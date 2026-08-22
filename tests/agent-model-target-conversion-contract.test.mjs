@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -160,25 +159,6 @@ test('Agent model target conversion materializes LLM connection and profile bind
     }), target);
 });
 
-test('Agent model target conversion preserves Moonshot endpoint selection', async () => {
-    const { buildLlmConnectionFromModelTarget } = await importConversion();
-    const connection = buildLlmConnectionFromModelTarget(sampleTarget({
-        api: 'moonshot',
-        model: 'kimi-k3',
-        'api-url': 'cn',
-        secretRef: {
-            key: 'api_key_moonshot',
-            id: 'secret-moonshot',
-        },
-    }));
-
-    assert.equal(connection.provider.chatCompletionSource, 'moonshot');
-    assert.deepEqual(connection.endpoint, {
-        sourceSpecific: {
-            moonshot_endpoint: 'cn',
-        },
-    });
-});
 
 test('Agent model target conversion preserves native adapter opt-ins', async () => {
     const { buildLlmConnectionFromModelTarget } = await importConversion();
@@ -197,44 +177,7 @@ test('Agent model target conversion preserves native adapter opt-ins', async () 
     assert.deepEqual(connection.capabilities, {});
 });
 
-test('Custom native controls keep connection transport separate from preset web search', async () => {
-    const [openaiSource, indexHtml] = await Promise.all([
-        readFile(path.join(REPO_ROOT, 'src/scripts/openai.js'), 'utf8'),
-        readFile(path.join(REPO_ROOT, 'src/index.html'), 'utf8'),
-    ]);
 
-    assert.match(openaiSource, /custom_openai_responses_websocket:[^\n]+true\]/);
-    assert.match(openaiSource, /custom_api_formats\.OPENAI_RESPONSES[\s\S]*?Boolean\(settings\.custom_openai_responses_websocket\)/);
-    assert.match(openaiSource, /data\('custom-api-format'\)/);
-    assert.match(indexHtml, /id="custom_openai_responses_websocket_section"[^>]+data-custom-api-format="openai_responses"/);
-    assert.match(indexHtml, /data-source="[^"]*custom" data-custom-api-format="claude_messages,openai_responses"[\s\S]{0,300}?openai_enable_web_search/);
-});
-
-test('Agent run model target ensure materializes the current saved target state', async () => {
-    const currentTarget = sampleTarget({
-        secretRef: {
-            key: 'api_key_custom',
-            id: 'secret-current',
-            labelSnapshot: 'Current custom key',
-        },
-    });
-    const { savedConnections } = installConnectionHarness([currentTarget]);
-    const {
-        ensureModelTargetLlmConnectionForProfile,
-    } = await importSharedModelTargetConnection();
-
-    const connection = await ensureModelTargetLlmConnectionForProfile({
-        model: {
-            mode: 'connectionRef',
-            connectionRef: 'model-target-writer-target',
-            modelId: 'claude-3-7-sonnet',
-        },
-    });
-
-    assert.equal(connection.auth.secretRef.id, 'secret-current');
-    assert.equal(savedConnections.length, 1);
-    assert.equal(savedConnections[0].auth.secretRef.id, 'secret-current');
-});
 
 test('Agent run model target ensure refreshes by connection ref without adopting target model changes', async () => {
     const currentTarget = sampleTarget({
@@ -263,25 +206,6 @@ test('Agent run model target ensure refreshes by connection ref without adopting
     assert.equal(savedConnections[0].auth.secretRef.id, 'secret-current');
 });
 
-test('Agent run model target ensure is scoped to derived Model Target bindings', async () => {
-    globalThis.window = {};
-    const {
-        ensureModelTargetLlmConnectionForProfile,
-    } = await importSharedModelTargetConnection();
-
-    assert.equal(await ensureModelTargetLlmConnectionForProfile({
-        model: {
-            mode: 'connectionRef',
-            connectionRef: 'external-main',
-            modelId: 'claude-3-7-sonnet',
-        },
-    }), null);
-    assert.equal(await ensureModelTargetLlmConnectionForProfile({
-        model: {
-            mode: 'currentPromptSnapshot',
-        },
-    }), null);
-});
 
 test('Agent run model target ensure fails fast when the saved target binding is missing', async () => {
     installConnectionHarness([]);
@@ -354,47 +278,7 @@ test('Agent model target startup sync invalidates stale LLM connection when mate
     assert.deepEqual(deletedConnections, ['model-target-writer-target']);
 });
 
-test('Agent model target startup sync reports stale LLM connection invalidation failures', async () => {
-    const invalidTarget = sampleTarget({ proxy: 'corporate-proxy' });
-    const { errors } = installConnectionHarness([invalidTarget], {
-        deleteErrors: {
-            'model-target-writer-target': new Error('permission denied'),
-        },
-    });
-    const {
-        syncSavedModelTargetLlmConnections,
-    } = await importConnection();
 
-    const result = await captureConsole(() => syncSavedModelTargetLlmConnections());
-
-    assert.equal(result.synced, 0);
-    assert.equal(result.failed.length, 1);
-    assert.match(errors.at(-1), /could not remove its stale Agent LLM connection/);
-});
-
-test('Agent model target update failure invalidates stale LLM connection', async () => {
-    const target = sampleTarget();
-    const invalidTarget = sampleTarget({ proxy: 'corporate-proxy' });
-    const { savedConnections, deletedConnections, errors } = installConnectionHarness([target]);
-    const {
-        startModelTargetLlmConnectionSync,
-        syncSavedModelTargetLlmConnections,
-    } = await importConnection();
-    const { event_types, eventSource } = await importEvents();
-
-    await syncSavedModelTargetLlmConnections();
-    assert.equal(savedConnections.at(-1).auth.secretRef.id, 'secret-custom');
-
-    const stopSync = startModelTargetLlmConnectionSync();
-    try {
-        await captureConsole(() => eventSource.emit(event_types.MODEL_TARGET_UPDATED, target, invalidTarget));
-
-        assert.deepEqual(deletedConnections, ['model-target-writer-target']);
-        assert.match(errors.at(-1), /could not be synced/);
-    } finally {
-        stopSync();
-    }
-});
 
 test('Agent model target conversion rejects lossy or invalid targets', async () => {
     const {

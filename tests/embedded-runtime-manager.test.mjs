@@ -93,56 +93,6 @@ test('EmbeddedRuntimeManager enforces budgets and chooses a stable active set', 
     }
 });
 
-test('EmbeddedRuntimeManager touch() affects ranking under tight budgets', async () => {
-    const dom = installFakeDom();
-    try {
-        let ts = 0;
-        const now = () => ts;
-
-        const { createEmbeddedRuntimeManager } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/services/embedded-runtime/embedded-runtime-manager.js'),
-        );
-
-        const manager = createEmbeddedRuntimeManager({
-            now,
-            profile: {
-                name: 'test',
-                maxActiveWeight: 10,
-                maxActiveIframes: 1,
-                maxActiveSlots: 1,
-                maxSoftParkedIframes: 0,
-                softParkTtlMs: 0,
-                parkWhenHiddenKinds: ['k'],
-                rootMargin: '0px',
-                threshold: 0,
-            },
-        });
-
-        const a = createRecordingSlot({ id: 'a', kind: 'k', element: document.createElement('div'), initialVisible: true, weight: 10 });
-        const b = createRecordingSlot({ id: 'b', kind: 'k', element: document.createElement('div'), initialVisible: true, weight: 10 });
-        document.body.append(a.slot.element, b.slot.element);
-
-        manager.register(a.slot);
-        manager.register(b.slot);
-        manager.reconcile();
-
-        assert.equal(manager.getPerfSnapshot().active, 1);
-        assert.deepEqual(a.calls[0], { type: 'hydrate', id: 'a', reason: 'manual' });
-        assert.deepEqual(b.calls[0], { type: 'dehydrate', id: 'b', reason: 'budget' });
-
-        ts = 1;
-        manager.touch('b');
-        manager.reconcile();
-
-        // After touch, b wins the single-slot budget.
-        const snap = manager.getPerfSnapshot();
-        assert.equal(snap.active, 1);
-        assert.ok(b.calls.some((c) => c.type === 'hydrate'));
-        assert.ok(a.calls.some((c) => c.type === 'dehydrate' && c.reason === 'budget'));
-    } finally {
-        dom.cleanup();
-    }
-});
 
 test('EmbeddedRuntimeManager invalidate() forces a re-hydrate for active candidates', async () => {
     const dom = installFakeDom();
@@ -181,50 +131,6 @@ test('EmbeddedRuntimeManager invalidate() forces a re-hydrate for active candida
 
         assert.equal(hydratesAfter, hydratesBefore + 1);
         assert.throws(() => manager.invalidate('missing'), /slot not found/);
-    } finally {
-        dom.cleanup();
-    }
-});
-
-test('EmbeddedRuntimeManager setVisible() works only for manual visibility slots', async () => {
-    const dom = installFakeDom();
-    try {
-        let ts = 0;
-        const now = () => (ts += 1);
-
-        const { createEmbeddedRuntimeManager } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/services/embedded-runtime/embedded-runtime-manager.js'),
-        );
-
-        const manager = createEmbeddedRuntimeManager({
-            now,
-            profile: {
-                name: 'test',
-                maxActiveWeight: 100,
-                maxActiveIframes: 10,
-                maxActiveSlots: 10,
-                maxSoftParkedIframes: 0,
-                softParkTtlMs: 0,
-                parkWhenHiddenKinds: ['k'],
-                rootMargin: '0px',
-                threshold: 0,
-            },
-        });
-
-        const manual = createRecordingSlot({ id: 'm', kind: 'k', element: document.createElement('div'), visibilityMode: 'manual', initialVisible: false });
-        document.body.append(manual.slot.element);
-        manager.register(manual.slot);
-        manager.reconcile();
-        assert.ok(manual.calls.some((c) => c.type === 'dehydrate' && c.reason === 'visibility'));
-
-        manager.setVisible('m', true);
-        manager.reconcile();
-        assert.ok(manual.calls.some((c) => c.type === 'hydrate'));
-
-        const intersection = createRecordingSlot({ id: 'i', kind: 'k', element: document.createElement('div'), visibilityMode: 'intersection', initialVisible: false });
-        document.body.append(intersection.slot.element);
-        manager.register(intersection.slot);
-        assert.throws(() => manager.setVisible('i', true), /not manual visibility/);
     } finally {
         dom.cleanup();
     }

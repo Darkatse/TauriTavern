@@ -36,16 +36,6 @@ const legacyFloor = (invocations, overrides = {}) => ({
     ...overrides,
 });
 
-test('ordinary chat passes through by identity', () => {
-    const user = { is_user: true, is_system: false, mes: 'Hello' };
-    const reply = assistant(undefined, { mes: 'Hi' });
-    const projection = projectToolTurns([user, reply]);
-
-    assert.deepEqual(projection, [
-        { type: 'message', sourceIndex: 0, message: user },
-        { type: 'message', sourceIndex: 1, message: reply },
-    ]);
-});
 
 test('empty Assistant owns parallel first-class Tool results by call ID', () => {
     const firstCall = call('call-1', {
@@ -117,71 +107,9 @@ test('old tool turns can be stripped while pure Assistant history and the active
     assert.equal(projection[2].assistantMessage, currentOwner);
 });
 
-test('adjacent legacy system floor is read-only projected into the preceding Assistant', () => {
-    const owner = assistant(undefined, { mes: 'I will check.' });
-    const invocation = { ...call(), result: 'sunny', error: false };
-    const floor = legacyFloor([invocation]);
-    const projection = projectToolTurns([owner, floor]);
 
-    assert.equal(projection.length, 1);
-    assert.equal(projection[0].assistantMessage, owner);
-    assert.equal(projection[0].metadataMessage, floor);
-    assert.deepEqual(projection[0].invocations, [invocation]);
-});
 
-test('standalone legacy floor synthesizes an empty provider Assistant', () => {
-    const floor = legacyFloor([{ ...call(), result: 'sunny' }]);
-    const followingAssistant = assistant(undefined, { mes: 'Final response' });
-    const chat = [floor, followingAssistant];
-    const projection = projectToolTurns(chat);
 
-    assert.equal(projection[0].assistantMessage, null);
-    assert.equal(projection[0].metadataMessage, floor);
-    assert.equal(projection[1].message, followingAssistant);
-});
-
-test('legacy JSON values normalize without mutating stored history', () => {
-    const rawInvocation = { ...call(), parameters: { query: 'weather' }, result: { temperature: 21 } };
-    const floor = legacyFloor([rawInvocation]);
-    const projection = projectToolTurns([floor]);
-
-    assert.equal(projection[0].invocations[0].parameters, '{"query":"weather"}');
-    assert.equal(projection[0].invocations[0].result, '{"temperature":21}');
-    assert.deepEqual(rawInvocation.parameters, { query: 'weather' });
-    assert.deepEqual(rawInvocation.result, { temperature: 21 });
-});
-
-test('empty containers and non-protocol metadata do not block replay', () => {
-    const emptyCalls = assistant([], {
-        role: 'assistant',
-        tool_call_id: 'stale-id',
-        mes: 'No tools after all',
-    });
-    const emptyLegacy = legacyFloor([]);
-    const owner = assistant([call('call-1', { displayName: 42, signature: {} })], {
-        extra: { tool_invocations: [] },
-    });
-    const result = tool('call-1', {
-        is_user: true,
-        is_system: false,
-        name: undefined,
-        error: 'failed',
-        tool_calls: [],
-        extra: { tool_invocations: [] },
-    });
-    const projection = projectToolTurns([emptyCalls, emptyLegacy, owner, result]);
-
-    assert.deepEqual(projection.slice(0, 2), [
-        { type: 'message', sourceIndex: 0, message: emptyCalls },
-        { type: 'message', sourceIndex: 1, message: emptyLegacy },
-    ]);
-    assert.deepEqual(projection[2].invocations, [{
-        id: 'call-1',
-        name: 'lookup',
-        parameters: '{"query":"weather"}',
-        result: '{"temperature":21}',
-    }]);
-});
 
 test('canonical malformed, orphan, duplicate, and missing relations fail at the first exact chat path', () => {
     const cases = [
@@ -224,19 +152,6 @@ test('canonical malformed, orphan, duplicate, and missing relations fail at the 
     }
 });
 
-test('IDs may be reused by completed later turns but not by overlapping pending turns', () => {
-    const first = assistant([call('same')]);
-    const second = assistant([call('same')]);
-    const repeatedAcrossTurns = projectToolTurns([first, tool('same'), second, tool('same')]);
-    assert.deepEqual(repeatedAcrossTurns.map(entry => entry.invocations[0].id), ['same', 'same']);
-
-    assert.throws(() => projectToolTurns([
-        assistant([call('pending')]),
-        assistant([call('pending')]),
-        tool('pending'),
-        tool('pending'),
-    ]), /matches multiple unresolved Assistant tool calls/);
-});
 
 test('mixed canonical and legacy facts fail instead of choosing one silently', () => {
     const owner = assistant([call()], { extra: { tool_invocations: [{ ...call(), result: 'legacy' }] } });

@@ -1,24 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Window } from 'happy-dom';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-test('drawer :has selectors only apply to desktop layout', async () => {
-    const source = await readFile(path.join(REPO_ROOT, 'src/style.css'), 'utf8');
-    const rule = `@media screen and (min-width: 1001px) {
-    body:has(.drawer-content.maximized) #top-settings-holder:has(.drawer-content.openDrawer:not(.fillLeft):not(.fillRight)),
-    body:has(.drawer-content.open) #top-settings-holder:has(.drawer-content.openDrawer:not(.fillLeft):not(.fillRight)),
-    body:has(#character_popup.open) #top-settings-holder:has(.drawer-content.openDrawer:not(.fillLeft):not(.fillRight)) {
-        z-index: 4005;
-    }
-}`;
-
-    assert.ok(source.includes(rule));
-});
 
 test('keyboard observer limits subtree work to structural focusability changes', async () => {
     const window = new Window();

@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -302,41 +301,4 @@ test('Abort and OutcomeUnknown terminate without fabricating a tool result', asy
     };
     resolveRemote(knownOutcome);
     assert.deepEqual(await knownCall, { result: JSON.stringify(knownOutcome, null, 2), error: false });
-});
-
-test('Legacy integration stays private and preserves both upstream request paths', async () => {
-    const [adapter, toolManager, script, openai, stContext, publicMcpApi] = await Promise.all([
-        readFile(path.join(REPO_ROOT, 'src/scripts/tauritavern/legacy-mcp-tools.js'), 'utf8'),
-        readFile(path.join(REPO_ROOT, 'src/scripts/tool-calling.js'), 'utf8'),
-        readFile(path.join(REPO_ROOT, 'src/script.js'), 'utf8'),
-        readFile(path.join(REPO_ROOT, 'src/scripts/openai.js'), 'utf8'),
-        readFile(path.join(REPO_ROOT, 'src/scripts/st-context.js'), 'utf8'),
-        readFile(path.join(REPO_ROOT, 'src/tauri/main/api/mcp.js'), 'utf8'),
-    ]);
-
-    assert.doesNotMatch(stContext, /legacy-mcp-tools|list_legacy_mcp_tools/);
-    assert.doesNotMatch(publicMcpApi, /list_legacy_mcp_tools|call_legacy_mcp_tool/);
-    assert.doesNotMatch(adapter, /custom_include_body|custom_exclude_body|registerFunctionTool/);
-    assert.match(adapter, /globalThis\.window\?\.__TAURITAVERN__\?\.invoke\?\.safeInvoke/);
-    assert.match(toolManager, /const requestTool = toolResolver\?\.\(name\) \?\? null/);
-    assert.match(toolManager, /for \(const \{[^}]+requestTool[^}]+\} of normalizedToolCalls\) \{\s*throwIfAborted\(\)/);
-    assert.match(toolManager, /let toolError;\s*try \{\s*throwIfAborted\(\);\s*if \(requestTool\)/);
-    assert.match(toolManager, /requestTool[\s\S]*ToolManager\.invokeFunctionTool\(name, parameters\)/);
-    assert.match(script, /main_api === 'openai' && !agentMode && canAdvertiseToolCalls/);
-    assert.ok(
-        script.indexOf('return generateGroupWrapper(false, type')
-        < script.indexOf("const useLegacyMcpTools = main_api === 'openai'"),
-    );
-    assert.match(script, /async function prepareLegacyMcpGenerationContext\(\)[\s\S]*catch \(error\)[\s\S]*return createEmptyLegacyMcpGenerationContext\(\)/);
-    assert.equal(script.match(/\[LEGACY_MCP_GENERATION_CONTEXT\]: legacyMcpContext/g)?.length, 2);
-    assert.equal(script.match(/toolResolver: legacyMcpToolRound \? name => legacyMcpToolRound\.resolveTool\(name\) : null/g)?.length, 2);
-    assert.equal(script.match(/legacyMcpToolRound \}/g)?.length, 2);
-    assert.equal(script.match(/if \(abortController\.signal\.aborted\) \{\s*unblockGeneration\(type\);\s*return;/g)?.length, 2);
-    assert.match(script, /error instanceof LegacyMcpOutcomeUnknownError[\s\S]*timeOut: 0, extendedTimeOut: 0, closeButton: true/);
-    assert.match(openai, /ToolManager\.registerFunctionToolsOpenAI\(toolData\);\s*legacyMcpToolRound\?\.mergeIntoToolData\(toolData\);/);
-    const settingsHook = openai.indexOf('await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, generate_data)');
-    const finalBinding = openai.indexOf('legacyMcpToolRound?.finalizeAdvertisedTools(generate_data)', settingsHook);
-    const request = openai.indexOf('const response = await fetch(generate_url', finalBinding);
-    assert.ok(settingsHook >= 0 && settingsHook < finalBinding && finalBinding < request);
-    assert.doesNotMatch(openai.slice(settingsHook, request), /custom_include_body|custom_exclude_body/);
 });

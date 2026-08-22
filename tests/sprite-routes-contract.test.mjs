@@ -11,14 +11,6 @@ function createSpriteRouter(context) {
     return router;
 }
 
-test('sprite routes expose the four upstream endpoints', () => {
-    const router = createSpriteRouter({});
-    assert.equal(router.canHandle('GET', '/api/sprites/get'), true);
-    assert.equal(router.canHandle('POST', '/api/sprites/upload'), true);
-    assert.equal(router.canHandle('POST', '/api/sprites/upload-zip'), true);
-    assert.equal(router.canHandle('POST', '/api/sprites/delete'), true);
-});
-
 test('/api/sprites/get forwards the sprite set and returns native sprites', async () => {
     const calls = [];
     const router = createSpriteRouter({

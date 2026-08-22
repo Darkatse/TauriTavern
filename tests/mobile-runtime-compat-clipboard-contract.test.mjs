@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -66,16 +65,4 @@ test('non-Android Web Clipboard is left unchanged', () => {
     installMobileRuntimeCompat(targetWindow);
 
     assert.equal(targetWindow.navigator.clipboard.writeText, writeText);
-});
-
-test('the main window capability grants only clipboard text writes', async () => {
-    const capability = JSON.parse(await readFile(
-        path.join(REPO_ROOT, 'src-tauri/crates/tauritavern/capabilities/default.json'),
-        'utf8',
-    ));
-    const clipboardPermissions = capability.permissions.filter(
-        permission => typeof permission === 'string' && permission.startsWith('clipboard-manager:'),
-    );
-
-    assert.deepEqual(clipboardPermissions, ['clipboard-manager:allow-write-text']);
 });

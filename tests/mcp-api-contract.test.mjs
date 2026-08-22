@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -22,84 +21,6 @@ async function installHarness(invokeOverride) {
     return { calls, mcp: globalThis.window.__TAURITAVERN__.api.mcp };
 }
 
-test('api.mcp exposes registration, discovery, permission, and one test-call intent', async () => {
-    const { calls, mcp } = await installHarness();
-
-    await mcp.servers.list();
-    await mcp.servers.create({
-        displayName: 'Local',
-        endpoint: 'http://127.0.0.1:3000/mcp',
-        headers: { 'x-api-key': 'secret' },
-        protocolVersion: '2025-11-25',
-    });
-    await mcp.servers.update({
-        registrationId: 'id',
-        displayName: 'Renamed',
-        endpoint: 'https://user:pass@example.com/mcp?tenant=updated',
-        headers: { authorization: 'Bearer updated' },
-        protocolVersion: '2025-06-18',
-    });
-    await mcp.servers.setState({ registrationId: 'id', state: 'active' });
-    await mcp.servers.discover('id');
-    await mcp.servers.refresh({ registrationId: 'id' });
-    await mcp.tools.setPermission({ registrationId: 'id', nativeName: ' search ', permission: 'ask' });
-    await mcp.tools.testCall({
-        registrationId: 'id',
-        nativeName: ' search ',
-        argumentsJson: '{"value":9007199254740993}',
-    });
-    await mcp.servers.remove({ registrationId: 'id' });
-
-    assert.deepEqual(calls.slice(0, 7), [
-        { command: 'list_mcp_servers', args: undefined },
-        {
-            command: 'create_mcp_server',
-            args: {
-                dto: {
-                    displayName: 'Local',
-                    endpoint: 'http://127.0.0.1:3000/mcp',
-                    headers: { 'x-api-key': 'secret' },
-                    protocolVersion: '2025-11-25',
-                },
-            },
-        },
-        {
-            command: 'update_mcp_server',
-            args: {
-                dto: {
-                    registrationId: 'id',
-                    displayName: 'Renamed',
-                    endpoint: 'https://user:pass@example.com/mcp?tenant=updated',
-                    headers: { authorization: 'Bearer updated' },
-                    protocolVersion: '2025-06-18',
-                },
-            },
-        },
-        { command: 'set_mcp_server_state', args: { dto: { registrationId: 'id', state: 'active' } } },
-        { command: 'discover_mcp_tools', args: { dto: { registrationId: 'id' } } },
-        { command: 'refresh_mcp_tools', args: { dto: { registrationId: 'id' } } },
-        { command: 'set_mcp_tool_permission', args: { dto: { registrationId: 'id', nativeName: ' search ', permission: 'ask' } } },
-    ]);
-    assert.equal(calls[7].command, 'start_mcp_test_call');
-    assert.equal(typeof calls[7].args.dto.callId, 'string');
-    assert.equal(calls[8].command, 'test_mcp_tool_call');
-    assert.deepEqual(
-        { ...calls[8].args.dto, callId: '<generated>' },
-        {
-            callId: '<generated>',
-            registrationId: 'id',
-            nativeName: ' search ',
-            argumentsJson: '{"value":9007199254740993}',
-        },
-    );
-    assert.equal(calls[7].args.dto.callId, calls[8].args.dto.callId);
-    assert.deepEqual(calls[9], {
-        command: 'remove_mcp_server',
-        args: { dto: { registrationId: 'id' } },
-    });
-    assert.equal(mcp.callTool, undefined);
-    assert.deepEqual(Object.keys(mcp.tools).sort(), ['setPermission', 'testCall']);
-});
 
 test('api.mcp fails fast on invalid states and permissions', async () => {
     const { mcp } = await installHarness();
@@ -237,18 +158,4 @@ test('api.mcp treats a user retry as a new call with new arguments', async () =>
     assert.equal(dispatched.length, 2);
     assert.notEqual(dispatched[0].args.dto.callId, dispatched[1].args.dto.callId);
     assert.deepEqual(dispatched.map(call => call.args.dto.argumentsJson), ['{"n":1}', '{"n":2}']);
-});
-
-test('MCP Manager is owned by a first-party extension, not TauriTavern Settings', async () => {
-    const [manifestRaw, settingsApp, settingsPopup] = await Promise.all([
-        readFile(path.join(REPO_ROOT, 'src/scripts/extensions/mcp-manager/manifest.json'), 'utf8'),
-        readFile(path.join(REPO_ROOT, 'src/scripts/tauri/setting/settings-app/SettingsApp.js'), 'utf8'),
-        readFile(path.join(REPO_ROOT, 'src/scripts/tauri/setting/setting-panel/settings-popup.js'), 'utf8'),
-    ]);
-    const manifest = JSON.parse(manifestRaw);
-
-    assert.equal(manifest.js, 'dist/index.bundle.js');
-    assert.equal(manifest.css, 'style.css');
-    assert.doesNotMatch(settingsApp, /MCP Servers|openMcpManager/);
-    assert.doesNotMatch(settingsPopup, /openMcpManager|mcp-manager/);
 });

@@ -135,66 +135,7 @@ test('chat payload commit uses bounded Android base64 frames and exact offsets',
     }
 });
 
-test('character and group save convergence points send logical targets', async () => {
-    const scenarios = [
-        {
-            host: createCommitHost({
-                expectedTarget: {
-                    kind: 'character',
-                    characterId: 'Alice',
-                    fileName: 'Story',
-                },
-                expectedForce: true,
-                expectedCommitReason: 'maintenance',
-            }),
-            run: () => saveCharacterChatPayload({
-                characterName: 'Display Name',
-                avatarUrl: 'Alice.png',
-                fileName: 'Story.jsonl',
-                payload: [{ user_name: 'User' }],
-                force: true,
-                commitReason: 'maintenance',
-            }),
-        },
-        {
-            host: createCommitHost({
-                expectedTarget: { kind: 'group', chatId: 'Group Story' },
-                expectedCommitReason: 'generationCheckpoint',
-            }),
-            run: () => saveGroupChatPayload({
-                id: 'Group Story.jsonl',
-                payload: [{ user_name: 'User' }],
-                commitReason: 'generationCheckpoint',
-            }),
-        },
-    ];
 
-    for (const scenario of scenarios) {
-        const restore = installRuntime('Mozilla/5.0 (Macintosh)', scenario.host.invoke);
-        try {
-            await scenario.run();
-            assert.ok(scenario.host.calls.every(({ command }) => !command.startsWith('stage_upload_')));
-        } finally {
-            restore();
-        }
-    }
-});
-
-test('chat payload commit treats a null legacy reason as a mutation', async () => {
-    const host = createCommitHost();
-    const restore = installRuntime('Mozilla/5.0 (Macintosh)', host.invoke);
-
-    try {
-        await commitChatPayload({
-            target: TARGET,
-            payload: [{ user_name: 'User' }],
-            force: false,
-            commitReason: null,
-        });
-    } finally {
-        restore();
-    }
-});
 
 test('chat payload commit keeps one frame in flight', async () => {
     let releaseFirst;

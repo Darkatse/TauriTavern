@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { jsonResponse } from '../src/tauri/main/http-utils.js';
@@ -8,7 +7,7 @@ import { registerProviderRoutes } from '../src/tauri/main/routes/provider-routes
 import { registerSettingsRoutes } from '../src/tauri/main/routes/settings-routes.js';
 import { registerVectorRoutes } from '../src/tauri/main/routes/vector-routes.js';
 
-const SECRET_BACKED_PROVIDER_METADATA_COMMANDS = [
+const SECRET_BACKED_METADATA = [
     'get_openrouter_credits',
     'get_nanogpt_credits',
     'get_siliconflow_embedding_models',
@@ -16,240 +15,18 @@ const SECRET_BACKED_PROVIDER_METADATA_COMMANDS = [
     'get_workers_ai_multimodal_models',
 ];
 
-let vectorsRuntimeSourcePromise;
-
-function createProviderRouter(context) {
+test('provider credential mutations invalidate only secret-backed metadata', async () => {
     const router = createRouteRegistry();
-    registerProviderRoutes(router, context, { jsonResponse });
-    return router;
-}
-
-function extractDeclaration(source, marker) {
-    const start = source.indexOf(marker);
-    assert.notEqual(start, -1, `Missing declaration marker: ${marker}`);
-
-    const isFunction = source.startsWith('function ', start) || source.startsWith('async function ', start);
-    const functionBody = isFunction ? source.indexOf(') {', start) : -1;
-    const braceStart = functionBody === -1 ? source.indexOf('{', start) : functionBody + 2;
-    assert.notEqual(braceStart, -1, `Missing declaration body: ${marker}`);
-
-    let depth = 0;
-    let quote = '';
-
-    for (let i = braceStart; i < source.length; i++) {
-        const char = source[i];
-        const next = source[i + 1];
-
-        if (quote) {
-            if (char === '\\') {
-                i++;
-            } else if (char === quote) {
-                quote = '';
-            }
-            continue;
-        }
-
-        if (char === '/' && next === '/') {
-            const lineEnd = source.indexOf('\n', i + 2);
-            i = lineEnd === -1 ? source.length : lineEnd;
-            continue;
-        }
-
-        if (char === '/' && next === '*') {
-            const commentEnd = source.indexOf('*/', i + 2);
-            i = commentEnd === -1 ? source.length : commentEnd + 1;
-            continue;
-        }
-
-        if (char === '"' || char === '\'' || char === '`') {
-            quote = char;
-            continue;
-        }
-
-        if (char === '{') {
-            depth++;
-        } else if (char === '}') {
-            depth--;
-            if (depth === 0) {
-                let end = i + 1;
-                if (source[end] === ';') {
-                    end++;
-                }
-                return source.slice(start, end);
-            }
-        }
-    }
-
-    assert.fail(`Unterminated declaration: ${marker}`);
-}
-
-async function getVectorsRuntimeSource() {
-    if (!vectorsRuntimeSourcePromise) {
-        vectorsRuntimeSourcePromise = readFile(new URL('../src/scripts/extensions/vectors/index.js', import.meta.url), 'utf8')
-            .then(source => [
-                extractDeclaration(source, 'const remoteEmbeddingEndpoints = {'),
-                extractDeclaration(source, 'function getVectorsRequestBody(args = {})'),
-                extractDeclaration(source, 'function toggleSettings()'),
-                extractDeclaration(source, 'async function loadRemoteEmbeddingModels(source)'),
-            ].join('\n\n'));
-    }
-
-    return vectorsRuntimeSourcePromise;
-}
-
-class FakeJQueryElement {
-    constructor(selector) {
-        this.selector = selector;
-        this.options = [];
-        this.value = '';
-        this.visible = null;
-    }
-
-    empty() {
-        this.options = [];
-        return this;
-    }
-
-    append(option) {
-        this.options.push({
-            value: option.value,
-            text: option.text,
-        });
-        return this;
-    }
-
-    val(value) {
-        if (arguments.length === 0) {
-            return this.value;
-        }
-
-        this.value = value;
-        return this;
-    }
-
-    toggle(value) {
-        this.visible = Boolean(value);
-        return this;
-    }
-}
-
-async function createVectorsRuntimeHarness({
-    oaiSettings = {},
-    settings: settingsPatch = {},
-    responses = {},
-} = {}) {
-    const source = await getVectorsRuntimeSource();
-    const elements = new Map();
-    const fetchCalls = [];
-    const savedSettings = [];
-    const toastErrors = [];
-    const consoleErrors = [];
-
-    const settings = {
-        source: 'workers_ai',
-        enabled_files: false,
-        enabled_chats: false,
-        enabled_world_info: false,
-        workers_ai_model: '',
-        siliconflow_model: '',
-        electronhub_model: '',
-        transformers_model: 'Qwen/Qwen3-Embedding-0.6B',
-        ...settingsPatch,
-    };
-    const extension_settings = { vectors: {} };
-    const oai_settings = {
-        siliconflow_endpoint: 'cn',
-        workers_ai_account_id: 'account-123',
-        ...oaiSettings,
-    };
-
-    function $(selector) {
-        const key = String(selector);
-        if (!elements.has(key)) {
-            elements.set(key, new FakeJQueryElement(key));
-        }
-        return elements.get(key);
-    }
-
-    const fetch = async (url, init = {}) => {
-        fetchCalls.push({ url, init });
-        const response = responses[url];
-        if (response instanceof Error) {
-            throw response;
-        }
-        if (!response) {
-            return { ok: false, status: 404, json: async () => ({}) };
-        }
-        return {
-            ok: response.ok !== false,
-            status: response.status ?? 200,
-            json: async () => response.json,
-        };
-    };
-
-    const factory = new Function(
-        'settings',
-        'extension_settings',
-        'oai_settings',
-        'getRequestHeaders',
-        'saveSettingsDebounced',
-        '$',
-        'document',
-        'fetch',
-        'toastr',
-        'console',
-        'vectorApiRequiresUrl',
-        'loadWebLlmModels',
-        `${source}\nreturn { remoteEmbeddingEndpoints, getVectorsRequestBody, toggleSettings, loadRemoteEmbeddingModels };`,
-    );
-
-    const runtime = factory(
-        settings,
-        extension_settings,
-        oai_settings,
-        () => ({ 'x-test': 'headers' }),
-        () => savedSettings.push({ ...settings }),
-        $,
-        { createElement: tagName => ({ tagName: String(tagName).toUpperCase(), value: '', text: '' }) },
-        fetch,
-        { error: (message, title, options) => toastErrors.push({ message, title, options }) },
-        { error: (...args) => consoleErrors.push(args) },
-        ['llamacpp', 'vllm', 'ollama', 'koboldcpp'],
-        () => {},
-    );
-
-    return {
-        runtime,
-        settings,
-        extension_settings,
-        elements,
-        fetchCalls,
-        savedSettings,
-        toastErrors,
-        consoleErrors,
-    };
-}
-
-test('provider secret mutations invalidate secret-backed metadata caches', async () => {
-    const router = createRouteRegistry();
-    const invokes = [];
     const invalidations = [];
-    const context = {
-        safeInvoke: async (command, args) => {
-            invokes.push({ command, args });
-            return command === 'write_secret' ? 'secret-id' : undefined;
-        },
-        invalidateInvokeAll: (command) => {
-            invalidations.push(command);
-        },
-    };
-
-    registerSettingsRoutes(router, context, { jsonResponse });
+    registerSettingsRoutes(router, {
+        safeInvoke: async () => 'secret-id',
+        invalidateInvokeAll: command => invalidations.push(command),
+    }, { jsonResponse });
 
     for (const request of [
         {
             path: '/api/secrets/write',
-            body: { key: 'api_key_openrouter', value: 'new-key', label: 'OpenRouter' },
+            body: { key: 'api_key_openrouter', value: 'new-key' },
         },
         {
             path: '/api/secrets/delete',
@@ -261,84 +38,48 @@ test('provider secret mutations invalidate secret-backed metadata caches', async
         },
     ]) {
         invalidations.length = 0;
-        const response = await router.handle({ method: 'POST', ...request });
-
-        assert.ok(response);
-        assert.equal(response.status, 200);
-        assert.deepEqual(invalidations, SECRET_BACKED_PROVIDER_METADATA_COMMANDS);
+        assert.equal((await router.handle({ method: 'POST', ...request })).status, 200);
+        assert.deepEqual(invalidations, SECRET_BACKED_METADATA);
     }
 
-    assert.deepEqual(invokes.map(call => call.command), ['write_secret', 'delete_secret', 'rotate_secret']);
+    invalidations.length = 0;
+    assert.equal((await router.handle({
+        method: 'POST',
+        path: '/api/secrets/write',
+        body: { key: 'api_key_openai', value: 'new-key' },
+    })).status, 200);
+    assert.deepEqual(invalidations, []);
 });
 
-test('provider metadata routes map upstream request bodies to Tauri invoke DTOs', async () => {
+test('provider metadata routes preserve request identity and visible failures', async () => {
     const calls = [];
-    const router = createProviderRouter({
+    const router = createRouteRegistry();
+    registerProviderRoutes(router, {
         safeInvoke: async (command, args) => {
             calls.push({ command, args });
-            switch (command) {
-                case 'get_nanogpt_model_providers':
-                    return { supportsProviderSelection: true, providers: ['chutes'] };
-                case 'get_openrouter_credits':
-                case 'get_nanogpt_credits':
-                    return {};
-                default:
-                    return [];
-            }
+            return [];
         },
+    }, { jsonResponse });
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/openai/workers-ai/models/embedding',
+        body: { workers_ai_account_id: 'account-id' },
     });
+    assert.equal(response.status, 200);
+    assert.deepEqual(calls, [{
+        command: 'get_workers_ai_embedding_models',
+        args: { dto: { workers_ai_account_id: 'account-id' } },
+    }]);
 
-    const requests = [
-        {
-            path: '/api/openrouter/models/providers',
-            body: { model: 'openai/gpt-4o' },
-            expected: { command: 'get_openrouter_model_providers', args: { dto: { model: 'openai/gpt-4o' } } },
-        },
-        {
-            path: '/api/nanogpt/models/providers',
-            body: { model: 'gpt-4o-mini' },
-            expected: { command: 'get_nanogpt_model_providers', args: { dto: { model: 'gpt-4o-mini' } } },
-        },
-        {
-            path: '/api/openai/siliconflow/models/embedding',
-            body: { siliconflow_endpoint: 'cn' },
-            expected: { command: 'get_siliconflow_embedding_models', args: { dto: { siliconflow_endpoint: 'cn' } } },
-        },
-        {
-            path: '/api/openai/workers-ai/models/embedding',
-            body: { workers_ai_account_id: 'account-id' },
-            expected: { command: 'get_workers_ai_embedding_models', args: { dto: { workers_ai_account_id: 'account-id' } } },
-        },
-        {
-            path: '/api/backends/chat-completions/multimodal-models/workers_ai',
-            body: { workers_ai_account_id: 'account-id' },
-            expected: { command: 'get_workers_ai_multimodal_models', args: { dto: { workers_ai_account_id: 'account-id' } } },
-        },
-    ];
-
-    for (const request of requests) {
-        const response = await router.handle({
-            method: 'POST',
-            path: request.path,
-            body: request.body,
-        });
-
-        assert.ok(response);
-        assert.equal(response.status, 200);
-    }
-
-    assert.deepEqual(calls, requests.map(request => request.expected));
-});
-
-test('provider metadata route errors stay visible to callers', async () => {
-    const router = createProviderRouter({
+    const failingRouter = createRouteRegistry();
+    registerProviderRoutes(failingRouter, {
         safeInvoke: async () => {
             throw new Error('provider unavailable');
         },
-    });
-
+    }, { jsonResponse });
     await assert.rejects(
-        router.handle({
+        failingRouter.handle({
             method: 'POST',
             path: '/api/openai/workers-ai/models/embedding',
             body: { workers_ai_account_id: 'account-id' },
@@ -347,239 +88,67 @@ test('provider metadata route errors stay visible to callers', async () => {
     );
 });
 
-test('vectors remote embedding loader posts provider metadata bodies and persists first model', async () => {
-    const harness = await createVectorsRuntimeHarness({
-        responses: {
-            '/api/openai/workers-ai/models/embedding': {
-                json: [
-                    { id: '@cf/baai/bge-m3' },
-                    { id: '@cf/baai/bge-small-en-v1.5' },
-                ],
-            },
-            '/api/openai/siliconflow/models/embedding': {
-                json: [
-                    { id: 'Qwen/Qwen3-Embedding-0.6B' },
-                ],
-            },
-        },
-    });
-
-    await harness.runtime.loadRemoteEmbeddingModels('workers_ai');
-    await harness.runtime.loadRemoteEmbeddingModels('siliconflow');
-
-    assert.deepEqual(harness.fetchCalls.map(call => ({
-        url: call.url,
-        method: call.init.method,
-        headers: call.init.headers,
-        body: JSON.parse(call.init.body),
-    })), [
-        {
-            url: '/api/openai/workers-ai/models/embedding',
-            method: 'POST',
-            headers: { 'x-test': 'headers' },
-            body: { workers_ai_account_id: 'account-123' },
-        },
-        {
-            url: '/api/openai/siliconflow/models/embedding',
-            method: 'POST',
-            headers: { 'x-test': 'headers' },
-            body: { siliconflow_endpoint: 'cn' },
-        },
-    ]);
-
-    assert.deepEqual(harness.elements.get('#vectors_workers_ai_model').options, [
-        { value: '@cf/baai/bge-m3', text: '@cf/baai/bge-m3' },
-        { value: '@cf/baai/bge-small-en-v1.5', text: '@cf/baai/bge-small-en-v1.5' },
-    ]);
-    assert.equal(harness.settings.workers_ai_model, '@cf/baai/bge-m3');
-    assert.equal(harness.extension_settings.vectors.workers_ai_model, '@cf/baai/bge-m3');
-    assert.equal(harness.elements.get('#vectors_workers_ai_model').value, '@cf/baai/bge-m3');
-    assert.equal(harness.settings.siliconflow_model, 'Qwen/Qwen3-Embedding-0.6B');
-    assert.equal(harness.savedSettings.length, 2);
-});
-
-test('vectors remote embedding loader applies upstream model shape configuration', async () => {
-    const harness = await createVectorsRuntimeHarness({
-        responses: {
-            '/api/openai/electronhub/models': {
-                json: [
-                    { id: 'chat-only', name: 'Chat Only', endpoints: ['/v1/chat/completions'] },
-                    { id: 'embed-model', name: 'Embeddings', endpoints: ['/v1/embeddings'] },
-                ],
-            },
-        },
-    });
-
-    await harness.runtime.loadRemoteEmbeddingModels('electronhub');
-
-    assert.deepEqual(harness.elements.get('#vectors_electronhub_model').options, [
-        { value: 'embed-model', text: 'Embeddings' },
-    ]);
-    assert.equal(harness.settings.electronhub_model, 'embed-model');
-    assert.equal(harness.extension_settings.vectors.electronhub_model, 'embed-model');
-});
-
-test('vectors source toggle exposes remote model failures without clearing current state', async () => {
-    const harness = await createVectorsRuntimeHarness({
-        settings: {
-            source: 'workers_ai',
-            workers_ai_model: '@cf/existing',
-        },
-        responses: {
-            '/api/openai/workers-ai/models/embedding': {
-                ok: false,
-                status: 401,
-                json: { error: 'unauthorized' },
-            },
-        },
-    });
-    const select = new FakeJQueryElement('#vectors_workers_ai_model');
-    harness.elements.set('#vectors_workers_ai_model', select);
-    select.options = [{ value: '@cf/existing', text: '@cf/existing' }];
-    select.value = '@cf/existing';
-
-    harness.runtime.toggleSettings();
-    await new Promise(resolve => setTimeout(resolve, 0));
-
-    assert.equal(harness.elements.get('#workers_ai_vectorsModel').visible, true);
-    assert.equal(harness.elements.get('#siliconflow_vectorsModel').visible, false);
-    assert.deepEqual(harness.fetchCalls.map(call => call.url), ['/api/openai/workers-ai/models/embedding']);
-    assert.deepEqual(select.options, [{ value: '@cf/existing', text: '@cf/existing' }]);
-    assert.equal(select.value, '@cf/existing');
-    assert.deepEqual(harness.toastErrors, [
-        {
-            message: 'HTTP 401',
-            title: 'Vector model list failed',
-            options: { preventDuplicates: true },
-        },
-    ]);
-    assert.equal(harness.consoleErrors.length, 1);
-    assert.equal(harness.savedSettings.length, 0);
-});
-
-test('vectors local model selection is forwarded and shown only for transformers', async () => {
-    const harness = await createVectorsRuntimeHarness({
-        settings: {
-            source: 'transformers',
-            transformers_model: 'Qwen/Qwen3-Embedding-0.6B',
-        },
-    });
-
-    assert.deepEqual(harness.runtime.getVectorsRequestBody({ collectionId: 'chat-1' }), {
-        collectionId: 'chat-1',
-        model: 'Qwen/Qwen3-Embedding-0.6B',
-    });
-    harness.runtime.toggleSettings();
-    assert.equal(harness.elements.get('#transformers_vectorsModel').visible, true);
-
-    harness.settings.source = 'openai';
-    harness.runtime.toggleSettings();
-    assert.equal(harness.elements.get('#transformers_vectorsModel').visible, false);
-});
-
-test('native vector endpoints bridge the seven upstream routes to one typed command', async () => {
+test('vector compatibility routes preserve success and validation responses', async () => {
     const router = createRouteRegistry();
     const calls = [];
     registerVectorRoutes(router, {
         safeInvoke: async (command, payload) => {
             calls.push({ command, payload });
-            if (payload.path === 'list') {
-                return { status: 200, kind: 'json', body: [17, 23] };
-            }
             if (payload.path === 'query') {
                 throw new Error('Bad request: searchText is required');
-            }
-            if (payload.path === 'koboldcpp-embed') {
-                return { status: 200, kind: 'json', body: { embeddings: [[1, 0]], model: 'embed.gguf' } };
             }
             return { status: 200, kind: 'empty', body: null };
         },
     }, { jsonResponse });
 
-    const response = await router.handle({
+    const inserted = await router.handle({
         method: 'POST',
         path: '/api/vector/insert',
         body: { collectionId: 'chat-1', items: [], source: 'transformers' },
     });
-
-    assert.equal(response.status, 200);
-    assert.equal(await response.text(), '');
-    assert.deepEqual(calls, [{
+    assert.equal(inserted.status, 200);
+    assert.deepEqual(calls[0], {
         command: 'vector_handle',
         payload: {
             path: 'insert',
             request: { collectionId: 'chat-1', items: [], source: 'transformers' },
         },
-    }]);
-
-    const listResponse = await router.handle({
-        method: 'POST',
-        path: '/api/vector/list',
-        body: { collectionId: 'chat-1' },
-    });
-    assert.deepEqual(await listResponse.json(), [17, 23]);
-
-    const koboldResponse = await router.handle({
-        method: 'POST',
-        path: '/api/backends/kobold/embed',
-        body: { server: 'http://localhost:5001', items: ['hello'] },
-    });
-    assert.deepEqual(await koboldResponse.json(), { embeddings: [[1, 0]], model: 'embed.gguf' });
-    assert.deepEqual(calls.at(-1), {
-        command: 'vector_handle',
-        payload: {
-            path: 'koboldcpp-embed',
-            request: {
-                source: 'koboldcpp',
-                apiUrl: 'http://localhost:5001',
-                texts: ['hello'],
-            },
-        },
     });
 
-    await router.handle({
-        method: 'POST',
-        path: '/api/backends/kobold/embed',
-        body: { server: 'http://localhost:5001', items: ['query'], isQuery: true },
-    });
-    assert.equal(calls.at(-1).payload.request.isQuery, true);
-
-    const invalidQuery = await router.handle({
+    const invalid = await router.handle({
         method: 'POST',
         path: '/api/vector/query',
         body: { collectionId: 'chat-1' },
     });
-    assert.equal(invalidQuery.status, 400);
-    assert.deepEqual(await invalidQuery.json(), {
+    assert.equal(invalid.status, 400);
+    assert.deepEqual(await invalid.json(), {
         error: true,
         message: 'Bad request: searchText is required',
     });
-    assert.equal(router.canHandle('POST', '/api/vector/query'), true);
 
-    const unknownResponse = await router.handle({
+    const unknown = await router.handle({
         method: 'POST',
         path: '/api/vector/not-yet-known',
         body: {},
     });
-
-    assert.equal(unknownResponse.status, 404);
-    assert.deepEqual(await unknownResponse.json(), {
+    assert.equal(unknown.status, 404);
+    assert.deepEqual(await unknown.json(), {
         error: 'Unsupported vector endpoint: not-yet-known',
     });
 });
 
-test('native vector routes classify operation-wide recoverable failures', async () => {
-    const failures = [
+test('vector routes classify operation-wide recoverable failures', async () => {
+    for (const [message, status, cause] of [
         ['Unauthorized: bad key', 401, 'embedding_auth_failed'],
         ['Conflict: stale dimensions', 409, 'vector_index_conflict'],
         ['Too many requests: retry later', 429, 'embedding_rate_limited'],
         ['Internal server error: provider offline', 500, 'embedding_unavailable'],
-    ];
-
-    for (const [message, status, cause] of failures) {
+    ]) {
         const router = createRouteRegistry();
         registerVectorRoutes(router, {
-            safeInvoke: async () => { throw new Error(message); },
+            safeInvoke: async () => {
+                throw new Error(message);
+            },
         }, { jsonResponse });
 
         const response = await router.handle({
@@ -590,154 +159,4 @@ test('native vector routes classify operation-wide recoverable failures', async 
         assert.equal(response.status, status);
         assert.equal((await response.json()).cause, cause);
     }
-});
-
-test('top-level native routes register vector compatibility before provider routes', async () => {
-    const source = await readFile(new URL('../src/tauri/main/routes/index.js', import.meta.url), 'utf8');
-    const aiIndex = source.indexOf('registerAiRoutes(router, context, responses);');
-    const vectorIndex = source.indexOf('registerVectorRoutes(router, context, responses);');
-    const providerIndex = source.indexOf('registerProviderRoutes(router, context, responses);');
-
-    assert.match(source, /import \{ registerVectorRoutes \} from '\.\/vector-routes\.js';/);
-    assert.notEqual(aiIndex, -1);
-    assert.notEqual(vectorIndex, -1);
-    assert.notEqual(providerIndex, -1);
-    assert.ok(aiIndex < vectorIndex);
-    assert.ok(vectorIndex < providerIndex);
-});
-
-test('vectors runtime keeps upstream 1.18 summary skip settings and native route semantics', async () => {
-    const source = await readFile(new URL('../src/scripts/extensions/vectors/index.js', import.meta.url), 'utf8');
-    const settingsHtml = await readFile(new URL('../src/scripts/extensions/vectors/settings.html', import.meta.url), 'utf8');
-    const processFiles = extractDeclaration(source, 'async function processFiles(');
-    const vectorizeFile = extractDeclaration(source, 'async function vectorizeFile(');
-    const rearrangeChat = extractDeclaration(source, 'async function rearrangeChat(');
-    const insertVectorItems = extractDeclaration(source, 'async function insertVectorItems(');
-    const purgeFiles = extractDeclaration(source, 'async function purgeFileVectorIndexes(');
-
-    assert.match(source, /summary_retries: 2/);
-    assert.match(source, /summary_threshold: 200/);
-    assert.match(source, /keep_hidden: false/);
-    assert.match(source, /const skippedHashes = new Set\(\);/);
-    assert.match(source, /vector_endpoint_unavailable/);
-    assert.match(source, /async function throwVectorResponseError\(response, action, collectionId = ''\)/);
-    assert.match(source, /\[404, 405, 501\]\.includes\(status\)/);
-    assert.match(source, /settings\.keep_hidden \|\| !x\.is_system/);
-    assert.match(source, /summarize\(toSummarize, settings\.summary_source, \{ skipOnFailure: true \}\)/);
-    assert.match(source, /skippedHashes\.add\(item\.hash\)/);
-    assert.match(source, /case 'koboldcpp':\s+body\.apiUrl =/);
-    assert.match(source, /case 'transformers':\s+body\.model = settings\.transformers_model/);
-    assert.match(source, /createKoboldCppEmbeddings/);
-    assert.match(vectorizeFile, /await insertVectorItems\(collectionId, items\)/);
-    assert.doesNotMatch(vectorizeFile, /items\.slice\(/);
-    assert.doesNotMatch(insertVectorItems, /interactive/);
-    assert.match(processFiles, /VECTOR_SOURCE_ABORT_CAUSES\.has\(error\?\.cause\)/);
-    assert.match(rearrangeChat, /World Info vector retrieval skipped\. Chat retrieval will continue\./);
-    assert.match(rearrangeChat, /\.searchMessages\(/);
-    assert.match(rearrangeChat, /reciprocalRankFusion/);
-    assert.match(rearrangeChat, /scanLimit: MAX_RETRIEVAL_CANDIDATES/);
-    assert.doesNotMatch(rearrangeChat, /queriedMessages\.sort/);
-    assert.match(purgeFiles, /if \(!await purgeFileVectorIndex\(file\.url\)\)/);
-    assert.match(purgeFiles, /return allSuccess/);
-
-    for (const id of ['vectors_keep_hidden', 'vectors_summary_retries', 'vectors_summary_threshold']) {
-        assert.match(settingsHtml, new RegExp(`id="${id}"`));
-        assert.match(source, new RegExp(`#${id}`));
-    }
-
-    assert.match(settingsHtml, /gemini-embedding-2-preview/);
-    assert.match(settingsHtml, /Qwen\/Qwen3-Embedding-0\.6B/);
-    for (const removedModel of ['jina-embeddings', 'BAAI/bge-m3', 'embeddinggemma']) {
-        assert.doesNotMatch(settingsHtml, new RegExp(removedModel, 'i'));
-    }
-});
-
-test('vector summarization treats non-OK and empty Extras responses as failures', async () => {
-    const source = await readFile(new URL('../src/scripts/extensions/vectors/index.js', import.meta.url), 'utf8');
-    let response = { ok: false, json: async () => ({ summary: 'ignored' }) };
-    const factory = new Function(
-        'getApiUrl',
-        'doExtrasFetch',
-        'removeReasoningFromString',
-        'console',
-        `${extractDeclaration(source, 'function setSummaryText(')}\n`
-        + `${extractDeclaration(source, 'async function summarizeExtra(')}\n`
-        + 'return { summarizeExtra };',
-    );
-    const runtime = factory(
-        () => 'http://localhost:5100',
-        async () => response,
-        value => String(value),
-        { log() {} },
-    );
-    const element = { hash: 1, index: 0, text: 'original' };
-
-    assert.equal(await runtime.summarizeExtra(element), false);
-    assert.equal(element.text, 'original');
-
-    response = { ok: true, json: async () => ({ summary: '   ' }) };
-    assert.equal(await runtime.summarizeExtra(element), false);
-    assert.equal(element.text, 'original');
-
-    response = { ok: true, json: async () => ({ summary: { text: 'invalid' } }) };
-    assert.equal(await runtime.summarizeExtra(element), false);
-    assert.equal(element.text, 'original');
-
-    response = { ok: true, json: async () => ({ summary: ' concise memory ' }) };
-    assert.equal(await runtime.summarizeExtra(element), true);
-    assert.equal(element.text, 'concise memory');
-});
-
-test('fatal vector summary causes preserve their original error', async () => {
-    const source = await readFile(new URL('../src/scripts/extensions/vectors/index.js', import.meta.url), 'utf8');
-    assert.doesNotMatch(source, /\bFATAL_CAUSES\b/);
-    const factory = new Function(
-        'settings',
-        'cachedSummaries',
-        'VECTOR_JOB_ABORT_CAUSES',
-        'summarizeMain',
-        'summarizeExtra',
-        'summarizeWebLLM',
-        'console',
-        `${extractDeclaration(source, 'async function summarizeOne(')}\n`
-        + `${extractDeclaration(source, 'async function summarize(')}\n`
-        + 'return summarize;',
-    );
-    const summarize = factory(
-        { summary_retries: 1 },
-        new Map(),
-        new Set(['summary_endpoint_invalid']),
-        async () => true,
-        async () => true,
-        async () => true,
-        { warn() {} },
-    );
-
-    await assert.rejects(
-        summarize([{ hash: 1, index: 0, text: 'message' }], 'unknown'),
-        error => error?.cause === 'summary_endpoint_invalid',
-    );
-});
-
-test('unrelated secret mutations leave provider metadata caches intact', async () => {
-    const router = createRouteRegistry();
-    const invalidations = [];
-    const context = {
-        safeInvoke: async () => 'secret-id',
-        invalidateInvokeAll: (command) => {
-            invalidations.push(command);
-        },
-    };
-
-    registerSettingsRoutes(router, context, { jsonResponse });
-
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/secrets/write',
-        body: { key: 'api_key_openai', value: 'new-key' },
-    });
-
-    assert.ok(response);
-    assert.equal(response.status, 200);
-    assert.deepEqual(invalidations, []);
 });

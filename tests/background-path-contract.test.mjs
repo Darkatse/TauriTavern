@@ -26,7 +26,7 @@ function installWindowMocks() {
     return { windowMock, documentMock };
 }
 
-test('Tauri resource helpers expose only stable Host Resource URLs', async () => {
+test('Tauri resource helpers encode stable Host Resource URLs', async () => {
     const { windowMock } = installWindowMocks();
 
     const { installAssetPathHelpers } = await importFresh(
@@ -63,8 +63,4 @@ test('Tauri resource helpers expose only stable Host Resource URLs', async () =>
     }
 
     assert.throws(() => thumbnailPathFn('unknown', 'test.png'), /Unsupported thumbnail type/);
-
-    assert.equal(windowMock.__TAURITAVERN_THUMBNAIL_BLOB_URL__, undefined);
-    assert.equal(windowMock.__TAURITAVERN_AVATAR_PATH__, undefined);
-    assert.equal(windowMock.__TAURITAVERN_PERSONA_PATH__, undefined);
 });

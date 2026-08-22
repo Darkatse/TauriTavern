@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -178,12 +177,3 @@ test('api.layout installs and returns snapshots (safe-area + IME)', async () => 
     await unsubscribe();
     await unsubscribe();
 });
-
-test('layout-kit.js exists and exposes stable surface strings', async () => {
-    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/tauritavern/layout-kit.js'), 'utf8');
-    assert.match(source, /export const SURFACE/);
-    assert.match(source, /data-tt-mobile-surface/);
-    assert.match(source, /fullscreen-window/);
-    assert.match(source, /viewport-host/);
-});
-

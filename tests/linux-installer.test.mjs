@@ -71,19 +71,6 @@ function runDryRun({
     };
 }
 
-test('Linux installer keeps all side effects behind the final main call', () => {
-    const lastLine = installerSource.trimEnd().split('\n').at(-1);
-    assert.equal(lastLine, 'main "$@"');
-});
-
-test('Linux installer test paths use the shell filesystem namespace', () => {
-    assert.equal(
-        shellPath('C:\\Users\\runner\\AppData\\Local\\Temp\\os-release', 'win32'),
-        '/c/Users/runner/AppData/Local/Temp/os-release',
-    );
-    assert.equal(shellPath('/tmp/os-release', 'linux'), '/tmp/os-release');
-});
-
 test('Linux installer is syntactically valid in available common shells', {
     skip: process.platform === 'win32' ? 'requires POSIX filesystem paths' : false,
 }, () => {

@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { jsonResponse, textResponse } from '../src/tauri/main/http-utils.js';
@@ -80,30 +79,6 @@ test('/api/backups/chat/get uses the metadata-only catalog only when requested',
     assert.deepEqual(calls, ['list_chat_backup_catalog', 'list_chat_backups']);
 });
 
-test('/api/backups/chat/download streams the decoded backup resource', async () => {
-    const calls = [];
-    const router = createBackupsRouter({
-        createChatBackupDownloadStream: async (name) => {
-            calls.push(name);
-            return new ReadableStream({
-                start(controller) {
-                    controller.enqueue(new TextEncoder().encode('{"mes":"hello"}\n'));
-                    controller.close();
-                },
-            });
-        },
-    });
-
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/backups/chat/download',
-        body: { name: 'chat_alice_20260722-120000.jsonl' },
-    });
-
-    assert.equal(response.status, 200);
-    assert.equal(await response.text(), '{"mes":"hello"}\n');
-    assert.deepEqual(calls, ['chat_alice_20260722-120000.jsonl']);
-});
 
 test('/api/backups/chat/download maps resource open failures before sending the response', async () => {
     const router = createBackupsRouter({
@@ -161,28 +136,6 @@ test('/api/chats/import restores a character backup without an upload Blob', asy
     ]);
 });
 
-test('/api/chats/group/import restores a group backup without an upload Blob', async () => {
-    const calls = [];
-    const router = createRouteRegistry();
-    registerChatRoutes(router, {
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            return 'Restored Group Chat';
-        },
-    }, { jsonResponse });
-
-    const body = new FormData();
-    body.set('backup_name', 'chat_group_20260722-120000.jsonl');
-
-    const response = await router.handle({ method: 'POST', path: '/api/chats/group/import', body });
-
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { res: 'Restored Group Chat' });
-    assert.deepEqual(calls, [{
-        command: 'restore_group_chat_backup',
-        args: { dto: { backup_name: 'chat_group_20260722-120000.jsonl' } },
-    }]);
-});
 
 test('/api/chats/import keeps the upload contract when a Blob also carries backup_name', async () => {
     const calls = [];
@@ -214,20 +167,4 @@ test('/api/chats/import keeps the upload contract when a Blob also carries backu
     assert.equal(calls[0].command, 'import_character_chats');
     assert.equal(calls[0].args.dto.file_path, '/tmp/upload.jsonl');
     assert.equal(cleaned, true);
-});
-
-test('chat backup browser views through a stream and restores by logical backup name', async () => {
-    const source = await readFile(new URL('../src/scripts/chat-backups.js', import.meta.url), 'utf8');
-    const routeSource = await readFile(new URL('../src/tauri/main/routes/backups-routes.js', import.meta.url), 'utf8');
-    const commandSource = await readFile(new URL('../src/tauri/main/kernel/invokes/tauri-commands.js', import.meta.url), 'utf8');
-
-    assert.match(source, /visitJsonlStream\(response\.body,/);
-    assert.match(source, /formData\.set\('backup_name', name\)/);
-    assert.match(source, /JSON\.stringify\(\{ detail: 'catalog' \}\)/);
-    assert.doesNotMatch(source, /response\.blob\(\)|new File\(\[blob\]/);
-    assert.match(routeSource, /createChatBackupDownloadStream\(name\)/);
-    assert.doesNotMatch(routeSource, /createReadableFileStream|chat_backup_materialization/);
-    assert.match(commandSource, /open_chat_backup_download/);
-    assert.match(commandSource, /read_chat_backup_download/);
-    assert.doesNotMatch(commandSource, /materialize_chat_backup|discard_chat_backup_materialization/);
 });

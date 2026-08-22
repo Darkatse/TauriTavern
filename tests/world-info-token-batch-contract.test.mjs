@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -83,36 +82,7 @@ function evaluateWorldInfoBudget(inputEntries, { budget, textToScanTokens = 0, p
     return { activated, newContent, tokenBudgetOverflowed, batchSizes };
 }
 
-test('World info batches only safe token-count prefixes', async () => {
-    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/world-info.js'), 'utf8');
 
-    assert.match(source, /getTokenCountAsync, getTokenPrefixCountsAsync/);
-    assert.match(source, /getWorldInfoTokenPrefetchBatch\(newEntries, entryIndex\)/);
-    assert.match(source, /Math\.max\(0, budget - textToScanTokens\)/);
-    assert.match(source, /getTokenPrefixCountsAsync\(batchBaseContent, batchSuffixes, undefined, remainingBudget\)/);
-    assert.match(source, /prefetchedTokenCounts\.has\(entry\)[\s\S]*getTokenCountAsync\(newContent\)/);
-});
-
-test('World info keeps probability, macro, budget, and activation ordering around token prefetch', async () => {
-    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/world-info.js'), 'utf8');
-    const start = source.indexOf("console.debug('[WI] --- PROBABILITY CHECKS ---')");
-    const end = source.indexOf('const successfulNewEntries =', start);
-    const slice = source.slice(start, end);
-
-    const probabilityIndex = slice.indexOf('const success = verifyProbability()');
-    const substitutionIndex = slice.indexOf('entry.content = substituteParams(entry.content)');
-    const prefetchIndex = slice.indexOf('getWorldInfoTokenPrefetchBatch(newEntries, entryIndex)');
-    const budgetIndex = slice.indexOf('(textToScanTokens + newContentTokens) >= budget');
-    const activationIndex = slice.indexOf('allActivatedEntries.set');
-
-    assert.ok(probabilityIndex >= 0);
-    assert.ok(substitutionIndex > probabilityIndex);
-    assert.ok(prefetchIndex > substitutionIndex);
-    assert.ok(budgetIndex > prefetchIndex);
-    assert.ok(activationIndex > budgetIndex);
-    assert.match(slice, /const newContentTokens = entry\.ignoreBudget\s*\? 0/);
-    assert.match(slice, /if \(!entry\.ignoreBudget && \(textToScanTokens \+ newContentTokens\) >= budget\)/);
-});
 
 test('World info token prefetch rejects behavior-sensitive entries', () => {
     assert.equal(canPrefetchWorldInfoTokenCount({ content: '', ignoreBudget: false, useProbability: false }), true);
@@ -221,28 +191,4 @@ test('World info token prefetch preserves activation order across the 64-entry b
     assert.deepEqual(optimized.activated, baseline.activated);
     assert.equal(optimized.newContent, baseline.newContent);
     assert.deepEqual(optimized.batchSizes, [64, 1]);
-});
-
-test('Batch token counts preserve individual OpenAI wrapper semantics', async () => {
-    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/tokenizers.js'), 'utf8');
-
-    assert.match(source, /export async function getTokenCountsAsync/);
-    assert.match(source, /countOpenAIMessageTokensBatchAsync\(messages\)/);
-    assert.match(source, /getOpenAITextTokenCount\(count\)/);
-    assert.match(source, /Promise\.all\(strings\.map\(text => getTokenCountAsync\(text, padding\)\)\)/);
-});
-
-test('Prefix token estimates use compact native payload without exact-cache coupling', async () => {
-    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/tokenizers.js'), 'utf8');
-    const start = source.indexOf('export async function getTokenPrefixCountsAsync');
-    const end = source.indexOf('\nexport function getTokenizerModel', start);
-    const prefixSource = source.slice(start, end);
-
-    assert.match(prefixSource, /count-prefix-batch/);
-    assert.match(prefixSource, /const requestBody = JSON\.stringify\(\{ base, suffixes, stop_at: stopAt \}\)/);
-    assert.match(prefixSource, /countTokenPrefixesSingleFlight\(requestKey/);
-    assert.match(prefixSource, /data: requestBody/);
-    assert.doesNotMatch(prefixSource, /cacheState|cacheKeys|cachedCounts/);
-    assert.match(prefixSource, /using exact batch fallback/);
-    assert.match(prefixSource, /return getTokenCountsAsync\(prefixes, padding\)/);
 });

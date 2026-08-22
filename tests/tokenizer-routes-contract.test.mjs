@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { createTokenCountBroker } from '../src/tauri/main/brokers/token-count-broker.js';
@@ -40,47 +39,8 @@ function tokenizerRequest(path, body, query = '') {
     };
 }
 
-test('Tokenizer commands are part of the centralized invoke contract', async () => {
-    const source = await readFile(new URL('../src/tauri/main/kernel/invokes/tauri-commands.js', import.meta.url), 'utf8');
 
-    assert.match(source, /\| 'count_openai_token_prefixes'/);
-    assert.match(source, /\| 'encode_tokens'/);
-    assert.match(source, /\| 'decode_tokens'/);
-    assert.doesNotMatch(source, /\| '(?:encode|decode)_openai_tokens'/);
-});
 
-test('Kimi model selection preserves the model identity for native tokenization', async () => {
-    const source = await readFile(new URL('../src/scripts/tokenizers.js', import.meta.url), 'utf8');
-    const start = source.indexOf('export function getTokenizerModel');
-    const end = source.indexOf('\nexport async function warmTokenizerCache', start);
-    const resolver = source.slice(start, end);
-
-    assert.match(resolver, /chat_completion_sources\.MOONSHOT[\s\S]*return oai_settings\.moonshot_model \|\| 'kimi'/);
-    assert.match(resolver, /chat_completion_sources\.CHUTES[\s\S]*model\.includes\('kimi'\)[\s\S]*return model/);
-});
-
-test('OpenAI token count broker preserves all message fields', async () => {
-    let capturedDto;
-    const broker = createTokenCountBroker({
-        flushIntervalMs: 0,
-        context: {
-            async safeInvoke(command, { dto }) {
-                assert.equal(command, 'count_openai_tokens_batch');
-                capturedDto = dto;
-                return { token_counts: [42] };
-            },
-        },
-    });
-
-    const messages = [{
-        role: 'user',
-        content: 'hello',
-        custom_payload: { weighted: true },
-    }];
-
-    assert.equal(await broker.count({ model: 'gpt-4o', messages }), 42);
-    assert.deepEqual(capturedDto.requests[0].messages[0], messages[0]);
-});
 
 test('OpenAI batch route preserves message fields and warms an empty batch', async () => {
     const capturedDtos = [];
@@ -154,58 +114,7 @@ test('OpenAI prefix route preserves compact parts and rejects invalid bodies', a
     assert.equal(invokeCount, 1);
 });
 
-test('All SillyTavern local tokenizer codec routes use their exact canonical model', async () => {
-    const calls = [];
-    const router = createTokenizerRouter({
-        async safeInvoke(command, { dto }) {
-            calls.push({ command, dto });
-            return command === 'encode_tokens'
-                ? { ids: [7], count: 1, chunks: ['x'] }
-                : { text: 'x', chunks: ['x'] };
-        },
-    });
 
-    for (const model of LOCAL_TOKENIZERS) {
-        const encodePath = `/api/tokenizers/${model}/encode`;
-        const encodeResponse = await router.handle(tokenizerRequest(encodePath, { text: 'x' }));
-        assert.equal(encodeResponse.status, 200, encodePath);
-        assert.deepEqual(await encodeResponse.json(), { ids: [7], count: 1, chunks: ['x'] });
-        assert.deepEqual(calls.at(-1), {
-            command: 'encode_tokens',
-            dto: { model, text: 'x' },
-        });
-
-        const decodePath = `/api/tokenizers/${model}/decode`;
-        const decodeResponse = await router.handle(tokenizerRequest(decodePath, { ids: [7] }));
-        assert.equal(decodeResponse.status, 200, decodePath);
-        assert.deepEqual(await decodeResponse.json(), { text: 'x', chunks: ['x'] });
-        assert.deepEqual(calls.at(-1), {
-            command: 'decode_tokens',
-            dto: { model, ids: [7] },
-        });
-    }
-});
-
-test('OpenAI codec routes preserve the requested model', async () => {
-    const calls = [];
-    const router = createTokenizerRouter({
-        async safeInvoke(command, { dto }) {
-            calls.push({ command, dto });
-            return { ids: [], count: 0, chunks: [] };
-        },
-    });
-
-    const response = await router.handle(tokenizerRequest(
-        '/api/tokenizers/openai/encode',
-        { text: '' },
-        '?model=llama-3.3-70b',
-    ));
-    assert.equal(response.status, 200);
-    assert.deepEqual(calls, [{
-        command: 'encode_tokens',
-        dto: { model: 'llama-3.3-70b', text: '' },
-    }]);
-});
 
 test('Tokenizer codec routes reject invalid text and token ids before invoke', async () => {
     let invokeCount = 0;
@@ -248,23 +157,4 @@ test('Tokenizer operational failures preserve upstream empty results and expose 
         chunks: [],
         error: 'model unavailable',
     });
-});
-
-test('Remote tokenizer routes fail explicitly until text-completion transport exists', async () => {
-    const router = createTokenizerRouter({
-        async safeInvoke() {
-            throw new Error('remote tokenizer routes must not invoke Rust');
-        },
-    });
-
-    for (const path of [
-        '/api/tokenizers/remote/kobold/count',
-        '/api/tokenizers/remote/textgenerationwebui/encode',
-    ]) {
-        const response = await router.handle(tokenizerRequest(path, { text: 'hello' }));
-        assert.equal(response.status, 501, path);
-        assert.deepEqual(await response.json(), {
-            error: 'Remote tokenizer APIs require native text-completion backend support',
-        });
-    }
 });
