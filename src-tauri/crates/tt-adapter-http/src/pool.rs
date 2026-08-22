@@ -22,6 +22,8 @@ pub const TOKENIZER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const TOKENIZER_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 pub const PROVIDER_METADATA_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const PROVIDER_METADATA_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+pub const WEB_SEARCH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+pub const WEB_SEARCH_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub const IMAGE_GENERATION_CONNECT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const TRANSLATION_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const TRANSLATION_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -41,6 +43,7 @@ pub enum HttpClientProfile {
     ChatCompletionStream,
     ChatCompletionWebSocket,
     ProviderMetadata,
+    WebSearch,
     ImageGeneration,
     Translation,
     Tts,
@@ -362,6 +365,9 @@ fn build_profile_client(
         HttpClientProfile::ProviderMetadata => builder
             .connect_timeout(PROVIDER_METADATA_CONNECT_TIMEOUT)
             .timeout(PROVIDER_METADATA_REQUEST_TIMEOUT),
+        HttpClientProfile::WebSearch => builder
+            .connect_timeout(WEB_SEARCH_CONNECT_TIMEOUT)
+            .timeout(WEB_SEARCH_REQUEST_TIMEOUT),
         HttpClientProfile::ImageGeneration => {
             builder.connect_timeout(IMAGE_GENERATION_CONNECT_TIMEOUT)
         }

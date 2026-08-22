@@ -11,6 +11,7 @@ import { registerBackupsRoutes } from './backups-routes.js';
 import { registerAiRoutes } from './ai-routes.js';
 import { registerTokenizerRoutes } from './tokenizer-routes.js';
 import { registerProviderRoutes } from './provider-routes.js';
+import { registerSearchRoutes } from './search-routes.js';
 import { registerStatsRoutes } from './stats-routes.js';
 import { registerWorldInfoRoutes } from './worldinfo-routes.js';
 import { registerContentRoutes } from './content-routes.js';
@@ -40,6 +41,7 @@ export function registerRoutes(router, context, responses) {
     registerVectorRoutes(router, context, responses);
     registerSpriteRoutes(router, context, responses);
     registerProviderRoutes(router, context, responses);
+    registerSearchRoutes(router, context, responses);
     registerSdRoutes(router, context, responses);
     registerTranslateRoutes(router, context, responses);
     registerTtsRoutes(router, context, responses);

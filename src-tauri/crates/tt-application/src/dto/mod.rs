@@ -15,6 +15,7 @@ pub mod mcp_dto;
 pub mod native_regex_dto;
 pub mod preset_dto;
 pub mod provider_metadata_dto;
+pub mod searxng_search_dto;
 pub mod secret_dto;
 pub mod settings_dto;
 pub mod sprite_dto;

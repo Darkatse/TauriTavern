@@ -34,6 +34,7 @@ use tt_application::services::native_regex_service::NativeRegexService;
 use tt_application::services::preset_service::PresetService;
 use tt_application::services::provider_metadata_service::ProviderMetadataService;
 use tt_application::services::quick_reply_service::QuickReplyService;
+use tt_application::services::searxng_search_service::SearxngSearchService;
 use tt_application::services::secret_service::SecretService;
 use tt_application::services::settings_service::{RequestProxyRuntime, SettingsService};
 use tt_application::services::skill_service::SkillService;
@@ -137,6 +138,9 @@ pub(super) async fn build(
         repositories.provider_metadata_repository.clone(),
         repositories.secret_repository.clone(),
         ios_policy.clone(),
+    ));
+    let searxng_search_service = Arc::new(SearxngSearchService::new(
+        repositories.searxng_search_repository.clone(),
     ));
     let skill_script_engine: Arc<dyn SkillScriptEngine> = Arc::new(QuickJsScriptEngine::new());
     let vector_service = Arc::new(VectorService::new(
@@ -278,6 +282,7 @@ pub(super) async fn build(
         user_endpoint_access_service,
         mcp_service,
         provider_metadata_service,
+        searxng_search_service,
         vector_service,
         tokenization_service,
         stable_diffusion_service,

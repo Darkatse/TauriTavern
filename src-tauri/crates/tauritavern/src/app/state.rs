@@ -32,6 +32,7 @@ use tt_application::services::preset_service::PresetService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::provider_metadata_service::ProviderMetadataService;
 use tt_application::services::quick_reply_service::QuickReplyService;
+use tt_application::services::searxng_search_service::SearxngSearchService;
 use tt_application::services::secret_service::SecretService;
 use tt_application::services::settings_service::SettingsService;
 use tt_application::services::skill_service::SkillService;
@@ -110,6 +111,7 @@ pub(crate) struct AppServices {
     pub(crate) user_endpoint_access_service: Arc<UserEndpointAccessService>,
     pub(crate) mcp_service: Arc<McpService>,
     pub(crate) provider_metadata_service: Arc<ProviderMetadataService>,
+    pub(crate) searxng_search_service: Arc<SearxngSearchService>,
     pub(crate) vector_service: Arc<VectorService>,
     pub(crate) tokenization_service: Arc<TokenizationService>,
     pub(crate) stable_diffusion_service: Arc<StableDiffusionService>,

@@ -24,6 +24,7 @@ pub mod preset_repository;
 pub mod prompt_cache_repository;
 pub mod provider_metadata_repository;
 pub mod quick_reply_repository;
+pub mod searxng_search_repository;
 pub mod secret_repository;
 pub mod settings_repository;
 pub mod skill_repository;

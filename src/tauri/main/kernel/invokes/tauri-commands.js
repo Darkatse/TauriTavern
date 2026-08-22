@@ -225,6 +225,7 @@ export {};
  *   | 'find_last_group_chat_message'
  *   | 'search_character_chat_messages'
  *   | 'search_group_chat_messages'
+ *   | 'search_searxng'
  *   | 'save_world_info'
  *   | 'search_chats'
  *   | 'search_group_chats'
