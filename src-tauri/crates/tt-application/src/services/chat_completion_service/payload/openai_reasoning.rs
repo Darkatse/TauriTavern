@@ -39,8 +39,12 @@ const OPENAI_MAX_REASONING_EFFORT_MODELS: &[&str] =
 const OPENAI_XHIGH_REASONING_THRESHOLD: &str = "gpt-5.1-codex-max";
 
 pub(super) fn should_forward_openai_reasoning_effort(source: &str, model: &str) -> bool {
+    if source == "custom" {
+        return true;
+    }
+
     let model = model.trim();
-    matches!(source, "openai" | "custom")
+    source == "openai"
         && (OPENAI_REASONING_EFFORT_MODELS.contains(&model)
             || supports_openai_xhigh_reasoning_effort(model))
 }
