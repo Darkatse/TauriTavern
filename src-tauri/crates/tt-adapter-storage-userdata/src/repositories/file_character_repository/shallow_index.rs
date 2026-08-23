@@ -83,15 +83,23 @@ impl FileCharacterRepository {
             return Ok(Self::shallow_index_characters(cache));
         }
 
-        if scan_complete && let Some(cache) = self.load_persistent_shallow_index(&signature).await {
-            let characters = Self::shallow_index_characters(&cache);
+        let persistent_candidate = if scan_complete {
+            self.load_persistent_shallow_index_candidate().await
+        } else {
+            None
+        };
+        if let Some(cache) = &persistent_candidate
+            && cache.signature == signature
+        {
+            let characters = Self::shallow_index_characters(cache);
             let mut memory_cache = self.shallow_index_cache.lock().await;
-            *memory_cache = Some(cache);
+            *memory_cache = persistent_candidate;
             return Ok(characters);
         }
 
         let previous_by_avatar = cached
             .as_ref()
+            .or(persistent_candidate.as_ref())
             .map(Self::shallow_index_by_avatar)
             .unwrap_or_default();
         let (mut indexed_characters, build_complete) = self
@@ -142,10 +150,25 @@ impl FileCharacterRepository {
             .collect()
     }
 
-    async fn load_persistent_shallow_index(
-        &self,
-        expected_signature: &CharacterShallowIndexSignature,
-    ) -> Option<CharacterShallowIndexCache> {
+    fn reuse_cached_shallow_character(
+        cached: &CharacterShallowIndexCachedCharacter,
+        signature: &CharacterShallowIndexEntrySignature,
+    ) -> Option<CharacterShallowIndexCachedCharacter> {
+        if cached.signature.file_size != signature.file_size
+            || cached.signature.modified_millis != signature.modified_millis
+            || cached.signature.created_millis != signature.created_millis
+        {
+            return None;
+        }
+
+        let mut reused = cached.clone();
+        reused.signature = signature.clone();
+        reused.character.chat_size = signature.chat_size;
+        reused.character.date_last_chat = signature.date_last_chat;
+        Some(reused)
+    }
+
+    async fn load_persistent_shallow_index_candidate(&self) -> Option<CharacterShallowIndexCache> {
         let bytes = match fs::read(&self.shallow_index_path).await {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
@@ -180,16 +203,13 @@ impl FileCharacterRepository {
             return None;
         }
 
-        let snapshot_signature = CharacterShallowIndexSignature {
+        let signature = CharacterShallowIndexSignature {
             entries: snapshot
                 .entries
                 .iter()
                 .map(|entry| entry.signature.clone())
                 .collect(),
         };
-        if &snapshot_signature != expected_signature {
-            return None;
-        }
 
         let characters = snapshot
             .entries
@@ -211,7 +231,7 @@ impl FileCharacterRepository {
             .collect();
 
         Some(CharacterShallowIndexCache {
-            signature: expected_signature.clone(),
+            signature,
             characters,
         })
     }
@@ -400,9 +420,9 @@ impl FileCharacterRepository {
 
         for (index, entry) in scan_entries.into_iter().enumerate() {
             if let Some(cached) = previous_by_avatar.get(&entry.signature.avatar)
-                && cached.signature == entry.signature
+                && let Some(reused) = Self::reuse_cached_shallow_character(cached, &entry.signature)
             {
-                results[index] = Some(cached.clone());
+                results[index] = Some(reused);
                 continue;
             }
 
@@ -488,5 +508,49 @@ impl FileCharacterRepository {
         character.date_last_chat = signature.date_last_chat;
 
         Ok(character.into_shallow())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cached_card_is_reused_when_only_chat_stats_change() {
+        let cached = CharacterShallowIndexCachedCharacter {
+            signature: CharacterShallowIndexEntrySignature {
+                avatar: "Alice.png".to_string(),
+                file_size: 100,
+                modified_millis: 2,
+                created_millis: 1,
+                chat_size: 0,
+                date_last_chat: 0,
+            },
+            character: Character::new(
+                "Alice".to_string(),
+                String::new(),
+                String::new(),
+                String::new(),
+            )
+            .into_shallow(),
+        };
+
+        let mut updated_signature = cached.signature.clone();
+        updated_signature.chat_size = 42;
+        updated_signature.date_last_chat = 3;
+        let reused =
+            FileCharacterRepository::reuse_cached_shallow_character(&cached, &updated_signature)
+                .expect("unchanged card should be reusable");
+
+        assert_eq!(reused.signature, updated_signature);
+        assert_eq!(reused.character.chat_size, 42);
+        assert_eq!(reused.character.date_last_chat, 3);
+
+        let mut changed_card = updated_signature;
+        changed_card.modified_millis = 4;
+        assert!(
+            FileCharacterRepository::reuse_cached_shallow_character(&cached, &changed_card)
+                .is_none()
+        );
     }
 }
