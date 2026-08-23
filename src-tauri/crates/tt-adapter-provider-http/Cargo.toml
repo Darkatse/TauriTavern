@@ -8,8 +8,9 @@ publish = false
 async-trait = "0.1"
 base64 = "0.23"
 futures-util = "0.3"
+jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 percent-encoding = "2"
-reqwest = { workspace = true, features = ["http2", "json", "multipart", "query", "rustls", "stream"] }
+reqwest = { workspace = true, features = ["form", "http2", "json", "multipart", "query", "rustls", "stream"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
@@ -21,9 +22,3 @@ tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 url = { workspace = true }
 uuid = { workspace = true }
-yup-oauth2 = { version = "12.1.2", default-features = false, features = ["hyper-rustls", "aws-lc-rs", "service-account"] }
-
-[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
-hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "http2", "tokio"] }
-rustls = "0.23"
-webpki-roots = "1"

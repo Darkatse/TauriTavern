@@ -95,7 +95,11 @@ impl HttpEmbeddingRepository {
             }
             VertexEmbeddingAuth::ServiceAccount { json: credentials } => {
                 let project_id = service_account_project_id(&credentials)?;
-                let token = vertexai_auth::get_service_account_access_token(&credentials).await?;
+                let token = vertexai_auth::get_service_account_access_token(
+                    &self.http_clients,
+                    &credentials,
+                )
+                .await?;
                 let url = Url::parse(&format!(
                     "{host}/v1/projects/{project_id}/locations/{region}/publishers/google/models/{model}:predict"
                 ))

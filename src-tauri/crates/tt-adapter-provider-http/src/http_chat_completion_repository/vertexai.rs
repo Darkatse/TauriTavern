@@ -56,7 +56,7 @@ async fn generate_gemini(
         .header(ACCEPT, "application/json")
         .json(&Value::Object(body));
 
-    let request = apply_vertexai_auth(request, config).await?;
+    let request = apply_vertexai_auth(repository, request, config).await?;
 
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
@@ -101,7 +101,7 @@ async fn generate_claude(
         .header(ACCEPT, "application/json")
         .json(&Value::Object(body));
 
-    let request = apply_vertexai_auth(request, config).await?;
+    let request = apply_vertexai_auth(repository, request, config).await?;
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
@@ -170,7 +170,7 @@ async fn generate_gemini_stream(
         .header(ACCEPT, "text/event-stream")
         .json(&Value::Object(body));
 
-    let request = apply_vertexai_auth(request, config)
+    let request = apply_vertexai_auth(repository, request, config)
         .await?
         .query(&[("alt", "sse")]);
 
@@ -217,7 +217,7 @@ async fn generate_claude_stream(
         .header(ACCEPT, "text/event-stream")
         .json(&Value::Object(body));
 
-    let request = apply_vertexai_auth(request, config).await?;
+    let request = apply_vertexai_auth(repository, request, config).await?;
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
@@ -357,6 +357,7 @@ fn resolve_generation_method(endpoint_path: &str, stream: bool) -> &'static str 
 }
 
 async fn apply_vertexai_auth(
+    repository: &HttpChatCompletionRepository,
     request: reqwest::RequestBuilder,
     config: &ChatCompletionApiConfig,
 ) -> Result<reqwest::RequestBuilder, DomainError> {
@@ -369,8 +370,11 @@ async fn apply_vertexai_auth(
     }
 
     if let Some(service_account_json) = config.vertexai_service_account_json.as_deref() {
-        let access_token =
-            vertexai_auth::get_service_account_access_token(service_account_json).await?;
+        let access_token = vertexai_auth::get_service_account_access_token(
+            &repository.http_clients,
+            service_account_json,
+        )
+        .await?;
         let auth_header = format!("Bearer {access_token}");
         return Ok(HttpChatCompletionRepository::apply_header_if_present(
             request,

@@ -58,7 +58,7 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | `tauri` / Tauri plugins | host shell、文件/通知/打开器/对话框/window state/barcode scanner 等平台能力 |
 | `serde` / `serde_json` / `serde_yaml` | DTO、配置、SillyTavern 兼容数据格式 |
 | `tokio` / `tokio-util` | 异步任务、文件 IO、取消与运行时能力 |
-| `reqwest` / `hyper-util` / `tokio-tungstenite` | provider HTTP、stream、移动端 HTTP client 适配 |
+| `reqwest` / `tokio-tungstenite` / `jsonwebtoken` | provider HTTP/stream/WebSocket、Service Account JWT 签名 |
 | `rmcp` / `jsonschema` | MCP lifecycle/protocol 与离线 JSON Schema 2020-12 校验 |
 | `gix` / `gix-transport` | third-party extension Git smart HTTP、embedded repository/worktree |
 | `tracing` / `tracing-subscriber` / `tracing-appender` | 后端日志、过滤、rolling file、Dev observability |

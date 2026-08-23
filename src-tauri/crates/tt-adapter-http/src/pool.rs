@@ -42,6 +42,7 @@ pub enum HttpClientProfile {
     ChatCompletion,
     ChatCompletionStream,
     ChatCompletionWebSocket,
+    ProviderAuthentication,
     ProviderMetadata,
     WebSearch,
     ImageGeneration,
@@ -362,6 +363,10 @@ fn build_profile_client(
         HttpClientProfile::ChatCompletionWebSocket => builder
             .http1_only()
             .connect_timeout(CHAT_COMPLETION_CONNECT_TIMEOUT),
+        HttpClientProfile::ProviderAuthentication => builder
+            .redirect(Policy::none())
+            .connect_timeout(PROVIDER_METADATA_CONNECT_TIMEOUT)
+            .timeout(PROVIDER_METADATA_REQUEST_TIMEOUT),
         HttpClientProfile::ProviderMetadata => builder
             .connect_timeout(PROVIDER_METADATA_CONNECT_TIMEOUT)
             .timeout(PROVIDER_METADATA_REQUEST_TIMEOUT),
