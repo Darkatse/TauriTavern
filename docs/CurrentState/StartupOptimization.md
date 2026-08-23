@@ -123,7 +123,8 @@
 ### 4.3 Rust 命令（并发采样）
 
 - `src-tauri/crates/tauritavern/src/presentation/commands/bootstrap_commands.rs:get_bootstrap_snapshot`
-  - 使用 `tokio::try_join!` 并发获取：settings / characters / groups / avatars / secret_state
+  - 使用 `tokio::join!` 并发获取：settings / characters / groups / avatars / secret_state
+  - settings 与 characters 是启动关键数据；groups、avatars、secret_state 失败时保留用户可见错误并仅禁用对应局部能力，不阻止 `APP_READY`
   - 目的：减少启动关键路径的串行 I/O 等待。
 
 ---

@@ -71,13 +71,21 @@ pub async fn get_bootstrap_snapshot(
             ))
     };
 
-    let (settings, characters, groups, avatars, secret_state) = tokio::try_join!(
+    let (settings, characters, groups, avatars, secret_state) = tokio::join!(
         settings_fut,
         characters_fut,
         groups_fut,
         avatars_fut,
         secret_state_fut
-    )?;
+    );
+
+    // Settings and character identity are startup-critical. Independent UI domains
+    // remain locally unavailable after their already user-visible load error.
+    let settings = settings?;
+    let characters = characters?;
+    let groups = groups.unwrap_or_default();
+    let avatars = avatars.unwrap_or_default();
+    let secret_state = secret_state.unwrap_or_default();
 
     Ok(BootstrapSnapshotDto {
         ios_policy: app_state.ios_policy.clone(),
