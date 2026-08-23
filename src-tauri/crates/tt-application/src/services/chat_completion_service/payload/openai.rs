@@ -388,10 +388,10 @@ mod tests {
     }
 
     #[test]
-    fn custom_payload_does_not_forward_reasoning_effort_for_non_openai_models() {
+    fn custom_payload_forwards_reasoning_effort_for_unknown_models() {
         let payload = json!({
             "chat_completion_source": "custom",
-            "model": "claude-opus-4-5",
+            "model": "custom-reasoning-model",
             "messages": [{"role": "user", "content": "hello"}],
             "reasoning_effort": "high",
             "verbosity": "high"
@@ -404,7 +404,12 @@ mod tests {
         assert_eq!(endpoint, "/chat/completions");
 
         let body = upstream.as_object().expect("payload must be object");
-        assert!(body.get("reasoning_effort").is_none());
+
+        assert_eq!(
+            body.get("reasoning_effort").and_then(Value::as_str),
+            Some("high")
+        );
+
         assert!(body.get("verbosity").is_none());
     }
 
