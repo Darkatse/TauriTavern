@@ -7,7 +7,9 @@
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use crate::presentation::main_window_presenter::present_main_window_from_app;
 #[cfg(any(dev, debug_assertions))]
-use crate::presentation::web_resources::dev_protocol_endpoint::handle_dev_protocol_request;
+use crate::presentation::web_resources::dev_protocol_endpoint::{
+    dev_protocol_task_error_response, handle_dev_protocol_request,
+};
 
 pub(super) fn install<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
@@ -43,9 +45,24 @@ pub(super) fn install<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::B
     // Dev-only static-resource protocol for extension assets served outside the
     // production custom protocol path. It depends on HostResourceService being
     // managed by setup before the frontend can issue requests.
-    let builder = builder.register_uri_scheme_protocol("tt-ext", move |ctx, request| {
-        handle_dev_protocol_request(ctx, request)
-    });
+    let builder = builder.register_asynchronous_uri_scheme_protocol(
+        "tt-ext",
+        move |ctx, request, responder| {
+            let app_handle = ctx.app_handle().clone();
+            let _task = tauri::async_runtime::spawn(async move {
+                let response = tauri::async_runtime::spawn_blocking(move || {
+                    handle_dev_protocol_request(&app_handle, request)
+                })
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::error!("Development resource task failed: {error}");
+                    dev_protocol_task_error_response()
+                });
+
+                responder.respond(response);
+            });
+        },
+    );
 
     builder
 }
