@@ -2322,6 +2322,92 @@ async fn list_chat_summaries_returns_streamed_metadata() {
 }
 
 #[tokio::test]
+async fn summary_index_write_failure_does_not_change_query_or_delete_outcome() {
+    let (repository, root) = setup_repository().await;
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "session",
+        &payload_with_integrity("summary-cache-failure"),
+        false,
+    )
+    .await
+    .expect("save chat payload");
+
+    let cache_parent = root.join("user").join("cache");
+    fs::create_dir_all(cache_parent.parent().expect("cache parent"))
+        .await
+        .expect("create user directory");
+    fs::write(&cache_parent, b"not a directory")
+        .await
+        .expect("block summary index directory");
+
+    let summaries = repository
+        .list_chat_summaries(Some("alice"), false)
+        .await
+        .expect("cache persistence must not block summary query");
+    assert_eq!(summaries.len(), 1);
+
+    repository
+        .delete_chat("alice", "session")
+        .await
+        .expect("cache persistence must not reverse committed deletion");
+    assert!(!root.join("chats/alice/session.jsonl").exists());
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn aggregate_chat_queries_skip_an_invalid_sibling() {
+    let (repository, root) = setup_repository().await;
+    save_chat_payload_from_values(
+        &repository,
+        &root,
+        "alice",
+        "valid",
+        &payload_with_message(
+            "aggregate-partial",
+            "2026-01-01T00:00:00.000Z",
+            "search needle",
+            "Alice",
+        ),
+        false,
+    )
+    .await
+    .expect("save valid chat payload");
+    fs::write(
+        root.join("chats").join("alice").join("invalid.jsonl"),
+        [0xff, b'\n'],
+    )
+    .await
+    .expect("write invalid sibling chat");
+
+    let summaries = repository
+        .list_chat_summaries(Some("alice"), false)
+        .await
+        .expect("list valid summaries");
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].file_name, "valid.jsonl");
+
+    let recent = repository
+        .list_recent_chat_summaries(Some("alice"), false, 10, &[])
+        .await
+        .expect("list valid recent summaries");
+    assert_eq!(recent.len(), 1);
+    assert_eq!(recent[0].file_name, "valid.jsonl");
+
+    let search = repository
+        .search_chats("needle", Some("alice"))
+        .await
+        .expect("search valid chats");
+    assert_eq!(search.len(), 1);
+    assert_eq!(search[0].file_name, "valid.jsonl");
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn search_character_chat_messages_returns_scored_hits_and_respects_role_filter() {
     let (repository, root) = setup_repository().await;
 

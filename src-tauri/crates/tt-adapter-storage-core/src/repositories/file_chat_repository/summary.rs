@@ -480,9 +480,7 @@ impl FileChatRepository {
             })?);
         }
 
-        if let Err(error) = self.flush_summary_index_if_needed().await {
-            tracing::warn!("Failed to persist chat stats index: {}", error);
-        }
+        self.flush_summary_index_best_effort().await;
 
         Ok(results)
     }
@@ -741,13 +739,15 @@ impl FileChatRepository {
         cache.clear();
     }
 
-    pub async fn clear_chat_summary_index(&self) -> Result<(), DomainError> {
+    pub async fn clear_chat_summary_index(&self) {
         {
             let mut cache = self.summary_cache.lock().await;
-            cache.ensure_loaded()?;
+            if cache.ensure_loaded().is_err() {
+                return;
+            }
             cache.clear();
         }
-        self.flush_summary_index_if_needed().await
+        self.flush_summary_index_best_effort().await;
     }
 
     pub(super) async fn remove_summary_cache_for_path(&self, path: &Path) {
@@ -811,6 +811,12 @@ impl FileChatRepository {
         cache.mark_clean();
 
         Ok(())
+    }
+
+    pub(super) async fn flush_summary_index_best_effort(&self) {
+        if let Err(error) = self.flush_summary_index_if_needed().await {
+            tracing::warn!("Failed to persist chat summary index: {}", error);
+        }
     }
 
     pub(super) async fn list_character_chat_files(
@@ -960,6 +966,86 @@ impl FileChatRepository {
             summary.chat_metadata = None;
         }
         Ok(summary)
+    }
+
+    pub(super) async fn collect_chat_summaries(
+        &self,
+        descriptors: Vec<ChatFileDescriptor>,
+        include_metadata: bool,
+    ) -> Vec<ChatSearchResult> {
+        let mut results = Vec::with_capacity(descriptors.len());
+        for descriptor in descriptors {
+            match self.get_chat_summary(&descriptor, include_metadata).await {
+                Ok(summary) => results.push(summary),
+                Err(error) => tracing::error!(
+                    target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                    "Failed to inspect chat '{}': {}",
+                    descriptor.path.display(),
+                    error
+                ),
+            }
+        }
+        results
+    }
+
+    pub(super) async fn collect_matching_chat_summaries(
+        &self,
+        descriptors: Vec<ChatFileDescriptor>,
+        fragments: &[String],
+    ) -> (Vec<ChatSearchResult>, bool) {
+        let mut results = Vec::new();
+        let mut complete = true;
+
+        for descriptor in descriptors {
+            let entry = match self.get_chat_summary_entry(&descriptor, true).await {
+                Ok(entry) => entry,
+                Err(error) => {
+                    complete = false;
+                    tracing::error!(
+                        target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                        "Failed to inspect chat '{}': {}",
+                        descriptor.path.display(),
+                        error
+                    );
+                    continue;
+                }
+            };
+            let mut summary = entry.summary.clone();
+            summary.chat_metadata = None;
+            let file_stem = strip_jsonl_extension(&descriptor.file_name);
+
+            if Self::file_stem_matches_all(file_stem, fragments) {
+                results.push(summary);
+                continue;
+            }
+            if !entry
+                .fingerprint
+                .as_ref()
+                .expect("fingerprint is required for search")
+                .might_match_fragments(fragments)
+            {
+                continue;
+            }
+
+            match self
+                .file_matches_query(&descriptor.path, file_stem, fragments)
+                .await
+            {
+                Ok(true) => results.push(summary),
+                Ok(false) => {}
+                Err(error) => {
+                    complete = false;
+                    tracing::error!(
+                        target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                        "Failed to search chat '{}': {}",
+                        descriptor.path.display(),
+                        error
+                    );
+                }
+            }
+        }
+
+        (results, complete)
     }
 
     pub(super) async fn get_character_chat_summary_internal(

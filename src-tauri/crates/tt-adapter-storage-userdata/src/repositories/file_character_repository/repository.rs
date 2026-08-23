@@ -571,7 +571,7 @@ impl CharacterRepository for FileCharacterRepository {
             self.chat_repository
                 .invalidate_all_payload_signatures()
                 .await;
-            self.chat_repository.clear_chat_summary_index().await?;
+            self.chat_repository.clear_chat_summary_index().await;
         }
 
         {
@@ -722,7 +722,7 @@ impl CharacterRepository for FileCharacterRepository {
             self.chat_repository
                 .invalidate_all_payload_signatures()
                 .await;
-            self.chat_repository.clear_chat_summary_index().await?;
+            self.chat_repository.clear_chat_summary_index().await;
         }
 
         if old_path != new_path {
@@ -1056,7 +1056,16 @@ impl CharacterRepository for FileCharacterRepository {
 
         let mut chats = Vec::with_capacity(summaries.len());
         for summary in summaries {
-            chats.push(Self::character_chat_from_summary(&chat_dir, summary).await?);
+            let file_name = summary.file_name.clone();
+            match Self::character_chat_from_summary(&chat_dir, summary).await {
+                Ok(chat) => chats.push(chat),
+                Err(error) => tracing::error!(
+                    target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                    "Failed to inspect character chat '{}': {}",
+                    file_name,
+                    error
+                ),
+            }
         }
 
         Ok(chats)

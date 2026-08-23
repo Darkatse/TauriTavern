@@ -75,6 +75,8 @@ Rust 仍保留 JSONL tail/before 读取，因为 Agent 和扩展可能只需要�
 
 分页是显式查询能力，不参与当前聊天的 `chat[]`、DOM、generation 或保存。`window.__TAURITAVERN__.api.chat` 的 `history.tail/before/beforePages` 是其公开前端入口。
 
+聊天摘要、最近记录和搜索属于可重建投影：单个文件失败只排除该文件并报告错误，持久化摘要索引写回失败只记录告警。真实目标 JSONL 的完整加载与保存仍保持整体失败语义。
+
 ## 6. `windowInfo()` ABI
 
 `api.chat.current.windowInfo()` 保留既有六字段 Promise ABI，但现在只描述完整历史：

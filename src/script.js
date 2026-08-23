@@ -1880,7 +1880,12 @@ async function delChat(chatfile) {
         const name = chatfile.replace('.jsonl', '');
         if (name === characters[this_chid].chat) {
             chat_metadata = {};
-            await replaceCurrentChat();
+            try {
+                await replaceCurrentChat();
+            } catch (error) {
+                console.error('Failed to open another chat after deletion:', error);
+                toastr.warning(t`The chat was deleted, but another chat could not be opened.`);
+            }
         }
         await eventSource.emit(event_types.CHAT_DELETED, name);
     }
@@ -1918,51 +1923,45 @@ export async function deleteCharacterChatByName(characterId, fileName) {
     }
 
     if (fileName === character.chat) {
-        const chatsResponse = await fetch('/api/characters/chats', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ avatar_url: character.avatar }),
-        });
-        const chats = Object.values(await chatsResponse.json());
-        chats.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));
-        const newChatName = chats.length && typeof chats[0] === 'object' ? chats[0].file_name.replace('.jsonl', '') : `${character.name} - ${humanizedDateTime()}`;
-        await updateRemoteChatName(characterId, newChatName);
+        try {
+            const chats = await getPersistedCharacterChats(characterId);
+            const newChatName = chats.length && typeof chats[0] === 'object' ? normalizeChatFileName(chats[0].file_name) : `${character.name} - ${humanizedDateTime()}`;
+            const persisted = await updateRemoteChatName(characterId, newChatName);
+            if (!persisted) {
+                toastr.warning(t`The chat was deleted, but the character's current chat could not be saved.`);
+            }
+        } catch (error) {
+            console.error('Failed to select another chat after deletion:', error);
+            toastr.warning(t`The chat was deleted, but another chat could not be selected.`);
+        }
     }
 
     await eventSource.emit(event_types.CHAT_DELETED, fileName);
 }
 
 export async function replaceCurrentChat() {
+    const characterId = this_chid;
+    const chats = await getPersistedCharacterChats(characterId);
+    if (characterId !== this_chid) {
+        return;
+    }
+
+    const character = characters[characterId];
+    const existingChat = chats[0];
+    const useExistingChat = typeof existingChat?.file_name === 'string';
+    const newChatName = useExistingChat
+        ? normalizeChatFileName(existingChat.file_name)
+        : `${character.name} - ${humanizedDateTime()}`;
+
     await clearChat({ clearData: true });
-
-    const chatsResponse = await fetch('/api/characters/chats', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ avatar_url: characters[this_chid].avatar, ch_name: characters[this_chid].name }),
-    });
-
-    if (!chatsResponse.ok) {
-        throw new Error('Character chat list could not be loaded');
+    if (characterId !== this_chid) {
+        return;
     }
 
-    const chats = Object.values(await chatsResponse.json());
-    chats.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));
-
-    // pick existing chat
-    if (chats.length && typeof chats[0] === 'object') {
-        characters[this_chid].chat = chats[0].file_name.replace('.jsonl', '');
-        $('#selected_chat_pole').val(characters[this_chid].chat);
-        saveCharacterDebounced();
-        await getChat();
-    }
-
-    // start new chat
-    else {
-        characters[this_chid].chat = `${name2} - ${humanizedDateTime()}`;
-        $('#selected_chat_pole').val(characters[this_chid].chat);
-        saveCharacterDebounced();
-        await getChat({ allowNewChat: true });
-    }
+    characters[characterId].chat = newChatName;
+    $('#selected_chat_pole').val(newChatName);
+    saveCharacterDebounced();
+    await getChat({ allowNewChat: !useExistingChat });
 }
 
 export async function showMoreMessages(messagesToLoad = null) {
