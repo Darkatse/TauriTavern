@@ -24,7 +24,7 @@ use super::cache::{
 use super::helpers::{file_ctime_millis, file_modified_millis};
 
 const MAX_CONCURRENT_SHALLOW_READS: usize = 8;
-const PERSISTENT_SHALLOW_INDEX_SCHEMA_VERSION: u32 = 1;
+const PERSISTENT_SHALLOW_INDEX_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
 struct PersistentShallowIndexSnapshot {

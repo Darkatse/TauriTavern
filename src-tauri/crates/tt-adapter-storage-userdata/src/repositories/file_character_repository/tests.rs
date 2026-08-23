@@ -1078,6 +1078,69 @@ async fn v2_data_metadata_is_canonical_for_full_and_shallow_reads() {
 }
 
 #[tokio::test]
+async fn missing_chat_identity_is_stable_and_incompatible_index_is_rebuilt() {
+    let (repository, root) = setup_repository().await;
+
+    let card_payload = json!({
+        "name": "Stable Missing",
+        "first_mes": "hello",
+    });
+    let source_png = write_character_data_to_png(
+        &build_minimal_png(),
+        &serde_json::to_string(&card_payload).expect("serialize card"),
+    )
+    .expect("embed card in png");
+    fs::write(
+        root.join("characters").join("StableMissing.png"),
+        source_png,
+    )
+    .await
+    .expect("write character png");
+
+    let shallow = repository
+        .find_all(true)
+        .await
+        .expect("load shallow character list");
+    let full = repository
+        .find_by_name("StableMissing")
+        .await
+        .expect("load full character");
+    let reopened = repository_for_root(&root)
+        .await
+        .find_by_name("StableMissing")
+        .await
+        .expect("reload full character");
+
+    let index_path = shallow_index_path(&root);
+    let mut stale_index: Value = serde_json::from_slice(
+        &fs::read(&index_path)
+            .await
+            .expect("read persistent shallow index"),
+    )
+    .expect("parse persistent shallow index");
+    stale_index["schema_version"] = json!(1);
+    stale_index["entries"][0]["character"]["chat"] = json!("drifted chat");
+    fs::write(
+        &index_path,
+        serde_json::to_vec(&stale_index).expect("serialize stale shallow index"),
+    )
+    .await
+    .expect("write stale shallow index");
+    let rebuilt = repository_for_root(&root)
+        .await
+        .find_all(true)
+        .await
+        .expect("rebuild stale shallow index");
+
+    assert_eq!(shallow[0].chat, "Stable Missing - chat");
+    assert_eq!(full.chat, shallow[0].chat);
+    assert_eq!(reopened.chat, full.chat);
+    assert_eq!(rebuilt[0].chat, full.chat);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn legacy_cards_get_data_size_after_normalization() {
     let (repository, root) = setup_repository().await;
 

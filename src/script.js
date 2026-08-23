@@ -29,6 +29,7 @@ import {
     CHAT_COMMIT_REASON,
     loadCharacterChatPayload,
     loadGroupChatPayload,
+    normalizeChatFileName,
 } from './scripts/chat-payload-transport.js';
 import { getActiveChatSnapshot } from './tauri/main/adapters/st/active-chat-ref.js';
 import { extension_prompt_roles, extension_prompt_types } from './scripts/extension-prompts.js';
@@ -1338,10 +1339,10 @@ export function resultCheckStatus() {
     stopStatusLoading();
 }
 
-async function hasPersistedCharacterChats(characterId) {
+async function getPersistedCharacterChats(characterId) {
     const character = characters[characterId];
     if (!character) {
-        return false;
+        return [];
     }
 
     const response = await fetch('/api/characters/chats', {
@@ -1359,7 +1360,9 @@ async function hasPersistedCharacterChats(characterId) {
         throw new Error('Character chat list could not be loaded');
     }
 
-    return (Array.isArray(data) ? data : Object.values(data ?? {})).length > 0;
+    const chats = Array.isArray(data) ? data : Object.values(data ?? {});
+    chats.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));
+    return chats;
 }
 
 /**
@@ -1389,7 +1392,8 @@ export async function selectCharacterById(id, { switchMenu = true } = {}) {
     if (selected_group || String(this_chid) !== String(id)) {
         //if clicked on a different character from what was currently selected
         if (!is_send_press) {
-            const allowNewChat = !(await hasPersistedCharacterChats(id));
+            const persistedChats = await getPersistedCharacterChats(id);
+            const allowNewChat = persistedChats.length === 0;
             setCharacterId(undefined);
             setCharacterName('');
             resetSelectedGroup();
@@ -1399,6 +1403,24 @@ export async function selectCharacterById(id, { switchMenu = true } = {}) {
             selected_button = 'character_edit';
             setCharacterId(id);
             chat_metadata = {};
+
+            await unshallowCharacter(id);
+            if (selected_group || String(this_chid) !== String(id)) {
+                return;
+            }
+
+            const currentChatExists = persistedChats.some(chat => normalizeChatFileName(chat.file_name) === characters[id].chat);
+            if (!allowNewChat && !currentChatExists) {
+                const recoveredChat = normalizeChatFileName(persistedChats[0].file_name);
+                const persisted = await updateRemoteChatName(id, recoveredChat);
+                if (!persisted) {
+                    toastr.warning(t`The chat was recovered, but the character's current chat could not be saved.`);
+                }
+            }
+
+            if (selected_group || String(this_chid) !== String(id)) {
+                return;
+            }
             await getChat({ allowNewChat });
         }
     } else {
@@ -1803,13 +1825,6 @@ async function applyCharactersSnapshot(getData) {
     for (let i = 0; i < getData.length; i++) {
         characters[i] = getData[i];
         characters[i].name = DOMPurify.sanitize(characters[i].name);
-
-        // For dropped-in cards
-        if (!characters[i].chat) {
-            characters[i].chat = `${characters[i].name} - ${humanizedDateTime()}`;
-        }
-
-        characters[i].chat = String(characters[i].chat);
     }
 
     if (previousAvatar) {
@@ -8935,11 +8950,18 @@ export async function unshallowCharacter(characterId) {
 export async function getChat({ allowNewChat = false } = {}) {
     const startedChid = this_chid;
     const startedSelectedGroup = selected_group;
-    const startedCharacter = startedChid !== undefined ? characters[startedChid] : null;
-    const startedChatFile = startedCharacter?.chat;
+    const isStillSelected = () => startedSelectedGroup === selected_group && startedChid === this_chid;
+    let startedCharacter;
+    let startedChatFile;
 
     try {
         await unshallowCharacter(startedChid);
+        if (!isStillSelected()) {
+            return;
+        }
+
+        startedCharacter = startedChid !== undefined ? characters[startedChid] : null;
+        startedChatFile = startedCharacter?.chat;
         const data = await loadCharacterChatPayload({
             characterName: startedCharacter?.name,
             avatarUrl: startedCharacter?.avatar,
@@ -8948,9 +8970,7 @@ export async function getChat({ allowNewChat = false } = {}) {
         });
 
         const currentCharacter = startedChid !== undefined ? characters[startedChid] : null;
-        const stillActive = startedSelectedGroup === selected_group
-            && startedChid === this_chid
-            && currentCharacter?.chat === startedChatFile;
+        const stillActive = isStillSelected() && currentCharacter?.chat === startedChatFile;
         if (!stillActive) {
             return;
         }
@@ -8983,9 +9003,8 @@ export async function getChat({ allowNewChat = false } = {}) {
         });
     } catch (error) {
         const currentCharacter = startedChid !== undefined ? characters[startedChid] : null;
-        const stillActive = startedSelectedGroup === selected_group
-            && startedChid === this_chid
-            && currentCharacter?.chat === startedChatFile;
+        const stillActive = isStillSelected()
+            && (startedCharacter === undefined || currentCharacter?.chat === startedChatFile);
         if (!stillActive) {
             return;
         }
@@ -12715,13 +12734,13 @@ export async function closeCurrentChat() {
  * Forces the update of the chat name for a remote character.
  * @param {string|number} characterId Character ID to update chat name for
  * @param {string} newName New name for the chat
- * @returns {Promise<void>}
+ * @returns {Promise<boolean>} Whether the chat name was persisted
  */
 export async function updateRemoteChatName(characterId, newName) {
     const character = characters[characterId];
     if (!character) {
         console.warn(`Character not found for ID: ${characterId}`);
-        return;
+        return false;
     }
     character.chat = newName;
     const mergeRequest = {
@@ -12734,8 +12753,11 @@ export async function updateRemoteChatName(characterId, newName) {
         body: JSON.stringify(mergeRequest),
     });
     if (!mergeResponse.ok) {
-        console.error('Failed to save extension field', mergeResponse.statusText);
+        console.error('Failed to update character chat name', mergeResponse.statusText);
+        return false;
     }
+
+    return true;
 }
 
 

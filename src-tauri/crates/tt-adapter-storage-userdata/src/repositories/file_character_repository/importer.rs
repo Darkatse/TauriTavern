@@ -427,14 +427,18 @@ impl FileCharacterRepository {
         candidate
     }
 
-    fn default_chat_file_stem(name: &str) -> String {
+    fn chat_file_stem(name: &str, suffix: &str) -> String {
         let sanitized_name = sanitize_filename(name);
-        let suffix = format!(" - {}", humanized_chat_date(Utc::now()));
+        let suffix = format!(" - {suffix}");
         let prefix = truncate_chat_file_stem_prefix(&sanitized_name, &suffix);
         let stem = format!("{prefix}{suffix}");
         let normalized = normalize_domain_chat_file_stem(&stem);
 
         normalized.unwrap_or_else(|| "chat".to_string())
+    }
+
+    fn fallback_chat_file_stem(name: &str) -> String {
+        Self::chat_file_stem(name, "chat")
     }
 
     fn normalize_chat_file_stem(chat_name: &str, character_name: &str) -> String {
@@ -444,15 +448,16 @@ impl FileCharacterRepository {
             return normalized;
         }
 
-        Self::default_chat_file_stem(character_name)
+        Self::fallback_chat_file_stem(character_name)
     }
 
     fn prepare_imported_character_for_storage(character: &mut Character, file_stem: &str) {
         // Match SillyTavern import semantics: imported cards lose local-only state.
-        character.create_date = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let now = Utc::now();
+        character.create_date = now.to_rfc3339_opts(SecondsFormat::Millis, true);
         character.file_name = Some(file_stem.to_string());
         character.avatar = format!("{}.png", file_stem);
-        character.chat = Self::normalize_chat_file_stem("", &character.name);
+        character.chat = Self::chat_file_stem(&character.name, &humanized_chat_date(now));
         character.fav = false;
         character.data.extensions.fav = false;
     }
