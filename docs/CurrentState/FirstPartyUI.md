@@ -53,9 +53,9 @@ TS/TSX 变化 -> Rspack 重编译 -> 成功后发送 reload
 
 | 指标 | 上限 |
 | --- | ---: |
-| runtime `template:` | 28 |
-| Vue imports | 7 |
-| `createApp()` roots | 7 |
+| runtime `template:` | 21 |
+| Vue imports | 6 |
+| `createApp()` roots | 6 |
 
 这些值只能随完整 root 迁移而下降；新增 `.vue` 文件直接失败。ESLint 同时保证：
 
@@ -89,7 +89,9 @@ Rspack 2.1.10、React 19.2.8、Vue 3.5.41 下的 2026-08-20 基线：
 | Dev Logs | 192,141 | 67,412 | Vue runtime compiler |
 | Sync | 217,240 | 72,093 | Vue runtime compiler |
 
-Phase 2 后（2026-08-22）：Sync 为 218,632 raw / 67,633 gzip -9 bytes。Sync Main 迁移完成后 Vue runtime 退出 `sync.bundle.js`，Phase 1 的双 runtime 过渡成本（404,416 / 131,048）已消除，Sync entry 现在是纯 React。Settings 与 Dev Logs 仍各自携带 Vue runtime；是否改为共享 React chunk，必须等这些入口迁移后用真实 stats 决定。
+Phase 2 后（2026-08-22）：Sync 为 218,632 raw / 67,633 gzip -9 bytes。Sync Main 迁移完成后 Vue runtime 退出 `sync.bundle.js`，Phase 1 的双 runtime 过渡成本（404,416 / 131,048）已消除，Sync entry 现在是纯 React。
+
+Phase 3 后（2026-08-23）：Settings 为 209,392 raw / 64,869 gzip -9 bytes，Vue runtime 退出 `settings.bundle.js`，gzip 反而低于 Vue 基线约 4 KB。Dev Logs 仍携带 Vue runtime；是否改为共享 React chunk，必须等它迁移后用真实 stats 决定。
 
 ## 6. 当前有意不做的事情
 
@@ -111,4 +113,6 @@ pnpm run web:build
 pnpm run check
 ```
 
-Phase 1 与 Phase 2 已完成：Sync feature 的三个 root（Main、Progress、Scope）全部迁移为 React（`sync-app/SyncApp.tsx`、`SyncProgressApp.tsx`、`SyncScopeApp.tsx`），`sync.bundle.js` 不再包含 Vue runtime。公开 handle 契约不变，行为经 `SyncMain.test.tsx` / `SyncPilot.test.tsx` 与真实桌面 WebView smoke 验证；Pairing 区域合并等为有意的 UI/UX 调整，不声称逐节点 DOM parity。下一阶段进入 Settings。
+Phase 1 与 Phase 2 已完成：Sync feature 的三个 root（Main、Progress、Scope）全部迁移为 React（`sync-app/SyncApp.tsx`、`SyncProgressApp.tsx`、`SyncScopeApp.tsx`），`sync.bundle.js` 不再包含 Vue runtime。公开 handle 契约不变，行为经 `SyncMain.test.tsx` / `SyncPilot.test.tsx` 与真实桌面 WebView smoke 验证；Pairing 区域合并等为有意的 UI/UX 调整，不声称逐节点 DOM parity。
+
+Phase 3 已完成：Settings root 迁移为 React（`settings-app/SettingsApp.tsx`，view-model/draft 规范化与最小 patch 仍归外壳 `setting-panel/settings-*.js` 所有），`settings.bundle.js` 不再包含 Vue runtime。`getDraft()` 由 mount-local controller 同步供给，不存在 React commit 竞态；未编辑 Save 不再产生 dynamic theme fallback patch（计划批准的唯一语义修复）。`SettingsApp.test.tsx` 只覆盖公开边界、非平凡状态语义、已修复缺陷与异步生命周期，不测试源码文本、静态 DOM 清单或明显条件渲染。迁移后另做一轮用户批准的 UX 微调（行 hint 桌面端跨整行宽、disclosure 摘要改为状态文本），并评估后否决了侧边栏分页方案。真实 WebView 走查（Save/Close/Escape veto、purge 确认、Data Root 不回滚、窄屏与主题）待真机反馈。下一阶段进入 Dev Logs。

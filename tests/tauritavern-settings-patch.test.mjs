@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 
 import { createTauriTavernSettingsState } from '../src/scripts/tauri/setting/setting-panel/settings-state.js';
 import { buildTauriTavernSettingsUpdate } from '../src/scripts/tauri/setting/setting-panel/settings-patch.js';
-import { createTauriTavernSettingsApp } from '../src/scripts/tauri/setting/settings-app/SettingsApp.js';
 
 const MEBIBYTE_BYTES = 1024 * 1024;
 const GIBIBYTE_BYTES = 1024 * MEBIBYTE_BYTES;

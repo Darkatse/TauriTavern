@@ -224,7 +224,7 @@ Stable 与 Canary 的普通自签 IPA 保持原有构建默认值；只有额外
   - `llm.chat_completion_features.request_images=false`：隐藏 request images block
   - `llm.text_completions.enabled=false`：移除 Text Completion option 并隐藏 panel
   - `ai.image_generation=false`：隐藏 `#bg_chat_hint`（避免 SD 相关提示露出）
-- Settings 面板投影：`src/scripts/tauri/setting/settings-app/SettingsApp.js`
+- Settings 面板投影：`src/scripts/tauri/setting/settings-app/SettingsSystemSection.tsx`
   - `network.request_proxy=false`：默认隐藏 Request Proxy details；若已有启用配置则保留只允许关闭的修复入口
   - `sync.lan=false`：隐藏 Sync panel（避免触发相机/局域网相关入口）
 - 外部导入点击门禁：`src/script.js`

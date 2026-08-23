@@ -59,6 +59,11 @@
     min-height: 34px;
 }
 
+/* Long hints read better spanning the full row below label and control. */
+.tt-settings-row > .tt-settings-hint {
+    grid-column: 1 / -1;
+}
+
 .tt-settings-row-copy {
     display: flex;
     flex-direction: column;
