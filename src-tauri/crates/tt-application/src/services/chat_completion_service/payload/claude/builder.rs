@@ -261,6 +261,11 @@ fn build_claude_payload_inner(
                 }
             }
         }
+    } else if let Some(reasoning_effort) = payload.get("reasoning_effort") {
+        request.insert(
+            "output_config".to_string(),
+            json!({ "effort": reasoning_effort }),
+        );
     }
 
     request.insert("messages".to_string(), Value::Array(messages));

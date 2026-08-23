@@ -4077,12 +4077,17 @@ function getReasoningEffort(settings = null, model = null) {
         return settings.reasoning_effort;
     }
 
+    if (settings.chat_completion_source === chat_completion_sources.CUSTOM) {
+        return settings.reasoning_effort === reasoning_effort_types.auto
+            ? undefined
+            : settings.reasoning_effort;
+    }
+
     // These sources expect the effort as string.
     const reasoningEffortSources = [
         chat_completion_sources.OPENAI,
         chat_completion_sources.AZURE_OPENAI,
         chat_completion_sources.DEEPSEEK,
-        chat_completion_sources.CUSTOM,
         chat_completion_sources.XAI,
         chat_completion_sources.AIMLAPI,
         chat_completion_sources.OPENROUTER,
@@ -4106,7 +4111,7 @@ function getReasoningEffort(settings = null, model = null) {
                 : settings.reasoning_effort;
         }
 
-        if (isOpenAiReasoningFormat()) {
+        if ([chat_completion_sources.OPENAI, chat_completion_sources.AZURE_OPENAI].includes(settings.chat_completion_source)) {
             return normalizeOpenAiReasoningEffort(settings.reasoning_effort, model);
         }
 
@@ -4115,16 +4120,6 @@ function getReasoningEffort(settings = null, model = null) {
                 return reasoning_effort_types.max;
             }
             return reasoning_effort_types.high;
-        }
-
-        function isCustomOpenAiReasoningFormat() {
-            const customApiFormat = settings.custom_api_format || custom_api_formats.OPENAI_COMPAT;
-            return [custom_api_formats.OPENAI_COMPAT, custom_api_formats.OPENAI_RESPONSES].includes(customApiFormat);
-        }
-
-        function isOpenAiReasoningFormat() {
-            return [chat_completion_sources.OPENAI, chat_completion_sources.AZURE_OPENAI].includes(settings.chat_completion_source)
-                || (settings.chat_completion_source === chat_completion_sources.CUSTOM && isCustomOpenAiReasoningFormat());
         }
 
         function supportsXHighReasoningEffort() {

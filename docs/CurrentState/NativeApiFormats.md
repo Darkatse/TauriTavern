@@ -92,6 +92,7 @@ Connection Profiles（Connection Manager 扩展）：
 
 ### 4.0 OpenAI-compatible（/chat/completions）
 
+- 第一方 UI 的 Reasoning Effort `Auto` 表示不生成 `reasoning_effort`；其他显式值由 Custom payload 原样发送，不按模型名启用、校验或降级。上游不接受时沿现有错误链路返回，用户仍可通过 include/exclude body override 最终覆盖或删除该字段。
 - assistant tool call 的 `extra_content` 是 provider-owned opaque JSON；Legacy 与 Agent 都按原 tool call 位置保存，并在同 API/model 的后续工具请求中原样回放。
 - 前端不解析其中的 provider namespace 或 signature，不按模型名启用，也不生成缺失值。
 - Rust OpenAI-compatible payload builder 继续整体转发 `messages`，不增加 provider-specific validation；上游不接受该字段时，其错误按现有链路返回用户。
@@ -109,7 +110,8 @@ Connection Profiles（Connection Manager 扩展）：
 - 有 `previous_response_id` 时，允许 orphan `function_call_output`，因为前置 function call 可由 provider previous response state 提供
 - `store` 默认 `false`；`include` 会保证包含 `reasoning.encrypted_content`，用于 reasoning/native continuation
 - Preset `enable_web_search=true` 会加入 `{ "type": "web_search" }` hosted tool；它可与本地 function tools 共存，不会进入 Agent 本地工具注册表
-- `previous_response_id`、`max_tokens` / `max_completion_tokens`→`max_output_tokens`、`reasoning_effort`→`reasoning.effort`、`verbosity`→`text.verbosity`、`metadata`、`parallel_tool_calls` 等字段按当前 payload builder 映射
+- `previous_response_id`、`max_tokens` / `max_completion_tokens`→`max_output_tokens`、`verbosity`→`text.verbosity`、`metadata`、`parallel_tool_calls` 等字段按当前 payload builder 映射
+- `reasoning_effort` 仅做 `reasoning.effort` 的结构转换，显式值不按模型名启用、校验或降级。
 
 传输侧（repository）：
 - 普通 Custom `/responses` 非流式请求走 HTTP，流式请求走 SSE
@@ -144,6 +146,7 @@ URL 与鉴权：
 - `system` message 聚合为顶层 `system_instruction`
 - user / assistant / tool history 分别构造 `user_input`、`model_output` / `function_call`、`function_result` steps
 - structured output 使用 `response_format = { "type": "text", "mime_type": "application/json", "schema": ... }`
+- `reasoning_effort` 仅做 `generation_config.thinking_level` 的结构转换，显式值不解析或降级。
 
 signature / native blocks（关键契约）：
 - 后端在 streaming 完成事件 `interaction.completed` 时，将聚合后的 `steps[]` 放入：
@@ -162,6 +165,10 @@ signature / native blocks（关键契约）：
 - `incomplete` 若含可消费文本则归一化为 `finish_reason=length`；无可消费输出或不完整 function call 直接报错
 
 ### 4.3 Claude Messages（/messages，Custom 变体）
+
+reasoning effort：
+- `reasoning_effort` 仅做 `output_config.effort` 的结构转换，显式值不按模型名启用、校验或降级
+- builder 不根据模型猜测或生成 `thinking`
 
 hosted web search：
 - Preset `enable_web_search=true` 在 direct Claude 与 Custom Claude Messages 中加入 `{ "type": "web_search_20250305", "name": "web_search" }`。

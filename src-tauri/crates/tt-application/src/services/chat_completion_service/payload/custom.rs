@@ -34,6 +34,29 @@ mod tests {
     use super::build;
 
     #[test]
+    fn custom_native_formats_only_relocate_reasoning_effort() {
+        for (format, pointer) in [
+            ("openai_responses", "/reasoning/effort"),
+            ("claude_messages", "/output_config/effort"),
+            ("gemini_interactions", "/generation_config/thinking_level"),
+        ] {
+            let payload = json!({
+                "chat_completion_source": "custom",
+                "custom_api_format": format,
+                "model": "custom-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "reasoning_effort": "max"
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
+
+            let (_endpoint, upstream) = build(payload).expect("build should succeed");
+            assert_eq!(upstream.pointer(pointer), Some(&json!("max")), "{format}");
+        }
+    }
+
+    #[test]
     fn custom_payload_strips_internal_fields_without_applying_overrides() {
         let payload = json!({
             "chat_completion_source": "custom",

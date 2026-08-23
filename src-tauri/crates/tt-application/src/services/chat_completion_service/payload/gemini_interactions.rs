@@ -4,9 +4,6 @@ use serde_json::{Map, Number, Value, json};
 
 use crate::errors::ApplicationError;
 
-use super::super::model_capabilities::{
-    RequestedReasoningEffort, parse_known_reasoning_effort, unsupported_reasoning_effort,
-};
 use super::content_parts::{
     InputPart, MediaPart, MediaSource, parse_openai_chat_content,
     reject_media_for_text_only_content,
@@ -149,13 +146,8 @@ fn build_generation_config(
         config.insert("stop_sequences".to_string(), Value::Array(stop.clone()));
     }
 
-    if let Some(value) = payload.get("reasoning_effort").and_then(Value::as_str)
-        && let Some(level) = map_thinking_level(value)?
-    {
-        config.insert(
-            "thinking_level".to_string(),
-            Value::String(level.to_string()),
-        );
+    if let Some(value) = payload.get("reasoning_effort") {
+        config.insert("thinking_level".to_string(), value.clone());
     }
 
     if let Some(include_reasoning) = payload.get("include_reasoning").and_then(Value::as_bool) {
@@ -166,20 +158,6 @@ fn build_generation_config(
     }
 
     Ok(config)
-}
-
-fn map_thinking_level(value: &str) -> Result<Option<&'static str>, ApplicationError> {
-    match parse_known_reasoning_effort(value, "Gemini Interactions")? {
-        RequestedReasoningEffort::Auto => Ok(None),
-        RequestedReasoningEffort::None => {
-            Err(unsupported_reasoning_effort("Gemini Interactions", "none"))
-        }
-        RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => Ok(Some("low")),
-        RequestedReasoningEffort::Medium => Ok(Some("medium")),
-        RequestedReasoningEffort::High
-        | RequestedReasoningEffort::XHigh
-        | RequestedReasoningEffort::Max => Ok(Some("high")),
-    }
 }
 
 fn map_tool_choice_to_interactions(value: &Value) -> Result<Value, ApplicationError> {

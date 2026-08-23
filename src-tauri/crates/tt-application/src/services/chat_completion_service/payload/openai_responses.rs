@@ -6,7 +6,6 @@ use crate::errors::ApplicationError;
 use tt_ports::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
 
 use super::content_parts::{InputPart, MediaPart, MediaSource, parse_openai_chat_content};
-use super::openai_reasoning::normalize_openai_reasoning_effort;
 use super::shared::message_content_to_text;
 use super::tool_calls::message_tool_call_id;
 
@@ -83,11 +82,7 @@ fn build_openai_responses_payload(
         );
     }
 
-    if let Some(reasoning_effort) = payload
-        .get("reasoning_effort")
-        .and_then(Value::as_str)
-        .and_then(|value| normalize_openai_reasoning_effort(value, model))
-    {
+    if let Some(reasoning_effort) = payload.get("reasoning_effort") {
         request.insert(
             "reasoning".to_string(),
             json!({ "effort": reasoning_effort }),
