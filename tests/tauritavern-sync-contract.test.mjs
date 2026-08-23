@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-const importSyncApp = () => import(new URL(
-    '../src/scripts/tauri/setting/sync-app/SyncApp.js',
-    import.meta.url,
-).href);
 const importSyncJobEvents = () => import(new URL(
     '../src/scripts/tauri/setting/setting-panel/sync-job-events.js',
     import.meta.url,
@@ -96,34 +92,6 @@ test('sync job events expose only user-relevant progress and completion', async 
     }), false);
 });
 
-test('sync automation status reports the newest successful outcome', async () => {
-    const { createTauriTavernSyncApp } = await importSyncApp();
-    const noopFunctions = new Proxy({}, { get: () => () => {} });
-    const component = createTauriTavernSyncApp({
-        client: noopFunctions,
-        actions: noopFunctions,
-        tr: key => key,
-    });
-    const context = {
-        ...component.data(),
-        tr: key => key,
-        automationStatus: {
-            running: false,
-            nextRunAtMs: null,
-            lastAttemptAtMs: null,
-            lastSuccessAtMs: 2000,
-            lastRequestAcceptedAtMs: 1000,
-            lastErrorAtMs: null,
-            lastError: '',
-        },
-    };
-
-    assert.match(component.computed.automationStatusText.call(context), /^Last success:/);
-    context.automationStatus.lastSuccessAtMs = 1000;
-    context.automationStatus.lastRequestAcceptedAtMs = 2000;
-    assert.match(component.computed.automationStatusText.call(context), /^Last request accepted:/);
-});
-
 test('sync dataset selection migrates once and rejects corrupt current state', async () => {
     const { getSyncDatasetSelection } = await importSyncState();
     const catalog = {
@@ -151,25 +119,4 @@ test('sync dataset selection migrates once and rejects corrupt current state', a
         () => getSyncDatasetSelection(catalog),
         /Stored sync content selection is invalid/,
     );
-});
-
-test('sync operations preserve the selected overwrite policy', async () => {
-    const { createTauriTavernSyncApp } = await importSyncApp();
-    const noopFunctions = new Proxy({}, { get: () => () => {} });
-    const component = createTauriTavernSyncApp({
-        client: noopFunctions,
-        actions: noopFunctions,
-        tr: key => key,
-    });
-    const selection = { policy_version: 1, dataset_ids: ['chat.character.history'] };
-
-    assert.deepEqual(component.methods.syncOperationOptions.call({
-        syncSelection: selection,
-        status: { overwritePolicy: 'prefer-newer' },
-        tr: key => key,
-    }), {
-        selection,
-        overwrite_policy: 'prefer-newer',
-        require_bundle_zstd: true,
-    });
 });

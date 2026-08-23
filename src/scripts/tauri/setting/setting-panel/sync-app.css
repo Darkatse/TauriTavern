@@ -149,6 +149,21 @@
     align-items: start;
 }
 
+.tt-sync-pair-share {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.tt-sync-pair-connect {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed color-mix(in srgb, var(--SmartThemeBorderColor) 64%, transparent);
+}
+
 .tt-sync-qr-wrap {
     display: flex;
     align-items: center;

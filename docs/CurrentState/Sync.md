@@ -96,12 +96,13 @@ Agent run retention 复用同一套 run storage class 词汇来描述 `run_journ
 
 Sync Panel 是 TauriTavern 自有设置面板，不属于上游 SillyTavern 事件 ABI。它遵循现有 host wrapper 边界：
 
-- `src/scripts/tauri/setting/sync-app/**` 只做 Vue 展示组件，不直接访问 Tauri invoke、Popup、扫码服务或 SillyTavern host API。
+- `src/scripts/tauri/setting/sync-app/**` 只做展示组件，不直接访问 Tauri invoke、Popup、扫码服务或 SillyTavern host API。
 - `src/scripts/tauri/setting/setting-panel/sync-popup.js` 拥有 popup / Tauri invoke / QR 扫码能力，并负责把 UI 选择转换为命令参数。
 - `sync_get_dataset_catalog` 返回当前 `DatasetPolicy` 版本、支持的数据集 ID、profile ID 与 TauriTavern 默认范围；前端只持久化 dataset ID，不持久化路径。
 - “Sync content”是独立持久化设置，保存在 localStorage。保存后所有 Sync Panel 发起的 LAN Sync pull、LAN Sync push-request、TT-Sync pull/push 默认都携带同一份 `DatasetSelection`。
 - “File overwrite”是后端持久化的全局偏好，保存在 `sync-preferences.json`。所有新建的手动作业都会显式携带当前值；自动同步在每次创建作业时读取当前值，不把它复制进 `automation.json`。
 - 自动同步配置保存在后端本地 `automation.json`，不进入同步 scope。Sync Panel 保存自动同步设置或同步范围时，会把当前 `DatasetSelection` 写入这份本地配置，供面板关闭后的 Rust 调度器使用。
+- 首次开启自动同步但尚未选择目标时，面板只保留本地草稿并展开配置；选定目标后由 Save 一次性提交完整配置。已有目标的开启和关闭继续立即持久化。
 - Sync Panel 展示并复制 LAN pairing URI/QR；粘贴 LAN pairing URI 时只接受 `tauritavern://lan-sync/pair?v=2`。旧 LAN v1 设备不会再作为可同步目标出现，需要重新配对。
 - Sync Panel 发起同步时传入 `require_bundle_zstd: true`。如果对端缺少 `bundle_v1` 或 `zstd_v1`，操作 fail-fast，不静默降级到 per-file 或旧 LAN v1。
 

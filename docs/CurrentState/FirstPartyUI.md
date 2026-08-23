@@ -53,9 +53,9 @@ TS/TSX 变化 -> Rspack 重编译 -> 成功后发送 reload
 
 | 指标 | 上限 |
 | --- | ---: |
-| runtime `template:` | 35 |
-| Vue imports | 8 |
-| `createApp()` roots | 10 |
+| runtime `template:` | 28 |
+| Vue imports | 7 |
+| `createApp()` roots | 7 |
 
 这些值只能随完整 root 迁移而下降；新增 `.vue` 文件直接失败。ESLint 同时保证：
 
@@ -89,12 +89,12 @@ Rspack 2.1.10、React 19.2.8、Vue 3.5.41 下的 2026-08-20 基线：
 | Dev Logs | 192,141 | 67,412 | Vue runtime compiler |
 | Sync | 217,240 | 72,093 | Vue runtime compiler |
 
-Settings、Dev Logs 与 Sync 当前各自携带 Vue runtime。是否改为共享 React chunk，必须等这些入口迁移后用真实 stats 决定；不能为了预想中的几十 KB 引入全局 runtime ABI 或 Module Federation。
+Phase 2 后（2026-08-22）：Sync 为 218,632 raw / 67,633 gzip -9 bytes。Sync Main 迁移完成后 Vue runtime 退出 `sync.bundle.js`，Phase 1 的双 runtime 过渡成本（404,416 / 131,048）已消除，Sync entry 现在是纯 React。Settings 与 Dev Logs 仍各自携带 Vue runtime；是否改为共享 React chunk，必须等这些入口迁移后用真实 stats 决定。
 
 ## 6. 当前有意不做的事情
 
 - 不启用 React Compiler。Rspack 基底已经具备后续能力，但先用 pilot 的 profiler 和 bundle 数据证明收益。
-- 不预建 `ui-runtime`、全局 root registry、通用 controller 或 async subscription hook。当前 MCP 常驻入口由扩展 loader 保证单次执行，临时 dialog 已显式 `finally -> unmount()`；Phase 1 出现第二个相同生命周期后再抽取共同机制。
+- 不预建 `ui-runtime`、全局 root registry、通用 controller 或 async subscription hook。当前 MCP 常驻入口由扩展 loader 保证单次执行，临时 dialog 已显式 `finally -> unmount()`；Phase 1/2 的三个 Sync mount 各自携带 feature-local 状态桥（Progress 的 `update()`、Scope 的同步 `getSelection()`、Main 的 `SyncController`），形状有意不同，没有出现值得抽取的共同机制。
 - 不在 Phase 0 拆分 MCP 或修改聊天关键路径。行数棘轮先阻止债务增长，真实 feature 改动再沿职责边界拆分。
 - 不引入 router、全局状态库、query cache、CSS-in-JS、UI framework、Zod 或新测试框架。
 
@@ -111,4 +111,4 @@ pnpm run web:build
 pnpm run check
 ```
 
-Phase 1 首选 Sync Progress 与 Sync Scope：它们分别验证 imperative `update()` 和同步 `getSelection()`，能够以最小风险证伪 mount handle、Popup cleanup、development watch 与移动端行为。
+Phase 1 与 Phase 2 已完成：Sync feature 的三个 root（Main、Progress、Scope）全部迁移为 React（`sync-app/SyncApp.tsx`、`SyncProgressApp.tsx`、`SyncScopeApp.tsx`），`sync.bundle.js` 不再包含 Vue runtime。公开 handle 契约不变，行为经 `SyncMain.test.tsx` / `SyncPilot.test.tsx` 与真实桌面 WebView smoke 验证；Pairing 区域合并等为有意的 UI/UX 调整，不声称逐节点 DOM parity。下一阶段进入 Settings。
