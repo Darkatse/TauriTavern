@@ -110,7 +110,7 @@ const raw = await dev.llmApiLogs.getRaw(index[0].id);
 type LlmApiLogIndexEntry = {
   id: number;
   timestampMs: number;
-  level: 'INFO' | 'ERROR';
+  level: 'INFO' | 'WARN' | 'ERROR';
   ok: boolean;
   source: string;
   model: string | null;
@@ -126,7 +126,7 @@ type LlmApiLogIndexEntry = {
 type LlmApiLogPreview = {
   id: number;
   timestampMs: number;
-  level: 'INFO' | 'ERROR';
+  level: 'INFO' | 'WARN' | 'ERROR';
   ok: boolean;
   source: string;
   model: string | null;

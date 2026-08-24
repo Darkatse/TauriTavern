@@ -140,6 +140,7 @@
       - `getKeep() -> Promise<number>`
       - `setKeep(value: number) -> Promise<void>`
       - 语义：宿主统一负责历史索引、实时索引流与 keep 设置持久化；调用方不应直接操作 `devlog_*` 命令。
+    - `api.dev.exportBundle() -> Promise<string>`：导出 debug bundle（zip）并返回保存路径，详见 `docs/API/Dev.md`。
 
 `api.dev.*` 的长期契约要求：
 

@@ -13,6 +13,15 @@ export function formatTimestamp(ms) {
     return date.toLocaleString();
 }
 
+/** Compact row time; the full datetime stays in the copied export line. */
+export function formatTime(ms) {
+    const date = new Date(Number(ms) || 0);
+    if (Number.isNaN(date.getTime())) {
+        return 'Invalid time';
+    }
+    return date.toLocaleTimeString();
+}
+
 export function normalizeLevel(level) {
     const value = String(level || '').trim().toUpperCase();
     if (!value) {

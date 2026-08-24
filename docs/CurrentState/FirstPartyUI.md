@@ -53,9 +53,9 @@ TS/TSX 变化 -> Rspack 重编译 -> 成功后发送 reload
 
 | 指标 | 上限 |
 | --- | ---: |
-| runtime `template:` | 21 |
-| Vue imports | 6 |
-| `createApp()` roots | 6 |
+| runtime `template:` | 14 |
+| Vue imports | 5 |
+| `createApp()` roots | 5 |
 
 这些值只能随完整 root 迁移而下降；新增 `.vue` 文件直接失败。ESLint 同时保证：
 
@@ -93,10 +93,14 @@ Phase 2 后（2026-08-22）：Sync 为 218,632 raw / 67,633 gzip -9 bytes。Sync
 
 Phase 3 后（2026-08-23）：Settings 为 209,392 raw / 64,869 gzip -9 bytes，Vue runtime 退出 `settings.bundle.js`，gzip 反而低于 Vue 基线约 4 KB。Dev Logs 仍携带 Vue runtime；是否改为共享 React chunk，必须等它迁移后用真实 stats 决定。
 
+Phase 4 后（2026-08-23）：Dev Logs 为 201,756 raw / 63,449 gzip -9 bytes，Vue runtime 退出 `dev-logs.bundle.js`，gzip 比 Vue 基线低约 4 KB；Settings compiler 不再携带 Vue DefinePlugin。三个 React entry（Settings 209,392 / 64,869、Sync 218,632 / 67,633、Dev Logs 201,756 / 63,449）合计 629,780 raw / 195,951 gzip，各自重复打包 React runtime；是否引入共享 chunk 由真实 stats 与面板并存时的内存实测另行决定，本阶段不引入 `dependOn`/`splitChunks`。
+
+Phase 4 UX 与状态一致性复审后（同日）：Live 面板 More 按钮并入状态行（`Showing x/y · +n new · Paused` + 按需出现的 Show older），行内时间戳缩写为本地化短时间（导出仍带完整日期时间），两个面板补空状态，LLM 面板以同步当前选择的条目下拉取代逐条 Prev/Next 盲翻（保留 Prev/Next），meta 对失败请求与加载错误以 `--fullred` 高亮；Dev Logs 最终为 202,991 raw / 63,965 gzip -9 bytes。
+
 ## 6. 当前有意不做的事情
 
 - 不启用 React Compiler。Rspack 基底已经具备后续能力，但先用 pilot 的 profiler 和 bundle 数据证明收益。
-- 不预建 `ui-runtime`、全局 root registry、通用 controller 或 async subscription hook。当前 MCP 常驻入口由扩展 loader 保证单次执行，临时 dialog 已显式 `finally -> unmount()`；Phase 1/2 的三个 Sync mount 各自携带 feature-local 状态桥（Progress 的 `update()`、Scope 的同步 `getSelection()`、Main 的 `SyncController`），形状有意不同，没有出现值得抽取的共同机制。
+- 不预建跨 feature 的 `ui-runtime`、全局 root registry、通用 controller 或 subscription framework。各 root 只保留已经出现的局部机制；Dev Logs 的 `useAsyncSubscription()` 只服务两个具有相同异步 cleanup 语义的真实订阅者，不提升为全局抽象。
 - 不在 Phase 0 拆分 MCP 或修改聊天关键路径。行数棘轮先阻止债务增长，真实 feature 改动再沿职责边界拆分。
 - 不引入 router、全局状态库、query cache、CSS-in-JS、UI framework、Zod 或新测试框架。
 
@@ -116,3 +120,5 @@ pnpm run check
 Phase 1 与 Phase 2 已完成：Sync feature 的三个 root（Main、Progress、Scope）全部迁移为 React（`sync-app/SyncApp.tsx`、`SyncProgressApp.tsx`、`SyncScopeApp.tsx`），`sync.bundle.js` 不再包含 Vue runtime。公开 handle 契约不变，行为经 `SyncMain.test.tsx` / `SyncPilot.test.tsx` 与真实桌面 WebView smoke 验证；Pairing 区域合并等为有意的 UI/UX 调整，不声称逐节点 DOM parity。
 
 Phase 3 已完成：Settings root 迁移为 React（`settings-app/SettingsApp.tsx`，view-model/draft 规范化与最小 patch 仍归外壳 `setting-panel/settings-*.js` 所有），`settings.bundle.js` 不再包含 Vue runtime。`getDraft()` 由 mount-local controller 同步供给，不存在 React commit 竞态；未编辑 Save 不再产生 dynamic theme fallback patch（计划批准的唯一语义修复）。`SettingsApp.test.tsx` 只覆盖公开边界、非平凡状态语义、已修复缺陷与异步生命周期，不测试源码文本、静态 DOM 清单或明显条件渲染。迁移后另做一轮用户批准的 UX 微调（行 hint 桌面端跨整行宽、disclosure 摘要改为状态文本），并评估后否决了侧边栏分页方案。真实 WebView 走查（Save/Close/Escape veto、purge 确认、Data Root 不回滚、窄屏与主题）待真机反馈。下一阶段进入 Dev Logs。
+
+Phase 4 已完成：Dev Logs root 迁移为 React（`dev-logs-app/DevLogsApp.tsx`，初始读取、Popup、clipboard 与 Text Viewer 仍归外壳 `dev-logs.js` 所有），`dev-logs.bundle.js` 不再包含 Vue runtime。不设 controller/store：Host 订阅是 push-only 且每个 Popup 只有一个消费者，两个 Panel 通过共享的 `useAsyncSubscription()` 管理订阅生命周期（effect-event handler + per-setup 订阅者身份，StrictMode 下恰好一个活动订阅；异步 teardown 失败写入 console）。同一变更修复了共享 stream bridge 的两个根因缺陷（start 失败残留 ghost handler、末次退订与新订阅紧邻时 disable 覆盖 enable），并把 LLM 选择从会漂移的 numeric index 改为稳定 `selectedId`、Preview/Raw 增加 epoch stale 防护、keep 改为两阶段提交（setKeep 失败零提交；reload 失败不回滚已持久化 keep；只合并 reload 期间真实收到的事件）。公开 mount、Host、Popup、Text Viewer、关键 class 与 raw `<details>` 契约保持不变；状态行、短时间、空状态、条目下拉和错误高亮是后续批准的有意 UX 调整，不声称逐节点 Vue parity。真实 WebView 走查（追尾/暂停/300-800 窗口、Popup 栈与 Escape、三个 slash command 入口、窄屏与主题）待真机反馈。下一阶段进入 Agent System 集中迁移。

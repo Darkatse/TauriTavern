@@ -206,9 +206,6 @@ export function createRspackConfigs(mode = 'production') {
       clean: true,
     },
     module: createReactModule(development),
-    plugins: [
-      createVueDefinePlugin(),
-    ],
   };
 
   return [coreConfig, agentSystemConfig, mcpManagerConfig, tauriTavernSettingsConfig];

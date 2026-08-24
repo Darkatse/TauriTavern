@@ -9,9 +9,9 @@ const OWNED_UI_ROOTS = [
 
 // Ratchet these limits down as each complete Vue root is migrated.
 const LIMITS = {
-    runtimeTemplates: 21,
-    vueImports: 6,
-    vueRoots: 6,
+    runtimeTemplates: 14,
+    vueImports: 5,
+    vueRoots: 5,
 };
 
 async function listFiles(directory) {
