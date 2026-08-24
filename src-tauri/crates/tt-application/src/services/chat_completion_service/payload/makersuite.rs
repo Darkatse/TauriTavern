@@ -220,17 +220,7 @@ fn build_google_payload(
 
     let mut request = Map::new();
     request.insert("model".to_string(), Value::String(model.to_string()));
-    request.insert(
-        "contents".to_string(),
-        Value::Array(if contents.is_empty() {
-            vec![json!({
-                "role": "user",
-                "parts": [{ "text": "" }],
-            })]
-        } else {
-            contents
-        }),
-    );
+    request.insert("contents".to_string(), Value::Array(contents));
     request.insert(
         "generationConfig".to_string(),
         Value::Object(generation_config),
@@ -417,10 +407,6 @@ fn convert_messages(
             parts
         };
 
-        if parts.is_empty() {
-            parts.push(json!({ "text": "" }));
-        }
-
         let target_role = if role == "assistant" { "model" } else { "user" };
 
         if supports_signatures {
@@ -470,6 +456,11 @@ fn convert_messages(
             }
         }
 
+        parts.retain(gemini_part_has_initialized_data);
+        if parts.is_empty() {
+            continue;
+        }
+
         if merge_with_previous
             && contents
                 .last()
@@ -492,6 +483,103 @@ fn convert_messages(
     }
 
     Ok((contents, system_parts.join("\n\n")))
+}
+
+fn gemini_part_has_initialized_data(part: &Value) -> bool {
+    let Some(object) = part.as_object() else {
+        return false;
+    };
+
+    if object
+        .get("text")
+        .and_then(Value::as_str)
+        .is_some_and(|text| !text.is_empty())
+    {
+        return true;
+    }
+
+    if gemini_inline_data_is_initialized(
+        object
+            .get("inlineData")
+            .or_else(|| object.get("inline_data")),
+    ) {
+        return true;
+    }
+
+    if gemini_file_data_is_initialized(object.get("fileData").or_else(|| object.get("file_data"))) {
+        return true;
+    }
+
+    if gemini_named_object_is_initialized(
+        object
+            .get("functionCall")
+            .or_else(|| object.get("function_call")),
+    ) {
+        return true;
+    }
+
+    if gemini_named_object_is_initialized(
+        object
+            .get("functionResponse")
+            .or_else(|| object.get("function_response")),
+    ) {
+        return true;
+    }
+
+    if object
+        .get("executableCode")
+        .or_else(|| object.get("executable_code"))
+        .and_then(Value::as_object)
+        .is_some_and(|code| !code.is_empty())
+    {
+        return true;
+    }
+
+    object
+        .get("codeExecutionResult")
+        .or_else(|| object.get("code_execution_result"))
+        .and_then(Value::as_object)
+        .is_some_and(|result| !result.is_empty())
+}
+
+fn gemini_inline_data_is_initialized(value: Option<&Value>) -> bool {
+    let Some(blob) = value.and_then(Value::as_object) else {
+        return false;
+    };
+
+    let mime_type = blob
+        .get("mimeType")
+        .or_else(|| blob.get("mime_type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let data = blob
+        .get("data")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    mime_type.is_some() && data.is_some()
+}
+
+fn gemini_file_data_is_initialized(value: Option<&Value>) -> bool {
+    let Some(file_data) = value.and_then(Value::as_object) else {
+        return false;
+    };
+
+    file_data
+        .get("fileUri")
+        .or_else(|| file_data.get("file_uri"))
+        .and_then(Value::as_str)
+        .is_some_and(|uri| !uri.trim().is_empty())
+}
+
+fn gemini_named_object_is_initialized(value: Option<&Value>) -> bool {
+    value
+        .and_then(Value::as_object)
+        .and_then(|object| object.get("name"))
+        .and_then(Value::as_str)
+        .is_some_and(|name| !name.trim().is_empty())
 }
 
 fn convert_message_content_to_parts(
@@ -1185,6 +1273,60 @@ mod tests {
                 { "functionCall": function_call },
                 { "functionResponse": function_response.clone() },
                 { "functionResponse": function_response }
+            ]))
+        );
+    }
+
+    #[test]
+    fn makersuite_drops_uninitialized_gemini_parts_from_plugin_history() {
+        let upstream = build_with_messages(
+            "gemini-2.5-flash",
+            json!([
+                { "role": "user", "content": "draw a cat" },
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "native": {
+                        "gemini": {
+                            "content": {
+                                "parts": [
+                                    { "thought": true },
+                                    { "thought": true, "text": "planning the image" },
+                                    {
+                                        "inlineData": {
+                                            "mimeType": "image/png",
+                                            "data": ""
+                                        }
+                                    },
+                                    { "text": "here is the image" }
+                                ]
+                            }
+                        }
+                    }
+                },
+                { "role": "user", "content": "again" },
+                { "role": "assistant", "content": "" }
+            ]),
+        );
+
+        assert_eq!(
+            upstream.pointer("/contents"),
+            Some(&json!([
+                {
+                    "role": "user",
+                    "parts": [{ "text": "draw a cat" }]
+                },
+                {
+                    "role": "model",
+                    "parts": [
+                        { "thought": true, "text": "planning the image" },
+                        { "text": "here is the image" }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "parts": [{ "text": "again" }]
+                }
             ]))
         );
     }
