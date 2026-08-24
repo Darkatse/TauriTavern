@@ -1,7 +1,5 @@
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use tt_domain::json_merge::merge_json_value;
 use tt_domain::models::character::{Character, CharacterExtensions};
 use tt_ports::repositories::character_repository::{
     CharacterChat, CharacterCreateResult, CharacterCreateWarning, ImageCrop,
@@ -126,6 +124,8 @@ pub struct UpdateCharacterCardDataDto {
     pub card_json: String,
     pub avatar_path: Option<String>,
     pub crop: Option<ImageCropDto>,
+    #[serde(default)]
+    pub materialize_primary_lorebook: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -315,6 +315,7 @@ impl From<Character> for CharacterDto {
             data_size,
             date_added,
             date_last_chat,
+            json_data,
             data,
             ..
         } = character;
@@ -327,12 +328,15 @@ impl From<Character> for CharacterDto {
 
         let extensions = if shallow {
             Some(serde_json::json!({
-                "talkativeness": data.extensions.talkativeness,
-                "fav": data.extensions.fav,
-                "world": data.extensions.world,
+                "talkativeness": data.extensions.talkativeness(),
+                "fav": data.extensions.fav(),
+                "world": data.extensions.world(),
             }))
         } else {
-            Some(serde_json::to_value(&data.extensions).unwrap_or(serde_json::Value::Null))
+            Some(
+                serde_json::to_value(&data.extensions)
+                    .expect("CharacterExtensions serialization should not fail"),
+            )
         };
 
         Self {
@@ -361,37 +365,9 @@ impl From<Character> for CharacterDto {
             post_history_instructions: data.post_history_instructions,
             extensions,
             character_book: data.character_book,
-            json_data: None,
+            json_data,
         }
     }
-}
-
-impl CharacterDto {
-    pub fn with_json_data(mut self, json_data: Option<String>) -> Self {
-        self.json_data = json_data;
-        self
-    }
-}
-
-fn replace_character_extensions(
-    character: &mut Character,
-    extensions: Option<Value>,
-) -> Result<(), serde_json::Error> {
-    if let Some(extensions) = extensions {
-        character.data.extensions = serde_json::from_value::<CharacterExtensions>(extensions)?;
-    }
-
-    Ok(())
-}
-
-pub(crate) fn merge_character_extensions(
-    character: &mut Character,
-    extensions: Value,
-) -> Result<(), serde_json::Error> {
-    let mut current = serde_json::to_value(&character.data.extensions)?;
-    merge_json_value(&mut current, extensions);
-    character.data.extensions = serde_json::from_value::<CharacterExtensions>(current)?;
-    Ok(())
 }
 
 /// Convert from DTO to domain model
@@ -430,9 +406,14 @@ impl TryFrom<CreateCharacterDto> for Character {
         character.data.system_prompt = dto.system_prompt.unwrap_or_default();
         character.data.post_history_instructions =
             dto.post_history_instructions.unwrap_or_default();
-        replace_character_extensions(&mut character, dto.extensions)?;
-        character.data.extensions.talkativeness = character.talkativeness;
-        character.data.extensions.fav = character.fav;
+        if let Some(extensions) = dto.extensions {
+            character.data.extensions = serde_json::from_value::<CharacterExtensions>(extensions)?;
+        }
+        character
+            .data
+            .extensions
+            .set_talkativeness(character.talkativeness);
+        character.data.extensions.set_fav(character.fav);
 
         Ok(character)
     }
@@ -466,37 +447,9 @@ impl From<ImageCropDto> for ImageCrop {
 
 #[cfg(test)]
 mod tests {
-    use super::{CharacterDto, merge_character_extensions};
+    use super::CharacterDto;
     use chrono::{SecondsFormat, TimeZone, Utc};
-    use serde_json::json;
     use tt_domain::models::character::Character;
-
-    #[test]
-    fn merge_character_extensions_preserves_nested_fields() {
-        let mut character = Character::new(
-            "Test".to_string(),
-            "desc".to_string(),
-            "persona".to_string(),
-            "hello".to_string(),
-        );
-        character.data.extensions.depth_prompt.prompt = "old".to_string();
-        character.data.extensions.depth_prompt.depth = 7;
-        character.data.extensions.depth_prompt.role = "assistant".to_string();
-
-        merge_character_extensions(
-            &mut character,
-            json!({
-                "depth_prompt": {
-                    "prompt": "new"
-                }
-            }),
-        )
-        .expect("extensions merge should succeed");
-
-        assert_eq!(character.data.extensions.depth_prompt.prompt, "new");
-        assert_eq!(character.data.extensions.depth_prompt.depth, 7);
-        assert_eq!(character.data.extensions.depth_prompt.role, "assistant");
-    }
 
     #[test]
     fn character_dto_falls_back_to_date_added_when_create_date_missing() {

@@ -1,7 +1,6 @@
 use crate::errors::ApplicationError;
 use serde_json::Value;
 use tt_domain::errors::DomainError;
-use tt_domain::models::character::Character;
 
 const EMBEDDED_AGENT_PROFILES_VERSION: u64 = 1;
 
@@ -25,127 +24,14 @@ pub(super) fn strip_character_card_json_data(card_value: &mut Value) {
     }
 }
 
-pub(super) fn ensure_readable_character_card(card_value: &Value) -> Result<(), ApplicationError> {
-    serde_json::from_value::<Character>(card_value.clone()).map_err(|error| {
-        ApplicationError::ValidationError(format!(
-            "Character card payload is not readable: {}",
-            error
-        ))
-    })?;
-    Ok(())
-}
-
-pub(super) fn normalize_v2_character_book_extensions(
-    card_value: &mut Value,
-) -> Result<(), DomainError> {
-    if card_value.get("spec").and_then(Value::as_str) != Some("chara_card_v2") {
-        return Ok(());
-    }
-
-    let Some(character_book) = card_value.pointer_mut("/data/character_book") else {
-        return Ok(());
-    };
-    let Some(character_book_object) = character_book.as_object_mut() else {
-        return Err(invalid_character_card_field("data.character_book"));
-    };
-
-    match character_book_object.get("extensions") {
-        Some(Value::Object(_)) => Ok(()),
-        Some(_) => Err(invalid_character_card_field(
-            "data.character_book.extensions",
-        )),
-        None => {
-            character_book_object.insert(
-                "extensions".to_string(),
-                Value::Object(serde_json::Map::new()),
-            );
-            Ok(())
-        }
-    }
-}
-
-pub(super) fn normalize_v2_creator_metadata_projection(
-    card_value: &mut Value,
-) -> Result<(), DomainError> {
-    if !matches!(
-        card_value.get("spec").and_then(Value::as_str),
-        Some("chara_card_v2" | "chara_card_v3")
-    ) {
-        return Ok(());
-    }
-
-    let Some(root_object) = card_value.as_object() else {
-        return Err(DomainError::InvalidData(
-            "Character payload must be a JSON object".to_string(),
-        ));
-    };
-    let Some(data_value) = root_object.get("data") else {
-        return Err(missing_character_card_field("data"));
-    };
-    let Some(data_object) = data_value.as_object() else {
-        return Err(invalid_character_card_field("data"));
-    };
-
-    let creator = creator_metadata_value(data_object, root_object, "creator");
-    let creator_notes = data_object
-        .get("creator_notes")
-        .or_else(|| root_object.get("creator_notes"))
-        .or_else(|| root_object.get("creatorcomment"))
-        .cloned();
-    let character_version = creator_metadata_value(data_object, root_object, "character_version");
-
-    let Some(root_object) = card_value.as_object_mut() else {
-        return Err(DomainError::InvalidData(
-            "Character payload must be a JSON object".to_string(),
-        ));
-    };
-
-    {
-        let data_object = root_object
-            .get_mut("data")
-            .and_then(Value::as_object_mut)
-            .ok_or_else(|| invalid_character_card_field("data"))?;
-
-        if let Some(value) = creator.as_ref() {
-            data_object
-                .entry("creator".to_string())
-                .or_insert_with(|| value.clone());
-        }
-        if let Some(value) = creator_notes.as_ref() {
-            data_object
-                .entry("creator_notes".to_string())
-                .or_insert_with(|| value.clone());
-        }
-        if let Some(value) = character_version.as_ref() {
-            data_object
-                .entry("character_version".to_string())
-                .or_insert_with(|| value.clone());
-        }
-    }
-
-    if let Some(value) = creator {
-        root_object.insert("creator".to_string(), value);
-    }
-    if let Some(value) = creator_notes {
-        root_object.insert("creator_notes".to_string(), value.clone());
-        root_object.insert("creatorcomment".to_string(), value);
-    }
-    if let Some(value) = character_version {
-        root_object.insert("character_version".to_string(), value);
-    }
-
-    Ok(())
-}
-
 pub(super) fn validate_character_card_schema(card_value: &Value) -> Result<(), DomainError> {
-    match card_value.get("spec").and_then(Value::as_str) {
-        Some("chara_card_v2") => validate_v2_character_card(card_value)?,
-        Some("chara_card_v3") => validate_v3_character_card(card_value)?,
-        Some(_) => return Err(invalid_character_card_field("spec")),
-        None => validate_v1_character_card(card_value)?,
+    if validate_v1_character_card(card_value).is_ok()
+        || validate_v2_character_card(card_value).is_ok()
+    {
+        return Ok(());
     }
 
-    Ok(())
+    validate_v3_character_card(card_value)
 }
 
 pub(super) fn character_card_name(card_value: &Value) -> Result<&str, DomainError> {
@@ -164,6 +50,27 @@ pub(super) fn character_card_name(card_value: &Value) -> Result<&str, DomainErro
         .ok_or_else(|| missing_character_card_field("name"))
 }
 
+pub(super) fn set_character_world(
+    card_value: &mut Value,
+    world: impl Into<String>,
+) -> Result<(), DomainError> {
+    let root = card_value.as_object_mut().ok_or_else(|| {
+        DomainError::InvalidData("Character payload must be a JSON object".to_string())
+    })?;
+    let data = root
+        .entry("data")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()))
+        .as_object_mut()
+        .ok_or_else(|| invalid_character_card_field("data"))?;
+    let extensions = data
+        .entry("extensions")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()))
+        .as_object_mut()
+        .ok_or_else(|| invalid_character_card_field("data.extensions"))?;
+    extensions.insert("world".to_string(), Value::String(world.into()));
+    Ok(())
+}
+
 pub(super) fn unset_private_fields(export_value: &mut Value) -> Result<(), DomainError> {
     let Some(root_object) = export_value.as_object_mut() else {
         return Err(DomainError::InvalidData(
@@ -174,86 +81,48 @@ pub(super) fn unset_private_fields(export_value: &mut Value) -> Result<(), Domai
     root_object.insert("fav".to_string(), Value::Bool(false));
     root_object.remove("chat");
 
-    let data = root_object
-        .entry("data")
-        .or_insert_with(|| Value::Object(serde_json::Map::new()));
-    let Some(data_object) = data.as_object_mut() else {
-        return Err(DomainError::InvalidData(
-            "Character payload data must be a JSON object".to_string(),
-        ));
-    };
-
-    let extensions = data_object
-        .entry("extensions")
-        .or_insert_with(|| Value::Object(serde_json::Map::new()));
-    let Some(extensions_object) = extensions.as_object_mut() else {
-        return Err(DomainError::InvalidData(
-            "Character payload extensions must be a JSON object".to_string(),
-        ));
-    };
-
-    extensions_object.insert("fav".to_string(), Value::Bool(false));
+    if let Some(extensions) = root_object
+        .get_mut("data")
+        .and_then(Value::as_object_mut)
+        .and_then(|data| data.get_mut("extensions"))
+        .and_then(Value::as_object_mut)
+    {
+        extensions.insert("fav".to_string(), Value::Bool(false));
+    }
 
     Ok(())
 }
 
-pub(super) fn sanitize_agent_profiles_for_export(
-    export_value: &mut Value,
-) -> Result<(), DomainError> {
-    sanitize_agent_profile_package_at_path(export_value, &["data", "extensions"])?;
-    sanitize_agent_profile_package_at_path(export_value, &["extensions"])?;
-    Ok(())
+pub(super) fn sanitize_agent_profiles_for_export(export_value: &mut Value) {
+    sanitize_agent_profile_package_at_path(export_value, "/data/extensions");
+    sanitize_agent_profile_package_at_path(export_value, "/extensions");
 }
 
-fn sanitize_agent_profile_package_at_path(
-    value: &mut Value,
-    extension_path: &[&str],
-) -> Result<(), DomainError> {
-    let Some(extensions) = object_at_path_mut(value, extension_path)? else {
-        return Ok(());
+fn sanitize_agent_profile_package_at_path(value: &mut Value, extension_path: &str) {
+    let Some(extensions) = value
+        .pointer_mut(extension_path)
+        .and_then(Value::as_object_mut)
+    else {
+        return;
     };
     let Some(tauritavern) = extensions.get_mut("tauritavern") else {
-        return Ok(());
+        return;
     };
     let Some(tauritavern) = tauritavern.as_object_mut() else {
-        return Err(DomainError::InvalidData(
-            "Character payload extensions.tauritavern must be an object".to_string(),
-        ));
+        return;
     };
-    let Some(package) = tauritavern.get_mut("agentProfiles") else {
-        return Ok(());
+    let Some(error) = tauritavern
+        .get_mut("agentProfiles")
+        .and_then(|package| sanitize_agent_profile_package(package).err())
+    else {
+        return;
     };
-    sanitize_agent_profile_package(package)
-}
-
-fn object_at_path_mut<'a>(
-    value: &'a mut Value,
-    path: &[&str],
-) -> Result<Option<&'a mut serde_json::Map<String, Value>>, DomainError> {
-    let mut cursor = value;
-    for segment in path {
-        let Some(next) = cursor.get_mut(*segment) else {
-            return Ok(None);
-        };
-        cursor = next;
-    }
-    cursor.as_object_mut().map(Some).ok_or_else(|| {
-        DomainError::InvalidData(format!(
-            "Character payload {} must be an object",
-            path.join(".")
-        ))
-    })
-}
-
-fn creator_metadata_value(
-    data_object: &serde_json::Map<String, Value>,
-    root_object: &serde_json::Map<String, Value>,
-    field: &str,
-) -> Option<Value> {
-    data_object
-        .get(field)
-        .or_else(|| root_object.get(field))
-        .cloned()
+    tracing::error!(
+        target: tt_contracts::observability::USER_VISIBLE_ERROR,
+        "Exporting character without malformed embedded Agent Profiles: {}",
+        error
+    );
+    tauritavern.remove("agentProfiles");
 }
 
 fn sanitize_agent_profile_package(package: &mut Value) -> Result<(), DomainError> {
@@ -332,6 +201,10 @@ fn validate_v1_character_card(card_value: &Value) -> Result<(), DomainError> {
 }
 
 fn validate_v2_character_card(card_value: &Value) -> Result<(), DomainError> {
+    if card_value.get("spec").and_then(Value::as_str) != Some("chara_card_v2") {
+        return Err(invalid_character_card_field("spec"));
+    }
+
     if card_value.get("spec_version").and_then(Value::as_str) != Some("2.0") {
         return Err(invalid_character_card_field("spec_version"));
     }
@@ -369,28 +242,27 @@ fn validate_v2_character_card(card_value: &Value) -> Result<(), DomainError> {
         return Err(invalid_character_card_field("data.tags"));
     }
 
-    if !data.get("extensions").is_some_and(Value::is_object) {
+    if !data.get("extensions").is_some_and(is_javascript_object) {
         return Err(invalid_character_card_field("data.extensions"));
     }
 
-    if let Some(character_book) = data.get("character_book") {
-        let Some(character_book) = character_book.as_object() else {
-            return Err(invalid_character_card_field("data.character_book"));
-        };
-
-        if !character_book.contains_key("extensions") {
+    if let Some(character_book) = data
+        .get("character_book")
+        .filter(|value| !is_javascript_falsy(value))
+    {
+        if character_book.get("extensions").is_none() {
             return Err(missing_character_card_field(
                 "data.character_book.extensions",
             ));
         }
 
-        if !character_book.contains_key("entries") {
+        if character_book.get("entries").is_none() {
             return Err(missing_character_card_field("data.character_book.entries"));
         }
 
         if !character_book
             .get("extensions")
-            .is_some_and(Value::is_object)
+            .is_some_and(is_javascript_object)
         {
             return Err(invalid_character_card_field(
                 "data.character_book.extensions",
@@ -406,6 +278,10 @@ fn validate_v2_character_card(card_value: &Value) -> Result<(), DomainError> {
 }
 
 fn validate_v3_character_card(card_value: &Value) -> Result<(), DomainError> {
+    if card_value.get("spec").and_then(Value::as_str) != Some("chara_card_v3") {
+        return Err(invalid_character_card_field("spec"));
+    }
+
     let spec_version = card_value
         .get("spec_version")
         .and_then(character_card_spec_version);
@@ -414,7 +290,10 @@ fn validate_v3_character_card(card_value: &Value) -> Result<(), DomainError> {
         return Err(invalid_character_card_field("spec_version"));
     }
 
-    if !card_value.get("data").is_some_and(Value::is_object) {
+    if !card_value
+        .get("data")
+        .is_some_and(|value| !is_javascript_falsy(value) && is_javascript_object(value))
+    {
         return Err(missing_character_card_field("data"));
     }
 
@@ -424,9 +303,22 @@ fn validate_v3_character_card(card_value: &Value) -> Result<(), DomainError> {
 fn character_card_spec_version(value: &Value) -> Option<f64> {
     match value {
         Value::Number(number) => number.as_f64(),
-        Value::String(string) => string.parse::<f64>().ok(),
+        Value::String(string) if string.trim().is_empty() => Some(0.0),
+        Value::String(string) => string.trim().parse::<f64>().ok(),
+        Value::Bool(value) => Some(if *value { 1.0 } else { 0.0 }),
+        Value::Null => Some(0.0),
         _ => None,
     }
+}
+
+fn is_javascript_object(value: &Value) -> bool {
+    matches!(value, Value::Null | Value::Array(_) | Value::Object(_))
+}
+
+fn is_javascript_falsy(value: &Value) -> bool {
+    matches!(value, Value::Null | Value::Bool(false))
+        || value.as_f64() == Some(0.0)
+        || value.as_str() == Some("")
 }
 
 fn missing_character_card_field(field: &str) -> DomainError {
@@ -467,7 +359,7 @@ mod tests {
             }
         });
 
-        super::sanitize_agent_profiles_for_export(&mut card).expect("sanitize profile");
+        super::sanitize_agent_profiles_for_export(&mut card);
 
         assert_eq!(
             card["data"]["extensions"]["tauritavern"]["agentProfiles"]["items"][0]["profile"]["model"],
@@ -476,7 +368,7 @@ mod tests {
     }
 
     #[test]
-    fn character_export_rejects_malformed_embedded_agent_profile_package() {
+    fn character_export_drops_malformed_embedded_agent_profile_package() {
         let mut unsupported_version = json!({
             "data": {
                 "extensions": {
@@ -489,12 +381,11 @@ mod tests {
                 }
             }
         });
-        let error = super::sanitize_agent_profiles_for_export(&mut unsupported_version)
-            .expect_err("unsupported version must fail fast");
+        super::sanitize_agent_profiles_for_export(&mut unsupported_version);
         assert!(
-            error
-                .to_string()
-                .contains("tauritavern.agentProfiles.version must be 1")
+            unsupported_version
+                .pointer("/data/extensions/tauritavern/agentProfiles")
+                .is_none()
         );
 
         let mut missing_items = json!({
@@ -508,12 +399,11 @@ mod tests {
                 }
             }
         });
-        let error = super::sanitize_agent_profiles_for_export(&mut missing_items)
-            .expect_err("missing items must fail fast");
+        super::sanitize_agent_profiles_for_export(&mut missing_items);
         assert!(
-            error
-                .to_string()
-                .contains("tauritavern.agentProfiles.items must be an array")
+            missing_items
+                .pointer("/data/extensions/tauritavern/agentProfiles")
+                .is_none()
         );
 
         let mut missing_profile = json!({
@@ -530,12 +420,11 @@ mod tests {
                 }
             }
         });
-        let error = super::sanitize_agent_profiles_for_export(&mut missing_profile)
-            .expect_err("missing item.profile must fail fast");
+        super::sanitize_agent_profiles_for_export(&mut missing_profile);
         assert!(
-            error
-                .to_string()
-                .contains("embedded Agent Profile item.profile must be an object")
+            missing_profile
+                .pointer("/data/extensions/tauritavern/agentProfiles")
+                .is_none()
         );
     }
 }

@@ -1,64 +1,46 @@
 use chrono::{SecondsFormat, Utc};
-use serde::de::{self};
-use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::HashMap;
-use std::str::FromStr;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
 
 use crate::models::chat::humanized_date as humanized_chat_date;
 use crate::models::filename::sanitize_filename;
 
-/// Character model representing a character card in SillyTavern format
-/// Supports both V2 and V3 character card formats
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Backend projection of a SillyTavern character card.
+///
+/// The stored JSON remains authoritative; this type contains only values the
+/// application needs to operate on.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Character {
     // Spec information
-    #[serde(default = "default_spec")]
     pub spec: String,
-    #[serde(default = "default_spec_version")]
     pub spec_version: String,
 
     // Core character information
-    #[serde(default)]
     pub name: String,
-    #[serde(default)]
     pub description: String,
-    #[serde(default)]
     pub personality: String,
-    #[serde(default)]
     pub scenario: String,
-    #[serde(default)]
     pub first_mes: String,
-    #[serde(default)]
     pub mes_example: String,
 
     // Avatar and chat information
-    #[serde(default)]
     pub avatar: String,
-    #[serde(default)]
     pub chat: String,
 
     // Creator information
-    #[serde(default)]
     pub creator: String,
-    #[serde(default)]
     pub creator_notes: String,
 
     // Metadata
-    #[serde(default)]
     pub character_version: String,
-    #[serde(default, deserialize_with = "deserialize_string_or_array")]
     pub tags: Vec<String>,
-    #[serde(default)]
     pub create_date: String,
 
     // Extensions
-    #[serde(default, deserialize_with = "deserialize_string_or_float")]
     pub talkativeness: f64,
-    #[serde(default)]
     pub fav: bool,
 
     // V2 data structure
-    #[serde(default)]
     pub data: CharacterData,
 
     // Internal fields (not part of the character card)
@@ -78,79 +60,81 @@ pub struct Character {
     pub shallow: bool,
 }
 
-/// Character data structure for V2 character cards
+/// Backend projection of the V2/V3 `data` object.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CharacterData {
-    #[serde(default)]
     pub name: String,
-    #[serde(default)]
     pub description: String,
-    #[serde(default)]
     pub personality: String,
-    #[serde(default)]
     pub scenario: String,
-    #[serde(default)]
     pub first_mes: String,
-    #[serde(default)]
     pub mes_example: String,
 
-    #[serde(default)]
     pub creator_notes: String,
-    #[serde(default)]
     pub system_prompt: String,
-    #[serde(default)]
     pub post_history_instructions: String,
-    #[serde(default, deserialize_with = "deserialize_string_or_array")]
     pub tags: Vec<String>,
-    #[serde(default)]
     pub creator: String,
-    #[serde(default)]
     pub character_version: String,
-    #[serde(default, deserialize_with = "deserialize_string_or_array")]
     pub alternate_greetings: Vec<String>,
-    #[serde(default, deserialize_with = "deserialize_string_or_array")]
     pub group_only_greetings: Vec<String>,
 
-    #[serde(default)]
     pub extensions: CharacterExtensions,
 
-    #[serde(default)]
     pub character_book: Option<serde_json::Value>,
 }
 
-/// Character extensions structure
+/// Open SillyTavern/third-party extension object.
+///
+/// The character-card specs deliberately leave this object open. Rust reads
+/// owned values through accessors and only changes them through explicit
+/// setters; every other value keeps its original JSON representation.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(transparent)]
 pub struct CharacterExtensions {
-    #[serde(default, deserialize_with = "deserialize_string_or_float")]
-    pub talkativeness: f64,
-    #[serde(default)]
-    pub fav: bool,
-    #[serde(default)]
-    pub world: String,
-    #[serde(default)]
-    pub depth_prompt: DepthPrompt,
-    #[serde(default, flatten)]
-    pub additional: HashMap<String, serde_json::Value>,
+    values: Map<String, Value>,
 }
 
-/// Depth prompt structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DepthPrompt {
-    #[serde(default)]
-    pub prompt: String,
-    #[serde(default = "default_depth")]
-    pub depth: i32,
-    #[serde(default = "default_role")]
-    pub role: String,
-}
-
-impl Default for DepthPrompt {
-    fn default() -> Self {
+impl CharacterExtensions {
+    fn from_card_value(value: Option<&Value>) -> Self {
         Self {
-            prompt: String::new(),
-            depth: default_depth(),
-            role: default_role(),
+            values: value
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
         }
+    }
+
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.values.get(key)
+    }
+
+    pub fn insert(&mut self, key: impl Into<String>, value: Value) {
+        self.values.insert(key.into(), value);
+    }
+
+    pub fn talkativeness(&self) -> f64 {
+        projected_number(self.get("talkativeness")).unwrap_or(0.0)
+    }
+
+    pub fn set_talkativeness(&mut self, value: f64) {
+        self.insert("talkativeness", json!(value));
+    }
+
+    pub fn fav(&self) -> bool {
+        projected_bool(self.get("fav"))
+    }
+
+    pub fn set_fav(&mut self, value: bool) {
+        self.insert("fav", Value::Bool(value));
+    }
+
+    pub fn world(&self) -> &str {
+        self.get("world").and_then(Value::as_str).unwrap_or("")
+    }
+
+    pub fn set_world(&mut self, value: impl Into<String>) {
+        self.insert("world", Value::String(value.into()));
     }
 }
 
@@ -162,133 +146,127 @@ fn default_spec_version() -> String {
     "2.0".to_string()
 }
 
-fn default_depth() -> i32 {
-    4
+fn projected_string(value: Option<&Value>) -> String {
+    value.and_then(Value::as_str).unwrap_or("").to_string()
 }
 
-fn default_role() -> String {
-    "system".to_string()
+fn projected_string_list(value: Option<&Value>, split_string: bool) -> Vec<String> {
+    match value {
+        Some(Value::String(value)) if split_string => value
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToString::to_string)
+            .collect(),
+        Some(Value::String(value)) => {
+            let value = value.trim();
+            (!value.is_empty())
+                .then(|| value.to_string())
+                .into_iter()
+                .collect()
+        }
+        Some(Value::Array(values)) => values
+            .iter()
+            .filter_map(|value| match value {
+                Value::String(value) => Some(value.trim().to_string()),
+                Value::Number(value) => Some(value.to_string()),
+                Value::Bool(value) => Some(value.to_string()),
+                _ => None,
+            })
+            .filter(|value| !value.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
-/// Deserialize a value that can be either a string or a number into an f64.
-fn deserialize_string_or_float<'de, D>(deserializer: D) -> Result<f64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct StringOrFloat;
+fn projected_number(value: Option<&Value>) -> Option<f64> {
+    match value? {
+        Value::Number(value) => value.as_f64(),
+        Value::String(value) if value.trim().is_empty() => Some(0.0),
+        Value::String(value) => value.trim().parse().ok(),
+        Value::Bool(value) => Some(if *value { 1.0 } else { 0.0 }),
+        Value::Null => Some(0.0),
+        _ => None,
+    }
+}
 
-    impl<'de> de::Visitor<'de> for StringOrFloat {
-        type Value = f64;
+fn projected_bool(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::Bool(value)) => *value,
+        Some(Value::Number(value)) => value.as_f64().is_some_and(|value| value != 0.0),
+        Some(Value::String(value)) => !value.is_empty(),
+        Some(Value::Array(_) | Value::Object(_)) => true,
+        Some(Value::Null) | None => false,
+    }
+}
 
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("a string or a float")
-        }
+impl CharacterData {
+    fn from_card_value(value: Option<&Value>) -> Self {
+        let object = value.and_then(Value::as_object);
+        let field = |name| object.and_then(|object| object.get(name));
 
-        fn visit_str<E>(self, value: &str) -> Result<f64, E>
-        where
-            E: de::Error,
-        {
-            f64::from_str(value).map_err(|_| E::custom(format!("invalid float value: {}", value)))
-        }
-
-        fn visit_f32<E>(self, value: f32) -> Result<f64, E>
-        where
-            E: de::Error,
-        {
-            Ok(f64::from(value))
-        }
-
-        fn visit_f64<E>(self, value: f64) -> Result<f64, E>
-        where
-            E: de::Error,
-        {
-            Ok(value)
-        }
-
-        fn visit_i64<E>(self, value: i64) -> Result<f64, E>
-        where
-            E: de::Error,
-        {
-            Ok(value as f64)
-        }
-
-        fn visit_u64<E>(self, value: u64) -> Result<f64, E>
-        where
-            E: de::Error,
-        {
-            Ok(value as f64)
+        Self {
+            name: projected_string(field("name")),
+            description: projected_string(field("description")),
+            personality: projected_string(field("personality")),
+            scenario: projected_string(field("scenario")),
+            first_mes: projected_string(field("first_mes")),
+            mes_example: projected_string(field("mes_example")),
+            creator_notes: projected_string(field("creator_notes")),
+            system_prompt: projected_string(field("system_prompt")),
+            post_history_instructions: projected_string(field("post_history_instructions")),
+            tags: projected_string_list(field("tags"), true),
+            creator: projected_string(field("creator")),
+            character_version: projected_string(field("character_version")),
+            alternate_greetings: projected_string_list(field("alternate_greetings"), false),
+            group_only_greetings: projected_string_list(field("group_only_greetings"), false),
+            extensions: CharacterExtensions::from_card_value(field("extensions")),
+            character_book: field("character_book")
+                .filter(|value| !value.is_null())
+                .cloned(),
         }
     }
-
-    deserializer.deserialize_any(StringOrFloat)
-}
-
-/// Deserialize a string list that may be encoded as an array or comma-delimited string.
-fn deserialize_string_or_array<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct StringOrArray;
-
-    impl<'de> de::Visitor<'de> for StringOrArray {
-        type Value = Vec<String>;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("a string, string array, or null")
-        }
-
-        fn visit_unit<E>(self) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(Vec::new())
-        }
-
-        fn visit_none<E>(self) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(Vec::new())
-        }
-
-        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(value
-                .split(',')
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
-                .map(ToString::to_string)
-                .collect())
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: de::SeqAccess<'de>,
-        {
-            let mut values = Vec::new();
-            while let Some(value) = seq.next_element::<serde_json::Value>()? {
-                match value {
-                    serde_json::Value::String(text) => {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            values.push(trimmed.to_string());
-                        }
-                    }
-                    serde_json::Value::Number(number) => values.push(number.to_string()),
-                    serde_json::Value::Bool(boolean) => values.push(boolean.to_string()),
-                    _ => {}
-                }
-            }
-            Ok(values)
-        }
-    }
-
-    deserializer.deserialize_any(StringOrArray)
 }
 
 impl Character {
+    /// Build the internal projection of an open character-card document.
+    ///
+    /// External cards must enter through this function rather than Serde's
+    /// struct decoder: fields irrelevant to the current Rust use case remain
+    /// raw JSON and cannot make the whole card unreadable.
+    pub fn from_card_value(value: &Value) -> Option<Self> {
+        let object = value.as_object()?;
+        let field = |name| object.get(name);
+
+        Some(Self {
+            spec: field("spec")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+                .unwrap_or_else(default_spec),
+            spec_version: field("spec_version")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+                .unwrap_or_else(default_spec_version),
+            name: projected_string(field("name")),
+            description: projected_string(field("description")),
+            personality: projected_string(field("personality")),
+            scenario: projected_string(field("scenario")),
+            first_mes: projected_string(field("first_mes")),
+            mes_example: projected_string(field("mes_example")),
+            avatar: projected_string(field("avatar")),
+            chat: projected_string(field("chat")),
+            creator: projected_string(field("creator")),
+            creator_notes: projected_string(field("creator_notes")),
+            character_version: projected_string(field("character_version")),
+            tags: projected_string_list(field("tags"), true),
+            create_date: projected_string(field("create_date")),
+            talkativeness: projected_number(field("talkativeness")).unwrap_or(0.0),
+            fav: projected_bool(field("fav")),
+            data: CharacterData::from_card_value(field("data")),
+            ..Default::default()
+        })
+    }
+
     /// Create a new character with basic information
     pub fn new(name: String, description: String, personality: String, first_mes: String) -> Self {
         let now = Utc::now();
@@ -319,10 +297,16 @@ impl Character {
                 description: description.clone(),
                 personality: personality.clone(),
                 first_mes: first_mes.clone(),
-                extensions: CharacterExtensions {
-                    talkativeness: 0.5,
-                    fav: false,
-                    ..Default::default()
+                extensions: {
+                    let mut extensions = CharacterExtensions::default();
+                    extensions.set_talkativeness(0.5);
+                    extensions.set_fav(false);
+                    extensions.set_world("");
+                    extensions.insert(
+                        "depth_prompt",
+                        json!({ "prompt": "", "depth": 4, "role": "system" }),
+                    );
+                    extensions
                 },
                 ..Default::default()
             },
@@ -358,8 +342,8 @@ impl Character {
         self.data.creator = self.creator.clone();
         self.data.character_version = self.character_version.clone();
         self.data.tags = self.tags.clone();
-        self.data.extensions.talkativeness = self.talkativeness;
-        self.data.extensions.fav = self.fav;
+        self.data.extensions.set_talkativeness(self.talkativeness);
+        self.data.extensions.set_fav(self.fav);
     }
 
     /// Get the file name for this character
@@ -394,10 +378,10 @@ impl Character {
         }
 
         if self.talkativeness == 0.0 {
-            self.talkativeness = self.data.extensions.talkativeness;
+            self.talkativeness = self.data.extensions.talkativeness();
         }
 
-        self.fav = self.fav || self.data.extensions.fav;
+        self.fav = self.fav || self.data.extensions.fav();
 
         // Drop heavy card payload from shallow projection.
         self.description.clear();
@@ -422,10 +406,13 @@ impl Character {
         self.data.alternate_greetings.clear();
         self.data.group_only_greetings.clear();
 
-        self.data.extensions.talkativeness = self.talkativeness;
-        self.data.extensions.fav = self.fav;
-        self.data.extensions.depth_prompt = DepthPrompt::default();
-        self.data.extensions.additional.clear();
+        let world = self.data.extensions.get("world").cloned();
+        self.data.extensions = CharacterExtensions::default();
+        self.data.extensions.set_talkativeness(self.talkativeness);
+        self.data.extensions.set_fav(self.fav);
+        if let Some(world) = world {
+            self.data.extensions.insert("world", world);
+        }
 
         self.data.character_book = None;
         self.json_data = None;
@@ -454,7 +441,7 @@ mod tests {
         character.data.alternate_greetings = vec!["hi".to_string()];
         character.data.group_only_greetings = vec!["group-hi".to_string()];
         character.data.character_book = Some(serde_json::json!({ "entries": { "1": {} } }));
-        character.data.extensions.additional.insert(
+        character.data.extensions.insert(
             "regex_scripts".to_string(),
             serde_json::json!([{ "replaceString": "x".repeat(1024) }]),
         );
@@ -473,7 +460,7 @@ mod tests {
         assert!(shallow.data.post_history_instructions.is_empty());
         assert!(shallow.data.alternate_greetings.is_empty());
         assert!(shallow.data.group_only_greetings.is_empty());
-        assert!(shallow.data.extensions.additional.is_empty());
+        assert!(shallow.data.extensions.get("regex_scripts").is_none());
         assert!(shallow.data.character_book.is_none());
         assert!(shallow.json_data.is_none());
     }
@@ -487,7 +474,7 @@ mod tests {
             "hello".to_string(),
         );
         character.talkativeness = 0.8;
-        character.data.extensions.talkativeness = 0.8;
+        character.data.extensions.set_talkativeness(0.8);
 
         let value = serde_json::to_value(character.to_v2()).expect("serialize character");
 

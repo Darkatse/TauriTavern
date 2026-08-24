@@ -8,7 +8,8 @@ use tokio::{
 };
 
 use crate::png_card_metadata::{
-    process_avatar_image, read_character_data_from_png, write_character_data_to_png,
+    process_avatar_image, read_character_data_from_png, read_character_data_from_png_file,
+    write_character_data_to_png,
 };
 use tt_adapter_storage_core::file_system::{replace_file_with_fallback, unique_temp_path};
 use tt_contracts::client_asset_paths::validate_path_segment;
@@ -58,20 +59,6 @@ impl FileCharacterRepository {
             DomainError::InternalError(format!("Failed to write character temp file: {error}"))
         })?;
         replace_file_with_fallback(&temp_path, file_path).await
-    }
-
-    fn with_storage_identity_and_json(
-        character: &Character,
-        file_name: &str,
-        json_data: Option<String>,
-    ) -> Character {
-        let mut stored = character.clone();
-        stored.file_name = Some(file_name.to_string());
-        stored.avatar = format!("{}.png", file_name);
-        stored.json_data = json_data;
-        stored.shallow = false;
-        stored.data_size = Self::calculate_data_size(&stored.to_v2().data);
-        stored
     }
 
     pub(crate) async fn discard_character_read_cache(&self, file_name: &str) {
@@ -443,16 +430,6 @@ impl FileCharacterRepository {
         )
     }
 
-    fn merge_existing_character_projection_into_card_json(
-        json_data: &str,
-        character: &Character,
-        context: &str,
-    ) -> Result<String, DomainError> {
-        let mut card_value = Self::parse_card_json(json_data, context)?;
-        Self::merge_existing_character_projection_into_card_value(&mut card_value, character)?;
-        Self::serialize_card_value(&card_value, context)
-    }
-
     fn merge_create_character_projection_into_card_json(
         json_data: &str,
         character: &Character,
@@ -471,45 +448,6 @@ impl FileCharacterRepository {
 
 #[async_trait]
 impl CharacterRepository for FileCharacterRepository {
-    async fn save(&self, character: &Character) -> Result<(), DomainError> {
-        self.ensure_directory_exists().await?;
-
-        let file_name = character.get_file_name();
-        let file_path = self.get_character_path(&file_name);
-
-        let image_data = if file_path.exists() {
-            fs::read(&file_path).await.map_err(|e| {
-                tracing::error!("Failed to read character file: {}", e);
-                DomainError::InternalError(format!("Failed to read character file: {}", e))
-            })?
-        } else {
-            self.read_default_avatar().await?
-        };
-
-        let json_data = if file_path.exists() {
-            let raw_json = read_character_data_from_png(&image_data)?;
-            Self::merge_existing_character_projection_into_card_json(
-                &raw_json,
-                character,
-                "stored character card",
-            )?
-        } else {
-            Self::serialize_character_card(character)?
-        };
-
-        let new_image_data = write_character_data_to_png(&image_data, &json_data)?;
-
-        Self::replace_character_png_file(&file_path, &new_image_data).await?;
-
-        let cached_character =
-            Self::with_storage_identity_and_json(character, &file_name, Some(json_data));
-
-        self.publish_character_write(file_name, cached_character)
-            .await;
-
-        Ok(())
-    }
-
     async fn find_by_name(&self, name: &str) -> Result<Character, DomainError> {
         let cached = {
             let cache = self.memory_cache.lock().await;
@@ -554,20 +492,40 @@ impl CharacterRepository for FileCharacterRepository {
                 name
             )));
         }
+        let chat_dir = if delete_chats {
+            match self.resolve_chat_directory(name).await {
+                Ok(path) => Some(path),
+                Err(error) => {
+                    tracing::error!(
+                        target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                        "Deleting character '{}' without deleting its chats: {}",
+                        name,
+                        error
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         fs::remove_file(&file_path).await.map_err(|e| {
             tracing::error!("Failed to delete character file: {}", e);
             DomainError::InternalError(format!("Failed to delete character file: {}", e))
         })?;
 
+        if let Some(chat_dir) = chat_dir
+            && chat_dir.exists()
+            && let Err(error) = fs::remove_dir_all(&chat_dir).await
+        {
+            tracing::error!(
+                target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                "Deleted character '{}' but could not delete its chat directory: {}",
+                name,
+                error
+            );
+        }
         if delete_chats {
-            let chat_dir = self.resolve_chat_directory(name).await?;
-            if chat_dir.exists() {
-                fs::remove_dir_all(&chat_dir).await.map_err(|e| {
-                    tracing::error!("Failed to delete chat directory: {}", e);
-                    DomainError::InternalError(format!("Failed to delete chat directory: {}", e))
-                })?;
-            }
             self.chat_repository
                 .invalidate_all_payload_signatures()
                 .await;
@@ -581,20 +539,6 @@ impl CharacterRepository for FileCharacterRepository {
         self.clear_shallow_index_cache().await;
 
         Ok(())
-    }
-
-    async fn update(&self, character: &Character) -> Result<(), DomainError> {
-        let file_name = character.get_file_name();
-        let file_path = self.get_character_path(&file_name);
-
-        if !file_path.exists() {
-            return Err(DomainError::NotFound(format!(
-                "Character not found: {}",
-                file_name
-            )));
-        }
-
-        self.save(character).await
     }
 
     async fn write_character_card_json(
@@ -690,15 +634,10 @@ impl CharacterRepository for FileCharacterRepository {
         let data_value = card_object
             .entry("data")
             .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-
-        let data_object = data_value.as_object_mut().ok_or_else(|| {
-            DomainError::InvalidData("Character card data field is invalid".to_string())
-        })?;
-
-        data_object.insert(
-            "name".to_string(),
-            serde_json::Value::String(new_name.to_string()),
-        );
+        if !data_value.is_object() {
+            *data_value = serde_json::Value::Object(serde_json::Map::new());
+        }
+        data_value["name"] = serde_json::Value::String(new_name.to_string());
 
         let patched_json = serde_json::to_string(&card_value).map_err(|e| {
             tracing::error!("Failed to serialize character data: {}", e);
@@ -881,16 +820,7 @@ impl CharacterRepository for FileCharacterRepository {
             )));
         }
 
-        let image_data = fs::read(&file_path).await.map_err(|error| {
-            tracing::error!(
-                "Failed to read character file {}: {}",
-                file_path.display(),
-                error
-            );
-            DomainError::InternalError(format!("Failed to read character file: {}", error))
-        })?;
-
-        read_character_data_from_png(&image_data)
+        read_character_data_from_png_file(&file_path).await
     }
 
     async fn export_character_png_bytes(
@@ -951,8 +881,14 @@ impl CharacterRepository for FileCharacterRepository {
 
         Self::replace_character_png_file(&file_path, &new_image_data).await?;
 
-        let stored_character =
-            Self::with_storage_identity_and_json(character, &file_name, Some(json_data));
+        let card_value = Self::parse_card_json(&json_data, "created character card")?;
+        let mut stored_character = character.clone();
+        stored_character.file_name = Some(file_name.clone());
+        stored_character.avatar = format!("{}.png", file_name);
+        stored_character.data_size =
+            Self::calculate_character_data_size(&card_value, &stored_character);
+        stored_character.json_data = Some(json_data);
+        stored_character.shallow = false;
 
         self.publish_character_write(file_name, stored_character.clone())
             .await;
@@ -961,48 +897,6 @@ impl CharacterRepository for FileCharacterRepository {
             character: stored_character,
             warnings,
         })
-    }
-
-    async fn update_avatar(
-        &self,
-        character: &Character,
-        avatar_path: &Path,
-        crop: Option<ImageCrop>,
-    ) -> Result<(), DomainError> {
-        let file_name = character.get_file_name();
-        let file_path = self.get_character_path(&file_name);
-        if !file_path.exists() {
-            return Err(DomainError::NotFound(format!(
-                "Character not found: {}",
-                file_name
-            )));
-        }
-
-        let existing_image_data = fs::read(&file_path).await.map_err(|e| {
-            tracing::error!("Failed to read character file: {}", e);
-            DomainError::InternalError(format!("Failed to read character file: {}", e))
-        })?;
-        let raw_json = read_character_data_from_png(&existing_image_data)?;
-        let json_data = Self::merge_existing_character_projection_into_card_json(
-            &raw_json,
-            character,
-            "stored character card",
-        )?;
-
-        let file_data = fs::read(avatar_path).await.map_err(|e| {
-            tracing::error!("Failed to read avatar file: {}", e);
-            DomainError::InternalError(format!("Failed to read avatar file: {}", e))
-        })?;
-        let image_data = process_avatar_image(file_data, crop).await?;
-        let new_image_data = write_character_data_to_png(&image_data, &json_data)?;
-
-        Self::replace_character_png_file(&file_path, &new_image_data).await?;
-
-        let cached_character =
-            Self::with_storage_identity_and_json(character, &file_name, Some(json_data));
-        self.publish_character_write(file_name.clone(), cached_character)
-            .await;
-        Ok(())
     }
 
     async fn get_character_chats(

@@ -51,7 +51,7 @@ fn export_contract_removes_private_fields_and_connection_refs() {
     });
 
     card_contract::unset_private_fields(&mut value).unwrap();
-    card_contract::sanitize_agent_profiles_for_export(&mut value).unwrap();
+    card_contract::sanitize_agent_profiles_for_export(&mut value);
 
     assert_eq!(value.get("chat"), None);
     assert_eq!(value.get("fav"), Some(&json!(false)));

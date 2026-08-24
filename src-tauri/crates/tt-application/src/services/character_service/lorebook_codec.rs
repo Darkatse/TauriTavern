@@ -61,7 +61,6 @@ pub(super) fn world_info_to_character_book(
         })?;
         character_book.insert("name".to_string(), json!(world_name));
         character_book.insert("entries".to_string(), Value::Array(converted_entries));
-        ensure_character_book_extensions(&mut character_book)?;
         return Ok(Value::Object(character_book));
     }
 
@@ -70,21 +69,6 @@ pub(super) fn world_info_to_character_book(
         "extensions": {},
         "entries": converted_entries,
     }))
-}
-
-fn ensure_character_book_extensions(
-    character_book: &mut Map<String, Value>,
-) -> Result<(), DomainError> {
-    match character_book.get("extensions") {
-        Some(Value::Object(_)) => Ok(()),
-        Some(_) => Err(DomainError::InvalidData(
-            "World info originalData character book extensions must be an object".to_string(),
-        )),
-        None => {
-            character_book.insert("extensions".to_string(), Value::Object(Map::new()));
-            Ok(())
-        }
-    }
 }
 
 fn convert_character_book_entry(entry: &Value, index: usize) -> Value {
@@ -762,6 +746,7 @@ mod tests {
         let original_data = json!({
             "name": "Imported Lore",
             "description": "preserve me",
+            "extensions": "future-shape",
             "entries": [{ "id": 1, "keys": ["alpha"], "content": "stale" }]
         });
         let world_info = json!({
@@ -787,6 +772,7 @@ mod tests {
 
         assert_eq!(converted.get("name"), Some(&json!("Lore")));
         assert_eq!(converted.get("description"), Some(&json!("preserve me")));
+        assert_eq!(converted.get("extensions"), Some(&json!("future-shape")));
         assert_eq!(converted.pointer("/entries/0/id"), Some(&json!(7)));
         assert_eq!(
             converted.pointer("/entries/0/content"),

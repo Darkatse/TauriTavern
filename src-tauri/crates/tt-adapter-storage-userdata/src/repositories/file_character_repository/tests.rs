@@ -1,5 +1,4 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use chrono::DateTime;
 use crc32fast::Hasher;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -122,6 +121,13 @@ async fn setup_repository() -> (FileCharacterRepository, PathBuf) {
     (repository, root)
 }
 
+async fn create_character(repository: &FileCharacterRepository, character: &Character) {
+    repository
+        .create_with_avatar(character, None, None)
+        .await
+        .expect("create character");
+}
+
 fn shallow_index_path(root: &Path) -> PathBuf {
     root.join("user")
         .join("cache")
@@ -135,7 +141,7 @@ fn chat_summary_index_path(root: &Path) -> PathBuf {
 }
 
 #[tokio::test]
-async fn find_by_name_repairs_invalid_create_date_and_persists_patch() {
+async fn find_by_name_preserves_nonstandard_create_date() {
     let (repository, root) = setup_repository().await;
 
     let card_payload = json!({
@@ -160,13 +166,9 @@ async fn find_by_name_repairs_invalid_create_date_and_persists_patch() {
     let loaded = repository
         .find_by_name("InvalidDate")
         .await
-        .expect("load repaired character");
+        .expect("load character");
 
-    assert_ne!(loaded.create_date, "not-a-date");
-    assert!(
-        DateTime::parse_from_rfc3339(&loaded.create_date).is_ok(),
-        "expected repaired create_date to be RFC3339"
-    );
+    assert_eq!(loaded.create_date, "not-a-date");
 
     let updated_png = fs::read(&character_path)
         .await
@@ -180,7 +182,7 @@ async fn find_by_name_repairs_invalid_create_date_and_persists_patch() {
         updated_value
             .get("create_date")
             .and_then(|value| value.as_str()),
-        Some(loaded.create_date.as_str())
+        Some("not-a-date")
     );
 
     let _ = fs::remove_dir_all(&root).await;
@@ -242,7 +244,7 @@ async fn write_character_card_json_canonicalizes_dirty_metadata_chunks() {
         "persona".to_string(),
         "hello".to_string(),
     );
-    repository.save(&character).await.expect("save character");
+    create_character(&repository, &character).await;
     repository
         .find_all(true)
         .await
@@ -294,7 +296,7 @@ async fn write_character_card_json_replaces_avatar_even_when_metadata_is_unchang
         "persona".to_string(),
         "hello".to_string(),
     );
-    repository.save(&character).await.expect("save character");
+    create_character(&repository, &character).await;
     repository
         .find_all(true)
         .await
@@ -542,11 +544,8 @@ async fn replace_character_preserves_requested_primary_lorebook_in_single_import
         "old personality".to_string(),
         "old first message".to_string(),
     );
-    old_character.data.extensions.world = "Local Lore".to_string();
-    repository
-        .save(&old_character)
-        .await
-        .expect("save old character");
+    old_character.data.extensions.set_world("Local Lore");
+    create_character(&repository, &old_character).await;
 
     let mut replacement = Character::new(
         "Replacement".to_string(),
@@ -554,7 +553,7 @@ async fn replace_character_preserves_requested_primary_lorebook_in_single_import
         "new personality".to_string(),
         "new first message".to_string(),
     );
-    replacement.data.extensions.world = "Incoming Lore".to_string();
+    replacement.data.extensions.set_world("Incoming Lore");
     let source_png = write_character_data_to_png(
         &build_distinct_png(),
         &serde_json::to_string(&replacement.to_v2()).expect("serialize replacement card"),
@@ -571,7 +570,7 @@ async fn replace_character_preserves_requested_primary_lorebook_in_single_import
         .expect("replace character");
     assert_eq!(imported.avatar, "Preserved.png");
     assert_eq!(imported.name, "Replacement");
-    assert_eq!(imported.data.extensions.world, "Local Lore");
+    assert_eq!(imported.data.extensions.world(), "Local Lore");
 
     let stored_json = repository
         .read_character_card_json("Preserved")
@@ -595,7 +594,7 @@ async fn failed_replace_keeps_existing_character() {
         "old personality".to_string(),
         "old first message".to_string(),
     );
-    repository.save(&character).await.expect("save character");
+    create_character(&repository, &character).await;
 
     let import_path = root.join("invalid.png");
     fs::write(&import_path, b"not a character card")
@@ -742,6 +741,84 @@ async fn import_png_preserves_unknown_card_fields() {
 }
 
 #[tokio::test]
+async fn import_png_preserves_open_card_field_types() {
+    let (repository, root) = setup_repository().await;
+    let card_payload = json!({
+        "spec": "chara_card_v2",
+        "spec_version": "2.0",
+        "data": {
+            "name": "AICharED",
+            "description": 7,
+            "personality": null,
+            "scenario": false,
+            "first_mes": { "text": "hello" },
+            "mes_example": ["example"],
+            "creator_notes": 9,
+            "system_prompt": ["system"],
+            "post_history_instructions": { "kept": true },
+            "creator": true,
+            "character_version": 1,
+            "alternate_greetings": "hello again",
+            "group_only_greetings": null,
+            "extensions": {
+                "talkativeness": "not-a-number",
+                "world": 42,
+                "depth_prompt": {
+                    "prompt": "",
+                    "depth": "",
+                    "role": "system"
+                }
+            }
+        }
+    });
+    let source_png = write_character_data_to_png(
+        &build_minimal_png(),
+        &serde_json::to_string(&card_payload).expect("serialize card"),
+    )
+    .expect("embed card in png");
+    let import_path = root.join("aichared.png");
+    fs::write(&import_path, source_png)
+        .await
+        .expect("write import png");
+
+    let imported = repository
+        .import_character(&import_path, None)
+        .await
+        .expect("import open character card");
+    let stored_json = repository
+        .read_character_card_json(imported.avatar.trim_end_matches(".png"))
+        .await
+        .expect("read stored card");
+    let stored: Value = serde_json::from_str(&stored_json).expect("parse stored card");
+
+    for pointer in [
+        "/data/description",
+        "/data/personality",
+        "/data/scenario",
+        "/data/first_mes",
+        "/data/mes_example",
+        "/data/creator_notes",
+        "/data/system_prompt",
+        "/data/post_history_instructions",
+        "/data/creator",
+        "/data/character_version",
+        "/data/alternate_greetings",
+        "/data/group_only_greetings",
+        "/data/extensions/talkativeness",
+        "/data/extensions/world",
+        "/data/extensions/depth_prompt/depth",
+    ] {
+        assert_eq!(
+            stored.pointer(pointer),
+            card_payload.pointer(pointer),
+            "{pointer}"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn import_json_preserves_unknown_card_fields() {
     let (repository, root) = setup_repository().await;
 
@@ -797,6 +874,53 @@ async fn import_json_preserves_unknown_card_fields() {
         stored_value.pointer("/data/extensions/tavern_helper/enabled"),
         Some(&json!(true))
     );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn import_legacy_json_persists_a_v2_fallback_without_dropping_unknown_fields() {
+    let (repository, root) = setup_repository().await;
+    let import_path = root.join("legacy.json");
+    fs::write(
+        &import_path,
+        serde_json::to_vec(&json!({
+            "name": "Legacy",
+            "description": "desc",
+            "personality": "persona",
+            "scenario": "scenario",
+            "first_mes": "hello",
+            "mes_example": "",
+            "custom": { "kept": true }
+        }))
+        .expect("serialize legacy card"),
+    )
+    .await
+    .expect("write legacy card");
+
+    let imported = repository
+        .import_character(&import_path, None)
+        .await
+        .expect("import legacy card");
+    let stored_png = fs::read(root.join("characters").join(&imported.avatar))
+        .await
+        .expect("read imported card");
+    let v2_chunk = read_text_chunks_from_png(&stored_png)
+        .expect("read imported card metadata")
+        .into_iter()
+        .find(|chunk| chunk.keyword.eq_ignore_ascii_case("chara"))
+        .expect("find V2 metadata");
+    let stored: Value = serde_json::from_slice(
+        &BASE64
+            .decode(v2_chunk.text)
+            .expect("decode V2 card metadata"),
+    )
+    .expect("parse V2 card metadata");
+
+    assert_eq!(stored.get("spec"), Some(&json!("chara_card_v2")));
+    assert_eq!(stored.get("spec_version"), Some(&json!("2.0")));
+    assert_eq!(stored.pointer("/data/name"), Some(&json!("Legacy")));
+    assert_eq!(stored.pointer("/custom/kept"), Some(&json!(true)));
 
     let _ = fs::remove_dir_all(&root).await;
 }
@@ -1177,6 +1301,89 @@ async fn legacy_cards_get_data_size_after_normalization() {
 }
 
 #[tokio::test]
+async fn unreadable_chat_statistics_do_not_hide_the_character() {
+    let (repository, root) = setup_repository().await;
+    let character = Character::new(
+        "Stats Fallback".to_string(),
+        "desc".to_string(),
+        "persona".to_string(),
+        "hello".to_string(),
+    );
+    create_character(&repository, &character).await;
+    let chat_dir = root.join("chats").join("Stats Fallback");
+    fs::create_dir_all(&chat_dir)
+        .await
+        .expect("create chat directory");
+    fs::write(chat_dir.join("broken.jsonl"), [0xff])
+        .await
+        .expect("write invalid UTF-8 chat");
+
+    let reopened = repository_for_root(&root).await;
+    let shallow = reopened
+        .find_all(true)
+        .await
+        .expect("list character despite unreadable chat statistics");
+    assert_eq!(shallow.len(), 1);
+    assert_eq!(shallow[0].avatar, "Stats Fallback.png");
+    assert_eq!((shallow[0].chat_size, shallow[0].date_last_chat), (0, 0));
+
+    let full = reopened
+        .find_by_name("Stats Fallback")
+        .await
+        .expect("read character despite unreadable chat statistics");
+    assert_eq!((full.chat_size, full.date_last_chat), (0, 0));
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn unreadable_character_does_not_restore_the_entire_stale_shallow_index() {
+    let (repository, root) = setup_repository().await;
+    for name in ["Alice", "Broken"] {
+        create_character(
+            &repository,
+            &Character::new(
+                name.to_string(),
+                "desc".to_string(),
+                "persona".to_string(),
+                "hello".to_string(),
+            ),
+        )
+        .await;
+    }
+    repository
+        .find_all(true)
+        .await
+        .expect("build initial shallow index");
+
+    fs::write(root.join("characters/Broken.png"), b"not a png")
+        .await
+        .expect("corrupt one character");
+    let added = json!({ "name": "Added", "first_mes": "hello" });
+    fs::write(
+        root.join("characters/Added.png"),
+        write_character_data_to_png(
+            &build_minimal_png(),
+            &serde_json::to_string(&added).expect("serialize added card"),
+        )
+        .expect("build added card"),
+    )
+    .await
+    .expect("write added character");
+
+    let avatars: Vec<_> = repository
+        .find_all(true)
+        .await
+        .expect("rebuild partial shallow index")
+        .into_iter()
+        .map(|character| character.avatar)
+        .collect();
+    assert_eq!(avatars, vec!["Added.png", "Alice.png"]);
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn rename_sanitizes_target_file_name_and_moves_chat_directory() {
     let (repository, root) = setup_repository().await;
 
@@ -1186,7 +1393,7 @@ async fn rename_sanitizes_target_file_name_and_moves_chat_directory() {
         "persona".to_string(),
         "hello".to_string(),
     );
-    repository.save(&character).await.expect("save character");
+    create_character(&repository, &character).await;
 
     let old_chat_dir = root.join("chats").join("Source");
     fs::create_dir_all(&old_chat_dir)
@@ -1221,7 +1428,7 @@ async fn character_chat_listing_reads_legacy_alias_directory() {
         "persona".to_string(),
         "hello".to_string(),
     );
-    repository.save(&character).await.expect("save character");
+    create_character(&repository, &character).await;
 
     let legacy_chat_dir = root.join("chats").join("Alice");
     fs::create_dir_all(&legacy_chat_dir)
@@ -1270,7 +1477,7 @@ async fn rename_moves_legacy_alias_chat_directory_to_new_canonical_dir() {
         "persona".to_string(),
         "hello".to_string(),
     );
-    repository.save(&character).await.expect("save character");
+    create_character(&repository, &character).await;
 
     let legacy_chat_dir = root.join("chats").join("Alice");
     fs::create_dir_all(&legacy_chat_dir)
@@ -1329,7 +1536,7 @@ async fn delete_with_chats_removes_legacy_alias_chat_directory() {
         "persona".to_string(),
         "hello".to_string(),
     );
-    repository.save(&character).await.expect("save character");
+    create_character(&repository, &character).await;
 
     let legacy_chat_dir = root.join("chats").join("Alice");
     fs::create_dir_all(&legacy_chat_dir)
@@ -1382,7 +1589,7 @@ async fn rename_uses_next_available_file_stem_when_target_exists() {
         "persona".to_string(),
         "hello".to_string(),
     );
-    repository.save(&source).await.expect("save source");
+    create_character(&repository, &source).await;
 
     let existing = Character::new(
         "Taken".to_string(),
@@ -1390,7 +1597,7 @@ async fn rename_uses_next_available_file_stem_when_target_exists() {
         "persona".to_string(),
         "hello".to_string(),
     );
-    repository.save(&existing).await.expect("save existing");
+    create_character(&repository, &existing).await;
 
     let renamed = repository
         .rename("Source", "Taken")
@@ -1453,43 +1660,7 @@ async fn rename_preserves_avatar_pixel_data() {
 }
 
 #[tokio::test]
-async fn update_avatar_replaces_stored_image() {
-    let (repository, root) = setup_repository().await;
-
-    let character = Character::new(
-        "Avatar Target".to_string(),
-        "desc".to_string(),
-        "personality".to_string(),
-        "hello".to_string(),
-    );
-    let created = repository
-        .create_with_avatar(&character, None, None)
-        .await
-        .expect("create character")
-        .character;
-
-    let replacement_path = root.join("replacement.png");
-    fs::write(&replacement_path, build_distinct_png())
-        .await
-        .expect("write replacement avatar");
-
-    repository
-        .update_avatar(&created, &replacement_path, None)
-        .await
-        .expect("update avatar");
-
-    let stored_png = fs::read(root.join("characters").join(&created.avatar))
-        .await
-        .expect("read updated character png");
-    let stored_image = image::load_from_memory(&stored_png).expect("decode updated avatar");
-    assert_eq!(stored_image.width(), 2);
-    assert_eq!(stored_image.height(), 2);
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn update_avatar_keeps_invalid_avatar_bytes_as_failure() {
+async fn write_character_card_json_rejects_invalid_avatar_bytes() {
     let (repository, root) = setup_repository().await;
 
     let character = Character::new(
@@ -1498,11 +1669,11 @@ async fn update_avatar_keeps_invalid_avatar_bytes_as_failure() {
         "personality".to_string(),
         "hello".to_string(),
     );
-    let created = repository
-        .create_with_avatar(&character, None, None)
+    create_character(&repository, &character).await;
+    let card_json = repository
+        .read_character_card_json("Strict Avatar Target")
         .await
-        .expect("create character")
-        .character;
+        .expect("read character card JSON");
 
     let invalid_avatar_path = root.join("invalid-replacement.bin");
     fs::write(&invalid_avatar_path, b"not an image")
@@ -1510,7 +1681,12 @@ async fn update_avatar_keeps_invalid_avatar_bytes_as_failure() {
         .expect("write invalid avatar");
 
     let result = repository
-        .update_avatar(&created, &invalid_avatar_path, None)
+        .write_character_card_json(
+            "Strict Avatar Target",
+            &card_json,
+            Some(&invalid_avatar_path),
+            None,
+        )
         .await;
 
     assert!(result.is_err(), "invalid avatar replacement should fail");

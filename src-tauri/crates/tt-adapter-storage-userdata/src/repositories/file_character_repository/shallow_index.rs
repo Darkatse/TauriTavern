@@ -105,11 +105,6 @@ impl FileCharacterRepository {
         let (mut indexed_characters, build_complete) = self
             .build_shallow_index_characters(scan_entries, &previous_by_avatar)
             .await?;
-        if (!scan_complete || !build_complete)
-            && let Some(cache) = &cached
-        {
-            return Ok(Self::shallow_index_characters(cache));
-        }
 
         let characters = indexed_characters
             .iter()
@@ -296,7 +291,7 @@ impl FileCharacterRepository {
         let character_files = list_files_with_extension(&self.characters_dir, "png").await?;
         let mut chat_stats_by_name = self
             .calculate_shallow_index_chat_stats(&character_files)
-            .await?;
+            .await;
         let mut results: Vec<Option<CharacterShallowIndexScanEntry>> =
             (0..character_files.len()).map(|_| None).collect();
         let mut complete = true;
@@ -353,18 +348,30 @@ impl FileCharacterRepository {
     async fn calculate_shallow_index_chat_stats(
         &self,
         character_files: &[PathBuf],
-    ) -> Result<HashMap<String, Result<(u64, i64), DomainError>>, DomainError> {
-        let character_names = character_files
+    ) -> HashMap<String, Result<(u64, i64), DomainError>> {
+        let character_names: Vec<String> = character_files
             .iter()
             .map(|path| Self::file_stem_from_path(path))
             .collect();
 
-        Ok(self
+        match self
             .chat_repository
-            .calculate_character_chat_stats_batch(character_names)
-            .await?
-            .into_iter()
-            .collect())
+            .calculate_character_chat_stats_batch(character_names.clone())
+            .await
+        {
+            Ok(stats) => stats.into_iter().collect(),
+            Err(error) => {
+                tracing::error!(
+                    target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                    "Failed to calculate character chat statistics; using zero statistics: {}",
+                    error
+                );
+                character_names
+                    .into_iter()
+                    .map(|name| (name, Ok((0, 0))))
+                    .collect()
+            }
+        }
     }
 
     async fn scan_shallow_index_entry(
@@ -384,7 +391,7 @@ impl FileCharacterRepository {
             .and_then(|value| value.to_str())
             .unwrap_or("")
             .to_string();
-        let (chat_size, date_last_chat) = chat_stats?;
+        let (chat_size, date_last_chat) = Self::chat_stats_or_default(&file_stem, chat_stats);
         let modified_millis = file_modified_millis(&metadata);
 
         Ok(CharacterShallowIndexScanEntry {
@@ -483,26 +490,18 @@ impl FileCharacterRepository {
         let raw_value: Value = serde_json::from_str(&json_data).map_err(|error| {
             DomainError::InvalidData(format!("Failed to parse character data: {}", error))
         })?;
-        let mut character: Character =
-            serde_json::from_value(raw_value.clone()).map_err(|error| {
-                DomainError::InvalidData(format!("Failed to decode character data: {}", error))
-            })?;
+        let mut character = Character::from_card_value(&raw_value).ok_or_else(|| {
+            DomainError::InvalidData("Character payload must be a JSON object".to_string())
+        })?;
 
         Self::sync_canonical_data_fields(&mut character, &raw_value);
         Self::normalize_imported_character(&mut character)?;
-        let data_size = Self::calculate_data_size(&character.data);
+        let data_size = Self::calculate_character_data_size(&raw_value, &character);
         character.shallow = false;
         let signature = entry.signature;
         character.file_name = Some(entry.file_stem);
         character.avatar = signature.avatar;
         character.date_added = signature.created_millis;
-        let create_date_fallback =
-            (signature.created_millis > 0).then_some(signature.created_millis);
-        if let Some(repaired_create_date) =
-            Self::repaired_character_create_date(&character.create_date, create_date_fallback)
-        {
-            character.create_date = repaired_create_date;
-        }
         character.chat_size = signature.chat_size;
         character.data_size = data_size;
         character.date_last_chat = signature.date_last_chat;
