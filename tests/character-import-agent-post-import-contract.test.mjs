@@ -48,6 +48,7 @@ test('/api/characters/import returns canonical character payload and Agent post-
             calls.push({ type: 'normalize', character });
             return normalized;
         },
+        invalidateCharacterCache: () => calls.push({ type: 'invalidate' }),
     };
 
     registerCharacterRoutes(router, context, { textResponse, jsonResponse });
@@ -96,6 +97,7 @@ test('/api/characters/import returns canonical character payload and Agent post-
         },
         { type: 'cleanup' },
         { type: 'normalize', character: imported },
+        { type: 'invalidate' },
     ]);
 });
 
@@ -104,10 +106,6 @@ test('/api/characters/import uses the explicit replacement command for an existi
     const calls = [];
     const imported = { name: 'Updated Alice', avatar: 'Alice.png' };
     const context = {
-        resolveExistingCharacterId: async (options) => {
-            calls.push({ type: 'resolve', options });
-            return 'Alice';
-        },
         materializeUploadFile: async () => ({
             filePath: '/tmp/update.png',
             cleanup: async () => calls.push({ type: 'cleanup' }),
@@ -117,6 +115,7 @@ test('/api/characters/import uses the explicit replacement command for an existi
             return imported;
         },
         normalizeCharacter: character => character,
+        invalidateCharacterCache: () => calls.push({ type: 'invalidate' }),
     };
     registerCharacterRoutes(router, context, { textResponse, jsonResponse });
 
@@ -134,13 +133,68 @@ test('/api/characters/import uses the explicit replacement command for an existi
     assert.equal(response.status, 200);
     assert.equal((await response.json()).replaced, true);
     assert.deepEqual(calls, [
-        { type: 'resolve', options: { avatar: 'Alice.png' } },
         {
             type: 'invoke',
             command: 'replace_character',
             args: { dto: { file_path: '/tmp/update.png', name: 'Alice' } },
         },
         { type: 'cleanup' },
+        { type: 'invalidate' },
+    ]);
+});
+
+test('/api/characters/import preserves an exact name when there is no character to replace', async () => {
+    const router = createRouteRegistry();
+    const calls = [];
+    const imported = { name: 'Alice', avatar: 'Alice.png' };
+    const context = {
+        materializeUploadFile: async () => ({
+            filePath: '/tmp/Alice.png',
+            cleanup: async () => calls.push({ type: 'cleanup' }),
+        }),
+        safeInvoke: async (command, args) => {
+            calls.push({ type: 'invoke', command, args });
+            if (command === 'replace_character') {
+                throw new Error('Not found: Character not found: Alice');
+            }
+            return imported;
+        },
+        normalizeCharacter: character => character,
+        invalidateCharacterCache: () => calls.push({ type: 'invalidate' }),
+    };
+    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
+
+    const body = new FormData();
+    body.set('avatar', new Blob(['png-bytes'], { type: 'image/png' }), 'Alice.png');
+    body.set('file_type', 'png');
+    body.set('preserved_name', 'Alice.png');
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/characters/import',
+        url: new URL('http://localhost/api/characters/import'),
+        body,
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).replaced, false);
+    assert.deepEqual(calls, [
+        {
+            type: 'invoke',
+            command: 'replace_character',
+            args: { dto: { file_path: '/tmp/Alice.png', name: 'Alice' } },
+        },
+        {
+            type: 'invoke',
+            command: 'import_character',
+            args: {
+                dto: {
+                    file_path: '/tmp/Alice.png',
+                    preserve_file_name: 'Alice.png',
+                },
+            },
+        },
+        { type: 'cleanup' },
+        { type: 'invalidate' },
     ]);
 });
 

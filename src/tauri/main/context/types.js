@@ -51,6 +51,7 @@ export {};
  *   normalizeCharacter: (character: any) => any;
  *   normalizeExtensions: (extensions: any) => any;
  *   getAllCharacters: (options?: { shallow?: boolean; forceRefresh?: boolean }) => Promise<any[]>;
+ *   invalidateCharacterCache: () => void;
  *   resolveCharacterId: (options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>;
  *   resolveExistingCharacterId: (options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>;
  *   getSingleCharacter: (body: any) => Promise<any | null>;

@@ -1,7 +1,7 @@
 // @ts-check
 
 import { getByPath, mergeObjects, setByPath, unsetByPath } from './form-object-utils.js';
-import { formDataToCreateCharacterDto, parseJsonObjectStrict } from './character-create-mapper.js';
+import { formDataToCreateCharacterDto } from './character-create-mapper.js';
 import { assertCharacterAvatarFileName } from './character-identity.js';
 import { parseCropParam } from './character-request-utils.js';
 
@@ -58,7 +58,7 @@ export function createCharacterFormService({
     /** @param {FormData} formData */
     function buildCharacterCardFromForm(formData) {
         const dto = formDataToCreateCharacterDto(formData);
-        const baseCard = parseJsonObjectStrict(stringFromForm(formData, 'json_data', ''), {}, "character json_data");
+        const baseCard = JSON.parse(dto.json_data || '{}');
         const name = dto.name.trim();
 
         if (!name) {
@@ -102,10 +102,6 @@ export function createCharacterFormService({
             'data.alternate_greetings': dto.alternate_greetings,
             'data.extensions': mergedExtensions,
         });
-
-        if (typeof mergedExtensions.world === 'string' && mergedExtensions.world !== '') {
-            unsetByPath(baseCard, 'data.character_book');
-        }
 
         if (formData.has('chat')) {
             if (chat) {
@@ -160,6 +156,7 @@ export function createCharacterFormService({
                         card_json: JSON.stringify(card),
                         avatar_path: fileInfo.filePath,
                         crop: crop || null,
+                        materialize_primary_lorebook: true,
                     },
                 });
             } finally {
@@ -175,6 +172,7 @@ export function createCharacterFormService({
                 card_json: JSON.stringify(card),
                 avatar_path: null,
                 crop: crop || null,
+                materialize_primary_lorebook: true,
             },
         });
     }

@@ -10,6 +10,12 @@ export function isBadRequestError(error) {
     return /^Bad request:/i.test(message);
 }
 
+/** @param {unknown} error */
+export function isNotFoundError(error) {
+    const message = error instanceof Error ? error.message : String(error || '');
+    return /(?:^|\b)(?:not found:|entity not found:)/i.test(message);
+}
+
 export async function resolveRouteCharacterId(context, options) {
     try {
         return { characterId: await context.resolveCharacterId(options) };

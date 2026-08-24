@@ -13,6 +13,25 @@ function registerGetRoute(context) {
     return router;
 }
 
+test('character cache invalidation defers refresh until the next read', async () => {
+    let reads = 0;
+    const service = createCharacterService({
+        safeInvoke: async (command) => {
+            assert.equal(command, 'get_all_characters');
+            reads += 1;
+            return [{ name: `Character ${reads}`, avatar: `Character ${reads}.png` }];
+        },
+    });
+
+    await service.getAllCharacters();
+    await service.getAllCharacters();
+    service.invalidateCharacterCache();
+    const refreshed = await service.getAllCharacters();
+
+    assert.equal(reads, 2);
+    assert.equal(refreshed[0].name, 'Character 2');
+});
+
 
 test('/api/characters/get treats avatar_url as an exact avatar filename identity', async () => {
     const calls = [];
@@ -126,6 +145,45 @@ test('/api/characters/get keeps name lookup only when avatar identity is absent'
     assert.deepEqual(calls, [
         { command: 'get_character', args: { name: 'Alice' } },
     ]);
+});
+
+test('/api/characters/get restores open card fields without narrowing their JSON types', async () => {
+    const service = createCharacterService({
+        safeInvoke: async () => ({
+            name: 'Alice',
+            avatar: 'Alice.png',
+            create_date: 'projected date',
+            description: 'projected description',
+            extensions: {
+                depth_prompt: { prompt: '', depth: '', role: 'system' },
+            },
+            json_data: JSON.stringify({
+                spec: 'chara_card_v2',
+                create_date: 123,
+                unknown_root: { kept: true },
+                data: {
+                    name: 'Alice',
+                    description: { raw: true },
+                    unknown_data: [1, 2, 3],
+                    alternate_greetings: '',
+                    extensions: {
+                        depth_prompt: { prompt: '', depth: '', role: 'system' },
+                    },
+                },
+            }),
+        }),
+    });
+
+    const character = await service.getSingleCharacter({ avatar_url: 'Alice.png' });
+
+    assert.equal(character.spec, 'chara_card_v2');
+    assert.equal(character.create_date, 123);
+    assert.deepEqual(character.unknown_root, { kept: true });
+    assert.deepEqual(character.data.unknown_data, [1, 2, 3]);
+    assert.deepEqual(character.description, { raw: true });
+    assert.deepEqual(character.data.description, { raw: true });
+    assert.equal(character.data.alternate_greetings, '');
+    assert.equal(character.data.extensions.depth_prompt.depth, '');
 });
 
 test('/api/characters/chats maps cached backend summaries to upstream listing shape', async () => {

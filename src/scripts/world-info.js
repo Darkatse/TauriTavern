@@ -6381,7 +6381,6 @@ export async function charUpdatePrimaryWorld(name) {
             toastr.info(t`Embedded lorebook will be removed from this character.`);
         } catch (error) {
             console.error('Failed to parse character JSON data.', error);
-            throw error;
         }
     }
 

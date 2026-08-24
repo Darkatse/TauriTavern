@@ -53,7 +53,7 @@ test('/api/characters/lorebook-conflict resolves avatar identity before checking
     ]);
 });
 
-test('/api/characters/resolve-lorebook-conflict maps copy resolution and refreshes character cache', async () => {
+test('/api/characters/resolve-lorebook-conflict maps copy resolution and invalidates character cache', async () => {
     const router = createRouteRegistry();
     const calls = [];
     const context = {
@@ -69,10 +69,7 @@ test('/api/characters/resolve-lorebook-conflict maps copy resolution and refresh
                 world_written: true,
             };
         },
-        getAllCharacters: async (options) => {
-            calls.push({ type: 'refresh', options });
-            return [];
-        },
+        invalidateCharacterCache: () => calls.push({ type: 'invalidate' }),
     };
 
     registerCharacterRoutes(router, context, { textResponse, jsonResponse });
@@ -109,7 +106,7 @@ test('/api/characters/resolve-lorebook-conflict maps copy resolution and refresh
                 },
             },
         },
-        { type: 'refresh', options: { shallow: true, forceRefresh: true } },
+        { type: 'invalidate' },
     ]);
 });
 
@@ -173,7 +170,7 @@ test('/api/characters/resolve-lorebook-conflict keeps legacy current resolution 
             calls.push({ command, args });
             return { world: 'Alice Lore', affected_world: null, world_written: false };
         },
-        getAllCharacters: async () => [],
+        invalidateCharacterCache: () => {},
     };
     registerCharacterRoutes(router, context, { textResponse, jsonResponse });
 

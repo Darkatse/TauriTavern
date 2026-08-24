@@ -12053,13 +12053,6 @@ export async function swipe_right(event = null, { source, repeated, message } = 
     await swipe.call(this, event, SWIPE_DIRECTION.RIGHT, { source: source, repeated: repeated, message: message });
 }
 
-class CharacterReplacementPostImportError extends Error {
-    constructor(message, cause) {
-        super(message, { cause });
-        this.name = 'CharacterReplacementPostImportError';
-    }
-}
-
 /**
  * Imports supported files dropped into the app window.
  * @param {File[]} files Array of files to process
@@ -12105,29 +12098,31 @@ export async function processDroppedFiles(files, data = new Map(), { replacement
             }
         }
 
-        try {
-            if (avatarFileNames.length > 0) {
+        if (avatarFileNames.length > 0) {
+            try {
                 await importCharactersTags(avatarFileNames);
+            } catch (error) {
+                console.warn('Characters imported, but their tags could not be imported:', error);
+                toastr.warning(error?.message, t`Characters imported; tag import failed`);
             }
+        }
 
-            for (const avatarFileName of replacements) {
+        for (const avatarFileName of replacements) {
+            try {
                 await resolveImportedCharacterLorebookConflict(avatarFileName);
+            } catch (error) {
+                console.warn('Character replaced, but its World/Lorebook conflict could not be resolved:', error);
+                toastr.warning(error?.message, t`Character replaced; World/Lorebook follow-up failed`);
             }
+        }
 
-            if (avatarFileNames.length > 0) {
+        if (avatarFileNames.length > 0) {
+            try {
                 selectImportedChar(avatarFileNames[avatarFileNames.length - 1]);
+            } catch (error) {
+                console.warn('Characters imported, but the imported character could not be selected:', error);
+                toastr.warning(error?.message, t`Characters imported; selection failed`);
             }
-        } catch (error) {
-            if (error instanceof CharacterReplacementPostImportError) {
-                throw error;
-            }
-            if (replacements.length > 0) {
-                throw new CharacterReplacementPostImportError(
-                    error?.message || t`Failed to resolve the World/Lorebook conflict.`,
-                    error,
-                );
-            }
-            throw error;
         }
     } finally {
         resumeImportedCharacterAgentAssetQueue();
@@ -12191,7 +12186,6 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
     formData.append('user_name', name1);
     if (preserveFileName) formData.append('preserved_name', preserveFileName);
 
-    let replacementCommitted = false;
     try {
         if (replacement) {
             await flushWorldInfoSaves('replace_character_lorebook_conflict');
@@ -12232,7 +12226,6 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
         if (data.file_name !== undefined) {
             const avatarFileName = `${data.file_name}.png`;
             const replaced = Boolean(data.replaced);
-            replacementCommitted = replacement;
 
             $('#character_search_bar').val('').trigger('input');
 
@@ -12242,7 +12235,12 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
                 || '',
             );
             if (linkedWorld && !world_names?.includes(linkedWorld)) {
-                await updateWorldInfoList();
+                try {
+                    await updateWorldInfoList();
+                } catch (error) {
+                    console.warn('Character imported, but the World/Lorebook list could not be refreshed:', error);
+                    toastr.warning(error?.message, t`Character imported; World/Lorebook refresh failed`);
+                }
             }
 
             if (replaced) {
@@ -12251,15 +12249,25 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
                 toastr.success(t`Character Created: ${String(data.file_name).replace('.png', '')}`);
             }
             if (importTags) {
-                await importCharactersTags([avatarFileName]);
-                selectImportedChar(data.file_name);
+                try {
+                    await importCharactersTags([avatarFileName]);
+                    selectImportedChar(data.file_name);
+                } catch (error) {
+                    console.warn('Character imported, but its tags could not be imported:', error);
+                    toastr.warning(error?.message, t`Character imported; tag import failed`);
+                }
             }
-            enqueueImportedCharacterAgentAssetScan({
-                avatarFileName,
-                label: String(data.file_name).replace('.png', ''),
-                character: data.character,
-                postImport: data.post_import,
-            });
+            try {
+                enqueueImportedCharacterAgentAssetScan({
+                    avatarFileName,
+                    label: String(data.file_name).replace('.png', ''),
+                    character: data.character,
+                    postImport: data.post_import,
+                });
+            } catch (error) {
+                console.warn('Character imported, but its Agent assets could not be inspected:', error);
+                toastr.warning(error?.message, t`Character imported; Agent asset scan failed`);
+            }
             return { avatarFileName, replaced };
         }
 
@@ -12268,12 +12276,6 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
         }
     } catch (error) {
         console.error('Error importing character', error);
-        if (replacementCommitted) {
-            throw new CharacterReplacementPostImportError(
-                error?.message || t`Failed to resolve the World/Lorebook conflict.`,
-                error,
-            );
-        }
         if (replacement) {
             throw error;
         }
@@ -12813,7 +12815,6 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
         return false;
     }
 
-    const worldsToDelete = new Set();
     let deleted = false;
 
     for (const key of characterKey) {
@@ -12823,32 +12824,13 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
             continue;
         }
 
-        let primaryWorldName = String(character?.data?.extensions?.world ?? '');
-        if (primaryWorldName === '') {
-            const detailsResponse = await fetch('/api/characters/get', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({ avatar_url: character.avatar }),
-                cache: 'no-cache',
-            });
-
-            if (!detailsResponse.ok) {
-                toastr.error(t`Failed to resolve linked worldbook for character deletion.`, t`Failed to delete character`);
-                continue;
-            }
-
-            try {
-                const details = await detailsResponse.json();
-                primaryWorldName = String(details?.data?.extensions?.world ?? details?.extensions?.world ?? '');
-            } catch (error) {
-                console.error('Failed to parse character details response:', error);
-                toastr.error(t`Failed to resolve linked worldbook for character deletion.`, t`Failed to delete character`);
-                continue;
-            }
-        }
-
         const chid = characters.indexOf(character);
-        const pastChats = await getPastCharacterChats(chid);
+        const pastChats = deleteChats
+            ? await getPastCharacterChats(chid).catch(error => {
+                console.error('Failed to list chats before deleting character:', error);
+                return [];
+            })
+            : [];
 
         const msg = { avatar_url: character.avatar, delete_chats: deleteChats };
 
@@ -12864,12 +12846,12 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
             continue;
         }
 
-        if (primaryWorldName !== '') {
-            worldsToDelete.add(primaryWorldName);
+        try {
+            const { clearCharacterSkillImportReminders } = await import('./scripts/tauri/agent-skills/reminders.js');
+            clearCharacterSkillImportReminders(character.avatar);
+        } catch (error) {
+            console.error('Failed to clear character Skill reminders:', error);
         }
-
-        const { clearCharacterSkillImportReminders } = await import('./scripts/tauri/agent-skills/reminders.js');
-        clearCharacterSkillImportReminders(character.avatar);
         accountStorage.removeItem(`AlertWI_${character.avatar}`);
         accountStorage.removeItem(`AlertRegex_${character.avatar}`);
         accountStorage.removeItem(`mediaWarningShown:${character.avatar}`);
@@ -12887,21 +12869,17 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
         deleted = true;
     }
 
-    await removeCharacterFromUI();
-
-    for (const worldName of worldsToDelete) {
+    try {
+        await removeCharacterFromUI();
+    } catch (error) {
+        console.error('Character deleted, but the UI refresh failed:', error);
+        toastr.warning(t`Character deleted, but the character list could not be refreshed.`);
+    }
+    if (deleted) {
         try {
-            if (!world_names.includes(worldName)) {
-                await updateWorldInfoList();
-            }
-
-            const deleted = await deleteWorldInfo(worldName, { saveLinkedCharacter: false });
-            if (!deleted) {
-                toastr.warning(t`Failed to delete linked worldbook.`, t`Character Deleted`);
-            }
+            await updateWorldInfoList();
         } catch (error) {
-            console.error('Failed to delete linked worldbook:', error);
-            toastr.error(t`Failed to delete linked worldbook.`, t`Character Deleted`);
+            console.error('Character deleted, but the World/Lorebook list refresh failed:', error);
         }
     }
 
@@ -14459,19 +14437,16 @@ jQuery(async function () {
                         await openCharacterChat(currentChatFile);
                         await refreshCharacterAvatarImages(replacementAvatar);
                     } catch (error) {
-                        throw new CharacterReplacementPostImportError(
-                            error?.message || t`Failed to resolve the World/Lorebook conflict.`,
-                            error,
-                        );
+                        console.warn('Character replaced, but its chat or avatar could not be refreshed:', error);
+                        toastr.warning(error?.message, t`Character replaced; refresh failed`);
                     }
                 }
 
                 async function showReplacementError(error) {
                     console.warn('Failed to replace the character card:', error);
-                    const postImportFailure = error instanceof CharacterReplacementPostImportError;
                     toastr.error(
                         error?.message || t`Failed to replace the character card.`,
-                        postImportFailure ? t`Character replaced; follow-up failed` : t`Character replacement failed`,
+                        t`Character replacement failed`,
                     );
                     try {
                         await getCharacters();

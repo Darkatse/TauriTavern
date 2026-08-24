@@ -16,9 +16,13 @@ import { createCharacterFormService } from '../src/tauri/main/services/character
 test('/api/characters/edit-avatar delegates multipart avatar replacement only', async () => {
     const router = createRouteRegistry();
     const calls = [];
+    let invalidated = false;
     const context = {
         editCharacterAvatarFromForm: async (formData, url) => {
             calls.push({ formData, url });
+        },
+        invalidateCharacterCache: () => {
+            invalidated = true;
         },
     };
 
@@ -42,6 +46,7 @@ test('/api/characters/edit-avatar delegates multipart avatar replacement only', 
     assert.equal(calls.length, 1);
     assert.equal(calls[0].formData, body);
     assert.equal(calls[0].url, url);
+    assert.equal(invalidated, true);
 });
 
 
@@ -67,6 +72,66 @@ test('/api/characters/edit-avatar rejects non-multipart payloads', async () => {
     assert.deepEqual(await response.json(), { error: 'Expected multipart form data' });
 });
 
+test('character form edit preserves the embedded lorebook while updating ordinary fields', async () => {
+    const calls = [];
+    const service = createCharacterFormService({
+        safeInvoke: async (command, args) => calls.push({ command, args }),
+        resolveCharacterId: async () => 'Alice',
+        resolveExistingCharacterId: async () => 'Alice',
+        materializeUploadFile: async () => {
+            throw new Error('materializeUploadFile should not be called');
+        },
+    });
+    const characterBook = {
+        name: 'Embedded Lore',
+        entries: [{ keys: ['alpha'], content: 'kept' }],
+    };
+    const body = new FormData();
+    body.set('avatar_url', 'Alice.png');
+    body.set('ch_name', 'Alice');
+    body.set('world', 'Local Lore');
+    body.set('description', 'updated');
+    body.set('json_data', JSON.stringify({
+        data: {
+            character_book: characterBook,
+            extensions: { world: 'Local Lore' },
+        },
+    }));
+
+    await service.editCharacterFromForm(body, new URL('http://localhost/api/characters/edit'));
+
+    assert.equal(calls.length, 1);
+    const written = JSON.parse(calls[0].args.dto.card_json);
+    assert.deepEqual(written.data.character_book, characterBook);
+    assert.equal(written.data.description, 'updated');
+    assert.equal(calls[0].args.dto.materialize_primary_lorebook, true);
+});
+
+test('character form ignores malformed optional card JSON and saves owned fields', async () => {
+    const calls = [];
+    const service = createCharacterFormService({
+        safeInvoke: async (command, args) => calls.push({ command, args }),
+        resolveCharacterId: async () => 'Alice',
+        resolveExistingCharacterId: async () => 'Alice',
+        materializeUploadFile: async () => {
+            throw new Error('materializeUploadFile should not be called');
+        },
+    });
+    const body = new FormData();
+    body.set('avatar_url', 'Alice.png');
+    body.set('ch_name', 'Alice');
+    body.set('description', 'recovered');
+    body.set('json_data', '{');
+    body.set('extensions', '[');
+
+    await service.editCharacterFromForm(body, new URL('http://localhost/api/characters/edit'));
+
+    assert.equal(calls.length, 1);
+    const written = JSON.parse(calls[0].args.dto.card_json);
+    assert.equal(written.data.description, 'recovered');
+    assert.equal(written.spec, 'chara_card_v2');
+});
+
 test('/api/characters/create accepts upstream JSON character payloads', async () => {
     const router = createRouteRegistry();
     const calls = [];
@@ -78,10 +143,7 @@ test('/api/characters/create accepts upstream JSON character payloads', async ()
             calls.push({ type: 'payload', payload });
             return { character: { avatar: 'Alice.png' }, warnings: [] };
         },
-        getAllCharacters: async (options) => {
-            calls.push({ type: 'refresh', options });
-            return [];
-        },
+        invalidateCharacterCache: () => calls.push({ type: 'invalidate' }),
     };
 
     registerCharacterRoutes(router, context, { textResponse, jsonResponse });
@@ -106,7 +168,7 @@ test('/api/characters/create accepts upstream JSON character payloads', async ()
     assert.equal(await response.text(), 'Alice.png');
     assert.deepEqual(calls, [
         { type: 'payload', payload },
-        { type: 'refresh', options: { shallow: true, forceRefresh: true } },
+        { type: 'invalidate' },
     ]);
 });
 
@@ -127,10 +189,7 @@ test('/api/characters/create keeps text body and exposes avatar fallback warning
         createCharacterFromPayload: async () => {
             throw new Error('createCharacterFromPayload should not be called');
         },
-        getAllCharacters: async (options) => {
-            calls.push({ type: 'refresh', options });
-            return [];
-        },
+        invalidateCharacterCache: () => calls.push({ type: 'invalidate' }),
     };
 
     registerCharacterRoutes(router, context, { textResponse, jsonResponse });
@@ -153,7 +212,7 @@ test('/api/characters/create keeps text body and exposes avatar fallback warning
     assert.equal(response.headers.get('x-tauritavern-warning'), CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED);
     assert.deepEqual(calls, [
         { type: 'form', formData: body, url },
-        { type: 'refresh', options: { shallow: true, forceRefresh: true } },
+        { type: 'invalidate' },
     ]);
 });
 

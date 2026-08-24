@@ -123,12 +123,12 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
     router.post('/api/characters/create', async ({ body, url }) => {
         if (body instanceof FormData) {
             const outcome = await context.createCharacterFromForm(body, url);
-            await context.getAllCharacters({ shallow: true, forceRefresh: true });
+            context.invalidateCharacterCache();
             return createCharacterResponse(outcome, textResponse);
         }
 
         const outcome = await context.createCharacterFromPayload(body);
-        await context.getAllCharacters({ shallow: true, forceRefresh: true });
+        context.invalidateCharacterCache();
         return createCharacterResponse(outcome, textResponse);
     });
 
@@ -138,6 +138,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         }
 
         await context.editCharacterFromForm(body, url);
+        context.invalidateCharacterCache();
         return textResponse('ok');
     });
 
@@ -189,7 +190,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
             },
         });
 
-        await context.getAllCharacters({ shallow: true, forceRefresh: true });
+        context.invalidateCharacterCache();
         return jsonResponse(result);
     });
 
@@ -199,6 +200,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         }
 
         await context.editCharacterAvatarFromForm(body, url);
+        context.invalidateCharacterCache();
         return textResponse('OK');
     });
 
@@ -221,7 +223,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
             },
         });
 
-        await context.getAllCharacters({ shallow: true, forceRefresh: true });
+        context.invalidateCharacterCache();
         return jsonResponse({ ok: true });
     });
 
@@ -246,7 +248,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
         });
 
         const normalized = context.normalizeCharacter(renamed);
-        await context.getAllCharacters({ shallow: true, forceRefresh: true });
+        context.invalidateCharacterCache();
         return jsonResponse(normalized);
     });
 
@@ -275,7 +277,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
             dto: { name: originalCharacterId },
         });
         const normalized = context.normalizeCharacter(created);
-        await context.getAllCharacters({ shallow: true, forceRefresh: true });
+        context.invalidateCharacterCache();
 
         return jsonResponse({ path: normalized.avatar });
     });
@@ -307,7 +309,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
                     filter: body.filter ?? null,
                 },
             });
-            await context.getAllCharacters({ shallow: true, forceRefresh: true });
+            context.invalidateCharacterCache();
             return jsonResponse(result);
         }
 
@@ -340,7 +342,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
                 update,
             },
         });
-        await context.getAllCharacters({ shallow: true, forceRefresh: true });
+        context.invalidateCharacterCache();
 
         return jsonResponse({ ok: true });
     });
