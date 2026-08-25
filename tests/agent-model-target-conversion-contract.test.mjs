@@ -2,8 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { EventEmitter } from '../src/lib/eventemitter.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const MODEL_TARGET_EVENT_TYPES = Object.freeze({
+    MODEL_TARGET_CREATED: 'test_model_target_created',
+    MODEL_TARGET_UPDATED: 'test_model_target_updated',
+    MODEL_TARGET_DELETED: 'test_model_target_deleted',
+});
 
 async function importConversion() {
     return import(pathToFileURL(path.join(
@@ -23,13 +29,6 @@ async function importSharedModelTargetConnection() {
     return import(pathToFileURL(path.join(
         REPO_ROOT,
         'src/scripts/tauritavern/agent/model-target-llm-connection.js',
-    )));
-}
-
-async function importEvents() {
-    return import(pathToFileURL(path.join(
-        REPO_ROOT,
-        'src/scripts/events.js',
     )));
 }
 
@@ -56,18 +55,22 @@ function installConnectionHarness(targets, options = {}) {
     const savedConnections = [];
     const deletedConnections = [];
     const errors = [];
+    const eventSource = new EventEmitter();
+    const context = {
+        extensionSettings: {
+            connectionManager: {
+                modelTargets: targets,
+            },
+        },
+        eventSource,
+        eventTypes: MODEL_TARGET_EVENT_TYPES,
+    };
     globalThis.localStorage = {
         getItem: () => null,
     };
     globalThis.window = {
         SillyTavern: {
-            getContext: () => ({
-                extensionSettings: {
-                    connectionManager: {
-                        modelTargets: targets,
-                    },
-                },
-            }),
+            getContext: () => context,
         },
         __TAURITAVERN__: {
             api: {
@@ -90,7 +93,13 @@ function installConnectionHarness(targets, options = {}) {
         },
     };
 
-    return { savedConnections, deletedConnections, errors };
+    return {
+        savedConnections,
+        deletedConnections,
+        errors,
+        eventSource,
+        eventTypes: MODEL_TARGET_EVENT_TYPES,
+    };
 }
 
 async function captureConsole(operation) {
@@ -234,12 +243,18 @@ test('Agent model target connection sync follows saved Model Target updates', as
             labelSnapshot: 'Rotated custom key',
         },
     });
-    const { savedConnections, deletedConnections, errors } = installConnectionHarness([target]);
+    const {
+        savedConnections,
+        deletedConnections,
+        errors,
+        eventSource,
+        eventTypes,
+    } = installConnectionHarness([target]);
     const {
         startModelTargetLlmConnectionSync,
+        subscribeModelTargetChanges,
         syncSavedModelTargetLlmConnections,
     } = await importConnection();
-    const { event_types, eventSource } = await importEvents();
 
     const result = await syncSavedModelTargetLlmConnections();
     assert.equal(result.synced, 1);
@@ -247,16 +262,21 @@ test('Agent model target connection sync follows saved Model Target updates', as
     assert.equal(savedConnections.at(-1).auth.secretRef.id, 'secret-custom');
 
     const stopSync = startModelTargetLlmConnectionSync();
+    const observedChanges = [];
+    const unsubscribeChanges = subscribeModelTargetChanges((change) => observedChanges.push(change));
     try {
-        await captureConsole(() => eventSource.emit(event_types.MODEL_TARGET_UPDATED, target, updatedTarget));
+        await captureConsole(() => eventSource.emit(eventTypes.MODEL_TARGET_UPDATED, target, updatedTarget));
         assert.equal(savedConnections.at(-1).auth.secretRef.id, 'secret-rotated');
+        assert.equal(observedChanges.at(-1).type, 'updated');
 
         const savedCountAfterUpdate = savedConnections.length;
-        await captureConsole(() => eventSource.emit(event_types.MODEL_TARGET_DELETED, updatedTarget));
+        await captureConsole(() => eventSource.emit(eventTypes.MODEL_TARGET_DELETED, updatedTarget));
         assert.equal(savedConnections.length, savedCountAfterUpdate);
+        assert.equal(observedChanges.at(-1).type, 'deleted');
         assert.deepEqual(deletedConnections, []);
         assert.deepEqual(errors, []);
     } finally {
+        unsubscribeChanges();
         stopSync();
     }
 });

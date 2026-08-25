@@ -62,6 +62,15 @@ function installHost(tryGetJson: () => Promise<StoredSettingsResult>): void {
         value: {
             getContext: () => ({
                 extensionSettings: { connectionManager: { modelTargets: [] } },
+                eventSource: {
+                    on: () => undefined,
+                    removeListener: () => undefined,
+                },
+                eventTypes: {
+                    MODEL_TARGET_CREATED: 'model_target_created',
+                    MODEL_TARGET_UPDATED: 'model_target_updated',
+                    MODEL_TARGET_DELETED: 'model_target_deleted',
+                },
                 getPresetManager: () => ({
                     getAllPresets: () => [],
                     findPreset: () => null,

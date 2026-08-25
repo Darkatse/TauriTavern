@@ -1,4 +1,3 @@
-import { event_types, eventSource } from '../../../events.js';
 import { errorText, requireLlmConnectionsApi, requireSillyTavernContext } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
 import {
@@ -22,6 +21,25 @@ export {
 };
 
 let stopModelTargetLlmConnectionSync = null;
+
+function requireModelTargetEvents() {
+    const { eventSource, eventTypes } = requireSillyTavernContext();
+    const requiredEvents = [
+        eventTypes?.MODEL_TARGET_CREATED,
+        eventTypes?.MODEL_TARGET_UPDATED,
+        eventTypes?.MODEL_TARGET_DELETED,
+    ];
+
+    if (
+        typeof eventSource?.on !== 'function'
+        || typeof eventSource?.removeListener !== 'function'
+        || requiredEvents.some((event) => typeof event !== 'string' || event.length === 0)
+    ) {
+        throw new Error('agent.model_target_events_unavailable: SillyTavern Model Target event contract is unavailable');
+    }
+
+    return { eventSource, eventTypes };
+}
 
 export function listSavedModelTargets() {
     return listSavedModelTargetsFromContext(requireSillyTavernContext());
@@ -63,15 +81,16 @@ export function startModelTargetLlmConnectionSync() {
         return stopModelTargetLlmConnectionSync;
     }
 
+    const { eventSource, eventTypes } = requireModelTargetEvents();
     const handleCreated = (target) => syncModelTargetLlmConnectionFromEvent(target);
     const handleUpdated = (_oldTarget, target) => syncModelTargetLlmConnectionFromEvent(target, { invalidateOnFailure: true });
 
-    eventSource.on(event_types.MODEL_TARGET_CREATED, handleCreated);
-    eventSource.on(event_types.MODEL_TARGET_UPDATED, handleUpdated);
+    eventSource.on(eventTypes.MODEL_TARGET_CREATED, handleCreated);
+    eventSource.on(eventTypes.MODEL_TARGET_UPDATED, handleUpdated);
 
     stopModelTargetLlmConnectionSync = () => {
-        eventSource.removeListener(event_types.MODEL_TARGET_CREATED, handleCreated);
-        eventSource.removeListener(event_types.MODEL_TARGET_UPDATED, handleUpdated);
+        eventSource.removeListener(eventTypes.MODEL_TARGET_CREATED, handleCreated);
+        eventSource.removeListener(eventTypes.MODEL_TARGET_UPDATED, handleUpdated);
         stopModelTargetLlmConnectionSync = null;
     };
 
@@ -79,18 +98,19 @@ export function startModelTargetLlmConnectionSync() {
 }
 
 export function subscribeModelTargetChanges(listener) {
+    const { eventSource, eventTypes } = requireModelTargetEvents();
     const handleCreated = (target) => listener({ type: 'created', target });
     const handleUpdated = (oldTarget, target) => listener({ type: 'updated', oldTarget, target });
     const handleDeleted = (target) => listener({ type: 'deleted', target });
 
-    eventSource.on(event_types.MODEL_TARGET_CREATED, handleCreated);
-    eventSource.on(event_types.MODEL_TARGET_UPDATED, handleUpdated);
-    eventSource.on(event_types.MODEL_TARGET_DELETED, handleDeleted);
+    eventSource.on(eventTypes.MODEL_TARGET_CREATED, handleCreated);
+    eventSource.on(eventTypes.MODEL_TARGET_UPDATED, handleUpdated);
+    eventSource.on(eventTypes.MODEL_TARGET_DELETED, handleDeleted);
 
     return () => {
-        eventSource.removeListener(event_types.MODEL_TARGET_CREATED, handleCreated);
-        eventSource.removeListener(event_types.MODEL_TARGET_UPDATED, handleUpdated);
-        eventSource.removeListener(event_types.MODEL_TARGET_DELETED, handleDeleted);
+        eventSource.removeListener(eventTypes.MODEL_TARGET_CREATED, handleCreated);
+        eventSource.removeListener(eventTypes.MODEL_TARGET_UPDATED, handleUpdated);
+        eventSource.removeListener(eventTypes.MODEL_TARGET_DELETED, handleDeleted);
     };
 }
 
