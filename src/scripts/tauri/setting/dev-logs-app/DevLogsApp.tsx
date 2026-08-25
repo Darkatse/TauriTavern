@@ -16,7 +16,7 @@ function DevLogsApp({ options }: { options: DevLogsMountOptions }) {
     return <LlmApiLogsPanel {...options} />;
 }
 
-export function mountTauriTavernDevLogsApp(mount: unknown, options: DevLogsMountOptions): DevLogsHandle {
+export function mountTauriTavernDevLogsApp(mount: unknown, options: unknown): DevLogsHandle {
     if (!(mount instanceof HTMLElement)) {
         throw new Error('TauriTavern dev logs mount element is required');
     }

@@ -12,7 +12,7 @@ import {
 } from './DevLogsContract';
 import { DevLogButton, TextPreviewSection } from './DevLogComponents';
 import { useAsyncSubscription } from './useAsyncSubscription';
-import { formatTime, formatTimestamp } from './log-utils.js';
+import { formatTime, formatTimestamp } from './log-utils';
 
 type LlmIndexState = {
     entries: LlmApiLogIndexEntry[];
@@ -61,8 +61,7 @@ function previewText(state: PreviewLoadState | null, field: BodyField, loadingTe
     return field === 'request' ? state.value.requestReadable : state.value.responseReadable;
 }
 
-// A failed raw load surfaces in the request pane; the response pane stays
-// empty, matching the pre-migration panel.
+// A failed raw load surfaces once in the request pane.
 function rawText(state: RawLoadState | null, field: BodyField, loadingText: string): string {
     if (!state || state.status === 'loading') {
         return loadingText;

@@ -12,7 +12,6 @@ import {
     type SettingsCapabilities,
     type SettingsDataRootState,
     type SettingsHandle,
-    type SettingsMountOptions,
     type SettingsOption,
     type SettingsTranslate,
 } from './SettingsContract';
@@ -354,7 +353,7 @@ function SettingsApp({
 
 export function mountTauriTavernSettingsApp(
     mount: unknown,
-    options: SettingsMountOptions,
+    options: unknown,
 ): SettingsHandle {
     if (!(mount instanceof HTMLElement)) {
         throw new Error('TauriTavern settings mount element is required');

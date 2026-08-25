@@ -226,18 +226,25 @@ const REQUIRED_ACTIONS = [
 
 /** Validates the parts of the JS host boundary that TypeScript cannot see. */
 export function validateSettingsBoundary(
-    options: SettingsMountOptions | undefined,
+    options: unknown,
 ): asserts options is SettingsMountOptions {
-    if (!options?.viewModel?.capabilities || !options.viewModel.values) {
+    if (!plainObject(options)
+        || !plainObject(options.viewModel)
+        || !options.viewModel.capabilities
+        || !options.viewModel.values) {
         throw new Error('TauriTavern settings view model is required');
     }
     if (typeof options.tr !== 'function') {
         throw new Error('TauriTavern settings translator is required');
     }
-    const actions = options.actions as Record<string, unknown> | undefined;
+    const actions = plainObject(options.actions) ? options.actions : {};
     for (const name of REQUIRED_ACTIONS) {
-        if (typeof actions?.[name] !== 'function') {
+        if (typeof actions[name] !== 'function') {
             throw new Error(`TauriTavern settings action is unavailable: ${name}`);
         }
     }
+}
+
+function plainObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

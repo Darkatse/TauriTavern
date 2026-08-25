@@ -153,7 +153,7 @@ test('settings mount enforces its public boundary and unmounts the root', () => 
         viewModel: options.viewModel,
         actions: partialActions,
         tr,
-    } as never)).toThrow('TauriTavern settings action is unavailable: chooseWallpaper');
+    })).toThrow('TauriTavern settings action is unavailable: chooseWallpaper');
 
     const { container, handle } = mountApp();
     expect(container.innerHTML).not.toBe('');

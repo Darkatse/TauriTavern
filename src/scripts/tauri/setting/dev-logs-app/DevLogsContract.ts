@@ -145,38 +145,40 @@ export type DevLogsHandle = {
 
 /** Validates the parts of the JS host boundary that TypeScript cannot see. */
 export function validateDevLogsBoundary(
-    options: DevLogsMountOptions | undefined,
+    options: unknown,
 ): asserts options is DevLogsMountOptions {
-    if (typeof options?.tr !== 'function') {
+    if (!plainObject(options) || typeof options.tr !== 'function') {
         throw new Error('TauriTavern dev logs translator is required');
     }
-    if (!options.client || typeof options.client !== 'object') {
+    if (!plainObject(options.client)) {
         throw new Error('TauriTavern dev logs client is required');
     }
-    if (!options.actions || typeof options.actions !== 'object') {
+    if (!plainObject(options.actions)) {
         throw new Error('TauriTavern dev logs actions are required');
     }
     if (options.kind !== 'live' && options.kind !== 'llm-api') {
-        const kind = (options as { kind?: unknown }).kind;
+        const { kind } = options;
         throw new Error(`Unsupported TauriTavern dev logs panel: ${typeof kind === 'string' ? kind : typeof kind}`);
     }
 
-    const client = options.client as unknown as Record<string, unknown>;
     const requiredMethods = options.kind === 'live'
-        ? options.showConsoleCapture
+        ? options.showConsoleCapture === true
             ? ['subscribe', 'setConsoleCaptureEnabled']
             : ['subscribe']
         : ['index', 'getPreview', 'getRaw', 'subscribeIndex', 'setKeep'];
     for (const name of requiredMethods) {
-        if (typeof client[name] !== 'function') {
+        if (typeof options.client[name] !== 'function') {
             throw new Error(`TauriTavern dev logs client method is unavailable: ${name}`);
         }
     }
 
-    const actions = options.actions as unknown as Record<string, unknown>;
     for (const name of ['copyText', 'openTextViewer', 'reportError']) {
-        if (typeof actions[name] !== 'function') {
+        if (typeof options.actions[name] !== 'function') {
             throw new Error(`TauriTavern dev logs action is unavailable: ${name}`);
         }
     }
+}
+
+function plainObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

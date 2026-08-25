@@ -5,7 +5,6 @@ import {
     automationTargetValue,
     validateSyncMainBoundary,
     type SyncMainHandle,
-    type SyncMainOptions,
     type SyncTarget,
     type SyncTranslate,
 } from './SyncContract';
@@ -426,7 +425,7 @@ function SyncMainView({ controller, canScanPairUri, tr }: SyncMainViewProps) {
 
 export function mountTauriTavernSyncApp(
     mount: unknown,
-    options: SyncMainOptions,
+    options: unknown,
 ): SyncMainHandle {
     if (!(mount instanceof HTMLElement)) {
         throw new Error('TauriTavern Sync mount element is required');
