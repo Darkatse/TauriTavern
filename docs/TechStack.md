@@ -91,7 +91,7 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | React / React DOM | TauriTavern first-party 状态型 UI 的统一表示层 |
 | strict TypeScript / TSX | React presentation、typed actions 与组件测试 |
 
-first-party React UI 采用 client island，而不是 Next.js 或独立 SPA：SillyTavern 继续拥有文档与扩展生命周期，Tauri/Rust 与 Host ABI 继续拥有平台能力和数据事实，React 只挂载到独立 extension container。构建复用 Rspack 2.1 的 `builtin:swc-loader`，`tsc` 独立执行类型检查；同一份 mode-aware 构建图分别服务 production build 与 Tauri development watch。当前不引入路由、全局状态库、query cache、CSS-in-JS 或 UI framework。
+first-party React UI 采用 client island，SillyTavern 继续拥有文档与扩展生命周期，Tauri/Rust 与 Host ABI 继续拥有平台能力和数据事实，React 只挂载到独立 extension container。
 
 TauriTavern 自己维护的前端集成层位于 `src/tauri/main/*`，按 `context/kernel/services/adapters/routes` 拆分：
 

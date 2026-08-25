@@ -90,7 +90,7 @@ function createVueDefinePlugin() {
   });
 }
 
-function createReactModule(development) {
+function createReactModule(development, reactCompiler = false) {
   return {
     rules: [
       {
@@ -103,6 +103,7 @@ function createReactModule(development) {
             detectSyntax: 'auto',
             jsc: {
               transform: {
+                reactCompiler,
                 react: {
                   development,
                   runtime: 'automatic',
@@ -165,7 +166,7 @@ export function createRspackConfigs(mode = 'production') {
       },
       clean: true,
     },
-    module: createReactModule(development),
+    module: createReactModule(development, true),
     plugins: [
       createVueDefinePlugin(),
     ],

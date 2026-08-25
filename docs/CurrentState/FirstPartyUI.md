@@ -33,7 +33,7 @@ src/scripts/tauri/setting/**/*.{ts,tsx}
 
 - `pnpm run web:build` 显式使用 production mode、persistent cache 和 fail-fast build。
 - `pnpm run web:dev` 显式使用 development mode、memory cache 和 watch。
-- Agent、MCP、Settings 三个 first-party compiler 都直接编译 TS/TSX；自有 UI 已不再消费 Vue，遗留 dependency 与 Agent DefinePlugin 留给 Phase 6 独立删除。
+- Agent、MCP、Settings 三个 first-party compiler 都直接编译 TS/TSX；只有 Agent 的 SWC rule 启用 React Compiler。自有 UI 已不再消费 Vue，遗留 dependency 与 Agent DefinePlugin 留给 Phase 6 独立删除。
 - production cache 由 Rspack 自己跟踪模块依赖；四个 compiler 使用独立目录。源码内容不再被预先哈希进 cache version，单文件修改不会人为废弃整个缓存。
 
 标准 `pnpm dev` 不再先生成 production bundle。`scripts/tauri-dev-server.mjs` 直接拥有同一份 development MultiCompiler：
@@ -99,9 +99,11 @@ Phase 4 UX 与状态一致性复审后（同日）：Live 面板 More 按钮并�
 
 Agent System Phase 5 五个切片完成后（2026-08-24）：Agent entry 为 465,458 raw / 130,154 gzip -9 bytes，production module graph 只包含 React/React DOM，不再包含 Vue runtime/compiler；迁移前最后一个双 runtime 基线为 656,384 / 194,316。active/history Timeline 与 SubAgent 共用 mount-local typed controller、event session/detail epoch 和 immutable cached snapshot，完整已读历史保留在内存，virtualizer 只限制 DOM。平台 WebView 的 scroll/pointer/native dialog smoke 仍是发布门禁，不由 happy-dom 结果替代。
 
+Agent SWC rule 启用 React Compiler 后（2026-08-24）：Agent entry 为 510,331 raw / 150,039 gzip -9 bytes；MCP 与 Settings 的 SWC rule 保持不变。Compiler 使用 Rspack 内置 SWC 能力，不新增 Babel、loader 或 npm dependency。
+
 ## 6. 当前有意不做的事情
 
-- 不启用 React Compiler。Rspack 基底已经具备后续能力，但先用 pilot 的 profiler 和 bundle 数据证明收益。
+- 不把 React Compiler 扩到 MCP 或 Settings；先用 Agent pilot 的 profiler 数据判断其他 entry 是否值得承担同样的产物成本。
 - 不预建跨 feature 的 `ui-runtime`、全局 root registry、通用 controller 或 subscription framework。各 root 只保留已经出现的局部机制；Dev Logs 的 `useAsyncSubscription()` 只服务两个具有相同异步 cleanup 语义的真实订阅者，不提升为全局抽象。
 - 不在 Phase 0 拆分 MCP 或修改聊天关键路径。行数棘轮先阻止债务增长，真实 feature 改动再沿职责边界拆分。
 - 不引入 router、全局状态库、query cache、CSS-in-JS、UI framework、Zod 或新测试框架。
