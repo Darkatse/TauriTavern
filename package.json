@@ -93,7 +93,6 @@
     "react-dom": "^19.2.8",
     "seedrandom": "^3.0.5",
     "showdown": "^2.1.0",
-    "vue": "^3.5.41",
     "yaml": "^2.8.3"
   },
   "engines": {

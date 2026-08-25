@@ -211,9 +211,7 @@ TauriTavern 自有的状态型 UI 作为 SillyTavern first-party extension 挂�
 - 样式必须使用 `--SmartTheme*`、字体、动画与边框变量，保留 SillyTavern vanilla 视觉和用户主题覆盖能力。
 - `tsconfig.ui.json`、React Hooks/TypeScript lint 与 Rstest/Testing Library 显式覆盖 Agent、MCP 和 `src/scripts/tauri/setting` 三个 owned scope；`pnpm check` 是统一验收入口。
 - production 与 development 共用 `createRspackConfigs(mode)`。标准 Tauri dev server 在首次 development 编译成功后才监听，并只在成功重编译后 reload。
-- `scripts/check-first-party-ui-guardrails.mjs` 约束 runtime template、Vue import、Vue root 和新 TSX 文件尺寸只能随迁移收敛。
-
-自有 UI 的 Vue root 已清零；不得重新引入跨框架组件桥。Vue dependency 与残留构建配置在独立清理阶段删除，不与功能改动混合。
+- `scripts/check-first-party-ui-guardrails.mjs` 为自有扩展架构限定为 React + Strict TypeScript。
 当前工程基线、冻结 handle 与 bundle 数据见 `docs/CurrentState/FirstPartyUI.md`。
 
 ### 7.4 契约与约束
