@@ -41,3 +41,20 @@ test('profileForEdit keeps CSV drafts separate and normalizeProfileForSave resto
     expect('visibleCsv' in saved.skills).toBe(false);
     expect('allowedCallersCsv' in saved.delegation).toBe(false);
 });
+
+test('tool description overrides preserve user text and reject invalid values', () => {
+    const profile = defaultProfile('descriptions');
+    profile.tools.toolDescriptions = {
+        'builtin:workspace.read_file': {
+            description: '  Read exactly this way.  ',
+            properties: { path: '  Use the supplied path.  ' },
+        },
+    };
+
+    expect(normalizeProfileForSave(profile).tools.toolDescriptions).toEqual(profile.tools.toolDescriptions);
+
+    Reflect.set(profile.tools, 'toolDescriptions', {
+        'builtin:workspace.read_file': { description: 42 },
+    });
+    expect(() => normalizeProfileForSave(profile)).toThrow(/description must be a string/);
+});

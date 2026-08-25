@@ -19,7 +19,7 @@ use crate::errors::ApplicationError;
 use crate::services::agent_workspace_scope::{
     format_model_visible_workspace_roots, format_model_workspace_roots,
 };
-use tt_domain::models::agent::profile::{AgentToolDescriptionOverride, ResolvedAgentProfile};
+use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::tool::{ToolCatalog, ToolDescriptor, ToolId};
 
 #[derive(Debug, Clone)]
@@ -74,7 +74,7 @@ impl BuiltinAgentToolRegistry {
         })?;
         apply_profile_context(&mut descriptor, profile)?;
         if let Some(override_) = profile.tools.tool_descriptions.get(tool_id) {
-            apply_description_override(&mut descriptor, override_)?;
+            descriptor.apply_description_override(override_)?;
         }
         Ok(descriptor)
     }
@@ -99,8 +99,7 @@ fn apply_return_mode_context(
             descriptor.description = Some(format!(
                 "List files visible to this delegated task under {visible_roots}. This is the same logical workspace used by the requesting Agent; use the paths named in the task brief."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!(
                     "Optional task workspace path under {visible_roots}. Omit to list visible roots."
@@ -111,8 +110,7 @@ fn apply_return_mode_context(
             descriptor.description = Some(format!(
                 "Read a visible UTF-8 task workspace file with line numbers. Omit start_line and line_count to read the full file; oversized files return a bounded preview with the next line to read. Visible roots are {visible_roots}. Use ordinary workspace paths exactly as they appear in the task brief or file list."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!("Visible task workspace file path under {visible_roots}."),
             )?;
@@ -121,8 +119,7 @@ fn apply_return_mode_context(
             descriptor.description = Some(format!(
                 "Search visible UTF-8 task workspace files under {visible_roots}. Use this before reading exact ranges."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 "Optional visible task workspace file or directory path. Omit to search all visible task paths.",
             )?;
@@ -131,8 +128,7 @@ fn apply_return_mode_context(
             descriptor.description = Some(format!(
                 "Write UTF-8 text to a writable workspace file for this delegated task. mode replace writes the complete file; mode append adds content exactly to the end and creates the file when missing. Writable prefixes are {writable_roots}. Use the path requested in the task brief when one is provided."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!(
                     "Writable task path under {writable_roots}. Use the path requested in the task when one is provided."
@@ -143,8 +139,7 @@ fn apply_return_mode_context(
             descriptor.description = Some(format!(
                 "Apply a precise single-file string replacement to a writable delegated-task workspace file. Writable prefixes are {writable_roots}. Fully read an existing file before editing it; if the tool reports that it changed, read it again and retry."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!(
                     "Writable task path under {writable_roots}. Use the path requested in the task when one is provided."
@@ -170,8 +165,7 @@ fn apply_profile_context(
             descriptor.description = Some(format!(
                 "List visible Agent workspace files under {visible_roots}. Use this before reading when you need to inspect available artifacts."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!(
                     "Optional relative workspace directory or file path under {visible_roots}. Omit to list the visible workspace roots."
@@ -187,8 +181,7 @@ fn apply_profile_context(
             descriptor.description = Some(format!(
                 "Read a visible UTF-8 Agent workspace file with line numbers. Omit start_line and line_count to read the full file; oversized files return a bounded preview with the next line to read.{patch_hint}"
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!("Relative workspace file path under {visible_roots}."),
             )?;
@@ -197,8 +190,7 @@ fn apply_profile_context(
             descriptor.description = Some(format!(
                 "Search visible UTF-8 Agent workspace files under {visible_roots}. Results return snippets and refs; use workspace_read_file to read exact ranges."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!(
                     "Optional visible workspace file or directory path under {visible_roots}. Omit to search all visible roots."
@@ -209,16 +201,14 @@ fn apply_profile_context(
             descriptor.description = Some(format!(
                 "Write UTF-8 text to a writable Agent workspace file. mode replace writes the complete file; mode append adds content exactly to the end and creates the file when missing. Use {final_path} for the default chat message body."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!("Relative workspace path. Writable prefixes are {writable_roots}."),
             )?;
         }
         WORKSPACE_APPLY_PATCH => {
             descriptor.description = Some("Apply a precise single-file string replacement. old_string must come from text you already read with workspace_read_file or from a file you created/replaced in this run. old_string must match exactly and uniquely unless replace_all is true. If a patch fails, fully read the file before retrying.".to_string());
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!("Relative writable workspace file path under {writable_roots}."),
             )?;
@@ -227,8 +217,7 @@ fn apply_profile_context(
             descriptor.description = Some(format!(
                 "Commit a workspace text file to this run's single chat message. With no arguments, replace the current run message with {final_path}. mode append appends the file text to the same message, creating it when this run has not committed yet."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!(
                     "Relative visible workspace file path to publish. Defaults to {final_path}."
@@ -251,66 +240,6 @@ fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
     let id = ToolId::builtin(name).expect("builtin Agent tool names form valid ToolIds");
     profile.tools.allow.iter().any(|allowed| allowed == &id)
         && !profile.tools.deny.iter().any(|denied| denied == &id)
-}
-
-pub(crate) fn apply_description_override(
-    descriptor: &mut ToolDescriptor,
-    override_: &AgentToolDescriptionOverride,
-) -> Result<(), ApplicationError> {
-    if let Some(description) = override_.description.as_ref() {
-        descriptor.description = Some(description.trim().to_string());
-    }
-
-    if override_.properties.is_empty() {
-        return Ok(());
-    }
-
-    for (property, description) in &override_.properties {
-        set_property_description(descriptor, property, description.trim())?;
-    }
-    Ok(())
-}
-
-fn set_property_description(
-    descriptor: &mut ToolDescriptor,
-    property: &str,
-    description: &str,
-) -> Result<(), ApplicationError> {
-    let object = property_schema_object_mut(descriptor, property)?;
-    object.insert(
-        "description".to_string(),
-        serde_json::Value::String(description.to_string()),
-    );
-    Ok(())
-}
-
-fn property_schema_object_mut<'a>(
-    descriptor: &'a mut ToolDescriptor,
-    property: &str,
-) -> Result<&'a mut serde_json::Map<String, serde_json::Value>, ApplicationError> {
-    let properties = descriptor
-        .input_schema
-        .get_mut("properties")
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| {
-            ApplicationError::ValidationError(format!(
-                "agent.profile_tool_properties_invalid: `{}` has no object properties",
-                descriptor.id.native_name()
-            ))
-        })?;
-    let schema = properties.get_mut(property).ok_or_else(|| {
-        ApplicationError::ValidationError(format!(
-            "agent.profile_unknown_tool_property: `{}` has no property `{property}`",
-            descriptor.id.native_name()
-        ))
-    })?;
-    let object = schema.as_object_mut().ok_or_else(|| {
-        ApplicationError::ValidationError(format!(
-            "agent.profile_tool_property_schema_invalid: `{}` property `{property}` is not an object",
-            descriptor.id.native_name()
-        ))
-    })?;
-    Ok(object)
 }
 
 #[cfg(test)]

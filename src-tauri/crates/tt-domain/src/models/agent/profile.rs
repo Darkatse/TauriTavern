@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{AgentRunPresentation, ArtifactSpec};
-use crate::models::tool::ToolId;
+use crate::models::tool::{ToolDescriptionOverride, ToolId};
 
 pub const AGENT_PROFILE_SCHEMA_VERSION: u32 = 3;
 pub const AGENT_PROFILE_KIND: &str = "tauritavern.agentProfile";
@@ -261,7 +261,7 @@ pub struct AgentToolPolicy<T = String> {
     #[serde(default)]
     pub deny: Vec<T>,
     #[serde(default)]
-    pub tool_descriptions: BTreeMap<T, AgentToolDescriptionOverride>,
+    pub tool_descriptions: BTreeMap<T, ToolDescriptionOverride>,
     pub max_rounds: usize,
     #[serde(default = "default_agent_tool_max_calls_per_run")]
     pub max_calls_per_run: usize,
@@ -272,15 +272,6 @@ pub struct AgentToolPolicy<T = String> {
 }
 
 pub type ResolvedAgentToolPolicy = AgentToolPolicy<ToolId>;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AgentToolDescriptionOverride {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub properties: BTreeMap<String, String>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

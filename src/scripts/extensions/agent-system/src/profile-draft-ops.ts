@@ -227,18 +227,13 @@ export function applyToolAllowed(
     ];
 }
 
-type ToolDescriptionOverride = {
-    description?: string;
-    properties?: Record<string, string>;
-};
-
 function updateToolDescriptionOverride(
     draft: AgentProfileDraft,
     toolId: string,
-    mutate: (override: ToolDescriptionOverride) => void,
+    mutate: (override: TauriTavernToolDescriptionOverride) => void,
 ): void {
     const toolDescriptions = { ...(draft.tools.toolDescriptions || {}) };
-    const override: ToolDescriptionOverride = { ...(toolDescriptions[toolId] || {}) };
+    const override: TauriTavernToolDescriptionOverride = { ...(toolDescriptions[toolId] || {}) };
     mutate(override);
     if (!override.description && !override.properties) {
         delete toolDescriptions[toolId];

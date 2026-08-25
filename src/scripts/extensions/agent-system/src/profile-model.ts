@@ -118,25 +118,34 @@ function normalizeToolDescriptions(value: unknown): ToolDescriptions {
             throw new Error(`tools.toolDescriptions.${toolName} must be an object`);
         }
 
-        const description = looseString(override.description).trim();
+        const description = override.description;
+        if (description !== undefined && typeof description !== 'string') {
+            throw new Error(`tools.toolDescriptions.${toolName}.description must be a string`);
+        }
         const properties: Record<string, string> = {};
         if (override.properties != null) {
             if (!isPlainObject(override.properties)) {
                 throw new Error(`tools.toolDescriptions.${toolName}.properties must be an object`);
             }
             for (const [property, propertyDescription] of Object.entries(override.properties)) {
-                const trimmed = looseString(propertyDescription).trim();
-                if (trimmed) {
-                    properties[property] = trimmed;
+                if (typeof propertyDescription !== 'string') {
+                    throw new Error(`tools.toolDescriptions.${toolName}.properties.${property} must be a string`);
+                }
+                if (propertyDescription.trim()) {
+                    properties[property] = propertyDescription;
                 }
             }
         }
 
-        if (description || Object.keys(properties).length > 0) {
-            normalized[toolName] = {
-                ...(description ? { description } : {}),
-                ...(Object.keys(properties).length > 0 ? { properties } : {}),
-            };
+        const normalizedOverride: TauriTavernToolDescriptionOverride = {};
+        if (typeof description === 'string' && description.trim()) {
+            normalizedOverride.description = description;
+        }
+        if (Object.keys(properties).length > 0) {
+            normalizedOverride.properties = properties;
+        }
+        if (normalizedOverride.description || normalizedOverride.properties) {
+            normalized[toolName] = normalizedOverride;
         }
     }
 

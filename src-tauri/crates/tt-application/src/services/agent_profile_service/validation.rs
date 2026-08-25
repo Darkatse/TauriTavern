@@ -1,18 +1,16 @@
 use std::collections::BTreeSet;
 
-use serde_json::Value;
-
 use crate::errors::ApplicationError;
 use tt_domain::models::agent::AgentRunPresentation;
 use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
 use tt_domain::models::agent::profile::{
     AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy, AgentDelegationPolicy,
     AgentModelBinding, AgentModelBindingMode, AgentProfileDefinition, AgentProfileId,
-    AgentProfileInstructions, AgentRunPolicy, AgentSkillPolicy, AgentToolDescriptionOverride,
-    AgentToolPolicy, AgentWorkspacePolicy, ResolvedAgentToolPolicy,
+    AgentProfileInstructions, AgentRunPolicy, AgentSkillPolicy, AgentToolPolicy,
+    AgentWorkspacePolicy, ResolvedAgentToolPolicy,
 };
 use tt_domain::models::mcp::{McpRegistrationId, validate_native_tool_name};
-use tt_domain::models::tool::{ToolCatalog, ToolDescriptor, ToolId};
+use tt_domain::models::tool::{ToolCatalog, ToolDescriptionOverride, ToolDescriptor, ToolId};
 
 use super::constants::{
     AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, AGENT_LIST_TOOL, TASK_RETURN_TOOL,
@@ -532,7 +530,7 @@ fn tool_is_visible(tools: &ResolvedAgentToolPolicy, name: &str) -> bool {
 fn validate_tool_description_override(
     id: &ToolId,
     descriptor: Option<&ToolDescriptor>,
-    override_: &AgentToolDescriptionOverride,
+    override_: &ToolDescriptionOverride,
 ) -> Result<(), ApplicationError> {
     if let Some(description) = override_.description.as_ref()
         && description.trim().is_empty()
@@ -554,22 +552,7 @@ fn validate_tool_description_override(
     let Some(descriptor) = descriptor else {
         return Ok(());
     };
-    let properties = descriptor
-        .input_schema
-        .get("properties")
-        .and_then(Value::as_object)
-        .ok_or_else(|| {
-            ApplicationError::ValidationError(format!(
-                "agent.profile_tool_properties_invalid: `{id}` has no object properties"
-            ))
-        })?;
-    for property in override_.properties.keys() {
-        if !properties.contains_key(property) {
-            return Err(ApplicationError::ValidationError(format!(
-                "agent.profile_unknown_tool_property: `{id}` has no property `{property}`"
-            )));
-        }
-    }
+    descriptor.clone().apply_description_override(override_)?;
     Ok(())
 }
 

@@ -399,10 +399,7 @@ type TauriTavernAgentProfileDefinition = {
     tools: {
         allow: string[];
         deny?: string[];
-        toolDescriptions?: Record<string, {
-            description?: string;
-            properties?: Record<string, string>;
-        }>;
+        toolDescriptions?: Record<string, TauriTavernToolDescriptionOverride>;
         maxRounds: number;
         maxCallsPerRun: number;
         mcpResultInlineCharLimit: number;
@@ -686,6 +683,11 @@ type TauriTavernLlmConnectionsApi = {
 type TauriTavernMcpServerState = 'active' | 'paused';
 type TauriTavernMcpToolPermission = 'off' | 'ask' | 'allow';
 type TauriTavernMcpProtocolVersion = 'auto' | '2026-07-28' | '2025-11-25' | '2025-06-18' | '2025-03-26';
+
+type TauriTavernToolDescriptionOverride = {
+    description?: string;
+    properties?: Record<string, string>;
+};
 
 type TauriTavernMcpServer = {
     id: string;

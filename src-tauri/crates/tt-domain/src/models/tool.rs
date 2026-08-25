@@ -158,6 +158,73 @@ pub struct ToolDescriptor {
     pub annotations: Value,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ToolDescriptionOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub properties: BTreeMap<String, String>,
+}
+
+impl ToolDescriptionOverride {
+    pub fn is_empty(&self) -> bool {
+        self.description.is_none() && self.properties.is_empty()
+    }
+}
+
+impl ToolDescriptor {
+    pub fn set_property_description(
+        &mut self,
+        property: &str,
+        description: &str,
+    ) -> Result<(), DomainError> {
+        let properties = self
+            .input_schema
+            .get_mut("properties")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| {
+                DomainError::InvalidData(format!(
+                    "tool.description_override_properties_invalid: `{}` has no object properties",
+                    self.id
+                ))
+            })?;
+        let schema = properties.get_mut(property).ok_or_else(|| {
+            DomainError::InvalidData(format!(
+                "tool.description_override_unknown_property: `{}` has no property `{property}`",
+                self.id
+            ))
+        })?;
+        let object = schema.as_object_mut().ok_or_else(|| {
+            DomainError::InvalidData(format!(
+                "tool.description_override_property_schema_invalid: `{}` property `{property}` is not an object",
+                self.id
+            ))
+        })?;
+        object.insert(
+            "description".to_string(),
+            Value::String(description.to_string()),
+        );
+        Ok(())
+    }
+
+    pub fn apply_description_override(
+        &mut self,
+        override_: &ToolDescriptionOverride,
+    ) -> Result<(), DomainError> {
+        if let Some(description) = override_.description.as_ref() {
+            self.description = Some(description.clone());
+        }
+        if override_.properties.is_empty() {
+            return Ok(());
+        }
+        for (property, description) in &override_.properties {
+            self.set_property_description(property, description)?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
 pub struct ToolSnapshotId(String);
 
@@ -423,11 +490,13 @@ impl ToolTurnContract {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use serde_json::json;
 
     use super::{
-        InvocationToolSnapshot, ToolBinding, ToolCatalog, ToolChoice, ToolDescriptor, ToolId,
-        ToolProviderId, ToolSnapshotId, ToolTurnContract,
+        InvocationToolSnapshot, ToolBinding, ToolCatalog, ToolChoice, ToolDescriptionOverride,
+        ToolDescriptor, ToolId, ToolProviderId, ToolSnapshotId, ToolTurnContract,
     };
     use crate::errors::DomainError;
 
@@ -448,6 +517,42 @@ mod tests {
             assert!(serde_json::from_value::<ToolId>(json!(invalid)).is_err());
         }
         assert!(ToolProviderId::parse("mcp:registration-1").is_err());
+    }
+
+    #[test]
+    fn description_override_only_changes_model_facing_text() {
+        let mut descriptor = ToolDescriptor {
+            id: ToolId::builtin("search").unwrap(),
+            title: Some("Search".to_string()),
+            description: Some("Server description".to_string()),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "query": { "type": "string" } },
+                "required": ["query"]
+            }),
+            output_schema: None,
+            annotations: json!({ "readOnlyHint": true }),
+        };
+        descriptor
+            .apply_description_override(&ToolDescriptionOverride {
+                description: Some("  Custom description  ".to_string()),
+                properties: BTreeMap::from([("query".to_string(), "  Custom query  ".to_string())]),
+            })
+            .unwrap();
+
+        assert_eq!(
+            descriptor.description.as_deref(),
+            Some("  Custom description  ")
+        );
+        assert_eq!(
+            descriptor.input_schema["properties"]["query"]["description"],
+            "  Custom query  "
+        );
+        assert_eq!(
+            descriptor.input_schema["properties"]["query"]["type"],
+            "string"
+        );
+        assert_eq!(descriptor.input_schema["required"], json!(["query"]));
     }
 
     #[test]

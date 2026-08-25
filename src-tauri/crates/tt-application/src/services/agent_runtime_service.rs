@@ -13,8 +13,8 @@ use crate::services::agent_profile_service::{
     AgentProfileResolveInput, AgentProfileService, materialize_agent_system_prompt,
 };
 use crate::services::agent_tools::{
-    AgentToolDispatcher, BuiltinAgentToolRegistry, apply_description_override,
-    compile_invocation_tool_snapshot, project_agent_model_tools,
+    AgentToolDispatcher, BuiltinAgentToolRegistry, compile_invocation_tool_snapshot,
+    project_agent_model_tools,
 };
 use crate::services::llm_connection_service::LlmConnectionService;
 use crate::services::mcp_service::{McpModelToolDiagnostic, McpService};
@@ -288,7 +288,7 @@ impl AgentRuntimeService {
             let Some(override_) = profile.tools.tool_descriptions.get(&tool.descriptor.id) else {
                 return true;
             };
-            match apply_description_override(&mut tool.descriptor, override_) {
+            match tool.descriptor.apply_description_override(override_) {
                 Ok(()) => true,
                 Err(error) => {
                     override_diagnostics.push(McpModelToolDiagnostic {
