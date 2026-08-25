@@ -617,15 +617,15 @@ impl ChatCompletionService {
         self: Arc<Self>,
         stream_id: String,
         dto: ChatCompletionGenerateRequestDto,
-        cancel: watch::Receiver<bool>,
+        mut lifecycle_cancel: watch::Receiver<bool>,
         mut background: GenerationBackgroundLease,
         notify_completion: bool,
     ) {
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<String>();
-        let mut lifecycle_cancel = cancel.clone();
+        let (stop_provider, provider_cancel) = watch::channel(false);
         let generation_task = tokio::spawn({
             let service = self.clone();
-            async move { service.generate_stream(dto, sender, cancel).await }
+            async move { service.generate_stream(dto, sender, provider_cancel).await }
         });
         let mut received_bytes = 0_u64;
 
@@ -656,7 +656,8 @@ impl ChatCompletionService {
             match self.stream_sessions.append(&stream_id, chunk).await {
                 Ok(StreamAppendOutcome::Appended) => {}
                 Ok(StreamAppendOutcome::ProviderDone) => {
-                    generation_task.abort();
+                    Self::finish_provider_after_done(&stream_id, stop_provider, generation_task)
+                        .await;
                     break Ok(());
                 }
                 Ok(StreamAppendOutcome::SessionClosed) => {
@@ -681,6 +682,25 @@ impl ChatCompletionService {
             Err(error) => self.stream_sessions.fail(&stream_id, error).await,
         }
         background.complete(outcome, notify_completion);
+    }
+
+    async fn finish_provider_after_done(
+        stream_id: &str,
+        stop_provider: watch::Sender<bool>,
+        generation_task: tokio::task::JoinHandle<Result<(), ApplicationError>>,
+    ) {
+        let _ = stop_provider.send(true);
+        match generation_task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::error!(
+                stream_id,
+                "Provider stream cleanup failed after completion: {error}"
+            ),
+            Err(error) => tracing::error!(
+                stream_id,
+                "Provider stream cleanup task failed after completion: {error}"
+            ),
+        }
     }
 
     fn is_quiet_request(dto: &ChatCompletionGenerateRequestDto) -> bool {
@@ -918,12 +938,18 @@ fn apply_nanogpt_claude_cache_control(payload: &mut Value, ttl: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use serde_json::{Value, json};
 
     use super::{
-        apply_nanogpt_claude_cache_control, apply_vertexai_prompt_cache_session_header,
-        ensure_vertexai_claude_prompt_cache_ttl, resolve_status_model_list_source,
+        ChatCompletionService, apply_nanogpt_claude_cache_control,
+        apply_vertexai_prompt_cache_session_header, ensure_vertexai_claude_prompt_cache_ttl,
+        resolve_status_model_list_source,
     };
+    use crate::errors::ApplicationError;
+    use tokio::sync::watch;
     use tt_ports::repositories::chat_completion_repository::{
         AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
     };
@@ -1004,6 +1030,29 @@ mod tests {
             resolve_status_model_list_source(ChatCompletionSource::Custom, "gemini_interactions")
                 .expect("status transport should resolve");
         assert_eq!(source, ChatCompletionSource::Makersuite);
+    }
+
+    #[tokio::test]
+    async fn provider_done_waits_for_provider_cleanup() {
+        let (stop_provider, mut provider_cancel) = watch::channel(false);
+        let cleaned_up = Arc::new(AtomicBool::new(false));
+        let generation_task = tokio::spawn({
+            let cleaned_up = cleaned_up.clone();
+            async move {
+                provider_cancel.changed().await.unwrap();
+                cleaned_up.store(true, Ordering::SeqCst);
+                Ok::<(), ApplicationError>(())
+            }
+        });
+
+        ChatCompletionService::finish_provider_after_done(
+            "stream-1",
+            stop_provider,
+            generation_task,
+        )
+        .await;
+
+        assert!(cleaned_up.load(Ordering::SeqCst));
     }
 }
 
