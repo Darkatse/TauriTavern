@@ -20,7 +20,7 @@ import {
     restoreTimelineScrollAnchor,
     scrollTimelineToBottom,
 } from './RunTimelineDom';
-import type { TimelineDetailReadInput } from './RunTimelineContract';
+import type { TimelineDetailReadInput, TimelineDetailSection } from './RunTimelineContract';
 
 function event(seq: number, runId = 'run-1', type = 'tool_call_completed'): TauriTavernAgentRunEvent {
     return {
@@ -77,19 +77,19 @@ test('paging keeps all pages and stale reads cannot replace a reset session', as
 test('detail state ignores stale async loads', async () => {
     const pending: Array<{
         input: TimelineDetailReadInput;
-        resolve: (sections: Array<{ labelKey: string }>) => void;
+        resolve: (sections: TimelineDetailSection[]) => void;
     }> = [];
     const state = createTimelineDetailState({
         readSections: input => new Promise(resolve => pending.push({ input, resolve })),
     });
-    const first = state.load({ runId: 'run-1', targets: [{ type: 'file', path: 'first' }], readOnly: false });
-    const second = state.load({ runId: 'run-1', targets: [{ type: 'file', path: 'second' }], readOnly: true });
+    const first = state.load({ runId: 'run-1', targets: [{ type: 'file', labelKey: 'timelineWorkspaceFile', path: 'first' }], readOnly: false });
+    const second = state.load({ runId: 'run-1', targets: [{ type: 'file', labelKey: 'timelineWorkspaceFile', path: 'second' }], readOnly: true });
     expect(pending[1]?.input.readOnly).toBe(true);
-    pending[1]?.resolve([{ labelKey: 'second' }]);
+    pending[1]?.resolve([{ labelKey: 'timelineResultText' }]);
     expect(await second).toBe(true);
-    pending[0]?.resolve([{ labelKey: 'first' }]);
+    pending[0]?.resolve([{ labelKey: 'timelineContent' }]);
     expect(await first).toBe(false);
-    expect(state.sections).toEqual([{ labelKey: 'second' }]);
+    expect(state.sections).toEqual([{ labelKey: 'timelineResultText' }]);
 });
 
 test('virtualizer limits DOM rows without dropping model entries', () => {
@@ -132,7 +132,7 @@ test('scroll anchor, follow-tail, resize, and touch gesture preserve their nativ
         isPrimary: true,
         pointerType: 'touch',
         target: currentTarget,
-    }) as unknown as PointerEvent;
+    });
     expect(canStartRunTimelineViewGesture({
         event: pointer(100, 100),
         collapsed: false,

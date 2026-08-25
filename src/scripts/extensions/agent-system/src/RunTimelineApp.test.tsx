@@ -2,7 +2,7 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test } from '@rstest/core';
 
-import type { AgentSystemSettings } from './AgentSystemEntryController';
+import type { AgentSystemSettings } from './settings-store';
 import { RunTimelineApp } from './RunTimelineApp';
 import { createRunTimelineController } from './RunTimelineController';
 import type { ActiveTimelineOptions, RunTimelineController } from './RunTimelineContract';

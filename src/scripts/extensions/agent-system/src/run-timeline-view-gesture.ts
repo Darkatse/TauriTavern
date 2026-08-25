@@ -1,7 +1,7 @@
 export const RUN_TIMELINE_VIEW_GESTURE_ACTION_DETAILS = 'details';
 export const RUN_TIMELINE_VIEW_GESTURE_ACTION_TIMELINE = 'timeline';
-export const RUN_TIMELINE_VIEW_GESTURE_MIN_DISTANCE_PX = 64;
-export const RUN_TIMELINE_VIEW_GESTURE_AXIS_RATIO = 1.5;
+const RUN_TIMELINE_VIEW_GESTURE_MIN_DISTANCE_PX = 64;
+const RUN_TIMELINE_VIEW_GESTURE_AXIS_RATIO = 1.5;
 
 const VERTICAL_CANCEL_DISTANCE_PX = 24;
 const VERTICAL_CANCEL_AXIS_RATIO = 1.2;
@@ -36,8 +36,14 @@ type PointerCoordinates = {
     clientY: number;
 };
 
+type GestureStartEvent = PointerCoordinates & {
+    isPrimary: boolean;
+    pointerType: string;
+    target: EventTarget | null;
+};
+
 export function canStartRunTimelineViewGesture(input: {
-    event: PointerEvent;
+    event: GestureStartEvent;
     collapsed: boolean;
     resizing: boolean;
     detailsOpen: boolean;

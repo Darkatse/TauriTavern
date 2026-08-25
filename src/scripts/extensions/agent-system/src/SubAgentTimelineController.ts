@@ -1,4 +1,4 @@
-import type { AgentSystemTr } from './i18n.js';
+import type { AgentSystemTr } from './i18n';
 import type {
     SubAgentTask,
     SubAgentTimelineSnapshot,
@@ -12,7 +12,7 @@ import {
     hasModelTurnNarration,
     isDisplayableRunEvent,
     timelineItemsFromEvents,
-} from './run-event-presenter.js';
+} from './run-event-presenter';
 import { createTimelineDetailState } from './run-timeline-detail-state';
 import { subAgentStatusLabel } from './run-timeline-display';
 import { createRunTimelineSession } from './run-timeline-session';

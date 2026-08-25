@@ -1,5 +1,5 @@
-import { prettyJson } from './host-api.js';
-import { findModelTargetForBinding, type AgentModelTarget } from './model-target-connection.js';
+import { prettyJson } from './host-api';
+import { findModelTargetForBinding, type AgentModelTarget } from './model-target-connection';
 import { AGENT_MODEL_REQUIRES_CONFIGURATION } from '../../../tauritavern/agent/agent-profile-portable.js';
 import { normalizeProfileForSave, type AgentProfileDraft } from './profile-model';
 import {
@@ -13,7 +13,7 @@ import {
     type Tr,
 } from './AgentSystemPanelContract';
 
-export function profileEditModeLabel(mode: AgentProfileEditMode, tr: Tr): string {
+function profileEditModeLabel(mode: AgentProfileEditMode, tr: Tr): string {
     const editMode = PROFILE_EDIT_MODES.find((item) => item.id === mode);
     return editMode ? tr(editMode.labelKey) : tr('mainAgent');
 }
@@ -82,7 +82,7 @@ export function hasExternalModelBinding(draft: AgentProfileDraft, modelTargets: 
     return draft.model.mode === 'connectionRef' && !selectedModelTarget(modelTargets, draft);
 }
 
-export function missingPresetName(draft: AgentProfileDraft, presetOptions: readonly string[]): string {
+function missingPresetName(draft: AgentProfileDraft, presetOptions: readonly string[]): string {
     const preset = draft.preset;
     if (preset.mode !== 'ref') {
         return '';
@@ -94,7 +94,7 @@ export function missingPresetName(draft: AgentProfileDraft, presetOptions: reado
     return name;
 }
 
-export function delegationSummaryLabel(draft: AgentProfileDraft, profileEditMode: AgentProfileEditMode, tr: Tr): string {
+function delegationSummaryLabel(draft: AgentProfileDraft, profileEditMode: AgentProfileEditMode, tr: Tr): string {
     const delegation = draft.delegation;
     if (profileEditMode === 'subagent') {
         return delegation.callable && delegation.allowAsSubagent ? tr('callableSubAgent') : tr('notCallable');
@@ -178,7 +178,7 @@ export function availablePresetOptions(presetOptions: readonly string[], draft: 
     return names;
 }
 
-export function profileDiagnostics(
+function profileDiagnostics(
     profileHealth: TauriTavernAgentProfileHealth | null,
     isRuntimeStateCurrent: boolean,
 ): TauriTavernAgentProfileDiagnostic[] {
@@ -188,7 +188,7 @@ export function profileDiagnostics(
     return Array.isArray(profileHealth.diagnostics) ? profileHealth.diagnostics : [];
 }
 
-export function profileDiagnosticMessage(diagnostic: TauriTavernAgentProfileDiagnostic, tr: Tr): string {
+function profileDiagnosticMessage(diagnostic: TauriTavernAgentProfileDiagnostic, tr: Tr): string {
     const resource: Partial<NonNullable<TauriTavernAgentProfileDiagnostic['resource']>> = diagnostic.resource || {};
     switch (diagnostic.code) {
         case PROFILE_DIAGNOSTIC_CODES.PRESET_MISSING:
@@ -208,7 +208,7 @@ export function profileDiagnosticMessage(diagnostic: TauriTavernAgentProfileDiag
     }
 }
 
-export function uniqueMessages(messages: readonly string[]): string[] {
+function uniqueMessages(messages: readonly string[]): string[] {
     return [...new Set(messages.filter(Boolean))];
 }
 
@@ -293,7 +293,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-export function schemaType(schema: unknown, tr: Tr): string {
+function schemaType(schema: unknown, tr: Tr): string {
     const type = isPlainObject(schema) ? schema.type : undefined;
     if (Array.isArray(type)) {
         return type.join(' | ');

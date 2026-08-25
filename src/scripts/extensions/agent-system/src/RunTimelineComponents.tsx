@@ -1,6 +1,6 @@
 import { useEffect, type CSSProperties, type RefObject } from 'react';
 
-import type { AgentSystemTr } from './i18n.js';
+import type { AgentSystemTr } from './i18n';
 import type {
     SubAgentTask,
     TimelineDetailAction,
@@ -262,21 +262,23 @@ export function RunTimelineDetailPane(props: TimelineDetailPaneProps) {
                                 {section.blocks.map((block, blockIndex) => (
                                     <details
                                         key={blockIndex}
-                                        className={`ttas-run-detail-block kind-${block.kind || 'text'}`}
-                                        data-ttas-block-kind={block.kind || 'text'}
+                                        className={`ttas-run-detail-block kind-${block.kind ?? 'text'}`}
+                                        data-ttas-block-kind={block.kind ?? 'text'}
                                         open={block.defaultOpen !== false}
                                     >
                                         <summary className="ttas-run-detail-block-head">
-                                            <strong>{block.labelKey ? props.tr(block.labelKey) : block.label}</strong>
+                                            <strong>{'labelKey' in block ? props.tr(block.labelKey) : block.label}</strong>
                                             <span className="ttas-run-detail-block-badges">
                                                 {block.meta && <small>{block.meta}</small>}
-                                                {block.truncated && <small>{props.tr('timelineTruncated')}</small>}
+                                                {block.kind !== 'diff' && block.truncated && (
+                                                    <small>{props.tr('timelineTruncated')}</small>
+                                                )}
                                                 <i className="fa-solid fa-chevron-down" aria-hidden="true"></i>
                                             </span>
                                         </summary>
                                         {block.kind === 'diff' ? (
                                             <div className="ttas-run-diff" role="table">
-                                                {(block.rows ?? []).map((row, rowIndex) => (
+                                                {block.rows.map((row, rowIndex) => (
                                                     <div
                                                         key={rowIndex}
                                                         className="ttas-run-diff-row"

@@ -40,6 +40,11 @@ function matchesSearch(skill: TauriTavernSkillIndexEntry, query: string): boolea
         .some(value => String(value || '').toLowerCase().includes(query));
 }
 
+function importConflictStrategy(value: string): TauriTavernSkillInstallConflictStrategy {
+    if (value === 'skip' || value === 'replace') return value;
+    throw new Error(`Unsupported Skill conflict strategy: ${value}`);
+}
+
 function ImportConflictSelect(props: {
     item: SkillImportItem;
     index: number;
@@ -54,7 +59,7 @@ function ImportConflictSelect(props: {
             value={item.conflictStrategy}
             disabled={busy}
             aria-label={tr('importConflictAction', { name: itemLabel(item, tr) })}
-            onChange={event => controller.setImportConflict(index, event.target.value as TauriTavernSkillInstallConflictStrategy)}
+            onChange={event => controller.setImportConflict(index, importConflictStrategy(event.target.value))}
         >
             <option value="skip">{tr('skipConflict')}</option>
             <option value="replace">{tr('replaceConflict')}</option>

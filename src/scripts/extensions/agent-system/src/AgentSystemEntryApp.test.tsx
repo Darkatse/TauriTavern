@@ -7,8 +7,8 @@ import { AgentSystemEntryApp } from './AgentSystemEntryApp';
 import {
     createAgentSystemEntryController,
     type AgentSystemEntryControllerDeps,
-    type AgentSystemSettings,
 } from './AgentSystemEntryController';
+import type { AgentSystemSettings } from './settings-store';
 
 const tr = (key: string): string => key;
 

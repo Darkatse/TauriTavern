@@ -1,5 +1,5 @@
-import { DEFAULT_PROFILE_ID } from '../constants.js';
-import { skillScopeLabel } from '../skill-scope.js';
+import { DEFAULT_PROFILE_ID } from '../constants';
+import { skillScopeLabel } from '../skill-scope';
 import { installSkillImports, manualSkillImportInput, previewSkillImports, skillImportItemLabel } from './SkillImportOperation';
 import {
     deleteSkillMutation,
@@ -108,14 +108,14 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
         commit({ selectedProfileId: next });
         await refreshProfiles();
         if (disposed) return;
-        await refreshChanged([...new Set([...rebuildSections(), 'profile' as const])]);
+        await refreshChanged([...rebuildSections(), 'profile']);
     }
 
     async function syncProfiles(): Promise<void> {
         if (disposed || !snapshot.initialized) return;
         await refreshProfiles();
         if (disposed) return;
-        await refreshChanged([...new Set([...rebuildSections(), 'profile' as const])]);
+        await refreshChanged([...rebuildSections(), 'profile']);
     }
 
     function subscribeExternalEvents(): void {
@@ -431,7 +431,7 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
         selectProfile(profileId) {
             fire(async () => {
                 commit({ selectedProfileId: profileId.trim() || DEFAULT_PROFILE_ID });
-                await refreshChanged([...new Set([...rebuildSections(), 'profile' as const])]);
+                await refreshChanged([...rebuildSections(), 'profile']);
             });
         },
         refreshAll: () => fire(async () => {

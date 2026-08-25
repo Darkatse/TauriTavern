@@ -11,7 +11,7 @@ import type { AgentSystemPanelControllerDeps } from './AgentSystemPanelContract'
 import { createRunHistoryController } from './RunHistoryController';
 import { createRunRetentionController } from './RunRetentionController';
 import { defaultProfile } from './profile-model';
-import type { AgentSystemSettings } from './AgentSystemEntryController';
+import type { AgentSystemSettings } from './settings-store';
 
 type ProfileListResult = Awaited<ReturnType<TauriTavernAgentProfilesApi['list']>>;
 
@@ -168,7 +168,7 @@ const disposables: Array<{ dispose: () => void }> = [];
 
 function renderPanel(controller: AgentSystemPanelController): void {
     const runHistory = createRunHistoryController({
-        listRuns: () => Promise.resolve({ runs: [], nextCursor: null }),
+        listRuns: () => Promise.resolve({ runs: [] }),
         currentChatRunFilter: () => Promise.resolve({
             chatRef: { kind: 'group', chatId: 'group' },
             stableChatId: 'stable-group',

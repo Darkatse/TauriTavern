@@ -1,5 +1,5 @@
-import { translateAgentSystem as tr } from './i18n.js';
-import { skillScopeKey, skillScopeLabel } from './skill-scope.js';
+import { translateAgentSystem as tr } from './i18n';
+import { skillScopeKey, skillScopeLabel } from './skill-scope';
 
 export type EmbeddedAssetTargetInput =
     | { kind: 'preset'; apiId?: string; name?: string }
@@ -7,6 +7,8 @@ export type EmbeddedAssetTargetInput =
 
 export type EmbeddedAssetTargetSummary = {
     kind: 'preset' | 'character';
+    apiId?: string;
+    characterId?: string;
     name: string;
     subtitle?: string;
 };
@@ -19,13 +21,9 @@ export type EmbeddedProfileItem = {
 };
 
 export type EmbeddedSkillItem = {
-    bundleFormat: string;
     skillName: string;
-    sourceScope: TauriTavernSkillScope;
     sourceScopeLabel: string;
     fileName: string;
-    contentBase64: string;
-    sha256: string;
 };
 
 export type EmbeddedAssetsRead = {
@@ -60,7 +58,7 @@ export type EmbeddedAssetsActions = {
     reportError: (error: unknown) => string;
 };
 
-export function skillSelectionKey(skill: { scope?: TauriTavernSkillScope | null; name?: string | null }): string {
+function skillSelectionKey(skill: { scope?: TauriTavernSkillScope | null; name?: string | null }): string {
     const scopeKey = skillScopeKey(skill?.scope);
     const name = String(skill?.name || '').trim();
     if (!scopeKey || !name) {

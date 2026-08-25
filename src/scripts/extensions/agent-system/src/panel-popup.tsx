@@ -6,20 +6,27 @@ import { createAgentSystemPanelController } from './AgentSystemPanelController';
 import { CHAT_COMPLETION_PRESET_API_ID } from './AgentSystemPanelContract';
 import { createRunHistoryController, type RunHistoryListInput } from './RunHistoryController';
 import { createRunRetentionController } from './RunRetentionController';
-import { confirmAction, errorText, requireAgentApi, requireHostApi, requireSillyTavernContext } from './host-api.js';
-import { translateAgentSystem as tr } from './i18n.js';
+import {
+    confirmAction,
+    errorText,
+    reportAgentSystemError,
+    requireAgentApi,
+    requireHostApi,
+    requireSillyTavernContext,
+} from './host-api';
+import { translateAgentSystem as tr } from './i18n';
 import {
     listSavedModelTargets,
     saveModelTargetAsLlmConnection,
     subscribeModelTargetChanges,
-} from './model-target-connection.js';
+} from './model-target-connection';
 import { openAgentRunTimelineDialog } from './run-timeline-panel';
-import { loadSettings, patchSettings } from './settings-store.js';
+import { loadSettings, patchSettings } from './settings-store';
 import { downloadBlobWithRuntime } from '../../../file-export.js';
 import { subscribeAgentProfilesChanged } from '../../../tauritavern/agent/agent-profile-events.js';
 import { subscribeLlmConnectionsChanged } from '../../../tauritavern/agent/llm-connection-events.js';
 
-let activePanel: { dialog: HTMLDialogElement; dispose: () => void } | null = null;
+let activePanel: HTMLDialogElement | null = null;
 
 type SillyTavernPresetManager = {
     getAllPresets: () => string[];
@@ -42,7 +49,7 @@ function listPresetOptions(): string[] {
 }
 
 async function currentChatRunFilter(): Promise<{ chatRef: TauriTavernChatRef; stableChatId: string }> {
-    const chat = requireHostApi('chat') as TauriTavernChatApi;
+    const chat = requireHostApi('chat');
     const chatRef = chat.current.ref();
     if (!plainObject(chatRef)) {
         throw new Error('agent.run_history_current_chat_invalid: current chat ref must be an object');
@@ -59,15 +66,11 @@ async function currentChatRunFilter(): Promise<{ chatRef: TauriTavernChatRef; st
 }
 
 function plainObject(value: unknown): value is Record<string, unknown> {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return false;
-    }
-    const prototype = Object.getPrototypeOf(value) as unknown;
-    return prototype === Object.prototype || prototype === null;
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function requireRetentionApi(): TauriTavernAgentRetentionApi {
-    const agent = requireHostApi('agent') as TauriTavernAgentApi;
+    const agent = requireHostApi('agent');
     const api = agent.retention;
     if (typeof api?.readSettings !== 'function'
         || typeof api.updateSettings !== 'function'
@@ -79,8 +82,8 @@ function requireRetentionApi(): TauriTavernAgentRetentionApi {
 }
 
 export function openAgentSystemPanel(): void {
-    if (activePanel?.dialog.open) {
-        activePanel.dialog.focus();
+    if (activePanel?.open) {
+        activePanel.focus();
         return;
     }
     if (typeof HTMLDialogElement === 'undefined') {
@@ -100,7 +103,7 @@ export function openAgentSystemPanel(): void {
 
     const runHistory = createRunHistoryController({
         listRuns: (input: RunHistoryListInput) => {
-            const agent = requireHostApi('agent') as TauriTavernAgentApi;
+            const agent = requireHostApi('agent');
             return agent.listRuns(input);
         },
         currentChatRunFilter,
@@ -116,15 +119,15 @@ export function openAgentSystemPanel(): void {
 
     const runRetention = createRunRetentionController({
         getRetentionApi: requireRetentionApi,
-        confirmAction: (message) => confirmAction(message),
+        confirmAction,
         notifySuccess: (message) => window.toastr?.success?.(message, tr('agentSystem')),
         notifyWarning: (message) => window.toastr?.warning?.(message, tr('agentSystem')),
         tr,
     });
 
     const controller = createAgentSystemPanelController({
-        loadSettings: () => loadSettings(),
-        patchSettings: (current, patch) => patchSettings(current, patch),
+        loadSettings,
+        patchSettings,
         getProfilesApi: () => requireAgentApi().profiles,
         listTools: async () => {
             const api = requireAgentApi().tools;
@@ -138,19 +141,16 @@ export function openAgentSystemPanel(): void {
             };
         },
         listPresetOptions,
-        listModelTargets: () => listSavedModelTargets(),
-        saveModelTargetConnection: (target) => saveModelTargetAsLlmConnection(target),
-        subscribeProfilesChanged: (listener) => subscribeAgentProfilesChanged(listener),
-        subscribeModelTargetsChanged: (listener) => subscribeModelTargetChanges(listener),
-        subscribeLlmConnectionsChanged: (listener) => subscribeLlmConnectionsChanged(listener),
-        confirmAction: (message) => confirmAction(message),
+        listModelTargets: listSavedModelTargets,
+        saveModelTargetConnection: saveModelTargetAsLlmConnection,
+        subscribeProfilesChanged: subscribeAgentProfilesChanged,
+        subscribeModelTargetsChanged: subscribeModelTargetChanges,
+        subscribeLlmConnectionsChanged,
+        confirmAction,
         downloadBlob: (blob, fileName) => downloadBlobWithRuntime(blob, fileName, {
             fallbackName: 'agent-profile.json',
         }),
-        notifyError: (error) => {
-            console.error('[AgentSystem]', error);
-            window.toastr?.error?.(errorText(error));
-        },
+        notifyError: reportAgentSystemError,
         notifyWarning: (message) => window.toastr?.warning?.(message),
         notifySuccess: (message) => window.toastr?.success?.(message),
         onRunsTabActivated: () => {
@@ -172,7 +172,7 @@ export function openAgentSystemPanel(): void {
         runRetention.dispose();
         root.unmount();
         dialog.remove();
-        if (activePanel?.dialog === dialog) {
+        if (activePanel === dialog) {
             activePanel = null;
         }
     };
@@ -193,7 +193,7 @@ export function openAgentSystemPanel(): void {
             />
         </StrictMode>,
     );
-    activePanel = { dialog, dispose: cleanup };
+    activePanel = dialog;
 
     try {
         dialog.showModal();
@@ -202,9 +202,8 @@ export function openAgentSystemPanel(): void {
         throw error;
     }
 
-    // Init is started once here by the composition root (never inside a React
-    // effect). Failures are already reported by the controller; rethrow async
-    // so the dev-log capture still observes them, matching the Vue panel.
+    // The composition root owns one initialization. The controller reports
+    // failures; the asynchronous rethrow also feeds the dev-log capture.
     void controller.init().catch((error: unknown) => {
         queueMicrotask(() => {
             throw error;

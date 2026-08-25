@@ -1,24 +1,20 @@
-import { loadSettings, patchSettings, subscribeSettings } from './settings-store.js';
+import { loadSettings, patchSettings, subscribeSettings } from './settings-store';
 import { subscribeAgentRunState } from '../../../tauritavern/agent/agent-run-controller.js';
-import { errorText } from './host-api.js';
-import { AGENT_TOGGLE_ICON } from './agent-icon.js';
-import { translateAgentSystem as tr } from './i18n.js';
-import { openAgentSystemPanel } from './panel-popup.tsx';
+import { reportAgentSystemError } from './host-api';
+import { AGENT_TOGGLE_ICON } from './agent-icon';
+import { translateAgentSystem as tr } from './i18n';
+import { openAgentSystemPanel } from './panel-popup';
+import type { AgentSystemSettings } from './settings-store';
 
 const BUTTON_ID = 'ttas_agent_send_toggle';
 const LONG_PRESS_MS = 550;
 const LONG_PRESS_MOVE_TOLERANCE_PX = 10;
 const LONG_PRESS_CLICK_SUPPRESS_MS = 800;
 
-let settings = null;
-let activeRun = null;
+let settings: AgentSystemSettings | null = null;
+let activeRun: TauriTavernAgentRunHandle | null = null;
 
-function reportInteractionError(error) {
-    console.error('[AgentSystem]', error);
-    window.toastr?.error?.(errorText(error));
-}
-
-export async function mountChatInputAgentToggle() {
+export async function mountChatInputAgentToggle(): Promise<void> {
     const rightSendForm = document.getElementById('rightSendForm');
     const sendButton = document.getElementById('send_but');
     if (!(rightSendForm instanceof HTMLElement) || !(sendButton instanceof HTMLElement)) {
@@ -32,13 +28,13 @@ export async function mountChatInputAgentToggle() {
     button.innerHTML = `${AGENT_TOGGLE_ICON}<span class="ttas-agent-send-toggle-status" aria-hidden="true"></span>`;
     rightSendForm.insertBefore(button, sendButton);
 
-    let longPressTimer = null;
-    let longPressPointerId = null;
+    let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+    let longPressPointerId: number | null = null;
     let longPressStartX = 0;
     let longPressStartY = 0;
     let suppressClickUntil = 0;
 
-    const clearLongPress = () => {
+    const clearLongPress = (): void => {
         if (longPressTimer !== null) {
             clearTimeout(longPressTimer);
             longPressTimer = null;
@@ -49,22 +45,21 @@ export async function mountChatInputAgentToggle() {
         longPressPointerId = null;
     };
 
-    const openPanel = () => {
+    const openPanel = (): void => {
         try {
-            const result = openAgentSystemPanel();
-            result?.catch?.(reportInteractionError);
+            openAgentSystemPanel();
         } catch (error) {
-            reportInteractionError(error);
+            reportAgentSystemError(error);
         }
     };
 
-    const syncVisibility = () => {
+    const syncVisibility = (): void => {
         button.classList.toggle('displayNone', sendButton.classList.contains('displayNone') || Boolean(settings?.chatInputToggleHidden));
     };
     const sendButtonObserver = new MutationObserver(syncVisibility);
     sendButtonObserver.observe(sendButton, { attributes: true, attributeFilter: ['class'] });
 
-    const render = () => {
+    const render = (): void => {
         const enabled = Boolean(settings?.agentModeEnabled);
         const label = activeRun
             ? tr('agentRunActive')
@@ -111,7 +106,7 @@ export async function mountChatInputAgentToggle() {
     button.addEventListener('pointercancel', clearLongPress);
     button.addEventListener('lostpointercapture', clearLongPress);
 
-    button.addEventListener('click', async (event) => {
+    const handleClick = async (event: MouseEvent): Promise<void> => {
         if (Date.now() < suppressClickUntil) {
             suppressClickUntil = 0;
             event.preventDefault();
@@ -125,10 +120,11 @@ export async function mountChatInputAgentToggle() {
             });
             render();
         } catch (error) {
-            reportInteractionError(error);
+            reportAgentSystemError(error);
             throw error;
         }
-    });
+    };
+    button.addEventListener('click', event => { void handleClick(event); });
 
     subscribeSettings((next) => {
         settings = next;

@@ -1,4 +1,4 @@
-import { WORKSPACE_ROOTS } from './constants.js';
+import { WORKSPACE_ROOTS } from './constants';
 import type { AgentSystemPanelController } from './AgentSystemPanelController';
 import {
     isBuiltinProfile,

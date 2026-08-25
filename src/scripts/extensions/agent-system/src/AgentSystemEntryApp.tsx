@@ -2,10 +2,11 @@ import { useSyncExternalStore } from 'react';
 
 import { DEFAULT_AGENT_PROFILE_ID } from '../../../tauritavern/agent/agent-system-settings.js';
 import type { AgentSystemEntryController } from './AgentSystemEntryController';
+import type { AgentSystemTr } from './i18n';
 
 export type AgentSystemEntryAppProps = {
     controller: AgentSystemEntryController;
-    tr: (key: string, params?: Record<string, unknown>) => string;
+    tr: AgentSystemTr;
     onOpenPanel: () => void;
 };
 
@@ -15,9 +16,7 @@ export function AgentSystemEntryApp({ controller, tr, onOpenPanel }: AgentSystem
     const activeProfileId = settings.activeProfileId || DEFAULT_AGENT_PROFILE_ID;
     const activeProfileOptions = snapshot.profiles.filter((profile) => profile.directRunnable !== false);
 
-    // Action failures are already surfaced by the controller (toastr +
-    // unhandled rejection for the dev-log capture); handlers stay
-    // fire-and-forget, matching the previous Vue event semantics.
+    // The controller reports action failures; UI handlers do not await them.
     return (
         <div id="agent_system_settings" className="ttas-root">
             <div className="inline-drawer">

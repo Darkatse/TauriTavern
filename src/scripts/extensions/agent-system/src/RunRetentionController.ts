@@ -1,13 +1,13 @@
-import { errorText } from './host-api.js';
-import { translateAgentSystem as tr } from './i18n.js';
+import { errorText } from './host-api';
+import { translateAgentSystem as tr } from './i18n';
 import type { Tr } from './AgentSystemPanelContract';
 
 const RUN_PRUNE_DETAIL_LIMIT = 8;
-const MAX_AGENT_RETENTION_KEEP_RUNS = 10000;
+export const MAX_AGENT_RETENTION_KEEP_RUNS = 10000;
 
 /**
  * Transient draft: the number inputs hold raw text (string) while typing;
- * normalizeRetentionSettings validates/converts at save/plan/apply time.
+ * retentionSettingsFromDraft validates/converts at save/plan/apply time.
  */
 export type RunRetentionDraft = {
     autoPruneEnabled: boolean;
@@ -59,7 +59,7 @@ export function retentionDraftIsDirty(snapshot: RunRetentionSnapshot): boolean {
         return false;
     }
     try {
-        const draft = normalizeRetentionSettings(snapshot.draft);
+        const draft = retentionSettingsFromDraft(snapshot.draft);
         return draft.autoPruneEnabled !== retention.autoPruneEnabled
             || draft.keepRecentTerminalRuns !== retention.keepRecentTerminalRuns
             || draft.keepFullRecentRuns !== retention.keepFullRecentRuns;
@@ -121,39 +121,38 @@ export function createRunRetentionController(deps: RunRetentionControllerDeps): 
     const listeners = new Set<() => void>();
     let disposed = false;
 
-    function commit(next: RunRetentionSnapshot): void {
+    function commit(patch: Partial<RunRetentionSnapshot>): void {
         if (disposed) {
             return;
         }
-        snapshot = next;
+        snapshot = { ...snapshot, ...patch };
         for (const listener of listeners) {
             listener();
         }
     }
 
-    function applyRetention(value: unknown): void {
-        const retention = normalizeRetentionSettings(value);
-        commit({ ...snapshot, retention, draft: { ...retention }, plan: null });
+    function applyRetention(retention: TauriTavernAgentRunRetentionSettings): void {
+        commit({ retention, draft: { ...retention }, plan: null });
     }
 
     async function refresh(): Promise<void> {
-        commit({ ...snapshot, loading: true, error: '' });
+        commit({ loading: true, error: '' });
         try {
             applyRetention(await deps.getRetentionApi().readSettings());
         } catch (error) {
             if (disposed) {
                 return;
             }
-            commit({ ...snapshot, error: errorText(error) });
+            commit({ error: errorText(error) });
         } finally {
-            commit({ ...snapshot, loading: false });
+            commit({ loading: false });
         }
     }
 
     async function save(): Promise<void> {
-        commit({ ...snapshot, saving: true, error: '' });
+        commit({ saving: true, error: '' });
         try {
-            const updated = await deps.getRetentionApi().updateSettings(normalizeRetentionSettings(snapshot.draft));
+            const updated = await deps.getRetentionApi().updateSettings(retentionSettingsFromDraft(snapshot.draft));
             if (disposed) {
                 return;
             }
@@ -163,30 +162,30 @@ export function createRunRetentionController(deps: RunRetentionControllerDeps): 
             if (disposed) {
                 return;
             }
-            commit({ ...snapshot, error: errorText(error) });
+            commit({ error: errorText(error) });
         } finally {
-            commit({ ...snapshot, saving: false });
+            commit({ saving: false });
         }
     }
 
     async function analyze(): Promise<void> {
-        commit({ ...snapshot, planning: true, error: '' });
+        commit({ planning: true, error: '' });
         try {
             const plan = await deps.getRetentionApi().planPrune({
-                retention: normalizeRetentionSettings(snapshot.draft),
+                retention: retentionSettingsFromDraft(snapshot.draft),
                 detailLimit: RUN_PRUNE_DETAIL_LIMIT,
             });
             if (disposed) {
                 return;
             }
-            commit({ ...snapshot, plan: normalizePrunePlan(plan) });
+            commit({ plan });
         } catch (error) {
             if (disposed) {
                 return;
             }
-            commit({ ...snapshot, error: errorText(error), plan: null });
+            commit({ error: errorText(error), plan: null });
         } finally {
-            commit({ ...snapshot, planning: false });
+            commit({ planning: false });
         }
     }
 
@@ -199,7 +198,7 @@ export function createRunRetentionController(deps: RunRetentionControllerDeps): 
             return null;
         }
 
-        commit({ ...snapshot, error: '' });
+        commit({ error: '' });
         let confirmed: boolean;
         try {
             confirmed = await deps.confirmAction(deps.tr('runRetentionApplyConfirm', {
@@ -208,7 +207,7 @@ export function createRunRetentionController(deps: RunRetentionControllerDeps): 
             }));
         } catch (error) {
             if (!disposed) {
-                commit({ ...snapshot, error: errorText(error) });
+                commit({ error: errorText(error) });
             }
             return null;
         }
@@ -216,16 +215,16 @@ export function createRunRetentionController(deps: RunRetentionControllerDeps): 
             return null;
         }
 
-        commit({ ...snapshot, applying: true });
+        commit({ applying: true });
         try {
-            const result = normalizePruneApplyResult(await deps.getRetentionApi().applyPrune({
-                retention: normalizeRetentionSettings(snapshot.draft),
+            const result = await deps.getRetentionApi().applyPrune({
+                retention: retentionSettingsFromDraft(snapshot.draft),
                 detailLimit: RUN_PRUNE_DETAIL_LIMIT,
-            }));
+            });
             if (disposed) {
                 return null;
             }
-            commit({ ...snapshot, plan: result.afterPlan });
+            commit({ plan: result.afterPlan });
 
             const toastParams = {
                 bytes: formatRetentionBytes(result.removedByteCount),
@@ -240,11 +239,11 @@ export function createRunRetentionController(deps: RunRetentionControllerDeps): 
             return result;
         } catch (error) {
             if (!disposed) {
-                commit({ ...snapshot, error: errorText(error) });
+                commit({ error: errorText(error) });
             }
             return null;
         } finally {
-            commit({ ...snapshot, applying: false });
+            commit({ applying: false });
         }
     }
 
@@ -261,13 +260,13 @@ export function createRunRetentionController(deps: RunRetentionControllerDeps): 
         analyze,
         applyPrune,
         setAutoPruneEnabled(enabled: boolean): void {
-            commit({ ...snapshot, draft: { ...snapshot.draft, autoPruneEnabled: Boolean(enabled) }, plan: null });
+            commit({ draft: { ...snapshot.draft, autoPruneEnabled: enabled }, plan: null });
         },
         setKeepRecentTerminalRuns(value: string): void {
-            commit({ ...snapshot, draft: { ...snapshot.draft, keepRecentTerminalRuns: value }, plan: null });
+            commit({ draft: { ...snapshot.draft, keepRecentTerminalRuns: value }, plan: null });
         },
         setKeepFullRecentRuns(value: string): void {
-            commit({ ...snapshot, draft: { ...snapshot.draft, keepFullRecentRuns: value }, plan: null });
+            commit({ draft: { ...snapshot.draft, keepFullRecentRuns: value }, plan: null });
         },
         dispose(): void {
             if (disposed) {
@@ -279,37 +278,23 @@ export function createRunRetentionController(deps: RunRetentionControllerDeps): 
     };
 }
 
-export function normalizeRetentionSettings(value: unknown): TauriTavernAgentRunRetentionSettings {
-    if (!plainObject(value)) {
-        throw new Error('agent.retention_settings_invalid: settings must be an object');
-    }
-    const autoPruneEnabled = normalizeRetentionAutoPrune(
-        value.autoPruneEnabled ?? value.auto_prune_enabled ?? false,
-        'autoPruneEnabled',
-    );
+function retentionSettingsFromDraft(value: RunRetentionDraft): TauriTavernAgentRunRetentionSettings {
     const keepRecentTerminalRuns = normalizeRetentionCount(
-        value.keepRecentTerminalRuns ?? value.keep_recent_terminal_runs,
+        value.keepRecentTerminalRuns,
         'keepRecentTerminalRuns',
     );
     const keepFullRecentRuns = normalizeRetentionCount(
-        value.keepFullRecentRuns ?? value.keep_full_recent_runs,
+        value.keepFullRecentRuns,
         'keepFullRecentRuns',
     );
     if (keepFullRecentRuns > keepRecentTerminalRuns) {
         throw new Error(tr('runRetentionFullExceedsHistory'));
     }
     return {
-        autoPruneEnabled,
+        autoPruneEnabled: value.autoPruneEnabled,
         keepRecentTerminalRuns,
         keepFullRecentRuns,
     };
-}
-
-function normalizeRetentionAutoPrune(value: unknown, label: string): boolean {
-    if (typeof value !== 'boolean') {
-        throw new Error(`${label} must be a boolean`);
-    }
-    return value;
 }
 
 function normalizeRetentionCount(value: unknown, label: string): number {
@@ -321,40 +306,4 @@ function normalizeRetentionCount(value: unknown, label: string): number {
         throw new Error(`${label} must be an integer between 0 and ${MAX_AGENT_RETENTION_KEEP_RUNS}`);
     }
     return count;
-}
-
-function normalizePrunePlan(value: unknown): TauriTavernAgentRunPrunePlan {
-    if (!plainObject(value)) {
-        throw new Error('agent.run_prune_plan_invalid: plan must be an object');
-    }
-    if (!Array.isArray(value.candidates)) {
-        throw new Error('agent.run_prune_plan_invalid: plan.candidates must be an array');
-    }
-    if (!Array.isArray(value.blockedRuns)) {
-        throw new Error('agent.run_prune_plan_invalid: plan.blockedRuns must be an array');
-    }
-    normalizeRetentionSettings(value.retention);
-    return value as TauriTavernAgentRunPrunePlan;
-}
-
-function normalizePruneApplyResult(value: unknown): TauriTavernAgentRunPruneApplyResult {
-    if (!plainObject(value)) {
-        throw new Error('agent.run_prune_apply_invalid: result must be an object');
-    }
-    if (!Array.isArray(value.failedRuns)) {
-        throw new Error('agent.run_prune_apply_invalid: result.failedRuns must be an array');
-    }
-    normalizeRetentionSettings(value.retention);
-    return {
-        ...(value as Omit<TauriTavernAgentRunPruneApplyResult, 'afterPlan'> & { afterPlan: unknown }),
-        afterPlan: normalizePrunePlan(value.afterPlan),
-    };
-}
-
-function plainObject(value: unknown): value is Record<string, unknown> {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return false;
-    }
-    const prototype = Object.getPrototypeOf(value) as unknown;
-    return prototype === Object.prototype || prototype === null;
 }

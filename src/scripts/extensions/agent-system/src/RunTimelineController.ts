@@ -1,4 +1,4 @@
-import type { AgentSystemSettings } from './AgentSystemEntryController';
+import type { AgentSystemSettings } from './settings-store';
 import type {
     RunTimelineController,
     RunTimelineOptions,
@@ -15,8 +15,8 @@ import {
     hasModelTurnNarration,
     isDisplayableRunEvent,
     timelineItemsFromEvents,
-} from './run-event-presenter.js';
-import { projectSubAgentTasks } from './run-invocation-projector.js';
+} from './run-event-presenter';
+import { projectSubAgentTasks } from './run-invocation-projector';
 import { createTimelineDetailState } from './run-timeline-detail-state';
 import {
     runTimelineHeading,

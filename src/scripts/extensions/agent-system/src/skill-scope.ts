@@ -1,6 +1,6 @@
-import { translateAgentSystem as tr } from './i18n.js';
+import { translateAgentSystem as tr } from './i18n';
 
-export function skillScopeKey(scope) {
+export function skillScopeKey(scope: TauriTavernSkillScope | null | undefined): string {
     if (!scope || typeof scope !== 'object') {
         return '';
     }
@@ -19,7 +19,7 @@ export function skillScopeKey(scope) {
     return '';
 }
 
-export function skillScopeLabel(scope) {
+export function skillScopeLabel(scope: TauriTavernSkillScope | null | undefined): string {
     if (!scope || typeof scope !== 'object') {
         return tr('none');
     }

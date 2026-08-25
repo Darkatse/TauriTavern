@@ -1,6 +1,6 @@
-import { translateAgentSystem as tr } from './i18n.js';
+import { translateAgentSystem as tr, type AgentSystemMessageKey } from './i18n';
 
-const TOOL_LABEL_KEYS = Object.freeze({
+const TOOL_LABEL_KEYS: Readonly<Record<string, AgentSystemMessageKey>> = Object.freeze({
     'agent.list': 'timelineToolAgentList',
     'agent.delegate': 'timelineToolAgentDelegate',
     'agent.handoff': 'timelineToolAgentHandoff',
@@ -22,8 +22,8 @@ const TOOL_LABEL_KEYS = Object.freeze({
     'workspace.finish': 'timelineToolWorkspaceFinish',
 });
 
-export function displayToolName(name) {
-    const normalized = String(name || '').trim();
+export function displayToolName(name: unknown): string {
+    const normalized = typeof name === 'string' ? name.trim() : '';
     if (!normalized) {
         return tr('timelineToolGeneric');
     }
@@ -32,10 +32,9 @@ export function displayToolName(name) {
     return key ? tr(key) : readableUnknownToolName(normalized);
 }
 
-function readableUnknownToolName(name) {
+function readableUnknownToolName(name: string): string {
     return name
-        .split('.')
-        .at(-1)
+        .slice(name.lastIndexOf('.') + 1)
         .replace(/[_-]+/g, ' ')
         .trim()
         || tr('timelineToolGeneric');

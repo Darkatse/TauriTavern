@@ -7,7 +7,7 @@ import {
     type CSSProperties,
 } from 'react';
 
-import type { AgentSystemTr } from './i18n.js';
+import type { AgentSystemTr } from './i18n';
 import type {
     RunTimelineController,
     SubAgentTimelineSnapshot,

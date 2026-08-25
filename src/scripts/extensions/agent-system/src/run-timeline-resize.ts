@@ -1,6 +1,6 @@
 import type { TimelineResizeBounds } from './RunTimelineContract';
 
-export const RUN_TIMELINE_HEIGHT_MIN_PX = 132;
+const RUN_TIMELINE_HEIGHT_MIN_PX = 132;
 export const RUN_TIMELINE_KEYBOARD_STEP_PX = 28;
 export const RUN_TIMELINE_PAGE_STEP_PX = 96;
 

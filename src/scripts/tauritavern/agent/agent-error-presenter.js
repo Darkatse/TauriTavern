@@ -1,3 +1,17 @@
+// @ts-check
+
+/**
+ * @typedef {{
+ *   code: string;
+ *   message: string;
+ *   summary: string;
+ *   technicalMessage: string;
+ *   retryable: boolean;
+ *   userRetryable: boolean;
+ * }} AgentRunFailurePresentation
+ */
+
+/** @type {Readonly<Record<string, { message: string; messageKey: string; summary: string; summaryKey: string }>>} */
 const RUN_FAILURE_PRESENTATIONS = Object.freeze({
     'model.tool_call_required': Object.freeze({
         message: 'The model skipped the Agent tool flow and tried to answer directly. No committed Agent chat output was kept. Try regenerating; if this keeps happening, reduce the context or use a model with stronger tool calling.',
@@ -25,8 +39,14 @@ const RUN_FAILURE_PRESENTATIONS = Object.freeze({
     }),
 });
 
+/**
+ * @param {{ payload?: unknown } | null | undefined} event
+ * @returns {AgentRunFailurePresentation}
+ */
 export function presentAgentRunFailure(event) {
-    const payload = event?.payload || {};
+    const payload = event?.payload && typeof event.payload === 'object' && !Array.isArray(event.payload)
+        ? /** @type {Record<string, unknown>} */ (event.payload)
+        : {};
     const code = String(payload.code || '').trim();
     const message = String(payload.message || '').trim();
     const technicalMessage = String(payload.technicalMessage || message || runFailed()).trim();
@@ -51,6 +71,10 @@ export function presentAgentRunFailure(event) {
     };
 }
 
+/**
+ * @param {any} error
+ * @returns {string}
+ */
 export function agentErrorMessage(error) {
     const raw = String(error?.userMessage || error?.message || error || runFailed());
     const code = structuredAgentErrorCode(raw);
@@ -64,11 +88,17 @@ function runFailed() {
     return translateAgentError('Agent run failed', 'agent.error.run_failed');
 }
 
+/**
+ * @param {string} message
+ * @param {string} key
+ */
 function translateAgentError(message, key) {
-    const translate = globalThis.SillyTavern?.getContext?.()?.translate;
+    const host = /** @type {typeof globalThis & { SillyTavern?: { getContext?: () => { translate?: (message: string, key: string) => string } } }} */ (globalThis);
+    const translate = host.SillyTavern?.getContext?.()?.translate;
     return typeof translate === 'function' ? translate(message, key) : message;
 }
 
+/** @param {unknown} message */
 function structuredAgentErrorCode(message) {
     const text = String(message || '').trim();
     const separator = text.indexOf(':');

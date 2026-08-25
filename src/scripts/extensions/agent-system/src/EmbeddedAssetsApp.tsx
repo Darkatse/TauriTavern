@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
-import { AGENT_TOGGLE_ICON } from './agent-icon.js';
-import { DEFAULT_PROFILE_ID } from './constants.js';
+import { AGENT_TOGGLE_ICON } from './agent-icon';
+import { DEFAULT_PROFILE_ID } from './constants';
 import {
     type EmbeddedAssetsActions,
     type EmbeddedAssetsInitial,
@@ -13,11 +13,12 @@ import {
     skillOptionLabel,
     type SkillOption,
 } from './EmbeddedAssetsContract';
+import type { AgentSystemTr } from './i18n';
 
 export type EmbeddedAssetsAppProps = {
     initialLoad: Promise<EmbeddedAssetsInitial>;
     actions: EmbeddedAssetsActions;
-    tr: (key: string, params?: Record<string, unknown>) => string;
+    tr: AgentSystemTr;
     onRequestClose: () => void;
 };
 

@@ -1,7 +1,7 @@
-import { AGENT_TOGGLE_ICON } from './agent-icon.js';
-import { errorText } from './host-api.js';
-import { translateAgentSystem as tr } from './i18n.js';
-import { openEmbeddedAssetsPanel } from './embedded-assets-popup.tsx';
+import { AGENT_TOGGLE_ICON } from './agent-icon';
+import { reportAgentSystemError, requireSillyTavernContext } from './host-api';
+import { translateAgentSystem as tr } from './i18n';
+import { openEmbeddedAssetsPanel } from './embedded-assets-popup';
 
 const PRESET_BUTTONS = Object.freeze([
     { apiId: 'kobold', selectId: 'settings_preset' },
@@ -10,12 +10,22 @@ const PRESET_BUTTONS = Object.freeze([
     { apiId: 'textgenerationwebui', selectId: 'settings_preset_textgenerationwebui' },
 ]);
 
-function reportInteractionError(error) {
-    console.error('[AgentSystem]', error);
-    window.toastr?.error?.(errorText(error));
-}
+type EmbeddedAssetEventName =
+    | 'CHARACTER_EDITOR_OPENED'
+    | 'CHARACTER_EDITED'
+    | 'CHARACTER_DELETED'
+    | 'CHAT_CHANGED';
+type EmbeddedAssetsHostContext = {
+    characterId?: string | number | null;
+    characters?: unknown[] | Record<string, unknown>;
+    eventTypes?: Partial<Record<EmbeddedAssetEventName, string>>;
+    eventSource?: {
+        on: (eventName: string, listener: () => void) => void;
+    };
+};
 
-function createEmbedButton({ id, targetKind, title }) {
+function createEmbedButton(input: { id: string; targetKind: string; title: string }): HTMLButtonElement {
+    const { id, targetKind, title } = input;
     const button = document.createElement('button');
     button.id = id;
     button.type = 'button';
@@ -27,27 +37,20 @@ function createEmbedButton({ id, targetKind, title }) {
     return button;
 }
 
-function requireSillyTavernContext() {
-    const context = window.SillyTavern?.getContext?.();
-    if (!context) {
-        throw new Error(tr('sillyTavernContextUnavailable'));
-    }
-    return context;
-}
-
-function findPresetButtonBar(select) {
+function findPresetButtonBar(select: HTMLSelectElement): HTMLElement | null {
     const row = select.parentElement;
     if (!(row instanceof HTMLElement)) {
         return null;
     }
-    return Array.from(row.children).find((child) => (
+    const bar = Array.from(row.children).find((child) => (
         child instanceof HTMLElement
         && child !== select
         && child.classList.contains('flex-container')
-    )) || null;
+    ));
+    return bar instanceof HTMLElement ? bar : null;
 }
 
-function mountPresetEmbedButtons() {
+function mountPresetEmbedButtons(): void {
     for (const { apiId, selectId } of PRESET_BUTTONS) {
         const select = document.getElementById(selectId);
         if (!(select instanceof HTMLSelectElement)) {
@@ -75,7 +78,7 @@ function mountPresetEmbedButtons() {
             try {
                 openEmbeddedAssetsPanel({ kind: 'preset', apiId });
             } catch (error) {
-                reportInteractionError(error);
+                reportAgentSystemError(error);
                 throw error;
             }
         });
@@ -84,17 +87,17 @@ function mountPresetEmbedButtons() {
     }
 }
 
-function isCharacterEditMode() {
+function isCharacterEditMode(): boolean {
     const form = document.getElementById('form_create');
     if (!(form instanceof HTMLElement)) {
         throw new Error(tr('characterFormNotFound'));
     }
-    const context = requireSillyTavernContext();
+    const context = requireSillyTavernContext() as EmbeddedAssetsHostContext;
     return form.getAttribute('actiontype') === 'editcharacter'
-        && Boolean(context.characters?.[context.characterId]);
+        && Boolean(selectedCharacter(context));
 }
 
-function mountCharacterEmbedButton() {
+function mountCharacterEmbedButton(): void {
     const bar = document.querySelector('#avatar_controls .form_create_bottom_buttons_block');
     if (!(bar instanceof HTMLElement)) {
         throw new Error(tr('characterButtonBarNotFound'));
@@ -114,7 +117,7 @@ function mountCharacterEmbedButton() {
         try {
             openEmbeddedAssetsPanel({ kind: 'character' });
         } catch (error) {
-            reportInteractionError(error);
+            reportAgentSystemError(error);
             throw error;
         }
     });
@@ -126,7 +129,7 @@ function mountCharacterEmbedButton() {
         bar.insertBefore(button, document.getElementById('export_button'));
     }
 
-    const sync = () => {
+    const sync = (): void => {
         const visible = isCharacterEditMode();
         button.classList.toggle('displayNone', !visible);
         button.disabled = !visible;
@@ -141,16 +144,52 @@ function mountCharacterEmbedButton() {
         attributeFilter: ['actiontype'],
     });
 
-    const context = requireSillyTavernContext();
-    const events = context.eventTypes;
-    context.eventSource.on(events.CHARACTER_EDITOR_OPENED, sync);
-    context.eventSource.on(events.CHARACTER_EDITED, sync);
-    context.eventSource.on(events.CHARACTER_DELETED, sync);
-    context.eventSource.on(events.CHAT_CHANGED, sync);
+    const context = requireSillyTavernContext() as EmbeddedAssetsHostContext;
+    const { eventSource, eventTypes } = requireEmbeddedAssetEvents(context);
+    eventSource.on(eventTypes.CHARACTER_EDITOR_OPENED, sync);
+    eventSource.on(eventTypes.CHARACTER_EDITED, sync);
+    eventSource.on(eventTypes.CHARACTER_DELETED, sync);
+    eventSource.on(eventTypes.CHAT_CHANGED, sync);
     sync();
 }
 
-export async function mountEmbeddedAssetButtons() {
+export function mountEmbeddedAssetButtons(): void {
     mountPresetEmbedButtons();
     mountCharacterEmbedButton();
+}
+
+function selectedCharacter(context: EmbeddedAssetsHostContext): unknown {
+    const id = context.characterId;
+    if (id == null) return undefined;
+    return Array.isArray(context.characters)
+        ? context.characters[Number(id)]
+        : context.characters?.[String(id)];
+}
+
+function requireEmbeddedAssetEvents(context: EmbeddedAssetsHostContext): {
+    eventSource: NonNullable<EmbeddedAssetsHostContext['eventSource']>;
+    eventTypes: Record<EmbeddedAssetEventName, string>;
+} {
+    const eventSource = context.eventSource;
+    const eventTypes = context.eventTypes;
+    const editorOpened = eventTypes?.CHARACTER_EDITOR_OPENED;
+    const edited = eventTypes?.CHARACTER_EDITED;
+    const deleted = eventTypes?.CHARACTER_DELETED;
+    const chatChanged = eventTypes?.CHAT_CHANGED;
+    if (typeof eventSource?.on !== 'function'
+        || typeof editorOpened !== 'string'
+        || typeof edited !== 'string'
+        || typeof deleted !== 'string'
+        || typeof chatChanged !== 'string') {
+        throw new Error('agent.embedded_asset_events_unavailable: SillyTavern character event contract is unavailable');
+    }
+    return {
+        eventSource,
+        eventTypes: {
+            CHARACTER_EDITOR_OPENED: editorOpened,
+            CHARACTER_EDITED: edited,
+            CHARACTER_DELETED: deleted,
+            CHAT_CHANGED: chatChanged,
+        },
+    };
 }

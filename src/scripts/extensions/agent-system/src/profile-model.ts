@@ -6,9 +6,9 @@ import {
     KNOWN_TOOLS,
     RUNTIME_ONLY_TOOLS,
     WORKSPACE_ROOTS,
-} from './constants.js';
-import { clone } from './host-api.js';
-import { translateAgentSystem as tr } from './i18n.js';
+} from './constants';
+import { clone } from './host-api';
+import { translateAgentSystem as tr } from './i18n';
 import { AGENT_MODEL_REQUIRES_CONFIGURATION } from '../../../tauritavern/agent/agent-profile-portable.js';
 import {
     DEFAULT_AGENT_CONTEXT_POLICY,
@@ -20,9 +20,8 @@ const DEFAULT_MCP_RESULT_INLINE_CHAR_LIMIT = 50_000;
 type AgentProfile = TauriTavernAgentProfileDefinition;
 
 /**
- * Transient numeric input state: `v-model.number` semantics keep an emptied
- * input as '' instead of coercing it to 0. Save-time normalization converts
- * the value to a number.
+ * Transient numeric input state: an empty field remains '' until save-time
+ * normalization converts it to a number.
  */
 export type AgentProfileDraftNumber = number | '';
 
@@ -414,13 +413,16 @@ export function normalizeProfileForSave(profile: AgentProfileDraft): TauriTavern
     delete normalized.skills.denyCsv;
     applyDelegationToolPolicy(normalized);
     const [firstArtifact] = normalized.output.artifacts;
-    const artifact = {
+    if (!firstArtifact) {
+        throw new Error('output.artifacts must contain the main artifact');
+    }
+    const artifact: TauriTavernAgentProfileDefinition['output']['artifacts'][number] = {
         ...firstArtifact,
         id: 'main',
         target: 'messageBody',
         required: true,
         assemblyOrder: 0,
-    } as TauriTavernAgentProfileDefinition['output']['artifacts'][number];
+    };
     normalized.output.artifacts = [artifact];
     // The normalizers above rewrote every draft-only field (CSV mirrors,
     // ''-valued numeric inputs) into the canonical shape.

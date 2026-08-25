@@ -1,5 +1,5 @@
-import { eventBelongsToInvocation } from './run-invocation-projector.js';
-import { TERMINAL_EVENT_TYPES } from './run-event-presenter.js';
+import { eventBelongsToInvocation } from './run-invocation-projector';
+import { TERMINAL_EVENT_TYPES } from './run-event-presenter';
 import type {
     TimelineProjection,
     TimelineReadInput,

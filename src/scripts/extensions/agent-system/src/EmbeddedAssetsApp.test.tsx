@@ -39,13 +39,9 @@ function skillEntry(name: string, scope: TauriTavernSkillScope): TauriTavernSkil
 
 function embeddedSkill(name: string): EmbeddedSkillItem {
     return {
-        bundleFormat: 'ttskill-archive-base64-v1',
         skillName: name,
-        sourceScope: { kind: 'global' },
         sourceScopeLabel: 'Global',
         fileName: `${name}.skill`,
-        contentBase64: '',
-        sha256: 'sha',
     };
 }
 

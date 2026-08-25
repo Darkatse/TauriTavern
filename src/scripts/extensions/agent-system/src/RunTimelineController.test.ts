@@ -1,6 +1,6 @@
 import { expect, rs, test } from '@rstest/core';
 
-import type { AgentSystemSettings } from './AgentSystemEntryController';
+import type { AgentSystemSettings } from './settings-store';
 import { createRunTimelineController } from './RunTimelineController';
 import type {
     ActiveTimelineOptions,

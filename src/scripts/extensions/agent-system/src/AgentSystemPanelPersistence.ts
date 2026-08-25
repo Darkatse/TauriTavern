@@ -1,6 +1,6 @@
-import { DEFAULT_PROFILE_ID } from './constants.js';
-import { prettyJson } from './host-api.js';
-import { findModelTargetForBinding, modelTargetIdFromConnectionRef } from './model-target-connection.js';
+import { DEFAULT_PROFILE_ID } from './constants';
+import { prettyJson } from './host-api';
+import { findModelTargetForBinding, modelTargetIdFromConnectionRef } from './model-target-connection';
 import { sanitizePortableAgentProfile } from '../../../tauritavern/agent/agent-profile-portable.js';
 import { normalizeProfileForSave } from './profile-model';
 import {
