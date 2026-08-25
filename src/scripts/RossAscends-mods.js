@@ -1005,10 +1005,19 @@ export function initRossMods() {
     // carries the hardware press timestamp, which necessarily precedes
     // compositionend: the press is what committed the composition. A deliberate
     // "send" Enter is pressed after the commit, so its timeStamp is always later.
-    // Comparing timestamps separates the two without any tuned delay window.
+    //
+    // The timestamp comparison alone is not enough, though: the hardware-to-page
+    // clock mapping behind event.timeStamp drifts in long-running WKWebView
+    // sessions (observed keydown timeStamps a few ms in the future relative to
+    // performance.now() after ~20 minutes of uptime, and a real ghost-Enter
+    // send-through after a few hours), which can flip the ghost's delta positive.
+    // So a second, drift-immune check backs it up: the ghost keydown is
+    // *dispatched* within ~2ms of compositionend, while the fastest deliberate
+    // Enter measured after a commit arrives 200ms+ later — an arrival gap under
+    // 50ms is decisive on its own.
     const lastCompositionEnd = new WeakMap();
     document.addEventListener('compositionend', (event) => {
-        if (event.target) lastCompositionEnd.set(event.target, event.timeStamp);
+        if (event.target) lastCompositionEnd.set(event.target, { timeStamp: event.timeStamp, arrivedAt: performance.now() });
     }, true);
 
     /**
@@ -1018,8 +1027,9 @@ export function initRossMods() {
      * @returns {boolean}
      */
     function isImeCommitEnter(event) {
-        const endedAt = lastCompositionEnd.get(event.target);
-        return endedAt !== undefined && event.timeStamp <= endedAt;
+        const ended = lastCompositionEnd.get(event.target);
+        if (!ended) return false;
+        return event.timeStamp <= ended.timeStamp || performance.now() - ended.arrivedAt < 50;
     }
 
     //Additional hotkeys CTRL+ENTER and CTRL+UPARROW
