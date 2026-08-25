@@ -26,6 +26,7 @@ function server(
         protocolVersion: 'auto',
         state,
         toolPermissions: {},
+        toolDescriptionOverrides: {},
     };
 }
 

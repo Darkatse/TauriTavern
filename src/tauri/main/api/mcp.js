@@ -49,6 +49,26 @@ function headers(value) {
 }
 
 /** @param {unknown} value */
+function toolDescriptionOverride(value) {
+    if (value === null) {
+        return null;
+    }
+    const override = requireObject(value, 'override');
+    if (override.description !== undefined && typeof override.description !== 'string') {
+        throw new Error('override.description must be a string');
+    }
+    if (override.properties !== undefined) {
+        const properties = requireObject(override.properties, 'override.properties');
+        for (const [name, description] of Object.entries(properties)) {
+            if (typeof description !== 'string') {
+                throw new Error(`override.properties.${name} must be a string`);
+            }
+        }
+    }
+    return override;
+}
+
+/** @param {unknown} value */
 function protocolVersion(value) {
     const version = requireString(value, 'protocolVersion');
     if (!PROTOCOL_VERSIONS.has(version)) {
@@ -136,6 +156,16 @@ function createMcpApi({ safeInvoke }) {
                         registrationId: requireString(value.registrationId, 'registrationId'),
                         nativeName: requireNativeName(value.nativeName),
                         permission,
+                    },
+                });
+            },
+            setDescriptionOverride: async (input) => {
+                const value = requireObject(input, 'input');
+                return safeInvoke('set_mcp_tool_description_override', {
+                    dto: {
+                        registrationId: requireString(value.registrationId, 'registrationId'),
+                        nativeName: requireNativeName(value.nativeName),
+                        override: toolDescriptionOverride(value.override),
                     },
                 });
             },

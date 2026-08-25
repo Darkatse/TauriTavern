@@ -5,6 +5,12 @@ import { ServerRow } from './ServerRow';
 
 export type McpManagerInitial = Awaited<ReturnType<TauriTavernMcpApi['servers']['list']>>;
 
+export type ToolDescriptionDialogInput = {
+    tool: TauriTavernMcpTool;
+    override: TauriTavernToolDescriptionOverride | undefined;
+    save: (override: TauriTavernToolDescriptionOverride | null) => Promise<void>;
+};
+
 export type McpManagerActions = {
     /** Opens the Add-server dialog; resolves the created server, or null when cancelled. */
     addServer: () => Promise<TauriTavernMcpServer | null>;
@@ -15,6 +21,9 @@ export type McpManagerActions = {
     discover: TauriTavernMcpApi['servers']['discover'];
     refresh: TauriTavernMcpApi['servers']['refresh'];
     setPermission: TauriTavernMcpApi['tools']['setPermission'];
+    setDescriptionOverride: TauriTavernMcpApi['tools']['setDescriptionOverride'];
+    /** Opens the per-tool description editor; its save throws on failure so the dialog can show the error in place. */
+    openToolDialog: (input: ToolDescriptionDialogInput) => Promise<void>;
     /** Opens the unified test-call console with the current server list. */
     openTestCall: (servers: TauriTavernMcpServer[]) => Promise<void>;
     confirmActivate: (server: TauriTavernMcpServer) => Promise<boolean>;
@@ -212,6 +221,24 @@ export function McpManagerApp({ initial, initialError = '', actions, tr }: McpMa
         });
     }
 
+    async function editDescription(server: TauriTavernMcpServer, tool: TauriTavernMcpTool): Promise<void> {
+        try {
+            await actions.openToolDialog({
+                tool,
+                override: server.toolDescriptionOverrides[tool.nativeName],
+                save: async override => {
+                    replaceServer(await actions.setDescriptionOverride({
+                        registrationId: server.id,
+                        nativeName: tool.nativeName,
+                        override,
+                    }));
+                },
+            });
+        } catch (error) {
+            updateStatus(server.id, { error: errorText(error, tr('unknownError')) });
+        }
+    }
+
     async function openTestConsole(): Promise<void> {
         setPanelError('');
         setTesting(true);
@@ -314,6 +341,7 @@ export function McpManagerApp({ initial, initialError = '', actions, tr }: McpMa
                                             onDiscover={() => void loadTools(server, actions.discover)}
                                             onRefresh={() => void loadTools(server, actions.refresh)}
                                             onSetPermission={(tool, permission) => void setPermission(server, tool, permission)}
+                                            onEditDescription={tool => void editDescription(server, tool)}
                                             onClearStale={nativeName => void clearStalePermission(server, nativeName)}
                                         />
                                     );

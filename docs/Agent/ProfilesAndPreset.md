@@ -86,6 +86,8 @@ mcp/<registration-uuid>:<native-name>
 
 v1/v2 只作为迁移输入；载入后将旧 builtin native names 一次性转换并写回 v3。新 Profile 不接受 shorthand，也没有平行 `mcpTools` 字段。MCP ToolId 可以在 server 离线或目录暂时缺失时保存；invocation preparation 会从 Manager 持久 catalog 解析，缺失项以 diagnostic 省略而不猜测替代工具。
 
+MCP Manager 的 description override 是 registration 级默认值；Agent Profile `tools.toolDescriptions` 在 invocation snapshot 前最后应用，同一工具同时存在两份覆盖时以 Profile 为准。两层都原样保留非空描述文本，只修改 descriptor 副本中的工具/参数描述，不修改 raw catalog、ToolId、schema 结构或执行权限。
+
 ## 2. Preset Agent Schema
 
 第一版可以使用 JSON-compatible schema，不必立刻引入 YAML。

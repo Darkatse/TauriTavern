@@ -77,22 +77,44 @@ type ToolItemProps = {
     tool: TauriTavernMcpTool;
     busy: boolean;
     tr: McpTranslator;
+    descriptionOverride: TauriTavernToolDescriptionOverride | undefined;
     onSetPermission: (permission: TauriTavernMcpToolPermission) => void;
+    onEditDescription: () => void;
 };
 
-export function ToolItem({ tool, busy, tr, onSetPermission }: ToolItemProps) {
+export function ToolItem({
+    tool,
+    busy,
+    tr,
+    descriptionOverride,
+    onSetPermission,
+    onEditDescription,
+}: ToolItemProps) {
     const params = extractSchemaParams(tool.inputSchema);
     const hasNativeAlias = tool.title !== undefined && tool.title !== tool.nativeName;
+    const customized = descriptionOverride?.description !== undefined;
+    const description = descriptionOverride?.description ?? tool.description;
 
     return (
         <li className="tt-mcp-tool">
             <div className="tt-mcp-tool-title">
                 <b>{tool.title ?? tool.nativeName}</b>
                 {hasNativeAlias && <code>{tool.nativeName}</code>}
+                {customized && <span className="tt-mcp-custom-chip">{tr('customized')}</span>}
+                <button
+                    type="button"
+                    className="tt-mcp-icon-btn tt-mcp-tool-edit"
+                    title={tr('editDescription')}
+                    aria-label={tr('editDescription')}
+                    disabled={busy}
+                    onClick={onEditDescription}
+                >
+                    <i className="fa-solid fa-pen" aria-hidden="true" />
+                </button>
             </div>
             <PermissionGroup tool={tool} busy={busy} tr={tr} onSetPermission={onSetPermission} />
             <div className="tt-mcp-tool-body">
-                {tool.description && <p>{tool.description}</p>}
+                {description && <p>{description}</p>}
                 {params.length > 0 && (
                     <div className="tt-mcp-params">
                         {params.map(param => (

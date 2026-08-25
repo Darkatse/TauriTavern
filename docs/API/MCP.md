@@ -1,6 +1,6 @@
 # `window.__TAURITAVERN__.api.mcp` — MCP Manager API
 
-本文档描述已经落地的 MCP Manager Host ABI，以及 Agent 与 Legacy generation 的消费契约。MCP 是独立平台能力；当前提供 registration、persistent tool catalog、显式 refresh、第一方 Manager test call，并由 Agent 与 Legacy generation 消费 cached tools。
+本文档描述已经落地的 MCP Manager Host ABI，以及 Agent 与 Legacy generation 的消费契约。MCP 是独立平台能力；当前提供 registration、persistent tool catalog、model-facing tool description override、显式 refresh、第一方 Manager test call，并由 Agent 与 Legacy generation 消费 cached tools。
 
 状态：Manager、Agent 与 Legacy generation 集成已实现，Project Contract（实验性）。
 
@@ -43,6 +43,11 @@ type TauriTavernMcpApi = {
       nativeName: string;
       permission: 'off' | 'ask' | 'allow';
     }): Promise<McpServer>;
+    setDescriptionOverride(input: {
+      registrationId: string;
+      nativeName: string;
+      override: ToolDescriptionOverride | null;
+    }): Promise<McpServer>;
     testCall(input: {
       registrationId: string;
       nativeName: string;
@@ -65,6 +70,12 @@ type McpServer = {
   protocolVersion: McpProtocolVersion;
   state: 'active' | 'paused';
   toolPermissions: Record<string, 'ask' | 'allow'>;
+  toolDescriptionOverrides: Record<string, ToolDescriptionOverride>;
+};
+
+type ToolDescriptionOverride = {
+  description?: string;
+  properties?: Record<string, string>;
 };
 
 type McpProtocolVersion =
@@ -128,6 +139,8 @@ type McpTestCallOutcome =
 - headers 的名称和值原样保存；registration 不维护 reserved-header 列表或数量/总量上限，transport/server 无法接受的配置通过正常调用错误返回。endpoint credentials 与 header values 明文保存在 registration 文件中、由 `servers.list()` 回传给同一 WebView 的编辑器，并随包含该 data root 的备份流转。
 - protocol version 缺省为 `auto`。固定版本只允许该版本参与 lifecycle 协商；当前选项与 Streamable HTTP transport 实际支持集一致。
 - `off` 是缺省值，不写入 `toolPermissions`；`setPermission(..., 'off')` 删除对应持久设置。
+- `setDescriptionOverride()` 按 native name 保存 model-facing description/property-description 覆盖；字符串原样保存，不做 trim 或改写。`override: null` 是唯一删除语义，空对象显式拒绝。值不写入或改写 discovery catalog，也不改变 ToolId、schema 结构、permission 或执行目标。
+- 模型描述优先级固定为 server catalog → registration override → Agent Profile `tools.toolDescriptions`。Legacy 消费前两层；Agent Profile 同一字段存在时覆盖 registration 值。
 - discovery 消失的 Ask/Allow 设置作为 `staleTools` 返回，但不会成为可用工具。
 - registration 保存为 `_tauritavern/mcp/registrations/<uuid>.json` 的严格 v1 单文件记录；persistent catalog 保存为 `_tauritavern/mcp/catalogs/<uuid>.json` 的独立严格 v1 记录。两者都没有旧 schema reader 或 revision graph。
 - Manager 的 Add 弹窗提供手动与 JSON 两种输入；JSON 每次只接受一个 Streamable HTTP server，支持 `{ "name": { "url": "...", "headers": {...}, "protocolVersion": "auto" } }` 和标准 `mcpServers` 包装。已保存 server 的 Edit 弹窗复用同一手动表单编辑名称、endpoint、headers 与 protocol version。无效 JSON、多个 server、非字符串 header、未知协议版本或不支持的 transport 会整体拒绝，不做 partial import。
@@ -172,7 +185,7 @@ type McpTestCallOutcome =
 
 Agent 没有新增公共 raw-call API。Profile v3 以 `mcp/<registration-uuid>:<native-name>` 选择工具；每个 root、return-mode child 与 handoff invocation 都通过 `McpService` 读取 memory→disk persistent snapshot，绝不因启动 Agent 隐式 cold discovery。无 snapshot 或工具不在缓存时，工具从该 invocation 省略并留下 diagnostic；用户在 Manager 中 discovery/refresh 后，下一个 invocation 才观察新目录。
 
-只有 Active 且 permission 为 Ask/Allow、input schema root 明确为 `type: "object"` 的工具可以进入 Agent binding。当前按用户要求不实现 Ask 审批 UI：Ask 与 Allow 都自动执行；Off 与 Paused 在广告前过滤，并在实际发送前重新读取 registration 复核。参数必须是 256 KiB 内 JSON object，Host 不按 schema 改写。alias 由 Agent snapshot 生成，不属于 Manager DTO 或 MCP identity。
+只有 Active 且 permission 为 Ask/Allow、input schema root 明确为 `type: "object"` 的工具可以进入 Agent binding。共享 resolver 先将 registration description override 应用到 catalog descriptor 的副本，Agent invocation 再应用 Profile `tools.toolDescriptions`，因此 Profile 优先。当前按用户要求不实现 Ask 审批 UI：Ask 与 Allow 都自动执行；Off 与 Paused 在广告前过滤，并在实际发送前重新读取 registration 复核。参数必须是 256 KiB 内 JSON object，Host 不按 schema 改写。alias 由 Agent snapshot 生成，不属于 Manager DTO 或 MCP identity。
 
 已知结果投影为现有 `AgentToolResult`。内部 `structured`、`error_code` 与 `resource_refs` 不作为字段发送给模型；text 保持原文，structured content 去重后转为 `## Details` Markdown，可操作的非文本 content diagnostic 转为 `## Notes`，metadata diagnostic 不进入模型。模型可见 `content` 超过 Agent Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，完整 JSON 保存在内部 audit，同时生成同一完整 Markdown 的行可读 `.txt` 视图；模型得到最多前 3,000 个 Unicode 字符的前缀预览、可读视图路径与分段读取指引，不接收 audit JSON 路径。`.txt` 视图换行超长物理行，JSON audit 保留精确原始结果。该值只属于 Agent invocation 投影，不进入共享 `McpService` 调用契约。`outcome_unknown` 不自动 retry，也不伪造 tool result；当前没有审批/未知结果交互状态机，因此终止当前 Agent run。
 
@@ -181,6 +194,7 @@ Agent 没有新增公共 raw-call API。Profile v3 以 `mcp/<registration-uuid>:
 Legacy 集成没有扩展上面的公共 `api.mcp`。Legacy 使用第一方内部 commands 从 `McpService` 获取 Active + Ask/Allow 的 cached descriptors，并通过 permission-aware call 用例执行；第三方仍没有公共 raw MCP executor。
 
 - catalog preparation 只读 memory/disk snapshot，cache miss 不联网；单 server diagnostic 不阻塞健康 MCP/local tools 或普通生成。
+- registration description override 在共享 resolver 中应用，Legacy root 冻结覆盖后的 descriptor；后续 Manager 修改只影响下一个 root。
 - 每个实际 Legacy root generation 冻结 descriptors；工具递归复用 descriptor snapshot，但每轮根据当前 local view 重新分配 alias 并重建 provider schema。执行只解析当前 round binding；MCP 不进入全局 ToolManager、slash commands 或 extension enumeration。
 - local alias 优先；settings hook 后只接受仍唯一存在的初始 MCP alias。删除、改名、重复或失去 binding 的 alias 不按名称/schema猜 canonical ToolId。
 - `custom_include_body` / `custom_exclude_body` 继续作为用户最终 upstream body 意图；Legacy MCP 不保护、拒绝或重注入 `tools` / `tool_choice`。
@@ -196,6 +210,6 @@ Legacy 集成没有扩展上面的公共 `api.mcp`。Legacy 使用第一方内�
 - OAuth、credential、stdio、2024 HTTP+SSE；
 - Resources、Prompts、Tasks、Apps、subscriptions/list-changed；
 - background discovery、discovery/list 通用 retry、catalog TTL/revision history；
-- scope hierarchy、Manager-defined/global model alias。
+- registration/Profile 之外的 description scope hierarchy、Manager-defined/global model alias。
 
 model alias 属于短命 Agent/Legacy invocation binding，不属于 registration/discovery/test call。Legacy 集成不把 MCP tool 注册进全局 SillyTavern `ToolManager`。

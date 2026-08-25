@@ -13,6 +13,7 @@ use tt_domain::{
         McpEndpoint, McpProtocolVersionPreference, McpRegistrationId, McpServerRegistration,
         McpServerState, McpToolPermission,
     },
+    models::tool::ToolDescriptionOverride,
 };
 use tt_ports::mcp::McpDiscoveryResult;
 use tt_ports::repositories::mcp_server_repository::{
@@ -189,6 +190,8 @@ struct StoredMcpRegistrationV1 {
     state: McpServerState,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     tool_permissions: BTreeMap<String, McpToolPermission>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    tool_description_overrides: BTreeMap<String, ToolDescriptionOverride>,
 }
 
 impl StoredMcpRegistrationV1 {
@@ -203,6 +206,7 @@ impl StoredMcpRegistrationV1 {
             protocol_version: registration.protocol_version(),
             state: registration.state(),
             tool_permissions: registration.tool_permissions().clone(),
+            tool_description_overrides: registration.tool_description_overrides().clone(),
         }
     }
 
@@ -240,6 +244,7 @@ impl StoredMcpRegistrationV1 {
             self.protocol_version,
             self.state,
             self.tool_permissions,
+            self.tool_description_overrides,
         )
     }
 }
@@ -359,6 +364,7 @@ mod tests {
             McpProtocolVersionPreference::Auto,
             McpServerState::Paused,
             BTreeMap::new(),
+            BTreeMap::new(),
         )
         .unwrap()
     }
@@ -388,7 +394,16 @@ mod tests {
     async fn round_trip_uses_one_strict_file_per_registration() {
         let dir = TestDir::new();
         let repository = FileMcpServerRepository::new(dir.path().to_path_buf());
-        let expected = registration("550e8400-e29b-41d4-a716-446655440000");
+        let mut expected = registration("550e8400-e29b-41d4-a716-446655440000");
+        expected
+            .set_tool_description_override(
+                "search",
+                Some(ToolDescriptionOverride {
+                    description: Some("Search local files".to_string()),
+                    properties: BTreeMap::new(),
+                }),
+            )
+            .unwrap();
 
         repository.save(&expected).await.unwrap();
         let loaded = repository.load(expected.id()).await.unwrap().unwrap();

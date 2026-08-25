@@ -2,7 +2,7 @@
 
 ## 当前解决的问题
 
-当前 MCP 平台以稳定 registration、严格持久化、显式启停、只读 discovery 与默认关闭权限为基础，提供第一方 Manager 的用户 test call，并将完整成功的 catalog 保存为 application-owned persistent snapshot。Rust Agent Runtime 与 Legacy generation 都从同一 snapshot 消费 MCP tools；Legacy generation 不会污染全局 ToolManager。
+当前 MCP 平台以稳定 registration、严格持久化、显式启停、只读 discovery 与默认关闭权限为基础，提供第一方 Manager 的 model-facing tool description override 与用户 test call，并将完整成功的 catalog 保存为 application-owned persistent snapshot。Rust Agent Runtime 与 Legacy generation 都从同一 snapshot 消费 MCP tools；Legacy generation 不会污染全局 ToolManager。
 
 ## 端到端链路
 
@@ -17,14 +17,15 @@ First-party MCP extension (React / strict TSX)
 
 Agent Profile v3
   -> AgentRuntimeService invocation preparation
-  -> McpService memory/disk-only catalog resolution
+  -> McpService memory/disk-only catalog + registration description override
+  -> Agent Profile description override
   -> InvocationToolSnapshot / ToolRequestGate
   -> McpService permission recheck
   -> McpGateway::call_tool
   -> Agent journal + tool-results + next model turn
 
 Legacy Generate root
-  -> McpService memory/disk-only permitted catalog
+  -> McpService memory/disk-only permitted catalog + registration description override
   -> private generation descriptors + per-round aliases
   -> existing provider hook / streaming and non-streaming parsers
   -> McpService permission recheck + cancellable call
@@ -33,7 +34,7 @@ Legacy Generate root
 
 crate 责任：
 
-- `tt-domain::models::mcp`：registration UUID、endpoint、协议版本偏好、Active/Paused、Off/Ask/Allow 与领域约束。
+- `tt-domain::models::tool` / `mcp`：通用 `ToolDescriptionOverride`、registration UUID、endpoint、协议版本偏好、Active/Paused、Off/Ask/Allow 与领域约束。
 - `tt-ports::mcp` / `repositories::mcp_server_repository`：Tauri-free、RMCP-free 的 outbound ports 与 MCP call outcome。
 - `tt-application::McpService`：intent CRUD、permission、persistent catalog policy、discovery、test-call Active/JSON gate，以及 Agent/Legacy 共用的 cached model-tool resolution 与发送前 permission/arguments gate。
 - `tt-adapter-storage-core`：registration 与 endpoint-bound catalog snapshot 的严格 v1 单文件存储。
@@ -41,7 +42,7 @@ crate 责任：
 - `tt-adapter-http`：无 redirect、无 retry 的 MCP client profile；MCP adapter 每次 discovery/call 从共享 pool 取得当前 proxy/TLS/UA 配置。
 - `tauritavern`：composition、commands 与 Manager Host ABI。
 
-管理 UI 位于 `src/scripts/extensions/mcp-manager/`，由 SillyTavern 内置扩展加载器激活，并在 Extensions 抽屉中与 Skill 同级展示。React 组件只消费 typed state 与 actions；Host ABI 等待、MCP API 解析以及全部 SillyTavern Popup 交互留在扩展 host adapter。Add 弹窗支持手动 header rows、协议版本选择，以及单服务器的直接对象/`mcpServers` JSON 输入；两者都只调用同一个 create 用例。已保存 server 的 Edit 弹窗复用手动连接表单，可修改名称、endpoint、headers 与协议版本。测试调用收敛为工具栏单一入口的测试控制台弹窗：选择 active 服务器后自动 discovery、选择工具、按 schema 表单填写并查看当次结果；没有历史/回放/自动重试。TauriTavern Settings 不再拥有平行入口。
+管理 UI 位于 `src/scripts/extensions/mcp-manager/`，由 SillyTavern 内置扩展加载器激活，并在 Extensions 抽屉中与 Skill 同级展示。React 组件只消费 typed state 与 actions；Host ABI 等待、MCP API 解析以及全部 SillyTavern Popup 交互留在扩展 host adapter。Add 弹窗支持手动 header rows、协议版本选择，以及单服务器的直接对象/`mcpServers` JSON 输入；两者都只调用同一个 create 用例。已保存 server 的 Edit 弹窗复用手动连接表单，可修改名称、endpoint、headers 与协议版本。工具描述弹窗只编辑顶层描述并保留 property overrides；“重置全部自定义”通过 `override: null` 删除完整覆盖。测试调用收敛为工具栏单一入口的测试控制台弹窗：选择 active 服务器后自动 discovery、选择工具、按 schema 表单填写并查看当次结果；没有历史/回放/自动重试。TauriTavern Settings 不再拥有平行入口。
 
 ## 长期不变量
 
@@ -58,16 +59,17 @@ crate 责任：
 11. MCP 不进入全局 Legacy ToolManager、slash commands 或 extension enumeration；Legacy 只通过 request-scoped resolver 分派，local registry 保持 live lookup。
 12. `custom_include_body` / `custom_exclude_body` 是用户最终 upstream body 意图；Legacy MCP 不保护、拒绝、重注入或改写 `tools` / `tool_choice`。
 13. endpoint、custom headers 与协议版本作为同一份连接配置原子更新。所有 discovery/call 消费路径从 registration 读取该配置，list DTO 为同一 WebView 的编辑器回传 endpoint 与明文 headers。
+14. discovery catalog 只保存 server 原始 descriptor；registration 保存稀疏 model-facing description override。共享 resolver 先应用 registration，Agent invocation 再应用 Profile override；Legacy 只消费 registration 层。
 
 ## Persistent catalog 与 Peer 语义
 
-`McpService` 按 registration 持有内存热副本，`tt-adapter-storage-core` 在 `_tauritavern/mcp/catalogs/<uuid>.json` 保存严格 v1 persistent snapshot。文件同时绑定 canonical UUID 与 registration 的规范化 endpoint；permissions 与 staleTools 不写入 catalog，而是在每次读取时根据当前 registration 投影。
+`McpService` 按 registration 持有内存热副本，`tt-adapter-storage-core` 在 `_tauritavern/mcp/catalogs/<uuid>.json` 保存严格 v1 persistent snapshot。文件同时绑定 canonical UUID 与 registration 的规范化 endpoint；permissions、description overrides 与 staleTools 不写入 catalog。permissions/overrides 保存在 registration，模型 descriptor 在每次读取时投影。
 
 普通 `servers.discover` 按内存、磁盘、真实 network discovery 的顺序读取。内存和磁盘均不存在时才创建 RMCP Peer；显式 `servers.refresh` 始终绕过两级 snapshot。cold discovery/refresh 在完整分页与 adapter/application validation 成功后发布；原子写盘失败不会阻止使用已验证 catalog，而是保留旧磁盘 snapshot、发布 memory-only snapshot，并返回 `mcp.catalog_persistence_failed` diagnostic。网络或 validation 失败仍直接返回错误，上一份 snapshot 保持不变但不会作为该请求的成功结果。损坏、未知 schema、UUID 或 endpoint 不匹配的文件显式失败，用户 refresh 可以直接联网并替换。
 
-snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 migration reader。registration 删除成功不受派生 catalog 清理失败影响；清理失败只写 warning。Data Archive/TT-Sync 的既有 external-data reconciliation 清空内存热副本，使后续读取重新观察当前 data root。仅改名称、Active/Paused 与 permission 不清 catalog；endpoint、headers 或协议版本变化先删除磁盘/内存 snapshot，再保存新连接配置。Paused gate 始终先于 cache lookup。
+snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 migration reader。registration 删除成功不受派生 catalog 清理失败影响；清理失败只写 warning。Data Archive/TT-Sync 的既有 external-data reconciliation 清空内存热副本，使后续读取重新观察当前 data root。仅改名称、Active/Paused、permission 与 description override 不清 catalog；endpoint、headers 或协议版本变化先删除磁盘/内存 snapshot，再保存新连接配置。Paused gate 始终先于 cache lookup。
 
-模型工具准备是严格 cached-only：共享 resolver 只处理 Active 且至少保存一个 Ask/Allow 的 registration，按 memory→disk 读取 snapshot，不调用 gateway、不做 cold discovery；没有 permission 的 registration 不触碰 catalog。单 registration cache miss、损坏 snapshot 或非 object-root function schema 只形成 diagnostic，健康 server 继续。Agent 再按 Profile 选择收窄；Legacy 每个实际 root generation 读取一次全量 permitted descriptors，并在工具递归中复用。用户在 Manager 显式 refresh 后，下一次 Agent invocation 或 Legacy root 才看到变化。
+模型工具准备是严格 cached-only：共享 resolver 只处理 Active 且至少保存一个 Ask/Allow 的 registration，按 memory→disk 读取 snapshot，不调用 gateway、不做 cold discovery；没有 permission 的 registration 不触碰 catalog。resolver 复制 raw descriptor 后应用 registration description override；无效 property override 形成 diagnostic，不回退 raw descriptor。单 registration cache miss、损坏 snapshot 或非 object-root function schema 只形成 diagnostic，健康 server 继续。Agent 再按 Profile 选择收窄并应用更高优先级的 Profile override；Legacy 每个实际 root generation 读取一次全量 permitted descriptors，并在工具递归中复用。用户在 Manager 显式 refresh 或修改 override 后，下一次 Agent invocation 或 Legacy root 才看到变化。
 
 每次 test call 也使用新的短生命周期 Peer。协商到 `2026-07-28` 时，RMCP 3.1.2 构造 SEP-2243 `Mcp-Param-*` 需要同一 transport worker 的 tool schema cache，因此 call 前在同一 Peer 分页 `tools/list`，找到目标工具后立即停止；目标始终未出现时才遍历完整目录。该步骤只 hydration transport metadata：不做 arguments schema validation/coercion，也不持久化 catalog；目标未出现在 SDK 可见列表时，明确 NotSent。2025 协议不做这次额外 list。
 
@@ -91,6 +93,7 @@ snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 mig
 ## Agent 调用语义
 
 - Profile v3 的 MCP identity 是 `mcp/<registration-uuid>:<native-name>`；v1/v2 的 builtin native names 在 application load 时一次性迁移为 `builtin:<native-name>` 并原子写回。
+- registration description override 是 Agent MCP descriptor 的默认值；Profile `tools.toolDescriptions` 在 invocation snapshot 前最后应用并拥有更高优先级。
 - 模型 alias 为 `mcp__<normalized server displayName>__<normalized nativeName>`，碰撞用确定性数字后缀；alias 只从 invocation binding 解码，执行使用原始 native name。
 - 实际发送前重新读取 registration；不存在、Paused 或 Off 都返回可恢复的 NotSent tool error。Ask 与 Allow 当前行为相同。
 - known `isError`、server error 与 unsupported response 作为可恢复 Agent tool result；MCP 不产生 `AgentToolEffect`。
@@ -99,6 +102,7 @@ snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 mig
 ## Legacy 调用语义
 
 - MCP descriptors 只存在于私有 generation context；每个实际 group member 的模型/工具递归链是独立 root。递归复用 descriptor snapshot，但每轮重新求值 local tools、根据当前 local view 分配 MCP aliases 并创建 provider objects；执行只解析当前 round map，历史 alias 不是新请求 authority。
+- 每个 root 从共享 resolver 取得已经应用 registration description override 的 descriptor；Manager 后续修改不改变正在进行的 root。
 - local aliases 保持生态优先；MCP 使用 `mcp__<server>__<tool>` 与确定性数字后缀。`CHAT_COMPLETION_SETTINGS_READY` 后只保留初始 MCP alias 与 post-hook 唯一同名 entry 的交集；删除、改名或重复 alias 不猜 ToolId。
 - finalizer 只描述 frontend post-hook view。后端随后照常应用用户 `custom_include_body` / `custom_exclude_body`；Legacy MCP 不保护或重新注入任何 body 字段。
 - response alias 命中本轮 MCP binding 时，通过独立 UUID `executionCallId` 调用 Rust；provider `tool_call_id` 只用于 Assistant/Tool 消息关联。初始 MCP alias 若失去最终 binding，会形成 NotSent Tool error，不回落到 live local registry。

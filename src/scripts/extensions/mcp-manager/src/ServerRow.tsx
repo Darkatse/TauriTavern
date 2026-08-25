@@ -23,6 +23,7 @@ type ServerRowProps = {
     onDiscover: () => void;
     onRefresh: () => void;
     onSetPermission: (tool: TauriTavernMcpTool, permission: TauriTavernMcpToolPermission) => void;
+    onEditDescription: (tool: TauriTavernMcpTool) => void;
     onClearStale: (nativeName: string) => void;
 };
 
@@ -41,6 +42,7 @@ export function ServerRow({
     onDiscover,
     onRefresh,
     onSetPermission,
+    onEditDescription,
     onClearStale,
 }: ServerRowProps) {
     const active = server.state === 'active';
@@ -166,7 +168,9 @@ export function ServerRow({
                                         tool={tool}
                                         busy={busy}
                                         tr={tr}
+                                        descriptionOverride={server.toolDescriptionOverrides[tool.nativeName]}
                                         onSetPermission={permission => onSetPermission(tool, permission)}
+                                        onEditDescription={() => onEditDescription(tool)}
                                     />
                                 ))}
                             </ul>

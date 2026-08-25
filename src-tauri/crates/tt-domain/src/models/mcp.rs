@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 use uuid::Uuid;
 
-use crate::{errors::DomainError, models::tool::ToolProviderId};
+use crate::{
+    errors::DomainError,
+    models::tool::{ToolDescriptionOverride, ToolProviderId},
+};
 
 const MCP_PROVIDER_PREFIX: &str = "mcp/";
 const MAX_NATIVE_TOOL_NAME_BYTES: usize = 256;
@@ -166,9 +169,14 @@ pub struct McpServerRegistration {
     protocol_version: McpProtocolVersionPreference,
     state: McpServerState,
     tool_permissions: BTreeMap<String, McpToolPermission>,
+    tool_description_overrides: BTreeMap<String, ToolDescriptionOverride>,
 }
 
 impl McpServerRegistration {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "rehydration constructor keeps the complete MCP registration state atomic"
+    )]
     pub fn try_new(
         id: McpRegistrationId,
         display_name: impl Into<String>,
@@ -177,6 +185,7 @@ impl McpServerRegistration {
         protocol_version: McpProtocolVersionPreference,
         state: McpServerState,
         tool_permissions: BTreeMap<String, McpToolPermission>,
+        tool_description_overrides: BTreeMap<String, ToolDescriptionOverride>,
     ) -> Result<Self, DomainError> {
         let display_name = validate_display_name(display_name.into())?;
         let request_headers = McpRequestHeaders::from(request_headers);
@@ -188,6 +197,10 @@ impl McpServerRegistration {
                 )));
             }
         }
+        for (native_name, override_) in &tool_description_overrides {
+            validate_native_tool_name(native_name)?;
+            validate_description_override(native_name, override_)?;
+        }
         Ok(Self {
             id,
             display_name,
@@ -196,6 +209,7 @@ impl McpServerRegistration {
             protocol_version,
             state,
             tool_permissions,
+            tool_description_overrides,
         })
     }
 
@@ -212,6 +226,7 @@ impl McpServerRegistration {
             request_headers,
             protocol_version,
             McpServerState::Paused,
+            BTreeMap::new(),
             BTreeMap::new(),
         )
     }
@@ -242,6 +257,14 @@ impl McpServerRegistration {
 
     pub fn tool_permissions(&self) -> &BTreeMap<String, McpToolPermission> {
         &self.tool_permissions
+    }
+
+    pub fn tool_description_overrides(&self) -> &BTreeMap<String, ToolDescriptionOverride> {
+        &self.tool_description_overrides
+    }
+
+    pub fn description_override_for(&self, native_name: &str) -> Option<&ToolDescriptionOverride> {
+        self.tool_description_overrides.get(native_name)
     }
 
     pub fn update(
@@ -291,6 +314,38 @@ impl McpServerRegistration {
         }
         Ok(())
     }
+
+    pub fn set_tool_description_override(
+        &mut self,
+        native_name: impl Into<String>,
+        override_: Option<ToolDescriptionOverride>,
+    ) -> Result<(), DomainError> {
+        let native_name = native_name.into();
+        validate_native_tool_name(&native_name)?;
+        match override_ {
+            Some(override_) => {
+                validate_description_override(&native_name, &override_)?;
+                self.tool_description_overrides
+                    .insert(native_name, override_);
+            }
+            None => {
+                self.tool_description_overrides.remove(&native_name);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validate_description_override(
+    native_name: &str,
+    override_: &ToolDescriptionOverride,
+) -> Result<(), DomainError> {
+    if override_.is_empty() {
+        return Err(DomainError::InvalidData(format!(
+            "mcp.description_override_empty: `{native_name}` must contain a tool or property description"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_display_name(raw: String) -> Result<String, DomainError> {
@@ -381,6 +436,31 @@ mod tests {
             .set_tool_permission("search", McpToolPermission::Off)
             .unwrap();
         assert!(registration.tool_permissions().is_empty());
+
+        registration
+            .set_tool_description_override(
+                "search",
+                Some(ToolDescriptionOverride {
+                    description: Some("Search local files".to_string()),
+                    properties: BTreeMap::new(),
+                }),
+            )
+            .unwrap();
+        assert_eq!(
+            registration
+                .description_override_for("search")
+                .and_then(|override_| override_.description.as_deref()),
+            Some("Search local files")
+        );
+        registration
+            .set_tool_description_override("search", None)
+            .unwrap();
+        assert!(registration.tool_description_overrides().is_empty());
+        assert!(
+            registration
+                .set_tool_description_override("search", Some(ToolDescriptionOverride::default()))
+                .is_err()
+        );
     }
 
     #[test]

@@ -31,6 +31,48 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
         ],
     );
     let (profile, mcp_tool_id) = configure_mcp_profile(&fixture, "mcp-writer", 3, 10_000).await;
+    let mcp_tool = tt_domain::models::tool::ToolId::parse(&mcp_tool_id).unwrap();
+    let registration_id =
+        tt_domain::models::mcp::McpRegistrationId::from_provider_id(mcp_tool.provider_id())
+            .unwrap();
+    fixture
+        .mcp_service
+        .set_tool_description_override(
+            registration_id.as_str(),
+            mcp_tool.native_name().to_string(),
+            Some(tt_domain::models::tool::ToolDescriptionOverride {
+                description: Some("Registration description".to_string()),
+                properties: Default::default(),
+            }),
+        )
+        .await
+        .unwrap();
+    let mut definition = fixture
+        .profile_service
+        .load_profile(profile.id.as_str())
+        .await
+        .unwrap()
+        .unwrap();
+    definition.tools.tool_descriptions.insert(
+        mcp_tool_id.clone(),
+        tt_domain::models::tool::ToolDescriptionOverride {
+            description: Some("Profile description".to_string()),
+            properties: Default::default(),
+        },
+    );
+    fixture
+        .profile_service
+        .save_profile(definition, fixture.service.tool_catalog())
+        .await
+        .unwrap();
+    let profile = fixture
+        .profile_service
+        .resolve_profile(AgentProfileResolveInput {
+            profile_id: Some(profile.id.as_str()),
+            tool_catalog: fixture.service.tool_catalog(),
+        })
+        .await
+        .unwrap();
 
     let handle = start_contract_agent_run(
         &fixture,
@@ -55,6 +97,10 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
         .find(|tool| tool.tool_id.as_str() == mcp_tool_id)
         .expect("MCP tool advertised");
     assert_eq!(advertised.model_alias, "mcp__my_server__issue_create");
+    assert_eq!(
+        advertised.description.as_deref(),
+        Some("Profile description")
+    );
     let mcp_result = requests[1]
         .messages
         .iter()

@@ -5,15 +5,15 @@ import {
     confirmActivate,
     confirmRemove,
     errorText,
-    openAddServerDialog,
-    openEditServerDialog,
     requireMcpApi,
     tr,
     waitForHostReady,
 } from './host';
 import { McpManagerApp, type McpManagerActions } from './McpManagerApp';
 import { ensureExaRecommendation } from './recommendation';
+import { openAddServerDialog, openEditServerDialog } from './server-dialog';
 import { openTestCallDialog } from './test-call-dialog';
+import { openToolDialog } from './tool-dialog';
 
 const CONTAINER_ID = 'mcp_manager_container';
 
@@ -58,6 +58,8 @@ async function mountMcpManager(): Promise<void> {
         discover: api.servers.discover,
         refresh: api.servers.refresh,
         setPermission: api.tools.setPermission,
+        setDescriptionOverride: api.tools.setDescriptionOverride,
+        openToolDialog,
         openTestCall: servers => openTestCallDialog({
             servers,
             discover: api.servers.discover,

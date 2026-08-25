@@ -12,8 +12,8 @@ use crate::{
 use tt_application::dto::mcp_dto::{
     CallLegacyMcpToolDto, CreateMcpServerDto, ListLegacyMcpToolsResultDto, ListMcpServersResultDto,
     McpCallOutcomeDto, McpDiscoveryResultDto, McpExecutionCallIdDto, McpRegistrationIdDto,
-    McpServerDto, McpTestCallIdDto, SetMcpServerStateDto, SetMcpToolPermissionDto,
-    TestMcpToolCallDto, UpdateMcpServerDto,
+    McpServerDto, McpTestCallIdDto, SetMcpServerStateDto, SetMcpToolDescriptionOverrideDto,
+    SetMcpToolPermissionDto, TestMcpToolCallDto, UpdateMcpServerDto,
 };
 
 #[tauri::command]
@@ -136,6 +136,22 @@ pub async fn set_mcp_tool_permission(
         .set_tool_permission(&dto.registration_id, dto.native_name, dto.permission)
         .await
         .map_err(map_command_error("Failed to update MCP tool permission"))
+}
+
+#[tauri::command]
+pub async fn set_mcp_tool_description_override(
+    dto: SetMcpToolDescriptionOverrideDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<McpServerDto, CommandError> {
+    log_command("set_mcp_tool_description_override");
+    app_state
+        .services
+        .mcp_service
+        .set_tool_description_override(&dto.registration_id, dto.native_name, dto.override_)
+        .await
+        .map_err(map_command_error(
+            "Failed to update MCP tool description override",
+        ))
 }
 
 #[tauri::command]

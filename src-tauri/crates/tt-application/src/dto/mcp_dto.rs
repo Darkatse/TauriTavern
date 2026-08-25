@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use tt_domain::models::{
     mcp::{McpProtocolVersionPreference, McpServerState, McpToolPermission},
-    tool::ToolId,
+    tool::{ToolDescriptionOverride, ToolId},
 };
 
 #[derive(Clone, Deserialize)]
@@ -52,6 +52,15 @@ pub struct SetMcpToolPermissionDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetMcpToolDescriptionOverrideDto {
+    pub registration_id: String,
+    pub native_name: String,
+    #[serde(rename = "override")]
+    pub override_: Option<ToolDescriptionOverride>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TestMcpToolCallDto {
     pub call_id: String,
     pub registration_id: String,
@@ -89,6 +98,7 @@ pub struct McpServerDto {
     pub protocol_version: McpProtocolVersionPreference,
     pub state: McpServerState,
     pub tool_permissions: BTreeMap<String, McpToolPermission>,
+    pub tool_description_overrides: BTreeMap<String, ToolDescriptionOverride>,
 }
 
 #[derive(Debug, Clone, Serialize)]

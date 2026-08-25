@@ -61,7 +61,7 @@ TS/TSX 变化 -> Rspack 重编译 -> 成功后发送 reload
 
 - 新的 typed first-party UI 不得 import Vue；
 - presentation 文件默认不超过 500 行；
-- MCP 的既有 `host.ts`（663 行）和 `test-call-dialog.tsx`（613 行）以当前值为上限，只能持平或缩短。
+- MCP 的既有 `test-call-dialog.tsx`（613 行）以当前值为上限，只能持平或缩短。
 
 门禁是迁移棘轮，不是源码解析器。每迁移一个 root，都必须在同一变更中删除旧 Vue 实现并下调对应计数。
 

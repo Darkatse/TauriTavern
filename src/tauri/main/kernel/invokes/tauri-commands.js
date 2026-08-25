@@ -198,6 +198,7 @@ export {};
  *   | 'set_group_chat_metadata_extension'
  *   | 'set_image_metadata_folder_thumbnails'
  *   | 'set_mcp_server_state'
+ *   | 'set_mcp_tool_description_override'
  *   | 'set_mcp_tool_permission'
  *   | 'start_legacy_mcp_tool_call'
  *   | 'start_mcp_test_call'

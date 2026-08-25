@@ -1,7 +1,8 @@
 .tt-mcp-root,
 .tt-mcp-add-form,
 .tt-mcp-confirm,
-.tt-mcp-test {
+.tt-mcp-test,
+.tt-mcp-tool-dialog {
     --tt-mcp-accent: var(--SmartThemeQuoteColor);
     --tt-mcp-line: color-mix(in srgb, var(--SmartThemeBorderColor) 80%, transparent);
     --tt-mcp-dim: var(--SmartThemeEmColor);
@@ -42,13 +43,15 @@
 .tt-mcp-confirm code,
 .tt-mcp-test code,
 .tt-mcp-test pre,
-.tt-mcp-test textarea {
+.tt-mcp-test textarea,
+.tt-mcp-tool-dialog code {
     font-family: var(--monoFontFamily);
 }
 
 /* Neutralize the host's global dark `code` chip; chips re-declare their own skin below. */
 .tt-mcp-root :where(code),
-.tt-mcp-test :where(code) {
+.tt-mcp-test :where(code),
+.tt-mcp-tool-dialog :where(code) {
     padding: 0;
     border: none;
     background-color: transparent;
@@ -456,6 +459,20 @@
     font-size: 0.82em;
     line-height: 1.4;
     white-space: pre-wrap;
+}
+
+.tt-mcp-custom-chip {
+    padding: 0 6px;
+    color: var(--tt-mcp-accent);
+    font-size: 0.72em;
+    line-height: 1.6;
+    white-space: nowrap;
+    border: 1px solid color-mix(in srgb, var(--tt-mcp-accent) 45%, var(--tt-mcp-line));
+    border-radius: 999px;
+}
+
+.tt-mcp-tool-edit {
+    margin-left: auto;
 }
 
 .tt-mcp-params {
@@ -895,6 +912,51 @@
     display: block;
     color: var(--tt-mcp-dim);
     white-space: pre-wrap;
+}
+
+/* ── Tool description dialog ─────────────────────────────── */
+
+.tt-mcp-tool-dialog {
+    display: grid;
+    gap: 9px;
+    min-width: min(360px, 62vw);
+    color: var(--SmartThemeBodyColor);
+    text-align: left;
+}
+
+.tt-mcp-tool-dialog h3 {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 7px;
+    margin: 0 0 2px;
+}
+
+.tt-mcp-tool-dialog h3 > code {
+    color: var(--tt-mcp-dim);
+    font-size: 0.75em;
+    overflow-wrap: anywhere;
+}
+
+.tt-mcp-tool-dialog p {
+    margin: 0;
+}
+
+.tt-mcp-tool-origin {
+    max-height: 120px;
+    overflow: auto;
+    padding: 7px 8px;
+    color: color-mix(in srgb, var(--SmartThemeBodyColor) 82%, var(--tt-mcp-dim));
+    font-size: 0.82em;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    border: 1px solid var(--tt-mcp-line);
+    border-radius: 5px;
+    background-color: var(--tt-mcp-sink);
+}
+
+.tt-mcp-tool-dialog textarea {
+    resize: vertical;
 }
 
 @media (prefers-reduced-motion: reduce) {

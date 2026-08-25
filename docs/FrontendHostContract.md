@@ -201,13 +201,13 @@
   - Preset / Character embedded skill 导入必须经过用户确认；同名不同 hash 必须显式 skip 或 replace，不自动改名。
   - Skill import/export 不触发上游 SillyTavern `GENERATION_*`、`TOOL_CALLS_*` 或 regex 事件。
 
-- `api.mcp`：MCP registration、只读 tool discovery 与第一方 Manager user test call 的独立平台 API。Agent 与 Legacy generation 已通过内部 application seam 消费 MCP，但 MCP 不依附 Agent Mode，公开 API 仍不提供 raw model-call executor。
+- `api.mcp`：MCP registration、只读 tool discovery、model-facing description override 与第一方 Manager user test call 的独立平台 API。Agent 与 Legacy generation 已通过内部 application seam 消费 MCP，但 MCP 不依附 Agent Mode，公开 API 仍不提供 raw model-call executor。
   - 当前为实验性的 Project Contract；详细签名见 `docs/API/MCP.md`。
-  - 当前暴露 `servers.list/create/update/setState/remove/discover/refresh`、`tools.setPermission` 与 `tools.testCall({ registrationId, nativeName, argumentsJson }, { signal? })`；`update` 可修改名称、endpoint、custom headers 与协议版本；`discover` 读取 application persistent catalog，`refresh` 是唯一强制联网入口；不暴露 raw RPC 或 RMCP session。
+  - 当前暴露 `servers.list/create/update/setState/remove/discover/refresh`、`tools.setPermission`、`tools.setDescriptionOverride` 与 `tools.testCall({ registrationId, nativeName, argumentsJson }, { signal? })`；description override 只改变模型 descriptor 副本，不修改 discovery catalog、权限或执行身份；`update` 可修改名称、endpoint、custom headers 与协议版本；`discover` 读取 application persistent catalog，`refresh` 是唯一强制联网入口；不暴露 raw RPC 或 RMCP session。
   - `testCall` 是第一方 Manager 的 Project Contract：Active registration 上的显式用户调用不受 Off/Ask/Allow 阻止且不修改 permission；typed outcome 区分 `known_response`、`not_sent` 与 `outcome_unknown`，AbortSignal 只停止本地等待，不承诺远端回滚。
   - 同一 WebView 内的 vendor/extension scripts 仍按当前平台 trust model 视为用户授权代码；本 ABI 不声称验证物理点击或隔离 hostile extension。
   - server 新建后总是 Paused；工具缺省 Off。discovery annotations 不构成 authority。
-  - Agent/Legacy model exposure 都只读取 application persistent snapshot，并在发送前由 Rust 重查 permission；Legacy MCP 不进入全局 SillyTavern ToolManager、slash commands 或 extension enumeration。
+  - Agent/Legacy model exposure 都只读取 application persistent snapshot，并在共享 resolver 应用 registration description override；Agent Profile `tools.toolDescriptions` 随后覆盖同一字段。发送前由 Rust 重查 permission；Legacy MCP 不进入全局 SillyTavern ToolManager、slash commands 或 extension enumeration。
   - 第一方 MCP 管理 UI 是独立内置扩展；它只消费本 API，不把 React 状态升格为平台事实，也不在 TauriTavern Settings 中维护第二入口。
 
 > 注意：`window.__TAURITAVERN__` 是“平台 ABI”，应保持**小而稳定**；不要把内部实现对象整个暴露出去。

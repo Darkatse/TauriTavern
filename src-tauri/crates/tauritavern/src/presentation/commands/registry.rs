@@ -176,6 +176,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::mcp_commands::discover_mcp_tools,
         super::mcp_commands::refresh_mcp_tools,
         super::mcp_commands::set_mcp_tool_permission,
+        super::mcp_commands::set_mcp_tool_description_override,
         super::mcp_commands::start_mcp_test_call,
         super::mcp_commands::test_mcp_tool_call,
         super::mcp_commands::cancel_mcp_test_call,

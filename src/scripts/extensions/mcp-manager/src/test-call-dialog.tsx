@@ -584,28 +584,28 @@ export async function openTestCallDialog(deps: TestCallDialogDeps): Promise<void
     let dialog: TestCallDialogHandle | null = null;
 
     const root = createRoot(mount);
-    root.render(
-        <TestCallDialog
-            {...deps}
-            tr={tr}
-            ref={handle => {
-                dialog = handle;
-            }}
-        />,
-    );
-
-    const popup = createTextPopup(mount, {
-        okButton: tr('close'),
-        allowVerticalScrolling: true,
-        wide: true,
-        leftAlign: true,
-        onOpen: () => mount.querySelector<HTMLSelectElement>('#tt-mcp-test-server')?.focus(),
-        onClosing: () => {
-            dialog?.abort();
-            return true;
-        },
-    });
     try {
+        root.render(
+            <TestCallDialog
+                {...deps}
+                tr={tr}
+                ref={handle => {
+                    dialog = handle;
+                }}
+            />,
+        );
+
+        const popup = createTextPopup(mount, {
+            okButton: tr('close'),
+            allowVerticalScrolling: true,
+            wide: true,
+            leftAlign: true,
+            onOpen: () => mount.querySelector<HTMLSelectElement>('#tt-mcp-test-server')?.focus(),
+            onClosing: () => {
+                dialog?.abort();
+                return true;
+            },
+        });
         await popup.show();
     } finally {
         root.unmount();

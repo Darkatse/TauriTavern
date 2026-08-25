@@ -697,6 +697,7 @@ type TauriTavernMcpServer = {
     protocolVersion: TauriTavernMcpProtocolVersion;
     state: TauriTavernMcpServerState;
     toolPermissions: Record<string, Exclude<TauriTavernMcpToolPermission, 'off'>>;
+    toolDescriptionOverrides: Record<string, TauriTavernToolDescriptionOverride>;
 };
 
 type TauriTavernMcpTool = {
@@ -781,6 +782,11 @@ type TauriTavernMcpApi = {
             registrationId: string;
             nativeName: string;
             permission: TauriTavernMcpToolPermission;
+        }) => Promise<TauriTavernMcpServer>;
+        setDescriptionOverride: (input: {
+            registrationId: string;
+            nativeName: string;
+            override: TauriTavernToolDescriptionOverride | null;
         }) => Promise<TauriTavernMcpServer>;
         testCall: (input: {
             registrationId: string;

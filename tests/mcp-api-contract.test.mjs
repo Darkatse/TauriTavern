@@ -38,6 +38,14 @@ test('api.mcp fails fast on invalid states and permissions', async () => {
         /nativeName is required/,
     );
     await assert.rejects(
+        () => mcp.tools.setDescriptionOverride({
+            registrationId: 'id',
+            nativeName: 'search',
+            override: { description: 42 },
+        }),
+        /override\.description must be a string/,
+    );
+    await assert.rejects(
         () => mcp.servers.create({
             displayName: 'Invalid',
             endpoint: 'https://example.com/mcp',
@@ -62,6 +70,36 @@ test('api.mcp fails fast on invalid states and permissions', async () => {
         }),
         /headers must be an object/,
     );
+});
+
+test('api.mcp passes tool description overrides through unchanged', async () => {
+    const { calls, mcp } = await installHarness();
+    const override = {
+        description: '  Search exactly as instructed.  ',
+        properties: { query: '  Exact query text.  ' },
+    };
+
+    await mcp.tools.setDescriptionOverride({
+        registrationId: 'id',
+        nativeName: 'search',
+        override,
+    });
+    await mcp.tools.setDescriptionOverride({
+        registrationId: 'id',
+        nativeName: 'search',
+        override: null,
+    });
+
+    assert.deepEqual(calls, [
+        {
+            command: 'set_mcp_tool_description_override',
+            args: { dto: { registrationId: 'id', nativeName: 'search', override } },
+        },
+        {
+            command: 'set_mcp_tool_description_override',
+            args: { dto: { registrationId: 'id', nativeName: 'search', override: null } },
+        },
+    ]);
 });
 
 test('api.mcp AbortSignal requests stop without replacing the backend outcome', async () => {

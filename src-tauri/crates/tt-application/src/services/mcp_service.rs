@@ -13,6 +13,7 @@ use tt_domain::models::mcp::{
     McpEndpoint, McpProtocolVersionPreference, McpRegistrationId, McpServerRegistration,
     McpServerState, McpToolPermission,
 };
+use tt_domain::models::tool::ToolDescriptionOverride;
 use tt_ports::{mcp::McpGateway, repositories::mcp_server_repository::McpServerRepository};
 
 mod call;
@@ -130,6 +131,20 @@ impl McpService {
         Ok(server_dto(&registration))
     }
 
+    pub async fn set_tool_description_override(
+        &self,
+        registration_id: &str,
+        native_name: String,
+        override_: Option<ToolDescriptionOverride>,
+    ) -> Result<McpServerDto, ApplicationError> {
+        let id = McpRegistrationId::parse(registration_id)?;
+        let _guard = self.mutation_lock.lock().await;
+        let mut registration = self.require_registration(&id).await?;
+        registration.set_tool_description_override(native_name, override_)?;
+        self.repository.save(&registration).await?;
+        Ok(server_dto(&registration))
+    }
+
     pub async fn remove_server(&self, registration_id: &str) -> Result<(), ApplicationError> {
         let id = McpRegistrationId::parse(registration_id)?;
         let _guard = self.mutation_lock.lock().await;
@@ -162,5 +177,6 @@ fn server_dto(registration: &McpServerRegistration) -> McpServerDto {
         protocol_version: registration.protocol_version(),
         state: registration.state(),
         tool_permissions: registration.tool_permissions().clone(),
+        tool_description_overrides: registration.tool_description_overrides().clone(),
     }
 }

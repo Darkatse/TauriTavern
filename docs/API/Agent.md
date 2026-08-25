@@ -622,7 +622,7 @@ type AgentListToolsResult = {
 };
 ```
 
-`tools.list()` 返回 builtin catalog 与当前可用于 Agent 的 MCP cached catalog 的 UI 投影。Profile 面板以 `id` 编辑 `tools.allow`、`tools.deny` 与 `tools.toolDescriptions`，但不得把返回值当作可修改的 catalog。MCP 只读取 application memory/disk snapshot，不在该命令或 Agent 启动时隐式联网；缺失 snapshot、Paused/Off、目录中缺失或 root input schema 不是显式 `object` 的工具不会进入 `tools`，并在 Profile 配置警告中显示 diagnostic。用户通过 MCP Manager discovery/refresh 更新目录。
+`tools.list()` 返回 builtin catalog 与当前可用于 Agent 的 MCP cached catalog 的 UI 投影。MCP 投影已经应用 registration description override；Profile 面板以 `id` 编辑 `tools.allow`、`tools.deny` 与更高优先级的 `tools.toolDescriptions`，但不得把返回值当作可修改的 catalog。MCP 只读取 application memory/disk snapshot，不在该命令或 Agent 启动时隐式联网；缺失 snapshot、Paused/Off、目录中缺失或 root input schema 不是显式 `object` 的工具不会进入 `tools`，并在 Profile 配置警告中显示 diagnostic。用户通过 MCP Manager discovery/refresh 更新目录及 registration 描述覆盖。
 
 Model alias 属于 invocation snapshot，不进入此 DTO。Profile v3 的所有 tool-keyed 字段只接受 canonical ToolId：builtin 为 `builtin:<native-name>`，MCP 为 `mcp/<registration-uuid>:<native-name>`；v1/v2 载入后一次性迁移并写回，不保留 shorthand 双语法。
 

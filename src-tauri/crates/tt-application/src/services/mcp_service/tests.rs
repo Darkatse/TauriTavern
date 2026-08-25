@@ -23,7 +23,7 @@ use tt_domain::models::{
         McpEndpoint, McpProtocolVersionPreference, McpRegistrationId, McpRequestHeaders,
         McpServerRegistration, McpServerState, McpToolPermission,
     },
-    tool::{ToolDescriptor, ToolId},
+    tool::{ToolDescriptionOverride, ToolDescriptor, ToolId},
 };
 use tt_ports::{
     mcp::{McpCallIssue, McpCallOutcome, McpGateway, McpKnownResponse},
@@ -581,6 +581,68 @@ async fn model_catalog_is_cached_only_and_ask_executes_like_allow() {
             if code == "mcp.call_permission_off"
     ));
     assert_eq!(gateway.calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn registration_description_override_is_shared_without_mutating_the_catalog() {
+    let repository = Arc::new(MemoryRepository::default());
+    let gateway = Arc::new(FixedGateway::default());
+    let service = McpService::new(repository, gateway);
+    let created = service
+        .create_server(
+            "My Server".to_string(),
+            "http://127.0.0.1:3333/mcp".to_string(),
+            BTreeMap::new(),
+            McpProtocolVersionPreference::Auto,
+        )
+        .await
+        .unwrap();
+    service
+        .set_server_state(&created.id, McpServerState::Active)
+        .await
+        .unwrap();
+    service.discover_tools(&created.id).await.unwrap();
+    service
+        .set_tool_permission(&created.id, "search".to_string(), McpToolPermission::Allow)
+        .await
+        .unwrap();
+    service
+        .set_tool_description_override(
+            &created.id,
+            "search".to_string(),
+            Some(ToolDescriptionOverride {
+                description: Some("  Search only local files.  ".to_string()),
+                properties: BTreeMap::new(),
+            }),
+        )
+        .await
+        .unwrap();
+
+    let raw = service.discover_tools(&created.id).await.unwrap();
+    assert_eq!(raw.tools[0].description, None);
+    let legacy = service.list_legacy_tools_cached().await.unwrap();
+    assert_eq!(
+        legacy.tools[0].description.as_deref(),
+        Some("  Search only local files.  ")
+    );
+    let tool_id = ToolId::parse(format!("mcp/{}:search", created.id)).unwrap();
+    let resolved = service
+        .resolve_permitted_model_tools_cached(&[tool_id])
+        .await
+        .unwrap();
+    assert_eq!(
+        resolved.tools[0].descriptor.description.as_deref(),
+        Some("  Search only local files.  ")
+    );
+
+    service
+        .set_tool_description_override(&created.id, "search".to_string(), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        service.list_legacy_tools_cached().await.unwrap().tools[0].description,
+        None
+    );
 }
 
 #[tokio::test]

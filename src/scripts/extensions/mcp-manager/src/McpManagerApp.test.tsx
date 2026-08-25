@@ -7,9 +7,10 @@ import {
     type McpManagerActions,
     type McpManagerInitial,
 } from './McpManagerApp';
-import { openAddServerDialog, openEditServerDialog, tr } from './host';
+import { tr } from './host';
 import { installPopupHost, TestPopup, uninstallPopupHost } from './popup-stub';
 import { ensureExaRecommendation } from './recommendation';
+import { openAddServerDialog, openEditServerDialog } from './server-dialog';
 
 const SERVER_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -22,6 +23,7 @@ function server(state: TauriTavernMcpServerState = 'paused'): TauriTavernMcpServ
         protocolVersion: 'auto',
         state,
         toolPermissions: {},
+        toolDescriptionOverrides: {},
     };
 }
 
@@ -57,6 +59,8 @@ function actions(overrides: Partial<McpManagerActions> = {}): McpManagerActions 
         discover: () => unexpected('discover'),
         refresh: () => unexpected('refresh'),
         setPermission: () => unexpected('setPermission'),
+        setDescriptionOverride: () => unexpected('setDescriptionOverride'),
+        openToolDialog: () => unexpected('openToolDialog'),
         openTestCall: () => unexpected('openTestCall'),
         confirmActivate: () => Promise.resolve(true),
         confirmRemove: () => Promise.resolve(true),
@@ -169,6 +173,90 @@ test('discovers tools on expand and persists an explicit permission choice', asy
         permission: 'allow',
     }]));
     expect(screen.getByRole<HTMLInputElement>('radio', { name: 'Allow' }).checked).toBe(true);
+});
+
+test('opens the description editor from a tool row and applies the saved override', async () => {
+    const calls: Parameters<TauriTavernMcpApi['tools']['setDescriptionOverride']>[0][] = [];
+    const dialogInput: { current: Parameters<McpManagerActions['openToolDialog']>[0] | undefined } = {
+        current: undefined,
+    };
+    const current: TauriTavernMcpServer = {
+        ...server('active'),
+        toolDescriptionOverrides: {
+            search: { properties: { query: 'Search terms.' } },
+        },
+    };
+    const user = userEvent.setup();
+    render(
+        <McpManagerApp
+            initial={initial([current])}
+            tr={tr}
+            actions={actions({
+                discover: () => Promise.resolve(discovery()),
+                setDescriptionOverride: input => {
+                    calls.push(input);
+                    const toolDescriptionOverrides = { ...current.toolDescriptionOverrides };
+                    if (input.override) {
+                        toolDescriptionOverrides[input.nativeName] = input.override;
+                    } else {
+                        delete toolDescriptionOverrides[input.nativeName];
+                    }
+                    return Promise.resolve({ ...current, toolDescriptionOverrides });
+                },
+                openToolDialog: input => {
+                    dialogInput.current = input;
+                    return Promise.resolve();
+                },
+            })}
+        />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Show or hide tools' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit description' }));
+
+    const dialog = dialogInput.current;
+    if (!dialog) {
+        throw new Error('Description dialog was not opened');
+    }
+    expect(dialog.tool.nativeName).toBe('search');
+    expect(dialog.override).toEqual({ properties: { query: 'Search terms.' } });
+    // Without custom text the row shows the server description and no marker.
+    expect(screen.getByText('Search local files by name.')).toBeTruthy();
+    expect(screen.queryByText('Custom')).toBeNull();
+
+    await act(async () => {
+        await dialog.save({
+            description: 'Use only for local filename searches.',
+            properties: { query: 'Search terms.' },
+        });
+    });
+    expect(calls).toEqual([{
+        registrationId: SERVER_ID,
+        nativeName: 'search',
+        override: {
+            description: 'Use only for local filename searches.',
+            properties: { query: 'Search terms.' },
+        },
+    }]);
+    // The row now reflects the effective description and marks it as custom.
+    expect(await screen.findByText('Use only for local filename searches.')).toBeTruthy();
+    expect(screen.getByText('Custom')).toBeTruthy();
+    expect(screen.queryByText('Search local files by name.')).toBeNull();
+});
+
+test('shows a tool editor opening failure on its server', async () => {
+    const user = userEvent.setup();
+    render(<McpManagerApp
+        initial={initial([server('active')])} tr={tr}
+        actions={actions({
+            discover: () => Promise.resolve(discovery()),
+            openToolDialog: () => Promise.reject(new Error('Popup API is unavailable')),
+        })}
+    />);
+    await user.click(screen.getByRole('button', { name: 'Show or hide tools' }));
+    await user.click(await screen.findByRole('button', { name: 'Edit description' }));
+
+    expect((await screen.findByRole('alert')).textContent).toBe('Popup API is unavailable');
 });
 
 test('does not discover while paused and explains the state instead', async () => {

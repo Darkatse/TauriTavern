@@ -117,20 +117,10 @@ impl McpService {
                 if permission == McpToolPermission::Off {
                     continue;
                 }
-                if let Err(message) = validate_model_input_schema(descriptor) {
-                    resolution.diagnostics.push(model_tool_diagnostic(
-                        &descriptor.id,
-                        "mcp.model_input_schema_unsupported",
-                        message,
-                    ));
-                    continue;
+                match materialize_model_tool(&registration, descriptor, permission) {
+                    Ok(tool) => resolution.tools.push(tool),
+                    Err(diagnostic) => resolution.diagnostics.push(diagnostic),
                 }
-                resolution.tools.push(McpModelTool {
-                    registration_id: registration.id().clone(),
-                    server_display_name: registration.display_name().to_string(),
-                    descriptor: descriptor.clone(),
-                    permission,
-                });
             }
         }
         resolution.tools.sort_by(|left, right| {
@@ -249,20 +239,14 @@ impl McpService {
                 ));
                 continue;
             };
-            if let Err(message) = validate_model_input_schema(descriptor) {
-                resolution.diagnostics.push(model_tool_diagnostic(
-                    tool_id,
-                    "mcp.model_input_schema_unsupported",
-                    message,
-                ));
-                continue;
+            match materialize_model_tool(
+                registration,
+                descriptor,
+                registration.permission_for(tool_id.native_name()),
+            ) {
+                Ok(tool) => resolution.tools.push(tool),
+                Err(diagnostic) => resolution.diagnostics.push(diagnostic),
             }
-            resolution.tools.push(McpModelTool {
-                registration_id,
-                server_display_name: registration.display_name().to_string(),
-                descriptor: descriptor.clone(),
-                permission: registration.permission_for(tool_id.native_name()),
-            });
         }
         Ok(resolution)
     }
@@ -280,6 +264,38 @@ impl McpService {
             Err(error) => Err(error),
         }
     }
+}
+
+fn materialize_model_tool(
+    registration: &McpServerRegistration,
+    descriptor: &ToolDescriptor,
+    permission: McpToolPermission,
+) -> Result<McpModelTool, McpModelToolDiagnostic> {
+    validate_model_input_schema(descriptor).map_err(|message| {
+        model_tool_diagnostic(
+            &descriptor.id,
+            "mcp.model_input_schema_unsupported",
+            message,
+        )
+    })?;
+    let mut descriptor = descriptor.clone();
+    if let Some(override_) = registration.description_override_for(descriptor.id.native_name()) {
+        descriptor
+            .apply_description_override(override_)
+            .map_err(|error| {
+                model_tool_diagnostic(
+                    &descriptor.id,
+                    "mcp.tool_description_override_invalid",
+                    error.to_string(),
+                )
+            })?;
+    }
+    Ok(McpModelTool {
+        registration_id: registration.id().clone(),
+        server_display_name: registration.display_name().to_string(),
+        descriptor,
+        permission,
+    })
 }
 
 pub(super) fn validate_model_input_schema(descriptor: &ToolDescriptor) -> Result<(), String> {
