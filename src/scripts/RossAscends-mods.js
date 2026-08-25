@@ -1008,10 +1008,16 @@ export function initRossMods() {
             return;
         }
 
+        // Some WebKit versions dispatch the IME commit keydown after compositionend,
+        // so isComposing is false; keyCode 229 is the legacy IME-processed marker.
+        if (event.isComposing || event.keyCode === 229) {
+            return;
+        }
+
         //Enter to send when send_textarea in focus
         if (document.activeElement == hotkeyTargets.send_textarea) {
             const sendOnEnter = shouldSendOnEnter();
-            if (!event.isComposing && !event.shiftKey && !event.ctrlKey && !event.altKey && event.key == 'Enter' && sendOnEnter) {
+            if (!event.shiftKey && !event.ctrlKey && !event.altKey && event.key == 'Enter' && sendOnEnter) {
                 event.preventDefault();
                 sendTextareaMessage();
                 return;
