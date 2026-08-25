@@ -16,6 +16,14 @@ interface Window {
     // SillyTavern ecosystem library shim ABI
     _?: any;
 
+    // Toastr notification shim (SillyTavern global)
+    toastr?: {
+        error?: (message: string, title?: string) => void;
+        warning?: (message: string, title?: string) => void;
+        success?: (message: string, title?: string) => void;
+        info?: (message: string, title?: string) => void;
+    };
+
     __TAURITAVERN_THUMBNAIL__?: (type: string, file: string, useTimestamp?: boolean) => string;
     __TAURITAVERN_BACKGROUND_PATH__?: (file: string) => string;
 

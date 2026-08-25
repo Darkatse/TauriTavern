@@ -154,7 +154,7 @@ export function createRspackConfigs(mode = 'production') {
     ...createSharedConfig(mode, 'agent-system'),
     dependencies: ['vendor-libs'],
     entry: {
-      index: './src/scripts/extensions/agent-system/src/index.js',
+      index: './src/scripts/extensions/agent-system/src/index.tsx',
     },
     output: {
       filename: '[name].bundle.js',

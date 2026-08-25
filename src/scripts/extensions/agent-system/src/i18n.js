@@ -127,6 +127,7 @@ const DEFAULT_MESSAGES = Object.freeze({
     hostApiUnavailable: 'TauriTavern host API is unavailable: {name}',
     hostExtensionStoreUnavailable: 'TauriTavern extension store API is unavailable',
     hostPopupApiUnavailable: 'SillyTavern Popup API is unavailable',
+    hostReadyUnavailable: 'TauriTavern host ready signal is unavailable',
     hostSkillWriteApiUnavailable: 'TauriTavern Skill file write API is unavailable',
     hideChatInputToggle: 'Hide Input Toggle',
     identity: 'Identity',

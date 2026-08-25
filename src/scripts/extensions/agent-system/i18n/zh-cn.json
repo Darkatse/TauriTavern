@@ -73,6 +73,7 @@
     "agent_system.hostApiUnavailable": "TauriTavern 宿主 API 不可用：{name}",
     "agent_system.hostExtensionStoreUnavailable": "TauriTavern 扩展存储 API 不可用",
     "agent_system.hostPopupApiUnavailable": "SillyTavern 弹窗 API 不可用",
+    "agent_system.hostReadyUnavailable": "TauriTavern 宿主就绪信号不可用",
     "agent_system.hideChatInputToggle": "隐藏输入框开关",
     "agent_system.identity": "身份",
     "agent_system.import": "导入",

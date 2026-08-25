@@ -1,9 +1,12 @@
 import { translateAgentSystem as tr } from './i18n.js';
 
 export function waitForHostReady() {
-    return window.__TAURITAVERN__?.ready
-        ?? window.__TAURITAVERN_MAIN_READY__
-        ?? Promise.resolve();
+    const ready = window.__TAURITAVERN__?.ready
+        ?? window.__TAURITAVERN_MAIN_READY__;
+    if (!ready) {
+        throw new Error(tr('hostReadyUnavailable'));
+    }
+    return ready;
 }
 
 export function requireHostApi(name) {
