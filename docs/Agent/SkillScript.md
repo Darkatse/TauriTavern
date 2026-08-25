@@ -61,7 +61,7 @@ import { context, workspace, log } from '@tauritavern/runtime';
 | 导出 | 读写 | 说明 |
 | --- | --- | --- |
 | `workspace` | 读写 | 受沙箱策略门控的文件 API |
-| `context` | 只读 | 与宿主状态隔离的 `worldInfo` + `variables` 快照 |
+| `context` | 只读 | 与宿主状态隔离的 `worldInfo` + `variables` + `macro` 快照 |
 | `log` | 只写 | 经宿主 tracing 输出的日志 API |
 
 除此之外**没有** `process`、`Buffer`、`fs`、`http`、`crypto`、`setTimeout`、`setInterval` 等 Node 或浏览器 API。
@@ -142,7 +142,56 @@ const theme = context.variables.global.theme;
 
 变量不存在时得到标准 JavaScript `undefined`，可按需使用 `??` 提供默认值。修改这份对象只影响本次脚本执行，不会写回 SillyTavern。
 
-### 3.4 `log` — 日志 API
+### 3.4 `context.macro` — 宏上下文快照（只读）
+
+`context.macro` 是当前 run 启动时冻结的宏上下文快照（macroContext），与 prompt 模板中的 `{{...}}` 宏共享同一数据源。它是普通 JSON 对象；脚本可以在本次执行中读取这些字段，但不会修改宿主状态。
+
+```js
+import { context } from '@tauritavern/runtime';
+
+// 当前楼层号（最后一条消息的 id）
+const floor = context.macro.chat.lastMessageId;   // "42"
+
+// 最后一条消息的 swipe 总数（1-based）
+const lastSwipe = context.macro.chat.lastSwipeId;  // "2"
+
+// 最后一条消息当前所在的 swipe 编号（1-based）
+const currentSwipe = context.macro.chat.currentSwipeId;  // "1"
+
+// 角色名与角色卡字段
+const charName = context.macro.names.char;          // "Bob"
+const description = context.macro.character.description;
+const personality = context.macro.character.personality;
+const scenario = context.macro.character.scenario;
+const greeting = context.macro.character.firstMessage;
+
+// 用户名与群组
+const userName = context.macro.names.user;          // "Alice"
+
+// 当前生成模型
+const model = context.macro.system.model;           // "test-model"
+```
+
+顶层字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `names` | `object` | 用户名、角色名、群组等名称宏 |
+| `character` | `object` | 角色卡字段（description、personality、scenario、firstMessage 等） |
+| `system` | `object` | 系统级宏（当前生成模型等） |
+| `chat` | `object` | 对话状态宏（楼层号、swipe 编号） |
+
+`chat` 子字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `lastMessageId` | `string` | 最后一条消息的 id，即当前楼层号 |
+| `lastSwipeId` | `string` | 最后一条消息的 swipe 总数（1-based） |
+| `currentSwipeId` | `string` | 最后一条消息当前所在的 swipe 编号（1-based） |
+
+所有值均为字符串（与宏替换语义一致）。字段缺失时得到 `undefined`，可按需使用 `??` 提供默认值。修改这份对象只影响本次脚本执行，不会写回宿主。
+
+### 3.5 `log` — 日志 API
 
 `log` 将日志输出到宿主的日志系统，供开发者调试。日志不会进入 Agent 上下文或聊天消息。
 
@@ -347,7 +396,7 @@ export default function (args) {
 | 导入 `@tauritavern/kit/*` 工具箱模块 | 是（内存加载） |
 | 导入快照外 / scripts/ 外的模块 | 否（fail-fast） |
 | 网络请求 | 否 |
-| 修改宿主变量 / 世界书 | 否；`context` 只是本次执行的副本 |
+| 修改宿主变量 / 世界书 / 宏上下文 | 否；`context` 只是本次执行的副本 |
 | 访问 Node / 浏览器内置对象 | 否 |
 | 访问进程 / shell | 否 |
 
@@ -469,6 +518,6 @@ Processes input text with configurable format and batch size.
 1. 使用 ES module，并导出 `default(args)` 或 `main(args)`。
 2. 返回 JSON 可序列化的小结果；大内容写入 workspace。
 3. workspace 路径使用当前 policy 允许的相对路径。
-4. `context` 是隔离快照，不会把修改写回宿主。
+4. `context` 是隔离快照（`worldInfo` / `variables` / `macro`），不会把修改写回宿主。
 5. 优先使用 `@tauritavern/kit/*`；其他依赖随 Skill 打包，且不能依赖 Node、浏览器或网络 API。
 6. 在 `SKILL.md` 中写清脚本参数、返回值和文件副作用。

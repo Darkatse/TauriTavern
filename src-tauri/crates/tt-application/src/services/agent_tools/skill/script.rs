@@ -508,9 +508,17 @@ fn build_script_context_json(prompt_snapshot: &Value) -> Result<Value, Applicati
         .transpose()?
         .unwrap_or_else(|| json!({ "local": {}, "global": {} }));
 
+    let macro_context = prompt_snapshot
+        .get("frozenRunInputSnapshot")
+        .and_then(|frozen| frozen.get("macroContext"))
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+
     Ok(json!({
         "worldInfo": { "entries": world_info_entries },
         "variables": variables,
+        "macro": macro_context,
     }))
 }
 

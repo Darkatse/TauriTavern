@@ -336,7 +336,7 @@ import {
     registerHtmlCodePreviewParticipant,
 } from './scripts/html-code-preview.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
-import { evaluateMacros, getLastMessageId, initMacros } from './scripts/macros.js';
+import { evaluateMacros, getCurrentSwipeId, getLastMessageId, getLastSwipeId, initMacros } from './scripts/macros.js';
 import { currentUser, setUserControls } from './scripts/user.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup, fixToastrForDialogs } from './scripts/popup.js';
 import { renderTemplate, renderTemplateAsync } from './scripts/templates.js';
@@ -4221,6 +4221,11 @@ function buildAgentPromptMacroContext(promptInputs = {}) {
         },
         system: {
             model: String(getGeneratingModel() ?? ''),
+        },
+        chat: {
+            lastMessageId: String(getLastMessageId() ?? ''),
+            lastSwipeId: String(getLastSwipeId() ?? ''),
+            currentSwipeId: String(getCurrentSwipeId() ?? ''),
         },
     };
 }
