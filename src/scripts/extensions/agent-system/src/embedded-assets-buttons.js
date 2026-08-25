@@ -1,7 +1,7 @@
 import { AGENT_TOGGLE_ICON } from './agent-icon.js';
 import { errorText } from './host-api.js';
 import { translateAgentSystem as tr } from './i18n.js';
-import { openEmbeddedAssetsPanel } from './embedded-assets-popup.js';
+import { openEmbeddedAssetsPanel } from './embedded-assets-popup.tsx';
 
 const PRESET_BUTTONS = Object.freeze([
     { apiId: 'kobold', selectId: 'settings_preset' },
