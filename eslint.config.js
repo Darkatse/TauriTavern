@@ -24,6 +24,10 @@ export default tseslint.config(
     },
     rules: {
       'max-lines': ['error', 500],
+      // A focusable separator is the keyboard-operated window-splitter pattern.
+      'jsx-a11y/no-interactive-element-to-noninteractive-role': ['error', {
+        button: ['separator'],
+      }],
       'no-restricted-imports': ['error', {
         paths: [{ name: 'vue', message: 'First-party typed UI uses React.' }],
         patterns: [{ group: ['vue/*'], message: 'First-party typed UI uses React.' }],

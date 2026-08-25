@@ -11,51 +11,19 @@ const SUBAGENT_COLORS = Object.freeze([
     '#b084cc',
 ]);
 
-const TASK_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
-
-export function projectAgentInvocations(timelineProjection) {
-    const invocations = new Map();
-    for (const invocation of Array.isArray(timelineProjection?.invocations) ? timelineProjection.invocations : []) {
-        invocations.set(normalizeInvocationId(invocation.invocationId), invocation);
-    }
-
-    const taskList = (Array.isArray(timelineProjection?.delegationEdges) ? timelineProjection.delegationEdges : [])
-        .map((edge) => ({
-            ...edge,
-            childInvocationId: edge.targetInvocationId,
-        }));
-    const tasks = new Map(taskList.map((task) => [task.taskId, task]));
-
-    const subAgentTasks = taskList
+export function projectSubAgentTasks(timelineProjection) {
+    return timelineProjection.delegationEdges
         .filter((task) => task.continuation === RETURN_TO_PARENT_CONTINUATION)
-        .filter((task) => task.childInvocationId)
+        .filter((task) => task.targetInvocationId)
         .sort(compareByCreatedAt)
         .map((task, index) => ({
-            ...task,
+            taskId: task.taskId,
+            targetInvocationId: task.targetInvocationId,
+            workspaceKey: task.workspaceKey,
+            status: task.status,
             color: SUBAGENT_COLORS[index % SUBAGENT_COLORS.length],
-            displayName: task.targetProfileId || task.workspaceKey || task.childInvocationId,
-            invocation: invocations.get(task.childInvocationId) || null,
+            displayName: task.targetProfileId || task.workspaceKey || task.targetInvocationId,
         }));
-    const handoffTasks = taskList
-        .filter((task) => task.continuation === TRANSFER_CONTROL_CONTINUATION)
-        .filter((task) => task.childInvocationId)
-        .sort(compareByCreatedAt)
-        .map((task) => ({
-            ...task,
-            displayName: task.targetProfileId || task.workspaceKey || task.childInvocationId,
-            invocation: invocations.get(task.childInvocationId) || null,
-        }));
-
-    return {
-        invocations,
-        tasks,
-        subAgentTasks,
-        handoffTasks,
-        foregroundInvocationIds: normalizeForegroundInvocationIds(timelineProjection?.foregroundInvocationIds),
-        runningSubAgentCount: subAgentTasks.filter((task) => isActiveTaskStatus(task.status)).length,
-        terminalSubAgentCount: subAgentTasks.filter((task) => TASK_TERMINAL_STATUSES.has(task.status)).length,
-        failedSubAgentCount: subAgentTasks.filter((task) => task.status === 'failed').length,
-    };
 }
 
 export function eventBelongsToInvocation(event, invocationId) {
@@ -103,17 +71,6 @@ export function isRootInvocation(value) {
 
 export function isActiveTaskStatus(status) {
     return status === 'queued' || status === 'running';
-}
-
-function normalizeForegroundInvocationIds(values) {
-    const ids = [];
-    for (const value of Array.isArray(values) ? values : [ROOT_INVOCATION_ID]) {
-        const id = normalizeInvocationId(value);
-        if (!ids.includes(id)) {
-            ids.push(id);
-        }
-    }
-    return ids;
 }
 
 function compareByCreatedAt(left, right) {

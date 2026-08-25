@@ -102,7 +102,8 @@ type TauriTavernAgentRunEvent = {
     timestamp: string;
     level: 'debug' | 'info' | 'warn' | 'error';
     type: string;
-    payload?: any;
+    // Payload shape varies by event type; consumers narrow by field.
+    payload?: unknown;
 };
 
 type TauriTavernAgentInvocationKind = 'root' | 'subagent' | 'handoff';

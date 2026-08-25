@@ -1,6 +1,6 @@
 # First-party UI 工程基线
 
-本文记录 TauriTavern 自有 UI 在 Vue 退役期间已经生效的工程契约。它不改变 SillyTavern 1.18.0 前端，也不把页面改造成 SPA。
+本文记录 TauriTavern 自有 UI 完成 Vue 表示层退役后已经生效的工程契约。它不改变 SillyTavern 1.18.0 前端，也不把页面改造成 SPA。
 
 ## 1. 所有权
 
@@ -33,7 +33,7 @@ src/scripts/tauri/setting/**/*.{ts,tsx}
 
 - `pnpm run web:build` 显式使用 production mode、persistent cache 和 fail-fast build。
 - `pnpm run web:dev` 显式使用 development mode、memory cache 和 watch。
-- Agent、MCP、Settings 三个 first-party compiler 都能直接编译 TS/TSX；Vue compiler 只为尚未迁移的 root 保留。
+- Agent、MCP、Settings 三个 first-party compiler 都直接编译 TS/TSX；自有 UI 已不再消费 Vue，遗留 dependency 与 Agent DefinePlugin 留给 Phase 6 独立删除。
 - production cache 由 Rspack 自己跟踪模块依赖；四个 compiler 使用独立目录。源码内容不再被预先哈希进 cache version，单文件修改不会人为废弃整个缓存。
 
 标准 `pnpm dev` 不再先生成 production bundle。`scripts/tauri-dev-server.mjs` 直接拥有同一份 development MultiCompiler：
@@ -53,11 +53,11 @@ TS/TSX 变化 -> Rspack 重编译 -> 成功后发送 reload
 
 | 指标 | 上限 |
 | --- | ---: |
-| runtime `template:` | 14 |
-| Vue imports | 5 |
-| `createApp()` roots | 5 |
+| runtime `template:` | 0 |
+| Vue imports | 0 |
+| `createApp()` roots | 0 |
 
-这些值只能随完整 root 迁移而下降；新增 `.vue` 文件直接失败。ESLint 同时保证：
+三个计数已经清零；任何回归都会直接失败，新增 `.vue` 文件同样失败。ESLint 同时保证：
 
 - 新的 typed first-party UI 不得 import Vue；
 - presentation 文件默认不超过 500 行；
@@ -97,6 +97,8 @@ Phase 4 后（2026-08-23）：Dev Logs 为 201,756 raw / 63,449 gzip -9 bytes，
 
 Phase 4 UX 与状态一致性复审后（同日）：Live 面板 More 按钮并入状态行（`Showing x/y · +n new · Paused` + 按需出现的 Show older），行内时间戳缩写为本地化短时间（导出仍带完整日期时间），两个面板补空状态，LLM 面板以同步当前选择的条目下拉取代逐条 Prev/Next 盲翻（保留 Prev/Next），meta 对失败请求与加载错误以 `--fullred` 高亮；Dev Logs 最终为 202,991 raw / 63,965 gzip -9 bytes。
 
+Agent System Phase 5 五个切片完成后（2026-08-24）：Agent entry 为 465,458 raw / 130,154 gzip -9 bytes，production module graph 只包含 React/React DOM，不再包含 Vue runtime/compiler；迁移前最后一个双 runtime 基线为 656,384 / 194,316。active/history Timeline 与 SubAgent 共用 mount-local typed controller、event session/detail epoch 和 immutable cached snapshot，完整已读历史保留在内存，virtualizer 只限制 DOM。平台 WebView 的 scroll/pointer/native dialog smoke 仍是发布门禁，不由 happy-dom 结果替代。
+
 ## 6. 当前有意不做的事情
 
 - 不启用 React Compiler。Rspack 基底已经具备后续能力，但先用 pilot 的 profiler 和 bundle 数据证明收益。
@@ -121,4 +123,6 @@ Phase 1 与 Phase 2 已完成：Sync feature 的三个 root（Main、Progress、
 
 Phase 3 已完成：Settings root 迁移为 React（`settings-app/SettingsApp.tsx`，view-model/draft 规范化与最小 patch 仍归外壳 `setting-panel/settings-*.js` 所有），`settings.bundle.js` 不再包含 Vue runtime。`getDraft()` 由 mount-local controller 同步供给，不存在 React commit 竞态；未编辑 Save 不再产生 dynamic theme fallback patch（计划批准的唯一语义修复）。`SettingsApp.test.tsx` 只覆盖公开边界、非平凡状态语义、已修复缺陷与异步生命周期，不测试源码文本、静态 DOM 清单或明显条件渲染。迁移后另做一轮用户批准的 UX 微调（行 hint 桌面端跨整行宽、disclosure 摘要改为状态文本），并评估后否决了侧边栏分页方案。真实 WebView 走查（Save/Close/Escape veto、purge 确认、Data Root 不回滚、窄屏与主题）待真机反馈。下一阶段进入 Dev Logs。
 
-Phase 4 已完成：Dev Logs root 迁移为 React（`dev-logs-app/DevLogsApp.tsx`，初始读取、Popup、clipboard 与 Text Viewer 仍归外壳 `dev-logs.js` 所有），`dev-logs.bundle.js` 不再包含 Vue runtime。不设 controller/store：Host 订阅是 push-only 且每个 Popup 只有一个消费者，两个 Panel 通过共享的 `useAsyncSubscription()` 管理订阅生命周期（effect-event handler + per-setup 订阅者身份，StrictMode 下恰好一个活动订阅；异步 teardown 失败写入 console）。同一变更修复了共享 stream bridge 的两个根因缺陷（start 失败残留 ghost handler、末次退订与新订阅紧邻时 disable 覆盖 enable），并把 LLM 选择从会漂移的 numeric index 改为稳定 `selectedId`、Preview/Raw 增加 epoch stale 防护、keep 改为两阶段提交（setKeep 失败零提交；reload 失败不回滚已持久化 keep；只合并 reload 期间真实收到的事件）。公开 mount、Host、Popup、Text Viewer、关键 class 与 raw `<details>` 契约保持不变；状态行、短时间、空状态、条目下拉和错误高亮是后续批准的有意 UX 调整，不声称逐节点 Vue parity。真实 WebView 走查（追尾/暂停/300-800 窗口、Popup 栈与 Escape、三个 slash command 入口、窄屏与主题）待真机反馈。下一阶段进入 Agent System 集中迁移。
+Phase 4 已完成：Dev Logs root 迁移为 React（`dev-logs-app/DevLogsApp.tsx`，初始读取、Popup、clipboard 与 Text Viewer 仍归外壳 `dev-logs.js` 所有），`dev-logs.bundle.js` 不再包含 Vue runtime。不设 controller/store：Host 订阅是 push-only 且每个 Popup 只有一个消费者，两个 Panel 通过共享的 `useAsyncSubscription()` 管理订阅生命周期（effect-event handler + per-setup 订阅者身份，StrictMode 下恰好一个活动订阅；异步 teardown 失败写入 console）。同一变更修复了共享 stream bridge 的两个根因缺陷（start 失败残留 ghost handler、末次退订与新订阅紧邻时 disable 覆盖 enable），并把 LLM 选择从会漂移的 numeric index 改为稳定 `selectedId`、Preview/Raw 增加 epoch stale 防护、keep 改为两阶段提交（setKeep 失败零提交；reload 失败不回滚已持久化 keep；只合并 reload 期间真实收到的事件）。公开 mount、Host、Popup、Text Viewer、关键 class 与 raw `<details>` 契约保持不变；状态行、短时间、空状态、条目下拉和错误高亮是后续批准的有意 UX 调整，不声称逐节点 Vue parity。真实 WebView 走查（追尾/暂停/300-800 窗口、Popup 栈与 Escape、三个 slash command 入口、窄屏与主题）待真机反馈；随后进入 Agent System 集中迁移。
+
+Agent System Phase 5 的五个 root family 已完成代码迁移：Settings Entry、Embedded Assets、Main/History/Retention、Skill Manager、active/history Timeline + SubAgent 均为 React + strict TS/TSX；原生 chat-input/embedded-asset 按钮继续作为上游 DOM adapter。Timeline 保留 240-event paging、server-side invocation filter、120ms projection debounce、完整内存历史、窗口化 DOM、scroll anchor/follow-tail、resize 与 touch gesture 语义；History 保持只读，retry 继续走 typed generation action。当前 first-party guardrail 为 `0 / 0 / 0`，下一步是平台 WebView 验收与 Phase 6 删除 Vue dependency/DefinePlugin，而不是新增兼容层。

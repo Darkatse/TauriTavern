@@ -120,116 +120,6 @@ test('Agent System settings use the extension store and publish changes', async 
 
 
 
-test('Agent run timeline event store keeps ordered history without tail truncation', async () => {
-    const storeModule = await importFresh('src/scripts/extensions/agent-system/src/run-timeline-event-store.js');
-    const store = storeModule.createRunTimelineEventStore();
-
-    assert.equal(store.add({ seq: 3, id: 'evt-3', runId: 'run-1', type: 'run_completed' }), true);
-    assert.equal(store.add({ seq: 1, id: 'evt-1', runId: 'run-1', type: 'run_created' }), true);
-    assert.equal(store.add({ seq: 2, id: 'evt-2', runId: 'run-1', type: 'tool_call_completed' }), true);
-    assert.equal(store.add({ seq: 2, id: 'evt-2', runId: 'run-1', type: 'tool_call_completed' }), false);
-
-    assert.deepEqual(store.events().map(event => event.seq), [1, 2, 3]);
-    assert.equal(store.oldestSeq(), 1);
-    assert.throws(() => store.add({ seq: 0, runId: 'run-1' }), /positive integer/);
-});
-
-
-test('Agent run timeline detail state ignores stale async loads', async () => {
-    const { createTimelineDetailState } = await importFresh(
-        'src/scripts/extensions/agent-system/src/run-timeline-detail-state.js',
-    );
-    const pending = [];
-    const state = createTimelineDetailState({
-        readSections(input) {
-            return new Promise((resolve) => {
-                pending.push({ input, resolve });
-            });
-        },
-    });
-
-    const firstLoad = state.load({
-        runId: 'run-1',
-        targets: [{ type: 'file', path: 'first.txt' }],
-        readOnly: false,
-    });
-    const secondLoad = state.load({
-        runId: 'run-1',
-        targets: [{ type: 'file', path: 'second.txt' }],
-        readOnly: true,
-    });
-
-    assert.equal(pending.length, 2);
-    assert.equal(pending[0].input.readOnly, false);
-    assert.equal(pending[1].input.readOnly, true);
-
-    pending[1].resolve([{ labelKey: 'second' }]);
-    assert.equal(await secondLoad, true);
-    assert.deepEqual(state.sections, [{ labelKey: 'second' }]);
-    assert.equal(state.loading, false);
-
-    pending[0].resolve([{ labelKey: 'first' }]);
-    assert.equal(await firstLoad, false);
-    assert.deepEqual(state.sections, [{ labelKey: 'second' }]);
-
-    state.reset();
-    assert.equal(state.loading, false);
-    assert.equal(state.error, '');
-    assert.deepEqual(state.sections, []);
-    assert.throws(
-        () => createTimelineDetailState({ readSections: null }),
-        /readSections dependency must be a function/,
-    );
-});
-
-test('Agent run timeline virtualizer windows DOM items without dropping timeline entries', async () => {
-    const virtualList = await importFresh('src/scripts/extensions/agent-system/src/run-timeline-virtual-list.js');
-    const items = Array.from({ length: 120 }, (_, index) => ({ id: `item-${index + 1}` }));
-
-    const topWindow = virtualList.virtualizeTimelineItems(items, 0, 174, {
-        rowHeight: 58,
-        overscan: 2,
-    });
-    assert.deepEqual(topWindow.items.map(item => item.id), [
-        'item-1',
-        'item-2',
-        'item-3',
-        'item-4',
-        'item-5',
-        'item-6',
-        'item-7',
-    ]);
-    assert.equal(topWindow.topPadding, 0);
-    assert.equal(topWindow.bottomPadding, (120 - 7) * 58);
-    assert.equal(topWindow.totalHeight, 120 * 58);
-
-    const middleWindow = virtualList.virtualizeTimelineItems(items, 58 * 50, 174, {
-        rowHeight: 58,
-        overscan: 2,
-    });
-    assert.equal(middleWindow.items[0].id, 'item-49');
-    assert.equal(middleWindow.topPadding, 48 * 58);
-    assert.ok(middleWindow.bottomPadding > 0);
-
-    const clampedWindow = virtualList.virtualizeTimelineItems(items.slice(0, 10), 999_999, 174, {
-        rowHeight: 58,
-        overscan: 2,
-    });
-    assert.equal(clampedWindow.items.at(-1).id, 'item-10');
-    assert.equal(clampedWindow.bottomPadding, 0);
-});
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 test('Agent run timeline projects SubAgent tasks without flattening child events into root', async () => {
@@ -366,13 +256,13 @@ test('Agent run timeline projects SubAgent tasks without flattening child events
         },
     ];
 
-    const projection = projector.projectAgentInvocations(timelineProjection);
-    assert.equal(projection.subAgentTasks.length, 1);
-    assert.equal(projection.subAgentTasks[0].displayName, 'scene-critic');
-    assert.equal(projection.subAgentTasks[0].status, 'completed');
+    const subAgentTasks = projector.projectSubAgentTasks(timelineProjection);
+    assert.equal(subAgentTasks.length, 1);
+    assert.equal(subAgentTasks[0].displayName, 'scene-critic');
+    assert.equal(subAgentTasks[0].status, 'completed');
 
     const rootItems = presenter.timelineItemsFromEvents(events, {
-        foregroundInvocationIds: projection.foregroundInvocationIds,
+        foregroundInvocationIds: timelineProjection.foregroundInvocationIds,
         delegationEdges: timelineProjection.delegationEdges,
     });
     assert.deepEqual(rootItems.map(item => item.type), ['agent_delegate_started']);
@@ -513,14 +403,10 @@ test('Agent run timeline projects Handoff as foreground chain', async () => {
         },
     ];
 
-    const projection = projector.projectAgentInvocations(timelineProjection);
-    assert.deepEqual(projection.foregroundInvocationIds, ['inv_root', 'inv-editor']);
-    assert.equal(projection.handoffTasks.length, 1);
-    assert.equal(projection.handoffTasks[0].displayName, 'line-editor');
-    assert.equal(projection.subAgentTasks.length, 0);
+    assert.equal(projector.projectSubAgentTasks(timelineProjection).length, 0);
 
     const mainItems = presenter.timelineItemsFromEvents(events, {
-        foregroundInvocationIds: projection.foregroundInvocationIds,
+        foregroundInvocationIds: timelineProjection.foregroundInvocationIds,
         delegationEdges: timelineProjection.delegationEdges,
     });
     assert.deepEqual(mainItems.map(item => item.type), [

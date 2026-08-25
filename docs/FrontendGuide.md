@@ -202,7 +202,7 @@ src/
 
 ### 7.3.2 First-party React extension
 
-TauriTavern 自有的新 UI 可以作为 SillyTavern first-party extension 挂载 React client island。当前基线由 `src/scripts/extensions/mcp-manager/` 建立：
+TauriTavern 自有的状态型 UI 作为 SillyTavern first-party extension 挂载 React client island。当前 Agent、MCP 与 Settings owned scope 均遵循这一基线：
 
 - manifest、locale 和 SmartTheme CSS 仍遵循现有扩展资源契约；不引入 Next.js、独立页面 shell 或第二套路由。
 - `src/index.tsx` 只负责等待 Host ABI、解析 concrete actions、创建 extension container 与 `createRoot()`。
@@ -213,7 +213,7 @@ TauriTavern 自有的新 UI 可以作为 SillyTavern first-party extension 挂�
 - production 与 development 共用 `createRspackConfigs(mode)`。标准 Tauri dev server 在首次 development 编译成功后才监听，并只在成功重编译后 reload。
 - `scripts/check-first-party-ui-guardrails.mjs` 约束 runtime template、Vue import、Vue root 和新 TSX 文件尺寸只能随迁移收敛。
 
-后续迁移应以单个完整 extension root 为单位。迁移期间允许 Vue 与 React 共存，但不建立跨框架组件桥；最后一个 Vue root 移除后再删除 Vue runtime。
+自有 UI 的 Vue root 已清零；不得重新引入跨框架组件桥。Vue dependency 与残留构建配置在独立清理阶段删除，不与功能改动混合。
 当前工程基线、冻结 handle 与 bundle 数据见 `docs/CurrentState/FirstPartyUI.md`。
 
 ### 7.4 契约与约束
