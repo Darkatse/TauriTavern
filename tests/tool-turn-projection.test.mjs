@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { projectToolTurns } from '../src/scripts/tauritavern/tool-turn-projection.js';
+import { projectToolTurns, stripOldToolTurns } from '../src/scripts/tauritavern/tool-turn-projection.js';
 
 const call = (id = 'call-1', overrides = {}) => ({
     id,
@@ -107,9 +107,17 @@ test('old tool turns can be stripped while pure Assistant history and the active
     assert.equal(projection[2].assistantMessage, currentOwner);
 });
 
+test('stripped tool turns cannot shift prompt depths of retained messages', () => {
+    const earlierReply = assistant(undefined, { mes: 'Earlier reply' });
+    const oldOwner = assistant([call('old-call')]);
+    const user = { is_user: true, is_system: false, mes: 'Continue' };
+    const currentReply = assistant(undefined, { mes: 'Current reply' });
 
-
-
+    assert.deepEqual(
+        stripOldToolTurns([earlierReply, oldOwner, tool('old-call'), user, currentReply]),
+        [earlierReply, user, currentReply],
+    );
+});
 
 test('canonical malformed, orphan, duplicate, and missing relations fail at the first exact chat path', () => {
     const cases = [

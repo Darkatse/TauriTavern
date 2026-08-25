@@ -59,7 +59,7 @@ Tool call 不进入 `swipe_info`；owner Assistant 只保留 `saveReply` 原本�
 
 calls 与全部 results 只在工具执行完成后一次性提交，避免工具 action 保存半成品 transcript。Legacy local 与 MCP tools 共用这一 writer；MCP `OutcomeUnknown` 终止当前批次且不伪造或部分提交结果。新 writer 不写 `extra.tool_invocations`；该字段仅用于读取旧 synthetic tool floors。
 
-Chat Completion preset 的“剥离旧函数调用结果”只改变 provider prompt：开启后，最后一条用户消息之前的完整工具轮（包括发起调用的 Assistant 消息及全部 Tool results）都会省略，只保留不含工具调用的普通 Assistant 消息。当前用户消息之后的递归工具链仍完整重放。该选项不修改 `chat[]`、DOM 或持久化历史，也不作用于 Agent prompt assembly。
+Chat Completion preset 的“剥离旧函数调用结果”只改变 provider prompt：开启后，最后一条用户消息之前的完整工具轮（包括发起调用的 Assistant 消息及全部 Tool results）都会省略，只保留不含工具调用的普通 Assistant 消息。该投影在 prompt 正则、reasoning 正则、generation interceptor 与 World Info 扫描前完成，因此已省略的楼层不参与深度或激活计算；provider 组装边界会用同一投影再次校验 interceptor 可能修改的历史。当前用户消息之后的递归工具链仍完整重放。该选项不修改 `chat[]`、DOM 或持久化历史，也不作用于 Agent prompt assembly。
 
 工具执行中的即时反馈只属于前端运行态：整批 calls 校验通过后，UI 在 owner Assistant 上显示 pending cards，并随每个工具完成更新结果；所有工具结束后，pending 消失，持久化 Tool 楼层按自身物理位置显示。pending 状态不进入 `chat[]`、不保存、也不提前发出工具事件，但会在 ChatSurface 重挂载时按同一 Assistant 对象恢复。
 

@@ -57,7 +57,7 @@ import {
 import { agentErrorMessage } from './scripts/tauritavern/agent/agent-error-presenter.js';
 import { normalizeAgentContextPolicy } from './scripts/tauritavern/agent/agent-context-policy.js';
 import { normalizeAgentSystemPrompt } from './scripts/tauritavern/agent/agent-system-prompt.js';
-import { readLegacyToolInvocations } from './scripts/tauritavern/tool-turn-projection.js';
+import { readLegacyToolInvocations, stripOldToolTurns } from './scripts/tauritavern/tool-turn-projection.js';
 import {
     buildFrozenRunInputSnapshot,
     buildCurrentModelConnectionSnapshot,
@@ -5420,6 +5420,10 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     // Collect messages with usable content
     const canPerformToolCalls = !dryRun && ToolManager.canPerformToolCalls(type) && depth < ToolManager.RECURSE_LIMIT;
     const canAdvertiseToolCalls = !dryRun && ToolManager.canAdvertiseToolCalls(type) && depth < ToolManager.RECURSE_LIMIT;
+    const stripOldToolCalls = main_api === 'openai'
+        && !agentMode
+        && oai_settings.function_calling
+        && oai_settings.strip_old_tool_calls;
     const useLegacyMcpTools = main_api === 'openai' && !agentMode && canAdvertiseToolCalls;
     const legacyMcpContext = useLegacyMcpTools
         ? inheritedLegacyMcpContext ?? await prepareLegacyMcpGenerationContext()
@@ -5429,6 +5433,9 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         || (main_api === 'openai' && (x.role === 'tool' || Object.hasOwn(x.extra ?? {}, 'tool_invocations'))));
     if (type === 'swipe') {
         coreChat.pop();
+    }
+    if (stripOldToolCalls) {
+        coreChat = stripOldToolTurns(coreChat);
     }
 
     const coreChatRegexedMessages = await getRegexedStringBatchAsync(coreChat.map((/** @type {ChatMessage} */ chatItem, index) => ({
@@ -5782,7 +5789,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     if (main_api === 'openai') {
         oaiMessages = setOpenAIMessages(
             coreChat,
-            !agentMode && oai_settings.function_calling && oai_settings.strip_old_tool_calls,
+            stripOldToolCalls,
         );
         oaiMessageExamples = setOpenAIMessageExamples(mesExamplesArray);
     }

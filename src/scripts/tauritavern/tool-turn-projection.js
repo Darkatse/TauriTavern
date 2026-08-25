@@ -184,6 +184,18 @@ export function projectToolTurns(chat, stripOldToolCalls = false) {
 }
 
 /**
+ * Returns the source messages retained after old tool turns are stripped,
+ * preserving their physical order without mutating the chat transcript.
+ * @param {ChatMessage[]} chat
+ * @returns {ChatMessage[]}
+ */
+export function stripOldToolTurns(chat) {
+    const retainedIndices = new Set(projectToolTurns(chat, true)
+        .flatMap(entry => entry.type === 'message' ? [entry.sourceIndex] : entry.sourceIndices));
+    return chat.filter((_, sourceIndex) => retainedIndices.has(sourceIndex));
+}
+
+/**
  * Reads the exact SillyTavern 1.18 synthetic system-floor format. This path is
  * read-only; new chats must use first-class Assistant and Tool messages.
  * @param {ChatMessage} message
