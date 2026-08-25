@@ -2469,17 +2469,6 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     min-width: 0;
 }
 
-.ttas-panel-fade-enter-active,
-.ttas-panel-fade-leave-active {
-    transition: opacity var(--ttas-transition), transform var(--ttas-transition);
-}
-
-.ttas-panel-fade-enter-from,
-.ttas-panel-fade-leave-to {
-    opacity: 0;
-    transform: translateY(4px);
-}
-
 .ttas-toolbar,
 .ttas-editor-actions {
     display: flex;

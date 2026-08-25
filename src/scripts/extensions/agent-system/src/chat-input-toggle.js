@@ -3,7 +3,7 @@ import { subscribeAgentRunState } from '../../../tauritavern/agent/agent-run-con
 import { errorText } from './host-api.js';
 import { AGENT_TOGGLE_ICON } from './agent-icon.js';
 import { translateAgentSystem as tr } from './i18n.js';
-import { openAgentSystemPanel } from './panel-popup.js';
+import { openAgentSystemPanel } from './panel-popup.tsx';
 
 const BUTTON_ID = 'ttas_agent_send_toggle';
 const LONG_PRESS_MS = 550;

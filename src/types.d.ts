@@ -320,14 +320,25 @@ type TauriTavernAgentProfileSummary = {
     directRunnable: boolean;
 };
 
+type TauriTavernAgentToolInputSchema = {
+    properties?: Record<string, unknown>;
+    required?: string[];
+};
+
+type TauriTavernAgentToolAnnotations = {
+    readOnly?: boolean;
+    mutating?: boolean;
+    control?: boolean;
+};
+
 type TauriTavernAgentToolCatalogItem = {
     id: string;
     nativeName: string;
     title: string;
     description: string;
-    inputSchema: any;
-    outputSchema?: any;
-    annotations?: any;
+    inputSchema: TauriTavernAgentToolInputSchema;
+    outputSchema?: unknown;
+    annotations?: TauriTavernAgentToolAnnotations;
     source: 'builtin' | 'mcp';
     registrationId?: string;
     serverDisplayName?: string;
@@ -360,6 +371,26 @@ type TauriTavernAgentProfileDefinition = {
             maxRetries: number;
             intervalMs: number;
         };
+    };
+    context: {
+        // Negative means full history, zero means no initial history,
+        // positive means a recent-message window.
+        initialChatHistoryMessages: number;
+        includeActivatedWorldInfo: boolean;
+    };
+    delegation: {
+        canDelegate: boolean;
+        canHandoff: boolean;
+        callable: boolean;
+        allowAsSubagent: boolean;
+        allowAsHandoffTarget: boolean;
+        allowNestedDelegation: boolean;
+        allowedCallers: string[];
+        descriptionForAgents: string | null;
+        maxConcurrentInvocations: number;
+        maxInvocationsPerRun: number;
+        resultBudgetTokens: number;
+        maxHandoffDepth: number;
     };
     instructions: {
         agentSystemPrompt?: string | null;
