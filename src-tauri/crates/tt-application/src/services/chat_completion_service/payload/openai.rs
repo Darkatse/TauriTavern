@@ -3,8 +3,9 @@ use serde_json::{Map, Value};
 use crate::errors::ApplicationError;
 
 use super::content_parts::{
-    AudioInputFormatSet, AudioRewriteFallbackPolicy, reject_media_for_text_only_provider,
-    reject_video_for_provider, rewrite_audio_url_parts_to_input_audio,
+    AudioInputFormatSet, AudioRewriteFallbackPolicy, InputPart, parse_openai_chat_content,
+    reject_media_for_text_only_provider, reject_video_for_provider,
+    rewrite_audio_url_parts_to_input_audio,
 };
 use super::openai_reasoning::{
     normalize_openai_reasoning_effort, should_forward_openai_reasoning_effort,
@@ -214,7 +215,66 @@ fn build_chat_completion_payload(
         reject_video_for_provider("OpenAI Chat Completions", request.get("messages"))?;
     }
 
+    drop_uninitialized_openai_chat_messages(&mut request)?;
+
     Ok(request)
+}
+
+fn drop_uninitialized_openai_chat_messages(
+    request: &mut Map<String, Value>,
+) -> Result<(), ApplicationError> {
+    let Some(messages) = request.get_mut("messages").and_then(Value::as_array_mut) else {
+        return Ok(());
+    };
+
+    messages.retain(openai_chat_message_has_initialized_payload);
+    if messages.is_empty() {
+        return Err(ApplicationError::ValidationError(
+            "OpenAI chat completion messages are empty after dropping uninitialized content"
+                .to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn openai_chat_message_has_initialized_payload(message: &Value) -> bool {
+    let Some(object) = message.as_object() else {
+        return false;
+    };
+
+    let role = object
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if matches!(role, "tool" | "function") {
+        return true;
+    }
+
+    if object
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|calls| !calls.is_empty())
+    {
+        return true;
+    }
+    if object.get("function_call").is_some() {
+        return true;
+    }
+
+    match parse_openai_chat_content(object.get("content")) {
+        Ok(parts) => parts.iter().any(openai_input_part_is_initialized),
+        Err(_) => true,
+    }
+}
+
+fn openai_input_part_is_initialized(part: &InputPart) -> bool {
+    match part {
+        InputPart::Text(text) => !text.trim().is_empty(),
+        InputPart::Image(_) | InputPart::Audio(_) | InputPart::Video(_) => true,
+        InputPart::Unknown { value, .. } => !value.is_null(),
+    }
 }
 
 fn should_forward_openai_verbosity(source: &str, model: &str) -> bool {
@@ -390,6 +450,66 @@ mod tests {
         assert_eq!(
             payload.get("model").and_then(Value::as_str),
             Some("gpt-4.1-mini")
+        );
+    }
+
+    #[test]
+    fn custom_openai_compat_drops_empty_assistant_turns() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "model": "kaon/gemini-3.7-flash",
+            "messages": [
+                { "role": "system", "content": "game = new Game()" },
+                { "role": "user", "content": "hi" },
+                { "role": "assistant", "content": "历史消息加载完毕" },
+                { "role": "user", "content": "continue_game()" },
+                { "role": "assistant", "content": "" },
+                { "role": "user", "content": "Ok." }
+            ]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+        assert_eq!(
+            upstream.pointer("/messages"),
+            Some(&json!([
+                { "role": "system", "content": "game = new Game()" },
+                { "role": "user", "content": "hi" },
+                { "role": "assistant", "content": "历史消息加载完毕" },
+                { "role": "user", "content": "continue_game()" },
+                { "role": "user", "content": "Ok." }
+            ]))
+        );
+    }
+
+    #[test]
+    fn custom_openai_compat_keeps_empty_assistant_tool_calls() {
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "model": "gpt-4.1-mini",
+            "messages": [
+                { "role": "user", "content": "weather?" },
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_weather",
+                        "type": "function",
+                        "function": { "name": "weather", "arguments": "{}" }
+                    }]
+                }
+            ]
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_endpoint, upstream) = build(payload).expect("build should succeed");
+        assert_eq!(
+            upstream.pointer("/messages/1/tool_calls/0/id"),
+            Some(&json!("call_weather"))
         );
     }
 
