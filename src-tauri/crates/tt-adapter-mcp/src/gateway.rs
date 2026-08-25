@@ -121,8 +121,21 @@ impl McpGateway for RmcpMcpGateway {
             ));
         }
 
-        let http_client = self.http_clients.client(HttpClientProfile::Mcp)?;
-        let request_headers = compile_request_headers(request_headers)?;
+        let http_client = match self.http_clients.client(HttpClientProfile::Mcp) {
+            Ok(client) => client,
+            Err(error) => {
+                return Ok(not_sent(
+                    "mcp.call_http_client_unavailable",
+                    format!("Failed to prepare the MCP HTTP client: {error}"),
+                ));
+            }
+        };
+        let request_headers = match compile_request_headers(request_headers) {
+            Ok(headers) => headers,
+            Err(error) => {
+                return Ok(not_sent("mcp.call_headers_invalid", error.to_string()));
+            }
+        };
         let mut client = match timeout(
             DISCOVERY_TIMEOUT,
             start_client(

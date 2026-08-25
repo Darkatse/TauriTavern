@@ -129,14 +129,14 @@ type McpTestCallOutcome =
   | { outcome: 'outcome_unknown'; code: string; message: string };
 ```
 
-`storageIssues` 显式报告损坏、未知 schema/kind、非 canonical 文件名或文件内 ID 不匹配；健康 registration 仍正常返回。
+`storageIssues` 显式报告已经定位到具体文件的读取失败、损坏、未知 schema/kind、非 canonical 文件名或文件内 ID 不匹配；健康 registration 仍正常返回。registration 目录本身无法枚举时，`list()` 仍 reject。
 
 ## 4. Registration 契约
 
 - `create()` 总是创建 `paused` registration；Manager 在切换为 Active 前展示并确认 exact endpoint。
 - Manager 首次加载时会通过现有 `create()` 契约添加一次 Paused 的 Exa Search 推荐项；处理标记保存在扩展 store 中。删除该普通 registration 不会清除标记，因此同一 data root 中不会自动恢复。
 - display name、endpoint、custom request headers 与 protocol version 由 `update()` 原子修改，不影响 UUID、ToolId、Active/Paused 或已保存权限。endpoint/headers/protocol 实际变化会删除该 registration 的 memory/disk catalog；仅改名称不清 catalog，也不会联网。
-- headers 的名称和值原样保存；registration 不维护 reserved-header 列表或数量/总量上限，transport/server 无法接受的配置通过正常调用错误返回。endpoint credentials 与 header values 明文保存在 registration 文件中、由 `servers.list()` 回传给同一 WebView 的编辑器，并随包含该 data root 的备份流转。
+- headers 的名称和值原样保存；registration 不维护 reserved-header 列表或数量/总量上限，HTTP transport 无法接受的配置在发送前返回 `not_sent`。endpoint credentials 与 header values 明文保存在 registration 文件中、由 `servers.list()` 回传给同一 WebView 的编辑器，并随包含该 data root 的备份流转。
 - protocol version 缺省为 `auto`。固定版本只允许该版本参与 lifecycle 协商；当前选项与 Streamable HTTP transport 实际支持集一致。
 - `off` 是缺省值，不写入 `toolPermissions`；`setPermission(..., 'off')` 删除对应持久设置。
 - `setDescriptionOverride()` 按 native name 保存 model-facing description/property-description 覆盖；字符串原样保存，不做 trim 或改写。`override: null` 是唯一删除语义，空对象显式拒绝。值不写入或改写 discovery catalog，也不改变 ToolId、schema 结构、permission 或执行目标。
@@ -174,7 +174,7 @@ type McpTestCallOutcome =
 顶层 outcome 是远端事实，而非 UI loading 状态：
 
 - `known_response`：server 已明确响应。`isError: true` 仍是 tool result；JSON-RPC error 是 `server_error`，都不变成 command rejection。
-- `not_sent`：backend 能证明目标 `tools/call` 尚未交给 transport，例如 Paused、JSON 不合法、metadata hydration 失败或发送前取消。
+- `not_sent`：backend 能证明目标 `tools/call` 尚未交给 transport，例如 registration 暂时无法读取、Paused、JSON 不合法、HTTP client/header 配置失败、metadata hydration 失败或发送前取消。
 - `outcome_unknown`：request handle 已建立后发生 cancel、timeout、disconnect 或无法确认响应；调用可能已经执行，系统绝不自动重试。
 
 已知 tool result 按原顺序投影 text、确定性 structured JSON、`isError` 与 diagnostic。当前不显示的 image/audio/resource block 与 metadata 会产生可见 diagnostic，不会抹掉“server 已响应”的事实。完整 response 已受 4 MiB wire 上限约束，text/structured 不再做第二次静默截断；raw response 超限或 malformed 时则是 `outcome_unknown`。取得已知响应后的 client close/join 失败只记录日志，不会改写 outcome。
@@ -193,7 +193,7 @@ Agent 没有新增公共 raw-call API。Profile v3 以 `mcp/<registration-uuid>:
 
 Legacy 集成没有扩展上面的公共 `api.mcp`。Legacy 使用第一方内部 commands 从 `McpService` 获取 Active + Ask/Allow 的 cached descriptors，并通过 permission-aware call 用例执行；第三方仍没有公共 raw MCP executor。
 
-- catalog preparation 只读 memory/disk snapshot，cache miss 不联网；单 server diagnostic 不阻塞健康 MCP/local tools 或普通生成。
+- catalog preparation 只读 memory/disk snapshot，cache miss 不联网；单 registration 的 snapshot 读取/校验失败形成 diagnostic，不阻塞健康 MCP/local tools 或普通生成。
 - registration description override 在共享 resolver 中应用，Legacy root 冻结覆盖后的 descriptor；后续 Manager 修改只影响下一个 root。
 - 每个实际 Legacy root generation 冻结 descriptors；工具递归复用 descriptor snapshot，但每轮根据当前 local view 重新分配 alias 并重建 provider schema。执行只解析当前 round binding；MCP 不进入全局 ToolManager、slash commands 或 extension enumeration。
 - local alias 优先；settings hook 后只接受仍唯一存在的初始 MCP alias。删除、改名、重复或失去 binding 的 alias 不按名称/schema猜 canonical ToolId。

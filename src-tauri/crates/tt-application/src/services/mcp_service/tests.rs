@@ -61,6 +61,8 @@ struct MemoryRepository {
     catalogs: StdMutex<BTreeMap<McpRegistrationId, (String, McpDiscoveryResult)>>,
     scan_issues: StdMutex<Vec<McpRegistrationStorageIssue>>,
     fail_scan: AtomicBool,
+    fail_load: AtomicBool,
+    catalog_load_failure: StdMutex<Option<McpRegistrationId>>,
     fail_catalog_save: AtomicBool,
     catalog_loads: AtomicUsize,
 }
@@ -89,6 +91,11 @@ impl McpServerRepository for MemoryRepository {
         &self,
         id: &McpRegistrationId,
     ) -> Result<Option<McpServerRegistration>, DomainError> {
+        if self.fail_load.load(Ordering::Relaxed) {
+            return Err(DomainError::InternalError(
+                "fixture registration load failed".to_string(),
+            ));
+        }
         Ok(self.registrations.lock().unwrap().get(id).cloned())
     }
 
@@ -106,6 +113,11 @@ impl McpServerRepository for MemoryRepository {
         endpoint: &McpEndpoint,
     ) -> Result<Option<McpDiscoveryResult>, DomainError> {
         self.catalog_loads.fetch_add(1, Ordering::Relaxed);
+        if self.catalog_load_failure.lock().unwrap().as_ref() == Some(id) {
+            return Err(DomainError::InternalError(
+                "fixture catalog load failed".to_string(),
+            ));
+        }
         let catalogs = self.catalogs.lock().unwrap();
         match catalogs.get(id) {
             Some((stored_endpoint, snapshot)) if stored_endpoint == endpoint.as_str() => {
@@ -526,7 +538,7 @@ async fn cancelled_prepared_call_is_not_sent_or_retained() {
 async fn model_catalog_is_cached_only_and_ask_executes_like_allow() {
     let repository = Arc::new(MemoryRepository::default());
     let gateway = Arc::new(FixedGateway::default());
-    let service = McpService::new(repository, gateway.clone());
+    let service = McpService::new(repository.clone(), gateway.clone());
     let created = service
         .create_server(
             "My Server".to_string(),
@@ -581,6 +593,17 @@ async fn model_catalog_is_cached_only_and_ask_executes_like_allow() {
             if code == "mcp.call_permission_off"
     ));
     assert_eq!(gateway.calls.lock().unwrap().len(), 1);
+
+    repository.fail_load.store(true, Ordering::Relaxed);
+    let outcome = service
+        .call_permitted_tool(&tool_id, json!({}), CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        McpCallOutcome::NotSent(McpCallIssue { ref code, .. })
+            if code == "mcp.call_registration_unavailable"
+    ));
 }
 
 #[tokio::test]
@@ -744,10 +767,8 @@ async fn model_catalog_is_cached_only_and_localizes_registration_failures() {
         .set_server_state(&corrupt.id, McpServerState::Active)
         .await
         .unwrap();
-    repository.catalogs.lock().unwrap().insert(
-        McpRegistrationId::parse(&corrupt.id).unwrap(),
-        ("https://wrong.example/mcp".to_string(), snapshot.clone()),
-    );
+    *repository.catalog_load_failure.lock().unwrap() =
+        Some(McpRegistrationId::parse(&corrupt.id).unwrap());
 
     let missing = service
         .create_server(

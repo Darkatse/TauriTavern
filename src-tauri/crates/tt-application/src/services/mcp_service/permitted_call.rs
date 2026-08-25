@@ -39,11 +39,20 @@ impl McpService {
                 "Arguments must be a JSON object",
             ));
         };
-        let Some(registration) = self.repository.load(&registration_id).await? else {
-            return Ok(not_sent(
-                "mcp.call_registration_not_found",
-                format!("MCP registration not found: {registration_id}"),
-            ));
+        let registration = match self.repository.load(&registration_id).await {
+            Ok(Some(registration)) => registration,
+            Ok(None) => {
+                return Ok(not_sent(
+                    "mcp.call_registration_not_found",
+                    format!("MCP registration not found: {registration_id}"),
+                ));
+            }
+            Err(error) => {
+                return Ok(not_sent(
+                    "mcp.call_registration_unavailable",
+                    error.to_string(),
+                ));
+            }
         };
         if registration.state() != McpServerState::Active {
             return Ok(not_sent(

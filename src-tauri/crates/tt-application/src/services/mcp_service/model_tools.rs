@@ -59,7 +59,7 @@ impl McpService {
             {
                 continue;
             }
-            let snapshot = match self.cached_model_catalog(&registration).await? {
+            let snapshot = match self.cached_model_catalog(&registration).await {
                 CachedModelCatalog::Available(snapshot) => snapshot,
                 CachedModelCatalog::Missing => {
                     resolution.diagnostics.push(McpModelToolDiagnostic {
@@ -202,7 +202,7 @@ impl McpService {
                 ));
                 continue;
             }
-            let snapshot = match self.cached_model_catalog(registration).await? {
+            let snapshot = match self.cached_model_catalog(registration).await {
                 CachedModelCatalog::Available(snapshot) => snapshot,
                 CachedModelCatalog::Missing => {
                     resolution.diagnostics.push(model_tool_diagnostic(
@@ -254,14 +254,11 @@ impl McpService {
     async fn cached_model_catalog(
         &self,
         registration: &McpServerRegistration,
-    ) -> Result<CachedModelCatalog, ApplicationError> {
+    ) -> CachedModelCatalog {
         match self.cached_catalog(registration).await {
-            Ok(Some(snapshot)) => Ok(CachedModelCatalog::Available(snapshot)),
-            Ok(None) => Ok(CachedModelCatalog::Missing),
-            Err(
-                ApplicationError::ValidationError(message) | ApplicationError::NotFound(message),
-            ) => Ok(CachedModelCatalog::Invalid(message)),
-            Err(error) => Err(error),
+            Ok(Some(snapshot)) => CachedModelCatalog::Available(snapshot),
+            Ok(None) => CachedModelCatalog::Missing,
+            Err(error) => CachedModelCatalog::Invalid(error.to_string()),
         }
     }
 }

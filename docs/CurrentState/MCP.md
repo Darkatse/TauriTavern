@@ -51,7 +51,7 @@ crate 责任：
 3. discovery 只产生候选描述，不产生执行 authority；新工具永远 Off。
 4. annotations 是不可信提示，不能改变 permission。
 5. 完整分页与 application canonical validation 成功后才发布新 catalog；写盘失败时以可见 diagnostic 明确标记 memory-only，不发布协议 partial，其他 refresh 失败不把旧 snapshot 冒充本次结果。
-6. 坏 registration 隔离到单文件，坏 tool/duplicate 隔离到最小工具组，系统 IO 与分页不完整显式失败。
+6. 已定位到具体 registration 文件的读取或解析错误隔离为 storage issue，坏 tool/duplicate 隔离到最小工具组；registration 目录无法枚举、分页不完整等无法归属的失败仍显式失败。
 7. user test call 的一次点击就是本次 authority；Off/Ask/Allow 不阻止调用，也不被调用修改。Agent 与 Legacy 模型调用中 Ask/Allow 均表示自动执行，审批系统留给后续统一工具交互设计。
 8. request handle 建立前的失败才可标记 NotSent；建立后 cancel/timeout/disconnect 无法证明远端状态时必须标记 OutcomeUnknown。
 9. Manager test call 将用户填写的 `argumentsJson` 原样交给 backend 解析；Legacy 沿用 ToolManager 的 provider 参数规范化与序列化结果。两条路径都不做 input-schema coercion。
@@ -69,7 +69,7 @@ crate 责任：
 
 snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 migration reader。registration 删除成功不受派生 catalog 清理失败影响；清理失败只写 warning。Data Archive/TT-Sync 的既有 external-data reconciliation 清空内存热副本，使后续读取重新观察当前 data root。仅改名称、Active/Paused、permission 与 description override 不清 catalog；endpoint、headers 或协议版本变化先删除磁盘/内存 snapshot，再保存新连接配置。Paused gate 始终先于 cache lookup。
 
-模型工具准备是严格 cached-only：共享 resolver 只处理 Active 且至少保存一个 Ask/Allow 的 registration，按 memory→disk 读取 snapshot，不调用 gateway、不做 cold discovery；没有 permission 的 registration 不触碰 catalog。resolver 复制 raw descriptor 后应用 registration description override；无效 property override 形成 diagnostic，不回退 raw descriptor。单 registration cache miss、损坏 snapshot 或非 object-root function schema 只形成 diagnostic，健康 server 继续。Agent 再按 Profile 选择收窄并应用更高优先级的 Profile override；Legacy 每个实际 root generation 读取一次全量 permitted descriptors，并在工具递归中复用。用户在 Manager 显式 refresh 或修改 override 后，下一次 Agent invocation 或 Legacy root 才看到变化。
+模型工具准备是严格 cached-only：共享 resolver 只处理 Active 且至少保存一个 Ask/Allow 的 registration，按 memory→disk 读取 snapshot，不调用 gateway、不做 cold discovery；没有 permission 的 registration 不触碰 catalog。resolver 复制 raw descriptor 后应用 registration description override；无效 property override 形成 diagnostic，不回退 raw descriptor。单 registration cache miss、读取/校验失败或非 object-root function schema 只形成 diagnostic，健康 server 继续。Agent 再按 Profile 选择收窄并应用更高优先级的 Profile override；Legacy 每个实际 root generation 读取一次全量 permitted descriptors，并在工具递归中复用。用户在 Manager 显式 refresh 或修改 override 后，下一次 Agent invocation 或 Legacy root 才看到变化。
 
 每次 test call 也使用新的短生命周期 Peer。协商到 `2026-07-28` 时，RMCP 3.1.2 构造 SEP-2243 `Mcp-Param-*` 需要同一 transport worker 的 tool schema cache，因此 call 前在同一 Peer 分页 `tools/list`，找到目标工具后立即停止；目标始终未出现时才遍历完整目录。该步骤只 hydration transport metadata：不做 arguments schema validation/coercion，也不持久化 catalog；目标未出现在 SDK 可见列表时，明确 NotSent。2025 协议不做这次额外 list。
 
@@ -81,7 +81,7 @@ snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 mig
 - Legacy MCP arguments 同样最多 256 KiB 且必须为 object；结果以现有 bounded MCP outcome JSON 内联到 Tool message，不复用 Agent workspace externalization。
 - Agent MCP 对模型发送直接 Text/Markdown：text 保持原文，structured content 去重后转为 `## Details`，可操作的非文本 content diagnostic 转为 `## Notes`，metadata diagnostic 保持内部。模型可见 `content` 超过当前 Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，同一完整 Markdown 的行可读 `.txt` 视图保存在 run 的只读可见 `tool-results/`；模型上下文接收最多前 3,000 个 Unicode 字符的前缀预览、可读视图路径与分段读取指引，不接收内部 audit JSON 路径。可读视图换行超长物理行，JSON audit 保留精确原始结果。该值只影响 Agent invocation 投影，不改变共享 MCP call outcome；统计复用 domain `TextMetrics`，不引入 tokenizer 依赖。
 - transport 接受任意带 host 的 HTTP(S) endpoint，包括公网 HTTP、userinfo 与 query。Manager 激活 HTTP registration 时会明确提示流量未加密。
-- custom headers 不设 reserved-name、数量或总量限制；名称和值原样保存，无法被 HTTP/MCP transport 接受时返回正常调用错误。endpoint credentials 与认证 headers 明文保存在 registration 中。
+- custom headers 不设 reserved-name、数量或总量限制；名称和值原样保存，无法被 HTTP transport 接受时在发送前返回 NotSent。endpoint credentials 与认证 headers 明文保存在 registration 中。
 - 单 tool wire representation：256 KiB；完整 catalog：8 MiB。
 - 每个 server：最多 32 页、512 tools。
 - HTTP connect timeout 为 30s；lifecycle 与分页各有 120s operation timeout，已发送 tool call 的响应等待为 60s。共享 client 不再叠加第二个 request timeout。
@@ -95,7 +95,7 @@ snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 mig
 - Profile v3 的 MCP identity 是 `mcp/<registration-uuid>:<native-name>`；v1/v2 的 builtin native names 在 application load 时一次性迁移为 `builtin:<native-name>` 并原子写回。
 - registration description override 是 Agent MCP descriptor 的默认值；Profile `tools.toolDescriptions` 在 invocation snapshot 前最后应用并拥有更高优先级。
 - 模型 alias 为 `mcp__<normalized server displayName>__<normalized nativeName>`，碰撞用确定性数字后缀；alias 只从 invocation binding 解码，执行使用原始 native name。
-- 实际发送前重新读取 registration；不存在、Paused 或 Off 都返回可恢复的 NotSent tool error。Ask 与 Allow 当前行为相同。
+- 实际发送前重新读取 registration；不存在、读取失败、Paused、Off 或发送前 transport 配置失败都返回可恢复的 NotSent tool error。Ask 与 Allow 当前行为相同。
 - known `isError`、server error 与 unsupported response 作为可恢复 Agent tool result；MCP 不产生 `AgentToolEffect`。
 - `outcome_unknown` 可能已经执行，绝不自动 retry，也不回填一个虚构结果。当前无用户决策 UI，因此以非 retryable error 终止 run；已有聊天 commit 时沿用 Agent 的 partial-success 终态。
 

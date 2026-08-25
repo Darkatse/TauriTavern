@@ -81,11 +81,20 @@ impl McpService {
             }
         };
 
-        let Some(registration) = self.repository.load(&id).await? else {
-            return Ok(not_sent(
-                "mcp.call_registration_not_found",
-                format!("MCP registration not found: {id}"),
-            ));
+        let registration = match self.repository.load(&id).await {
+            Ok(Some(registration)) => registration,
+            Ok(None) => {
+                return Ok(not_sent(
+                    "mcp.call_registration_not_found",
+                    format!("MCP registration not found: {id}"),
+                ));
+            }
+            Err(error) => {
+                return Ok(not_sent(
+                    "mcp.call_registration_unavailable",
+                    error.to_string(),
+                ));
+            }
         };
         if registration.state() != McpServerState::Active {
             return Ok(not_sent(

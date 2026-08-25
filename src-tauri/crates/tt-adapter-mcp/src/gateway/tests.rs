@@ -324,6 +324,31 @@ async fn json_rpc_tool_error_is_a_known_response() {
 }
 
 #[tokio::test]
+async fn invalid_custom_headers_make_the_call_not_sent() {
+    let request_headers = McpRequestHeaders::from(BTreeMap::from([(
+        "invalid name".to_string(),
+        "value".to_string(),
+    )]));
+
+    let outcome = gateway()
+        .call_tool(
+            &McpEndpoint::parse("https://example.com/mcp").unwrap(),
+            &request_headers,
+            McpProtocolVersionPreference::Auto,
+            "search",
+            Map::new(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        outcome,
+        McpCallOutcome::NotSent(ref issue) if issue.code == "mcp.call_headers_invalid"
+    ));
+}
+
+#[tokio::test]
 async fn invalid_standard_header_annotation_makes_the_target_not_sent() {
     let (endpoint, _, captured, server) = spawn_fixture(FixtureMode::ModernInvalidHeader).await;
 

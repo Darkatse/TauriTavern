@@ -104,14 +104,11 @@ impl McpServerRepository for FileMcpServerRepository {
             };
             match self.load_file(&path, &id).await {
                 Ok(registration) => scan.registrations.push(registration),
-                Err(DomainError::InvalidData(message) | DomainError::NotFound(message)) => {
-                    scan.issues.push(McpRegistrationStorageIssue {
-                        registration_id: Some(id),
-                        file_name,
-                        message,
-                    });
-                }
-                Err(error) => return Err(error),
+                Err(error) => scan.issues.push(McpRegistrationStorageIssue {
+                    registration_id: Some(id),
+                    file_name,
+                    message: error.to_string(),
+                }),
             }
         }
 
@@ -517,7 +514,7 @@ mod tests {
         let corrupt_path = dir
             .path()
             .join("registrations/550e8400-e29b-41d4-a716-446655440001.json");
-        tokio::fs::write(&corrupt_path, b"{not json").await.unwrap();
+        tokio::fs::write(&corrupt_path, [0xff]).await.unwrap();
 
         let scan = repository.scan().await.unwrap();
 
