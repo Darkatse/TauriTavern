@@ -844,24 +844,24 @@ type TauriTavernSkillImportInput =
     | {
         kind: 'inlineFiles';
         files: TauriTavernSkillInlineFile[];
-        source?: any;
+        source?: unknown;
     }
     | {
         kind: 'directory';
         path: string;
-        source?: any;
+        source?: unknown;
     }
     | {
         kind: 'archiveFile';
         path: string;
-        source?: any;
+        source?: unknown;
     }
     | {
         kind: 'archiveBase64';
         fileName: string;
         contentBase64: string;
         sha256?: string;
-        source?: any;
+        source?: unknown;
     };
 
 type TauriTavernSkillFileRef = {
@@ -880,7 +880,7 @@ type TauriTavernSkillImportPreview = {
         installedHash?: string;
     };
     warnings: string[];
-    source: any;
+    source: unknown;
 };
 
 type TauriTavernSkillInstallResult = {
@@ -957,7 +957,7 @@ type TauriTavernSkillApi = {
     retargetScope: (request: {
         fromScope: TauriTavernSkillScope;
         toScope: TauriTavernSkillScope;
-    }) => Promise<any>;
+    }) => Promise<unknown>;
 };
 
 type TauriTavernFrontendLogsApi = {

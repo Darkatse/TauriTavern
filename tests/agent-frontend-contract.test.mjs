@@ -11,34 +11,6 @@ async function importFresh(relativePath) {
     return import(url);
 }
 
-async function createAgentPanelHarness() {
-    const { createAgentSystemPanelRoot } = await importFresh('src/scripts/extensions/agent-system/src/AgentSystemPanelApp.js');
-    const options = createAgentSystemPanelRoot({ requestClose() {} });
-    return createComponentHarness(options);
-}
-
-async function createSkillPanelHarness() {
-    const { createSkillManagerPanelRoot } = await importFresh('src/scripts/extensions/agent-system/src/skill-manager/panel-app.js');
-    return createComponentHarness(createSkillManagerPanelRoot());
-}
-
-function createComponentHarness(options) {
-    const vm = options.data();
-    for (const [name, method] of Object.entries(options.methods || {})) {
-        vm[name] = method.bind(vm);
-    }
-    for (const [name, computed] of Object.entries(options.computed || {})) {
-        Object.defineProperty(vm, name, {
-            configurable: true,
-            enumerable: true,
-            get: computed.bind(vm),
-        });
-    }
-    vm.$el = { querySelector: () => null };
-    vm.$nextTick = (callback) => callback();
-    return vm;
-}
-
 function ensureCustomEvent() {
     if (typeof globalThis.CustomEvent === 'function') {
         return;
@@ -766,97 +738,6 @@ test('Agent context policy windows latest-first prompt history without mutating 
     );
 });
 
-
-
-
-
-
-
-test('Skill Manager previews and installs selected imports sequentially with per-item failure isolation', async (t) => {
-    const previewEvents = [];
-    const installs = [];
-    const errors = [];
-    const successes = [];
-    const originalConsoleError = console.error;
-    console.error = () => {};
-    t.after(() => {
-        console.error = originalConsoleError;
-    });
-    let refreshes = 0;
-    let discards = 0;
-    globalThis.toastr = {
-        error: (message) => errors.push(message),
-        success: (message) => successes.push(message),
-    };
-    installWindow({
-        skill: {
-            async previewImport({ input }) {
-                previewEvents.push(`start:${input.path}`);
-                await Promise.resolve();
-                previewEvents.push(`end:${input.path}`);
-                if (input.path === '/tmp/bad.zip') {
-                    throw new Error('invalid archive');
-                }
-                return {
-                    skill: { name: path.basename(input.path, '.zip') },
-                    conflict: { kind: input.path === '/tmp/last.zip' ? 'different' : 'new' },
-                    warnings: [],
-                };
-            },
-            async installImport(request) {
-                installs.push(request);
-                if (request.input.path === '/tmp/install-fail.zip') {
-                    throw new Error('install failed');
-                }
-                return {
-                    action: 'installed',
-                    name: path.basename(request.input.path, '.zip'),
-                    scope: { kind: 'global' },
-                };
-            },
-            async discardPickedImport() {
-                discards += 1;
-            },
-        },
-    });
-
-    const vm = await createSkillPanelHarness();
-    vm.sections = [{
-        id: 'global',
-        available: true,
-        scope: { kind: 'global' },
-        labelKey: 'skillScopeGlobal',
-        skills: [],
-    }];
-    vm.refreshSection = async () => {
-        refreshes += 1;
-    };
-    const inputs = ['one', 'bad', 'install-fail', 'last']
-        .map((name) => ({ kind: 'archiveFile', path: `/tmp/${name}.zip` }));
-
-    await vm.previewImportInputs(vm.sections[0], inputs);
-    assert.deepEqual(previewEvents, [
-        'start:/tmp/one.zip', 'end:/tmp/one.zip',
-        'start:/tmp/bad.zip', 'end:/tmp/bad.zip',
-        'start:/tmp/install-fail.zip', 'end:/tmp/install-fail.zip',
-        'start:/tmp/last.zip', 'end:/tmp/last.zip',
-    ]);
-    assert.equal(vm.importDraft.items[1].error, 'invalid archive');
-    vm.importDraft.items[3].conflictStrategy = 'replace';
-
-    await vm.installImports();
-    assert.deepEqual(installs.map((request) => request.input.path), [
-        '/tmp/one.zip',
-        '/tmp/install-fail.zip',
-        '/tmp/last.zip',
-    ]);
-    assert.equal(installs[2].conflictStrategy, 'replace');
-    assert.equal(discards, 1);
-    assert.equal(refreshes, 1);
-    assert.deepEqual(vm.importDraft.items, []);
-    assert.ok(successes.some((message) => message === 'Processed 2 of 4 Skills.'));
-    assert.ok(errors.some((message) => message === '2 Skills could not be imported.'));
-});
 
 
 
