@@ -998,40 +998,6 @@ export function initRossMods() {
         'dialogue_popup_input': document.querySelector('#dialogue_popup_input'),
     };
 
-    // WebKit (Safari / the WKWebView this app runs in on macOS and iOS) dispatches
-    // the Enter that commits an IME composition AFTER compositionend, with
-    // isComposing already false (WebKit bug 165004) — so the isComposing check
-    // below never sees it and the commit keystroke sends the message. That keydown
-    // carries the hardware press timestamp, which necessarily precedes
-    // compositionend: the press is what committed the composition. A deliberate
-    // "send" Enter is pressed after the commit, so its timeStamp is always later.
-    //
-    // The timestamp comparison alone is not enough, though: the hardware-to-page
-    // clock mapping behind event.timeStamp drifts in long-running WKWebView
-    // sessions (observed keydown timeStamps a few ms in the future relative to
-    // performance.now() after ~20 minutes of uptime, and a real ghost-Enter
-    // send-through after a few hours), which can flip the ghost's delta positive.
-    // So a second, drift-immune check backs it up: the ghost keydown is
-    // *dispatched* within ~2ms of compositionend, while the fastest deliberate
-    // Enter measured after a commit arrives 200ms+ later — an arrival gap under
-    // 50ms is decisive on its own.
-    const lastCompositionEnd = new WeakMap();
-    document.addEventListener('compositionend', (event) => {
-        if (event.target) lastCompositionEnd.set(event.target, { timeStamp: event.timeStamp, arrivedAt: performance.now() });
-    }, true);
-
-    /**
-     * Whether this Enter keydown is the keystroke that committed an IME
-     * composition (WebKit dispatches it after compositionend), rather than a send.
-     * @param {KeyboardEvent} event
-     * @returns {boolean}
-     */
-    function isImeCommitEnter(event) {
-        const ended = lastCompositionEnd.get(event.target);
-        if (!ended) return false;
-        return event.timeStamp <= ended.timeStamp || performance.now() - ended.arrivedAt < 50;
-    }
-
     //Additional hotkeys CTRL+ENTER and CTRL+UPARROW
     /**
      * @param {KeyboardEvent} event
@@ -1042,10 +1008,16 @@ export function initRossMods() {
             return;
         }
 
+        // Some WebKit versions dispatch the IME commit keydown after compositionend,
+        // so isComposing is false; keyCode 229 is the legacy IME-processed marker.
+        if (event.isComposing || event.keyCode === 229) {
+            return;
+        }
+
         //Enter to send when send_textarea in focus
         if (document.activeElement == hotkeyTargets.send_textarea) {
             const sendOnEnter = shouldSendOnEnter();
-            if (!event.isComposing && !isImeCommitEnter(event) && !event.shiftKey && !event.ctrlKey && !event.altKey && event.key == 'Enter' && sendOnEnter) {
+            if (!event.shiftKey && !event.ctrlKey && !event.altKey && event.key == 'Enter' && sendOnEnter) {
                 event.preventDefault();
                 sendTextareaMessage();
                 return;
