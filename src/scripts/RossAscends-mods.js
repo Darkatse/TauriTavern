@@ -998,6 +998,30 @@ export function initRossMods() {
         'dialogue_popup_input': document.querySelector('#dialogue_popup_input'),
     };
 
+    // WebKit (Safari / the WKWebView this app runs in on macOS and iOS) dispatches
+    // the Enter that commits an IME composition AFTER compositionend, with
+    // isComposing already false (WebKit bug 165004) — so the isComposing check
+    // below never sees it and the commit keystroke sends the message. That keydown
+    // carries the hardware press timestamp, which necessarily precedes
+    // compositionend: the press is what committed the composition. A deliberate
+    // "send" Enter is pressed after the commit, so its timeStamp is always later.
+    // Comparing timestamps separates the two without any tuned delay window.
+    const lastCompositionEnd = new WeakMap();
+    document.addEventListener('compositionend', (event) => {
+        if (event.target) lastCompositionEnd.set(event.target, event.timeStamp);
+    }, true);
+
+    /**
+     * Whether this Enter keydown is the keystroke that committed an IME
+     * composition (WebKit dispatches it after compositionend), rather than a send.
+     * @param {KeyboardEvent} event
+     * @returns {boolean}
+     */
+    function isImeCommitEnter(event) {
+        const endedAt = lastCompositionEnd.get(event.target);
+        return endedAt !== undefined && event.timeStamp <= endedAt;
+    }
+
     //Additional hotkeys CTRL+ENTER and CTRL+UPARROW
     /**
      * @param {KeyboardEvent} event
@@ -1011,7 +1035,7 @@ export function initRossMods() {
         //Enter to send when send_textarea in focus
         if (document.activeElement == hotkeyTargets.send_textarea) {
             const sendOnEnter = shouldSendOnEnter();
-            if (!event.isComposing && !event.shiftKey && !event.ctrlKey && !event.altKey && event.key == 'Enter' && sendOnEnter) {
+            if (!event.isComposing && !isImeCommitEnter(event) && !event.shiftKey && !event.ctrlKey && !event.altKey && event.key == 'Enter' && sendOnEnter) {
                 event.preventDefault();
                 sendTextareaMessage();
                 return;
