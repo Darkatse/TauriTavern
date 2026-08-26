@@ -20,6 +20,10 @@ import { extractErrorText, resolveHostErrorResponse } from './kernel/host-error-
 import { isAbortError } from './kernel/abort-error.js';
 import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
 import { installWorldInfoGlobalSelectorSelect2Enforcer } from './adapters/st/world-info-global-selector-select2-enforcer.js';
+import {
+    installDesktopFullscreenShortcut,
+    leaveDesktopFullscreenForShutdown,
+} from './adapters/window/desktop-fullscreen-shortcut.js';
 import { installChatApi } from './api/chat.js';
 import { installChatSurfaceApi } from './api/chat-surface.js';
 import { installCharacterCardsApi } from './api/character-cards.js';
@@ -44,6 +48,7 @@ import {
 import { registerRoutes } from './routes/index.js';
 import { isEmbeddedRuntimeTakeoverDisabled } from './services/embedded-runtime/embedded-runtime-profile-state.js';
 import { installFrontendLogCapture, setFrontendLogBackendForwardingEnabled } from './services/dev-logging/frontend-log-capture.js';
+import { registerLifecycleFlushHandler } from './services/lifecycle/lifecycle-flush-service.js';
 import { preinstallPanelRuntime } from './services/panel-runtime/preinstall.js';
 let bootstrapped = false;
 const HOST_ABI_VERSION = 1;
@@ -269,6 +274,10 @@ export function bootstrapTauriMain() {
 
     installFrontendLogCapture();
     installDialogPolyfillCoverage();
+    if (!isMobile) {
+        installDesktopFullscreenShortcut();
+        registerLifecycleFlushHandler('desktop-fullscreen', leaveDesktopFullscreenForShutdown);
+    }
 
     installBackNavigationBridge();
     installNativeShareBridge();
@@ -366,6 +375,8 @@ export function bootstrapTauriMain() {
         installDialogPolyfillCoverage(targetWindow);
         if (isMobile) {
             installMobileRuntimeCompat(targetWindow);
+        } else {
+            installDesktopFullscreenShortcut(targetWindow);
         }
     };
     installSameOriginWindowPatches(interceptors, downloadBridge, {

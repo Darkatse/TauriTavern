@@ -4,6 +4,7 @@
     "security": {
       "capabilities": [
         "default",
+        "desktop-fullscreen",
         {
           "identifier": "pilot-devtools",
           "description": "Development-only capability for tauri-pilot WebView automation.",

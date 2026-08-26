@@ -360,6 +360,12 @@ TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板�
 
 - 显式外链打开统一使用 `src/tauri-bridge.js` 的 `openExternalUrl()`；例如 `tauritavern-version` 扩展与自动更新弹窗。
 
+### 5.5 桌面全屏快捷键（Project）
+
+- Windows/macOS/Linux 主窗口使用无修饰键 `F11` 切换原生窗口全屏；按键长按只响应首次 `keydown`。
+- 宿主在主文档及其同源 iframe 中捕获该快捷键；独立 popup、移动端和带修饰键的 `F11` 不属于此契约。
+- 原生窗口状态是唯一真值；全屏不写入 SillyTavern 设置，也不纳入窗口几何持久化。切换失败会记录错误，后续按键仍可重试。
+
 ## 6. Smoke Tests（Public 回归用例）
 
 这些用例是“最小但真实”的兼容回归集（来源：你提供的 `.cache` 样本）：
