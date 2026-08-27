@@ -315,7 +315,7 @@ fn encodes_tool_results_as_model_facing_text() {
 }
 
 #[test]
-fn tool_choice_requires_tools_and_ignores_raw_payload_overrides() {
+fn agent_encoder_owns_tool_selection_stream_and_choice_count() {
     let mut request = basic_request("openai", None, Vec::new());
     request.tool_choice = ToolChoice::Required;
     let error = encode_chat_completion_request(&request).expect_err("required needs tools");
@@ -332,9 +332,13 @@ fn tool_choice_requires_tools_and_ignores_raw_payload_overrides() {
     request
         .payload
         .insert("tool_choice".to_string(), json!("required"));
+    request.payload.insert("stream".to_string(), json!(true));
+    request.payload.insert("n".to_string(), json!(4));
     let dto = encode_chat_completion_request(&request).expect("auto without tools is valid");
     assert!(dto.payload.get("tools").is_none());
     assert!(dto.payload.get("tool_choice").is_none());
+    assert_eq!(dto.payload["stream"], false);
+    assert_eq!(dto.payload["n"], 1);
 }
 
 #[test]

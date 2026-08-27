@@ -15,6 +15,7 @@ use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamSender,
+    ChatCompletionToolCallDelta,
 };
 
 pub struct LoggingChatCompletionRepository {
@@ -22,9 +23,97 @@ pub struct LoggingChatCompletionRepository {
     store: Arc<LlmApiLogStore>,
 }
 
+struct JsonGenerationLog<'a> {
+    source: ChatCompletionSource,
+    config: &'a ChatCompletionApiConfig,
+    endpoint_path: &'a str,
+    payload: &'a Value,
+    started: Instant,
+    started_at_ms: i64,
+    stream: bool,
+}
+
+impl<'a> JsonGenerationLog<'a> {
+    fn start(
+        source: ChatCompletionSource,
+        config: &'a ChatCompletionApiConfig,
+        endpoint_path: &'a str,
+        payload: &'a Value,
+        stream: bool,
+    ) -> Self {
+        Self {
+            source,
+            config,
+            endpoint_path,
+            payload,
+            started: Instant::now(),
+            started_at_ms: chrono::Utc::now().timestamp_millis(),
+            stream,
+        }
+    }
+}
+
 impl LoggingChatCompletionRepository {
     pub fn new(inner: Arc<dyn ChatCompletionRepository>, store: Arc<LlmApiLogStore>) -> Self {
         Self { inner, store }
+    }
+
+    async fn record_json_generation(
+        &self,
+        log: JsonGenerationLog<'_>,
+        result: &Result<ChatCompletionRepositoryGenerateResponse, DomainError>,
+    ) {
+        let id = self.store.allocate_id();
+        let duration_ms = log.started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
+
+        let (ok, level, error_message, response_value) = match result {
+            Ok(response) => (true, "INFO".to_string(), None, Some(&response.body)),
+            Err(error) => {
+                let level = if matches!(error, DomainError::Cancelled(_)) {
+                    "WARN"
+                } else {
+                    "ERROR"
+                };
+                (false, level.to_string(), Some(error.to_string()), None)
+            }
+        };
+
+        let endpoint = format_endpoint(&log.config.base_url, log.endpoint_path);
+        let log_payload = wire_log_payload(log.payload);
+        let model = extract_model(&log_payload);
+        let request_raw = pretty_json(&log_payload);
+        let request_readable = format_request_readable(log.source, &log_payload);
+        let response_log_payload = response_value.map(wire_log_payload);
+        let (response_readable, response_raw_inline, response_raw_kind) =
+            match response_log_payload.as_deref() {
+                Some(value) => (
+                    format_response_readable(value),
+                    Some(pretty_json(value)),
+                    Some(LlmApiRawKind::Json),
+                ),
+                None => (error_message.clone().unwrap_or_default(), None, None),
+            };
+
+        let meta = LlmApiLogMeta {
+            id,
+            timestamp_ms: log.started_at_ms,
+            level,
+            ok,
+            source: log.source.key().to_string(),
+            model,
+            endpoint,
+            duration_ms,
+            stream: log.stream,
+            error_message,
+            request_readable,
+            response_readable,
+            request_raw_kind: LlmApiRawKind::Json,
+            response_raw_kind,
+        };
+
+        self.store
+            .record_entry(meta, Some(request_raw), response_raw_inline)
+            .await;
     }
 }
 
@@ -45,66 +134,12 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
         endpoint_path: &str,
         payload: &Value,
     ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
-        let started = Instant::now();
-        let started_at_ms = chrono::Utc::now().timestamp_millis();
-
+        let log = JsonGenerationLog::start(source, config, endpoint_path, payload, false);
         let result = self
             .inner
             .generate(source, config, endpoint_path, payload)
             .await;
-
-        let id = self.store.allocate_id();
-        let duration_ms = started.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
-
-        let (ok, level, error_message, response_value) = match &result {
-            Ok(response) => (true, "INFO".to_string(), None, Some(&response.body)),
-            Err(error) => {
-                let level = if matches!(error, DomainError::Cancelled(_)) {
-                    "WARN"
-                } else {
-                    "ERROR"
-                };
-                (false, level.to_string(), Some(error.to_string()), None)
-            }
-        };
-
-        let endpoint = format_endpoint(&config.base_url, endpoint_path);
-        let log_payload = wire_log_payload(payload);
-        let model = extract_model(&log_payload);
-
-        let request_raw = pretty_json(&log_payload);
-        let request_readable = format_request_readable(source, &log_payload);
-        let response_log_payload = response_value.map(wire_log_payload);
-        let (response_readable, response_raw_inline, response_raw_kind) =
-            match response_log_payload.as_deref() {
-                Some(value) => (
-                    format_response_readable(value),
-                    Some(pretty_json(value)),
-                    Some(LlmApiRawKind::Json),
-                ),
-                None => (error_message.clone().unwrap_or_default(), None, None),
-            };
-
-        let meta = LlmApiLogMeta {
-            id,
-            timestamp_ms: started_at_ms,
-            level,
-            ok,
-            source: source.key().to_string(),
-            model,
-            endpoint,
-            duration_ms,
-            stream: false,
-            error_message,
-            request_readable,
-            response_readable,
-            request_raw_kind: LlmApiRawKind::Json,
-            response_raw_kind,
-        };
-
-        self.store
-            .record_entry(meta, Some(request_raw), response_raw_inline)
-            .await;
+        self.record_json_generation(log, &result).await;
         result
     }
 
@@ -230,6 +265,29 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
         };
 
         self.store.record_entry(meta, None, None).await;
+        result
+    }
+
+    async fn generate_with_tool_call_deltas(
+        &self,
+        source: ChatCompletionSource,
+        config: &ChatCompletionApiConfig,
+        endpoint_path: &str,
+        payload: &Value,
+        on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+    ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+        let log = JsonGenerationLog::start(source, config, endpoint_path, payload, true);
+        let result = self
+            .inner
+            .generate_with_tool_call_deltas(
+                source,
+                config,
+                endpoint_path,
+                payload,
+                on_tool_call_delta,
+            )
+            .await;
+        self.record_json_generation(log, &result).await;
         result
     }
 

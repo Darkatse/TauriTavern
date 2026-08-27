@@ -55,6 +55,7 @@ pub(crate) fn encode_chat_completion_request(
 
     adapter.finalize_payload(&mut payload);
     payload.insert("stream".to_string(), Value::Bool(false));
+    payload.insert("n".to_string(), json!(1));
     Ok(ChatCompletionGenerateRequestDto { payload })
 }
 

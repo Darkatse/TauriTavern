@@ -51,6 +51,8 @@ const AGENT_STRUCTURAL_BODY_OVERRIDE_KEYS: &[&str] = &[
     "input",
     "tools",
     "tool_choice",
+    "stream",
+    "n",
     "previous_response_id",
     CHAT_COMPLETION_PROVIDER_STATE_FIELD,
 ];
@@ -60,6 +62,13 @@ struct ChatCompletionExecution {
     provider_format: ChatCompletionProviderFormat,
     body: Value,
     normalization_report: ChatCompletionNormalizationReport,
+}
+
+struct PreparedChatCompletionRequest {
+    source: ChatCompletionSource,
+    config: ChatCompletionApiConfig,
+    endpoint_path: String,
+    upstream_payload: Value,
 }
 
 pub struct ChatCompletionService {
@@ -405,11 +414,38 @@ impl ChatCompletionService {
         let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
         Self::ensure_agent_body_overrides_allowed(&dto.payload, &additional_parameters)?;
         let provider_format = ChatCompletionProviderFormat::from_payload(source, &dto.payload)?;
+        let prepared = self
+            .prepare_generate_request(dto, source, additional_parameters)
+            .await?;
 
+        let response = self
+            .chat_completion_repository
+            .generate(
+                prepared.source,
+                &prepared.config,
+                &prepared.endpoint_path,
+                &prepared.upstream_payload,
+            )
+            .await
+            .map_err(ApplicationError::from)?;
+
+        Ok(ChatCompletionExecution {
+            source: prepared.source,
+            provider_format,
+            body: response.body,
+            normalization_report: response.normalization_report,
+        })
+    }
+
+    async fn prepare_generate_request(
+        &self,
+        dto: ChatCompletionGenerateRequestDto,
+        source: ChatCompletionSource,
+        additional_parameters: AdditionalParameters,
+    ) -> Result<PreparedChatCompletionRequest, ApplicationError> {
         let settings = self.load_tauritavern_settings().await?;
         let prompt_caching_hints =
             prompt_caching_plan::PromptCachingRequestHints::from_payload(&dto.payload)?;
-
         let mut config = config::resolve_generate_api_config(
             source,
             &dto,
@@ -417,8 +453,7 @@ impl ChatCompletionService {
             &self.secret_repository,
         )
         .await?;
-        let payload = dto.payload;
-        let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
+        let (endpoint_path, mut upstream_payload) = payload::build_payload(source, dto.payload)?;
         additional_parameters.apply_body_overrides(&mut upstream_payload)?;
         self.apply_tauritavern_prompt_caching(
             source,
@@ -431,17 +466,11 @@ impl ChatCompletionService {
         .await?;
         payload::validate_upstream_tool_transcript(&endpoint_path, &upstream_payload)?;
 
-        let response = self
-            .chat_completion_repository
-            .generate(source, &config, &endpoint_path, &upstream_payload)
-            .await
-            .map_err(ApplicationError::from)?;
-
-        Ok(ChatCompletionExecution {
+        Ok(PreparedChatCompletionRequest {
             source,
-            provider_format,
-            body: response.body,
-            normalization_report: response.normalization_report,
+            config,
+            endpoint_path,
+            upstream_payload,
         })
     }
 
@@ -529,38 +558,16 @@ impl ChatCompletionService {
         let source = self.resolve_generate_source(&dto)?;
         let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
         Self::ensure_agent_body_overrides_allowed(&dto.payload, &additional_parameters)?;
-
-        let settings = self.load_tauritavern_settings().await?;
-        let prompt_caching_hints =
-            prompt_caching_plan::PromptCachingRequestHints::from_payload(&dto.payload)?;
-
-        let mut config = config::resolve_generate_api_config(
-            source,
-            &dto,
-            &additional_parameters,
-            &self.secret_repository,
-        )
-        .await?;
-        let payload = dto.payload;
-        let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
-        additional_parameters.apply_body_overrides(&mut upstream_payload)?;
-        self.apply_tauritavern_prompt_caching(
-            source,
-            &endpoint_path,
-            &mut config,
-            &settings,
-            &mut upstream_payload,
-            prompt_caching_hints,
-        )
-        .await?;
-        payload::validate_upstream_tool_transcript(&endpoint_path, &upstream_payload)?;
+        let prepared = self
+            .prepare_generate_request(dto, source, additional_parameters)
+            .await?;
 
         self.chat_completion_repository
             .generate_stream(
-                source,
-                &config,
-                &endpoint_path,
-                &upstream_payload,
+                prepared.source,
+                &prepared.config,
+                &prepared.endpoint_path,
+                &prepared.upstream_payload,
                 sender,
                 cancel,
             )
@@ -944,14 +951,15 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        ChatCompletionService, apply_nanogpt_claude_cache_control,
+        AdditionalParameters, ChatCompletionService, apply_nanogpt_claude_cache_control,
         apply_vertexai_prompt_cache_session_header, ensure_vertexai_claude_prompt_cache_ttl,
         resolve_status_model_list_source,
     };
     use crate::errors::ApplicationError;
     use tokio::sync::watch;
     use tt_ports::repositories::chat_completion_repository::{
-        AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
+        AnthropicBetaHeaderMode, CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig,
+        ChatCompletionSource,
     };
     use tt_ports::repositories::prompt_cache_repository::PromptCacheKey;
 
@@ -1030,6 +1038,43 @@ mod tests {
             resolve_status_model_list_source(ChatCompletionSource::Custom, "gemini_interactions")
                 .expect("status transport should resolve");
         assert_eq!(source, ChatCompletionSource::Makersuite);
+    }
+
+    #[test]
+    fn agent_body_overrides_cannot_change_stream_or_choice_count() {
+        for (override_fields, expected_error) in [
+            (
+                json!({
+                    (CHAT_COMPLETION_PROVIDER_STATE_FIELD): {},
+                    "custom_include_body": { "stream": true }
+                }),
+                true,
+            ),
+            (
+                json!({
+                    (CHAT_COMPLETION_PROVIDER_STATE_FIELD): {},
+                    "custom_exclude_body": ["n"]
+                }),
+                true,
+            ),
+            (
+                json!({
+                    "custom_include_body": { "stream": true },
+                    "custom_exclude_body": ["n"]
+                }),
+                false,
+            ),
+        ] {
+            let payload = override_fields
+                .as_object()
+                .expect("payload must be an object");
+            let parameters = AdditionalParameters::from_payload(payload).expect("override parses");
+            assert_eq!(
+                ChatCompletionService::ensure_agent_body_overrides_allowed(payload, &parameters)
+                    .is_err(),
+                expected_error
+            );
+        }
     }
 
     #[tokio::test]

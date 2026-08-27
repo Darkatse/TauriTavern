@@ -12,6 +12,7 @@ use tt_domain::models::endpoint_url::append_endpoint_path;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamSender,
+    ChatCompletionToolCallDelta,
 };
 
 mod aws_bedrock;
@@ -48,11 +49,10 @@ impl SseEventAccumulator {
     fn on_line<F: FnMut(&[u8]) -> Result<(), DomainError>>(
         &mut self,
         line: &[u8],
-        sender: &ChatCompletionStreamSender,
-        hook: &mut F,
+        on_event: &mut F,
     ) -> Result<(), DomainError> {
         if line.is_empty() {
-            return self.dispatch(sender, hook);
+            return self.dispatch(on_event);
         }
 
         if line.first().is_some_and(|byte| *byte == b':') {
@@ -72,33 +72,21 @@ impl SseEventAccumulator {
 
     fn finish<F: FnMut(&[u8]) -> Result<(), DomainError>>(
         &mut self,
-        sender: &ChatCompletionStreamSender,
-        hook: &mut F,
+        on_event: &mut F,
     ) -> Result<(), DomainError> {
-        self.dispatch(sender, hook)
+        self.dispatch(on_event)
     }
 
     fn dispatch<F: FnMut(&[u8]) -> Result<(), DomainError>>(
         &mut self,
-        sender: &ChatCompletionStreamSender,
-        hook: &mut F,
+        on_event: &mut F,
     ) -> Result<(), DomainError> {
         if self.data.is_empty() {
             return Ok(());
         }
 
         let payload = std::mem::take(&mut self.data);
-        hook(payload.as_slice())?;
-
-        let payload = std::str::from_utf8(payload.as_slice()).map_err(|error| {
-            DomainError::InternalError(format!("SSE payload is not valid UTF-8: {error}"))
-        })?;
-
-        if sender.send(payload.to_string()).is_err() {
-            return Ok(());
-        }
-
-        Ok(())
+        on_event(payload.as_slice())
     }
 }
 
@@ -327,10 +315,47 @@ impl HttpChatCompletionRepository {
 
     async fn stream_sse_response_internal<F>(
         provider_name: &str,
-        mut response: reqwest::Response,
+        response: reqwest::Response,
         sender: ChatCompletionStreamSender,
         mut cancel: ChatCompletionCancelReceiver,
         mut hook: F,
+    ) -> Result<(), DomainError>
+    where
+        F: FnMut(&[u8]) -> Result<(), DomainError>,
+    {
+        if *cancel.borrow() {
+            return Ok(());
+        }
+
+        let consume = Self::consume_sse_response(provider_name, response, |payload| {
+            hook(payload)?;
+            let payload = std::str::from_utf8(payload).map_err(|error| {
+                DomainError::InternalError(format!("SSE payload is not valid UTF-8: {error}"))
+            })?;
+            let _ = sender.send(payload.to_string());
+            Ok(())
+        });
+        tokio::pin!(consume);
+
+        loop {
+            tokio::select! {
+                result = &mut consume => return result,
+                changed = cancel.changed() => {
+                    if changed.is_err() {
+                        return consume.await;
+                    }
+                    if *cancel.borrow() {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
+    async fn consume_sse_response<F>(
+        provider_name: &str,
+        mut response: reqwest::Response,
+        mut on_event: F,
     ) -> Result<(), DomainError>
     where
         F: FnMut(&[u8]) -> Result<(), DomainError>,
@@ -340,61 +365,45 @@ impl HttpChatCompletionRepository {
         let endpoint = response.url().clone();
 
         loop {
-            if *cancel.borrow() {
-                return Ok(());
-            }
-
-            let chunk = tokio::select! {
-                _ = cancel.changed() => {
-                    if *cancel.borrow() {
-                        return Ok(());
-                    }
-                    continue;
-                }
-                chunk = response.chunk() => {
-                    chunk.map_err(|error| {
-                        let failure =
-                            crate::http_error::reqwest_body_failure(&error, Some(&endpoint));
-                        tracing::warn!(
-                            provider = provider_name,
-                            operation = "stream",
-                            code = %failure.code,
-                            category = %failure.category,
-                            endpoint = failure.endpoint.as_deref().unwrap_or(""),
-                            timeout = error.is_timeout(),
-                            connect = error.is_connect(),
-                            body = error.is_body(),
-                            request = error.is_request(),
-                            "upstream stream read failed",
-                        );
-                        DomainError::upstream_failure(failure)
-                    })?
-                }
-            };
+            let chunk = response.chunk().await.map_err(|error| {
+                let failure = crate::http_error::reqwest_body_failure(&error, Some(&endpoint));
+                tracing::warn!(
+                    provider = provider_name,
+                    operation = "stream",
+                    code = %failure.code,
+                    category = %failure.category,
+                    endpoint = failure.endpoint.as_deref().unwrap_or(""),
+                    timeout = error.is_timeout(),
+                    connect = error.is_connect(),
+                    body = error.is_body(),
+                    request = error.is_request(),
+                    "upstream stream read failed",
+                );
+                DomainError::upstream_failure(failure)
+            })?;
 
             let Some(chunk) = chunk else {
                 break;
             };
 
             buffer.extend_from_slice(&chunk);
-            Self::forward_sse_events(&mut buffer, &mut accumulator, &sender, &mut hook)?;
+            Self::forward_sse_events(&mut buffer, &mut accumulator, &mut on_event)?;
         }
 
         if !buffer.is_empty() {
-            Self::forward_sse_events(&mut buffer, &mut accumulator, &sender, &mut hook)?;
-            Self::forward_sse_line(buffer.as_slice(), &mut accumulator, &sender, &mut hook)?;
+            Self::forward_sse_events(&mut buffer, &mut accumulator, &mut on_event)?;
+            Self::forward_sse_line(buffer.as_slice(), &mut accumulator, &mut on_event)?;
             buffer.clear();
         }
 
-        accumulator.finish(&sender, &mut hook)?;
+        accumulator.finish(&mut on_event)?;
         Ok(())
     }
 
     fn forward_sse_events<F: FnMut(&[u8]) -> Result<(), DomainError>>(
         buffer: &mut Vec<u8>,
         accumulator: &mut SseEventAccumulator,
-        sender: &ChatCompletionStreamSender,
-        hook: &mut F,
+        on_event: &mut F,
     ) -> Result<(), DomainError> {
         let mut line_start = 0_usize;
         let mut consumed = 0_usize;
@@ -409,7 +418,7 @@ impl HttpChatCompletionRepository {
                 line = &line[..line.len() - 1];
             }
 
-            accumulator.on_line(line, sender, hook)?;
+            accumulator.on_line(line, on_event)?;
             consumed = index + 1;
             line_start = consumed;
         }
@@ -424,15 +433,14 @@ impl HttpChatCompletionRepository {
     fn forward_sse_line<F: FnMut(&[u8]) -> Result<(), DomainError>>(
         line: &[u8],
         accumulator: &mut SseEventAccumulator,
-        sender: &ChatCompletionStreamSender,
-        hook: &mut F,
+        on_event: &mut F,
     ) -> Result<(), DomainError> {
         let mut line = line;
         if line.last().is_some_and(|byte| *byte == b'\r') {
             line = &line[..line.len() - 1];
         }
 
-        accumulator.on_line(line, sender, hook)
+        accumulator.on_line(line, on_event)
     }
 }
 
@@ -763,6 +771,32 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         }
     }
 
+    async fn generate_with_tool_call_deltas(
+        &self,
+        source: ChatCompletionSource,
+        config: &ChatCompletionApiConfig,
+        endpoint_path: &str,
+        payload: &Value,
+        on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+    ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+        if source != ChatCompletionSource::OpenAi || endpoint_path != "/chat/completions" {
+            return Err(DomainError::InvalidData(format!(
+                "Tool-call delta streaming is unsupported for source `{}` endpoint `{endpoint_path}`",
+                source.key()
+            )));
+        }
+
+        openai::generate_with_tool_call_deltas(
+            self,
+            config,
+            endpoint_path,
+            payload,
+            source.display_name(),
+            on_tool_call_delta,
+        )
+        .await
+    }
+
     async fn close_provider_session(&self, session_id: &str) {
         self.openai_responses_ws_sessions.close(session_id).await;
     }
@@ -805,7 +839,6 @@ mod tests {
 
     use reqwest::Client;
     use reqwest::header::AUTHORIZATION;
-    use tokio::sync::mpsc;
 
     use tt_domain::errors::DomainError;
     use tt_ports::repositories::chat_completion_repository::ChatCompletionApiConfig;
@@ -929,97 +962,86 @@ mod tests {
 
     #[test]
     fn forward_sse_events_extracts_data_payloads() {
-        let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
+        let mut events = Vec::<Vec<u8>>::new();
         let mut buffer =
             b"event: message\r\ndata: {\"chunk\":1}\n\n: ping\ndata: [DONE]\n\n".to_vec();
 
-        fn noop(_: &[u8]) -> Result<(), DomainError> {
+        let mut on_event = |event: &[u8]| {
+            events.push(event.to_vec());
             Ok(())
-        }
-        let mut hook = noop;
+        };
         let mut accumulator = super::SseEventAccumulator::default();
         let result = HttpChatCompletionRepository::forward_sse_events(
             &mut buffer,
             &mut accumulator,
-            &sender,
-            &mut hook,
+            &mut on_event,
         );
         assert!(result.is_ok());
 
-        assert_eq!(receiver.try_recv().ok(), Some("{\"chunk\":1}".to_string()));
-        assert_eq!(receiver.try_recv().ok(), Some("[DONE]".to_string()));
-        assert!(receiver.try_recv().is_err());
+        assert_eq!(events, [b"{\"chunk\":1}".to_vec(), b"[DONE]".to_vec()]);
         assert!(buffer.is_empty());
     }
 
     #[test]
     fn forward_sse_events_keeps_partial_line_in_buffer() {
-        let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
+        let mut events = Vec::<Vec<u8>>::new();
         let mut buffer = b"data: {\"chunk\":1}".to_vec();
 
-        fn noop(_: &[u8]) -> Result<(), DomainError> {
+        let mut on_event = |event: &[u8]| {
+            events.push(event.to_vec());
             Ok(())
-        }
-        let mut hook = noop;
+        };
         let mut accumulator = super::SseEventAccumulator::default();
         let result = HttpChatCompletionRepository::forward_sse_events(
             &mut buffer,
             &mut accumulator,
-            &sender,
-            &mut hook,
+            &mut on_event,
         );
         assert!(result.is_ok());
-        assert_eq!(receiver.try_recv().ok(), None);
+        assert!(events.is_empty());
         assert_eq!(buffer, b"data: {\"chunk\":1}".to_vec());
     }
 
     #[test]
     fn forward_sse_events_combines_multiline_data_fields() {
-        let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
+        let mut events = Vec::<Vec<u8>>::new();
         let mut buffer = b"data: first\ndata: second\n\n".to_vec();
 
-        fn noop(_: &[u8]) -> Result<(), DomainError> {
+        let mut on_event = |event: &[u8]| {
+            events.push(event.to_vec());
             Ok(())
-        }
-        let mut hook = noop;
+        };
         let mut accumulator = super::SseEventAccumulator::default();
         HttpChatCompletionRepository::forward_sse_events(
             &mut buffer,
             &mut accumulator,
-            &sender,
-            &mut hook,
+            &mut on_event,
         )
         .unwrap();
 
-        assert_eq!(receiver.try_recv().ok(), Some("first\nsecond".to_string()));
-        assert!(receiver.try_recv().is_err());
+        assert_eq!(events, [b"first\nsecond".to_vec()]);
         assert!(buffer.is_empty());
     }
 
     #[test]
     fn forward_sse_events_can_flush_pending_event_at_end_of_stream() {
-        let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
+        let mut events = Vec::<Vec<u8>>::new();
         let mut buffer = b"data: tail\n".to_vec();
 
-        fn noop(_: &[u8]) -> Result<(), DomainError> {
+        let mut on_event = |event: &[u8]| {
+            events.push(event.to_vec());
             Ok(())
-        }
-        let mut hook = noop;
+        };
         let mut accumulator = super::SseEventAccumulator::default();
         HttpChatCompletionRepository::forward_sse_events(
             &mut buffer,
             &mut accumulator,
-            &sender,
-            &mut hook,
+            &mut on_event,
         )
         .unwrap();
 
-        // No blank line yet, so no event dispatched.
-        assert!(receiver.try_recv().is_err());
+        accumulator.finish(&mut on_event).unwrap();
 
-        accumulator.finish(&sender, &mut hook).unwrap();
-
-        assert_eq!(receiver.try_recv().ok(), Some("tail".to_string()));
-        assert!(receiver.try_recv().is_err());
+        assert_eq!(events, [b"tail".to_vec()]);
     }
 }
