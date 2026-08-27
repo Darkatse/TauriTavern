@@ -42,3 +42,15 @@ test('Unhandled error cleanup only targets foreground UI lifecycle leaks', async
         isGroupGenerating: false,
     }), false);
 });
+
+test('tool-only Assistant messages do not emit legacy character events', async () => {
+    const { shouldEmitCharacterMessageEvents } = await import('../src/scripts/util/generation-lifecycle.js');
+    const message = (mes = '', extra = {}) => ({ mes, extra });
+
+    assert.equal(shouldEmitCharacterMessageEvents(message(), false), true);
+    assert.equal(shouldEmitCharacterMessageEvents(message(), true), false);
+    assert.equal(shouldEmitCharacterMessageEvents(message(' ... '), true), false);
+    assert.equal(shouldEmitCharacterMessageEvents(message('Calling a tool'), true), true);
+    assert.equal(shouldEmitCharacterMessageEvents(message('', { reasoning: 'Thinking' }), true), true);
+    assert.equal(shouldEmitCharacterMessageEvents(message('', { media: [{ url: 'result.png' }] }), true), true);
+});

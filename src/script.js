@@ -372,7 +372,7 @@ import { initAccessibility } from './scripts/a11y.js';
 import { initDomHandlers } from './scripts/dom-handlers.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
 import { createGenerationIdleGate } from './scripts/util/generation-idle-gate.js';
-import { shouldUnblockGenerationAfterUnhandledError } from './scripts/util/generation-lifecycle.js';
+import { shouldEmitCharacterMessageEvents, shouldUnblockGenerationAfterUnhandledError } from './scripts/util/generation-lifecycle.js';
 import { AudioPlayer } from './scripts/audio-player.js';
 import { MacroEnvBuilder } from './scripts/macros/engine/MacroEnvBuilder.js';
 import { MacroEngine } from './scripts/macros/engine/MacroEngine.js';
@@ -4534,8 +4534,9 @@ class StreamingProcessor {
      * @param {string} text - The message text.
      * @param {Object} options - Additional options for finalization.
      * @param {boolean} options.unlockUI - Whether to unlock the generation UI.
+     * @param {boolean} options.hasToolCalls - Whether the message owns tool calls.
      */
-    async finalizeIntermediaryMessage(messageId, text, { unlockUI = true }) {
+    async finalizeIntermediaryMessage(messageId, text, { unlockUI = true, hasToolCalls = false }) {
         await this.onProgressStreaming(messageId, text, true);
         const messageElement = chatElement.find(`.mes[mesid="${messageId}"]`);
         const message = chat[messageId];
@@ -4584,8 +4585,11 @@ class StreamingProcessor {
         }
 
         if (this.type !== 'impersonate') {
-            await eventSource.emit(event_types.MESSAGE_RECEIVED, this.messageId, this.type);
-            await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, this.messageId, this.type);
+            const emitMessageEvents = shouldEmitCharacterMessageEvents(message, hasToolCalls);
+            if (emitMessageEvents) {
+                await eventSource.emit(event_types.MESSAGE_RECEIVED, this.messageId, this.type);
+                await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, this.messageId, this.type);
+            }
         } else {
             await eventSource.emit(event_types.IMPERSONATE_READY, text);
         }
@@ -6405,7 +6409,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 const toolTurnOwner = chat[streamingProcessor.messageId];
                 const reasoningContent = streamingProcessor?.reasoningHandler?.reasoning || null;
                 if (hasToolCalls) {
-                    await streamingProcessor.finalizeIntermediaryMessage(streamingProcessor.messageId, getMessage, { unlockUI: false });
+                    await streamingProcessor.finalizeIntermediaryMessage(streamingProcessor.messageId, getMessage, { unlockUI: false, hasToolCalls });
                 }
                 let invocationResult;
                 try {
@@ -6519,6 +6523,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             model: requestModel,
         });
         const native = data?.choices?.[0]?.message?.native ?? null;
+        const hasToolCalls = canPerformToolCalls && ToolManager.hasToolCalls(data);
         kobold_horde_model = title;
 
         const swipes = extractMultiSwipes(data, type);
@@ -6560,9 +6565,9 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         } else {
             // Without streaming we'll be having a full message on continuation. Treat it as a last chunk.
             if (originalType !== 'continue') {
-                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native }));
+                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native, hasToolCalls }));
             } else {
-                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native }));
+                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native, hasToolCalls }));
             }
             toolTurnOwner = chat.at(-1) ?? null;
 
@@ -6571,7 +6576,6 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         }
 
         if (canPerformToolCalls) {
-            const hasToolCalls = ToolManager.hasToolCalls(data);
             let invocationResult;
             try {
                 invocationResult = await ToolManager.invokeFunctionTools(data, {
@@ -7891,12 +7895,13 @@ async function processImageAttachment(message, { imageUrls }) {
  * @property {string[]} [imageUrls] Links to images
  * @property {string?} [reasoningSignature] Encrypted signature of the reasoning text
  * @property {any?} [native] Provider-native metadata that must be preserved across turns
+ * @property {boolean} [hasToolCalls] Whether the message owns tool calls
  *
  * @typedef {object} SaveReplyResult
  * @property {string} type Type of generation
  * @property {string} getMessage Generated message
  */
-export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], reasoning = '', imageUrls = [], reasoningSignature = null, native = null }) {
+export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], reasoning = '', imageUrls = [], reasoningSignature = null, native = null, hasToolCalls = false }) {
     // Backward compatibility
     if (arguments.length > 1 && typeof arguments[0] !== 'object') {
         console.trace('saveReply called with positional arguments. Please use an object instead.');
@@ -7951,9 +7956,10 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
                 lastMessage.extra.token_count = await getTokenCountAsync(tokenCountText, 0);
             }
             const chat_id = (chat.length - 1);
-            !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
+            const emitMessageEvents = !fromStreaming && shouldEmitCharacterMessageEvents(chat[chat_id], hasToolCalls);
+            emitMessageEvents && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
             addOneMessage(chat[chat_id], { type: 'swipe' });
-            !fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
+            emitMessageEvents && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
         } else {
             lastMessage.mes = getMessage;
         }
@@ -7979,9 +7985,10 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             lastMessage.extra.token_count = await getTokenCountAsync(tokenCountText, 0);
         }
         const chat_id = (chat.length - 1);
-        !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
+        const emitMessageEvents = !fromStreaming && shouldEmitCharacterMessageEvents(chat[chat_id], hasToolCalls);
+        emitMessageEvents && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
         addOneMessage(chat[chat_id], { type: 'swipe' });
-        !fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
+        emitMessageEvents && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
     } else if (type === 'appendFinal') {
         oldMessage = lastMessage.mes;
         console.debug('Trying to appendFinal.');
@@ -8004,9 +8011,10 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             lastMessage.extra.token_count = await getTokenCountAsync(tokenCountText, 0);
         }
         const chat_id = (chat.length - 1);
-        !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
+        const emitMessageEvents = !fromStreaming && shouldEmitCharacterMessageEvents(chat[chat_id], hasToolCalls);
+        emitMessageEvents && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
         addOneMessage(chat[chat_id], { type: 'swipe' });
-        !fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
+        emitMessageEvents && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
     } else {
         console.debug('entering chat update routine for non-swipe post');
         if (power_user.trim_spaces) {
@@ -8048,12 +8056,13 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
 
         await processImageAttachment(newMessage, { imageUrls });
         const chat_id = chat.length;
+        const emitMessageEvents = !fromStreaming && shouldEmitCharacterMessageEvents(newMessage, hasToolCalls);
         await withChatSurfaceStructureMutation(async () => {
             chat.push(newMessage);
-            !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
+            emitMessageEvents && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
             addOneMessage(chat[chat_id]);
         });
-        !fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
+        emitMessageEvents && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
     }
 
     const item = chat[chat.length - 1];
