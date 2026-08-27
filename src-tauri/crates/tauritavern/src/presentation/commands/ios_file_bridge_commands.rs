@@ -420,8 +420,9 @@ pub async fn ios_pick_character_card(
 async fn present_ios_share_sheet_for_path(
     window: &WebviewWindow,
     file_path: &std::path::Path,
+    suggested_name: Option<&str>,
 ) -> Result<IosShareFileResponse, CommandError> {
-    let share_result = share_file(window, file_path)
+    let share_result = share_file(window, file_path, suggested_name)
         .await
         .map_err(map_command_error("Failed to present iOS share sheet"))?;
 
@@ -519,7 +520,7 @@ pub async fn ios_share_file(
     }
 
     let file_path = resolve_ios_shareable_file_path(&window, file_path)?;
-    present_ios_share_sheet_for_path(&window, &file_path).await
+    present_ios_share_sheet_for_path(&window, &file_path, None).await
 }
 
 #[tauri::command]
@@ -535,13 +536,15 @@ pub async fn ios_share_export_data_archive(
         return Err(CommandError::BadRequest("Missing job_id".to_string()));
     }
 
-    let archive_path = app_state
+    let archive = app_state
         .services
         .data_archive_service
-        .completed_export_archive_path(&job_id)
-        .map_err(map_command_error("Failed to resolve export archive path"))?;
+        .completed_export_archive(&job_id)
+        .map_err(map_command_error("Failed to resolve export archive"))?;
 
-    let share_result = present_ios_share_sheet_for_path(&window, &archive_path).await?;
+    let share_result =
+        present_ios_share_sheet_for_path(&window, &archive.archive_path, Some(&archive.file_name))
+            .await?;
 
     let cleanup_error = match app_state
         .services

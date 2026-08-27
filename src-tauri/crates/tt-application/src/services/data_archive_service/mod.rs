@@ -24,6 +24,11 @@ pub(crate) use ports::{
 };
 pub use ports::{DataArchiveExecutor, DataArchiveFileGateway, DataRootInitializer};
 
+pub struct CompletedExportArchive {
+    pub archive_path: PathBuf,
+    pub file_name: String,
+}
+
 pub struct DataArchiveService {
     jobs: Arc<DataArchiveJobRegistry>,
     runtime: TokioRuntimeHandle,

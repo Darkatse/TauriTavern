@@ -2,10 +2,13 @@
 
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::Bool;
-use objc2::{MainThreadMarker, MainThreadOnly};
-use objc2_foundation::{NSArray, NSError, NSString, NSURL};
-use objc2_ui_kit::{UIActivityType, UIActivityViewController};
+use objc2::runtime::{Bool, ProtocolObject};
+use objc2::{AnyThread, MainThreadMarker, MainThreadOnly};
+use objc2_foundation::{NSArray, NSError, NSItemProvider, NSString, NSURL};
+use objc2_ui_kit::{
+    UIActivityItemsConfiguration, UIActivityItemsConfigurationReading, UIActivityType,
+    UIActivityViewController,
+};
 use tauri::WebviewWindow;
 use tokio::sync::oneshot;
 
@@ -26,6 +29,7 @@ enum ShareOutcome {
 pub async fn share_file(
     window: &WebviewWindow,
     file_path: &std::path::Path,
+    suggested_name: Option<&str>,
 ) -> Result<ShareResult, DomainError> {
     if !file_path.is_file() {
         return Err(DomainError::NotFound(format!(
@@ -35,6 +39,7 @@ pub async fn share_file(
     }
 
     let file_path_string = file_path.to_string_lossy().to_string();
+    let suggested_name = suggested_name.map(str::to_owned);
     let (sender, receiver) = oneshot::channel::<ShareOutcome>();
 
     window
@@ -66,14 +71,38 @@ pub async fn share_file(
 
             let ns_path = NSString::from_str(&file_path_string);
             let url = NSURL::fileURLWithPath(&ns_path);
-            let activity_items = NSArray::from_retained_slice(&[Retained::from(url)]);
-
-            let controller = unsafe {
-                UIActivityViewController::initWithActivityItems_applicationActivities(
+            let controller = if let Some(suggested_name) = suggested_name.as_deref() {
+                let Some(provider) = (unsafe {
+                    NSItemProvider::initWithContentsOfURL(NSItemProvider::alloc(), Some(&url))
+                }) else {
+                    send_failure(
+                        &mut sender,
+                        "Failed to create an iOS file share provider".to_string(),
+                    );
+                    return;
+                };
+                let suggested_name = NSString::from_str(suggested_name);
+                provider.setSuggestedName(Some(&suggested_name));
+                let providers = NSArray::from_retained_slice(&[provider]);
+                let configuration =
+                    UIActivityItemsConfiguration::activityItemsConfigurationWithItemProviders(
+                        &providers, mtm,
+                    );
+                let configuration: &ProtocolObject<dyn UIActivityItemsConfigurationReading> =
+                    ProtocolObject::from_ref(&*configuration);
+                UIActivityViewController::initWithActivityItemsConfiguration(
                     UIActivityViewController::alloc(mtm),
-                    &activity_items,
-                    None,
+                    configuration,
                 )
+            } else {
+                let activity_items = NSArray::from_retained_slice(&[Retained::from(url)]);
+                unsafe {
+                    UIActivityViewController::initWithActivityItems_applicationActivities(
+                        UIActivityViewController::alloc(mtm),
+                        &activity_items,
+                        None,
+                    )
+                }
             };
 
             let completion_sender = std::cell::RefCell::new(sender.take());
