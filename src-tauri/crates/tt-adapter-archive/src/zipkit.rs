@@ -1,9 +1,11 @@
+use std::borrow::Cow;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use encoding_rs::GB18030;
 use typed_path::{Utf8WindowsComponent, Utf8WindowsPath};
 use zip::CompressionMethod;
-use zip::read::ZipFile;
+use zip::read::{HasZipMetadata, ZipFile};
 use zip::write::SimpleFileOptions as FileOptions;
 
 use tt_domain::errors::DomainError;
@@ -12,6 +14,12 @@ const DEFLATE_TEXT_COMPRESSION_LEVEL: i64 = 1;
 const DEFLATE_TEXT_EXTENSIONS: &[&str] = &[
     "json", "jsonl", "txt", "md", "csv", "html", "css", "js", "yaml", "yml", "log", "sse",
 ];
+
+#[derive(Clone, Copy)]
+pub(crate) enum ZipEntryNameEncoding {
+    Utf8OrCp437,
+    Gb18030,
+}
 
 pub(crate) fn export_file_options(path: impl AsRef<Path>) -> FileOptions {
     let path = path.as_ref();
@@ -32,12 +40,28 @@ pub(crate) fn export_file_options(path: impl AsRef<Path>) -> FileOptions {
         .unix_permissions(0o644)
 }
 
-pub(crate) fn enclosed_zip_entry_path_with_name<'a, 'b, R: Read + ?Sized>(
+pub(crate) fn enclosed_zip_entry_path_with_encoding<'a, 'b, R: Read + ?Sized>(
     entry: &'b ZipFile<'a, R>,
-) -> Result<(PathBuf, &'b str), DomainError> {
-    let name = zip_entry_display_name(entry)?;
-    let path = enclosed_archive_entry_path(name)?;
+    encoding: ZipEntryNameEncoding,
+) -> Result<(PathBuf, Cow<'b, str>), DomainError> {
+    let name = zip_entry_display_name(entry, encoding)?;
+    let path = enclosed_archive_entry_path(&name)?;
     Ok((path, name))
+}
+
+pub(crate) fn has_cp437_box_or_block(name: &str) -> bool {
+    name.chars()
+        .any(|character| matches!(character, '\u{2500}'..='\u{259f}'))
+}
+
+pub(crate) fn decodes_as_legacy_gb18030_cjk<R: Read + ?Sized>(entry: &ZipFile<'_, R>) -> bool {
+    if entry.get_metadata().is_utf8 || std::str::from_utf8(entry.name_raw()).is_ok() {
+        return false;
+    }
+
+    GB18030
+        .decode_without_bom_handling_and_without_replacement(entry.name_raw())
+        .is_some_and(|name| contains_cjk(&name))
 }
 
 pub(crate) fn enclosed_archive_entry_path(name: &str) -> Result<PathBuf, DomainError> {
@@ -47,7 +71,8 @@ pub(crate) fn enclosed_archive_entry_path(name: &str) -> Result<PathBuf, DomainE
 
 fn zip_entry_display_name<'a, 'b, R: Read + ?Sized>(
     entry: &'b ZipFile<'a, R>,
-) -> Result<&'b str, DomainError> {
+    encoding: ZipEntryNameEncoding,
+) -> Result<Cow<'b, str>, DomainError> {
     let raw_name = entry.name_raw();
     if raw_name.contains(&0) {
         return Err(DomainError::InvalidData(format!(
@@ -56,7 +81,36 @@ fn zip_entry_display_name<'a, 'b, R: Read + ?Sized>(
         )));
     }
 
-    Ok(std::str::from_utf8(raw_name).unwrap_or_else(|_| entry.name()))
+    if entry.get_metadata().is_utf8 {
+        return Ok(Cow::Borrowed(entry.name()));
+    }
+
+    match encoding {
+        ZipEntryNameEncoding::Utf8OrCp437 => Ok(std::str::from_utf8(raw_name)
+            .map(Cow::Borrowed)
+            .unwrap_or_else(|_| Cow::Borrowed(entry.name()))),
+        ZipEntryNameEncoding::Gb18030 => GB18030
+            .decode_without_bom_handling_and_without_replacement(raw_name)
+            .ok_or_else(|| {
+                DomainError::InvalidData(format!(
+                    "Invalid GB18030 archive entry name: {}",
+                    entry.name()
+                ))
+            }),
+    }
+}
+
+fn contains_cjk(name: &str) -> bool {
+    name.chars().any(|character| {
+        matches!(
+            character,
+            '\u{3400}'..='\u{4dbf}'
+                | '\u{4e00}'..='\u{9fff}'
+                | '\u{f900}'..='\u{faff}'
+                | '\u{20000}'..='\u{2fa1f}'
+                | '\u{30000}'..='\u{323af}'
+        )
+    })
 }
 
 fn enclosed_name_from_str(name: &str) -> Option<PathBuf> {

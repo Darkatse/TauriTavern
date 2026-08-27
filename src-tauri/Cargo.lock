@@ -8279,6 +8279,7 @@ name = "tt-adapter-archive"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "encoding_rs",
  "flate2",
  "rand 0.10.2",
  "serde_json",

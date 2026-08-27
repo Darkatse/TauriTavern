@@ -236,6 +236,58 @@ mod tests {
         writer.finish().expect("finish zip").into_inner()
     }
 
+    fn import_zip_with_raw_names(
+        label: &str,
+        entries: &[(&str, &[u8], &[u8])],
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-{}-{}",
+            label,
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.zip");
+
+        fs::create_dir_all(&workspace_root).expect("create temp workspace");
+        let source_entries = entries
+            .iter()
+            .map(|(placeholder, _, content)| (*placeholder, *content))
+            .collect::<Vec<_>>();
+        let mut bytes = write_zip_bytes(&source_entries, FileOptions::default());
+
+        for (placeholder, raw_name, _) in entries {
+            let placeholder = placeholder.as_bytes();
+            assert_eq!(placeholder.len(), raw_name.len());
+
+            let mut replaced = 0;
+            let mut offset = 0;
+            while let Some(relative) = bytes[offset..]
+                .windows(placeholder.len())
+                .position(|candidate| candidate == placeholder)
+            {
+                let start = offset + relative;
+                bytes[start..start + raw_name.len()].copy_from_slice(raw_name);
+                offset = start + raw_name.len();
+                replaced += 1;
+            }
+            assert_eq!(replaced, 2, "replace local and central ZIP entry names");
+        }
+
+        fs::write(&archive_path, bytes).expect("write raw-name zip");
+        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+        run_import_data_archive(
+            &data_root,
+            &archive_path,
+            &workspace_root,
+            &mut report_progress,
+            &|| false,
+        )
+        .expect("import raw-name zip");
+
+        (root, data_root)
+    }
+
     #[test]
     fn zip_extract_uses_prepared_archive_handle_after_source_is_removed() {
         let root = std::env::temp_dir().join(format!(
@@ -534,6 +586,80 @@ mod tests {
 
         let text = fs::read_to_string(&imported).expect("read imported file");
         assert!(text.contains("中文"), "imported content should match");
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn import_decodes_legacy_gb18030_zip_filenames_as_one_archive() {
+        let entries: &[(&str, &[u8], &[u8])] = &[
+            (
+                "data/default-user/characters/abcdefgh.json",
+                b"data/default-user/characters/\xd6\xd0\xce\xc4\xc3\xfb\xd7\xd6.json",
+                b"first",
+            ),
+            (
+                "data/default-user/characters/ij.json",
+                b"data/default-user/characters/\xc2\xa5.json",
+                b"second",
+            ),
+        ];
+        let (root, data_root) = import_zip_with_raw_names("gb18030", entries);
+
+        assert_eq!(
+            fs::read(
+                data_root
+                    .join("default-user/characters")
+                    .join("中文名字.json")
+            )
+            .expect("read GB18030 filename"),
+            b"first"
+        );
+        assert_eq!(
+            fs::read(data_root.join("default-user/characters/楼.json"))
+                .expect("read ambiguous GB18030 filename"),
+            b"second"
+        );
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn import_preserves_unflagged_utf8_zip_filenames() {
+        let (root, data_root) = import_zip_with_raw_names(
+            "unflagged-utf8",
+            &[(
+                "data/default-user/characters/abcdef.json",
+                "data/default-user/characters/夏瑾.json".as_bytes(),
+                b"utf8",
+            )],
+        );
+
+        assert_eq!(
+            fs::read(data_root.join("default-user/characters/夏瑾.json"))
+                .expect("read UTF-8 filename"),
+            b"utf8"
+        );
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn import_preserves_cp437_zip_filenames_without_gb18030_evidence() {
+        let (root, data_root) = import_zip_with_raw_names(
+            "cp437",
+            &[(
+                "data/default-user/characters/abcde.json",
+                b"data/default-user/characters/\x82cole.json",
+                b"cp437",
+            )],
+        );
+
+        assert_eq!(
+            fs::read(data_root.join("default-user/characters/école.json"))
+                .expect("read CP437 filename"),
+            b"cp437"
+        );
 
         cleanup_directory_sync(&root);
     }

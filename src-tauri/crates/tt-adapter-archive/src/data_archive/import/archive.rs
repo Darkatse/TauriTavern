@@ -201,15 +201,26 @@ pub fn prepare_archive_for_import(
         .map_err(|error| internal_error("Failed to seek archive file", error))?;
     match ZipArchive::new(archive_file) {
         Ok(mut archive) => {
-            let (scanned_archive, entries) = scan_zip_archive(&mut archive, is_cancelled, visit)?;
+            let name_encoding = detect_zip_entry_name_encoding(&mut archive, is_cancelled)?;
+            let (scanned_archive, entries) =
+                scan_zip_archive(&mut archive, name_encoding, is_cancelled, visit)?;
             let worker_count =
                 zip_worker_count(entries.iter().filter(|entry| !entry.is_dir).count());
             let metadata = archive.metadata();
             let mut archives = Vec::with_capacity(worker_count);
             archives.push(archive);
             for _ in 1..worker_count {
-                let file = File::open(archive_path)
-                    .map_err(|error| internal_error("Failed to open zip worker reader", error))?;
+                let file = match File::open(archive_path) {
+                    Ok(file) => file,
+                    Err(error) => {
+                        tracing::warn!(
+                            "Failed to open an additional ZIP reader; continuing with {} worker(s): {}",
+                            archives.len(),
+                            error
+                        );
+                        break;
+                    }
+                };
                 // SAFETY: the import contract keeps archive_path bound to the same unchanged ZIP
                 // while readers are opened, and keeps its bytes unchanged while they are read.
                 archives
@@ -236,8 +247,34 @@ pub fn prepare_archive_for_import(
     }
 }
 
+fn detect_zip_entry_name_encoding<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<zipkit::ZipEntryNameEncoding, DomainError> {
+    // Keep the common path in-memory; only mojibake-shaped names need raw ZIP entry metadata.
+    let mojibake_candidates = archive
+        .file_names()
+        .enumerate()
+        .filter_map(|(index, name)| zipkit::has_cp437_box_or_block(name).then_some(index))
+        .collect::<Vec<_>>();
+
+    for index in mojibake_candidates {
+        ensure_not_cancelled(is_cancelled)?;
+        let entry = archive
+            .by_index_raw(index)
+            .map_err(|error| invalid_archive_error("Failed to read zip archive entry", error))?;
+        if zipkit::decodes_as_legacy_gb18030_cjk(&entry) {
+            tracing::info!("Detected legacy GB18030 ZIP entry names");
+            return Ok(zipkit::ZipEntryNameEncoding::Gb18030);
+        }
+    }
+
+    Ok(zipkit::ZipEntryNameEncoding::Utf8OrCp437)
+}
+
 fn scan_zip_archive<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
+    name_encoding: zipkit::ZipEntryNameEncoding,
     is_cancelled: &dyn Fn() -> bool,
     visit: &mut dyn FnMut(&Path) -> Result<(), DomainError>,
 ) -> Result<(ScannedArchive, Vec<ZipEntryPlan>), DomainError> {
@@ -251,13 +288,14 @@ fn scan_zip_archive<R: Read + Seek>(
         let entry = archive
             .by_index(index)
             .map_err(|error| invalid_archive_error("Failed to read zip archive entry", error))?;
-        let (sanitized_path, entry_name) = zipkit::enclosed_zip_entry_path_with_name(&entry)?;
+        let (sanitized_path, entry_name) =
+            zipkit::enclosed_zip_entry_path_with_encoding(&entry, name_encoding)?;
         if sanitized_path.as_os_str().is_empty() {
             continue;
         }
 
         validate_archive_entry_limits(
-            entry_name,
+            &entry_name,
             entry.size(),
             Some(entry.compressed_size()),
             &mut total_uncompressed_bytes,
