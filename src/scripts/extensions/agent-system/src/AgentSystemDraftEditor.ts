@@ -66,6 +66,7 @@ export type AgentSystemDraftEditor = {
     setCanDelegate: (enabled: boolean) => void;
     setCanHandoff: (enabled: boolean) => void;
     setRunPresentation: (presentation: string) => void;
+    setRunStream: (enabled: boolean) => void;
     setCallableAsSubAgent: (enabled: boolean) => void;
     setCallableAsHandoffTarget: (enabled: boolean) => void;
     setDelegationDescription: (value: string) => void;
@@ -211,6 +212,14 @@ export function createAgentSystemDraftEditor(context: AgentSystemDraftEditorCont
             }
             editDraft((draft) => {
                 applyRunPresentation(draft, presentation, context.presentationMemory, memoryKey(draft));
+            });
+        },
+        setRunStream(enabled) {
+            if (isBuiltin()) {
+                return;
+            }
+            editDraft((draft) => {
+                draft.run.stream = enabled;
             });
         },
         setCallableAsSubAgent(enabled) {

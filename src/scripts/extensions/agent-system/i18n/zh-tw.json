@@ -138,6 +138,8 @@
     "agent_system.retryIntervalMs": "重試間隔（毫秒）",
     "agent_system.resizeTimelineHeight": "拖曳以調整時間線高度",
     "agent_system.runPolicy": "執行策略",
+    "agent_system.streaming": "串流傳輸",
+    "agent_system.streamingHint": "即時傳輸生成中的工具參數；前台 write_file 內容會同步顯示在聊天中。",
     "agent_system.runs": "執行記錄",
     "agent_system.runHistory": "執行記錄",
     "agent_system.runHistoryAllChats": "全部聊天",

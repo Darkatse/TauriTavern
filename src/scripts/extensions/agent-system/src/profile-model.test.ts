@@ -26,6 +26,7 @@ test('profileForEdit migrates v2 native tool names to canonical ToolIds', () => 
 
 test('profileForEdit keeps CSV drafts separate and normalizeProfileForSave restores lists', () => {
     const profile = defaultProfile('writer');
+    profile.run.stream = true;
     profile.skills.visible = ['lore', 'tools'];
     profile.delegation.allowedCallers = ['main', 'reviewer'];
 
@@ -36,10 +37,20 @@ test('profileForEdit keeps CSV drafts separate and normalizeProfileForSave resto
     draft.delegation.allowedCallersCsv = 'editor';
 
     const saved = normalizeProfileForSave(draft);
+    expect(saved.run.stream).toBe(true);
     expect(saved.skills.visible).toEqual(['research', 'tools']);
     expect(saved.delegation.allowedCallers).toEqual(['editor']);
     expect('visibleCsv' in saved.skills).toBe(false);
     expect('allowedCallersCsv' in saved.delegation).toBe(false);
+});
+
+test('run streaming defaults missing fields and rejects non-booleans', () => {
+    const profile = defaultProfile('streaming');
+    Reflect.deleteProperty(profile.run, 'stream');
+    expect(profileForEdit(profile).run.stream).toBe(false);
+
+    Reflect.set(profile.run, 'stream', 'true');
+    expect(() => normalizeProfileForSave(profile)).toThrow(/run\.stream must be a boolean/);
 });
 
 test('tool description overrides preserve user text and reject invalid values', () => {

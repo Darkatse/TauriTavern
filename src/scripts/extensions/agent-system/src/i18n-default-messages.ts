@@ -216,6 +216,8 @@ export const DEFAULT_MESSAGES = {
     "retryIntervalMs": "Retry Interval Ms",
     "resizeTimelineHeight": "Drag to resize timeline height",
     "runPolicy": "Run Policy",
+    "streaming": "Streaming",
+    "streamingHint": "Stream generated tool arguments. Foreground write_file content appears in chat while it is generated.",
     "runs": "Runs",
     "runHistory": "Run History",
     "runHistoryAllChats": "All chats",

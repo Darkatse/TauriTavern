@@ -207,11 +207,16 @@ function normalizeRunPolicy(value: unknown): AgentProfile['run'] {
     if (presentation !== 'foreground' && presentation !== 'background') {
         throw new Error(`run.presentation is unsupported: ${presentation}`);
     }
+    const stream = policy.stream ?? false;
+    if (typeof stream !== 'boolean') {
+        throw new Error('run.stream must be a boolean');
+    }
     const directRunnable = policy.directRunnable !== false;
     const modelRetry = isPlainObject(policy.modelRetry) ? policy.modelRetry : {};
 
     return {
         presentation: directRunnable ? presentation : 'background',
+        stream,
         directRunnable,
         modelRetry: {
             maxRetries: Number(modelRetry.maxRetries ?? 3),
@@ -329,6 +334,7 @@ export function defaultProfile(id: string = DEFAULT_PROFILE_ID): AgentProfile {
         },
         run: {
             presentation: 'foreground',
+            stream: false,
             directRunnable: true,
             modelRetry: {
                 maxRetries: 3,
