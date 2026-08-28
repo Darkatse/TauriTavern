@@ -305,6 +305,8 @@
     "agent_system.timelineIdle": "等待运行",
     "agent_system.timelineLoading": "正在加载事件...",
     "agent_system.timelineLoadingDetails": "正在加载详情...",
+    "agent_system.timelineLivePatching": "正在修改 {path}",
+    "agent_system.timelineLiveWriting": "正在写入 {path}",
     "agent_system.timelineMatches": "匹配结果",
     "agent_system.timelineModelToolCalls": "工具调用",
     "agent_system.timelineNoEvents": "暂无 Agent 运行事件。",

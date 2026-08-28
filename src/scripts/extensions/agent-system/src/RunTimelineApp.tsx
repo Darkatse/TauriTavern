@@ -160,7 +160,9 @@ export function RunTimelineApp(props: { controller: RunTimelineController; tr: A
                     </span>
                     <div className="ttas-run-heading-copy">
                         <strong>{snapshot.headerTitle}</strong>
-                        <small>{snapshot.headerSubtitle}</small>
+                        <small aria-live={snapshot.displayItems.at(-1)?.live ? 'off' : undefined}>
+                            {snapshot.headerSubtitle}
+                        </small>
                     </div>
                 </div>
                 <div className="ttas-run-actions">

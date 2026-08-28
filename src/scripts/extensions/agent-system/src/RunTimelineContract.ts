@@ -42,6 +42,23 @@ export type TimelineReadResult = Omit<
     timelineProjection?: unknown;
 };
 
+export type TimelineLiveToolId = 'builtin:workspace.write_file' | 'builtin:workspace.apply_patch';
+
+// Transient, non-authoritative projection of a tool call whose arguments are
+// still streaming. It disappears on live remove and never gains detail
+// targets; durable journal events remain independent.
+// The stream shows whichever field is currently arriving: for a patch that is
+// old_string in red while the model locates the text, then new_string in green
+// as the replacement streams in. A write is a single neutral stream.
+export type TimelineLiveContent = {
+    toolId: TimelineLiveToolId;
+    tail: string;
+    truncated: boolean;
+    streamTone: 'neutral' | 'added' | 'removed';
+    addedWords: number;
+    removedWords: number;
+};
+
 export type TimelineItem = {
     id: string;
     seq: number;
@@ -57,6 +74,7 @@ export type TimelineItem = {
     summary: string;
     rawEvent?: TauriTavernAgentRunEvent;
     rowSpan?: number;
+    live?: TimelineLiveContent;
     detailTargets?: TimelineDetailTarget[];
 };
 
@@ -317,6 +335,8 @@ export type ActiveTimelineOptions = {
             lastEvent: TauriTavernAgentRunEvent | null;
         }) => void) => () => void;
         subscribeRunEvents: (listener: (event: TauriTavernAgentRunEvent) => void) => () => void;
+        subscribeLiveProjection?: TauriTavernAgentApi['subscribeLiveProjection'];
+        scheduleFrame?: (callback: () => void) => void;
         retryFailure: (input: {
             run: TimelineRun | null;
             events: readonly TauriTavernAgentRunEvent[];

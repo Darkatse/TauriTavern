@@ -33,6 +33,7 @@ import {
     RUN_TIMELINE_PAGE_STEP_PX,
 } from './run-timeline-resize';
 import { createRunTimelineSession } from './run-timeline-session';
+import { createRunTimelineLiveLane } from './run-timeline-live-lane';
 import { createSubAgentTimelineController } from './SubAgentTimelineController';
 import {
     canStartRunTimelineViewGesture,
@@ -76,9 +77,18 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
     let projectionTimer: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
     let initPromise: Promise<void> | null = null;
+    const liveDeps = options.mode === 'active' ? options.deps : null;
+    const liveLane = createRunTimelineLiveLane({
+        subscribeLiveProjection: liveDeps?.subscribeLiveProjection,
+        scheduleFrame: liveDeps?.scheduleFrame,
+        onChange: publish,
+        onError: deps.reportError,
+    });
     // Session arrays are immutable references; keep presentation stable across viewport-only publishes.
     let derivedEventRef: readonly TauriTavernAgentRunEvent[] = main.events;
     let derivedProjectionRef = main.timelineProjection;
+    let derivedEventBase: { subAgentTasks: SubAgentTask[]; eventItems: TimelineItem[] } | null = null;
+    let derivedLiveVersion = liveLane.version();
     let derived: DerivedTimeline = deriveMain();
     let selectionItemsRef: readonly TimelineItem[] | null = null;
     let selectionEventsRef: readonly TauriTavernAgentRunEvent[] | null = null;
@@ -94,18 +104,26 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
     let snapshot = buildSnapshot();
 
     function deriveMain(): DerivedTimeline {
-        const subAgentTasks = projectSubAgentTasks(main.timelineProjection);
-        const items = timelineItemsFromEvents(main.events, {
-            foregroundInvocationIds: main.timelineProjection.foregroundInvocationIds,
-            delegationEdges: main.timelineProjection.delegationEdges,
-        });
-        return { subAgentTasks, items, navItems: items.slice(-24) };
+        if (!derivedEventBase || derivedEventRef !== main.events || derivedProjectionRef !== main.timelineProjection) {
+            derivedEventRef = main.events;
+            derivedProjectionRef = main.timelineProjection;
+            derivedEventBase = {
+                subAgentTasks: projectSubAgentTasks(main.timelineProjection),
+                eventItems: timelineItemsFromEvents(main.events, {
+                    foregroundInvocationIds: main.timelineProjection.foregroundInvocationIds,
+                    delegationEdges: main.timelineProjection.delegationEdges,
+                }),
+            };
+        }
+        const items = [...derivedEventBase.eventItems, ...liveLane.items()];
+        return { subAgentTasks: derivedEventBase.subAgentTasks, items, navItems: items.slice(-24) };
     }
 
     function currentDerived(): DerivedTimeline {
-        if (derivedEventRef !== main.events || derivedProjectionRef !== main.timelineProjection) {
-            derivedEventRef = main.events;
-            derivedProjectionRef = main.timelineProjection;
+        const liveVersion = liveLane.version();
+        if (!derivedEventBase || derivedLiveVersion !== liveVersion
+            || derivedEventRef !== main.events || derivedProjectionRef !== main.timelineProjection) {
+            derivedLiveVersion = liveVersion;
             derived = deriveMain();
         }
         return derived;
@@ -206,6 +224,7 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
         viewGesture = null;
         detail.reset();
         subAgent.reset();
+        liveLane.attach(run.runId);
         await loadInitial();
     }
 
@@ -226,6 +245,7 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
         const added = main.receiveEvent(event);
         const addedToSub = subAgent.receiveEvent(event);
         if (!added && !addedToSub) return;
+        if (added && main.terminalEvent === event) liveLane.detach();
         if (added && options.mode === 'active' && event.type === 'run_failed'
             && eventPayload(event).userRetryable === true) {
             collapsed = false;
@@ -326,6 +346,7 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
             main.reset();
             detail.reset();
             subAgent.dispose();
+            liveLane.dispose();
             unsubscribes.splice(0).reverse().forEach(unsubscribe => unsubscribe());
             listeners.clear();
         },
