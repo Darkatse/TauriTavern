@@ -14,6 +14,7 @@ use tt_domain::models::tool::{ToolChoice, ToolId, ToolInvocation};
 
 pub(crate) fn encode_chat_completion_request(
     request: &AgentModelRequest,
+    stream: bool,
 ) -> Result<ChatCompletionGenerateRequestDto, ApplicationError> {
     let (_source, adapter) = resolve_request_adapter(request)?;
     let mut payload = request.payload.clone();
@@ -54,7 +55,7 @@ pub(crate) fn encode_chat_completion_request(
     }
 
     adapter.finalize_payload(&mut payload);
-    payload.insert("stream".to_string(), Value::Bool(false));
+    payload.insert("stream".to_string(), Value::Bool(stream));
     payload.insert("n".to_string(), json!(1));
     Ok(ChatCompletionGenerateRequestDto { payload })
 }

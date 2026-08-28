@@ -118,7 +118,7 @@ fn openai_compatible_replays_opaque_tool_call_extra_content() {
     let mut request = basic_request("custom", Some("openai_compat"), vec![decoded.message]);
     request.tools = tools;
 
-    let dto = encode_chat_completion_request(&request).unwrap();
+    let dto = encode_chat_completion_request(&request, false).unwrap();
     let calls = dto.payload["messages"][0]["tool_calls"].as_array().unwrap();
     assert_eq!(
         calls[0]["extra_content"],
@@ -224,7 +224,7 @@ fn encodes_typed_tool_choice_against_advertised_tools() {
         request.tools = vec![finish.clone()];
         request.tool_choice = tool_choice;
 
-        let dto = encode_chat_completion_request(&request).expect("choice should encode");
+        let dto = encode_chat_completion_request(&request, false).expect("choice should encode");
         assert_eq!(dto.payload.get("tool_choice"), Some(&expected));
     }
 }
@@ -236,8 +236,8 @@ fn rejects_tool_choice_outside_the_advertised_set() {
     request.tools = vec![model_tool(&registry, "workspace.finish")];
 
     request.tool_choice = ToolChoice::Specific(ToolId::builtin("workspace.write_file").unwrap());
-    let error =
-        encode_chat_completion_request(&request).expect_err("unadvertised tool choice must fail");
+    let error = encode_chat_completion_request(&request, false)
+        .expect_err("unadvertised tool choice must fail");
     assert!(
         error
             .to_string()
@@ -246,7 +246,7 @@ fn rejects_tool_choice_outside_the_advertised_set() {
 
     let external = ToolProviderId::parse("mcp/registration-1").unwrap();
     request.tool_choice = ToolChoice::Specific(ToolId::new(&external, "search").unwrap());
-    let error = encode_chat_completion_request(&request)
+    let error = encode_chat_completion_request(&request, false)
         .expect_err("unadvertised external tool choice must fail");
     assert!(
         error
@@ -294,7 +294,7 @@ fn encodes_tool_results_as_model_facing_text() {
         provider_metadata: Value::Null,
     }];
 
-    let dto = encode_chat_completion_request(&request).unwrap();
+    let dto = encode_chat_completion_request(&request, false).unwrap();
     assert_eq!(dto.payload["messages"][0]["name"], "mcp_search");
     assert_eq!(
         dto.payload["messages"][0]["content"],
@@ -307,7 +307,7 @@ fn encodes_tool_results_as_model_facing_text() {
     result.content = "The requested file is not available.".to_string();
     result.is_error = true;
     result.error_code = Some("workspace.file_not_found".to_string());
-    let dto = encode_chat_completion_request(&request).unwrap();
+    let dto = encode_chat_completion_request(&request, false).unwrap();
     assert_eq!(
         dto.payload["messages"][0]["content"],
         Value::String("## Tool error\n\nThe requested file is not available.".to_string())
@@ -318,7 +318,7 @@ fn encodes_tool_results_as_model_facing_text() {
 fn agent_encoder_owns_tool_selection_stream_and_choice_count() {
     let mut request = basic_request("openai", None, Vec::new());
     request.tool_choice = ToolChoice::Required;
-    let error = encode_chat_completion_request(&request).expect_err("required needs tools");
+    let error = encode_chat_completion_request(&request, false).expect_err("required needs tools");
     assert!(
         error
             .to_string()
@@ -334,11 +334,14 @@ fn agent_encoder_owns_tool_selection_stream_and_choice_count() {
         .insert("tool_choice".to_string(), json!("required"));
     request.payload.insert("stream".to_string(), json!(true));
     request.payload.insert("n".to_string(), json!(4));
-    let dto = encode_chat_completion_request(&request).expect("auto without tools is valid");
+    let dto = encode_chat_completion_request(&request, false).expect("auto without tools is valid");
     assert!(dto.payload.get("tools").is_none());
     assert!(dto.payload.get("tool_choice").is_none());
     assert_eq!(dto.payload["stream"], false);
     assert_eq!(dto.payload["n"], 1);
+
+    let dto = encode_chat_completion_request(&request, true).unwrap();
+    assert_eq!(dto.payload["stream"], true);
 }
 
 #[test]
@@ -487,7 +490,7 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
         }),
     };
 
-    let dto = encode_chat_completion_request(&request).unwrap();
+    let dto = encode_chat_completion_request(&request, false).unwrap();
     let messages = dto.payload["messages"].as_array().unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["role"], "tool");
@@ -516,7 +519,7 @@ fn openai_responses_portable_mode_replays_full_transcript() {
         "messageCursor": 1
     });
 
-    let dto = encode_chat_completion_request(&request).unwrap();
+    let dto = encode_chat_completion_request(&request, false).unwrap();
     assert_eq!(dto.payload["messages"].as_array().unwrap().len(), 2);
     assert!(dto.payload.get("previous_response_id").is_none());
 }
@@ -569,7 +572,7 @@ fn openai_responses_continuation_requires_valid_cursor() {
         "previousResponseId": "resp_1"
     });
 
-    let error = encode_chat_completion_request(&request).unwrap_err();
+    let error = encode_chat_completion_request(&request, false).unwrap_err();
     assert!(error.to_string().contains("missing messageCursor"));
 
     request.provider_state = json!({
@@ -578,7 +581,7 @@ fn openai_responses_continuation_requires_valid_cursor() {
         "previousResponseId": "resp_1",
         "messageCursor": 2
     });
-    let error = encode_chat_completion_request(&request).unwrap_err();
+    let error = encode_chat_completion_request(&request, false).unwrap_err();
     assert!(error.to_string().contains("exceeds message count"));
 }
 
@@ -782,7 +785,7 @@ fn cross_provider_switch_does_not_migrate_private_native_metadata() {
         }],
     );
 
-    let dto = encode_chat_completion_request(&request).unwrap();
+    let dto = encode_chat_completion_request(&request, false).unwrap();
     let message = dto.payload["messages"][0].as_object().unwrap();
     assert_eq!(message["content"], "portable text");
     assert!(message.get("native").is_none());
@@ -803,7 +806,7 @@ fn same_provider_keeps_matching_private_native_metadata() {
         }],
     );
 
-    let dto = encode_chat_completion_request(&request).unwrap();
+    let dto = encode_chat_completion_request(&request, false).unwrap();
     let native = dto.payload["messages"][0]["native"].as_object().unwrap();
     assert!(native.get("claude").is_some());
 }

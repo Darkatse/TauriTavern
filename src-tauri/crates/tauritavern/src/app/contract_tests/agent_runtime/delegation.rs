@@ -46,6 +46,7 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
         &profile,
         AgentRunPresentation::Background,
         "delegate-return-child",
+        Some(false),
     )
     .await;
 
@@ -181,6 +182,7 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
         &profile,
         AgentRunPresentation::Foreground,
         "handoff-after-commit",
+        Some(false),
     )
     .await;
     resolve_chat_commits_and_persistent_state_update(
@@ -322,6 +324,7 @@ async fn agent_runtime_handoff_target_failure_keeps_root_transferred() {
         &profile,
         AgentRunPresentation::Background,
         "handoff-target-failure",
+        Some(false),
     )
     .await;
 
@@ -416,6 +419,7 @@ async fn agent_runtime_recovers_handoff_before_trailing_tool() {
         &profile,
         AgentRunPresentation::Background,
         "handoff-trailing-tool",
+        Some(false),
     )
     .await;
 

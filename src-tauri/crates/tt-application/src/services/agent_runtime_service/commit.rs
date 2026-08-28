@@ -334,6 +334,7 @@ impl AgentRuntimeService {
                 "persistBaseStateId": run.persist_base_state_id.as_deref(),
                 "path": file.path.as_str(),
                 "mode": mode,
+                "isExplicit": is_explicit,
                 "reason": reason.as_deref(),
                 "chars": file_metrics.chars,
                 "words": file_metrics.words,

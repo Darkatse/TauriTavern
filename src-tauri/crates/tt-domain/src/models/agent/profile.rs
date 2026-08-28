@@ -187,6 +187,8 @@ pub enum AgentModelBindingMode {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentRunPolicy {
     pub presentation: AgentRunPresentation,
+    #[serde(default)]
+    pub stream: bool,
     #[serde(default = "default_agent_run_direct_runnable")]
     pub direct_runnable: bool,
     #[serde(default)]
@@ -485,6 +487,7 @@ mod tests {
         .expect("profile with optional fields omitted");
 
         assert!(!profile.preset.required);
+        assert!(!profile.run.stream);
         assert!(profile.run.direct_runnable);
         assert_eq!(
             profile.run.model_retry.max_retries,

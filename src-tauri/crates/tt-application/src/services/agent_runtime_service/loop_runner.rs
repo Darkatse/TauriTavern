@@ -44,6 +44,10 @@ impl AgentRuntimeService {
         let auto_commit_text_mutations = updates_run_status
             && self.run_repository.load_run(run_id).await?.presentation
                 == AgentRunPresentation::Foreground;
+        let stream = self
+            .active_run_handle(run_id)
+            .await?
+            .stream_enabled(profile.run.stream);
         let mut tool_session = AgentToolSession::new(prepared.effective_skills.clone());
         let mut tool_request_gate = ToolRequestGate::default();
         let mut seen_child_result_task_ids = HashSet::new();
@@ -80,11 +84,11 @@ impl AgentRuntimeService {
 
             let exchange = self
                 .generate_model_with_retry(
-                    run_id,
-                    invocation_id,
+                    &prepared.invocation,
                     round,
                     &prepared.request,
                     &profile.run.model_retry,
+                    stream,
                     cancel,
                 )
                 .await?;
@@ -191,13 +195,14 @@ impl AgentRuntimeService {
             let mut finished = false;
             let mut handoff = None;
             let tool_call_count = tool_calls.len();
-            let mut text_mutation = None;
+            let mut auto_commit_candidate = None;
 
             for (index, call) in tool_calls.into_iter().enumerate() {
                 let outcome = self
                     .dispatch_tool_call(
                         prepared,
                         round,
+                        index,
                         &call,
                         &mut tool_request_gate,
                         &mut tool_session,
@@ -224,7 +229,11 @@ impl AgentRuntimeService {
                             }),
                         )
                         .await?;
-                        text_mutation = Some((call.call_id, file));
+                        auto_commit_candidate = if stream {
+                            None
+                        } else {
+                            Some((call.call_id, file))
+                        };
                     }
                     AgentToolEffect::WorkspaceFilesWritten {
                         files,
@@ -257,7 +266,7 @@ impl AgentRuntimeService {
                                         path.as_str()
                                     ))
                                 })?;
-                            text_mutation = Some((call.call_id, file));
+                            auto_commit_candidate = Some((call.call_id, file));
                         }
                     }
                     AgentToolEffect::WorkspaceFilePatched {
@@ -285,7 +294,7 @@ impl AgentRuntimeService {
                             }),
                         )
                         .await?;
-                        text_mutation = Some((call.call_id, file));
+                        auto_commit_candidate = Some((call.call_id, file));
                     }
                     AgentToolEffect::ChatCommitRequested { .. } => {}
                     AgentToolEffect::Finish => {
@@ -333,7 +342,7 @@ impl AgentRuntimeService {
                 self.ensure_not_cancelled(cancel)?;
             }
 
-            if auto_commit_text_mutations && let Some((call_id, file)) = text_mutation {
+            if auto_commit_text_mutations && let Some((call_id, file)) = auto_commit_candidate {
                 self.auto_commit_text_file_if_eligible(
                     run_id,
                     &call_id,

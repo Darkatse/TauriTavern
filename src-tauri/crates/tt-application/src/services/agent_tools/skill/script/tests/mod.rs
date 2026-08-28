@@ -436,6 +436,7 @@ fn base_profile() -> ResolvedAgentProfile {
         },
         run: AgentRunPolicy {
             presentation: AgentRunPresentation::Background,
+            stream: false,
             direct_runnable: true,
             model_retry: Default::default(),
         },
