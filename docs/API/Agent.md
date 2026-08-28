@@ -114,7 +114,7 @@ type AgentStartRunFromLegacyGenerateInput = {
 - 当前只支持 `main_api = openai` 的 chat-completion 路径。
 - 必须禁用 Legacy ToolManager tools；Agent tools 只能由 Rust runtime 注册。
 - `worldInfoActivation` 必须来自本次 dryRun 的最终 `WORLDINFO_SCAN_DONE`，不能读取全局 last activation 当作 run 真相。
-- `stream` 是可选的 run-wide override；省略时每个 invocation 使用自己的 resolved Profile `run.stream`（缺失字段默认 `false`），显式值覆盖整次 run。`true` 只支持后端已接入的 OpenAI Chat-compatible `/chat/completions` route，不支持时明确失败。
+- `stream` 是可选的 run-wide override；省略时每个 invocation 使用自己的 resolved Profile `run.stream`（缺失字段默认 `false`），显式值覆盖整次 run。`true` 只支持后端已接入的 OpenAI Chat-compatible `/chat/completions` 与 Custom OpenAI Responses `/responses` route，不支持时明确失败。
 - `presentation` 可显式覆盖 profile 默认前台/后台语义。
 - dryRun 没有产出 messages、已有 tool turns、已有 external tools 都必须 reject，不回退 Legacy Generate。
 - 入口路由到 Agent 后，profile、provider、group chat、context policy 或 Host API 错误必须 reject 并显式呈现；不得静默降级为 Legacy Generate。`/trigger` 作为生成入口遵守同一规则。
@@ -216,7 +216,7 @@ Public Host ABI 可以允许调用方省略 `stableChatId`，但 `api.agent.star
 - 当前拒绝已有 `tools`、`tool_choice`、`role: "tool"` 或已有 `tool_calls` 的外部 tool turns。
 - `stream: true` 启用非权威工具参数 live projection；完整 provider final 仍进入与非流式相同的 Runtime、Journal、Gate 与工具执行路径。
 - `options.stream` 省略时，每个 root / child / handoff invocation 使用自己的 resolved Profile `run.stream`；显式 `true/false` 是整次 run override。
-- live route 只支持后端已接入的 OpenAI Chat-compatible `/chat/completions`；其它 source/endpoint 明确失败，不回退 buffered 请求。
+- live route 只支持后端已接入的 OpenAI Chat-compatible `/chat/completions` 与 Custom OpenAI Responses `/responses`；其它 source/endpoint 明确失败，不回退 buffered 请求。
 - `workspaceMode` / `resumeRunId` 当前只是后续字段，不应作为当前行为依赖。
 - 参数无效必须 reject，不静默回退 Legacy Generate。
 

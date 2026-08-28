@@ -779,6 +779,18 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         payload: &Value,
         on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
     ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+        if source == ChatCompletionSource::Custom && endpoint_path == "/responses" {
+            return openai_responses::generate_with_tool_call_deltas(
+                self,
+                config,
+                endpoint_path,
+                payload,
+                "Custom OpenAI Responses",
+                on_tool_call_delta,
+            )
+            .await;
+        }
+
         if endpoint_path != "/chat/completions"
             || !matches!(
                 source,
