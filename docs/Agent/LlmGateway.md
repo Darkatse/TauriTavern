@@ -22,18 +22,18 @@ Agent 不维护第二套 provider registry，不直接调用 `HttpChatCompletion
 
 ```text
 AgentRuntimeService
-  -> AgentModelGateway.generate_with_cancel(AgentModelRequest)
+  -> AgentModelGateway.generate_with_cancel(AgentModelRequest, optional tool delta callback)
     -> encode_chat_completion_request()
-      -> ChatCompletionService.generate_exchange_with_cancel(ChatCompletionGenerateRequestDto)
+      -> ChatCompletionService.generate_exchange_with_cancel(ChatCompletionGenerateRequestDto, optional callback)
         -> payload builder
-        -> ChatCompletionRepository
+        -> ChatCompletionRepository.generate / generate_with_tool_call_deltas
         -> LoggingChatCompletionRepository
         -> HttpChatCompletionRepository
     -> decode_chat_completion_response()
   -> AgentModelResponse
 ```
 
-当前只实现非 streaming Agent tool loop。`ChatCompletionStreamEvent::Chunk` 仍只是 provider SSE bridge，不是 Agent timeline event。
+当前 Agent 支持可选的工具参数 live projection。它只旁路观察 provider stream 中的 tool-call arguments；同一次调用聚合出的完整 final 仍由现有 decoder 生成 `AgentModelResponse`。`ChatCompletionStreamEvent::Chunk` 仍只是 Legacy provider SSE bridge，不是 Agent timeline event。
 
 当前代码布局：
 
@@ -235,19 +235,29 @@ Custom Claude Messages 的 header 兼容策略尤其不能被 Agent 硬编码覆
 
 ## 10. Streaming 边界
 
-未来需要 `ModelDelta`，但当前 Agent tool loop 仍是非 streaming。
+当前 streaming 只解决一个用户可见问题：在完整工具调用生成期间，实时投影 `workspace.write_file` / `workspace.apply_patch` 的顶层字符串参数。它不建立通用 `ModelDelta`，也不流式执行工具。
 
-两种事件流不能混：
+三条数据流不能混：
 
 ```text
-Provider stream
-  来自 ChatCompletionService/Repository 的 SSE data 或 normalized chunk。
+Provider wire stream
+  repository 在同一 read loop 中累计权威 final，并投出工具参数 fragment。
+
+Agent live projection
+  request-scoped exact alias -> canonical ToolId -> run-scoped ephemeral watch/Channel。
 
 Agent run event stream
-  AgentRunEvent：model_delta、tool_call_requested、chat_commit_requested 等语义事件。
+  AgentRunEvent：model_completed、tool_call_requested、chat_commit_requested 等 durable facts。
 ```
 
-Agent UI 必须订阅 `api.agent.subscribe(runId, handler)` 的 run event，不直接消费 provider raw stream。
+约束：
+
+- callback presence 决定请求的 `stream` 值；没有 callback 时保持 buffered path。
+- 当前 observed route 只支持 exact OpenAI source + `/chat/completions`；其它 route 明确失败，不静默回退。
+- delta 中的 model alias 只按当前 request 广告的 exact alias 映射。unknown alias 不产生 live projection，最终 decoder仍明确失败。
+- live scanner只提取已知工具的顶层可展示字符串，不构造 `ToolInvocation`、不写 Journal、不调用 Gate或 Workspace。
+- retry/cancel清理当前 attempt generation；canonical final成功后只标记参数完整，`tool_call_requested` durable append成功后才移除 live entry。
+- Host commit bridge 与 Agent Timeline 独立订阅 `api.agent.subscribeLiveProjection()`；durable timeline 继续来自 `api.agent.subscribe()`。两者都不直接消费 provider raw stream。
 
 ## 11. Error Contract
 

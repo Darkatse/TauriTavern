@@ -2,7 +2,7 @@
 
 本文档是 Agent Host ABI 当前参考。Run 控制入口属于 Public Contract；明确标注为 Project Contract 的 UI/诊断投影可以随 Agent 实验能力演进，不等同于 Rust 内部 service/repository。
 
-状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、前端 dryRun adapter、Agent run history listing、Agent run retention facade / dry-run plan preview / manual apply prune / backend auto prune，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文只记录当前已落地 Host ABI。
+状态：当前已实现 canonical model IR、provider native metadata 保真、provider_state continuation、上下文只读工具、Skill tools、workspace 读改工具循环、可选工具参数 live projection、前端 dryRun adapter、Agent run history listing、Agent run retention facade / dry-run plan preview / manual apply prune / backend auto prune，以及 Agent Profile 独立 preset / 独立 model 的 Frontend PromptAssemblyBroker 链路。Agent System 扩展开关开启时，普通发送、`/trigger`、regenerate 与 overswipe 新候选生成会通过 Legacy Generate 兼容桥启动 Agent；普通切换已有 swipe 候选不启动 Agent。本文只记录当前已落地 Host ABI。
 
 `provider_state` 是 Rust 后端内部 continuation contract，不是 Host ABI。前端/扩展不应读写 `_tauritavern_provider_state`；需要诊断时通过 run events、`modelResponsePath` 与 LLM API log 观察。
 模型回合详情必须通过 `readModelTurn()` 读取后端投影 DTO；前端不解析 `model-responses/` raw JSON。
@@ -24,6 +24,8 @@ type TauriTavernAgentApi = {
   startRunFromLegacyGenerate(input?: AgentStartRunFromLegacyGenerateInput): Promise<AgentRunHandle>;
   startRunWithPromptSnapshot(input: AgentStartRunWithPromptSnapshotInput): Promise<AgentRunHandle>;
   subscribe(runId: string, handler: (event: AgentRunEvent) => void, options?: AgentSubscribeOptions): TauriTavernHostUnsubscribe;
+  subscribeLiveProjection(runId: string, handler: (update: AgentRunLiveUpdate) => void, options?: AgentLiveSubscribeOptions): TauriTavernHostUnsubscribe;
+  settleChatPresentation(handle: AgentRunHandle): Promise<void>; // Host generation adapter lifecycle
   cancel(runId: string): Promise<AgentRunHandle>;
   submitGuidance(input: AgentSubmitGuidanceInput): Promise<AgentSubmitGuidanceResult>;
   readEvents(input: AgentReadEventsInput): Promise<AgentReadEventsResult>;
@@ -99,7 +101,7 @@ type AgentStartRunFromLegacyGenerateInput = {
   presentation?: 'foreground' | 'background';
   options?: {
     presentation?: 'foreground' | 'background';
-    stream?: false;
+    stream?: boolean;
   };
 };
 ```
@@ -112,7 +114,8 @@ type AgentStartRunFromLegacyGenerateInput = {
 - 当前只支持 `main_api = openai` 的 chat-completion 路径。
 - 必须禁用 Legacy ToolManager tools；Agent tools 只能由 Rust runtime 注册。
 - `worldInfoActivation` 必须来自本次 dryRun 的最终 `WORLDINFO_SCAN_DONE`，不能读取全局 last activation 当作 run 真相。
-- `stream` 必须为 `false` 或省略；`presentation` 可显式覆盖 profile 默认前台/后台语义。
+- `stream` 是可选的 run-wide override；省略时每个 invocation 使用自己的 resolved Profile `run.stream`（缺失字段默认 `false`），显式值覆盖整次 run。`true` 当前只支持 exact OpenAI Chat `/chat/completions` route，不支持时明确失败。
+- `presentation` 可显式覆盖 profile 默认前台/后台语义。
 - dryRun 没有产出 messages、已有 tool turns、已有 external tools 都必须 reject，不回退 Legacy Generate。
 - 入口路由到 Agent 后，profile、provider、group chat、context policy 或 Host API 错误必须 reject 并显式呈现；不得静默降级为 Legacy Generate。`/trigger` 作为生成入口遵守同一规则。
 
@@ -211,7 +214,9 @@ Public Host ABI 可以允许调用方省略 `stableChatId`，但 `api.agent.star
 - `promptSnapshot.chatCompletionPayload` 必须包含 chat-completion payload object。
 - 如果调用方希望 `worldinfo_read_activated` 返回非错误结果，必须在 prompt snapshot 中提供本次 run 的 `worldInfoActivation`。
 - 当前拒绝已有 `tools`、`tool_choice`、`role: "tool"` 或已有 `tool_calls` 的外部 tool turns。
-- 当前拒绝 `stream: true`。
+- `stream: true` 启用非权威工具参数 live projection；完整 provider final 仍进入与非流式相同的 Runtime、Journal、Gate 与工具执行路径。
+- `options.stream` 省略时，每个 root / child / handoff invocation 使用自己的 resolved Profile `run.stream`；显式 `true/false` 是整次 run override。
+- 当前 live route 只支持 exact OpenAI Chat `/chat/completions`；其它 source/endpoint 明确失败，不回退 buffered 请求。
 - `workspaceMode` / `resumeRunId` 当前只是后续字段，不应作为当前行为依赖。
 - 参数无效必须 reject，不静默回退 Legacy Generate。
 
@@ -232,6 +237,62 @@ type AgentSubscribeOptions = {
 - 默认从 `afterSeq = 0` 开始读取；调用方可以传入 `afterSeq`。
 - 返回 unsubscribe 函数，必须幂等。
 - 底层 polling 细节和 Rust command 名不是 Public Contract。
+
+### 5.1 subscribeLiveProjection
+
+`subscribeLiveProjection()` 是 run-scoped、非持久化的工具参数投影，只用于观察当前生成中的 `workspace.write_file` / `workspace.apply_patch`。它与 durable `subscribe()` 相互独立。
+
+```ts
+type AgentRunLiveToolCall =
+  | {
+      toolId: 'builtin:workspace.write_file';
+      invocationId: string;
+      invocationExitPolicy: 'run_finish_allowed' | 'task_return_required';
+      toolCallIndex: number;
+      path: string;
+      content: string;
+      contentWords: number;
+    }
+  | {
+      toolId: 'builtin:workspace.apply_patch';
+      invocationId: string;
+      invocationExitPolicy: 'run_finish_allowed' | 'task_return_required';
+      toolCallIndex: number;
+      path: string;
+      oldString: string;
+      oldStringWords: number;
+      newString: string;
+      newStringWords: number;
+    };
+
+type AgentRunLiveUpdate =
+  | { type: 'snapshot'; calls: AgentRunLiveToolCall[] }
+  | {
+      type: 'append';
+      invocationId: string;
+      toolCallIndex: number;
+      field: 'path' | 'content' | 'oldString' | 'newString';
+      text: string;
+      wordDelta: number;
+    }
+  | { type: 'replace'; call: AgentRunLiveToolCall }
+  | { type: 'remove'; invocationId: string; toolCallIndex: number };
+
+type AgentLiveSubscribeOptions = {
+  onError?: (error: unknown) => void;
+};
+```
+
+语义：
+
+- 第一条 update 是 retained `snapshot`；`append` 只传新增文本，新 call 或 retry 使用 `replace`。
+- `snapshot/replace` 的字段词数由完整文本计算；`append.wordDelta` 按本次 append 文本计算并由消费者累计。delta 可能切开一个字母数字词，因此 live 计数是近似值；工具完成后的 durable 文本指标仍按完整文本精确计算。
+- `tool_call_requested` 写入 Journal 后 live call 被 `remove`；run 或 Channel 结束时订阅完成，错误调用 `onError`。
+- unsubscribe 只幂等停止本地 handler。
+- live update 不写 Journal、不能历史 replay，也不是 SillyTavern `STREAM_TOKEN_RECEIVED` / `TOOL_CALLS_*` 事件。
+- Host 把前台 root / handoff `write_file.content` 写入真实 assistant message；Timeline 独立展示 live write/patch。`apply_patch` 仍通过正式 auto-commit 改变聊天正文。
+- live projection 不构成工具成功、commit、Agent metadata 或 persistent state；failure/cancel 保留已显示的 partial。
+- `settleChatPresentation(handle)` 是 Legacy Generate adapter 使用的 Project lifecycle seam：它等待 terminal partial save 完成后再允许 generation 收尾，不是新的 Agent 状态或 commit API。
 
 ## 6. cancel
 
@@ -539,7 +600,7 @@ type AgentRunPruneApplyResult = {
 
 ## 13. profiles / promptAssembly / tools
 
-`profiles.*` 是当前 Agent Profile 管理入口。`profiles.list()` 的 summary 包含 `directRunnable`，供前端区分可直接启动的 root-run Profile 与只能作为 SubAgent / handoff target 的 Profile。列表扫描会返回可加载 Profile，同时把单个本地 Profile JSON 文件的内容损坏放入 `issues`，避免一个坏文件阻塞整个面板；`invalidJson` 建议用户确认后删除，`invalidFileIdentity` 可通过 `profiles.repairFile({ profileId, action: "normalizeIdentity" })` 尝试规范化文件 header / identity 键（`schemaVersion`、`kind`、`id`），其它 Profile 内容保持原样。若修复后整份 JSON 仍不能按 Agent Profile 契约读取，则拒绝写回并报告错误。`invalidProfile` 表示主体结构损坏，需要手动修复，不会自动替换为默认 Profile。目录读取失败、非法文件名等仓储契约错误仍然 fail-fast。Profile JSON 中的 `preset.mode = "ref"` 与 `model.mode = "connectionRef"` 会影响 prompt assembly 和最终模型连接；`model.mode = "requiresConfiguration"` 表示 Profile 需要本机重新选择模型，可保存但不可运行；`run.directRunnable = false` 表示该 Profile 不能直接启动，只能通过已实现的非直接入口运行（当前为 return-mode SubAgent）。前端“可作为子 Agent”会写入该非直接运行语义。保存时无效 schema 必须 fail-fast。
+`profiles.*` 是当前 Agent Profile 管理入口。`profiles.list()` 的 summary 包含 `directRunnable`，供前端区分可直接启动的 root-run Profile 与只能作为 SubAgent / handoff target 的 Profile。列表扫描会返回可加载 Profile，同时把单个本地 Profile JSON 文件的内容损坏放入 `issues`，避免一个坏文件阻塞整个面板；`invalidJson` 建议用户确认后删除，`invalidFileIdentity` 可通过 `profiles.repairFile({ profileId, action: "normalizeIdentity" })` 尝试规范化文件 header / identity 键（`schemaVersion`、`kind`、`id`），其它 Profile 内容保持原样。若修复后整份 JSON 仍不能按 Agent Profile 契约读取，则拒绝写回并报告错误。`invalidProfile` 表示主体结构损坏，需要手动修复，不会自动替换为默认 Profile。目录读取失败、非法文件名等仓储契约错误仍然 fail-fast。Profile JSON 中的 `preset.mode = "ref"` 与 `model.mode = "connectionRef"` 会影响 prompt assembly 和最终模型连接；`model.mode = "requiresConfiguration"` 表示 Profile 需要本机重新选择模型，可保存但不可运行；`run.stream` 是默认 `false` 的 invocation 流式策略，不升级 Profile v3；`run.directRunnable = false` 表示该 Profile 不能直接启动，只能通过已实现的非直接入口运行（当前为 return-mode SubAgent）。前端“可作为子 Agent”会写入该非直接运行语义。保存时无效 schema 必须 fail-fast。
 
 `profiles.retargetPresetRefs()` 是管理态引用迁移 API，用于 preset rename 生命周期。它只更新 `preset.mode = "ref"` 且精确匹配 `from` 的 Profile；`to` preset 必须已经存在，且不能跨 `apiId` retarget。`from` 可以已经 dangling。该 API 不会让运行态静默降级；运行和 prompt assembly 仍按 Profile 契约 fail-fast。该操作逐个 Profile 写回，失败后可用同一请求重试；preset rename 流程必须在依赖迁移完成后再删除旧 preset。
 
@@ -642,15 +703,17 @@ type AgentCommitResult = {
 
 Chat commit 不是公开 Host API 方法，而是 runtime Committer 与 host bridge 的内部握手：
 
-- 前台 root / handoff Agent 在首次成功显式 commit 前，会在每轮 tool calls 全部处理后检查该轮最后一次成功的 write/patch；若目标是 `.md`、`.markdown`、`.txt` 或 `.text` 文件，则自动触发一次 `replace` commit。每轮最多自动 commit 一次，路径所在 root 不参与判断。
-- 模型也可调用 `workspace.commit`，无参数时默认 `replace output/main.md`；第一次 host-confirmed 显式 commit 后停止当前 run 的自动 commit。
+- 前台 root / handoff Agent 在首次成功显式 commit 前，会在每轮 tool calls 全部处理后检查最后一个 auto-commit 候选。非流式 write 与 patch 保持旧候选语义；流式 write 清空候选并由真实 chat partial 承载，patch 仍会成为候选。候选若是 `.md`、`.markdown`、`.txt` 或 `.text` 文件，则自动触发一次 `replace` commit。
+- 模型也可调用 `workspace.commit`，无参数时默认 `replace output/main.md`；第一次 host-confirmed 显式 commit 后同时停止当前 run 的自动 commit 与 live-write 展示。patch auto-commit 只规范化当前楼层并清空当次 partial，后续 write 仍可继续流入同一楼层。
 - 前端 host bridge 校验当前 active chat 与 run 的 `chatRef/stableChatId` 一致。
 - bridge 读取当前 workspace 文件并校验 `chat_commit_requested.sha256`，内容已变化时拒绝提交；同时通过 `readModelTurn()` 读取 root / handoff active chain 的可见 reasoning 投影。bridge 先应用上游生成输出保存前后处理，再通过上游 `saveReply()` 写入聊天、累计到标准 `extra.reasoning`，最后调用 `resolve_agent_chat_commit`。
 - Host 握手只有“已确认提交 / 未确认提交”两种结果且不设置 wall-clock timeout，移动端挂起期间可以继续等待，取消 run 仍会终止等待。未确认提交统一作为可恢复失败且不写 preservation ledger；自动提交继续运行，显式提交返回模型可见 tool error 以便重试。若 `saveReply()` 已成功改写 `chat[]`，正文与 reasoning 会保留，本地 reasoning cursor 同步推进以避免重试时重复追加。Rust 侧 journal、状态机等错误仍 fail-fast。
 - `chat_commit_requested` 不携带 `persistStateId`；该字段只能在 `workspace.finish` 成功提交 persistent state 后，由 `persistent_state_metadata_update_requested` / `resolve_agent_persistent_state_metadata_update` 写回同一条 chat message。
+- `chat_commit_requested.isExplicit` 区分正式工具 commit 与 auto checkpoint；Host 只在成功处理 `isExplicit: true` 后关闭 live write。partial 本身不产生该事件。
 - 首次 commit 按 generation type 创建或改写目标楼层；后续 commit 使用 `appendFinal` 写入完整 postprocessed 目标文本。`append` mode 会把本次读取到的文件文本作为 raw 追加贡献累计后再整体处理，避免片段级 regex。
 - `append` 在本 run 尚无 commit 时不会报错，会创建本 run 的消息楼层。
 - 自动和显式 commit 都进入 preservation ledger；任何一个成功后发生错误都会保留 chat 输出并进入 partial success。前台 run 在 `workspace.finish` 前仍必须至少成功一次显式 `workspace.commit`；后台 run 可无 chat commit 完成。
+- 只有 live partial 而没有 host-confirmed commit 时 ledger 仍为空，因此 Rust terminal 仍是普通 `run_failed` / `run_cancelled`；chat 文本的保留不伪造 backend partial-success。
 
 ## 15. Event Envelope
 
@@ -779,7 +842,7 @@ const agent = window.__TAURITAVERN__.api.agent;
 
 const run = await agent.startRunFromLegacyGenerate({
   generationType: 'normal',
-  options: { stream: false, presentation: 'foreground' },
+  options: { presentation: 'foreground' },
 });
 
 const stop = agent.subscribe(run.runId, event => console.log(event));

@@ -24,24 +24,30 @@ scratch/*.md
 summaries/*.md
 ```
 
-聊天消息只能由 ArtifactAssembly + Committer 统一提交。
+正式 Agent chat commit 只能由 ArtifactAssembly + Committer 统一提交。
+
+唯一的展示期例外是：前台流式 root / handoff 可以把 `workspace.write_file.content`
+写入真实 assistant message。它是已交付的 partial，不代表工具执行或 commit，不修改 Agent
+metadata、Journal、ledger 或 persistent state；失败或取消时仍保留。已有 checkpoint metadata
+只描述最近一次正式 commit。
 
 禁止：
 
-- LLM response 直接变成 chat message。
+- LLM response 或 Tool result 绕过上述 live-write / Committer 边界直接变成 chat message。
 - Tool result 直接插入 chat 楼层。
 - workspace-mutating tool 绕过 WorkspaceService 写文件。
 
 理由：workspace 提供受控的多轮编辑、artifact assembly 与 timeline 审计边界。
 
 当前前台 root / handoff Agent 在第一次成功的显式 `workspace.commit` 之前，会在每轮
-tool calls 全部处理后检查本轮最后一次成功的 `workspace.write_file` /
-`workspace.apply_patch`。如果目标路径以 `.md`、`.markdown`、`.txt` 或 `.text`
+tool calls 全部处理后检查本轮最后一个 auto-commit 候选：非流式 `workspace.write_file`
+和所有 `workspace.apply_patch` 成功结果会成为候选；流式 `workspace.write_file` 会清空候选，
+因为其内容已经作为 partial chat output 实时交付。如果候选路径以 `.md`、`.markdown`、`.txt` 或 `.text`
 （大小写不敏感）结尾，runtime 会把该 mutation 作为一次 `replace` commit 交给同一个
 Committer。每轮最多自动 commit 一次；它不绕过 workspace、journal、Host bridge 或完整 chat
 保存契约，也不把 Tool result 直接插入聊天。
 
-第一次 host-confirmed 的显式 `workspace.commit` 成功后，当前 run 永久停止自动 commit。
+第一次 host-confirmed 的显式 `workspace.commit` 成功后，当前 run 永久停止自动 commit 和 live-write chat 展示；`apply_patch` 的自动 commit 只形成 checkpoint，不关闭后续 live write。
 自动 commit 是可保留的 chat 输出，但不能满足前台 `workspace.finish` 对显式 commit 的要求。
 Host commit 不设置固定等待期限：宿主挂起时保持 pending，run cancellation 仍可中断。Host
 未能确认提交时统一回到可恢复路径；只有 host-confirmed 结果才能推进 backend commit ledger。
@@ -314,7 +320,7 @@ dryRun 不能被视为纯函数。它仍会触发上游事件、prompt 组合、
 - 公共 Agent 启动入口只有 `api.agent.startRunFromLegacyGenerate()` 与 `api.agent.startRunWithPromptSnapshot()`；不保留职责不清的 `startRun()` alias。
 - `startRunFromLegacyGenerate()` 内部可以调用 Legacy dryRun，但工具循环必须在 Rust runtime 中推进，不得递归调用 `Generate()`。
 - 工具注册由 Rust runtime 独占；prompt snapshot 中不得携带 external `tools`、`tool_choice`、`role: "tool"` 或已有 `tool_calls`。
-- 当前只支持非 streaming；请求 `stream: true` 必须 fail-fast。Chat commit 只能由 runtime 的 pre-explicit 文本 mutation policy 或显式 `workspace.commit` 触发，并统一通过 Committer + host bridge 写入。
+- `stream` 是可选的 per-run override；省略时保持非流式，`true` 只选择具备精确语义的 OpenAI Chat Completions 流式 adapter，不支持的 provider route 必须 fail-fast。流式 adapter 只实时投影工具参数增量，结束后仍把聚合完成的 `AgentModelResponse` 交给同一执行流程。live write 可以形成上述 partial chat output，但正式 commit 仍只能由 runtime 的 pre-explicit mutation policy 或显式 `workspace.commit` 触发，并统一通过 Committer + host bridge 写入。
 - 模型可修正的工具参数错误必须作为 `is_error = true` tool result 回填模型；宿主级 IO、journal、序列化、取消和模型响应结构错误必须 fail-fast。
 
 Agent run/timeline/tool event 不得伪装成上游 `GENERATION_*` 或 `TOOL_CALLS_*` 事件。上游事件属于 Legacy Generate 兼容面。

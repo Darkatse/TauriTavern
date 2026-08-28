@@ -335,14 +335,14 @@ Policy 拒绝不是 skipped，而是 failure。
 ```text
 model_request_created
 model_request_sent
-model_delta
-model_tool_call_delta
 model_response_stored
 provider_state_updated
 model_completed
 direct_output_captured
 model_failed
 ```
+
+工具参数 live projection 不属于 Run Journal：provider delta 只进入 run-scoped ephemeral Channel，生成完成后仍以 canonical final 写入现有 `model_response_stored` / `model_completed` / `tool_call_requested` 流程。当前不定义 durable `model_delta` 或 `model_tool_call_delta`，因此历史读取与 replay 不会返回 partial 参数。
 
 当前 `model_request_created` 记录 canonical request summary（source、custom format、model、message count、tool count）、`round`、`invocationId` 与同一 invocation 的 `toolTurn`，不默认记录完整 prompt。长期应记录 request ref、profile id、provider/source、model、token estimate；完整 prompt 是否保存取决于调试设置与隐私策略。
 
@@ -452,7 +452,7 @@ chat_commit_failed
 committed_message_rollback_completed
 ```
 
-自动与显式 commit 共用同一事件序列。自动 commit 在一轮 tool calls 全部处理后最多发起一次。`chat_commit_requested` 记录 chat ref、artifact path 与预期 SHA；Host 重读当前 workspace，SHA 不一致时拒绝提交，并在确认后记录 message id。`chat_commit_completed.messageId` 是提交时结果，不是对当前聊天消息位置的反向查询。Host 返回未确认时写 warning 级 `chat_commit_failed`；它不会终止 run，也不会产生 `chat_commit_recorded`。自动提交跳过本次，显式提交另写模型可见的 `tool_call_failed`。
+自动与显式 commit 共用同一事件序列。自动 commit 在一轮 tool calls 全部处理后最多发起一次。`chat_commit_requested` 记录 chat ref、artifact path、预期 SHA 与 `isExplicit`；Host 重读当前 workspace，SHA 不一致时拒绝提交，并在确认后记录 message id。`chat_commit_completed.messageId` 是提交时结果，不是对当前聊天消息位置的反向查询。Host 返回未确认时写 warning 级 `chat_commit_failed`；它不会终止 run，也不会产生 `chat_commit_recorded`。自动提交跳过本次，显式提交另写模型可见的 `tool_call_failed`。流式 write partial 不是 durable fact，因此不会创建 commit event 或改变 ledger。
 
 ## 5. 事件与副作用的顺序
 
