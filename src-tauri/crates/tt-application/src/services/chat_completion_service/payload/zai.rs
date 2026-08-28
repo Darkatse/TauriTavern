@@ -43,6 +43,15 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
                 Value::String(reasoning_effort.to_string()),
             );
         }
+
+        if body.get("stream").and_then(Value::as_bool) == Some(true)
+            && body
+                .get("tools")
+                .and_then(Value::as_array)
+                .is_some_and(|tools| !tools.is_empty())
+        {
+            body.insert("tool_stream".to_string(), Value::Bool(true));
+        }
     }
 
     Ok((endpoint, upstream_payload))
@@ -100,6 +109,27 @@ mod tests {
             .unwrap_or_default();
 
         assert_eq!(thinking_type, "enabled");
+    }
+
+    #[test]
+    fn zai_streaming_tools_enable_tool_stream() {
+        let payload = payload(json!({
+            "model": "glm-4.6",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "parameters": {"type": "object"}
+                }
+            }],
+            "stream": true,
+            "chat_completion_source": "zai"
+        }));
+
+        let (_endpoint, upstream) = build(payload).expect("payload should build");
+
+        assert_eq!(body(&upstream).get("tool_stream"), Some(&Value::Bool(true)));
     }
 
     #[test]

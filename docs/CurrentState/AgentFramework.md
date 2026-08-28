@@ -117,7 +117,7 @@ _tauritavern/agent-profiles/
 - 每个 invocation 按 `global -> preset -> profile -> character` 解析 active Skill scopes。root run 会固化 ambient `skillScopeRefs`；return-mode child 使用 target Profile 的 Skill policy，并按 target preset / run ambient character 解析可读 Skill。
 - `workspace.visibleRoots` / `workspace.writableRoots` 只能收窄 root universe：`output`、`scratch`、`plan`、`summaries`、`persist`。
 - `run.presentation` 区分 `foreground` / `background`，默认 built-in profile 为前台；`run.directRunnable` 控制 Profile 是否可被用户直接启动。直接可运行 Profile 必须暴露 `workspace.finish`，前台直接运行还必须暴露 `workspace.commit`；非直接运行 Profile 必须可作为 return-mode SubAgent 或 handoff target。仅作为 handoff target 的前台 Profile 可以不暴露 `workspace.finish`，只要它仍能继续 handoff；若要成为最终收尾 Agent，则应暴露 `workspace.commit` / `workspace.finish`。
-- `run.stream` 控制单个 invocation 的流式策略，缺失时默认 `false`；显式 `options.stream` 覆盖整次 run。`true` 当前仅支持 OpenAI Chat Completions，其他 provider route fail-fast。
+- `run.stream` 控制单个 invocation 的流式策略，缺失时默认 `false`；显式 `options.stream` 覆盖整次 run。`true` 仅支持已接入的 OpenAI Chat-compatible route，其他 route fail-fast。
 - `profiles.list()` 的 summary 暴露 `directRunnable`，Agent System UI 只允许直接可运行 Profile 成为 `activeProfileId`。保存或删除当前生效 Profile 导致其不可直接运行时，前端会把 `activeProfileId` 显式切回 built-in `default-writer`；不会把当前正在编辑的 Profile 自动设为生效。
 - `profiles.diagnose()` 返回管理态 `AgentProfileHealth`，用于展示可加载 Profile 的外部资源健康度。第一期覆盖 missing/unsupported preset ref、`model.requiresConfiguration`、LLM Connection 缺失或无效；该 API 不改变 run / prompt assembly 的 fail-fast 语义，也不会让运行静默回退当前 UI preset/model。
 - `run.modelRetry` 控制单次模型调用的瞬时错误重试；默认 `maxRetries = 3`、`intervalMs = 3000`。当前只重试 rate limit / transient transport-provider 错误，不重试 prompt/schema/native metadata/tool id 等契约错误。

@@ -779,7 +779,23 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         payload: &Value,
         on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
     ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
-        if source != ChatCompletionSource::OpenAi || endpoint_path != "/chat/completions" {
+        if endpoint_path != "/chat/completions"
+            || !matches!(
+                source,
+                ChatCompletionSource::OpenAi
+                    | ChatCompletionSource::OpenRouter
+                    | ChatCompletionSource::Custom
+                    | ChatCompletionSource::DeepSeek
+                    | ChatCompletionSource::Groq
+                    | ChatCompletionSource::Moonshot
+                    | ChatCompletionSource::NanoGpt
+                    | ChatCompletionSource::Chutes
+                    | ChatCompletionSource::SiliconFlow
+                    | ChatCompletionSource::WorkersAi
+                    | ChatCompletionSource::Zai
+                    | ChatCompletionSource::MiniMax
+            )
+        {
             return Err(DomainError::InvalidData(format!(
                 "Tool-call delta streaming is unsupported for source `{}` endpoint `{endpoint_path}`",
                 source.key()

@@ -82,13 +82,20 @@ fn decodes_tool_call_to_canonical_identity() {
 }
 
 #[test]
-fn openai_compatible_replays_opaque_tool_call_extra_content() {
+fn openai_compatible_replays_opaque_continuation() {
     let registry = BuiltinAgentToolRegistry::all();
     let tools = model_tools(&registry);
     let response = json!({
         "choices": [{
             "message": {
                 "content": null,
+                "reasoning": "Need tools",
+                "reasoning_content": " exact reasoning ",
+                "reasoning_details": [{
+                    "type": "reasoning.encrypted",
+                    "id": "call_1",
+                    "data": "opaque-reasoning"
+                }],
                 "tool_calls": [
                     {
                         "id": "call_1",
@@ -119,7 +126,18 @@ fn openai_compatible_replays_opaque_tool_call_extra_content() {
     request.tools = tools;
 
     let dto = encode_chat_completion_request(&request, false).unwrap();
-    let calls = dto.payload["messages"][0]["tool_calls"].as_array().unwrap();
+    let message = &dto.payload["messages"][0];
+    assert_eq!(message["reasoning"], "Need tools");
+    assert_eq!(message["reasoning_content"], " exact reasoning ");
+    assert_eq!(
+        message["reasoning_details"],
+        json!([{
+            "type": "reasoning.encrypted",
+            "id": "call_1",
+            "data": "opaque-reasoning"
+        }])
+    );
+    let calls = message["tool_calls"].as_array().unwrap();
     assert_eq!(
         calls[0]["extra_content"],
         json!({ "google": { "thought_signature": "opaque-signature" } })

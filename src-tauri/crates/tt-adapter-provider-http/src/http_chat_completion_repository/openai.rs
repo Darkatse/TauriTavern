@@ -224,6 +224,9 @@ struct OpenAiChatAccumulator {
     usage: Option<Value>,
     content: String,
     refusal: String,
+    reasoning: String,
+    reasoning_content: String,
+    reasoning_details: Vec<Value>,
     finish_reason: Option<String>,
     tool_calls: Vec<OpenAiToolCallAccumulator>,
 }
@@ -302,6 +305,21 @@ impl OpenAiChatAccumulator {
         }
         if let Some(value) = take_optional_string(delta, "refusal")? {
             append_string_fragment(&mut self.refusal, value);
+        }
+        if let Some(value) = take_optional_string(delta, "reasoning")? {
+            append_string_fragment(&mut self.reasoning, value);
+        }
+        if let Some(value) = take_optional_string(delta, "reasoning_content")? {
+            append_string_fragment(&mut self.reasoning_content, value);
+        }
+        match delta.remove("reasoning_details") {
+            None | Some(Value::Null) => {}
+            Some(Value::Array(details)) => self.reasoning_details.extend(details),
+            Some(_) => {
+                return Err(invalid_openai_stream(
+                    "delta.reasoning_details must be an array",
+                ));
+            }
         }
 
         if let Some(tool_calls) = delta.get_mut("tool_calls") {
@@ -393,6 +411,11 @@ impl OpenAiChatAccumulator {
         let finish_reason = self
             .finish_reason
             .ok_or_else(|| invalid_openai_stream("ended without a finish reason"))?;
+        if finish_reason == "tool_calls" && self.tool_calls.is_empty() {
+            return Err(invalid_openai_stream(
+                "ended with tool_calls finish reason but no tool calls",
+            ));
+        }
 
         let mut message = Map::new();
         message.insert("role".to_string(), Value::String("assistant".to_string()));
@@ -406,6 +429,21 @@ impl OpenAiChatAccumulator {
         );
         if !self.refusal.is_empty() {
             message.insert("refusal".to_string(), Value::String(self.refusal));
+        }
+        if !self.reasoning.is_empty() {
+            message.insert("reasoning".to_string(), Value::String(self.reasoning));
+        }
+        if !self.reasoning_content.is_empty() {
+            message.insert(
+                "reasoning_content".to_string(),
+                Value::String(self.reasoning_content),
+            );
+        }
+        if !self.reasoning_details.is_empty() {
+            message.insert(
+                "reasoning_details".to_string(),
+                Value::Array(self.reasoning_details),
+            );
         }
         if !self.tool_calls.is_empty() {
             message.insert(
@@ -508,8 +546,8 @@ mod tests {
     #[test]
     fn openai_chat_stream_projects_tool_fragments_and_builds_agent_final() {
         let events = [
-            br#"{"id":"chat_1","object":"chat.completion.chunk","created":42,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","content":"I will ","tool_calls":[{"index":0,"id":"call_0","type":"function","function":{"arguments":"{\"path\":\"a.md\",\"content\":\"hel"}}]},"finish_reason":null}]}"#.as_slice(),
-            br#"{"id":"chat_1","created":42,"model":"gpt-test","error":null,"choices":[{"index":0,"delta":{"content":"write.","tool_calls":[{"index":0,"function":{"name":"workspace_write_file"}},{"index":1,"id":"call_1","type":"function","function":{"name":"workspace_apply_patch","arguments":"{\"path\":\"b.md\",\"old_string\":\"x\",\"new_string\":\"n"}}]},"finish_reason":null}]}"#.as_slice(),
+            br#"{"id":"chat_1","object":"chat.completion.chunk","created":42,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","content":"I will ","reasoning":"Plan ","reasoning_content":"Need ","reasoning_details":[{"type":"reasoning.encrypted","id":"call_0","data":"opaque"}],"tool_calls":[{"index":0,"id":"call_0","type":"function","function":{"arguments":"{\"path\":\"a.md\",\"content\":\"hel"}}]},"finish_reason":null}]}"#.as_slice(),
+            br#"{"id":"chat_1","created":42,"model":"gpt-test","error":null,"choices":[{"index":0,"delta":{"content":"write.","reasoning":"then act.","reasoning_content":"files.","tool_calls":[{"index":0,"function":{"name":"workspace_write_file"}},{"index":1,"id":"call_1","type":"function","function":{"name":"workspace_apply_patch","arguments":"{\"path\":\"b.md\",\"old_string\":\"x\",\"new_string\":\"n"}}]},"finish_reason":null}]}"#.as_slice(),
             br#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"lo\"}"}}]},"finish_reason":null}]}"#.as_slice(),
             br#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"ew\"}"}}]},"finish_reason":null}]}"#.as_slice(),
             br#"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#.as_slice(),
@@ -556,6 +594,15 @@ mod tests {
         assert_eq!(body["id"], "chat_1");
         assert_eq!(body["model"], "gpt-test");
         assert_eq!(body["choices"][0]["message"]["content"], "I will write.");
+        assert_eq!(body["choices"][0]["message"]["reasoning"], "Plan then act.");
+        assert_eq!(
+            body["choices"][0]["message"]["reasoning_content"],
+            "Need files."
+        );
+        assert_eq!(
+            body["choices"][0]["message"]["reasoning_details"],
+            json!([{"type":"reasoning.encrypted","id":"call_0","data":"opaque"}])
+        );
         assert_eq!(body["choices"][0]["finish_reason"], "tool_calls");
         assert_eq!(
             body["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"],
@@ -586,5 +633,14 @@ mod tests {
         let mut missing_finish = OpenAiChatAccumulator::default();
         missing_finish.apply_event(b"[DONE]", &mut |_| {}).unwrap();
         assert!(missing_finish.finish().is_err());
+
+        let mut missing_tool_calls = OpenAiChatAccumulator::default();
+        missing_tool_calls
+            .apply_event(
+                br#"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#,
+                &mut |_| {},
+            )
+            .unwrap();
+        assert!(missing_tool_calls.finish().is_err());
     }
 }
