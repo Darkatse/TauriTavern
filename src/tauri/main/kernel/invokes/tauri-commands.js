@@ -232,6 +232,7 @@ export {};
  *   | 'search_group_chats'
  *   | 'show_system_notification'
  *   | 'start_agent_run'
+ *   | 'subscribe_agent_run_live_projection'
  *   | 'prune_agent_chat_persistent_states'
  *   | 'start_chat_completion_stream'
  *   | 'start_export_data_archive'

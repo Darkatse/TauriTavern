@@ -2606,19 +2606,27 @@ function insertSVGIcon(mes, extra) {
  * @param {object} message Message object
  * @param {object} [options={}] Optional arguments
  * @param {boolean} [options.rerenderMessage=true] Whether to re-render the message content (inside <c>.mes_text</c>)
+ * @param {boolean} [options.transient=false] Whether to defer decorators and embedded runtimes until final content
  */
-export function updateMessageBlock(messageId, message, { rerenderMessage = true } = {}) {
+export function updateMessageBlock(messageId, message, { rerenderMessage = true, transient = false } = {}) {
     const messageElement = chatElement.find(`[mesid="${messageId}"]`);
     if (messageElement.length === 0) {
         return;
     }
     if (rerenderMessage) {
         const text = message?.extra?.display_text ?? message.mes;
-        replaceMesTextHtmlWithRuntimePolicy(
+        const replace = transient
+            ? replaceTransientMesTextHtmlWithRuntimePolicy
+            : replaceMesTextHtmlWithRuntimePolicy;
+        replace(
             /** @type {HTMLElement} */ (messageElement[0]),
             getToolMessageHTML(message, messageId)
                 ?? messageFormatting(text, message.name, message.is_system, message.is_user, messageId, {}, false),
         );
+    }
+
+    if (transient) {
+        return;
     }
 
     updateReasoningUI(messageElement);
@@ -6737,7 +6745,7 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
         promptSnapshot,
         frozenRunInputSnapshot: runFrozenRunInputSnapshot,
         generationIntent,
-        options: { stream: false, presentation: 'foreground' },
+        options: { presentation: 'foreground' },
     });
 }
 

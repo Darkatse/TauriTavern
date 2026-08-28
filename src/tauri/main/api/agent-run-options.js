@@ -6,8 +6,8 @@ export function normalizeAgentRunOptions(value, presentationOverride = undefined
     }
 
     const options = value || {};
-    if (options.stream === true) {
-        throw new Error('agent.stream_unsupported: Agent runtime only supports non-streaming model calls');
+    if (Object.prototype.hasOwnProperty.call(options, 'stream') && typeof options.stream !== 'boolean') {
+        throw new Error('agent.stream_invalid: stream must be a boolean');
     }
     if (Object.prototype.hasOwnProperty.call(options, 'autoCommit')) {
         throw new Error('agent.auto_commit_removed: Agent chat commits are driven by workspace.commit');
@@ -16,7 +16,6 @@ export function normalizeAgentRunOptions(value, presentationOverride = undefined
 
     return {
         ...options,
-        stream: false,
         ...(presentation ? { presentation } : {}),
     };
 }

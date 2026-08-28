@@ -161,6 +161,41 @@ type TauriTavernAgentRunHandle = {
     status: TauriTavernAgentRunStatus;
 };
 
+type TauriTavernAgentRunLiveToolCall =
+    | {
+        toolId: 'builtin:workspace.write_file';
+        invocationId: string;
+        invocationExitPolicy: TauriTavernAgentInvocationExitPolicy;
+        toolCallIndex: number;
+        path: string;
+        content: string;
+        contentWords: number;
+    }
+    | {
+        toolId: 'builtin:workspace.apply_patch';
+        invocationId: string;
+        invocationExitPolicy: TauriTavernAgentInvocationExitPolicy;
+        toolCallIndex: number;
+        path: string;
+        oldString: string;
+        oldStringWords: number;
+        newString: string;
+        newStringWords: number;
+    };
+
+type TauriTavernAgentRunLiveUpdate =
+    | { type: 'snapshot'; calls: TauriTavernAgentRunLiveToolCall[] }
+    | {
+        type: 'append';
+        invocationId: string;
+        toolCallIndex: number;
+        field: 'path' | 'content' | 'oldString' | 'newString';
+        text: string;
+        wordDelta: number;
+    }
+    | { type: 'replace'; call: TauriTavernAgentRunLiveToolCall }
+    | { type: 'remove'; invocationId: string; toolCallIndex: number };
+
 type TauriTavernAgentGuidanceResult = {
     runId: string;
     guidanceId: string;
@@ -367,6 +402,7 @@ type TauriTavernAgentProfileDefinition = {
     };
     run: {
         presentation: TauriTavernAgentRunPresentation;
+        stream: boolean;
         directRunnable: boolean;
         modelRetry: {
             maxRetries: number;
@@ -572,7 +608,7 @@ type TauriTavernAgentApi = {
         profileId?: string | null;
         generationIntent?: any;
         presentation?: TauriTavernAgentRunPresentation;
-        options?: { presentation?: TauriTavernAgentRunPresentation; stream?: false };
+        options?: { presentation?: TauriTavernAgentRunPresentation; stream?: boolean };
     }) => Promise<TauriTavernAgentRunHandle>;
     cancel: (runId: string) => Promise<TauriTavernAgentRunHandle>;
     submitGuidance: (input: {
@@ -606,6 +642,12 @@ type TauriTavernAgentApi = {
         handler: (event: TauriTavernAgentRunEvent) => void,
         options?: { afterSeq?: number; limit?: number; intervalMs?: number; onError?: (error: unknown) => void },
     ) => TauriTavernHostUnsubscribe;
+    subscribeLiveProjection: (
+        runId: string,
+        handler: (update: TauriTavernAgentRunLiveUpdate) => void,
+        options?: { onError?: (error: unknown) => void },
+    ) => TauriTavernHostUnsubscribe;
+    settleChatPresentation: (handle: TauriTavernAgentRunHandle) => Promise<void>;
     profiles: TauriTavernAgentProfilesApi;
     tools: TauriTavernAgentToolsApi;
     promptAssembly: TauriTavernAgentPromptAssemblyApi;

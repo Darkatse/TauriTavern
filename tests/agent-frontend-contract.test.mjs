@@ -333,6 +333,7 @@ test('Agent run controller tracks active runs until terminal events', async () =
                     stopped = true;
                 };
             },
+            async settleChatPresentation() {},
         },
     });
 
@@ -358,6 +359,42 @@ test('Agent run controller tracks active runs until terminal events', async () =
     assert.equal(stopped, true);
     assert.equal(controller.hasActiveAgentRun(), false);
     assert.equal(stateChanges.at(-1).lastEvent.type, 'run_completed');
+});
+
+test('Agent run controller waits for retained chat output to settle', async () => {
+    let listener = null;
+    let releasePresentation;
+    const presentation = new Promise(resolve => { releasePresentation = resolve; });
+    installWindow({
+        agent: {
+            async startRunWithPromptSnapshot() {
+                return { runId: 'run-presentation' };
+            },
+            subscribe(_runId, callback) {
+                listener = callback;
+                return () => {};
+            },
+            settleChatPresentation(handle) {
+                assert.equal(handle.runId, 'run-presentation');
+                return presentation;
+            },
+        },
+    });
+
+    const controller = await importFresh('src/scripts/tauritavern/agent/agent-run-controller.js');
+    let settled = false;
+    const run = controller.startAndWaitForAgentRun({ generationType: 'normal' })
+        .finally(() => { settled = true; });
+    await Promise.resolve();
+    listener({ type: 'run_completed', payload: {} });
+    await Promise.resolve();
+    assert.equal(settled, false);
+    assert.equal(controller.hasActiveAgentRun(), true);
+
+    releasePresentation();
+    await run;
+    assert.equal(settled, true);
+    assert.equal(controller.hasActiveAgentRun(), false);
 });
 
 
