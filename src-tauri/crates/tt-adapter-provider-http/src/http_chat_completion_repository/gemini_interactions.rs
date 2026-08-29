@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
@@ -11,9 +9,9 @@ use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionToolCallDelta,
 };
 
-use super::HttpChatCompletionRepository;
 use super::normalizers;
 use super::response_body::read_upstream_json_body;
+use super::{HttpChatCompletionRepository, current_unix_timestamp};
 use crate::endpoint_url::append_google_api_path;
 
 const GEMINI_API_VERSION: &str = "v1beta";
@@ -436,18 +434,12 @@ pub(super) async fn generate(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            provider_name,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        provider_name,
+        "Generation request failed",
+    )
+    .await?;
 
     let body = read_upstream_json_body(provider_name, "generate", response).await?;
 
@@ -476,7 +468,7 @@ pub(super) async fn generate_stream(
     let (dummy_sender, dummy_receiver) = mpsc::unbounded_channel::<String>();
     drop(dummy_receiver);
 
-    HttpChatCompletionRepository::stream_sse_response_internal(
+    HttpChatCompletionRepository::stream_sse_response_with_hook(
         provider_name,
         response,
         dummy_sender,
@@ -534,20 +526,8 @@ async fn send_stream_request(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            provider_name,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
-
-    Ok(response)
+    HttpChatCompletionRepository::send_checked(request, provider_name, "Generation request failed")
+        .await
 }
 
 fn apply_gemini_auth(
@@ -743,13 +723,6 @@ fn stream_error(event: &Map<String, Value>) -> DomainError {
 
 fn invalid_stream(message: impl Into<String>) -> DomainError {
     DomainError::InternalError(format!("Gemini Interactions stream {}", message.into()))
-}
-
-fn current_unix_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

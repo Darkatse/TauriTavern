@@ -1,11 +1,11 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde_json::{Map, Value, json};
 
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionNormalizationReport, ChatCompletionRepositoryGenerateResponse,
 };
+
+use super::current_unix_timestamp;
 
 pub(super) fn normalize_claude_response(
     response: Value,
@@ -825,13 +825,6 @@ pub(super) fn map_gemini_interactions_usage(raw_usage: Option<&Value>) -> Option
     }))
 }
 
-fn current_unix_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or_default()
-}
-
 fn build_openai_tool_call(
     id: &str,
     name: &str,
@@ -867,11 +860,10 @@ fn as_non_empty_str(value: Option<&Value>) -> Option<&str> {
 }
 
 fn to_openai_arguments(value: Value) -> String {
-    if value.is_string() {
-        return value.as_str().unwrap_or_default().to_string();
+    match value {
+        Value::String(value) => value,
+        value => value.to_string(),
     }
-
-    serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string())
 }
 
 fn extract_reasoning_texts(object: &Map<String, Value>) -> Vec<String> {

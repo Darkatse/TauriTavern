@@ -21,18 +21,9 @@ pub(super) async fn list_models(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Status request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            "Cohere",
-            response,
-            "Failed to list models",
-        )
-        .await);
-    }
+    let response =
+        HttpChatCompletionRepository::send_checked(request, "Cohere", "Failed to list models")
+            .await?;
 
     let body = read_upstream_json_body("Cohere", "list_models", response).await?;
 
@@ -59,18 +50,9 @@ pub(super) async fn generate(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            "Cohere",
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response =
+        HttpChatCompletionRepository::send_checked(request, "Cohere", "Generation request failed")
+            .await?;
 
     read_upstream_json_body("Cohere", "generate", response).await
 }
@@ -97,18 +79,9 @@ pub(super) async fn generate_stream(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            "Cohere",
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response =
+        HttpChatCompletionRepository::send_checked(request, "Cohere", "Generation request failed")
+            .await?;
 
     HttpChatCompletionRepository::stream_sse_response("Cohere", response, sender, cancel).await
 }

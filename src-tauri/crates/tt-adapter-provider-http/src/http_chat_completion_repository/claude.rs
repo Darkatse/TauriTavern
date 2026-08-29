@@ -38,18 +38,9 @@ pub(super) async fn list_models(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Status request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            "Claude",
-            response,
-            "Failed to list models",
-        )
-        .await);
-    }
+    let response =
+        HttpChatCompletionRepository::send_checked(request, "Claude", "Failed to list models")
+            .await?;
 
     read_upstream_json_body("Claude", "list_models", response).await
 }
@@ -81,18 +72,12 @@ pub(super) async fn generate(
     let request = apply_configured_anthropic_beta_headers(request, config, payload);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            provider_name,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        provider_name,
+        "Generation request failed",
+    )
+    .await?;
 
     let body = read_upstream_json_body(provider_name, "generate", response).await?;
 
@@ -122,39 +107,12 @@ pub(super) async fn generate_stream(
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        let mut logged = false;
-
-        HttpChatCompletionRepository::stream_sse_response_internal(
+        HttpChatCompletionRepository::stream_sse_response_with_cache_logging(
             provider_name,
+            model,
             response,
             sender,
             cancel,
-            move |payload| {
-                if logged {
-                    return Ok(());
-                }
-
-                if !payload
-                    .windows(b"cache_read_input_tokens".len())
-                    .any(|window| window == b"cache_read_input_tokens")
-                    && !payload
-                        .windows(b"cache_creation_input_tokens".len())
-                        .any(|window| window == b"cache_creation_input_tokens")
-                {
-                    return Ok(());
-                }
-
-                let Ok(value) = serde_json::from_slice::<Value>(payload) else {
-                    return Ok(());
-                };
-
-                logged = super::log_prompt_cache_performance_if_present(
-                    provider_name,
-                    Some(model.as_str()),
-                    &value,
-                );
-                Ok(())
-            },
         )
         .await
     } else {
@@ -226,19 +184,8 @@ async fn send_stream_request(
     let request = apply_configured_anthropic_beta_headers(request, config, payload);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            provider_name,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
-
-    Ok(response)
+    HttpChatCompletionRepository::send_checked(request, provider_name, "Generation request failed")
+        .await
 }
 
 #[derive(Deserialize)]

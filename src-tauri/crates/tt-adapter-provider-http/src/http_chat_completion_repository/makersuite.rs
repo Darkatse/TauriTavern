@@ -28,18 +28,12 @@ pub(super) async fn list_models(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Status request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            "Google Gemini",
-            response,
-            "Failed to list models",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        "Google Gemini",
+        "Failed to list models",
+    )
+    .await?;
 
     let body = read_upstream_json_body("Google Gemini", "list_models", response).await?;
 
@@ -111,18 +105,12 @@ pub(super) async fn generate(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            "Google Gemini",
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        "Google Gemini",
+        "Generation request failed",
+    )
+    .await?;
 
     let body = read_upstream_json_body("Google Gemini", "generate", response).await?;
 
@@ -194,20 +182,12 @@ async fn send_stream_request(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            "Google Gemini",
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
-
-    Ok(response)
+    HttpChatCompletionRepository::send_checked(
+        request,
+        "Google Gemini",
+        "Generation request failed",
+    )
+    .await
 }
 
 fn normalize_gemini_model(model: &str) -> String {

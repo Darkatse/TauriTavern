@@ -64,18 +64,12 @@ async fn generate_gemini(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        PROVIDER_NAME,
+        "Generation request failed",
+    )
+    .await?;
 
     let body = read_upstream_json_body(PROVIDER_NAME, "generate", response).await?;
 
@@ -108,18 +102,12 @@ async fn generate_claude(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            CLAUDE_PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        CLAUDE_PROVIDER_NAME,
+        "Generation request failed",
+    )
+    .await?;
 
     let body = read_upstream_json_body(CLAUDE_PROVIDER_NAME, "generate", response).await?;
 
@@ -191,20 +179,8 @@ async fn send_gemini_stream_request(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
-
-    Ok(response)
+    HttpChatCompletionRepository::send_checked(request, PROVIDER_NAME, "Generation request failed")
+        .await
 }
 
 async fn generate_claude_stream(
@@ -219,38 +195,12 @@ async fn generate_claude_stream(
         send_claude_stream_request(repository, config, endpoint_path, payload).await?;
 
     if super::payload_contains_cache_control(payload) {
-        let mut logged = false;
-        HttpChatCompletionRepository::stream_sse_response_internal(
+        HttpChatCompletionRepository::stream_sse_response_with_cache_logging(
             CLAUDE_PROVIDER_NAME,
+            model,
             response,
             sender,
             cancel,
-            move |payload| {
-                if logged {
-                    return Ok(());
-                }
-
-                if !payload
-                    .windows(b"cache_read_input_tokens".len())
-                    .any(|window| window == b"cache_read_input_tokens")
-                    && !payload
-                        .windows(b"cache_creation_input_tokens".len())
-                        .any(|window| window == b"cache_creation_input_tokens")
-                {
-                    return Ok(());
-                }
-
-                let Ok(value) = serde_json::from_slice::<Value>(payload) else {
-                    return Ok(());
-                };
-
-                logged = super::log_prompt_cache_performance_if_present(
-                    CLAUDE_PROVIDER_NAME,
-                    Some(model.as_str()),
-                    &value,
-                );
-                Ok(())
-            },
         )
         .await
     } else {
@@ -324,18 +274,12 @@ async fn send_claude_stream_request(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            CLAUDE_PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        CLAUDE_PROVIDER_NAME,
+        "Generation request failed",
+    )
+    .await?;
 
     Ok((model, response))
 }

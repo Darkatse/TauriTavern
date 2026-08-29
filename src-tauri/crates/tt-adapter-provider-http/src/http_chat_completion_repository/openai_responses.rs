@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures_util::{SinkExt, StreamExt};
 use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderName, HeaderValue};
@@ -19,9 +18,9 @@ use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionToolCallDelta, OPENAI_RESPONSES_WEBSOCKET_TRANSPORT,
 };
 
-use super::HttpChatCompletionRepository;
 use super::normalizers;
 use super::response_body::{log_upstream_body_parse_failure, read_upstream_json_body};
+use super::{HttpChatCompletionRepository, current_unix_timestamp};
 
 type ResponsesWsStream = tokio_tungstenite::WebSocketStream<reqwest::Upgraded>;
 
@@ -297,15 +296,11 @@ impl ResponsesStreamState {
         if !self.sent_role {
             self.sent_role = true;
             let role_chunk = self.build_chunk(json!({ "role": "assistant" }), None);
-            if let Ok(payload) = serde_json::to_string(&role_chunk) {
-                let _ = sender.send(payload);
-            }
+            let _ = sender.send(role_chunk.to_string());
         }
 
         let chunk = self.build_chunk(delta, finish_reason);
-        if let Ok(payload) = serde_json::to_string(&chunk) {
-            let _ = sender.send(payload);
-        }
+        let _ = sender.send(chunk.to_string());
     }
 
     fn build_chunk(&self, delta: Value, finish_reason: Option<&str>) -> Value {
@@ -371,18 +366,12 @@ async fn generate_http(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            provider_name,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        provider_name,
+        "Generation request failed",
+    )
+    .await?;
 
     let body = read_upstream_json_body(provider_name, "generate", response).await?;
     validate_terminal_response(&body)?;
@@ -480,7 +469,7 @@ async fn generate_stream_http(
     let (dummy_sender, dummy_receiver) = mpsc::unbounded_channel::<String>();
     drop(dummy_receiver);
 
-    HttpChatCompletionRepository::stream_sse_response_internal(
+    HttpChatCompletionRepository::stream_sse_response_with_hook(
         provider_name,
         response,
         dummy_sender,
@@ -518,18 +507,8 @@ async fn send_stream_request(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            provider_name,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
-    Ok(response)
+    HttpChatCompletionRepository::send_checked(request, provider_name, "Generation request failed")
+        .await
 }
 
 async fn generate_persistent_ws(
@@ -952,13 +931,6 @@ fn parse_sse_event(payload: &[u8], operation: &str) -> Result<Value, DomainError
             "model.upstream_invalid_response: OpenAI Responses stream event is not valid JSON ({operation}): {error}"
         ))
     })
-}
-
-fn current_unix_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

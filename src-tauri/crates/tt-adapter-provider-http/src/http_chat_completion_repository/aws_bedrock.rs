@@ -116,21 +116,10 @@ async fn get_control_plane_json(
     let request = apply_bedrock_auth(request, config);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error(
-            &format!("{BEDROCK_PROVIDER_NAME} {op} request failed"),
-            error,
-        )
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            BEDROCK_PROVIDER_NAME,
-            response,
-            &format!("Failed to list Bedrock {op}"),
-        )
-        .await);
-    }
+    let error_context = format!("Failed to list Bedrock {op}");
+    let response =
+        HttpChatCompletionRepository::send_checked(request, BEDROCK_PROVIDER_NAME, &error_context)
+            .await?;
 
     read_upstream_json_body(BEDROCK_PROVIDER_NAME, op, response).await
 }
@@ -259,18 +248,12 @@ pub(super) async fn generate(
     let request = apply_bedrock_auth(request, config);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            BEDROCK_PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        BEDROCK_PROVIDER_NAME,
+        "Generation request failed",
+    )
+    .await?;
 
     let body = read_upstream_json_body(BEDROCK_PROVIDER_NAME, "generate", response).await?;
     normalize_provider_response(body, response_mode)
@@ -384,20 +367,12 @@ async fn send_eventstream_request(
     let request = apply_bedrock_auth(request, config);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            BEDROCK_PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
-
-    Ok(response)
+    HttpChatCompletionRepository::send_checked(
+        request,
+        BEDROCK_PROVIDER_NAME,
+        "Generation request failed",
+    )
+    .await
 }
 
 #[derive(Debug, Clone)]
