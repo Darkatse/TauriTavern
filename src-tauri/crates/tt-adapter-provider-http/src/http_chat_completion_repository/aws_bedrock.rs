@@ -23,9 +23,11 @@ use tt_domain::models::bedrock_model::{BedrockModelFamily, BedrockModelSpec, ext
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
+    ChatCompletionToolCallDelta,
 };
 
 use super::HttpChatCompletionRepository;
+use super::claude;
 use super::normalizers;
 use super::response_body::read_upstream_json_body;
 
@@ -320,11 +322,57 @@ pub(super) async fn generate_stream(
     sender: ChatCompletionStreamSender,
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
-    let stream_endpoint = to_stream_endpoint(endpoint_path)?;
     let stream_mode = stream_mode_from_endpoint(
         endpoint_path,
         config.aws_bedrock_custom_stream_path.as_deref(),
     )?;
+    let response = send_eventstream_request(repository, config, endpoint_path, payload).await?;
+
+    forward_eventstream_response(response, sender, cancel, stream_mode).await
+}
+
+pub(super) async fn generate_with_tool_call_deltas(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+    on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+    let stream_mode = stream_mode_from_endpoint(
+        endpoint_path,
+        config.aws_bedrock_custom_stream_path.as_deref(),
+    )?;
+    if !matches!(
+        &stream_mode,
+        StreamMode::Family(BedrockModelFamily::AnthropicClaude)
+    ) {
+        return Err(DomainError::InvalidData(
+            "AWS Bedrock tool-call delta streaming requires an Anthropic Claude model".to_string(),
+        ));
+    }
+
+    let response = send_eventstream_request(repository, config, endpoint_path, payload).await?;
+    let mut accumulator = claude::ClaudeMessageAccumulator::default();
+    let mut completed = None;
+    consume_eventstream_response(response, &stream_mode, |event| {
+        if let Some(message) = accumulator.apply_event(event.as_bytes(), on_tool_call_delta)? {
+            completed = Some(message);
+        }
+        Ok(())
+    })
+    .await?;
+
+    let body = claude::require_message_stop(completed)?;
+    Ok(normalizers::normalize_claude_response(body))
+}
+
+async fn send_eventstream_request(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+) -> Result<reqwest::Response, DomainError> {
+    let stream_endpoint = to_stream_endpoint(endpoint_path)?;
     let url = HttpChatCompletionRepository::build_url(&config.base_url, &stream_endpoint)?;
 
     let client = repository.stream_client(config)?;
@@ -349,7 +397,7 @@ pub(super) async fn generate_stream(
         .await);
     }
 
-    forward_eventstream_response(response, sender, cancel, stream_mode).await
+    Ok(response)
 }
 
 #[derive(Debug, Clone)]
@@ -450,73 +498,73 @@ fn to_stream_endpoint(endpoint_path: &str) -> Result<String, DomainError> {
 }
 
 async fn forward_eventstream_response(
-    mut response: reqwest::Response,
+    response: reqwest::Response,
     sender: ChatCompletionStreamSender,
     mut cancel: ChatCompletionCancelReceiver,
     mode: StreamMode,
 ) -> Result<(), DomainError> {
+    let consume = consume_eventstream_response(response, &mode, |event| {
+        let _ = sender.send(event);
+        Ok(())
+    });
+    tokio::pin!(consume);
+
+    tokio::select! {
+        result = &mut consume => result,
+        Ok(_) = cancel.wait_for(|cancelled| *cancelled) => Ok(()),
+    }
+}
+
+async fn consume_eventstream_response<F>(
+    mut response: reqwest::Response,
+    mode: &StreamMode,
+    mut on_event: F,
+) -> Result<(), DomainError>
+where
+    F: FnMut(String) -> Result<(), DomainError>,
+{
     let mut buffer = Vec::<u8>::new();
     let endpoint = response.url().clone();
 
-    loop {
-        if *cancel.borrow() {
-            return Ok(());
-        }
-
-        let chunk = tokio::select! {
-            _ = cancel.changed() => {
-                if *cancel.borrow() {
-                    return Ok(());
-                }
-                continue;
-            }
-            chunk = response.chunk() => {
-                chunk.map_err(|error| {
-                    let failure =
-                        crate::http_error::reqwest_body_failure(&error, Some(&endpoint));
-                    tracing::warn!(
-                        provider = BEDROCK_PROVIDER_NAME,
-                        operation = "eventstream",
-                        code = %failure.code,
-                        category = %failure.category,
-                        endpoint = failure.endpoint.as_deref().unwrap_or(""),
-                        timeout = error.is_timeout(),
-                        connect = error.is_connect(),
-                        body = error.is_body(),
-                        request = error.is_request(),
-                        "upstream event stream read failed",
-                    );
-                    DomainError::upstream_failure(failure)
-                })?
-            }
-        };
-
-        let Some(chunk) = chunk else {
-            break;
-        };
-
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        let failure = crate::http_error::reqwest_body_failure(&error, Some(&endpoint));
+        tracing::warn!(
+            provider = BEDROCK_PROVIDER_NAME,
+            operation = "eventstream",
+            code = %failure.code,
+            category = %failure.category,
+            endpoint = failure.endpoint.as_deref().unwrap_or(""),
+            timeout = error.is_timeout(),
+            connect = error.is_connect(),
+            body = error.is_body(),
+            request = error.is_request(),
+            "upstream event stream read failed",
+        );
+        DomainError::upstream_failure(failure)
+    })? {
         buffer.extend_from_slice(&chunk);
-        drain_eventstream_messages(&mut buffer, &sender, &mode)?;
+        drain_eventstream_messages(&mut buffer, mode, &mut on_event)?;
     }
 
     Ok(())
 }
 
-fn drain_eventstream_messages(
+fn drain_eventstream_messages<F>(
     buffer: &mut Vec<u8>,
-    sender: &ChatCompletionStreamSender,
     mode: &StreamMode,
-) -> Result<(), DomainError> {
+    on_event: &mut F,
+) -> Result<(), DomainError>
+where
+    F: FnMut(String) -> Result<(), DomainError>,
+{
     loop {
         match parse_next_message(buffer)? {
             ParseStep::Need => return Ok(()),
             ParseStep::Consumed { consumed, payload } => {
                 if !payload.is_empty()
                     && let Some(forwarded) = decode_eventstream_payload(&payload, mode)?
-                    && sender.send(forwarded).is_err()
                 {
-                    buffer.drain(..consumed);
-                    return Ok(());
+                    on_event(forwarded)?;
                 }
                 buffer.drain(..consumed);
             }
@@ -633,7 +681,6 @@ mod tests {
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
     use serde_json::json;
-    use tokio::sync::mpsc::unbounded_channel;
 
     use tt_domain::models::bedrock_model::BedrockModelFamily;
 
@@ -712,18 +759,19 @@ mod tests {
         buffer.extend_from_slice(&chunk_one);
         buffer.extend_from_slice(&chunk_two);
 
-        let (sender, mut receiver) = unbounded_channel::<String>();
+        let mut forwarded = Vec::new();
         drain_eventstream_messages(
             &mut buffer,
-            &sender,
             &StreamMode::Family(BedrockModelFamily::AnthropicClaude),
+            &mut |chunk| {
+                forwarded.push(chunk);
+                Ok(())
+            },
         )
         .unwrap();
         assert!(buffer.is_empty());
 
-        assert_eq!(receiver.try_recv().ok(), Some("first".to_string()));
-        assert_eq!(receiver.try_recv().ok(), Some("second".to_string()));
-        assert!(receiver.try_recv().is_err());
+        assert_eq!(forwarded, ["first", "second"]);
     }
 
     #[test]
@@ -731,15 +779,18 @@ mod tests {
         let chunk = synthesize_frame(b"hello");
         let mut buffer = chunk[..chunk.len() - 1].to_vec();
 
-        let (sender, mut receiver) = unbounded_channel::<String>();
+        let mut forwarded = Vec::new();
         drain_eventstream_messages(
             &mut buffer,
-            &sender,
             &StreamMode::Family(BedrockModelFamily::AnthropicClaude),
+            &mut |chunk| {
+                forwarded.push(chunk);
+                Ok(())
+            },
         )
         .unwrap();
         assert_eq!(buffer.len(), chunk.len() - 1, "buffer should be retained");
-        assert!(receiver.try_recv().is_err());
+        assert!(forwarded.is_empty());
     }
 
     #[test]

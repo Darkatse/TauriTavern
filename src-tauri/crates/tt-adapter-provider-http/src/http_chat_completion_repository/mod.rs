@@ -323,10 +323,6 @@ impl HttpChatCompletionRepository {
     where
         F: FnMut(&[u8]) -> Result<(), DomainError>,
     {
-        if *cancel.borrow() {
-            return Ok(());
-        }
-
         let consume = Self::consume_sse_response(provider_name, response, |payload| {
             hook(payload)?;
             let payload = std::str::from_utf8(payload).map_err(|error| {
@@ -337,18 +333,9 @@ impl HttpChatCompletionRepository {
         });
         tokio::pin!(consume);
 
-        loop {
-            tokio::select! {
-                result = &mut consume => return result,
-                changed = cancel.changed() => {
-                    if changed.is_err() {
-                        return consume.await;
-                    }
-                    if *cancel.borrow() {
-                        return Ok(());
-                    }
-                }
-            }
+        tokio::select! {
+            result = &mut consume => result,
+            Ok(_) = cancel.wait_for(|cancelled| *cancelled) => Ok(()),
         }
     }
 
@@ -779,50 +766,89 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         payload: &Value,
         on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
     ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
-        if source == ChatCompletionSource::Custom && endpoint_path == "/responses" {
-            return openai_responses::generate_with_tool_call_deltas(
-                self,
-                config,
-                endpoint_path,
-                payload,
-                "Custom OpenAI Responses",
-                on_tool_call_delta,
-            )
-            .await;
-        }
-
-        if endpoint_path != "/chat/completions"
-            || !matches!(
-                source,
-                ChatCompletionSource::OpenAi
-                    | ChatCompletionSource::OpenRouter
-                    | ChatCompletionSource::Custom
-                    | ChatCompletionSource::DeepSeek
-                    | ChatCompletionSource::Groq
-                    | ChatCompletionSource::Moonshot
-                    | ChatCompletionSource::NanoGpt
-                    | ChatCompletionSource::Chutes
-                    | ChatCompletionSource::SiliconFlow
-                    | ChatCompletionSource::WorkersAi
-                    | ChatCompletionSource::Zai
-                    | ChatCompletionSource::MiniMax
-            )
-        {
-            return Err(DomainError::InvalidData(format!(
+        match source {
+            ChatCompletionSource::Custom if endpoint_path == "/responses" => {
+                openai_responses::generate_with_tool_call_deltas(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "Custom OpenAI Responses",
+                    on_tool_call_delta,
+                )
+                .await
+            }
+            ChatCompletionSource::Custom if endpoint_path == "/messages" => {
+                claude::generate_with_tool_call_deltas(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "Custom Claude Messages",
+                    on_tool_call_delta,
+                )
+                .await
+            }
+            ChatCompletionSource::Claude => {
+                claude::generate_with_tool_call_deltas(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    source.display_name(),
+                    on_tool_call_delta,
+                )
+                .await
+            }
+            ChatCompletionSource::VertexAi => {
+                vertexai::generate_with_tool_call_deltas(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    on_tool_call_delta,
+                )
+                .await
+            }
+            ChatCompletionSource::AwsBedrock => {
+                aws_bedrock::generate_with_tool_call_deltas(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    on_tool_call_delta,
+                )
+                .await
+            }
+            ChatCompletionSource::OpenAi
+            | ChatCompletionSource::OpenRouter
+            | ChatCompletionSource::Custom
+            | ChatCompletionSource::DeepSeek
+            | ChatCompletionSource::Groq
+            | ChatCompletionSource::Moonshot
+            | ChatCompletionSource::NanoGpt
+            | ChatCompletionSource::Chutes
+            | ChatCompletionSource::SiliconFlow
+            | ChatCompletionSource::WorkersAi
+            | ChatCompletionSource::Zai
+            | ChatCompletionSource::MiniMax
+                if endpoint_path == "/chat/completions" =>
+            {
+                openai::generate_with_tool_call_deltas(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    source.display_name(),
+                    on_tool_call_delta,
+                )
+                .await
+            }
+            _ => Err(DomainError::InvalidData(format!(
                 "Tool-call delta streaming is unsupported for source `{}` endpoint `{endpoint_path}`",
                 source.key()
-            )));
+            ))),
         }
-
-        openai::generate_with_tool_call_deltas(
-            self,
-            config,
-            endpoint_path,
-            payload,
-            source.display_name(),
-            on_tool_call_delta,
-        )
-        .await
     }
 
     async fn close_provider_session(&self, session_id: &str) {

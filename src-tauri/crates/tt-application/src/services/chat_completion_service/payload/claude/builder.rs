@@ -140,7 +140,7 @@ fn build_claude_payload_inner(
 
     let mut claude_tools = payload
         .get("tools")
-        .map(map_openai_tools_to_claude)
+        .map(|tools| map_openai_tools_to_claude(tools, stream))
         .unwrap_or_default();
     if claude_web_search_enabled(payload) {
         claude_tools.insert(

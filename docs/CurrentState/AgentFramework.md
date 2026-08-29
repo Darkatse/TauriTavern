@@ -216,6 +216,7 @@ AgentModelContentPart {
 - Tool schema 在 gateway 边界按 provider format 做深拷贝 sanitizer；canonical schema 本身不被污染。
 - Tool choice 在 gateway 边界从 domain enum 投影到 OpenAI-compatible 中间形态，再由现有 provider builder 精确转换；未知或不支持的组合不得回退 Auto/省略。
 - Claude / Gemini / OpenAI Responses / Gemini Interactions 的 native blocks 会进入 normalized `message.native`，再进入 Agent `Native` part。
+- 工具参数 live projection 当前覆盖 OpenAI-compatible、OpenAI Responses 与 direct/custom/Vertex/Bedrock Claude Messages。
 
 当前 `provider_state` 契约：
 
