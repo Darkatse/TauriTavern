@@ -253,7 +253,7 @@ Agent run event stream
 约束：
 
 - callback presence 决定请求的 `stream` 值；没有 callback 时保持 buffered path。
-- observed route 支持 OpenAI-compatible `/chat/completions`、Custom OpenAI Responses，以及 direct/custom/Vertex/Bedrock Claude Messages；其它 route 明确失败。
+- observed route 支持 OpenAI-compatible `/chat/completions`、Custom OpenAI Responses、Claude Messages、Gemini generateContent 与 Gemini Interactions；其它 route 明确失败。
 - delta 中的 model alias 只按当前 request 广告的 exact alias 映射。unknown alias 不产生 live projection，最终 decoder仍明确失败。
 - live scanner只提取已知工具的顶层可展示字符串，不构造 `ToolInvocation`、不写 Journal、不调用 Gate或 Workspace。
 - retry/cancel清理当前 attempt generation；canonical final成功后只标记参数完整，`tool_call_requested` durable append成功后才移除 live entry。

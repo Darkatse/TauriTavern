@@ -5,9 +5,11 @@ use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
+    ChatCompletionToolCallDelta,
 };
 
 use super::HttpChatCompletionRepository;
+use super::gemini;
 use super::normalizers;
 use super::response_body::read_upstream_json_body;
 use crate::endpoint_url::append_google_api_path;
@@ -135,6 +137,33 @@ pub(super) async fn generate_stream(
     sender: ChatCompletionStreamSender,
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
+    let response = send_stream_request(repository, config, endpoint_path, payload).await?;
+
+    HttpChatCompletionRepository::stream_sse_response("Google Gemini", response, sender, cancel)
+        .await
+}
+
+pub(super) async fn generate_with_tool_call_deltas(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+    on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+    let response = send_stream_request(repository, config, endpoint_path, payload).await?;
+    let body =
+        gemini::consume_generate_content_stream("Google Gemini", response, on_tool_call_delta)
+            .await?;
+
+    Ok(normalizers::normalize_gemini_response(body))
+}
+
+async fn send_stream_request(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+) -> Result<reqwest::Response, DomainError> {
     let payload_object = payload.as_object().ok_or_else(|| {
         DomainError::InvalidData("Gemini payload must be a JSON object".to_string())
     })?;
@@ -178,8 +207,7 @@ pub(super) async fn generate_stream(
         .await);
     }
 
-    HttpChatCompletionRepository::stream_sse_response("Google Gemini", response, sender, cancel)
-        .await
+    Ok(response)
 }
 
 fn normalize_gemini_model(model: &str) -> String {

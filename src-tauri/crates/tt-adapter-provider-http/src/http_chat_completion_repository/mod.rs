@@ -18,6 +18,7 @@ use tt_ports::repositories::chat_completion_repository::{
 mod aws_bedrock;
 mod claude;
 mod cohere;
+mod gemini;
 mod gemini_interactions;
 mod makersuite;
 mod normalizers;
@@ -778,6 +779,17 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 )
                 .await
             }
+            ChatCompletionSource::Custom if endpoint_path == "/interactions" => {
+                gemini_interactions::generate_with_tool_call_deltas(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "Custom Gemini Interactions",
+                    on_tool_call_delta,
+                )
+                .await
+            }
             ChatCompletionSource::Custom if endpoint_path == "/messages" => {
                 claude::generate_with_tool_call_deltas(
                     self,
@@ -796,6 +808,16 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                     endpoint_path,
                     payload,
                     source.display_name(),
+                    on_tool_call_delta,
+                )
+                .await
+            }
+            ChatCompletionSource::Makersuite => {
+                makersuite::generate_with_tool_call_deltas(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
                     on_tool_call_delta,
                 )
                 .await

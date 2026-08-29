@@ -10,6 +10,7 @@ use tt_ports::repositories::chat_completion_repository::{
 
 use super::HttpChatCompletionRepository;
 use super::claude;
+use super::gemini;
 use super::normalizers;
 use super::response_body::read_upstream_json_body;
 use super::vertexai_auth;
@@ -157,6 +158,17 @@ async fn generate_gemini_stream(
     sender: ChatCompletionStreamSender,
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
+    let response = send_gemini_stream_request(repository, config, endpoint_path, payload).await?;
+
+    HttpChatCompletionRepository::stream_sse_response(PROVIDER_NAME, response, sender, cancel).await
+}
+
+async fn send_gemini_stream_request(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+) -> Result<reqwest::Response, DomainError> {
     let (model, body) = extract_model_and_body(payload)?;
 
     let method = resolve_generation_method(endpoint_path, true);
@@ -192,7 +204,7 @@ async fn generate_gemini_stream(
         .await);
     }
 
-    HttpChatCompletionRepository::stream_sse_response(PROVIDER_NAME, response, sender, cancel).await
+    Ok(response)
 }
 
 async fn generate_claude_stream(
@@ -259,6 +271,15 @@ pub(super) async fn generate_with_tool_call_deltas(
     payload: &Value,
     on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+    if !is_anthropic_raw_predict_endpoint(endpoint_path) {
+        let response =
+            send_gemini_stream_request(repository, config, endpoint_path, payload).await?;
+        let body =
+            gemini::consume_generate_content_stream(PROVIDER_NAME, response, on_tool_call_delta)
+                .await?;
+        return Ok(normalizers::normalize_gemini_response(body));
+    }
+
     let (model, response) =
         send_claude_stream_request(repository, config, endpoint_path, payload).await?;
     let body =
