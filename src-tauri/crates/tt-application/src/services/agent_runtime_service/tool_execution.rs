@@ -65,7 +65,6 @@ impl AgentRuntimeService {
                 "snapshotId": snapshot_id,
                 "name": tool_name,
                 "argumentsRef": arguments_ref.as_str(),
-                "providerMetadata": &tool_invocation.provider_metadata,
             }),
         )
         .await?;

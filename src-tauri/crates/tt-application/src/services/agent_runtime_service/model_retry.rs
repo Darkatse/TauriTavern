@@ -51,12 +51,12 @@ impl AgentRuntimeService {
                 Some(projector) => {
                     let mut observe = |delta| projector.observe(delta);
                     self.model_gateway
-                        .generate_with_cancel(request.clone(), Some(&mut observe), cancel.clone())
+                        .generate_with_cancel(request, Some(&mut observe), cancel.clone())
                         .await
                 }
                 None => {
                     self.model_gateway
-                        .generate_with_cancel(request.clone(), None, cancel.clone())
+                        .generate_with_cancel(request, None, cancel.clone())
                         .await
                 }
             };

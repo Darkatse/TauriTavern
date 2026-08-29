@@ -222,12 +222,34 @@ async fn repository_round_trips_run_workspace_and_event() {
         .await
         .expect("append event");
     assert_eq!(event.seq, 1);
+    let event = repository
+        .append_event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "artifact_updated",
+            Value::Null,
+        )
+        .await
+        .expect("append second event");
+    assert_eq!(event.seq, 2);
+
+    let repository = FileAgentRepository::new(root.clone());
+    let event = repository
+        .append_event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "artifact_finalized",
+            Value::Null,
+        )
+        .await
+        .expect("append event after reopening repository");
+    assert_eq!(event.seq, 3);
 
     let events = repository
         .read_events(
             &run.id,
             AgentRunEventReadQuery {
-                after_seq: Some(0),
+                after_seq: Some(1),
                 before_seq: None,
                 limit: 10,
                 invocation_id: None,
@@ -235,13 +257,92 @@ async fn repository_round_trips_run_workspace_and_event() {
         )
         .await
         .expect("read events");
-    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        vec![2, 3]
+    );
+
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: None,
+                before_seq: Some(3),
+                limit: 1,
+                invocation_id: None,
+            },
+        )
+        .await
+        .expect("read previous event page");
+    assert_eq!(
+        events.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        vec![2]
+    );
 
     let file = repository
         .read_text(&run.id, &path)
         .await
         .expect("read workspace file");
     assert_eq!(file.text, "hello");
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn repository_rejects_non_contiguous_event_sequences() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_invalid_event_seq");
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .append_event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "run_created",
+            Value::Null,
+        )
+        .await
+        .expect("append event");
+
+    let events_path = root
+        .join("chats")
+        .join(&run.workspace_id)
+        .join("runs")
+        .join(&run.id)
+        .join("events.jsonl");
+    let mut event: Value = serde_json::from_str(
+        fs::read_to_string(&events_path)
+            .await
+            .expect("read journal")
+            .trim(),
+    )
+    .expect("parse journal event");
+    event["seq"] = serde_json::json!(2);
+    fs::write(
+        &events_path,
+        format!(
+            "{}\n",
+            serde_json::to_string(&event).expect("serialize event")
+        ),
+    )
+    .await
+    .expect("write invalid journal");
+
+    let error = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: None,
+                before_seq: None,
+                limit: 10,
+                invocation_id: None,
+            },
+        )
+        .await
+        .expect_err("non-contiguous sequence must fail");
+    assert!(
+        matches!(error, DomainError::InvalidData(message) if message.contains("expected 1, found 2"))
+    );
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -617,6 +718,20 @@ async fn delete_run_removes_workspace_index_and_summary_projection() {
         !root
             .join("index/run-summaries/run_prune_delete.json")
             .exists()
+    );
+    assert!(
+        repository
+            .read_events(
+                &run.id,
+                AgentRunEventReadQuery {
+                    after_seq: Some(1),
+                    before_seq: None,
+                    limit: 10,
+                    invocation_id: None,
+                },
+            )
+            .await
+            .is_err()
     );
 
     fs::remove_dir_all(root).await.expect("cleanup");

@@ -159,13 +159,22 @@ impl AgentRuntimeService {
                     .to_string(),
             )
         })?;
+        let requested_event = json!({
+            "assemblyId": assembly_id.as_str(),
+            "invocationId": invocation_id,
+            "profileId": profile.id.as_str(),
+            "scope": &scope,
+            "requestKind": request.kind.as_str(),
+            "requestSchemaVersion": request.schema_version,
+            "requestFingerprint": &request.fingerprint,
+        });
 
         let (sender, receiver) = oneshot::channel();
         let previous = self.active_prompt_assemblies.write().await.insert(
             assembly_id.clone(),
             PendingHostPromptAssembly {
                 run_id: run_id.to_string(),
-                request: request.clone(),
+                request,
                 sender,
             },
         );
@@ -180,15 +189,7 @@ impl AgentRuntimeService {
                 run_id,
                 AgentRunEventLevel::Info,
                 "prompt_assembly_requested",
-                json!({
-                    "assemblyId": assembly_id.as_str(),
-                    "invocationId": invocation_id,
-                    "profileId": profile.id.as_str(),
-                    "scope": &scope,
-                    "requestKind": request.kind.as_str(),
-                    "requestSchemaVersion": request.schema_version,
-                    "requestFingerprint": &request.fingerprint,
-                }),
+                requested_event,
             )
             .await
         {

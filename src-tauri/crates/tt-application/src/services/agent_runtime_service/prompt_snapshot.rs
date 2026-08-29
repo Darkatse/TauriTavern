@@ -16,12 +16,11 @@ const AGENT_PROMPT_MARKER_FIELD: &str = "_tauritavern_agent_prompt_marker";
 pub(super) fn request_from_prompt_snapshot(
     prompt_snapshot: &Value,
 ) -> Result<ChatCompletionGenerateRequestDto, ApplicationError> {
-    let payload = find_payload_object(prompt_snapshot).ok_or_else(|| {
+    let mut payload = find_payload_object(prompt_snapshot).ok_or_else(|| {
         ApplicationError::ValidationError(
             "agent.invalid_prompt_snapshot: expected a chat completion payload object".to_string(),
         )
     })?;
-    let mut payload = payload.clone();
 
     payload.insert("stream".to_string(), Value::Bool(false));
     if !payload.contains_key("chat_completion_source") {
@@ -244,7 +243,7 @@ fn messages_from_payload(
     payload.remove("prompt");
 
     messages
-        .iter()
+        .into_iter()
         .map(message_from_openai_value)
         .collect::<Result<Vec<_>, _>>()
 }
@@ -268,13 +267,16 @@ fn reject_agent_prompt_marker(value: &Value) -> Result<(), ApplicationError> {
     ))
 }
 
-fn message_from_openai_value(value: &Value) -> Result<AgentModelMessage, ApplicationError> {
-    reject_agent_prompt_marker(value)?;
-    let object = value.as_object().ok_or_else(|| {
-        ApplicationError::ValidationError(
-            "agent.invalid_prompt_snapshot: message must be an object".to_string(),
-        )
-    })?;
+fn message_from_openai_value(value: Value) -> Result<AgentModelMessage, ApplicationError> {
+    reject_agent_prompt_marker(&value)?;
+    let mut object = match value {
+        Value::Object(object) => object,
+        _ => {
+            return Err(ApplicationError::ValidationError(
+                "agent.invalid_prompt_snapshot: message must be an object".to_string(),
+            ));
+        }
+    };
     let role = match object
         .get("role")
         .and_then(Value::as_str)
@@ -298,32 +300,31 @@ fn message_from_openai_value(value: &Value) -> Result<AgentModelMessage, Applica
 
     Ok(AgentModelMessage {
         role,
-        parts: content_parts_from_openai_value(object.get("content")),
+        parts: content_parts_from_openai_value(object.remove("content")),
         provider_metadata,
     })
 }
 
-fn content_parts_from_openai_value(value: Option<&Value>) -> Vec<AgentModelContentPart> {
+fn content_parts_from_openai_value(value: Option<Value>) -> Vec<AgentModelContentPart> {
     match value {
-        Some(Value::String(text)) => vec![AgentModelContentPart::Text { text: text.clone() }],
+        Some(Value::String(text)) => vec![AgentModelContentPart::Text { text }],
         Some(Value::Array(parts)) => parts
-            .iter()
+            .into_iter()
             .map(|part| match part {
-                Value::String(text) => AgentModelContentPart::Text { text: text.clone() },
-                Value::Object(object)
+                Value::String(text) => AgentModelContentPart::Text { text },
+                Value::Object(mut object)
                     if object.get("type").and_then(Value::as_str) == Some("text") =>
                 {
                     AgentModelContentPart::Text {
-                        text: object
-                            .get("text")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
+                        text: match object.remove("text") {
+                            Some(Value::String(text)) => text,
+                            _ => String::new(),
+                        },
                     }
                 }
                 other => AgentModelContentPart::Native {
                     provider: "openai.content_part".to_string(),
-                    value: other.clone(),
+                    value: other,
                 },
             })
             .collect(),

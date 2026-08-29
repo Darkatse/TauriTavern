@@ -268,17 +268,15 @@ pub(super) fn snapshot_map(
         .collect()
 }
 
-pub(super) fn workspace_file_from_text(
-    path: WorkspacePath,
-    text: String,
-) -> Result<WorkspaceFile, DomainError> {
-    let bytes = text.as_bytes().to_vec();
-    Ok(WorkspaceFile {
+pub(super) fn workspace_file_from_text(path: WorkspacePath, text: String) -> WorkspaceFile {
+    let bytes = text.len() as u64;
+    let sha256 = sha256_hex(text.as_bytes());
+    WorkspaceFile {
         path,
         text,
-        bytes: bytes.len() as u64,
-        sha256: sha256_hex(&bytes),
-    })
+        bytes,
+        sha256,
+    }
 }
 
 pub(super) fn workspace_path_from_run_dir(

@@ -860,7 +860,7 @@ impl MockAgentModelGateway {
 impl AgentModelGateway for MockAgentModelGateway {
     async fn generate_with_cancel(
         &self,
-        request: AgentModelRequest,
+        request: &AgentModelRequest,
         on_tool_call_delta: Option<&mut (dyn FnMut(AgentToolCallDelta) + Send)>,
         _cancel: watch::Receiver<bool>,
     ) -> Result<AgentModelExchange, ApplicationError> {
@@ -868,7 +868,7 @@ impl AgentModelGateway for MockAgentModelGateway {
             .lock()
             .await
             .push(on_tool_call_delta.is_some());
-        self.requests.lock().await.push(request.clone());
+        self.requests.lock().await.push((*request).clone());
         let response = self.responses.lock().await.pop_front().ok_or_else(|| {
             ApplicationError::ValidationError(
                 "mock_model.empty_responses: no response left".to_string(),
@@ -877,7 +877,7 @@ impl AgentModelGateway for MockAgentModelGateway {
         let response = decode_chat_completion_response(response, &request.tools)?;
         Ok(AgentModelExchange {
             response,
-            provider_state: request.provider_state,
+            provider_state: request.provider_state.clone(),
         })
     }
 

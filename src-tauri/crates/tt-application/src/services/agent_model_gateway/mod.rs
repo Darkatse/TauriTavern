@@ -27,7 +27,7 @@ pub use decode::decode_chat_completion_response;
 pub trait AgentModelGateway: Send + Sync {
     async fn generate_with_cancel(
         &self,
-        request: AgentModelRequest,
+        request: &AgentModelRequest,
         on_tool_call_delta: Option<&mut (dyn FnMut(AgentToolCallDelta) + Send)>,
         cancel: watch::Receiver<bool>,
     ) -> Result<AgentModelExchange, ApplicationError>;
@@ -64,13 +64,13 @@ impl ChatCompletionAgentModelGateway {
 impl AgentModelGateway for ChatCompletionAgentModelGateway {
     async fn generate_with_cancel(
         &self,
-        request: AgentModelRequest,
+        request: &AgentModelRequest,
         on_tool_call_delta: Option<&mut (dyn FnMut(AgentToolCallDelta) + Send)>,
         cancel: watch::Receiver<bool>,
     ) -> Result<AgentModelExchange, ApplicationError> {
         let websocket_session_id =
-            provider_state::responses_websocket_session_id(&request).map(str::to_string);
-        let dto = encode::encode_chat_completion_request(&request, on_tool_call_delta.is_some())?;
+            provider_state::responses_websocket_session_id(request).map(str::to_string);
+        let dto = encode::encode_chat_completion_request(request, on_tool_call_delta.is_some())?;
         let exchange = match on_tool_call_delta {
             Some(on_tool_call_delta) => {
                 let mut forward_delta = |delta: ChatCompletionToolCallDelta| {
@@ -109,7 +109,7 @@ impl AgentModelGateway for ChatCompletionAgentModelGateway {
         let adapter = providers::AgentProviderAdapter::from_format(exchange.provider_format);
         let response = decode::decode_chat_completion_exchange(exchange, &request.tools)?;
         let provider_state =
-            provider_state::next_provider_state(&request, source, adapter, &response)?;
+            provider_state::next_provider_state(request, source, adapter, &response)?;
 
         Ok(AgentModelExchange {
             response,

@@ -3,9 +3,6 @@ use std::collections::HashSet;
 use serde_json::{Value, json};
 
 use super::commit_ledger::RunCommitLedger;
-use super::model_turn::{
-    append_tool_turn_to_request, assistant_message_for_next_turn, extract_response_text,
-};
 use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
@@ -110,7 +107,7 @@ impl AgentRuntimeService {
             )
             .await?;
 
-            let tool_calls = response.tool_calls.clone();
+            let tool_call_count = response.tool_calls.len();
             self.event(run_id, AgentRunEventLevel::Info, "model_completed", {
                 let mut payload = model_turn_event_summary(&response);
                 let object = payload
@@ -122,15 +119,15 @@ impl AgentRuntimeService {
                     "modelResponsePath".to_string(),
                     json!(model_response_path.as_str()),
                 );
-                object.insert("toolCallCount".to_string(), json!(tool_calls.len()));
-                let text_metrics = TextMetrics::from_text(extract_response_text(&response));
+                object.insert("toolCallCount".to_string(), json!(tool_call_count));
+                let text_metrics = TextMetrics::from_text(response.text.as_str());
                 object.insert("textChars".to_string(), json!(text_metrics.chars));
                 object.insert("textWords".to_string(), json!(text_metrics.words));
                 payload
             })
             .await?;
 
-            if tool_calls.is_empty() {
+            if response.tool_calls.is_empty() {
                 // Issue #64: instead of failing the run immediately, let the
                 // model self-correct while normal tool-loop rounds remain.
                 // Direct output is usually a contract slip, not a host
@@ -159,7 +156,7 @@ impl AgentRuntimeService {
                         exit_policy,
                         &prepared.tool_turn,
                     );
-                    prepared.request.messages.push(response.message.clone());
+                    prepared.request.messages.push(response.message);
                     prepared.request.messages.push(AgentModelMessage {
                         role: AgentModelRole::User,
                         parts: vec![AgentModelContentPart::Text { text: nudge_text }],
@@ -190,7 +187,8 @@ impl AgentRuntimeService {
                 )));
             }
 
-            let assistant_message = assistant_message_for_next_turn(&response)?;
+            let assistant_message = response.message;
+            let tool_calls = response.tool_calls;
             let mut tool_results = Vec::with_capacity(tool_calls.len());
             let mut finished = false;
             let mut handoff = None;
@@ -378,7 +376,15 @@ impl AgentRuntimeService {
             }
 
             remember_seen_child_results_from_await(&tool_results, &mut seen_child_result_task_ids);
-            append_tool_turn_to_request(&mut prepared.request, assistant_message, &tool_results)?;
+            prepared.request.messages.push(assistant_message);
+            prepared
+                .request
+                .messages
+                .extend(tool_results.into_iter().map(|result| AgentModelMessage {
+                    role: AgentModelRole::Tool,
+                    parts: vec![AgentModelContentPart::ToolResult { result }],
+                    provider_metadata: Value::Null,
+                }));
             if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed
                 && let Some(message) = self
                     .completed_child_results_message(
@@ -408,7 +414,7 @@ impl AgentRuntimeService {
         response: &AgentModelResponse,
         profile: &ResolvedAgentProfile,
     ) -> Result<Option<WorkspacePath>, ApplicationError> {
-        let text = extract_response_text(response);
+        let text = response.text.as_str();
         if text.trim().is_empty() {
             return Ok(None);
         }

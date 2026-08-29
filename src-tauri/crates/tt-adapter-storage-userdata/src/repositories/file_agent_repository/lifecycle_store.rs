@@ -81,6 +81,10 @@ impl AgentWorkspaceLifecycleRepository for FileAgentRepository {
                 }
             }
         }
+        let mut sequences = self.event_sequences.lock().await;
+        for run_id in &run_ids {
+            sequences.remove(run_id);
+        }
 
         Ok(AgentChatWorkspaceDeletion {
             workspace_id: workspace_id.to_string(),
