@@ -1,33 +1,30 @@
 export const RUN_EVENT_PAGE_LIMIT = 240;
 export const RUN_EVENT_TAIL_SEQ = Number.MAX_SAFE_INTEGER;
 
-export type RunTimelineEventStore = {
-    add: (event: TauriTavernAgentRunEvent) => boolean;
-    events: () => TauriTavernAgentRunEvent[];
-    oldestSeq: () => number | null;
-};
-
-export function createRunTimelineEventStore(): RunTimelineEventStore {
-    const eventsByKey = new Map<string, TauriTavernAgentRunEvent>();
+export function createRunTimelineEventStore() {
+    const eventKeys = new Set<string>();
     const events: TauriTavernAgentRunEvent[] = [];
 
-    return {
-        add(event) {
+    function addMany(incoming: readonly TauriTavernAgentRunEvent[]): boolean {
+        let added = false;
+        let needsSort = false;
+        for (const event of incoming) {
             const key = eventKey(event);
-            if (eventsByKey.has(key)) return false;
-            eventsByKey.set(key, event);
+            if (eventKeys.has(key)) continue;
+            const seq = eventSeq(event);
+            const previous = events.at(-1);
+            needsSort ||= previous != null && eventSeq(previous) > seq;
+            eventKeys.add(key);
             events.push(event);
-            const previous = events.at(-2);
-            if (previous && eventSeq(previous) > eventSeq(event)) {
-                events.sort(compareEvents);
-            }
-            return true;
-        },
+            added = true;
+        }
+        if (needsSort) events.sort(compareEvents);
+        return added;
+    }
+
+    return {
+        addMany,
         events: () => events.slice(),
-        oldestSeq: () => {
-            const oldest = events[0];
-            return oldest ? eventSeq(oldest) : null;
-        },
     };
 }
 

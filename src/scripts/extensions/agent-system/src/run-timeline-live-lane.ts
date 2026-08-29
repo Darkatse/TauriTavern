@@ -15,7 +15,7 @@ const LIVE_SEQ_BASE = 1_000_000_000;
 const TAIL_MAX_CHARS = 420;
 const TAIL_MAX_LINES = 3;
 
-type LiveStreamField = 'path' | 'content' | 'oldString' | 'newString';
+type LiveStreamField = 'content' | 'oldString' | 'newString';
 
 type LiveLaneCall = {
     invocationId: string;
@@ -24,12 +24,10 @@ type LiveLaneCall = {
     insertionIndex: number;
     activeField: LiveStreamField | null;
     path: string;
-    content: string;
-    contentWords: number;
-    oldString: string;
-    oldStringWords: number;
-    newString: string;
-    newStringWords: number;
+    tail: string;
+    truncated: boolean;
+    addedWords: number;
+    removedWords: number;
 };
 
 export type RunTimelineLiveLaneOptions = {
@@ -101,27 +99,22 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
         if (call.invocationExitPolicy !== 'run_finish_allowed') return false;
         const key = keyOf(call.invocationId, call.toolCallIndex);
         const existing = calls.get(key);
-        const fields = {
-            path: call.path,
-            content: call.toolId === WRITE_TOOL_ID ? call.content : '',
-            contentWords: call.toolId === WRITE_TOOL_ID ? call.contentWords : 0,
-            oldString: call.toolId === PATCH_TOOL_ID ? call.oldString : '',
-            oldStringWords: call.toolId === PATCH_TOOL_ID ? call.oldStringWords : 0,
-            newString: call.toolId === PATCH_TOOL_ID ? call.newString : '',
-            newStringWords: call.toolId === PATCH_TOOL_ID ? call.newStringWords : 0,
-        };
+        const isWrite = call.toolId === WRITE_TOOL_ID;
+        const activeField = isWrite
+            ? (call.content ? 'content' : null)
+            : call.newString ? 'newString'
+                : call.oldString ? 'oldString' : null;
+        const preview = streamPreview(isWrite ? call.content : call.newString || call.oldString);
         calls.set(key, {
             invocationId: call.invocationId,
             toolCallIndex: call.toolCallIndex,
             toolId: call.toolId,
             insertionIndex: existing?.insertionIndex ?? insertionCounter++,
-            // A full call has no delta arrival order; use the furthest populated
-            // field in the tool schema.
-            activeField: fields.newString ? 'newString'
-                : fields.oldString ? 'oldString'
-                    : fields.content ? 'content'
-                        : fields.path ? 'path' : null,
-            ...fields,
+            activeField,
+            path: call.path,
+            ...preview,
+            addedWords: isWrite ? call.contentWords : call.newStringWords,
+            removedWords: isWrite ? 0 : call.oldStringWords,
         });
         return true;
     }
@@ -130,20 +123,24 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
         const key = keyOf(update.invocationId, update.toolCallIndex);
         const call = calls.get(key);
         if (!call) return false;
-        const next = { ...call, activeField: update.field };
+        const next = { ...call };
         if (update.field === 'path') {
             next.path += update.text;
         } else if (update.field === 'content' && call.toolId === WRITE_TOOL_ID) {
-            next.content += update.text;
-            next.contentWords += update.wordDelta;
+            next.addedWords += update.wordDelta;
         } else if (update.field === 'oldString' && call.toolId === PATCH_TOOL_ID) {
-            next.oldString += update.text;
-            next.oldStringWords += update.wordDelta;
+            next.removedWords += update.wordDelta;
         } else if (update.field === 'newString' && call.toolId === PATCH_TOOL_ID) {
-            next.newString += update.text;
-            next.newStringWords += update.wordDelta;
+            next.addedWords += update.wordDelta;
         } else {
             throw new Error('agent.timeline_live_update_invalid: field does not match tool call');
+        }
+        if (update.field !== 'path') {
+            const continuing = call.activeField === update.field;
+            const preview = streamPreview(`${continuing ? call.tail : ''}${update.text}`);
+            next.activeField = update.field;
+            next.tail = preview.tail;
+            next.truncated = (continuing && call.truncated) || preview.truncated;
         }
         calls.set(key, next);
         return true;
@@ -154,11 +151,6 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
         // The stream follows the field currently arriving: a patch locates the
         // old_string in red first, then switches to the green new_string; a
         // write is a single neutral stream.
-        const text = call.activeField === 'content' ? call.content
-            : call.activeField === 'newString' ? call.newString
-                : call.activeField === 'oldString' ? call.oldString
-                    : '';
-        const { tail, truncated } = streamTail(text);
         const streamTone = call.activeField === 'newString' ? 'added'
             : call.activeField === 'oldString' ? 'removed'
                 : 'neutral';
@@ -182,11 +174,11 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
             rowSpan: 2,
             live: {
                 toolId: call.toolId,
-                tail,
-                truncated,
+                tail: `${call.truncated ? '…' : ''}${call.tail}`,
+                truncated: call.truncated,
                 streamTone,
-                addedWords: isWrite ? call.contentWords : call.newStringWords,
-                removedWords: isWrite ? 0 : call.oldStringWords,
+                addedWords: call.addedWords,
+                removedWords: call.removedWords,
             },
         };
     }
@@ -240,11 +232,10 @@ function keyOf(invocationId: string, toolCallIndex: number): string {
     return `${invocationId} ${toolCallIndex}`;
 }
 
-function streamTail(text: string): { tail: string; truncated: boolean } {
+function streamPreview(text: string): { tail: string; truncated: boolean } {
     if (!text) return { tail: '', truncated: false };
     const window = text.length > TAIL_MAX_CHARS ? text.slice(-TAIL_MAX_CHARS) : text;
     const lines = window.split('\n');
     const kept = lines.length > TAIL_MAX_LINES ? lines.slice(-TAIL_MAX_LINES).join('\n') : window;
-    const truncated = kept.length < text.length;
-    return { tail: truncated ? `…${kept}` : kept, truncated };
+    return { tail: kept, truncated: kept.length < text.length };
 }

@@ -158,6 +158,8 @@ export function createSubAgentTimelineController(deps: {
             void loadDetails();
         },
         setViewport(next: TimelineViewport): void {
+            if (viewport.scrollTop === next.scrollTop && viewport.viewportHeight === next.viewportHeight
+                && viewport.nearBottom === next.nearBottom) return;
             viewport = next;
             deps.onChange();
         },

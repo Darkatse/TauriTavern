@@ -118,6 +118,21 @@ test('publishes at most once per scheduled frame regardless of update volume', (
     expect(lane.items()[0]?.live?.addedWords).toBe(2);
 });
 
+test('keeps a bounded rolling tail across large snapshots and deltas', () => {
+    const { lane, state } = harness();
+    lane.attach('run-1');
+    const handler = state.handler;
+    if (!handler) throw new Error('expected the lane to subscribe');
+    handler({ type: 'snapshot', calls: [writeCall('x'.repeat(500), { contentWords: 1 })] });
+    handler({ type: 'append', invocationId: 'inv_root', toolCallIndex: 0, field: 'content', text: 'y', wordDelta: 1 });
+
+    expect(lane.items()[0]?.live).toMatchObject({
+        tail: `…${'x'.repeat(419)}y`,
+        truncated: true,
+        addedWords: 2,
+    });
+});
+
 test('ignores SubAgent updates without publishing and replaces retry generations', () => {
     const { lane, state } = harness();
     lane.attach('run-1');

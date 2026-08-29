@@ -36,14 +36,11 @@ function event(seq: number, runId = 'run-1', type = 'tool_call_completed'): Taur
 
 test('event store orders and deduplicates the complete loaded history', () => {
     const store = createRunTimelineEventStore();
-    expect(store.add(event(3))).toBe(true);
-    expect(store.add(event(1))).toBe(true);
-    expect(store.add(event(2))).toBe(true);
-    expect(store.add(event(2))).toBe(false);
+    expect(store.addMany([event(3), event(1), event(2), event(2)])).toBe(true);
+    expect(store.addMany([event(2)])).toBe(false);
     expect(store.events().map(item => item.seq)).toEqual([1, 2, 3]);
-    expect(store.oldestSeq()).toBe(1);
-    expect(() => store.add(event(0))).toThrow('positive integer');
-    expect(() => store.add({ ...event(4), id: '' })).toThrow('id is required');
+    expect(() => store.addMany([event(0)])).toThrow('positive integer');
+    expect(() => store.addMany([{ ...event(4), id: '' }])).toThrow('id is required');
 });
 
 test('paging keeps all pages and stale reads cannot replace a reset session', async () => {

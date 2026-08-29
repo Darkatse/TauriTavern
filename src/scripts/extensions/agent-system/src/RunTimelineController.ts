@@ -409,6 +409,8 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
             }
         },
         setTimelineViewport(next) {
+            if (viewport.scrollTop === next.scrollTop && viewport.viewportHeight === next.viewportHeight
+                && viewport.nearBottom === next.nearBottom) return;
             viewport = next;
             publish();
         },

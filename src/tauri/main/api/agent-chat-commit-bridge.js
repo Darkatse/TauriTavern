@@ -319,10 +319,10 @@ async function renderCurrentLiveWrite(state) {
 
     const script = await state.loadScript();
     await assertCurrentChat(state.chatRef, state.stableChatId);
-    let getMessage = prepareGeneratedReplyForDisplay(script, current.content, state.generationType);
-    if (!getMessage) return;
 
     if (state.messageId == null) {
+        const getMessage = prepareGeneratedReplyForDisplay(script, current.content, state.generationType);
+        if (!getMessage) return;
         const lengthBefore = script.chat.length;
         await script.saveReply({
             type: initialCommitSaveType(state.generationType, 'replace'),
@@ -338,7 +338,7 @@ async function renderCurrentLiveWrite(state) {
         || !isAutoCommitTextPath(latest.path)) {
         return;
     }
-    getMessage = prepareGeneratedReplyForDisplay(script, latest.content, state.generationType);
+    const getMessage = prepareGeneratedReplyForDisplay(script, latest.content, state.generationType);
     if (!getMessage) return;
 
     assertActiveAgentMessage(script.chat, state);
