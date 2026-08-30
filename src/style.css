@@ -112,6 +112,7 @@
     --topBarIconSize: calc(var(--mainFontSize) * 2);
     --topBarBlockSize: calc(var(--topBarIconSize) + var(--topBarBlockPadding));
     --topBarBlockPadding: calc(var(--mainFontSize) / 3);
+    --top-settings-holder-max-z-index: 4005;
 
     /* Layout contract: Android is native-injected, iOS uses env(safe-area-inset-*). */
     --tt-inset-top: env(safe-area-inset-top, 0px);
@@ -5676,7 +5677,7 @@ body:not(.caption) .mes_img_caption {
     body:has(.drawer-content.maximized) #top-settings-holder:has(.drawer-content.openDrawer:not(.fillLeft):not(.fillRight)),
     body:has(.drawer-content.open) #top-settings-holder:has(.drawer-content.openDrawer:not(.fillLeft):not(.fillRight)),
     body:has(#character_popup.open) #top-settings-holder:has(.drawer-content.openDrawer:not(.fillLeft):not(.fillRight)) {
-        z-index: 4005;
+        z-index: var(--top-settings-holder-max-z-index);
     }
 }
 

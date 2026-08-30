@@ -2193,8 +2193,10 @@ class PromptManager {
      */
     makeDraggable() {
         $(`#${this.configuration.prefix}prompt_manager_list`).sortable({
+            appendTo: document.body,
             delay: this.configuration.sortableDelay,
             handle: isMobile() ? '.drag-handle' : null,
+            helper: 'clone',
             items: `.${this.configuration.prefix}prompt_manager_prompt_draggable`,
             update: (event, ui) => {
                 const promptOrder = this.getPromptOrderForCharacter(this.activeCharacter);
