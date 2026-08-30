@@ -167,11 +167,9 @@ impl FileChatRepository {
             }
         }
 
-        let parsed_date =
-            projection::read_last_raw_record(&mut file, &descriptor.path, signature.size)
-                .await?
-                .map(|record| parse_message_timestamp_value(record.send_date.as_ref()))
-                .unwrap_or_default();
+        let send_date =
+            projection::read_last_raw_date(&mut file, &descriptor.path, signature.size).await?;
+        let parsed_date = parse_message_timestamp_value(send_date.as_ref());
         let entry = ChatStatsCacheEntry {
             signature,
             date: if parsed_date > 0 {

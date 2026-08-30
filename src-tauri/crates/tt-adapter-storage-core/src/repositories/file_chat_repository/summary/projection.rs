@@ -25,6 +25,11 @@ pub(super) struct TailProjection {
     pub(super) send_date: Option<Value>,
 }
 
+#[derive(Deserialize)]
+struct DateProjection {
+    send_date: Option<Value>,
+}
+
 pub(super) struct FileProjection {
     pub(super) line_count: usize,
     pub(super) header: HeaderProjection,
@@ -57,24 +62,25 @@ where
     Value::deserialize(deserializer).map(Some)
 }
 
-pub(super) async fn read_last_raw_record(
+pub(super) async fn read_last_raw_date(
     file: &mut File,
     path: &Path,
     file_size: u64,
-) -> Result<Option<TailProjection>, DomainError> {
+) -> Result<Option<Value>, DomainError> {
     let Some(span) = find_last_record_span(file, path, file_size).await? else {
         return Ok(None);
     };
     let task_path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || read_raw_record(&task_path, span))
-        .await
-        .map_err(|error| {
-            DomainError::InternalError(format!(
-                "Chat stats projection task failed for {}: {error}",
-                path.display()
-            ))
-        })?
-        .map(Some)
+    tokio::task::spawn_blocking(move || {
+        read_raw_record::<DateProjection>(&task_path, span).map(|record| record.send_date)
+    })
+    .await
+    .map_err(|error| {
+        DomainError::InternalError(format!(
+            "Chat stats projection task failed for {}: {error}",
+            path.display()
+        ))
+    })?
 }
 
 pub(super) async fn scan_file(path: &Path) -> Result<FileProjection, DomainError> {
@@ -402,5 +408,27 @@ mod tests {
         fs::write(&path, raw).await.unwrap();
         assert!(scan_file(&path).await.is_err());
         let _ = fs::remove_dir_all(root).await;
+    }
+
+    #[tokio::test]
+    async fn stats_projection_ignores_message_body() {
+        let path = std::env::temp_dir().join(format!(
+            "tauritavern-stats-projection-{}.jsonl",
+            random::<u64>()
+        ));
+        let raw = json!({
+            "mes": { "not": "a string" },
+            "send_date": "2026-08-30T00:00:00.000Z"
+        })
+        .to_string();
+        fs::write(&path, &raw).await.unwrap();
+
+        let mut file = File::open(&path).await.unwrap();
+        let send_date = read_last_raw_date(&mut file, &path, raw.len() as u64)
+            .await
+            .unwrap();
+        assert_eq!(send_date, Some(json!("2026-08-30T00:00:00.000Z")));
+
+        let _ = fs::remove_file(path).await;
     }
 }
