@@ -19,7 +19,7 @@ tauri-build = { version = "2.6.3", features = [] }
 serde_json = { workspace = true }
 
 [dependencies]
-tauri = { version = "2.11.5", features = ["macos-private-api", "protocol-asset"] }
+tauri = { version = "2.11.5", features = ["protocol-asset"] }
 tauri-plugin-opener = "2.5.4"
 tauri-plugin-fs = "2.5.1"
 tauri-plugin-notification = "2.3.3"
@@ -95,6 +95,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["s
 objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-uniform-type-identifiers", "UIActivity", "UIActivityItemsConfiguration", "UIActivityItemsConfigurationReading", "UIActivityViewController", "UIAlertController", "UIApplication", "UIControl", "UIDocumentPickerViewController", "UIPopoverPresentationController", "UIPresentationController", "UIResponder", "UIScrollView", "UITextField", "UIView", "UIViewController", "UIWindow", "UIGeometry"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+tauri = { version = "2.11.5", features = ["macos-private-api"] }
 objc2 = "0.6.4"
 block2 = "0.6.2"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSError", "NSString", "NSGeometry", "objc2-core-foundation"] }

@@ -126,7 +126,7 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 </details>
 
 > [!TIP]
-> **iOS**: установите приложение через [открытое тестирование в TestFlight](https://testflight.apple.com/join/gpqAdeTm). Требуется iOS 16 или новее. На тестовые сборки распространяются правила и ограничения TestFlight.
+> **iOS**: установите приложение через [открытое тестирование в TestFlight](https://testflight.apple.com/join/gpqAdeTm). Требуется iOS 15.0 или новее. Для iOS 15.0–16.3 предоставляется ограниченная поддержка; полная поддержка начинается с iOS 16.4. На тестовые сборки распространяются правила и ограничения TestFlight.
 >
 > **Портативная версия для Windows**: в системе должен быть установлен WebView2 Runtime.
 
