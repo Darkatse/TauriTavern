@@ -6818,6 +6818,8 @@ function onSettingsPresetChange() {
         savePreset: saveOpenAIPreset,
         presetNameBefore: presetNameBefore,
     }).finally(async () => {
+        if (oai_settings.preset_settings_openai !== presetName) return;
+
         if (oai_settings.bind_preset_to_connection) {
             $('.model_custom_select').empty();
         }
