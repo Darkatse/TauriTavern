@@ -461,13 +461,27 @@ class PromptManager {
 
         // Enable and disable prompts
         this.handleToggle = (event) => {
-            const promptID = event.target.closest('.' + this.configuration.prefix + 'prompt_manager_prompt').dataset.pmIdentifier;
+            const { prefix } = this.configuration;
+            const promptRow = event.target.closest('.' + prefix + 'prompt_manager_prompt');
+            const promptID = promptRow.dataset.pmIdentifier;
             const promptOrderEntry = this.getPromptOrderEntry(this.activeCharacter, promptID);
             const counts = this.tokenHandler.getCounts();
+            const enabled = !promptOrderEntry.enabled;
 
             counts[promptID] = null;
-            promptOrderEntry.enabled = !promptOrderEntry.enabled;
-            this.render();
+            promptOrderEntry.enabled = enabled;
+
+            promptRow.classList.toggle(prefix + 'prompt_manager_prompt_disabled', !enabled);
+
+            const toggle = promptRow.querySelector('.prompt-manager-toggle-action');
+            toggle.classList.toggle('fa-toggle-on', enabled);
+            toggle.classList.toggle('fa-toggle-off', !enabled);
+
+            const tokenElement = promptRow.querySelector('.prompt_manager_prompt_tokens');
+            tokenElement.dataset.pmTokens = '-';
+            tokenElement.textContent = '-';
+
+            this.renderDebounced();
             this.saveServiceSettings();
         };
 
