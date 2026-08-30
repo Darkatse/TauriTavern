@@ -24,6 +24,7 @@ import {
     isChatVirtualizationEnabled,
 } from './tauri/main/services/chat-surface/chat-virtualization-state.js';
 import { isInlineDrawerContentOpen, setInlineDrawerContentOpen } from './scripts/tauri/perf/inline-drawer-motion.js';
+import { initializeCodeMirrorEditor } from './scripts/tauri/codemirror-editor.js';
 import { getStreamingRenderInterval, normalizeStreamingFps, shouldCommitStreamingMessage } from './scripts/tauri/perf/streaming-render-policy.js';
 import {
     CHAT_COMMIT_REASON,
@@ -1085,6 +1086,7 @@ async function firstLoadInit() {
         await hostReadyPromise;
         const tauriTavernSettings = await getTauriTavernSettings();
         initializeChatVirtualization(tauriTavernSettings);
+        initializeCodeMirrorEditor(tauriTavernSettings);
 
         const tokenResponse = await fetch('/csrf-token');
         if (!tokenResponse.ok) {

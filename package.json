@@ -70,6 +70,7 @@
   },
   "dependencies": {
     "@adobe/css-tools": "^4.4.4",
+    "@codemirror/state": "6.7.1",
     "@iconfu/svg-inject": "^1.2.3",
     "@mozilla/readability": "^0.6.0",
     "@popperjs/core": "^2.11.8",
@@ -77,6 +78,7 @@
     "bowser": "^2.12.1",
     "chalk": "^5.6.0",
     "chevrotain": "^11.2.0",
+    "codemirror": "6.0.2",
     "diff-match-patch": "^1.0.5",
     "dompurify": "^3.4.2",
     "droll": "^0.2.1",

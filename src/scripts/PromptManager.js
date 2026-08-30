@@ -20,6 +20,7 @@ import {
     resolvePromptOrderFromDomIdentifiers,
 } from './prompt-manager-order-utils.js';
 import { createLatestTaskScheduler } from './util/latest-task-scheduler.js';
+import { getMountedCodeMirrorEditor, mountCodeMirrorEditor } from './tauri/codemirror-editor.js';
 
 function debouncePromise(func, delay) {
     let timeoutId;
@@ -617,6 +618,7 @@ class PromptManager {
             forbidOverridesField.checked = prompt.forbid_overrides ?? false;
             forbidOverridesBlock.style.visibility = this.overridablePrompts.includes(prompt.identifier) ? 'visible' : 'hidden';
             promptField.disabled = prompt.marker ?? false;
+            getMountedCodeMirrorEditor(promptField)?.reset();
             entrySourceBlock.style.display = isPulledPrompt ? '' : 'none';
 
             if (isPulledPrompt) {
@@ -768,34 +770,42 @@ class PromptManager {
 
         // Fill quick edit fields for the first time
         if ('global' === this.configuration.promptOrder.strategy) {
-            const handleQuickEditSave = (event) => {
-                const promptId = event.target.dataset.pmPrompt;
+            const saveQuickEdit = (textarea) => {
+                const promptId = textarea.dataset.pmPrompt;
                 const prompt = this.getPromptById(promptId);
 
-                prompt.content = event.target.value;
+                prompt.content = textarea.value;
 
                 // Update edit form if present
                 // @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/offsetParent
                 const popupEditFormPrompt = /** @type {HTMLTextAreaElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_prompt'));
                 if (popupEditFormPrompt.offsetParent) {
                     popupEditFormPrompt.value = prompt.content;
+                    getMountedCodeMirrorEditor(popupEditFormPrompt)?.reset();
                 }
 
                 this.log('Saved prompt: ' + promptId);
                 this.saveServiceSettings().then(() => this.render());
             };
 
-            const mainPrompt = this.getPromptById('main');
-            const mainElementId = this.updateQuickEdit('main', mainPrompt);
-            document.getElementById(mainElementId).addEventListener('blur', handleQuickEditSave);
-
-            const nsfwPrompt = this.getPromptById('nsfw');
-            const nsfwElementId = this.updateQuickEdit('nsfw', nsfwPrompt);
-            document.getElementById(nsfwElementId).addEventListener('blur', handleQuickEditSave);
-
-            const jailbreakPrompt = this.getPromptById('jailbreak');
-            const jailbreakElementId = this.updateQuickEdit('jailbreak', jailbreakPrompt);
-            document.getElementById(jailbreakElementId).addEventListener('blur', handleQuickEditSave);
+            for (const identifier of ['main', 'nsfw', 'jailbreak']) {
+                const textarea = /** @type {HTMLTextAreaElement} */(document.getElementById(this.updateQuickEdit(identifier, this.getPromptById(identifier))));
+                textarea.addEventListener('blur', () => {
+                    if (!getMountedCodeMirrorEditor(textarea)) saveQuickEdit(textarea);
+                });
+                textarea.addEventListener('focus', () => {
+                    void mountCodeMirrorEditor(textarea).then(editor => {
+                        if (!editor) return;
+                        editor.wrapper.addEventListener('focusout', event => {
+                            if (event.relatedTarget instanceof Node && editor.wrapper.contains(event.relatedTarget)) return;
+                            editor.flush();
+                            saveQuickEdit(textarea);
+                            editor.destroy();
+                        });
+                        editor.focus();
+                    });
+                });
+            }
         }
 
         // Re-render when chat history changes.
@@ -1010,6 +1020,7 @@ class PromptManager {
         const attachIndexField = /** @type {HTMLInputElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_attach_index'));
         const attachSideField = /** @type {HTMLSelectElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_attach_side'));
 
+        getMountedCodeMirrorEditor(promptField)?.flush();
         prompt.name = nameField.value;
         prompt.role = roleField.value;
         prompt.content = promptField.value;
@@ -1563,6 +1574,7 @@ class PromptManager {
         const elementId = `${identifier}_prompt_quick_edit_textarea`;
         const textarea = /** @type {HTMLTextAreaElement} */(document.getElementById(elementId));
         textarea.value = prompt.content;
+        getMountedCodeMirrorEditor(textarea)?.reset();
 
         return elementId;
     }
@@ -1613,6 +1625,7 @@ class PromptManager {
         roleField.value = prompt.role || 'system';
         promptField.value = prompt.content ?? '';
         promptField.disabled = prompt.marker ?? false;
+        void mountCodeMirrorEditor(promptField).then(editor => editor?.reset());
         injectionPositionField.value = injectionPosition.toString();
         injectionDepthField.value = (prompt.injection_depth ?? DEFAULT_DEPTH).toString();
         injectionOrderField.value = (prompt.injection_order ?? DEFAULT_ORDER).toString();
@@ -1737,6 +1750,7 @@ class PromptManager {
         roleField.selectedIndex = 0;
         promptField.value = '';
         promptField.disabled = false;
+        getMountedCodeMirrorEditor(promptField)?.destroy();
         injectionPositionField.selectedIndex = 0;
         injectionPositionField.removeAttribute('disabled');
         injectionDepthField.value = DEFAULT_DEPTH.toString();

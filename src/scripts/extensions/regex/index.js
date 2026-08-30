@@ -13,6 +13,8 @@ import { allowPresetScripts, allowScopedScripts, disallowPresetScripts, disallow
 import { t } from '../../i18n.js';
 import { accountStorage } from '../../util/AccountStorage.js';
 import { getPresetManager } from '../../preset-manager.js';
+import { debounce_timeout } from '../../constants.js';
+import { mountCodeMirrorEditor } from '../../tauri/codemirror-editor.js';
 import {
     isNativeRegexBackendEnabled,
     NATIVE_REGEX_BACKEND_SETTING_CHANGED_EVENT,
@@ -901,7 +903,27 @@ async function onRegexEditorOpenClick(existingId, scriptType) {
     editorHtml.find('input, textarea, select').on('input', updateTestResult);
     updateInfoBlock(editorHtml);
 
-    const popupResult = await callGenericPopup(editorHtml, POPUP_TYPE.CONFIRM, '', { okButton: t`Save`, cancelButton: t`Cancel`, allowVerticalScrolling: true });
+    let previewTimeout = null;
+    let editors = [];
+    const schedulePreview = () => {
+        clearTimeout(previewTimeout);
+        previewTimeout = setTimeout(() => {
+            editors.forEach(editor => editor.flush());
+            updateTestResult();
+        }, debounce_timeout.standard);
+    };
+    const popupResultPromise = callGenericPopup(editorHtml, POPUP_TYPE.CONFIRM, '', { okButton: t`Save`, cancelButton: t`Cancel`, allowVerticalScrolling: true });
+    editors = (await Promise.all(
+        editorHtml.find('.regex_replace_string, .regex_trim_strings').get()
+            .map(source => mountCodeMirrorEditor(source, { onChange: schedulePreview })),
+    )).filter(Boolean);
+    const popupResult = await popupResultPromise;
+    clearTimeout(previewTimeout);
+    if (popupResult) {
+        editors.forEach(editor => editor.flush());
+    }
+    editors.forEach(editor => editor.destroy());
+
     if (popupResult) {
         const newRegexScript = {
             id: existingId ? String(existingId) : uuidv4(),

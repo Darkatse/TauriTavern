@@ -66,6 +66,11 @@ export function createTauriTavernSettingsState(settings, options = {}) {
         throw new Error('TauriTavern settings: chat virtualization setting missing');
     }
 
+    const codeMirrorEditorEnabled = settings.codemirror_editor_enabled;
+    if (typeof codeMirrorEditorEnabled !== 'boolean') {
+        throw new Error('TauriTavern settings: CodeMirror editor setting missing');
+    }
+
     const avatarPersonaOriginalImagesEnabled = settings.avatar_persona_original_images_enabled;
     if (typeof avatarPersonaOriginalImagesEnabled !== 'boolean') {
         throw new Error('TauriTavern settings: avatar/persona original images setting missing');
@@ -104,6 +109,7 @@ export function createTauriTavernSettingsState(settings, options = {}) {
         configuredEmbeddedRuntimeProfile,
         embeddedRuntimeProfile,
         chatVirtualizationEnabled,
+        codeMirrorEditorEnabled,
         chatBackups: {
             automaticEnabled: chatBackups.automatic_enabled,
             zstdCompressionEnabled: chatBackups.zstd_compression_enabled,

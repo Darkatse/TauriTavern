@@ -11,6 +11,7 @@ import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.j
 import { SlashCommandParserError } from '../../../slash-commands/SlashCommandParserError.js';
 import { SlashCommandScope } from '../../../slash-commands/SlashCommandScope.js';
 import { accountStorage } from '../../../util/AccountStorage.js';
+import { mountCodeMirrorEditor } from '../../../tauri/codemirror-editor.js';
 import { debounce, delay, getSortableDelay, showFontAwesomePicker } from '../../../utils.js';
 import { log, quickReplyApi, warn } from '../index.js';
 import { QuickReplyContextLink } from './QuickReplyContextLink.js';
@@ -295,6 +296,17 @@ export class QuickReply {
                     mes.value = this.message;
                     //HACK need to use jQuery to catch the triggered event from the expanded editor
                     $(mes).on('input', ()=>this.updateMessage(mes.value));
+                    mes.addEventListener('focus', () => {
+                        void mountCodeMirrorEditor(mes).then(editor => {
+                            if (!editor) return;
+                            editor.wrapper.addEventListener('focusout', event => {
+                                if (event.relatedTarget instanceof Node && editor.wrapper.contains(event.relatedTarget)) return;
+                                editor.flush({ input: true });
+                                editor.destroy();
+                            });
+                            editor.focus();
+                        });
+                    });
                     itemContent.append(mes);
                 }
                 const actions = document.createElement('div'); {

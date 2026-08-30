@@ -28,6 +28,7 @@ import { normalizeWorldInfoActivationBatch } from './tauritavern/agent/world-inf
 import { registerLifecycleFlushHandler } from '../tauri/main/services/lifecycle/lifecycle-flush-service.js';
 import { canPrefetchWorldInfoTokenCount, getWorldInfoTokenPrefetchBatch } from './world-info-token-prefetch.js';
 import { prepareWorldInfoEntries } from './world-info-entry-prepare.js';
+import { getMountedCodeMirrorEditor, mountCodeMirrorEditor } from './tauri/codemirror-editor.js';
 
 export const world_info_insertion_strategy = {
     evenly: 0,
@@ -2473,6 +2474,12 @@ function clearEntryList($list) {
         return;
     }
 
+    $list.find('textarea').each((_, source) => {
+        const editor = getMountedCodeMirrorEditor(source);
+        editor?.flush({ input: true });
+        editor?.destroy();
+    });
+
     // Unsubscribe from toggle events, so that mass open won't create new drawers
     $list.find('.inline-drawer').off('inline-drawer-toggle');
 
@@ -3667,30 +3674,41 @@ export async function getWorldEntry(name, data, entry) {
         await moveWorldInfoEntry(sourceWorld, selectedValue, sourceUid, { deleteOriginal });
     });
 
+    const editOutlet = headerTemplate.find('.inline-drawer-outlet');
     let drawerInitialized = false;
     let drawerDestroyTimeout = null;
-    headerTemplate.find('.inline-drawer').on('inline-drawer-toggle', function () {
+    let contentEditor = null;
+    let contentCommitTimeout = null;
+    const commitContent = () => {
+        clearTimeout(contentCommitTimeout);
+        contentEditor?.flush({ input: true });
+    };
+
+    headerTemplate.find('.inline-drawer').on('inline-drawer-toggle', function (event) {
         if (drawerDestroyTimeout) {
             clearTimeout(drawerDestroyTimeout);
             drawerDestroyTimeout = null;
         }
-        if (drawerInitialized) {
+        const open = event.originalEvent?.detail?.open ?? editOutlet.is(':visible');
+        if (!open) {
+            commitContent();
             drawerDestroyTimeout = setTimeout(() => {
                 // Drawer was reopened, so we don't destroy it
                 if (editOutlet.is(':visible')) {
                     return;
                 }
+                commitContent();
+                contentEditor?.destroy();
+                contentEditor = null;
                 drawerInitialized = false;
                 clearEntryList(editOutlet);
                 drawerDestroyTimeout = null;
             }, debounce_timeout.relaxed);
-        } else {
+        } else if (!drawerInitialized) {
             drawerInitialized = true;
             addEditorDrawerContent();
         }
     });
-
-    const editOutlet = headerTemplate.find('.inline-drawer-outlet');
 
     function addEditorDrawerContent() {
         const editTemplate = WI_ENTRY_EDIT_TEMPLATE.clone();
@@ -4005,6 +4023,18 @@ export async function getWorldEntry(name, data, entry) {
 
         editTemplate.find('.inline-drawer-content').css('display', 'none');
         editOutlet.append(editTemplate);
+        void mountCodeMirrorEditor(contentInput[0], {
+            onChange: () => {
+                clearTimeout(contentCommitTimeout);
+                contentCommitTimeout = setTimeout(commitContent, debounce_timeout.relaxed);
+            },
+        }).then(editor => {
+            contentEditor = editor;
+            editor?.wrapper.addEventListener('focusout', event => {
+                if (event.relatedTarget instanceof Node && editor.wrapper.contains(event.relatedTarget)) return;
+                commitContent();
+            });
+        });
     }
 
     headerTemplate.find('.inline-drawer-content').css('display', 'none');

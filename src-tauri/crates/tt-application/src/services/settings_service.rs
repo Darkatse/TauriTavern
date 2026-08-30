@@ -215,6 +215,10 @@ impl SettingsService {
             settings.chat_virtualization_enabled = chat_virtualization_enabled;
         }
 
+        if let Some(codemirror_editor_enabled) = dto.codemirror_editor_enabled {
+            settings.codemirror_editor_enabled = codemirror_editor_enabled;
+        }
+
         let previous_chat_backups = settings.chat_backups;
         if let Some(chat_backups) = dto.chat_backups {
             Self::apply_chat_backup_settings_update(&mut settings.chat_backups, chat_backups)?;
@@ -959,6 +963,7 @@ mod tests {
                 panel_runtime_profile: None,
                 embedded_runtime_profile: None,
                 chat_virtualization_enabled: None,
+                codemirror_editor_enabled: None,
                 chat_backups: Some(UpdateChatBackupSettingsDto {
                     automatic_enabled: Some(false),
                     zstd_compression_enabled: Some(true),
@@ -1019,6 +1024,7 @@ mod tests {
             panel_runtime_profile: None,
             embedded_runtime_profile: None,
             chat_virtualization_enabled: None,
+            codemirror_editor_enabled: None,
             close_to_tray_on_close: None,
             request_proxy: None,
             allow_keys_exposure: None,
@@ -1086,6 +1092,7 @@ mod tests {
                 panel_runtime_profile: None,
                 embedded_runtime_profile: None,
                 chat_virtualization_enabled: None,
+                codemirror_editor_enabled: None,
                 close_to_tray_on_close: None,
                 request_proxy: None,
                 allow_keys_exposure: None,

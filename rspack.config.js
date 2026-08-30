@@ -130,6 +130,7 @@ export function createRspackConfigs(mode = 'production') {
     entry: {
       'lib.core': './src/lib-bundle-core.js',
       'lib.optional': './src/lib-bundle-optional.js',
+      'lib.editor': './src/lib-bundle-editor.js',
     },
     output: {
       filename: '[name].bundle.js',

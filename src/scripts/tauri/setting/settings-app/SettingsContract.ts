@@ -35,6 +35,7 @@ export type SettingsValues = {
     panelRuntimeProfile: string;
     embeddedRuntimeProfile: string;
     chatVirtualizationEnabled: boolean;
+    codeMirrorEditorEnabled: boolean;
     chatBackups: {
         automaticEnabled: boolean;
         zstdCompressionEnabled: boolean;
@@ -101,6 +102,7 @@ export type SettingsDraft = {
     panelRuntimeProfile: string;
     embeddedRuntimeProfile: string;
     chatVirtualizationEnabled: boolean;
+    codeMirrorEditorEnabled: boolean;
     chatBackups: {
         automaticEnabled: boolean;
         zstdCompressionEnabled: boolean;
@@ -146,6 +148,7 @@ export function createSettingsDraft(values: SettingsValues): SettingsDraft {
         panelRuntimeProfile: values.panelRuntimeProfile,
         embeddedRuntimeProfile: values.embeddedRuntimeProfile,
         chatVirtualizationEnabled: values.chatVirtualizationEnabled,
+        codeMirrorEditorEnabled: values.codeMirrorEditorEnabled,
         chatBackups: {
             automaticEnabled: values.chatBackups.automaticEnabled,
             zstdCompressionEnabled: values.chatBackups.zstdCompressionEnabled,
