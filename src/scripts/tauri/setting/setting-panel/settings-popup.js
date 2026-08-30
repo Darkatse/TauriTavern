@@ -42,7 +42,7 @@ const HELP_TOPICS = {
         ],
     },
     codeMirrorEditor: {
-        title: 'CodeMirror Editor (Experimental)',
+        title: 'CodeMirror Editor',
         lines: [
             'When enabled, supported textareas in Preset, World Info, Regex, and Quick Reply editors use CodeMirror. The editor bundle is loaded only when needed.',
             "Text is synchronized at each feature's existing save or update boundary, reducing full-text copies while typing.",

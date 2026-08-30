@@ -2855,7 +2855,7 @@
     "Panel Runtime": "後檯面板自動停放",
     "Embedded Runtime": "前端內容自動停放",
     "Chat DOM Virtualization": "聊天 DOM 虛擬化",
-    "CodeMirror Editor (Experimental)": "CodeMirror 編輯器（實驗性）",
+    "CodeMirror Editor": "CodeMirror 編輯器",
     "When enabled, supported textareas in Preset, World Info, Regex, and Quick Reply editors use CodeMirror. The editor bundle is loaded only when needed.": "啟用後，預設、世界資訊、正規表示式與快速回覆編輯器中支援的文字方塊會使用 CodeMirror。編輯器資源僅在實際需要時載入。",
     "Text is synchronized at each feature's existing save or update boundary, reducing full-text copies while typing.": "內容會在各功能原有的儲存或更新時機同步，藉此減少輸入過程中反覆複製完整文字。",
     "Some textarea-specific features, including macro autocomplete and Markdown shortcuts, are not available in CodeMirror.": "部分依賴原生文字方塊的功能（包括巨集自動完成與 Markdown 快捷鍵）暫不適用於 CodeMirror。",

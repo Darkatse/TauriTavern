@@ -2413,7 +2413,7 @@
     "Panel Runtime": "后台面板自动冻结",
     "Embedded Runtime": "前端角色卡渲染管理",
     "Chat DOM Virtualization": "聊天 DOM 虚拟化",
-    "CodeMirror Editor (Experimental)": "CodeMirror 编辑器（实验性）",
+    "CodeMirror Editor": "CodeMirror 编辑器",
     "When enabled, supported textareas in Preset, World Info, Regex, and Quick Reply editors use CodeMirror. The editor bundle is loaded only when needed.": "启用后，预设、世界书、正则和快速回复编辑器中支持的文本框会使用 CodeMirror。编辑器资源仅在实际需要时加载。",
     "Text is synchronized at each feature's existing save or update boundary, reducing full-text copies while typing.": "内容会在各功能原有的保存或更新时机同步，从而减少输入过程中反复复制完整文本。",
     "Some textarea-specific features, including macro autocomplete and Markdown shortcuts, are not available in CodeMirror.": "部分依赖原生文本框的功能（包括宏自动补全和 Markdown 快捷键）暂不适用于 CodeMirror。",

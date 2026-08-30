@@ -43,6 +43,10 @@ fn default_native_regex_backend_enabled() -> bool {
     true
 }
 
+fn default_codemirror_editor_enabled() -> bool {
+    true
+}
+
 fn default_model_settings() -> ModelSettings {
     ModelSettings::default()
 }
@@ -335,7 +339,7 @@ pub struct TauriTavernSettings {
     pub embedded_runtime_profile: String,
     #[serde(default)]
     pub chat_virtualization_enabled: bool,
-    #[serde(default)]
+    #[serde(default = "default_codemirror_editor_enabled")]
     pub codemirror_editor_enabled: bool,
     #[serde(default)]
     pub chat_backups: ChatBackupSettings,
@@ -377,7 +381,7 @@ impl Default for TauriTavernSettings {
             panel_runtime_profile: default_panel_runtime_profile(),
             embedded_runtime_profile: default_embedded_runtime_profile(),
             chat_virtualization_enabled: false,
-            codemirror_editor_enabled: false,
+            codemirror_editor_enabled: default_codemirror_editor_enabled(),
             chat_backups: ChatBackupSettings::default(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
             request_proxy: RequestProxySettings::default(),
@@ -480,7 +484,7 @@ mod tests {
         )
         .expect("parse settings");
 
-        assert!(!settings.codemirror_editor_enabled);
+        assert!(settings.codemirror_editor_enabled);
         assert!(!settings.agent.retention.auto_prune_enabled);
         assert_eq!(
             settings.agent.retention.keep_recent_terminal_runs,
