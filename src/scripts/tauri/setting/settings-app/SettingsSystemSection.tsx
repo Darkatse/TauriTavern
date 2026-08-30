@@ -134,7 +134,7 @@ export function SettingsSystemSection({
                     onToggle={event => setProxyOpen(event.currentTarget.open)}
                 >
                     <summary>
-                        <span>{tr('Request Proxy (Advanced)')}</span>
+                        <span>{tr('Request Proxy')}</span>
                         <span className="tt-settings-summary-meta">
                             <small>{requestProxySummary(proxy, tr)}</small>
                             <i className="fa-solid fa-chevron-down" aria-hidden="true"></i>

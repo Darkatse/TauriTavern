@@ -797,7 +797,7 @@
     "Depth:": "深度：",
     "Role:": "角色：",
     "System": "系統",
-    "Request Proxy (Advanced)": "出站代理（進階設定）",
+    "Request Proxy": "出站代理",
     "Enable Request Proxy": "啟用出站代理",
     "Request Proxy URL": "代理 URL",
     "Bypass (one per line)": "略過清單（每行一條）",

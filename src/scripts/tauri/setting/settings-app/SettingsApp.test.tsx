@@ -254,7 +254,7 @@ test('iOS proxy repair path: an enabled proxy can be disabled but not re-enabled
     const { container, handle } = mountApp(options);
 
     // The summary meta shows the live proxy URL instead of a click hint.
-    const details = disclosure(container, 'Request Proxy (Advanced)');
+    const details = disclosure(container, 'Request Proxy');
     expect(details.querySelector('.tt-settings-summary-meta small')?.textContent).toBe('http://127.0.0.1:7890');
 
     const toggle = within(container).getByRole<HTMLInputElement>('checkbox', { name: 'Enable Request Proxy' });
@@ -266,7 +266,7 @@ test('iOS proxy repair path: an enabled proxy can be disabled but not re-enabled
     await user.click(toggle);
     expect(handle.getDraft().requestProxy.enabled).toBe(false);
     expect(within(container).queryByRole('checkbox', { name: 'Enable Request Proxy' })).toBeNull();
-    expect(container.textContent).not.toContain('Request Proxy (Advanced)');
+    expect(container.textContent).not.toContain('Request Proxy');
 });
 
 test('unknown stored theme stays selectable and wallpaper choosing preserves raw filenames', async () => {
