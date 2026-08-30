@@ -4,7 +4,6 @@ import { EditorView, minimalSetup } from 'codemirror';
 const theme = EditorView.theme({
     '&': {
         height: '100%',
-        backgroundColor: 'var(--SmartThemeBlurTintColor)',
         color: 'var(--SmartThemeBodyColor)',
         font: 'inherit',
     },
