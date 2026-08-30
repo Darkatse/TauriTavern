@@ -4,6 +4,7 @@
     "security": {
       "capabilities": [
         "default",
+        "desktop-dialog",
         "desktop-fullscreen",
         {
           "identifier": "pilot-devtools",
