@@ -47,12 +47,15 @@ export async function mountCodeMirrorEditor(source, { onChange } = {}) {
         return loadedEditor;
     }
 
-    const minHeight = source.offsetHeight;
+    const sourceStyle = getComputedStyle(source);
+    const height = source.offsetHeight;
     const wrapper = document.createElement('div');
     wrapper.className = 'tt-codemirror-editor';
-    wrapper.style.flex = getComputedStyle(source).flex;
+    wrapper.style.flex = sourceStyle.flex;
+    wrapper.style.font = sourceStyle.font;
+    wrapper.style.textAlign = sourceStyle.textAlign;
     wrapper.style.width = '100%';
-    wrapper.style.minHeight = `${minHeight}px`;
+    wrapper.style.height = `${height}px`;
     wrapper.style.overflow = 'hidden';
     source.insertAdjacentElement('afterend', wrapper);
 
@@ -68,7 +71,7 @@ export async function mountCodeMirrorEditor(source, { onChange } = {}) {
 
     const handle = {
         wrapper,
-        minHeight,
+        height,
         focus: editor.focus,
         requestMeasure: editor.requestMeasure,
         reset() {
@@ -112,14 +115,12 @@ export async function showCodeMirrorEditorFullscreen(source) {
     host.className = 'height100p wide100p flex-container flexFlowColumn';
     host.append(editor.wrapper);
     editor.wrapper.style.height = '100%';
-    editor.wrapper.style.minHeight = '0';
     editor.requestMeasure();
 
     try {
         await callGenericPopup(host, POPUP_TYPE.TEXT, '', { wide: true, large: true });
     } finally {
-        editor.wrapper.style.height = '';
-        editor.wrapper.style.minHeight = `${editor.minHeight}px`;
+        editor.wrapper.style.height = `${editor.height}px`;
         if (source.isConnected) {
             source.insertAdjacentElement('afterend', editor.wrapper);
             editor.requestMeasure();

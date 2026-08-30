@@ -4,7 +4,6 @@ import { EditorView, minimalSetup } from 'codemirror';
 const theme = EditorView.theme({
     '&': {
         height: '100%',
-        minHeight: 'inherit',
         backgroundColor: 'var(--SmartThemeBlurTintColor)',
         color: 'var(--SmartThemeBodyColor)',
         font: 'inherit',
@@ -16,9 +15,6 @@ const theme = EditorView.theme({
         fontFamily: 'inherit',
         lineHeight: 'inherit',
         overflow: 'auto',
-    },
-    '.cm-content': {
-        padding: '0.5em',
     },
 });
 
