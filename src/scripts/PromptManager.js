@@ -844,6 +844,8 @@ class PromptManager {
         });
 
         // Prepare prompt edit form buttons
+        const injectionPositionField = document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_injection_position');
+        injectionPositionField.addEventListener('change', event => this.handleInjectionPositionChange(event));
         document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_save').addEventListener('click', this.handleSavePrompt);
         document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_reset').addEventListener('click', this.handleResetPrompt);
 
@@ -1641,9 +1643,6 @@ class PromptManager {
         } else {
             resetPromptButton.style.display = 'none';
         }
-
-        injectionPositionField.removeEventListener('change', (e) => this.handleInjectionPositionChange(e));
-        injectionPositionField.addEventListener('change', (e) => this.handleInjectionPositionChange(e));
 
         const savePromptButton = document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_save');
         savePromptButton.dataset.pmPrompt = prompt.identifier;
