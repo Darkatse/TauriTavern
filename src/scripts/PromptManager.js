@@ -306,7 +306,7 @@ export class PromptCollection {
 class PromptManager {
     #isVisible = false;
     #dryRunPending = false;
-    #presetPreviewPending = false;
+    #previewPending = false;
     #visibilityObserver = null;
 
     get promptSources() {
@@ -523,7 +523,7 @@ class PromptManager {
             this.detachPrompt(prompt, this.activeCharacter);
             this.hidePopup();
             this.clearEditForm();
-            this.render();
+            this.renderNowAndRefresh();
             this.saveServiceSettings();
         };
 
@@ -548,7 +548,7 @@ class PromptManager {
 
             this.hidePopup();
             this.clearEditForm();
-            this.render();
+            this.renderNowAndRefresh();
             this.saveServiceSettings();
         };
 
@@ -633,7 +633,7 @@ class PromptManager {
 
             if (prompt) {
                 this.appendPrompt(prompt, this.activeCharacter);
-                this.render();
+                this.renderNowAndRefresh();
                 this.saveServiceSettings();
             }
         };
@@ -654,7 +654,7 @@ class PromptManager {
 
                     this.hidePopup();
                     this.clearEditForm();
-                    this.render();
+                    this.renderNowAndRefresh();
                     this.saveServiceSettings();
                 }
             });
@@ -761,7 +761,7 @@ class PromptManager {
                     this.removePromptOrderForCharacter(this.activeCharacter);
                     this.addPromptOrderForCharacter(this.activeCharacter, promptManagerDefaultPromptOrder);
 
-                    this.render();
+                    this.renderNowAndRefresh();
                     this.saveServiceSettings();
                 });
         };
@@ -872,9 +872,7 @@ class PromptManager {
 
             this.hidePopup();
             this.clearEditForm();
-            this.#presetPreviewPending = true;
-            if (this.#isVisible) this.render(false);
-            this.renderDebounced();
+            this.renderNowAndRefresh();
         });
 
         // Re-render prompt manager on world settings update
@@ -889,7 +887,7 @@ class PromptManager {
             this.#isVisible = entry.isIntersecting;
             if (!this.#isVisible) return;
 
-            if (this.#presetPreviewPending) this.render(false);
+            if (this.#previewPending) this.render(false);
             if (!this.#dryRunPending) return;
 
             this.#dryRunPending = false;
@@ -945,7 +943,7 @@ class PromptManager {
         this.profileStart('filling context');
         try {
             await this.tryGenerate();
-            this.#presetPreviewPending = false;
+            this.#previewPending = false;
         } catch (error) {
             this.error = error instanceof Error ? error.message : String(error || t`Unknown error`);
             throw error;
@@ -957,6 +955,13 @@ class PromptManager {
 
     async #renderWithoutTryGenerate() {
         await this.#renderPromptManagerUi();
+    }
+
+    renderNowAndRefresh() {
+        if (main_api !== 'openai') return;
+        this.#previewPending = true;
+        if (this.#isVisible) this.render(false);
+        this.renderDebounced();
     }
 
     /**
@@ -1861,7 +1866,7 @@ class PromptManager {
                 </div>
         ` : '';
 
-        const totalActiveTokens = this.#presetPreviewPending ? '-' : this.tokenUsage;
+        const totalActiveTokens = this.#previewPending ? '-' : this.tokenUsage;
 
         const headerHtml = await renderTemplateAsync('promptManagerHeader', { error: this.error, errorDiv, prefix: this.configuration.prefix, totalActiveTokens });
         promptManagerDiv.insertAdjacentHTML('beforeend', headerHtml);
@@ -1910,7 +1915,7 @@ class PromptManager {
         promptManagerList.innerHTML = '';
 
         const { prefix } = this.configuration;
-        const previewPending = this.#presetPreviewPending;
+        const previewPending = this.#previewPending;
 
         let listItemHtml = await renderTemplateAsync('promptManagerListHeader', { prefix });
 
@@ -2133,7 +2138,8 @@ class PromptManager {
         this.normalizeAgentPromptMarkerDefinitions();
         this.ensureAgentPromptOrderReferences();
         toastr.success(t`Prompt import complete.`);
-        this.saveServiceSettings().then(() => this.render());
+        this.renderNowAndRefresh();
+        this.saveServiceSettings();
     }
 
     /**

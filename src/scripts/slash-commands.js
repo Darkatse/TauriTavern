@@ -6621,7 +6621,7 @@ function setPromptEntryCallback(args, targetState) {
     });
 
     // no need to render for each identifier
-    promptManager.render();
+    promptManager.renderNowAndRefresh();
     promptManager.saveServiceSettings();
     return '';
 }
