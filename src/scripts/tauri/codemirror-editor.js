@@ -120,7 +120,7 @@ export async function showCodeMirrorEditorFullscreen(source) {
     editor.requestMeasure();
 
     try {
-        await callGenericPopup(host, POPUP_TYPE.TEXT, '', { wide: true, large: true });
+        await callGenericPopup(host, POPUP_TYPE.TEXT, '', { wide: true, large: true, animation: 'none' });
     } finally {
         editor.wrapper.style.height = `${editor.height}px`;
         if (source.isConnected) {
