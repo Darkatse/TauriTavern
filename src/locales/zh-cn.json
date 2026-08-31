@@ -4575,5 +4575,15 @@
     "Whether to select/open the duplicated character after creation": "复制后是否选择/打开该角色",
     "Whether to show the avatar resize/crop dialog": "是否显示头像调整大小/裁剪对话框",
     "Whether to show the avatar resize/crop dialog when uploading": "上传时是否显示头像调整大小/裁剪对话框",
-    "Would you like to update primary lorebook links for ${0} character(s) as well?": "是否也要更新 ${0} 个角色的主要世界书链接？"
+    "Would you like to update primary lorebook links for ${0} character(s) as well?": "是否也要更新 ${0} 个角色的主要世界书链接？",
+    "Allow anyway": "仍然允许",
+    "Allow anyway runs it in V8 without a timeout for this session. It may consume CPU indefinitely; reload the app to stop it.": "仍然允许会让该脚本在本次会话中由 V8 无超时运行。它可能无限期占用 CPU；重新加载应用即可停止。",
+    "Keep paused": "保持暂停",
+    "Regex acceleration paused": "正则加速已暂停",
+    "Regex script is slow": "正则脚本运行缓慢",
+    "Rust regex acceleration exceeded ${0} milliseconds and was disabled for this session. The batch will continue in V8.": "Rust 正则加速运行超过 ${0} 毫秒，已在本次会话中停用。该批次将继续由 V8 处理。",
+    "Rust regex acceleration failed and was disabled for this session. The batch will continue in V8.": "Rust 正则加速失败，已在本次会话中停用。该批次将继续由 V8 处理。",
+    "Script \"${0}\" exceeded ${1} milliseconds and was paused for this session.": "脚本“${0}”运行超过 ${1} 毫秒，已在本次会话中暂停。",
+    "This usually indicates catastrophic backtracking. Common causes include leading .*, nested quantifiers, and unbounded lookahead. Review or replace the pattern before allowing it.": "这通常意味着发生了灾难性回溯。常见原因包括前导 .*、嵌套量词和不受约束的前瞻断言。请在允许继续运行前检查或替换该正则。",
+    "Unnamed regex script": "未命名正则脚本"
 }

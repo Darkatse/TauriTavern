@@ -5092,5 +5092,15 @@
     "Whether to select/open the duplicated character after creation": "複製後是否選取／開啟該角色",
     "Whether to show the avatar resize/crop dialog": "是否顯示頭像調整大小／裁切對話框",
     "Whether to show the avatar resize/crop dialog when uploading": "上傳時是否顯示頭像調整大小／裁切對話框",
-    "Would you like to update primary lorebook links for ${0} character(s) as well?": "是否也要更新 ${0} 個角色的主要知識書連結？"
+    "Would you like to update primary lorebook links for ${0} character(s) as well?": "是否也要更新 ${0} 個角色的主要知識書連結？",
+    "Allow anyway": "仍然允許",
+    "Allow anyway runs it in V8 without a timeout for this session. It may consume CPU indefinitely; reload the app to stop it.": "「仍然允許」會讓此腳本在本次工作階段中由 V8 無逾時限制執行。它可能無限期占用 CPU；重新載入應用程式即可停止。",
+    "Keep paused": "保持暫停",
+    "Regex acceleration paused": "正則加速已暫停",
+    "Regex script is slow": "正則腳本執行緩慢",
+    "Rust regex acceleration exceeded ${0} milliseconds and was disabled for this session. The batch will continue in V8.": "Rust 正則加速執行超過 ${0} 毫秒，已在本次工作階段停用。此批次將繼續由 V8 處理。",
+    "Rust regex acceleration failed and was disabled for this session. The batch will continue in V8.": "Rust 正則加速失敗，已在本次工作階段停用。此批次將繼續由 V8 處理。",
+    "Script \"${0}\" exceeded ${1} milliseconds and was paused for this session.": "腳本「${0}」執行超過 ${1} 毫秒，已在本次工作階段暫停。",
+    "This usually indicates catastrophic backtracking. Common causes include leading .*, nested quantifiers, and unbounded lookahead. Review or replace the pattern before allowing it.": "這通常意味著發生了災難性回溯。常見原因包括前導 .*、巢狀量詞及未受限制的前瞻斷言。請在允許繼續執行前檢查或替換該正則。",
+    "Unnamed regex script": "未命名正則腳本"
 }
