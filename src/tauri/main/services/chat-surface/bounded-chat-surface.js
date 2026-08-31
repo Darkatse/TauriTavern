@@ -112,6 +112,12 @@ export function createBoundedChatSurface({
         });
     }
 
+    /** @param {number} messageCount */
+    function materializationCandidates(messageCount) {
+        const start = Math.max(0, messageCount - CHAT_VIRTUAL_MAX_VIEWPORT_ITEMS - 1);
+        return Array.from({ length: messageCount - start }, (_value, index) => start + index);
+    }
+
     /** @param {any} current @param {any} next */
     function hasSameDomLayout(current, next) {
         return Boolean(current)
@@ -297,8 +303,8 @@ export function createBoundedChatSurface({
         });
     }
 
-    /** @param {{ messages?: any[] }} [options] */
-    function open({ messages = getMessages() } = {}) {
+    /** @param {{ messages?: any[]; materializeOptionsByMessageId?: Map<number, any> }} [options] */
+    function open({ messages = getMessages(), materializeOptionsByMessageId = new Map() } = {}) {
         assertOperational();
         if (state !== 'inactive') {
             throw new Error(`Bounded ChatSurface cannot open from state ${state}`);
@@ -314,12 +320,12 @@ export function createBoundedChatSurface({
             virtual.mount();
             virtual.setMode('tail');
             committing = true;
-            commitStructure({ messages });
+            commitStructure({ messages, materializeOptionsByMessageId });
             virtual.scrollToEnd();
             followingTail = true;
             virtual.setMode('normal');
-            commitCurrentGeometry();
-            commitCurrentGeometry();
+            commitCurrentGeometry({ materializeOptionsByMessageId });
+            commitCurrentGeometry({ materializeOptionsByMessageId });
             pendingGeometry = null;
             domAdapter.root.removeAttribute('data-tt-chat-bootstrap');
             state = 'settled';
@@ -483,6 +489,7 @@ export function createBoundedChatSurface({
     return Object.freeze({
         open,
         reconcile,
+        materializationCandidates,
         jumpToMessage,
         resetEpoch,
         refreshLayoutMetrics,
