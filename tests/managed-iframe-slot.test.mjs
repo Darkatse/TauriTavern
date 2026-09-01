@@ -68,6 +68,44 @@ test('managed iframe slot: budget park uses a placeholder and restores the parke
     }
 });
 
+test('managed iframe slot: managed mutation marker survives the observer delivery checkpoint', async () => {
+    const dom = installFakeDom();
+    try {
+        const { createManagedIframeSlot } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-slot.js'),
+        );
+
+        const host = document.createElement('div');
+        const iframe = document.createElement('iframe');
+        host.append(iframe);
+        document.body.append(host);
+
+        const slot = createManagedIframeSlot({
+            id: 'slot:test:managed-mutation',
+            kind: 'k',
+            host,
+            maxSoftParkedIframes: 0,
+            softParkTtlMs: 0,
+        });
+
+        let markerSeenByObserver;
+        slot.dispose();
+        assert.equal(iframe.dataset.ttRuntimeManaged, '1');
+
+        // A child-list MutationObserver delivery is queued by iframe.remove()
+        // after the first cleanup microtask has already been queued.
+        queueMicrotask(() => {
+            markerSeenByObserver = iframe.dataset.ttRuntimeManaged;
+        });
+        dom.flushMicrotasks();
+
+        assert.equal(markerSeenByObserver, '1');
+        assert.equal(iframe.dataset.ttRuntimeManaged, undefined);
+    } finally {
+        dom.cleanup();
+    }
+});
+
 
 test('managed iframe slot: dispose destroys active and parked iframe ownership', async () => {
     const dom = installFakeDom();

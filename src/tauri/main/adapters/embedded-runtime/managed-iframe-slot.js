@@ -18,7 +18,11 @@ const GHOST_PLACEHOLDER_CLASS = 'tt-runtime-ghost';
 function markManagedIframeMutation(iframe) {
     iframe.dataset.ttRuntimeManaged = '1';
     queueMicrotask(() => {
-        delete iframe.dataset.ttRuntimeManaged;
+        // Callers mutate childList after this function returns, so observer
+        // delivery is queued behind this microtask. Keep the marker until then.
+        queueMicrotask(() => {
+            delete iframe.dataset.ttRuntimeManaged;
+        });
     });
 }
 
