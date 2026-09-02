@@ -68,6 +68,100 @@ test('managed iframe slot: budget park uses a placeholder and restores the parke
     }
 });
 
+test('managed iframe slot: transient blob iframe uses cold rebuild instead of soft park', async () => {
+    const dom = installFakeDom();
+    const id = 'slot:test:blob-cold-rebuild';
+    try {
+        const { createManagedIframeSlot } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-slot.js'),
+        );
+        const lot = await importStable(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-parking-lot.js'),
+        );
+        lot.dropParkedManagedIframe(id);
+
+        const host = document.createElement('div');
+        const iframe = document.createElement('iframe');
+        iframe.src = 'blob:transient-runtime';
+        host.append(iframe);
+        document.body.append(host);
+
+        const calls = [];
+        const slot = createManagedIframeSlot({
+            id,
+            kind: 'k',
+            host,
+            maxSoftParkedIframes: 2,
+            softParkTtlMs: 1000,
+            requestColdRebuild: () => calls.push('cold'),
+        });
+
+        slot.hydrate();
+        slot.dehydrate('budget');
+
+        assert.equal(host.querySelector('iframe'), null);
+        assert.equal(iframe.isConnected, false);
+        assert.equal(lot.takeParkedManagedIframe(id), null);
+
+        slot.hydrate();
+        assert.deepEqual(calls, ['cold']);
+    } finally {
+        const lot = await importStable(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-parking-lot.js'),
+        );
+        lot.dropParkedManagedIframe(id);
+        dom.cleanup();
+    }
+});
+
+test('managed iframe slot: hydrate keeps an upstream replacement over a parked iframe', async () => {
+    const dom = installFakeDom();
+    const id = 'slot:test:upstream-replacement';
+    try {
+        const { createManagedIframeSlot } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-slot.js'),
+        );
+        const lot = await importStable(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-parking-lot.js'),
+        );
+        lot.dropParkedManagedIframe(id);
+
+        const host = document.createElement('div');
+        const parkedIframe = document.createElement('iframe');
+        parkedIframe.src = 'https://old.example/';
+        host.append(parkedIframe);
+        document.body.append(host);
+
+        const slot = createManagedIframeSlot({
+            id,
+            kind: 'k',
+            host,
+            maxSoftParkedIframes: 2,
+            softParkTtlMs: 1000,
+        });
+
+        slot.hydrate();
+        slot.dehydrate('budget');
+
+        const replacement = document.createElement('iframe');
+        replacement.src = 'https://new.example/';
+        host.append(replacement);
+
+        slot.hydrate();
+
+        assert.equal(host.querySelector('iframe'), replacement);
+        assert.equal(parkedIframe.isConnected, false);
+        assert.equal(host.querySelector('.tt-runtime-placeholder'), null);
+        assert.equal(lot.takeParkedManagedIframe(id), null);
+    } finally {
+        const lot = await importStable(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-parking-lot.js'),
+        );
+        lot.dropParkedManagedIframe(id);
+        dom.cleanup();
+    }
+});
+
 test('managed iframe slot: managed mutation marker survives the observer delivery checkpoint', async () => {
     const dom = installFakeDom();
     try {
