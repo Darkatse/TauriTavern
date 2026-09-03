@@ -3,6 +3,8 @@ use serde_json::{Map, Value};
 use crate::errors::ApplicationError;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
+use super::exchange::ChatCompletionProviderFormat;
+
 mod aws_bedrock;
 mod chutes;
 mod claude;
@@ -36,6 +38,13 @@ pub(super) fn build_payload(
 
     if !matches!(source, ChatCompletionSource::DeepSeek) {
         prompt_post_processing::apply_custom_prompt_post_processing(&mut payload);
+    }
+
+    if source == ChatCompletionSource::OpenAi
+        && ChatCompletionProviderFormat::from_payload(source, &payload)?
+            == ChatCompletionProviderFormat::OpenAiResponses
+    {
+        return openai_responses::build(payload);
     }
 
     match source {
@@ -100,6 +109,25 @@ mod tests {
             body.get("stream").and_then(serde_json::Value::as_bool),
             Some(true)
         );
+    }
+
+    #[test]
+    fn openai_gpt_6_astra_uses_responses_api() {
+        let payload = json!({
+            "model": "gpt-6-astra",
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0.7
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (endpoint, upstream) =
+            build_payload(ChatCompletionSource::OpenAi, payload).expect("payload should build");
+
+        assert_eq!(endpoint, "/responses");
+        assert_eq!(upstream["model"], "gpt-6-astra");
+        assert_eq!(upstream["temperature"], 0.7);
     }
 
     #[test]

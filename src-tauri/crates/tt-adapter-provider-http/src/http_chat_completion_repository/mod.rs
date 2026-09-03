@@ -635,6 +635,10 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         let source_name = source.display_name();
 
         match (source, endpoint_path) {
+            (ChatCompletionSource::OpenAi, "/responses") => {
+                openai_responses::generate(self, config, endpoint_path, payload, "OpenAI Responses")
+                    .await
+            }
             (ChatCompletionSource::Custom, "/responses") => {
                 openai_responses::generate(
                     self,
@@ -714,6 +718,18 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         let source_name = source.display_name();
 
         match (source, endpoint_path) {
+            (ChatCompletionSource::OpenAi, "/responses") => {
+                openai_responses::generate_stream(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "OpenAI Responses",
+                    sender,
+                    cancel,
+                )
+                .await
+            }
             (ChatCompletionSource::Custom, "/responses") => {
                 openai_responses::generate_stream(
                     self,
@@ -817,6 +833,17 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         let source_name = source.display_name();
 
         match (source, endpoint_path) {
+            (ChatCompletionSource::OpenAi, "/responses") => {
+                openai_responses::generate_with_tool_call_deltas(
+                    self,
+                    config,
+                    endpoint_path,
+                    payload,
+                    "OpenAI Responses",
+                    on_tool_call_delta,
+                )
+                .await
+            }
             (ChatCompletionSource::Custom, "/responses") => {
                 openai_responses::generate_with_tool_call_deltas(
                     self,

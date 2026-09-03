@@ -328,8 +328,6 @@ export const reasoning_effort_types = {
     max: 'max',
 };
 
-const OPENAI_GPT56_MODEL_PATTERN = /^gpt-5\.6(?:-(?:sol|terra|luna))?$/;
-
 export const verbosity_levels = {
     auto: 'auto',
     low: 'low',
@@ -4020,7 +4018,8 @@ function getZaiReasoningEffort(settings, model) {
 }
 
 function supportsOpenAiMaxReasoningEffort(model) {
-    return OPENAI_GPT56_MODEL_PATTERN.test(String(model ?? '').trim().toLowerCase());
+    const normalizedModel = String(model ?? '').trim().toLowerCase();
+    return /^(?:gpt-5\.6(?:-(?:sol|terra|luna))?|gpt-6-astra)$/.test(normalizedModel);
 }
 
 function supportsOpenAiXHighReasoningEffort(model) {
@@ -4826,7 +4825,7 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, mo
             }
         });
         return data.choices?.[0]?.delta?.content ?? data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? '';
-    } else if ([chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.SILICONFLOW, chat_completion_sources.CHUTES, chat_completion_sources.WORKERS_AI].includes(chat_completion_source)) {
+    } else if ([chat_completion_sources.OPENAI, chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.SILICONFLOW, chat_completion_sources.CHUTES, chat_completion_sources.WORKERS_AI].includes(chat_completion_source)) {
         if (show_thoughts) {
             state.reasoning +=
                 data.choices?.filter(x => x?.delta?.reasoning_content)?.[0]?.delta?.reasoning_content ??
@@ -6867,7 +6866,7 @@ function getMaxContextOpenAI(value) {
     if (oai_settings.max_context_unlocked) {
         return unlocked_max;
     }
-    else if (/^gpt-5\.[45](?:$|-\d)/.test(value) || OPENAI_GPT56_MODEL_PATTERN.test(value)) {
+    else if (/^gpt-5\.[45](?:$|-\d)/.test(value) || /^gpt-5\.6(?:-(?:sol|terra|luna))?$/.test(value) || value === 'gpt-6-astra') {
         return max_1mil;
     }
     else if (value.startsWith('gpt-5')) {
@@ -8128,6 +8127,7 @@ export function isImageInliningSupported(settings = oai_settings) {
         'gpt-4.5-preview',
         'gpt-4o',
         'gpt-5',
+        'gpt-6',
         'o1',
         'o3',
         'o4-mini',

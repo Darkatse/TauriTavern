@@ -39,6 +39,11 @@ impl ChatCompletionProviderFormat {
         }
 
         Ok(match source {
+            ChatCompletionSource::OpenAi
+                if payload.get("model").and_then(Value::as_str) == Some("gpt-6-astra") =>
+            {
+                Self::OpenAiResponses
+            }
             ChatCompletionSource::Claude => Self::ClaudeMessages,
             ChatCompletionSource::AwsBedrock if is_bedrock_claude_payload(payload) => {
                 Self::ClaudeMessages

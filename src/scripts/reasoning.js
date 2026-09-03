@@ -143,6 +143,7 @@ export function extractReasoningFromData(data, {
                     return data?.content?.filter(part => part.type === 'thinking')?.map(part => part.thinking)?.join('\n\n') ?? '';
                 case chat_completion_sources.MISTRALAI:
                     return data?.choices?.[0]?.message?.content?.[0]?.thinking?.map(part => part.text)?.filter(x => x)?.join('\n\n') ?? '';
+                case chat_completion_sources.OPENAI:
                 case chat_completion_sources.AIMLAPI:
                 case chat_completion_sources.POLLINATIONS:
                 case chat_completion_sources.MOONSHOT:
