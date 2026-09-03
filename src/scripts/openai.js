@@ -4104,13 +4104,13 @@ function getReasoningEffort(settings = null, model = null) {
     }
 
     function resolveReasoningEffort() {
-        if ([chat_completion_sources.OPENROUTER, chat_completion_sources.MOONSHOT].includes(settings.chat_completion_source)) {
+        if ([chat_completion_sources.OPENAI, chat_completion_sources.OPENROUTER, chat_completion_sources.MOONSHOT].includes(settings.chat_completion_source)) {
             return settings.reasoning_effort === reasoning_effort_types.auto
                 ? undefined
                 : settings.reasoning_effort;
         }
 
-        if ([chat_completion_sources.OPENAI, chat_completion_sources.AZURE_OPENAI].includes(settings.chat_completion_source)) {
+        if (settings.chat_completion_source === chat_completion_sources.AZURE_OPENAI) {
             return normalizeOpenAiReasoningEffort(settings.reasoning_effort, model);
         }
 
