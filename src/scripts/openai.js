@@ -3993,7 +3993,7 @@ function getVertexAiClaudeMaxContext(modelId, unlocked = false) {
  * @returns {boolean}
  */
 function isZaiReasoningEffortModel(model) {
-    return String(model ?? '').trim().toLowerCase() === 'glm-5.2';
+    return ['glm-5.2', 'glm-5.3', 'glm-5.3-flash'].includes(String(model ?? '').trim().toLowerCase());
 }
 
 /**
@@ -6995,6 +6995,8 @@ function getZaiMaxContext(model, isUnlocked) {
     }
 
     const contextMap = {
+        'glm-5.3-flash': max_1mil,
+        'glm-5.3': max_1mil,
         'glm-5.2': max_1mil,
         'glm-5.1': max_200k,
         'glm-5-turbo': max_200k,
@@ -8168,6 +8170,7 @@ export function isImageInliningSupported(settings = oai_settings) {
         'kimi-k2.5',
         'kimi-latest',
         // Z.AI (GLM)
+        'glm-5.3-flash',
         'glm-4.5v',
         'glm-4.6v',
         'autoglm-phone',
@@ -8258,6 +8261,7 @@ export function isVideoInliningSupported(settings = oai_settings) {
         'gemini-exp-1206',
         'gemini-3',
         // Z.AI (GLM)
+        'glm-5.3-flash',
         'glm-4.5v',
         'glm-4.6v',
     ];

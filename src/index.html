@@ -2176,8 +2176,8 @@
                                             <div class="toggle-description justifyLeft marginBot5" data-source="deepseek" data-i18n="DeepSeek V4 options: Auto omits the effort field, Minimum and Low request low effort, Medium through XHigh request high effort, and Maximum requests max effort.">
                                                 DeepSeek V4 options: Auto omits the effort field, Minimum and Low request low effort, Medium through XHigh request high effort, and Maximum requests max effort.
                                             </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="zai" data-i18n="Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, XHigh requests max effort, and Maximum requests xhigh effort.">
-                                                Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, XHigh requests max effort, and Maximum requests xhigh effort.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="zai" data-i18n="Z.AI GLM-5.3 models require thinking and accept low, high, or max. XHigh and Maximum both request max. GLM-5.2 accepts the full effort list.">
+                                                Z.AI GLM-5.3 models require thinking and accept low, high, or max. XHigh and Maximum both request max. GLM-5.2 accepts the full effort list.
                                             </div>
                                             <strong class="toggle-description justifyLeft marginBot5" data-source="openrouter">
                                                 Request model reasoning = Off with Reasoning Effort = Minimum disables reasoning entirely on models that support that, but can cause errors with some models.
@@ -4108,6 +4108,8 @@
                             </select>
                             <h4 data-i18n="Z.AI Model">Z.AI Model</h4>
                             <select id="model_zai_select">
+                                <option value="glm-5.3">glm-5.3</option>
+                                <option value="glm-5.3-flash">glm-5.3-flash</option>
                                 <option value="glm-5.2">glm-5.2</option>
                                 <option value="glm-5-turbo">glm-5-turbo</option>
                                 <option value="glm-5v-turbo">glm-5v-turbo</option>

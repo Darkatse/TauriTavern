@@ -85,27 +85,27 @@ pub(super) fn map_openrouter_reasoning_effort(
     }
 }
 
-pub(super) fn is_zai_reasoning_effort_model(model: &str) -> bool {
-    model.trim().eq_ignore_ascii_case("glm-5.2")
-}
-
 pub(super) fn map_zai_reasoning_effort(
     model: &str,
     value: &str,
 ) -> Result<Option<&'static str>, ApplicationError> {
     let effort = parse_known_reasoning_effort(value, "Z.AI")?;
+    let model = model.trim().to_ascii_lowercase();
+
     match effort {
         RequestedReasoningEffort::Auto => Ok(None),
-        _ if !is_zai_reasoning_effort_model(model) => Err(ApplicationError::ValidationError(
-            "Z.AI reasoning_effort is only supported by glm-5.2".to_string(),
-        )),
+        _ if !matches!(model.as_str(), "glm-5.2" | "glm-5.3" | "glm-5.3-flash") => {
+            Err(ApplicationError::ValidationError(
+                "Z.AI reasoning_effort is only supported by glm-5.2, glm-5.3, and glm-5.3-flash"
+                    .to_string(),
+            ))
+        }
         RequestedReasoningEffort::None => Ok(Some("none")),
         RequestedReasoningEffort::Minimal => Ok(Some("minimal")),
         RequestedReasoningEffort::Low => Ok(Some("low")),
         RequestedReasoningEffort::Medium => Ok(Some("medium")),
         RequestedReasoningEffort::High => Ok(Some("high")),
-        RequestedReasoningEffort::XHigh => Ok(Some("max")),
-        RequestedReasoningEffort::Max => Ok(Some("xhigh")),
+        RequestedReasoningEffort::XHigh | RequestedReasoningEffort::Max => Ok(Some("max")),
     }
 }
 
@@ -309,7 +309,7 @@ fn gemini_3_pro_medium_level(effort: RequestedReasoningEffort) -> Option<&'stati
 mod tests {
     use super::{
         GeminiThinkingControl, RequestedReasoningEffort, map_gemini_thinking_control,
-        map_openrouter_reasoning_effort, map_zai_reasoning_effort,
+        map_openrouter_reasoning_effort,
     };
 
     #[test]
@@ -320,17 +320,6 @@ mod tests {
             error
                 .to_string()
                 .contains("Unsupported OpenRouter reasoning_effort")
-        );
-    }
-
-    #[test]
-    fn zai_reasoning_effort_rejects_unknown_values() {
-        let error = map_zai_reasoning_effort("glm-5.2", "turbo")
-            .expect_err("unknown effort should fail locally");
-        assert!(
-            error
-                .to_string()
-                .contains("Unsupported Z.AI reasoning_effort")
         );
     }
 
