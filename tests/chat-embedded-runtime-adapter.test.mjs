@@ -24,17 +24,21 @@ function createManagerStub(profileConfig = { maxSoftParkedIframes: 1, softParkTt
         invalidate: [],
         touch: [],
     };
+    const slots = new Map();
 
     return {
         calls,
+        slots,
         profileConfig,
         register(slot) {
             calls.register.push(slot.id);
+            slots.set(slot.id, slot);
             slot.element.dataset.ttRuntimeSlotId = slot.id;
             return { id: slot.id, unregister: () => this.unregister(slot.id) };
         },
         unregister(id) {
             calls.unregister.push(id);
+            slots.delete(id);
         },
         invalidate(id) {
             calls.invalidate.push(id);
@@ -194,6 +198,49 @@ test('chat embedded-runtime adapter restores orphaned TH-render UI, parks iframe
         if (slotId) {
             lot.dropParkedManagedIframe(slotId);
         }
+        handle?.dispose();
+        dom.cleanup();
+    }
+});
+
+test('chat embedded-runtime adapter ignores iframe removals initiated by a managed slot', async () => {
+    const dom = installFakeDom();
+    let handle = null;
+    try {
+        const { installChatEmbeddedRuntimeAdapters } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/chat-embedded-runtime-adapter.js'),
+        );
+
+        const chat = document.createElement('div');
+        chat.setAttribute('id', 'chat');
+        document.body.append(chat);
+
+        const { message, wrapper, iframe } = createJsrMessage({ mesid: '12' });
+        chat.append(message);
+
+        const manager = createManagerStub({ maxSoftParkedIframes: 0, softParkTtlMs: 0 });
+        handle = installChatEmbeddedRuntimeAdapters({ manager });
+
+        const slotId = String(wrapper.dataset.ttRuntimeSlotId || '');
+        const slot = manager.slots.get(slotId);
+        assert.ok(slot);
+
+        slot.dehydrate('visibility');
+
+        const observer = dom.createdMutationObservers.at(-1);
+        // MutationObserver delivers after the managed DOM mutation at the
+        // microtask checkpoint.
+        queueMicrotask(() => {
+            observer._trigger([{ target: wrapper, removedNodes: [iframe], addedNodes: [] }]);
+        });
+        dom.flushMicrotasks();
+        dom.flushRaf();
+
+        assert.equal(wrapper.querySelector('iframe'), null);
+        assert.deepEqual(manager.calls.invalidate, []);
+        assert.deepEqual(manager.calls.unregister, []);
+        assert.equal(wrapper.dataset.ttRuntimeSlotId, slotId);
+    } finally {
         handle?.dispose();
         dom.cleanup();
     }

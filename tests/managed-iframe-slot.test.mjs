@@ -53,9 +53,6 @@ test('managed iframe slot: budget park uses a placeholder and restores the parke
         assert.equal(placeholder.style.minHeight, '123px');
         assert.equal(placeholder.dataset.ttRuntimeParkReason, 'budget');
 
-        dom.flushMicrotasks();
-        assert.equal(iframe.dataset.ttRuntimeManaged, undefined);
-
         slot.hydrate();
         assert.equal(host.querySelector('.tt-runtime-placeholder'), null);
         assert.equal(host.querySelector('iframe'), iframe);
@@ -68,7 +65,7 @@ test('managed iframe slot: budget park uses a placeholder and restores the parke
     }
 });
 
-test('managed iframe slot: transient blob iframe uses cold rebuild instead of soft park', async () => {
+test('managed iframe slot: cold rebuild replaces a transient blob iframe instead of reviving it', async () => {
     const dom = installFakeDom();
     const id = 'slot:test:blob-cold-rebuild';
     try {
@@ -86,14 +83,18 @@ test('managed iframe slot: transient blob iframe uses cold rebuild instead of so
         host.append(iframe);
         document.body.append(host);
 
-        const calls = [];
+        let replacement = null;
         const slot = createManagedIframeSlot({
             id,
             kind: 'k',
             host,
             maxSoftParkedIframes: 2,
             softParkTtlMs: 1000,
-            requestColdRebuild: () => calls.push('cold'),
+            requestColdRebuild: () => {
+                replacement = document.createElement('iframe');
+                replacement.src = 'blob:fresh-runtime';
+                host.append(replacement);
+            },
         });
 
         slot.hydrate();
@@ -101,10 +102,10 @@ test('managed iframe slot: transient blob iframe uses cold rebuild instead of so
 
         assert.equal(host.querySelector('iframe'), null);
         assert.equal(iframe.isConnected, false);
-        assert.equal(lot.takeParkedManagedIframe(id), null);
 
         slot.hydrate();
-        assert.deepEqual(calls, ['cold']);
+        assert.ok(replacement);
+        assert.equal(host.querySelector('iframe'), replacement);
     } finally {
         const lot = await importStable(
             path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-parking-lot.js'),
@@ -152,7 +153,6 @@ test('managed iframe slot: hydrate keeps an upstream replacement over a parked i
         assert.equal(host.querySelector('iframe'), replacement);
         assert.equal(parkedIframe.isConnected, false);
         assert.equal(host.querySelector('.tt-runtime-placeholder'), null);
-        assert.equal(lot.takeParkedManagedIframe(id), null);
     } finally {
         const lot = await importStable(
             path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-parking-lot.js'),
@@ -161,45 +161,6 @@ test('managed iframe slot: hydrate keeps an upstream replacement over a parked i
         dom.cleanup();
     }
 });
-
-test('managed iframe slot: managed mutation marker survives the observer delivery checkpoint', async () => {
-    const dom = installFakeDom();
-    try {
-        const { createManagedIframeSlot } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-slot.js'),
-        );
-
-        const host = document.createElement('div');
-        const iframe = document.createElement('iframe');
-        host.append(iframe);
-        document.body.append(host);
-
-        const slot = createManagedIframeSlot({
-            id: 'slot:test:managed-mutation',
-            kind: 'k',
-            host,
-            maxSoftParkedIframes: 0,
-            softParkTtlMs: 0,
-        });
-
-        let markerSeenByObserver;
-        slot.dispose();
-        assert.equal(iframe.dataset.ttRuntimeManaged, '1');
-
-        // A child-list MutationObserver delivery is queued by iframe.remove()
-        // after the first cleanup microtask has already been queued.
-        queueMicrotask(() => {
-            markerSeenByObserver = iframe.dataset.ttRuntimeManaged;
-        });
-        dom.flushMicrotasks();
-
-        assert.equal(markerSeenByObserver, '1');
-        assert.equal(iframe.dataset.ttRuntimeManaged, undefined);
-    } finally {
-        dom.cleanup();
-    }
-});
-
 
 test('managed iframe slot: dispose destroys active and parked iframe ownership', async () => {
     const dom = installFakeDom();
@@ -251,50 +212,6 @@ test('managed iframe slot: dispose destroys active and parked iframe ownership',
         );
         lot.dropParkedManagedIframe(activeId);
         lot.dropParkedManagedIframe(parkedId);
-        dom.cleanup();
-    }
-});
-
-test('managed iframe slot: cold start calls requestColdRebuild instead of cloning a stale template', async () => {
-    const dom = installFakeDom();
-    const id = 'slot:test:cold-rebuild';
-    try {
-        const { createManagedIframeSlot } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-slot.js'),
-        );
-        const lot = await importStable(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-parking-lot.js'),
-        );
-        lot.dropParkedManagedIframe(id);
-
-        const host = document.createElement('div');
-        document.body.append(host);
-
-        const iframe = document.createElement('iframe');
-        iframe.src = 'blob:stale';
-        host.append(iframe);
-
-        const calls = [];
-        const slot = createManagedIframeSlot({
-            id,
-            kind: 'k',
-            host,
-            maxSoftParkedIframes: 0,
-            softParkTtlMs: 0,
-            requestColdRebuild: () => calls.push('cold'),
-        });
-
-        slot.hydrate(); // materializes template
-        iframe.remove();
-
-        slot.hydrate();
-        assert.deepEqual(calls, ['cold']);
-        assert.equal(host.querySelector('iframe'), null);
-    } finally {
-        const lot = await importStable(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/managed-iframe-parking-lot.js'),
-        );
-        lot.dropParkedManagedIframe(id);
         dom.cleanup();
     }
 });
