@@ -168,19 +168,19 @@ impl SyncExecutionReport {
 
 #[derive(Debug)]
 pub struct SyncExecutionFailure {
-    pub error: DomainError,
+    pub error: Box<DomainError>,
     pub local_applied: LocalAppliedChangeSummary,
 }
 
 impl SyncExecutionFailure {
-    pub fn new(error: DomainError, local_applied: LocalAppliedChangeSummary) -> Self {
+    pub fn new(error: impl Into<Box<DomainError>>, local_applied: LocalAppliedChangeSummary) -> Self {
         Self {
-            error,
+            error: error.into(),
             local_applied,
         }
     }
 
-    pub fn without_local_mutation(error: DomainError) -> Self {
+    pub fn without_local_mutation(error: impl Into<Box<DomainError>>) -> Self {
         Self::new(error, LocalAppliedChangeSummary::default())
     }
 }

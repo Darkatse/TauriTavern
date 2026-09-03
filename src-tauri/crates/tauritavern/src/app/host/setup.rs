@@ -21,6 +21,11 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
     let runtime_paths = super::runtime_paths::install(app, &app_handle)?;
     super::observability::purge_old_logs(&runtime_paths);
 
+    let trivium_store_manager = Arc::new(crate::infrastructure::trivium_store::TriviumStoreManager::new(
+        &runtime_paths.data_root,
+    ));
+    app.manage(trivium_store_manager);
+
     // 2. Publish lightweight host services that do not depend on user settings.
     // AppState construction later reuses the same HTTP pool via managed state.
     let http_client_pool = Arc::new(HttpClientPool::new(crate::product::USER_AGENT));

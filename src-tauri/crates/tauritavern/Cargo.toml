@@ -61,6 +61,7 @@ tt-adapter-provider-http = { path = "../tt-adapter-provider-http" }
 tt-adapter-storage-core = { path = "../tt-adapter-storage-core" }
 tt-adapter-storage-userdata = { path = "../tt-adapter-storage-userdata" }
 tt-adapter-media = { path = "../tt-adapter-media" }
+triviumdb = { workspace = true }
 
 # TT-Sync v2 shared protocol crates. (crates.io)
 ttsync-contract = { workspace = true }

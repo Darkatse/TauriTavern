@@ -33,6 +33,7 @@ ttsync-client = "2"
 uuid = { version = "1.4", default-features = false, features = ["serde", "std", "v4"] }
 # Keep bundled libzstd target SIMD/assembly auto-detection; `no_asm` and `thin` disable fast paths.
 zstd = { version = "0.13.3", default-features = false }
+triviumdb = "0.8.5"
 
 [profile.dev]
 debug = "line-tables-only"
