@@ -122,6 +122,12 @@ function registerWrapper(manager, wrapper) {
         kind: EmbeddedRuntimeKind.LittleWhiteBoxHtmlRender,
         host: wrapper,
         requestColdRebuild: () => {
+            const pre = wrapper.nextElementSibling;
+            if (!(pre instanceof HTMLPreElement)) {
+                throw new Error(`LittleWhiteBox cold rebuild(${slotId}): paired <pre> is missing`);
+            }
+            delete pre.dataset.xbFinal;
+            delete pre.dataset.xbHash;
             void eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
         },
         priority: 0,
