@@ -6,6 +6,9 @@
  * @typedef {(command: import('../../context/types.js').TauriInvokeCommand, args?: any, options?: { headers?: HeadersInit }) => Promise<any>} RawInvokeFn
  */
 
+const isBlobLike = (f) => f && typeof f === 'object' && typeof f.arrayBuffer === 'function';
+const isFileLike = (f) => isBlobLike(f) && typeof f.name === 'string';
+
 /**
  * @param {{ safeInvoke?: SafeInvokeFn; invoke?: RawInvokeFn }} [deps]
  */
@@ -226,7 +229,7 @@ export function createUploadService({ safeInvoke, invoke } = {}) {
         const extension = resolveUploadExtension({
             preferredExtension,
             preferredName,
-            sourceName: file instanceof File ? file.name : '',
+            sourceName: isFileLike(file) ? file.name : '',
         });
         let filePath = '';
 
@@ -331,7 +334,7 @@ export function createUploadService({ safeInvoke, invoke } = {}) {
      * @returns {Promise<MaterializedFileInfo | null>}
      */
     async function materializeUploadFile(file, { preferredName = '', preferredExtension = '', kind = DEFAULT_UPLOAD_KIND } = {}) {
-        if (!(file instanceof Blob)) {
+        if (!isBlobLike(file)) {
             return null;
         }
 
@@ -385,4 +388,4 @@ export function createUploadService({ safeInvoke, invoke } = {}) {
         isAndroidRuntime,
         isIosRuntime,
     };
-}
+                }
