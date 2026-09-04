@@ -1,10 +1,6 @@
 import { assertCharacterAvatarFileName } from '../services/characters/character-identity.js';
 import { badRequestBody, isNotFoundError } from './character-route-utils.js';
 
-const isFormData = (b) => b && typeof b.get === 'function' && typeof b.has === 'function';
-const isBlobLike = (f) => f && typeof f === 'object' && typeof f.arrayBuffer === 'function';
-const isFileLike = (f) => isBlobLike(f) && typeof f.name === 'string';
-
 /**
  * @param {any} character
  * @param {'agentProfiles' | 'skills'} field
@@ -20,12 +16,12 @@ function hasCharacterEmbeddedAgentAsset(character, field) {
 
 export function registerCharacterImportRoute(router, context, { jsonResponse }) {
     router.post('/api/characters/import', async ({ body }) => {
-        if (!isFormData(body)) {
+        if (!(body instanceof FormData)) {
             return jsonResponse({ error: 'Expected multipart form data' }, 400);
         }
 
         const file = body.get('avatar');
-        if (!isBlobLike(file)) {
+        if (!(file instanceof Blob)) {
             return jsonResponse({ error: 'No character file provided' }, 400);
         }
 
@@ -44,7 +40,7 @@ export function registerCharacterImportRoute(router, context, { jsonResponse }) 
 
         const fileType = String(body.get('file_type') || '').trim().toLowerCase();
         const fallbackName = fileType ? `import.${fileType}` : 'import.bin';
-        const preferredName = isFileLike(file) && file.name ? file.name : fallbackName;
+        const preferredName = file instanceof File && file.name ? file.name : fallbackName;
         const fileInfo = await context.materializeUploadFile(file, {
             kind: 'character-import',
             preferredName,
@@ -93,4 +89,4 @@ export function registerCharacterImportRoute(router, context, { jsonResponse }) 
             },
         });
     });
-    }
+}
