@@ -76,6 +76,7 @@ Production 与 development 共用 `rspack.config.js` 的 `createRspackConfigs(mo
 
 - Raw Settings 外壳创建 Popup、读取 Host 数据并向 React root 注入 typed options、actions 与 translator。
 - React root 不读取外壳内部状态；外壳也不依赖 React component instance，只持有公开 mount handle。
+- 扩展菜单快捷入口是设备本地的展示偏好；Raw Settings 外壳复用上游 Popup 管理选择，并由 DOM adapter 投影到既有 `#extensionsMenu`，不新增 React root 或后端设置。
 - 三个功能共享同一 Rspack compiler，但保持独立 bundle 和独立生命周期。
 
 ## 5. 宿主调用契约

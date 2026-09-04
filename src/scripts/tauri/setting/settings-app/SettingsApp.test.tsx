@@ -80,6 +80,7 @@ function createActions(overrides: Partial<SettingsActions> = {}): SettingsAction
         chooseDataRoot: () => Promise.resolve(null),
         chooseWallpaper: () => Promise.resolve(null),
         showHelp: () => Promise.resolve(),
+        manageQuickAccess: () => Promise.resolve(),
         reloadFrontend: () => Promise.resolve(),
         openFrontendLogs: () => Promise.resolve(),
         openBackendLogs: () => Promise.resolve(),

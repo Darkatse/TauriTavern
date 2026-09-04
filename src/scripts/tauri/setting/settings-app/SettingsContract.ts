@@ -192,6 +192,7 @@ export type SettingsActions = {
     chooseDataRoot: () => Promise<string | null | undefined>;
     chooseWallpaper: (request: { currentValue: string }) => Promise<string | null | undefined>;
     showHelp: (topicId: string) => Promise<unknown>;
+    manageQuickAccess: () => Promise<unknown>;
     reloadFrontend: () => Promise<unknown>;
     openFrontendLogs: () => Promise<unknown>;
     openBackendLogs: () => Promise<unknown>;
@@ -220,6 +221,7 @@ const REQUIRED_ACTIONS = [
     'chooseDataRoot',
     'chooseWallpaper',
     'showHelp',
+    'manageQuickAccess',
     'reloadFrontend',
     'openFrontendLogs',
     'openBackendLogs',

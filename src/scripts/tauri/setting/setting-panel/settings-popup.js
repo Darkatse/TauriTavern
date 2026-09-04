@@ -361,6 +361,10 @@ function createSettingsActions(backgroundOptions) {
         chooseDataRoot: () => runTaskOrPopup(chooseDataRoot),
         chooseWallpaper: (request) => runTaskOrPopup(() => chooseWallpaper(backgroundOptions, request)),
         showHelp: (topicId) => runTaskOrPopup(() => showHelpTopic(topicId)),
+        manageQuickAccess: () => runTaskOrPopup(async () => {
+            const { openExtensionMenuShortcutsManager } = await import('../extension-menu-shortcuts.js');
+            await openExtensionMenuShortcutsManager();
+        }),
         reloadFrontend: () => runTaskOrPopup(async () => {
             window.location.reload();
         }),

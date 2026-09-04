@@ -263,7 +263,7 @@ export const extension_settings = {
     },
 };
 
-function showHideExtensionsMenu() {
+export function showHideExtensionsMenu() {
     // Get the number of menu items that are not hidden
     const hasMenuItems = $('#extensionsMenu').children().filter((_, child) => $(child).css('display') !== 'none').length > 0;
 
@@ -945,7 +945,7 @@ function syncExtensionSettingsUi() {
     $('#extensions_notify_updates').prop('checked', extension_settings.notifyUpdates);
 }
 
-async function ensureExtensionsUiReady() {
+export async function ensureExtensionsUiReady() {
     if (extensionsUiReadyPromise) {
         return extensionsUiReadyPromise;
     }
