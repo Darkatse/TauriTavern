@@ -9,6 +9,8 @@ import {
 } from './character-route-utils.js';
 import { registerCharacterImportRoute } from './character-import-route.js';
 
+const isFormData = (b) => b && typeof b.get === 'function' && typeof b.has === 'function';
+
 const CHARACTER_CREATE_WARNING_HEADER = 'x-tauritavern-warning';
 
 function hasBodyField(body, fieldName) {
@@ -121,7 +123,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
     });
 
     router.post('/api/characters/create', async ({ body, url }) => {
-        if (body instanceof FormData) {
+        if (isFormData(body)) {
             const outcome = await context.createCharacterFromForm(body, url);
             context.invalidateCharacterCache();
             return createCharacterResponse(outcome, textResponse);
@@ -133,7 +135,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
     });
 
     router.post('/api/characters/edit', async ({ body, url }) => {
-        if (!(body instanceof FormData)) {
+        if (!isFormData(body)) {
             return jsonResponse({ error: 'Expected multipart form data' }, 400);
         }
 
@@ -195,7 +197,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
     });
 
     router.post('/api/characters/edit-avatar', async ({ body, url }) => {
-        if (!(body instanceof FormData)) {
+        if (!isFormData(body)) {
             return jsonResponse({ error: 'Expected multipart form data' }, 400);
         }
 
@@ -394,4 +396,4 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
             },
         });
     });
-}
+            }
