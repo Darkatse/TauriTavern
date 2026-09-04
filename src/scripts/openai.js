@@ -189,6 +189,7 @@ export let model_list = [];
 
 export const chat_completion_sources = {
     OPENAI: 'openai',
+    OPENCODE: 'opencode',
     CLAUDE: 'claude',
     OPENROUTER: 'openrouter',
     AI21: 'ai21',
@@ -224,6 +225,7 @@ const custom_model_option_values = new Set([
 
 const chatCompletionModelControls = {
     [chat_completion_sources.OPENAI]: { selector: '#model_openai_select', settingKey: 'openai_model', label: 'OpenAI', supportsCustomModels: true },
+    [chat_completion_sources.OPENCODE]: { selector: '#model_opencode_select', settingKey: 'opencode_model', label: 'OpenCode', supportsCustomModels: true },
     [chat_completion_sources.CLAUDE]: { selector: '#model_claude_select', settingKey: 'claude_model', label: 'Claude', supportsCustomModels: true },
     [chat_completion_sources.OPENROUTER]: { selector: '#model_openrouter_select', settingKey: 'openrouter_model', label: 'OpenRouter', supportsCustomModels: true },
     [chat_completion_sources.AI21]: { selector: '#model_ai21_select', settingKey: 'ai21_model', label: 'AI21', supportsCustomModels: true },
@@ -277,6 +279,18 @@ const custom_api_formats = {
     OPENAI_RESPONSES: 'openai_responses',
     CLAUDE_MESSAGES: 'claude_messages',
     GEMINI_INTERACTIONS: 'gemini_interactions',
+};
+
+export const OPENCODE_API_FORMAT = {
+    OPENAI_COMPAT: 'openai_compat',
+    OPENAI_RESPONSES: 'openai_responses',
+    CLAUDE_MESSAGES: 'claude_messages',
+    GEMINI: 'gemini',
+};
+
+export const OPENCODE_ENDPOINT = {
+    ZEN: 'zen',
+    GO: 'go',
 };
 
 const custom_source_variants = {
@@ -386,6 +400,8 @@ function usesClaudeMessagesSemantics(settings, model = getChatCompletionModel(se
     switch (settings.chat_completion_source) {
         case chat_completion_sources.CLAUDE:
             return true;
+        case chat_completion_sources.OPENCODE:
+            return settings.opencode_api_format === OPENCODE_API_FORMAT.CLAUDE_MESSAGES;
         case chat_completion_sources.CUSTOM:
             return settings.custom_api_format === custom_api_formats.CLAUDE_MESSAGES;
         case chat_completion_sources.VERTEXAI:
@@ -430,6 +446,9 @@ const sensitiveFields = [
 export const settingsToUpdate = {
     chat_completion_source: ['#chat_completion_source', 'chat_completion_source', false, true],
     custom_api_format: ['', 'custom_api_format', false, true],
+    opencode_model: ['#model_opencode_select', 'opencode_model', false, true],
+    opencode_endpoint: ['#opencode_endpoint', 'opencode_endpoint', false, true],
+    opencode_api_format: ['#opencode_api_format', 'opencode_api_format', false, true],
     temperature: ['#temp_openai', 'temp_openai', false, false],
     frequency_penalty: ['#freq_pen_openai', 'freq_pen_openai', false, false],
     presence_penalty: ['#pres_pen_openai', 'pres_pen_openai', false, false],
@@ -577,6 +596,9 @@ const default_settings = {
     scenario_format: default_scenario_format,
     personality_format: default_personality_format,
     openai_model: 'gpt-4-turbo',
+    opencode_model: '',
+    opencode_endpoint: OPENCODE_ENDPOINT.ZEN,
+    opencode_api_format: OPENCODE_API_FORMAT.OPENAI_COMPAT,
     claude_model: 'claude-sonnet-4-5',
     google_model: 'gemini-2.5-pro',
     vertexai_model: 'gemini-2.5-pro',
@@ -2708,6 +2730,8 @@ export function getChatCompletionModel(settings = null) {
             return settings.claude_model;
         case chat_completion_sources.OPENAI:
             return settings.openai_model;
+        case chat_completion_sources.OPENCODE:
+            return settings.opencode_model;
         case chat_completion_sources.MAKERSUITE:
             return settings.google_model;
         case chat_completion_sources.VERTEXAI:
@@ -3325,6 +3349,18 @@ function saveModelList(data) {
             );
             setModelSelectValue(chat_completion_sources.OPENAI, model);
         }
+    }
+
+    if (oai_settings.chat_completion_source === chat_completion_sources.OPENCODE) {
+        $('#model_opencode_select').empty().append(new Option('-- Select a model --', ''));
+        model_list.forEach(model => $('#model_opencode_select').append(new Option(model.id, model.id)));
+        oai_settings.opencode_model = chooseModelOrCurrentCustom(
+            chat_completion_sources.OPENCODE,
+            model_list.map(model => model.id),
+            oai_settings.opencode_model,
+            '',
+        );
+        setModelSelectValue(chat_completion_sources.OPENCODE, oai_settings.opencode_model);
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.CUSTOM) {
@@ -4076,7 +4112,7 @@ function getReasoningEffort(settings = null, model = null) {
         return settings.reasoning_effort;
     }
 
-    if (settings.chat_completion_source === chat_completion_sources.CUSTOM) {
+    if ([chat_completion_sources.CUSTOM, chat_completion_sources.OPENCODE].includes(settings.chat_completion_source)) {
         return settings.reasoning_effort === reasoning_effort_types.auto
             ? undefined
             : settings.reasoning_effort;
@@ -4267,6 +4303,10 @@ export async function createGenerationParameters(settings, model, type, messages
     const canMultiSwipe = !agentMode && ToolManager.canPerformMultiSwipe(type, settings);
     const macroNames = macroContext?.names && typeof macroContext.names === 'object' ? macroContext.names : null;
     const isVertexAiClaude = settings.chat_completion_source === chat_completion_sources.VERTEXAI && isVertexAiClaudeModelId(model);
+    const isOpenCodeClaude = settings.chat_completion_source === chat_completion_sources.OPENCODE
+        && settings.opencode_api_format === OPENCODE_API_FORMAT.CLAUDE_MESSAGES;
+    const isOpenCodeGemini = settings.chat_completion_source === chat_completion_sources.OPENCODE
+        && settings.opencode_api_format === OPENCODE_API_FORMAT.GEMINI;
 
     let logit_bias = {};
     if (settings.bias_preset_selected
@@ -4358,7 +4398,7 @@ export async function createGenerationParameters(settings, model, type, messages
         delete generate_data.logprobs;
     }
 
-    if (settings.chat_completion_source === chat_completion_sources.CLAUDE || isVertexAiClaude) {
+    if (settings.chat_completion_source === chat_completion_sources.CLAUDE || isVertexAiClaude || isOpenCodeClaude) {
         generate_data.top_k = Number(settings.top_k_openai);
         generate_data.use_sysprompt = settings.use_sysprompt;
         generate_data.stop = getCustomStoppingStrings(); // Claude shouldn't have limits on stop strings.
@@ -4382,7 +4422,7 @@ export async function createGenerationParameters(settings, model, type, messages
         generate_data.middleout = settings.openrouter_middleout;
     }
 
-    if ([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(settings.chat_completion_source)) {
+    if ([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(settings.chat_completion_source) || isOpenCodeGemini) {
         const stopStringsLimit = 5;
         generate_data.top_k = Number(settings.top_k_openai);
         if (!isVertexAiClaude) {
@@ -4412,6 +4452,11 @@ export async function createGenerationParameters(settings, model, type, messages
         generate_data.custom_openai_responses_websocket =
             settings.custom_api_format === custom_api_formats.OPENAI_RESPONSES
             && Boolean(settings.custom_openai_responses_websocket);
+    }
+
+    if (settings.chat_completion_source === chat_completion_sources.OPENCODE) {
+        generate_data.opencode_endpoint = settings.opencode_endpoint;
+        generate_data.opencode_api_format = settings.opencode_api_format;
     }
 
     if (settings.chat_completion_source === chat_completion_sources.COHERE) {
@@ -4677,9 +4722,9 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
                 if (canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0) {
                     const swipeIndex = parsed.choices[0].index - 1;
                     // FIXME: state.reasoning should be an array to support multi-swipe
-                    swipes[swipeIndex] = (swipes[swipeIndex] || '') + getStreamingReply(parsed, state, { chatCompletionSource: requestSource, model: requestModel, overrideShowThoughts: false });
+                    swipes[swipeIndex] = (swipes[swipeIndex] || '') + getStreamingReply(parsed, state, { chatCompletionSource: requestSource, model: requestModel, opencodeApiFormat: generate_data.opencode_api_format, overrideShowThoughts: false });
                 } else {
-                    text += getStreamingReply(parsed, state, { chatCompletionSource: requestSource, model: requestModel });
+                    text += getStreamingReply(parsed, state, { chatCompletionSource: requestSource, model: requestModel, opencodeApiFormat: generate_data.opencode_api_format });
                 }
 
                 ToolManager.parseToolCalls(toolCalls, parsed, state.toolSignatures);
@@ -4757,27 +4802,33 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
  * @param {object} [options] Additional options
  * @param {string?} [options.chatCompletionSource] Chat completion source
  * @param {string?} [options.model] Chat completion model
+ * @param {string?} [options.opencodeApiFormat] OpenCode API format
  * @param {boolean?} [options.overrideShowThoughts] Override show thoughts
  * @returns {string} The reply extracted from the response data
  */
-export function getStreamingReply(data, state, { chatCompletionSource = null, model = null, overrideShowThoughts = null } = {}) {
+export function getStreamingReply(data, state, { chatCompletionSource = null, model = null, opencodeApiFormat = null, overrideShowThoughts = null } = {}) {
     const chat_completion_source = chatCompletionSource ?? oai_settings.chat_completion_source;
     const show_thoughts = overrideShowThoughts ?? oai_settings.show_thoughts;
 
     const isCustomClaudeMessages = chat_completion_source === chat_completion_sources.CUSTOM
         && oai_settings.custom_api_format === custom_api_formats.CLAUDE_MESSAGES;
+    const isOpenCodeClaudeMessages = chat_completion_source === chat_completion_sources.OPENCODE
+        && (opencodeApiFormat ?? oai_settings.opencode_api_format) === OPENCODE_API_FORMAT.CLAUDE_MESSAGES;
+    const isOpenCodeGemini = chat_completion_source === chat_completion_sources.OPENCODE
+        && (opencodeApiFormat ?? oai_settings.opencode_api_format) === OPENCODE_API_FORMAT.GEMINI;
     const isVertexAiClaude = chat_completion_source === chat_completion_sources.VERTEXAI
         && isVertexAiClaudeModelId(model);
 
     if (chat_completion_source === chat_completion_sources.CLAUDE
         || chat_completion_source === chat_completion_sources.AWS_BEDROCK
         || isCustomClaudeMessages
+        || isOpenCodeClaudeMessages
         || isVertexAiClaude) {
         if (show_thoughts) {
             state.reasoning += data?.delta?.thinking || '';
         }
         return data?.delta?.text || '';
-    } else if ([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(chat_completion_source)) {
+    } else if ([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(chat_completion_source) || isOpenCodeGemini) {
         const parts = data?.candidates?.[0]?.content?.parts || [];
         const inlineData = parts.filter(x => x.inlineData && !x.thought).map(x => x.inlineData);
         if (inlineData.length > 0) {
@@ -4825,7 +4876,7 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, mo
             }
         });
         return data.choices?.[0]?.delta?.content ?? data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? '';
-    } else if ([chat_completion_sources.OPENAI, chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.SILICONFLOW, chat_completion_sources.CHUTES, chat_completion_sources.WORKERS_AI].includes(chat_completion_source)) {
+    } else if ([chat_completion_sources.OPENAI, chat_completion_sources.OPENCODE, chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.SILICONFLOW, chat_completion_sources.CHUTES, chat_completion_sources.WORKERS_AI].includes(chat_completion_source)) {
         if (show_thoughts) {
             state.reasoning +=
                 data.choices?.filter(x => x?.delta?.reasoning_content)?.[0]?.delta?.reasoning_content ??
@@ -6275,6 +6326,11 @@ async function getStatusOpen() {
         data.custom_url = oai_settings.custom_url;
     }
 
+    if (oai_settings.chat_completion_source === chat_completion_sources.OPENCODE) {
+        data.opencode_endpoint = oai_settings.opencode_endpoint;
+        data.opencode_api_format = oai_settings.opencode_api_format;
+    }
+
     if (oai_settings.chat_completion_source === chat_completion_sources.AZURE_OPENAI) {
         data.azure_base_url = oai_settings.azure_base_url;
         data.azure_deployment_name = oai_settings.azure_deployment_name;
@@ -7253,6 +7309,14 @@ async function onModelChange() {
         oai_settings.openai_model = value;
     }
 
+    if ($(this).is('#model_opencode_select')) {
+        if (!value) {
+            console.debug('Null OpenCode model selected. Ignoring.');
+            return;
+        }
+        oai_settings.opencode_model = value;
+    }
+
     if ($(this).is('#model_openrouter_select')) {
         if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.OPENROUTER, value))) {
             console.debug('Null OR model selected. Ignoring.');
@@ -7635,7 +7699,7 @@ async function onModelChange() {
         $('#temp_openai').attr('max', oai_max_temp).val(oai_settings.temp_openai).trigger('input');
     }
 
-    if (oai_settings.chat_completion_source == chat_completion_sources.CUSTOM) {
+    if ([chat_completion_sources.CUSTOM, chat_completion_sources.OPENCODE].includes(oai_settings.chat_completion_source)) {
         $('#openai_max_context').attr('max', unlocked_max);
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
         $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
@@ -7877,6 +7941,7 @@ async function onConnectButtonClick(e) {
         [chat_completion_sources.MAKERSUITE]: { key: SECRET_KEYS.MAKERSUITE, selector: '#api_key_makersuite', proxy: true },
         [chat_completion_sources.CLAUDE]: { key: SECRET_KEYS.CLAUDE, selector: '#api_key_claude', proxy: true },
         [chat_completion_sources.OPENAI]: { key: SECRET_KEYS.OPENAI, selector: '#api_key_openai', proxy: true },
+        [chat_completion_sources.OPENCODE]: { key: SECRET_KEYS.OPENCODE, selector: '#api_key_opencode', proxy: false },
         [chat_completion_sources.AI21]: { key: SECRET_KEYS.AI21, selector: '#api_key_ai21', proxy: false },
         [chat_completion_sources.MISTRALAI]: { key: SECRET_KEYS.MISTRALAI, selector: '#api_key_mistralai', proxy: true },
         [chat_completion_sources.CUSTOM]: { key: SECRET_KEYS.CUSTOM, selector: '#api_key_custom', proxy: false, keyless: true },
@@ -7962,6 +8027,9 @@ function toggleChatCompletionForms() {
         $('#model_vertexai_select').trigger('change');
         // Update UI based on authentication mode
         onVertexAIAuthModeChange.call($('#vertexai_auth_mode')[0]);
+    }
+    else if (oai_settings.chat_completion_source === chat_completion_sources.OPENCODE) {
+        $('#model_opencode_select').trigger('change');
     }
     else if (oai_settings.chat_completion_source == chat_completion_sources.OPENROUTER) {
         $('#model_openrouter_select').trigger('change');
@@ -9240,6 +9308,7 @@ export function initOpenAI() {
     $('#api_button_openai').on('click', onConnectButtonClick);
     $('#openai_reverse_proxy').on('input', onReverseProxyInput);
     $('#model_openai_select').on('change', onModelChange);
+    $('#model_opencode_select').on('change', onModelChange);
     $('#model_claude_select').on('change', onModelChange);
     $('#model_google_select').on('change', onModelChange);
     $('#model_vertexai_select').on('change', onModelChange);
@@ -9254,6 +9323,14 @@ export function initOpenAI() {
     });
     $('#zai_endpoint').on('input', function () {
         oai_settings.zai_endpoint = String($(this).val());
+        saveSettingsDebounced();
+    });
+    $('#opencode_endpoint').on('input', function () {
+        oai_settings.opencode_endpoint = String($(this).val());
+        saveSettingsDebounced();
+    });
+    $('#opencode_api_format').on('input', function () {
+        oai_settings.opencode_api_format = String($(this).val());
         saveSettingsDebounced();
     });
     $('#siliconflow_endpoint').on('input', function () {

@@ -40,6 +40,17 @@ const TEXT_COMPLETION_MODELS: &[&str] = &[
 ];
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
+    build_with_text_completions(payload, true)
+}
+
+pub(super) fn build_chat(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
+    build_with_text_completions(payload, false)
+}
+
+fn build_with_text_completions(
+    payload: Map<String, Value>,
+    allow_text_completions: bool,
+) -> Result<(String, Value), ApplicationError> {
     let mut payload = payload;
     let source = payload
         .get("chat_completion_source")
@@ -48,7 +59,7 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
         .trim()
         .to_ascii_lowercase();
     strip_internal_fields(&mut payload);
-    build_clean(payload, &source)
+    build_clean(payload, &source, allow_text_completions)
 }
 
 pub(super) fn strip_internal_fields(payload: &mut Map<String, Value>) {
@@ -80,8 +91,9 @@ pub(super) fn strip_internal_fields(payload: &mut Map<String, Value>) {
 fn build_clean(
     payload: Map<String, Value>,
     source: &str,
+    allow_text_completions: bool,
 ) -> Result<(String, Value), ApplicationError> {
-    if is_text_completion(&payload) {
+    if allow_text_completions && is_text_completion(&payload) {
         Ok((
             "/completions".to_string(),
             Value::Object(build_text_completion_payload(&payload)?),

@@ -58,6 +58,7 @@ const SOURCE_ALIASES = Object.freeze({
 
 /** @type {Readonly<Record<string, string>>} */
 const SOURCE_SPECIFIC_API_URL_KEYS = Object.freeze({
+    opencode: 'opencode_endpoint',
     zai: 'zai_endpoint',
     siliconflow: 'siliconflow_endpoint',
     minimax: 'minimax_endpoint',
@@ -154,6 +155,9 @@ export function buildLlmConnectionFromModelTarget(target) {
     }
 
     const customApiFormat = normalizeCustomApiFormat(target);
+    if (source === 'opencode') {
+        endpoint.sourceSpecific.opencode_api_format = customApiFormat || 'openai_compat';
+    }
 
     return {
         schemaVersion: LLM_CONNECTION_SCHEMA_VERSION,
@@ -163,7 +167,7 @@ export function buildLlmConnectionFromModelTarget(target) {
         description: `Connection Manager model target: ${String(target.name || target.id).trim()}`,
         provider: {
             chatCompletionSource: source,
-            ...(customApiFormat ? { customApiFormat } : {}),
+            ...(source === 'custom' && customApiFormat ? { customApiFormat } : {}),
         },
         endpoint,
         auth: {

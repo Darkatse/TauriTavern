@@ -32,6 +32,7 @@ mod custom_parameters;
 pub(crate) mod exchange;
 mod generation_background;
 mod model_capabilities;
+pub(super) mod opencode;
 mod payload;
 mod prompt_caching;
 mod prompt_caching_plan;
@@ -45,6 +46,8 @@ use self::generation_background::GenerationBackgroundLease;
 use self::stream_session::{StreamAppendOutcome, StreamSessionRegistry};
 
 const OPENAI_SOURCE: &str = ChatCompletionSource::OpenAi.key();
+pub(crate) const OPENCODE_STABLE_CHAT_ID_FIELD: &str = "_tauritavern_stable_chat_id";
+const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
 const VERTEXAI_PROMPT_CACHE_SESSION_HEADER: &str = "X-Vertex-Ai-Session-Id";
 const AGENT_STRUCTURAL_BODY_OVERRIDE_KEYS: &[&str] = &[
     "messages",
@@ -468,6 +471,7 @@ impl ChatCompletionService {
             &self.secret_repository,
         )
         .await?;
+        apply_opencode_session_header(source, &dto.payload, &mut config)?;
         let (endpoint_path, mut upstream_payload) = payload::build_payload(source, dto.payload)?;
         additional_parameters.apply_body_overrides(&mut upstream_payload)?;
         self.apply_tauritavern_prompt_caching(
@@ -923,6 +927,34 @@ fn has_configured_header(config: &ChatCompletionApiConfig, header_name: &str) ->
         .any(|key| key.eq_ignore_ascii_case(header_name))
 }
 
+fn apply_opencode_session_header(
+    source: ChatCompletionSource,
+    payload: &Map<String, Value>,
+    config: &mut ChatCompletionApiConfig,
+) -> Result<(), ApplicationError> {
+    if source != ChatCompletionSource::OpenCode
+        || has_configured_header(config, OPENCODE_SESSION_HEADER)
+    {
+        return Ok(());
+    }
+
+    let stable_chat_id = payload
+        .get(OPENCODE_STABLE_CHAT_ID_FIELD)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "OpenCode requires a stable chat id for x-opencode-session".to_string(),
+            )
+        })?;
+    config.extra_headers.insert(
+        OPENCODE_SESSION_HEADER.to_string(),
+        stable_chat_id.to_string(),
+    );
+    Ok(())
+}
+
 fn resolve_status_model_list_source(
     source: ChatCompletionSource,
     custom_api_format: &str,
@@ -969,8 +1001,8 @@ mod tests {
 
     use super::{
         AdditionalParameters, ChatCompletionService, apply_nanogpt_claude_cache_control,
-        apply_vertexai_prompt_cache_session_header, ensure_vertexai_claude_prompt_cache_ttl,
-        resolve_status_model_list_source,
+        apply_opencode_session_header, apply_vertexai_prompt_cache_session_header,
+        ensure_vertexai_claude_prompt_cache_ttl, resolve_status_model_list_source,
     };
     use crate::errors::ApplicationError;
     use tokio::sync::watch;
@@ -1039,6 +1071,47 @@ mod tests {
         apply_vertexai_prompt_cache_session_header(&mut config, &key);
 
         assert!(config.extra_headers.contains_key("X-Vertex-Ai-Session-Id"));
+    }
+
+    #[test]
+    fn opencode_uses_stable_chat_id_as_session_header() {
+        let mut config = ChatCompletionApiConfig {
+            base_url: "https://opencode.ai/zen/v1".to_string(),
+            user_configured_endpoint: false,
+            api_key: "secret".to_string(),
+            authorization_header: None,
+            vertexai_service_account_json: None,
+            extra_headers: Default::default(),
+            additional_headers: Default::default(),
+            anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+            aws_bedrock_custom_response_path: None,
+            aws_bedrock_custom_stream_path: None,
+        };
+        let missing_id = json!({});
+        assert!(
+            apply_opencode_session_header(
+                ChatCompletionSource::OpenCode,
+                missing_id.as_object().unwrap(),
+                &mut config,
+            )
+            .is_err()
+        );
+        let payload = json!({ "_tauritavern_stable_chat_id": "stable-chat" });
+
+        apply_opencode_session_header(
+            ChatCompletionSource::OpenCode,
+            payload.as_object().unwrap(),
+            &mut config,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config
+                .extra_headers
+                .get("x-opencode-session")
+                .map(String::as_str),
+            Some("stable-chat")
+        );
     }
 
     #[test]

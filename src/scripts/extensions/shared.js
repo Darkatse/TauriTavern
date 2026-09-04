@@ -486,6 +486,8 @@ export class ConnectionManagerRequestService {
                         model: profile.model,
                         chat_completion_source: selectedApiMap.source,
                         custom_api_format: profile['custom-api-format'],
+                        opencode_api_format: profile['custom-api-format'],
+                        opencode_endpoint: profile['api-url'],
                         secret_id: profile['secret-id'],
                         custom_url: profile['api-url'],
                         vertexai_region: profile['api-url'],

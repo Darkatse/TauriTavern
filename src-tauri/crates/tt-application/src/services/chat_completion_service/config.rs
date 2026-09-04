@@ -18,6 +18,7 @@ use tt_ports::repositories::provider_metadata_repository::SiliconFlowEndpoint;
 use tt_ports::repositories::secret_repository::SecretRepository;
 
 use super::additional_parameters::AdditionalParameters;
+use super::opencode::{self, OpenCodeApiFormat};
 
 const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
 const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
@@ -64,6 +65,8 @@ struct ApiConfigHints<'a> {
     workers_ai_account_id: &'a str,
     nanogpt_provider: &'a str,
     nanogpt_payg_override: bool,
+    opencode_endpoint: &'a str,
+    opencode_api_format: &'a str,
     aws_bedrock_region: &'a str,
     /// Dotted JSON path applied to non-stream Bedrock responses when the
     /// custom-invoke-template escape hatch is enabled (e.g.
@@ -96,6 +99,8 @@ pub(super) async fn resolve_status_api_config(
         additional_headers,
         ApiConfigHints {
             siliconflow_endpoint: dto.siliconflow_endpoint.trim(),
+            opencode_endpoint: dto.opencode_endpoint.trim(),
+            opencode_api_format: dto.opencode_api_format.trim(),
             minimax_endpoint: dto.minimax_endpoint.trim(),
             moonshot_endpoint: dto.moonshot_endpoint.trim(),
             workers_ai_account_id: dto.workers_ai_account_id.trim(),
@@ -126,6 +131,8 @@ pub(super) async fn resolve_generate_api_config(
     let workers_ai_account_id = get_payload_string(&dto.payload, "workers_ai_account_id")?;
     let nanogpt_provider = get_payload_string(&dto.payload, "nanogpt_provider")?;
     let nanogpt_payg_override = get_payload_bool(&dto.payload, "nanogpt_payg_override")?;
+    let opencode_endpoint = get_payload_string(&dto.payload, "opencode_endpoint")?;
+    let opencode_api_format = get_payload_string(&dto.payload, "opencode_api_format")?;
     let aws_bedrock_region = get_payload_string(&dto.payload, "aws_bedrock_region")?;
     let aws_bedrock_use_custom_template =
         get_payload_bool(&dto.payload, "aws_bedrock_use_custom_template")?;
@@ -168,6 +175,8 @@ pub(super) async fn resolve_generate_api_config(
             workers_ai_account_id: &workers_ai_account_id,
             nanogpt_provider: &nanogpt_provider,
             nanogpt_payg_override,
+            opencode_endpoint: &opencode_endpoint,
+            opencode_api_format: &opencode_api_format,
             aws_bedrock_region: &aws_bedrock_region,
             aws_bedrock_custom_response_path: aws_bedrock_custom_path_hint(
                 &aws_bedrock_custom_response_path,
@@ -230,7 +239,7 @@ async fn resolve_api_config(
                 None => default_base_url(source, purpose, &hints)?,
             };
 
-            let api_key = if user_configured_endpoint {
+            let mut api_key = if user_configured_endpoint {
                 proxy_password.to_string()
             } else {
                 let secret_key = source_secret_key(source).ok_or_else(|| {
@@ -250,6 +259,13 @@ async fn resolve_api_config(
 
             let mut extra_headers = source_extra_headers(source);
             apply_dynamic_headers(source, &hints, &mut extra_headers);
+            if source == ChatCompletionSource::OpenCode
+                && purpose == ApiConfigPurpose::Generate
+                && OpenCodeApiFormat::parse(hints.opencode_api_format)? == OpenCodeApiFormat::Gemini
+            {
+                // OpenCode expects the Gemini key as a header, not the adapter's `?key=` query.
+                extra_headers.insert("x-goog-api-key".to_string(), std::mem::take(&mut api_key));
+            }
 
             let (aws_bedrock_custom_response_path, aws_bedrock_custom_stream_path) =
                 aws_bedrock_custom_paths(source, &hints);
@@ -442,6 +458,11 @@ fn default_base_url(
 ) -> Result<String, ApplicationError> {
     let base_url = match source {
         ChatCompletionSource::OpenAi => OPENAI_API_BASE.to_string(),
+        ChatCompletionSource::OpenCode => opencode::base_url(
+            hints.opencode_endpoint,
+            OpenCodeApiFormat::parse(hints.opencode_api_format)?,
+        )?
+        .to_string(),
         ChatCompletionSource::OpenRouter => OPENROUTER_API_BASE.to_string(),
         ChatCompletionSource::Claude => CLAUDE_API_BASE.to_string(),
         ChatCompletionSource::Makersuite => GEMINI_API_BASE.to_string(),
@@ -482,6 +503,7 @@ fn default_base_url(
 fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
     match source {
         ChatCompletionSource::OpenAi => Some(SecretKeys::OPENAI),
+        ChatCompletionSource::OpenCode => Some(SecretKeys::OPENCODE),
         ChatCompletionSource::OpenRouter => Some(SecretKeys::OPENROUTER),
         ChatCompletionSource::Claude => Some(SecretKeys::CLAUDE),
         ChatCompletionSource::Makersuite => Some(SecretKeys::MAKERSUITE),

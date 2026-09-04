@@ -2,6 +2,7 @@ use serde_json::{Map, Value, json};
 
 use crate::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::errors::ApplicationError;
+use crate::services::chat_completion_service::OPENCODE_STABLE_CHAT_ID_FIELD;
 use tt_domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile};
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentModelTool,
@@ -43,6 +44,7 @@ pub(super) fn prepare_agent_tool_request(
     mut request: ChatCompletionGenerateRequestDto,
     tools: &[AgentModelTool],
     tool_choice: ToolChoice,
+    stable_chat_id: &str,
     run_id: &str,
     invocation_id: &str,
 ) -> Result<AgentModelRequest, ApplicationError> {
@@ -83,6 +85,17 @@ pub(super) fn prepare_agent_tool_request(
     request
         .payload
         .insert("stream".to_string(), Value::Bool(false));
+    if request
+        .payload
+        .get("chat_completion_source")
+        .and_then(Value::as_str)
+        == Some("opencode")
+    {
+        request.payload.insert(
+            OPENCODE_STABLE_CHAT_ID_FIELD.to_string(),
+            Value::String(stable_chat_id.to_string()),
+        );
+    }
 
     let mut provider_state = json!({
         "sessionId": model_session_id(run_id, invocation_id),
@@ -340,8 +353,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        prepare_agent_tool_request, reject_external_tool_request, request_from_prompt_snapshot,
-        validate_prompt_snapshot_context_policy,
+        OPENCODE_STABLE_CHAT_ID_FIELD, prepare_agent_tool_request, reject_external_tool_request,
+        request_from_prompt_snapshot, validate_prompt_snapshot_context_policy,
     };
     use tt_domain::models::agent::profile::ResolvedAgentProfile;
     use tt_domain::models::tool::ToolChoice;
@@ -376,13 +389,45 @@ mod tests {
         }))
         .expect("request");
 
-        let request =
-            prepare_agent_tool_request(request, &[], ToolChoice::Auto, "run_test", "inv_root")
-                .expect("agent request");
+        let request = prepare_agent_tool_request(
+            request,
+            &[],
+            ToolChoice::Auto,
+            "stable",
+            "run_test",
+            "inv_root",
+        )
+        .expect("agent request");
 
         assert_eq!(
             request.provider_state["transport"],
             json!("responses_websocket")
+        );
+    }
+
+    #[test]
+    fn opencode_agent_uses_the_run_chat_identity() {
+        let request = request_from_prompt_snapshot(&json!({
+            "chatCompletionPayload": {
+                "chat_completion_source": "opencode",
+                "messages": [{ "role": "user", "content": "hello" }]
+            }
+        }))
+        .expect("request");
+
+        let request = prepare_agent_tool_request(
+            request,
+            &[],
+            ToolChoice::Auto,
+            "stable-chat",
+            "run_test",
+            "inv_root",
+        )
+        .expect("agent request");
+
+        assert_eq!(
+            request.payload[OPENCODE_STABLE_CHAT_ID_FIELD],
+            json!("stable-chat")
         );
     }
 
@@ -398,9 +443,15 @@ mod tests {
         }))
         .expect("request");
 
-        let error =
-            prepare_agent_tool_request(request, &[], ToolChoice::Auto, "run_test", "inv_root")
-                .expect_err("format mismatch must fail");
+        let error = prepare_agent_tool_request(
+            request,
+            &[],
+            ToolChoice::Auto,
+            "stable",
+            "run_test",
+            "inv_root",
+        )
+        .expect_err("format mismatch must fail");
         assert!(
             error
                 .to_string()
@@ -420,9 +471,15 @@ mod tests {
         }))
         .expect("request");
 
-        let error =
-            prepare_agent_tool_request(request, &[], ToolChoice::Auto, "run_test", "inv_root")
-                .expect_err("marker leak fails");
+        let error = prepare_agent_tool_request(
+            request,
+            &[],
+            ToolChoice::Auto,
+            "stable",
+            "run_test",
+            "inv_root",
+        )
+        .expect_err("marker leak fails");
 
         assert!(
             error

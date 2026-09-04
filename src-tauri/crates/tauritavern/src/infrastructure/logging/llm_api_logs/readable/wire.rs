@@ -159,8 +159,20 @@ pub(in crate::infrastructure::logging::llm_api_logs) fn stream_readable_source(
     source: ChatCompletionSource,
     endpoint_path: &str,
 ) -> ChatCompletionSource {
-    if matches!(source, ChatCompletionSource::Custom) && endpoint_path.trim() == "/messages" {
+    if matches!(
+        source,
+        ChatCompletionSource::Custom | ChatCompletionSource::OpenCode
+    ) && endpoint_path.trim() == "/messages"
+    {
         return ChatCompletionSource::Claude;
+    }
+    if source == ChatCompletionSource::OpenCode
+        && matches!(
+            endpoint_path.trim(),
+            "/generateContent" | "/streamGenerateContent"
+        )
+    {
+        return ChatCompletionSource::Makersuite;
     }
 
     source

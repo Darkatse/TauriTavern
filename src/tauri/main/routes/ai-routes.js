@@ -45,6 +45,7 @@ const ANDROID_GENERATION_BRIDGE_NAME = 'TauriTavernAndroidAiBridge';
 const FAILURE_NOTIFICATION_MAX_BODY_LENGTH = 180;
 const ANDROID_LIVE_UPDATE_TOKEN_THROTTLE_MS = 4000;
 const ANDROID_LIVE_UPDATE_TOKEN_MIN_CHARS_DELTA = 160;
+const OPENCODE_STABLE_CHAT_ID_FIELD = '_tauritavern_stable_chat_id';
 const i18nNotificationKeys = Object.freeze({
     successTitle: 'tauritavern_ai_notification_success_title',
     successBody: 'tauritavern_ai_notification_success_body',
@@ -215,6 +216,19 @@ function isVertexAiClaudePayload(payload) {
         && getCompletionModel(payload).toLowerCase().startsWith('claude-');
 }
 
+function isOpenCodeFormat(payload, format) {
+    return getChatCompletionSource(payload) === 'opencode'
+        && String(asObject(payload).opencode_api_format || '').trim() === format;
+}
+
+async function attachOpenCodeStableChatId(payload) {
+    if (getChatCompletionSource(payload) !== 'opencode') {
+        return;
+    }
+
+    payload[OPENCODE_STABLE_CHAT_ID_FIELD] = await globalThis.__TAURITAVERN__.api.chat.current.handle().stableId();
+}
+
 function buildErrorAssistantText(error) {
     const normalizedMessage = getUserFacingErrorMessage(error);
     const errorLabel = translateApiErrorLabel();
@@ -275,7 +289,7 @@ function buildErrorStreamChunk(error, payload) {
     const content = buildErrorAssistantText(error);
     const source = getChatCompletionSource(payload);
 
-    if (source === 'claude' || isVertexAiClaudePayload(payload)) {
+    if (source === 'claude' || isVertexAiClaudePayload(payload) || isOpenCodeFormat(payload, 'claude_messages')) {
         return {
             delta: {
                 text: content,
@@ -283,7 +297,7 @@ function buildErrorStreamChunk(error, payload) {
         };
     }
 
-    if (source === 'makersuite' || source === 'vertexai') {
+    if (source === 'makersuite' || source === 'vertexai' || isOpenCodeFormat(payload, 'gemini')) {
         return {
             candidates: [
                 {
@@ -343,6 +357,7 @@ async function invokeChatCompletionWithAbort(context, payload, signal) {
     if (signal?.aborted) {
         throw createAbortError();
     }
+    await attachOpenCodeStableChatId(payload);
 
     const requestId = createStreamId();
     let abortRequested = false;
@@ -378,6 +393,7 @@ async function invokeChatCompletionWithAbort(context, payload, signal) {
 }
 
 async function createChatCompletionStreamResponse(context, payload, signal, lifecycle) {
+    await attachOpenCodeStableChatId(payload);
     const streamId = createStreamId();
     const encoder = new TextEncoder();
 
@@ -641,6 +657,8 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
         const dto = {
             chat_completion_source: String(payload.chat_completion_source || ''),
             custom_api_format: String(payload.custom_api_format || ''),
+            opencode_endpoint: String(payload.opencode_endpoint || ''),
+            opencode_api_format: String(payload.opencode_api_format || ''),
             reverse_proxy: String(payload.reverse_proxy || ''),
             proxy_password: String(payload.proxy_password || ''),
             custom_url: String(payload.custom_url || ''),

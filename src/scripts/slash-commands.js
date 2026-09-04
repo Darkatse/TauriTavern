@@ -78,7 +78,7 @@ import { hideChatMessageRange } from './chats.js';
 import { getContext, saveMetadataDebounced } from './extensions.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { findGroupMemberId, groups, is_group_generating, openGroupById, regenerateGroup, resetSelectedGroup, saveGroupChat, selected_group, getGroupMembers } from './group-chats.js';
-import { addAndSelectCustomModelForSource, chat_completion_sources, getChatCompletionModelControl, isCustomModelActionValue, MINIMAX_ENDPOINT, MOONSHOT_ENDPOINT, oai_settings, promptManager, SILICONFLOW_ENDPOINT, ZAI_ENDPOINT } from './openai.js';
+import { addAndSelectCustomModelForSource, chat_completion_sources, getChatCompletionModelControl, isCustomModelActionValue, MINIMAX_ENDPOINT, MOONSHOT_ENDPOINT, oai_settings, OPENCODE_API_FORMAT, OPENCODE_ENDPOINT, promptManager, SILICONFLOW_ENDPOINT, ZAI_ENDPOINT } from './openai.js';
 import { user_avatar } from './personas.js';
 import { addEphemeralStoppingString, chat_styles, context_presets, flushEphemeralStoppingStrings, playMessageSound, power_user } from './power-user.js';
 import { SERVER_INPUTS, textgen_types, textgenerationwebui_settings } from './textgen-settings.js';
@@ -455,7 +455,12 @@ export function initDefaultSlashCommands() {
         name: 'custom-api-format',
         callback: async function (_args, format) {
             const rawFormat = String(format || '').trim();
+            const isOpenCode = main_api === 'openai'
+                && oai_settings.chat_completion_source === chat_completion_sources.OPENCODE;
             if (!rawFormat) {
+                if (isOpenCode) {
+                    return String(oai_settings.opencode_api_format || OPENCODE_API_FORMAT.OPENAI_COMPAT);
+                }
                 if (main_api !== 'openai' || oai_settings.chat_completion_source !== chat_completion_sources.CUSTOM) {
                     return '';
                 }
@@ -463,6 +468,15 @@ export function initDefaultSlashCommands() {
             }
 
             const normalized = rawFormat.toLowerCase();
+            if (isOpenCode) {
+                if (!Object.values(OPENCODE_API_FORMAT).includes(normalized)) {
+                    toastr.error(t`Error: ${rawFormat} is not a valid OpenCode API format`);
+                    return '';
+                }
+                $('#opencode_api_format').val(normalized).trigger('input');
+                return normalized;
+            }
+
             const allowed = ['openai_compat', 'openai_responses', 'claude_messages', 'gemini_interactions'];
             if (!allowed.includes(normalized)) {
                 toastr.error(t`Error: ${rawFormat} is not a valid custom API format`);
@@ -3161,6 +3175,7 @@ export function initDefaultSlashCommands() {
                 typeList: [ARGUMENT_TYPE.STRING],
                 enumList: [
                     new SlashCommandEnumValue('custom', 'custom OpenAI-compatible', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'openai')), 'O'),
+                    new SlashCommandEnumValue('opencode', 'OpenCode', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'openai')), 'O'),
                     new SlashCommandEnumValue('zai', 'Z.AI', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'zai')), 'Z'),
                     new SlashCommandEnumValue('vertexai', 'Google Vertex AI', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'vertexai')), 'V'),
                     new SlashCommandEnumValue('siliconflow', 'SiliconFlow', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'siliconflow')), 'S'),
@@ -6641,6 +6656,29 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
     const isQuiet = isTrueBoolean(quiet);
     const autoConnect = isTrueBoolean(connect);
     const isClear = isTrueBoolean(clear);
+
+    const isCurrentlyOpenCode = main_api === 'openai' && oai_settings.chat_completion_source === chat_completion_sources.OPENCODE;
+    if (api === chat_completion_sources.OPENCODE || (!api && isCurrentlyOpenCode)) {
+        if (isClear) {
+            $('#opencode_endpoint').val(OPENCODE_ENDPOINT.ZEN).trigger('input');
+            if (autoConnect) triggerApiConnectionButton('#api_button_openai');
+            return '';
+        }
+        if (!url) {
+            return oai_settings.opencode_endpoint || OPENCODE_ENDPOINT.ZEN;
+        }
+        if (!Object.values(OPENCODE_ENDPOINT).includes(url)) {
+            !isQuiet && toastr.warning(t`Valid options are: ${Object.values(OPENCODE_ENDPOINT).join(', ')}`, t`OpenCode service '${url}' is not a valid option.`);
+            return '';
+        }
+        if (!isCurrentlyOpenCode && autoConnect) {
+            toastr.warning(t`OpenCode is not the currently selected API, so we cannot do an auto-connect. Consider switching to it via /api beforehand.`);
+            return '';
+        }
+        $('#opencode_endpoint').val(url).trigger('input');
+        if (autoConnect) triggerApiConnectionButton('#api_button_openai');
+        return oai_settings.opencode_endpoint || OPENCODE_ENDPOINT.ZEN;
+    }
 
     // Special handling for Chat Completion Custom OpenAI compatible, that one can also support API url handling
     const isCurrentlyCustomOpenai = main_api === 'openai' && oai_settings.chat_completion_source === chat_completion_sources.CUSTOM;

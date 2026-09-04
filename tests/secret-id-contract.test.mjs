@@ -90,3 +90,29 @@ test('chat completion status exposes structured network failures', async () => {
     });
     assert.match(body.message, /Could not connect through the configured proxy/);
 });
+
+test('OpenCode generation carries the current stable chat id', async () => {
+    globalThis.__TAURITAVERN__ = {
+        api: {
+            chat: {
+                current: {
+                    handle: () => ({ stableId: async () => 'stable-chat' }),
+                },
+            },
+        },
+    };
+    const calls = [];
+    const router = await createAiRouter(async (command, args) => {
+        calls.push({ command, args });
+        return {};
+    });
+
+    await router.handle({
+        method: 'POST',
+        path: '/api/backends/chat-completions/generate',
+        body: { chat_completion_source: 'opencode', type: 'quiet' },
+    });
+
+    const generate = calls.find(call => call.command === 'generate_chat_completion');
+    assert.equal(generate.args.dto._tauritavern_stable_chat_id, 'stable-chat');
+});

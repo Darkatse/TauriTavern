@@ -124,7 +124,7 @@ src/
 | `resource-routes.js` | 头像、背景、主题、群组等资源接口 |
 | `character-routes.js` | 角色列表、创建、编辑、导入导出、重命名 |
 | `chat-routes.js` | 聊天读写、搜索、最近记录、导出 |
-| `ai-routes.js` | Chat Completion（OpenAI / Claude / Gemini(MakerSuite)） |
+| `ai-routes.js` | Chat Completion（OpenAI / Claude / Gemini / OpenCode） |
 | `tokenizer-routes.js` | tokenizer count/encode/decode/bias 与上游本地 tokenizer 兼容路由 |
 
 ## 6.1 聊天 payload 与 DOM 边界

@@ -123,6 +123,23 @@ test('Agent model target conversion preserves native adapter opt-ins', async () 
     assert.deepEqual(connection.capabilities, {});
 });
 
+test('Agent model target conversion keeps OpenCode service and wire format', async () => {
+    const { buildLlmConnectionFromModelTarget } = await importConversion();
+    const connection = buildLlmConnectionFromModelTarget(sampleTarget({
+        api: 'opencode',
+        model: 'qwen3-coder',
+        'api-url': 'go',
+        'custom-api-format': 'claude_messages',
+        secretRef: { key: 'api_key_opencode', id: 'secret-opencode' },
+    }));
+
+    assert.deepEqual(connection.provider, { chatCompletionSource: 'opencode' });
+    assert.deepEqual(connection.endpoint.sourceSpecific, {
+        opencode_endpoint: 'go',
+        opencode_api_format: 'claude_messages',
+    });
+});
+
 
 
 test('Agent run model target ensure refreshes by connection ref without adopting target model changes', async () => {

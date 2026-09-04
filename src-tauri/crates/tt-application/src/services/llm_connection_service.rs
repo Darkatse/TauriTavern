@@ -12,6 +12,8 @@ use tt_domain::models::secret::SecretKeys;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 use tt_ports::repositories::llm_connection_repository::LlmConnectionRepository;
 
+use super::chat_completion_service::opencode;
+
 pub(crate) const CONNECTION_PAYLOAD_KEYS: &[&str] = &[
     "chat_completion_source",
     "custom_api_format",
@@ -52,6 +54,16 @@ struct SourceSpecificFieldSpec {
 }
 
 const SOURCE_SPECIFIC_FIELD_SPECS: &[SourceSpecificFieldSpec] = &[
+    SourceSpecificFieldSpec {
+        key: "opencode_endpoint",
+        source: ChatCompletionSource::OpenCode,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
+    SourceSpecificFieldSpec {
+        key: "opencode_api_format",
+        source: ChatCompletionSource::OpenCode,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
     SourceSpecificFieldSpec {
         key: "vertexai_auth_mode",
         source: ChatCompletionSource::VertexAi,
@@ -586,6 +598,23 @@ fn validate_source_specific(
         }
     }
 
+    if source == ChatCompletionSource::OpenCode {
+        opencode::resolve_format(
+            connection
+                .endpoint
+                .source_specific
+                .get("opencode_endpoint")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            connection
+                .endpoint
+                .source_specific
+                .get("opencode_api_format")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        )?;
+    }
+
     if source == ChatCompletionSource::WorkersAi
         && !connection
             .endpoint
@@ -730,6 +759,7 @@ fn expected_secret_key(
 
     match source {
         ChatCompletionSource::OpenAi => Ok(SecretKeys::OPENAI),
+        ChatCompletionSource::OpenCode => Ok(SecretKeys::OPENCODE),
         ChatCompletionSource::OpenRouter => Ok(SecretKeys::OPENROUTER),
         ChatCompletionSource::Custom => Ok(SecretKeys::CUSTOM),
         ChatCompletionSource::Claude => Ok(SecretKeys::CLAUDE),
@@ -887,6 +917,30 @@ mod tests {
                 .to_string()
                 .contains("source_specific_source_mismatch")
         );
+    }
+
+    #[test]
+    fn validate_opencode_source_specific_contract() {
+        let mut connection = openrouter_connection();
+        connection.provider.chat_completion_source = "opencode".to_string();
+        connection.auth.secret_ref.key = "api_key_opencode".to_string();
+        connection
+            .endpoint
+            .source_specific
+            .insert("opencode_endpoint".to_string(), json!("zen"));
+        connection
+            .endpoint
+            .source_specific
+            .insert("opencode_api_format".to_string(), json!("gemini"));
+
+        validate_connection(&connection).expect("Zen should support Gemini");
+
+        connection
+            .endpoint
+            .source_specific
+            .insert("opencode_endpoint".to_string(), json!("go"));
+        let error = validate_connection(&connection).unwrap_err();
+        assert!(error.to_string().contains("does not support the Gemini"));
     }
 
     #[test]

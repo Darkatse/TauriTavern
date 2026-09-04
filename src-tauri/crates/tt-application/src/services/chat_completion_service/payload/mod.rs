@@ -3,7 +3,9 @@ use serde_json::{Map, Value};
 use crate::errors::ApplicationError;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
+use super::OPENCODE_STABLE_CHAT_ID_FIELD;
 use super::exchange::ChatCompletionProviderFormat;
+use super::opencode::{self, OpenCodeApiFormat};
 
 mod aws_bedrock;
 mod chutes;
@@ -35,6 +37,14 @@ pub(super) fn build_payload(
     payload: Map<String, Value>,
 ) -> Result<(String, Value), ApplicationError> {
     let mut payload = payload;
+    let opencode_format = (source == ChatCompletionSource::OpenCode)
+        .then(|| opencode::format_from_payload(&payload))
+        .transpose()?;
+    payload.remove(OPENCODE_STABLE_CHAT_ID_FIELD);
+    if opencode_format.is_some() {
+        payload.remove("opencode_endpoint");
+        payload.remove("opencode_api_format");
+    }
 
     if !matches!(source, ChatCompletionSource::DeepSeek) {
         prompt_post_processing::apply_custom_prompt_post_processing(&mut payload);
@@ -51,6 +61,14 @@ pub(super) fn build_payload(
         ChatCompletionSource::OpenAi
         | ChatCompletionSource::Groq
         | ChatCompletionSource::SiliconFlow => openai::build(payload),
+        ChatCompletionSource::OpenCode => {
+            match opencode_format.expect("OpenCode format resolved") {
+                OpenCodeApiFormat::OpenAiCompat => openai::build_chat(payload),
+                OpenCodeApiFormat::OpenAiResponses => openai_responses::build(payload),
+                OpenCodeApiFormat::ClaudeMessages => claude_messages::build(payload),
+                OpenCodeApiFormat::Gemini => makersuite::build(payload),
+            }
+        }
         ChatCompletionSource::DeepSeek => deepseek::build(payload),
         ChatCompletionSource::Cohere => Ok(cohere::build(payload)?),
         ChatCompletionSource::Moonshot => moonshot::build(payload),
@@ -128,6 +146,39 @@ mod tests {
         assert_eq!(endpoint, "/responses");
         assert_eq!(upstream["model"], "gpt-6-astra");
         assert_eq!(upstream["temperature"], 0.7);
+    }
+
+    #[test]
+    fn opencode_selects_existing_wire_adapter_explicitly() {
+        for (format, endpoint, model) in [
+            (
+                "openai_compat",
+                "/chat/completions",
+                "gpt-3.5-turbo-instruct",
+            ),
+            ("openai_responses", "/responses", "test-model"),
+            ("claude_messages", "/messages", "test-model"),
+            ("gemini", "/generateContent", "test-model"),
+        ] {
+            let payload = json!({
+                "chat_completion_source": "opencode",
+                "opencode_endpoint": "zen",
+                "opencode_api_format": format,
+                "model": model,
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": false
+            })
+            .as_object()
+            .cloned()
+            .unwrap();
+
+            assert_eq!(
+                build_payload(ChatCompletionSource::OpenCode, payload)
+                    .unwrap()
+                    .0,
+                endpoint
+            );
+        }
     }
 
     #[test]

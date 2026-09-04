@@ -582,6 +582,24 @@ fn value_to_u64(value: Option<&Value>) -> Option<u64> {
     value.and_then(Value::as_u64)
 }
 
+fn provider_transport_source(
+    source: ChatCompletionSource,
+    endpoint_path: &str,
+) -> Result<ChatCompletionSource, DomainError> {
+    if source != ChatCompletionSource::OpenCode {
+        return Ok(source);
+    }
+
+    match endpoint_path {
+        "/chat/completions" | "/responses" => Ok(ChatCompletionSource::OpenAi),
+        "/messages" => Ok(ChatCompletionSource::Claude),
+        "/generateContent" | "/streamGenerateContent" => Ok(ChatCompletionSource::Makersuite),
+        path => Err(DomainError::InvalidData(format!(
+            "Unsupported OpenCode endpoint path: {path}"
+        ))),
+    }
+}
+
 #[async_trait]
 impl ChatCompletionRepository for HttpChatCompletionRepository {
     async fn list_models(
@@ -593,6 +611,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
 
         match source {
             ChatCompletionSource::OpenAi
+            | ChatCompletionSource::OpenCode
             | ChatCompletionSource::OpenRouter
             | ChatCompletionSource::Custom
             | ChatCompletionSource::DeepSeek
@@ -633,6 +652,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         payload: &Value,
     ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
         let source_name = source.display_name();
+        let source = provider_transport_source(source, endpoint_path)?;
 
         match (source, endpoint_path) {
             (ChatCompletionSource::OpenAi, "/responses") => {
@@ -703,6 +723,9 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             (ChatCompletionSource::VertexAi, _) => {
                 vertexai::generate(self, config, endpoint_path, payload).await
             }
+            (ChatCompletionSource::OpenCode, _) => {
+                unreachable!("OpenCode source is resolved to its wire transport before dispatch")
+            }
         }
     }
 
@@ -716,6 +739,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         cancel: ChatCompletionCancelReceiver,
     ) -> Result<(), DomainError> {
         let source_name = source.display_name();
+        let source = provider_transport_source(source, endpoint_path)?;
 
         match (source, endpoint_path) {
             (ChatCompletionSource::OpenAi, "/responses") => {
@@ -819,6 +843,9 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 vertexai::generate_stream(self, config, endpoint_path, payload, sender, cancel)
                     .await
             }
+            (ChatCompletionSource::OpenCode, _) => {
+                unreachable!("OpenCode source is resolved to its wire transport before dispatch")
+            }
         }
     }
 
@@ -831,6 +858,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
     ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
         let source_name = source.display_name();
+        let source = provider_transport_source(source, endpoint_path)?;
 
         match (source, endpoint_path) {
             (ChatCompletionSource::OpenAi, "/responses") => {
@@ -983,9 +1011,25 @@ mod tests {
     use reqwest::header::AUTHORIZATION;
 
     use tt_domain::errors::DomainError;
-    use tt_ports::repositories::chat_completion_repository::ChatCompletionApiConfig;
+    use tt_ports::repositories::chat_completion_repository::{
+        ChatCompletionApiConfig, ChatCompletionSource,
+    };
 
-    use super::HttpChatCompletionRepository;
+    use super::{HttpChatCompletionRepository, provider_transport_source};
+
+    #[test]
+    fn opencode_routes_by_wire_format() {
+        assert_eq!(
+            provider_transport_source(ChatCompletionSource::OpenCode, "/messages").unwrap(),
+            ChatCompletionSource::Claude
+        );
+        assert_eq!(
+            provider_transport_source(ChatCompletionSource::OpenCode, "/streamGenerateContent")
+                .unwrap(),
+            ChatCompletionSource::Makersuite
+        );
+        assert!(provider_transport_source(ChatCompletionSource::OpenCode, "/unknown").is_err());
+    }
 
     #[test]
     fn apply_extra_headers_with_filter_skips_matching_headers() {

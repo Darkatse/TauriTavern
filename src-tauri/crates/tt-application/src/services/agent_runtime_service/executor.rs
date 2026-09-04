@@ -296,6 +296,7 @@ impl AgentRuntimeService {
             request,
             &visible_tools,
             tool_turn.choice().clone(),
+            &run.stable_chat_id,
             run_id,
             root_invocation.id.as_str(),
         )?;
