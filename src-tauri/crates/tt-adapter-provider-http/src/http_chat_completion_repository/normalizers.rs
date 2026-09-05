@@ -717,20 +717,27 @@ fn map_claude_finish_reason(stop_reason: Option<&str>, has_tool_calls: bool) -> 
 
 fn map_claude_usage(raw_usage: Option<&Value>) -> Option<Value> {
     let usage = raw_usage?.as_object()?;
-    let prompt_tokens = usage
-        .get("input_tokens")
-        .and_then(Value::as_u64)
-        .unwrap_or_default();
+    let prompt_tokens: u64 = [
+        "input_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    ]
+    .iter()
+    .filter_map(|key| usage.get(*key).and_then(Value::as_u64))
+    .sum();
     let completion_tokens = usage
         .get("output_tokens")
         .and_then(Value::as_u64)
         .unwrap_or_default();
 
-    Some(json!({
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": prompt_tokens + completion_tokens,
-    }))
+    Some(with_cached_prompt_tokens(
+        json!({
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        }),
+        usage.get("cache_read_input_tokens"),
+    ))
 }
 
 fn map_gemini_finish_reason(finish_reason: Option<&str>, has_tool_calls: bool) -> String {
@@ -767,14 +774,17 @@ fn map_gemini_usage(response: &Value) -> Option<Value> {
         .and_then(Value::as_u64)
         .unwrap_or(prompt_tokens + completion_tokens);
 
-    Some(json!({
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": total_tokens,
-    }))
+    Some(with_cached_prompt_tokens(
+        json!({
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }),
+        usage.get("cachedContentTokenCount"),
+    ))
 }
 
-fn map_openai_responses_usage(raw_usage: Option<&Value>) -> Option<Value> {
+pub(super) fn map_openai_responses_usage(raw_usage: Option<&Value>) -> Option<Value> {
     let usage = raw_usage?.as_object()?;
 
     let prompt_tokens = usage
@@ -790,11 +800,16 @@ fn map_openai_responses_usage(raw_usage: Option<&Value>) -> Option<Value> {
         .and_then(Value::as_u64)
         .unwrap_or(prompt_tokens + completion_tokens);
 
-    Some(json!({
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": total_tokens,
-    }))
+    Some(with_cached_prompt_tokens(
+        json!({
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }),
+        usage
+            .get("input_tokens_details")
+            .and_then(|details| details.get("cached_tokens")),
+    ))
 }
 
 pub(super) fn map_gemini_interactions_usage(raw_usage: Option<&Value>) -> Option<Value> {
@@ -818,11 +833,21 @@ pub(super) fn map_gemini_interactions_usage(raw_usage: Option<&Value>) -> Option
         .and_then(Value::as_u64)
         .unwrap_or(prompt_tokens + completion_tokens);
 
-    Some(json!({
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": total_tokens,
-    }))
+    Some(with_cached_prompt_tokens(
+        json!({
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }),
+        usage.get("total_cached_tokens"),
+    ))
+}
+
+fn with_cached_prompt_tokens(mut usage: Value, cached_tokens: Option<&Value>) -> Value {
+    if let Some(cached_tokens) = cached_tokens {
+        usage["prompt_tokens_details"] = json!({ "cached_tokens": cached_tokens });
+    }
+    usage
 }
 
 fn build_openai_tool_call(
@@ -910,6 +935,40 @@ mod tests {
         normalize_claude_response, normalize_gemini_interactions_response,
         normalize_gemini_response, normalize_openai_responses_response,
     };
+
+    #[test]
+    fn normalize_prompt_cache_usage_preserves_total_input_and_known_zero() {
+        let responses = [
+            normalize_claude_response(json!({
+                "usage": { "input_tokens": 100, "cache_creation_input_tokens": 200, "cache_read_input_tokens": 700 }
+            })).body,
+            normalize_gemini_response(json!({
+                "usageMetadata": { "promptTokenCount": 1000, "cachedContentTokenCount": 700 }
+            })).body,
+            normalize_openai_responses_response(json!({
+                "usage": { "input_tokens": 1000, "input_tokens_details": { "cached_tokens": 700 } }
+            })).body,
+            normalize_gemini_interactions_response(json!({
+                "status": "completed", "steps": [{ "type": "model_output", "content": [{ "type": "text", "text": "Hello" }] }],
+                "usage": { "total_input_tokens": 1000, "total_cached_tokens": 700 }
+            })).unwrap().body,
+        ];
+        for response in responses {
+            assert_eq!(response["usage"]["prompt_tokens"], 1000);
+            assert_eq!(
+                response["usage"]["prompt_tokens_details"]["cached_tokens"],
+                700
+            );
+        }
+
+        let unknown = normalize_claude_response(json!({ "usage": { "input_tokens": 100 } })).body;
+        assert!(unknown["usage"].get("prompt_tokens_details").is_none());
+        let miss = normalize_claude_response(json!({
+            "usage": { "input_tokens": 100, "cache_creation_input_tokens": 200, "cache_read_input_tokens": 0 }
+        })).body;
+        assert_eq!(miss["usage"]["prompt_tokens"], 300);
+        assert_eq!(miss["usage"]["prompt_tokens_details"]["cached_tokens"], 0);
+    }
 
     #[test]
     fn normalize_claude_tool_use_preserves_signature() {

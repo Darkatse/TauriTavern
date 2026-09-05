@@ -120,6 +120,8 @@ declare global {
         title?: string;
         isSmallSys?: boolean;
         token_count?: number;
+        time_to_first_token?: number | null;
+        prompt_cache?: { input_tokens: number; cached_tokens: number };
         /** When false, the message cannot be swiped. */
         swipeable?: boolean;
         overswipe_behavior?: OVERSWIPE_BEHAVIOR;

@@ -11,6 +11,8 @@ import {
 } from './lib.js';
 import { getClientVersion as getBridgeClientVersion, getTauriTavernSettings, invoke, updateTauriTavernSettings } from './tauri-bridge.js';
 import { SILLYTAVERN_COMPAT_VERSION } from './compat-version.js';
+import { getPromptCacheUsage } from './scripts/util/prompt-cache-usage.js';
+import { formatGenerationTimer, updateMessageGenerationInfo } from './scripts/message-generation-info.js';
 import { registerLifecycleFlushHandler } from './tauri/main/services/lifecycle/lifecycle-flush-service.js';
 import {
     replaceMesTextHtmlWithRuntimePolicy,
@@ -2718,6 +2720,8 @@ export function updateMessageBlock(messageId, message, { rerenderMessage = true,
         return;
     }
 
+    const { tokenRate } = formatGenerationTimer(message.gen_started, message.gen_finished, message.extra?.token_count);
+    updateMessageGenerationInfo(messageElement[0], message, tokenRate);
     updateReasoningUI(messageElement);
 
     appendMediaToMessage(message, messageElement);
@@ -3436,7 +3440,7 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
     const messageHTML = getMessageTextHTML(mes, { messageId, regexSourceText, regexedText });
     const bookmarkLink = mes?.extra?.bookmark_link;
     const tokenCount = mes.extra?.token_count;
-    const { timerValue, timerTitle } = formatGenerationTimer(mes.gen_started, mes.gen_finished, mes.extra?.token_count, mes.extra?.reasoning_duration, mes.extra?.time_to_first_token);
+    const { timerValue, timerTitle, tokenRate } = formatGenerationTimer(mes.gen_started, mes.gen_finished, mes.extra?.token_count, mes.extra?.reasoning_duration, mes.extra?.time_to_first_token);
 
     messageElement.attr({
         'mesid': messageId,
@@ -3458,6 +3462,7 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
     tokenCount && messageElement.find('.tokenCounterDisplay').text(`${tokenCount}t`);
     mes.title && messageElement.attr('title', mes.title);
     timerValue && messageElement.find('.mes_timer').attr('title', timerTitle).text(timerValue);
+    updateMessageGenerationInfo(messageElement[0], mes, tokenRate);
     bookmarkLink && updateBookmarkDisplay(messageElement);
 
     if (mes.extra?.bias !== '') {
@@ -3517,43 +3522,8 @@ export function formatCharacterAvatar(characterAvatar) {
     return `characters/${characterAvatar}`;
 }
 
-/**
- * Formats the title for the generation timer.
- * @param {MessageTimestamp} gen_started Date when generation was started
- * @param {MessageTimestamp} gen_finished Date when generation was finished
- * @param {number} tokenCount Number of tokens generated (0 if not available)
- * @param {number?} [reasoningDuration=null] Reasoning duration (null if no reasoning was done)
- * @param {number?} [timeToFirstToken=null] Time to first token
- * @returns {Object} Object containing the formatted timer value and title
- * @example
- * const { timerValue, timerTitle } = formatGenerationTimer(gen_started, gen_finished, tokenCount);
- * console.log(timerValue); // 1.2s
- * console.log(timerTitle); // Generation queued: 12:34:56 7 Jan 2021\nReply received: 12:34:57 7 Jan 2021\nTime to generate: 1.2 seconds\nToken rate: 5 t/s
- */
-function formatGenerationTimer(gen_started, gen_finished, tokenCount, reasoningDuration = null, timeToFirstToken = null) {
-    if (!gen_started || !gen_finished) {
-        return {};
-    }
-
-    const dateFormat = 'HH:mm:ss D MMM YYYY';
-    const start = moment(gen_started);
-    const finish = moment(gen_finished);
-    const seconds = finish.diff(start, 'seconds', true);
-    const timerValue = `${seconds.toFixed(1)}s`;
-    const timerTitle = [
-        `Generation queued: ${start.format(dateFormat)}`,
-        `Reply received: ${finish.format(dateFormat)}`,
-        `Time to generate: ${seconds} seconds`,
-        timeToFirstToken ? `Time to first token: ${timeToFirstToken / 1000} seconds` : '',
-        reasoningDuration > 0 ? `Time to think: ${reasoningDuration / 1000} seconds` : '',
-        tokenCount > 0 ? `Token rate: ${Number(tokenCount / seconds).toFixed(3)} t/s` : '',
-    ].filter(x => x).join('\n').trim();
-
-    if (isNaN(seconds) || seconds < 0) {
-        return { timerValue: '', timerTitle };
-    }
-
-    return { timerValue, timerTitle };
+function shouldCountMessageTokens() {
+    return power_user.message_token_count_enabled || power_user.message_token_rate_enabled;
 }
 
 let requestId = null;
@@ -4493,6 +4463,7 @@ class StreamingProcessor {
         this.reasoningSignature = null;
         /** @type {any?} */
         this.native = null;
+        this.promptCache = null;
     }
 
     /**
@@ -4536,6 +4507,8 @@ class StreamingProcessor {
             await saveReply({ type: this.type, getMessage: text, fromStreaming: true });
             messageId = chat.length - 1;
             await this.#checkDomElements(messageId, continueOnReasoning);
+            delete chat[messageId].extra.token_count;
+            $(this.messageDom).find('.mes_generation_info, .tokenCounterDisplay').empty();
             this.markUIGenStarted();
         }
         hideSwipeButtons({ hideCounters: true });
@@ -4589,6 +4562,7 @@ class StreamingProcessor {
                 chat[messageId].extra = {};
             }
             chat[messageId].extra.time_to_first_token = this.timeToFirstToken;
+            chat[messageId].extra.prompt_cache = this.promptCache ?? undefined;
 
             // Update reasoning
             await this.reasoningHandler.process(messageId, mesChanged, this.promptReasoning);
@@ -4596,7 +4570,7 @@ class StreamingProcessor {
 
             // Token count update.
             const tokenCountText = this.reasoningHandler.reasoning + processedText;
-            const currentTokenCount = isFinal && power_user.message_token_count_enabled ? await getTokenCountAsync(tokenCountText, 0) : 0;
+            const currentTokenCount = isFinal && shouldCountMessageTokens() ? await getTokenCountAsync(tokenCountText, 0) : 0;
             if (currentTokenCount) {
                 chat[messageId].extra.token_count = currentTokenCount;
                 if (this.messageTokenCounterDom instanceof HTMLElement) {
@@ -4644,6 +4618,9 @@ class StreamingProcessor {
             }
 
             const timePassed = formatGenerationTimer(this.timeStarted, currentTime, currentTokenCount, this.reasoningHandler.getDuration(), this.timeToFirstToken);
+            if (isFinal) {
+                updateMessageGenerationInfo(this.messageDom, chat[messageId], timePassed.tokenRate);
+            }
             if (this.messageTimerDom instanceof HTMLElement) {
                 if (this.messageTimerDom.textContent !== timePassed.timerValue) {
                     this.messageTimerDom.textContent = timePassed.timerValue;
@@ -4826,6 +4803,7 @@ class StreamingProcessor {
                 this.images = state?.images ?? [];
                 this.reasoningSignature = state?.signature ?? null;
                 this.native = state?.native ?? null;
+                this.promptCache = getPromptCacheUsage(state?.usage);
                 await eventSource.emit(event_types.STREAM_TOKEN_RECEIVED, text);
                 sw.interval = getStreamingRenderInterval({
                     configuredFps: streamingFps,
@@ -6664,6 +6642,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             model: requestModel,
         });
         const native = data?.choices?.[0]?.message?.native ?? null;
+        const promptCache = getPromptCacheUsage(data?.usage);
         const hasToolCalls = canPerformToolCalls && ToolManager.hasToolCalls(data);
         kobold_horde_model = title;
 
@@ -6706,9 +6685,9 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         } else {
             // Without streaming we'll be having a full message on continuation. Treat it as a last chunk.
             if (originalType !== 'continue') {
-                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native, hasToolCalls }));
+                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native, promptCache, hasToolCalls }));
             } else {
-                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native, hasToolCalls }));
+                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native, promptCache, hasToolCalls }));
             }
             toolTurnOwner = chat.at(-1) ?? null;
 
@@ -8036,13 +8015,14 @@ async function processImageAttachment(message, { imageUrls }) {
  * @property {string[]} [imageUrls] Links to images
  * @property {string?} [reasoningSignature] Encrypted signature of the reasoning text
  * @property {any?} [native] Provider-native metadata that must be preserved across turns
+ * @property {{ input_tokens: number, cached_tokens: number }?} [promptCache] Prompt cache usage for this request
  * @property {boolean} [hasToolCalls] Whether the message owns tool calls
  *
  * @typedef {object} SaveReplyResult
  * @property {string} type Type of generation
  * @property {string} getMessage Generated message
  */
-export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], reasoning = '', imageUrls = [], reasoningSignature = null, native = null, hasToolCalls = false }) {
+export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], reasoning = '', imageUrls = [], reasoningSignature = null, native = null, promptCache = null, hasToolCalls = false }) {
     // Backward compatibility
     if (arguments.length > 1 && typeof arguments[0] !== 'object') {
         console.trace('saveReply called with positional arguments. Please use an object instead.');
@@ -8088,11 +8068,13 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             lastMessage.extra.reasoning = reasoning;
             lastMessage.extra.reasoning_duration = null;
             lastMessage.extra.reasoning_signature = reasoningSignature;
+            lastMessage.extra.prompt_cache = promptCache ?? undefined;
+            delete lastMessage.extra.time_to_first_token;
             if (native !== null && native !== undefined) {
                 lastMessage.extra.native = native;
             }
             await processImageAttachment(lastMessage, { imageUrls });
-            if (power_user.message_token_count_enabled) {
+            if (shouldCountMessageTokens()) {
                 const tokenCountText = (reasoning || '') + lastMessage.mes;
                 lastMessage.extra.token_count = await getTokenCountAsync(tokenCountText, 0);
             }
@@ -8117,11 +8099,13 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         lastMessage.extra.reasoning = reasoning;
         lastMessage.extra.reasoning_duration = null;
         lastMessage.extra.reasoning_signature = reasoningSignature;
+        lastMessage.extra.prompt_cache = promptCache ?? undefined;
+        delete lastMessage.extra.time_to_first_token;
         if (native !== null && native !== undefined) {
             lastMessage.extra.native = native;
         }
         await processImageAttachment(lastMessage, { imageUrls });
-        if (power_user.message_token_count_enabled) {
+        if (shouldCountMessageTokens()) {
             const tokenCountText = (reasoning || '') + lastMessage.mes;
             lastMessage.extra.token_count = await getTokenCountAsync(tokenCountText, 0);
         }
@@ -8142,12 +8126,14 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         lastMessage.extra.model = getGeneratingModel();
         lastMessage.extra.reasoning += reasoning;
         lastMessage.extra.reasoning_signature = reasoningSignature;
+        lastMessage.extra.prompt_cache = promptCache ?? undefined;
+        delete lastMessage.extra.time_to_first_token;
         if (native !== null && native !== undefined) {
             lastMessage.extra.native = native;
         }
         await processImageAttachment(lastMessage, { imageUrls });
         // We don't know if the reasoning duration extended, so we don't update it here on purpose.
-        if (power_user.message_token_count_enabled) {
+        if (shouldCountMessageTokens()) {
             const tokenCountText = (reasoning || '') + lastMessage.mes;
             lastMessage.extra.token_count = await getTokenCountAsync(tokenCountText, 0);
         }
@@ -8175,11 +8161,12 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
                 reasoning,
                 reasoning_duration: null,
                 reasoning_signature: reasoningSignature,
+                ...(promptCache ? { prompt_cache: promptCache } : {}),
                 ...(native !== null && native !== undefined ? { native } : {}),
             },
         };
 
-        if (power_user.message_token_count_enabled) {
+        if (shouldCountMessageTokens()) {
             const tokenCountText = (reasoning || '') + newMessage.mes;
             newMessage.extra.token_count = await getTokenCountAsync(tokenCountText, 0);
         }
@@ -12026,6 +12013,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
             // resets the timer
             thisMesDiv.find('.mes_timer').html('');
             thisMesDiv.find('.tokenCounterDisplay').text('');
+            thisMesDiv.find('.mes_generation_info').empty();
             updateReasoningUI(thisMesDiv, { reset: true });
         } else {
             //console.log('showing previously generated swipe candidate, or "..."');
@@ -12036,7 +12024,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
             //The swipe buttons will be refreshed in endSwipe(), refreshing them now will cause flickering.
             addOneMessage(chat[mesId], { type: 'swipe', forceId: mesId, scroll: scroll, showSwipes: false });
 
-            if (power_user.message_token_count_enabled) {
+            if (shouldCountMessageTokens()) {
                 if (!chat[mesId].extra) {
                     chat[mesId].extra = {};
                 }
@@ -12045,6 +12033,8 @@ export async function swipe(event, direction, { source, repeated, message = chat
                 const tokenCount = await getTokenCountAsync(tokenCountText, 0);
                 chat[mesId].extra.token_count = tokenCount;
                 thisMesDiv.find('.tokenCounterDisplay').text(`${tokenCount}t`);
+                const { tokenRate } = formatGenerationTimer(chat[mesId].gen_started, chat[mesId].gen_finished, tokenCount);
+                updateMessageGenerationInfo(thisMesDiv[0], chat[mesId], tokenRate);
             }
         }
 

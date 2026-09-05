@@ -3616,6 +3616,25 @@ input[type=search]:focus::-webkit-search-cancel-button {
     align-items: flex-start;
 }
 
+.mes_header_info {
+    min-width: 0;
+}
+
+.mes_generation_info {
+    opacity: 0.7;
+    font-size: calc(var(--mainFontSize) * 0.8);
+    font-weight: normal;
+    white-space: nowrap;
+}
+
+.mes_generation_info:empty {
+    display: none;
+}
+
+.mes_block .ch_name > .mes_buttons {
+    flex-shrink: 0;
+}
+
 /*applies to both groups and solos chars in the char list*/
 #rm_print_characters_block .character_select_container,
 #rm_print_characters_block .group_select_container {

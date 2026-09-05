@@ -178,14 +178,15 @@ impl ResponsesStreamState {
             return Ok(());
         }
 
-        if terminal_response_from_event(event)?.is_some() {
+        if let Some(response) = terminal_response_from_event(event)? {
             let finish_reason = if self.saw_tool_call {
                 "tool_calls"
             } else {
                 "stop"
             };
 
-            self.send_delta(sender, json!({}), Some(finish_reason));
+            let usage = normalizers::map_openai_responses_usage(response.get("usage"));
+            self.send_delta(sender, json!({}), Some(finish_reason), usage);
             let _ = sender.send("[DONE]".to_string());
             self.done_sent = true;
             return Ok(());
@@ -207,7 +208,7 @@ impl ResponsesStreamState {
                     if let Some(delta) = event.get("delta").and_then(Value::as_str)
                         && !delta.is_empty()
                     {
-                        self.send_delta(sender, json!({ "content": delta }), None);
+                        self.send_delta(sender, json!({ "content": delta }), None, None);
                     }
                 }
                 "response.reasoning_text.delta"
@@ -216,7 +217,7 @@ impl ResponsesStreamState {
                     if let Some(delta) = event.get("delta").and_then(Value::as_str)
                         && !delta.is_empty()
                     {
-                        self.send_delta(sender, json!({ "reasoning_content": delta }), None);
+                        self.send_delta(sender, json!({ "reasoning_content": delta }), None, None);
                     }
                 }
                 "response.output_item.done" => {
@@ -268,6 +269,7 @@ impl ResponsesStreamState {
                             }]
                         }),
                         None,
+                        None,
                     );
                 }
                 _ => {}
@@ -292,6 +294,7 @@ impl ResponsesStreamState {
         sender: &ChatCompletionStreamSender,
         delta: Value,
         finish_reason: Option<&str>,
+        usage: Option<Value>,
     ) {
         if !self.sent_role {
             self.sent_role = true;
@@ -299,7 +302,10 @@ impl ResponsesStreamState {
             let _ = sender.send(role_chunk.to_string());
         }
 
-        let chunk = self.build_chunk(delta, finish_reason);
+        let mut chunk = self.build_chunk(delta, finish_reason);
+        if let Some(usage) = usage {
+            chunk["usage"] = usage;
+        }
         let _ = sender.send(chunk.to_string());
     }
 
@@ -1094,19 +1100,27 @@ mod tests {
                 &sender,
                 &json!({
                     "type": "response.completed",
-                    "response": { "id": "resp_1", "status": "completed" }
+                    "response": {
+                        "id": "resp_1", "status": "completed",
+                        "usage": { "input_tokens": 1000, "input_tokens_details": { "cached_tokens": 700 } }
+                    }
                 }),
             )
             .unwrap();
 
         let mut tool_calls = Vec::new();
         let mut saw_done = false;
+        let mut usage = None;
         while let Ok(payload) = receiver.try_recv() {
             if payload == "[DONE]" {
+                assert!(usage.is_some());
                 saw_done = true;
                 continue;
             }
             let chunk: Value = serde_json::from_str(&payload).unwrap();
+            if let Some(value) = chunk.get("usage") {
+                usage = Some(value.clone());
+            }
             if let Some(tool_call) = chunk.pointer("/choices/0/delta/tool_calls/0") {
                 tool_calls.push(tool_call.clone());
             }
@@ -1120,6 +1134,9 @@ mod tests {
             json!("{\"city\":\"Paris\"}")
         );
         assert!(saw_done);
+        let usage = usage.unwrap();
+        assert_eq!(usage["prompt_tokens"], 1000);
+        assert_eq!(usage["prompt_tokens_details"]["cached_tokens"], 700);
         state.ensure_completed(false).unwrap();
     }
 

@@ -4695,7 +4695,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
             let text = '';
             const swipes = [];
             const toolCalls = [];
-            const state = { reasoning: '', images: [], signature: '', toolSignatures: {}, native: null };
+            const state = { reasoning: '', images: [], signature: '', toolSignatures: {}, native: null, usage: {} };
             const requestSource = generate_data.chat_completion_source ?? oai_settings.chat_completion_source;
             const claudeNative = isClaudeMessagesRequest
                 ? new ClaudeNativeStreamAccumulator()
@@ -4713,6 +4713,9 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
                 }
                 tryParseStreamingError(response, rawData);
                 const parsed = JSON.parse(rawData);
+
+                // Usage updates are cumulative snapshots, including metadata-only terminal chunks.
+                Object.assign(state.usage, parsed.message?.usage, parsed.usageMetadata, parsed.usage);
 
                 const nativeDelta = claudeNative?.consume(parsed)
                     ?? parsed?.choices?.[0]?.delta?.native;

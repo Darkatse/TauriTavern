@@ -226,6 +226,9 @@ export const power_user = {
     hideChatAvatars_enabled: false,
     max_context_unlocked: false,
     message_token_count_enabled: false,
+    message_ttft_enabled: false,
+    message_token_rate_enabled: false,
+    message_cache_enabled: false,
     expand_message_actions: false,
     enableZenSliders: false,
     enableLabMode: false,
@@ -521,6 +524,16 @@ function switchIcons() {
 function switchTokenCount() {
     $('body').toggleClass('no-tokenCount', !power_user.message_token_count_enabled);
     $('#messageTokensEnabled').prop('checked', power_user.message_token_count_enabled);
+    notifyChatLayoutChanged();
+}
+
+function switchGenerationInfo() {
+    $('body').toggleClass('no-message-ttft', !power_user.message_ttft_enabled);
+    $('body').toggleClass('no-message-token-rate', !power_user.message_token_rate_enabled);
+    $('body').toggleClass('no-message-cache', !power_user.message_cache_enabled);
+    $('#messageFirstTokenEnabled').prop('checked', power_user.message_ttft_enabled);
+    $('#messageTokenRateEnabled').prop('checked', power_user.message_token_rate_enabled);
+    $('#messageCacheEnabled').prop('checked', power_user.message_cache_enabled);
     notifyChatLayoutChanged();
 }
 
@@ -1421,6 +1434,9 @@ function applyTheme(name) {
                 switchTokenCount();
             },
         },
+        { key: 'message_ttft_enabled', action: switchGenerationInfo },
+        { key: 'message_token_rate_enabled', action: switchGenerationInfo },
+        { key: 'message_cache_enabled', action: switchGenerationInfo },
         {
             key: 'mesIDDisplay_enabled',
             action: () => {
@@ -1769,6 +1785,7 @@ export function applyPowerUserSettings() {
     applyNoShadows();
     switchHotswap();
     switchTimer();
+    switchGenerationInfo();
     switchTimestamps();
     switchIcons();
     switchMesIDDisplay();
@@ -2951,6 +2968,9 @@ export function getThemeObject(name) {
         mesIDDisplay_enabled: power_user.mesIDDisplay_enabled,
         hideChatAvatars_enabled: power_user.hideChatAvatars_enabled,
         message_token_count_enabled: power_user.message_token_count_enabled,
+        message_ttft_enabled: power_user.message_ttft_enabled,
+        message_token_rate_enabled: power_user.message_token_rate_enabled,
+        message_cache_enabled: power_user.message_cache_enabled,
         expand_message_actions: power_user.expand_message_actions,
         enableZenSliders: power_user.enableZenSliders,
         enableLabMode: power_user.enableLabMode,
@@ -4061,6 +4081,12 @@ jQuery(() => {
         const value = !!$(this).prop('checked');
         power_user.message_token_count_enabled = value;
         switchTokenCount();
+        saveSettingsDebounced();
+    });
+
+    $('#messageFirstTokenEnabled, #messageTokenRateEnabled, #messageCacheEnabled').on('input', function () {
+        power_user[this.dataset.setting] = this.checked;
+        switchGenerationInfo();
         saveSettingsDebounced();
     });
 

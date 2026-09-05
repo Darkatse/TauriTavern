@@ -172,6 +172,13 @@ fn build_chat_completion_payload(
         insert_if_present(&mut request, payload, key);
     }
 
+    if payload.get("stream").and_then(Value::as_bool) == Some(true) {
+        request.insert(
+            "stream_options".to_string(),
+            serde_json::json!({ "include_usage": true }),
+        );
+    }
+
     if source == "custom"
         && let Some(reasoning_effort) = payload.get("reasoning_effort")
     {

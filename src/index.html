@@ -5344,6 +5344,18 @@
                                     <input id="messageTokensEnabled" type="checkbox" />
                                     <small data-i18n="Show Message Token Count">Message Token Count</small>
                                 </label>
+                                <label for="messageFirstTokenEnabled" class="checkbox_label" title="Time to first streamed result" data-i18n="[title]Time to first streamed result">
+                                    <input id="messageFirstTokenEnabled" type="checkbox" data-setting="message_ttft_enabled" />
+                                    <small data-i18n="Time to First Token (TTFT)">Time to First Token (TTFT)</small>
+                                </label>
+                                <label for="messageTokenRateEnabled" class="checkbox_label" title="Average generation speed: locally counted tokens divided by total generation time" data-i18n="[title]Average generation speed: locally counted tokens divided by total generation time">
+                                    <input id="messageTokenRateEnabled" type="checkbox" data-setting="message_token_rate_enabled" />
+                                    <small data-i18n="Generation Speed">Generation Speed</small>
+                                </label>
+                                <label for="messageCacheEnabled" class="checkbox_label" title="Share of input tokens read from cache in the latest request, when reported by the provider" data-i18n="[title]Share of input tokens read from cache in the latest request, when reported by the provider">
+                                    <input id="messageCacheEnabled" type="checkbox" data-setting="message_cache_enabled" />
+                                    <small data-i18n="Prompt Cache Hit Rate">Prompt Cache Hit Rate</small>
+                                </label>
                                 <label for="compact_input_area" class="checkbox_label" title="Single-row message input area. Mobile only, no effect on PC." data-i18n="[title]Single-row message input area. Mobile only, no effect on PC">
                                     <input id="compact_input_area" type="checkbox" />
                                     <small data-i18n="Compact Input Area (Mobile)">Compact Input Area</small><i class="fa-solid fa-mobile-screen-button"></i>
@@ -7650,11 +7662,14 @@
                 <div class="swipe_left fa-solid fa-chevron-left"></div>
                 <div class="mes_block">
                     <div class="ch_name flex-container justifySpaceBetween">
-                        <div class="flex-container flex1 alignitemscenter">
+                        <div class="mes_header_info flex-container flex1 alignitemscenter">
                             <div class="flex-container alignItemsBaseline">
                                 <span class="name_text">${characterName}</span>
                                 <i class="mes_ghost fa-solid fa-ghost" title="This message is invisible for the AI" data-i18n="[title]This message is invisible for the AI"></i>
                                 <small class="timestamp"></small>
+                                <small class="mes_generation_info mes_generation_ttft" title="Time to first streamed result" data-i18n="[title]Time to first streamed result"></small>
+                                <small class="mes_generation_info mes_generation_rate" title="Average generation speed: locally counted tokens divided by total generation time" data-i18n="[title]Average generation speed: locally counted tokens divided by total generation time"></small>
+                                <small class="mes_generation_info mes_generation_cache"></small>
                             </div>
                         </div>
                         <div class="mes_buttons">
