@@ -426,3 +426,7 @@ runs/<run-id>/
 - journal
 - artifact commit
 - workspace list/read/write/patch 工具循环
+
+### 模板展开
+
+工作区工具读取和搜索文件原文。脚本可用 `macros.render(workspace.readText(path))` 展开模板中的冻结宏。

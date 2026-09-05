@@ -62,6 +62,7 @@ import { context, workspace, log } from '@tauritavern/runtime';
 | --- | --- | --- |
 | `workspace` | 读写 | 受沙箱策略门控的文件 API |
 | `context` | 只读 | 与宿主状态隔离的 `worldInfo` + `variables` + `macro` 快照 |
+| `macros` | 只读 | `render(text)` 使用冻结值展开宏 |
 | `log` | 只写 | 经宿主 tracing 输出的日志 API |
 
 除此之外**没有** `process`、`Buffer`、`fs`、`http`、`crypto`、`setTimeout`、`setInterval` 等 Node 或浏览器 API。
@@ -163,10 +164,29 @@ const lastMessageId = context.macro.chat?.lastMessageId;
 | `chat.lastMessageId` | 最后一条合格消息的 0-based 索引，跳过正在生成新 swipe 的消息 |
 | `chat.lastSwipeId` | 末尾消息已有的 swipe 数量 |
 | `chat.currentSwipeId` | 末尾消息的 1-based swipe 编号，包含正在生成的新 swipe |
+| `builtins` | 捕获时的时间、聊天、输入、Token 上限与提示词模板文本 |
+| `variableValues.local` / `variableValues.global` | 按前端变量读取规则转换后的宏文本；原始值仍在 `context.variables` |
 
 三个 `chat` 值均为字符串，不可用时为 `""`；生成新 swipe 时，它们可能指向不同消息。缺少宏快照时 `context.macro` 为 `{}`，字段可用可选链读取。
 
-### 3.5 `log` — 日志 API
+### 3.5 `macros.render(text)` — 冻结宏重放
+
+```js
+import { macros, workspace } from '@tauritavern/runtime';
+const text = macros.render(workspace.readText('output/template.md'));
+```
+
+返回展开后的字符串。除名称、角色／Persona 字段、模型与聊天位置外，还支持：
+
+- 时间与状态：`time`、`date`、`weekday`、`isotime`、`isodate`、`idleDuration` / `idle_duration`、`input`、`isMobile`、`lastGenerationType`、`maxPrompt` / `maxContext` / `maxResponse` 及其 `Tokens` 别名，均使用捕获时的值。
+- 聊天：`lastMessage`、`lastUserMessage`、`lastCharMessage`、`firstIncludedMessageId`、`firstDisplayedMessageId`、`allChatRange`。
+- 提示词：内置 `instruct*` 序列及别名、`systemPrompt`、`defaultSystemPrompt`、`exampleSeparator` / `chatSeparator`、`chatStart`、`reasoningPrefix` / `reasoningSuffix` / `reasoningSeparator`。
+- 固定文本：无参数 `space`、`newline`、`noop`。
+- 单层参数查询：`{{greeting::1}}`（0 为主开场白，1 起为备选；也支持 `charFirstMessage`）、`{{getvar::Name}}` / `{{getglobalvar::Name}}`、`{{hasvar::Name}}` / `{{hasglobalvar::Name}}`（别名 `varexists` / `globalvarexists`），以及 `{{outlet::key}}`。
+
+宏名不区分大小写，变量名和 outlet key 区分大小写。参数使用 `::` 加字面量；已捕获的查询集合中，缺失项或越界 greeting 返回空字符串，存在性查询返回 `true` / `false`。替换值不再递归展开；未知、嵌套或不支持的语法保持原文，`\{{char}}` 保留字面量 `{{char}}`。扩展注册宏与变量写入宏不参与重放。单次展开上限与脚本工作区输出上限相同。
+
+### 3.6 `log` — 日志 API
 
 `log` 将日志输出到宿主的日志系统，供开发者调试。日志不会进入 Agent 上下文或聊天消息。
 

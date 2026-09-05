@@ -89,6 +89,8 @@ materialize input into .staging
 
 ## Agent 读取
 
+`skill.read` / `skill.search` 在分页和搜索前展开前端冻结宏。行号和计量对应展开后的正文，SHA 仍对应原文件；`scripts/` 下的源码保持原文。支持范围、转义和脚本用法见 [SkillScript.md](./SkillScript.md#35-macrosrendertext--冻结宏重放)。
+
 `skill.list`：
 
 - 只读。

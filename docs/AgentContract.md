@@ -333,6 +333,7 @@ Agent 构建有界 context 时应优先使用后端 chat repository 的分页、
 
 - `chat.search` 只能搜索当前 run 绑定的聊天；模型只提供 `query` 与可选过滤参数。
 - `chat.read_messages` 使用 0-based message index；JSONL header 不计入 index。
+- 聊天正文在分页和搜索前展开前端冻结宏；姓名、角色等结构化字段保持原值。
 - 两个工具必须读取 run 创建时冻结的输入历史前缀；`swipe` / `regenerate` 的目标楼层和本 run 后续写入楼层不得对当前 run 可见。
 - 模型可见文本读取统一使用 1-based `start_line` / `line_count`；省略范围时优先返回全文，超出工具上下文预算时返回成功的行预览、实际范围与下一起始行，不能要求模型改用字符坐标重试。
 - 搜索/读取结果可以返回 snippet、text slice 与 stable ref，但不能另建一份前端 canonical chat。
