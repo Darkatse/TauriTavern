@@ -43,6 +43,14 @@
 <details>
 <summary><b>📦 Установка через менеджер пакетов</b> (Windows · macOS · Linux)</summary>
 
+### Windows · WinGet
+
+Выполните в PowerShell:
+
+```powershell
+winget install --id TauriTavern.TauriTavern
+```
+
 ### Windows · Scoop
 
 Выполните в PowerShell:

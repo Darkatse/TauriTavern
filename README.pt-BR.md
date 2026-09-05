@@ -43,6 +43,14 @@
 <details>
 <summary><b>📦 Instalação com um gerenciador de pacotes</b> (Windows · macOS · Linux)</summary>
 
+### Windows · WinGet
+
+Execute no PowerShell:
+
+```powershell
+winget install --id TauriTavern.TauriTavern
+```
+
 ### Windows · Scoop
 
 Execute no PowerShell:

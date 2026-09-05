@@ -43,6 +43,14 @@
 <details>
 <summary><b>📦 Install with a package manager</b> (Windows · macOS · Linux)</summary>
 
+### Windows · WinGet
+
+Run in PowerShell:
+
+```powershell
+winget install --id TauriTavern.TauriTavern
+```
+
 ### Windows · Scoop
 
 Run in PowerShell:

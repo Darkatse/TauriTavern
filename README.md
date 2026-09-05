@@ -43,6 +43,14 @@
 <details>
 <summary><b>📦 使用包管理器安装</b>（Windows · macOS · Linux）</summary>
 
+### Windows · WinGet
+
+在 PowerShell 中运行：
+
+```powershell
+winget install --id TauriTavern.TauriTavern
+```
+
 ### Windows · Scoop
 
 在 PowerShell 中运行：

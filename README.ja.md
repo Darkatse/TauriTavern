@@ -43,6 +43,14 @@
 <details>
 <summary><b>📦 パッケージマネージャーでインストール</b>（Windows · macOS · Linux）</summary>
 
+### Windows · WinGet
+
+PowerShellで次を実行します。
+
+```powershell
+winget install --id TauriTavern.TauriTavern
+```
+
 ### Windows · Scoop
 
 PowerShellで次を実行します。
