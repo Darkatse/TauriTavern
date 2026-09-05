@@ -31,8 +31,8 @@ pub(super) use self::write_file::write_file;
 pub(super) const WORKSPACE_LIST_FILES: &str = "workspace.list_files";
 pub(super) const WORKSPACE_SEARCH_FILES: &str = "workspace.search_files";
 pub(super) const WORKSPACE_READ_FILE: &str = "workspace.read_file";
-pub(super) const WORKSPACE_WRITE_FILE: &str = "workspace.write_file";
-pub(super) const WORKSPACE_APPLY_PATCH: &str = "workspace.apply_patch";
+pub(crate) const WORKSPACE_WRITE_FILE: &str = "workspace.write_file";
+pub(crate) const WORKSPACE_APPLY_PATCH: &str = "workspace.apply_patch";
 pub(super) const WORKSPACE_COMMIT: &str = "workspace.commit";
 pub(crate) const WORKSPACE_FINISH: &str = "workspace.finish";
 

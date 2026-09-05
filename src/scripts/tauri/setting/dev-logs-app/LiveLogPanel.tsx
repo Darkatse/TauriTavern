@@ -12,7 +12,7 @@ import {
     entryMatchesLevel,
     formatEntryLine,
     levelClass,
-} from './log-utils.js';
+} from './log-utils';
 
 const NEAR_BOTTOM_THRESHOLD_PX = 24;
 

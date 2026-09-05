@@ -17,3 +17,22 @@ export function shouldUnblockGenerationAfterUnhandledError(state) {
 
     return Boolean(state.isSendPress || state.isBodyGenerating);
 }
+
+/**
+ * Legacy character events describe visible Assistant content. A first-class
+ * Assistant that only owns tool calls is published through the tool events.
+ *
+ * @param {ChatMessage} message
+ * @param {boolean} hasToolCalls
+ * @returns {boolean}
+ */
+export function shouldEmitCharacterMessageEvents(message, hasToolCalls) {
+    if (!hasToolCalls) {
+        return true;
+    }
+
+    const text = message.mes.trim();
+    const reasoning = message.extra?.reasoning?.trim() ?? '';
+    const hasMedia = Boolean(message.extra?.media?.length);
+    return !['', '...'].includes(text) || Boolean(reasoning) || hasMedia;
+}

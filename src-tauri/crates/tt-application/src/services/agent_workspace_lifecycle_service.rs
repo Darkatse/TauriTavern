@@ -124,6 +124,17 @@ impl AgentWorkspaceLifecycleService {
             .map_err(Into::into)
     }
 
+    pub async fn copy_persistent_states(
+        &self,
+        source: &AgentChatWorkspaceTarget,
+        target: &AgentChatWorkspaceTarget,
+    ) -> Result<(), ApplicationError> {
+        self.repository
+            .copy_persistent_states(&self.workspace_id(source)?, &self.workspace_id(target)?)
+            .await
+            .map_err(Into::into)
+    }
+
     pub async fn delete_chat_workspaces(
         &self,
         targets: &[AgentChatWorkspaceTarget],
@@ -156,7 +167,10 @@ impl AgentWorkspaceLifecycleService {
     }
 
     fn workspace_id(&self, target: &AgentChatWorkspaceTarget) -> Result<String, ApplicationError> {
-        workspace_id_for_stable_chat_id(&target.chat_ref, &target.stable_chat_id)
+        workspace_id_for_stable_chat_id(
+            &target.chat_ref,
+            &validate_stable_chat_id(&target.stable_chat_id)?,
+        )
     }
 }
 
@@ -176,6 +190,14 @@ mod tests {
 
     #[async_trait]
     impl AgentWorkspaceLifecycleRepository for MockLifecycleRepository {
+        async fn copy_persistent_states(
+            &self,
+            _source_workspace_id: &str,
+            _target_workspace_id: &str,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
         async fn delete_chat_workspace(
             &self,
             workspace_id: &str,

@@ -1,4 +1,4 @@
-import { clone, prettyJson } from './host-api.js';
+import { clone, prettyJson } from './host-api';
 import {
     defaultProfile,
     normalizeProfileForSave,
@@ -24,6 +24,7 @@ import {
     applyWorkspaceRootVisible,
     applyWorkspaceRootWritable,
     nextProfileId,
+    profilePresentationMemoryKey,
     type AgentPresentationMemory,
 } from './profile-draft-ops';
 import {
@@ -43,7 +44,6 @@ export type AgentSystemDraftEditorContext = {
     commit: (patch: Partial<AgentSystemPanelSnapshot>) => void;
     isDisposed: () => boolean;
     presentationMemory: AgentPresentationMemory;
-    memoryKey: (draft: AgentProfileDraft) => string;
     seedMainAgentPresentation: (draft: AgentProfileDraft) => void;
     editModeSyncPatch: (
         draft: AgentProfileDraft,
@@ -66,6 +66,7 @@ export type AgentSystemDraftEditor = {
     setCanDelegate: (enabled: boolean) => void;
     setCanHandoff: (enabled: boolean) => void;
     setRunPresentation: (presentation: string) => void;
+    setRunStream: (enabled: boolean) => void;
     setCallableAsSubAgent: (enabled: boolean) => void;
     setCallableAsHandoffTarget: (enabled: boolean) => void;
     setDelegationDescription: (value: string) => void;
@@ -107,6 +108,10 @@ export type AgentSystemDraftEditor = {
  */
 export function createAgentSystemDraftEditor(context: AgentSystemDraftEditorContext): AgentSystemDraftEditor {
     const { deps } = context;
+
+    function memoryKey(draft: AgentProfileDraft): string {
+        return profilePresentationMemoryKey(draft.id, context.getSnapshot().editingProfileId);
+    }
 
     function editDraft(mutate: (draft: AgentProfileDraft) => void): void {
         const draft = clone(context.getSnapshot().draft);
@@ -206,7 +211,15 @@ export function createAgentSystemDraftEditor(context: AgentSystemDraftEditorCont
                 return;
             }
             editDraft((draft) => {
-                applyRunPresentation(draft, presentation, context.presentationMemory, context.memoryKey(draft));
+                applyRunPresentation(draft, presentation, context.presentationMemory, memoryKey(draft));
+            });
+        },
+        setRunStream(enabled) {
+            if (isBuiltin()) {
+                return;
+            }
+            editDraft((draft) => {
+                draft.run.stream = enabled;
             });
         },
         setCallableAsSubAgent(enabled) {
@@ -214,7 +227,7 @@ export function createAgentSystemDraftEditor(context: AgentSystemDraftEditorCont
                 return;
             }
             const draft = clone(context.getSnapshot().draft);
-            applyCallableAsSubAgent(draft, enabled, context.presentationMemory, context.memoryKey(draft));
+            applyCallableAsSubAgent(draft, enabled, context.presentationMemory, memoryKey(draft));
             context.commit({ draft, ...context.editModeSyncPatch(draft) });
         },
         setCallableAsHandoffTarget(enabled) {
@@ -222,7 +235,7 @@ export function createAgentSystemDraftEditor(context: AgentSystemDraftEditorCont
                 return;
             }
             const draft = clone(context.getSnapshot().draft);
-            const restored = applyCallableAsHandoffTarget(draft, enabled, context.presentationMemory, context.memoryKey(draft));
+            const restored = applyCallableAsHandoffTarget(draft, enabled, context.presentationMemory, memoryKey(draft));
             context.commit(restored ? { draft, ...context.editModeSyncPatch(draft) } : { draft });
         },
         setDelegationDescription(value) {
@@ -241,8 +254,11 @@ export function createAgentSystemDraftEditor(context: AgentSystemDraftEditorCont
             });
         },
         setPlanMode(mode) {
+            if (mode !== 'none') {
+                throw new Error(`Unsupported Agent plan mode: ${mode}`);
+            }
             editDraft((draft) => {
-                draft.plan.mode = mode as AgentProfileDraft['plan']['mode'];
+                draft.plan.mode = mode;
             });
         },
         setToolsLimitField(field, value) {

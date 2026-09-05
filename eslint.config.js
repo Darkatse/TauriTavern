@@ -24,6 +24,8 @@ export default tseslint.config(
     },
     rules: {
       'max-lines': ['error', 500],
+      // Switch copy is nested under label > span > strong/small.
+      'jsx-a11y/label-has-associated-control': ['error', { depth: 3 }],
       // A focusable separator is the keyboard-operated window-splitter pattern.
       'jsx-a11y/no-interactive-element-to-noninteractive-role': ['error', {
         button: ['separator'],

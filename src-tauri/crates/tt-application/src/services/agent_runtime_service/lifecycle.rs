@@ -5,7 +5,6 @@ use serde_json::{Value, json};
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use super::AgentRuntimeService;
 use super::prompt_snapshot::{
     reject_external_tool_request, request_from_prompt_snapshot,
     validate_prompt_snapshot_context_policy,
@@ -14,6 +13,7 @@ use super::skill_scope::{
     resolve_run_skill_scope_refs, skill_event_summary, skill_scope_order_for_profile,
 };
 use super::timeline_projection::build_run_timeline_projection;
+use super::{AgentRunLiveProjection, AgentRuntimeService};
 use crate::dto::agent_dto::{
     AgentCancelRunDto, AgentReadEventsDto, AgentReadEventsResultDto, AgentReadWorkspaceFileDto,
     AgentRunHandleDto, AgentStartRunDto, AgentWorkspaceFileDto,
@@ -32,21 +32,16 @@ use tt_ports::repositories::agent_run_repository::AgentRunEventReadQuery;
 impl AgentRuntimeService {
     pub async fn start_run(
         self: &Arc<Self>,
-        dto: AgentStartRunDto,
+        mut dto: AgentStartRunDto,
     ) -> Result<AgentRunHandleDto, ApplicationError> {
-        if dto.options.stream {
-            return Err(ApplicationError::ValidationError(
-                "agent.stream_unsupported: Agent runtime only supports non-streaming model calls"
-                    .to_string(),
-            ));
-        }
-        let Some(prompt_snapshot) = dto.prompt_snapshot.as_ref() else {
+        let stream_override = dto.options.stream;
+        let Some(prompt_snapshot) = dto.prompt_snapshot.take() else {
             return Err(ApplicationError::ValidationError(
                 "agent.prompt_snapshot_required: Agent tool loop requires a concrete prompt snapshot"
                     .to_string(),
             ));
         };
-        let request = request_from_prompt_snapshot(prompt_snapshot)?;
+        let request = request_from_prompt_snapshot(&prompt_snapshot)?;
         reject_external_tool_request(&request.payload)?;
 
         let generation_type = dto.generation_type.trim().to_string();
@@ -70,10 +65,10 @@ impl AgentRuntimeService {
             )));
         }
         ensure_profile_model_configured(&resolved_profile)?;
-        validate_prompt_snapshot_context_policy(prompt_snapshot, &resolved_profile)?;
+        validate_prompt_snapshot_context_policy(&prompt_snapshot, &resolved_profile)?;
         let prompt_snapshot = attach_frozen_run_input_snapshot(
-            prompt_snapshot.clone(),
-            dto.frozen_run_input_snapshot.clone(),
+            prompt_snapshot,
+            dto.frozen_run_input_snapshot.take(),
         )?;
         let presentation = dto
             .options
@@ -191,6 +186,7 @@ impl AgentRuntimeService {
             self,
             run_id.clone(),
             cancel_sender,
+            stream_override,
         ));
         self.active_runs
             .write()
@@ -219,6 +215,37 @@ impl AgentRuntimeService {
             generation_type,
             status: AgentRunStatus::Created,
         })
+    }
+
+    pub async fn subscribe_live_projection(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<watch::Receiver<AgentRunLiveProjection>>, ApplicationError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "agent.run_id_required: runId is required".to_string(),
+            ));
+        }
+
+        if let Some(receiver) = self
+            .active_runs
+            .read()
+            .await
+            .get(run_id)
+            .map(|handle| handle.live_projection.subscribe())
+        {
+            return Ok(Some(receiver));
+        }
+
+        let run = self.run_repository.load_run(run_id).await?;
+        if run.status.is_terminal() {
+            return Ok(None);
+        }
+
+        Err(ApplicationError::InternalError(format!(
+            "agent.active_run_missing: nonterminal run `{run_id}` has no active run handle"
+        )))
     }
 
     pub async fn cancel_run(

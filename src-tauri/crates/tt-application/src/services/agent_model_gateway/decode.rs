@@ -195,14 +195,11 @@ fn parse_tool_call(
                 "model.invalid_tool_call: tool_call_id is required".to_string(),
             )
         })?;
-    let tool = tools
-        .iter()
-        .find(|tool| tool.model_alias == raw_name)
-        .ok_or_else(|| {
-            ApplicationError::ValidationError(format!(
-                "model.unknown_tool_call: model returned unadvertised tool alias `{raw_name}`"
-            ))
-        })?;
+    let tool = model_tool_for_alias(tools, raw_name).ok_or_else(|| {
+        ApplicationError::ValidationError(format!(
+            "model.unknown_tool_call: model returned unadvertised tool alias `{raw_name}`"
+        ))
+    })?;
     let arguments =
         parse_tool_call_arguments(function.get("arguments").or_else(|| function.get("args")));
 
@@ -216,6 +213,13 @@ fn parse_tool_call(
             "raw": call,
         }),
     })
+}
+
+pub(super) fn model_tool_for_alias<'a>(
+    tools: &'a [AgentModelTool],
+    alias: &str,
+) -> Option<&'a AgentModelTool> {
+    tools.iter().find(|tool| tool.model_alias == alias)
 }
 
 fn parse_tool_call_arguments(value: Option<&Value>) -> Value {

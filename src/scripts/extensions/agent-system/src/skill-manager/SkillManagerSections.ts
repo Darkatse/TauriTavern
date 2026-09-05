@@ -1,4 +1,4 @@
-import { skillScopeKey } from '../skill-scope.js';
+import { skillScopeKey } from '../skill-scope';
 import { buildSkillScopeSections } from './scope';
 import type {
     SkillManagerDeps,

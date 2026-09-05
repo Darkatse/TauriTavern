@@ -20,6 +20,7 @@ import {
     resolvePromptOrderFromDomIdentifiers,
 } from './prompt-manager-order-utils.js';
 import { createLatestTaskScheduler } from './util/latest-task-scheduler.js';
+import { getMountedCodeMirrorEditor, mountCodeMirrorEditor } from './tauri/codemirror-editor.js';
 
 function debouncePromise(func, delay) {
     let timeoutId;
@@ -306,6 +307,7 @@ export class PromptCollection {
 class PromptManager {
     #isVisible = false;
     #dryRunPending = false;
+    #previewPending = false;
     #visibilityObserver = null;
 
     get promptSources() {
@@ -461,13 +463,27 @@ class PromptManager {
 
         // Enable and disable prompts
         this.handleToggle = (event) => {
-            const promptID = event.target.closest('.' + this.configuration.prefix + 'prompt_manager_prompt').dataset.pmIdentifier;
+            const { prefix } = this.configuration;
+            const promptRow = event.target.closest('.' + prefix + 'prompt_manager_prompt');
+            const promptID = promptRow.dataset.pmIdentifier;
             const promptOrderEntry = this.getPromptOrderEntry(this.activeCharacter, promptID);
             const counts = this.tokenHandler.getCounts();
+            const enabled = !promptOrderEntry.enabled;
 
             counts[promptID] = null;
-            promptOrderEntry.enabled = !promptOrderEntry.enabled;
-            this.render();
+            promptOrderEntry.enabled = enabled;
+
+            promptRow.classList.toggle(prefix + 'prompt_manager_prompt_disabled', !enabled);
+
+            const toggle = promptRow.querySelector('.prompt-manager-toggle-action');
+            toggle.classList.toggle('fa-toggle-on', enabled);
+            toggle.classList.toggle('fa-toggle-off', !enabled);
+
+            const tokenElement = promptRow.querySelector('.prompt_manager_prompt_tokens');
+            tokenElement.dataset.pmTokens = '-';
+            tokenElement.textContent = '-';
+
+            this.renderDebounced();
             this.saveServiceSettings();
         };
 
@@ -508,7 +524,7 @@ class PromptManager {
             this.detachPrompt(prompt, this.activeCharacter);
             this.hidePopup();
             this.clearEditForm();
-            this.render();
+            this.renderNowAndRefresh();
             this.saveServiceSettings();
         };
 
@@ -533,7 +549,7 @@ class PromptManager {
 
             this.hidePopup();
             this.clearEditForm();
-            this.render();
+            this.renderNowAndRefresh();
             this.saveServiceSettings();
         };
 
@@ -602,6 +618,7 @@ class PromptManager {
             forbidOverridesField.checked = prompt.forbid_overrides ?? false;
             forbidOverridesBlock.style.visibility = this.overridablePrompts.includes(prompt.identifier) ? 'visible' : 'hidden';
             promptField.disabled = prompt.marker ?? false;
+            getMountedCodeMirrorEditor(promptField)?.reset();
             entrySourceBlock.style.display = isPulledPrompt ? '' : 'none';
 
             if (isPulledPrompt) {
@@ -618,7 +635,7 @@ class PromptManager {
 
             if (prompt) {
                 this.appendPrompt(prompt, this.activeCharacter);
-                this.render();
+                this.renderNowAndRefresh();
                 this.saveServiceSettings();
             }
         };
@@ -639,7 +656,7 @@ class PromptManager {
 
                     this.hidePopup();
                     this.clearEditForm();
-                    this.render();
+                    this.renderNowAndRefresh();
                     this.saveServiceSettings();
                 }
             });
@@ -746,41 +763,49 @@ class PromptManager {
                     this.removePromptOrderForCharacter(this.activeCharacter);
                     this.addPromptOrderForCharacter(this.activeCharacter, promptManagerDefaultPromptOrder);
 
-                    this.render();
+                    this.renderNowAndRefresh();
                     this.saveServiceSettings();
                 });
         };
 
         // Fill quick edit fields for the first time
         if ('global' === this.configuration.promptOrder.strategy) {
-            const handleQuickEditSave = (event) => {
-                const promptId = event.target.dataset.pmPrompt;
+            const saveQuickEdit = (textarea) => {
+                const promptId = textarea.dataset.pmPrompt;
                 const prompt = this.getPromptById(promptId);
 
-                prompt.content = event.target.value;
+                prompt.content = textarea.value;
 
                 // Update edit form if present
                 // @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/offsetParent
                 const popupEditFormPrompt = /** @type {HTMLTextAreaElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_prompt'));
                 if (popupEditFormPrompt.offsetParent) {
                     popupEditFormPrompt.value = prompt.content;
+                    getMountedCodeMirrorEditor(popupEditFormPrompt)?.reset();
                 }
 
                 this.log('Saved prompt: ' + promptId);
                 this.saveServiceSettings().then(() => this.render());
             };
 
-            const mainPrompt = this.getPromptById('main');
-            const mainElementId = this.updateQuickEdit('main', mainPrompt);
-            document.getElementById(mainElementId).addEventListener('blur', handleQuickEditSave);
-
-            const nsfwPrompt = this.getPromptById('nsfw');
-            const nsfwElementId = this.updateQuickEdit('nsfw', nsfwPrompt);
-            document.getElementById(nsfwElementId).addEventListener('blur', handleQuickEditSave);
-
-            const jailbreakPrompt = this.getPromptById('jailbreak');
-            const jailbreakElementId = this.updateQuickEdit('jailbreak', jailbreakPrompt);
-            document.getElementById(jailbreakElementId).addEventListener('blur', handleQuickEditSave);
+            for (const identifier of ['main', 'nsfw', 'jailbreak']) {
+                const textarea = /** @type {HTMLTextAreaElement} */(document.getElementById(this.updateQuickEdit(identifier, this.getPromptById(identifier))));
+                textarea.addEventListener('blur', () => {
+                    if (!getMountedCodeMirrorEditor(textarea)) saveQuickEdit(textarea);
+                });
+                textarea.addEventListener('focus', () => {
+                    void mountCodeMirrorEditor(textarea).then(editor => {
+                        if (!editor) return;
+                        editor.wrapper.addEventListener('focusout', event => {
+                            if (event.relatedTarget instanceof Node && editor.wrapper.contains(event.relatedTarget)) return;
+                            editor.flush();
+                            saveQuickEdit(textarea);
+                            editor.destroy();
+                        });
+                        editor.focus();
+                    });
+                });
+            }
         }
 
         // Re-render when chat history changes.
@@ -829,6 +854,8 @@ class PromptManager {
         });
 
         // Prepare prompt edit form buttons
+        const injectionPositionField = document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_injection_position');
+        injectionPositionField.addEventListener('change', event => this.handleInjectionPositionChange(event));
         document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_save').addEventListener('click', this.handleSavePrompt);
         document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_reset').addEventListener('click', this.handleResetPrompt);
 
@@ -857,7 +884,7 @@ class PromptManager {
 
             this.hidePopup();
             this.clearEditForm();
-            this.renderDebounced();
+            this.renderNowAndRefresh();
         });
 
         // Re-render prompt manager on world settings update
@@ -870,7 +897,10 @@ class PromptManager {
         const visibilityTarget = this.containerElement.closest('.drawer-content') ?? this.containerElement;
         this.#visibilityObserver = new IntersectionObserver(([entry]) => {
             this.#isVisible = entry.isIntersecting;
-            if (!this.#isVisible || !this.#dryRunPending) return;
+            if (!this.#isVisible) return;
+
+            if (this.#previewPending) this.render(false);
+            if (!this.#dryRunPending) return;
 
             this.#dryRunPending = false;
             this.render();
@@ -900,8 +930,8 @@ class PromptManager {
         const scrollPosition = this.#getScrollPosition();
         try {
             await this.renderPromptManager();
-            await this.renderPromptManagerListItems();
             this.makeDraggable();
+            await this.renderPromptManagerListItems();
             this.#setScrollPosition(scrollPosition);
         } finally {
             this.profileEnd('render');
@@ -925,6 +955,7 @@ class PromptManager {
         this.profileStart('filling context');
         try {
             await this.tryGenerate();
+            this.#previewPending = false;
         } catch (error) {
             this.error = error instanceof Error ? error.message : String(error || t`Unknown error`);
             throw error;
@@ -935,8 +966,14 @@ class PromptManager {
     }
 
     async #renderWithoutTryGenerate() {
-        if (!await this.#waitUntilGenerationIsIdle()) return;
         await this.#renderPromptManagerUi();
+    }
+
+    renderNowAndRefresh() {
+        if (main_api !== 'openai') return;
+        this.#previewPending = true;
+        if (this.#isVisible) this.render(false);
+        this.renderDebounced();
     }
 
     /**
@@ -983,6 +1020,7 @@ class PromptManager {
         const attachIndexField = /** @type {HTMLInputElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_attach_index'));
         const attachSideField = /** @type {HTMLSelectElement} */(document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_attach_side'));
 
+        getMountedCodeMirrorEditor(promptField)?.flush();
         prompt.name = nameField.value;
         prompt.role = roleField.value;
         prompt.content = promptField.value;
@@ -1536,6 +1574,7 @@ class PromptManager {
         const elementId = `${identifier}_prompt_quick_edit_textarea`;
         const textarea = /** @type {HTMLTextAreaElement} */(document.getElementById(elementId));
         textarea.value = prompt.content;
+        getMountedCodeMirrorEditor(textarea)?.reset();
 
         return elementId;
     }
@@ -1586,6 +1625,7 @@ class PromptManager {
         roleField.value = prompt.role || 'system';
         promptField.value = prompt.content ?? '';
         promptField.disabled = prompt.marker ?? false;
+        void mountCodeMirrorEditor(promptField).then(editor => editor?.reset());
         injectionPositionField.value = injectionPosition.toString();
         injectionDepthField.value = (prompt.injection_depth ?? DEFAULT_DEPTH).toString();
         injectionOrderField.value = (prompt.injection_order ?? DEFAULT_ORDER).toString();
@@ -1616,9 +1656,6 @@ class PromptManager {
         } else {
             resetPromptButton.style.display = 'none';
         }
-
-        injectionPositionField.removeEventListener('change', (e) => this.handleInjectionPositionChange(e));
-        injectionPositionField.addEventListener('change', (e) => this.handleInjectionPositionChange(e));
 
         const savePromptButton = document.getElementById(this.configuration.prefix + 'prompt_manager_popup_entry_form_save');
         savePromptButton.dataset.pmPrompt = prompt.identifier;
@@ -1713,6 +1750,7 @@ class PromptManager {
         roleField.selectedIndex = 0;
         promptField.value = '';
         promptField.disabled = false;
+        getMountedCodeMirrorEditor(promptField)?.destroy();
         injectionPositionField.selectedIndex = 0;
         injectionPositionField.removeAttribute('disabled');
         injectionDepthField.value = DEFAULT_DEPTH.toString();
@@ -1841,7 +1879,7 @@ class PromptManager {
                 </div>
         ` : '';
 
-        const totalActiveTokens = this.tokenUsage;
+        const totalActiveTokens = this.#previewPending ? '-' : this.tokenUsage;
 
         const headerHtml = await renderTemplateAsync('promptManagerHeader', { error: this.error, errorDiv, prefix: this.configuration.prefix, totalActiveTokens });
         promptManagerDiv.insertAdjacentHTML('beforeend', headerHtml);
@@ -1890,6 +1928,8 @@ class PromptManager {
         promptManagerList.innerHTML = '';
 
         const { prefix } = this.configuration;
+        const previewPending = this.#previewPending;
+        const dragHandleClass = isMobile() ? ' ui-sortable-handle' : '';
 
         let listItemHtml = await renderTemplateAsync('promptManagerListHeader', { prefix });
 
@@ -1900,14 +1940,14 @@ class PromptManager {
             const enabledClass = listEntry.enabled ? '' : `${prefix}prompt_manager_prompt_disabled`;
             const draggableClass = `${prefix}prompt_manager_prompt_draggable`;
             const markerClass = prompt.marker ? `${prefix}prompt_manager_marker` : '';
-            const tokens = this.tokenHandler?.getCounts()[prompt.identifier] ?? 0;
+            const tokens = previewPending ? 0 : (this.tokenHandler?.getCounts()[prompt.identifier] ?? 0);
 
             // Warn the user if the chat history goes below certain token thresholds.
             let warningClass = '';
             let warningTitle = '';
 
             const tokenBudget = this.serviceSettings.openai_max_context - this.serviceSettings.openai_max_tokens;
-            if (this.tokenUsage > tokenBudget * 0.8 &&
+            if (!previewPending && this.tokenUsage > tokenBudget * 0.8 &&
                 'chatHistory' === prompt.identifier) {
                 const warningThreshold = this.configuration.warningTokenThreshold;
                 const dangerThreshold = this.configuration.dangerTokenThreshold;
@@ -1975,7 +2015,7 @@ class PromptManager {
 
             listItemHtml += `
                 <li class="${prefix}prompt_manager_prompt ${draggableClass} ${enabledClass} ${markerClass} ${importantClass}" data-pm-identifier="${escapeHtml(prompt.identifier)}">
-                    <span class="drag-handle">☰</span>
+                    <span class="drag-handle${dragHandleClass}">☰</span>
                     <span class="${prefix}prompt_manager_prompt_name" data-pm-name="${encodedName}">
                         ${isMarkerPrompt ? '<span class="fa-fw fa-solid fa-thumb-tack" title="Marker"></span>' : ''}
                         ${isSystemPrompt ? '<span class="fa-fw fa-solid fa-square-poll-horizontal" title="Global Prompt"></span>' : ''}
@@ -2112,7 +2152,8 @@ class PromptManager {
         this.normalizeAgentPromptMarkerDefinitions();
         this.ensureAgentPromptOrderReferences();
         toastr.success(t`Prompt import complete.`);
-        this.saveServiceSettings().then(() => this.render());
+        this.renderNowAndRefresh();
+        this.saveServiceSettings();
     }
 
     /**
@@ -2165,8 +2206,10 @@ class PromptManager {
      */
     makeDraggable() {
         $(`#${this.configuration.prefix}prompt_manager_list`).sortable({
+            appendTo: document.body,
             delay: this.configuration.sortableDelay,
             handle: isMobile() ? '.drag-handle' : null,
+            helper: 'clone',
             items: `.${this.configuration.prefix}prompt_manager_prompt_draggable`,
             update: (event, ui) => {
                 const promptOrder = this.getPromptOrderForCharacter(this.activeCharacter);

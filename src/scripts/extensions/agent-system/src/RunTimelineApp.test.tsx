@@ -2,7 +2,7 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test } from '@rstest/core';
 
-import type { AgentSystemSettings } from './AgentSystemEntryController';
+import type { AgentSystemSettings } from './settings-store';
 import { RunTimelineApp } from './RunTimelineApp';
 import { createRunTimelineController } from './RunTimelineController';
 import type { ActiveTimelineOptions, RunTimelineController } from './RunTimelineContract';
@@ -127,6 +127,67 @@ test('the React event list renders only the virtual window while the controller 
     expect(controller.getSnapshot().displayItems).toHaveLength(240);
     expect(document.querySelectorAll('#history-window li.ttas-run-event').length).toBeLessThan(240);
     expect(document.querySelectorAll('#history-window li.ttas-run-event').length).toBeGreaterThan(0);
+});
+
+test('active timeline renders a streaming write card with tail and metric', async () => {
+    let liveHandler: ((update: TauriTavernAgentRunLiveUpdate) => void) | null = null;
+    const deps: ActiveTimelineOptions['deps'] = {
+        readEvents: () => Promise.resolve({
+            events: [fileEvent(1)],
+            timelineProjection: { foregroundInvocationIds: [], invocations: [], delegationEdges: [] },
+        }),
+        reportError: error => { throw error; },
+        tr,
+        loadSettings: () => Promise.resolve(settings()),
+        patchSettings: (current, patch) => Promise.resolve({ ...current, ...patch }),
+        subscribeSettings: () => () => undefined,
+        getActiveRun: () => ({ runId: 'run-1', generationType: 'normal' }),
+        subscribeRunState: () => () => undefined,
+        subscribeRunEvents: () => () => undefined,
+        subscribeLiveProjection: (_runId, handler) => {
+            liveHandler = handler;
+            return () => undefined;
+        },
+        scheduleFrame: callback => callback(),
+        retryFailure: () => Promise.resolve(),
+    };
+    const controller = createRunTimelineController({ mode: 'active', deps });
+    controllers.push(controller);
+    render(<RunTimelineApp controller={controller} tr={tr} />);
+    await act(() => controller.init());
+    await userEvent.setup().click(screen.getByRole('button', { name: 'expandTimeline' }));
+
+    act(() => {
+        liveHandler?.({
+            type: 'replace',
+            call: {
+                toolId: 'builtin:workspace.write_file',
+                invocationId: 'inv_root',
+                invocationExitPolicy: 'run_finish_allowed',
+                toolCallIndex: 0,
+                path: 'reply.md',
+                content: '',
+                contentWords: 0,
+            },
+        });
+        liveHandler?.({
+            type: 'append',
+            invocationId: 'inv_root',
+            toolCallIndex: 0,
+            field: 'content',
+            text: 'a streamed tail line',
+            wordDelta: 4,
+        });
+    });
+
+    const card = document.querySelector('.ttas-run-event.is-live');
+    expect(card).not.toBeNull();
+    expect(card?.getAttribute('aria-live')).toBe('off');
+    expect(document.querySelector('.ttas-run-heading-copy small')?.getAttribute('aria-live')).toBe('off');
+    expect(card?.getAttribute('style')).toContain('116px');
+    expect(card?.querySelector('.ttas-run-event-live-stream')?.textContent).toBe('a streamed tail line');
+    expect(card?.textContent).toContain('timelineLiveWriting');
+    expect(card?.querySelector('.ttas-run-event-live-metric')?.textContent).toBe('+timelineWordCount');
 });
 
 test('SubAgent tray opens and closes its native dialog through controller-local state', async () => {

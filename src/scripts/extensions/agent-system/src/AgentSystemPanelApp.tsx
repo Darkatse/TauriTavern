@@ -54,9 +54,7 @@ export function AgentSystemPanelApp({ controller, runHistory, runRetention, tr, 
 
     const rootRef = useRef<HTMLDivElement>(null);
     const { activeProfileSectionId, profileSectionScrollRequest } = snapshot;
-    // The section rail's scrollIntoView replaces Vue's $nextTick: measure the
-    // committed DOM in a layout effect after the controller bumped the
-    // request counter.
+    // Scroll only after React commits the selected section.
     useLayoutEffect(() => {
         if (profileSectionScrollRequest === 0) {
             return;

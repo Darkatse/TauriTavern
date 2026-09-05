@@ -191,6 +191,78 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
 }
 
 #[tokio::test]
+async fn agent_runtime_streaming_keeps_the_existing_final_execution_path() {
+    let root = temp_root("agent-runtime-streaming");
+    let fixture = agent_runtime_fixture(&root);
+    let registry = BuiltinAgentToolRegistry::all();
+    let mut definition = fixture
+        .profile_service
+        .load_profile(DEFAULT_AGENT_PROFILE_ID)
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    definition.id = AgentProfileId::parse("streaming-profile").unwrap();
+    definition.display_name = "Streaming Profile".to_string();
+    definition.run.stream = true;
+    fixture
+        .profile_service
+        .save_profile(definition, registry.catalog())
+        .await
+        .expect("save streaming profile");
+    let profile = fixture
+        .profile_service
+        .resolve_profile(AgentProfileResolveInput {
+            profile_id: Some("streaming-profile"),
+            tool_catalog: registry.catalog(),
+        })
+        .await
+        .expect("resolve streaming profile");
+    let handle = start_contract_agent_run(
+        &fixture,
+        &profile,
+        AgentRunPresentation::Background,
+        "streaming-final",
+        None,
+    )
+    .await;
+
+    let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;
+    assert_eq!(run.status, AgentRunStatus::Completed);
+    assert_eq!(fixture.model_gateway.stream_requests().await, [true, true]);
+    if let Some(mut receiver) = fixture
+        .service
+        .subscribe_live_projection(&handle.run_id)
+        .await
+        .unwrap()
+    {
+        tokio::time::timeout(AGENT_CONTRACT_ASYNC_TIMEOUT, async {
+            while receiver.changed().await.is_ok() {}
+        })
+        .await
+        .expect("terminal run did not close its live projection");
+    }
+    assert!(
+        fixture
+            .service
+            .subscribe_live_projection(&handle.run_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let artifact = fixture
+        .agent_repository
+        .read_text(
+            &handle.run_id,
+            &WorkspacePath::parse("output/main.md").unwrap(),
+        )
+        .await
+        .expect("read streamed run artifact");
+    assert_eq!(artifact.text, "hello from real repo");
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
 async fn agent_runtime_returns_missing_chat_reads_to_the_agent() {
     let root = temp_root("agent-missing-chat-recovery");
     let fixture = agent_runtime_fixture_with_responses(
@@ -309,6 +381,7 @@ async fn agent_runtime_duplicate_tool_call_id_preserves_first_audit_facts() {
         &profile,
         AgentRunPresentation::Background,
         "duplicate-tool-call-id",
+        Some(false),
     )
     .await;
 
@@ -566,6 +639,7 @@ async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_com
         .iter()
         .find(|event| event.payload["callId"] == "call_patch")
         .expect("the round must auto-commit only its final text mutation");
+    assert_eq!(automatic_commit_request.payload["isExplicit"], false);
     assert_eq!(automatic_commit_request.payload["path"], "output/main.md");
     assert_eq!(automatic_commit_request.payload["mode"], "replace");
     assert!(
@@ -579,6 +653,7 @@ async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_com
             .all(|event| event.payload["callId"] != "call_write")
     );
     let final_commit_request = commit_requests.last().unwrap();
+    assert_eq!(final_commit_request.payload["isExplicit"], true);
     assert_eq!(final_commit_request.payload["runId"], run.id);
     assert_eq!(
         final_commit_request.payload["workspaceId"],
@@ -642,6 +717,96 @@ async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_com
     assert!(events.iter().any(|event| {
         event.event_type == "persistent_state_metadata_updated"
             && event.payload["messageId"] == "message_1"
+    }));
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn agent_runtime_streamed_writes_defer_to_patch_and_explicit_commits() {
+    let root = temp_root("agent-streamed-write-commit");
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![
+            model_tool_response(vec![
+                model_tool_call(
+                    "call_write_first",
+                    "workspace_write_file",
+                    json!({ "path": "output/main.md", "content": "draft" }),
+                ),
+                model_tool_call(
+                    "call_patch_first",
+                    "workspace_apply_patch",
+                    json!({
+                        "path": "output/main.md",
+                        "old_string": "draft",
+                        "new_string": "patched",
+                    }),
+                ),
+            ]),
+            model_tool_response(vec![
+                model_tool_call(
+                    "call_patch_second",
+                    "workspace_apply_patch",
+                    json!({
+                        "path": "output/main.md",
+                        "old_string": "patched",
+                        "new_string": "second patch",
+                    }),
+                ),
+                model_tool_call(
+                    "call_write_second",
+                    "workspace_write_file",
+                    json!({
+                        "path": "output/main.md",
+                        "content": "streamed replacement",
+                    }),
+                ),
+            ]),
+            model_tool_response(vec![
+                model_tool_call("call_commit", "workspace_commit", json!({})),
+                model_tool_call("call_finish", "workspace_finish", json!({})),
+            ]),
+        ],
+    );
+    let mut profile = resolve_contract_profile(&fixture).await;
+    profile.tools.max_rounds = 3;
+    let handle = start_contract_agent_run(
+        &fixture,
+        &profile,
+        AgentRunPresentation::Foreground,
+        "streamed-write-commit",
+        Some(true),
+    )
+    .await;
+
+    let (run, resolver) = tokio::join!(
+        wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id),
+        resolve_chat_commits_and_persistent_state_update(
+            fixture.service.clone(),
+            fixture.agent_repository.clone(),
+            handle.run_id.clone(),
+            "message_streamed",
+            &[],
+        ),
+    );
+    resolver.expect("host resolver");
+    assert_eq!(run.status, AgentRunStatus::Completed);
+
+    let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+    let commits = events
+        .iter()
+        .filter(|event| event.event_type == "chat_commit_requested")
+        .collect::<Vec<_>>();
+    assert_eq!(commits.len(), 2);
+    assert_eq!(commits[0].payload["callId"], "call_patch_first");
+    assert_eq!(commits[0].payload["isExplicit"], false);
+    assert_eq!(commits[1].payload["callId"], "call_commit");
+    assert_eq!(commits[1].payload["isExplicit"], true);
+    assert!(commits.iter().all(|event| {
+        event.payload["callId"] != "call_write_first"
+            && event.payload["callId"] != "call_write_second"
+            && event.payload["callId"] != "call_patch_second"
     }));
 
     let _ = fs::remove_dir_all(root).await;

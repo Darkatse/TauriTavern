@@ -3,27 +3,29 @@ use std::sync::Arc;
 use std::collections::BTreeSet;
 
 use serde_json::Value;
-use tauri::State;
+use tauri::{State, ipc::Channel};
 
 use crate::app::AppState;
+use crate::presentation::commands::agent_live_projection::AgentRunLivePresenter;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::agent_dto::{
     AgentApplyCurrentModelConnectionSnapshotDto, AgentApplyCurrentModelConnectionSnapshotResultDto,
     AgentApplyRunPruneDto, AgentBuildCurrentModelConnectionSnapshotDto,
     AgentBuildCurrentModelConnectionSnapshotResultDto, AgentCancelRunDto,
-    AgentListProfilesResultDto, AgentListRunsDto, AgentListRunsResultDto, AgentListToolsResultDto,
-    AgentLoadProfileResultDto, AgentModelTurnDisplayDto, AgentPlanRunPruneDto,
-    AgentPreparePromptAssemblyDto, AgentPreparePromptAssemblyResultDto, AgentProfileIdDto,
-    AgentPromptAssemblyBrokerRequestDto, AgentPruneChatPersistentStatesDto,
-    AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto, AgentReadEventsResultDto,
-    AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto, AgentReadWorkspaceFileDto,
-    AgentRepairProfileFileDto, AgentResolveChatCommitDto,
+    AgentCopyChatPersistentStatesDto, AgentListProfilesResultDto, AgentListRunsDto,
+    AgentListRunsResultDto, AgentListToolsResultDto, AgentLoadProfileResultDto,
+    AgentModelTurnDisplayDto, AgentPlanRunPruneDto, AgentPreparePromptAssemblyDto,
+    AgentPreparePromptAssemblyResultDto, AgentProfileIdDto, AgentPromptAssemblyBrokerRequestDto,
+    AgentPruneChatPersistentStatesDto, AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto,
+    AgentReadEventsResultDto, AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto,
+    AgentReadWorkspaceFileDto, AgentRepairProfileFileDto, AgentResolveChatCommitDto,
     AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
     AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentRetargetPresetRefsDto,
-    AgentRetargetPresetRefsResultDto, AgentRunHandleDto, AgentRunPruneApplyResultDto,
-    AgentRunPrunePlanDto, AgentSaveProfileDto, AgentStartRunDto, AgentSubmitGuidanceDto,
-    AgentSubmitGuidanceResultDto, AgentWorkspaceFileDto,
+    AgentRetargetPresetRefsResultDto, AgentRunHandleDto, AgentRunLiveUpdateDto,
+    AgentRunPruneApplyResultDto, AgentRunPrunePlanDto, AgentSaveProfileDto, AgentStartRunDto,
+    AgentSubmitGuidanceDto, AgentSubmitGuidanceResultDto, AgentSubscribeRunLiveProjectionDto,
+    AgentWorkspaceFileDto,
 };
 use tt_application::errors::ApplicationError;
 use tt_application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
@@ -44,6 +46,52 @@ pub async fn start_agent_run(
         .start_run(dto)
         .await
         .map_err(map_command_error("Failed to start agent run"))
+}
+
+#[tauri::command]
+pub async fn subscribe_agent_run_live_projection(
+    dto: AgentSubscribeRunLiveProjectionDto,
+    channel: Channel<AgentRunLiveUpdateDto>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("subscribe_agent_run_live_projection");
+
+    let Some(mut receiver) = app_state
+        .services
+        .agent_runtime_service
+        .subscribe_live_projection(&dto.run_id)
+        .await
+        .map_err(map_command_error(
+            "Failed to subscribe to agent run live projection",
+        ))?
+    else {
+        let _ = channel.send(AgentRunLiveUpdateDto::Snapshot { calls: Vec::new() });
+        return Ok(());
+    };
+
+    let mut presenter = AgentRunLivePresenter::default();
+    let snapshot = {
+        let projection = receiver.borrow_and_update();
+        presenter.snapshot(&projection)
+    };
+    if channel.send(snapshot).is_err() {
+        return Ok(());
+    }
+
+    loop {
+        if receiver.changed().await.is_err() {
+            return Ok(());
+        }
+        let updates = {
+            let projection = receiver.borrow_and_update();
+            presenter.updates(&projection)?
+        };
+        for update in updates {
+            if channel.send(update).is_err() {
+                return Ok(());
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -527,6 +575,32 @@ pub async fn prune_agent_chat_persistent_states(
             removed_state_ids: prune.removed_state_ids,
         })
         .map_err(map_command_error("Failed to prune agent persistent states"))
+}
+
+#[tauri::command]
+pub async fn copy_agent_chat_persistent_states(
+    dto: AgentCopyChatPersistentStatesDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("copy_agent_chat_persistent_states");
+
+    app_state
+        .services
+        .chat_service
+        .copy_agent_persistent_states(
+            &AgentChatWorkspaceTarget {
+                chat_ref: dto.source_chat_ref,
+                stable_chat_id: dto.source_stable_chat_id,
+            },
+            &AgentChatWorkspaceTarget {
+                chat_ref: dto.target_chat_ref,
+                stable_chat_id: dto.target_stable_chat_id,
+            },
+        )
+        .await
+        .map_err(map_command_error(
+            "Failed to copy agent chat persistent states",
+        ))
 }
 
 fn collect_agent_persistent_state_ids(payload: &[Value]) -> Vec<String> {

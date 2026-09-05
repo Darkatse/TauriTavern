@@ -1,16 +1,15 @@
 import { StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
-import type { AgentSystemSettings } from './AgentSystemEntryController';
 import { RunTimelineApp } from './RunTimelineApp';
 import { createRunTimelineController } from './RunTimelineController';
 import type {
     RunTimelineController,
     TimelineReadInput,
 } from './RunTimelineContract';
-import { errorText, requireAgentApi } from './host-api.js';
-import { translateAgentSystem as tr } from './i18n.js';
-import { loadSettings, patchSettings, subscribeSettings } from './settings-store.js';
+import { errorText, requireAgentApi } from './host-api';
+import { translateAgentSystem as tr } from './i18n';
+import { loadSettings, patchSettings, subscribeSettings } from './settings-store';
 import {
     getActiveAgentRun,
     subscribeAgentRunEvents,
@@ -103,12 +102,13 @@ export async function mountAgentRunTimelinePanel(): Promise<void> {
             readEvents,
             reportError: reportTimelineError,
             tr,
-            loadSettings: () => loadSettings() as Promise<AgentSystemSettings>,
-            patchSettings: (current, patch) => patchSettings(current, patch) as Promise<AgentSystemSettings>,
-            subscribeSettings: listener => subscribeSettings(listener),
+            loadSettings,
+            patchSettings,
+            subscribeSettings,
             getActiveRun: () => getActiveAgentRun(),
             subscribeRunState: listener => subscribeAgentRunState(listener),
             subscribeRunEvents: listener => subscribeAgentRunEvents(listener),
+            subscribeLiveProjection: (runId, handler, options) => requireAgentApi().subscribeLiveProjection(runId, handler, options),
             retryFailure: input => retryAgentRunFailure(input),
         },
     });

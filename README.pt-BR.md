@@ -126,7 +126,7 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 </details>
 
 > [!TIP]
-> **iOS**: instale pelo [teste público no TestFlight](https://testflight.apple.com/join/gpqAdeTm). É necessário ter o iOS 16 ou mais recente. As compilações estão sujeitas às regras e limitações do TestFlight.
+> **iOS**: instale pelo [teste público no TestFlight](https://testflight.apple.com/join/gpqAdeTm). É necessário ter o iOS 15.0 ou mais recente. O iOS 15.0–16.3 tem suporte limitado; o suporte completo começa no iOS 16.4. As compilações estão sujeitas às regras e limitações do TestFlight.
 >
 > **Versão portátil para Windows**: requer o WebView2 Runtime instalado no sistema.
 

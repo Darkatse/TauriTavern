@@ -1,5 +1,5 @@
-import { errorText } from './host-api.js';
-import { readTimelineDetailSections } from './run-timeline-detail-reader.js';
+import { errorText } from './host-api';
+import { readTimelineDetailSections } from './run-timeline-detail-reader';
 import type {
     TimelineDetailReadInput,
     TimelineDetailSection,

@@ -5,9 +5,12 @@ use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
+    ChatCompletionToolCallDelta,
 };
 
 use super::HttpChatCompletionRepository;
+use super::claude;
+use super::gemini;
 use super::normalizers;
 use super::response_body::read_upstream_json_body;
 use super::vertexai_auth;
@@ -61,18 +64,12 @@ async fn generate_gemini(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        PROVIDER_NAME,
+        "Generation request failed",
+    )
+    .await?;
 
     let body = read_upstream_json_body(PROVIDER_NAME, "generate", response).await?;
 
@@ -105,18 +102,12 @@ async fn generate_claude(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            CLAUDE_PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        CLAUDE_PROVIDER_NAME,
+        "Generation request failed",
+    )
+    .await?;
 
     let body = read_upstream_json_body(CLAUDE_PROVIDER_NAME, "generate", response).await?;
 
@@ -155,6 +146,17 @@ async fn generate_gemini_stream(
     sender: ChatCompletionStreamSender,
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
+    let response = send_gemini_stream_request(repository, config, endpoint_path, payload).await?;
+
+    HttpChatCompletionRepository::stream_sse_response(PROVIDER_NAME, response, sender, cancel).await
+}
+
+async fn send_gemini_stream_request(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+) -> Result<reqwest::Response, DomainError> {
     let (model, body) = extract_model_and_body(payload)?;
 
     let method = resolve_generation_method(endpoint_path, true);
@@ -177,20 +179,8 @@ async fn generate_gemini_stream(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
-
-    HttpChatCompletionRepository::stream_sse_response(PROVIDER_NAME, response, sender, cancel).await
+    HttpChatCompletionRepository::send_checked(request, PROVIDER_NAME, "Generation request failed")
+        .await
 }
 
 async fn generate_claude_stream(
@@ -201,11 +191,74 @@ async fn generate_claude_stream(
     sender: ChatCompletionStreamSender,
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
-    let model = extract_anthropic_model_id(endpoint_path).ok_or_else(|| {
-        DomainError::InvalidData(format!(
-            "Vertex AI Claude endpoint path is missing model id: {endpoint_path}"
-        ))
-    })?;
+    let (model, response) =
+        send_claude_stream_request(repository, config, endpoint_path, payload).await?;
+
+    if super::payload_contains_cache_control(payload) {
+        HttpChatCompletionRepository::stream_sse_response_with_cache_logging(
+            CLAUDE_PROVIDER_NAME,
+            model,
+            response,
+            sender,
+            cancel,
+        )
+        .await
+    } else {
+        HttpChatCompletionRepository::stream_sse_response(
+            CLAUDE_PROVIDER_NAME,
+            response,
+            sender,
+            cancel,
+        )
+        .await
+    }
+}
+
+pub(super) async fn generate_with_tool_call_deltas(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+    on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+    if !is_anthropic_raw_predict_endpoint(endpoint_path) {
+        let response =
+            send_gemini_stream_request(repository, config, endpoint_path, payload).await?;
+        let body =
+            gemini::consume_generate_content_stream(PROVIDER_NAME, response, on_tool_call_delta)
+                .await?;
+        return Ok(normalizers::normalize_gemini_response(body));
+    }
+
+    let (model, response) =
+        send_claude_stream_request(repository, config, endpoint_path, payload).await?;
+    let body =
+        claude::consume_message_stream(CLAUDE_PROVIDER_NAME, response, on_tool_call_delta).await?;
+
+    if super::payload_contains_cache_control(payload) {
+        let _ = super::log_prompt_cache_performance_if_present(
+            CLAUDE_PROVIDER_NAME,
+            Some(model.as_str()),
+            &body,
+        );
+    }
+
+    Ok(normalizers::normalize_claude_response(body))
+}
+
+async fn send_claude_stream_request(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+) -> Result<(String, reqwest::Response), DomainError> {
+    let model = extract_anthropic_model_id(endpoint_path)
+        .map(str::to_string)
+        .ok_or_else(|| {
+            DomainError::InvalidData(format!(
+                "Vertex AI Claude endpoint path is missing model id: {endpoint_path}"
+            ))
+        })?;
     let body = payload_object(payload)?;
     let endpoint_path = anthropic_endpoint_path(endpoint_path, true)?;
     let url = HttpChatCompletionRepository::build_url(&config.base_url, &endpoint_path)?;
@@ -221,63 +274,14 @@ async fn generate_claude_stream(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        CLAUDE_PROVIDER_NAME,
+        "Generation request failed",
+    )
+    .await?;
 
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            CLAUDE_PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
-
-    if super::payload_contains_cache_control(payload) {
-        let mut logged = false;
-        HttpChatCompletionRepository::stream_sse_response_internal(
-            CLAUDE_PROVIDER_NAME,
-            response,
-            sender,
-            cancel,
-            move |payload| {
-                if logged {
-                    return Ok(());
-                }
-
-                if !payload
-                    .windows(b"cache_read_input_tokens".len())
-                    .any(|window| window == b"cache_read_input_tokens")
-                    && !payload
-                        .windows(b"cache_creation_input_tokens".len())
-                        .any(|window| window == b"cache_creation_input_tokens")
-                {
-                    return Ok(());
-                }
-
-                let Ok(value) = serde_json::from_slice::<Value>(payload) else {
-                    return Ok(());
-                };
-
-                logged = super::log_prompt_cache_performance_if_present(
-                    CLAUDE_PROVIDER_NAME,
-                    Some(model),
-                    &value,
-                );
-                Ok(())
-            },
-        )
-        .await
-    } else {
-        HttpChatCompletionRepository::stream_sse_response(
-            CLAUDE_PROVIDER_NAME,
-            response,
-            sender,
-            cancel,
-        )
-        .await
-    }
+    Ok((model, response))
 }
 
 fn extract_model_and_body(payload: &Value) -> Result<(String, Map<String, Value>), DomainError> {

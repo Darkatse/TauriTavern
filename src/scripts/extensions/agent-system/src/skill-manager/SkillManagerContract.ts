@@ -1,4 +1,6 @@
-export type SkillManagerTr = (key: string, params?: Record<string, unknown>) => string;
+import type { AgentSystemMessageKey, AgentSystemTr } from '../i18n';
+
+export type SkillManagerTr = AgentSystemTr;
 
 export type SkillSectionId = 'global' | 'preset' | 'profile' | 'character';
 export type SkillImportKind = 'archive' | 'directory' | 'manual' | 'download';
@@ -44,10 +46,10 @@ export type SkillHostEventKey = typeof SKILL_HOST_EVENT_KEYS[number];
 export type SkillScopeSection = {
     id: SkillSectionId;
     icon: string;
-    labelKey: string;
+    labelKey: AgentSystemMessageKey;
     available: boolean;
     subtitle: string;
-    unavailableKey?: string;
+    unavailableKey?: AgentSystemMessageKey;
     scope: TauriTavernSkillScope | null;
 };
 

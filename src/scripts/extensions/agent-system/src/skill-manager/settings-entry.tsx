@@ -4,9 +4,9 @@ import { createRoot } from 'react-dom/client';
 import { downloadBlobWithRuntime } from '../../../../file-export.js';
 import { isAndroidRuntime, isIosRuntime } from '../../../../util/mobile-runtime.js';
 import { subscribeAgentProfilesChanged } from '../../../../tauritavern/agent/agent-profile-events.js';
-import { confirmAction, errorText, requireAgentApi, requireSillyTavernContext, requireSkillApi } from '../host-api.js';
-import { translateAgentSystem as tr, translateSkillInstallAction } from '../i18n.js';
-import { loadSettings, subscribeSettings } from '../settings-store.js';
+import { confirmAction, errorText, requireAgentApi, requireSillyTavernContext, requireSkillApi } from '../host-api';
+import { translateAgentSystem as tr, translateSkillInstallAction } from '../i18n';
+import { loadSettings, subscribeSettings } from '../settings-store';
 import { SkillManager } from './SkillManager';
 import type { SkillHostContext, SkillManagerDeps } from './SkillManagerContract';
 import { createSkillManagerController } from './SkillManagerController';
@@ -15,7 +15,7 @@ import {
     syncSkillInstallPortability,
     syncSkillMovePortability,
     syncSkillWritePortability,
-} from './embedded-skill-sync.js';
+} from './embedded-skill-sync';
 
 const EXTENSIONS_BLOCK_ID = 'rm_extensions_block';
 const AGENT_SYSTEM_CONTAINER_ID = 'agent_system_container';

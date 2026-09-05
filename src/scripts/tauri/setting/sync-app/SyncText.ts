@@ -1,4 +1,4 @@
-import { formatTimestampValue } from './format.js';
+import { formatTimestampValue } from './format';
 import {
     automationTargetValue,
     type SyncAutomationConfig,

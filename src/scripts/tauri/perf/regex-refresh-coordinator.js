@@ -1,7 +1,6 @@
 // @ts-check
 
-import { chat, characters, eventSource, event_types, getCurrentChatId, getMessageFormattingRegexContext, messageFormatting, this_chid } from '../../../script.js';
-import { getRegexedStringBatchAsync } from '../../extensions/regex/engine.js';
+import { chat, characters, eventSource, event_types, getCurrentChatId, messageFormatting, prepareMessageRegexOptions, this_chid } from '../../../script.js';
 import { replaceMesTextHtmlWithRuntimePolicy } from '../message/mes-text-write.js';
 
 /** @type {ReturnType<typeof createRegexRefreshCoordinator> | null} */
@@ -28,8 +27,8 @@ function createRegexRefreshCoordinator() {
     /** @type {{ messageId: number; message: any }[]} */
     let queue = [];
     let queueIndex = 0;
-    /** @type {Map<number, string>} */
-    let regexedTextByMessageId = new Map();
+    /** @type {Map<number, { regexSourceText: string; regexedText: string }>} */
+    let regexOptionsByMessageId = new Map();
 
     let scheduled = false;
     let running = false;
@@ -137,49 +136,6 @@ function createRegexRefreshCoordinator() {
         return next;
     }
 
-    async function prepareRegexedTexts() {
-        regexedTextByMessageId = new Map();
-
-        /** @type {{ rawString: string; placement: number; params: { characterOverride: any; isMarkdown: boolean; depth: number } }[]} */
-        const regexRequests = [];
-        /** @type {number[]} */
-        const messageIds = [];
-
-        for (const entry of queue) {
-            const message = entry.message;
-            if (entry.messageId === 0 || message?.is_system) {
-                continue;
-            }
-
-            const text = message?.extra?.display_text ?? message.mes;
-            const { placement, depth } = getMessageFormattingRegexContext(message.is_user, entry.messageId, false);
-            regexRequests.push({
-                rawString: text,
-                placement,
-                params: {
-                    characterOverride: message.name,
-                    isMarkdown: true,
-                    depth,
-                },
-            });
-            messageIds.push(entry.messageId);
-        }
-
-        if (regexRequests.length === 0) {
-            return;
-        }
-
-        const regexedTexts = await getRegexedStringBatchAsync(regexRequests);
-        regexedTexts.forEach((text, index) => {
-            const messageId = messageIds[index];
-            if (messageId === undefined) {
-                throw new Error(`RegexRefreshCoordinator: missing native regex result owner at index ${index}`);
-            }
-
-            regexedTextByMessageId.set(messageId, text);
-        });
-    }
-
     /**
      * @param {{ messageId: number; message: any }} entry
      */
@@ -192,11 +148,14 @@ function createRegexRefreshCoordinator() {
             return;
         }
         const message = entry.message;
-        const hasRegexedText = regexedTextByMessageId.has(entry.messageId);
-        const text = hasRegexedText ? regexedTextByMessageId.get(entry.messageId) : (message?.extra?.display_text ?? message.mes);
+        const regexOptions = regexOptionsByMessageId.get(entry.messageId);
+        const text = regexOptions?.regexedText ?? (message?.extra?.display_text || message.mes);
         replaceMesTextHtmlWithRuntimePolicy(
             element,
-            messageFormatting(text, message.name, message.is_system, message.is_user, entry.messageId, {}, false, { skipRegex: hasRegexedText }),
+            messageFormatting(text, message.name, message.is_system, message.is_user, entry.messageId, {}, false, {
+                regexPrepared: regexOptions !== undefined,
+                regexSourceText: regexOptions?.regexSourceText,
+            }),
         );
     }
 
@@ -218,7 +177,11 @@ function createRegexRefreshCoordinator() {
                 queue = collectQueue();
                 pendingChatReloadEvents ||= queue.length > 0;
                 queueIndex = 0;
-                await prepareRegexedTexts();
+                regexOptionsByMessageId = await prepareMessageRegexOptions({
+                    messages: chat,
+                    messageIds: queue.map(entry => entry.messageId),
+                    assertUnchanged: false,
+                });
             }
 
             if (queue.length === 0) {
@@ -274,7 +237,7 @@ function createRegexRefreshCoordinator() {
         running = false;
         queue = [];
         queueIndex = 0;
-        regexedTextByMessageId = new Map();
+        regexOptionsByMessageId = new Map();
     }
 
     function resolveWaiters() {

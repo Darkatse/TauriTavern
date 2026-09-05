@@ -24,6 +24,7 @@ import {
     isChatVirtualizationEnabled,
 } from './tauri/main/services/chat-surface/chat-virtualization-state.js';
 import { isInlineDrawerContentOpen, setInlineDrawerContentOpen } from './scripts/tauri/perf/inline-drawer-motion.js';
+import { initializeCodeMirrorEditor } from './scripts/tauri/codemirror-editor.js';
 import { getStreamingRenderInterval, normalizeStreamingFps, shouldCommitStreamingMessage } from './scripts/tauri/perf/streaming-render-policy.js';
 import {
     CHAT_COMMIT_REASON,
@@ -270,7 +271,7 @@ import {
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
 
 import { activateDeferredThirdPartyExtensions, activateRequiredChatSurfaceExtensions, activateStartupSystemExtensions, applyExtensionSettings, cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, isCodeRenderDelegatedToThirdPartyRenderer, runGenerationInterceptors, startOfflineExtensionsDiscovery } from './scripts/extensions.js';
-import { COMMENT_NAME_DEFAULT, CONNECT_API_MAP, executeSlashCommandsOnChatInput, initDefaultSlashCommands, initSlashCommandAutoComplete, isExecutingCommandsFromChatInput, pauseScriptExecution, stopScriptExecution, UNIQUE_APIS } from './scripts/slash-commands.js';
+import { CONNECT_API_MAP, executeSlashCommandsOnChatInput, initDefaultSlashCommands, initSlashCommandAutoComplete, isExecutingCommandsFromChatInput, pauseScriptExecution, stopScriptExecution, UNIQUE_APIS } from './scripts/slash-commands.js';
 import { initMacroAutoComplete } from './scripts/autocomplete/MacroAutoComplete.js';
 import {
     tag_map,
@@ -372,7 +373,7 @@ import { initAccessibility } from './scripts/a11y.js';
 import { initDomHandlers } from './scripts/dom-handlers.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
 import { createGenerationIdleGate } from './scripts/util/generation-idle-gate.js';
-import { shouldUnblockGenerationAfterUnhandledError } from './scripts/util/generation-lifecycle.js';
+import { shouldEmitCharacterMessageEvents, shouldUnblockGenerationAfterUnhandledError } from './scripts/util/generation-lifecycle.js';
 import { AudioPlayer } from './scripts/audio-player.js';
 import { MacroEnvBuilder } from './scripts/macros/engine/MacroEnvBuilder.js';
 import { MacroEngine } from './scripts/macros/engine/MacroEngine.js';
@@ -708,10 +709,13 @@ registerHtmlCodePreviewParticipant({
 const chatSurface = installChatSurfaceRuntime({
     root: /** @type {HTMLElement} */ (chatElement[0]),
     getMessages: () => chat,
+    prepareMaterializeOptions: prepareMessageRegexOptions,
     materializeMessage: ({ message, messageId, frontendSourceHandoffEvent, materializeOptions }) => updateMessageElement(message, {
         messageId,
         frontendSourceHandoffEvent,
         adjustMediaScroll: materializeOptions?.adjustMediaScroll ?? SCROLL_BEHAVIOR.NONE,
+        regexSourceText: materializeOptions?.regexSourceText,
+        regexedText: materializeOptions?.regexedText,
     }),
     syncMountedViewState: syncMountedChatViewState,
     onFault: error => {
@@ -1085,6 +1089,7 @@ async function firstLoadInit() {
         await hostReadyPromise;
         const tauriTavernSettings = await getTauriTavernSettings();
         initializeChatVirtualization(tauriTavernSettings);
+        initializeCodeMirrorEditor(tauriTavernSettings);
 
         const tokenResponse = await fetch('/csrf-token');
         if (!tokenResponse.ok) {
@@ -2046,7 +2051,7 @@ export async function redisplayChat({ targetChat = chat, startIndex = 0, fade = 
         throw new Error('redisplayChat only accepts the canonical chat array');
     }
     const t1 = performance.now();
-    const result = chatSurface.render({
+    const result = await chatSurface.render({
         messages: targetChat,
         startIndex,
         frontendSourceHandoffEvent,
@@ -2406,47 +2411,118 @@ export function getMessageFormattingRegexContext(isUser, messageId, isReasoning 
     };
 }
 
+function normalizeMessageSystemFlag(chName, isSystem) {
+    return isSystem && chName === systemUserName;
+}
+
+function getMessageDisplayText(message) {
+    return message.extra?.display_text || message.mes;
+}
+
+function substituteFirstMessage(mes, chName, isSystem, isUser, messageId, isReasoning) {
+    if (Number(messageId) !== 0 || isSystem || isUser || isReasoning) {
+        return mes;
+    }
+    const source = mes;
+    mes = substituteParams(mes, undefined, chName);
+    const message = chat[messageId];
+    if (message && message.mes === source && message.extra?.display_text !== source) {
+        message.mes = mes;
+    }
+    return mes;
+}
+
+function removeMessagePromptBias(mes, chName, isSystem, isUser) {
+    const promptBias = power_user.user_prompt_bias && substituteParams(power_user.user_prompt_bias);
+    return !power_user.show_user_prompt_bias && chName && !isUser && !isSystem && promptBias && mes.startsWith(promptBias)
+        ? mes.slice(promptBias.length)
+        : mes;
+}
+
+/**
+ * Prepares the regex output consumed by a ChatSurface materialization batch.
+ * @param {{ messages: ChatMessage[]; messageIds: number[]; assertUnchanged?: boolean }} input
+ * @returns {Promise<Map<number, { regexSourceText: string; regexedText: string }>>}
+ */
+export async function prepareMessageRegexOptions({ messages, messageIds, assertUnchanged = true }) {
+    const requests = [];
+    const owners = [];
+
+    for (const messageId of messageIds) {
+        const message = messages[messageId];
+        if (!message) {
+            throw new Error(`Cannot prepare regex for missing message ${messageId}`);
+        }
+        if (message.role === 'tool') {
+            continue;
+        }
+
+        const isToolFloor = message.is_system === true
+            && message.is_user !== true
+            && Array.isArray(message.extra?.tool_invocations);
+        const chName = isToolFloor ? systemUserName : message.name;
+        const isSystem = normalizeMessageSystemFlag(chName, isToolFloor || message.is_system);
+        if (isSystem) {
+            continue;
+        }
+
+        const regexSourceText = substituteFirstMessage(
+            getMessageDisplayText(message),
+            chName,
+            isToolFloor || message.is_system,
+            message.is_user,
+            messageId,
+            false,
+        );
+        const { placement, depth } = getMessageFormattingRegexContext(message.is_user, messageId, false);
+        requests.push({
+            rawString: removeMessagePromptBias(regexSourceText, chName, isSystem, message.is_user),
+            placement,
+            params: { characterOverride: chName, isMarkdown: true, depth },
+        });
+        owners.push({ messageId, message, regexSourceText });
+    }
+
+    const texts = await getRegexedStringBatchAsync(requests);
+    if (assertUnchanged) {
+        for (const owner of owners) {
+            if (messages[owner.messageId] !== owner.message) {
+                throw new Error(`Message ${owner.messageId} changed while preparing regex`);
+            }
+        }
+    }
+    return new Map(owners.map((owner, index) => [owner.messageId, {
+        regexSourceText: owner.regexSourceText,
+        regexedText: texts[index],
+    }]));
+}
+
 export function messageFormatting(mes, ch_name, isSystem, isUser, messageId, sanitizerOverrides = {}, isReasoning = false, formattingOptions = {}) {
     if (!mes) {
         return '';
     }
 
-    if (Number(messageId) === 0 && !isSystem && !isUser && !isReasoning) {
-        const mesBeforeReplace = mes;
-        const chatMessage = chat[messageId];
-        mes = substituteParams(mes, undefined, ch_name);
-        if (chatMessage && chatMessage.mes === mesBeforeReplace && chatMessage.extra?.display_text !== mesBeforeReplace) {
-            chatMessage.mes = mes;
+    if (!formattingOptions?.regexPrepared) {
+        mes = substituteFirstMessage(mes, ch_name, isSystem, isUser, messageId, isReasoning);
+    }
+
+    mesForShowdownParse = formattingOptions?.regexSourceText ?? mes;
+
+    // Let comment and hidden messages have markdown.
+    isSystem = normalizeMessageSystemFlag(ch_name, isSystem);
+
+    if (!formattingOptions?.regexPrepared) {
+        mes = removeMessagePromptBias(mes, ch_name, isSystem, isUser);
+        if (!isSystem) {
+            const { placement: regexPlacement, depth } = getMessageFormattingRegexContext(isUser, messageId, isReasoning);
+
+            // Always override the character name
+            mes = getRegexedString(mes, regexPlacement, {
+                characterOverride: ch_name,
+                isMarkdown: true,
+                depth: depth,
+            });
         }
-    }
-
-    mesForShowdownParse = mes;
-
-    // Force isSystem = false on comment messages so they get formatted properly
-    if (ch_name === COMMENT_NAME_DEFAULT && isSystem && !isUser) {
-        isSystem = false;
-    }
-
-    // Let hidden messages have markdown
-    if (isSystem && ch_name !== systemUserName) {
-        isSystem = false;
-    }
-
-    // Prompt bias replacement should be applied on the raw message
-    const replacedPromptBias = power_user.user_prompt_bias && substituteParams(power_user.user_prompt_bias);
-    if (!power_user.show_user_prompt_bias && ch_name && !isUser && !isSystem && replacedPromptBias && mes.startsWith(replacedPromptBias)) {
-        mes = mes.slice(replacedPromptBias.length);
-    }
-
-    if (!isSystem && !formattingOptions?.skipRegex) {
-        const { placement: regexPlacement, depth } = getMessageFormattingRegexContext(isUser, messageId, isReasoning);
-
-        // Always override the character name
-        mes = getRegexedString(mes, regexPlacement, {
-            characterOverride: ch_name,
-            isMarkdown: true,
-            depth: depth,
-        });
     }
 
     if (power_user.auto_fix_generated_markdown) {
@@ -2606,19 +2682,27 @@ function insertSVGIcon(mes, extra) {
  * @param {object} message Message object
  * @param {object} [options={}] Optional arguments
  * @param {boolean} [options.rerenderMessage=true] Whether to re-render the message content (inside <c>.mes_text</c>)
+ * @param {boolean} [options.transient=false] Whether to defer decorators and embedded runtimes until final content
  */
-export function updateMessageBlock(messageId, message, { rerenderMessage = true } = {}) {
+export function updateMessageBlock(messageId, message, { rerenderMessage = true, transient = false } = {}) {
     const messageElement = chatElement.find(`[mesid="${messageId}"]`);
     if (messageElement.length === 0) {
         return;
     }
     if (rerenderMessage) {
         const text = message?.extra?.display_text ?? message.mes;
-        replaceMesTextHtmlWithRuntimePolicy(
+        const replace = transient
+            ? replaceTransientMesTextHtmlWithRuntimePolicy
+            : replaceMesTextHtmlWithRuntimePolicy;
+        replace(
             /** @type {HTMLElement} */ (messageElement[0]),
             getToolMessageHTML(message, messageId)
                 ?? messageFormatting(text, message.name, message.is_system, message.is_user, messageId, {}, false),
         );
+    }
+
+    if (transient) {
+        return;
     }
 
     updateReasoningUI(messageElement);
@@ -3138,9 +3222,11 @@ function getToolMessageHTML(message, messageId) {
  * @param {ChatMessage} message
  * @param {object} options Options
  * @param {number} [options.messageId] Message ID
+ * @param {string} [options.regexSourceText] Original display text before regex
+ * @param {string} [options.regexedText] Precomputed display regex output
  * @returns {string} Formatted message HTML
  */
-function getMessageTextHTML(message, { messageId = chat.indexOf(message) }) {
+function getMessageTextHTML(message, { messageId = chat.indexOf(message), regexSourceText, regexedText }) {
     // if mes.extra.uses_system_ui is true, set an override on the sanitizer options
     /** @type {Partial<DOMPurify.Config>} */
     const sanitizerOverrides = message.extra?.uses_system_ui ? { MESSAGE_ALLOW_SYSTEM_UI: true } : {};
@@ -3151,15 +3237,19 @@ function getMessageTextHTML(message, { messageId = chat.indexOf(message) }) {
         ? readLegacyToolInvocations(message, messageId).invocations
         : null;
 
+    const hasRegexedText = regexedText !== undefined;
     return getToolMessageHTML(message, messageId)
         ?? messageFormatting(
-            invocations ? ToolManager.formatToolInvocationMessage(invocations) : (message.extra?.display_text || message.mes),
+            hasRegexedText
+                ? regexedText
+                : (invocations ? ToolManager.formatToolInvocationMessage(invocations) : getMessageDisplayText(message)),
             isToolFloor ? systemUserName : message.name,
             isToolFloor || message.is_system,
             message.is_user,
             messageId,
             sanitizerOverrides,
             false,
+            { regexPrepared: hasRegexedText, regexSourceText },
         );
 }
 
@@ -3302,9 +3392,11 @@ export function addOneMessage(mes, { type = undefined, insertAfter = null, scrol
  * @param {JQuery<HTMLElement>} [options.messageElement=messageTemplate.clone()] This message element will be updated with the ChatMessage object.
  * @param {SCROLL_BEHAVIOR} [options.adjustMediaScroll=SCROLL_BEHAVIOR.NONE] Scroll behavior option passed to appendMediaToMessage.
  * @param {string|null} [options.frontendSourceHandoffEvent=null] Event after which detached frontend source cover is released.
+ * @param {string} [options.regexSourceText] Original display text before regex.
+ * @param {string} [options.regexedText] Precomputed display regex output.
  * @returns {JQuery<HTMLElement>} Rendered HTMLElement.
  */
-export function updateMessageElement(mes, { messageId = chat.length - 1, messageElement = messageTemplate.clone(), adjustMediaScroll = SCROLL_BEHAVIOR.NONE, frontendSourceHandoffEvent = null } = {}) {
+export function updateMessageElement(mes, { messageId = chat.length - 1, messageElement = messageTemplate.clone(), adjustMediaScroll = SCROLL_BEHAVIOR.NONE, frontendSourceHandoffEvent = null, regexSourceText, regexedText } = {}) {
     let avatarImg = getThumbnailUrl('persona', user_avatar);
 
     //for non-user messages
@@ -3328,7 +3420,7 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
     }
     const momentDate = timestampToMoment(mes.send_date);
     const timestamp = momentDate.isValid() ? momentDate.format('LL LT') : '';
-    const messageHTML = getMessageTextHTML(mes, { messageId });
+    const messageHTML = getMessageTextHTML(mes, { messageId, regexSourceText, regexedText });
     const bookmarkLink = mes?.extra?.bookmark_link;
     const tokenCount = mes.extra?.token_count;
     const { timerValue, timerTitle } = formatGenerationTimer(mes.gen_started, mes.gen_finished, mes.extra?.token_count, mes.extra?.reasoning_duration, mes.extra?.time_to_first_token);
@@ -4539,8 +4631,9 @@ class StreamingProcessor {
      * @param {string} text - The message text.
      * @param {Object} options - Additional options for finalization.
      * @param {boolean} options.unlockUI - Whether to unlock the generation UI.
+     * @param {boolean} options.hasToolCalls - Whether the message owns tool calls.
      */
-    async finalizeIntermediaryMessage(messageId, text, { unlockUI = true }) {
+    async finalizeIntermediaryMessage(messageId, text, { unlockUI = true, hasToolCalls = false }) {
         await this.onProgressStreaming(messageId, text, true);
         const messageElement = chatElement.find(`.mes[mesid="${messageId}"]`);
         const message = chat[messageId];
@@ -4589,8 +4682,11 @@ class StreamingProcessor {
         }
 
         if (this.type !== 'impersonate') {
-            await eventSource.emit(event_types.MESSAGE_RECEIVED, this.messageId, this.type);
-            await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, this.messageId, this.type);
+            const emitMessageEvents = shouldEmitCharacterMessageEvents(message, hasToolCalls);
+            if (emitMessageEvents) {
+                await eventSource.emit(event_types.MESSAGE_RECEIVED, this.messageId, this.type);
+                await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, this.messageId, this.type);
+            }
         } else {
             await eventSource.emit(event_types.IMPERSONATE_READY, text);
         }
@@ -6410,7 +6506,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 const toolTurnOwner = chat[streamingProcessor.messageId];
                 const reasoningContent = streamingProcessor?.reasoningHandler?.reasoning || null;
                 if (hasToolCalls) {
-                    await streamingProcessor.finalizeIntermediaryMessage(streamingProcessor.messageId, getMessage, { unlockUI: false });
+                    await streamingProcessor.finalizeIntermediaryMessage(streamingProcessor.messageId, getMessage, { unlockUI: false, hasToolCalls });
                 }
                 let invocationResult;
                 try {
@@ -6524,6 +6620,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             model: requestModel,
         });
         const native = data?.choices?.[0]?.message?.native ?? null;
+        const hasToolCalls = canPerformToolCalls && ToolManager.hasToolCalls(data);
         kobold_horde_model = title;
 
         const swipes = extractMultiSwipes(data, type);
@@ -6565,9 +6662,9 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         } else {
             // Without streaming we'll be having a full message on continuation. Treat it as a last chunk.
             if (originalType !== 'continue') {
-                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native }));
+                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native, hasToolCalls }));
             } else {
-                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native }));
+                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native, hasToolCalls }));
             }
             toolTurnOwner = chat.at(-1) ?? null;
 
@@ -6576,7 +6673,6 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         }
 
         if (canPerformToolCalls) {
-            const hasToolCalls = ToolManager.hasToolCalls(data);
             let invocationResult;
             try {
                 invocationResult = await ToolManager.invokeFunctionTools(data, {
@@ -6738,7 +6834,7 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
         promptSnapshot,
         frozenRunInputSnapshot: runFrozenRunInputSnapshot,
         generationIntent,
-        options: { stream: false, presentation: 'foreground' },
+        options: { presentation: 'foreground' },
     });
 }
 
@@ -7896,12 +7992,13 @@ async function processImageAttachment(message, { imageUrls }) {
  * @property {string[]} [imageUrls] Links to images
  * @property {string?} [reasoningSignature] Encrypted signature of the reasoning text
  * @property {any?} [native] Provider-native metadata that must be preserved across turns
+ * @property {boolean} [hasToolCalls] Whether the message owns tool calls
  *
  * @typedef {object} SaveReplyResult
  * @property {string} type Type of generation
  * @property {string} getMessage Generated message
  */
-export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], reasoning = '', imageUrls = [], reasoningSignature = null, native = null }) {
+export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], reasoning = '', imageUrls = [], reasoningSignature = null, native = null, hasToolCalls = false }) {
     // Backward compatibility
     if (arguments.length > 1 && typeof arguments[0] !== 'object') {
         console.trace('saveReply called with positional arguments. Please use an object instead.');
@@ -7956,9 +8053,10 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
                 lastMessage.extra.token_count = await getTokenCountAsync(tokenCountText, 0);
             }
             const chat_id = (chat.length - 1);
-            !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
+            const emitMessageEvents = !fromStreaming && shouldEmitCharacterMessageEvents(chat[chat_id], hasToolCalls);
+            emitMessageEvents && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
             addOneMessage(chat[chat_id], { type: 'swipe' });
-            !fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
+            emitMessageEvents && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
         } else {
             lastMessage.mes = getMessage;
         }
@@ -7984,9 +8082,10 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             lastMessage.extra.token_count = await getTokenCountAsync(tokenCountText, 0);
         }
         const chat_id = (chat.length - 1);
-        !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
+        const emitMessageEvents = !fromStreaming && shouldEmitCharacterMessageEvents(chat[chat_id], hasToolCalls);
+        emitMessageEvents && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
         addOneMessage(chat[chat_id], { type: 'swipe' });
-        !fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
+        emitMessageEvents && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
     } else if (type === 'appendFinal') {
         oldMessage = lastMessage.mes;
         console.debug('Trying to appendFinal.');
@@ -8009,9 +8108,10 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             lastMessage.extra.token_count = await getTokenCountAsync(tokenCountText, 0);
         }
         const chat_id = (chat.length - 1);
-        !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
+        const emitMessageEvents = !fromStreaming && shouldEmitCharacterMessageEvents(chat[chat_id], hasToolCalls);
+        emitMessageEvents && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
         addOneMessage(chat[chat_id], { type: 'swipe' });
-        !fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
+        emitMessageEvents && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
     } else {
         console.debug('entering chat update routine for non-swipe post');
         if (power_user.trim_spaces) {
@@ -8053,12 +8153,13 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
 
         await processImageAttachment(newMessage, { imageUrls });
         const chat_id = chat.length;
+        const emitMessageEvents = !fromStreaming && shouldEmitCharacterMessageEvents(newMessage, hasToolCalls);
         await withChatSurfaceStructureMutation(async () => {
             chat.push(newMessage);
-            !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
+            emitMessageEvents && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
             addOneMessage(chat[chat_id]);
         });
-        !fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
+        emitMessageEvents && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
     }
 
     const item = chat[chat.length - 1];

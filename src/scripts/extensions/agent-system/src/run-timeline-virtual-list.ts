@@ -1,5 +1,5 @@
-export const RUN_TIMELINE_ROW_HEIGHT_PX = 58;
-export const RUN_TIMELINE_OVERSCAN_ROWS = 8;
+const RUN_TIMELINE_ROW_HEIGHT_PX = 58;
+const RUN_TIMELINE_OVERSCAN_ROWS = 8;
 
 export type TimelineVirtualItem = { rowSpan?: number };
 

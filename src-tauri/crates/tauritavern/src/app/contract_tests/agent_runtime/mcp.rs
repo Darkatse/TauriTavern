@@ -79,6 +79,7 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
         &profile,
         AgentRunPresentation::Background,
         "mcp-tool-call",
+        Some(false),
     )
     .await;
     let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;
@@ -199,6 +200,7 @@ async fn agent_runtime_stops_after_unknown_mcp_call_outcome() {
         &profile,
         AgentRunPresentation::Background,
         "mcp-outcome-unknown",
+        Some(false),
     )
     .await;
     let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;

@@ -168,6 +168,7 @@ fn claude_use_sysprompt_collects_only_leading_system_messages() {
 fn claude_tool_calls_and_results_are_structured() {
     let payload = json!({
         "model": "claude-3-5-sonnet-latest",
+        "stream": true,
         "messages": [
             {
                 "role": "assistant",
@@ -224,6 +225,7 @@ fn claude_tool_calls_and_results_are_structured() {
         assistant_blocks[0]["name"].as_str().unwrap_or_default(),
         "weather"
     );
+    assert_eq!(upstream["tools"][0]["eager_input_streaming"], true);
 
     let tool_result_block = messages
         .get(1)

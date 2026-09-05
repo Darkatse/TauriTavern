@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { formatBytesValue } from './format.js';
+import { formatBytes } from '../format-bytes.js';
 
 /**
  * Sync progress popup island. `setting-panel/sync-listeners.js` owns the sync:job
@@ -47,7 +47,7 @@ function SyncProgressView({ title, payload, tr }: SyncProgressViewProps) {
         ? `${tr('Phase')}: ${tr(direction)} / ${tr(phase)}`
         : `${tr('Phase')}: ${tr(phase)}`;
     const countsText = `${tr('Files')}: ${Number(payload.files_done) || 0}/${Number(payload.files_total) || 0}`;
-    const bytesText = `${tr('Bytes')}: ${formatBytesValue(payload.bytes_done)}/${formatBytesValue(payload.bytes_total)}`;
+    const bytesText = `${tr('Bytes')}: ${formatBytes(Number(payload.bytes_done) || 0)}/${formatBytes(Number(payload.bytes_total) || 0)}`;
     const currentPath = payload.current_path || '';
 
     return (
@@ -65,15 +65,15 @@ function SyncProgressView({ title, payload, tr }: SyncProgressViewProps) {
 
 export function mountTauriTavernSyncProgressApp(
     mount: unknown,
-    options: SyncProgressOptions,
+    options: Partial<SyncProgressOptions> | undefined,
 ): SyncProgressHandle {
     if (!(mount instanceof HTMLElement)) {
         throw new Error('TauriTavern Sync progress mount element is required');
     }
-    const tr = options?.tr;
-    if (typeof tr !== 'function') {
+    if (!options || typeof options.tr !== 'function') {
         throw new Error('TauriTavern Sync progress translator is required');
     }
+    const { tr } = options;
 
     let current = {
         title: options.title || 'Sync progress',

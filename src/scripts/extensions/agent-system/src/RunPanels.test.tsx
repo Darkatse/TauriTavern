@@ -13,6 +13,8 @@ import {
     type RunRetentionController,
 } from './RunRetentionController';
 
+type RunHistoryResult = Awaited<ReturnType<TauriTavernAgentApi['listRuns']>>;
+
 function formatParam(value: unknown): string {
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
         return String(value);
@@ -98,7 +100,7 @@ afterEach(() => {
 test('the newest History filter response wins', async () => {
     const requests: Array<{
         input: RunHistoryListInput;
-        resolve: (value: unknown) => void;
+        resolve: (value: RunHistoryResult) => void;
     }> = [];
     const history = createRunHistoryController({
         listRuns: (input) => new Promise((resolve) => {
@@ -123,13 +125,13 @@ test('the newest History filter response wins', async () => {
     expect(requests[0]?.input.stableChatId).toBe('stable-current');
     expect(requests[1]?.input.stableChatId).toBeUndefined();
     await act(async () => {
-        requests[1]?.resolve({ runs: [run('new-all-run', 'Newest Chat')], nextCursor: null });
+        requests[1]?.resolve({ runs: [run('new-all-run', 'Newest Chat')] });
         await Promise.resolve();
     });
     expect(screen.getByText('Newest Chat')).toBeDefined();
 
     await act(async () => {
-        requests[0]?.resolve({ runs: [run('stale-current-run', 'Stale Chat')], nextCursor: null });
+        requests[0]?.resolve({ runs: [run('stale-current-run', 'Stale Chat')] });
         await Promise.resolve();
     });
     expect(screen.getByText('Newest Chat')).toBeDefined();
@@ -149,7 +151,7 @@ test('Retention validates, confirms, applies, and refreshes History', async () =
     const history = createRunHistoryController({
         listRuns: () => {
             state.historyCalls += 1;
-            return Promise.resolve({ runs: [], nextCursor: null });
+            return Promise.resolve({ runs: [] });
         },
         currentChatRunFilter: () => Promise.reject(new Error('unused')),
         openRun: () => undefined,

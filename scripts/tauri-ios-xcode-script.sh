@@ -41,6 +41,22 @@ ensure_node_on_path() {
   return 1
 }
 
+verify_ios_deployment_target() {
+  local config_path="$REPO_ROOT/src-tauri/crates/tauritavern/tauri.conf.json"
+  local configured_target
+  local xcode_target="${IPHONEOS_DEPLOYMENT_TARGET:?Xcode did not provide IPHONEOS_DEPLOYMENT_TARGET}"
+
+  configured_target="$(node -p '
+JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).bundle.iOS.minimumSystemVersion
+' "$config_path")"
+
+  if [ "$xcode_target" != "$configured_target" ]; then
+    echo "error: iOS deployment target mismatch: Xcode=$xcode_target, tauri.conf.json=$configured_target." >&2
+    echo "error: align the committed Apple project with bundle.iOS.minimumSystemVersion." >&2
+    exit 1
+  fi
+}
+
 run_tauri_ios_xcode_script() {
   cd "$REPO_ROOT"
   CARGO_PROFILE_RELEASE_PANIC=unwind \
@@ -74,6 +90,8 @@ if ! ensure_node_on_path; then
   echo "error: PATH=$PATH" >&2
   exit 127
 fi
+
+verify_ios_deployment_target
 
 if command -v pnpm >/dev/null 2>&1; then
   build_tauri_ios_target pnpm

@@ -14,6 +14,7 @@ use tt_domain::models::tool::{ToolChoice, ToolId, ToolInvocation};
 
 pub(crate) fn encode_chat_completion_request(
     request: &AgentModelRequest,
+    stream: bool,
 ) -> Result<ChatCompletionGenerateRequestDto, ApplicationError> {
     let (_source, adapter) = resolve_request_adapter(request)?;
     let mut payload = request.payload.clone();
@@ -54,7 +55,8 @@ pub(crate) fn encode_chat_completion_request(
     }
 
     adapter.finalize_payload(&mut payload);
-    payload.insert("stream".to_string(), Value::Bool(false));
+    payload.insert("stream".to_string(), Value::Bool(stream));
+    payload.insert("n".to_string(), json!(1));
     Ok(ChatCompletionGenerateRequestDto { payload })
 }
 
@@ -119,6 +121,19 @@ fn encode_openai_compatible_message(
                 .collect::<Result<Vec<_>, _>>()?;
             if !tool_calls.is_empty() {
                 object.insert("tool_calls".to_string(), Value::Array(tool_calls));
+            }
+
+            if adapter == AgentProviderAdapter::OpenAiCompatible
+                && let Some(raw_message) = message
+                    .provider_metadata
+                    .get("message")
+                    .and_then(Value::as_object)
+            {
+                for key in ["reasoning", "reasoning_details"] {
+                    if let Some(value) = raw_message.get(key).filter(|value| !value.is_null()) {
+                        object.insert(key.to_string(), value.clone());
+                    }
+                }
             }
         }
         AgentModelRole::Tool => {
@@ -257,8 +272,7 @@ fn copy_reasoning_content(object: &mut Map<String, Value>, parts: &[AgentModelCo
             _ => None,
         })
         .map(String::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.trim().is_empty())
         .collect::<Vec<_>>();
 
     if !reasoning.is_empty() {

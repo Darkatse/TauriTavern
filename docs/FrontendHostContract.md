@@ -169,15 +169,16 @@
 
 - `api.agent`：TauriTavern Agent Run API。用于启动 Agent Run、订阅 run event、取消、审批工具、读取 workspace 文件/diff、rollback。
   - 详细参考见：`docs/API/Agent.md`。
-  - 当前已落地 Host ABI：`startRunFromLegacyGenerate()`、`startRunWithPromptSnapshot()`、`cancel()`、`readEvents()`、`readWorkspaceFile()`、`readModelTurn()`、`subscribe()`。
-  - Chat commit 由每轮结束时最多一次的 pre-explicit 文本 mutation policy 或模型显式调用 `workspace.commit` 触发；两者产生相同的 `chat_commit_requested`，前端内部 host bridge 重读当前 workspace 文件并校验事件 SHA，同时读取对应 Model Turn 的可见 reasoning，先按完整 raw 目标文本应用上游生成输出保存前后处理，再通过上游 `saveReply()` 写同一消息楼层、把累计 reasoning 写入标准 `extra.reasoning`，最后调用 `resolve_agent_chat_commit`。
+  - 当前已落地 Host ABI：`startRunFromLegacyGenerate()`、`startRunWithPromptSnapshot()`、`cancel()`、`readEvents()`、`readWorkspaceFile()`、`readModelTurn()`、`copyChatPersistentStates()`、`subscribe()`、`subscribeLiveProjection()`、`settleChatPresentation()`。
+  - 前台流式 root / handoff `workspace.write_file.content` 会写入同一条 assistant message；failure/cancel 保留 partial。live projection 非持久化，不代表工具成功或 commit；Timeline 独立订阅。
   - `persistStateId` 只在 persistent state 已经落盘后写入 chat metadata；host bridge 响应 `persistent_state_metadata_update_requested` 后调用 `resolve_agent_persistent_state_metadata_update`。
   - `startRunFromLegacyGenerate()` 是当前兼容入口：使用 Legacy dryRun 生成 `promptSnapshot`，再进入 Rust-owned Agent loop。
   - `startRunWithPromptSnapshot()` 必须在调用 backend 前解析 `stableChatId`；`workspaceId` 由 `kind + stableChatId` 派生，`runId` 仍表示单次执行。
+  - 分叉/Checkpoint 必须生成新的 `integrity`；目标聊天保存成功后，调用 `copyChatPersistentStates()` 复制完整的 Agent `persistent-states/`。
   - 不存在公共 `startRun()` alias；启动入口必须通过名称表达来源和职责。
   - Legacy `Generate(..., dryRun = true)` 不返回 payload；Agent adapter 必须通过 `GENERATE_AFTER_DATA` 事件捕获 `generate_data`。
   - 当前 Rust registry 包含 `agent_list`、`agent_delegate`、`agent_handoff`、`agent_await`、`task_return`、`chat_search`、`chat_read_messages`、`worldinfo_read_activated`、`dice_roll`、`skill_list`、`skill_search`、`skill_read`、`workspace_list_files`、`workspace_search_files`、`workspace_read_file`、`workspace_write_file`、`workspace_apply_patch`、`workspace_commit`、`workspace_finish`；实际模型可见集合由 Profile 与 invocation exit policy 收窄，`task_return` 只注入 return-mode child。工具注册由 Rust runtime 独占，前端 Legacy ToolManager tools 必须禁用。
-  - 当前显式拒绝 `stream: true`、external tools、external tool choice 和已有 tool turns。
+  - `options.stream` 覆盖整次 run；省略时使用各 invocation 的 Profile `run.stream`。
   - 可恢复工具错误会写入 Agent journal 并回填下一轮模型；宿主级错误仍让 run failed。
   - Agent event 属于 Agent Run journal/timeline 投影，不得伪装成上游 SillyTavern `GENERATION_*` / `TOOL_CALLS_*` 事件。
   - `subscribe()` 当前是 polling wrapper，必须返回幂等 `unsubscribe`；底层 Tauri 事件名与 Rust command 名属于 Internal，不是第三方 Public Contract。
@@ -359,6 +360,12 @@ TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板�
 工程约定（Project）：
 
 - 显式外链打开统一使用 `src/tauri-bridge.js` 的 `openExternalUrl()`；例如 `tauritavern-version` 扩展与自动更新弹窗。
+
+### 5.5 桌面全屏快捷键（Project）
+
+- Windows/macOS/Linux 主窗口使用无修饰键 `F11` 切换原生窗口全屏；按键长按只响应首次 `keydown`。
+- 宿主在主文档及其同源 iframe 中捕获该快捷键；独立 popup、移动端和带修饰键的 `F11` 不属于此契约。
+- 原生窗口状态是唯一真值；全屏不写入 SillyTavern 设置，也不纳入窗口几何持久化。切换失败会记录错误，后续按键仍可重试。
 
 ## 6. Smoke Tests（Public 回归用例）
 

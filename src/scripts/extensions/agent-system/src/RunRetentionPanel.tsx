@@ -4,6 +4,7 @@ import {
     formatRetentionBytes,
     formatRetentionCount,
     formatRetentionFiles,
+    MAX_AGENT_RETENTION_KEEP_RUNS,
     retentionBusy,
     retentionCanApplyPrune,
     retentionDraftIsDirty,
@@ -12,13 +13,10 @@ import {
 } from './RunRetentionController';
 import type { Tr } from './AgentSystemPanelContract';
 
-const MAX_AGENT_RETENTION_KEEP_RUNS = 10000;
-
 export type RunRetentionPanelProps = {
     controller: RunRetentionController;
     tr: Tr;
-    // Typed replacement for the Vue `pruned` emit; the parent refreshes the
-    // run history after a successful prune (Fix 6).
+    // The parent refreshes run history after a successful prune.
     onPruned: (result: TauriTavernAgentRunPruneApplyResult) => void;
 };
 

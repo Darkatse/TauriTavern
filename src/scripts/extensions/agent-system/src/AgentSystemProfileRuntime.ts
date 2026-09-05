@@ -1,5 +1,5 @@
 import { normalizeAgentSystemPrompt } from '../../../tauritavern/agent/agent-system-prompt.js';
-import { errorText } from './host-api.js';
+import { errorText } from './host-api';
 
 export type AgentSystemProfileRuntimeState = {
     resolvedAgentSystemPrompt: string;

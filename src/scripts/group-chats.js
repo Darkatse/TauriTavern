@@ -2460,8 +2460,6 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, chat
         return;
     }
 
-    group.chats.push(name);
-
     /** @type {ChatHeader} */
     const chatHeader = {
         chat_metadata: { ...chat_metadata, ...(metadata || {}) },
@@ -2475,8 +2473,6 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, chat
         : (mesId !== undefined && mesId >= 0 && mesId < chat.length)
             ? chat.slice(0, Number(mesId) + 1)
             : chat;
-
-    await editGroup(groupId, true, false);
 
     try {
         const saveChatRequest = await compressRequest({
@@ -2492,7 +2488,11 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, chat
     } catch (error) {
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group chat could not be saved`);
         console.error('Group chat could not be saved', error);
+        throw error;
     }
+
+    group.chats.push(name);
+    await editGroup(groupId, true, false);
 }
 
 function onSendTextareaInput() {

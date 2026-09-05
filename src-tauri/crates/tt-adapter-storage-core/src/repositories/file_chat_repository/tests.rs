@@ -2322,6 +2322,91 @@ async fn list_chat_summaries_returns_streamed_metadata() {
 }
 
 #[tokio::test]
+async fn finds_remaining_character_chat_with_integrity() {
+    let (repository, root) = setup_repository().await;
+    for name in ["first", "second"] {
+        save_chat_payload_from_values(
+            &repository,
+            &root,
+            "alice",
+            name,
+            &payload_with_integrity("shared"),
+            false,
+        )
+        .await
+        .expect("save shared chat");
+    }
+
+    repository
+        .delete_chat("alice", "first")
+        .await
+        .expect("delete first chat");
+    assert!(
+        repository
+            .has_character_chat_with_integrity("alice", "shared")
+            .await
+            .expect("find remaining chat")
+    );
+    repository
+        .delete_chat("alice", "second")
+        .await
+        .expect("delete second chat");
+    assert!(
+        !repository
+            .has_character_chat_with_integrity("alice", "shared")
+            .await
+            .expect("find no remaining chat")
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
+async fn stats_and_summary_project_fields_without_materializing_large_swipes() {
+    let (repository, root) = setup_repository().await;
+    let swipe = "ignored swipe body".repeat(32 * 1024);
+    let visible_tail = format!("discard{}", "界".repeat(400));
+    let payload = vec![
+        json!({
+            "chat_metadata": { "chat_id_hash": 42 },
+            "user_name": "unused",
+            "character_name": "unused",
+        }),
+        json!({
+            "name": "Alice",
+            "is_user": false,
+            "send_date": "2026-01-04T00:00:00.000Z",
+            "mes": visible_tail,
+            "swipes": vec![swipe; 4],
+            "swipe_info": [{ "extra": "ignored".repeat(1024) }],
+            "extra": { "ignored": "value" },
+        }),
+    ];
+
+    save_chat_payload_from_values(&repository, &root, "alice", "large", &payload, false)
+        .await
+        .expect("save large-swipe payload");
+
+    let (_, date_last_chat) = repository
+        .calculate_character_chat_stats("alice")
+        .await
+        .expect("calculate projected chat stats");
+    assert_eq!(date_last_chat, timestamp_millis("2026-01-04T00:00:00.000Z"));
+
+    let summaries = repository
+        .list_chat_summaries(Some("alice"), true)
+        .await
+        .expect("list projected chat summary");
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].message_count, 1);
+    assert_eq!(summaries[0].preview, format!("...{}", "界".repeat(400)));
+    assert_eq!(summaries[0].date, date_last_chat);
+    assert_eq!(summaries[0].chat_id.as_deref(), Some("42"));
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn summary_index_write_failure_does_not_change_query_or_delete_outcome() {
     let (repository, root) = setup_repository().await;
     save_chat_payload_from_values(

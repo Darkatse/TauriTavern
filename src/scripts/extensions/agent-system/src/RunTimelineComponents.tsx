@@ -1,11 +1,12 @@
 import { useEffect, type CSSProperties, type RefObject } from 'react';
 
-import type { AgentSystemTr } from './i18n.js';
+import type { AgentSystemTr } from './i18n';
 import type {
     SubAgentTask,
     TimelineDetailAction,
     TimelineDetailSection,
     TimelineItem,
+    TimelineLiveContent,
     TimelineViewport,
     TimelineVirtualWindow,
 } from './RunTimelineContract';
@@ -90,6 +91,7 @@ export function RunTimelineEventList(props: TimelineEventListProps) {
                         const selected = props.selectedSeq != null && props.selectedSeq === item.seq;
                         const latest = props.latestSeq != null && props.latestSeq === item.seq;
                         const active = props.activeSeq != null && props.activeSeq === item.seq;
+                        const live = item.live;
                         const time = timelineItemTime(item);
                         const style = {
                             '--ttas-run-event-item-height': `${timelineItemHeightPx(item)}px`,
@@ -104,9 +106,11 @@ export function RunTimelineEventList(props: TimelineEventListProps) {
                                     latest && 'is-latest',
                                     active && 'is-active',
                                     selected && 'is-selected',
+                                    live && 'is-live',
                                 ].filter(Boolean).join(' ')}
                                 data-ttas-kind={item.kind}
                                 data-ttas-row-span={timelineItemRowSpan(item)}
+                                aria-live={live ? 'off' : undefined}
                                 style={style}
                             >
                                 <button type="button" onClick={() => props.onSelect(item)}>
@@ -116,18 +120,29 @@ export function RunTimelineEventList(props: TimelineEventListProps) {
                                     <span className="ttas-run-event-copy">
                                         <span className="ttas-run-event-title">
                                             {timelineItemTitle(item, props.tr)}
+                                            {live && <TimelineLiveMetric live={live} tr={props.tr} />}
                                             {active && (
                                                 <span className="ttas-run-ellipsis" aria-hidden="true">
                                                     <i>.</i><i>.</i><i>.</i>
                                                 </span>
                                             )}
                                         </span>
-                                        {item.summary && <small>{item.summary}</small>}
+                                        {!live && item.summary && <small>{item.summary}</small>}
                                     </span>
                                     <span className="ttas-run-event-meta">
                                         <em>{timelineItemShortLabel(item, props.tr)}</em>
                                         {time && <time>{time}</time>}
                                     </span>
+                                    {live && (
+                                        <span className={`ttas-run-event-live is-${live.streamTone}`} aria-hidden="true">
+                                            <code
+                                                className="ttas-run-event-live-stream"
+                                                data-ttas-truncated={live.truncated ? '' : undefined}
+                                            >
+                                                {live.tail}
+                                            </code>
+                                        </span>
+                                    )}
                                 </button>
                             </li>
                         );
@@ -142,6 +157,24 @@ export function RunTimelineEventList(props: TimelineEventListProps) {
                 </ol>
             )}
         </div>
+    );
+}
+
+function TimelineLiveMetric({ live, tr }: { live: TimelineLiveContent; tr: AgentSystemTr }) {
+    if (live.addedWords === 0 && live.removedWords === 0) return null;
+    if (live.toolId === 'builtin:workspace.apply_patch') {
+        return (
+            <em className="ttas-run-event-live-metric">
+                (<span className="is-added">+{tr('timelineWordCount', { count: live.addedWords })}</span>
+                {' / '}
+                <span className="is-removed">-{tr('timelineWordCount', { count: live.removedWords })}</span>)
+            </em>
+        );
+    }
+    return (
+        <em className="ttas-run-event-live-metric">
+            +{tr('timelineWordCount', { count: live.addedWords })}
+        </em>
     );
 }
 
@@ -262,21 +295,23 @@ export function RunTimelineDetailPane(props: TimelineDetailPaneProps) {
                                 {section.blocks.map((block, blockIndex) => (
                                     <details
                                         key={blockIndex}
-                                        className={`ttas-run-detail-block kind-${block.kind || 'text'}`}
-                                        data-ttas-block-kind={block.kind || 'text'}
+                                        className={`ttas-run-detail-block kind-${block.kind ?? 'text'}`}
+                                        data-ttas-block-kind={block.kind ?? 'text'}
                                         open={block.defaultOpen !== false}
                                     >
                                         <summary className="ttas-run-detail-block-head">
-                                            <strong>{block.labelKey ? props.tr(block.labelKey) : block.label}</strong>
+                                            <strong>{'labelKey' in block ? props.tr(block.labelKey) : block.label}</strong>
                                             <span className="ttas-run-detail-block-badges">
                                                 {block.meta && <small>{block.meta}</small>}
-                                                {block.truncated && <small>{props.tr('timelineTruncated')}</small>}
+                                                {block.kind !== 'diff' && block.truncated && (
+                                                    <small>{props.tr('timelineTruncated')}</small>
+                                                )}
                                                 <i className="fa-solid fa-chevron-down" aria-hidden="true"></i>
                                             </span>
                                         </summary>
                                         {block.kind === 'diff' ? (
                                             <div className="ttas-run-diff" role="table">
-                                                {(block.rows ?? []).map((row, rowIndex) => (
+                                                {block.rows.map((row, rowIndex) => (
                                                     <div
                                                         key={rowIndex}
                                                         className="ttas-run-diff-row"

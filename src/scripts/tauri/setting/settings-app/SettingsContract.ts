@@ -35,6 +35,7 @@ export type SettingsValues = {
     panelRuntimeProfile: string;
     embeddedRuntimeProfile: string;
     chatVirtualizationEnabled: boolean;
+    codeMirrorEditorEnabled: boolean;
     chatBackups: {
         automaticEnabled: boolean;
         zstdCompressionEnabled: boolean;
@@ -101,6 +102,7 @@ export type SettingsDraft = {
     panelRuntimeProfile: string;
     embeddedRuntimeProfile: string;
     chatVirtualizationEnabled: boolean;
+    codeMirrorEditorEnabled: boolean;
     chatBackups: {
         automaticEnabled: boolean;
         zstdCompressionEnabled: boolean;
@@ -146,6 +148,7 @@ export function createSettingsDraft(values: SettingsValues): SettingsDraft {
         panelRuntimeProfile: values.panelRuntimeProfile,
         embeddedRuntimeProfile: values.embeddedRuntimeProfile,
         chatVirtualizationEnabled: values.chatVirtualizationEnabled,
+        codeMirrorEditorEnabled: values.codeMirrorEditorEnabled,
         chatBackups: {
             automaticEnabled: values.chatBackups.automaticEnabled,
             zstdCompressionEnabled: values.chatBackups.zstdCompressionEnabled,
@@ -189,6 +192,7 @@ export type SettingsActions = {
     chooseDataRoot: () => Promise<string | null | undefined>;
     chooseWallpaper: (request: { currentValue: string }) => Promise<string | null | undefined>;
     showHelp: (topicId: string) => Promise<unknown>;
+    manageQuickAccess: () => Promise<unknown>;
     reloadFrontend: () => Promise<unknown>;
     openFrontendLogs: () => Promise<unknown>;
     openBackendLogs: () => Promise<unknown>;
@@ -217,6 +221,7 @@ const REQUIRED_ACTIONS = [
     'chooseDataRoot',
     'chooseWallpaper',
     'showHelp',
+    'manageQuickAccess',
     'reloadFrontend',
     'openFrontendLogs',
     'openBackendLogs',
@@ -226,18 +231,25 @@ const REQUIRED_ACTIONS = [
 
 /** Validates the parts of the JS host boundary that TypeScript cannot see. */
 export function validateSettingsBoundary(
-    options: SettingsMountOptions | undefined,
+    options: unknown,
 ): asserts options is SettingsMountOptions {
-    if (!options?.viewModel?.capabilities || !options.viewModel.values) {
+    if (!plainObject(options)
+        || !plainObject(options.viewModel)
+        || !options.viewModel.capabilities
+        || !options.viewModel.values) {
         throw new Error('TauriTavern settings view model is required');
     }
     if (typeof options.tr !== 'function') {
         throw new Error('TauriTavern settings translator is required');
     }
-    const actions = options.actions as Record<string, unknown> | undefined;
+    const actions = plainObject(options.actions) ? options.actions : {};
     for (const name of REQUIRED_ACTIONS) {
-        if (typeof actions?.[name] !== 'function') {
+        if (typeof actions[name] !== 'function') {
             throw new Error(`TauriTavern settings action is unavailable: ${name}`);
         }
     }
+}
+
+function plainObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

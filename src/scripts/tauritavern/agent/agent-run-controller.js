@@ -144,7 +144,8 @@ export async function startAndWaitForAgentRun(input) {
 
                 stop();
                 const pending = pendingRollback;
-                void pending.then(() => {
+                void pending.then(async () => {
+                    await agent.settleChatPresentation(handle);
                     clearActiveRun(event);
 
                     if (event.type === 'run_failed') {
@@ -159,6 +160,9 @@ export async function startAndWaitForAgentRun(input) {
                 }, (rollbackError) => {
                     clearActiveRun(event);
                     reject(errorFromRollbackFailure(rollbackError, event));
+                }).catch((error) => {
+                    clearActiveRun(event);
+                    reject(error);
                 });
             }, {
                 onError(error) {

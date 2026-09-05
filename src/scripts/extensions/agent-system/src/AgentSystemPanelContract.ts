@@ -3,12 +3,12 @@ import {
     DEFAULT_PROFILE_ID,
     KNOWN_TOOLS,
     RUNTIME_ONLY_TOOLS,
-} from './constants.js';
-import { prettyJson } from './host-api.js';
-import type { AgentSystemTr } from './i18n.js';
+} from './constants';
+import { prettyJson } from './host-api';
+import type { AgentSystemMessageKey, AgentSystemTr } from './i18n';
 import { defaultProfile, profileForEdit, type AgentProfileDraft } from './profile-model';
-import type { AgentModelTarget } from './model-target-connection.js';
-import type { AgentSystemSettings } from './AgentSystemEntryController';
+import type { AgentModelTarget } from './model-target-connection';
+import type { AgentSystemSettings } from './settings-store';
 
 export const PROFILE_EXPORT_CONTENT_TYPE = 'application/json';
 export const CHAT_COMPLETION_PRESET_API_ID = 'openai';
@@ -38,24 +38,24 @@ export type AgentProfileSectionId =
 
 export type AgentSystemPanelTabId = 'profiles' | 'runs';
 
-export const PANEL_TABS: ReadonlyArray<{ id: AgentSystemPanelTabId; labelKey: string; icon: string }> = Object.freeze([
+export const PANEL_TABS: ReadonlyArray<{ id: AgentSystemPanelTabId; labelKey: AgentSystemMessageKey; icon: string }> = Object.freeze([
     { id: 'profiles', labelKey: 'profiles', icon: 'fa-id-card-clip' },
     { id: 'runs', labelKey: 'runs', icon: 'fa-clock-rotate-left' },
 ]);
 
-export const PROFILE_EDIT_MODES: ReadonlyArray<{ id: AgentProfileEditMode; labelKey: string; icon: string }> = Object.freeze([
+export const PROFILE_EDIT_MODES: ReadonlyArray<{ id: AgentProfileEditMode; labelKey: AgentSystemMessageKey; icon: string }> = Object.freeze([
     { id: 'main', labelKey: 'mainAgent', icon: 'fa-compass-drafting' },
     { id: 'subagent', labelKey: 'subAgent', icon: 'fa-people-arrows' },
 ]);
 
 export type AgentProfileSection = {
     id: AgentProfileSectionId;
-    labelKey: string;
+    labelKey: AgentSystemMessageKey;
     icon: string;
     modes: readonly AgentProfileEditMode[];
 };
 
-export const PROFILE_SECTIONS: readonly AgentProfileSection[] = Object.freeze([
+const PROFILE_SECTIONS: readonly AgentProfileSection[] = Object.freeze([
     { id: 'identity', labelKey: 'identity', icon: 'fa-fingerprint', modes: ['main', 'subagent'] },
     { id: 'binding', labelKey: 'presetAndModel', icon: 'fa-sliders', modes: ['main', 'subagent'] },
     { id: 'main-delegation', labelKey: 'mainAgentControl', icon: 'fa-diagram-project', modes: ['main'] },
@@ -86,7 +86,7 @@ export const PROFILE_TOOL_MATRIX_HIDDEN: ReadonlySet<string> = new Set([
 
 export type AgentToolGroup = {
     id: string;
-    labelKey: string;
+    labelKey: AgentSystemMessageKey;
     icon: string;
     tools: readonly string[];
 };
@@ -142,10 +142,6 @@ export function workspaceRootIcon(root: string): string {
     return WORKSPACE_ROOT_ICONS[root] || 'fa-folder';
 }
 
-export function isProfileEditMode(mode: string): mode is AgentProfileEditMode {
-    return PROFILE_EDIT_MODES.some((item) => item.id === mode);
-}
-
 export function firstProfileSectionIdForMode(mode: AgentProfileEditMode): AgentProfileSectionId {
     const section = PROFILE_SECTIONS.find((item) => item.modes.includes(mode));
     if (!section) {
@@ -186,7 +182,7 @@ export function activeProfileOptions(profiles: readonly TauriTavernAgentProfileS
     return profiles.filter((profile) => profile.directRunnable !== false);
 }
 
-/** `v-model.number` semantics: an emptied input stays '', never becomes 0. */
+/** An emptied numeric input stays '' until save-time normalization. */
 export function parseNumberInput(raw: string): number | '' {
     if (raw === '') {
         return '';
@@ -202,7 +198,7 @@ function firstKnownToolId(): string {
     return first;
 }
 
-export const FIRST_KNOWN_TOOL_ID = firstKnownToolId();
+const FIRST_KNOWN_TOOL_ID = firstKnownToolId();
 
 /**
  * Immutable controller snapshot. The draft is the only deeply mutable-looking
@@ -242,7 +238,7 @@ export type AgentSystemPanelControllerDeps = {
         current: AgentSystemSettings,
         patch: Partial<AgentSystemSettings>,
     ) => Promise<AgentSystemSettings>;
-    // Lazy so a missing Host API surfaces at action time like the Vue panel.
+    // Resolve lazily so a missing Host API fails at the action that needs it.
     getProfilesApi: () => TauriTavernAgentProfilesApi;
     listTools: () => Promise<{
         tools: TauriTavernAgentToolCatalogItem[];

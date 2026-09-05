@@ -63,6 +63,8 @@ Chat Completion preset 的“剥离旧函数调用结果”只改变 provider pr
 
 工具执行中的即时反馈只属于前端运行态：整批 calls 校验通过后，UI 在 owner Assistant 上显示 pending cards，并随每个工具完成更新结果；所有工具结束后，pending 消失，持久化 Tool 楼层按自身物理位置显示。pending 状态不进入 `chat[]`、不保存、也不提前发出工具事件，但会在 ChatSurface 重挂载时按同一 Assistant 对象恢复。
 
+纯 tool-only Assistant 仍保留 owner 楼层并持续更新流式/pending UI，但不发出 legacy `MESSAGE_RECEIVED` / `CHARACTER_MESSAGE_RENDERED`；完整 calls/results 原子提交后只发出一次 `TOOL_CALLS_PERFORMED` / `TOOL_CALLS_RENDERED`，递归产生的最终可见 Assistant 再按普通消息语义发出角色事件。包含正文、reasoning 或 media 的 Assistant 不属于 tool-only，继续保持既有角色事件语义。
+
 ## 5. 独立只读分页
 
 Rust 仍保留 JSONL tail/before 读取，因为 Agent 和扩展可能只需要一个有界历史切片：

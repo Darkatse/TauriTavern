@@ -467,11 +467,12 @@ function setOptionalField(target, key, value) {
 function readModelTargetAdapterHints(target) {
     const settings = getContext().chatCompletionSettings;
     const format = String(target['custom-api-format'] || '');
+    const isCustom = String(target.api || '').startsWith('custom');
     target.adapterHints = {
-        ...(format === 'claude_messages' && settings.custom_claude_prompt_caching
+        ...(isCustom && format === 'claude_messages' && settings.custom_claude_prompt_caching
             ? { claudePromptCaching: 'enabled' }
             : {}),
-        ...(format === 'openai_responses' && settings.custom_openai_responses_websocket
+        ...(isCustom && format === 'openai_responses' && settings.custom_openai_responses_websocket
             ? { openaiResponsesMode: 'websocket' }
             : {}),
     };

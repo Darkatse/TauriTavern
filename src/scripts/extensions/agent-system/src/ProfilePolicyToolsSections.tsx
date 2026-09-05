@@ -24,27 +24,6 @@ export function ProfileMainDelegationSection({ snapshot, controller, tr }: Profi
     const { draft } = snapshot;
     const builtin = isBuiltinProfile(draft);
     const callableHandoffTarget = isCallableAsHandoffTarget(draft);
-    // The label text stays in the same DOM position; hoisting it into a
-    // variable keeps the rendered tree identical while letting the a11y
-    // lint see the label copy (it only scans two levels deep).
-    const delegateCopy = (
-        <span>
-            <strong>{tr('delegateToSubAgents')}</strong>
-            <small>{tr('delegateToSubAgentsHint')}</small>
-        </span>
-    );
-    const handoffCopy = (
-        <span>
-            <strong>{tr('allowAgentHandoff')}</strong>
-            <small>{tr('allowAgentHandoffHint')}</small>
-        </span>
-    );
-    const handoffTargetCopy = (
-        <span>
-            <strong>{tr('callableHandoffTargetToggle')}</strong>
-            <small>{tr('callableHandoffTargetHint')}</small>
-        </span>
-    );
     return (
         <div className="ttas-section" data-ttas-profile-section="main-delegation">
             <div className="ttas-section-title">
@@ -59,7 +38,10 @@ export function ProfileMainDelegationSection({ snapshot, controller, tr }: Profi
                         disabled={builtin}
                         onChange={(event) => controller.setCanDelegate(event.target.checked)}
                     />
-                    {delegateCopy}
+                    <span>
+                        <strong>{tr('delegateToSubAgents')}</strong>
+                        <small>{tr('delegateToSubAgentsHint')}</small>
+                    </span>
                 </label>
                 {draft.delegation.canDelegate && (
                     <div className="ttas-form-grid ttas-delegation-controls">
@@ -94,7 +76,10 @@ export function ProfileMainDelegationSection({ snapshot, controller, tr }: Profi
                         disabled={builtin}
                         onChange={(event) => controller.setCanHandoff(event.target.checked)}
                     />
-                    {handoffCopy}
+                    <span>
+                        <strong>{tr('allowAgentHandoff')}</strong>
+                        <small>{tr('allowAgentHandoffHint')}</small>
+                    </span>
                 </label>
                 {draft.delegation.canHandoff && (
                     <div className="ttas-form-grid ttas-delegation-controls">
@@ -118,7 +103,10 @@ export function ProfileMainDelegationSection({ snapshot, controller, tr }: Profi
                         disabled={builtin}
                         onChange={(event) => controller.setCallableAsHandoffTarget(event.target.checked)}
                     />
-                    {handoffTargetCopy}
+                    <span>
+                        <strong>{tr('callableHandoffTargetToggle')}</strong>
+                        <small>{tr('callableHandoffTargetHint')}</small>
+                    </span>
                 </label>
                 {callableHandoffTarget && (
                     <div className="ttas-form-grid ttas-delegation-controls">
@@ -161,12 +149,6 @@ export function ProfileSubAgentAccessSection({ snapshot, controller, tr }: Profi
     const { draft } = snapshot;
     const builtin = isBuiltinProfile(draft);
     const callableSubAgent = isCallableAsSubAgent(draft);
-    const subAgentCopy = (
-        <span>
-            <strong>{tr('callableSubAgentToggle')}</strong>
-            <small>{tr('callableSubAgentHint')}</small>
-        </span>
-    );
     return (
         <div className="ttas-section" data-ttas-profile-section="subagent-access">
             <div className="ttas-section-title">
@@ -181,7 +163,10 @@ export function ProfileSubAgentAccessSection({ snapshot, controller, tr }: Profi
                         disabled={builtin}
                         onChange={(event) => controller.setCallableAsSubAgent(event.target.checked)}
                     />
-                    {subAgentCopy}
+                    <span>
+                        <strong>{tr('callableSubAgentToggle')}</strong>
+                        <small>{tr('callableSubAgentHint')}</small>
+                    </span>
                 </label>
                 {callableSubAgent && (
                     <div className="ttas-form-grid ttas-delegation-controls">
@@ -231,6 +216,18 @@ export function ProfileRunSection({ snapshot, controller, tr }: ProfileSectionPr
                 <h4>{tr('runPolicy')}</h4>
             </div>
             <div className="ttas-form-grid">
+                <label className="ttas-switch-row ttas-span-2">
+                    <input
+                        type="checkbox"
+                        checked={draft.run.stream}
+                        disabled={builtin}
+                        onChange={(event) => controller.setRunStream(event.target.checked)}
+                    />
+                    <span>
+                        <strong>{tr('streaming')}</strong>
+                        <small>{tr('streamingHint')}</small>
+                    </span>
+                </label>
                 <label className="ttas-field">
                     <span>{tr('presentation')}</span>
                     <select

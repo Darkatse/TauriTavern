@@ -1,5 +1,5 @@
-import type { AgentSystemSettings } from './AgentSystemEntryController';
-import type { AgentSystemTr } from './i18n.js';
+import type { AgentSystemSettings } from './settings-store';
+import type { AgentSystemMessageKey, AgentSystemMessageParams, AgentSystemTr } from './i18n';
 import type { TimelineVirtualResult } from './run-timeline-virtual-list';
 
 export type TimelineRun = {
@@ -42,6 +42,23 @@ export type TimelineReadResult = Omit<
     timelineProjection?: unknown;
 };
 
+export type TimelineLiveToolId = 'builtin:workspace.write_file' | 'builtin:workspace.apply_patch';
+
+// Transient, non-authoritative projection of a tool call whose arguments are
+// still streaming. It disappears on live remove and never gains detail
+// targets; durable journal events remain independent.
+// The stream shows whichever field is currently arriving: for a patch that is
+// old_string in red while the model locates the text, then new_string in green
+// as the replacement streams in. A write is a single neutral stream.
+export type TimelineLiveContent = {
+    toolId: TimelineLiveToolId;
+    tail: string;
+    truncated: boolean;
+    streamTone: 'neutral' | 'added' | 'removed';
+    addedWords: number;
+    removedWords: number;
+};
+
 export type TimelineItem = {
     id: string;
     seq: number;
@@ -52,22 +69,81 @@ export type TimelineItem = {
     icon: string;
     tone: string;
     kind: string;
-    titleKey: string;
-    titleParams: Record<string, unknown>;
+    titleKey: AgentSystemMessageKey;
+    titleParams: AgentSystemMessageParams;
     summary: string;
-    rawEvent: TauriTavernAgentRunEvent;
+    rawEvent?: TauriTavernAgentRunEvent;
     rowSpan?: number;
+    live?: TimelineLiveContent;
     detailTargets?: TimelineDetailTarget[];
 };
 
-export type TimelineDetailTarget = {
-    type: string;
-    [key: string]: unknown;
+type TimelineDetailTargetBase = { labelKey: AgentSystemMessageKey };
+type TimelineTextMetrics = {
+    chars?: number;
+    words?: number;
+    totalChars?: number;
+    totalWords?: number;
 };
 
+export type TimelineDetailTarget =
+    | TimelineDetailTargetBase & TimelineTextMetrics & {
+        type: 'file';
+        path: string;
+    }
+    | TimelineDetailTargetBase & {
+        type: 'modelTurn' | 'modelReasoning' | 'modelNarration';
+        round: number;
+        invocationId?: string;
+        showPath?: boolean;
+    }
+    | TimelineDetailTargetBase & {
+        type: 'subAgentTask';
+        taskId: string;
+        childInvocationId: string;
+        targetProfileId: string;
+        workspaceKey: string;
+        status: string;
+        resultRef: string;
+        summaryRef: string;
+        error: string;
+    }
+    | TimelineDetailTargetBase & {
+        type: 'handoff';
+        taskId: string;
+        sourceInvocationId: string;
+        newInvocationId: string;
+        targetProfileId: string;
+        workspaceKey: string;
+        status: string;
+    }
+    | TimelineDetailTargetBase & TimelineTextMetrics & {
+        type: 'guidance';
+        guidanceIds: string[];
+        clientGuidanceIds: string[];
+        invocationId: string;
+        round?: number;
+        status: string;
+        reason: string;
+        text: string;
+        preview: string;
+    }
+    | TimelineDetailTargetBase & TimelineTextMetrics & {
+        type: 'patchDiff';
+        path: string;
+        argumentsRef: string;
+        replacements?: number;
+        errorKey: '' | AgentSystemMessageKey;
+        errorParams: AgentSystemMessageParams;
+    }
+    | TimelineDetailTargetBase & {
+        type: 'runFailure';
+        event: TauriTavernAgentRunEvent;
+    };
+
 type TimelineDetailActionBase = {
-    labelKey: string;
-    hintKey?: string;
+    labelKey: AgentSystemMessageKey;
+    hintKey?: AgentSystemMessageKey;
     icon?: string;
 };
 
@@ -81,26 +157,37 @@ export type TimelineDetailField = {
 };
 
 export type TimelineDiffRow = {
-    type: string;
+    type: 'context' | 'delete' | 'add';
     oldLine: number | null;
     newLine: number | null;
-    marker: string;
+    marker: ' ' | '-' | '+';
     text: string;
 };
 
-export type TimelineDetailBlock = {
-    kind?: string;
-    labelKey?: string;
-    label?: string;
-    text?: string;
-    rows?: TimelineDiffRow[];
+type TimelineDetailBlockLabel =
+    | { labelKey: AgentSystemMessageKey }
+    | { label: string };
+
+export type TimelineDetailTextBlock = TimelineDetailBlockLabel & {
+    kind?: 'text' | 'assistant' | 'reasoning' | 'user';
+    text: string;
     meta?: string;
     truncated?: boolean;
     defaultOpen?: boolean;
 };
 
+type TimelineDetailDiffBlock = {
+    kind: 'diff';
+    labelKey: AgentSystemMessageKey;
+    rows: TimelineDiffRow[];
+    meta?: string;
+    defaultOpen?: boolean;
+};
+
+export type TimelineDetailBlock = TimelineDetailTextBlock | TimelineDetailDiffBlock;
+
 export type TimelineDetailSection = {
-    labelKey: string;
+    labelKey: AgentSystemMessageKey;
     path?: string;
     fields?: TimelineDetailField[];
     blocks?: TimelineDetailBlock[];
@@ -248,6 +335,8 @@ export type ActiveTimelineOptions = {
             lastEvent: TauriTavernAgentRunEvent | null;
         }) => void) => () => void;
         subscribeRunEvents: (listener: (event: TauriTavernAgentRunEvent) => void) => () => void;
+        subscribeLiveProjection?: TauriTavernAgentApi['subscribeLiveProjection'];
+        scheduleFrame?: (callback: () => void) => void;
         retryFailure: (input: {
             run: TimelineRun | null;
             events: readonly TauriTavernAgentRunEvent[];

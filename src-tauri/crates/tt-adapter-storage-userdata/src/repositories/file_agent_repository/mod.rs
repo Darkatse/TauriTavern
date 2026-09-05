@@ -14,7 +14,7 @@ mod tests;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -26,18 +26,20 @@ use tt_domain::errors::DomainError;
 
 pub struct FileAgentRepository {
     pub(super) root: PathBuf,
-    pub(super) event_lock: Arc<Mutex<()>>,
-    pub(super) persist_lock: Arc<Mutex<()>>,
-    pub(super) workspace_write_locks: Arc<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>>,
+    // ponytail: one append lock stays simpler than per-run lock lifecycle; split only if
+    // concurrent runs become measurable after removing journal scans from the hot path.
+    pub(super) event_sequences: Mutex<HashMap<String, u64>>,
+    pub(super) persist_lock: Mutex<()>,
+    pub(super) workspace_write_locks: Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>,
 }
 
 impl FileAgentRepository {
     pub fn new(root: PathBuf) -> Self {
         Self {
             root,
-            event_lock: Arc::new(Mutex::new(())),
-            persist_lock: Arc::new(Mutex::new(())),
-            workspace_write_locks: Arc::new(Mutex::new(HashMap::new())),
+            event_sequences: Mutex::new(HashMap::new()),
+            persist_lock: Mutex::new(()),
+            workspace_write_locks: Mutex::new(HashMap::new()),
         }
     }
 

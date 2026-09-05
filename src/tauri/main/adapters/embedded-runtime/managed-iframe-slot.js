@@ -18,7 +18,11 @@ const GHOST_PLACEHOLDER_CLASS = 'tt-runtime-ghost';
 function markManagedIframeMutation(iframe) {
     iframe.dataset.ttRuntimeManaged = '1';
     queueMicrotask(() => {
-        delete iframe.dataset.ttRuntimeManaged;
+        // Callers mutate childList after this function returns, so observer
+        // delivery is queued behind this microtask. Keep the marker until then.
+        queueMicrotask(() => {
+            delete iframe.dataset.ttRuntimeManaged;
+        });
     });
 }
 
@@ -202,7 +206,9 @@ export function createManagedIframeSlot({
      * @param {HTMLIFrameElement} iframe
      */
     const softParkIframe = (iframe) => {
-        if (!(maxSoftParkedIframes > 0)) {
+        const iframeSrc = String(iframe.getAttribute('src') || iframe.src || '').trim().toLowerCase();
+        const requiresColdRebuild = typeof requestColdRebuild === 'function' && iframeSrc.startsWith('blob:');
+        if (!(maxSoftParkedIframes > 0) || requiresColdRebuild) {
             markManagedIframeMutation(iframe);
             iframe.remove();
             return;
@@ -217,18 +223,23 @@ export function createManagedIframeSlot({
     };
 
     /**
-     * Ensures the host has a live iframe instance, preferring a parked instance
-     * for the same id to avoid reload/flicker.
+     * Ensures the host has a live iframe instance, keeping an upstream
+     * replacement when present and otherwise reusing a parked instance.
      */
     const ensureIframeNow = () => {
+        const existing = findHostIframe(host);
+        if (existing) {
+            // The upstream renderer may have replaced a parked iframe with a
+            // fresh one. Keep the fresh instance instead of reviving a stale
+            // (and possibly revoked) blob URL from the parking lot.
+            dropParkedManagedIframe(id);
+            ensureTemplate();
+            removePlaceholdersNow();
+            return;
+        }
+
         const parked = takeParkedManagedIframe(id);
         if (parked) {
-            const existing = findHostIframe(host);
-            if (existing && existing !== parked) {
-                markManagedIframeMutation(existing);
-                existing.remove();
-            }
-
             const budgetPlaceholder = findHostBudgetPlaceholder(host);
             if (budgetPlaceholder) {
                 budgetPlaceholder.replaceWith(parked);
@@ -240,13 +251,6 @@ export function createManagedIframeSlot({
                     host.append(parked);
                 }
             }
-            removePlaceholdersNow();
-            return;
-        }
-
-        const iframe = findHostIframe(host);
-        if (iframe) {
-            ensureTemplate();
             removePlaceholdersNow();
             return;
         }

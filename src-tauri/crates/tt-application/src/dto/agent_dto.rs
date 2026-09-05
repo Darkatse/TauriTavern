@@ -278,7 +278,7 @@ pub struct AgentLoadProfileResultDto {
 #[serde(rename_all = "camelCase")]
 pub struct AgentStartRunOptionsDto {
     #[serde(default)]
-    pub stream: bool,
+    pub stream: Option<bool>,
     #[serde(default)]
     pub presentation: Option<AgentRunPresentation>,
 }
@@ -291,6 +291,72 @@ pub struct AgentRunHandleDto {
     pub stable_chat_id: String,
     pub generation_type: String,
     pub status: AgentRunStatus,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSubscribeRunLiveProjectionDto {
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "toolId", rename_all_fields = "camelCase")]
+pub enum AgentRunLiveToolCallDto {
+    #[serde(rename = "builtin:workspace.write_file")]
+    WriteFile {
+        invocation_id: String,
+        invocation_exit_policy: AgentInvocationExitPolicy,
+        tool_call_index: usize,
+        path: String,
+        content: String,
+        content_words: usize,
+    },
+    #[serde(rename = "builtin:workspace.apply_patch")]
+    ApplyPatch {
+        invocation_id: String,
+        invocation_exit_policy: AgentInvocationExitPolicy,
+        tool_call_index: usize,
+        path: String,
+        old_string: String,
+        old_string_words: usize,
+        new_string: String,
+        new_string_words: usize,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentRunLiveFieldDto {
+    Path,
+    Content,
+    OldString,
+    NewString,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum AgentRunLiveUpdateDto {
+    Snapshot {
+        calls: Vec<AgentRunLiveToolCallDto>,
+    },
+    Append {
+        invocation_id: String,
+        tool_call_index: usize,
+        field: AgentRunLiveFieldDto,
+        text: String,
+        word_delta: usize,
+    },
+    Replace {
+        call: AgentRunLiveToolCallDto,
+    },
+    Remove {
+        invocation_id: String,
+        tool_call_index: usize,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -720,6 +786,15 @@ pub struct AgentPruneChatPersistentStatesDto {
     #[serde(default, alias = "stableId")]
     pub stable_chat_id: String,
     pub candidate_state_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCopyChatPersistentStatesDto {
+    pub source_chat_ref: AgentChatRef,
+    pub source_stable_chat_id: String,
+    pub target_chat_ref: AgentChatRef,
+    pub target_stable_chat_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

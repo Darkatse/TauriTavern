@@ -1,13 +1,6 @@
 import { DEFAULT_AGENT_PROFILE_ID } from '../../../tauritavern/agent/agent-system-settings.js';
-
-export type AgentSystemSettings = {
-    agentModeEnabled: boolean;
-    chatInputToggleHidden: boolean;
-    activeProfileId: string;
-    editingProfileId: string;
-    activeTab: string;
-    runTimelineHeightPx: number | null;
-};
+import type { AgentSystemTr } from './i18n';
+import type { AgentSystemSettings } from './settings-store';
 
 export type AgentSystemEntrySnapshot = {
     loading: boolean;
@@ -23,7 +16,7 @@ export type AgentSystemEntryControllerDeps = {
     subscribeProfilesChanged: (listener: () => void) => () => void;
     notifyError: (error: unknown) => void;
     notifyWarning: (message: string) => void;
-    tr: (key: string, params?: Record<string, unknown>) => string;
+    tr: AgentSystemTr;
 };
 
 export type AgentSystemEntryController = {
@@ -47,8 +40,8 @@ const DEFAULT_SETTINGS: AgentSystemSettings = {
 
 /**
  * Mount-local owner of the settings-entry state. The composition root calls
- * init() exactly once as part of startup; React only
- * subscribes to the published snapshot, so StrictMode re-mounts cannot
+ * init() exactly once as part of startup; React only subscribes to the
+ * published snapshot, so StrictMode re-mounts cannot
  * duplicate Host subscriptions or writes.
  */
 export function createAgentSystemEntryController(deps: AgentSystemEntryControllerDeps): AgentSystemEntryController {
@@ -66,8 +59,8 @@ export function createAgentSystemEntryController(deps: AgentSystemEntryControlle
         unsubscribes.splice(0).forEach((unsubscribe) => unsubscribe());
     }
 
-    function commit(next: AgentSystemEntrySnapshot): void {
-        snapshot = next;
+    function commit(patch: Partial<AgentSystemEntrySnapshot>): void {
+        snapshot = { ...snapshot, ...patch };
         for (const listener of listeners) {
             listener();
         }
@@ -102,7 +95,7 @@ export function createAgentSystemEntryController(deps: AgentSystemEntryControlle
         if (disposed) {
             return;
         }
-        commit({ ...snapshot, profiles });
+        commit({ profiles });
     }
 
     async function setActiveProfile(profileId: string): Promise<void> {
@@ -118,7 +111,7 @@ export function createAgentSystemEntryController(deps: AgentSystemEntryControlle
         if (disposed) {
             return;
         }
-        commit({ ...snapshot, settings });
+        commit({ settings });
     }
 
     async function ensureActiveProfileSelectable(): Promise<void> {
@@ -138,13 +131,13 @@ export function createAgentSystemEntryController(deps: AgentSystemEntryControlle
 
     async function init(): Promise<void> {
         initPromise ??= (async () => {
-            commit({ ...snapshot, loading: true });
+            commit({ loading: true });
             try {
                 const settings = await deps.loadSettings();
                 if (disposed) {
                     return;
                 }
-                commit({ ...snapshot, settings });
+                commit({ settings });
                 await refreshProfiles();
                 if (disposed) {
                     return;
@@ -157,7 +150,7 @@ export function createAgentSystemEntryController(deps: AgentSystemEntryControlle
                     if (disposed) {
                         return;
                     }
-                    commit({ ...snapshot, settings });
+                    commit({ settings });
                 }));
                 unsubscribes.push(deps.subscribeProfilesChanged(() => {
                     runEventTask(async () => {
@@ -173,7 +166,7 @@ export function createAgentSystemEntryController(deps: AgentSystemEntryControlle
                 throw error;
             } finally {
                 if (!disposed) {
-                    commit({ ...snapshot, loading: false });
+                    commit({ loading: false });
                 }
             }
         })();
@@ -207,7 +200,7 @@ export function createAgentSystemEntryController(deps: AgentSystemEntryControlle
                 if (disposed) {
                     return;
                 }
-                commit({ ...snapshot, settings });
+                commit({ settings });
             } catch (error) {
                 reportAndRethrow(error);
             }
@@ -220,7 +213,7 @@ export function createAgentSystemEntryController(deps: AgentSystemEntryControlle
                 if (disposed) {
                     return;
                 }
-                commit({ ...snapshot, settings });
+                commit({ settings });
             } catch (error) {
                 reportAndRethrow(error);
             }

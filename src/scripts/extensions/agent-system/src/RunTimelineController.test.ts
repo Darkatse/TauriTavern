@@ -1,6 +1,6 @@
 import { expect, rs, test } from '@rstest/core';
 
-import type { AgentSystemSettings } from './AgentSystemEntryController';
+import type { AgentSystemSettings } from './settings-store';
 import { createRunTimelineController } from './RunTimelineController';
 import type {
     ActiveTimelineOptions,
@@ -271,4 +271,62 @@ test('retry is typed, history is read-only, and resize persistence follows compl
     await flushMicrotasks();
     expect(history.getSnapshot().detail.sections.flatMap(section => section.actions ?? [])).toEqual([]);
     history.dispose();
+});
+
+test('active mode removes transient writes immediately and detaches at terminal', async () => {
+    let liveHandler: ((update: TauriTavernAgentRunLiveUpdate) => void) | null = null;
+    let liveUnsubscribed = 0;
+    const liveCall: TauriTavernAgentRunLiveToolCall = {
+        toolId: 'builtin:workspace.write_file',
+        invocationId: 'inv_root',
+        invocationExitPolicy: 'run_finish_allowed',
+        toolCallIndex: 0,
+        path: 'reply.md',
+        content: '',
+        contentWords: 0,
+    };
+    const { controller, state } = activeHarness({
+        subscribeLiveProjection: (_runId, handler) => {
+            liveHandler = handler;
+            return () => {
+                liveUnsubscribed += 1;
+            };
+        },
+        scheduleFrame: callback => callback(),
+    });
+    await controller.init();
+    expect(liveHandler).not.toBeNull();
+    const emit = (update: TauriTavernAgentRunLiveUpdate) => liveHandler?.(update);
+
+    state.eventListener?.(event(1));
+    emit({ type: 'snapshot', calls: [] });
+    emit({ type: 'replace', call: liveCall });
+    emit({ type: 'append', invocationId: 'inv_root', toolCallIndex: 0, field: 'content', text: 'Hello', wordDelta: 1 });
+
+    let items = controller.getSnapshot().displayItems;
+    expect(items.map(item => item.seq)).toEqual([1, 1_000_000_000]);
+    expect(items[1]?.rowSpan).toBe(2);
+    expect(items[1]?.live?.tail).toBe('Hello');
+    expect(controller.getSnapshot().activeSeq).toBe(1_000_000_000);
+
+    emit({ type: 'remove', invocationId: 'inv_root', toolCallIndex: 0 });
+    expect(controller.getSnapshot().displayItems.map(item => item.seq)).toEqual([1]);
+    state.eventListener?.(event(2, 'tool_call_requested', {
+        invocationId: 'inv_root',
+        toolId: 'builtin:workspace.write_file',
+        callId: 'call-1',
+    }));
+    items = controller.getSnapshot().displayItems;
+    expect(items.map(item => item.seq)).toEqual([1, 2]);
+
+    emit({ type: 'replace', call: liveCall });
+    emit({ type: 'append', invocationId: 'inv_root', toolCallIndex: 0, field: 'content', text: 'again', wordDelta: 1 });
+    expect(controller.getSnapshot().displayItems.at(-1)?.live?.tail).toBe('again');
+    state.eventListener?.(event(3, 'run_completed', {}, 'run-1'));
+    expect(controller.getSnapshot().displayItems.every(item => !item.live)).toBe(true);
+    expect(liveUnsubscribed).toBe(1);
+
+    controller.dispose();
+    expect(state.unsubscribed).toBe(3);
+    expect(liveUnsubscribed).toBe(1);
 });

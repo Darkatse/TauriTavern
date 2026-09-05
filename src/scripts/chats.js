@@ -57,6 +57,7 @@ import { t } from './i18n.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, SCROLL_BEHAVIOR, SWIPE_DIRECTION } from './constants.js';
+import { showCodeMirrorEditorFullscreen } from './tauri/codemirror-editor.js';
 
 /**
  * @typedef {Object} FileAttachment
@@ -2231,6 +2232,10 @@ export function initChatUtilities() {
 
         if (!bro.length) {
             console.error('Could not find editor with id', broId);
+            return;
+        }
+
+        if (bro[0] instanceof HTMLTextAreaElement && await showCodeMirrorEditorFullscreen(bro[0])) {
             return;
         }
 

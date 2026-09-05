@@ -1,13 +1,13 @@
-import type { AgentSystemTr } from './i18n.js';
+import type { AgentSystemMessageKey, AgentSystemTr } from './i18n';
 import type { SubAgentTask, TimelineItem, TimelinePanelStatus } from './RunTimelineContract';
-import { isActiveTaskStatus } from './run-invocation-projector.js';
+import { isActiveTaskStatus } from './run-invocation-projector';
 
 export function timelineItemTitle(item: TimelineItem, tr: AgentSystemTr): string {
     return tr(item.titleKey, item.titleParams);
 }
 
 export function timelineItemShortLabel(item: TimelineItem, tr: AgentSystemTr): string {
-    const labels: Record<string, string> = {
+    const labels: Record<string, AgentSystemMessageKey> = {
         read: 'timelineOpRead',
         search: 'timelineOpSearch',
         list: 'timelineOpList',
@@ -38,7 +38,7 @@ export function timelineItemShortLabel(item: TimelineItem, tr: AgentSystemTr): s
     }
     if (item.type === 'run_cancelled') return tr('timelineOpCancel');
 
-    const payload = plainObject(item.rawEvent.payload) ? item.rawEvent.payload : {};
+    const payload = plainObject(item.rawEvent?.payload) ? item.rawEvent.payload : {};
     const tool = stringValue(payload.name) || stringValue(item.titleParams.tool);
     if (tool.includes('read')) return tr('timelineOpRead');
     if (tool.includes('search')) return tr('timelineOpSearch');
@@ -59,7 +59,7 @@ export function shortRunId(runId: string): string {
 }
 
 export function subAgentStatusLabel(status: string, tr: AgentSystemTr): string {
-    const labels: Record<string, string> = {
+    const labels: Record<string, AgentSystemMessageKey> = {
         queued: 'timelineStatusQueued',
         running: 'timelineStatusRunning',
         completed: 'timelineStatusCompleted',

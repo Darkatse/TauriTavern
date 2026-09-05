@@ -45,6 +45,10 @@ incremental = true
 [profile.dev.package."*"]
 debug = false
 
+# Optimize gemm-f16 until https://github.com/sarah-quinones/gemm/issues/31 is fixed.
+[profile.dev.package.gemm-f16]
+opt-level = 1
+
 [profile.test.package.kitoken]
 opt-level = 2
 

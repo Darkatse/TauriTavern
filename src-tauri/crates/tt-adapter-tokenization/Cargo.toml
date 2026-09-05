@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 async-trait = "0.1"
 flate2 = "1.1.9"
-miktik = { version = "0.4.2", default-features = false, features = ["openai", "huggingface", "sentencepiece", "tiktoken-bpe"] }
+miktik = { version = "0.4.3", default-features = false, features = ["openai", "huggingface", "sentencepiece", "tiktoken-bpe"] }
 serde_json = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["fs", "rt", "sync"] }
 tt-adapter-http = { path = "../tt-adapter-http" }

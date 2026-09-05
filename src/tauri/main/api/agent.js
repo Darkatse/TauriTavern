@@ -2,11 +2,12 @@
 
 import { buildAgentPromptSnapshotSeed } from './agent-prompt-snapshot.js';
 import { assemblePromptSnapshotForProfile, createPromptAssemblyApi } from './agent-prompt-assembly-run.js';
-import { attachHostCommitBridge } from './agent-chat-commit-bridge.js';
+import { attachHostCommitBridge, settleHostCommitBridge } from './agent-chat-commit-bridge.js';
 import { attachHostPromptAssemblyBridge } from './agent-prompt-assembly-bridge.js';
 import { resolveStableChatId } from './agent-chat-identity.js';
 import { createAgentProfilesApi } from './agent-profiles.js';
 import { createSharedRunEventSubscribe } from './agent-run-event-subscription.js';
+import { createAgentRunLiveSubscribe } from './agent-run-live-subscription.js';
 import { normalizeAgentRunOptions } from './agent-run-options.js';
 import { createAgentRunRuntimeApi } from './agent-run-runtime.js';
 import { DEFAULT_AGENT_PROFILE_ID } from '../../../scripts/tauritavern/agent/agent-system-settings.js';
@@ -25,6 +26,8 @@ function createAgentApi({ safeInvoke }) {
     const promptAssembly = createPromptAssemblyApi({ safeInvoke });
     const profiles = createAgentProfilesApi({ safeInvoke });
     const runtime = createAgentRunRuntimeApi({ safeInvoke });
+    const subscribeLiveProjection = createAgentRunLiveSubscribe({ safeInvoke });
+    const commitBridges = new WeakMap();
 
     async function startRunWithPromptSnapshot(input) {
         return startRunWithPromptSnapshotInternal(input, { ensureModelTargetConnection: true });
@@ -38,13 +41,21 @@ function createAgentApi({ safeInvoke }) {
         });
         const handle = await safeInvoke('start_agent_run', { dto });
         const hostSubscribe = createSharedRunEventSubscribe(handle?.runId, runtime.subscribe);
-        attachHostCommitBridge({
+        const commitBridge = attachHostCommitBridge({
             runId: handle?.runId,
+            chatRef: dto.chatRef,
+            stableChatId: dto.stableChatId,
+            generationType: dto.generationType,
             safeInvoke,
             readWorkspaceFile: runtime.readWorkspaceFile,
             readModelTurn: runtime.readModelTurn,
             subscribe: hostSubscribe,
+            subscribeLiveProjection: dto.options?.stream !== false
+                && dto.options?.presentation === 'foreground'
+                ? subscribeLiveProjection
+                : null,
         });
+        commitBridges.set(handle, commitBridge);
         attachHostPromptAssemblyBridge({
             runId: handle?.runId,
             safeInvoke,
@@ -95,6 +106,18 @@ function createAgentApi({ safeInvoke }) {
         return safeInvoke('list_agent_tools');
     }
 
+    async function copyChatPersistentStates(input) {
+        return safeInvoke('copy_agent_chat_persistent_states', { dto: input });
+    }
+
+    function settleChatPresentation(handle) {
+        const bridge = commitBridges.get(handle);
+        if (!bridge) {
+            throw new Error('agent.chat_presentation_handle_invalid: unknown Agent run handle');
+        }
+        return settleHostCommitBridge(bridge);
+    }
+
     return {
         startRunWithPromptSnapshot,
         startRunFromLegacyGenerate,
@@ -104,8 +127,11 @@ function createAgentApi({ safeInvoke }) {
         readWorkspaceFile: runtime.readWorkspaceFile,
         readModelTurn: runtime.readModelTurn,
         pruneChatPersistentStates: runtime.pruneChatPersistentStates,
+        copyChatPersistentStates,
         retention: runtime.retention,
         subscribe: runtime.subscribe,
+        subscribeLiveProjection,
+        settleChatPresentation,
         profiles,
         tools: {
             list: listTools,
@@ -137,6 +163,7 @@ async function normalizePromptSnapshotRunInput(input, { safeInvoke, ensureModelT
         throw new Error('stableChatId is required');
     }
 
+    const options = normalizeAgentRunOptions(input.options, input.presentation);
     let resolvedRunProfile = runProfile;
     if (ensureModelTargetConnection) {
         resolvedRunProfile = await ensureRunProfileModelTargetConnection(input.profileId ?? input.profile_id, safeInvoke);
@@ -149,7 +176,10 @@ async function normalizePromptSnapshotRunInput(input, { safeInvoke, ensureModelT
         stableChatId,
         skillScopeRefs,
         persistBaseStateId: normalizeOptionalString(input.persistBaseStateId),
-        options: normalizeAgentRunOptions(input.options, input.presentation),
+        options: normalizeAgentRunOptions(
+            options,
+            options.presentation ?? resolvedRunProfile?.run?.presentation,
+        ),
     };
 }
 

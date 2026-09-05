@@ -88,7 +88,7 @@ test('JS-Slash-Runner adapter registers a managed slot and cold rebuild emits ME
     }
 });
 
-test('LittleWhiteBox adapter registers a managed slot and cold rebuild emits MESSAGE_UPDATED', async () => {
+test('LittleWhiteBox adapter cold rebuild materializes a replacement iframe', async () => {
     const dom = installFakeDom();
     try {
         const { createLittleWhiteBoxRuntimeAdapter } = await importFresh(
@@ -100,10 +100,8 @@ test('LittleWhiteBox adapter registers a managed slot and cold rebuild emits MES
         const events = await importStable(path.join(REPO_ROOT, 'src/scripts/events.js'));
 
         const emitted = [];
+        let replacement = null;
         const prevEmit = events.eventSource.emit;
-        events.eventSource.emit = async (event, ...args) => {
-            emitted.push({ event, args });
-        };
 
         try {
             const message = document.createElement('div');
@@ -122,9 +120,24 @@ test('LittleWhiteBox adapter registers a managed slot and cold rebuild emits MES
             const code = document.createElement('code');
             code.textContent = 'signature';
             pre.append(code);
+            pre.dataset.xbFinal = 'true';
             pre.dataset.xbHash = 'hash';
 
             message.append(wrapper, pre);
+
+            events.eventSource.emit = async (event, ...args) => {
+                emitted.push({ event, args });
+                // LWB skips unchanged final blocks unless the adapter
+                // invalidates this renderer-owned guard first.
+                if (pre.dataset.xbFinal === 'true' && pre.dataset.xbHash === 'hash') {
+                    return;
+                }
+                replacement = document.createElement('iframe');
+                replacement.src = 'blob:lwb-rebuilt';
+                wrapper.append(replacement);
+                pre.dataset.xbFinal = 'true';
+                pre.dataset.xbHash = 'hash';
+            };
 
             const registered = [];
             const manager = {
@@ -149,7 +162,13 @@ test('LittleWhiteBox adapter registers a managed slot and cold rebuild emits MES
             slot.hydrate();
 
             assert.deepEqual(emitted, [{ event: events.event_types.MESSAGE_UPDATED, args: ['7'] }]);
-            assert.equal(wrapper.querySelector('iframe'), null);
+            assert.ok(replacement);
+            assert.equal(wrapper.querySelector('iframe'), replacement);
+
+            replacement.remove();
+            pre.remove();
+            assert.throws(() => slot.hydrate(), /paired <pre> is missing/);
+            assert.equal(emitted.length, 1);
         } finally {
             events.eventSource.emit = prevEmit;
         }

@@ -342,15 +342,18 @@ function SyncScopeView({
 
 export function mountTauriTavernSyncScopeApp(
     mount: unknown,
-    options: SyncScopeOptions,
+    options: Partial<SyncScopeOptions> | undefined,
 ): SyncScopeHandle {
     if (!(mount instanceof HTMLElement)) {
         throw new Error('TauriTavern Sync scope mount element is required');
     }
-    const { catalog, selection, tr } = options;
-    if (typeof tr !== 'function') {
+    if (!options || typeof options.tr !== 'function') {
         throw new Error('TauriTavern Sync translator is required');
     }
+    if (!options.catalog) {
+        throw new Error('TauriTavern Sync scope catalog is required');
+    }
+    const { catalog, selection, tr } = options;
 
     const groups = createGroups(catalog);
     let selectedIds = normalizeInitialSelection(selection, catalog);

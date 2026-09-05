@@ -4,6 +4,17 @@
 
 补充：iOS/iPadOS 的 **分发 Policy（profile + capabilities snapshot）** 属于“合规裁剪/能力分级”问题域，其当前实现快照与维护约束已收敛到 `docs/CurrentState/iOSPolicy.md`，本文件仍聚焦 WKWebView 行为差异与 iOS-only 桥接。
 
+当前系统支持边界：
+
+| iOS/iPadOS | `structuredClone` | Element Fullscreen | 支持级别 |
+| --- | --- | --- | --- |
+| 15.0–15.3 | 上游 vendored polyfill | 关闭 | 有限支持 |
+| 15.4–15.x | WebKit 原生实现 | 关闭 | 有限支持 |
+| 16.0–16.3 | WebKit 原生实现 | 开启 | 有限支持 |
+| 16.4+ | WebKit 原生实现 | 开启 | 完整支持 |
+
+`src/index.html` 已在 `init.js` 前加载 SillyTavern 1.18.0 的 `lib/structured-clone/monkey-patch.js`。它只在全局能力缺失时安装，15.4+ 不替换 WebKit 原生函数。
+
 ## 1. WKWebView safe-area 自动 inset 导致底部死区
 
 ### 1.1 现象
@@ -42,7 +53,7 @@ WKWebView 内部是 `UIScrollView` 承载 Web 内容；在默认行为下，iOS 
 实现位置：
 
 - iOS 配置入口：`src-tauri/crates/tauritavern/src/infrastructure/ios_webview.rs` 的 `configure_main_wkwebview()`
-- 调用时机：`src-tauri/crates/tauritavern/src/lib.rs`（主窗口 build 后立刻调用）
+- 调用时机：`src-tauri/crates/tauritavern/src/app/host/window.rs`（主窗口 build 后立刻调用）
 
 ### 1.5 验收建议
 
@@ -162,7 +173,7 @@ Skill 导入使用独立命令 `ios_pick_skill_import_archives`：
 - 前端仍只收到一个或多个 `{ kind: 'archiveFile', path }`，后续预览与安装继续逐项走 Skill repository 的真实路径契约；
 - 用户放弃某个输入时由 `api.skill.discardPickedImport(input)` 清理；放弃整个批次时调用无参数的 `discardPickedImport()`。安装完成或失败后由 `installImport()` 自动清理对应输入。
 
-## 4. WKWebView Fullscreen API（iOS 16+）
+## 4. WKWebView Element Fullscreen（iOS 16+ 启用）
 
 ### 4.1 现象
 
@@ -177,12 +188,20 @@ Skill 导入使用独立命令 `ios_pick_skill_import_archives`：
 
 - 继续复用 `src-tauri/crates/tauritavern/src/infrastructure/ios_webview.rs` 的主 WebView 配置入口，在 `configure_main_wkwebview()` 内统一完成两类 native 配置：
   - 关闭 `scrollView` 的 safe-area 自动 inset 调整；
-  - 开启 `WKPreferences.setElementFullscreenEnabled(true)`。
+  - 仅在 iOS 16.0+ 开启 `WKPreferences.setElementFullscreenEnabled(true)`。
 - 这样角色卡、JS-Slash-Runner、同源 iframe 的 fullscreen 事件、退出语义和上游契约保持一致，宿主只补齐平台能力，不改前端行为。
 
 ### 4.4 支持边界
 
-- 该能力依赖 iOS 16 的 app-embedded WKWebView Fullscreen API，因此项目 iOS 支持线提升到 `iOS 16+`。
+- 公开 `WKPreferences.elementFullscreenEnabled` 从 iOS 15.4 可用且默认关闭；TauriTavern 仍将 iOS 16.0 作为产品 fullscreen feature floor。
+- iOS 15 保持 WebKit 默认关闭，不删除 iframe 权限、不改写 `requestFullscreen()`，让页面继续观察标准浏览器失败语义。
+- iOS 16.0–16.3 可使用 fullscreen，但仍属于有限支持；完整支持从 iOS 16.4 开始。
+
+### 4.5 构建版本契约
+
+- 最低部署版本是 `15.0`，规范值写在 `tauri.conf.json` 的 `bundle.iOS.minimumSystemVersion`。
+- `gen/apple/project.yml`、`Podfile` 与已提交 `.xcodeproj` 必须保持同值；Xcode pre-build script 会将真实 `IPHONEOS_DEPLOYMENT_TARGET` 与 Tauri 配置比较，不一致时直接失败。
+- 当前 `project.yml` 未覆盖已提交 Apple host 的全部自定义 Info.plist、scheme 与签名状态。不要直接运行 XcodeGen 或 `tauri ios init` 覆盖工程；修改后只审查必要 diff，否则可能删除高刷、后台模式与文件类型声明。
 
 ## 5. iOS 分发 Policy（当前状态）
 
@@ -227,7 +246,7 @@ xcrun --sdk macosx swift scripts/generate-ios-app-icon-variants.swift \
 ```sh
 xcrun actool --compile /tmp/tt-appicon \
   --platform iphonesimulator \
-  --minimum-deployment-target 16.0 \
+  --minimum-deployment-target 15.0 \
   --app-icon AppIcon \
   --output-partial-info-plist /tmp/tt-appicon/partial.plist \
   src-tauri/crates/tauritavern/gen/apple/Assets.xcassets

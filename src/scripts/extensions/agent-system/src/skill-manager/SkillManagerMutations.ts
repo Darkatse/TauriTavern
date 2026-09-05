@@ -1,4 +1,4 @@
-import { skillScopeLabel } from '../skill-scope.js';
+import { skillScopeLabel } from '../skill-scope';
 import { skillArchiveBlob, type SkillManagerDeps, type SkillPreview, type SkillSection } from './SkillManagerContract';
 
 type AvailableSection = SkillSection & { scope: TauriTavernSkillScope };

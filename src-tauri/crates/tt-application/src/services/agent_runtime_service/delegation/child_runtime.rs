@@ -15,6 +15,7 @@ use crate::services::agent_runtime_service::prompt_snapshot::{
 use crate::services::agent_runtime_service::skill_scope::{
     skill_event_summary, skill_scope_order_for_profile,
 };
+use crate::services::agent_runtime_service::tool_call_projection::clear_live_invocation;
 use crate::services::agent_runtime_service::tool_snapshot::tool_snapshot_summary;
 use crate::services::agent_runtime_service::{
     AgentCancelReceiver, AgentRuntimeService, PreparedInvocation,
@@ -54,9 +55,15 @@ impl AgentRuntimeService {
         invocation_id: &str,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
+        let live_projection = self
+            .active_run_handle(run_id)
+            .await?
+            .live_projection
+            .clone();
         let result =
             Box::pin(self.execute_child_invocation_body(run_id, task_id, invocation_id, cancel))
                 .await;
+        clear_live_invocation(&live_projection, invocation_id);
         if let Err(error) = result {
             let was_cancelled = matches!(error, ApplicationError::Cancelled(_));
             let task_status = if was_cancelled {
@@ -275,6 +282,7 @@ impl AgentRuntimeService {
             request,
             &visible_tools,
             tool_turn.choice().clone(),
+            &run.stable_chat_id,
             run_id,
             invocation_id,
         )?;

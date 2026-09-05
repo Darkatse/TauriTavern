@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use serde_json::{Value, json};
+#[cfg(feature = "test-support")]
+use tokio::sync::watch;
 
 use super::artifacts::build_agent_manifest;
 use super::commit_ledger::RunCommitLedger;
@@ -138,7 +140,7 @@ impl AgentRuntimeService {
 
     #[cfg(feature = "test-support")]
     pub async fn execute_agent_loop_run_inner(
-        &self,
+        self: &Arc<Self>,
         run_id: &str,
         prompt_snapshot: Value,
         request: ChatCompletionGenerateRequestDto,
@@ -155,6 +157,16 @@ impl AgentRuntimeService {
             .skill_service
             .resolve_effective_skills(&scope_order, &resolved_profile.skills)
             .await?;
+        let (cancel_sender, _) = watch::channel(false);
+        self.active_runs.write().await.insert(
+            run_id.to_string(),
+            Arc::new(super::scheduler::ActiveRunHandle::new(
+                self,
+                run_id.to_string(),
+                cancel_sender,
+                None,
+            )),
+        );
         let result = self
             .execute_agent_loop_run_body(
                 run_id,
@@ -284,6 +296,7 @@ impl AgentRuntimeService {
             request,
             &visible_tools,
             tool_turn.choice().clone(),
+            &run.stable_chat_id,
             run_id,
             root_invocation.id.as_str(),
         )?;

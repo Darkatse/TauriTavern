@@ -29,7 +29,10 @@ function createActions(overrides: Partial<DevLogsActions> = {}) {
     const actions: DevLogsActions = {
         copyText: (text) => { copied.push(text); return Promise.resolve(); },
         openTextViewer: (options) => { viewed.push(options); return Promise.resolve(); },
-        reportError: (error) => { errors.push(error as Error); },
+        reportError: (error) => {
+            if (!(error instanceof Error)) throw new TypeError('expected an Error');
+            errors.push(error);
+        },
         ...overrides,
     };
     return { actions, copied, viewed, errors };
@@ -87,8 +90,8 @@ function createLiveHarness(options: { failSetConsoleCapture?: boolean; failTeard
 type LiveHarness = ReturnType<typeof createLiveHarness>;
 
 function createLiveOptions(harness: LiveHarness, overrides: Partial<LiveLogPanelOptions> = {}): LiveLogPanelOptions {
-    const base = {
-        kind: 'live' as const, title: 'Frontend Logs', initialEntries: [], consoleCaptureEnabled: false,
+    const base: LiveLogPanelOptions = {
+        kind: 'live', title: 'Frontend Logs', initialEntries: [], consoleCaptureEnabled: false,
         showConsoleCapture: false, trimEntriesInPlace: null, client: harness.client, actions: createActions().actions, tr,
     };
     return { ...base, ...overrides };
@@ -119,8 +122,8 @@ async function flushAct(action?: () => void): Promise<void> {
 }
 
 function indexEntry(id: number, overrides: Partial<LlmApiLogIndexEntry> = {}): LlmApiLogIndexEntry {
-    const base = {
-        id, timestampMs: 1750000000000 + id * 1000, level: 'INFO' as const, ok: true,
+    const base: LlmApiLogIndexEntry = {
+        id, timestampMs: 1750000000000 + id * 1000, level: 'INFO', ok: true,
         source: `source-${id}`, model: `model-${id}`, endpoint: 'https://api.example.com/v1/chat',
         durationMs: 100 + id, stream: true,
     };
@@ -185,8 +188,8 @@ function createLlmHarness() {
 type LlmHarness = ReturnType<typeof createLlmHarness>;
 
 function createLlmOptions(harness: LlmHarness, overrides: Partial<LlmApiLogsPanelOptions> = {}): LlmApiLogsPanelOptions {
-    const base = {
-        kind: 'llm-api' as const, initialKeep: 5, initialIndexEntries: [], initialPreview: null,
+    const base: LlmApiLogsPanelOptions = {
+        kind: 'llm-api', initialKeep: 5, initialIndexEntries: [], initialPreview: null,
         client: harness.client, actions: createActions().actions, tr,
     };
     return { ...base, ...overrides };
@@ -204,8 +207,8 @@ test('mount enforces the public boundary and unmounts the root', () => {
     const harness = createLiveHarness();
     expect(() => mountTauriTavernDevLogsApp(null, createLiveOptions(harness)))
         .toThrow('TauriTavern dev logs mount element is required');
-    const badOptions = (patch: object) => ({ ...createLiveOptions(harness), ...patch }) as never;
-    const mountAt = (options: never) => () => mountTauriTavernDevLogsApp(document.createElement('div'), options);
+    const badOptions = (patch: object): unknown => ({ ...createLiveOptions(harness), ...patch });
+    const mountAt = (options: unknown) => () => mountTauriTavernDevLogsApp(document.createElement('div'), options);
     expect(mountAt(badOptions({ tr: undefined }))).toThrow('TauriTavern dev logs translator is required');
     expect(mountAt(badOptions({ kind: 'unknown' }))).toThrow('Unsupported TauriTavern dev logs panel: unknown');
     expect(mountAt(badOptions({ client: {} }))).toThrow('TauriTavern dev logs client method is unavailable: subscribe');

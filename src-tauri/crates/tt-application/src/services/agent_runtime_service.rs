@@ -50,13 +50,13 @@ mod loop_runner;
 mod markdown;
 mod model_response_store;
 mod model_retry;
-mod model_turn;
 mod model_turn_display;
 mod prompt_assembly;
 mod prompt_snapshot;
 mod scheduler;
 mod skill_scope;
 mod timeline_projection;
+mod tool_call_projection;
 mod tool_execution;
 mod tool_snapshot;
 
@@ -64,6 +64,10 @@ mod tool_snapshot;
 mod tests;
 
 use scheduler::ActiveRunHandle;
+pub use tool_call_projection::{
+    AgentRunLiveCall, AgentRunLiveCallKey, AgentRunLiveProjection, ModelAttemptGeneration,
+    ToolCallProjection,
+};
 
 pub(super) type AgentCancelReceiver = watch::Receiver<bool>;
 

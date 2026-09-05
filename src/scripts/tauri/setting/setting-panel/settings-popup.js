@@ -41,6 +41,15 @@ const HELP_TOPICS = {
             'When enabled, only messages near the viewport and the newest message stay mounted. Turn it off to use upstream SillyTavern chat rendering. Renderer extensions must support ChatSurface.',
         ],
     },
+    codeMirrorEditor: {
+        title: 'CodeMirror Editor',
+        lines: [
+            'When enabled, supported textareas in Preset, World Info, Regex, and Quick Reply editors use CodeMirror. The editor bundle is loaded only when needed.',
+            "Text is synchronized at each feature's existing save or update boundary, reducing full-text copies while typing.",
+            'Some textarea-specific features, including macro autocomplete and Markdown shortcuts, are not available in CodeMirror.',
+            'Requires reload to apply.',
+        ],
+    },
     zstdCompression: {
         title: 'zstd Compression',
         lines: [
@@ -352,6 +361,10 @@ function createSettingsActions(backgroundOptions) {
         chooseDataRoot: () => runTaskOrPopup(chooseDataRoot),
         chooseWallpaper: (request) => runTaskOrPopup(() => chooseWallpaper(backgroundOptions, request)),
         showHelp: (topicId) => runTaskOrPopup(() => showHelpTopic(topicId)),
+        manageQuickAccess: () => runTaskOrPopup(async () => {
+            const { openExtensionMenuShortcutsManager } = await import('../extension-menu-shortcuts.js');
+            await openExtensionMenuShortcutsManager();
+        }),
         reloadFrontend: () => runTaskOrPopup(async () => {
             window.location.reload();
         }),

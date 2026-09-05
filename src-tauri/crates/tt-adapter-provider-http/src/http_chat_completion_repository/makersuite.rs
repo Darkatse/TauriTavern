@@ -5,9 +5,11 @@ use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
+    ChatCompletionToolCallDelta,
 };
 
 use super::HttpChatCompletionRepository;
+use super::gemini;
 use super::normalizers;
 use super::response_body::read_upstream_json_body;
 use crate::endpoint_url::append_google_api_path;
@@ -26,18 +28,12 @@ pub(super) async fn list_models(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Status request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            "Google Gemini",
-            response,
-            "Failed to list models",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        "Google Gemini",
+        "Failed to list models",
+    )
+    .await?;
 
     let body = read_upstream_json_body("Google Gemini", "list_models", response).await?;
 
@@ -109,18 +105,12 @@ pub(super) async fn generate(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            "Google Gemini",
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        "Google Gemini",
+        "Generation request failed",
+    )
+    .await?;
 
     let body = read_upstream_json_body("Google Gemini", "generate", response).await?;
 
@@ -135,6 +125,33 @@ pub(super) async fn generate_stream(
     sender: ChatCompletionStreamSender,
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
+    let response = send_stream_request(repository, config, endpoint_path, payload).await?;
+
+    HttpChatCompletionRepository::stream_sse_response("Google Gemini", response, sender, cancel)
+        .await
+}
+
+pub(super) async fn generate_with_tool_call_deltas(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+    on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+    let response = send_stream_request(repository, config, endpoint_path, payload).await?;
+    let body =
+        gemini::consume_generate_content_stream("Google Gemini", response, on_tool_call_delta)
+            .await?;
+
+    Ok(normalizers::normalize_gemini_response(body))
+}
+
+async fn send_stream_request(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+) -> Result<reqwest::Response, DomainError> {
     let payload_object = payload.as_object().ok_or_else(|| {
         DomainError::InvalidData("Gemini payload must be a JSON object".to_string())
     })?;
@@ -165,21 +182,12 @@ pub(super) async fn generate_stream(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            "Google Gemini",
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
-
-    HttpChatCompletionRepository::stream_sse_response("Google Gemini", response, sender, cancel)
-        .await
+    HttpChatCompletionRepository::send_checked(
+        request,
+        "Google Gemini",
+        "Generation request failed",
+    )
+    .await
 }
 
 fn normalize_gemini_model(model: &str) -> String {

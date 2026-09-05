@@ -1,4 +1,4 @@
-import { errorText } from './host-api.js';
+import { errorText } from './host-api';
 
 const RUN_HISTORY_PAGE_LIMIT = 50;
 const TERMINAL_RUN_STATUSES: readonly TauriTavernAgentRunStatus[] = Object.freeze([
@@ -28,7 +28,7 @@ export type RunHistorySnapshot = {
 };
 
 export type RunHistoryControllerDeps = {
-    listRuns: (input: RunHistoryListInput) => Promise<unknown>;
+    listRuns: (input: RunHistoryListInput) => ReturnType<TauriTavernAgentApi['listRuns']>;
     currentChatRunFilter: () => Promise<{ chatRef: TauriTavernChatRef; stableChatId: string }>;
     openRun: (run: TauriTavernAgentRunSummary) => void;
 };
@@ -46,7 +46,7 @@ export type RunHistoryController = {
 /**
  * Mount-local owner of the run history list. Every refresh/loadMore runs
  * under a request epoch so a slower older response (e.g. a previous filter)
- * never overwrites a newer one (Fix 5, last-request-wins).
+ * never overwrites a newer one (last request wins).
  */
 export function createRunHistoryController(deps: RunHistoryControllerDeps): RunHistoryController {
     let snapshot: RunHistorySnapshot = {
@@ -61,11 +61,11 @@ export function createRunHistoryController(deps: RunHistoryControllerDeps): RunH
     let disposed = false;
     let requestEpoch = 0;
 
-    function commit(next: RunHistorySnapshot): void {
+    function commit(patch: Partial<RunHistorySnapshot>): void {
         if (disposed) {
             return;
         }
-        snapshot = next;
+        snapshot = { ...snapshot, ...patch };
         for (const listener of listeners) {
             listener();
         }
@@ -87,22 +87,22 @@ export function createRunHistoryController(deps: RunHistoryControllerDeps): RunH
 
     async function refresh(): Promise<void> {
         const epoch = ++requestEpoch;
-        commit({ ...snapshot, loading: true, loadingMore: false, error: '' });
+        commit({ loading: true, loadingMore: false, error: '' });
         try {
             const input = await buildListInput();
-            const result = normalizeRunHistoryResult(await deps.listRuns(input));
+            const result = await deps.listRuns(input);
             if (disposed || epoch !== requestEpoch) {
                 return;
             }
-            commit({ ...snapshot, runs: result.runs, nextCursor: result.nextCursor });
+            commit({ runs: result.runs, nextCursor: result.nextCursor ?? null });
         } catch (error) {
             if (disposed || epoch !== requestEpoch) {
                 return;
             }
-            commit({ ...snapshot, error: errorText(error), runs: [], nextCursor: null });
+            commit({ error: errorText(error), runs: [], nextCursor: null });
         } finally {
             if (!disposed && epoch === requestEpoch) {
-                commit({ ...snapshot, loading: false });
+                commit({ loading: false });
             }
         }
     }
@@ -113,22 +113,25 @@ export function createRunHistoryController(deps: RunHistoryControllerDeps): RunH
         }
         const epoch = requestEpoch;
         const before = snapshot.nextCursor;
-        commit({ ...snapshot, loadingMore: true, error: '' });
+        commit({ loadingMore: true, error: '' });
         try {
             const input = await buildListInput({ before });
-            const result = normalizeRunHistoryResult(await deps.listRuns(input));
+            const result = await deps.listRuns(input);
             if (disposed || epoch !== requestEpoch) {
                 return;
             }
-            commit({ ...snapshot, runs: [...snapshot.runs, ...result.runs], nextCursor: result.nextCursor });
+            commit({
+                runs: [...snapshot.runs, ...result.runs],
+                nextCursor: result.nextCursor ?? null,
+            });
         } catch (error) {
             if (disposed || epoch !== requestEpoch) {
                 return;
             }
-            commit({ ...snapshot, error: errorText(error) });
+            commit({ error: errorText(error) });
         } finally {
             if (!disposed && epoch === requestEpoch) {
-                commit({ ...snapshot, loadingMore: false });
+                commit({ loadingMore: false });
             }
         }
     }
@@ -148,7 +151,7 @@ export function createRunHistoryController(deps: RunHistoryControllerDeps): RunH
             if (next === snapshot.filter) {
                 return;
             }
-            commit({ ...snapshot, filter: next });
+            commit({ filter: next });
             await refresh();
         },
         openRun(run) {
@@ -162,31 +165,4 @@ export function createRunHistoryController(deps: RunHistoryControllerDeps): RunH
             listeners.clear();
         },
     };
-}
-
-function normalizeRunHistoryResult(value: unknown): {
-    runs: TauriTavernAgentRunSummary[];
-    nextCursor: TauriTavernAgentRunListCursor | null;
-} {
-    if (!plainObject(value)) {
-        throw new Error('agent.run_history_result_invalid: result must be an object');
-    }
-    if (!Array.isArray(value.runs)) {
-        throw new Error('agent.run_history_result_invalid: result.runs must be an array');
-    }
-    if (value.nextCursor != null && !plainObject(value.nextCursor)) {
-        throw new Error('agent.run_history_result_invalid: result.nextCursor must be an object or null');
-    }
-    return {
-        runs: value.runs as TauriTavernAgentRunSummary[],
-        nextCursor: (value.nextCursor || null) as TauriTavernAgentRunListCursor | null,
-    };
-}
-
-function plainObject(value: unknown): value is Record<string, unknown> {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return false;
-    }
-    const prototype = Object.getPrototypeOf(value) as unknown;
-    return prototype === Object.prototype || prototype === null;
 }

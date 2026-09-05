@@ -21,7 +21,7 @@ pub(super) fn convert_openai_tool_calls_to_claude_blocks(
         .collect()
 }
 
-pub(super) fn map_openai_tools_to_claude(tools: &Value) -> Vec<Value> {
+pub(super) fn map_openai_tools_to_claude(tools: &Value, eager_input_streaming: bool) -> Vec<Value> {
     let Some(entries) = tools.as_array() else {
         return Vec::new();
     };
@@ -62,6 +62,9 @@ pub(super) fn map_openai_tools_to_claude(tools: &Value) -> Vec<Value> {
                 .filter(|value| !value.is_null())
                 .unwrap_or_else(|| json!({ "type": "object", "properties": {} }));
             mapped.insert("input_schema".to_string(), input_schema);
+            if eager_input_streaming {
+                mapped.insert("eager_input_streaming".to_string(), Value::Bool(true));
+            }
 
             Some(Value::Object(mapped))
         })

@@ -1,5 +1,5 @@
-import { DEFAULT_PROFILE_ID } from './constants.js';
-import { errorText, prettyJson } from './host-api.js';
+import { DEFAULT_PROFILE_ID } from './constants';
+import { errorText, prettyJson } from './host-api';
 import { loadAgentSystemProfileRuntime } from './AgentSystemProfileRuntime';
 import {
     defaultProfile,
@@ -8,6 +8,7 @@ import {
     type AgentProfileDraft,
 } from './profile-model';
 import {
+    profilePresentationMemoryKey,
     rememberMainAgentPresentation,
     type AgentPresentationMemory,
 } from './profile-draft-ops';
@@ -33,7 +34,7 @@ import {
     createAgentSystemPanelPersistence,
     type AgentSystemPanelPersistence,
 } from './AgentSystemPanelPersistence';
-import type { AgentSystemSettings } from './AgentSystemEntryController';
+import type { AgentSystemSettings } from './settings-store';
 
 export type AgentSystemPanelSession = {
     getSnapshot: () => AgentSystemPanelSnapshot;
@@ -68,18 +69,14 @@ export function createAgentSystemPanelController(deps: AgentSystemPanelControlle
         unsubscribes.splice(0).forEach((unsubscribe) => unsubscribe());
     }
 
-    function commit(next: AgentSystemPanelSnapshot): void {
+    function patch(patchValue: Partial<AgentSystemPanelSnapshot>): void {
         if (disposed) {
             return;
         }
-        snapshot = next;
+        snapshot = { ...snapshot, ...patchValue };
         for (const listener of listeners) {
             listener();
         }
-    }
-
-    function patch(patchValue: Partial<AgentSystemPanelSnapshot>): void {
-        commit({ ...snapshot, ...patchValue });
     }
 
     function reportError(error: unknown): void {
@@ -150,13 +147,12 @@ export function createAgentSystemPanelController(deps: AgentSystemPanelControlle
         ])];
     }
 
-    function memoryKey(draft: AgentProfileDraft): string {
-        const key = (draft.id || snapshot.editingProfileId || DEFAULT_PROFILE_ID).trim() || DEFAULT_PROFILE_ID;
-        return key;
-    }
-
     function seedMainAgentPresentation(draft: AgentProfileDraft): void {
-        rememberMainAgentPresentation(mainAgentPresentationByProfileId, memoryKey(draft), draft.run.presentation || 'foreground');
+        rememberMainAgentPresentation(
+            mainAgentPresentationByProfileId,
+            profilePresentationMemoryKey(draft.id, snapshot.editingProfileId),
+            draft.run.presentation || 'foreground',
+        );
     }
 
     function editModeSyncPatch(draft: AgentProfileDraft): Pick<AgentSystemPanelSnapshot, 'profileEditMode' | 'activeProfileSectionId'> {
@@ -358,7 +354,6 @@ export function createAgentSystemPanelController(deps: AgentSystemPanelControlle
         commit: patch,
         isDisposed: () => disposed,
         presentationMemory: mainAgentPresentationByProfileId,
-        memoryKey,
         seedMainAgentPresentation,
         editModeSyncPatch,
         toolIdsForDraft: draft => toolIdsForDraft(draft, snapshot.toolItems),
@@ -401,8 +396,8 @@ export function createAgentSystemPanelController(deps: AgentSystemPanelControlle
                 if (disposed) {
                     return;
                 }
-                // Fix 4: Host subscriptions install only after a successful
-                // init; a popup closed mid-init never registers listeners.
+                // Subscribe only after initialization so a panel closed while
+                // loading cannot leave host listeners behind.
                 unsubscribes.push(deps.subscribeProfilesChanged(() => {
                     runEventTask(handleProfilesChanged);
                 }));

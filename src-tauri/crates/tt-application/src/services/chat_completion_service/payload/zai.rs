@@ -2,9 +2,7 @@ use serde_json::{Map, Value};
 
 use crate::errors::ApplicationError;
 
-use super::super::model_capabilities::{
-    RequestedReasoningEffort, map_zai_reasoning_effort, parse_known_reasoning_effort,
-};
+use super::super::model_capabilities::map_zai_reasoning_effort;
 use super::openai;
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
@@ -15,13 +13,11 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
     let model = payload
         .get("model")
         .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+        .unwrap_or_default();
     let reasoning_effort = payload
         .get("reasoning_effort")
         .and_then(Value::as_str)
-        .map(|value| resolve_reasoning_effort(&model, value, include_reasoning))
+        .map(|value| map_zai_reasoning_effort(model, value))
         .transpose()?
         .flatten();
 
@@ -43,26 +39,18 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
                 Value::String(reasoning_effort.to_string()),
             );
         }
+
+        if body.get("stream").and_then(Value::as_bool) == Some(true)
+            && body
+                .get("tools")
+                .and_then(Value::as_array)
+                .is_some_and(|tools| !tools.is_empty())
+        {
+            body.insert("tool_stream".to_string(), Value::Bool(true));
+        }
     }
 
     Ok((endpoint, upstream_payload))
-}
-
-fn resolve_reasoning_effort(
-    model: &str,
-    value: &str,
-    include_reasoning: bool,
-) -> Result<Option<&'static str>, ApplicationError> {
-    if include_reasoning {
-        return map_zai_reasoning_effort(model, value);
-    }
-
-    match parse_known_reasoning_effort(value, "Z.AI")? {
-        RequestedReasoningEffort::Auto => Ok(None),
-        _ => Err(ApplicationError::ValidationError(
-            "Z.AI reasoning_effort requires include_reasoning=true".to_string(),
-        )),
-    }
 }
 
 #[cfg(test)]
@@ -103,6 +91,27 @@ mod tests {
     }
 
     #[test]
+    fn zai_streaming_tools_enable_tool_stream() {
+        let payload = payload(json!({
+            "model": "glm-4.6",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "parameters": {"type": "object"}
+                }
+            }],
+            "stream": true,
+            "chat_completion_source": "zai"
+        }));
+
+        let (_endpoint, upstream) = build(payload).expect("payload should build");
+
+        assert_eq!(body(&upstream).get("tool_stream"), Some(&Value::Bool(true)));
+    }
+
+    #[test]
     fn zai_payload_disables_thinking_without_reasoning_effort() {
         let payload = payload(json!({
             "model": "glm-5.2",
@@ -125,60 +134,42 @@ mod tests {
     }
 
     #[test]
-    fn zai_glm52_maps_project_maximum_to_xhigh() {
-        let payload = payload(json!({
-            "model": "glm-5.2",
-            "messages": [{"role": "user", "content": "hello"}],
-            "include_reasoning": true,
-            "reasoning_effort": "max",
-            "chat_completion_source": "zai"
-        }));
+    fn zai_payload_maps_effort_without_requiring_thinking() {
+        for (model, effort, expected) in [
+            ("glm-5.2", "xhigh", "max"),
+            ("glm-5.2", "max", "max"),
+            ("glm-5.3", "xhigh", "max"),
+            ("glm-5.3", "max", "max"),
+            ("glm-5.3", "medium", "medium"),
+            ("glm-5.3-flash", "xhigh", "max"),
+            ("glm-5.3-flash", "max", "max"),
+        ] {
+            let payload = payload(json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "hello"}],
+                "include_reasoning": false,
+                "reasoning_effort": effort,
+                "chat_completion_source": "zai"
+            }));
 
-        let (_endpoint, upstream) = build(payload).expect("payload should build");
+            let (_endpoint, upstream) = build(payload).expect("payload should build");
 
-        assert_eq!(
-            body(&upstream)
-                .get("reasoning_effort")
-                .and_then(Value::as_str),
-            Some("xhigh")
-        );
-    }
-
-    #[test]
-    fn zai_rejects_reasoning_effort_for_unsupported_models() {
-        let payload = payload(json!({
-            "model": "glm-5.1",
-            "messages": [{"role": "user", "content": "hello"}],
-            "include_reasoning": true,
-            "reasoning_effort": "high",
-            "chat_completion_source": "zai"
-        }));
-
-        let error = build(payload).expect_err("unsupported model should fail");
-
-        assert!(
-            error
-                .to_string()
-                .contains("Z.AI reasoning_effort is only supported by glm-5.2")
-        );
-    }
-
-    #[test]
-    fn zai_rejects_reasoning_effort_when_thinking_is_disabled() {
-        let payload = payload(json!({
-            "model": "glm-5.2",
-            "messages": [{"role": "user", "content": "hello"}],
-            "include_reasoning": false,
-            "reasoning_effort": "high",
-            "chat_completion_source": "zai"
-        }));
-
-        let error = build(payload).expect_err("contradictory reasoning request should fail");
-
-        assert!(
-            error
-                .to_string()
-                .contains("Z.AI reasoning_effort requires include_reasoning=true")
-        );
+            assert_eq!(
+                body(&upstream)
+                    .get("reasoning_effort")
+                    .and_then(Value::as_str),
+                Some(expected),
+                "{model} {effort}"
+            );
+            assert_eq!(
+                body(&upstream)
+                    .get("thinking")
+                    .and_then(Value::as_object)
+                    .and_then(|thinking| thinking.get("type"))
+                    .and_then(Value::as_str),
+                Some("disabled"),
+                "{model} {effort}"
+            );
+        }
     }
 }

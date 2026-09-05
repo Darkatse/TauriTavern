@@ -12,7 +12,6 @@ import {
     type SettingsCapabilities,
     type SettingsDataRootState,
     type SettingsHandle,
-    type SettingsMountOptions,
     type SettingsOption,
     type SettingsTranslate,
 } from './SettingsContract';
@@ -157,6 +156,19 @@ function SettingsApp({
                         checked={draft.chatVirtualizationEnabled}
                         ariaLabel={tr('Chat DOM Virtualization')}
                         onChange={checked => controller.updateDraft('chatVirtualizationEnabled', checked)}
+                    />
+                </SettingRow>
+
+                <SettingRow
+                    label={tr('CodeMirror Editor')}
+                    helpTopic="codeMirrorEditor"
+                    helpTitle={tr('Learn more')}
+                    onHelp={showHelp}
+                >
+                    <ToggleSwitch
+                        checked={draft.codeMirrorEditorEnabled}
+                        ariaLabel={tr('CodeMirror Editor')}
+                        onChange={checked => controller.updateDraft('codeMirrorEditorEnabled', checked)}
                     />
                 </SettingRow>
 
@@ -334,6 +346,7 @@ function SettingsApp({
 
             <SettingsSection title={tr('Development')} icon="fa-code">
                 <div className="tt-settings-action-grid">
+                    <ActionButton label={tr('Manage Quick Access')} icon="fa-magic-wand-sparkles" onClick={() => void actions.manageQuickAccess()} />
                     <ActionButton label={tr('Reload Frontend')} icon="fa-arrows-rotate" onClick={() => void actions.reloadFrontend()} />
                     <ActionButton label={tr('Frontend Logs')} icon="fa-terminal" onClick={() => void actions.openFrontendLogs()} />
                     <ActionButton label={tr('Backend Logs')} icon="fa-server" onClick={() => void actions.openBackendLogs()} />
@@ -354,7 +367,7 @@ function SettingsApp({
 
 export function mountTauriTavernSettingsApp(
     mount: unknown,
-    options: SettingsMountOptions,
+    options: unknown,
 ): SettingsHandle {
     if (!(mount instanceof HTMLElement)) {
         throw new Error('TauriTavern settings mount element is required');

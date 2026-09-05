@@ -6,6 +6,7 @@ use tokio::sync::watch;
 
 use super::AgentRuntimeService;
 use super::guidance::AgentGuidanceMailbox;
+use super::tool_call_projection::AgentRunLiveProjection;
 use crate::errors::ApplicationError;
 use tt_domain::models::agent::{
     AgentDelegationContinuation, AgentInvocationStatus, AgentTaskRecord, AgentTaskStatus,
@@ -15,6 +16,8 @@ pub(super) struct ActiveRunHandle {
     pub(super) cancel_sender: watch::Sender<bool>,
     pub(super) scheduler: Arc<AgentTaskScheduler>,
     pub(super) guidance_mailbox: Arc<AgentGuidanceMailbox>,
+    pub(super) stream_override: Option<bool>,
+    pub(super) live_projection: watch::Sender<AgentRunLiveProjection>,
 }
 
 impl ActiveRunHandle {
@@ -22,12 +25,20 @@ impl ActiveRunHandle {
         service: &Arc<AgentRuntimeService>,
         run_id: String,
         cancel_sender: watch::Sender<bool>,
+        stream_override: Option<bool>,
     ) -> Self {
+        let (live_projection, _) = watch::channel(AgentRunLiveProjection::default());
         Self {
             cancel_sender,
             scheduler: Arc::new(AgentTaskScheduler::new(service, run_id)),
             guidance_mailbox: Arc::new(AgentGuidanceMailbox::new()),
+            stream_override,
+            live_projection,
         }
+    }
+
+    pub(super) fn stream_enabled(&self, profile_default: bool) -> bool {
+        self.stream_override.unwrap_or(profile_default)
     }
 }
 

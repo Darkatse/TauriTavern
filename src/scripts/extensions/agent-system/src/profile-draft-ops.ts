@@ -1,9 +1,9 @@
-import { DEFAULT_PROFILE_ID, RUNTIME_ONLY_TOOLS } from './constants.js';
-import { translateAgentSystem as tr } from './i18n.js';
+import { DEFAULT_PROFILE_ID, RUNTIME_ONLY_TOOLS } from './constants';
+import { translateAgentSystem as tr } from './i18n';
 import {
     modelBindingFromTarget,
     type AgentModelTarget,
-} from './model-target-connection.js';
+} from './model-target-connection';
 import { AGENT_MODEL_REQUIRES_CONFIGURATION } from '../../../tauritavern/agent/agent-profile-portable.js';
 import {
     PROFILE_TOOL_MATRIX_HIDDEN,
@@ -104,7 +104,7 @@ export function applyModelTarget(
     draft.model = modelBindingFromTarget(target);
 }
 
-export function syncDelegationTools(draft: AgentProfileDraft, catalogToolIds: readonly string[]): void {
+function syncDelegationTools(draft: AgentProfileDraft, catalogToolIds: readonly string[]): void {
     draft.tools.allow = normalizeDelegationToolAllowList(
         draft.tools?.allow,
         draft.delegation,
@@ -113,12 +113,12 @@ export function syncDelegationTools(draft: AgentProfileDraft, catalogToolIds: re
 }
 
 export function applyCanDelegate(draft: AgentProfileDraft, enabled: boolean, catalogToolIds: readonly string[]): void {
-    draft.delegation.canDelegate = Boolean(enabled);
+    draft.delegation.canDelegate = enabled;
     syncDelegationTools(draft, catalogToolIds);
 }
 
 export function applyCanHandoff(draft: AgentProfileDraft, enabled: boolean, catalogToolIds: readonly string[]): void {
-    draft.delegation.canHandoff = Boolean(enabled);
+    draft.delegation.canHandoff = enabled;
     syncDelegationTools(draft, catalogToolIds);
 }
 
@@ -168,10 +168,9 @@ export function applyCallableAsSubAgent(
     memory: AgentPresentationMemory,
     memoryKey: string,
 ): void {
-    const isEnabled = Boolean(enabled);
-    draft.delegation.allowAsSubagent = isEnabled;
-    draft.delegation.callable = isEnabled || Boolean(draft.delegation.allowAsHandoffTarget);
-    if (isEnabled) {
+    draft.delegation.allowAsSubagent = enabled;
+    draft.delegation.callable = enabled || Boolean(draft.delegation.allowAsHandoffTarget);
+    if (enabled) {
         applySubAgentOnlyRunPolicy(draft, memory, memoryKey);
         return;
     }
@@ -187,10 +186,9 @@ export function applyCallableAsHandoffTarget(
     memory: AgentPresentationMemory,
     memoryKey: string,
 ): boolean {
-    const isEnabled = Boolean(enabled);
-    draft.delegation.allowAsHandoffTarget = isEnabled;
-    draft.delegation.callable = isEnabled || Boolean(draft.delegation.allowAsSubagent);
-    if (!isEnabled && !draft.delegation.allowAsSubagent && draft.run.directRunnable === false) {
+    draft.delegation.allowAsHandoffTarget = enabled;
+    draft.delegation.callable = enabled || Boolean(draft.delegation.allowAsSubagent);
+    if (!enabled && !draft.delegation.allowAsSubagent && draft.run.directRunnable === false) {
         draft.run.directRunnable = true;
         restoreMainAgentPresentation(draft, memory, memoryKey);
         return true;

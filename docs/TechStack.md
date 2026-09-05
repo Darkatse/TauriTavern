@@ -87,7 +87,6 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | DOMPurify | HTML 净化 |
 | Highlight.js | 代码高亮 |
 | localForage | 浏览器侧存储 |
-| Vue | 自有 UI 已不再消费；依赖与残留构建配置待独立清理 |
 | React / React DOM | TauriTavern first-party 状态型 UI 的统一表示层 |
 | strict TypeScript / TSX | React presentation、typed actions 与组件测试 |
 
@@ -156,7 +155,7 @@ pnpm run check:rust:dev
 
 - `scripts/check-rust-crate-boundaries.mjs` 守住 Rust crate 依赖方向。
 - `scripts/check-frontend-guardrails.mjs` 守住前端注入层边界。
-- `scripts/check-first-party-ui-guardrails.mjs` 守住自有 UI 的 Vue 退役棘轮。
+- `scripts/check-first-party-ui-guardrails.mjs` 守住 React + strict TS/TSX 边界。
 - `scripts/check-logging-boundaries.mjs` 守住 logging target 使用边界。
 - `tsconfig.host.json` 为 Host Kernel 提供 TypeScript 检查。
 - `tsconfig.ui.json` 为 Agent、MCP 与 Tauri Settings owned UI 提供 strict TS/TSX 检查。

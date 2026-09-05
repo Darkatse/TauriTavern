@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-import { formatTimestampValue } from './format.js';
+import { formatTimestampValue } from './format';
 import type { SyncTarget, SyncTranslate } from './SyncContract';
 
 type SyncButtonProps = {

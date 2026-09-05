@@ -14,7 +14,7 @@ pub fn configure_main_wkwebview(window: &WebviewWindow) -> tauri::Result<()> {
         let wkwebview = &*wkwebview_ptr.cast::<AnyObject>();
         super::apple_webview_refresh_rate::enable_native_refresh_rate(wkwebview);
         disable_content_inset_adjustment(wkwebview);
-        enable_element_fullscreen(wkwebview);
+        configure_element_fullscreen(wkwebview);
         super::apple_webview_js_dialogs::install_js_dialog_ui_delegate(wkwebview);
     })
 }
@@ -34,7 +34,12 @@ unsafe fn disable_content_inset_adjustment(wkwebview: &objc2::runtime::AnyObject
     scroll_view.setAutomaticallyAdjustsScrollIndicatorInsets(false);
 }
 
-unsafe fn enable_element_fullscreen(wkwebview: &objc2::runtime::AnyObject) {
+unsafe fn configure_element_fullscreen(wkwebview: &objc2::runtime::AnyObject) {
+    if !objc2::available!(ios = 16.0) {
+        // Element Fullscreen is intentionally disabled on limited-support iOS 15.
+        return;
+    }
+
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
 

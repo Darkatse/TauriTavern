@@ -66,6 +66,10 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     if (typeof nextChatVirtualizationEnabled !== 'boolean') {
         throw new TypeError('Chat virtualization setting must be a boolean');
     }
+    const nextCodeMirrorEditorEnabled = draft.codeMirrorEditorEnabled;
+    if (typeof nextCodeMirrorEditorEnabled !== 'boolean') {
+        throw new TypeError('CodeMirror editor setting must be a boolean');
+    }
     const nextChatBackupAutomaticEnabled = Boolean(draft.chatBackups?.automaticEnabled);
     const nextChatBackupZstdCompressionEnabled = Boolean(draft.chatBackups?.zstdCompressionEnabled);
     const nextChatBackupMaxFilesPerPrefix = normalizeChatBackupLimit(draft.chatBackups?.maxFilesPerPrefix);
@@ -105,6 +109,8 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         && (nextEmbeddedRuntimeProfile !== initial.embeddedRuntimeProfile || requiresEmbeddedRuntimeMigration);
     const hasChatVirtualizationEnabledChange =
         nextChatVirtualizationEnabled !== initial.chatVirtualizationEnabled;
+    const hasCodeMirrorEditorEnabledChange =
+        nextCodeMirrorEditorEnabled !== initial.codeMirrorEditorEnabled;
     const hasChatBackupAutomaticEnabledChange =
         nextChatBackupAutomaticEnabled !== initial.chatBackups.automaticEnabled;
     const hasChatBackupZstdCompressionEnabledChange =
@@ -142,6 +148,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         panelRuntimeProfile: hasPanelRuntimeChange,
         embeddedRuntimeProfile: hasEmbeddedRuntimeChange,
         chatVirtualizationEnabled: hasChatVirtualizationEnabledChange,
+        codeMirrorEditorEnabled: hasCodeMirrorEditorEnabledChange,
         chatBackups: hasChatBackupsChange,
         closeToTrayOnClose: hasCloseToTrayOnCloseChange,
         dynamicTheme: hasDynamicThemeChange,
@@ -165,6 +172,9 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     }
     if (hasChatVirtualizationEnabledChange) {
         patch.chat_virtualization_enabled = nextChatVirtualizationEnabled;
+    }
+    if (hasCodeMirrorEditorEnabledChange) {
+        patch.codemirror_editor_enabled = nextCodeMirrorEditorEnabled;
     }
     if (hasChatBackupsChange) {
         /** @type {Record<string, unknown>} */
@@ -239,6 +249,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
             panelRuntimeProfile: nextPanelRuntimeProfile,
             embeddedRuntimeProfile: nextEmbeddedRuntimeProfile,
             chatVirtualizationEnabled: nextChatVirtualizationEnabled,
+            codeMirrorEditorEnabled: nextCodeMirrorEditorEnabled,
             chatBackups: {
                 automaticEnabled: nextChatBackupAutomaticEnabled,
                 zstdCompressionEnabled: nextChatBackupZstdCompressionEnabled,

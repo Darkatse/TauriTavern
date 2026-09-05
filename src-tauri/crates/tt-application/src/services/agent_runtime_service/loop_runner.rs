@@ -3,9 +3,6 @@ use std::collections::HashSet;
 use serde_json::{Value, json};
 
 use super::commit_ledger::RunCommitLedger;
-use super::model_turn::{
-    append_tool_turn_to_request, assistant_message_for_next_turn, extract_response_text,
-};
 use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
@@ -44,6 +41,10 @@ impl AgentRuntimeService {
         let auto_commit_text_mutations = updates_run_status
             && self.run_repository.load_run(run_id).await?.presentation
                 == AgentRunPresentation::Foreground;
+        let stream = self
+            .active_run_handle(run_id)
+            .await?
+            .stream_enabled(profile.run.stream);
         let mut tool_session = AgentToolSession::new(prepared.effective_skills.clone());
         let mut tool_request_gate = ToolRequestGate::default();
         let mut seen_child_result_task_ids = HashSet::new();
@@ -80,11 +81,11 @@ impl AgentRuntimeService {
 
             let exchange = self
                 .generate_model_with_retry(
-                    run_id,
-                    invocation_id,
+                    &prepared.invocation,
                     round,
                     &prepared.request,
                     &profile.run.model_retry,
+                    stream,
                     cancel,
                 )
                 .await?;
@@ -106,7 +107,7 @@ impl AgentRuntimeService {
             )
             .await?;
 
-            let tool_calls = response.tool_calls.clone();
+            let tool_call_count = response.tool_calls.len();
             self.event(run_id, AgentRunEventLevel::Info, "model_completed", {
                 let mut payload = model_turn_event_summary(&response);
                 let object = payload
@@ -118,15 +119,15 @@ impl AgentRuntimeService {
                     "modelResponsePath".to_string(),
                     json!(model_response_path.as_str()),
                 );
-                object.insert("toolCallCount".to_string(), json!(tool_calls.len()));
-                let text_metrics = TextMetrics::from_text(extract_response_text(&response));
+                object.insert("toolCallCount".to_string(), json!(tool_call_count));
+                let text_metrics = TextMetrics::from_text(response.text.as_str());
                 object.insert("textChars".to_string(), json!(text_metrics.chars));
                 object.insert("textWords".to_string(), json!(text_metrics.words));
                 payload
             })
             .await?;
 
-            if tool_calls.is_empty() {
+            if response.tool_calls.is_empty() {
                 // Issue #64: instead of failing the run immediately, let the
                 // model self-correct while normal tool-loop rounds remain.
                 // Direct output is usually a contract slip, not a host
@@ -155,7 +156,7 @@ impl AgentRuntimeService {
                         exit_policy,
                         &prepared.tool_turn,
                     );
-                    prepared.request.messages.push(response.message.clone());
+                    prepared.request.messages.push(response.message);
                     prepared.request.messages.push(AgentModelMessage {
                         role: AgentModelRole::User,
                         parts: vec![AgentModelContentPart::Text { text: nudge_text }],
@@ -186,18 +187,20 @@ impl AgentRuntimeService {
                 )));
             }
 
-            let assistant_message = assistant_message_for_next_turn(&response)?;
+            let assistant_message = response.message;
+            let tool_calls = response.tool_calls;
             let mut tool_results = Vec::with_capacity(tool_calls.len());
             let mut finished = false;
             let mut handoff = None;
             let tool_call_count = tool_calls.len();
-            let mut text_mutation = None;
+            let mut auto_commit_candidate = None;
 
             for (index, call) in tool_calls.into_iter().enumerate() {
                 let outcome = self
                     .dispatch_tool_call(
                         prepared,
                         round,
+                        index,
                         &call,
                         &mut tool_request_gate,
                         &mut tool_session,
@@ -224,7 +227,11 @@ impl AgentRuntimeService {
                             }),
                         )
                         .await?;
-                        text_mutation = Some((call.call_id, file));
+                        auto_commit_candidate = if stream {
+                            None
+                        } else {
+                            Some((call.call_id, file))
+                        };
                     }
                     AgentToolEffect::WorkspaceFilesWritten {
                         files,
@@ -257,7 +264,7 @@ impl AgentRuntimeService {
                                         path.as_str()
                                     ))
                                 })?;
-                            text_mutation = Some((call.call_id, file));
+                            auto_commit_candidate = Some((call.call_id, file));
                         }
                     }
                     AgentToolEffect::WorkspaceFilePatched {
@@ -285,7 +292,7 @@ impl AgentRuntimeService {
                             }),
                         )
                         .await?;
-                        text_mutation = Some((call.call_id, file));
+                        auto_commit_candidate = Some((call.call_id, file));
                     }
                     AgentToolEffect::ChatCommitRequested { .. } => {}
                     AgentToolEffect::Finish => {
@@ -333,7 +340,7 @@ impl AgentRuntimeService {
                 self.ensure_not_cancelled(cancel)?;
             }
 
-            if auto_commit_text_mutations && let Some((call_id, file)) = text_mutation {
+            if auto_commit_text_mutations && let Some((call_id, file)) = auto_commit_candidate {
                 self.auto_commit_text_file_if_eligible(
                     run_id,
                     &call_id,
@@ -369,7 +376,15 @@ impl AgentRuntimeService {
             }
 
             remember_seen_child_results_from_await(&tool_results, &mut seen_child_result_task_ids);
-            append_tool_turn_to_request(&mut prepared.request, assistant_message, &tool_results)?;
+            prepared.request.messages.push(assistant_message);
+            prepared
+                .request
+                .messages
+                .extend(tool_results.into_iter().map(|result| AgentModelMessage {
+                    role: AgentModelRole::Tool,
+                    parts: vec![AgentModelContentPart::ToolResult { result }],
+                    provider_metadata: Value::Null,
+                }));
             if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed
                 && let Some(message) = self
                     .completed_child_results_message(
@@ -399,7 +414,7 @@ impl AgentRuntimeService {
         response: &AgentModelResponse,
         profile: &ResolvedAgentProfile,
     ) -> Result<Option<WorkspacePath>, ApplicationError> {
-        let text = extract_response_text(response);
+        let text = response.text.as_str();
         if text.trim().is_empty() {
             return Ok(None);
         }

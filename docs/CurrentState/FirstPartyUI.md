@@ -1,130 +1,121 @@
-# First-party UI 工程基线
+# First-party UI 当前架构
 
-本文记录 TauriTavern 自有 UI 完成 Vue 表示层退役后已经生效的工程契约。它不改变 SillyTavern 1.18.0 前端，也不把页面改造成 SPA。
+本文说明 TauriTavern 自有前端的现行架构与维护边界。SillyTavern 1.18.0 仍拥有页面、扩展加载和全局生命周期；TauriTavern 只在既有页面中挂载独立的 React client island，不建立第二套页面壳或路由。
 
-## 1. 所有权
+## 1. 范围
+
+First-party UI 包含：
+
+- Agent System；
+- MCP Manager；
+- Tauri Settings、Dev Logs 与 Sync。
+
+这些界面统一使用 React、React DOM 与 strict TypeScript/TSX。上游 SillyTavern 前端、第三方扩展和由 WebView 直接加载的宿主脚本不属于 React 组件源码。
+
+## 2. 所有权与数据流
 
 ```text
-Rust / Host ABI（持久事实、平台能力、事件）
-  -> feature composition root（DTO、actions、subscription、Popup/DOM 桥）
-  -> React client island（局部草稿和视图状态）
+Rust / Host services
+  -> feature composition root
+  -> typed controller / model / external store（按需）
+  -> React client island
   -> island 自己的 DOM subtree
 ```
 
-- React 是 TauriTavern 自有状态型 UI 的统一表示层。
-- SillyTavern 继续拥有文档、扩展加载和全局生命周期。
-- Rust/Host 继续拥有持久事实和跨窗口事实；React 不建立第二份平台状态。
-- 迁移以完整 root 为单位，不建立 Vue/React 组件桥。
-- 上游前端及其依赖不纳入这次现代化范围。
+- Rust 与 Host service 拥有持久数据、跨窗口事实、文件和网络 I/O、Tauri command 及平台事件。
+- Feature composition root 获取并校验 Host 能力，组装 DTO、typed actions、订阅、翻译器和挂载参数。
+- Controller、model 或 external store 只在功能确实需要时承载异步编排和视图投影；简单界面直接使用局部 React state。
+- React 组件负责渲染、未保存草稿和当前视图状态，不复制持久事实，也不直接调用 Tauri `invoke()`。
+- 页面级事件必须使用 `window.SillyTavern.getContext()` 提供的 `eventSource` 与 `eventTypes`；订阅和退订使用同一个页面实例。
+- 缺少必需 Host API、事件或 DTO 字段时立即失败并暴露上下文，不猜测默认能力。
 
-当前 strict TSX 所有权范围只有三处：
+## 3. 源码与构建边界
 
-```text
-src/scripts/extensions/agent-system/src/**/*.{ts,tsx}
-src/scripts/extensions/mcp-manager/src/**/*.{ts,tsx}
-src/scripts/tauri/setting/**/*.{ts,tsx}
-```
-
-`tsconfig.ui.json`、ESLint 和 Rstest 显式使用这三个范围。尚未存在 TSX 的目录也保留在配置中，使后续原地迁移从第一个文件开始就进入门禁。
-
-## 2. 构建与开发链路
-
-`rspack.config.js` 的 `createRspackConfigs(mode)` 是 production 与 development 的唯一构建图：
-
-- `pnpm run web:build` 显式使用 production mode、persistent cache 和 fail-fast build。
-- `pnpm run web:dev` 显式使用 development mode、memory cache 和 watch。
-- Agent、MCP、Settings 三个 first-party compiler 都直接编译 TS/TSX；只有 Agent 的 SWC rule 启用 React Compiler。自有 UI 已不再消费 Vue，遗留 dependency 与 Agent DefinePlugin 留给 Phase 6 独立删除。
-- production cache 由 Rspack 自己跟踪模块依赖；四个 compiler 使用独立目录。源码内容不再被预先哈希进 cache version，单文件修改不会人为废弃整个缓存。
-
-标准 `pnpm dev` 不再先生成 production bundle。`scripts/tauri-dev-server.mjs` 直接拥有同一份 development MultiCompiler：
+Rspack 直接拥有以下 TypeScript/TSX 源码：
 
 ```text
-启动 -> development 初次编译成功 -> HTTP server 开始监听
-TS/TSX 变化 -> Rspack 重编译 -> 成功后发送 reload
-                              -> 失败则保留页面并报告错误
-普通未打包资源变化 -----------> 直接发送 reload
+src/scripts/extensions/agent-system/src
+src/scripts/extensions/mcp-manager/src
+src/scripts/tauri/setting/settings-app
+src/scripts/tauri/setting/dev-logs-app
+src/scripts/tauri/setting/sync-app
 ```
 
-因此，页面不会在编译失败时刷新到旧 bundle；进程退出时 watcher 和 compiler 都会关闭。现阶段继续使用既有 dev server，是因为它还负责 service worker bootstrap 和 Tauri reload URL；没有引入第二个 dev server 或 HMR 协议。
+入口和稳定输出如下：
 
-## 3. 自动门禁
+| 功能 | Rspack entry | 输出 | 加载方 |
+| --- | --- | --- | --- |
+| Agent System | `agent-system/src/index.tsx` | `agent-system/dist/index.bundle.js` | Agent manifest |
+| MCP Manager | `mcp-manager/src/index.tsx` | `mcp-manager/dist/index.bundle.js` | MCP manifest |
+| Settings | `settings-app/SettingsApp.tsx` | `setting/dist/settings.bundle.js` | `setting-panel/settings-popup.js` |
+| Dev Logs | `dev-logs-app/DevLogsApp.tsx` | `setting/dist/dev-logs.bundle.js` | `setting/dev-logs.js` |
+| Sync | `sync-app/index.ts` | `setting/dist/sync.bundle.js` | Sync popup 与 listener 外壳 |
 
-`scripts/check-first-party-ui-guardrails.mjs` 被 `pnpm run check:frontend` 调用。当前 Vue 债务基线为：
+本地 TS/TSX 模块使用无扩展名相对 import。显式 `.js` import 只指向磁盘上真实存在、由浏览器执行的 JavaScript 模块。
 
-| 指标 | 上限 |
-| --- | ---: |
-| runtime `template:` | 0 |
-| Vue imports | 0 |
-| `createApp()` roots | 0 |
+`src/scripts/tauri/setting/*.js` 与 `setting-panel/*.js` 是 WebView 直接加载的宿主适配层。它们拥有 Popup 生命周期、保存/关闭时序、原生事件接线和 bundle 动态导入，因此继续以浏览器 ESM 交付。`format-bytes.js` 同时服务宿主脚本与 TS bundle，并在实现中通过 `// @ts-check` 和 JSDoc 提供类型信息。
 
-三个计数已经清零；任何回归都会直接失败，新增 `.vue` 文件同样失败。ESLint 同时保证：
+Production 与 development 共用 `rspack.config.js` 的 `createRspackConfigs(mode)`。各 bundle 都是自包含 ES module，不依赖页面级 React 全局变量；React Compiler 只用于 Agent System。
 
-- 新的 typed first-party UI 不得 import Vue；
-- presentation 文件默认不超过 500 行；
-- MCP 的既有 `test-call-dialog.tsx`（613 行）以当前值为上限，只能持平或缩短。
+## 4. 功能内部结构
 
-门禁是迁移棘轮，不是源码解析器。每迁移一个 root，都必须在同一变更中删除旧 Vue 实现并下调对应计数。
+### Agent System
 
-## 4. 冻结的宿主契约
+- `index.tsx` 是扩展启动与主入口 composition root。
+- `host-api.ts` 集中访问 `window.__TAURITAVERN__` 和 SillyTavern context。
+- Panel、Timeline 与 Skill Manager 各自拥有 feature-local contract、controller/model 和 React presentation。
+- `i18n.ts` 负责翻译与插值，消息 key 由静态 catalog 推导类型。
+- `chat-input-toggle.ts` 与 `embedded-assets-buttons.ts` 是接入上游 DOM 的原生适配器，不创建额外 React root。
 
-第一轮迁移只替换 island 内部表示层。以下外壳 handle 与调用时序保持不变：
+### MCP Manager
 
-- Settings：`getDraft()`、`setChatBackupStorageStats()`、`unmount()`；
-- Sync：`refresh()`、`refreshAutomationStatus()`、`unmount()`；
-- Sync Progress：`update()`、`unmount()`；
-- Sync Scope：`getSelection()`、`unmount()`；
-- Dev Logs：`unmount()`。
+- `index.tsx` 负责挂载；`host.ts` 负责 Host 与 SillyTavern 边界。
+- Manager、server dialog 与 test-call dialog 保持 feature-local，不依赖 Agent 或 Settings 的 UI runtime。
 
-Popup 的 Save/Cancel/onClosing、关键 class/ID、SmartTheme 变量、滚动容器、移动端 surface 和文案顺序同样属于外部可观察契约。迁移不顺带重写 Host API、CSS 或交互设计。
+### Settings、Dev Logs 与 Sync
 
-## 5. 迁移前 production bundle 基线
+- Raw Settings 外壳创建 Popup、读取 Host 数据并向 React root 注入 typed options、actions 与 translator。
+- React root 不读取外壳内部状态；外壳也不依赖 React component instance，只持有公开 mount handle。
+- 扩展菜单快捷入口是设备本地的展示偏好；Raw Settings 外壳复用上游 Popup 管理选择，并由 DOM adapter 投影到既有 `#extensionsMenu`，不新增 React root 或后端设置。
+- 三个功能共享同一 Rspack compiler，但保持独立 bundle 和独立生命周期。
 
-Rspack 2.1.10、React 19.2.8、Vue 3.5.41 下的 2026-08-20 基线：
+## 5. 宿主调用契约
 
-| bundle | raw bytes | gzip -9 bytes | framework |
-| --- | ---: | ---: | --- |
-| Agent System | 501,628 | 134,165 | Vue runtime compiler |
-| MCP Manager | 230,039 | 71,148 | React |
-| Settings | 203,922 | 68,782 | Vue runtime compiler |
-| Dev Logs | 192,141 | 67,412 | Vue runtime compiler |
-| Sync | 217,240 | 72,093 | Vue runtime compiler |
+Settings 系列 bundle 通过 named export 暴露挂载函数：
 
-Phase 2 后（2026-08-22）：Sync 为 218,632 raw / 67,633 gzip -9 bytes。Sync Main 迁移完成后 Vue runtime 退出 `sync.bundle.js`，Phase 1 的双 runtime 过渡成本（404,416 / 131,048）已消除，Sync entry 现在是纯 React。
+| 挂载函数 | 返回 handle |
+| --- | --- |
+| `mountTauriTavernSettingsApp()` | `getDraft()`、`setChatBackupStorageStats()`、`unmount()` |
+| `mountTauriTavernDevLogsApp()` | `unmount()` |
+| `mountTauriTavernSyncApp()` | `refresh()`、`refreshAutomationStatus()`、`unmount()` |
+| `mountTauriTavernSyncProgressApp()` | `update()`、`unmount()` |
+| `mountTauriTavernSyncScopeApp()` | `getSelection()`、`unmount()` |
 
-Phase 3 后（2026-08-23）：Settings 为 209,392 raw / 64,869 gzip -9 bytes，Vue runtime 退出 `settings.bundle.js`，gzip 反而低于 Vue 基线约 4 KB。Dev Logs 仍携带 Vue runtime；是否改为共享 React chunk，必须等它迁移后用真实 stats 决定。
+挂载参数在 JS/TS 边界校验。外壳只通过这些 handle 与 island 交互；新增能力应优先扩展对应 feature contract，而不是读取 React DOM 或组件内部状态。
 
-Phase 4 后（2026-08-23）：Dev Logs 为 201,756 raw / 63,449 gzip -9 bytes，Vue runtime 退出 `dev-logs.bundle.js`，gzip 比 Vue 基线低约 4 KB；Settings compiler 不再携带 Vue DefinePlugin。三个 React entry（Settings 209,392 / 64,869、Sync 218,632 / 67,633、Dev Logs 201,756 / 63,449）合计 629,780 raw / 195,951 gzip，各自重复打包 React runtime；是否引入共享 chunk 由真实 stats 与面板并存时的内存实测另行决定，本阶段不引入 `dependOn`/`splitChunks`。
+Agent 与 MCP 由 manifest 加载后自行启动。它们的外部契约是 manifest 路径、Host ABI、事件/DTO 语义以及已挂载 DOM 的可观察行为。
 
-Phase 4 UX 与状态一致性复审后（同日）：Live 面板 More 按钮并入状态行（`Showing x/y · +n new · Paused` + 按需出现的 Show older），行内时间戳缩写为本地化短时间（导出仍带完整日期时间），两个面板补空状态，LLM 面板以同步当前选择的条目下拉取代逐条 Prev/Next 盲翻（保留 Prev/Next），meta 对失败请求与加载错误以 `--fullred` 高亮；Dev Logs 最终为 202,991 raw / 63,965 gzip -9 bytes。
+## 6. 生命周期、DOM 与样式
 
-Agent System Phase 5 五个切片完成后（2026-08-24）：Agent entry 为 465,458 raw / 130,154 gzip -9 bytes，production module graph 只包含 React/React DOM，不再包含 Vue runtime/compiler；迁移前最后一个双 runtime 基线为 656,384 / 194,316。active/history Timeline 与 SubAgent 共用 mount-local typed controller、event session/detail epoch 和 immutable cached snapshot，完整已读历史保留在内存，virtualizer 只限制 DOM。平台 WebView 的 scroll/pointer/native dialog smoke 仍是发布门禁，不由 happy-dom 结果替代。
+- 每个 React root 只管理自己的 mount subtree；SillyTavern 继续管理外围文档和扩展容器。
+- Host 订阅由 composition root、controller 或专用 hook 持有，并在对应生命周期结束时释放。
+- 异步读取使用明确的 epoch、snapshot 或取消语义阻止旧结果覆盖新状态；不使用定时等待模拟协调。
+- Popup 的 Save、Cancel、Escape、`onClosing` 和原生 dialog 行为由创建它的外壳或 composition root 拥有。
+- 样式沿用 SillyTavern class、SmartTheme CSS 变量和移动端 surface 契约；React 不引入 CSS-in-JS 或独立 UI framework。
+- 需要插入上游既有控件栏的简单按钮使用原生 DOM adapter；完整状态型界面才使用 React root。
 
-Agent SWC rule 启用 React Compiler 后（2026-08-24）：Agent entry 为 510,331 raw / 150,039 gzip -9 bytes；MCP 与 Settings 的 SWC rule 保持不变。Compiler 使用 Rspack 内置 SWC 能力，不新增 Babel、loader 或 npm dependency。
+## 7. 测试与开发
 
-## 6. 当前有意不做的事情
+Rstest、Testing Library 与 `happy-dom` 覆盖组件交互、controller 行为、订阅生命周期和稳定边界。Node contract tests 覆盖 Host ABI 与浏览器 JavaScript 集成；Rust tests 覆盖后端领域和适配器行为。
 
-- 不把 React Compiler 扩到 MCP 或 Settings；先用 Agent pilot 的 profiler 数据判断其他 entry 是否值得承担同样的产物成本。
-- 不预建跨 feature 的 `ui-runtime`、全局 root registry、通用 controller 或 subscription framework。各 root 只保留已经出现的局部机制；Dev Logs 的 `useAsyncSubscription()` 只服务两个具有相同异步 cleanup 语义的真实订阅者，不提升为全局抽象。
-- 不在 Phase 0 拆分 MCP 或修改聊天关键路径。行数棘轮先阻止债务增长，真实 feature 改动再沿职责边界拆分。
-- 不引入 router、全局状态库、query cache、CSS-in-JS、UI framework、Zod 或新测试框架。
+`happy-dom` 不提供真实布局、滚动和平台 WebView 行为。涉及 pointer、focus、native dialog、scroll anchor、移动端 viewport 或主题级联的改动，还需要在真实 Tauri WebView 中验证。
 
-mount/listener 泄漏、Popup 视觉、focus/scroll/pointer 和移动端内存需要真实 React pilot 与 WebView 才能测量。它们是进入 Settings/Agent 大规模迁移前的 Go/No-Go 证据，不用静态脚手架伪造基线。
-
-## 7. 验证入口
+常用命令：
 
 ```bash
-pnpm run check:frontend
 pnpm run check:types
 pnpm run check:lint
 pnpm run test:ui
 pnpm run web:build
 pnpm run check
 ```
-
-Phase 1 与 Phase 2 已完成：Sync feature 的三个 root（Main、Progress、Scope）全部迁移为 React（`sync-app/SyncApp.tsx`、`SyncProgressApp.tsx`、`SyncScopeApp.tsx`），`sync.bundle.js` 不再包含 Vue runtime。公开 handle 契约不变，行为经 `SyncMain.test.tsx` / `SyncPilot.test.tsx` 与真实桌面 WebView smoke 验证；Pairing 区域合并等为有意的 UI/UX 调整，不声称逐节点 DOM parity。
-
-Phase 3 已完成：Settings root 迁移为 React（`settings-app/SettingsApp.tsx`，view-model/draft 规范化与最小 patch 仍归外壳 `setting-panel/settings-*.js` 所有），`settings.bundle.js` 不再包含 Vue runtime。`getDraft()` 由 mount-local controller 同步供给，不存在 React commit 竞态；未编辑 Save 不再产生 dynamic theme fallback patch（计划批准的唯一语义修复）。`SettingsApp.test.tsx` 只覆盖公开边界、非平凡状态语义、已修复缺陷与异步生命周期，不测试源码文本、静态 DOM 清单或明显条件渲染。迁移后另做一轮用户批准的 UX 微调（行 hint 桌面端跨整行宽、disclosure 摘要改为状态文本），并评估后否决了侧边栏分页方案。真实 WebView 走查（Save/Close/Escape veto、purge 确认、Data Root 不回滚、窄屏与主题）待真机反馈。下一阶段进入 Dev Logs。
-
-Phase 4 已完成：Dev Logs root 迁移为 React（`dev-logs-app/DevLogsApp.tsx`，初始读取、Popup、clipboard 与 Text Viewer 仍归外壳 `dev-logs.js` 所有），`dev-logs.bundle.js` 不再包含 Vue runtime。不设 controller/store：Host 订阅是 push-only 且每个 Popup 只有一个消费者，两个 Panel 通过共享的 `useAsyncSubscription()` 管理订阅生命周期（effect-event handler + per-setup 订阅者身份，StrictMode 下恰好一个活动订阅；异步 teardown 失败写入 console）。同一变更修复了共享 stream bridge 的两个根因缺陷（start 失败残留 ghost handler、末次退订与新订阅紧邻时 disable 覆盖 enable），并把 LLM 选择从会漂移的 numeric index 改为稳定 `selectedId`、Preview/Raw 增加 epoch stale 防护、keep 改为两阶段提交（setKeep 失败零提交；reload 失败不回滚已持久化 keep；只合并 reload 期间真实收到的事件）。公开 mount、Host、Popup、Text Viewer、关键 class 与 raw `<details>` 契约保持不变；状态行、短时间、空状态、条目下拉和错误高亮是后续批准的有意 UX 调整，不声称逐节点 Vue parity。真实 WebView 走查（追尾/暂停/300-800 窗口、Popup 栈与 Escape、三个 slash command 入口、窄屏与主题）待真机反馈；随后进入 Agent System 集中迁移。
-
-Agent System Phase 5 的五个 root family 已完成代码迁移：Settings Entry、Embedded Assets、Main/History/Retention、Skill Manager、active/history Timeline + SubAgent 均为 React + strict TS/TSX；原生 chat-input/embedded-asset 按钮继续作为上游 DOM adapter。Timeline 保留 240-event paging、server-side invocation filter、120ms projection debounce、完整内存历史、窗口化 DOM、scroll anchor/follow-tail、resize 与 touch gesture 语义；History 保持只读，retry 继续走 typed generation action。当前 first-party guardrail 为 `0 / 0 / 0`，下一步是平台 WebView 验收与 Phase 6 删除 Vue dependency/DefinePlugin，而不是新增兼容层。

@@ -88,6 +88,12 @@ v1/v2 只作为迁移输入；载入后将旧 builtin native names 一次性转�
 
 MCP Manager 的 description override 是 registration 级默认值；Agent Profile `tools.toolDescriptions` 在 invocation snapshot 前最后应用，同一工具同时存在两份覆盖时以 Profile 为准。两层都原样保留非空描述文本，只修改 descriptor 副本中的工具/参数描述，不修改 raw catalog、ToolId、schema 结构或执行权限。
 
+### 1.6 Run Streaming Policy
+
+`run.stream` 是默认 `false` 的布尔策略，控制当前 invocation 是否启用非权威工具参数 live projection。它是 Profile v3 的普通默认字段，不需要 schema 升级或 migration；缺失时直接补 `false`，保存后自然写回。
+
+`AgentStartRunOptionsDto.stream` 保持可选 run-wide override：显式 `true/false` 覆盖 root、child 与 handoff；省略时每个 invocation 使用自己的 resolved Profile。Unsupported exact provider route 继续 fail-fast，不在 Profile 保存阶段复制 capability 判断。
+
 ## 2. Preset Agent Schema
 
 第一版可以使用 JSON-compatible schema，不必立刻引入 YAML。

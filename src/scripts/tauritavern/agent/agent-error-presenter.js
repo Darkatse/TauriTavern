@@ -1,20 +1,34 @@
+// @ts-check
+
+/**
+ * @typedef {{
+ *   code: string;
+ *   message: string;
+ *   summary: string;
+ *   technicalMessage: string;
+ *   retryable: boolean;
+ *   userRetryable: boolean;
+ * }} AgentRunFailurePresentation
+ */
+
+/** @type {Readonly<Record<string, { message: string; messageKey: string; summary: string; summaryKey: string }>>} */
 const RUN_FAILURE_PRESENTATIONS = Object.freeze({
     'model.tool_call_required': Object.freeze({
-        message: 'The model skipped the Agent tool flow and tried to answer directly. No committed Agent chat output was kept. Try regenerating; if this keeps happening, reduce the context or use a model with stronger tool calling.',
+        message: 'The model skipped the Agent tool flow and tried to answer directly. No Agent output was committed; any streamed partial text remains in chat. Try regenerating; if this keeps happening, reduce the context or use a model with stronger tool calling.',
         messageKey: 'agent.error.model_tool_call_required.message',
-        summary: 'The model skipped the Agent tool flow; no Agent chat output was kept.',
+        summary: 'The model skipped the Agent tool flow; no output was committed, but any streamed partial text was kept.',
         summaryKey: 'agent.error.model_tool_call_required.summary',
     }),
     'agent.tool_after_finish': Object.freeze({
-        message: 'The model requested more tools after workspace.finish, which breaks the Agent contract. No committed Agent chat output was kept. Try regenerating; if this persists, lower the temperature or pick a model that obeys workspace.finish.',
+        message: 'The model requested more tools after workspace.finish, which breaks the Agent contract. No Agent output was committed; any streamed partial text remains in chat. Try regenerating; if this persists, lower the temperature or pick a model that obeys workspace.finish.',
         messageKey: 'agent.error.tool_after_finish.message',
-        summary: 'Model kept calling tools after workspace.finish; no Agent chat output was kept.',
+        summary: 'Model kept calling tools after workspace.finish; no output was committed, but any streamed partial text was kept.',
         summaryKey: 'agent.error.tool_after_finish.summary',
     }),
     'agent.max_tool_rounds_exceeded': Object.freeze({
-        message: 'The Agent loop exceeded the configured maximum tool rounds before calling workspace.finish. No committed Agent chat output was kept. Try regenerating with a tighter prompt, or raise the round budget in the profile.',
+        message: 'The Agent loop exceeded the configured maximum tool rounds before calling workspace.finish. No Agent output was committed; any streamed partial text remains in chat. Try regenerating with a tighter prompt, or raise the round budget in the profile.',
         messageKey: 'agent.error.max_tool_rounds_exceeded.message',
-        summary: 'Tool round budget exhausted; no Agent chat output was kept.',
+        summary: 'Tool round budget exhausted; no output was committed, but any streamed partial text was kept.',
         summaryKey: 'agent.error.max_tool_rounds_exceeded.summary',
     }),
     'agent.profile_model_requires_configuration': Object.freeze({
@@ -25,8 +39,14 @@ const RUN_FAILURE_PRESENTATIONS = Object.freeze({
     }),
 });
 
+/**
+ * @param {{ payload?: unknown } | null | undefined} event
+ * @returns {AgentRunFailurePresentation}
+ */
 export function presentAgentRunFailure(event) {
-    const payload = event?.payload || {};
+    const payload = event?.payload && typeof event.payload === 'object' && !Array.isArray(event.payload)
+        ? /** @type {Record<string, unknown>} */ (event.payload)
+        : {};
     const code = String(payload.code || '').trim();
     const message = String(payload.message || '').trim();
     const technicalMessage = String(payload.technicalMessage || message || runFailed()).trim();
@@ -51,6 +71,10 @@ export function presentAgentRunFailure(event) {
     };
 }
 
+/**
+ * @param {any} error
+ * @returns {string}
+ */
 export function agentErrorMessage(error) {
     const raw = String(error?.userMessage || error?.message || error || runFailed());
     const code = structuredAgentErrorCode(raw);
@@ -64,11 +88,17 @@ function runFailed() {
     return translateAgentError('Agent run failed', 'agent.error.run_failed');
 }
 
+/**
+ * @param {string} message
+ * @param {string} key
+ */
 function translateAgentError(message, key) {
-    const translate = globalThis.SillyTavern?.getContext?.()?.translate;
+    const host = /** @type {typeof globalThis & { SillyTavern?: { getContext?: () => { translate?: (message: string, key: string) => string } } }} */ (globalThis);
+    const translate = host.SillyTavern?.getContext?.()?.translate;
     return typeof translate === 'function' ? translate(message, key) : message;
 }
 
+/** @param {unknown} message */
 function structuredAgentErrorCode(message) {
     const text = String(message || '').trim();
     const separator = text.indexOf(':');

@@ -1,5 +1,5 @@
-import { eventBelongsToInvocation } from './run-invocation-projector.js';
-import { TERMINAL_EVENT_TYPES } from './run-event-presenter.js';
+import { eventBelongsToInvocation } from './run-invocation-projector';
+import { TERMINAL_EVENT_TYPES } from './run-event-presenter';
 import type {
     TimelineProjection,
     TimelineReadInput,
@@ -9,23 +9,21 @@ import {
     createRunTimelineEventStore,
     RUN_EVENT_PAGE_LIMIT,
     RUN_EVENT_TAIL_SEQ,
-    type RunTimelineEventStore,
 } from './run-timeline-event-store';
 import { emptyTimelineProjection, normalizeTimelineProjection } from './run-timeline-projection';
 
-export type RunTimelineSessionOptions = {
+type RunTimelineSessionOptions = {
     runId?: string;
     invocationId?: string;
     includeTimelineProjection?: boolean;
 };
 
-export type TimelineEventReader = (input: TimelineReadInput) => Promise<TimelineReadResult>;
+type TimelineEventReader = (input: TimelineReadInput) => Promise<TimelineReadResult>;
 
-export type RunTimelineSession = {
+type RunTimelineSession = {
     runId: string;
     invocationId: string;
     includeTimelineProjection: boolean;
-    eventStore: RunTimelineEventStore;
     events: TauriTavernAgentRunEvent[];
     timelineProjection: TimelineProjection;
     terminalEvent: TauriTavernAgentRunEvent | null;
@@ -40,15 +38,14 @@ export type RunTimelineSession = {
     receiveEvents: (events: readonly TauriTavernAgentRunEvent[]) => boolean;
     receiveEvent: (event: TauriTavernAgentRunEvent) => boolean;
     acceptsEvent: (event: TauriTavernAgentRunEvent) => boolean;
-    oldestSeq: () => number | null;
 };
 
 export function createRunTimelineSession(options: RunTimelineSessionOptions = {}): RunTimelineSession {
+    let eventStore = createRunTimelineEventStore();
     const session: RunTimelineSession = {
         runId: '',
         invocationId: '',
         includeTimelineProjection: false,
-        eventStore: createRunTimelineEventStore(),
         events: [],
         timelineProjection: emptyTimelineProjection(),
         terminalEvent: null,
@@ -60,7 +57,7 @@ export function createRunTimelineSession(options: RunTimelineSessionOptions = {}
             session.runId = optionalString(next.runId);
             session.invocationId = optionalString(next.invocationId);
             session.includeTimelineProjection = next.includeTimelineProjection === true;
-            session.eventStore = createRunTimelineEventStore();
+            eventStore = createRunTimelineEventStore();
             session.events = [];
             session.timelineProjection = emptyTimelineProjection();
             session.terminalEvent = null;
@@ -74,23 +71,21 @@ export function createRunTimelineSession(options: RunTimelineSessionOptions = {}
         loadOlder: readEvents => loadOlderPage(session, readEvents),
         refreshProjection: readEvents => refreshProjection(session, readEvents),
         receiveEvents(events) {
-            let added = false;
-            for (const event of events) added = session.receiveEvent(event) || added;
-            return added;
-        },
-        receiveEvent(event) {
-            if (!session.acceptsEvent(event) || !session.eventStore.add(event)) return false;
-            session.events = session.eventStore.events();
-            if (TERMINAL_EVENT_TYPES.includes(event.type)) session.terminalEvent = event;
+            const accepted = events.filter(session.acceptsEvent);
+            if (!eventStore.addMany(accepted)) return false;
+            session.events = eventStore.events();
+            for (const event of accepted) {
+                if (TERMINAL_EVENT_TYPES.includes(event.type)) session.terminalEvent = event;
+            }
             return true;
         },
+        receiveEvent: event => session.receiveEvents([event]),
         acceptsEvent(event) {
             if (!event.runId) throw new Error('Agent run event runId is required.');
             if (!session.runId) session.runId = event.runId;
             if (event.runId !== session.runId) return false;
             return !session.invocationId || eventBelongsToInvocation(event, session.invocationId);
         },
-        oldestSeq: () => session.eventStore.oldestSeq(),
     };
     return session.reset(options);
 }
@@ -110,7 +105,7 @@ async function loadInitialPage(session: RunTimelineSession, readEvents: Timeline
 
 async function loadOlderPage(session: RunTimelineSession, readEvents: TimelineEventReader): Promise<boolean> {
     if (session.loading || session.loadingOlder || !session.hasMoreBefore) return false;
-    const beforeSeq = session.oldestSeq();
+    const beforeSeq = session.events[0]?.seq;
     if (beforeSeq == null || beforeSeq <= 1) {
         session.hasMoreBefore = false;
         return false;
@@ -161,7 +156,7 @@ function applyResult(session: RunTimelineSession, result: TimelineReadResult): v
     }
     session.receiveEvents(result.events);
     session.hasMoreBefore = result.events.length >= RUN_EVENT_PAGE_LIMIT
-        && Number(session.oldestSeq() || 0) > 1;
+        && (session.events[0]?.seq ?? 0) > 1;
 }
 
 function isCurrent(session: RunTimelineSession, requestId: number): boolean {

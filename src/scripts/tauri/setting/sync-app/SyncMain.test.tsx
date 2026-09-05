@@ -215,17 +215,17 @@ test('sync main mount validates its boundary arguments', () => {
     const fakes = createFakes();
     expect(() => mountTauriTavernSyncApp(null, { client: fakes.client, actions: fakes.actions, tr }))
         .toThrow('TauriTavern Sync mount element is required');
-    expect(() => mountTauriTavernSyncApp(document.createElement('div'), {} as never))
+    expect(() => mountTauriTavernSyncApp(document.createElement('div'), {}))
         .toThrow('TauriTavern Sync translator is required');
     expect(() => mountTauriTavernSyncApp(document.createElement('div'), {
-        client: {} as SyncClient,
+        client: {},
         actions: fakes.actions,
         tr,
     }))
         .toThrow('TauriTavern Sync client method is unavailable: loadState');
     expect(() => mountTauriTavernSyncApp(document.createElement('div'), {
         client: fakes.client,
-        actions: {} as SyncActions,
+        actions: {},
         tr,
     }))
         .toThrow('TauriTavern Sync action is unavailable: copyText');

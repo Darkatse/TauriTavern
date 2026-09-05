@@ -404,6 +404,7 @@ function RA_autoconnect(PrevApi) {
                 break;
             case 'openai':
                 if (((secret_state[SECRET_KEYS.OPENAI] || oai_settings.reverse_proxy) && oai_settings.chat_completion_source == chat_completion_sources.OPENAI)
+                    || (secret_state[SECRET_KEYS.OPENCODE] && oai_settings.chat_completion_source == chat_completion_sources.OPENCODE)
                     || ((secret_state[SECRET_KEYS.CLAUDE] || oai_settings.reverse_proxy) && oai_settings.chat_completion_source == chat_completion_sources.CLAUDE)
                     || (secret_state[SECRET_KEYS.OPENROUTER] && oai_settings.chat_completion_source == chat_completion_sources.OPENROUTER)
                     || (secret_state[SECRET_KEYS.AI21] && oai_settings.chat_completion_source == chat_completion_sources.AI21)
@@ -1008,10 +1009,16 @@ export function initRossMods() {
             return;
         }
 
+        // Some WebKit versions dispatch the IME commit keydown after compositionend,
+        // so isComposing is false; keyCode 229 is the legacy IME-processed marker.
+        if (event.isComposing || event.keyCode === 229) {
+            return;
+        }
+
         //Enter to send when send_textarea in focus
         if (document.activeElement == hotkeyTargets.send_textarea) {
             const sendOnEnter = shouldSendOnEnter();
-            if (!event.isComposing && !event.shiftKey && !event.ctrlKey && !event.altKey && event.key == 'Enter' && sendOnEnter) {
+            if (!event.shiftKey && !event.ctrlKey && !event.altKey && event.key == 'Enter' && sendOnEnter) {
                 event.preventDefault();
                 sendTextareaMessage();
                 return;

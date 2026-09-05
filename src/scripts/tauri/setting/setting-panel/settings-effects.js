@@ -43,6 +43,7 @@ export function applyTauriTavernSettingsUpdateEffects(update, updatedSettings) {
         changes.panelRuntimeProfile
         || changes.embeddedRuntimeProfile
         || changes.chatVirtualizationEnabled
+        || changes.codeMirrorEditorEnabled
         || changes.avatarPersonaOriginalImagesEnabled
     ) {
         window.location.reload();

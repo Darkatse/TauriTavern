@@ -700,6 +700,24 @@ impl ChatRepository for FileChatRepository {
         self.read_chat_metadata_from_path(&path).await
     }
 
+    async fn has_character_chat_with_integrity(
+        &self,
+        character_name: &str,
+        integrity: &str,
+    ) -> Result<bool, DomainError> {
+        for chat in self.list_character_chat_files(Some(character_name)).await? {
+            let metadata = self.read_chat_metadata_from_path(&chat.path).await?;
+            if metadata
+                .get("integrity")
+                .and_then(Value::as_str)
+                .is_some_and(|value| value.trim() == integrity)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     async fn set_character_chat_metadata_extension(
         &self,
         character_name: &str,

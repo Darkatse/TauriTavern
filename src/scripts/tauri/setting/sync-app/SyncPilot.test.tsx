@@ -97,7 +97,7 @@ function scopeCheckbox(container: HTMLElement, name: RegExp): HTMLInputElement {
 test('sync progress mount validates its boundary arguments', () => {
     expect(() => mountTauriTavernSyncProgressApp(null, { tr }))
         .toThrow('TauriTavern Sync progress mount element is required');
-    expect(() => mountTauriTavernSyncProgressApp(createContainer(), {} as never))
+    expect(() => mountTauriTavernSyncProgressApp(createContainer(), {}))
         .toThrow('TauriTavern Sync progress translator is required');
 });
 
@@ -168,7 +168,7 @@ test('sync progress unmount clears the mount element', () => {
 test('sync scope mount validates its boundary arguments', () => {
     expect(() => mountTauriTavernSyncScopeApp(null, { catalog: SCOPE_CATALOG, tr }))
         .toThrow('TauriTavern Sync scope mount element is required');
-    expect(() => mountTauriTavernSyncScopeApp(createContainer(), { catalog: SCOPE_CATALOG } as never))
+    expect(() => mountTauriTavernSyncScopeApp(createContainer(), { catalog: SCOPE_CATALOG }))
         .toThrow('TauriTavern Sync translator is required');
 });
 

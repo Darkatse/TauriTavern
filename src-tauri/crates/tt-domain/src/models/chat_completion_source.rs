@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatCompletionSource {
     OpenAi,
+    OpenCode,
     OpenRouter,
     Custom,
     Claude,
@@ -23,6 +24,7 @@ impl ChatCompletionSource {
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_lowercase().as_str() {
             "" | "openai" => Some(Self::OpenAi),
+            "opencode" => Some(Self::OpenCode),
             "openrouter" | "open-router" => Some(Self::OpenRouter),
             "custom" => Some(Self::Custom),
             "claude" => Some(Self::Claude),
@@ -48,6 +50,7 @@ impl ChatCompletionSource {
     pub const fn key(self) -> &'static str {
         match self {
             Self::OpenAi => "openai",
+            Self::OpenCode => "opencode",
             Self::OpenRouter => "openrouter",
             Self::Custom => "custom",
             Self::Claude => "claude",
@@ -70,6 +73,7 @@ impl ChatCompletionSource {
     pub const fn display_name(self) -> &'static str {
         match self {
             Self::OpenAi => "OpenAI",
+            Self::OpenCode => "OpenCode",
             Self::OpenRouter => "OpenRouter",
             Self::Custom => "Custom OpenAI",
             Self::Claude => "Claude",

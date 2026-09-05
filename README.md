@@ -126,7 +126,7 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 </details>
 
 > [!TIP]
-> **iOS 用户**：通过 [TestFlight 公开外测](https://testflight.apple.com/join/gpqAdeTm) 安装，需要 iOS 16 或更高版本。请注意 TestFlight 版本需要遵守苹果的 TestFlight 规则，存在使用限制。
+> **iOS 用户**：通过 [TestFlight 公开外测](https://testflight.apple.com/join/gpqAdeTm) 安装，需要 iOS 15.0 或更高版本。iOS 15.0–16.3 仅提供有限支持，完整支持从 iOS 16.4 开始。请注意 TestFlight 版本需要遵守苹果的 TestFlight 规则，存在使用限制。
 >
 > **Windows 便携版**（Portable）：需系统已安装 WebView2 运行时。
 

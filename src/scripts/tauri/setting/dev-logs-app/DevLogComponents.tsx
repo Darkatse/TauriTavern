@@ -1,5 +1,5 @@
 import type { LiveLogEntry } from './DevLogsContract';
-import { formatTime, levelClass, normalizeLevel } from './log-utils.js';
+import { formatTime, levelClass, normalizeLevel } from './log-utils';
 
 export function DevLogButton({ label, icon = '', disabled = false, title = '', iconOnly = false, onClick }: {
     label: string;

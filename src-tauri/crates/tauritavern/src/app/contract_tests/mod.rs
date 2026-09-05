@@ -38,7 +38,7 @@ use tt_application::dto::character_dto::{
 use tt_application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use tt_application::errors::ApplicationError;
 use tt_application::services::agent_model_gateway::{
-    AgentModelExchange, AgentModelGateway, decode_chat_completion_response,
+    AgentModelExchange, AgentModelGateway, AgentToolCallDelta, decode_chat_completion_response,
 };
 use tt_application::services::agent_profile_service::{
     AgentProfileResolveInput, AgentProfileService,
@@ -55,7 +55,9 @@ use tt_application::services::mcp_service::McpService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
 use tt_domain::errors::DomainError;
-use tt_domain::models::agent::profile::{AgentDelegationPolicy, AgentProfileId};
+use tt_domain::models::agent::profile::{
+    AgentDelegationPolicy, AgentProfileId, DEFAULT_AGENT_PROFILE_ID,
+};
 use tt_domain::models::agent::{
     AgentChatRef, AgentModelContentPart, AgentModelRequest, AgentRun, AgentRunEventLevel,
     AgentRunPresentation, AgentRunStatus, WorkspacePath,
@@ -301,6 +303,7 @@ async fn start_contract_agent_run(
     profile: &tt_domain::models::agent::profile::ResolvedAgentProfile,
     presentation: AgentRunPresentation,
     label: &str,
+    stream: Option<bool>,
 ) -> AgentRunHandleDto {
     let request = chat_request(label);
     let file_name = format!("{label}.jsonl");
@@ -330,7 +333,7 @@ async fn start_contract_agent_run(
             generation_intent: None,
             skill_scope_refs: AgentSkillScopeRefsDto::default(),
             options: AgentStartRunOptionsDto {
-                stream: false,
+                stream,
                 presentation: Some(presentation),
             },
         })
@@ -826,6 +829,7 @@ impl McpGateway for ContractMcpGateway {
 struct MockAgentModelGateway {
     responses: Mutex<VecDeque<Result<Value, ApplicationError>>>,
     requests: Mutex<Vec<AgentModelRequest>>,
+    stream_requests: Mutex<Vec<bool>>,
     closed_sessions: Mutex<Vec<String>>,
 }
 
@@ -834,6 +838,7 @@ impl MockAgentModelGateway {
         Self {
             responses: Mutex::new(responses.into()),
             requests: Mutex::new(Vec::new()),
+            stream_requests: Mutex::new(Vec::new()),
             closed_sessions: Mutex::new(Vec::new()),
         }
     }
@@ -845,16 +850,25 @@ impl MockAgentModelGateway {
     async fn closed_sessions(&self) -> Vec<String> {
         self.closed_sessions.lock().await.clone()
     }
+
+    async fn stream_requests(&self) -> Vec<bool> {
+        self.stream_requests.lock().await.clone()
+    }
 }
 
 #[async_trait]
 impl AgentModelGateway for MockAgentModelGateway {
     async fn generate_with_cancel(
         &self,
-        request: AgentModelRequest,
+        request: &AgentModelRequest,
+        on_tool_call_delta: Option<&mut (dyn FnMut(AgentToolCallDelta) + Send)>,
         _cancel: watch::Receiver<bool>,
     ) -> Result<AgentModelExchange, ApplicationError> {
-        self.requests.lock().await.push(request.clone());
+        self.stream_requests
+            .lock()
+            .await
+            .push(on_tool_call_delta.is_some());
+        self.requests.lock().await.push((*request).clone());
         let response = self.responses.lock().await.pop_front().ok_or_else(|| {
             ApplicationError::ValidationError(
                 "mock_model.empty_responses: no response left".to_string(),
@@ -863,7 +877,7 @@ impl AgentModelGateway for MockAgentModelGateway {
         let response = decode_chat_completion_response(response, &request.tools)?;
         Ok(AgentModelExchange {
             response,
-            provider_state: request.provider_state,
+            provider_state: request.provider_state.clone(),
         })
     }
 

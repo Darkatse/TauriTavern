@@ -126,7 +126,7 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 </details>
 
 > [!TIP]
-> **iOS**： [公開TestFlightベータ](https://testflight.apple.com/join/gpqAdeTm)からインストールできます。iOS 16以降が必要です。TestFlight版にはAppleのTestFlight規約と利用上の制限が適用されます。
+> **iOS**： [公開TestFlightベータ](https://testflight.apple.com/join/gpqAdeTm)からインストールできます。iOS 15.0以降が必要です。iOS 15.0〜16.3は限定サポートで、完全サポートはiOS 16.4以降です。TestFlight版にはAppleのTestFlight規約と利用上の制限が適用されます。
 >
 > **Windowsポータブル版**：システムにWebView2ランタイムが必要です。
 

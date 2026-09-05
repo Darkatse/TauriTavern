@@ -48,6 +48,7 @@ function createValues(overrides: ValuesOverrides = {}): SettingsValues {
         panelRuntimeProfile: 'off',
         embeddedRuntimeProfile: 'off',
         chatVirtualizationEnabled: false,
+        codeMirrorEditorEnabled: false,
         chatBackups: {
             automaticEnabled: true,
             zstdCompressionEnabled: false,
@@ -79,6 +80,7 @@ function createActions(overrides: Partial<SettingsActions> = {}): SettingsAction
         chooseDataRoot: () => Promise.resolve(null),
         chooseWallpaper: () => Promise.resolve(null),
         showHelp: () => Promise.resolve(),
+        manageQuickAccess: () => Promise.resolve(),
         reloadFrontend: () => Promise.resolve(),
         openFrontendLogs: () => Promise.resolve(),
         openBackendLogs: () => Promise.resolve(),
@@ -153,7 +155,7 @@ test('settings mount enforces its public boundary and unmounts the root', () => 
         viewModel: options.viewModel,
         actions: partialActions,
         tr,
-    } as never)).toThrow('TauriTavern settings action is unavailable: chooseWallpaper');
+    })).toThrow('TauriTavern settings action is unavailable: chooseWallpaper');
 
     const { container, handle } = mountApp();
     expect(container.innerHTML).not.toBe('');
@@ -253,7 +255,7 @@ test('iOS proxy repair path: an enabled proxy can be disabled but not re-enabled
     const { container, handle } = mountApp(options);
 
     // The summary meta shows the live proxy URL instead of a click hint.
-    const details = disclosure(container, 'Request Proxy (Advanced)');
+    const details = disclosure(container, 'Request Proxy');
     expect(details.querySelector('.tt-settings-summary-meta small')?.textContent).toBe('http://127.0.0.1:7890');
 
     const toggle = within(container).getByRole<HTMLInputElement>('checkbox', { name: 'Enable Request Proxy' });
@@ -265,7 +267,7 @@ test('iOS proxy repair path: an enabled proxy can be disabled but not re-enabled
     await user.click(toggle);
     expect(handle.getDraft().requestProxy.enabled).toBe(false);
     expect(within(container).queryByRole('checkbox', { name: 'Enable Request Proxy' })).toBeNull();
-    expect(container.textContent).not.toContain('Request Proxy (Advanced)');
+    expect(container.textContent).not.toContain('Request Proxy');
 });
 
 test('unknown stored theme stays selectable and wallpaper choosing preserves raw filenames', async () => {

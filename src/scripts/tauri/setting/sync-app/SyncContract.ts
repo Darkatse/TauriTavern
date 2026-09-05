@@ -205,9 +205,9 @@ const REQUIRED_ACTIONS = [
 ] as const;
 
 function requireMethods(source: unknown, names: readonly string[], label: string): void {
-    const record = source as Record<string, unknown> | null | undefined;
+    const methods = plainObject(source) ? source : {};
     for (const name of names) {
-        if (typeof record?.[name] !== 'function') {
+        if (typeof methods[name] !== 'function') {
             throw new Error(`TauriTavern Sync ${label} is unavailable: ${name}`);
         }
     }
@@ -215,13 +215,17 @@ function requireMethods(source: unknown, names: readonly string[], label: string
 
 /** Validates the parts of the JS host boundary that TypeScript cannot see. */
 export function validateSyncMainBoundary(
-    options: SyncMainOptions | undefined,
+    options: unknown,
 ): asserts options is SyncMainOptions {
-    if (typeof options?.tr !== 'function') {
+    if (!plainObject(options) || typeof options.tr !== 'function') {
         throw new Error('TauriTavern Sync translator is required');
     }
     requireMethods(options.client, REQUIRED_CLIENT_METHODS, 'client method');
     requireMethods(options.actions, REQUIRED_ACTIONS, 'action');
+}
+
+function plainObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 // ── Automation target encoding ("<type>:<id>" in the target select) ────────

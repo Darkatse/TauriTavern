@@ -22,7 +22,7 @@
 - Return-mode SubAgent MVP 已落地：root/active invocation 可通过 `agent.list`、`agent.delegate`、`agent.await` 创建、查看或等待子任务；child invocation 使用 `task.return` 结束，不能直接 `workspace.commit`、`workspace.finish` 或 `agent.handoff`。SubAgent 硬运行预算来自 target Agent Profile，`agent.delegate` 不接受 `budget` 参数，也不能覆盖或收窄 `maxRounds` / `maxCallsPerRun`。当前 child task 已由 run-scoped scheduler 后台并行执行；`agent.await` 只等待/查询结果，未显式 await 的 terminal results 会在父 Agent 下一次 tool turn 后注入下一轮模型请求。
 - Handoff MVP 已落地：具备 `delegation.canHandoff` 且显式暴露 `agent.handoff` 的 foreground owner 可把同一 `AgentRun` 的下一阶段交给 `allowAsHandoffTarget` 的 target Profile。handoff 创建 `TransferControl` task 与 `Handoff` invocation，不进入后台 scheduler；当前 invocation 记为 `Transferred` 后，executor 在同一 run 内继续目标 Agent 的工具循环。已经 `workspace.commit` 过的 Agent 仍允许 handoff，最终 handoff owner 可继续修订、再次 commit 并 `workspace.finish`。实现框架、结构体与事件序列见 `docs/Agent/Handoff.md`。
 - Agent Tool Control Plane 已接入现有 Agent 实现：root、return-mode child 与 handoff invocation 各自冻结 `InvocationToolSnapshot` 和 `ToolTurnContract`；Gateway 把当前 request alias 解码为 canonical `ToolInvocation`，唯一执行入口再通过 invocation-local `ToolRequestGate` 检查 snapshot、turn、typed choice 与冻结预算，之后才进入 Agent control handler、builtin dispatcher 或 `McpService`。MCP descriptors 只从 application memory/disk catalog 读取，不在 Agent 启动中联网。root PromptManager 仍先经兼容桥组装，但其工具预览复用同一 compiler，实际 advertisement/执行权限以 root snapshot 为准。完整 snapshot 持久化到 run workspace，模型名称不再通过全局 registry 模糊解析。
-- 当前工具循环是非 streaming；provider stream 仍不是 Agent timeline event。
+- 已接入的 exact provider route 支持可选流式工具参数；完整响应仍走原执行路径，前台 root / handoff write 投影到 chat，Timeline 独立展示 write/patch。
 - Agent System 扩展开关开启时，当前前端会把普通发送、regenerate 与 overswipe 新候选生成接入 Agent；实际 root run 使用扩展设置中的 `activeProfileId`。Profile 面板的 `editingProfileId` 只表示当前正在编辑的配置档案，不影响生成。Agent Mode off 时上游 SillyTavern 生成、事件和保存语义不变。
 - Agent System 前端已提供 React/strict TSX run timeline / detail panel；timeline 以 `readEvents(beforeSeq, limit)` 读取最新页并按需补拉更早 journal 页，默认视图只投影用户可见操作，DOM 使用窗口化渲染避免长 run 在低端移动设备上堆积节点；Timeline / Detail 使用 `detailsOpen` 单一事实源驱动互斥视图，不再依赖横向 scroll-snap、smooth scroll 或 scroll 事件反写状态，避免低端 WebView 在切换中进入半页卡住状态；移动端横向滑动只作为 Pointer Events 输入快捷方式，最终仍调用 typed `openDetails()` / `showTimeline()` action，并通过 `touch-action: pan-y pinch-zoom` 保留原生纵向滚动与缩放；关闭 Detail 会 reset detail state 并取消 stale detail load，Detail 打开期间不测量或贴底隐藏的 timeline scroller；详情面板顶部可拖动调整高度，高度仅作为扩展 UI 偏好保存，不进入 Agent Host ABI、journal 或 Rust runtime。active、history 与 SubAgent family 由同一个 mount-local controller 拥有，复用 typed session/detail primitives；active root 以 `display:none` 保留状态，History 保持只读，SubAgent 使用 server-side `invocationId` 事件页，不依赖组件实例方法。
 - Agent run history 已提供只读 `listRuns()` / `list_agent_runs(dto)` 入口；首版从 `_tauritavern/agent-workspaces/index/runs/*.json` 读取 `AgentRun` 摘要，支持 `chatRef`、`stableChatId`、`statuses`、时间游标与 limit。列表会维护 `_tauritavern/agent-workspaces/index/run-summaries/<run-id>.json` projection，从 `chat_commit_completed.messageId` 派生提交当时的 `messageIndex`；该索引是提交时快照，不扫描聊天消息、不反查当前楼层。只有已经写入 terminal event 的终态 run 会复用/落盘 summary projection，运行中或终态事件尚未出现的窗口只即时投影。
@@ -36,6 +36,7 @@
 ```ts
 api.agent.startRunFromLegacyGenerate(input?)
 api.agent.startRunWithPromptSnapshot(input)
+api.agent.subscribeLiveProjection(runId, handler, options?)
 api.agent.subscribe(runId, handler, options?)
 api.agent.cancel(runId)
 api.agent.submitGuidance(input)
@@ -87,7 +88,6 @@ api.skill.export(input)
 
 当前显式拒绝：
 
-- `stream: true`
 - prompt snapshot 中已有 external `tools`
 - external `tool_choice`
 - 已有 `role: "tool"` 或 assistant `tool_calls`
@@ -117,6 +117,7 @@ _tauritavern/agent-profiles/
 - 每个 invocation 按 `global -> preset -> profile -> character` 解析 active Skill scopes。root run 会固化 ambient `skillScopeRefs`；return-mode child 使用 target Profile 的 Skill policy，并按 target preset / run ambient character 解析可读 Skill。
 - `workspace.visibleRoots` / `workspace.writableRoots` 只能收窄 root universe：`output`、`scratch`、`plan`、`summaries`、`persist`。
 - `run.presentation` 区分 `foreground` / `background`，默认 built-in profile 为前台；`run.directRunnable` 控制 Profile 是否可被用户直接启动。直接可运行 Profile 必须暴露 `workspace.finish`，前台直接运行还必须暴露 `workspace.commit`；非直接运行 Profile 必须可作为 return-mode SubAgent 或 handoff target。仅作为 handoff target 的前台 Profile 可以不暴露 `workspace.finish`，只要它仍能继续 handoff；若要成为最终收尾 Agent，则应暴露 `workspace.commit` / `workspace.finish`。
+- `run.stream` 控制单个 invocation 的流式策略，缺失时默认 `false`；显式 `options.stream` 覆盖整次 run。`true` 仅支持已接入的 exact route，其他 route fail-fast。
 - `profiles.list()` 的 summary 暴露 `directRunnable`，Agent System UI 只允许直接可运行 Profile 成为 `activeProfileId`。保存或删除当前生效 Profile 导致其不可直接运行时，前端会把 `activeProfileId` 显式切回 built-in `default-writer`；不会把当前正在编辑的 Profile 自动设为生效。
 - `profiles.diagnose()` 返回管理态 `AgentProfileHealth`，用于展示可加载 Profile 的外部资源健康度。第一期覆盖 missing/unsupported preset ref、`model.requiresConfiguration`、LLM Connection 缺失或无效；该 API 不改变 run / prompt assembly 的 fail-fast 语义，也不会让运行静默回退当前 UI preset/model。
 - `run.modelRetry` 控制单次模型调用的瞬时错误重试；默认 `maxRetries = 3`、`intervalMs = 3000`。当前只重试 rate limit / transient transport-provider 错误，不重试 prompt/schema/native metadata/tool id 等契约错误。
@@ -215,6 +216,7 @@ AgentModelContentPart {
 - Tool schema 在 gateway 边界按 provider format 做深拷贝 sanitizer；canonical schema 本身不被污染。
 - Tool choice 在 gateway 边界从 domain enum 投影到 OpenAI-compatible 中间形态，再由现有 provider builder 精确转换；未知或不支持的组合不得回退 Auto/省略。
 - Claude / Gemini / OpenAI Responses / Gemini Interactions 的 native blocks 会进入 normalized `message.native`，再进入 Agent `Native` part。
+- 工具参数 live projection 的 exact route 见 `docs/Agent/LlmGateway.md`。
 
 当前 `provider_state` 契约：
 
@@ -267,10 +269,10 @@ persist/
 
 实际 roots 由 resolved Profile 收窄后写入 run manifest。runtime 另加只读可见、never-commit 的 `tool-results/`，不属于 Profile 可配置 root universe。`persist/` 是 chat workspace 级持久 root 的 run projection。run 中修改 `persist/` 只影响本 run；`workspace.finish` 收尾成功时 promote 回 `chats/<workspace-id>/persist/`。
 
-Chat commit 由 pre-explicit 文本 mutation policy 或模型显式调用 `workspace.commit` 触发，并由同一个前端 host bridge 执行：
+前台流式 root / handoff `write_file.content` 直接写入同一条 assistant message；正式 Chat commit 仍由 host bridge 执行：
 
 ```text
-每轮最后一次 workspace.write_file / workspace.apply_patch  # 首次成功显式 commit 前，匹配文本后缀
+每轮最后一个非流式 workspace.write_file / workspace.apply_patch 候选  # 首次成功显式 commit 前
 或 workspace.commit(path?, mode?)
   -> chat_commit_requested event
   -> Host API 重读当前 workspace 文件并校验事件 SHA，同时读取 root / handoff Model Turn 的可见 reasoning
@@ -283,7 +285,9 @@ Chat commit 由 pre-explicit 文本 mutation policy 或模型显式调用 `works
   -> resolve_agent_persistent_state_metadata_update
 ```
 
-自动 commit 只在一轮 tool calls 全部处理后检查该轮最后一次成功的 write/patch，每轮最多一次。它使用大小写不敏感的固定后缀 `.md`、`.markdown`、`.txt`、`.text`，不按 artifact 或 root 过滤，并把该 mutation 的完整文件以 `replace` 发布；跨轮多次发布仍在同一楼层遵循 last-write-wins。第一次 host-confirmed 的显式 `workspace.commit` 后自动触发永久停止。显式 `mode` 默认为 `replace`；`append` 在本 run 尚无 commit 时创建消息，之后多次 commit 始终更新同一个消息楼层。`append` 追加的是本次 commit 读取到的文件文本，不计算 workspace file diff；host bridge 会对累计后的 raw 目标文本做一次 Legacy output postprocess。Commit 必须遵守 SillyTavern 完整 chat payload 与保存串行化契约，不能直接写 chat JSONL。`persistStateId` 只能表示已经落盘的 durable persistent state；`chat_commit_requested` 不携带该字段，partial success 保留的聊天输出不会成为下一轮可复用 persist base。下一轮 run 的 `persistBaseStateId` 由 Rust runtime 从同一个输入历史前缀内解析，前端不再负责扫描聊天历史来决定 base state。
+自动 commit 每轮只检查最后一个匹配文本后缀的候选；流式 write 不成为候选，patch 保持原语义，首次成功显式 commit 后停止自动 commit 与 live write。live projection 不持久化；failure/cancel 保留 partial，并通过标准 chat save 落盘。
+
+commit 默认 `replace`，后续 commit 仍更新同一消息。`persistStateId` 只表示已落盘状态，live partial 不成为下一轮 persist base。
 
 聊天删除现在会联动清理对应的 Agent chat workspace：
 
@@ -320,9 +324,9 @@ prepare_agent_tool_request 从该 turn 生成 AgentModelRequest 与 request-scop
   ↓
 model -> tool -> model -> ... -> workspace.commit? -> workspace.finish
   ↓
-workspace mutation 成功后记录 CAS 结果与 journal；每轮结束时由最后一次 mutation 检查 pre-explicit policy
+workspace mutation 成功后记录 CAS 结果与 journal；每轮结束时检查最后一个 auto-commit 候选
   ↓
-workspace.commit 成功后关闭自动 commit；host 继续写入同一条 chat message
+workspace.commit 成功后关闭自动 commit 与 live write；host 保持同一条 chat message
   ↓
 workspace.finish 结束 run，并提交 persist projection
 ```
@@ -400,7 +404,7 @@ run_cancelled
 run_failed
 ```
 
-Provider stream chunk 不是 Agent run event。Agent UI 必须订阅 `api.agent.subscribe(runId, handler)` 的 run event。
+`subscribe()` 读取 durable Journal；`subscribeLiveProjection()` 接收非持久化工具参数。Provider chunk 和 live update 都不是 Agent run event。
 
 `model_completed` payload 当前包含 `round`、`modelResponsePath`、`toolCallCount`、assistant/reasoning 字节摘要与 `hasAssistantText` / `hasReasoning`。带工具调用且存在可展示 assistant visible text 的模型回合会额外携带可选 `narration` preview；它是模型轮次展示投影，不是 runtime status，不从 reasoning / thinking / thought 提取。工具相关事件携带同一 `round`，便于 UI 从任意工具事件跳回本轮模型回合。
 
@@ -488,7 +492,7 @@ const agent = window.__TAURITAVERN__.api.agent;
 const run = await agent.startRunFromLegacyGenerate({
   generationType: 'normal',
   // profileId: 'default-writer',
-  options: { stream: false, presentation: 'foreground' },
+  options: { presentation: 'foreground' },
 });
 
 const stop = agent.subscribe(run.runId, event => console.log(event));
@@ -515,7 +519,7 @@ git diff --check
 - 继续完善运行中 prompt assembly 的恢复/诊断体验；当前 child / handoff 已有独立 provider_state、model binding 与 host bridge prompt assembly handshake。
 - 实现模型可见 task cancel 与更完整的 scheduler policy。
 - 明确多 Agent provider/model switch policy；root run 的 `connectionRef` 模型绑定已经可用。
-- 实现 resume-run、streaming 的明确策略。
+- 实现 resume-run；按实际需求扩展其他 provider 的 streaming adapter。
 
 ## 每次 Agent 相关变更必须更新
 

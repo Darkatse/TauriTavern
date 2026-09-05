@@ -1,4 +1,4 @@
-import { DEFAULT_PROFILE_ID } from '../constants.js';
+import { DEFAULT_PROFILE_ID } from '../constants';
 import {
     characterStemFromAvatarFileName,
     hasCharacterAvatarIdentity,

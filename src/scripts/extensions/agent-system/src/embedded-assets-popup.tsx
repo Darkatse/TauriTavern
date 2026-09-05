@@ -15,11 +15,11 @@ import {
     readEmbeddedAssets,
     removeEmbeddedProfile,
     removeEmbeddedSkill,
-} from './embedded-assets.js';
-import { errorText, requireAgentApi, requireSkillApi } from './host-api.js';
-import { translateAgentSystem as tr } from './i18n.js';
+} from './embedded-assets';
+import { reportAgentSystemError, requireAgentApi, requireSkillApi } from './host-api';
+import { translateAgentSystem as tr } from './i18n';
 
-let activePanel: { dialog: HTMLDialogElement; dispose: () => void } | null = null;
+let activePanel: HTMLDialogElement | null = null;
 
 async function loadInitial(target: EmbeddedAssetTargetInput): Promise<EmbeddedAssetsInitial> {
     const [profileResult, skills, embedded] = await Promise.all([
@@ -54,18 +54,13 @@ function createActions(target: EmbeddedAssetTargetInput): EmbeddedAssetsActions 
         toastSuccess: (message) => {
             window.toastr?.success?.(message);
         },
-        reportError: (error) => {
-            const message = errorText(error);
-            console.error('[AgentSystem]', error);
-            window.toastr?.error?.(message);
-            return message;
-        },
+        reportError: reportAgentSystemError,
     };
 }
 
 export function openEmbeddedAssetsPanel(target: EmbeddedAssetTargetInput): void {
-    if (activePanel?.dialog.open) {
-        activePanel.dialog.focus();
+    if (activePanel?.open) {
+        activePanel.focus();
         return;
     }
     if (typeof HTMLDialogElement === 'undefined') {
@@ -93,7 +88,7 @@ export function openEmbeddedAssetsPanel(target: EmbeddedAssetTargetInput): void 
         disposed = true;
         root.unmount();
         dialog.remove();
-        if (activePanel?.dialog === dialog) {
+        if (activePanel === dialog) {
             activePanel = null;
         }
     };
@@ -113,7 +108,7 @@ export function openEmbeddedAssetsPanel(target: EmbeddedAssetTargetInput): void 
             />
         </StrictMode>,
     );
-    activePanel = { dialog, dispose: cleanup };
+    activePanel = dialog;
 
     try {
         dialog.showModal();

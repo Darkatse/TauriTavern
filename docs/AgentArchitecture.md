@@ -157,7 +157,7 @@ LLM Gateway / provider adapter
 - 工具循环最多 80 轮，必须以 `workspace.finish` 结束；前台 run 在一轮 tool calls 结束时最多自动发布该轮最后一次文本 mutation，但 finish 前仍必须至少成功显式 `workspace.commit` 一次，后台 run 可无 chat commit；模型直接输出文本会捕获到 workspace `direct_output.md` 并触发 soft drift recovery，只要仍有下一轮模型调用预算就继续用合成 `user` 提醒纠偏，直到恢复、取消或 `maxRounds` 边界触发 fail-fast / partial-success。
 - 模型可修正的工具错误以 `is_error = true` tool result 回填下一轮；宿主级 IO、journal、序列化、取消和模型响应结构错误仍 fail-fast。
 - root、return-mode child 与 handoff invocation 各自冻结 `InvocationToolSnapshot` / `ToolTurnContract`；provider alias 只在当前 turn 内解析为 canonical `ToolInvocation`，唯一执行入口通过 invocation-local `ToolRequestGate` 检查 contract 并预留冻结预算，完整 manifest 随 run 持久化。
-- Skill profile policy、resume-run、tool approval、profile routing、MCP、timeline UI、streaming Agent loop、主发送按钮 Agent toggle 仍未实现。
+- Skill profile policy、resume-run、tool approval、profile routing、MCP、通用 assistant 文本流式输出、主发送按钮 Agent toggle 仍未实现。工具参数增量的后端 live projection 接缝已落地；前台文本 write 由 Host 投影到真实 chat partial，Agent Timeline 独立展示 root / handoff 的 live write/patch 卡片。
 
 ### 5.2 Run 与 Workspace 身份
 

@@ -65,6 +65,10 @@ export async function getHljs() {
     return hljs;
 }
 
+export function getCodeMirrorEditor() {
+    return import('./dist/lib.editor.bundle.js');
+}
+
 /**
  * SillyTavern compatibility: slide-toggle animation helper used by some third-party extensions.
  *

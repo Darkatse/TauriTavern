@@ -89,6 +89,7 @@ fn context_policy_normalizes_negative_history_window_to_full_history() {
 fn direct_runnable_profiles_require_finish_tool() {
     let run = tt_domain::models::agent::profile::AgentRunPolicy {
         presentation: tt_domain::models::agent::AgentRunPresentation::Background,
+        stream: false,
         direct_runnable: true,
         model_retry: Default::default(),
     };
@@ -105,6 +106,7 @@ fn direct_runnable_profiles_require_finish_tool() {
 fn subagent_only_profiles_do_not_require_finish_tool() {
     let run = tt_domain::models::agent::profile::AgentRunPolicy {
         presentation: tt_domain::models::agent::AgentRunPresentation::Background,
+        stream: false,
         direct_runnable: false,
         model_retry: Default::default(),
     };
@@ -153,6 +155,7 @@ fn tool_policy_rejects_zero_mcp_result_inline_limit() {
 fn direct_runnable_false_requires_subagent_entrypoint() {
     let run = tt_domain::models::agent::profile::AgentRunPolicy {
         presentation: tt_domain::models::agent::AgentRunPresentation::Background,
+        stream: false,
         direct_runnable: false,
         model_retry: Default::default(),
     };

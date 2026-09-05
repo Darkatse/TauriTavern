@@ -1,6 +1,5 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as rspack from '@rspack/core';
 
 // Get the directory name of the current module
 const __filename = fileURLToPath(import.meta.url);
@@ -82,14 +81,6 @@ const sharedStats = {
   modulesSpace: 20,
 };
 
-function createVueDefinePlugin() {
-  return new rspack.DefinePlugin({
-    __VUE_OPTIONS_API__: JSON.stringify(true),
-    __VUE_PROD_DEVTOOLS__: JSON.stringify(false),
-    __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: JSON.stringify(false),
-  });
-}
-
 function createReactModule(development, reactCompiler = false) {
   return {
     rules: [
@@ -139,6 +130,7 @@ export function createRspackConfigs(mode = 'production') {
     entry: {
       'lib.core': './src/lib-bundle-core.js',
       'lib.optional': './src/lib-bundle-optional.js',
+      'lib.editor': './src/lib-bundle-editor.js',
     },
     output: {
       filename: '[name].bundle.js',
@@ -167,9 +159,6 @@ export function createRspackConfigs(mode = 'production') {
       clean: true,
     },
     module: createReactModule(development, true),
-    plugins: [
-      createVueDefinePlugin(),
-    ],
   };
 
   const mcpManagerConfig = {
@@ -193,9 +182,9 @@ export function createRspackConfigs(mode = 'production') {
     ...createSharedConfig(mode, 'tauritavern-settings'),
     dependencies: ['vendor-libs'],
     entry: {
-      settings: './src/scripts/tauri/setting/settings-app/index.js',
-      'dev-logs': './src/scripts/tauri/setting/dev-logs-app/index.js',
-      sync: './src/scripts/tauri/setting/sync-app/index.js',
+      settings: './src/scripts/tauri/setting/settings-app/SettingsApp.tsx',
+      'dev-logs': './src/scripts/tauri/setting/dev-logs-app/DevLogsApp.tsx',
+      sync: './src/scripts/tauri/setting/sync-app/index.ts',
     },
     output: {
       filename: '[name].bundle.js',

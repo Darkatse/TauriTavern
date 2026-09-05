@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 use super::commit_ledger::RunCommitLedger;
 use super::delegation::workspace_policy::InvocationWorkspaceRepository;
 use super::markdown::render_markdown_value;
+use super::tool_call_projection::remove_live_tool_call;
 use super::{AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
 use crate::services::hashing::hex_lower;
@@ -37,6 +38,7 @@ impl AgentRuntimeService {
         &self,
         prepared: &PreparedInvocation,
         round: usize,
+        tool_call_index: usize,
         tool_invocation: &ToolInvocation,
         gate: &mut ToolRequestGate,
         session: &mut AgentToolSession,
@@ -63,10 +65,11 @@ impl AgentRuntimeService {
                 "snapshotId": snapshot_id,
                 "name": tool_name,
                 "argumentsRef": arguments_ref.as_str(),
-                "providerMetadata": &tool_invocation.provider_metadata,
             }),
         )
         .await?;
+        let active_run = self.active_run_handle(run_id).await?;
+        remove_live_tool_call(&active_run.live_projection, invocation_id, tool_call_index);
         let started = Instant::now();
 
         if let Err(rejection) = gate.authorize_and_reserve(

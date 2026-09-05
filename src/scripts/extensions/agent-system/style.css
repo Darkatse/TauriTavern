@@ -986,6 +986,115 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     animation-delay: 0.28s;
 }
 
+.ttas-run-event.is-live button {
+    grid-template-rows: auto minmax(0, 1fr);
+}
+
+.ttas-run-event-live {
+    position: relative;
+    display: block;
+    grid-column: 1 / -1;
+    align-self: stretch;
+    min-width: 0;
+    min-height: 0;
+    margin: 1px 2px 2px 32px;
+    padding: 2px 0 2px 10px;
+    overflow: hidden;
+    color: color-mix(in srgb, var(--SmartThemeBodyColor) 78%, transparent);
+}
+
+.ttas-run-event-live::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    left: 0;
+    width: 2px;
+    border-radius: 999px;
+    background-color: color-mix(in srgb, var(--ttas-run-tone-write) 50%, transparent);
+}
+
+.ttas-run-event-live.is-added {
+    color: color-mix(in srgb, var(--ttas-run-diff-add-color) 70%, var(--SmartThemeBodyColor));
+}
+
+.ttas-run-event-live.is-added::before {
+    background-color: color-mix(in srgb, var(--ttas-run-diff-add-color) 62%, transparent);
+}
+
+.ttas-run-event-live.is-removed {
+    color: color-mix(in srgb, var(--ttas-run-diff-delete-color) 70%, var(--SmartThemeBodyColor));
+}
+
+.ttas-run-event-live.is-removed::before {
+    background-color: color-mix(in srgb, var(--ttas-run-diff-delete-color) 62%, transparent);
+}
+
+.ttas-run-event-live-stream {
+    display: -webkit-box;
+    overflow: hidden;
+    color: inherit;
+    font-family: var(--ttas-mono);
+    font-size: 0.72rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+}
+
+.ttas-run-event-live-stream[data-ttas-truncated] {
+    mask-image: linear-gradient(180deg, transparent 0, #000 1.4em);
+    -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 1.4em);
+}
+
+.ttas-run-event.is-live .ttas-run-event-live-stream::after {
+    content: '';
+    display: inline-block;
+    width: 0.5em;
+    height: 1em;
+    margin-left: 2px;
+    vertical-align: -0.15em;
+    border-radius: 1px;
+    background-color: var(--ttas-run-panel-accent);
+    animation: ttas-run-live-caret 1.05s steps(2, start) infinite;
+}
+
+.ttas-run-event.is-live .ttas-run-event-icon {
+    animation: ttas-run-live-icon 1.6s ease-in-out infinite;
+}
+
+.ttas-run-event-live-metric {
+    flex: none;
+    align-self: baseline;
+    margin-inline-start: 4px;
+    color: var(--ttas-run-line-text-muted);
+    font-size: 0.68rem;
+    font-style: normal;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+}
+
+.ttas-run-event-live-metric .is-added {
+    color: var(--ttas-run-diff-add-color);
+}
+
+.ttas-run-event-live-metric .is-removed {
+    color: var(--ttas-run-diff-delete-color);
+}
+
+@keyframes ttas-run-live-caret {
+    50% {
+        opacity: 0;
+    }
+}
+
+@keyframes ttas-run-live-icon {
+    50% {
+        opacity: 0.55;
+    }
+}
+
 .ttas-run-empty,
 .ttas-run-detail-error {
     display: flex;

@@ -2,6 +2,7 @@ use serde_json::{Map, Value, json};
 
 use crate::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::errors::ApplicationError;
+use crate::services::chat_completion_service::OPENCODE_STABLE_CHAT_ID_FIELD;
 use tt_domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile};
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentModelTool,
@@ -16,12 +17,11 @@ const AGENT_PROMPT_MARKER_FIELD: &str = "_tauritavern_agent_prompt_marker";
 pub(super) fn request_from_prompt_snapshot(
     prompt_snapshot: &Value,
 ) -> Result<ChatCompletionGenerateRequestDto, ApplicationError> {
-    let payload = find_payload_object(prompt_snapshot).ok_or_else(|| {
+    let mut payload = find_payload_object(prompt_snapshot).ok_or_else(|| {
         ApplicationError::ValidationError(
             "agent.invalid_prompt_snapshot: expected a chat completion payload object".to_string(),
         )
     })?;
-    let mut payload = payload.clone();
 
     payload.insert("stream".to_string(), Value::Bool(false));
     if !payload.contains_key("chat_completion_source") {
@@ -44,6 +44,7 @@ pub(super) fn prepare_agent_tool_request(
     mut request: ChatCompletionGenerateRequestDto,
     tools: &[AgentModelTool],
     tool_choice: ToolChoice,
+    stable_chat_id: &str,
     run_id: &str,
     invocation_id: &str,
 ) -> Result<AgentModelRequest, ApplicationError> {
@@ -84,6 +85,17 @@ pub(super) fn prepare_agent_tool_request(
     request
         .payload
         .insert("stream".to_string(), Value::Bool(false));
+    if request
+        .payload
+        .get("chat_completion_source")
+        .and_then(Value::as_str)
+        == Some("opencode")
+    {
+        request.payload.insert(
+            OPENCODE_STABLE_CHAT_ID_FIELD.to_string(),
+            Value::String(stable_chat_id.to_string()),
+        );
+    }
 
     let mut provider_state = json!({
         "sessionId": model_session_id(run_id, invocation_id),
@@ -244,7 +256,7 @@ fn messages_from_payload(
     payload.remove("prompt");
 
     messages
-        .iter()
+        .into_iter()
         .map(message_from_openai_value)
         .collect::<Result<Vec<_>, _>>()
 }
@@ -268,13 +280,16 @@ fn reject_agent_prompt_marker(value: &Value) -> Result<(), ApplicationError> {
     ))
 }
 
-fn message_from_openai_value(value: &Value) -> Result<AgentModelMessage, ApplicationError> {
-    reject_agent_prompt_marker(value)?;
-    let object = value.as_object().ok_or_else(|| {
-        ApplicationError::ValidationError(
-            "agent.invalid_prompt_snapshot: message must be an object".to_string(),
-        )
-    })?;
+fn message_from_openai_value(value: Value) -> Result<AgentModelMessage, ApplicationError> {
+    reject_agent_prompt_marker(&value)?;
+    let mut object = match value {
+        Value::Object(object) => object,
+        _ => {
+            return Err(ApplicationError::ValidationError(
+                "agent.invalid_prompt_snapshot: message must be an object".to_string(),
+            ));
+        }
+    };
     let role = match object
         .get("role")
         .and_then(Value::as_str)
@@ -298,32 +313,31 @@ fn message_from_openai_value(value: &Value) -> Result<AgentModelMessage, Applica
 
     Ok(AgentModelMessage {
         role,
-        parts: content_parts_from_openai_value(object.get("content")),
+        parts: content_parts_from_openai_value(object.remove("content")),
         provider_metadata,
     })
 }
 
-fn content_parts_from_openai_value(value: Option<&Value>) -> Vec<AgentModelContentPart> {
+fn content_parts_from_openai_value(value: Option<Value>) -> Vec<AgentModelContentPart> {
     match value {
-        Some(Value::String(text)) => vec![AgentModelContentPart::Text { text: text.clone() }],
+        Some(Value::String(text)) => vec![AgentModelContentPart::Text { text }],
         Some(Value::Array(parts)) => parts
-            .iter()
+            .into_iter()
             .map(|part| match part {
-                Value::String(text) => AgentModelContentPart::Text { text: text.clone() },
-                Value::Object(object)
+                Value::String(text) => AgentModelContentPart::Text { text },
+                Value::Object(mut object)
                     if object.get("type").and_then(Value::as_str) == Some("text") =>
                 {
                     AgentModelContentPart::Text {
-                        text: object
-                            .get("text")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
+                        text: match object.remove("text") {
+                            Some(Value::String(text)) => text,
+                            _ => String::new(),
+                        },
                     }
                 }
                 other => AgentModelContentPart::Native {
                     provider: "openai.content_part".to_string(),
-                    value: other.clone(),
+                    value: other,
                 },
             })
             .collect(),
@@ -339,8 +353,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        prepare_agent_tool_request, reject_external_tool_request, request_from_prompt_snapshot,
-        validate_prompt_snapshot_context_policy,
+        OPENCODE_STABLE_CHAT_ID_FIELD, prepare_agent_tool_request, reject_external_tool_request,
+        request_from_prompt_snapshot, validate_prompt_snapshot_context_policy,
     };
     use tt_domain::models::agent::profile::ResolvedAgentProfile;
     use tt_domain::models::tool::ToolChoice;
@@ -375,13 +389,45 @@ mod tests {
         }))
         .expect("request");
 
-        let request =
-            prepare_agent_tool_request(request, &[], ToolChoice::Auto, "run_test", "inv_root")
-                .expect("agent request");
+        let request = prepare_agent_tool_request(
+            request,
+            &[],
+            ToolChoice::Auto,
+            "stable",
+            "run_test",
+            "inv_root",
+        )
+        .expect("agent request");
 
         assert_eq!(
             request.provider_state["transport"],
             json!("responses_websocket")
+        );
+    }
+
+    #[test]
+    fn opencode_agent_uses_the_run_chat_identity() {
+        let request = request_from_prompt_snapshot(&json!({
+            "chatCompletionPayload": {
+                "chat_completion_source": "opencode",
+                "messages": [{ "role": "user", "content": "hello" }]
+            }
+        }))
+        .expect("request");
+
+        let request = prepare_agent_tool_request(
+            request,
+            &[],
+            ToolChoice::Auto,
+            "stable-chat",
+            "run_test",
+            "inv_root",
+        )
+        .expect("agent request");
+
+        assert_eq!(
+            request.payload[OPENCODE_STABLE_CHAT_ID_FIELD],
+            json!("stable-chat")
         );
     }
 
@@ -397,9 +443,15 @@ mod tests {
         }))
         .expect("request");
 
-        let error =
-            prepare_agent_tool_request(request, &[], ToolChoice::Auto, "run_test", "inv_root")
-                .expect_err("format mismatch must fail");
+        let error = prepare_agent_tool_request(
+            request,
+            &[],
+            ToolChoice::Auto,
+            "stable",
+            "run_test",
+            "inv_root",
+        )
+        .expect_err("format mismatch must fail");
         assert!(
             error
                 .to_string()
@@ -419,9 +471,15 @@ mod tests {
         }))
         .expect("request");
 
-        let error =
-            prepare_agent_tool_request(request, &[], ToolChoice::Auto, "run_test", "inv_root")
-                .expect_err("marker leak fails");
+        let error = prepare_agent_tool_request(
+            request,
+            &[],
+            ToolChoice::Auto,
+            "stable",
+            "run_test",
+            "inv_root",
+        )
+        .expect_err("marker leak fails");
 
         assert!(
             error

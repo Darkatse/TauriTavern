@@ -77,6 +77,13 @@ impl ChatCompletionRepositoryGenerateResponse {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct ChatCompletionToolCallDelta {
+    pub tool_call_index: usize,
+    pub name: String,
+    pub arguments_fragment: String,
+}
+
 #[async_trait]
 pub trait ChatCompletionRepository: Send + Sync {
     async fn list_models(
@@ -102,6 +109,15 @@ pub trait ChatCompletionRepository: Send + Sync {
         sender: ChatCompletionStreamSender,
         cancel: ChatCompletionCancelReceiver,
     ) -> Result<(), DomainError>;
+
+    async fn generate_with_tool_call_deltas(
+        &self,
+        source: ChatCompletionSource,
+        config: &ChatCompletionApiConfig,
+        endpoint_path: &str,
+        payload: &Value,
+        on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+    ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError>;
 
     async fn close_provider_session(&self, session_id: &str);
 }

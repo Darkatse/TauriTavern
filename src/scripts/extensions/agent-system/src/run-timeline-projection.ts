@@ -1,4 +1,4 @@
-import { normalizeInvocationId } from './run-invocation-projector.js';
+import { normalizeInvocationId } from './run-invocation-projector';
 import type {
     TimelineDelegationEdge,
     TimelineProjection,
