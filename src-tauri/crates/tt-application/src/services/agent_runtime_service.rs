@@ -99,6 +99,7 @@ pub(super) struct PendingPersistentStateMetadataUpdate {
 }
 
 struct PreparedInvocation {
+    frozen_macros: Arc<tt_domain::frozen_macros::FrozenMacros>,
     invocation: AgentInvocation,
     delegation_task_id: Option<String>,
     profile: ResolvedAgentProfile,

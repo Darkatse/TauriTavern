@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::Serialize;
 use serde_json::{Map, Value};
 
@@ -11,6 +13,7 @@ use crate::services::agent_tools::common::{
 };
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
 use tt_domain::errors::DomainError;
+use tt_domain::frozen_macros::FrozenMacros;
 use tt_domain::models::agent::{AgentChatRef, AgentToolResult};
 use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
@@ -48,6 +51,7 @@ pub(in crate::services::agent_tools) async fn search(
     group_chat_repository: &dyn GroupChatRepository,
     run_id: &str,
     call: &ToolInvocation,
+    macros: &Arc<FrozenMacros>,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let Some(args) = object_args(call) else {
         return Ok((
@@ -78,6 +82,7 @@ pub(in crate::services::agent_tools) async fn search(
         }
     };
 
+    search_query.frozen_macros = Some(macros.clone());
     let run = run_repository.load_run(run_id).await?;
     if run.input_message_count.is_some() {
         let raw_total =
@@ -250,6 +255,7 @@ fn parse_search_query(
         };
 
     Ok(ChatMessageSearchQuery {
+        frozen_macros: None,
         query,
         limit,
         filters,

@@ -5,6 +5,7 @@ use super::FileSkillRepository;
 use super::package::{collect_skill_files, sha256_hex};
 use super::paths::{normalize_skill_path, validate_skill_name};
 use tt_domain::errors::DomainError;
+use tt_domain::frozen_macros::MAX_EXPANDED_TEXT_BYTES;
 use tt_domain::models::skill::{
     SkillFileKind, SkillFileRef, SkillReadRequest, SkillReadResult, SkillScope, SkillSearchHit,
     SkillSearchRequest, SkillSearchResult,
@@ -53,8 +54,15 @@ pub(super) async fn read_skill_file(
         ));
     }
 
-    let file =
+    let mut file =
         read_skill_text_file(repository, &request.scope, &request.name, &request.path).await?;
+    if let Some(macros) = &request.frozen_macros
+        && !file.path.starts_with("scripts/")
+        && let std::borrow::Cow::Owned(text) =
+            macros.render(&file.content, MAX_EXPANDED_TEXT_BYTES)?
+    {
+        file.content = text;
+    }
     let selection = TextLineSelection::select(
         &file.content,
         request.start_line.unwrap_or(1),
@@ -139,7 +147,14 @@ pub(super) async fn search_skill_files(
             skipped_files += 1;
             continue;
         }
-        let file = read_text_file_at(&skill_root, &request.scope, &name, &file_ref)?;
+        let mut file = read_text_file_at(&skill_root, &request.scope, &name, &file_ref)?;
+        if let Some(macros) = &request.frozen_macros
+            && !file.path.starts_with("scripts/")
+            && let std::borrow::Cow::Owned(text) =
+                macros.render(&file.content, MAX_EXPANDED_TEXT_BYTES)?
+        {
+            file.content = text;
+        }
         searched_files += 1;
         hits.extend(
             search

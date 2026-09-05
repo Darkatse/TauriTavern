@@ -2547,6 +2547,7 @@ async fn search_character_chat_messages_returns_scored_hits_and_respects_role_fi
             "alice",
             "session",
             ChatMessageSearchQuery {
+                frozen_macros: None,
                 query: "北京烤鸭".to_string(),
                 limit: 2,
                 filters: None,
@@ -2566,6 +2567,7 @@ async fn search_character_chat_messages_returns_scored_hits_and_respects_role_fi
             "alice",
             "session",
             ChatMessageSearchQuery {
+                frozen_macros: None,
                 query: "北京烤鸭".to_string(),
                 limit: 10,
                 filters: Some(ChatMessageSearchFilters {
@@ -2723,6 +2725,7 @@ async fn tool_role_roundtrips_and_is_distinct_from_system() {
             "alice",
             "session",
             ChatMessageSearchQuery {
+                frozen_macros: None,
                 query: "weather result".to_string(),
                 limit: 10,
                 filters: Some(ChatMessageSearchFilters {
@@ -2744,6 +2747,7 @@ async fn tool_role_roundtrips_and_is_distinct_from_system() {
             "alice",
             "session",
             ChatMessageSearchQuery {
+                frozen_macros: None,
                 query: "weather result".to_string(),
                 limit: 10,
                 filters: Some(ChatMessageSearchFilters {
@@ -2830,6 +2834,7 @@ async fn search_group_chat_messages_respects_scan_limit() {
         .search_group_chat_messages(
             "group-one",
             ChatMessageSearchQuery {
+                frozen_macros: None,
                 query: "dragon".to_string(),
                 limit: 10,
                 filters: Some(ChatMessageSearchFilters {
@@ -2849,6 +2854,7 @@ async fn search_group_chat_messages_respects_scan_limit() {
         .search_group_chat_messages(
             "group-one",
             ChatMessageSearchQuery {
+                frozen_macros: None,
                 query: "dragon".to_string(),
                 limit: 10,
                 filters: Some(ChatMessageSearchFilters {

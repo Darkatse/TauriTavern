@@ -95,6 +95,7 @@ async fn write_skill_file_inner(
     super::read::read_skill_file(
         repository,
         SkillReadRequest {
+            frozen_macros: None,
             scope: request.scope,
             name,
             path,

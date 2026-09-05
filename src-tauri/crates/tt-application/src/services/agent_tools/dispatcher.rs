@@ -126,6 +126,7 @@ impl AgentToolDispatcher {
                     self.group_chat_repository.as_ref(),
                     run_id,
                     call,
+                    &session.frozen_macros,
                 )
                 .await?
             }
@@ -136,6 +137,7 @@ impl AgentToolDispatcher {
                     self.group_chat_repository.as_ref(),
                     run_id,
                     call,
+                    &session.frozen_macros,
                 )
                 .await?
             }

@@ -163,6 +163,9 @@ pub struct ChatMessageSearchFilters {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatMessageSearchQuery {
+    /// Internal text view; never accepted from serialized requests.
+    #[serde(skip)]
+    pub frozen_macros: Option<std::sync::Arc<tt_domain::frozen_macros::FrozenMacros>>,
     pub query: String,
     pub limit: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]

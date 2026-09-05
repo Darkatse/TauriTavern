@@ -166,6 +166,7 @@ pub(in crate::services::agent_tools) async fn search(
         .map(str::to_string);
     let search = match skill_service
         .search_skill_files(SkillSearchRequest {
+            frozen_macros: Some(session.frozen_macros.clone()),
             scope,
             name: name.to_string(),
             query: query.to_string(),

@@ -36,6 +36,7 @@ impl WorkspaceReadState {
 
 #[derive(Debug, Default)]
 pub struct AgentToolSession {
+    pub(crate) frozen_macros: std::sync::Arc<tt_domain::frozen_macros::FrozenMacros>,
     read_state: HashMap<String, WorkspaceReadState>,
     skill_read_chars: usize,
     effective_skills: Vec<SkillIndexEntry>,

@@ -262,6 +262,9 @@ pub struct SkillInlineFile {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillReadRequest {
+    /// Internal text view; never accepted from serialized requests.
+    #[serde(skip)]
+    pub frozen_macros: Option<std::sync::Arc<crate::frozen_macros::FrozenMacros>>,
     #[serde(default)]
     pub scope: SkillScope,
     pub name: String,
@@ -313,6 +316,8 @@ pub struct SkillReadResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillSearchRequest {
+    #[serde(skip)]
+    pub frozen_macros: Option<std::sync::Arc<crate::frozen_macros::FrozenMacros>>,
     #[serde(default)]
     pub scope: SkillScope,
     pub name: String,

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
@@ -11,6 +12,7 @@ use crate::errors::ApplicationError;
 use crate::services::agent_tools::common::{ensure_only_args, object_args, tool_error};
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
 use tt_domain::errors::DomainError;
+use tt_domain::frozen_macros::{FrozenMacros, MAX_EXPANDED_TEXT_BYTES};
 use tt_domain::models::agent::{AgentChatRef, AgentToolResult};
 use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_lines::TextLineSelection;
@@ -66,6 +68,7 @@ pub(in crate::services::agent_tools) async fn read_messages(
     group_chat_repository: &dyn GroupChatRepository,
     run_id: &str,
     call: &ToolInvocation,
+    macros: &FrozenMacros,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let Some(args) = object_args(call) else {
         return Ok((
@@ -113,7 +116,7 @@ pub(in crate::services::agent_tools) async fn read_messages(
                 .await
         }
     };
-    let read = match read {
+    let mut read = match read {
         Ok(read) => read,
         Err(DomainError::NotFound(message)) => {
             return Ok((
@@ -166,6 +169,11 @@ pub(in crate::services::agent_tools) async fn read_messages(
         ));
     }
 
+    for message in &mut read.messages {
+        if let Cow::Owned(text) = macros.render(&message.text, MAX_EXPANDED_TEXT_BYTES)? {
+            message.text = text;
+        }
+    }
     let by_index = read
         .messages
         .into_iter()

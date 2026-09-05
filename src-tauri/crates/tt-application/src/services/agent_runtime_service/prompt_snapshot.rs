@@ -348,6 +348,23 @@ fn content_parts_from_openai_value(value: Option<Value>) -> Vec<AgentModelConten
     }
 }
 
+/// Compile captured values once per invocation; readers share the immutable table.
+pub(super) fn frozen_macros_from_snapshot(
+    snapshot: &Value,
+) -> Result<std::sync::Arc<tt_domain::frozen_macros::FrozenMacros>, ApplicationError> {
+    let macros = snapshot
+        .pointer("/frozenRunInputSnapshot/macroContext")
+        .map(|context| {
+            tt_domain::frozen_macros::FrozenMacros::from_context(
+                context,
+                snapshot.pointer("/frozenRunInputSnapshot/promptInputs/extensionPrompts"),
+            )
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(std::sync::Arc::new(macros))
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;

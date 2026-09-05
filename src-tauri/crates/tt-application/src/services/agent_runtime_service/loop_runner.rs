@@ -46,6 +46,7 @@ impl AgentRuntimeService {
             .await?
             .stream_enabled(profile.run.stream);
         let mut tool_session = AgentToolSession::new(prepared.effective_skills.clone());
+        tool_session.frozen_macros = prepared.frozen_macros.clone();
         let mut tool_request_gate = ToolRequestGate::default();
         let mut seen_child_result_task_ids = HashSet::new();
         // Counts soft drift recovery nudges for model-facing text and

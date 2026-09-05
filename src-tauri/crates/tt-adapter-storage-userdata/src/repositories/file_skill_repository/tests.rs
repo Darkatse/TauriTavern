@@ -150,6 +150,7 @@ async fn installs_inline_skill_and_reads_file() {
 
     let read = repository
         .read_skill_file(SkillReadRequest {
+            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -185,6 +186,7 @@ async fn large_skill_reads_return_a_line_preview() {
 
     let default_read = repository
         .read_skill_file(SkillReadRequest {
+            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "references/long.md".to_string(),
@@ -202,6 +204,7 @@ async fn large_skill_reads_return_a_line_preview() {
 
     let profile_sized_read = repository
         .read_skill_file(SkillReadRequest {
+            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "references/long.md".to_string(),
@@ -245,6 +248,7 @@ async fn write_skill_file_rejects_stale_expected_hash() {
 
     let read = repository
         .read_skill_file(SkillReadRequest {
+            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -286,6 +290,7 @@ async fn write_skill_file_rejects_skill_rename() {
 
     let read = repository
         .read_skill_file(SkillReadRequest {
+            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "SKILL.md".to_string(),
@@ -359,6 +364,7 @@ async fn allows_same_skill_name_in_different_scopes() {
 
     let global = repository
         .read_skill_file(SkillReadRequest {
+            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -370,6 +376,7 @@ async fn allows_same_skill_name_in_different_scopes() {
         .expect("read global skill");
     let profile = repository
         .read_skill_file(SkillReadRequest {
+            frozen_macros: None,
             scope: profile_scope("writer"),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -451,6 +458,7 @@ async fn moves_skill_between_scopes() {
     );
     let read = repository
         .read_skill_file(SkillReadRequest {
+            frozen_macros: None,
             scope: profile_scope("writer"),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -705,6 +713,7 @@ async fn move_replace_rolls_back_target_when_index_save_fails() {
     );
     let source = repository
         .read_skill_file(SkillReadRequest {
+            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -716,6 +725,7 @@ async fn move_replace_rolls_back_target_when_index_save_fails() {
         .expect("read source");
     let target = repository
         .read_skill_file(SkillReadRequest {
+            frozen_macros: None,
             scope: profile_scope("writer"),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -802,6 +812,7 @@ async fn retargets_preset_scope_and_source_refs() {
 
     let read = repository
         .read_skill_file(SkillReadRequest {
+            frozen_macros: None,
             scope: preset_scope("openai", "New"),
             name: "preset-skill".to_string(),
             path: "references/a.md".to_string(),
@@ -1606,6 +1617,7 @@ async fn read_rejects_symlink_escape_inside_installed_skill() {
 
     let error = repository
         .read_skill_file(SkillReadRequest {
+            frozen_macros: None,
             scope: global_scope(),
             name: "test-skill".to_string(),
             path: "references/a.md".to_string(),

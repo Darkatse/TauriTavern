@@ -10,7 +10,8 @@ use crate::services::agent_profile_service::{
 };
 use crate::services::agent_runtime_service::commit_ledger::RunCommitLedger;
 use crate::services::agent_runtime_service::prompt_snapshot::{
-    prepare_agent_tool_request, request_from_prompt_snapshot, request_summary,
+    frozen_macros_from_snapshot, prepare_agent_tool_request, request_from_prompt_snapshot,
+    request_summary,
 };
 use crate::services::agent_runtime_service::skill_scope::{
     skill_event_summary, skill_scope_order_for_profile,
@@ -336,6 +337,7 @@ impl AgentRuntimeService {
         .await?;
 
         Ok(PreparedInvocation {
+            frozen_macros: frozen_macros_from_snapshot(&prompt_snapshot)?,
             invocation,
             delegation_task_id: Some(task.id.clone()),
             profile,

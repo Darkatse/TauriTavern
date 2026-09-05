@@ -125,6 +125,7 @@ pub async fn read_skill_file(
         .services
         .skill_service
         .read_skill_file(SkillReadRequest {
+            frozen_macros: None,
             scope: scope.unwrap_or_default(),
             name,
             path,
