@@ -93,7 +93,13 @@ impl FileSettingsRepository {
                 map_tauritavern_settings_read_error(&self.tauritavern_settings_file, error)
             })?;
 
-        parse_tauritavern_settings(&self.tauritavern_settings_file, &contents)
+        match parse_tauritavern_settings(&self.tauritavern_settings_file, &contents) {
+            Ok(settings) => Ok(settings),
+            Err(error) if matches!(error, DomainError::InvalidData(_)) => {
+                self.recover_corrupt_tauritavern_settings_sync(error)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn save_tauritavern_settings_sync(
@@ -135,6 +141,111 @@ impl FileSettingsRepository {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as i64
+    }
+
+    /// Name under which a corrupt settings file is moved aside: the original
+    /// name plus a `.corrupt-<timestamp>` suffix, in the same directory.
+    fn quarantine_path_for(&self, path: &Path) -> PathBuf {
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("settings");
+        path.with_file_name(format!("{}.corrupt-{}", file_name, self.get_timestamp_ms()))
+    }
+
+    /// Moves a corrupt settings file aside so the next load rebuilds defaults.
+    ///
+    /// The original bytes are never deleted: they stay on disk under the
+    /// quarantine name for manual recovery. A failed rename is logged and
+    /// leaves the file in place; recovery then continues with defaults while
+    /// every subsequent load retries the quarantine.
+    async fn quarantine_corrupt_file(&self, path: &Path) {
+        let quarantined = self.quarantine_path_for(path);
+        match fs::rename(path, &quarantined).await {
+            Ok(()) => tracing::warn!(
+                "Quarantined corrupt settings file {} as {}",
+                path.display(),
+                quarantined.display()
+            ),
+            Err(error) => tracing::error!(
+                "Failed to quarantine corrupt settings file {} as {}: {}",
+                path.display(),
+                quarantined.display(),
+                error
+            ),
+        }
+    }
+
+    /// Synchronous variant of [`Self::quarantine_corrupt_file`] for startup
+    /// paths that run before the async runtime is available.
+    fn quarantine_corrupt_file_sync(&self, path: &Path) {
+        let quarantined = self.quarantine_path_for(path);
+        match std::fs::rename(path, &quarantined) {
+            Ok(()) => tracing::warn!(
+                "Quarantined corrupt settings file {} as {}",
+                path.display(),
+                quarantined.display()
+            ),
+            Err(error) => tracing::error!(
+                "Failed to quarantine corrupt settings file {} as {}: {}",
+                path.display(),
+                quarantined.display(),
+                error
+            ),
+        }
+    }
+
+    /// Recovers [`Self::load_user_settings`] from a corrupt settings file:
+    /// quarantine, rebuild from defaults, and report success so a broken
+    /// `settings.json` cannot keep the app from starting.
+    async fn recover_corrupt_user_settings(
+        &self,
+        error: DomainError,
+    ) -> Result<UserSettings, DomainError> {
+        tracing::error!(
+            "User settings file {} is corrupt and cannot be loaded ({}); rebuilding from defaults",
+            self.user_settings_file.display(),
+            error
+        );
+        self.quarantine_corrupt_file(&self.user_settings_file).await;
+        let default_settings = UserSettings::default();
+        self.save_user_settings(&default_settings).await?;
+        Ok(default_settings)
+    }
+
+    /// Async variant of corrupt-file recovery for the TauriTavern settings
+    /// file; see [`Self::recover_corrupt_tauritavern_settings_sync`].
+    async fn recover_corrupt_tauritavern_settings(
+        &self,
+        error: DomainError,
+    ) -> Result<TauriTavernSettings, DomainError> {
+        tracing::error!(
+            "TauriTavern settings file {} is corrupt and cannot be loaded ({}); rebuilding from defaults",
+            self.tauritavern_settings_file.display(),
+            error
+        );
+        self.quarantine_corrupt_file(&self.tauritavern_settings_file)
+            .await;
+        let default_settings = TauriTavernSettings::default();
+        self.save_tauritavern_settings(&default_settings).await?;
+        Ok(default_settings)
+    }
+
+    /// Synchronous variant of corrupt-file recovery for the TauriTavern
+    /// settings file; see [`Self::recover_corrupt_tauritavern_settings`].
+    fn recover_corrupt_tauritavern_settings_sync(
+        &self,
+        error: DomainError,
+    ) -> Result<TauriTavernSettings, DomainError> {
+        tracing::error!(
+            "TauriTavern settings file {} is corrupt and cannot be loaded ({}); rebuilding from defaults",
+            self.tauritavern_settings_file.display(),
+            error
+        );
+        self.quarantine_corrupt_file_sync(&self.tauritavern_settings_file);
+        let default_settings = TauriTavernSettings::default();
+        self.save_tauritavern_settings_sync(&default_settings)?;
+        Ok(default_settings)
     }
 
     async fn read_json_files_from_directory(
@@ -318,7 +429,13 @@ impl SettingsRepository for FileSettingsRepository {
                 map_tauritavern_settings_read_error(&self.tauritavern_settings_file, error)
             })?;
 
-        parse_tauritavern_settings(&self.tauritavern_settings_file, &contents)
+        match parse_tauritavern_settings(&self.tauritavern_settings_file, &contents) {
+            Ok(settings) => Ok(settings),
+            Err(error) if matches!(error, DomainError::InvalidData(_)) => {
+                self.recover_corrupt_tauritavern_settings(error).await
+            }
+            Err(error) => Err(error),
+        }
     }
 
     async fn save_user_settings(&self, settings: &UserSettings) -> Result<(), DomainError> {
@@ -343,7 +460,13 @@ impl SettingsRepository for FileSettingsRepository {
             "Loading user settings from {}",
             self.user_settings_file.display()
         );
-        read_json_file::<UserSettings>(&self.user_settings_file).await
+        match read_json_file::<UserSettings>(&self.user_settings_file).await {
+            Ok(settings) => Ok(settings),
+            Err(error) if matches!(error, DomainError::InvalidData(_)) => {
+                self.recover_corrupt_user_settings(error).await
+            }
+            Err(error) => Err(error),
+        }
     }
 
     async fn create_snapshot(&self) -> Result<(), DomainError> {
@@ -572,6 +695,97 @@ mod tests {
             .await
             .expect("load externally updated user settings");
         assert_eq!(second.data, json!({"hello":"world"}));
+    }
+
+    #[tokio::test]
+    async fn load_user_settings_recovers_from_corrupt_file() {
+        let dir = TestDir::new();
+        let repository = FileSettingsRepository::new(dir.path().to_path_buf());
+        let corrupt = r#"{"hello":"wor"#;
+        fs::write(dir.path().join("settings.json"), corrupt).expect("write corrupt settings.json");
+
+        let settings = repository
+            .load_user_settings()
+            .await
+            .expect("recover user settings from corrupt file");
+        assert_eq!(settings.data, json!({}));
+
+        let rebuilt =
+            fs::read_to_string(dir.path().join("settings.json")).expect("read rebuilt settings");
+        assert!(serde_json::from_str::<serde_json::Value>(&rebuilt).is_ok());
+
+        let quarantined = quarantined_file_names(&dir);
+        assert_eq!(
+            quarantined.len(),
+            1,
+            "exactly one quarantined file expected"
+        );
+        assert!(quarantined[0].starts_with("settings.json.corrupt-"));
+        assert_eq!(
+            fs::read_to_string(dir.path().join(&quarantined[0])).expect("read quarantined file"),
+            corrupt
+        );
+    }
+
+    #[tokio::test]
+    async fn load_tauritavern_settings_recovers_from_corrupt_file() {
+        let dir = TestDir::new();
+        let repository = FileSettingsRepository::new(dir.path().to_path_buf());
+        let corrupt = r#"{"updates":{"startup_popup":{"dismissed_release_token":"to"#;
+        fs::write(dir.path().join("tauritavern-settings.json"), corrupt)
+            .expect("write corrupt tauritavern-settings.json");
+
+        repository
+            .load_tauritavern_settings()
+            .await
+            .expect("recover tauritavern settings from corrupt file");
+
+        let quarantined = quarantined_file_names(&dir);
+        assert_eq!(
+            quarantined.len(),
+            1,
+            "exactly one quarantined file expected"
+        );
+        assert!(quarantined[0].starts_with("tauritavern-settings.json.corrupt-"));
+        assert_eq!(
+            fs::read_to_string(dir.path().join(&quarantined[0])).expect("read quarantined file"),
+            corrupt
+        );
+    }
+
+    #[test]
+    fn load_tauritavern_settings_sync_recovers_from_corrupt_file() {
+        let dir = TestDir::new();
+        let repository = FileSettingsRepository::new(dir.path().to_path_buf());
+        fs::write(dir.path().join("tauritavern-settings.json"), "{oops")
+            .expect("write corrupt tauritavern-settings.json");
+
+        let settings = repository
+            .load_tauritavern_settings_sync()
+            .expect("recover tauritavern settings from corrupt file");
+        assert_eq!(settings.updates.startup_popup.dismissed_release_token, None);
+
+        let quarantined = quarantined_file_names(&dir);
+        assert_eq!(
+            quarantined.len(),
+            1,
+            "exactly one quarantined file expected"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join(&quarantined[0])).expect("read quarantined file"),
+            "{oops"
+        );
+    }
+
+    fn quarantined_file_names(dir: &TestDir) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir.path())
+            .expect("list settings dir")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".corrupt-"))
+            .collect();
+        names.sort();
+        names
     }
 
     #[tokio::test]
