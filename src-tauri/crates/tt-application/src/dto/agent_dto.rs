@@ -788,6 +788,15 @@ pub struct AgentPruneChatPersistentStatesDto {
     pub candidate_state_ids: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCopyChatPersistentStatesDto {
+    pub source_chat_ref: AgentChatRef,
+    pub source_stable_chat_id: String,
+    pub target_chat_ref: AgentChatRef,
+    pub target_stable_chat_id: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentPruneChatPersistentStatesResultDto {

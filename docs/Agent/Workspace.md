@@ -55,6 +55,8 @@ chatWorkspaceId = "chat_" + sha256({ kind, stableChatId })[0..16]
 
 它不得直接使用可变的 chat file name、角色显示名或完整 `chatRef` hash。聊天重命名、角色卡显示名变化、前端当前引用变化，不应该让同一个稳定聊天分裂到新的 chat workspace。
 
+聊天分叉会生成新的 `stableChatId`，并把源 workspace 的整个 `persistent-states/` 复制到目标 workspace。
+
 ### 2.1 Chat Workspace
 
 对话级 workspace 保存长期资源引用或 materialized 快照：
@@ -310,7 +312,7 @@ Commit metadata 建议：
 
 当前实现：
 
-- 单个角色聊天删除清理由 `chat_metadata.integrity` 派生的 Agent chat workspace。
+- 单个角色聊天删除后，仅在同一角色已无相同 `integrity` 的聊天时清理 Agent chat workspace；检查或清理失败会保留 workspace 并报告错误，不反转已经完成的聊天删除。
 - 单个群聊聊天删除清理由 group chat id 派生的 Agent chat workspace。
 - 删除角色且级联删除聊天、删除群组时，会批量清理对应聊天 workspace。
 - 若 workspace 仍有关联 active run，删除必须 fail-fast；用户应先取消 run 再删除聊天。

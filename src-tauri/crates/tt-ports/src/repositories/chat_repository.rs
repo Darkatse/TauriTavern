@@ -194,6 +194,12 @@ pub trait ChatRepository: Send + Sync {
         file_name: &str,
     ) -> Result<Value, DomainError>;
 
+    async fn has_character_chat_with_integrity(
+        &self,
+        character_name: &str,
+        integrity: &str,
+    ) -> Result<bool, DomainError>;
+
     /// Set `chat_metadata.extensions[namespace]` for a character chat (header-only rewrite).
     async fn set_character_chat_metadata_extension(
         &self,

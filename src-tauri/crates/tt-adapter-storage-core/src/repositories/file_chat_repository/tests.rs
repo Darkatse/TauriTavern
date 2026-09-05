@@ -2322,6 +2322,46 @@ async fn list_chat_summaries_returns_streamed_metadata() {
 }
 
 #[tokio::test]
+async fn finds_remaining_character_chat_with_integrity() {
+    let (repository, root) = setup_repository().await;
+    for name in ["first", "second"] {
+        save_chat_payload_from_values(
+            &repository,
+            &root,
+            "alice",
+            name,
+            &payload_with_integrity("shared"),
+            false,
+        )
+        .await
+        .expect("save shared chat");
+    }
+
+    repository
+        .delete_chat("alice", "first")
+        .await
+        .expect("delete first chat");
+    assert!(
+        repository
+            .has_character_chat_with_integrity("alice", "shared")
+            .await
+            .expect("find remaining chat")
+    );
+    repository
+        .delete_chat("alice", "second")
+        .await
+        .expect("delete second chat");
+    assert!(
+        !repository
+            .has_character_chat_with_integrity("alice", "shared")
+            .await
+            .expect("find no remaining chat")
+    );
+
+    let _ = fs::remove_dir_all(&root).await;
+}
+
+#[tokio::test]
 async fn stats_and_summary_project_fields_without_materializing_large_swipes() {
     let (repository, root) = setup_repository().await;
     let swipe = "ignored swipe body".repeat(32 * 1024);

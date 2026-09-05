@@ -169,11 +169,12 @@
 
 - `api.agent`：TauriTavern Agent Run API。用于启动 Agent Run、订阅 run event、取消、审批工具、读取 workspace 文件/diff、rollback。
   - 详细参考见：`docs/API/Agent.md`。
-  - 当前已落地 Host ABI：`startRunFromLegacyGenerate()`、`startRunWithPromptSnapshot()`、`cancel()`、`readEvents()`、`readWorkspaceFile()`、`readModelTurn()`、`subscribe()`、`subscribeLiveProjection()`、`settleChatPresentation()`。
+  - 当前已落地 Host ABI：`startRunFromLegacyGenerate()`、`startRunWithPromptSnapshot()`、`cancel()`、`readEvents()`、`readWorkspaceFile()`、`readModelTurn()`、`copyChatPersistentStates()`、`subscribe()`、`subscribeLiveProjection()`、`settleChatPresentation()`。
   - 前台流式 root / handoff `workspace.write_file.content` 会写入同一条 assistant message；failure/cancel 保留 partial。live projection 非持久化，不代表工具成功或 commit；Timeline 独立订阅。
   - `persistStateId` 只在 persistent state 已经落盘后写入 chat metadata；host bridge 响应 `persistent_state_metadata_update_requested` 后调用 `resolve_agent_persistent_state_metadata_update`。
   - `startRunFromLegacyGenerate()` 是当前兼容入口：使用 Legacy dryRun 生成 `promptSnapshot`，再进入 Rust-owned Agent loop。
   - `startRunWithPromptSnapshot()` 必须在调用 backend 前解析 `stableChatId`；`workspaceId` 由 `kind + stableChatId` 派生，`runId` 仍表示单次执行。
+  - 分叉/Checkpoint 必须生成新的 `integrity`；目标聊天保存成功后，调用 `copyChatPersistentStates()` 复制完整的 Agent `persistent-states/`。
   - 不存在公共 `startRun()` alias；启动入口必须通过名称表达来源和职责。
   - Legacy `Generate(..., dryRun = true)` 不返回 payload；Agent adapter 必须通过 `GENERATE_AFTER_DATA` 事件捕获 `generate_data`。
   - 当前 Rust registry 包含 `agent_list`、`agent_delegate`、`agent_handoff`、`agent_await`、`task_return`、`chat_search`、`chat_read_messages`、`worldinfo_read_activated`、`dice_roll`、`skill_list`、`skill_search`、`skill_read`、`workspace_list_files`、`workspace_search_files`、`workspace_read_file`、`workspace_write_file`、`workspace_apply_patch`、`workspace_commit`、`workspace_finish`；实际模型可见集合由 Profile 与 invocation exit policy 收窄，`task_return` 只注入 return-mode child。工具注册由 Rust runtime 独占，前端 Legacy ToolManager tools 必须禁用。

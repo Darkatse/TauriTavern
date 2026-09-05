@@ -39,8 +39,6 @@ struct PersistentStateManifest {
     version: u32,
     state_id: String,
     run_id: String,
-    workspace_id: String,
-    stable_chat_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     base_state_id: Option<String>,
     created_at: DateTime<Utc>,
@@ -72,12 +70,6 @@ impl FileAgentRepository {
                     return Err(DomainError::InvalidData(format!(
                         "agent.persistent_state_manifest_mismatch: manifest state `{}` does not match requested state `{state_id}`",
                         state_manifest.state_id
-                    )));
-                }
-                if state_manifest.workspace_id != run.workspace_id {
-                    return Err(DomainError::InvalidData(format!(
-                        "agent.persistent_state_workspace_mismatch: state `{state_id}` belongs to workspace `{}`",
-                        state_manifest.workspace_id
                     )));
                 }
                 Some((state_dir, state_manifest))
@@ -268,8 +260,6 @@ impl FileAgentRepository {
                 version: 1,
                 state_id: changes.state_id.clone(),
                 run_id: run.id.clone(),
-                workspace_id: run.workspace_id.clone(),
-                stable_chat_id: run.stable_chat_id.clone(),
                 base_state_id: changes.base_state_id.clone(),
                 created_at: Utc::now(),
                 files,

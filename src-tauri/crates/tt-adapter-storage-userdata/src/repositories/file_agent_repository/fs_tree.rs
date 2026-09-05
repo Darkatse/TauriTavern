@@ -114,25 +114,10 @@ pub(super) async fn copy_directory_contents(
             if metadata.is_dir() {
                 stack.push((child, target_child));
             } else if metadata.is_file() {
-                let bytes = fs::read(&child).await.map_err(|error| {
+                fs::copy(&child, &target_child).await.map_err(|error| {
                     DomainError::InternalError(format!(
-                        "Failed to read persistent file {}: {}",
+                        "Failed to copy persistent file {} to {}: {}",
                         child.display(),
-                        error
-                    ))
-                })?;
-                if let Some(parent) = target_child.parent() {
-                    fs::create_dir_all(parent).await.map_err(|error| {
-                        DomainError::InternalError(format!(
-                            "Failed to create persistent projection file parent {}: {}",
-                            parent.display(),
-                            error
-                        ))
-                    })?;
-                }
-                fs::write(&target_child, bytes).await.map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to write persistent projection file {}: {}",
                         target_child.display(),
                         error
                     ))

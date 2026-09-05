@@ -13,13 +13,13 @@ use tt_application::dto::agent_dto::{
     AgentApplyCurrentModelConnectionSnapshotDto, AgentApplyCurrentModelConnectionSnapshotResultDto,
     AgentApplyRunPruneDto, AgentBuildCurrentModelConnectionSnapshotDto,
     AgentBuildCurrentModelConnectionSnapshotResultDto, AgentCancelRunDto,
-    AgentListProfilesResultDto, AgentListRunsDto, AgentListRunsResultDto, AgentListToolsResultDto,
-    AgentLoadProfileResultDto, AgentModelTurnDisplayDto, AgentPlanRunPruneDto,
-    AgentPreparePromptAssemblyDto, AgentPreparePromptAssemblyResultDto, AgentProfileIdDto,
-    AgentPromptAssemblyBrokerRequestDto, AgentPruneChatPersistentStatesDto,
-    AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto, AgentReadEventsResultDto,
-    AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto, AgentReadWorkspaceFileDto,
-    AgentRepairProfileFileDto, AgentResolveChatCommitDto,
+    AgentCopyChatPersistentStatesDto, AgentListProfilesResultDto, AgentListRunsDto,
+    AgentListRunsResultDto, AgentListToolsResultDto, AgentLoadProfileResultDto,
+    AgentModelTurnDisplayDto, AgentPlanRunPruneDto, AgentPreparePromptAssemblyDto,
+    AgentPreparePromptAssemblyResultDto, AgentProfileIdDto, AgentPromptAssemblyBrokerRequestDto,
+    AgentPruneChatPersistentStatesDto, AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto,
+    AgentReadEventsResultDto, AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto,
+    AgentReadWorkspaceFileDto, AgentRepairProfileFileDto, AgentResolveChatCommitDto,
     AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
     AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentRetargetPresetRefsDto,
     AgentRetargetPresetRefsResultDto, AgentRunHandleDto, AgentRunLiveUpdateDto,
@@ -575,6 +575,32 @@ pub async fn prune_agent_chat_persistent_states(
             removed_state_ids: prune.removed_state_ids,
         })
         .map_err(map_command_error("Failed to prune agent persistent states"))
+}
+
+#[tauri::command]
+pub async fn copy_agent_chat_persistent_states(
+    dto: AgentCopyChatPersistentStatesDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("copy_agent_chat_persistent_states");
+
+    app_state
+        .services
+        .chat_service
+        .copy_agent_persistent_states(
+            &AgentChatWorkspaceTarget {
+                chat_ref: dto.source_chat_ref,
+                stable_chat_id: dto.source_stable_chat_id,
+            },
+            &AgentChatWorkspaceTarget {
+                chat_ref: dto.target_chat_ref,
+                stable_chat_id: dto.target_stable_chat_id,
+            },
+        )
+        .await
+        .map_err(map_command_error(
+            "Failed to copy agent chat persistent states",
+        ))
 }
 
 fn collect_agent_persistent_state_ids(payload: &[Value]) -> Vec<String> {

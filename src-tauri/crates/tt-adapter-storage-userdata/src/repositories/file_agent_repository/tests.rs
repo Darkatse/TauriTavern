@@ -1237,6 +1237,37 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
         .expect("read committed persist projection");
     assert_eq!(projected.text, "long running thread note");
 
+    repository
+        .copy_persistent_states(&run.workspace_id, "chat_fork")
+        .await
+        .expect("copy persistent states");
+    let mut fork_run = sample_run_with_id("run_persist_fork");
+    fork_run.workspace_id = "chat_fork".to_string();
+    fork_run.stable_chat_id = "stable_chat_fork".to_string();
+    fork_run.persist_base_state_id = Some(run.id.clone());
+    let fork_manifest = sample_manifest(&fork_run);
+    repository
+        .create_run(&fork_run)
+        .await
+        .expect("create fork run");
+    repository
+        .initialize_run(
+            &fork_run,
+            &fork_manifest,
+            &serde_json::json!({"messages": []}),
+            &sample_resolved_profile(&fork_manifest),
+        )
+        .await
+        .expect("initialize fork from copied state");
+    assert_eq!(
+        repository
+            .read_text(&fork_run.id, &persist_path)
+            .await
+            .expect("read copied persist projection")
+            .text,
+        "long running thread note"
+    );
+
     fs::remove_dir_all(root).await.expect("cleanup");
 }
 

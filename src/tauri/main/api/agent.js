@@ -106,6 +106,10 @@ function createAgentApi({ safeInvoke }) {
         return safeInvoke('list_agent_tools');
     }
 
+    async function copyChatPersistentStates(input) {
+        return safeInvoke('copy_agent_chat_persistent_states', { dto: input });
+    }
+
     function settleChatPresentation(handle) {
         const bridge = commitBridges.get(handle);
         if (!bridge) {
@@ -123,6 +127,7 @@ function createAgentApi({ safeInvoke }) {
         readWorkspaceFile: runtime.readWorkspaceFile,
         readModelTurn: runtime.readModelTurn,
         pruneChatPersistentStates: runtime.pruneChatPersistentStates,
+        copyChatPersistentStates,
         retention: runtime.retention,
         subscribe: runtime.subscribe,
         subscribeLiveProjection,

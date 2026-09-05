@@ -31,6 +31,7 @@ type TauriTavernAgentApi = {
   readEvents(input: AgentReadEventsInput): Promise<AgentReadEventsResult>;
   readWorkspaceFile(input: AgentReadWorkspaceFileInput): Promise<AgentWorkspaceFile>;
   readModelTurn(input: AgentReadModelTurnInput): Promise<AgentModelTurn>;
+  copyChatPersistentStates(input: AgentCopyChatPersistentStatesInput): Promise<void>;
   pruneChatPersistentStates(input: AgentPruneChatPersistentStatesInput): Promise<AgentPruneChatPersistentStatesResult>;
   retention: {
     readSettings(): Promise<AgentRunRetentionSettings>;
@@ -521,6 +522,19 @@ type AgentPruneChatPersistentStatesResult = {
 
 当前只支持 character chat；group chat persistent state prune 会 fail-fast。删除整个 chat / group chat 时，生命周期服务仍删除对应的完整 Agent chat workspace，这不是本方法的职责。
 
+### 11.1 copyChatPersistentStates
+
+```ts
+type AgentCopyChatPersistentStatesInput = {
+  sourceChatRef: AgentChatRef;
+  sourceStableChatId: string;
+  targetChatRef: AgentChatRef;
+  targetStableChatId: string;
+};
+```
+
+`copyChatPersistentStates()` 是聊天分叉后的 Host lifecycle 操作。它把源 chat workspace 的整个 `persistent-states/` 目录复制到新 stable identity 对应的 workspace；不解析或筛选 `persistStateId`。源目录不存在表示没有状态需要继承，其他 I/O 错误直接传播。
+
 ## 12. retention
 
 ```ts
@@ -774,6 +788,7 @@ plan_agent_run_prune(dto)
 apply_agent_run_prune(dto)
 read_agent_run_events(dto)
 read_agent_workspace_file(dto)
+copy_agent_chat_persistent_states(dto)
 resolve_agent_chat_commit(dto)
 ```
 

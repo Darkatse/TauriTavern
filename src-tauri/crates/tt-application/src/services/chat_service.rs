@@ -241,10 +241,15 @@ impl ChatService {
             .invalidate(&character_locator(character_name, file_name))
             .await;
 
-        if let Some(target) = target {
-            self.agent_workspace_lifecycle_service
-                .delete_chat_workspace(&target)
-                .await?;
+        if let Some(target) = target
+            && let Err(error) = self
+                .cleanup_deleted_chat_workspace(character_name, &target)
+                .await
+        {
+            tracing::error!(
+                target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                "Deleted chat '{character_name}/{file_name}' but could not clean its Agent workspace: {error}"
+            );
         }
 
         Ok(())
@@ -621,6 +626,34 @@ impl ChatService {
         self.agent_workspace_lifecycle_service
             .prune_persistent_states(target, request)
             .await
+    }
+
+    pub async fn copy_agent_persistent_states(
+        &self,
+        source: &AgentChatWorkspaceTarget,
+        target: &AgentChatWorkspaceTarget,
+    ) -> Result<(), ApplicationError> {
+        self.agent_workspace_lifecycle_service
+            .copy_persistent_states(source, target)
+            .await
+    }
+
+    async fn cleanup_deleted_chat_workspace(
+        &self,
+        character_name: &str,
+        target: &AgentChatWorkspaceTarget,
+    ) -> Result<(), ApplicationError> {
+        if self
+            .chat_repository
+            .has_character_chat_with_integrity(character_name, &target.stable_chat_id)
+            .await?
+        {
+            return Ok(());
+        }
+        self.agent_workspace_lifecycle_service
+            .delete_chat_workspace(target)
+            .await
+            .map(|_| ())
     }
 
     /// Get the tail window for a character chat JSONL payload.

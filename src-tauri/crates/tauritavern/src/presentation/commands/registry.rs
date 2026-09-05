@@ -345,6 +345,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::agent_commands::resolve_agent_prompt_assembly,
         super::agent_commands::resolve_agent_persistent_state_metadata_update,
         super::agent_commands::prune_agent_chat_persistent_states,
+        super::agent_commands::copy_agent_chat_persistent_states,
         // Agent Skill commands
         super::skill_commands::download_skill_import_url,
         super::skill_commands::list_skills,
