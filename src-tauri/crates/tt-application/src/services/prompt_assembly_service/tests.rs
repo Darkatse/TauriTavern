@@ -67,6 +67,62 @@ fn normalizes_frozen_run_input_snapshot() {
 }
 
 #[test]
+fn attaches_selected_frozen_input_and_preserves_optional_input() {
+    let prompt = json!({ "messages": [] });
+    assert_eq!(
+        attach_frozen_run_input_snapshot(prompt.clone(), None).unwrap(),
+        prompt
+    );
+
+    let frozen = json!({
+        "schemaVersion": 1,
+        "kind": FROZEN_RUN_INPUT_SNAPSHOT_KIND,
+        "generationType": "normal",
+        "promptInputs": {},
+        "worldInfoActivation": {},
+        "macroContext": { "names": { "char": "Char" } }
+    });
+    let embedded = json!({ "messages": [], "frozenRunInputSnapshot": frozen });
+    assert_eq!(
+        attach_frozen_run_input_snapshot(embedded.clone(), None).unwrap(),
+        embedded
+    );
+    // The explicit input replaces the embedded input; only the selected one is validated.
+    assert_eq!(
+        attach_frozen_run_input_snapshot(
+            json!({ "messages": [], "frozenRunInputSnapshot": 7 }),
+            Some(frozen),
+        )
+        .unwrap(),
+        embedded
+    );
+}
+
+#[test]
+fn rejects_malformed_embedded_frozen_input() {
+    for (frozen, error_code) in [
+        (json!(7), "agent.frozen_run_input_snapshot_required"),
+        (
+            json!({
+                "schemaVersion": 1,
+                "kind": FROZEN_RUN_INPUT_SNAPSHOT_KIND,
+                "generationType": "normal",
+                "promptInputs": {},
+                "worldInfoActivation": {},
+                "macroContext": 7
+            }),
+            "agent.frozen_run_input_macro_context_invalid",
+        ),
+    ] {
+        let error =
+            attach_frozen_run_input_snapshot(json!({ "frozenRunInputSnapshot": frozen }), None)
+                .unwrap_err();
+        assert!(matches!(error, ApplicationError::ValidationError(_)));
+        assert!(error.to_string().contains(error_code), "{error}");
+    }
+}
+
+#[test]
 fn builds_current_model_connection_snapshot_with_backend_owned_fields() {
     let snapshot = build_current_model_connection_snapshot(
         &json!({

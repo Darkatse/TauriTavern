@@ -1277,6 +1277,7 @@ function withPromptAssemblyMacroContext(options, macroContext, { model = null } 
     const names = macroContext.names && typeof macroContext.names === 'object' ? macroContext.names : {};
     const character = macroContext.character && typeof macroContext.character === 'object' ? macroContext.character : {};
     const system = macroContext.system && typeof macroContext.system === 'object' ? macroContext.system : {};
+    const chat = macroContext.chat && typeof macroContext.chat === 'object' ? macroContext.chat : {};
     const dynamicMacros = {
         user: stringOrEmpty(names.user),
         char: stringOrEmpty(names.char),
@@ -1306,6 +1307,9 @@ function withPromptAssemblyMacroContext(options, macroContext, { model = null } 
         greeting: stringOrEmpty(character.firstMessage),
         charFirstMessage: stringOrEmpty(character.firstMessage),
         model: stringOrEmpty(model ?? system.model),
+        lastMessageId: stringOrEmpty(chat.lastMessageId),
+        lastSwipeId: stringOrEmpty(chat.lastSwipeId),
+        currentSwipeId: stringOrEmpty(chat.currentSwipeId),
         ...(options?.dynamicMacros ?? {}),
     };
 
