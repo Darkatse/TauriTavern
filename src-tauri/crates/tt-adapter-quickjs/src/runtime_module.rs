@@ -7,10 +7,12 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::{Ctx, JsLifetime, Result};
+use rquickjs::{Ctx, Function, JsLifetime, Object, Result};
 use serde_json::Value;
+use tt_domain::frozen_macros::FrozenMacros;
 
 use crate::api::{OverlayFs, build_log_object, build_workspace_object};
 
@@ -18,6 +20,8 @@ pub(crate) const RUNTIME_MODULE_NAME: &str = "@tauritavern/runtime";
 
 /// 一次执行的 Runtime 状态，经 ctx userdata 传给原生模块。
 pub(crate) struct RuntimeState {
+    pub(crate) frozen_macros: Arc<FrozenMacros>,
+    pub(crate) max_render_bytes: usize,
     pub(crate) overlay: Rc<RefCell<OverlayFs>>,
     pub(crate) context: Value,
 }
@@ -35,19 +39,26 @@ impl ModuleDef for RuntimeModule {
         decl.declare("workspace")?;
         decl.declare("log")?;
         decl.declare("context")?;
+        decl.declare("macros")?;
         Ok(())
     }
 
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
-        let (overlay, context) = match ctx.userdata::<RuntimeState>() {
-            Some(state) => (state.overlay.clone(), state.context.clone()),
-            None => {
-                return Err(rquickjs::Exception::throw_message(
-                    ctx,
-                    "runtime module evaluated without execution state",
-                ));
-            }
-        };
+        let (overlay, context, frozen_macros, max_render_bytes) =
+            match ctx.userdata::<RuntimeState>() {
+                Some(state) => (
+                    state.overlay.clone(),
+                    state.context.clone(),
+                    state.frozen_macros.clone(),
+                    state.max_render_bytes,
+                ),
+                None => {
+                    return Err(rquickjs::Exception::throw_message(
+                        ctx,
+                        "runtime module evaluated without execution state",
+                    ));
+                }
+            };
 
         let workspace = build_workspace_object(ctx, overlay.clone())?;
         let log = build_log_object(ctx, overlay)?;
@@ -56,6 +67,22 @@ impl ModuleDef for RuntimeModule {
         exports.export("workspace", workspace)?;
         exports.export("log", log)?;
         exports.export("context", context)?;
+        let macros = Object::new(ctx.clone())?;
+        macros.set(
+            "render",
+            Function::new(
+                ctx.clone(),
+                move |ctx: Ctx<'_>, text: String| -> Result<String> {
+                    frozen_macros
+                        .render(&text, max_render_bytes)
+                        .map(std::borrow::Cow::into_owned)
+                        .map_err(|error| {
+                            rquickjs::Exception::throw_message(&ctx, &error.to_string())
+                        })
+                },
+            )?,
+        )?;
+        exports.export("macros", macros)?;
         Ok(())
     }
 }

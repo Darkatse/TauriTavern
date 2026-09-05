@@ -12,6 +12,7 @@ fn request(source: &str, args: serde_json::Value) -> SkillScriptRequest {
     let mut modules = HashMap::new();
     modules.insert("scripts/main.js".to_string(), source.to_string());
     SkillScriptRequest {
+        frozen_macros: Default::default(),
         entry_module: "scripts/main.js".to_string(),
         modules,
         args,
@@ -408,4 +409,29 @@ async fn concurrent_executions_all_complete() {
     for handle in handles {
         handle.await.expect("join").expect("execute");
     }
+}
+
+#[tokio::test]
+async fn native_macro_render_uses_frozen_values_and_enforces_its_output_budget() {
+    let captured = "abcdefghijklmnopqrst";
+    let macro_context = json!({ "names": { "char": captured } });
+    let mut input = request(
+        r#"
+        import { context, macros } from '@tauritavern/runtime';
+        export default () => {
+            context.macro.names.char = 'changed';
+            let limited = false;
+            try { macros.render('{{char}}'.repeat(4)); } catch (error) { limited = /exceeds 64 bytes/.test(error.message); }
+            return { text: macros.render('{{char}}'), limited };
+        }
+    "#,
+        json!({}),
+    );
+    input.context["macro"] = macro_context.clone();
+    input.frozen_macros = Arc::new(
+        tt_domain::frozen_macros::FrozenMacros::from_context(&macro_context, None).unwrap(),
+    );
+    let engine = QuickJsScriptEngine::new().with_budgets(DEFAULT_MAX_TOTAL_INPUT_BYTES, 64);
+    let result = engine.execute(input).await.unwrap();
+    assert_eq!(result.value, json!({ "text": captured, "limited": true }));
 }

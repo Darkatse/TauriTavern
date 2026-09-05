@@ -12,6 +12,7 @@ serde_json = { workspace = true }
 # 只保留 spawn_blocking（rt）与 Semaphore（sync）所需的 feature。
 tokio = { version = "1", default-features = false, features = ["rt", "sync"] }
 tt-ports = { path = "../tt-ports" }
+tt-domain = { path = "../tt-domain" }
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["macros"] }

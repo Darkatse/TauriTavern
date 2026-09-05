@@ -181,6 +181,8 @@ fn execute_sync(
         // Runtime 状态经 ctx userdata 传入原生模块（模块求值时读取）。
         // store_userdata 仅在 userdata 被并发访问时失败，此处不可能。
         ctx.store_userdata(RuntimeState {
+            frozen_macros: request.frozen_macros.clone(),
+            max_render_bytes: limits.max_total_output_bytes,
             overlay: overlay.clone(),
             context: request.context.clone(),
         })

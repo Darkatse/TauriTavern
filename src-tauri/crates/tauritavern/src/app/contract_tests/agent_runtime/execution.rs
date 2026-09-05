@@ -963,3 +963,170 @@ async fn agent_runtime_does_not_retry_non_retryable_model_errors() {
 
     let _ = fs::remove_dir_all(root).await;
 }
+
+#[tokio::test]
+async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
+    use tt_domain::models::chat::ChatMessage;
+    use tt_domain::models::skill::{
+        SkillImportInput, SkillInlineFile, SkillInstallRequest, SkillScope,
+    };
+    use tt_ports::repositories::skill_repository::SkillRepository;
+
+    let root = temp_root("frozen-macros");
+    let source = "heading\n{{description}}\n{{char}}\n{{greeting::1}} / {{getvar::Name}} / {{getglobalvar::Name}} / {{outlet::Lore}} / {{date}} / {{instructUserPrefix}}";
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![
+            model_tool_response(vec![
+                model_tool_call(
+                    "write",
+                    "workspace_write_file",
+                    json!({ "path": "output/main.md", "content": source }),
+                ),
+                model_tool_call(
+                    "skill_read",
+                    "skill_read",
+                    json!({ "name": "macro-demo", "path": "references/template.md", "start_line": 3, "line_count": 1 }),
+                ),
+                model_tool_call(
+                    "skill_search",
+                    "skill_search",
+                    json!({ "name": "macro-demo", "query": "lantern" }),
+                ),
+                model_tool_call(
+                    "chat_read",
+                    "chat_read_messages",
+                    json!({ "messages": [{ "index": 0, "start_line": 3, "line_count": 1 }] }),
+                ),
+                model_tool_call("chat_search", "chat_search", json!({ "query": "lantern" })),
+                model_tool_call(
+                    "file_read",
+                    "workspace_read_file",
+                    json!({ "path": "output/main.md" }),
+                ),
+                model_tool_call(
+                    "file_search",
+                    "workspace_search_files",
+                    json!({ "path": "output", "query": "lantern" }),
+                ),
+                model_tool_call(
+                    "script",
+                    "skill_run_script",
+                    json!({ "skill": "macro-demo", "script": "helper" }),
+                ),
+            ]),
+            model_tool_response(vec![model_tool_call(
+                "finish",
+                "workspace_finish",
+                json!({}),
+            )]),
+        ],
+    );
+    FileSkillRepository::new(root.join("_tauritavern/skills"))
+        .install_import(SkillInstallRequest {
+            target_scope: SkillScope::Global,
+            conflict_strategy: None,
+            input: SkillImportInput::InlineFiles {
+                source: json!({ "kind": "test" }),
+                files: [
+                    ("SKILL.md", "---\nname: macro-demo\ndescription: Macro test\n---\n{{char}}"),
+                    ("references/template.md", source),
+                    ("scripts/helper.js", "import { macros, workspace } from '@tauritavern/runtime'; export default () => macros.render(workspace.readText('output/main.md'));"),
+                ].into_iter().map(|(path, content)| SkillInlineFile {
+                    path: path.into(), content: content.into(), encoding: "utf8".into(),
+                    media_type: None, size_bytes: None, sha256: None,
+                }).collect(),
+            },
+        }).await.unwrap();
+    let mut profile = resolve_contract_profile(&fixture).await;
+    profile.tools.max_rounds = 2;
+    profile.tools.max_calls_per_run = 20;
+    let mut run = contract_run("run_macros", AgentRunPresentation::Background, &profile);
+    run.chat_ref = AgentChatRef::Character {
+        character_id: "Alice".into(),
+        file_name: "macros.jsonl".into(),
+    };
+    run.input_message_count = Some(1);
+    let mut chat = Chat::new("User", "Alice");
+    chat.file_name = Some("macros.jsonl".into());
+    chat.add_message(ChatMessage::user("User", source));
+    fixture.chat_repository.save(&chat).await.unwrap();
+    fixture.agent_repository.create_run(&run).await.unwrap();
+    let request = chat_request("read the frozen text");
+    let prompt = json!({
+        "chatCompletionPayload": request.payload,
+        "worldInfoActivation": { "entries": [] },
+        "frozenRunInputSnapshot": {
+            "promptInputs": {
+                "extensionPrompts": { "customWIOutlet_Lore": { "value": "Outlet" } }
+            },
+            "macroContext": {
+                "names": { "char": "Frozen name" },
+                "character": {
+                    "description": "first line\nblue lantern\nlast line",
+                    "firstMessage": "Main",
+                    "alternateGreetings": ["Alternate"]
+                },
+                "variableValues": { "local": { "Name": "Local" }, "global": { "Name": "Global" } },
+                "builtins": { "date": "2026-09-05", "instructInput": "USER:" }
+            }
+        }
+    });
+    let (_cancel, mut receiver) = watch::channel(false);
+    fixture
+        .service
+        .execute_agent_loop_run_inner(&run.id, prompt, request, profile, &mut receiver)
+        .await
+        .unwrap();
+    let requests = fixture.model_gateway.requests().await;
+    let results = requests[1]
+        .messages
+        .iter()
+        .flat_map(|message| &message.parts)
+        .filter_map(|part| match part {
+            AgentModelContentPart::ToolResult { result } => Some((result.call_id.as_str(), result)),
+            _ => None,
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    for result in results.values() {
+        assert!(!result.is_error, "{}: {}", result.call_id, result.content);
+    }
+    assert!(results["skill_read"].content.contains("3 | blue lantern"));
+    assert_eq!(results["skill_read"].structured["totalLines"], 6);
+    assert_eq!(
+        results["chat_read"].structured["messages"][0]["text"],
+        "blue lantern"
+    );
+    for id in ["skill_search", "chat_search"] {
+        assert_eq!(
+            results[id].structured["hits"].as_array().unwrap().len(),
+            1,
+            "{id}"
+        );
+    }
+    assert!(
+        results["file_search"].structured["hits"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(results["file_read"].content.contains("{{description}}"));
+    assert_eq!(results["file_read"].structured["totalLines"], 4);
+    assert!(results["script"].content.contains("blue lantern"));
+    assert!(results["script"].content.contains("Frozen name"));
+    assert!(
+        results["script"]
+            .content
+            .contains("Alternate / Local / Global / Outlet / 2026-09-05 / USER:")
+    );
+    assert_eq!(
+        fixture
+            .agent_repository
+            .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
+            .await
+            .unwrap()
+            .text,
+        source
+    );
+    let _ = fs::remove_dir_all(root).await;
+}

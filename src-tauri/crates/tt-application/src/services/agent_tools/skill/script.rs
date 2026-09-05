@@ -176,6 +176,7 @@ pub(in crate::services::agent_tools) async fn script(
 
     let outcome = engine
         .execute(SkillScriptRequest {
+            frozen_macros: session.frozen_macros.clone(),
             entry_module: entry_module.clone(),
             modules,
             args: script_args,

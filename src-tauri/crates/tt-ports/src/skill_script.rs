@@ -31,8 +31,9 @@ pub enum SkillScriptEngineError {
 }
 
 /// 一次脚本执行请求。适配器只接触逻辑模块名、源码字符串与纯 JSON 上下文，
-/// 不接收任何物理路径或领域模型类型。
+/// 冻结宏仅携带内存替换值，不接收任何物理路径或宿主对象。
 pub struct SkillScriptRequest {
+    pub frozen_macros: std::sync::Arc<tt_domain::frozen_macros::FrozenMacros>,
     /// 入口模块的逻辑名（如 `scripts/main.js`），必须存在于 `modules` 中。
     pub entry_module: String,
     /// 内存模块快照：逻辑模块名 → 模块源码（含入口模块）。
