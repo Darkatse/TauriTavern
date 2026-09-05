@@ -365,9 +365,14 @@ pub fn attach_frozen_run_input_snapshot(
     mut prompt_snapshot: Value,
     frozen_run_input_snapshot: Option<Value>,
 ) -> Result<Value, ApplicationError> {
-    let Some(frozen_run_input_snapshot) = frozen_run_input_snapshot else {
+    let Some(frozen_run_input_snapshot) = frozen_run_input_snapshot
+        .as_ref()
+        .or_else(|| prompt_snapshot.get("frozenRunInputSnapshot"))
+    else {
         return Ok(prompt_snapshot);
     };
+    let frozen_run_input_snapshot =
+        normalize_frozen_run_input_snapshot(frozen_run_input_snapshot, "")?;
     let object = prompt_snapshot.as_object_mut().ok_or_else(|| {
         ApplicationError::ValidationError(
             "agent.prompt_snapshot_invalid: promptSnapshot must be an object".to_string(),
@@ -375,7 +380,7 @@ pub fn attach_frozen_run_input_snapshot(
     })?;
     object.insert(
         "frozenRunInputSnapshot".to_string(),
-        normalize_frozen_run_input_snapshot(&frozen_run_input_snapshot, "")?,
+        frozen_run_input_snapshot,
     );
     Ok(prompt_snapshot)
 }

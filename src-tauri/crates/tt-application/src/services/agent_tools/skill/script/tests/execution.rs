@@ -200,7 +200,7 @@ async fn module_snapshot_contains_only_script_modules() {
 }
 
 #[tokio::test]
-async fn variables_from_frozen_run_input_snapshot_are_passed_to_engine() {
+async fn frozen_host_context_is_passed_to_engine() {
     let engine = Arc::new(FakeScriptEngine {
         outcome: FakeOutcome::Ok(json!({})),
         requests: Mutex::new(Vec::new()),
@@ -208,9 +208,21 @@ async fn variables_from_frozen_run_input_snapshot_are_passed_to_engine() {
     let session = session_with_skill("demo");
     let profile = profile(true);
 
+    let macro_context = json!({
+        "schemaVersion": 1,
+        "names": { "user": "Alice", "char": "Bob" },
+        "character": {
+            "description": "A test character",
+            "personaPosition": 0,
+            "alternateGreetings": ["Another greeting"]
+        },
+        "system": { "model": "captured-model" },
+        "chat": { "lastMessageId": "42", "lastSwipeId": "2", "currentSwipeId": "1" }
+    });
     let prompt_snapshot = json!({
         "worldInfoActivation": { "entries": [] },
         "frozenRunInputSnapshot": {
+            "macroContext": macro_context,
             "variables": {
                 "local": { "score": 42, "name": "Alice" },
                 "global": { "theme": "dark" }
@@ -246,102 +258,45 @@ async fn variables_from_frozen_run_input_snapshot_are_passed_to_engine() {
     let requests = engine.requests.lock().await;
     assert_eq!(requests.len(), 1);
     assert_eq!(
-        requests[0].context["variables"]["local"].get("score"),
-        Some(&json!(42))
-    );
-    assert_eq!(
-        requests[0].context["variables"]["local"].get("name"),
-        Some(&json!("Alice"))
-    );
-    assert_eq!(
-        requests[0].context["variables"]["global"].get("theme"),
-        Some(&json!("dark"))
-    );
-}
-
-#[tokio::test]
-async fn macro_context_from_frozen_run_input_snapshot_is_passed_to_engine() {
-    let engine = Arc::new(FakeScriptEngine {
-        outcome: FakeOutcome::Ok(json!({})),
-        requests: Mutex::new(Vec::new()),
-    });
-    let session = session_with_skill("demo");
-    let profile = profile(true);
-
-    let prompt_snapshot = json!({
-        "worldInfoActivation": { "entries": [] },
-        "frozenRunInputSnapshot": {
-            "macroContext": {
-                "schemaVersion": 1,
-                "names": { "user": "Alice", "char": "Bob" },
-                "character": { "description": "A test character" },
-                "system": { "model": "test-model" },
-                "chat": { "lastMessageId": "42", "lastSwipeId": "2", "currentSwipeId": "1" },
-            }
-        }
-    });
-
-    let (result, _) = script(
-        ScriptContext {
-            skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
-                script_source: Some("export default function() { return {}; }".to_string()),
-            })),
-            engine: engine.as_ref(),
-            workspace_repository: &FakeWorkspaceRepo {
-                files: HashMap::new(),
-                written: Mutex::new(Vec::new()),
-                truncated: false,
-                fail_write_on: None,
-                snapshot_content: None,
+        requests[0].context,
+        json!({
+            "worldInfo": { "entries": [] },
+            "variables": {
+                "local": { "score": 42, "name": "Alice" },
+                "global": { "theme": "dark" }
             },
-            run_id: "run-1",
-            prompt_snapshot,
-        },
-        &call(json!({ "skill": "demo", "script": "helper" })),
-        &session,
-        &profile,
-    )
-    .await
-    .expect("script must succeed");
-
-    assert!(!result.is_error);
-
-    let requests = engine.requests.lock().await;
-    assert_eq!(requests.len(), 1);
-    assert_eq!(
-        requests[0].context["macro"]["chat"]["lastMessageId"],
-        json!("42")
-    );
-    assert_eq!(
-        requests[0].context["macro"]["chat"]["lastSwipeId"],
-        json!("2")
-    );
-    assert_eq!(
-        requests[0].context["macro"]["chat"]["currentSwipeId"],
-        json!("1")
-    );
-    assert_eq!(
-        requests[0].context["macro"]["names"]["char"],
-        json!("Bob")
-    );
-    assert_eq!(
-        requests[0].context["macro"]["character"]["description"],
-        json!("A test character")
+            "macro": macro_context
+        })
     );
 }
 
 #[test]
 fn malformed_script_context_fails_fast() {
     assert!(build_script_context_json(&json!({ "worldInfoActivation": {} })).is_err());
-    assert!(
-        build_script_context_json(&json!({
+    for (frozen, message) in [
+        (
+            json!({ "variables": { "local": [], "global": {} } }),
+            "variables.local must be an object",
+        ),
+        (json!(7), "frozenRunInputSnapshot must be an object"),
+        (
+            json!({ "macroContext": 7 }),
+            "macroContext must be an object",
+        ),
+    ] {
+        let error = build_script_context_json(&json!({
             "worldInfoActivation": { "entries": [] },
-            "frozenRunInputSnapshot": {
-                "variables": { "local": [], "global": {} }
-            },
+            "frozenRunInputSnapshot": frozen,
         }))
-        .is_err()
-    );
+        .unwrap_err();
+        assert!(matches!(error, ApplicationError::ValidationError(_)));
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("agent.invalid_skill_script_context: {message}")),
+            "{error}"
+        );
+    }
 }
 
 #[test]

@@ -7,6 +7,7 @@ import { getVariableMacros } from './variables.js';
 import { isMobile } from './RossAscends-mods.js';
 import { inject_ids } from './constants.js';
 import { initRegisterMacros, macros as macroSystem } from './macros/macro-system.js';
+import { findLastMessageId, getLastSwipeId as getChatLastSwipeId, getCurrentSwipeId as getChatCurrentSwipeId } from './macros/chat-state.js';
 import { power_user } from './power-user.js';
 
 /**
@@ -338,22 +339,7 @@ function getChatIdHash() {
  * @returns {number|null} The message id, or null if none was found
  */
 export function getLastMessageId({ exclude_swipe_in_propress = true, filter = null } = {}) {
-    for (let i = chat?.length - 1; i >= 0; i--) {
-        let message = chat[i];
-
-        // If ignoring swipes and the message is being swiped, continue
-        // We can check if a message is being swiped by checking whether the current swipe id is not in the list of finished swipes yet
-        if (exclude_swipe_in_propress && message.swipes && message.swipe_id >= message.swipes.length) {
-            continue;
-        }
-
-        // Check if no filter is provided, or if the message passes the filter
-        if (!filter || filter(message)) {
-            return i;
-        }
-    }
-
-    return null;
+    return findLastMessageId(chat, { excludePendingSwipe: exclude_swipe_in_propress, filter });
 }
 
 /**
@@ -411,15 +397,12 @@ function getLastCharMessage() {
 }
 
 /**
- * Returns the 1-based ID (number) of the last swipe
+ * Returns the number of existing swipes on the last message, including a pending swipe's message.
  *
- * @returns {number|null} The 1-based ID of the last swipe
+ * @returns {number|null} The swipe count, or null when unavailable
  */
 export function getLastSwipeId() {
-    // For swipe macro, we are accepting using the message that is currently being swiped
-    const mid = getLastMessageId({ exclude_swipe_in_propress: false });
-    const swipes = chat[mid]?.swipes;
-    return swipes?.length;
+    return getChatLastSwipeId(chat);
 }
 
 /**
@@ -428,10 +411,7 @@ export function getLastSwipeId() {
  * @returns {number|null} The 1-based ID of the current swipe
  */
 export function getCurrentSwipeId() {
-    // For swipe macro, we are accepting using the message that is currently being swiped
-    const mid = getLastMessageId({ exclude_swipe_in_propress: false });
-    const swipeId = chat[mid]?.swipe_id;
-    return swipeId !== null ? swipeId + 1 : null;
+    return getChatCurrentSwipeId(chat);
 }
 
 /**

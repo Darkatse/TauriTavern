@@ -144,52 +144,27 @@ const theme = context.variables.global.theme;
 
 ### 3.4 `context.macro` — 宏上下文快照（只读）
 
-`context.macro` 是当前 run 启动时冻结的宏上下文快照（macroContext），与 prompt 模板中的 `{{...}}` 宏共享同一数据源。它是普通 JSON 对象；脚本可以在本次执行中读取这些字段，但不会修改宿主状态。
+`context.macro` 提供本次 run 启动时冻结的前端宏数据，保留原始 JSON 类型。修改这份对象只影响本次脚本执行，不会写回宿主。
 
 ```js
 import { context } from '@tauritavern/runtime';
 
-// 当前楼层号（最后一条消息的 id）
-const floor = context.macro.chat.lastMessageId;   // "42"
-
-// 最后一条消息的 swipe 总数（1-based）
-const lastSwipe = context.macro.chat.lastSwipeId;  // "2"
-
-// 最后一条消息当前所在的 swipe 编号（1-based）
-const currentSwipe = context.macro.chat.currentSwipeId;  // "1"
-
-// 角色名与角色卡字段
-const charName = context.macro.names.char;          // "Bob"
-const description = context.macro.character.description;
-const personality = context.macro.character.personality;
-const scenario = context.macro.character.scenario;
-const greeting = context.macro.character.firstMessage;
-
-// 用户名与群组
-const userName = context.macro.names.user;          // "Alice"
-
-// 当前生成模型
-const model = context.macro.system.model;           // "test-model"
+const charName = context.macro.names?.char;
+const description = context.macro.character?.description;
+const lastMessageId = context.macro.chat?.lastMessageId;
 ```
 
-顶层字段：
+| 字段 | 说明 |
+| --- | --- |
+| `schemaVersion` | 宏上下文版本号 |
+| `names` | user、char、group 等名称 |
+| `character` | description、scenario、firstMessage 等角色字段；personaPosition 为数值，alternateGreetings 为字符串数组 |
+| `system.model` | 前端捕获时使用的模型 |
+| `chat.lastMessageId` | 最后一条合格消息的 0-based 索引，跳过正在生成新 swipe 的消息 |
+| `chat.lastSwipeId` | 末尾消息已有的 swipe 数量 |
+| `chat.currentSwipeId` | 末尾消息的 1-based swipe 编号，包含正在生成的新 swipe |
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `names` | `object` | 用户名、角色名、群组等名称宏 |
-| `character` | `object` | 角色卡字段（description、personality、scenario、firstMessage 等） |
-| `system` | `object` | 系统级宏（当前生成模型等） |
-| `chat` | `object` | 对话状态宏（楼层号、swipe 编号） |
-
-`chat` 子字段：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `lastMessageId` | `string` | 最后一条消息的 id，即当前楼层号 |
-| `lastSwipeId` | `string` | 最后一条消息的 swipe 总数（1-based） |
-| `currentSwipeId` | `string` | 最后一条消息当前所在的 swipe 编号（1-based） |
-
-所有值均为字符串（与宏替换语义一致）。字段缺失时得到 `undefined`，可按需使用 `??` 提供默认值。修改这份对象只影响本次脚本执行，不会写回宿主。
+三个 `chat` 值均为字符串，不可用时为 `""`；生成新 swipe 时，它们可能指向不同消息。缺少宏快照时 `context.macro` 为 `{}`，字段可用可选链读取。
 
 ### 3.5 `log` — 日志 API
 

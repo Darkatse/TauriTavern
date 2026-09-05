@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use serde_json::Value;
-use serde_json::json;
+use serde_json::{Map, Value, json};
 
 use super::super::common::{
     ensure_only_args, object_args, required_trimmed_string_arg, tool_error,
@@ -488,8 +487,15 @@ fn build_script_context_json(prompt_snapshot: &Value) -> Result<Value, Applicati
         .map(|(index, entry)| super::super::world_info::normalize_entry_json(index, entry))
         .collect::<Result<Vec<_>, ApplicationError>>()?;
 
-    let variables = prompt_snapshot
+    let frozen = prompt_snapshot
         .get("frozenRunInputSnapshot")
+        .map(|value| {
+            value
+                .as_object()
+                .ok_or_else(|| invalid_script_context("frozenRunInputSnapshot must be an object"))
+        })
+        .transpose()?;
+    let variables = frozen
         .and_then(|frozen| frozen.get("variables"))
         .map(|variables| {
             let variables = variables
@@ -508,12 +514,16 @@ fn build_script_context_json(prompt_snapshot: &Value) -> Result<Value, Applicati
         .transpose()?
         .unwrap_or_else(|| json!({ "local": {}, "global": {} }));
 
-    let macro_context = prompt_snapshot
-        .get("frozenRunInputSnapshot")
+    let empty_macro_context = Map::new();
+    let macro_context = frozen
         .and_then(|frozen| frozen.get("macroContext"))
-        .filter(|value| value.is_object())
-        .cloned()
-        .unwrap_or_else(|| json!({}));
+        .map(|value| {
+            value
+                .as_object()
+                .ok_or_else(|| invalid_script_context("macroContext must be an object"))
+        })
+        .transpose()?
+        .unwrap_or(&empty_macro_context);
 
     Ok(json!({
         "worldInfo": { "entries": world_info_entries },
