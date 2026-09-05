@@ -666,14 +666,12 @@ function selectMatchingContextTemplate(name) {
 }
 
 /**
- * Replaces instruct mode macros in the given input string.
- * @param {Object<string, *>} env - Map of macro names to the values they'll be substituted with. If the param
- * values are functions, those functions will be called and their return values are used.
- * @returns {import('./macros.js').Macro[]} Macro objects.
+ * Returns the values and enablement rules shared by instruct macros and their frozen snapshot.
+ * @param {Object<string, *>} env Macro environment.
+ * @returns {{ key: string, value: string, enabled: boolean }[]}
  */
-export function getInstructMacros(env) {
-    /** @type {{ key: string,value: string, enabled: boolean }[]} */
-    const instructMacros = [
+function getInstructMacroEntries(env) {
+    return [
         // Instruct template macros
         {
             key: 'instructStoryStringPrefix',
@@ -773,10 +771,23 @@ export function getInstructMacros(env) {
             enabled: true,
         },
     ];
+}
 
+/** Capture canonical values once; replay aliases share these strings. */
+export function getInstructMacroValues(env) {
+    return Object.fromEntries(getInstructMacroEntries(env).map(({ key, value, enabled }) =>
+        [key.split('|')[0], enabled ? String(value ?? '') : ''],
+    ));
+}
+
+/**
+ * @param {Object<string, *>} env Macro environment.
+ * @returns {import('./macros.js').Macro[]}
+ */
+export function getInstructMacros(env) {
     const macros = [];
 
-    for (const { key, value, enabled } of instructMacros) {
+    for (const { key, value, enabled } of getInstructMacroEntries(env)) {
         const regex = new RegExp(`{{(${key})}}`, 'gi');
         const replace = () => enabled ? value : '';
         macros.push({ regex, replace });

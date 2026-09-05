@@ -347,7 +347,7 @@ export function getLastMessageId({ exclude_swipe_in_propress = true, filter = nu
  *
  * @returns {number|null} The ID of the first message in the context
  */
-function getFirstIncludedMessageId() {
+export function getFirstIncludedMessageId() {
     return chat_metadata.lastInContextMessageId;
 }
 
@@ -356,7 +356,7 @@ function getFirstIncludedMessageId() {
  *
  * @returns {number|null} The ID of the first displayed message
  */
-function getFirstDisplayedMessageId() {
+export function getFirstDisplayedMessageId() {
     const mesId = Number(document.querySelector('#chat .mes')?.getAttribute('mesid'));
 
     if (!isNaN(mesId) && mesId >= 0) {
@@ -371,7 +371,7 @@ function getFirstDisplayedMessageId() {
  *
  * @returns {string} The last message in the chat
  */
-function getLastMessage() {
+export function getLastMessage() {
     const mid = getLastMessageId();
     return chat[mid]?.mes ?? '';
 }
@@ -381,7 +381,7 @@ function getLastMessage() {
  *
  * @returns {string} The last message from the user
  */
-function getLastUserMessage() {
+export function getLastUserMessage() {
     const mid = getLastMessageId({ filter: m => m.is_user && !m.is_system });
     return chat[mid]?.mes ?? '';
 }
@@ -391,7 +391,7 @@ function getLastUserMessage() {
  *
  * @returns {string} The last message from the bot
  */
-function getLastCharMessage() {
+export function getLastCharMessage() {
     const mid = getLastMessageId({ filter: m => !m.is_user && !m.is_system });
     return chat[mid]?.mes ?? '';
 }
@@ -432,9 +432,7 @@ function getBannedWordsMacro() {
     return { regex: banPattern, replace: banReplace };
 }
 
-function getTimeSinceLastMessage() {
-    const now = moment();
-
+export function getTimeSinceLastMessage(now = moment()) {
     if (Array.isArray(chat) && chat.length > 0) {
         let lastMessage;
         let takeNext = false;

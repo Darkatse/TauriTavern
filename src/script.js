@@ -312,6 +312,7 @@ import {
     formatInstructModeExamples,
     formatInstructModeStoryString,
     getInstructStoppingSequences,
+    getInstructMacroValues,
 } from './scripts/instruct-mode.js';
 import { initLocales, t, translate } from './scripts/i18n.js';
 import { captureTokenCacheSaveState, getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, initTokenizers, saveTokenCache, warmTokenizerCache } from './scripts/tokenizers.js';
@@ -337,8 +338,19 @@ import {
     registerHtmlCodePreviewParticipant,
 } from './scripts/html-code-preview.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
-import { evaluateMacros, getLastMessageId, initMacros } from './scripts/macros.js';
+import {
+    evaluateMacros,
+    getLastMessageId,
+    getLastMessage,
+    getLastUserMessage,
+    getLastCharMessage,
+    getFirstIncludedMessageId,
+    getFirstDisplayedMessageId as getMacroFirstDisplayedMessageId,
+    getTimeSinceLastMessage,
+    initMacros,
+} from './scripts/macros.js';
 import { findLastMessageId, getLastSwipeId, getCurrentSwipeId } from './scripts/macros/chat-state.js';
+import { snapshotVariableMacroValues } from './scripts/variables/values.js';
 import { currentUser, setUserControls } from './scripts/user.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup, fixToastrForDialogs } from './scripts/popup.js';
 import { renderTemplate, renderTemplateAsync } from './scripts/templates.js';
@@ -4279,6 +4291,7 @@ function buildAgentPromptMacroContext(promptInputs = {}) {
     const charName = String(promptInputs.name2 ?? name2 ?? '');
     const userName = String(name1 ?? '');
     const mesExamplesRaw = String(fields.mesExamples ?? '');
+    const now = moment();
 
     return {
         schemaVersion: 1,
@@ -4319,6 +4332,30 @@ function buildAgentPromptMacroContext(promptInputs = {}) {
             lastMessageId: String(findLastMessageId(chat) ?? ''),
             lastSwipeId: String(getLastSwipeId(chat) ?? ''),
             currentSwipeId: String(getCurrentSwipeId(chat) ?? ''),
+        },
+        builtins: {
+            ...getInstructMacroValues({ charPrompt: fields.system }),
+            time: now.format('LT'),
+            date: now.format('LL'),
+            weekday: now.format('dddd'),
+            isotime: now.format('HH:mm'),
+            isodate: now.format('YYYY-MM-DD'),
+            idleDuration: getTimeSinceLastMessage(now),
+            lastMessage: getLastMessage(),
+            lastUserMessage: getLastUserMessage(),
+            lastCharMessage: getLastCharMessage(),
+            firstIncludedMessageId: String(getFirstIncludedMessageId() ?? ''),
+            firstDisplayedMessageId: String(getMacroFirstDisplayedMessageId() ?? ''),
+            allChatRange: chat.length ? `0-${chat.length - 1}` : '',
+            input: String($('#send_textarea').val() ?? ''),
+            isMobile: String(isMobile()),
+            lastGenerationType: String(promptInputs.type || 'normal'),
+            maxPrompt: String(getMaxPromptTokens()),
+            maxContext: String(getMaxContextTokens()),
+            maxResponse: String(getMaxResponseTokens()),
+            reasoningPrefix: String(power_user.reasoning.prefix ?? ''),
+            reasoningSuffix: String(power_user.reasoning.suffix ?? ''),
+            reasoningSeparator: String(power_user.reasoning.separator ?? ''),
         },
     };
 }
@@ -6382,12 +6419,18 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                     secretKey: resolveSecretKey(),
                     secretState: secret_state,
                 });
+                const macroContext = buildAgentPromptMacroContext(promptInputs);
+                const variables = buildAgentVariablesSnapshot();
                 generate_data.frozenRunInputSnapshot = buildFrozenRunInputSnapshot({
                     generationType: type,
                     promptInputs,
                     worldInfoActivation,
-                    macroContext: buildAgentPromptMacroContext(promptInputs),
-                    variables: buildAgentVariablesSnapshot(),
+                    macroContext: {
+                        ...macroContext,
+                        variableValues: snapshotVariableMacroValues(variables,
+                            power_user.experimental_macro_engine ? value => MacroEngine.normalizeMacroResult(value) : String),
+                    },
+                    variables,
                     currentModelConnection,
                 });
             }
