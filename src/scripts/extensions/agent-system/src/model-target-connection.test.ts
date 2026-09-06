@@ -131,10 +131,10 @@ test('Model Target sync and UI changes use the context-owned event source', asyn
 
     try {
         await syncSavedModelTargetLlmConnections();
-        expect(host.savedConnections.at(-1)?.auth.secretRef.id).toBe('secret-custom');
+        expect(host.savedConnections.at(-1)?.auth.secretRef?.id).toBe('secret-custom');
 
         await host.eventSource.emit(EVENT_TYPES.MODEL_TARGET_UPDATED, target, updatedTarget);
-        expect(host.savedConnections.at(-1)?.auth.secretRef.id).toBe('secret-rotated');
+        expect(host.savedConnections.at(-1)?.auth.secretRef?.id).toBe('secret-rotated');
         expect(observedChanges.at(-1)?.type).toBe('updated');
 
         await host.eventSource.emit(EVENT_TYPES.MODEL_TARGET_DELETED, updatedTarget);
@@ -149,7 +149,7 @@ test('Model Target sync and UI changes use the context-owned event source', asyn
 });
 
 test('startup sync invalidates a stale connection when materialization fails', async () => {
-    const host = installHost([sampleTarget({ proxy: 'corporate-proxy' })]);
+    const host = installHost([sampleTarget({ secretRef: { key: 'api_key_custom', id: '' } })]);
     const warn = rs.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
         await syncSavedModelTargetLlmConnections();

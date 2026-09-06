@@ -341,6 +341,7 @@ fn blocks(diagnostics: &[AgentProfileDiagnostic], block: AgentProfileDiagnosticB
 
 #[cfg(test)]
 mod tests {
+    use crate::services::agent_run_retention_test_support::TestSettingsRepository;
     use std::collections::BTreeSet;
     use std::sync::{Arc, Mutex};
 
@@ -507,9 +508,10 @@ mod tests {
         let profile_health_repository: Arc<dyn AgentProfileStorageHealthRepository> =
             profile_repository;
         let preset_repository: Arc<dyn PresetRepository> = Arc::new(preset_repository);
-        let llm_connection_service = Arc::new(LlmConnectionService::new(Arc::new(
-            llm_connection_repository,
-        )));
+        let llm_connection_service = Arc::new(LlmConnectionService::new(
+            Arc::new(llm_connection_repository),
+            TestSettingsRepository::new(),
+        ));
         let profile_service = Arc::new(AgentProfileService::new(
             profile_repository_trait,
             profile_health_repository,

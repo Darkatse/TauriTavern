@@ -14,8 +14,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use tt_adapter_quickjs::QuickJsScriptEngine;
-use tt_adapter_storage_core::FileChatRepository;
 use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
+use tt_adapter_storage_core::{FileChatRepository, FileSettingsRepository};
 use tt_adapter_storage_core::{FileLlmConnectionRepository, FileMcpServerRepository};
 use tt_adapter_storage_userdata::FileAgentProfileRepository;
 use tt_adapter_storage_userdata::FileAgentRepository;
@@ -207,9 +207,12 @@ fn agent_runtime_fixture_with_results(
     let skill_service = Arc::new(SkillService::new(Arc::new(FileSkillRepository::new(
         root.join("_tauritavern/skills"),
     ))));
-    let llm_connection_service = Arc::new(LlmConnectionService::new(Arc::new(
-        FileLlmConnectionRepository::new(root.join("_tauritavern/llm-connections")),
-    )));
+    let llm_connection_service = Arc::new(LlmConnectionService::new(
+        Arc::new(FileLlmConnectionRepository::new(
+            root.join("_tauritavern/llm-connections"),
+        )),
+        Arc::new(FileSettingsRepository::new(default_user.clone())),
+    ));
     let prompt_assembly_service = Arc::new(PromptAssemblyService::new(
         profile_service.clone(),
         preset_repository,

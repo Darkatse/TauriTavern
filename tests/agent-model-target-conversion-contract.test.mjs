@@ -195,10 +195,6 @@ test('Agent model target conversion rejects lossy or invalid targets', async () 
     } = await importConversion();
 
     assert.throws(
-        () => buildLlmConnectionFromModelTarget(sampleTarget({ proxy: 'corporate-proxy' })),
-        /cannot be converted to an Agent LLM connection/,
-    );
-    assert.throws(
         () => buildLlmConnectionFromModelTarget(sampleTarget({ mode: 'tc' })),
         /is not a chat-completion target/,
     );
@@ -210,4 +206,18 @@ test('Agent model target conversion rejects lossy or invalid targets', async () 
         () => modelTargetConnectionRef({ id: 'x'.repeat(129) }),
         /too long/,
     );
+});
+
+test('Agent model targets preserve a named reverse proxy and the provider-specific model name', async () => {
+    const { buildLlmConnectionFromModelTarget, modelBindingFromTarget } = await importConversion();
+    const target = sampleTarget({
+        api: 'google', model: '[v]gemini-custom', proxy: 'Team proxy',
+        secretRef: { key: 'api_key_makersuite', id: 'google-key' },
+    });
+    const connection = buildLlmConnectionFromModelTarget(target);
+    assert.deepEqual(connection.routing, { reverseProxy: { preset: 'Team proxy' } });
+    assert.equal(connection.provider.chatCompletionSource, 'makersuite');
+    assert.equal(modelBindingFromTarget(target).modelId, '[v]gemini-custom');
+    assert.deepEqual(buildLlmConnectionFromModelTarget({ ...target, secretRef: undefined }).auth, {});
+    assert.deepEqual(buildLlmConnectionFromModelTarget({ ...target, proxy: 'None' }).routing, {});
 });

@@ -111,6 +111,7 @@ pub(super) async fn build(
     let sprite_service = Arc::new(SpriteService::new(repositories.sprite_repository.clone()));
     let llm_connection_service = Arc::new(LlmConnectionService::new(
         repositories.llm_connection_repository.clone(),
+        repositories.settings_repository.clone(),
     ));
     let user_endpoint_runtime: Arc<dyn UserEndpointGrantRuntime> = http_client_pool.clone();
     let user_endpoint_access_service = Arc::new(

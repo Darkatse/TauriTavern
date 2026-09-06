@@ -120,7 +120,8 @@ pub struct LlmConnectionEndpoint {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LlmConnectionAuth {
-    pub secret_ref: LlmConnectionSecretRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_ref: Option<LlmConnectionSecretRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,9 +141,10 @@ pub struct LlmConnectionRouting {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LlmConnectionReverseProxy {
-    pub url: String,
+#[serde(untagged, deny_unknown_fields)]
+pub enum LlmConnectionReverseProxy {
+    Url { url: String },
+    Preset { preset: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

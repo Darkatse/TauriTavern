@@ -716,7 +716,7 @@ type TauriTavernLlmConnectionDefinition = {
         sourceSpecific?: Record<string, any>;
     };
     auth: {
-        secretRef: {
+        secretRef?: {
             key: string;
             id: string;
             labelSnapshot?: string;
@@ -725,6 +725,8 @@ type TauriTavernLlmConnectionDefinition = {
     routing?: {
         reverseProxy?: {
             url: string;
+        } | {
+            preset: string;
         };
     };
     adapterHints?: {

@@ -39,14 +39,14 @@ type LlmConnectionDefinition = {
     sourceSpecific?: Record<string, unknown>;
   };
   auth: {
-    secretRef: {
+    secretRef?: {
       key: string;
       id: string;
       labelSnapshot?: string;
     };
   };
   routing?: {
-    reverseProxy?: { url: string };
+    reverseProxy?: { url: string } | { preset: string };
   };
   adapterHints?: Record<string, string>;
   capabilities?: Record<string, string>;
@@ -54,6 +54,8 @@ type LlmConnectionDefinition = {
 ```
 
 `id` 必须满足 Rust domain contract：非空、长度不超过 128，只能使用小写 ASCII、数字、`-`、`_`。
+
+使用反代时允许 `auth: {}`，认证来自反代预设，不要求额外选择官方 API Key。直接连接仍要求有效的 `auth.secretRef`。
 
 ## 与 Agent Profile 的关系
 
@@ -81,6 +83,7 @@ Agent System 负责把 Connection Manager 中的 chat-completion Model Target �
 - Profile 保存前会重新读取当前 Model Target 列表，再按 `connectionRef + modelId` 找到对应 target 并物化，避免打开面板后的旧快照覆盖新 connection。
 - Agent run 启动前会对当前 Profile 的 `model-target-*` binding 再执行一次同样的物化，确保 prompt assembly 与 runtime 看到 Connection Manager 中最新的 endpoint/provider/API key；该步骤按 `connectionRef` 找源 Model Target，不改写 Profile 的 `modelId`。
 - Model Target 会保真保存 Custom Claude prompt caching 与 Custom Responses WebSocket 等显式 native adapter opt-in，并物化到 `adapterHints`；这些字段不进入 prompt preset。
+- Model Target 的命名反代预设物化为 `routing.reverseProxy.preset`；空值或 `None` 表示不使用反代。解析模型绑定时从已保存的用户 `proxies` 中读取该预设的 URL 与密码，并沿用现有 `reverse_proxy` / `proxy_password` 请求配置。连接不复制反代凭据，更新预设会作用于后续绑定；引用不存在或预设缺少 URL 时明确报错。中转服务的模型名原样传递，不按官方命名格式改写。
 - 删除 Model Target 不会自动删除已经物化的 LLM Connection。Profile 是否继续可运行由 `connectionRef` 指向的 LLM Connection 是否存在决定，避免 UI 清理操作隐式破坏已有 Profile。
 - `modelId` 属于 Profile binding，不属于 LLM Connection。更新 Model Target 的模型名不会静默改写已有 Profile；需要用户在 Profile 面板重新选择该 Model Target 才会采纳新的 `modelId`。
 

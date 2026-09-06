@@ -15,11 +15,11 @@ fn model_binding(
         chat_completion_source: source.to_string(),
         custom_api_format: custom_api_format.map(str::to_string),
         model_id: model_id.to_string(),
-        secret_ref: ResolvedLlmSecretRef {
+        secret_ref: Some(ResolvedLlmSecretRef {
             key: "api_key_deepseek".to_string(),
             id: "secret-1".to_string(),
             label_snapshot: None,
-        },
+        }),
     }
 }
 
