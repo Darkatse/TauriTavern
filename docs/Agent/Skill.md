@@ -33,6 +33,8 @@ Skill 可以属于全局、预设、Profile 或角色。运行时按 `global →
 
 子 Agent 使用目标 Profile 的 Skill 配置；角色与当前预设等环境信息来自 Run 冻结的输入。这样同一名称可以在某个角色或 Profile 中提供更具体的工作方法。
 
+Skill Manager 可选择父目录或 ZIP；后端递归发现其中的 Skill，目录命中普通文件 `SKILL.md` 后不再深入。每个发现结果继续独立预览和安装。
+
 ## 在运行中使用
 
 模型先通过 `skill.list` 查看索引，使用 `skill.read` 阅读正文，或用 `skill.search` 查找片段。读取支持行范围，长文返回预览和续读位置。

@@ -228,6 +228,7 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
     async function pickAndPreview(target: SkillSection, kind: 'archive' | 'directory'): Promise<void> {
         const api = deps.getSkillApi();
         const inputs = kind === 'directory' ? await api.pickImportDirectories() : await api.pickImportArchives();
+        if (disposed) return api.discardPickedImport();
         if (inputs) await previewInputs(target, inputs);
     }
 

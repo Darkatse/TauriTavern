@@ -9,7 +9,9 @@ export function skillImportSourceField(input: TauriTavernSkillImportInput, field
 export function skillImportItemLabel(item: SkillImportItem, tr: SkillManagerTr): string {
     if (item.preview) return item.preview.skill.displayName || item.preview.skill.name;
     const path = 'path' in item.input ? item.input.path.replace(/[\\/]+$/, '') : '';
-    return path.split(/[\\/]/).pop() || skillImportSourceField(item.input, 'label') || tr('importSkillArchive');
+    const label = path.split(/[\\/]/).pop() || skillImportSourceField(item.input, 'label') || tr('importSkillArchive');
+    return item.input.kind === 'archiveFile' && item.input.skillRoot
+        ? `${label} / ${item.input.skillRoot}` : label;
 }
 
 export function manualSkillImportInput(content: string, tr: SkillManagerTr): TauriTavernSkillImportInput {

@@ -113,7 +113,7 @@ function ImportDraft(props: {
             </header>
             <ol className="ttas-skill-import-batch-list">
                 {items.map((item, index) => (
-                    <li key={'path' in item.input ? item.input.path : `${index}`} className={`ttas-skill-import-batch-item${item.error ? ' has-error' : ''}`}>
+                    <li key={JSON.stringify(['path' in item.input ? item.input.path : '', item.input.kind === 'archiveFile' ? item.input.skillRoot : '', index])} className={`ttas-skill-import-batch-item${item.error ? ' has-error' : ''}`}>
                         <i className={`fa-solid ttas-skill-import-batch-status ${item.error ? 'fa-triangle-exclamation' : item.preview ? 'fa-circle-check' : 'fa-spinner fa-spin'}`}></i>
                         <div className="ttas-skill-import-batch-copy">
                             <strong>{itemLabel(item, tr)}</strong>
