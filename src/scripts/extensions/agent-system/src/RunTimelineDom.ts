@@ -1,4 +1,41 @@
-import type { TimelineViewport } from './RunTimelineContract';
+import type { TimelineResizeBounds, TimelineViewport } from './RunTimelineContract';
+import { runTimelineHeightBounds } from './run-timeline-resize';
+
+function layoutTop(element: HTMLElement): number {
+    // Layout coordinates exclude the Android composer's temporary IME transform.
+    let top = element.offsetTop;
+    while (element.offsetParent instanceof HTMLElement) {
+        element = element.offsetParent;
+        top += element.offsetTop + element.clientTop;
+    }
+    return top;
+}
+
+export function readTimelineHeightBounds(panel: HTMLElement, header: HTMLElement): TimelineResizeBounds {
+    const anchor = panel.parentElement;
+    if (!anchor) throw new Error('Agent run timeline anchor is unavailable.');
+    const topBar = document.getElementById('top-bar');
+    return runTimelineHeightBounds({
+        panelBottom: layoutTop(anchor),
+        topBoundary: topBar ? layoutTop(topBar) + topBar.offsetHeight : 0,
+        chromeHeight: header.offsetHeight,
+    });
+}
+
+export function observeTimelineHeight(
+    panel: HTMLElement,
+    header: HTMLElement,
+    onChange: (height: number) => void,
+): () => void {
+    const update = () => onChange(readTimelineHeightBounds(panel, header).max);
+    update();
+    const observer = new ResizeObserver(update);
+    // #form_sheld includes the IME spacer; observe the actual input content instead.
+    for (const element of [document.documentElement, document.getElementById('send_form'), document.getElementById('top-bar'), header]) {
+        if (element) observer.observe(element);
+    }
+    return () => observer.disconnect();
+}
 
 export type TimelineScrollAnchor = { scrollHeight: number; scrollTop: number };
 

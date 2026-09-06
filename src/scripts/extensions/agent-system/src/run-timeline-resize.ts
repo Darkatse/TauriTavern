@@ -32,8 +32,8 @@ export function runTimelineHeightBounds(input: {
     if (![panelBottom, topBoundary, chromeHeight].every(Number.isFinite)) {
         throw new Error('Agent run timeline resize geometry is invalid.');
     }
-    const max = Math.floor(panelBottom - topBoundary - chromeHeight - TOP_EDGE_GAP_PX);
-    return { min: RUN_TIMELINE_HEIGHT_MIN_PX, max: Math.max(RUN_TIMELINE_HEIGHT_MIN_PX, max) };
+    const max = Math.max(0, Math.floor(panelBottom - topBoundary - chromeHeight - TOP_EDGE_GAP_PX));
+    return { min: Math.min(RUN_TIMELINE_HEIGHT_MIN_PX, max), max };
 }
 
 export function heightFromTopEdgeDrag(input: {

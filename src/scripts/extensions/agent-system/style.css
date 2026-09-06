@@ -323,7 +323,10 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     --ttas-run-panel-collapsed-width: 108px;
     --ttas-run-panel-collapsed-compact-height: 24px;
     --ttas-run-panel-default-height: clamp(112px, 18dvh, 210px);
-    --ttas-run-panel-height: var(--ttas-run-panel-user-height, var(--ttas-run-panel-default-height));
+    --ttas-run-panel-height: min(
+        var(--ttas-run-panel-user-height, var(--ttas-run-panel-default-height)),
+        var(--ttas-run-panel-available-height, 100dvh)
+    );
     --ttas-run-panel-collapsed-height: 34px;
     --ttas-run-panel-bg: var(--ttas-run-surface);
     --ttas-run-panel-bg-strong: var(--ttas-run-surface-strong);
