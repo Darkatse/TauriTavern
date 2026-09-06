@@ -3,9 +3,10 @@
 import { compareEmbeddedRuntimeSlotRank, normalizeEmbeddedRuntimeProfile, normalizeEmbeddedRuntimeSlot, parseRootMarginPx } from './embedded-runtime-normalize.js';
 
 /**
- * @typedef {import('./types.js').EmbeddedRuntimeState} EmbeddedRuntimeState
+ * @typedef {import('./types.js').EmbeddedRuntimeAppliedState} EmbeddedRuntimeAppliedState
  * @typedef {import('./types.js').EmbeddedRuntimeSlot} EmbeddedRuntimeSlot
  * @typedef {import('./types.js').EmbeddedRuntimeProfile} EmbeddedRuntimeProfile
+ * @typedef {{ slot: ReturnType<typeof normalizeEmbeddedRuntimeSlot>; appliedState: EmbeddedRuntimeAppliedState; parkReason: string; visible: boolean; inViewport: boolean; lastVisibleAt: number; lastTouchedAt: number }} SlotRecord
  */
 
 /**
@@ -27,11 +28,11 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
         threshold: normalizedProfile.threshold,
     });
 
-    /** @type {Map<string, { slot: ReturnType<typeof normalizeEmbeddedRuntimeSlot>; state: EmbeddedRuntimeState; parkReason: string; visible: boolean; inViewport: boolean; lastVisibleAt: number; lastTouchedAt: number; activatedAt: number; deactivatedAt: number; }>} */
+    /** @type {Map<string, SlotRecord>} */
     const slots = new Map();
 
-    let reconcilePending = false;
-    let reconcileSeq = 0;
+    /** @type {number | null} */
+    let pendingFrame = null;
 
     const counters = {
         hydrate: 0,
@@ -105,31 +106,51 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
      * Cancels a pending requestAnimationFrame reconcile, if any.
      */
     function cancelPendingReconcile() {
-        if (!reconcilePending) {
-            return;
-        }
-
-        reconcilePending = false;
-        reconcileSeq += 1;
+        if (pendingFrame === null) return;
+        cancelAnimationFrame(pendingFrame);
+        pendingFrame = null;
     }
 
-    /**
-     * @param {string} reason
-     */
+    /** @param {string} reason */
     function requestReconcile(reason) {
-        if (reconcilePending) {
-            return;
-        }
-        reconcilePending = true;
-        const seq = (reconcileSeq += 1);
-        requestAnimationFrame(() => {
-            if (seq !== reconcileSeq) {
-                return;
-            }
-
-            reconcilePending = false;
+        if (pendingFrame !== null) return;
+        pendingFrame = requestAnimationFrame(() => {
+            pendingFrame = null;
             reconcile(reason);
         });
+    }
+
+    /** @param {SlotRecord} record */
+    function isResident(record) {
+        return record.appliedState !== 'disposed'
+            && (record.slot.isResident ? record.slot.isResident() : record.appliedState === 'active');
+    }
+
+    /** @param {SlotRecord} record @param {string} reason */
+    function park(record, reason) {
+        if (!isResident(record) && record.appliedState === 'parked' && record.parkReason === reason) {
+            return;
+        }
+        record.slot.dehydrate(reason);
+        if (record.slot.isResident?.()) {
+            // Source capture can defer/refuse eviction. The retained page still
+            // consumes its budget; do not report it as parked or grant its space.
+            record.appliedState = 'active';
+            record.parkReason = '';
+            return;
+        }
+        if (record.appliedState === 'parked') {
+            counters.parkReasonChange += 1;
+        } else {
+            counters.dehydrate += 1;
+            if (reason === 'budget') {
+                counters.parkBudget += 1;
+            } else {
+                counters.parkVisibility += 1;
+            }
+        }
+        record.appliedState = 'parked';
+        record.parkReason = reason;
     }
 
     /**
@@ -144,6 +165,9 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
         const desired = [];
 
         for (const [id, record] of slots.entries()) {
+            if (record.appliedState === 'disposed') {
+                continue;
+            }
             if (!record.slot.element.isConnected) {
                 unregister(id);
                 continue;
@@ -154,6 +178,10 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
             if (!wantsActive) {
                 continue;
             }
+
+            // A missing page may still be reading its source or have failed.
+            // It cannot displace a healthy resident until it is restorable.
+            if (!isResident(record) && record.slot.canHydrate?.() === false) continue;
 
             desired.push({
                 id,
@@ -167,9 +195,15 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
 
         desired.sort(compareEmbeddedRuntimeSlotRank);
 
-        let activeWeight = 0;
-        let activeIframes = 0;
-        let activeSlots = 0;
+        const plannedUsage = { slots: 0, weight: 0, iframes: 0 };
+        const residentUsage = { slots: 0, weight: 0, iframes: 0 };
+
+        /** @param {typeof plannedUsage} usage @param {SlotRecord['slot']} slot */
+        const fitsBudget = (usage, slot) => (
+            (normalizedProfile.maxActiveSlots <= 0 || usage.slots + 1 <= normalizedProfile.maxActiveSlots)
+            && (normalizedProfile.maxActiveWeight <= 0 || usage.weight + slot.weight <= normalizedProfile.maxActiveWeight)
+            && (normalizedProfile.maxActiveIframes <= 0 || usage.iframes + slot.iframeCount <= normalizedProfile.maxActiveIframes)
+        );
 
         /** @type {Set<string>} */
         const nextActive = new Set();
@@ -180,65 +214,60 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
                 continue;
             }
 
-            const slotWeight = record.slot.weight;
-            const slotIframes = record.slot.iframeCount;
-
-            if (normalizedProfile.maxActiveSlots > 0 && activeSlots + 1 > normalizedProfile.maxActiveSlots) {
-                counters.budgetDeny += 1;
-                continue;
-            }
-            if (normalizedProfile.maxActiveWeight > 0 && activeWeight + slotWeight > normalizedProfile.maxActiveWeight) {
-                counters.budgetDeny += 1;
-                continue;
-            }
-            if (normalizedProfile.maxActiveIframes > 0 && activeIframes + slotIframes > normalizedProfile.maxActiveIframes) {
+            if (!fitsBudget(plannedUsage, record.slot)) {
                 counters.budgetDeny += 1;
                 continue;
             }
 
             nextActive.add(item.id);
-            activeSlots += 1;
-            activeWeight += slotWeight;
-            activeIframes += slotIframes;
+            plannedUsage.slots += 1;
+            plannedUsage.weight += record.slot.weight;
+            plannedUsage.iframes += record.slot.iframeCount;
         }
 
+        // Reclaim first, then budget against actual residency. In particular,
+        // a renderer-created page can already be live before its first hydrate.
         for (const [id, record] of slots.entries()) {
-            if (record.state === 'disposed') {
-                continue;
-            }
-            const shouldBeActive = nextActive.has(id);
-            if (shouldBeActive && record.state !== 'active') {
-                record.slot.hydrate(reason);
-                record.state = 'active';
-                record.parkReason = '';
-                record.activatedAt = startedAt;
-                counters.hydrate += 1;
-                continue;
-            }
-            if (!shouldBeActive) {
+            if (record.appliedState !== 'disposed' && !nextActive.has(id)) {
                 const parkReason = record.visible || !normalizedProfile.parkWhenHiddenKinds.has(record.slot.kind)
                     ? 'budget'
                     : 'visibility';
+                park(record, parkReason);
+            }
+        }
 
-                if (record.state === 'active' || record.state === 'cold') {
-                    record.slot.dehydrate(parkReason);
-                    record.state = 'parked';
-                    record.parkReason = parkReason;
-                    record.deactivatedAt = startedAt;
-                    counters.dehydrate += 1;
-                    if (parkReason === 'budget') {
-                        counters.parkBudget += 1;
-                    } else {
-                        counters.parkVisibility += 1;
-                    }
-                    continue;
-                }
+        for (const record of slots.values()) {
+            if (isResident(record)) {
+                residentUsage.weight += record.slot.weight;
+                residentUsage.iframes += record.slot.iframeCount;
+                residentUsage.slots += 1;
+            }
+        }
 
-                if (record.state === 'parked' && record.parkReason !== parkReason) {
-                    record.slot.dehydrate(parkReason);
-                    record.parkReason = parkReason;
-                    counters.parkReasonChange += 1;
-                }
+        for (const id of nextActive) {
+            const record = /** @type {SlotRecord} */ (slots.get(id));
+            const alreadyResident = isResident(record);
+            if (alreadyResident && record.appliedState === 'active') {
+                continue;
+            }
+            if (!alreadyResident && !fitsBudget(residentUsage, record.slot)) {
+                counters.budgetDeny += 1;
+                park(record, 'budget');
+                continue;
+            }
+            record.slot.hydrate(reason);
+            if (record.slot.isResident?.() === false) {
+                record.appliedState = 'cold';
+                record.parkReason = '';
+                continue;
+            }
+            record.appliedState = 'active';
+            record.parkReason = '';
+            counters.hydrate += 1;
+            if (!alreadyResident) {
+                residentUsage.weight += record.slot.weight;
+                residentUsage.iframes += record.slot.iframeCount;
+                residentUsage.slots += 1;
             }
         }
 
@@ -258,12 +287,13 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
             observer.unobserve(record.slot.visibilityTarget);
         }
 
-        record.state = 'disposed';
+        record.appliedState = 'disposed';
         if (record.slot.dispose) {
             record.slot.dispose();
         }
         slots.delete(id);
         counters.unregister += 1;
+        requestReconcile('unregister');
     }
 
     /**
@@ -271,7 +301,7 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
      */
     function touch(id) {
         const record = slots.get(id);
-        if (!record || record.state === 'disposed') {
+        if (!record || record.appliedState === 'disposed') {
             throw new Error(`EmbeddedRuntimeManager.touch(${id}): slot not found`);
         }
 
@@ -283,20 +313,20 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
      * Marks a slot as "dirty" so the next reconcile can re-assert its desired
      * state and (re)hydrate it if selected active.
      *
-     * This supports self-healing when third-party code removes an iframe DOM
-     * node without properly unmounting its runtime controller.
+     * Refresh externally owned resource data synchronously, before a renderer
+     * can remove it again. Only touch() changes interaction priority.
      *
      * @param {string} id
      */
     function invalidate(id) {
         const record = slots.get(id);
-        if (!record || record.state === 'disposed') {
+        if (!record || record.appliedState === 'disposed') {
             throw new Error(`EmbeddedRuntimeManager.invalidate(${id}): slot not found`);
         }
 
-        record.lastTouchedAt = now();
-        if (record.state !== 'cold') {
-            record.state = 'cold';
+        record.slot.refresh?.();
+        if (record.appliedState !== 'cold') {
+            record.appliedState = 'cold';
             record.parkReason = '';
         }
 
@@ -309,7 +339,7 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
      */
     function setVisible(id, visible) {
         const record = slots.get(id);
-        if (!record || record.state === 'disposed') {
+        if (!record || record.appliedState === 'disposed') {
             throw new Error(`EmbeddedRuntimeManager.setVisible(${id}): slot not found`);
         }
         if (record.slot.visibilityMode !== 'manual') {
@@ -367,14 +397,12 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
 
         slots.set(normalizedSlot.id, {
             slot: normalizedSlot,
-            state: 'cold',
+            appliedState: 'cold',
             parkReason: '',
             visible,
             inViewport,
             lastVisibleAt: visible ? now() : 0,
             lastTouchedAt: 0,
-            activatedAt: 0,
-            deactivatedAt: 0,
         });
         if (normalizedSlot.visibilityMode === 'intersection') {
             observer.observe(normalizedSlot.visibilityTarget);
@@ -405,11 +433,11 @@ export function createEmbeddedRuntimeManager({ profile, now = () => Date.now(), 
             if (record.inViewport) {
                 inViewport += 1;
             }
-            if (record.state === 'active') {
+            if (isResident(record)) {
                 active += 1;
                 activeWeight += record.slot.weight;
                 activeIframes += record.slot.iframeCount;
-            } else if (record.state === 'parked') {
+            } else if (record.appliedState === 'parked') {
                 parked += 1;
             }
         }

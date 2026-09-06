@@ -91,7 +91,9 @@ function registerWrapper(manager, wrapper) {
         return;
     }
 
-    if (findManagedSlotId(wrapper)) {
+    const existingId = findManagedSlotId(wrapper);
+    if (existingId) {
+        manager.invalidate(existingId);
         return;
     }
 
@@ -112,6 +114,7 @@ function registerWrapper(manager, wrapper) {
         id: slotId,
         kind: EmbeddedRuntimeKind.JsrHtmlRender,
         host: wrapper,
+        onSourceSettled: () => manager.invalidate(slotId),
         priority: 0,
         weight: 10,
         maxSoftParkedIframes,
