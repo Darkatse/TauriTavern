@@ -79,31 +79,13 @@ export function buildEventDetailTargets(
     addModelReasoning(associatedTurn?.round, associatedTurn?.invocationId);
     addFile('timelineArguments', payload.argumentsRef);
 
-    if (isSubAgentTaskEvent(event.type)) {
+    if (isSubAgentTaskEvent(event.type) || event.type === 'agent_handoff_accepted') {
         targets.push({
-            type: 'subAgentTask',
-            labelKey: 'timelineSubAgent',
+            type: 'agentTask',
+            labelKey: event.type === 'agent_handoff_accepted' ? 'timelineHandoff' : 'timelineSubAgent',
             taskId: stringValue(payload.taskId),
-            childInvocationId: stringValue(payload.childInvocationId),
-            targetProfileId: stringValue(payload.targetProfileId),
-            workspaceKey: stringValue(payload.workspaceKey),
-            status: stringValue(payload.status),
-            resultRef: stringValue(payload.resultRef),
-            summaryRef: stringValue(payload.summaryRef),
-            error: stringValue(payload.error),
-        });
-    }
-
-    if (event.type === 'agent_handoff_accepted') {
-        targets.push({
-            type: 'handoff',
-            labelKey: 'timelineHandoff',
-            taskId: stringValue(payload.taskId),
-            sourceInvocationId: stringValue(payload.sourceInvocationId),
-            newInvocationId: stringValue(payload.newInvocationId),
-            targetProfileId: stringValue(payload.targetProfileId),
-            workspaceKey: stringValue(payload.workspaceKey),
-            status: 'accepted',
+            view: event.type === 'agent_delegate_started' || event.type === 'agent_task_started'
+                || event.type === 'agent_handoff_accepted' ? 'brief' : 'result',
         });
     }
 
@@ -117,11 +99,6 @@ export function buildEventDetailTargets(
 
     if (event.type === 'run_failed' || event.type === 'run_partial_success') {
         targets.push({ type: 'runFailure', labelKey: 'timelineErrorDetails', event });
-    }
-
-    if (event.type === 'task_return_completed') {
-        addFile('timelineSubAgentSummary', payload.summaryRef);
-        addFile('timelineSubAgentResult', payload.resultRef);
     }
 
     if (isWorkspaceFileEvent(event.type)) {

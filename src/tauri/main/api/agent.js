@@ -125,6 +125,7 @@ function createAgentApi({ safeInvoke }) {
         submitGuidance: runtime.submitGuidance,
         readEvents: runtime.readEvents,
         readWorkspaceFile: runtime.readWorkspaceFile,
+        readTaskDetail: runtime.readTaskDetail,
         readModelTurn: runtime.readModelTurn,
         pruneChatPersistentStates: runtime.pruneChatPersistentStates,
         copyChatPersistentStates,

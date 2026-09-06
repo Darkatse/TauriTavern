@@ -3,12 +3,11 @@ import { translateAgentSystem as tr } from './i18n';
 import {
     formatDetailFile,
     formatGuidanceDetail,
-    formatHandoffDetail,
     formatModelTurnDetail,
     formatPatchDiffDetail,
     formatRunFailureDetail,
-    formatSubAgentTaskDetail,
 } from './run-detail-format';
+import { formatAgentTaskDetail } from './run-detail-agent-format';
 import { isRootInvocation } from './run-invocation-projector';
 import type {
     TimelineDetailReadInput,
@@ -36,22 +35,24 @@ export async function readTimelineDetailSections({
 async function readTimelineDetailTarget(input: {
     runId: string;
     target: TimelineDetailTarget;
-    readOnly?: boolean;
+    readOnly: boolean;
 }): Promise<TimelineDetailSection> {
-    const { runId, target, readOnly = false } = input;
-    const normalizedRunId = requireRunId(runId);
-    if (target.type === 'handoff') {
-        return formatHandoffDetail(target);
-    }
-    if (target.type === 'subAgentTask') {
-        return formatSubAgentTaskDetail(target);
+    const { runId, target, readOnly } = input;
+    if (target.type === 'agentTask') {
+        const api = requireHostApi('agent');
+        const task = await api.readTaskDetail({
+            runId,
+            taskId: target.taskId,
+            includeResult: target.view === 'result',
+        });
+        return formatAgentTaskDetail(target, task);
     }
     if (target.type === 'guidance') {
         return formatGuidanceDetail(target);
     }
     if (target.type === 'modelTurn' || target.type === 'modelReasoning' || target.type === 'modelNarration') {
         const modelInput: Parameters<TauriTavernAgentApi['readModelTurn']>[0] = {
-            runId: normalizedRunId,
+            runId,
             round: target.round,
         };
         if (target.invocationId && !isRootInvocation(target.invocationId)) {
@@ -65,7 +66,7 @@ async function readTimelineDetailTarget(input: {
             throw new Error(tr(target.errorKey, target.errorParams));
         }
         const file = await requireHostApi('agent').readWorkspaceFile({
-            runId: normalizedRunId,
+            runId,
             path: target.argumentsRef,
         });
         return formatPatchDiffDetail(target, file);
@@ -78,7 +79,7 @@ async function readTimelineDetailTarget(input: {
 
     if (target.type === 'file') {
         const file = await requireHostApi('agent').readWorkspaceFile({
-            runId: normalizedRunId,
+            runId,
             path: target.path,
         });
         return formatDetailFile(target, file);

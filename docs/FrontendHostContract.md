@@ -169,7 +169,7 @@
 
 - `api.agent`：TauriTavern Agent Run API。用于启动 Agent Run、订阅 run event、取消、审批工具、读取 workspace 文件/diff、rollback。
   - 详细参考见：`docs/API/Agent.md`。
-  - 当前已落地 Host ABI：`startRunFromLegacyGenerate()`、`startRunWithPromptSnapshot()`、`cancel()`、`readEvents()`、`readWorkspaceFile()`、`readModelTurn()`、`copyChatPersistentStates()`、`subscribe()`、`subscribeLiveProjection()`、`settleChatPresentation()`。
+  - 当前已落地 Host ABI：`startRunFromLegacyGenerate()`、`startRunWithPromptSnapshot()`、`cancel()`、`readEvents()`、`readWorkspaceFile()`、`readModelTurn()`、`readTaskDetail()`、`copyChatPersistentStates()`、`subscribe()`、`subscribeLiveProjection()`、`settleChatPresentation()`。
   - 前台流式 root / handoff `workspace.write_file.content` 会写入同一条 assistant message；failure/cancel 保留 partial。live projection 非持久化，不代表工具成功或 commit；Timeline 独立订阅。
   - `persistStateId` 只在 persistent state 已经落盘后写入 chat metadata；host bridge 响应 `persistent_state_metadata_update_requested` 后调用 `resolve_agent_persistent_state_metadata_update`。
   - `startRunFromLegacyGenerate()` 是当前兼容入口：使用 Legacy dryRun 生成 `promptSnapshot`，再进入 Rust-owned Agent loop。
@@ -182,7 +182,7 @@
   - 可恢复工具错误会写入 Agent journal 并回填下一轮模型；宿主级错误仍让 run failed。
   - Agent event 属于 Agent Run journal/timeline 投影，不得伪装成上游 SillyTavern `GENERATION_*` / `TOOL_CALLS_*` 事件。
   - `subscribe()` 当前是 polling wrapper，必须返回幂等 `unsubscribe`；底层 Tauri 事件名与 Rust command 名属于 Internal，不是第三方 Public Contract。
-  - `tools.list()` 与 `readModelTurn()` 是 Agent System UI/诊断使用的 Project Contract；其 DTO 可以随实验性 Agent control plane 演进，但必须在 `docs/API/Agent.md` 明确记录。不得为了兼容返回全局 model alias 或从 native name 猜测 canonical identity。
+  - `tools.list()`、`readModelTurn()` 与 `readTaskDetail()` 是 Agent System UI/诊断使用的 Project Contract；其 DTO 可以随实验性 Agent control plane 演进，但必须在 `docs/API/Agent.md` 明确记录。任务详情按 ID 读取原始委派/交接参数、当前状态和按需结果投影，不依赖 journal 分页窗口或内部持久化文件格式。不得为了兼容返回全局 model alias 或从 native name 猜测 canonical identity。
   - Agent Mode off 时，Legacy `Generate()`、`ToolManager`、`api.chat` 行为必须不变。
 
 - `api.llmConnections`：TauriTavern LLM Connection 管理 API。用于保存和读取 Agent Profile 可引用的 LLM 连接定义。

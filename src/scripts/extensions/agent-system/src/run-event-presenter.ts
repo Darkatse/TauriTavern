@@ -35,7 +35,6 @@ type TransferControlEdge = {
     targetInvocationId: string;
     targetProfileId: string;
     workspaceKey: string;
-    status: string;
 };
 
 const DISPLAY_EVENT_TYPES: ReadonlySet<string> = new Set([
@@ -220,7 +219,6 @@ function normalizeTransferControlEdges(values?: readonly TimelineDelegationEdge[
             targetInvocationId: normalizeInvocationId(edge.targetInvocationId),
             targetProfileId: edge.targetProfileId.trim(),
             workspaceKey: edge.workspaceKey.trim(),
-            status: edge.status.trim(),
         }))
         .filter(edge => !isRootInvocation(edge.targetInvocationId));
 }
@@ -263,14 +261,10 @@ function projectedHandoffBoundary(edge: TransferControlEdge, anchor: TimelineIte
 
 function handoffDetailTarget(edge: TransferControlEdge): TimelineDetailTarget {
     return {
-        type: 'handoff',
+        type: 'agentTask',
         labelKey: 'timelineHandoff',
         taskId: edge.taskId,
-        sourceInvocationId: edge.sourceInvocationId,
-        newInvocationId: edge.targetInvocationId,
-        targetProfileId: edge.targetProfileId,
-        workspaceKey: edge.workspaceKey,
-        status: edge.status,
+        view: 'brief',
     };
 }
 

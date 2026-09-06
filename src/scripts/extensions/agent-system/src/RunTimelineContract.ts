@@ -98,24 +98,9 @@ export type TimelineDetailTarget =
         showPath?: boolean;
     }
     | TimelineDetailTargetBase & {
-        type: 'subAgentTask';
+        type: 'agentTask';
         taskId: string;
-        childInvocationId: string;
-        targetProfileId: string;
-        workspaceKey: string;
-        status: string;
-        resultRef: string;
-        summaryRef: string;
-        error: string;
-    }
-    | TimelineDetailTargetBase & {
-        type: 'handoff';
-        taskId: string;
-        sourceInvocationId: string;
-        newInvocationId: string;
-        targetProfileId: string;
-        workspaceKey: string;
-        status: string;
+        view: 'brief' | 'result';
     }
     | TimelineDetailTargetBase & TimelineTextMetrics & {
         type: 'guidance';

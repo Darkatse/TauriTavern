@@ -665,6 +665,50 @@ pub struct AgentReadWorkspaceFileDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentReadTaskDetailDto {
+    pub run_id: String,
+    pub task_id: String,
+    #[serde(default)]
+    pub include_result: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskBriefDto {
+    pub objective: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(flatten)]
+    pub details: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskResultDto {
+    pub summary: String,
+    pub summary_ref: Option<String>,
+    pub output: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskDetailDto {
+    pub run_id: String,
+    pub task_id: String,
+    pub parent_invocation_id: String,
+    pub child_invocation_id: String,
+    pub target_profile_id: String,
+    pub workspace_key: String,
+    pub continuation: AgentDelegationContinuation,
+    pub status: AgentTaskStatus,
+    pub task: AgentTaskBriefDto,
+    pub result_ref: Option<String>,
+    pub result: Option<AgentTaskResultDto>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentReadModelTurnDto {
     pub run_id: String,
     #[serde(default)]

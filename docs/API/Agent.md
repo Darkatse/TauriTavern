@@ -31,6 +31,7 @@ type TauriTavernAgentApi = {
   readEvents(input: AgentReadEventsInput): Promise<AgentReadEventsResult>;
   readWorkspaceFile(input: AgentReadWorkspaceFileInput): Promise<AgentWorkspaceFile>;
   readModelTurn(input: AgentReadModelTurnInput): Promise<AgentModelTurn>;
+  readTaskDetail(input: AgentReadTaskDetailInput): Promise<AgentTaskDetail>;
   copyChatPersistentStates(input: AgentCopyChatPersistentStatesInput): Promise<void>;
   pruneChatPersistentStates(input: AgentPruneChatPersistentStatesInput): Promise<AgentPruneChatPersistentStatesResult>;
   retention: {
@@ -500,6 +501,37 @@ type AgentModelTurn = {
 `invocationId` 省略时读取 root invocation；读取 SubAgent / handoff invocation 的模型回合时必须传入对应 invocation id。
 
 该方法返回面向 UI 的白名单投影：assistant 输出、narration、可见/摘要化 reasoning、工具调用摘要与 provider 摘要。它不会暴露完整 raw response、provider-private native continuation、签名或 encrypted reasoning。需要完整诊断时仍使用 run workspace 中的 `modelResponsePath` 与 LLM API log。
+
+### 10.1 readTaskDetail（Project Contract）
+
+```ts
+type AgentReadTaskDetailInput = { runId: string; taskId: string; includeResult?: boolean };
+
+type AgentTaskDetail = {
+  runId: string;
+  taskId: string;
+  parentInvocationId: string;
+  childInvocationId: string;
+  targetProfileId: string;
+  workspaceKey: string;
+  continuation: 'return_to_parent' | 'transfer_control';
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  task: { objective: string; title?: string; [key: string]: unknown };
+  resultRef: string | null;
+  result: {
+    summary: string;
+    summaryRef: string | null;
+    output: Record<string, unknown>;
+  } | null;
+  error: string | null;
+};
+```
+
+按任务 ID 读取原始委派 `task` 或交接 `handoff` 参数，以及读取时的任务状态、结果引用和错误。两种参数统一放在 `task` 字段，保留自定义字段；状态不是所选历史事件发生时的快照。空 ID、任务不存在、持久化记录身份不匹配或任务说明格式无效直接 reject。
+
+`includeResult` 默认 `false`，此时不读取结果文件，`result` 为 `null`。传入 `true` 且存在结果引用时，后端读取并校验结果的格式与任务身份，返回原始摘要和输出字段；无结果引用时仍为 `null`，结果文件损坏则直接 reject。旧字段 `questionsForParent` 统一投影为 `questionsForCaller`；`questionsForCaller` 已有非 `null` 值时优先使用它，其余输出字段保留。该读取和兼容逻辑由 `agent.await` 与详情 API 共用，不改写持久化文件。
+
+Timeline 只在打开对应详情时调用，不依赖当前 journal 页包含原始工具请求，也不解析 `tasks/` 或 `agent-results/` 内部文件；返回视图传入 `includeResult: true`，没有结果时明确显示不可用或任务错误，不重复读取 Markdown 摘要文件。
 
 ## 11. pruneChatPersistentStates
 

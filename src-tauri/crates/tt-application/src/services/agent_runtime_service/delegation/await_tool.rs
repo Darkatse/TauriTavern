@@ -13,7 +13,7 @@ use crate::services::agent_runtime_service::{
 };
 use crate::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
 use tt_domain::models::agent::{
-    AgentRunEventLevel, AgentTaskRecord, AgentTaskStatus, AgentToolResult, WorkspacePath,
+    AgentRunEventLevel, AgentTaskRecord, AgentTaskStatus, AgentToolResult,
 };
 use tt_domain::models::tool::ToolInvocation;
 
@@ -254,35 +254,26 @@ impl AgentRuntimeService {
     ) -> Result<Vec<AwaitTaskView>, ApplicationError> {
         let mut views = Vec::with_capacity(tasks.len());
         for task in tasks {
-            let result = match task.result_ref.as_ref() {
-                Some(path) => {
-                    let path = WorkspacePath::parse(path)?;
-                    let file = self.workspace_repository.read_text(run_id, &path).await?;
-                    Some(serde_json::from_str::<Value>(&file.text).map_err(|error| {
-                        ApplicationError::ValidationError(format!(
-                            "agent.await_result_invalid: result `{}` is invalid JSON: {error}",
-                            path.as_str()
-                        ))
-                    })?)
-                }
-                None => None,
+            let result = self.read_task_result(run_id, task).await?;
+            let output_field = |key| {
+                result
+                    .as_ref()
+                    .and_then(|result| result.output.get(key))
+                    .filter(|value| !value.is_null())
+                    .cloned()
             };
             views.push(AwaitTaskView {
                 task_id: task.id.clone(),
                 agent_id: task.target_profile_id.clone(),
                 status: task.status,
                 error: task.error.clone(),
-                summary: result_summary(result.as_ref()),
-                confidence: result_payload_field(result.as_ref(), "confidence"),
-                artifacts: result_payload_field(result.as_ref(), "artifacts"),
-                findings: result_payload_field(result.as_ref(), "findings"),
-                warnings: result_payload_field(result.as_ref(), "warnings"),
-                suggested_next_actions: result_payload_field(
-                    result.as_ref(),
-                    "suggestedNextActions",
-                ),
-                questions_for_caller: result_payload_field(result.as_ref(), "questionsForCaller")
-                    .or_else(|| result_payload_field(result.as_ref(), "questionsForParent")),
+                summary: result.as_ref().map(|result| result.summary.clone()),
+                confidence: output_field("confidence"),
+                artifacts: output_field("artifacts"),
+                findings: output_field("findings"),
+                warnings: output_field("warnings"),
+                suggested_next_actions: output_field("suggestedNextActions"),
+                questions_for_caller: output_field("questionsForCaller"),
             });
         }
         Ok(views)
@@ -355,21 +346,4 @@ fn await_condition_met(tasks: &[AgentTaskRecord], mode: AgentAwaitMode) -> bool 
         AgentAwaitMode::NextCompleted => tasks.iter().any(|task| task_is_terminal(task.status)),
         AgentAwaitMode::AllCompleted => tasks.iter().all(|task| task_is_terminal(task.status)),
     }
-}
-
-fn result_summary(result_doc: Option<&Value>) -> Option<String> {
-    result_doc
-        .and_then(|result| result.get("summary"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|summary| !summary.is_empty())
-        .map(str::to_string)
-}
-
-fn result_payload_field(result_doc: Option<&Value>, key: &str) -> Option<Value> {
-    result_doc
-        .and_then(|result| result.get("result"))
-        .and_then(|result| result.get(key))
-        .filter(|value| !value.is_null())
-        .cloned()
 }

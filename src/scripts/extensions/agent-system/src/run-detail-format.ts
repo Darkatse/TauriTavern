@@ -29,12 +29,11 @@ import type {
 
 type FileDetailTarget = Extract<TimelineDetailTarget, { type: 'file' }>;
 type ModelDetailTarget = Extract<TimelineDetailTarget, { type: 'modelTurn' | 'modelReasoning' | 'modelNarration' }>;
-type SubAgentDetailTarget = Extract<TimelineDetailTarget, { type: 'subAgentTask' }>;
-type HandoffDetailTarget = Extract<TimelineDetailTarget, { type: 'handoff' }>;
 type GuidanceDetailTarget = Extract<TimelineDetailTarget, { type: 'guidance' }>;
 type PatchDiffDetailTarget = Extract<TimelineDetailTarget, { type: 'patchDiff' }>;
 type RunFailureDetailTarget = Extract<TimelineDetailTarget, { type: 'runFailure' }>;
 type WorkspaceFile = Awaited<ReturnType<TauriTavernAgentApi['readWorkspaceFile']>>;
+
 export function formatDetailFile(
     target: FileDetailTarget,
     file: WorkspaceFile,
@@ -105,42 +104,6 @@ export function formatModelTurnDetail(
         fields,
         blocks,
     };
-}
-
-export function formatSubAgentTaskDetail(target: SubAgentDetailTarget): TimelineDetailSection {
-    const fields: TimelineDetailField[] = [];
-    const actions: TimelineDetailAction[] = [];
-    if (target.targetProfileId) fields.push(field(tr('timelineDetailFieldAgent'), target.targetProfileId));
-    if (target.status) fields.push(field(tr('timelineDetailFieldStatus'), target.status));
-    if (target.workspaceKey) fields.push(field(tr('timelineDetailFieldWorkspace'), target.workspaceKey));
-    if (target.taskId) fields.push(field(tr('timelineDetailFieldTask'), target.taskId));
-    if (target.childInvocationId) {
-        fields.push(field(tr('timelineDetailFieldInvocation'), target.childInvocationId));
-        actions.push({
-            kind: 'openSubAgent',
-            labelKey: 'timelineActionOpenSubAgent',
-            hintKey: 'timelineActionOpenSubAgentHint',
-            icon: 'fa-up-right-from-square',
-            invocationId: target.childInvocationId,
-        });
-    }
-    if (target.error) fields.push(field(tr('timelineDetailFieldErrorCode'), target.error));
-
-    const blocks: TimelineDetailBlock[] = [];
-    if (target.summaryRef) addBlock(blocks, 'timelineSubAgentSummary', target.summaryRef);
-    if (target.resultRef) addBlock(blocks, 'timelineSubAgentResult', target.resultRef);
-    return { labelKey: target.labelKey, path: '', fields, blocks, actions };
-}
-
-export function formatHandoffDetail(target: HandoffDetailTarget): TimelineDetailSection {
-    const fields: TimelineDetailField[] = [];
-    if (target.targetProfileId) fields.push(field(tr('timelineDetailFieldAgent'), target.targetProfileId));
-    if (target.status) fields.push(field(tr('timelineDetailFieldStatus'), target.status));
-    if (target.workspaceKey) fields.push(field(tr('timelineDetailFieldWorkspace'), target.workspaceKey));
-    if (target.sourceInvocationId) fields.push(field(tr('timelineDetailFieldSourceInvocation'), target.sourceInvocationId));
-    if (target.newInvocationId) fields.push(field(tr('timelineDetailFieldInvocation'), target.newInvocationId));
-    if (target.taskId) fields.push(field(tr('timelineDetailFieldTask'), target.taskId));
-    return { labelKey: target.labelKey, path: '', fields, blocks: [], actions: [] };
 }
 
 export function formatGuidanceDetail(target: GuidanceDetailTarget): TimelineDetailSection {

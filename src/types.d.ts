@@ -147,6 +147,29 @@ type TauriTavernAgentRunTimelineDelegationEdge = {
     updatedAt: string;
 };
 
+type TauriTavernAgentTaskDetail = {
+    runId: string;
+    taskId: string;
+    parentInvocationId: string;
+    childInvocationId: string;
+    targetProfileId: string;
+    workspaceKey: string;
+    continuation: 'return_to_parent' | 'transfer_control';
+    status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+    task: {
+        objective: string;
+        title?: string;
+        [key: string]: unknown;
+    };
+    resultRef: string | null;
+    result: {
+        summary: string;
+        summaryRef: string | null;
+        output: Record<string, unknown>;
+    } | null;
+    error: string | null;
+};
+
 type TauriTavernAgentRunTimelineProjection = {
     foregroundInvocationIds: string[];
     invocations: TauriTavernAgentRunTimelineInvocation[];
@@ -637,6 +660,11 @@ type TauriTavernAgentApi = {
         round: number;
         maxChars?: number;
     }) => Promise<TauriTavernAgentModelTurn>;
+    readTaskDetail: (input: {
+        runId: string;
+        taskId: string;
+        includeResult?: boolean;
+    }) => Promise<TauriTavernAgentTaskDetail>;
     subscribe: (
         runId: string,
         handler: (event: TauriTavernAgentRunEvent) => void,

@@ -64,6 +64,21 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
         AgentDelegationContinuation::ReturnToParent
     );
     assert_eq!(task.status, AgentTaskStatus::Completed);
+    let detail = fixture
+        .service
+        .read_task_detail(tt_application::dto::agent_dto::AgentReadTaskDetailDto {
+            run_id: handle.run_id.clone(),
+            task_id: task.id.clone(),
+            include_result: true,
+        })
+        .await
+        .expect("read persisted task detail after completion");
+    assert_eq!(detail.task.objective, "Return one concrete revision note.");
+    assert_eq!(detail.child_invocation_id, task.child_invocation_id);
+    assert_eq!(
+        detail.result.expect("returned result").summary,
+        "Add a concrete sound."
+    );
     let child = fixture
         .agent_repository
         .load_invocation(&handle.run_id, &task.child_invocation_id)

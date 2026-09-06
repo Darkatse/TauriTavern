@@ -229,14 +229,10 @@ test('handoff projection keeps one foreground boundary and its typed detail targ
     const handoffItem = items[0];
     if (!handoffItem) throw new Error('expected a handoff item');
     expect(buildEventDetailTargets(handoffItem, events)).toEqual([{
-        type: 'handoff',
+        type: 'agentTask',
         labelKey: 'timelineHandoff',
         taskId: 'handoff-1',
-        sourceInvocationId: 'inv_root',
-        newInvocationId: 'inv-editor',
-        targetProfileId: 'line-editor',
-        workspaceKey: 'line-editor',
-        status: 'accepted',
+        view: 'brief',
     }]);
 });
 

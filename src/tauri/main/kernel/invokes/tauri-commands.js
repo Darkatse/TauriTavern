@@ -151,6 +151,7 @@ export {};
  *   | 'read_chat_backup_download'
  *   | 'read_agent_workspace_file'
  *   | 'read_agent_model_turn'
+ *   | 'read_agent_task_detail'
  *   | 'read_skill_file'
  *   | 'refresh_mcp_tools'
  *   | 'replace_character'

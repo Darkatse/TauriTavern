@@ -436,6 +436,19 @@ test('api.agent.submitGuidance forwards camelCase DTO and fails fast on invalid 
 });
 
 
+test('api.agent.readTaskDetail requests result content explicitly and rejects invalid options before invoking', async () => {
+    const { agent, calls } = await installHarness();
+    await agent.readTaskDetail({ runId: ' run-1 ', taskId: ' task-1 ' });
+    await agent.readTaskDetail({ runId: 'run-1', taskId: 'task-1', includeResult: true });
+    assert.deepEqual(calls.map(call => call.args.dto), [
+        { runId: 'run-1', taskId: 'task-1', includeResult: false },
+        { runId: 'run-1', taskId: 'task-1', includeResult: true },
+    ]);
+    await assert.rejects(() => agent.readTaskDetail({ runId: 'run-1', taskId: ' ' }), /taskId is required/);
+    await assert.rejects(() => agent.readTaskDetail({ runId: 'run-1', taskId: 'task-1', includeResult: 'true' }), /includeResult must be a boolean/);
+    assert.equal(calls.length, 2);
+});
+
 test('api.agent.listRuns fails fast on invalid history filters', async () => {
     const { calls, agent } = await installHarness();
 

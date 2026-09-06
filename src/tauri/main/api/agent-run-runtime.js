@@ -83,6 +83,17 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
         return safeInvoke('read_agent_workspace_file', { dto: { runId, path } });
     }
 
+    async function readTaskDetail(input) {
+        const runId = requireRunId(input?.runId);
+        const taskId = String(input?.taskId || '').trim();
+        if (!taskId) throw new Error('taskId is required');
+        const includeResult = input?.includeResult ?? false;
+        if (typeof includeResult !== 'boolean') {
+            throw new Error('includeResult must be a boolean');
+        }
+        return safeInvoke('read_agent_task_detail', { dto: { runId, taskId, includeResult } });
+    }
+
     async function readModelTurn(input) {
         const runId = requireRunId(input?.runId);
         const round = Number(input?.round);
@@ -191,6 +202,7 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
         retention: createAgentRunRetentionApi({ safeInvoke }),
         readEvents,
         readWorkspaceFile,
+        readTaskDetail,
         readModelTurn,
         pruneChatPersistentStates,
         subscribe,

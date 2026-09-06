@@ -55,6 +55,7 @@ mod prompt_assembly;
 mod prompt_snapshot;
 mod scheduler;
 mod skill_scope;
+mod task_details;
 mod timeline_projection;
 mod tool_call_projection;
 mod tool_execution;
