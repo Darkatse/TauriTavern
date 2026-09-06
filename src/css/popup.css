@@ -218,6 +218,7 @@ body.no-blur .popup[open]::backdrop {
 
 @media screen and (max-width: 1000px) {
     .popup.tt-tauritavern-panel-popup[data-tt-mobile-surface="fullscreen-window"] {
+        min-height: 0;
         padding: 0;
         box-sizing: border-box;
         border-radius: 8px;
