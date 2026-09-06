@@ -454,6 +454,8 @@ committed_message_rollback_completed
 
 自动与显式 commit 共用同一事件序列。自动 commit 在一轮 tool calls 全部处理后最多发起一次。`chat_commit_requested` 记录 chat ref、artifact path、预期 SHA 与 `isExplicit`；Host 重读当前 workspace，SHA 不一致时拒绝提交，并在确认后记录 message id。`chat_commit_completed.messageId` 是提交时结果，不是对当前聊天消息位置的反向查询。Host 返回未确认时写 warning 级 `chat_commit_failed`；它不会终止 run，也不会产生 `chat_commit_recorded`。自动提交跳过本次，显式提交另写模型可见的 `tool_call_failed`。流式 write partial 不是 durable fact，因此不会创建 commit event 或改变 ledger。
 
+`chat_commit_completed` 同样记录 `isExplicit`，保留提交来源供分页 Timeline 独立投影。Timeline 只显示显式 commit 的请求与完成；自动 commit 仍属于完整 journal，`chat_commit_failed` 继续显示。
+
 ## 5. 事件与副作用的顺序
 
 推荐顺序：

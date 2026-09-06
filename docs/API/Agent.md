@@ -724,6 +724,7 @@ Chat commit 不是公开 Host API 方法，而是 runtime Committer 与 host bri
 - Host 握手只有“已确认提交 / 未确认提交”两种结果且不设置 wall-clock timeout，移动端挂起期间可以继续等待，取消 run 仍会终止等待。未确认提交统一作为可恢复失败且不写 preservation ledger；自动提交继续运行，显式提交返回模型可见 tool error 以便重试。若 `saveReply()` 已成功改写 `chat[]`，正文与 reasoning 会保留，本地 reasoning cursor 同步推进以避免重试时重复追加。Rust 侧 journal、状态机等错误仍 fail-fast。
 - `chat_commit_requested` 不携带 `persistStateId`；该字段只能在 `workspace.finish` 成功提交 persistent state 后，由 `persistent_state_metadata_update_requested` / `resolve_agent_persistent_state_metadata_update` 写回同一条 chat message。
 - `chat_commit_requested.isExplicit` 区分正式工具 commit 与 auto checkpoint；Host 只在成功处理 `isExplicit: true` 后关闭 live write。partial 本身不产生该事件。
+- `chat_commit_completed.isExplicit` 保留同一来源标记，使完成事件可独立用于分页展示。Timeline 只显示显式 commit 的请求与完成，自动 commit 仍完整写入 journal，失败警告仍显示。旧完成事件缺少标记时，通过已加载的同 `commitId` 请求确认显式来源；无法确认时不显示提交成功项。
 - 首次 commit 按 generation type 创建或改写目标楼层；后续 commit 使用 `appendFinal` 写入完整 postprocessed 目标文本。`append` mode 会把本次读取到的文件文本作为 raw 追加贡献累计后再整体处理，避免片段级 regex。
 - `append` 在本 run 尚无 commit 时不会报错，会创建本 run 的消息楼层。
 - 自动和显式 commit 都进入 preservation ledger；任何一个成功后发生错误都会保留 chat 输出并进入 partial success。前台 run 在 `workspace.finish` 前仍必须至少成功一次显式 `workspace.commit`；后台 run 可无 chat commit 完成。

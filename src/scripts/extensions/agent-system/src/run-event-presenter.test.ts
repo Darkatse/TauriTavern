@@ -30,6 +30,43 @@ function event(
     };
 }
 
+test('timeline shows explicit commits while automatic checkpoints stay hidden, including across pages', () => {
+    const events = [
+        event(1, 'chat_commit_requested', { commitId: 'auto', isExplicit: false }),
+        event(2, 'chat_commit_completed', { commitId: 'auto', isExplicit: false }),
+        event(3, 'tool_call_requested', { callId: 'commit', toolId: 'builtin:workspace.commit' }),
+        event(4, 'chat_commit_requested', { commitId: 'explicit', isExplicit: true }),
+        event(5, 'chat_commit_completed', { commitId: 'explicit', isExplicit: true }),
+        event(6, 'tool_call_completed', { callId: 'commit', toolId: 'builtin:workspace.commit' }),
+    ];
+
+    expect(timelineItemsFromEvents(events.slice(0, 1))).toEqual([]);
+    expect(timelineItemsFromEvents(events.slice(0, 2))).toEqual([]);
+    expect(timelineItemsFromEvents(events.slice(3, 4)).map(item => item.type)).toEqual(['chat_commit_requested']);
+    expect(timelineItemsFromEvents(events).map(item => item.seq)).toEqual([5]);
+    expect(timelineItemsFromEvents(events.slice(1, 2))).toEqual([]);
+    expect(timelineItemsFromEvents(events.slice(4, 5))).toMatchObject([{
+        seq: 5,
+        type: 'chat_commit_completed',
+        titleKey: 'timelineEventCommitCompleted',
+    }]);
+});
+
+test('legacy commit completions require explicit request evidence and commit failures remain visible', () => {
+    const events = [
+        event(1, 'chat_commit_requested', { commitId: 'auto', isExplicit: false }),
+        event(2, 'chat_commit_completed', { commitId: 'auto' }),
+        event(3, 'chat_commit_requested', { commitId: 'explicit', isExplicit: true }),
+        event(4, 'chat_commit_completed', { commitId: 'explicit' }),
+        event(5, 'chat_commit_completed', { commitId: 'unknown' }),
+        event(6, 'chat_commit_failed', { commitId: 'failed-auto', message: 'Host rejected commit' }),
+    ];
+
+    expect(timelineItemsFromEvents(events).map(item => item.seq)).toEqual([4, 6]);
+    expect(timelineItemsFromEvents(events.slice(3, 4))).toEqual([]);
+    expect(timelineItemsFromEvents(events.slice(2, 4)).map(item => item.seq)).toEqual([4]);
+});
+
 test('SubAgent projection does not flatten child lifecycle into the foreground chain', () => {
     const projection: TimelineProjection = {
         foregroundInvocationIds: ['inv_root'],

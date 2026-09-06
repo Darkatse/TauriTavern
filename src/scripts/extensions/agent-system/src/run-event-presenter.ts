@@ -23,6 +23,7 @@ type TimelinePresenterOptions = {
     delegationEdges?: readonly TimelineDelegationEdge[];
 };
 type ShowEventOptions = {
+    explicitCommitIds: ReadonlySet<string>;
     invocationId: string | null;
     foregroundInvocationIds: ReadonlySet<string> | null;
     acceptedHandoffInvocationIds: ReadonlySet<string>;
@@ -89,10 +90,18 @@ export const TERMINAL_EVENT_TYPES = Object.freeze([
 
 export { buildEventDetailTargets, presentRunEvent };
 
-export function isDisplayableRunEvent(event: TauriTavernAgentRunEvent): boolean {
+export function isDisplayableRunEvent(
+    event: TauriTavernAgentRunEvent,
+    explicitCommitIds?: ReadonlySet<string>,
+): boolean {
     if (!DISPLAY_EVENT_TYPES.has(event.type)) return false;
-    if (event.type !== 'context_assembled') return true;
     const payload = plainObject(event.payload) ? event.payload : {};
+    if (event.type === 'chat_commit_requested' || event.type === 'chat_commit_completed') {
+        // Older completion events only identify their origin through the matching request.
+        return payload.isExplicit === true || (payload.isExplicit === undefined
+            && explicitCommitIds?.has(stringValue(payload.commitId).trim()) === true);
+    }
+    if (event.type !== 'context_assembled') return true;
     return Array.isArray(payload.toolDiagnostics) && payload.toolDiagnostics.length > 0;
 }
 
@@ -106,6 +115,7 @@ export function timelineItemsFromEvents(
 ): TimelineItem[] {
     const completedToolCalls = new Set<string>();
     const resolvedCommits = new Set<string>();
+    const explicitCommitIds = new Set<string>();
     const acceptedHandoffInvocationIds = new Set<string>();
     const invocationId = options.invocationId == null ? null : normalizeInvocationId(options.invocationId);
     const foregroundInvocationIds = normalizeForegroundInvocationIds(options.foregroundInvocationIds);
@@ -124,6 +134,10 @@ export function timelineItemsFromEvents(
             const commitId = stringValue(payload.commitId).trim();
             if (commitId) resolvedCommits.add(commitId);
         }
+        if (event.type === 'chat_commit_requested' && payload.isExplicit === true) {
+            const commitId = stringValue(payload.commitId).trim();
+            if (commitId) explicitCommitIds.add(commitId);
+        }
         if (event.type === 'agent_handoff_accepted') {
             const newInvocationId = stringValue(payload.newInvocationId).trim();
             if (newInvocationId) acceptedHandoffInvocationIds.add(normalizeInvocationId(newInvocationId));
@@ -131,6 +145,7 @@ export function timelineItemsFromEvents(
     }
 
     const showOptions: ShowEventOptions = {
+        explicitCommitIds,
         invocationId,
         foregroundInvocationIds,
         acceptedHandoffInvocationIds,
@@ -150,7 +165,7 @@ function shouldShowEvent(
 ): boolean {
     if (event.type === 'model_completed') {
         if (!hasModelTurnNarration(event)) return false;
-    } else if (!isDisplayableRunEvent(event)) {
+    } else if (!isDisplayableRunEvent(event, options.explicitCommitIds)) {
         return false;
     }
 

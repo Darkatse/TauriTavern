@@ -380,6 +380,7 @@ impl AgentRuntimeService {
                         "callId": call_id,
                         "path": file.path.as_str(),
                         "mode": mode,
+                        "isExplicit": is_explicit,
                         "messageId": result.message_id.as_deref(),
                         "messageIndex": message_index,
                     }),

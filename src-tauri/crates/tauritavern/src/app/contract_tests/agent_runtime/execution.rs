@@ -687,12 +687,17 @@ async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_com
     assert_eq!(
         events
             .iter()
-            .filter(|event| {
-                event.event_type == "chat_commit_completed"
-                    && event.payload["messageId"] == "message_1"
-            })
-            .count(),
-        2
+            .filter(|event| event.event_type == "chat_commit_completed")
+            .map(|event| (
+                event.payload["callId"].as_str(),
+                event.payload["isExplicit"].as_bool(),
+                event.payload["messageId"].as_str(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (Some("call_patch"), Some(false), Some("message_1")),
+            (Some("call_commit_retry"), Some(true), Some("message_1")),
+        ]
     );
     let commit_recorded = events
         .iter()
