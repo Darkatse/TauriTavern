@@ -143,7 +143,7 @@ export function installChatEmbeddedRuntimeAdapters({ manager }) {
         }
 
         const placeholder = target.closest(PLACEHOLDER_SELECTOR);
-        if (!placeholder) {
+        if (!placeholder || (placeholder instanceof HTMLElement && placeholder.dataset.ttRuntimeParkReason === 'source-unavailable')) {
             return;
         }
 
@@ -153,12 +153,16 @@ export function installChatEmbeddedRuntimeAdapters({ manager }) {
             return;
         }
 
-        manager.invalidate(id);
+        manager.touch(id);
     };
 
     const observer = new MutationObserver((records) => {
         for (const record of records) {
             const target = record.target;
+            if (record.type === 'attributes' && target instanceof HTMLIFrameElement) {
+                scanForHosts(manager, target, adapters);
+                continue;
+            }
             const slotHost = target instanceof Element ? target.closest(SLOT_ID_SELECTOR) : null;
             for (const removedNode of record.removedNodes) {
                 if (removedNode instanceof HTMLIFrameElement) {
@@ -236,6 +240,7 @@ export function installChatEmbeddedRuntimeAdapters({ manager }) {
                 }
 
                 if (addedNode instanceof HTMLIFrameElement || addedNode.tagName === 'IFRAME') {
+                    if (addedNode instanceof HTMLElement && addedNode.dataset.ttRuntimeManaged === '1') continue;
                     const slotHost = addedNode.closest(SLOT_ID_SELECTOR);
                     if (slotHost instanceof HTMLElement) {
                         slotHost.querySelectorAll(`${PLACEHOLDER_SELECTOR}, ${GHOST_SELECTOR}`).forEach((el) => el.remove());
@@ -293,7 +298,7 @@ export function installChatEmbeddedRuntimeAdapters({ manager }) {
     };
 
     scanUnseenMessages();
-    observer.observe(chat, { childList: true, subtree: true });
+    observer.observe(chat, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcdoc'] });
     chat.addEventListener('click', onClick, true);
 
     const makeChatOpenListenersLast = () => {

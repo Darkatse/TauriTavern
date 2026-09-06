@@ -4,6 +4,8 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { installFakeDom } from './helpers/fake-dom.mjs';
+import { createEmbeddedRuntimeManager } from '../src/tauri/main/services/embedded-runtime/embedded-runtime-manager.js';
+import { installChatEmbeddedRuntimeAdapters } from '../src/tauri/main/adapters/embedded-runtime/chat-embedded-runtime-adapter.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FRONTEND_SOURCE_HANDOFF_ATTRIBUTE = 'data-tt-frontend-source-handoff';
@@ -22,7 +24,6 @@ function createManagerStub(profileConfig = { maxSoftParkedIframes: 1, softParkTt
         register: [],
         unregister: [],
         invalidate: [],
-        touch: [],
     };
     const slots = new Map();
 
@@ -43,9 +44,6 @@ function createManagerStub(profileConfig = { maxSoftParkedIframes: 1, softParkTt
         invalidate(id) {
             calls.invalidate.push(id);
         },
-        touch(id) {
-            calls.touch.push(id);
-        },
     };
 }
 
@@ -64,7 +62,7 @@ function createJsrMessage({ mesid = '1', orphaned = false } = {}) {
     }
 
     const iframe = document.createElement('iframe');
-    iframe.src = 'blob:jsr';
+    iframe.srcdoc = '<p>runtime</p>';
     wrapper.append(iframe);
 
     const pre = document.createElement('pre');
@@ -281,3 +279,59 @@ test('chat embedded-runtime adapter unregisters slots when an iframe is removed 
         dom.cleanup();
     }
 });
+
+for (const change of ['replacement', 'source attributes']) {
+    test(`chat adapter captures the latest ${change} before external removal and ignores the old read`, async (t) => {
+        const nativeQueueMicrotask = globalThis.queueMicrotask;
+        const dom = installFakeDom();
+        globalThis.queueMicrotask = nativeQueueMicrotask;
+        const oldRead = Promise.withResolvers();
+        const newRead = Promise.withResolvers();
+        const nativeFetch = globalThis.fetch;
+        t.mock.method(globalThis, 'fetch', url => {
+            if (url === 'blob:old') return oldRead.promise;
+            if (url === 'blob:new') return newRead.promise;
+            return nativeFetch(url);
+        });
+        const chat = document.createElement('div');
+        chat.id = 'chat';
+        document.body.append(chat);
+        const { message, wrapper, iframe } = createJsrMessage({ orphaned: true });
+        iframe.removeAttribute('srcdoc');
+        iframe.src = 'blob:old';
+        chat.append(message);
+        const manager = createEmbeddedRuntimeManager({ profile: {
+            name: 'test', maxActiveWeight: 10, maxActiveIframes: 1, maxActiveSlots: 1,
+            maxSoftParkedIframes: 0, softParkTtlMs: 0,
+            parkWhenHiddenKinds: [], rootMargin: '0px', threshold: 0,
+        } });
+        const adapter = installChatEmbeddedRuntimeAdapters({ manager });
+        t.after(() => {
+            manager.unregister(wrapper.dataset.ttRuntimeSlotId);
+            adapter.dispose();
+            dom.cleanup();
+        });
+        manager.reconcile();
+        const observer = dom.createdMutationObservers.at(-1);
+        const current = change === 'replacement' ? document.createElement('iframe') : iframe;
+        current.src = 'blob:new';
+        if (change === 'replacement') {
+            iframe.replaceWith(current);
+            observer._trigger([{ type: 'childList', target: wrapper, removedNodes: [iframe], addedNodes: [current] }]);
+        } else {
+            observer._trigger([{ type: 'attributes', target: current, attributeName: 'src', removedNodes: [], addedNodes: [] }]);
+        }
+        newRead.resolve(new Response('<p>new</p>'));
+        await new Promise(resolve => setImmediate(resolve));
+        oldRead.resolve(new Response('<p>old</p>'));
+        await new Promise(resolve => setImmediate(resolve));
+        dom.flushRaf();
+
+        current.remove();
+        observer._trigger([{ type: 'childList', target: wrapper, removedNodes: [current], addedNodes: [] }]);
+        dom.flushRaf();
+        dom.flushRaf();
+        assert.equal(wrapper.querySelector('iframe'), current);
+        assert.equal(await (await fetch(current.src)).text(), '<p>new</p>');
+    });
+}
