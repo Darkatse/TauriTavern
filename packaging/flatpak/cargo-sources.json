@@ -5293,14 +5293,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/miktik/miktik-0.4.2.crate",
-        "sha256": "d5008139bd095add0e019d55d2a11f74afb2389b7c6ae021a1a204bef63715ed",
-        "dest": "cargo/vendor/miktik-0.4.2"
+        "url": "https://static.crates.io/crates/miktik/miktik-0.4.3.crate",
+        "sha256": "01e181235417370181be4d2570356a5f408364802e49e582bfb2d49109c55598",
+        "dest": "cargo/vendor/miktik-0.4.3"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"d5008139bd095add0e019d55d2a11f74afb2389b7c6ae021a1a204bef63715ed\", \"files\": {}}",
-        "dest": "cargo/vendor/miktik-0.4.2",
+        "contents": "{\"package\": \"01e181235417370181be4d2570356a5f408364802e49e582bfb2d49109c55598\", \"files\": {}}",
+        "dest": "cargo/vendor/miktik-0.4.3",
         "dest-filename": ".cargo-checksum.json"
     },
     {
