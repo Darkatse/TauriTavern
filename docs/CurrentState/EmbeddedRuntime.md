@@ -50,7 +50,8 @@
 - slot 实现：`src/tauri/main/adapters/embedded-runtime/managed-iframe-slot.js`
   - budget park：替换为 `.tt-runtime-placeholder`（可点击恢复）
   - visibility park：替换为 `.tt-runtime-ghost`（占位但不可交互）
-  - cold start：当软停车池无可复用 iframe 时，交还给上游渲染管线重建（避免复用已失效的 `blob:` URL）
+  - cold start：只恢复当前 slot，不发送 `MESSAGE_UPDATED`。对于 `blob:` 页面，在原地址有效时读取原始 Blob，恢复时使用 slot 自己持有的新地址，并保留原 iframe 元素上的加载监听；原地址被撤销不会影响恢复。同楼层其他渲染块保持不动。
+  - 原始 Blob 尚未读完时保留正在运行的页面，读取成功后才执行仍有效的回收请求；读取失败则不主动丢弃页面。如果页面已被外部移除且原始源也无法读取，仅在当前块显示重新打开聊天的提示，不复用失效地址或退回整楼刷新。离屏、销毁或上游替换会使待完成的恢复失效；slot 销毁时释放缓存及自己创建的地址。
   - `dehydrate()` 只在同一 slot owner 内临时 park；`dispose()` 同步销毁 active 与 parked iframe，不允许跨 content/chat owner 复用
 - 软停车池：`src/tauri/main/adapters/embedded-runtime/managed-iframe-parking-lot.js`
   - 目标：尽量复用 browsing context，避免 iframe 重载/白屏
@@ -158,7 +159,7 @@ reconcile 后 manager 会根据 profile 预算与可见性选择：
 - source handoff 只覆盖两个明确的既有聊天 full-load 入口；Show More、普通新增消息、编辑、swipe、streaming 与 regex refresh 不在当前范围。
 - 宿主无法从未修改的社区扩展获得严格 claim 信号；指定事件后的单 rAF release 是有界机会窗口，不保证每种 renderer 设置都获得相同的性能收益。
 - 当前 marker 以事件类型而非 chat-open 批次标识。快速连续打开同类聊天、运行时晚注册的跨帧 listener 或后台节流可能提前结束单次 cover；这是有意接受的性能型天花板，出现真实主路径证据后再升级为 batch token。
-- legacy ER adapter 仍会借用 `MESSAGE_UPDATED` 请求 JSR/LWB cold rebuild；这不是新 ChatSurface 的事件语义，也是 bounded policy 必须禁用/删除 legacy ER owner 的原因之一。
+- Blob 恢复只保留顶层原始页面数据，不接管页面引用的其他资源的生命周期；这些资源仍需在原有 renderer 生命周期内有效。bounded policy 仍须禁用 legacy ER owner，避免双重接管。
 
 ---
 

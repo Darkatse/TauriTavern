@@ -143,7 +143,7 @@ export function installChatEmbeddedRuntimeAdapters({ manager }) {
         }
 
         const placeholder = target.closest(PLACEHOLDER_SELECTOR);
-        if (!placeholder) {
+        if (!placeholder || (placeholder instanceof HTMLElement && placeholder.dataset.ttRuntimeParkReason === 'source-unavailable')) {
             return;
         }
 

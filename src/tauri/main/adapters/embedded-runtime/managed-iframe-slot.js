@@ -66,7 +66,6 @@ function findHostGhostPlaceholder(host) {
  * @param {HTMLElement} options.host
  * @param {number} options.maxSoftParkedIframes
  * @param {number} options.softParkTtlMs
- * @param {(() => void) | undefined} [options.requestColdRebuild]
  * @param {number} [options.priority]
  * @param {number} [options.weight]
  * @returns {EmbeddedRuntimeSlot}
@@ -77,7 +76,6 @@ export function createManagedIframeSlot({
     host,
     maxSoftParkedIframes,
     softParkTtlMs,
-    requestColdRebuild,
     priority = 0,
     weight = 10,
 }) {
@@ -93,18 +91,61 @@ export function createManagedIframeSlot({
 
     /** @type {HTMLIFrameElement | null} */
     let template = null;
+    /** @type {HTMLIFrameElement | null} */
+    let sourceIframe = null;
+    let sourceUrl = '';
+    let ownedBlobUrl = '';
+    /** @type {Promise<{ blob: Blob } | { error: unknown }> | null} */
+    let sourceBlob = null;
+    /** @type {{ blob: Blob } | { error: unknown } | null} */
+    let capturedSource = null;
+    let revision = 0;
+    let disposed = false;
     /** @type {number} */
     let lastMeasuredHeight = 0;
 
     const ensureTemplate = () => {
-        if (template) {
-            return;
-        }
         const iframe = findHostIframe(host);
         if (!(iframe instanceof HTMLIFrameElement)) {
+            if (template) {
+                return;
+            }
             throw new Error(`createManagedIframeSlot(${id}): iframe is missing`);
         }
+        const src = iframe.getAttribute('src') || '';
+        if (template?.srcdoc === iframe.srcdoc
+            && template.hasAttribute('srcdoc') === iframe.hasAttribute('srcdoc')
+            && ((sourceIframe === iframe && src === sourceUrl) || (ownedBlobUrl && src === ownedBlobUrl))) {
+            // An upstream replacement can keep our URL. Transfer the element,
+            // not the URL's lifetime; it still uses the same captured source.
+            sourceIframe = iframe;
+            template = cloneIframeTemplate(iframe);
+            return;
+        }
+        if (ownedBlobUrl) {
+            URL.revokeObjectURL(ownedBlobUrl);
+            ownedBlobUrl = '';
+        }
         template = cloneIframeTemplate(iframe);
+        sourceIframe = iframe;
+        sourceUrl = src;
+        capturedSource = null;
+        // Read the renderer-owned URL before detaching can cause it to be revoked.
+        // Keep source bytes, not a serialization of the already-running document.
+        sourceBlob = !iframe.hasAttribute('srcdoc') && src.startsWith('blob:')
+            ? fetch(src).then(response => {
+                if (!response.ok) {
+                    throw new Error(`Embedded iframe source(${id}): HTTP ${response.status}`);
+                }
+                return response.blob();
+            }).then(blob => ({ blob }), error => ({ error }))
+            : null;
+        const reading = sourceBlob;
+        reading?.then(result => {
+            if (!disposed && sourceBlob === reading) {
+                capturedSource = result;
+            }
+        });
     };
 
     const removeIframeNow = () => {
@@ -176,6 +217,23 @@ export function createManagedIframeSlot({
         }
     };
 
+    /** @param {unknown} error */
+    const showRecoveryError = (error) => {
+        removePlaceholdersNow();
+        const placeholder = ensureBudgetPlaceholderNow(lastMeasuredHeight || 240, 'source-unavailable');
+        placeholder.tabIndex = -1;
+        placeholder.title = String(error);
+        placeholder.style.cursor = 'default';
+        const title = placeholder.querySelector('.tt-runtime-placeholder-title');
+        if (title) {
+            title.textContent = 'Embedded content unavailable';
+        }
+        const hint = placeholder.querySelector('.tt-runtime-placeholder-hint');
+        if (hint) {
+            hint.textContent = 'Cannot restore this page locally. Reopen the chat to reload it.';
+        }
+    };
+
     /** @param {HTMLIFrameElement} iframe */
     const measureIframeHeight = (iframe) => {
         const rect = iframe.getBoundingClientRect();
@@ -206,9 +264,7 @@ export function createManagedIframeSlot({
      * @param {HTMLIFrameElement} iframe
      */
     const softParkIframe = (iframe) => {
-        const iframeSrc = String(iframe.getAttribute('src') || iframe.src || '').trim().toLowerCase();
-        const requiresColdRebuild = typeof requestColdRebuild === 'function' && iframeSrc.startsWith('blob:');
-        if (!(maxSoftParkedIframes > 0) || requiresColdRebuild) {
+        if (!(maxSoftParkedIframes > 0) || sourceBlob) {
             markManagedIframeMutation(iframe);
             iframe.remove();
             return;
@@ -226,7 +282,11 @@ export function createManagedIframeSlot({
      * Ensures the host has a live iframe instance, keeping an upstream
      * replacement when present and otherwise reusing a parked instance.
      */
-    const ensureIframeNow = () => {
+    const ensureIframeNow = async () => {
+        const restoreRevision = ++revision;
+        if (disposed) {
+            return;
+        }
         const existing = findHostIframe(host);
         if (existing) {
             // The upstream renderer may have replaced a parked iframe with a
@@ -235,37 +295,56 @@ export function createManagedIframeSlot({
             dropParkedManagedIframe(id);
             ensureTemplate();
             removePlaceholdersNow();
+            await sourceBlob;
             return;
         }
 
-        const parked = takeParkedManagedIframe(id);
-        if (parked) {
-            const budgetPlaceholder = findHostBudgetPlaceholder(host);
-            if (budgetPlaceholder) {
-                budgetPlaceholder.replaceWith(parked);
-            } else {
-                const ghostPlaceholder = findHostGhostPlaceholder(host);
-                if (ghostPlaceholder) {
-                    ghostPlaceholder.replaceWith(parked);
-                } else {
-                    host.append(parked);
-                }
+        let next = takeParkedManagedIframe(id);
+        if (next && sourceBlob) {
+            markManagedIframeMutation(next);
+            next.remove();
+            next = null;
+        }
+        if (!next) {
+            ensureTemplate();
+            if (sourceIframe?.isConnected) {
+                // The renderer has moved this element to another owner. Do not
+                // steal it (or navigate it by assigning a replacement Blob URL).
+                showRecoveryError(`Embedded iframe(${id}) was moved to another host`);
+                return;
             }
-            removePlaceholdersNow();
-            return;
+            if (sourceBlob) {
+                const captured = await sourceBlob;
+                if (disposed || restoreRevision !== revision || !host.isConnected) {
+                    return;
+                }
+                if (findHostIframe(host)) {
+                    ensureTemplate();
+                    removePlaceholdersNow();
+                    return;
+                }
+                if (sourceIframe?.isConnected) {
+                    showRecoveryError(`Embedded iframe(${id}) was moved to another host`);
+                    return;
+                }
+                if ('error' in captured) {
+                    showRecoveryError(captured.error);
+                    return;
+                }
+                if (ownedBlobUrl) {
+                    URL.revokeObjectURL(ownedBlobUrl);
+                }
+                ownedBlobUrl = URL.createObjectURL(captured.blob);
+                // Reuse only this renderer's element, preserving its load listener.
+                // A fresh URL avoids both stale-blob failures and message-wide updates.
+                next = /** @type {HTMLIFrameElement} */ (sourceIframe);
+                next.src = ownedBlobUrl;
+            } else {
+                // srcdoc / ordinary URLs also need the renderer's load listener
+                // when their soft-parked browsing context has been evicted.
+                next = /** @type {HTMLIFrameElement} */ (sourceIframe);
+            }
         }
-
-        // Cold start: no live iframe and no parked browsing context. For runtimes
-        // that render via transient `blob:` URLs, cloning a stale template can
-        // resurrect a revoked URL. Hand this back to the upstream renderer.
-        if (requestColdRebuild) {
-            requestColdRebuild();
-            return;
-        }
-
-        ensureTemplate();
-        const next = cloneIframeTemplate(/** @type {HTMLIFrameElement} */ (template));
-        next.dataset.ttRuntimeClone = '1';
 
         const budgetPlaceholder = findHostBudgetPlaceholder(host);
         if (budgetPlaceholder) {
@@ -288,10 +367,29 @@ export function createManagedIframeSlot({
         priority,
         weight,
         iframeCount: 1,
-        hydrate: () => {
-            ensureIframeNow();
-        },
-        dehydrate: (reason) => {
+        hydrate: ensureIframeNow,
+        dehydrate: function dehydrate(reason) {
+            revision += 1;
+            if (disposed) {
+                return;
+            }
+            if (findHostIframe(host)) {
+                ensureTemplate();
+                if (sourceBlob && !capturedSource) {
+                    // Never discard a running page before its original source
+                    // has been read. A later hydrate/dispose cancels this park.
+                    const parkRevision = revision;
+                    sourceBlob.then(result => {
+                        if ('blob' in result && !disposed && revision === parkRevision && host.isConnected) {
+                            dehydrate(reason);
+                        }
+                    });
+                    return;
+                }
+                if (capturedSource && 'error' in capturedSource) {
+                    return;
+                }
+            }
             if (reason === 'budget') {
                 const ghost = findHostGhostPlaceholder(host);
                 if (ghost) {
@@ -334,9 +432,19 @@ export function createManagedIframeSlot({
             removeIframeNow();
         },
         dispose: () => {
+            disposed = true;
+            revision += 1;
             removeIframeNow();
             dropParkedManagedIframe(id);
             removePlaceholdersNow();
+            if (ownedBlobUrl) {
+                URL.revokeObjectURL(ownedBlobUrl);
+                ownedBlobUrl = '';
+            }
+            sourceBlob = null;
+            capturedSource = null;
+            sourceIframe = null;
+            template = null;
         },
     };
 }

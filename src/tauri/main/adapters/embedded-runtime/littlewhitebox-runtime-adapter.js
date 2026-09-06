@@ -2,7 +2,6 @@
 
 import { fnv1a32 } from '../../kernel/hash-utils.js';
 import { EmbeddedRuntimeKind } from '../../services/embedded-runtime/runtime-kinds.js';
-import { eventSource, event_types } from '../../../../scripts/events.js';
 import { installDomEmbeddedRuntimeAdapter } from './dom-runtime-adapter.js';
 import { createManagedIframeSlot } from './managed-iframe-slot.js';
 
@@ -121,15 +120,6 @@ function registerWrapper(manager, wrapper) {
         id: slotId,
         kind: EmbeddedRuntimeKind.LittleWhiteBoxHtmlRender,
         host: wrapper,
-        requestColdRebuild: () => {
-            const pre = wrapper.nextElementSibling;
-            if (!(pre instanceof HTMLPreElement)) {
-                throw new Error(`LittleWhiteBox cold rebuild(${slotId}): paired <pre> is missing`);
-            }
-            delete pre.dataset.xbFinal;
-            delete pre.dataset.xbHash;
-            void eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
-        },
         priority: 0,
         weight: 10,
         maxSoftParkedIframes,

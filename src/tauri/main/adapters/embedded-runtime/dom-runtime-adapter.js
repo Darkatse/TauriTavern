@@ -102,7 +102,7 @@ export function installDomEmbeddedRuntimeAdapter({ manager, root, adapters }) {
         }
 
         const placeholder = target.closest(PLACEHOLDER_SELECTOR);
-        if (!placeholder) {
+        if (!placeholder || (placeholder instanceof HTMLElement && placeholder.dataset.ttRuntimeParkReason === 'source-unavailable')) {
             return;
         }
 

@@ -1,178 +1,82 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-
 import { installFakeDom } from './helpers/fake-dom.mjs';
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-async function importFresh(modulePath) {
-    const url = `${pathToFileURL(modulePath).href}?t=${Date.now()}-${Math.random()}`;
-    return import(url);
-}
-
-async function importStable(modulePath) {
-    return import(pathToFileURL(modulePath).href);
-}
-
-test('JS-Slash-Runner adapter registers a managed slot and cold rebuild emits MESSAGE_UPDATED', async () => {
-    const dom = installFakeDom();
-    try {
-        const { createJsSlashRunnerRuntimeAdapter } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/js-slash-runner-runtime-adapter.js'),
-        );
-        const { EmbeddedRuntimeKind } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/services/embedded-runtime/runtime-kinds.js'),
-        );
-        const events = await importStable(path.join(REPO_ROOT, 'src/scripts/events.js'));
-
+for (const [name, file, factory, wrapperClass, prefix] of [
+    ['JS-Slash-Runner', 'js-slash-runner', 'createJsSlashRunnerRuntimeAdapter', 'TH-render', 'jsr'],
+    ['LittleWhiteBox', 'littlewhitebox', 'createLittleWhiteBoxRuntimeAdapter', 'xiaobaix-iframe-wrapper', 'lwb'],
+]) {
+    test(`${name}: restoring a revoked blob does not refresh its message or sibling iframe`, async () => {
+        const nativeQueueMicrotask = globalThis.queueMicrotask;
+        const dom = installFakeDom();
+        globalThis.queueMicrotask = nativeQueueMicrotask;
+        const sourceUrls = [0, 1].map(index => URL.createObjectURL(
+            new Blob([`<p>source ${index}</p>`], { type: 'text/html' }),
+        ));
+        const registered = [];
+        const events = await import('../src/scripts/events.js');
+        const previousEmit = events.eventSource.emit;
         const emitted = [];
-        const prevEmit = events.eventSource.emit;
-        events.eventSource.emit = async (event, ...args) => {
-            emitted.push({ event, args });
-        };
-
+        events.eventSource.emit = async (...args) => { emitted.push(args); };
         try {
+            const module = await import(`../src/tauri/main/adapters/embedded-runtime/${file}-runtime-adapter.js`);
+            const adapter = module[factory]();
             const message = document.createElement('div');
-            message.classList.add('mes');
+            message.className = 'mes';
             message.setAttribute('mesid', '42');
             document.body.append(message);
-
-            const wrapper = document.createElement('div');
-            wrapper.classList.add('TH-render');
-
-            const iframe = document.createElement('iframe');
-            iframe.src = 'blob:jsr';
-
-            const pre = document.createElement('pre');
-            const code = document.createElement('code');
-            code.textContent = 'signature';
-            pre.append(code);
-
-            wrapper.append(iframe, pre);
-            message.append(wrapper);
-
-            const registered = [];
             const manager = {
-                profileConfig: { maxSoftParkedIframes: 0, softParkTtlMs: 0 },
+                profileConfig: { maxSoftParkedIframes: 2, softParkTtlMs: 1000 },
                 register(slot) {
                     registered.push(slot);
                     slot.element.dataset.ttRuntimeSlotId = slot.id;
                 },
             };
-
-            const adapter = createJsSlashRunnerRuntimeAdapter();
-            adapter.registerHost(manager, wrapper);
-
-            assert.equal(registered.length, 1);
-            const slot = registered[0];
-            assert.equal(slot.kind, EmbeddedRuntimeKind.JsrHtmlRender);
-            assert.ok(slot.id.startsWith('jsr:42:'));
-            assert.equal(wrapper.dataset.ttRuntimeSlotId, slot.id);
-
-            slot.hydrate();
-            iframe.remove();
-            slot.hydrate();
-
-            assert.deepEqual(emitted, [{ event: events.event_types.MESSAGE_UPDATED, args: ['42'] }]);
-            assert.equal(wrapper.querySelector('iframe'), null);
-
-            adapter.registerHost(manager, wrapper);
-            assert.equal(registered.length, 1);
-        } finally {
-            events.eventSource.emit = prevEmit;
-        }
-    } finally {
-        dom.cleanup();
-    }
-});
-
-test('LittleWhiteBox adapter cold rebuild materializes a replacement iframe', async () => {
-    const dom = installFakeDom();
-    try {
-        const { createLittleWhiteBoxRuntimeAdapter } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/littlewhitebox-runtime-adapter.js'),
-        );
-        const { EmbeddedRuntimeKind } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/services/embedded-runtime/runtime-kinds.js'),
-        );
-        const events = await importStable(path.join(REPO_ROOT, 'src/scripts/events.js'));
-
-        const emitted = [];
-        let replacement = null;
-        const prevEmit = events.eventSource.emit;
-
-        try {
-            const message = document.createElement('div');
-            message.classList.add('mes');
-            message.setAttribute('mesid', '7');
-            document.body.append(message);
-
-            const wrapper = document.createElement('div');
-            wrapper.classList.add('xiaobaix-iframe-wrapper');
-
-            const iframe = document.createElement('iframe');
-            iframe.src = 'blob:lwb';
-            wrapper.append(iframe);
-
-            const pre = document.createElement('pre');
-            const code = document.createElement('code');
-            code.textContent = 'signature';
-            pre.append(code);
-            pre.dataset.xbFinal = 'true';
-            pre.dataset.xbHash = 'hash';
-
-            message.append(wrapper, pre);
-
-            events.eventSource.emit = async (event, ...args) => {
-                emitted.push({ event, args });
-                // LWB skips unchanged final blocks unless the adapter
-                // invalidates this renderer-owned guard first.
-                if (pre.dataset.xbFinal === 'true' && pre.dataset.xbHash === 'hash') {
-                    return;
-                }
-                replacement = document.createElement('iframe');
-                replacement.src = 'blob:lwb-rebuilt';
-                wrapper.append(replacement);
+            const frames = sourceUrls.map((url, index) => {
+                const wrapper = document.createElement('div');
+                wrapper.className = wrapperClass;
+                const iframe = document.createElement('iframe');
+                iframe.src = url;
+                const pre = document.createElement('pre');
+                const code = document.createElement('code');
+                code.textContent = `source ${index}`;
+                pre.append(code);
                 pre.dataset.xbFinal = 'true';
-                pre.dataset.xbHash = 'hash';
-            };
+                pre.dataset.xbHash = `hash-${index}`;
+                wrapper.append(iframe);
+                message.append(wrapper);
+                if (prefix === 'jsr') {
+                    wrapper.append(pre);
+                } else {
+                    message.append(pre);
+                }
+                adapter.registerHost(manager, wrapper);
+                return { wrapper, iframe, pre };
+            });
+            assert.equal(registered.length, 2);
+            assert.ok(registered.every(slot => slot.id.startsWith(`${prefix}:42:`)));
+            for (const slot of registered) {
+                await slot.hydrate();
+            }
+            registered[1].dehydrate('visibility');
+            URL.revokeObjectURL(sourceUrls[1]);
+            await registered[1].hydrate();
 
-            const registered = [];
-            const manager = {
-                profileConfig: { maxSoftParkedIframes: 0, softParkTtlMs: 0 },
-                register(slot) {
-                    registered.push(slot);
-                    slot.element.dataset.ttRuntimeSlotId = slot.id;
-                },
-            };
-
-            const adapter = createLittleWhiteBoxRuntimeAdapter();
-            adapter.registerHost(manager, wrapper);
-
-            assert.equal(registered.length, 1);
-            const slot = registered[0];
-            assert.equal(slot.kind, EmbeddedRuntimeKind.LittleWhiteBoxHtmlRender);
-            assert.ok(slot.id.startsWith('lwb:7:'));
-            assert.equal(wrapper.dataset.ttRuntimeSlotId, slot.id);
-
-            slot.hydrate();
-            iframe.remove();
-            slot.hydrate();
-
-            assert.deepEqual(emitted, [{ event: events.event_types.MESSAGE_UPDATED, args: ['7'] }]);
-            assert.ok(replacement);
-            assert.equal(wrapper.querySelector('iframe'), replacement);
-
-            replacement.remove();
-            pre.remove();
-            assert.throws(() => slot.hydrate(), /paired <pre> is missing/);
-            assert.equal(emitted.length, 1);
+            assert.deepEqual(emitted, [], 'a resource restore must not impersonate a message update');
+            assert.equal(frames[0].wrapper.querySelector('iframe'), frames[0].iframe);
+            assert.equal(frames[0].iframe.src, sourceUrls[0]);
+            assert.equal(frames[1].wrapper.querySelector('iframe'), frames[1].iframe);
+            assert.notEqual(frames[1].iframe.src, sourceUrls[1]);
+            assert.equal(await (await fetch(frames[1].iframe.src)).text(), '<p>source 1</p>');
+            assert.equal(frames[1].pre.dataset.xbFinal, 'true');
+            assert.equal(frames[1].pre.dataset.xbHash, 'hash-1');
+            adapter.registerHost(manager, frames[1].wrapper);
+            assert.equal(registered.length, 2);
         } finally {
-            events.eventSource.emit = prevEmit;
+            for (const slot of registered) slot.dispose();
+            for (const url of sourceUrls) URL.revokeObjectURL(url);
+            events.eventSource.emit = previousEmit;
+            dom.cleanup();
         }
-    } finally {
-        dom.cleanup();
-    }
-});
+    });
+}

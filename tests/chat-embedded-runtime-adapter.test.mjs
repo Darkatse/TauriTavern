@@ -216,6 +216,7 @@ test('chat embedded-runtime adapter ignores iframe removals initiated by a manag
         document.body.append(chat);
 
         const { message, wrapper, iframe } = createJsrMessage({ mesid: '12' });
+        iframe.srcdoc = '<p>managed lifecycle</p>';
         chat.append(message);
 
         const manager = createManagerStub({ maxSoftParkedIframes: 0, softParkTtlMs: 0 });
@@ -245,6 +246,38 @@ test('chat embedded-runtime adapter ignores iframe removals initiated by a manag
         dom.cleanup();
     }
 });
+
+for (const adapter of ['chat', 'legacy']) {
+    test(`${adapter} embedded-runtime adapter does not retry a source failure on click`, async () => {
+        const dom = installFakeDom();
+        let handle;
+        try {
+            const module = await importFresh(path.join(REPO_ROOT,
+                `src/tauri/main/adapters/embedded-runtime/${adapter === 'chat' ? 'chat-embedded-runtime' : 'js-slash-runner-runtime'}-adapter.js`));
+            const install = module.installChatEmbeddedRuntimeAdapters ?? module.installJsSlashRunnerRuntimeAdapter;
+            const chat = document.createElement('div');
+            chat.id = 'chat';
+            document.body.append(chat);
+            const { message, wrapper } = createJsrMessage();
+            chat.append(message);
+            const manager = createManagerStub();
+            handle = install({ manager });
+            const placeholder = document.createElement('div');
+            placeholder.className = 'tt-runtime-placeholder';
+            placeholder.dataset.ttRuntimeParkReason = 'source-unavailable';
+            wrapper.append(placeholder);
+            placeholder.click();
+            assert.deepEqual(manager.calls.invalidate, []);
+            assert.deepEqual(manager.calls.touch, []);
+            placeholder.dataset.ttRuntimeParkReason = 'budget';
+            placeholder.click();
+            assert.deepEqual(adapter === 'chat' ? manager.calls.invalidate : manager.calls.touch, [wrapper.dataset.ttRuntimeSlotId]);
+        } finally {
+            handle?.dispose();
+            dom.cleanup();
+        }
+    });
+}
 
 test('chat embedded-runtime adapter unregisters slots when an iframe is removed and wrapper is not orphaned', async () => {
     const dom = installFakeDom();
