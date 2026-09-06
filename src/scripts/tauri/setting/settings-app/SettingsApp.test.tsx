@@ -313,8 +313,7 @@ test('choosing a data root projects busy state and the pending migration result'
     });
     const { container } = mountApp(options);
     const dataRootDisclosure = disclosure(container, 'Data Directory');
-    dataRootDisclosure.open = true;
-    fireEvent(dataRootDisclosure, new Event('toggle'));
+    act(() => { dataRootDisclosure.open = true; });
 
     const chooseButton = within(container).getByRole<HTMLButtonElement>('button', { name: 'Choose...' });
     await user.click(chooseButton);

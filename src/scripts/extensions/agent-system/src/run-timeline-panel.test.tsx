@@ -27,15 +27,25 @@ test('history timelines support multiple roots and clean every dialog path', asy
     const hostDescriptor = Object.getOwnPropertyDescriptor(window, '__TAURITAVERN__');
     const showModalDescriptor = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal');
     const closeDescriptor = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'close');
+    const readEvents: TauriTavernAgentApi['readEvents'] = ({ runId }) => Promise.resolve({
+        events: [{
+            seq: 1,
+            id: `event-${runId}`,
+            runId,
+            timestamp: '2026-01-01T00:00:00Z',
+            level: 'info',
+            type: 'workspace_file_written',
+            payload: { path: `${runId}.txt`, chars: 5, words: 1 },
+        }],
+        timelineProjection: { foregroundInvocationIds: [], invocations: [], delegationEdges: [] },
+    });
     Object.defineProperty(window, '__TAURITAVERN__', {
         configurable: true,
         value: {
             api: {
                 agent: {
-                    readEvents: () => Promise.resolve({
-                        events: [],
-                        timelineProjection: { foregroundInvocationIds: [], invocations: [], delegationEdges: [] },
-                    }),
+                    profiles: {},
+                    readEvents,
                 },
             },
         },
@@ -60,6 +70,10 @@ test('history timelines support multiple roots and clean every dialog path', asy
         await waitFor(() => expect(document.querySelectorAll('dialog.ttas-run-history-dialog')).toHaveLength(2));
         const roots = [...document.querySelectorAll<HTMLElement>('.ttas-run-history-dialog .ttas-run-panel')];
         expect(new Set(roots.map(root => root.id)).size).toBe(2);
+        await waitFor(() => {
+            expect(roots[0]?.textContent).toContain('run-1.txt');
+            expect(roots[1]?.textContent).toContain('run-2.txt');
+        });
 
         const dialogs = [...document.querySelectorAll<HTMLDialogElement>('dialog.ttas-run-history-dialog')];
         act(() => dialogs[0]?.close());

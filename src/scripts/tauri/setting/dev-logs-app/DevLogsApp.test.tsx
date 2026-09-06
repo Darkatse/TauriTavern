@@ -478,9 +478,7 @@ test('llm text viewer carries readable and raw title, text and wrap contracts', 
 
     const details = container.querySelector<HTMLDetailsElement>('details.tt-dev-log-raw');
     if (!details) throw new Error('raw disclosure not found');
-    details.open = true;
-    fireEvent(details, new Event('toggle'));
-    await flushAct();
+    await flushAct(() => { details.open = true; });
 
     const rawSections = details.querySelectorAll<HTMLElement>('.tt-dev-log-text-section');
     fireEvent.click(within(rawSections.item(0)).getByRole('button', { name: 'Raw JSON/SSE - Request body' }));
