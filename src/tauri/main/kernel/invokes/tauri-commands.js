@@ -209,6 +209,7 @@ export {};
  *   | 'set_group_chat_store_json'
  *   | 'delete_character_chat_store_json'
  *   | 'delete_group_chat_store_json'
+ *   | 'discover_skill_imports'
  *   | 'get_extension_store_json'
  *   | 'try_get_extension_store_json'
  *   | 'set_extension_store_json'

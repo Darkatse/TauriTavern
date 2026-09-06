@@ -905,6 +905,7 @@ type TauriTavernSkillImportInput =
     | {
         kind: 'archiveFile';
         path: string;
+        skillRoot?: string;
         source?: unknown;
     }
     | {

@@ -130,6 +130,13 @@ impl SkillRepository for FileSkillRepository {
         package::collect_skill_files(&skill_root)
     }
 
+    async fn discover_imports(
+        &self,
+        inputs: Vec<SkillImportInput>,
+    ) -> Result<Vec<SkillImportInput>, DomainError> {
+        self.discover_inputs(inputs).await
+    }
+
     async fn preview_import(
         &self,
         input: SkillImportInput,

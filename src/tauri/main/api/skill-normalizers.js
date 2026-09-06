@@ -120,11 +120,17 @@ export function normalizeSkillImportInput(value) {
     }
 
     if (kind === 'directory' || kind === 'archiveFile') {
-        return {
+        /** @type {Record<string, any>} */
+        const output = {
             kind,
             path: requireNonEmptyString(input.path, 'skill import path'),
             source: normalizeSource(input.source),
         };
+        const skillRoot = String(input.skillRoot ?? input.skill_root ?? '').trim();
+        if (kind === 'archiveFile' && skillRoot) {
+            output.skillRoot = skillRoot;
+        }
+        return output;
     }
 
     if (kind === 'archiveBase64') {
@@ -148,6 +154,10 @@ export function normalizeSkillImportInput(value) {
  * @param {ReturnType<typeof normalizeSkillImportInput>} input
  */
 export function toSkillImportCommandInput(input) {
+    if (input.kind === 'archiveFile' && input.skillRoot) {
+        const { skillRoot, ...output } = input;
+        return { ...output, skill_root: skillRoot };
+    }
     if (input.kind !== 'archiveBase64') {
         return input;
     }

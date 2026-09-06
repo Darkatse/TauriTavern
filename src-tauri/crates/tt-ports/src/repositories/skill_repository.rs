@@ -21,6 +21,11 @@ pub trait SkillRepository: Send + Sync {
         name: &str,
     ) -> Result<Vec<SkillFileRef>, DomainError>;
 
+    async fn discover_imports(
+        &self,
+        inputs: Vec<SkillImportInput>,
+    ) -> Result<Vec<SkillImportInput>, DomainError>;
+
     async fn preview_import(
         &self,
         input: SkillImportInput,
