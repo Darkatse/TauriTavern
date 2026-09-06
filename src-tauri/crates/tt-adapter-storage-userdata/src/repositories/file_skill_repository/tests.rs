@@ -171,6 +171,98 @@ async fn installs_inline_skill_and_reads_file() {
 }
 
 #[tokio::test]
+async fn discovers_nested_skill_collections_in_directories_and_archives() {
+    let source_root = temp_root("discover-source");
+    for (path, name) in [
+        ("skill-one", "skill-one"),
+        ("B1/skill-two", "skill-two"),
+        ("B1/skill-three", "skill-three"),
+        ("B2/skill-four", "skill-four"),
+        ("B2/deep/skill-five", "skill-five"),
+    ] {
+        let root = source_root.join(path);
+        tokio_fs::create_dir_all(&root)
+            .await
+            .expect("create skill root");
+        tokio_fs::write(
+            root.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Discovered Skill.\n---\n"),
+        )
+        .await
+        .expect("write SKILL.md");
+    }
+    let nested_example = source_root.join("skill-one/examples/nested");
+    tokio_fs::create_dir_all(&nested_example)
+        .await
+        .expect("create nested example");
+    tokio_fs::write(
+        nested_example.join("SKILL.md"),
+        "---\nname: not-a-package\ndescription: Nested example.\n---\n",
+    )
+    .await
+    .expect("write nested SKILL.md");
+
+    let repository_root = temp_root("discover-repository");
+    let repository = FileSkillRepository::new(repository_root.clone());
+    let directory_inputs = repository
+        .discover_imports(vec![SkillImportInput::Directory {
+            path: source_root.to_string_lossy().into_owned(),
+            source: json!({"kind": "test"}),
+        }])
+        .await
+        .expect("discover directory skills");
+    assert_eq!(directory_inputs.len(), 5);
+
+    let archive_path = repository_root.join("skills.zip");
+    tokio_fs::write(
+        &archive_path,
+        archive::export_skill_dir(&source_root).expect("build collection archive"),
+    )
+    .await
+    .expect("write collection archive");
+    let archive_inputs = repository
+        .discover_imports(vec![SkillImportInput::ArchiveFile {
+            path: archive_path.to_string_lossy().into_owned(),
+            skill_root: None,
+            source: json!({"kind": "test"}),
+        }])
+        .await
+        .expect("discover archive skills");
+    assert_eq!(archive_inputs.len(), 5);
+
+    let mut names = std::collections::BTreeSet::new();
+    for input in archive_inputs {
+        names.insert(
+            repository
+                .preview_import(input, global_scope())
+                .await
+                .expect("preview discovered archive skill")
+                .skill
+                .name,
+        );
+    }
+    assert_eq!(
+        names,
+        [
+            "skill-five",
+            "skill-four",
+            "skill-one",
+            "skill-three",
+            "skill-two",
+        ]
+            .map(str::to_string)
+            .into()
+    );
+
+    tokio_fs::remove_dir_all(source_root)
+        .await
+        .expect("cleanup source");
+    tokio_fs::remove_dir_all(repository_root)
+        .await
+        .expect("cleanup repository");
+}
+
+#[tokio::test]
 async fn large_skill_reads_return_a_line_preview() {
     let root = temp_root("read-budget");
     let repository = FileSkillRepository::new(root.clone());
@@ -1279,6 +1371,7 @@ async fn exported_skill_archive_can_be_reimported() {
         .preview_import(
             SkillImportInput::ArchiveFile {
                 path: archive_path.to_string_lossy().to_string(),
+                skill_root: None,
                 source: json!({"kind": "test"}),
             },
             global_scope(),

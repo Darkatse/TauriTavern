@@ -59,6 +59,13 @@ impl SkillService {
         Ok(self.repository.list_skill_files(scope, name).await?)
     }
 
+    pub async fn discover_imports(
+        &self,
+        inputs: Vec<SkillImportInput>,
+    ) -> Result<Vec<SkillImportInput>, ApplicationError> {
+        Ok(self.repository.discover_imports(inputs).await?)
+    }
+
     pub async fn preview_import(
         &self,
         input: SkillImportInput,
@@ -372,6 +379,13 @@ mod tests {
             _scope: SkillScope,
             _name: &str,
         ) -> Result<Vec<tt_domain::models::skill::SkillFileRef>, DomainError> {
+            unreachable!("not needed for resolver tests")
+        }
+
+        async fn discover_imports(
+            &self,
+            _inputs: Vec<SkillImportInput>,
+        ) -> Result<Vec<SkillImportInput>, DomainError> {
             unreachable!("not needed for resolver tests")
         }
 

@@ -21,6 +21,91 @@ pub(super) struct PreparedImport {
 }
 
 impl FileSkillRepository {
+    pub(super) async fn discover_inputs(
+        &self,
+        inputs: Vec<SkillImportInput>,
+    ) -> Result<Vec<SkillImportInput>, DomainError> {
+        self.ensure_layout().await?;
+        let mut discovered = Vec::new();
+
+        for input in inputs {
+            match input {
+                SkillImportInput::Directory { path, source } => {
+                    for skill_root in discover_skill_roots(Path::new(&path))? {
+                        discovered.push(SkillImportInput::Directory {
+                            path: skill_root.to_string_lossy().into_owned(),
+                            source: source.clone(),
+                        });
+                    }
+                }
+                SkillImportInput::ArchiveFile {
+                    path,
+                    skill_root: Some(skill_root),
+                    source,
+                } => discovered.push(SkillImportInput::ArchiveFile {
+                    path,
+                    skill_root: Some(skill_root),
+                    source,
+                }),
+                SkillImportInput::ArchiveFile {
+                    path,
+                    skill_root: None,
+                    source,
+                } => {
+                    let staging_dir = self
+                        .staging_root()
+                        .join(format!("discover-{}", Uuid::new_v4().simple()));
+                    fs::create_dir_all(&staging_dir).map_err(|error| {
+                        DomainError::InternalError(format!(
+                            "Failed to create Skill discovery directory '{}': {}",
+                            staging_dir.display(),
+                            error
+                        ))
+                    })?;
+                    let result = (|| {
+                        extract_archive(Path::new(&path), &staging_dir)?;
+                        discover_skill_roots(&staging_dir)?
+                            .into_iter()
+                            .map(|root| {
+                                let relative = root.strip_prefix(&staging_dir).map_err(|error| {
+                                    DomainError::InternalError(format!(
+                                        "Failed to compute discovered Skill archive root: {error}"
+                                    ))
+                                })?;
+                                Ok(SkillImportInput::ArchiveFile {
+                                    path: path.clone(),
+                                    skill_root: if relative.as_os_str().is_empty() {
+                                        None
+                                    } else {
+                                        Some(normalize_skill_path(&relative.to_string_lossy())?)
+                                    },
+                                    source: source.clone(),
+                                })
+                            })
+                            .collect::<Result<Vec<_>, DomainError>>()
+                    })();
+                    let archive_inputs = match result {
+                        Ok(inputs) => inputs,
+                        Err(error) => {
+                            cleanup_dir(&staging_dir);
+                            return Err(error);
+                        }
+                    };
+                    discovered.extend(archive_inputs);
+                    cleanup_dir(&staging_dir);
+                }
+                _ => {
+                    return Err(DomainError::InvalidData(
+                        "Skill discovery only supports directory and archiveFile inputs"
+                            .to_string(),
+                    ));
+                }
+            }
+        }
+
+        Ok(discovered)
+    }
+
     pub(super) async fn materialize_input(
         &self,
         input: &SkillImportInput,
@@ -58,7 +143,7 @@ impl FileSkillRepository {
             }
             SkillImportInput::Directory { path, source } => {
                 let source_root = PathBuf::from(path);
-                let selected_root = select_skill_root(&source_root)?;
+                let selected_root = select_skill_root(&source_root, None)?;
                 let package_root = staging_dir.join("package");
                 copy_dir_contents(&selected_root, &package_root)?;
                 Ok(PreparedImport {
@@ -67,7 +152,11 @@ impl FileSkillRepository {
                     source: source.clone(),
                 })
             }
-            SkillImportInput::ArchiveFile { path, source } => {
+            SkillImportInput::ArchiveFile {
+                path,
+                skill_root,
+                source,
+            } => {
                 let archive_root = staging_dir.join("archive");
                 fs::create_dir_all(&archive_root).map_err(|error| {
                     DomainError::InternalError(format!(
@@ -77,7 +166,7 @@ impl FileSkillRepository {
                     ))
                 })?;
                 extract_archive(Path::new(path), &archive_root)?;
-                let selected_root = select_skill_root(&archive_root)?;
+                let selected_root = select_skill_root(&archive_root, skill_root.as_deref())?;
                 let package_root = staging_dir.join("package");
                 copy_dir_contents(&selected_root, &package_root)?;
                 Ok(PreparedImport {
@@ -132,7 +221,7 @@ impl FileSkillRepository {
                     ))
                 })?;
                 extract_archive(&archive_path, &archive_root)?;
-                let selected_root = select_skill_root(&archive_root)?;
+                let selected_root = select_skill_root(&archive_root, None)?;
                 let package_root = staging_dir.join("package");
                 copy_dir_contents(&selected_root, &package_root)?;
                 Ok(PreparedImport {
@@ -250,7 +339,7 @@ fn write_inline_files(files: &[SkillInlineFile], root: &Path) -> Result<(), Doma
     Ok(())
 }
 
-fn select_skill_root(root: &Path) -> Result<PathBuf, DomainError> {
+fn select_skill_root(root: &Path, skill_root: Option<&str>) -> Result<PathBuf, DomainError> {
     let metadata = fs::symlink_metadata(root).map_err(|error| {
         DomainError::InternalError(format!(
             "Failed to read Skill import root '{}': {}",
@@ -269,6 +358,27 @@ fn select_skill_root(root: &Path) -> Result<PathBuf, DomainError> {
             root.display()
         )));
     }
+
+    if let Some(skill_root) = skill_root {
+        let selected = root.join(normalize_skill_path(skill_root)?);
+        let metadata = fs::symlink_metadata(&selected).map_err(|error| {
+            DomainError::InvalidData(format!(
+                "Invalid discovered Skill root '{}': {}",
+                skill_root, error
+            ))
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(DomainError::InvalidData(format!(
+                "Discovered Skill root is not a regular directory: {skill_root}"
+            )));
+        }
+        return Ok(selected);
+    }
+
+    if root.join("SKILL.md").is_file() {
+        return Ok(root.to_path_buf());
+    }
+
     let mut candidates = Vec::new();
     for entry in fs::read_dir(root).map_err(|error| {
         DomainError::InternalError(format!(
@@ -297,15 +407,6 @@ fn select_skill_root(root: &Path) -> Result<PathBuf, DomainError> {
         }
     }
 
-    if root.join("SKILL.md").is_file() {
-        if !candidates.is_empty() {
-            return Err(DomainError::InvalidData(
-                "Skill package contains multiple candidate SKILL.md roots".to_string(),
-            ));
-        }
-        return Ok(root.to_path_buf());
-    }
-
     match candidates.len() {
         1 => Ok(candidates.remove(0)),
         0 => Err(DomainError::InvalidData(
@@ -316,4 +417,79 @@ fn select_skill_root(root: &Path) -> Result<PathBuf, DomainError> {
             "Skill package contains multiple candidate SKILL.md roots".to_string(),
         )),
     }
+}
+
+fn discover_skill_roots(root: &Path) -> Result<Vec<PathBuf>, DomainError> {
+    let metadata = fs::symlink_metadata(root).map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to read Skill discovery root '{}': {}",
+            root.display(),
+            error
+        ))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(DomainError::InvalidData(format!(
+            "Skill discovery root must be a regular directory: {}",
+            root.display()
+        )));
+    }
+
+    let mut roots = Vec::new();
+    discover_skill_roots_inner(root, &mut roots)?;
+    roots.sort();
+    if roots.is_empty() {
+        return Err(DomainError::InvalidData(format!(
+            "No SKILL.md found under Skill import root: {}",
+            root.display()
+        )));
+    }
+    Ok(roots)
+}
+
+fn discover_skill_roots_inner(current: &Path, roots: &mut Vec<PathBuf>) -> Result<(), DomainError> {
+    let skill_md = current.join("SKILL.md");
+    match fs::symlink_metadata(&skill_md) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(DomainError::InvalidData(format!(
+                "SKILL.md cannot be a symlink: {}",
+                skill_md.display()
+            )));
+        }
+        Ok(metadata) if metadata.is_file() => {
+            roots.push(current.to_path_buf());
+            return Ok(());
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(DomainError::InternalError(format!(
+                "Failed to inspect Skill candidate '{}': {}",
+                skill_md.display(),
+                error
+            )));
+        }
+    }
+
+    for entry in fs::read_dir(current).map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to read Skill discovery directory '{}': {}",
+            current.display(),
+            error
+        ))
+    })? {
+        let entry = entry.map_err(|error| {
+            DomainError::InternalError(format!("Failed to read Skill discovery entry: {error}"))
+        })?;
+        let metadata = fs::symlink_metadata(entry.path()).map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to inspect Skill discovery entry '{}': {}",
+                entry.path().display(),
+                error
+            ))
+        })?;
+        if metadata.is_dir() && !metadata.file_type().is_symlink() {
+            discover_skill_roots_inner(&entry.path(), roots)?;
+        }
+    }
+    Ok(())
 }

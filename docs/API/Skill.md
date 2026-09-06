@@ -62,8 +62,8 @@ type TauriTavernSkillApi = {
 用户从本机选择 Skill 来源时可调用：
 
 - `pickImportArchive()`：选择一个 `.zip` / `.ttskill` 归档，保留既有单选契约；
-- `pickImportArchives()`：在同一个选择窗口中选择一个或多个 `.zip` / `.ttskill` 归档；
-- `pickImportDirectories()`：在桌面端选择一个或多个 Skill 目录；移动端不提供目录选择。
+- `pickImportArchives()`：选择一个或多个 `.zip` / `.ttskill` 归档，并递归展开其中发现的全部 Skill；
+- `pickImportDirectories()`：在桌面端选择一个或多个父目录，并递归展开其中发现的全部 Skill；移动端不提供目录选择。
 
 单选方法返回：
 
@@ -71,7 +71,7 @@ type TauriTavernSkillApi = {
 { kind: 'archiveFile', path: string }
 ```
 
-复数方法返回对应输入数组；用户取消选择时均返回 `null`。选择器只负责生成输入，实际解包、校验、hash、冲突判断与安装仍必须对每个输入调用现有 `previewImport()` / `installImport()`。Host API 不提供批量事务；每个 Skill 保持独立原子安装，调用方应明确呈现逐项失败。
+复数方法返回发现后的输入数组；某目录命中普通文件 `SKILL.md` 后即作为一个 Skill 根，不继续扫描其内部。用户取消选择时返回 `null`。实际校验、hash、冲突判断与安装仍必须对每个输入调用现有 `previewImport()` / `installImport()`。Host API 不提供批量事务；每个 Skill 保持独立原子安装，调用方应明确呈现逐项失败。
 
 移动端文件选择器可能返回宿主私有的临时归档路径。调用方如果放弃某个输入，应调用 `discardPickedImport(input)`；放弃整个选择批次时调用无参数的 `discardPickedImport()`，它会释放所有尚未消费的临时文件。`installImport()` 成功或失败后会自动释放对应输入的临时归档。
 
@@ -99,9 +99,12 @@ type TauriTavernSkillImportInput =
   | {
       kind: 'archiveFile';
       path: string;
+      skillRoot?: string;
       source?: unknown;
     };
 ```
+
+`skillRoot` 是后端发现多 Skill 归档后返回的归档内相对根路径。调用方应将选择器返回的输入原样传给 `previewImport()` / `installImport()`；后端仍会执行路径与归档安全校验。
 
 `source` 用于记录来源引用。Preset / Character embedded import 会传入稳定来源 ID，以便删除 Preset / Character 时清理仅由该来源引用的 Skill。
 
