@@ -51,7 +51,6 @@ const ACTIVE_ROOT_ID = 'ttas_agent_run_timeline';
 type DerivedTimeline = {
     subAgentTasks: SubAgentTask[];
     items: TimelineItem[];
-    navItems: TimelineItem[];
 };
 
 export function createRunTimelineController(options: RunTimelineOptions): RunTimelineController {
@@ -116,7 +115,7 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
             };
         }
         const items = [...derivedEventBase.eventItems, ...liveLane.items()];
-        return { subAgentTasks: derivedEventBase.subAgentTasks, items, navItems: items.slice(-24) };
+        return { subAgentTasks: derivedEventBase.subAgentTasks, items };
     }
 
     function currentDerived(): DerivedTimeline {
@@ -160,7 +159,7 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
             selectedSeq: selectedItem?.seq ?? null,
             latestSeq: latest?.seq ?? null,
             activeSeq: isRunning ? latest?.seq ?? null : null,
-            navItems: view.navItems,
+            hasMoreBefore: main.hasMoreBefore,
             loading: main.loading,
             loadingOlder: main.loadingOlder,
             detail: { loading: detail.loading, error: detail.error, sections: detail.sections },

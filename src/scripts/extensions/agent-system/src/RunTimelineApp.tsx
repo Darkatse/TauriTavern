@@ -249,7 +249,10 @@ export function RunTimelineApp(props: { controller: RunTimelineController; tr: A
                             ariaLabel={tr('timelineDetails')}
                             title={snapshot.detailTitle}
                             type={snapshot.selectedItem?.type ?? ''}
-                            navItems={snapshot.navItems}
+                            items={snapshot.displayItems}
+                            hasMoreBefore={snapshot.hasMoreBefore}
+                            loadingOlder={snapshot.loadingOlder}
+                            onLoadOlder={controller.loadOlder}
                             selectedSeq={snapshot.selectedSeq}
                             loading={snapshot.detail.loading}
                             error={snapshot.detail.error}

@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test } from '@rstest/core';
 
@@ -6,6 +6,7 @@ import type { AgentSystemSettings } from './settings-store';
 import { RunTimelineApp } from './RunTimelineApp';
 import { createRunTimelineController } from './RunTimelineController';
 import type { ActiveTimelineOptions, RunTimelineController } from './RunTimelineContract';
+import type { AgentSystemTr } from './i18n';
 
 const tr = (key: string): string => key;
 const controllers: RunTimelineController[] = [];
@@ -127,6 +128,67 @@ test('the React event list renders only the virtual window while the controller 
     expect(controller.getSnapshot().displayItems).toHaveLength(240);
     expect(document.querySelectorAll('#history-window li.ttas-run-event').length).toBeLessThan(240);
     expect(document.querySelectorAll('#history-window li.ttas-run-event').length).toBeGreaterThan(0);
+});
+
+test('detail navigation scrolls through older pages with bounded buttons and lazy detail reads', async () => {
+    const reads: number[] = [];
+    const detailReads: string[] = [];
+    const translate: AgentSystemTr = (key, params) => params?.path ? `${key}:${params.path}` : key;
+    Object.defineProperty(window, '__TAURITAVERN__', {
+        configurable: true,
+        value: { api: { agent: { readWorkspaceFile: ({ path }: { path: string }) => {
+            detailReads.push(path);
+            return Promise.resolve({ path, text: `content:${path}`, chars: 5, words: 1, sha256: 'hash' });
+        } } } },
+    });
+    const controller = createRunTimelineController({
+        mode: 'history',
+        rootId: 'detail-history',
+        run: { runId: 'run-1' },
+        requestClose: () => undefined,
+        deps: {
+            readEvents: ({ beforeSeq }) => {
+                reads.push(beforeSeq ?? 0);
+                const last = beforeSeq === Number.MAX_SAFE_INTEGER ? 720 : (beforeSeq ?? 1) - 1;
+                return Promise.resolve({
+                    events: Array.from({ length: 240 }, (_, index) => fileEvent(last - 239 + index)),
+                    timelineProjection: { foregroundInvocationIds: [], invocations: [], delegationEdges: [] },
+                });
+            },
+            reportError: error => { throw error; },
+            tr: translate,
+        },
+    });
+    controllers.push(controller);
+    render(<RunTimelineApp controller={controller} tr={translate} />);
+    await act(() => controller.init());
+    await userEvent.setup().click(screen.getByRole('button', { name: 'showTimelineDetails' }));
+    const nav = screen.getByRole('navigation', { name: 'timelineDetails' });
+    Object.defineProperties(nav, { clientWidth: { value: 340 }, clientHeight: { value: 64 } });
+    fireEvent.scroll(nav);
+    nav.scrollTop = 192;
+    fireEvent.scroll(nav);
+    const earlier = await within(nav).findByTitle('timelineEventFileWritten:file-501.txt');
+    await userEvent.setup().click(earlier);
+    await screen.findByText('content:file-501.txt');
+    expect(nav.querySelectorAll('button').length).toBeLessThan(40);
+
+    nav.scrollTop = 0;
+    fireEvent.scroll(nav);
+    await waitFor(() => expect(controller.getSnapshot().displayItems).toHaveLength(480));
+    await within(nav).findByTitle('timelineEventFileWritten:file-481.txt');
+    expect(controller.getSnapshot().selectedSeq).toBe(501);
+    nav.scrollTop = 0;
+    fireEvent.scroll(nav);
+    await waitFor(() => expect(controller.getSnapshot().displayItems).toHaveLength(720));
+    expect(detailReads).toEqual(['file-720.txt', 'file-501.txt']);
+    nav.scrollTop = 0;
+    fireEvent.scroll(nav);
+    await userEvent.setup().click(await within(nav).findByTitle('timelineEventFileWritten:file-1.txt'));
+    await screen.findByText('content:file-1.txt');
+    expect(reads).toEqual([Number.MAX_SAFE_INTEGER, 481, 241]);
+    expect(controller.getSnapshot().hasMoreBefore).toBe(false);
+    expect(nav.querySelectorAll('button').length).toBeLessThan(40);
 });
 
 test('active timeline renders a streaming write card with tail and metric', async () => {

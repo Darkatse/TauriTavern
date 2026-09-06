@@ -232,7 +232,7 @@ export type SubAgentTimelineSnapshot = {
     virtualItems: TimelineVirtualWindow;
     selectedItem: TimelineItem | null;
     selectedSeq: number | null;
-    navItems: readonly TimelineItem[];
+    hasMoreBefore: boolean;
     loading: boolean;
     loadingOlder: boolean;
     autoStick: boolean;
@@ -249,7 +249,7 @@ export type RunTimelineSnapshot = {
     selectedSeq: number | null;
     latestSeq: number | null;
     activeSeq: number | null;
-    navItems: readonly TimelineItem[];
+    hasMoreBefore: boolean;
     loading: boolean;
     loadingOlder: boolean;
     detail: TimelineDetailSnapshot;

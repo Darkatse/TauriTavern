@@ -11,6 +11,7 @@ import type {
     TimelineVirtualWindow,
 } from './RunTimelineContract';
 import { readTimelineViewport } from './RunTimelineDom';
+import { RunTimelineDetailNav } from './RunTimelineDetailNav';
 import {
     subAgentStatusLabel,
     subAgentTaskStyle,
@@ -184,7 +185,10 @@ export type TimelineDetailPaneProps = {
     ariaLabel: string;
     title: string;
     type: string;
-    navItems: readonly TimelineItem[];
+    items: readonly TimelineItem[];
+    hasMoreBefore: boolean;
+    loadingOlder: boolean;
+    onLoadOlder: () => Promise<boolean>;
     selectedSeq: number | null;
     loading: boolean;
     error: string;
@@ -216,26 +220,16 @@ export function RunTimelineDetailPane(props: TimelineDetailPaneProps) {
                 </div>
             </div>
 
-            {props.navItems.length > 1 && (
-                <div className="ttas-run-detail-nav">
-                    <div className="ttas-run-nav-list">
-                        {props.navItems.map(item => (
-                            <button
-                                key={`nav-${item.id}`}
-                                type="button"
-                                className={props.selectedSeq === item.seq ? 'is-selected' : ''}
-                                title={timelineItemTitle(item, props.tr)}
-                                onClick={(event) => {
-                                    event.stopPropagation();
-                                    props.onSelectNav(item);
-                                }}
-                            >
-                                <i aria-hidden="true"></i>
-                                <span>{timelineItemShortLabel(item, props.tr)}</span>
-                            </button>
-                        ))}
-                    </div>
-                </div>
+            {(props.items.length > 1 || props.hasMoreBefore) && (
+                <RunTimelineDetailNav
+                    items={props.items}
+                    selectedSeq={props.selectedSeq}
+                    hasMoreBefore={props.hasMoreBefore}
+                    loadingOlder={props.loadingOlder}
+                    onLoadOlder={props.onLoadOlder}
+                    onSelect={props.onSelectNav}
+                    tr={props.tr}
+                />
             )}
 
             <div className="ttas-run-detail-scroll">

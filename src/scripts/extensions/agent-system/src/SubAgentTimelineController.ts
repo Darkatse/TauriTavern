@@ -110,7 +110,7 @@ export function createSubAgentTimelineController(deps: {
                 virtualItems: virtualizeTimelineItems(all, viewport.scrollTop, viewport.viewportHeight),
                 selectedItem: selected,
                 selectedSeq: selected?.seq ?? null,
-                navItems: all.slice(-20),
+                hasMoreBefore: session.hasMoreBefore,
                 loading: session.loading,
                 loadingOlder: session.loadingOlder,
                 autoStick: viewport.nearBottom,

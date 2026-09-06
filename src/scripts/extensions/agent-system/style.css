@@ -1303,16 +1303,34 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
 }
 
 .ttas-run-nav-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 5px;
-    align-content: flex-start;
     min-width: 0;
     max-height: 64px;
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-width: thin;
+    overflow-anchor: none;
+}
+
+.ttas-run-nav-space,
+.ttas-run-nav-window {
+    /* Virtual geometry must settle before restoring the scroll anchor. */
+    transition: none;
+}
+
+.ttas-run-nav-space {
+    position: relative;
+}
+
+.ttas-run-nav-window {
+    position: absolute;
+    inset-inline: 0;
+    display: grid;
+}
+
+.ttas-run-nav-list .ttas-run-nav-load {
+    grid-column: 1 / -1;
+    max-width: none;
 }
 
 .ttas-run-nav-list::-webkit-scrollbar {
