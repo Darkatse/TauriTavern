@@ -1,27 +1,24 @@
-# `window.__TAURITAVERN__.api.llmConnections` — LLM Connection API
+# LLM Connection API
 
-本 API 是前端/扩展侧管理 Agent 可引用 LLM 连接定义的 Host ABI。它只暴露稳定 DTO，不暴露 Rust repository、文件路径或 Tauri command 名。
+`api.llmConnections` 管理 Agent 可以引用的模型连接。连接保存 provider、端点、凭据引用和路由，Profile 另外选择模型 ID。
 
-## 入口
+## 入口与方法
 
 ```js
 await (window.__TAURITAVERN__?.ready ?? window.__TAURITAVERN_MAIN_READY__);
-
-const llmConnections = window.__TAURITAVERN__.api.llmConnections;
+const connections = window.__TAURITAVERN__.api.llmConnections;
 ```
 
-## 方法
+| 方法 | 返回值 |
+| --- | --- |
+| `list()` | `{ connections }`，连接摘要列表 |
+| `load(connectionId)` | `{ connection }`，不存在时为 `null` |
+| `save(connection)` | 保存完成后返回 |
+| `delete(connectionId)` | 删除完成后返回 |
 
-```ts
-type TauriTavernLlmConnectionsApi = {
-  list(): Promise<{ connections: LlmConnectionSummary[] }>;
-  load(input: string | { connectionId: string }): Promise<{ connection: LlmConnectionDefinition | null }>;
-  save(input: LlmConnectionDefinition | { connection: LlmConnectionDefinition }): Promise<void>;
-  delete(input: string | { connectionId: string }): Promise<void>;
-};
-```
+`load`、`delete` 也接受 `{ connectionId }`，`save` 也接受 `{ connection }`。
 
-## DTO
+## 连接内容
 
 ```ts
 type LlmConnectionDefinition = {
@@ -39,11 +36,7 @@ type LlmConnectionDefinition = {
     sourceSpecific?: Record<string, unknown>;
   };
   auth: {
-    secretRef?: {
-      key: string;
-      id: string;
-      labelSnapshot?: string;
-    };
+    secretRef?: { key: string; id: string; labelSnapshot?: string };
   };
   routing?: {
     reverseProxy?: { url: string } | { preset: string };
@@ -53,56 +46,22 @@ type LlmConnectionDefinition = {
 };
 ```
 
-`id` 必须满足 Rust domain contract：非空、长度不超过 128，只能使用小写 ASCII、数字、`-`、`_`。
+`id` 使用小写字母、数字、`-` 或 `_`，最长 128 字符。直接连接通过 `auth.secretRef` 引用密钥；使用反向代理时可以保留 `auth: {}`。
 
-使用反代时允许 `auth: {}`，认证来自反代预设，不要求额外选择官方 API Key。直接连接仍要求有效的 `auth.secretRef`。
+`routing.reverseProxy.preset` 引用用户保存的反代预设。解析连接时读取其 URL 与密码，预设更新作用于后续解析；模型名按 Profile 指定的值传递。
 
-## 与 Agent Profile 的关系
+## Profile 与 Model Target
 
-Agent Profile 的持久化字段仍然是：
+Profile 使用 `model.mode = "connectionRef"`，保存 `connectionRef` 和 `modelId`。具体配置见 [Profile 与预设](../Agent/ProfilesAndPreset.md)。
 
-```json
-{
-  "model": {
-    "mode": "connectionRef",
-    "connectionRef": "model-target-...",
-    "modelId": "..."
-  }
-}
-```
+Agent System 将 Connection Manager 的 Model Target 物化为 `model-target-<target.id>` 连接，在启动、Target 更新、Profile 保存和 Run 启动时同步。无法表示的 Target 配置会报告错误，并移除对应旧连接，供 Profile 诊断显示。
 
-Profile 不保存 Connection Manager 的 `modelTargetId`。Profile 面板可以把用户保存的 Model Target 物化为一个 LLM Connection，再把 Profile 指向 `connectionRef + modelId`。这样 runtime 只依赖 Agent domain 的 LLM Connection contract，Connection Manager 只是 UI 输入来源。
+连接同步会更新 provider、端点、凭据和 adapter 选项。`modelId` 属于 Profile，修改 Target 的模型名后，需要在 Profile 中重新选择才会采用新值。删除 Target 会保留已经物化的连接。
 
-## Connection Manager Model Target 生命周期
+已经准备好的 Invocation 继续使用其模型请求，连接更新供后续解析使用。独立模型绑定导出时会移除本机引用，导入后重新配置。
 
-Agent System 负责把 Connection Manager 中的 chat-completion Model Target 同步为 `id = "model-target-" + target.id` 的 LLM Connection：
+## 实现
 
-- Agent System 启动时会 reconcile 当前保存的 Model Target，并覆盖写入对应 LLM Connection。
-- Model Target 创建或更新后，会立即重新物化对应 LLM Connection；更新 API key 时，新的 `secretRef.id` 因此会进入 Agent domain 的 connection definition。
-- 启动 reconcile 或 Model Target 更新无法物化时，Agent System 会删除对应 `model-target-*` LLM Connection，让 Profile 诊断和运行按 missing connection fail-fast，而不是继续使用旧连接。
-- Profile 保存前会重新读取当前 Model Target 列表，再按 `connectionRef + modelId` 找到对应 target 并物化，避免打开面板后的旧快照覆盖新 connection。
-- Agent run 启动前会对当前 Profile 的 `model-target-*` binding 再执行一次同样的物化，确保 prompt assembly 与 runtime 看到 Connection Manager 中最新的 endpoint/provider/API key；该步骤按 `connectionRef` 找源 Model Target，不改写 Profile 的 `modelId`。
-- Model Target 会保真保存 Custom Claude prompt caching 与 Custom Responses WebSocket 等显式 native adapter opt-in，并物化到 `adapterHints`；这些字段不进入 prompt preset。
-- Model Target 的命名反代预设物化为 `routing.reverseProxy.preset`；空值或 `None` 表示不使用反代。解析模型绑定时从已保存的用户 `proxies` 中读取该预设的 URL 与密码，并沿用现有 `reverse_proxy` / `proxy_password` 请求配置。连接不复制反代凭据，更新预设会作用于后续绑定；引用不存在或预设缺少 URL 时明确报错。中转服务的模型名原样传递，不按官方命名格式改写。
-- 删除 Model Target 不会自动删除已经物化的 LLM Connection。Profile 是否继续可运行由 `connectionRef` 指向的 LLM Connection 是否存在决定，避免 UI 清理操作隐式破坏已有 Profile。
-- `modelId` 属于 Profile binding，不属于 LLM Connection。更新 Model Target 的模型名不会静默改写已有 Profile；需要用户在 Profile 面板重新选择该 Model Target 才会采纳新的 `modelId`。
-
-运行中 invocation 不热替换已解析的 model binding；新的 LLM Connection 会在后续 profile/model binding resolution 中生效。
-
-当 Profile 被导出或嵌入到 Preset/Character 时，`connectionRef + modelId` 必须改写为：
-
-```json
-{
-  "model": {
-    "mode": "requiresConfiguration"
-  }
-}
-```
-
-`requiresConfiguration` 是合法可保存状态，但不可运行；用户需要在本机重新选择模型。
-
-要求：
-
-- 连接转换必须保真；无法表示的字段必须报错，不静默丢弃。
-- `modelId` 属于 Profile binding，不属于 connection definition。
-- Tauri command 名 `list_llm_connections` / `save_llm_connection` 等属于 Internal 实现细节，不是 Public Contract。
+- [llm_connection.rs](../../src-tauri/crates/tt-domain/src/models/llm_connection.rs)：连接结构。
+- [llm_connection_service.rs](../../src-tauri/crates/tt-application/src/services/llm_connection_service.rs)：解析与请求字段应用。
+- [model-target-llm-connection.js](../../src/scripts/tauritavern/agent/model-target-llm-connection.js)：Model Target 同步。

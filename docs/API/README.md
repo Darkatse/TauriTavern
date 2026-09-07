@@ -1,69 +1,24 @@
-# TauriTavern Extension APIs
+# 扩展 API
 
-TauriTavern 专属扩展 API 的统一入口是 `window.__TAURITAVERN__.api`。
-
-这套 API 的目标不是把上游内部实现直接摊给扩展，而是把真正值得长期承诺的平台能力，整理成小而稳定的宿主 ABI。
-
-## 入口
+TauriTavern 的宿主 API 位于 `window.__TAURITAVERN__.api`。使用前等待宿主就绪：
 
 ```js
 await (window.__TAURITAVERN__?.ready ?? window.__TAURITAVERN_MAIN_READY__);
-
-const host = window.__TAURITAVERN__;
-const api = host?.api;
+const api = window.__TAURITAVERN__.api;
 ```
 
-## API 分区
-
-- `api.chat`
-  - 面向记忆类 / 数据库 / 检索类扩展。
-  - 提供跨窗口聊天访问、全文检索、per-chat store、metadata、历史分页等能力。
-- `api.layout`
-  - 面向移动端 UI/面板/悬浮窗/iframe 等需要对齐 safe-area/viewport/IME 的扩展。
-  - 提供布局契约快照与订阅，并配合 `data-tt-mobile-surface` taxonomy 实现少量 opt-in 即稳定适配。
-- `api.dev`
-  - 面向调试、诊断与开发工具。
-  - 提供前端日志、后端日志、LLM API 日志的统一宿主入口。
-- `api.worldInfo`
-  - 面向角色卡作者与世界书相关扩展。
-  - 提供最近一次激活结果、实时订阅与 best-effort 条目跳转。
-- `api.extension.store`
-  - 面向需要**全局持久化**的扩展（不绑定 chat）。
-  - 提供 Extension KV JSON + Blob 存储，支持多 table。
-- `api.agent`（已落地 canonical model IR、provider_state continuation、上下文只读工具、workspace 读改工具循环与 run history listing）
-  - 面向 Agent Run / timeline / workspace / commit。
-  - 当前提供启动 run、列出历史 run、订阅/读取事件、取消、读取 workspace 文件、prepare/finalize/commit；模型侧内建 chat search/read、world info read、skill list/read 与 workspace list/read/write/patch/finish 工具由 Rust runtime 注册。
-  - approval 仍是后续工作；当前入口显式 throw。
-- `api.llmConnections`
-  - 面向 Agent Profile / 扩展侧的 LLM 连接定义管理。
-  - 当前提供 list、load、save、delete；Profile 通过 `connectionRef + modelId` 引用连接，不直接依赖 Connection Manager 的 Model Target id。
-- `api.skill`（已落地）
-  - 面向本地 Agent Skill 管理。
-  - 当前提供 scope-aware 的 list、previewImport、installImport、readFile、writeFile、move、export、delete；Agent run 内只能通过 `skill.list` / `skill.search` / `skill.read` 工具消费已安装 Skill。
-- `api.mcp`
-  - 面向 MCP registration、persistent tool catalog 与第一方 Manager user test call 的独立平台能力。
-  - 当前提供 Active/Paused、Off/Ask/Allow、显式 refresh、完整分页、diagnostics 与 typed one-shot call outcome，并支持 Agent/Legacy 模型工具调用。
-
-## 文档
-
-| 文档 | 内容 |
+| API | 用途 |
 | --- | --- |
-| [Chat.md](Chat.md) | `api.chat` 完整参考 |
-| [Layout.md](Layout.md) | `api.layout` 完整参考（safe-area/viewport/IME） |
-| [Dev.md](Dev.md) | `api.dev` 完整参考 |
-| [WorldInfo.md](WorldInfo.md) | `api.worldInfo` 完整参考 |
-| [ExtensionStore.md](Extension.md) | `api.extension.store` 完整参考 |
-| [Agent.md](Agent.md) | `api.agent` 当前参考（Agent Run / workspace / timeline） |
-| [LlmConnections.md](LlmConnections.md) | `api.llmConnections` 完整参考（Agent LLM 连接定义） |
-| [Skill.md](Skill.md) | `api.skill` 完整参考（Skill 管理、导入导出、读取） |
-| [MCP.md](MCP.md) | `api.mcp` 当前参考（registration、persistent catalog、user test call 与模型工具调用） |
-| [Migration.md](Migration.md) | 从 SillyTavern 扩展迁移到 TauriTavern 的适配指南 |
+| [api.chat](Chat.md) | 聊天读取、检索、metadata 与扩展存储 |
+| [api.layout](Layout.md) | safe area、viewport 与输入法布局 |
+| [api.dev](Dev.md) | 前后端日志和模型请求诊断 |
+| [api.worldInfo](WorldInfo.md) | 世界书激活结果与条目导航 |
+| [api.extension.store](Extension.md) | 扩展的全局 JSON / Blob 存储 |
+| [api.agent](Agent.md) | 运行控制、历史、文件详情与 Profile 管理 |
+| [api.llmConnections](LlmConnections.md) | Agent 使用的模型连接 |
+| [api.skill](Skill.md) | Skill 导入、编辑、作用域与导出 |
+| [api.mcp](MCP.md) | MCP 服务器、工具发现、权限与测试调用 |
 
-## 契约说明
+完整类型见 [src/types.d.ts](../../src/types.d.ts)，稳定性约定见 [宿主契约](../FrontendHostContract.md)。从 SillyTavern 扩展迁移时，可参考 [迁移指南](Migration.md)。
 
-- API 类型定义见 `src/types.d.ts`
-- 宿主契约与稳定性边界见 `docs/FrontendHostContract.md`
-- Agent 已落地当前 Host ABI、canonical model IR、provider_state continuation、上下文只读工具、Skill tools 与 workspace 读改工具；真实边界见 `docs/API/Agent.md`、`docs/CurrentState/AgentFramework.md` 与 `docs/CurrentState/AgentProviderState.md`
-- LLM Connection 管理 API 真实边界见 `docs/API/LlmConnections.md` 与 `docs/Agent/PromptAssembly.md`
-- Skill 管理 API 真实边界见 `docs/API/Skill.md` 与 `docs/Agent/Skill.md`
-- MCP 当前边界见 `docs/API/MCP.md` 与 `docs/CurrentState/MCP.md`
+框架内部的工作方式见 [Agent](../Agent/README.md)；本目录集中说明调用方法和返回结果。

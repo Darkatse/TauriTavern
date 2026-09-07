@@ -1,311 +1,45 @@
-# TauriTavern Agent LLM Gateway
+# LLM gateway
 
-本文档定义 Agent Runtime 与现有 LLM 调用链之间的边界。
-
-结论：Agent 内部使用 provider-agnostic canonical model IR；provider 边界继续复用现有 `ChatCompletionService`；provider-native metadata 作为 opaque state 保留和回放，不成为 Agent 业务语义。
-
-## 1. Ground of Truth
-
-当前后端 LLM 事实：
-
-- Provider source 定义在 `ChatCompletionSource`。见 `src-tauri/crates/tt-domain/src/models/chat_completion_source.rs`；旧的 repository 路径仍 re-export 以保持兼容。
-- Payload builder 由 `crates/tt-application/src/services/chat_completion_service/payload/mod.rs` 按 provider 分发。
-- `ChatCompletionService` 负责 source 解析、iOS policy、endpoint override、feature policy、settings、secret、prompt caching、payload build、generate/generate_stream/cancel。
-- LLM API 日志依赖 `LoggingChatCompletionRepository` wrapper。
-- Custom Native API 文档强调 tool call id 透明性与 native metadata 保真。见 `docs/CurrentState/NativeApiFormats.md`。
-
-Agent 不维护第二套 provider registry，不直接调用 `HttpChatCompletionRepository`，不自行读取 secret，不绕过现有 policy/logging/prompt cache。
-
-## 2. 当前调用链
-
-当前调用链：
+Agent Loop 使用统一的模型消息、工具调用和工具结果。Gateway 在这套表示与各家模型协议之间转换，并复用项目已有的 ChatCompletionService。
 
 ```text
-AgentRuntimeService
-  -> AgentModelGateway.generate_with_cancel(AgentModelRequest, optional tool delta callback)
-    -> encode_chat_completion_request()
-      -> ChatCompletionService.generate_exchange_with_cancel(ChatCompletionGenerateRequestDto, optional callback)
-        -> payload builder
-        -> ChatCompletionRepository.generate / generate_with_tool_call_deltas
-        -> LoggingChatCompletionRepository
-        -> HttpChatCompletionRepository
-    -> decode_chat_completion_response()
-  -> AgentModelResponse
+AgentModelRequest
+  → AgentModelGateway
+  → ChatCompletionService
+  → provider repository
+  → AgentModelResponse + provider_state
 ```
 
-当前 Agent 支持可选的工具参数 live projection。它只旁路观察 provider stream 中的 tool-call arguments；同一次调用聚合出的完整 final 仍由现有 decoder 生成 `AgentModelResponse`。`ChatCompletionStreamEvent::Chunk` 仍只是 Legacy provider SSE bridge，不是 Agent timeline event。
+连接设置、凭据、请求日志与平台策略继续由原有服务处理。Provider 格式细节集中在 gateway 与对应 adapter，循环只处理模型回合和工具操作。
 
-当前代码布局：
+## 通用内容与原生内容
 
-- `agent_model_gateway/mod.rs`：`AgentModelGateway` trait、`AgentModelExchange`、`ChatCompletionAgentModelGateway` wrapper。
-- `encode.rs` / `decode.rs`：canonical `AgentModelRequest` / `AgentModelResponse` 与 normalized ChatCompletion exchange 的双向转换。
-- `format.rs`：根据 request payload 解析 `ChatCompletionSource` 与 `ChatCompletionProviderFormat`。
-- `schema.rs`：按 provider adapter 清洗 tool JSON Schema。
-- `provider_state.rs`：写入内部 `_tauritavern_provider_state`，并生成下一轮 run-scoped continuation。
-- `providers/*`：OpenAI-compatible、OpenAI Responses、Claude、Gemini / Gemini Interactions 的 provider-specific 规则。
+`AgentModelRequest` 保存消息、工具和续接状态；`AgentModelResponse` 保存 assistant 消息、文本、工具调用与 usage 等信息。Gateway 根据本次工具快照，把模型返回的调用名称还原为稳定工具 ID。
 
-## 3. Canonical Model IR
+Claude、Gemini、OpenAI Responses 等协议还需要回传原生内容，如 reasoning signature、thought signature 或原生 output blocks。这些内容随消息保留，由对应 provider adapter 原样续接。Timeline 使用 `readModelTurn()` 提供的可见文本和 reasoning 投影。
 
-Agent runtime 只消费 canonical IR：
+## 续接状态
 
-```rust
-AgentModelRequest {
-    payload,
-    messages,
-    tools,
-    tool_choice,
-    provider_state,
-}
+`provider_state` 属于一个 Invocation 的模型会话。每轮调用成功后，gateway 更新会话 ID、消息游标和 provider 需要的响应信息，下一轮继续使用。不同 Invocation 各自持有状态。
 
-AgentModelResponse {
-    message,
-    tool_calls,
-    text,
-    provider_metadata,
-    raw_response,
-}
-```
+OpenAI Responses 有两种续接方式：
 
-`tool_choice` 使用 domain-owned `ToolChoice::{None, Auto, Required, Specific(ToolId)}`，不保存 provider JSON。当前 Agent 生产请求显式使用 `Auto`；runtime 的完成约束仍由 invocation exit policy 与 tool effect 执行，不能由单轮 provider choice 代替。
+- 默认通过 HTTP 重放完整消息与原生输出。
+- 显式启用 Responses WebSocket 时，复用会话，以 `previous_response_id` 发送新增输入。
 
-`Specific(ToolId)` 只接受当前 request-scoped `AgentModelTool` 中已广告的 canonical 工具，并解析到 snapshot 冻结的 `modelAlias`。空工具集上的 `Required`/`Specific`、未公布 ID 都会在发送前失败。原始 prompt payload 中的 `tools`/`tool_choice` 不能覆盖这份 typed contract。
+内部字段 `_tauritavern_provider_state` 只用于服务间传递，在请求日志和上游 payload 输出前移除。Profile 与提示词无需管理该字段。传输细节见 [原生 API 格式](../CurrentState/NativeApiFormats.md)。
 
-`AgentModelContentPart` 当前支持：
+## 流式调用
 
-```text
-Text
-Reasoning
-ToolCall
-ToolResult
-Media
-ResourceRef
-Native
-```
+Profile 的 `run.stream` 控制当前 Invocation 的默认行为，启动参数 `options.stream` 可覆盖整次 Run。当前流式工具参数投影支持 OpenAI Chat-compatible 和 Custom OpenAI Responses 路径。
 
-设计原则：
+流式过程供前端显示正在写入或修改的内容，最终完整响应仍进入相同的工具执行路径。不支持的流式路由会返回错误。
 
-- `Text` / `ToolCall` / `ToolResult` 是可迁移语义。
-- `Reasoning` 保存 provider 返回的可见/摘要化 reasoning；没有公开 reasoning 文本的 provider 可以为空。
-- `Native` 保存 provider-private blocks，不解析、不清洗、不改写。
-- `payload` 仍承载现有 ChatCompletionService 需要的 source/model/settings 字段。
-- `provider_state` 是当前已落地的 run-scoped continuation state，详见 `docs/CurrentState/AgentProviderState.md`。
+## 修改入口
 
-## 4. Provider Format
+- [agent_model_gateway](../../src-tauri/crates/tt-application/src/services/agent_model_gateway)：`encode`、`decode`、工具 schema 与 provider adapter。
+- [provider_state.rs](../../src-tauri/crates/tt-application/src/services/agent_model_gateway/provider_state.rs)：续接状态。
+- [ChatCompletionService](../../src-tauri/crates/tt-application/src/services/chat_completion_service/mod.rs)：统一模型调用。
+- [tt-adapter-provider-http](../../src-tauri/crates/tt-adapter-provider-http/src)：实际网络请求与 provider 协议。
 
-当前 gateway 根据 request payload 判断 provider format：
-
-- OpenAI-compatible
-- OpenAI Responses
-- Claude Messages
-- Gemini / Makersuite / Vertex AI
-- Gemini Interactions
-
-转换方向：
-
-```text
-canonical AgentModelRequest
-  -> OpenAI-compatible messages/tools shape
-  -> existing provider payload builder
-  -> provider native payload
-```
-
-响应方向：
-
-```text
-provider native response
-  -> existing normalizer / repository
-  -> OpenAI-compatible normalized response with message.native
-  -> AgentModelResponse
-```
-
-这个过渡结构保留了现有 ChatCompletionService 投资，同时让 Agent runtime 摆脱 OpenAI-shaped raw JSON。
-
-Provider payload builder 负责最后一段精确转换：OpenAI Chat/Responses、Claude、Gemini generateContent、Gemini Interactions 和 Cohere 不得把未知 choice 改成 Auto 或静默省略。Provider/model 无法表达的组合必须返回明确错误；例如 Claude manual extended thinking 不能与 forced tool choice 同时使用。
-
-## 5. Native Metadata Contract
-
-Provider native metadata 必须当作 opaque continuation state。
-
-已落地保留：
-
-| Provider format | 保留内容 | 用途 |
-| --- | --- | --- |
-| Claude Messages | assistant `content` blocks，包括 `thinking`、`tool_use`、signature | 同 provider 续接时原样回放 |
-| Gemini | response `content.parts` 与 `thoughtSignature` | 同 provider 续接时原样回放 |
-| Gemini Interactions | raw `steps` | 同 provider 续接时原样回放 |
-| OpenAI Responses | raw `output` items 与 `responseId` | function call output / reasoning continuation |
-
-禁止：
-
-- 重写 provider 返回的 tool call id。
-- 缺失 id 时自动生成 fallback id。
-- 丢弃 Claude / Gemini / Responses 的 native tool metadata。
-- 把 Gemini thought signature 或 Claude thinking signature 压成普通文本。
-- 把 OpenAI encrypted reasoning 当作可解释内容。
-
-同 provider continuation 所需 native state 丢失时，应 fail-fast 或测试失败。跨 provider switch 只能迁移 canonical 语义，不能伪装 provider-private state 已迁移。
-
-UI 展示契约：
-
-- Provider normalizer 只把可见文本或 provider 明确给出的摘要提升为 normalized `message.reasoning_content`。
-- Claude / Gemini 的 signature、Gemini thoughtSignature、OpenAI encrypted reasoning 与 Responses continuation item 仍留在 `Native` / `provider_state`，不进入显示 DTO。
-- OpenAI-compatible `tool_calls[].extra_content` 保留在 `ToolInvocation.provider_metadata.raw`，并在后续工具请求中按原调用位置原样回放。
-- Agent timeline 读取模型回合详情时使用 `api.agent.readModelTurn({ runId, round })`；该 DTO 是 `AgentModelResponse` 的白名单投影，不是 raw LLM API log。
-
-## 5.1 Provider State Contract
-
-`provider_state` 由 Agent runtime 初始化，由 `AgentModelGateway` 在每轮模型调用后更新。
-
-当前契约：
-
-- 初始状态包含 invocation-scoped `sessionId`；显式启用 Responses WebSocket 模式时还包含 `transport: "responses_websocket"`。
-- gateway 会把该状态以内部字段 `_tauritavern_provider_state` 写入 ChatCompletion payload。
-- LLM API log 与真正发往 provider 的 payload 都必须剥离 `_tauritavern_provider_state`。
-- 每轮成功后，gateway 返回 `sessionId`、`chatCompletionSource`、`providerFormat`、`messageCursor`、`lastResponseId`。
-- WebSocket 模式的 OpenAI Responses 会额外返回 `transport: "responses_websocket"` 与 `previousResponseId`；gateway 根据 `messageCursor` 只发送新消息，并注入 `previous_response_id`。
-- portable OpenAI Responses 不写 `previousResponseId`，每轮发送完整 transcript/native replay。
-- Claude / Gemini / OpenAI Responses / Gemini Interactions 会记录 `nativeContinuation`；tool call 存在但 native metadata 丢失时 fail-fast。
-
-显式启用增强模式的 OpenAI Responses Agent 路径使用 persistent WebSocket session。session 由 `sessionId` 复用，建连复用 `HttpClientPool` 的 ChatCompletion WebSocket profile；用户取消时 gateway 立即关闭 socket，run 最终清理保持幂等。未启用时使用 HTTP/full replay。
-
-## 6. Tool Schema
-
-Gateway 消费从当前 invocation snapshot/turn 单向生成的 `AgentModelTool`；它只包含 canonical `ToolId`、本 invocation 冻结的 model alias、description 与 input schema。Base `ToolCatalog` 与 UI DTO 不进入 provider payload 路径。
-
-Gateway/payload adapter 在发送前渲染 provider-facing schema：
-
-```text
-InvocationToolSnapshot + ToolTurnContract
-  -> AgentModelTool
-  -> provider-specific schema sanitizer
-  -> OpenAI-compatible function tool shape
-  -> existing provider payload builder maps to native shape
-```
-
-当前 sanitizer 策略：
-
-- OpenAI-compatible / OpenAI Responses：保留完整 canonical schema。
-- Claude Messages：移除轻量元字段，如 `$schema`、`$id`。
-- Gemini / Gemini Interactions：移除当前不兼容的 JSON Schema 关键字，如 `$schema`、`$defs`、`additionalProperties`、组合 schema、`const`、`default`、`title` 等。
-
-Canonical schema 不应为某个 provider 被永久降级。
-
-## 7. Tool Call Contract
-
-Tool call id 必须是不透明字符串：
-
-```text
-Provider tool call id
-  -> ToolInvocation.call_id + ToolInvocation.tool_id
-  -> AgentToolResult.call_id
-  -> provider tool result id
-```
-
-缺失 id 是 `model.invalid_tool_call`，不得静默生成 `tool_call_{index}`。`AgentToolResult` 同时携带 canonical `ToolId`；历史 call/result 的 alias 都只能通过当前 request 的 model-tool projection 精确编码，不按 native name 猜测。
-
-Tool result 的模型语言界面是直接 Text/Markdown。成功结果发送 `AgentToolResult.content` 原文；可恢复错误在正文前增加 `## Tool error`。Gateway 不再增加 `{ ok, content, errorCode, resourceRefs }` JSON envelope。
-
-`AgentToolResult.structured`、`error_code` 与 `resource_refs` 只供 runtime、audit 与 Timeline UI 使用，不作为字段发送给模型。模型后续需要使用的路径必须已经出现在 `content`。`workspace.write_file` / `workspace.apply_patch` 成功结果不会被 runtime 自动补入完整文件内容；下一轮模型只看到包含目标路径的文本摘要，需要完整文件内容时必须通过 `workspace.read_file` 显式读取。
-
-## 8. Policy
-
-Gateway 必须遵守：
-
-- iOS policy source allowlist。
-- iOS policy endpoint override。
-- web search/request image capability。
-- settings 中的 provider 配置。
-- secret 暴露策略。
-- prompt caching opt-in/opt-out。
-- model/profile tool support 声明。
-
-Policy denied 必须 fail-fast 并写 journal，不允许静默降级为另一个 provider、另一个模型或空工具集。
-
-## 8.1 `custom_*` 参数优先级
-
-用户填写的 `custom_include_body`、`custom_exclude_body`、`custom_include_headers` 是明确的上游请求覆盖，优先级高于 TauriTavern 自动组装的 provider 参数。后端只负责解析并透传这些字段，不按 provider 语义二次裁决；若与 prompt caching 等自动功能冲突，自动功能必须退让，上游 provider 负责接受或拒绝最终请求。
-
-## 9. Prompt Cache
-
-Prompt cache 是 provider 能力，不是 Agent 自己随意拼 header。
-
-Agent 可以在 canonical request 中表达 cache 意图，但具体是否启用、如何写 header、是否需要 beta header，必须由现有 provider logic 或正式 adapter 决定。
-
-Custom Claude Messages 的 header 兼容策略尤其不能被 Agent 硬编码覆盖。
-
-## 10. Streaming 边界
-
-当前 streaming 只解决一个用户可见问题：在完整工具调用生成期间，实时投影 `workspace.write_file` / `workspace.apply_patch` 的顶层字符串参数。它不建立通用 `ModelDelta`，也不流式执行工具。
-
-三条数据流不能混：
-
-```text
-Provider wire stream
-  repository 在同一 read loop 中累计权威 final，并投出工具参数 fragment。
-
-Agent live projection
-  request-scoped exact alias -> canonical ToolId -> run-scoped ephemeral watch/Channel。
-
-Agent run event stream
-  AgentRunEvent：model_completed、tool_call_requested、chat_commit_requested 等 durable facts。
-```
-
-约束：
-
-- callback presence 决定请求的 `stream` 值；没有 callback 时保持 buffered path。
-- observed route 支持 OpenAI-compatible `/chat/completions`、Custom OpenAI Responses、Claude Messages、Gemini generateContent 与 Gemini Interactions；其它 route 明确失败。
-- delta 中的 model alias 只按当前 request 广告的 exact alias 映射。unknown alias 不产生 live projection，最终 decoder仍明确失败。
-- live scanner只提取已知工具的顶层可展示字符串，不构造 `ToolInvocation`、不写 Journal、不调用 Gate或 Workspace。
-- retry/cancel清理当前 attempt generation；canonical final成功后只标记参数完整，`tool_call_requested` durable append成功后才移除 live entry。
-- Host commit bridge 与 Agent Timeline 独立订阅 `api.agent.subscribeLiveProjection()`；durable timeline 继续来自 `api.agent.subscribe()`。两者都不直接消费 provider raw stream。
-
-## 11. Error Contract
-
-Gateway 错误建议：
-
-```text
-model.provider_denied
-model.upstream_invalid_response
-model.unsupported_tool_call
-model.invalid_tool_call
-model.request_build_failed
-model.request_failed
-model.stream_failed
-model.cancelled
-model.native_metadata_lost
-model.provider_refusal
-model.output_truncated
-```
-
-Agent gateway 在 canonical decode 与工具执行前检查 terminal reason：`refusal` 返回 `model.provider_refusal`；`max_tokens`、`length`、`model_context_window_exceeded` 返回 `model.output_truncated`。两者都是 provider 已明确给出的终态，不自动重试，也不消费部分文本或工具调用。
-
-Agent runtime 会按 Profile `run.modelRetry` 重试 `429` rate limit、transient provider availability 与结构化 network `UpstreamFailure`。`model.upstream_invalid_response` 专用于上游响应体不可读或不是合法 provider JSON 的暂态异常，可自动重试；payload build、policy denied、provider 明确拒绝、response schema decode、tool call id、native metadata 等本地或 provider 明确契约错误不重试。
-
-`model.native_metadata_lost` 不应静默降级。
-
-## 12. Tests
-
-当前已覆盖：
-
-- canonical response decode。
-- missing tool call id fail-fast。
-- Gemini schema sanitizer。
-- Agent loop 通过 canonical response 推进。
-- workspace write/patch result 不再隐式补入完整内容，后续编辑依赖显式 read-state。
-- OpenAI Responses native output items 回放。
-- OpenAI Responses portable full replay，以及显式 WebSocket 模式下的 `provider_state.previousResponseId` 注入与 `messageCursor` 增量输入。
-- Claude / Gemini native continuation 计数与缺失 fail-fast。
-- 内建 Bedrock Claude 使用 Claude Messages adapter；其他 Bedrock family 与自定义模板仍使用通用 adapter。
-- provider refusal 与输出截断在 canonical decode 前 fail-fast。
-- same-provider native metadata loss fail-fast。
-- cross-provider switch 不迁移 provider-private state。
-- LLM API log 剥离 `_tauritavern_provider_state`。
-- Claude native content blocks 回放。
-- normalizer 保留 Claude/Gemini/OpenAI Responses/Gemini Interactions native metadata。
-- Agent model retry 只覆盖 rate limit / transient transport-provider 错误，非瞬时契约错误不重试。
-
-后续最低补齐：
-
-- prompt cache 与 provider-native state 共存。
-- stream `ModelDelta` 不泄漏 raw provider event。
-- persistent provider session close 不阻塞 Agent 最终状态。
+修改 provider 时，优先验证多轮工具调用中的消息和原生续接内容。代表性覆盖位于 gateway tests 和 host 的 chat-completion contract tests。

@@ -1,82 +1,34 @@
-# TauriTavern Agent 测试策略
+# Agent 测试
 
-测试是风险控制，不是代码清单。一个测试只有在长期防止真实错误的收益高于维护成本时才应存在；代码发生变化或覆盖率增加本身不是理由。
+测试准入沿用 [贡献指南](../../CONTRIBUTING.md#测试准入)：验证可观察行为、非平凡边界或已经修复的缺陷。优先扩展已有行为测试，让一次验证覆盖完整的数据流。
 
-## 准入标准
+## 在哪里验证
 
-新增测试必须至少满足一项：
+| 改动 | 现有入口 |
+| --- | --- |
+| Run、委派、交接、提交 | [host Agent contract tests](../../src-tauri/crates/tauritavern/src/app/contract_tests/agent_runtime) |
+| 文件与持久版本 | [FileAgentRepository tests](../../src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_repository/tests.rs) |
+| 模型协议与续接 | [gateway tests](../../src-tauri/crates/tt-application/src/services/agent_model_gateway/tests.rs) |
+| Host API | [agent-api-contract.test.mjs](../../tests/agent-api-contract.test.mjs) |
+| Profile、历史与 Timeline 界面 | [agent-system tests](../../src/scripts/extensions/agent-system/src) |
+| Skill 脚本 | [脚本工具 tests](../../src-tauri/crates/tt-application/src/services/agent_tools/skill/script/tests)、[QuickJS tests](../../src-tauri/crates/tt-adapter-quickjs/src/engine/tests.rs) |
 
-- 验证用户或调用方可观察的稳定行为。
-- 守住非平凡不变式或边界，例如路径安全、原子发布、并发顺序、配额、取消语义或第三方协议。
-- 复现已经发生且已修复的具体缺陷。
+涉及文件时使用临时目录和真实仓储；涉及并发时用 channel、barrier 或受控 future 协调。测试从调用结果、保存的文件或用户界面观察行为。
 
-不要提前建立“可能有用”的回归测试。缺陷测试应描述触发条件和外部结果，并在修复缺陷时加入。
+## 运行检查
 
-以下内容通常不应测试：
-
-- 源码文本、正则匹配、文件布局、函数是否存在或调用链形状。
-- 字面量、枚举映射、默认值、派生序列化、构造器和直接委托。
-- 显然控制流的每个分支，或同一边界的等价输入排列。
-- 已移除功能的墓碑、当前实现细节和本地上游符号链接。
-- 仅为提高覆盖率而存在的用例。
-
-源码形状不是产品契约。架构边界由 crate 依赖检查、类型系统、lint 和编译器负责，不用读取源码的测试重复维护。
-
-## 分层归属
-
-优先在能够观察完整行为的最低成本边界保留一个测试，避免在每一层重复同一断言。
-
-- Domain：纯粹且非平凡的领域不变式、规范化和输入边界。
-- Application：服务的状态转换、错误语义、策略执行和副作用顺序。
-- Adapter：真实文件、网络协议、原子性、格式兼容和安全边界。
-- Host：少量 composition 测试，证明关键能力经过真实 repository/service/command 路径。
-- Frontend：通过公开 API、路由或用户交互观察结果，不检查源码实现。
-
-当 host 或 adapter 的现有行为测试已经覆盖风险时，不再为内部 helper 添加同义测试。简单映射由其所属的代表性请求或响应覆盖。
-
-## Agent 必须守住的风险
-
-Agent 相关改动应根据影响选择最小测试集合，重点包括：
-
-- run 生命周期、journal、持久化与终态一致性。
-- workspace 路径隔离、读取后写入约束、SHA 冲突和 commit 发布顺序。
-- foreground/background、delegate/await/handoff 的所有权与取消语义。
-- 冻结输入、profile/skill scope 和 portable profile 迁移。
-- 工具身份、当前 turn snapshot、预算和副作用审计。
-- Claude、Gemini、OpenAI Responses 等原生 continuation metadata 的保真与跨 provider 隔离。
-- MCP 的权限门、缓存失效，以及已发送后结果未知时不伪造成功或自动重试。
-- chat payload 在成功发布后才通知 history，并保留用户数据。
-
-这是一组风险类别，不是要求每个分支各写一个测试的检查表。已有高层测试能够观察同一风险时，应复用它。
-
-## 并发、时间与 I/O
-
-- 使用 barrier、channel、受控 future 或显式状态协调并发；不要依赖 sleep 猜测调度。
-- 文件行为使用临时目录和真实 adapter；只 mock 当前测试不拥有的外部边界。
-- 网络协议优先使用受控本地 server/fixture，验证发送、提交和失败语义。
-- 时间相关逻辑优先注入时钟或使用确定输入；不要扩大等待时间掩盖不稳定。
-
-## 测试基建
-
-测试 helper 必须减少多个有价值测试的总复杂度。功能删除后同时删除 fixture、fake、hook、feature flag 和未使用依赖。
-
-- 优先使用项目已有 helper、标准库和已安装依赖。
-- 不为少量 DOM 行为维护自制浏览器实现。
-- fixture 只保存外部格式无法用短小构造表达的代表样例。
-- 不向生产代码加入只为测试暴露实现细节的接口。
-
-## 维护与验证
-
-修改前先找现有行为边界；修改后运行受影响 crate 或前端模块的 focused tests。最终合并门禁是：
+先运行受影响部分，例如：
 
 ```sh
-pnpm run check
+cargo test --manifest-path src-tauri/Cargo.toml -p tauritavern contract_tests::agent_runtime
+node --test tests/agent-api-contract.test.mjs
 ```
 
-Rust crate 边界还应由以下脚本验证：
+完成改动后运行仓库检查：
 
 ```sh
 node scripts/check-rust-crate-boundaries.mjs
+pnpm run check
 ```
 
-测试失败时修复行为或更新已明确改变的契约，不要放宽断言、增加 sleep 或添加静默 fallback。功能删除、边界被更高层覆盖或测试只剩实现细节时，直接删除测试。
+手动验证可从默认 Profile 开始：运行一次写作，查看文件与提交，再选择此次改动涉及的委派、交接、取消或历史场景。测试范围随实际行为变化确定。

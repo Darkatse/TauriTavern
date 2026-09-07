@@ -1,154 +1,117 @@
-# TauriTavern Agent Skill
+# Skill
 
-本文档记录当前已落地的 Agent Skill 能力。长期开发以本文、`docs/CurrentState/AgentFramework.md`、`docs/Agent/ToolSystem.md` 与 `docs/API/Skill.md` 为准。
+Skill 是按需读取的本地知识包。`SKILL.md` 说明它适合什么任务、如何使用，其他文件保存参考材料、示例和脚本。
 
-## 定义
-
-Skill 是 Agent 按需读取的本地知识包，不是可执行插件，也不是默认注入 prompt 的大段文本。
-
-一个 Skill 是一个目录：
+## 创建一个 Skill
 
 ```text
-my-skill/
+scene-review/
   SKILL.md
-  references/
-  examples/
-  assets/
-  scripts/
-  agents/tauritavern.json
+  references/checklist.md
+  scripts/list-scenes.js
 ```
 
-当前要求：
+最小的 `SKILL.md`：
 
-- `SKILL.md` 必须存在，并以 YAML frontmatter 开头。
-- frontmatter 必须包含 `name` 与 `description`。
-- `name` 使用小写 ASCII、数字、`-`、`_`，最长 128。
-- `agents/tauritavern.json` 可选；一旦存在，schema 无效就 fail-fast。
-- `scripts/` 会随 Skill 导入、导出，并在预览中提示风险；不会随导入/安装自动执行，只在 Agent 显式调用 `skill.run_script` 时经沙箱执行。
+```markdown
+---
+name: scene-review
+description: 检查场景中的人物动机与叙事衔接。
+---
 
-> `scripts/` 内的脚本可由 Agent 通过 `skill.run_script` 在 QuickJS 沙箱中执行。脚本开发指南（context 快照、文件读写边界、模块导入、脚本工具箱）见 [docs/Agent/SkillScript.md](./SkillScript.md)。
-
-## 当前实现
-
-已落地：
-
-- Domain：`SkillIndexEntry`、`SkillImportInput`、`SkillImportPreview`、`SkillInstallRequest`、`SkillReadResult` 等模型。
-- Repository：`SkillRepository` trait 与文件实现 `FileSkillRepository`。
-- Service：`SkillService`。
-- Host ABI：`window.__TAURITAVERN__.api.skill`。
-- Agent tools：`skill.list` / `skill.search` / `skill.read` / `skill.run_script`，模型侧 alias 分别为 `skill_list` / `skill_search` / `skill_read` / `skill_run_script`。
-- Preset / Character embedded skill 扫描与导入确认 UI。
-- Preset / Character 删除时，删除仅由该来源引用的已安装 Skill。
-
-本地存储：
-
-```text
-data_root/_tauritavern/skills/
-  installed/<skill-name>/
-  index/skills.json
-  .staging/
+阅读 references/checklist.md，按其中的问题检查草稿。
+将具体修改建议写入 summaries/review.md，并引用对应段落。
 ```
 
-`FileSkillRepository` 只负责文件系统、zip、staging、索引与原子安装；运行时可见性、profile policy、journal 由 Agent tool/runtime 层负责。
+包名使用小写字母、数字、`-` 或 `_`。其他目录按内容需要添加；有脚本时，在 `SKILL.md` 中说明用途、参数和返回值。
 
-`skills.json` 是可见状态的权威提交点。Import、Move 与 scope retarget 在写入目标前都会定向检查同名目录：合法的孤立目录会恢复为索引项并进入现有 hash 冲突语义；无效目录继续 fail-fast。索引提交后的旧目录或 backup 清理失败只记录 warning，不把已经提交的操作伪装成失败；残留目录可在后续定向操作中重新协调。
+## 安装与作用域
 
-## 导入导出
+Skill Manager 可以从本地目录或 ZIP 导入，预览内容后安装；支持一次选择多个来源。角色卡和预设也可以携带 Skill。导出得到包含原始文件的 ZIP。
 
-支持输入：
+Skill 可以属于全局、预设、Profile 或角色。运行时按 `global → preset → profile → character` 解析，同名 Skill 由靠后的作用域覆盖，再按 Profile 的 `skills.visible` 和 `deny` 筛选。
 
-- `inlineFiles`：Preset / 角色卡嵌入 Skill 的文件列表。
-- `directory`：本地 Skill 目录。
-- `archiveFile`：zip 包；`.ttskill` 作为历史扩展名保持导入兼容。
-- `downloadImport()`：Host API 后端下载远程 HTTPS raw `SKILL.md` 后转为 `inlineFiles`；当前不递归抓取远程目录。
+子 Agent 使用目标 Profile 的 Skill 配置；角色与当前预设等环境信息来自 Run 冻结的输入。这样同一名称可以在某个角色或 Profile 中提供更具体的工作方法。
 
-Skill Manager 保持一个本地导入入口，在层级弹窗中选择 ZIP 或文件夹来源；选择文件夹时，每个目录都必须包含 `SKILL.md`。系统选择器支持一次选择多个 ZIP；桌面端还支持一次选择多个 Skill 目录。选择一个来源时继续使用原有单项预览卡片，选择多个来源时统一展示逐项预览和冲突决策。预览与安装按选择顺序逐项执行，复用同一个 `SkillImportInput` / `SkillInstallRequest` 契约；单个 Skill 的安装保持原子性，某一项失败不会回滚已经成功安装的其他项，也不会阻止后续项继续处理。
+## 在运行中使用
 
-导入流程：
+模型先通过 `skill.list` 查看索引，使用 `skill.read` 阅读正文，或用 `skill.search` 查找片段。读取支持行范围，长文返回预览和续读位置。
 
-```text
-materialize input into .staging
-  -> validate package
-  -> compute files/hash/warnings
-  -> compare installed index
-  -> install / replace / skip
-  -> update index
+普通 Skill 文本会展开本次输入冻结的宏，脚本源码保持原文。已安装文件供模型读取，需要摘录或修改的内容写入工作区。模型显式调用 `skill.run_script` 时才会执行包内脚本。
+
+宿主侧的管理接口是 `api.skill`，包括预览、安装、编辑、移动、导出与删除，见 [Skill API](../API/Skill.md)。
+
+## 运行脚本
+
+`scripts/` 中的 JavaScript 可以处理文件、计算或生成材料。例如 `scripts/list-scenes.js`：
+
+```js
+import { workspace } from '@tauritavern/runtime';
+
+export default function ({ path }) {
+  const text = workspace.readText(path);
+  const scenes = text.split('\n').filter(line => line.startsWith('## '));
+  workspace.writeText('summaries/scenes.md', scenes.join('\n'));
+  return { count: scenes.length, path: 'summaries/scenes.md' };
+}
 ```
 
-冲突策略：
+模型通过 `skill.run_script` 调用：
 
-- 同名不存在：安装。
-- 同名且 hash 相同：视为已安装，并合并 source refs。
-- 同名但 hash 不同：必须显式 `skip` 或 `replace`。
+```json
+{
+  "skill": "scene-review",
+  "script": "list-scenes",
+  "args": { "path": "output/main.md" }
+}
+```
 
-导出：
+`script` 对应 `scripts/<name>.js`，名称使用小写字母、数字和连字符。入口导出 `default(args)` 或 `main(args)`，同时存在时使用 `default`。返回值为可序列化的 JSON；没有内容时返回 `null`，较大正文写入文件并返回路径。
 
-- `api.skill.export({ scope, name })` 返回 `{ fileName, contentBase64, sha256 }`；`scope` 省略时按全局 Skill 处理。
-- 默认导出文件名使用 `.zip` 扩展名；归档内只包含 Skill 文件本身，不写入会改变内容 hash 的诊断 sidecar。
-- `.ttskill` 是历史兼容扩展名，仍可导入，但不再作为默认导出扩展名。
+### 可用能力
 
-## Agent 读取
+每次调用在独立 QuickJS 环境中执行，宿主能力从 `@tauritavern/runtime` 导入。标准 JavaScript 和脚本内部可完成的 `async` / `await` 可用；环境不提供网络、进程、Node、DOM 或定时器 API。
 
-`skill.read` / `skill.search` 在分页和搜索前展开前端冻结宏。行号和计量对应展开后的正文，SHA 仍对应原文件；`scripts/` 下的源码保持原文。支持范围、转义和脚本用法见 [SkillScript.md](./SkillScript.md#35-macrosrendertext--冻结宏重放)。
+| 接口 | 用途 |
+| --- | --- |
+| `workspace.readText(path)` | 读取 UTF-8 文件，返回字符串 |
+| `workspace.writeText(path, text)` | 写入文件，自动创建父目录 |
+| `workspace.listFiles(path?)` | 无参数时列出可见顶层条目；指定目录时返回相对于该目录的文件路径 |
+| `workspace.exists(path)` | 查询文件或目录，可见范围外返回 `false` |
+| `context.worldInfo.entries` | Run 启动时激活的世界书 |
+| `context.variables.local` / `global` | 保留原始 JSON 类型的 SillyTavern 变量 |
+| `context.macro` | 冻结的名称、角色、聊天位置等宏数据 |
+| `macros.render(text)` | 使用冻结值展开模板中的宏 |
+| `log.info(text)` / `warn` / `error` / `debug` | 将字符串写入宿主日志 |
 
-`skill.list`：
+路径相对于 Run 工作区，读写范围来自 Invocation 的 Profile。脚本在调用时的文件快照上工作，同一路径多次写入保留最后的内容；执行成功后按快照 SHA 写回。并发修改会报告冲突，多文件写入中途失败时会列出已写入的文件。
 
-- 只读。
-- 返回当前 Profile 可见的已安装 Skill 索引摘要。
-- `skills.visible` 支持具体 Skill name 或 `"*"`；`skills.deny` 优先。
-- root 与 child invocation 都使用同一套 active scope 顺序：`global -> preset -> profile -> character`。后出现的 scope 覆盖同名 Skill；Profile policy 再按 Skill name 过滤可见性。
-- return-mode child 使用 target Profile 的 `skills` policy。`preset.ref` child 使用 target Profile 的 preset scope；`currentPromptSnapshot` child 使用 root run 启动时固化的 ambient preset scope；character scope 来自 root run 固化的 ambient character ref。
+`context` 是当前执行的副本，修改它不会写回宿主。`macros.render()` 只展开一层，未知语法保持原文，`\{{char}}` 得到字面量 `{{char}}`；支持的宏与查询见 [frozen_macros](../../src-tauri/crates/tt-domain/src/frozen_macros.rs)。
 
-`skill.read`：
+### 模块与工具箱
 
-- 只读。
-- 参数：`name`、可选 `path`、`start_line`、`line_count`。
-- `path` 默认 `SKILL.md`。
-- 只能读取当前 Profile 可见且未 deny 的 Skill。
-- 只支持 1-based 行范围；省略范围时默认读取全文，超限时返回前段预览、下一起始行与续读提示。
-- 只能读取 UTF-8 文本文件；二进制文件返回可恢复 tool error。
-- `maxReadCharsPerCall` 与 `maxReadCharsPerRun` 继续作为当前 Agent Profile 的内部读取预算；它们控制自动预览大小，不作为模型输入参数。非 Agent Skill 管理读取使用默认 80000 字符输出边界。
-- 结果写入 Agent journal / tool result，并作为后续模型上下文的一部分回填。
+相对导入可以引用同一 Skill 的 `scripts/**/*.js`，例如 `import { format } from './helpers.js'`。常用库已随应用提供：
 
-`skill.search`：
+| 模块 | 用途 |
+| --- | --- |
+| `@tauritavern/kit/dayjs` | 日期处理 |
+| `@tauritavern/kit/es-toolkit` | 数组、对象和字符串处理 |
+| `@tauritavern/kit/fast-xml-parser` | XML 解析、校验与构建 |
+| `@tauritavern/kit/marked` | Markdown 转 HTML |
+| `@tauritavern/kit/papaparse` | CSV 解析与生成 |
+| `@tauritavern/kit/slugify` | 生成适合路径或标识符的文本 |
 
-- 只读。
-- 参数：`name`、`query`、可选 `path`、`limit`、`context_lines`。
-- 只搜索当前 Profile 可见且未 deny 的单个 Skill。
-- 纯标点或符号 query 中的连续片段按原始字符序列做字面量子串匹配；混合 query 继续使用既有分词评分语义。
-- 返回 snippet 与 `skills/<name>/<path>#Lx-Ly` ref，不返回完整文件。
-- snippet 字符数计入同一个 Skill run read budget。
+这些库保留各自的 API，功能仍受 QuickJS 环境限制。其他库可打包成 ESM 放入 `scripts/vendor/`，通过相对路径导入。
 
-Skill 文件对 Agent 是只读 virtual resource。Agent 不能修改 installed Skill；需要摘录、总结或改写时写入 workspace 的 `scratch/`、`summaries/` 或 `output/`。
+脚本每次执行限时 30 秒，内存 32 MiB，返回值 256 KiB。模块和输入输出的具体预算见下方引擎源码。
 
-## 安全边界
+## 源码
 
-导入、安装、导出与 repository 层必须 fail-fast：
+Skill 保存在 `_tauritavern/skills/`，按作用域组织安装目录，索引位于 `index/skills.json`。
 
-- `SKILL.md` 缺失、frontmatter 无效、`name` / `description` 缺失。
-- path traversal、绝对路径、Windows drive prefix、NUL、symlink escape。
-- zip entry 超限、压缩比超限、总大小超限。
-- `agents/tauritavern.json` schema 无效。
-- 同名冲突但没有用户决策。
-- 整个 index 文件缺失但 installed 目录已存在，无法证明完整索引语义。
-
-单个目标索引项缺失不等于整个 index 丢失：仓储会先验证目录、manifest、名称和内容 hash。只有合法目录才会恢复；内容不同仍要求显式冲突决策，目录不完整、名称不符、symlink 或 IO 状态未知时仍 fail-fast。
-
-Agent tool 层的模型可修正读取错误，例如缺失文件、二进制文件、非法 path 或超出 read budget，应返回 recoverable tool error；repository 内部 IO、index 损坏和安装一致性错误仍 fail-fast。
-
-当前限制：
-
-- 不自动执行 Skill 自带脚本；脚本只在 Agent 显式调用 `skill.run_script` 时经 QuickJS 沙箱执行（见 [docs/Agent/SkillScript.md](./SkillScript.md)）。
-- 不让 Skill 自动安装 MCP server。
-- 不让 Skill 授予工具权限。
-- 不支持 marketplace、自动更新、多版本并存或依赖解析。
-- 不支持模型在 run 内安装/替换 Skill。
-
-## 后续开发
-
-下一步只保留必要能力：
-
-- 明确 recommended skill 与 embedded skill 在 profile / preset / character resolver 中的合流规则。
-- 将 Profile 管理 UI 暴露给创作者后，同步补齐 Skill 可见性配置入口。
-
-不要把 Skill 扩展成自动脚本执行、权限授予或 MCP 配置入口；脚本执行必须走独立的 `skill.run_script` 沙箱体系（QuickJS、文件读写门控、无网络），权限与 MCP 配置不得由 Skill 自行授予。
+- [SkillService](../../src-tauri/crates/tt-application/src/services/skill_service.rs)：管理与有效 Skill 解析。
+- [file_skill_repository](../../src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_skill_repository)：包格式、安装、索引与文件读写。
+- [skill_scope.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/skill_scope.rs)：Invocation 的作用域。
+- [Skill 工具](../../src-tauri/crates/tt-application/src/services/agent_tools/skill)：模型读取和脚本调用。
+- [script.rs](../../src-tauri/crates/tt-application/src/services/agent_tools/skill/script.rs)：脚本输入快照与工作区写回。
+- [QuickJS engine](../../src-tauri/crates/tt-adapter-quickjs/src/engine.rs)：脚本执行与资源预算。

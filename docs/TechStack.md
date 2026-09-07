@@ -186,4 +186,4 @@ pnpm run check:rust:dev
 | First-party UI 工程基线 | `docs/CurrentState/FirstPartyUI.md` |
 | Linux 分发与 Nix | `docs/CurrentState/LinuxRepository.md` |
 | 扩展 API | `docs/API/README.md` |
-| Agent 架构 | `docs/AgentArchitecture.md` |
+| Agent 架构 | [Agent](Agent/README.md) |

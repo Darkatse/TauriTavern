@@ -332,7 +332,7 @@ TauriTavern 用户数据中的私有状态放在 `_tauritavern` 下，例如 age
 | Custom endpoint SSRF 与用户授权 | `docs/CurrentState/UserEndpointAccess.md` |
 | Vector 兼容层 | `docs/CurrentState/VectorApi.md` |
 | Sync | `docs/CurrentState/Sync.md` |
-| Agent 总览 | `docs/AgentArchitecture.md` |
+| Agent 总览 | [Agent](Agent/README.md) |
 | Agent 细节 | `docs/Agent/README.md` |
 | iOS policy | `docs/CurrentState/iOSPolicy.md` |
 

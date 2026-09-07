@@ -135,7 +135,7 @@ Connection Profiles（Connection Manager 扩展）：
 tool follow-up（关键契约）：
 - 普通 Custom Responses 不再依赖 repository 内存缓存。若没有 `previous_response_id`，请求必须通过 full transcript replay 或 native output replay 提供前置 `function_call`。
 - 若 payload 已有 `previous_response_id`，builder 允许只发送对应的 `function_call_output`。
-- portable Agent Responses follow-up 使用 full transcript/native output replay；显式启用 WebSocket 模式后才由 `AgentModelGateway` 的 `provider_state.previousResponseId` 驱动。详见 `docs/CurrentState/AgentProviderState.md`。
+- portable Agent Responses follow-up 使用 full transcript/native output replay；显式启用 WebSocket 模式后才由 `AgentModelGateway` 的 `provider_state.previousResponseId` 驱动。详见 [Agent LLM gateway](../Agent/LlmGateway.md#续接状态)。
 
 ### 4.2 Gemini Interactions（/v1beta/interactions）
 

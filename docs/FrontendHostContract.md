@@ -167,40 +167,15 @@
 - 不把扫描循环控制、预算内部状态、可变中间态对象直接升格为 Public Contract。
 - `openEntry()` 必须复用上游 World Info 模块自身的导航能力；宿主 ABI 层不得直接依赖 `#WorldInfo`、`#world_editor_select`、`[uid=\"...\"]` 等 DOM 细节。
 
-- `api.agent`：TauriTavern Agent Run API。用于启动 Agent Run、订阅 run event、取消、审批工具、读取 workspace 文件/diff、rollback。
-  - 详细参考见：`docs/API/Agent.md`。
-  - 当前已落地 Host ABI：`startRunFromLegacyGenerate()`、`startRunWithPromptSnapshot()`、`cancel()`、`readEvents()`、`readWorkspaceFile()`、`readModelTurn()`、`readTaskDetail()`、`copyChatPersistentStates()`、`subscribe()`、`subscribeLiveProjection()`、`settleChatPresentation()`。
-  - 前台流式 root / handoff `workspace.write_file.content` 会写入同一条 assistant message；failure/cancel 保留 partial。live projection 非持久化，不代表工具成功或 commit；Timeline 独立订阅。
-  - `persistStateId` 只在 persistent state 已经落盘后写入 chat metadata；host bridge 响应 `persistent_state_metadata_update_requested` 后调用 `resolve_agent_persistent_state_metadata_update`。
-  - `startRunFromLegacyGenerate()` 是当前兼容入口：使用 Legacy dryRun 生成 `promptSnapshot`，再进入 Rust-owned Agent loop。
-  - `startRunWithPromptSnapshot()` 必须在调用 backend 前解析 `stableChatId`；`workspaceId` 由 `kind + stableChatId` 派生，`runId` 仍表示单次执行。
-  - 分叉/Checkpoint 必须生成新的 `integrity`；目标聊天保存成功后，调用 `copyChatPersistentStates()` 复制完整的 Agent `persistent-states/`。
-  - 不存在公共 `startRun()` alias；启动入口必须通过名称表达来源和职责。
-  - Legacy `Generate(..., dryRun = true)` 不返回 payload；Agent adapter 必须通过 `GENERATE_AFTER_DATA` 事件捕获 `generate_data`。
-  - 当前 Rust registry 包含 `agent_list`、`agent_delegate`、`agent_handoff`、`agent_await`、`task_return`、`chat_search`、`chat_read_messages`、`worldinfo_read_activated`、`dice_roll`、`skill_list`、`skill_search`、`skill_read`、`workspace_list_files`、`workspace_search_files`、`workspace_read_file`、`workspace_write_file`、`workspace_apply_patch`、`workspace_commit`、`workspace_finish`；实际模型可见集合由 Profile 与 invocation exit policy 收窄，`task_return` 只注入 return-mode child。工具注册由 Rust runtime 独占，前端 Legacy ToolManager tools 必须禁用。
-  - `options.stream` 覆盖整次 run；省略时使用各 invocation 的 Profile `run.stream`。
-  - 可恢复工具错误会写入 Agent journal 并回填下一轮模型；宿主级错误仍让 run failed。
-  - Agent event 属于 Agent Run journal/timeline 投影，不得伪装成上游 SillyTavern `GENERATION_*` / `TOOL_CALLS_*` 事件。
-  - `subscribe()` 当前是 polling wrapper，必须返回幂等 `unsubscribe`；底层 Tauri 事件名与 Rust command 名属于 Internal，不是第三方 Public Contract。
-  - `tools.list()`、`readModelTurn()` 与 `readTaskDetail()` 是 Agent System UI/诊断使用的 Project Contract；其 DTO 可以随实验性 Agent control plane 演进，但必须在 `docs/API/Agent.md` 明确记录。任务详情按 ID 读取原始委派/交接参数、当前状态和按需结果投影，不依赖 journal 分页窗口或内部持久化文件格式。不得为了兼容返回全局 model alias 或从 native name 猜测 canonical identity。
-  - Agent Mode off 时，Legacy `Generate()`、`ToolManager`、`api.chat` 行为必须不变。
+- `api.agent`：运行控制、历史、工作区详情与 Profile 管理，见 [Agent API](API/Agent.md)。
+  - 前端准备聊天输入，Rust 执行模型与工具循环；Agent Mode 关闭时沿用 Legacy Generate。
+  - Host API 解析稳定聊天身份，宿主提交桥复用聊天保存流程，持久版本发布后再关联到消息 metadata。分叉使用新身份并复制持久版本。
+  - Run 事件供历史与 Timeline 使用，实时参数预览供当前显示使用；它们与 SillyTavern 生成事件分别订阅。
+  - 运行控制属于 Public Contract；模型回合、任务详情、工具目录和 Timeline 关系是 Project Contract，由对应 API 提供展示 DTO。
 
-- `api.llmConnections`：TauriTavern LLM Connection 管理 API。用于保存和读取 Agent Profile 可引用的 LLM 连接定义。
-  - 详细参考见：`docs/API/LlmConnections.md` 与 `docs/Agent/PromptAssembly.md`。
-  - 当前已落地 Host ABI：`list()`、`load()`、`save()`、`delete()`。
-  - Profile 只保存 `model.mode = "connectionRef"`、`connectionRef` 与 `modelId`，或保存分享/导入用的 `model.mode = "requiresConfiguration"`；不直接保存 Connection Manager 的 Model Target id。
-  - Connection Manager Model Target 可以作为 UI 输入来源，但转换成 LLM Connection 时必须保真；无法表达的字段必须显式报错，不得静默丢弃。
-  - Agent System 负责在启动、Model Target 创建/更新、Profile 保存和 Agent run 启动前同步 `model-target-*` LLM Connection；启动 reconcile 或更新无法保真物化时会删除对应派生 connection；删除 Model Target 不隐式删除已物化 LLM Connection。
-  - Rust command 名与 repository/file layout 属于 Internal 实现细节，不是第三方 Public Contract。
+- `api.llmConnections`：管理 Profile 引用的模型连接，见 [LLM Connection API](API/LlmConnections.md)。Profile 通过连接 ID 和模型 ID 绑定；Model Target 是界面的配置来源。
 
-- `api.skill`：TauriTavern Agent Skill 管理 API。用于列出、预览导入、安装、读取和导出本地 Skill。
-  - 详细参考见：`docs/API/Skill.md` 与 `docs/Agent/Skill.md`。
-  - 当前已落地 Host ABI：`list()`、`listFiles()`、`pickImportArchive()`、`pickImportArchives()`、`pickImportDirectories()`、`discardPickedImport()`、`downloadImport()`、`previewImport()`、`installImport()`、`readFile()`、`writeFile()`、`move()`、`export()`、`delete()`。
-  - 复数 picker 只返回多个既有 `SkillImportInput`，不引入批量安装 DTO 或跨 Skill 事务。UI 必须逐项预览、显式处理冲突，并让单项失败可见；桌面支持多归档和多目录，移动端只支持多归档。
-  - Skill scope 分为 `global` / `preset` / `profile` / `character`；未显式传 scope 的历史无归属 Skill 按 `global` 处理。
-  - `api.skill` 是 UI / 扩展侧管理入口，不是 Agent run 内的工具入口；模型只能通过 Rust runtime 注册的 `skill.list` / `skill.search` / `skill.read` 消费已安装 Skill。
-  - Preset / Character embedded skill 导入必须经过用户确认；同名不同 hash 必须显式 skip 或 replace，不自动改名。
-  - Skill import/export 不触发上游 SillyTavern `GENERATION_*`、`TOOL_CALLS_*` 或 regex 事件。
+- `api.skill`：管理本地知识包的导入、编辑、作用域与导出，见 [Skill API](API/Skill.md)。模型在 Run 中通过 Skill 工具读取材料或执行脚本；安装与替换由管理界面处理。
 
 - `api.mcp`：MCP registration、只读 tool discovery、model-facing description override 与第一方 Manager user test call 的独立平台 API。Agent 与 Legacy generation 已通过内部 application seam 消费 MCP，但 MCP 不依附 Agent Mode，公开 API 仍不提供 raw model-call executor。
   - 当前为实验性的 Project Contract；详细签名见 `docs/API/MCP.md`。

@@ -1,162 +1,75 @@
-# `window.__TAURITAVERN__.api.skill` — Skill API
+# Skill API
 
-Skill API 用于管理本地 Agent Skill。它不是 Agent run API；Agent 只是 Skill 的消费者之一。
+`api.skill` 管理本地知识包，包括导入、文件编辑、作用域和导出。知识包与脚本的编写方法见 [Skill](../Agent/Skill.md)。
 
 ## 入口
 
 ```js
 await (window.__TAURITAVERN__?.ready ?? window.__TAURITAVERN_MAIN_READY__);
-
 const skill = window.__TAURITAVERN__.api.skill;
+const installed = await skill.list();
 ```
 
-## 方法
+## 管理与文件
+
+| 方法 | 行为 |
+| --- | --- |
+| `list({ scope? }?)` | 返回安装索引列表，可按作用域筛选 |
+| `listFiles({ scope?, name })` | 列出包内文件 |
+| `readFile({ scope?, name, path, startLine?, lineCount? })` | 读取 UTF-8 文件，支持 1-based 行范围 |
+| `writeFile({ scope?, name, path, content, expectedSha256? })` | 写入文件，可按读取到的 SHA 检查并发修改 |
+| `move({ name, fromScope, toScope, conflictStrategy? })` | 移动到另一个作用域 |
+| `export({ scope?, name })` | 返回 `{ fileName, contentBase64, sha256 }`，内容为 ZIP |
+| `delete({ scope?, name })` | 删除安装索引与包目录 |
+
+作用域有 `global`、`preset`、`profile`、`character`，省略时按全局处理。完整结构见 [src/types.d.ts](../../src/types.d.ts) 的 `TauriTavernSkillScope`。
+
+文件路径相对于 Skill 包。`readFile` 省略范围时读取全文，较长内容返回行预览和 `nextStartLine`，供调用方续读。`writeFile` 的 SHA 不匹配时返回错误。
+
+## 选择导入来源
+
+| 方法 | 返回内容 |
+| --- | --- |
+| `pickImportArchive()` | 单个归档输入，取消时为 `null` |
+| `pickImportArchives()` | 一个或多个归档输入，取消时为 `null` |
+| `pickImportDirectories()` | 桌面端选择一个或多个 Skill 目录，取消时为 `null` |
+| `downloadImport({ url })` | 下载 HTTPS raw `SKILL.md`，返回单文件导入输入 |
+| `discardPickedImport(input?)` | 释放放弃导入的临时归档；无参数时释放全部待处理输入 |
+
+导入输入有三种形式：
 
 ```ts
-type TauriTavernSkillApi = {
-  list(options?: { scope?: TauriTavernSkillScopeFilter }): Promise<TauriTavernSkillIndexEntry[]>;
-  listFiles(options: { scope?: TauriTavernSkillScope; name: string }): Promise<TauriTavernSkillFileRef[]>;
-  pickImportArchive(): Promise<TauriTavernSkillImportInput | null>;
-  pickImportArchives(): Promise<TauriTavernSkillImportInput[] | null>;
-  pickImportDirectories(): Promise<TauriTavernSkillImportInput[] | null>;
-  discardPickedImport(input?: TauriTavernSkillImportInput | null): Promise<void>;
-  downloadImport(options: { url: string }): Promise<TauriTavernSkillImportInput>;
-  previewImport(options: {
-    input: TauriTavernSkillImportInput;
-    targetScope?: TauriTavernSkillScope;
-  }): Promise<TauriTavernSkillImportPreview>;
-  installImport(request: {
-    input: TauriTavernSkillImportInput;
-    targetScope?: TauriTavernSkillScope;
-    conflictStrategy?: 'skip' | 'replace';
-  }): Promise<TauriTavernSkillInstallResult>;
-  readFile(options: {
-    scope?: TauriTavernSkillScope;
-    name: string;
-    path: string;
-    startLine?: number;
-    lineCount?: number;
-  }): Promise<TauriTavernSkillReadResult>;
-  writeFile(options: {
-    scope?: TauriTavernSkillScope;
-    name: string;
-    path: string;
-    content: string;
-    expectedSha256?: string;
-  }): Promise<TauriTavernSkillReadResult>;
-  export(options: { scope?: TauriTavernSkillScope; name: string }): Promise<TauriTavernSkillExportPayload>;
-  delete(options: { scope?: TauriTavernSkillScope; name: string }): Promise<void>;
-  move(request: {
-    name: string;
-    fromScope: TauriTavernSkillScope;
-    toScope: TauriTavernSkillScope;
-    conflictStrategy?: 'skip' | 'replace';
-  }): Promise<TauriTavernSkillInstallResult>;
-};
-```
-
-`TauriTavernSkillScope` 分为 `global` / `preset` / `profile` / `character`。未显式传入 scope 的旧无归属操作按 `global` 处理。
-
-## 导入输入
-
-用户从本机选择 Skill 来源时可调用：
-
-- `pickImportArchive()`：选择一个 `.zip` / `.ttskill` 归档，保留既有单选契约；
-- `pickImportArchives()`：在同一个选择窗口中选择一个或多个 `.zip` / `.ttskill` 归档；
-- `pickImportDirectories()`：在桌面端选择一个或多个 Skill 目录；移动端不提供目录选择。
-
-单选方法返回：
-
-```ts
-{ kind: 'archiveFile', path: string }
-```
-
-复数方法返回对应输入数组；用户取消选择时均返回 `null`。选择器只负责生成输入，实际解包、校验、hash、冲突判断与安装仍必须对每个输入调用现有 `previewImport()` / `installImport()`。Host API 不提供批量事务；每个 Skill 保持独立原子安装，调用方应明确呈现逐项失败。
-
-移动端文件选择器可能返回宿主私有的临时归档路径。调用方如果放弃某个输入，应调用 `discardPickedImport(input)`；放弃整个选择批次时调用无参数的 `discardPickedImport()`，它会释放所有尚未消费的临时文件。`installImport()` 成功或失败后会自动释放对应输入的临时归档。
-
-`downloadImport({ url })` 由 Rust 后端下载远程 `SKILL.md`，并返回等价的 `inlineFiles` 导入输入。当前仅支持 HTTPS raw `SKILL.md` 单文件链接；完整解包、frontmatter 校验、hash、冲突判断与安装仍必须继续走 `previewImport()` / `installImport()`。
-
-```ts
-type TauriTavernSkillImportInput =
+type SkillImportInput =
+  | { kind: 'directory'; path: string; source?: unknown }
+  | { kind: 'archiveFile'; path: string; source?: unknown }
   | {
       kind: 'inlineFiles';
       files: Array<{
         path: string;
-        encoding?: 'utf8' | 'utf-8' | 'base64';
         content: string;
+        encoding?: 'utf8' | 'utf-8' | 'base64';
         mediaType?: string;
         sizeBytes?: number;
         sha256?: string;
       }>;
       source?: unknown;
-    }
-  | {
-      kind: 'directory';
-      path: string;
-      source?: unknown;
-    }
-  | {
-      kind: 'archiveFile';
-      path: string;
-      source?: unknown;
     };
 ```
 
-`source` 用于记录来源引用。Preset / Character embedded import 会传入稳定来源 ID，以便删除 Preset / Character 时清理仅由该来源引用的 Skill。
+`source` 记录来源关系，角色卡和预设用它关联嵌入的 Skill。ZIP 和历史 `.ttskill` 归档都可导入，导出统一使用 ZIP。
 
-## 冲突语义
+## 预览与安装
 
-`previewImport()` 会返回：
+先用 `previewImport({ input, targetScope? })` 查看内容和同名冲突，再调用 `installImport({ input, targetScope?, conflictStrategy? })`。
 
-```ts
-type conflict.kind = 'new' | 'same' | 'different';
-```
+| `conflict.kind` | 含义 | 安装方式 |
+| --- | --- | --- |
+| `new` | 同名包不存在 | 安装 |
+| `same` | 同名且内容相同 | 合并来源，保留已有内容 |
+| `different` | 同名但内容不同 | 指定 `skip` 或 `replace` |
 
-- `new`：同名 Skill 不存在。
-- `same`：同名且内容 hash 相同。
-- `different`：同名但内容 hash 不同，安装时必须传 `conflictStrategy`。
+安装结果的 `action` 为 `installed`、`replaced`、`already_installed` 或 `skipped`。多个来源逐项预览和安装，每项单独提交并返回结果；已完成的安装会保留。
 
-若目标 scope 中存在合法目录但缺少单个索引项，`installImport()`、`move()` 与 scope retarget 会先恢复该索引项，再按同一套 hash 冲突规则继续。恢复不会覆盖不同内容；无效或无法验证的目录仍会 reject。
+`installImport` 完成后自动释放该输入的临时归档。用户放弃预览或取消整个批次时，由调用方使用 `discardPickedImport` 释放。
 
-`installImport()` 的结果：
-
-```ts
-type action = 'installed' | 'replaced' | 'already_installed' | 'skipped';
-```
-
-不同 hash 冲突没有显式 `skip` / `replace` 时会 reject，不会自动改名。
-
-## 读取与导出
-
-`readFile()`：
-
-- 只能读取已安装 Skill 内的 UTF-8 文本文件。
-- `path` 必须是 Skill 相对路径。
-- 只支持 1-based `startLine` / `lineCount` 行范围。省略时默认读取全文；超过 Host 的 80000 字符输出边界时返回前段行预览，并通过 `nextStartLine` 指示续读位置。
-- Agent run 内的 `skill.read` 使用相同的行接口；预览大小由 Agent Profile 的 `maxReadCharsPerCall` / `maxReadCharsPerRun` 内部预算控制。
-- 二进制文件、非法路径、symlink escape、缺失文件都会 reject。
-
-`writeFile()`：
-
-- 只写入已安装 Skill 内的 UTF-8 文本文件。
-- `expectedSha256` 用于乐观并发校验；hash 不匹配时后端应 reject。
-- 前端不做本地伪保存，写入必须经过 Host API。
-
-`export()`：
-
-- 返回 base64 编码的 zip，默认文件名使用 `.zip` 扩展名。
-- zip 内只包含 Skill 文件本身；不会写入会改变内容 hash 的导出诊断文件。
-- `.ttskill` 是历史兼容扩展名，仍可导入，但不再作为默认导出扩展名。
-
-`delete()`：
-
-- 删除一个已安装 Skill 的索引记录与文件目录。
-- 不会触发 source-ref 的增量解绑；这是用户显式删除 Skill 的管理动作。
-
-## 兼容边界
-
-- Skill 管理不是 SillyTavern 上游 API。
-- Skill import/export 不触发上游 `GENERATION_*`、`TOOL_CALLS_*` 或 regex 事件。
-- Agent Mode off 时，Legacy Generate 不读取 Skill。
-- 模型不能通过 `api.skill` 安装或替换 Skill；当前 Skill 安装只由用户 UI / Host ABI 显式触发。
+模型在 Run 中通过 `skill.list`、`skill.read`、`skill.search` 和 `skill.run_script` 使用已安装内容，运行过程见 [Agent 工具](../Agent/ToolSystem.md)。

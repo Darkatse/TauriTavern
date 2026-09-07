@@ -1,502 +1,92 @@
-# Agent Profiles, Preset Schema, and Plan Policy
+# Profile 与预设
 
-本文档定义 Agent Profile、Preset Agent 扩展字段、ContextFrame、Prompt Component 与 Plan Policy。
+Profile 描述一个 Agent 如何工作：使用什么提示词和模型，能调用哪些工具，能读写哪些文件，以及如何交付结果。Preset 负责提示词的组织，LLM Connection 负责连接信息。
 
-SillyTavern 的核心优势之一是 prompt/preset 的创作者自由。Agent Mode 必须继承这一点，但自由度要进入可维护的 runtime policy，而不是散落在字符串 prompt 中。
+## 从默认配置开始
 
-当前已落地字段以 `ResolvedAgentProfile` 为准：`preset.mode` 支持 `currentPromptSnapshot` / `ref` / `none`，`preset.ref` 当前用于独立 OpenAI/chat-completion preset 组装；`model.mode` 支持 `currentPromptSnapshot` / `connectionRef` / `requiresConfiguration`，`connectionRef + modelId` 会通过 LLM Connection 解耦 preset source/model，`requiresConfiguration` 用于可分享 Profile 导入后的本机模型重绑。完整生产链路见 [PromptAssembly.md](PromptAssembly.md)。
+Agent System 的 Profile 面板可以复制和编辑配置。`Default Writer` 使用当前聊天的预设与模型，以 `output/main.md` 作为正文，支持工作区工具、Skill 和委派。先用它完成一次运行，再按任务需要修改配置。
 
-## 1. Agent Profile
+扩展也可以读取默认配置后另存一份：
 
-Agent Profile 是：
-
-```text
-Preset + Model/API + Context Policy + Tool Policy + Plan Policy + Output Policy
+```js
+const agent = window.__TAURITAVERN__.api.agent;
+const { profile } = await agent.profiles.load('default-writer');
+const reviewer = structuredClone(profile);
+reviewer.id = 'reviewer';
+reviewer.displayName = 'Reviewer';
+reviewer.instructions.agentSystemPrompt = '检查草稿中的人物动机，给出具体修改建议，并按任务要求返回结果。';
+reviewer.delegation.callable = true;
+reviewer.delegation.allowAsSubagent = true;
+await agent.profiles.save(reviewer);
 ```
 
-不是单纯的模型选择。
+配置保存后，可通过 `profiles.diagnose('reviewer')` 查看模型、预设或工具引用的问题。
 
-建议领域模型：
+## 选择提示词和模型
 
-```rust
-AgentProfile {
-    id,
-    display_name,
-    preset_ref,
-    model_ref,
-    prompt_policy,
-    visible_resource_policy,
-    tool_policy,
-    plan_policy,
-    summary_policy,
-    switch_policy,
-    output_policy,
-    budget_policy,
-}
-```
+两种绑定各自独立：
 
-### 1.1 Profile 来源
+| 配置 | 选择 | 含义 |
+| --- | --- | --- |
+| `preset.mode` | `currentPromptSnapshot` | 使用当前生成准备好的提示词 |
+| | `ref` | 用 `preset.ref` 指定的预设重新组装 |
+| | `none` | 使用输入提示词，作为兼容绑定保留 |
+| `model.mode` | `currentPromptSnapshot` | 使用本次输入冻结的模型连接 |
+| | `connectionRef` | 使用指定 LLM Connection 和 `modelId` |
+| | `requiresConfiguration` | 等待用户在本机选择模型 |
 
-Profile 可以来自：
-
-- 用户手动创建。
-- Preset 内嵌 agent schema。
-- 角色卡推荐配置。
-- 扩展提供的 profile template。
-
-最终运行时必须 resolve 为一个完整、可检查的 `ResolvedAgentProfile`。
-
-### 1.2 Profile Resolution
-
-解析顺序建议：
-
-```text
-Built-in defaults
-  < Preset agent schema
-  < Character agent schema
-  < User profile override
-  < Per-run override
-```
-
-冲突规则必须明确：
-
-- deny 优先于 allow。
-- plan node policy 优先于 profile global policy。
-- user explicit deny 优先级最高。
-- missing required field fail-fast。
-
-### 1.3 Agent System Prompt Ownership
-
-`instructions.agentSystemPrompt` 只属于 Agent Profile：`null` 使用 resolved profile 默认值，非空字符串完整替换默认值。
-
-Preset / PromptManager 中的 `agentSystemPrompt` 不是内容源，而是 Agent Mode 的组装位置、enabled 状态与 role 契约。前端必须先解析 Agent Profile，再在该 PromptManager index materialize 真实 Agent system prompt；Rust runtime 只消费组装后的最终 messages，并 fail-fast 拒绝内部 marker 泄漏。Legacy Generation 必须移除 Agent-only 组件，不能看到 `agentSystemPrompt` 或 Agent system prompt 内容。
-
-### 1.4 Agent-facing Delegation Description
-
-`delegation.descriptionForAgents` 是给其它 Agent 选择调用对象时看的能力说明，不是给人类管理界面的营销文案。它应该用一两句话说明“什么时候找我、给我哪些 workspace path、我会返回什么形态”，例如“审阅 `output/scene.md` 的连续性并在 `summaries/notes.md` 返回问题列表；如要求修订，可直接编辑指定 `output/` 文件”。不要写 runtime id、物理路径、CAS/overwrite policy 或内部实现细节。
-
-### 1.5 Profile v3 ToolId
-
-Profile v3 的 `tools.allow`、`tools.deny`、`tools.toolDescriptions` keys 与 `tools.maxCallsPerTool` keys 统一使用 canonical ToolId；`tools.mcpResultInlineCharLimit` 控制单个 MCP 结果进入模型上下文前的字符上限，默认 `50000`：
-
-```text
-builtin:<native-name>
-mcp/<registration-uuid>:<native-name>
-```
-
-v1/v2 只作为迁移输入；载入后将旧 builtin native names 一次性转换并写回 v3。新 Profile 不接受 shorthand，也没有平行 `mcpTools` 字段。MCP ToolId 可以在 server 离线或目录暂时缺失时保存；invocation preparation 会从 Manager 持久 catalog 解析，缺失项以 diagnostic 省略而不猜测替代工具。
-
-MCP Manager 的 description override 是 registration 级默认值；Agent Profile `tools.toolDescriptions` 在 invocation snapshot 前最后应用，同一工具同时存在两份覆盖时以 Profile 为准。两层都原样保留非空描述文本，只修改 descriptor 副本中的工具/参数描述，不修改 raw catalog、ToolId、schema 结构或执行权限。
-
-### 1.6 Run Streaming Policy
-
-`run.stream` 是默认 `false` 的布尔策略，控制当前 invocation 是否启用非权威工具参数 live projection。它是 Profile v3 的普通默认字段，不需要 schema 升级或 migration；缺失时直接补 `false`，保存后自然写回。
-
-`AgentStartRunOptionsDto.stream` 保持可选 run-wide override：显式 `true/false` 覆盖 root、child 与 handoff；省略时每个 invocation 使用自己的 resolved Profile。Unsupported exact provider route 继续 fail-fast，不在 Profile 保存阶段复制 capability 判断。
-
-## 2. Preset Agent Schema
-
-第一版可以使用 JSON-compatible schema，不必立刻引入 YAML。
-
-示例：
+例如，使用专门的写作预设和本地连接：
 
 ```json
 {
-  "agent": {
-    "enabled": true,
-    "profiles": [
-      {
-        "schemaVersion": 3,
-        "id": "writer",
-        "displayName": "Writer",
-        "model": { "source": "openai", "model": "..." },
-        "context": {
-          "historyBudgetTokens": 12000,
-          "workspaceFileBudgetTokens": 6000,
-          "toolResultBudgetTokens": 2000,
-          "include": [
-            "chat.history",
-            "world.activated",
-            "character.instructions",
-            "workspace.output",
-            "agent.plan",
-            "agent.tool_results"
-          ],
-          "exclude": ["workspace.scratch.private"]
-        },
-        "tools": {
-          "allow": [
-            "builtin:workspace.read_file",
-            "builtin:workspace.apply_patch",
-            "builtin:chat.search",
-            "builtin:skill.read",
-            "mcp/550e8400-e29b-41d4-a716-446655440000:issue.create"
-          ],
-          "deny": []
-        },
-        "output": {
-          "artifacts": [
-            { "id": "main", "path": "output/main.md", "kind": "body", "target": "message_body" },
-            { "id": "status", "path": "output/status.md", "kind": "status", "target": { "message_extra": "status_bar" } }
-          ]
-        }
-      }
-    ],
-    "defaultProfile": "writer"
-  }
-}
-```
-
-第一期可以只支持：
-
-- `enabled`
-- `defaultProfile`
-- `profiles[].id`
-- `profiles[].model`
-- `profiles[].context`
-- `profiles[].tools`
-- `profiles[].output.artifacts`
-
-更复杂的 plan/profile switch 属于后续 profile routing 工作。
-
-## 3. ContextFrame
-
-ContextFrame 是 Agent Mode 的 prompt 组织真相。
-
-它应该表达 typed components：
-
-```text
-SystemInstruction
-ChatHistory
-WorldInfo
-CharacterCard
-UserProfile
-PresetGuide
-WorkspaceTree
-WorkspaceFile
-ToolDefinitions
-ToolResults
-Plan
-DiffSummary
-Skill
-```
-
-每个 component 至少包含：
-
-```text
-id
-kind
-source
-visibility
-tokenBudget
-priority
-contentRef or inlineContent
-metadata
-```
-
-ContextFrame 不是 provider payload。Provider adapter 只消费编译后的 `ModelRequest`。
-
-## 4. Prompt 宏
-
-创作者看到的是宏：
-
-```text
-{{agent.plan}}
-{{agent.workspace.tree}}
-{{agent.file "output/main.md"}}
-{{agent.file "scratch/notes.md" budget=800}}
-{{agent.tools.available}}
-{{agent.tool_results mode="summary" budget=1200}}
-{{agent.diff.latest}}
-{{agent.skill "long-form-romance"}}
-```
-
-宏展开必须生成 typed component 或 component reference，而不是简单字符串替换。
-
-原因：
-
-- provider adapter 可以决定 system/user/tool/resource 位置。
-- component 可以独立预算和摘要。
-- hidden/private resource 可以被 policy 拒绝。
-- prompt cache 可以按 component 做。
-- tool result 可以与 chat history 平级。
-
-## 5. Context Budget
-
-Budget 必须可组合：
-
-```text
-totalContextBudget
-historyBudgetTokens
-workspaceFileBudgetTokens
-toolResultBudgetTokens
-skillBudgetTokens
-worldInfoBudgetTokens
-summaryBudgetTokens
-```
-
-超预算策略：
-
-```text
-truncate
-summarize
-drop_optional
-fail
-```
-
-默认建议：
-
-- required component 超预算：fail-fast。
-- optional component 超预算：按 priority drop，并写 `context_component_skipped` event。
-- tool result 超预算：优先摘要。
-- chat history 超预算：使用 paged read/search + summary。
-
-## 6. Tool Policy
-
-Tool policy 应能表达：
-
-```json
-{
-  "allow": ["workspace.*", "chat.search"],
-  "deny": ["shell.*"],
-  "requireApproval": ["mcp.*"],
-  "maxCallsPerRun": 20,
-  "mcpResultInlineCharLimit": 50000,
-  "maxCallsPerTool": {
-    "chat.search": 5
-  }
-}
-```
-
-解析规则：
-
-1. user deny 最高。
-2. plan node deny/allow 覆盖 profile global allow。
-3. deny 优先 allow。
-4. requireApproval 不等于 deny。
-5. 未显式 allow 的工具默认不可见，除非 profile 选择 permissive mode。
-
-建议默认 conservative mode：不在 allow list 的工具不可见。
-
-## 7. Visible Resource Policy
-
-资源可见性要与工具独立。
-
-示例：
-
-```json
-{
-  "include": [
-    "chat.history.tail",
-    "world.activated",
-    "workspace.output",
-    "agent.plan"
-  ],
-  "exclude": [
-    "workspace.scratch.private",
-    "user.secrets",
-    "mcp.resource.private"
-  ]
-}
-```
-
-Agent 不能通过 `workspace.read_file` 绕过 hidden resource policy。
-
-## 8. Plan Policy
-
-Plan Mode 有三种：
-
-```text
-free
-strict
-hybrid
-```
-
-### 8.1 Free Plan
-
-Agent 可以创建和修改计划。
-
-运行时仍必须要求：
-
-- 先产出 plan。
-- 每个阶段结束时记录 journal 状态。
-- 完成前检查 artifact manifest。
-- 不能突破全局 tool/resource/budget policy。
-
-### 8.2 Strict Plan
-
-Preset/创作者提供固定节点。
-
-Agent 不能：
-
-- 改节点顺序。
-- 跳过 locked 节点。
-- 使用节点外工具。
-- 切换到节点外 profile。
-- 写节点外 expected artifact，除非 output policy 允许。
-
-违反必须 fail-fast 或进入 approval，不能静默继续。
-
-### 8.3 Hybrid Plan
-
-部分 locked，部分 free。
-
-推荐作为高级默认模式：
-
-```text
-outline locked
-write free
-polish locked
-```
-
-它同时保留创作者控制和模型发挥空间。
-
-## 9. Plan Node
-
-建议模型：
-
-```rust
-PlanNode {
-    id,
-    title,
-    locked,
-    profile_id,
-    allowed_tools,
-    visible_files,
-    max_rounds,
-    context_budget,
-    expected_artifacts,
-    approval_required,
-}
-```
-
-Plan node 开始/完成必须写 journal：
-
-```text
-plan_node_started
-plan_node_completed
-```
-
-## 10. Profile Switch
-
-Profile switch 可以来自：
-
-- plan node 指定。
-- model request。
-- runtime policy。
-- user override。
-
-必须检查：
-
-- current plan node 是否允许 switch。
-- target profile 是否存在。
-- target profile 的 tool/resource/model policy 是否满足平台限制。
-- switch 次数是否超 budget。
-
-结果必须写 journal：
-
-```text
-profile_switch_requested
-profile_switched
-profile_switch_denied
-```
-
-## 11. 创作者自由与安全边界
-
-创作者可以控制：
-
-- Agent 可见哪些内容。
-- Agent 可用哪些工具。
-- 输出有哪些 artifact。
-- 哪些阶段严格，哪些阶段自由。
-- 是否需要审批。
-- token/tool/context budget。
-- profile/model 切换策略。
-
-创作者不能控制：
-
-- workspace root 之外的文件访问。
-- MCP stdio command。
-- 平台 policy 禁用的 provider/source/endpoint override。
-- 用户显式 deny 的工具。
-- journal 是否记录副作用。
-- commit 是否绕过保存契约。
-
-## 12. MVP Profile
-
-当前状态（2026-08-09）：Profile v3 已实现 canonical ToolId，并可选择 builtin 与 cached MCP tools；尚未实现 profile routing、Plan Mode runtime 或 ContextFrame 总预算。`profileId` 会驱动 tools、Skill、workspace roots、output artifact、tool budget、max rounds、model retry 与 model-facing prompt/tool descriptions。`preset.ref` / `model.connectionRef` 已进入真实 prompt/model resolution。
-
-当前最小 built-in profile 是 `default-writer`，缺省 `profileId` 时使用它：
-
-```json
-{
-  "schemaVersion": 3,
-  "kind": "tauritavern.agentProfile",
-  "id": "default-writer",
   "preset": {
-    "mode": "currentPromptSnapshot",
-    "required": false
+    "mode": "ref",
+    "ref": { "apiId": "openai", "name": "Writer Preset" }
   },
   "model": {
-    "mode": "currentPromptSnapshot"
-  },
-  "run": {
-    "presentation": "foreground",
-    "directRunnable": true,
-    "modelRetry": {
-      "maxRetries": 3,
-      "intervalMs": 3000
-    }
-  },
-  "instructions": {
-    "agentSystemPrompt": null
-  },
-  "tools": {
-    "allow": [
-      "builtin:agent.list",
-      "builtin:agent.delegate",
-      "builtin:agent.await",
-      "builtin:chat.search",
-      "builtin:chat.read_messages",
-      "builtin:worldinfo.read_activated",
-      "builtin:skill.list",
-      "builtin:skill.search",
-      "builtin:skill.read",
-      "builtin:workspace.list_files",
-      "builtin:workspace.search_files",
-      "builtin:workspace.read_file",
-      "builtin:workspace.write_file",
-      "builtin:workspace.apply_patch",
-      "builtin:workspace.commit",
-      "builtin:workspace.finish"
-    ],
-    "deny": [],
-    "toolDescriptions": {},
-    "maxRounds": 80,
-    "maxCallsPerRun": 80,
-    "mcpResultInlineCharLimit": 50000
-  },
-  "skills": {
-    "visible": ["*"],
-    "deny": [],
-    "maxReadCharsPerCall": 20000,
-    "maxReadCharsPerRun": 80000
-  },
-  "workspace": {
-    "visibleRoots": ["output", "scratch", "plan", "summaries", "persist"],
-    "writableRoots": ["output", "scratch", "plan", "summaries", "persist"]
-  },
-  "plan": {
-    "mode": "none",
-    "beta": true,
-    "nodes": []
-  },
-  "output": {
-    "artifacts": [
-      { "id": "main", "path": "output/main.md", "kind": "markdown", "target": "messageBody", "required": true }
-    ]
+    "mode": "connectionRef",
+    "connectionRef": "writer-model",
+    "modelId": "model-name"
   }
 }
 ```
 
-Profile 文件存储在 `_tauritavern/agent-profiles/profiles/<id>.json`。每个 run 会固化 `input/resolved_profile.json`；每个 invocation 再从 resolved Profile 与宿主 exit policy 编译不可变 tool snapshot，写入 `input/invocations/<invocation-id>/tool_snapshot.json`。后续 profile routing 应在此基础上扩展，而不是绕过现有 resolver、snapshot compiler 与 dispatcher。
+这是 Profile 中的绑定片段。`writer-model` 需要是本机已经保存的连接。独立预设使用 OpenAI/chat-completion Preset，组装方式见 [Prompt assembly](PromptAssembly.md)。
+
+Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点和凭据更新供后续解析使用，Profile 的 `modelId` 则保留用户选定的值。导出或嵌入到角色卡、预设时，本机的独立模型绑定会改为 `requiresConfiguration`，导入后重新选择即可。
+
+## 调整工作方式
+
+| 字段 | 用途 |
+| --- | --- |
+| `instructions.agentSystemPrompt` | Agent 的工作指令；省略时使用默认指令 |
+| `context.initialChatHistoryMessages` | 初始历史楼数：`-1` 不主动裁剪，`0` 不注入，正数取最近 N 楼；仍受模型上下文预算限制 |
+| `context.includeActivatedWorldInfo` | 是否在初始提示词中包含已激活世界书 |
+| `tools.allow` / `deny` | 可用工具，deny 优先 |
+| `tools.maxRounds` / `maxCallsPerRun` / `maxCallsPerTool` | 每个 Invocation 的轮数与调用预算 |
+| `tools.toolDescriptions` | 替换模型看到的工具或参数描述 |
+| `skills.visible` / `deny` | 按名称选择可用 Skill |
+| `workspace.visibleRoots` / `writableRoots` | 文件读写范围 |
+| `run.presentation` | 前台聊天输出或后台文件处理 |
+| `run.stream` / `modelRetry` | 流式预览与模型请求重试 |
+| `run.directRunnable` | 是否出现在直接运行的 Agent 选择列表 |
+| `output.artifacts` | 输出文件；当前正文目标为 `messageBody` |
+
+工具字段使用稳定 ID，例如 `builtin:workspace.read_file` 或 `mcp/<registration-id>:<tool-name>`。模型看到的调用名称由 runtime 生成，见 [工具](ToolSystem.md)。
+
+`plan/` 可以保存普通计划文件。当前运行器支持的 Profile plan 配置是 `mode: "none"`、空 `nodes`，尚无节点式工作流执行器。
+
+## 配置协作
+
+调用方开启 `delegation.canDelegate` 或 `canHandoff`，并允许相应工具。接收方开启 `callable`，再按用途选择 `allowAsSubagent` 或 `allowAsHandoffTarget`；`allowedCallers` 指定可调用它的 Profile，`["*"]` 表示所有调用方。
+
+`descriptionForAgents` 用于向其他 Agent 介绍它适合处理什么工作。并发、任务数量和交接深度也在 `delegation` 中设置。完整流程见 [多 Agent 协作](SubAgent.md)。
+
+## 源码
+
+Profile 以 JSON 保存到 `_tauritavern/agent-profiles/profiles/`，当前 schema 版本为 3。
+
+- [profile.rs](../../src-tauri/crates/tt-domain/src/models/agent/profile.rs)：字段与默认值。
+- [agent_profile_service](../../src-tauri/crates/tt-application/src/services/agent_profile_service)：默认配置、解析和验证。
+- [profile-model.ts](../../src/scripts/extensions/agent-system/src/profile-model.ts)：Profile 编辑与可移植配置。
+- [LLM Connection API](../API/LlmConnections.md)：连接的创建与管理。

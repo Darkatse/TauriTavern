@@ -1,432 +1,83 @@
-# TauriTavern Agent Workspace
+# 工作区
 
-本文档定义 Agent Workspace 的存储模型、路径约束与 Artifact Assembly 语义。
+工作区保存 Agent 可以反复处理的文件。一次 Run 拥有一份工作区；同一 Run 中的 Agent 共享文件，各自按 Profile 获得读写范围。
 
-Workspace 是 Agent Mode 的中心抽象。Agent 不直接写聊天消息，而是在 workspace 中像编辑项目文件一样多轮修改输出，最后由 runtime 提交 artifact。
+## 文件放在哪里
 
-## 1. 核心目标
+默认 Profile 使用下列目录：
 
-Workspace 解决三个问题：
+| 目录 | 用途 |
+| --- | --- |
+| `output/` | 准备提交的正文或其他输出，默认正文为 `output/main.md` |
+| `scratch/` | 草稿和临时材料 |
+| `plan/` | 普通计划文件 |
+| `summaries/` | 摘要与子 Agent 结果的可读版本 |
+| `persist/` | 本次运行的持久内容工作副本 |
+| `tool-results/` | 工具结果及较长结果的可读版本，只读 |
 
-1. 多轮编辑：允许模型反复修改草稿、计划、状态栏、小剧场等文件。
-2. 可审计：每次写入与 patch 都进入 journal。
-3. 可组合：最终聊天消息可以由多个 artifact 组装，而不是只有单个 output。
+模型用 `workspace.list_files`、`search_files`、`read_file` 寻找和读取材料，用 `write_file`、`apply_patch` 修改文件。路径相对于工作区，例如 `output/main.md`。替换已有文件和应用补丁时，工具使用读取记录和内容 SHA 检查冲突；发生冲突后重新读取，再决定如何修改。
 
-## 2. 两级 Workspace
+工作区读取返回文件原文。脚本需要展开模板时，可以显式调用 `macros.render()`。聊天、世界书和 Skill 的读取由各自工具完成，保留原有数据来源。
 
-推荐使用两级结构：
+## Run 与聊天的关系
+
+磁盘数据位于数据目录的 `_tauritavern/agent-workspaces/`：
 
 ```text
 agent-workspaces/
-  chats/
-    <chat-workspace-id>/
-      resources/
-        world/
-        character/
-        preset/
-        user/
-        skills/
-        memory/
-      persist/
-      runs/
-        <run-id>/
-          manifest.json
-          input/
-          tool-args/
-          tool-results/
-          model-responses/
-          output/
-          plan/
-          scratch/
-          summaries/
-          persist/
-          patches/
-          events.jsonl
-```
-
-实际物理根目录为数据根下的 `_tauritavern/agent-workspaces`。它是 TauriTavern 运行产物空间，不属于上游 SillyTavern `default-user` 聊天文件布局。
-
-`<chat-workspace-id>` 必须由稳定聊天身份派生：
-
-```text
-stableChatId = window.__TAURITAVERN__.api.chat.open(chatRef).stableId()
-chatWorkspaceId = "chat_" + sha256({ kind, stableChatId })[0..16]
-```
-
-它不得直接使用可变的 chat file name、角色显示名或完整 `chatRef` hash。聊天重命名、角色卡显示名变化、前端当前引用变化，不应该让同一个稳定聊天分裂到新的 chat workspace。
-
-聊天分叉会生成新的 `stableChatId`，并把源 workspace 的整个 `persistent-states/` 复制到目标 workspace。
-
-### 2.1 Chat Workspace
-
-对话级 workspace 保存长期资源引用或 materialized 快照：
-
-- 当前角色卡的 Agent 指导文件。
-- 当前 preset 的 Agent policy。
-- 用户侧写。
-- 可用 skill 索引。
-- 长期 memory/resource 索引。
-
-它不应该被某一次 regenerate/swipe 污染。
-
-同一稳定聊天的 normal、regenerate、swipe、continue 等多次 Agent run 共享同一个 chat workspace，但每次 run 必须有独立 run workspace 与独立 journal。
-
-### 2.2 Run Workspace
-
-一次 Agent Run 拥有独立 run workspace：
-
-- 本次输入快照。
-- 每个 invocation 的冻结 tool snapshot。
-- 本次计划。
-- 本次 scratch。
-- 本次输出 artifact。
-- 本次 journal。
-
-这样不同 run 可以独立调试、删除或保留，不互相覆盖。
-
-## 3. Resource 类型
-
-“万物皆文件”是 Agent 视角的抽象，不代表所有数据都必须物理复制。
-
-Workspace resource 分三类：
-
-```text
-MaterializedFile
-  已落盘到 run workspace 的文本或二进制文件。
-
-VirtualResource
-  看起来像文件，但内容由 repository/tool 按需读取。
-
-GeneratedArtifact
-  Agent 生成或修改、准备参与提交的输出文件。
-```
-
-示例：
-
-```text
-input/prompt_snapshot.json          MaterializedFile
-input/invocations/inv_root/tool_snapshot.json  MaterializedFile
-input/world/activated.md            MaterializedFile
-input/preset/instructions.md        MaterializedFile
-input/character/card.md             MaterializedFile
-chat/history.tail.md                VirtualResource
-chat/history.search://query=...     VirtualResource
-skills/long-form-romance/SKILL.md   VirtualResource or MaterializedFile
-output/main.md                      GeneratedArtifact
-output/status.md                    GeneratedArtifact
-```
-
-原则：
-
-- 大历史、大世界书、大记忆库默认 virtual。
-- 本次生成必须固定的输入可以 materialize，但 “materialize input/context” 不等于复制完整上下文。
-- 模型要改的文件必须是 materialized/generated，不能直接修改 virtual resource。
-
-## 4. 路径契约
-
-WorkspacePath 必须是逻辑路径，不直接等同系统路径。
-
-必须满足：
-
-- 相对路径。
-- 使用 `/` 作为分隔符。
-- 非空。
-- UTF-8。
-- normalize 后不能包含 `..`。
-- 不能是绝对路径。
-- 不能包含 NUL。
-- 不能包含 Windows drive prefix。
-- 不能逃出 workspace root。
-
-禁止：
-
-```text
-../secrets.json
-/Users/me/file
-C:\Users\me\file
-output/../../chat.jsonl
-scratch/\0bad
-```
-
-所有 workspace file operation 必须经由 WorkspaceService 统一校验。工具、MCP、extension bridge 不得自行拼接文件系统路径。
-
-## 5. Manifest
-
-每个 run workspace 必须有 `manifest.json`。
-
-建议结构：
-
-```json
-{
-  "workspaceVersion": 1,
-  "runId": "run_...",
-  "stableChatId": "stable-chat-id",
-  "chatRef": {
-    "kind": "character",
-    "characterId": "...",
-    "fileName": "..."
-  },
-  "createdAt": "2026-04-26T00:00:00Z",
-  "input": {
-    "mode": "prompt_snapshot",
-    "promptSnapshotPath": "input/prompt_snapshot.json"
-  },
-  "artifacts": [
-    {
-      "id": "main",
-      "path": "output/main.md",
-      "kind": "body",
-      "target": "message_body",
-      "required": true,
-      "assemblyOrder": 10
-    },
-    {
-      "id": "status",
-      "path": "output/status.md",
-      "kind": "status",
-      "target": { "message_extra": "status_bar" },
-      "required": false,
-      "assemblyOrder": 20
-    },
-    {
-      "id": "theater",
-      "path": "output/theater.md",
-      "kind": "side_scene",
-      "target": "combined_markdown",
-      "required": false,
-      "assemblyOrder": 30
-    }
-  ],
-  "commitPolicy": {
-    "defaultTarget": "message_body",
-    "combineTemplate": "{{main}}\n\n---\n\n{{theater}}",
-    "storeArtifactsInExtra": true
-  }
-}
-```
-
-Manifest 是 runtime contract：
-
-- required artifact 缺失必须 fail-fast。
-- unknown target 必须 fail-fast。
-- artifact path 违反 WorkspacePath 必须 fail-fast。
-- commitPolicy 不合法必须 fail-fast。
-
-## 6. 目录职责
-
-```text
-input/
-  本次 run 的不可变输入快照。
-
-output/
-  准备提交给聊天消息或 extra 的 artifact。
-
-plan/
-  runtime 可检查的计划文件和用户/模型可读计划。
-
-scratch/
-  Agent 草稿；是否进入 context 由 policy 决定。前台首次显式 commit 前，每轮最后一次 write/patch 若匹配文本后缀会自动发布。
-
-summaries/
-  对历史、工具结果、前序步骤的摘要。
-
-patches/
-  可选 patch 记录。第一期可以只做 snapshot。
-
-events.jsonl
-  append-only run journal。
-```
-
-## 7. Artifact Assembly
-
-Artifact Assembly 把多个 workspace 文件组装为 chat message。
-
-Artifact target：
-
-```text
-MessageBody
-  写入 chat message `mes`。
-
-MessageExtra(key)
-  写入 chat message extra 的 TauriTavern namespace。
-
-CombinedMarkdown(template)
-  按模板合并到 message body。
-
-HiddenRunArtifact
-  不进入 chat，仅保留在 run workspace。
-```
-
-建议优先级：
-
-1. 第一版只要求 `output/main.md` -> `mes`。
-2. 同时保留 manifest 能力，允许后续扩展状态栏、小剧场、变量。
-3. optional artifact 缺失时跳过。
-4. required artifact 缺失时 fail-fast。
-
-## 8. Commit 语义
-
-Commit 是 workspace 到 chat 的边界。
-
-必须：
-
-- 读取 manifest。
-- assemble artifacts。
-- 让 Host 按提交请求中的 SHA 校验当前 workspace 文件。
-- 通过现有 chat 保存契约写入。
-- 写入 agent metadata。
-- journal 记录 `artifact_assembled` 与 `run_committed`。
-
-禁止：
-
-- 直接写 JSONL。
-- 绕过正式 chat save contract 或 integrity 校验。
-- 由工具自行 commit。
-- commit 半成品 artifact。
-
-Commit metadata 建议：
-
-```json
-{
-  "tauritavern": {
-      "agent": {
-        "runId": "run_...",
-        "stableChatId": "stable-chat-id",
-        "profileId": "writer",
-      "artifactSetId": "artifact_set_...",
-      "artifacts": [
-        { "id": "main", "kind": "body", "path": "output/main.md" }
-      ]
-    }
-  }
-}
-```
-
-## 9. Retention
-
-默认 retention 应保守：
-
-- Completed run 可以保留完整 workspace。
-- Failed/Cancelled run 默认保留，便于 debug。
-- 用户删除聊天时，关联 chat workspace 必须随聊天生命周期清理，避免静默泄漏大量文件。
-
-当前实现：
-
-- 单个角色聊天删除后，仅在同一角色已无相同 `integrity` 的聊天时清理 Agent chat workspace；检查或清理失败会保留 workspace 并报告错误，不反转已经完成的聊天删除。
-- 单个群聊聊天删除清理由 group chat id 派生的 Agent chat workspace。
-- 删除角色且级联删除聊天、删除群组时，会批量清理对应聊天 workspace。
-- 若 workspace 仍有关联 active run，删除必须 fail-fast；用户应先取消 run 再删除聊天。
-- 旧聊天缺少稳定 `integrity` 时，不存在可可靠定位的 Agent workspace，保持普通聊天删除语义。
-- `tauritavern-settings.agent.retention.auto_prune_enabled` 默认 `false`，控制 Rust 后端是否在 TauriTavern 进程运行期间周期性执行自动清理。
-- `tauritavern-settings.agent.retention.keep_recent_terminal_runs` 是 terminal run 核心历史窗口，默认 100。
-- `tauritavern-settings.agent.retention.keep_full_recent_runs` 是完整 workspace/debug artifacts 窗口，默认 20，必须小于等于 `keep_recent_terminal_runs`。
-- 两个 retention 数量都允许为 0，最大 10000；run prune 只作用于 terminal runs，active/non-terminal run 保持不可清理。
-- 前端只通过 `api.agent.retention.readSettings()` / `updateSettings()` / `planPrune()` / `applyPrune()` facade 接触该策略；`updateSettings()` 只保存设置并唤醒后端调度器重读配置，不同步执行清理。
-- `plan_agent_run_prune(dto)` 是 dry-run command：读取当前设置或调用方传入的一次性 retention override，生成候选动作、原因、文件数与字节数，不删除 run workspace 或重型 artifacts。`detailLimit` 只截断返回明细，不截断 totals；active run、缺失 terminal event、journal/storage 异常会进入 `blockedRuns`，不会被计为可执行 candidate。
-- `apply_agent_run_prune(dto)` 使用同一 planner 的 execution 模式在后端重新生成全量执行计划，不信任前端 preview candidates；同一服务实例内 apply 串行执行。它执行 `slim_heavy_artifacts` / `delete_run` 后返回删除统计、`failedRuns` 和 caller `detailLimit` 下的 `afterPlan`；单个 run 删除失败会显式返回并继续后续 candidate，结构性规划错误仍 fail-fast。
-- dry-run 和 apply 都使用 Agent run storage class 判断清理范围，并与 TT-Sync 的 Agent dataset 边界保持同一套路径归属词汇。核心 history 是 `run_journal`（run 目录根级 `run.json` / `events.jsonl` 与 index run）和本地 `run_summary_projection`；`slim_heavy_artifacts` 删除 `run_context`、`run_workspace_projection`、`run_tool_io`、`workspace_outputs`、`workspace_scratch`、`tasks`、`model_responses` 以及未知 run artifact。`delete_run` 删除完整 run 目录加 index run/summary 文件。稳定 `persistent-states/` 不属于 run prune 范围。
-
-run prune 由上述两个窗口推导动作：
-
-```text
-rank < keep_full_recent_runs:
-  keep full workspace/debug artifacts
-
-keep_full_recent_runs <= rank < keep_recent_terminal_runs:
-  keep core history, slim heavy artifacts
-
-rank >= keep_recent_terminal_runs:
-  delete terminal run history
-```
-
-## 10. 性能约束
-
-- 不复制完整聊天历史。
-- 不把大 virtual resource materialize 到每个 run。
-- workspace tree 展示应懒加载。
-- timeline 读取 journal 应支持分页。
-
-## 11. 当前 Workspace
-
-当前 run workspace 物理布局：
-
-```text
-_tauritavern/agent-workspaces/
   index/
-    runs/
-      <run-id>.json
-  chats/
-    <workspace-id>/
-      persist/
-        <promoted persistent files>
-      runs/
-        <run-id>/
-          manifest.json
-          events.jsonl
-          input/
-            prompt_snapshot.json
-            persist_snapshot.json
-          tool-args/
-            <tool-call-id>.json
-          tool-results/
-            <tool-call-id>.json
-            <externalized-mcp-call-id>.txt
-          model-responses/
-            round-XXX.json
-          output/
-            main.md
-          scratch/
-          plan/
-          summaries/
-          persist/
-            <run projection of chat-level persist files>
+    runs/<run-id>.json
+  chats/<workspace-id>/
+    persistent-states/<state-id>/
+      manifest.json
+      persist/...
+    runs/<run-id>/
+      run.json
+      manifest.json
+      events.jsonl
+      input/...
+      invocations/...
+      tasks/...
+      agent-results/...
+      model-responses/...
+      tool-args/...
+      tool-results/...
+      output/...
+      scratch/...
+      plan/...
+      summaries/...
+      persist/...
 ```
 
-当前模型可见 / 可写 workspace 根：
+`workspaceId` 由聊天种类和 `stableChatId` 派生。聊天文件名用于定位当前聊天，稳定身份用于关联历次运行。每次生成都创建新的 `runId`。
 
-```text
-output/
-scratch/
-plan/
-summaries/
-persist/
-```
+`manifest.json` 描述工作区目录与输出；`input/` 保存提示词、Profile 和持久内容的起点。Invocation、任务与模型响应等目录供 runtime 和详情 API 使用。
 
-return-mode child invocation 与请求它的 Agent 使用同一套逻辑 workspace path。runtime 不再把 `summaries/` / `scratch/` 映射到 child 私有目录，也不再暴露 `summaries/parent/` 或 `summaries/agents/` 这类虚拟目录。
+## 提交到聊天
 
-child 的 workspace 差异只剩两个：
+模型调用 `workspace.commit` 时，runtime 读取指定文件并请求前端宿主保存。默认操作是替换本次输出楼层的正文；`append` 则将文件内容追加到本次输出。Host bridge 沿用 SillyTavern 的输出处理与保存流程，成功后把结果交回 runtime。
 
-- 工具面：return-mode child 不能 `workspace.commit` / `workspace.finish`，必须用 `task.return` 结束。
-- root 权限：runtime 按 target Agent Profile 的 `workspace.visibleRoots` / `workspace.writableRoots` 过滤同一个 run workspace 的 roots。
+首次显式提交前，前台运行还会展示写作进度：流式写入形成实时正文，符合条件的文本修改会自动提交为进度记录。首次显式提交成功后，后续聊天发布由显式 `workspace.commit` 控制。`workspace.finish` 仍要求前台至少完成一次显式提交。
 
-`task.return` 会自动生成 `summaries/<workspace-key>-result.md`，其中 `<workspace-key>` 优先使用 target Agent id；同一 run 重复调用同一 Agent 时追加 `-002`、`-003`。子 Agent 不需要知道 `childInvocationId` 或物理路径。
+已确认的提交会保留，即使后续运行失败。模型、工具与文件处理的详细过程放在 Timeline；聊天消息保存正文、可见 reasoning 和关联 Run 的 metadata。
 
-`persist/` 是 chat workspace 级持久 root 的 run projection：
+## 将内容带到下一次运行
 
-```text
-chats/<workspace-id>/persist/                # 稳定持久层
-chats/<workspace-id>/runs/<run-id>/persist/  # 本 run 投影
-```
+`persist/` 的起点由 `persistBaseStateId` 指定。初始化时，仓储把对应持久版本复制到本次 Run；模型随后像处理普通文件一样修改它。
 
-run 初始化时，稳定 `persist/` 会复制到本次 run 的 `persist/`，并在 `input/persist_snapshot.json` 中记录 base sha。模型在 run 中通过普通 workspace 工具读写 `persist/`；这些写入在 `workspace.finish` 收尾成功前不会写回稳定层。finish 阶段会计算 persistent changes、检查并发冲突，并 promote 回 `chats/<workspace-id>/persist/`。Failed、Cancelled 或未 finish 的 run 不会污染后续 run。
+`workspace.finish` 收尾时发布一个新的 `persistent-states/<state-id>/`，并将其 ID 写入已提交消息的 Agent metadata。后续生成根据当前消息或 swipe 选择起点，因此不同候选可以保有各自的持久内容。前端负责选择版本，仓储负责保存版本。当前持久内容支持新增与修改。
 
-早期设计中的最小概念结构仍可作为抽象理解：
+聊天分叉会复制持久版本并使用新聊天身份。运行历史清理与持久版本清理分别处理：缩减旧 Run 的材料不会删除仍被聊天使用的持久内容。
 
-```text
-runs/<run-id>/
-  manifest.json
-  input/prompt_snapshot.json
-  output/main.md
-  events.jsonl
-```
+## 保留与清理
 
-这个结构足以支撑：
+运行历史分为核心记录和完整材料。较近的 Run 保留全部文件，较早的 Run 可以只留 `run.json`、日志和摘要，超过历史窗口的 Run 再整次删除。材料清理后，Timeline 仍能显示保留的事件，对应文件详情可能已不可读。
 
-- minimal run
-- journal
-- artifact commit
-- workspace list/read/write/patch 工具循环
+`api.agent.retention` 提供设置、预览和执行入口；自动清理默认关闭。操作参数见 [Agent API](../API/Agent.md)。
 
-### 模板展开
+## 源码
 
-工作区工具读取和搜索文件原文。脚本可用 `macros.render(workspace.readText(path))` 展开模板中的冻结宏。
+- [workspace_policy.rs](../../src-tauri/crates/tt-application/src/services/agent_profile_service/workspace_policy.rs)：目录与 Profile 的对应关系。
+- [workspace 工具](../../src-tauri/crates/tt-application/src/services/agent_tools/workspace)：文件读改与提交请求。
+- [FileAgentRepository](../../src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_repository)：路径、文件、持久版本与清理。
+- [聊天提交桥](../../src/tauri/main/api/agent-chat-commit-bridge.js)：接入前端聊天保存。
