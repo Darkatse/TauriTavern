@@ -334,7 +334,7 @@ export function defaultProfile(id: string = DEFAULT_PROFILE_ID): AgentProfile {
         },
         run: {
             presentation: 'foreground',
-            stream: false,
+            stream: true,
             directRunnable: true,
             modelRetry: {
                 maxRetries: 3,

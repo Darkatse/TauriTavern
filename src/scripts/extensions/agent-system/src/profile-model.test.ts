@@ -26,7 +26,7 @@ test('profileForEdit migrates v2 native tool names to canonical ToolIds', () => 
 
 test('profileForEdit keeps CSV drafts separate and normalizeProfileForSave restores lists', () => {
     const profile = defaultProfile('writer');
-    profile.run.stream = true;
+    profile.run.stream = false;
     profile.skills.visible = ['lore', 'tools'];
     profile.delegation.allowedCallers = ['main', 'reviewer'];
 
@@ -37,7 +37,7 @@ test('profileForEdit keeps CSV drafts separate and normalizeProfileForSave resto
     draft.delegation.allowedCallersCsv = 'editor';
 
     const saved = normalizeProfileForSave(draft);
-    expect(saved.run.stream).toBe(true);
+    expect(saved.run.stream).toBe(false);
     expect(saved.skills.visible).toEqual(['research', 'tools']);
     expect(saved.delegation.allowedCallers).toEqual(['editor']);
     expect('visibleCsv' in saved.skills).toBe(false);

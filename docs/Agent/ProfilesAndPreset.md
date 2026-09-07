@@ -4,7 +4,7 @@ Profile 描述一个 Agent 如何工作：使用什么提示词和模型，能�
 
 ## 从默认配置开始
 
-Agent System 的 Profile 面板可以复制和编辑配置。`Default Writer` 使用当前聊天的预设与模型，以 `output/main.md` 作为正文，支持工作区工具、Skill 和委派。先用它完成一次运行，再按任务需要修改配置。
+Agent System 的 Profile 面板可以复制和编辑配置。`Default Writer` 使用当前聊天的预设与模型，以 `output/main.md` 作为正文，支持工作区工具、Skill 和委派。内置默认配置和新建 Profile 默认开启流式传输；已保存配置继续使用原有设置。先用它完成一次运行，再按任务需要修改配置。
 
 扩展也可以读取默认配置后另存一份：
 

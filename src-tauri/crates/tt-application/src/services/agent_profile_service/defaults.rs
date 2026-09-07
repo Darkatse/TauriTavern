@@ -38,7 +38,7 @@ pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, Applica
         },
         run: AgentRunPolicy {
             presentation: AgentRunPresentation::Foreground,
-            stream: false,
+            stream: true,
             direct_runnable: true,
             model_retry: Default::default(),
         },
