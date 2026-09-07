@@ -1,5 +1,10 @@
 @import "debugger.css";
 
+/* Fullscreen moves the editor away from its source textarea. */
+:is(.regex_replace_string, .regex_trim_strings) + .tt-codemirror-editor :is(.cm-editor-tools, .cm-panels-top:not(:has(.cm-editor-search))) {
+    display: none;
+}
+
 .regex_settings .menu_button {
     width: fit-content;
     display: flex;

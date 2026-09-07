@@ -71,7 +71,10 @@
   },
   "dependencies": {
     "@adobe/css-tools": "^4.4.4",
+    "@codemirror/commands": "6.11.0",
+    "@codemirror/search": "6.7.1",
     "@codemirror/state": "6.7.1",
+    "@codemirror/view": "6.43.9",
     "@iconfu/svg-inject": "^1.2.3",
     "@mozilla/readability": "^0.6.0",
     "@popperjs/core": "^2.11.8",

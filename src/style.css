@@ -1611,6 +1611,10 @@ br {
     margin: 2px 0;
 }
 
+.tt-codemirror-editor:has(.cm-editor-search) {
+    min-height: 160px;
+}
+
 textarea {
     width: 100%;
     resize: vertical;

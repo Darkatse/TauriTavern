@@ -2,6 +2,8 @@
 
 import { getCodeMirrorEditor } from '../../lib.js';
 import { callGenericPopup, POPUP_TYPE } from '../popup.js';
+import { t } from '../i18n.js';
+import { copyText } from '../utils.js';
 
 /** @type {boolean | null} */
 let enabled = null;
@@ -69,6 +71,26 @@ export async function mountCodeMirrorEditor(source, { onChange } = {}) {
         readOnly: source.disabled || source.readOnly,
         ariaLabel: label || source.placeholder || 'Text editor',
         onChange,
+        phrases: {
+            Undo: t`Undo`, Redo: t`Redo`, 'Copy all': t`Copy all`, 'Editor tools': t`Editor tools`,
+            'Find and replace': t`Find and replace`, Find: t`Find`, Replace: t`Replace`,
+            Next: t`Next`, Previous: t`Previous`, All: t`All`,
+            'Case sensitive': t`Case sensitive`, 'Regular expression': t`Regular expression`, 'Whole word': t`Whole word`,
+            'Replace all': t`Replace all`, Close: t`Close`, 'Toggle replace': t`Toggle replace`,
+            'No matches': t`No matches`, 'Invalid regular expression': t`Invalid regular expression`,
+            'current match': t`Current match`, 'on line': t`On line`,
+            'replaced match on line $': t`Replaced match on line $`, 'replaced $ matches': t`Replaced $ matches`,
+        },
+        /** @param {string} text */
+        async onCopy(text) {
+            const toast = /** @type {any} */ (toastr);
+            try {
+                await copyText(text);
+                toast.info(t`Copied!`, '', { timeOut: 1500 });
+            } catch (error) {
+                toast.error(String(error), t`Copy failed`);
+            }
+        },
     });
 
     const handle = {
