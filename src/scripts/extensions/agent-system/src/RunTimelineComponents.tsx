@@ -136,12 +136,12 @@ export function RunTimelineEventList(props: TimelineEventListProps) {
                                     </span>
                                     {live && (
                                         <span className={`ttas-run-event-live is-${live.streamTone}`} aria-hidden="true">
-                                            <code
+                                            <span
                                                 className="ttas-run-event-live-stream"
                                                 data-ttas-truncated={live.truncated ? '' : undefined}
                                             >
                                                 {live.tail}
-                                            </code>
+                                            </span>
                                         </span>
                                     )}
                                 </button>
@@ -315,7 +315,7 @@ export function RunTimelineDetailPane(props: TimelineDetailPaneProps) {
                                                         <span className="ttas-run-diff-gutter" role="cell">{row.oldLine || ''}</span>
                                                         <span className="ttas-run-diff-gutter" role="cell">{row.newLine || ''}</span>
                                                         <span className="ttas-run-diff-marker" role="cell">{row.marker}</span>
-                                                        <code className="ttas-run-diff-code" role="cell">{row.text}</code>
+                                                        <span className="ttas-run-diff-code" role="cell">{row.text}</span>
                                                     </div>
                                                 ))}
                                             </div>
