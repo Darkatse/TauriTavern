@@ -226,6 +226,7 @@ export function RunTimelineApp(props: { controller: RunTimelineController; tr: A
                             emptyText={snapshot.emptyText}
                             items={snapshot.displayItems}
                             virtualItems={snapshot.virtualItems}
+                            live={{ items: snapshot.liveItems, onToggle: controller.toggleLiveItem }}
                             selectedSeq={snapshot.selectedSeq}
                             latestSeq={snapshot.latestSeq}
                             activeSeq={snapshot.activeSeq}

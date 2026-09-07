@@ -51,6 +51,8 @@ const ACTIVE_ROOT_ID = 'ttas_agent_run_timeline';
 type DerivedTimeline = {
     subAgentTasks: SubAgentTask[];
     items: TimelineItem[];
+    eventItems: TimelineItem[];
+    liveItems: TimelineItem[];
 };
 
 export function createRunTimelineController(options: RunTimelineOptions): RunTimelineController {
@@ -114,8 +116,8 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
                 }),
             };
         }
-        const items = [...derivedEventBase.eventItems, ...liveLane.items()];
-        return { subAgentTasks: derivedEventBase.subAgentTasks, items };
+        const liveItems = liveLane.items();
+        return { ...derivedEventBase, liveItems, items: [...derivedEventBase.eventItems, ...liveItems] };
     }
 
     function currentDerived(): DerivedTimeline {
@@ -154,7 +156,9 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
             rootId: options.mode === 'history' ? options.rootId : ACTIVE_ROOT_ID,
             visible: options.mode === 'history' || settings?.agentModeEnabled === true,
             displayItems: view.items,
-            virtualItems: virtualizeTimelineItems(view.items, viewport.scrollTop, viewport.viewportHeight),
+            // Keep the small active tail mounted so expanded rows use natural browser height.
+            virtualItems: virtualizeTimelineItems(view.eventItems, viewport.scrollTop, viewport.viewportHeight),
+            liveItems: view.liveItems,
             selectedItem,
             selectedSeq: selectedItem?.seq ?? null,
             latestSeq: latest?.seq ?? null,
@@ -198,9 +202,9 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
         });
     }
 
-    async function loadInitial(): Promise<boolean> {
+    async function loadEventPage(page: 'initial' | 'older'): Promise<boolean> {
         try {
-            const pending = main.loadInitial(deps.readEvents);
+            const pending = page === 'older' ? main.loadOlder(deps.readEvents) : main.loadInitial(deps.readEvents);
             publish();
             const applied = await pending;
             publish();
@@ -224,7 +228,7 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
         detail.reset();
         subAgent.reset();
         liveLane.attach(run.runId);
-        await loadInitial();
+        await loadEventPage('initial');
     }
 
     async function handleRunState(run: TimelineRun | null, lastEvent: TauriTavernAgentRunEvent | null): Promise<void> {
@@ -349,23 +353,19 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
             unsubscribes.splice(0).reverse().forEach(unsubscribe => unsubscribe());
             listeners.clear();
         },
-        async loadOlder() {
-            try {
-                const pending = main.loadOlder(deps.readEvents);
-                publish();
-                const applied = await pending;
-                publish();
-                return applied;
-            } catch (error) {
-                publish();
-                deps.reportError(error);
-                return false;
-            }
-        },
+        loadOlder: () => loadEventPage('older'),
         selectItem(seq) {
             selectedSeq = seq;
             if (detailsOpen) void loadDetails();
             else publish();
+        },
+        toggleLiveItem(id) {
+            const item = currentDerived().liveItems.find(item => item.id === id);
+            if (!item) return;
+            selectedSeq = item.seq;
+            // Opening a long preview is a reading action; do not jump to its bottom.
+            viewport = { ...viewport, nearBottom: false };
+            liveLane.toggleExpanded(id);
         },
         toggleCollapsed() {
             collapsed = !collapsed;

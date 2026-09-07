@@ -680,7 +680,7 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     min-height: var(--ttas-run-event-item-height);
 }
 
-.ttas-run-events.is-windowed .ttas-run-event {
+.ttas-run-events.is-windowed .ttas-run-event:not(.is-live) {
     height: var(--ttas-run-event-item-height);
     overflow: hidden;
 }
@@ -725,7 +725,7 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     bottom: 50%;
 }
 
-.ttas-run-event button {
+.ttas-run-event .ttas-run-event-card {
     position: relative;
     display: grid;
     grid-template-columns: 24px minmax(0, 1fr) auto;
@@ -744,17 +744,17 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     transition: background-color var(--ttas-transition), border-color var(--ttas-transition), transform var(--ttas-transition), box-shadow var(--ttas-transition);
 }
 
-.ttas-run-events.is-windowed .ttas-run-event button {
+.ttas-run-events.is-windowed .ttas-run-event:not(.is-live) .ttas-run-event-card {
     height: calc(var(--ttas-run-event-item-height) - 4px);
 }
 
-.ttas-run-event button:hover,
-.ttas-run-event.is-selected button {
+.ttas-run-event .ttas-run-event-card:hover,
+.ttas-run-event.is-selected .ttas-run-event-card {
     border-color: var(--ttas-run-panel-border-soft);
     background-color: var(--ttas-run-line-bg);
 }
 
-.ttas-run-event.is-latest button {
+.ttas-run-event.is-latest .ttas-run-event-card {
     border-color: color-mix(in srgb, var(--ttas-run-panel-accent) 38%, var(--ttas-run-panel-border));
     background:
         linear-gradient(90deg, color-mix(in srgb, currentColor 9%, transparent), transparent 66%),
@@ -817,14 +817,14 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     color: color-mix(in srgb, var(--ttas-run-panel-accent) 78%, var(--SmartThemeBodyColor) 22%);
 }
 
-.ttas-run-event.kind-narration button {
+.ttas-run-event.kind-narration .ttas-run-event-card {
     align-items: center;
     border-color: transparent;
     background-color: transparent;
     box-shadow: none;
 }
 
-.ttas-run-event.kind-narration button::after {
+.ttas-run-event.kind-narration .ttas-run-event-card::after {
     content: '';
     position: absolute;
     top: 12px;
@@ -863,20 +863,20 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     display: none;
 }
 
-.ttas-run-event.kind-narration button:hover,
-.ttas-run-event.kind-narration.is-selected button {
+.ttas-run-event.kind-narration .ttas-run-event-card:hover,
+.ttas-run-event.kind-narration.is-selected .ttas-run-event-card {
     border-color: color-mix(in srgb, var(--ttas-run-panel-accent) 22%, transparent);
     background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor) 18%, transparent);
 }
 
-.ttas-run-event.kind-narration button:hover::after,
-.ttas-run-event.kind-narration.is-selected button::after,
-.ttas-run-event.kind-narration.is-latest button::after {
+.ttas-run-event.kind-narration .ttas-run-event-card:hover::after,
+.ttas-run-event.kind-narration.is-selected .ttas-run-event-card::after,
+.ttas-run-event.kind-narration.is-latest .ttas-run-event-card::after {
     opacity: 0.9;
     transform: scaleY(1);
 }
 
-.ttas-run-event.kind-narration.is-latest button {
+.ttas-run-event.kind-narration.is-latest .ttas-run-event-card {
     border-color: color-mix(in srgb, var(--ttas-run-panel-accent) 24%, transparent);
     background:
         linear-gradient(90deg, color-mix(in srgb, var(--ttas-run-panel-accent) 8%, transparent), transparent 72%),
@@ -884,7 +884,7 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     box-shadow: none;
 }
 
-.ttas-run-event.kind-handoff button {
+.ttas-run-event.kind-handoff .ttas-run-event-card {
     border-color: color-mix(in srgb, var(--ttas-run-panel-accent) 34%, var(--ttas-run-panel-border-soft));
     background:
         linear-gradient(90deg, color-mix(in srgb, var(--ttas-run-panel-accent) 12%, transparent), transparent 64%),
@@ -939,6 +939,12 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     white-space: nowrap;
 }
 
+.ttas-run-event-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .ttas-run-event-meta {
     display: flex;
     flex-direction: column;
@@ -990,8 +996,68 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     animation-delay: 0.28s;
 }
 
-.ttas-run-event.is-live button {
+/* Active rows use browser layout; only history rows need fixed virtual heights. */
+.ttas-run-event.is-live .ttas-run-event-card {
+    display: block;
+    padding: 0;
+}
+
+.ttas-run-event.is-live summary {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
     grid-template-rows: auto minmax(0, 1fr);
+    gap: 8px;
+    align-items: center;
+    padding: 6px 8px;
+    min-height: calc(var(--ttas-run-event-item-height) - 6px);
+    cursor: pointer;
+    list-style: none;
+}
+
+.ttas-run-event summary::-webkit-details-marker {
+    display: none;
+}
+
+.ttas-run-event summary:focus-visible {
+    outline: 1px solid var(--ttas-run-panel-accent);
+    outline-offset: -2px;
+    border-radius: inherit;
+}
+
+.ttas-run-event-chevron {
+    flex: none;
+    margin-inline-start: 5px;
+    align-self: center;
+    color: var(--ttas-run-line-text-muted);
+    font-size: 0.65rem;
+    transition: transform var(--ttas-transition);
+}
+
+.ttas-run-event-card[open] .ttas-run-event-chevron {
+    transform: rotate(90deg);
+}
+
+.ttas-run-event-card[open] summary {
+    min-height: 0;
+    grid-template-rows: auto;
+}
+
+.ttas-run-event-card[open] > .ttas-run-event-live {
+    margin: 4px 10px 10px 40px;
+}
+
+.ttas-run-event-card[open] .ttas-run-event-live-stream {
+    display: block;
+    overflow: visible;
+    -webkit-line-clamp: unset;
+}
+
+.ttas-run-event-live-label {
+    display: block;
+    margin-bottom: 4px;
+    color: inherit;
+    font-size: 0.68rem;
+    opacity: 0.8;
 }
 
 .ttas-run-event-live {
@@ -1087,7 +1153,7 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 1.4em);
 }
 
-.ttas-run-event.is-live .ttas-run-event-live-stream::after {
+.ttas-run-event-live.is-streaming .ttas-run-event-live-stream::after {
     content: '';
     display: inline-block;
     width: 0.5em;
@@ -1779,7 +1845,8 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
         min-height: var(--ttas-run-panel-collapsed-height);
     }
 
-    .ttas-run-event button {
+    .ttas-run-event button.ttas-run-event-card,
+    .ttas-run-event summary {
         gap: 7px;
         padding-right: 7px;
     }

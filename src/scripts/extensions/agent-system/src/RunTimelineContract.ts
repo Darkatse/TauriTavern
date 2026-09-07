@@ -48,6 +48,12 @@ export type TimelineLiveToolId = 'builtin:workspace.write_file' | 'builtin:works
 export type TimelineLiveContent = {
     tail: string;
     truncated: boolean;
+    expanded: boolean;
+    blocks: Array<{
+        text: string;
+        streamTone: 'neutral' | 'added' | 'removed' | 'reasoning';
+        labelKey?: AgentSystemMessageKey;
+    }>;
 } & ({
     streamTone: 'neutral' | 'added' | 'removed';
     toolId: TimelineLiveToolId;
@@ -228,6 +234,7 @@ export type RunTimelineSnapshot = {
     rootId: string;
     visible: boolean;
     displayItems: readonly TimelineItem[];
+    liveItems: readonly TimelineItem[];
     virtualItems: TimelineVirtualWindow;
     selectedItem: TimelineItem | null;
     selectedSeq: number | null;
@@ -275,6 +282,7 @@ export type RunTimelineController = {
     dispose: () => void;
     loadOlder: () => Promise<boolean>;
     selectItem: (seq: number) => void;
+    toggleLiveItem: (id: string) => void;
     toggleCollapsed: () => void;
     openDetails: () => void;
     showTimeline: () => void;

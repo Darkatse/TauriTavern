@@ -42,7 +42,7 @@ run_started
 
 Timeline 还需要知道完整的 Agent 关系。`includeTimelineProjection: true` 会附带由 Invocation 和 Task 记录生成的关系图；它独立于当前事件页。任务详情通过 `readTaskDetail()` 读取，模型回合通过 `readModelTurn()` 读取，因此页面无需碰内部文件格式。
 
-实时工具参数和推理文字预览由 `subscribeLiveProjection()` 提供。这是内存中的显示状态，最终执行结果仍从日志读取。Timeline 默认省略自动提交的进度项，原始日志继续保留这些记录。
+实时工具参数和推理文字预览由 `subscribeLiveProjection()` 提供。折叠时只渲染三行尾部预览，展开后显示完整已接收内容并自然增高；用户展开阅读时暂停自动贴底。历史事件继续按固定行高虚拟化，少量实时块独立使用自然高度。这是内存中的显示状态，最终执行结果仍从日志读取。Timeline 默认省略自动提交的进度项，原始日志继续保留这些记录。
 
 ## 可以重建什么
 

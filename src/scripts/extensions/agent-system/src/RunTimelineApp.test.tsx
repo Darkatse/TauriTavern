@@ -369,6 +369,23 @@ test('active timeline renders a streaming write card with tail and metric', asyn
     expect(card?.querySelector('.ttas-run-event-live-stream')?.textContent).toBe('a streamed tail line');
     expect(card?.textContent).toContain('timelineLiveWriting');
     expect(card?.querySelector('.ttas-run-event-live-metric')?.textContent).toBe('+timelineWordCount');
+    const disclosure = card?.querySelector('summary');
+    if (!disclosure) throw new Error('expected live disclosure');
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
+    act(() => liveHandler?.({ type: 'append', invocationId: 'inv_root', toolCallIndex: 0,
+        field: 'content', text: '\nline 2\nline 3\nline 4', wordDelta: 6 }));
+    expect(card?.textContent).not.toContain('a streamed tail line');
+    const user = userEvent.setup();
+    await user.click(disclosure);
+    expect(disclosure.getAttribute('aria-expanded')).toBe('true');
+    expect(card?.querySelector('details')?.open).toBe(true);
+    expect(card?.querySelector('.ttas-run-event-live-stream')?.textContent).toBe('a streamed tail line\nline 2\nline 3\nline 4');
+    act(() => liveHandler?.({ type: 'append', invocationId: 'inv_root', toolCallIndex: 0,
+        field: 'content', text: '\nline 5', wordDelta: 2 }));
+    expect(card?.querySelector('.ttas-run-event-live-stream')?.textContent).toContain('line 4\nline 5');
+    await user.click(disclosure);
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
+    expect(card?.textContent).not.toContain('a streamed tail line');
     act(() => {
         liveHandler?.({ type: 'reasoningReplace', reasoning: {
             invocationId: 'inv_root', invocationExitPolicy: 'run_finish_allowed', text: 'Planning', toolIds: [],

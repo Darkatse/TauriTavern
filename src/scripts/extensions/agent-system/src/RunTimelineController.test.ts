@@ -308,6 +308,16 @@ test('active mode removes transient writes immediately and detaches at terminal'
     expect(items[1]?.rowSpan).toBe(2);
     expect(items[1]?.live?.tail).toBe('Hello');
     expect(controller.getSnapshot().activeSeq).toBe(1_000_000_000);
+    expect(controller.getSnapshot().virtualItems.items.map(item => item.seq)).toEqual([1]);
+    expect(controller.getSnapshot().liveItems).toHaveLength(1);
+    const liveItem = items[1];
+    if (!liveItem) throw new Error('expected live item');
+    controller.toggleLiveItem(liveItem.id);
+    expect(controller.getSnapshot().liveItems[0]?.live?.expanded).toBe(true);
+    expect(controller.getSnapshot().autoStick).toBe(false);
+    emit({ type: 'append', invocationId: 'inv_root', toolCallIndex: 0, field: 'content', text: '\nworld', wordDelta: 1 });
+    expect(controller.getSnapshot().liveItems[0]?.live).toMatchObject({ expanded: true, blocks: [{ text: 'Hello\nworld' }] });
+    expect(controller.getSnapshot().autoStick).toBe(false);
 
     emit({ type: 'remove', invocationId: 'inv_root', toolCallIndex: 0 });
     expect(controller.getSnapshot().displayItems.map(item => item.seq)).toEqual([1]);

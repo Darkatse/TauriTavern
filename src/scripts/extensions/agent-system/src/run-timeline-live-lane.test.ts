@@ -225,6 +225,12 @@ test('patch cards follow the arriving field: red while locating, green while wri
     expect(item?.live?.streamTone).toBe('added');
     expect(item?.live?.tail).toBe('new text');
     expect(item?.live).toMatchObject({ addedWords: 2, removedWords: 2 });
+    if (!item) throw new Error('expected patch preview');
+    lane.toggleExpanded(item.id);
+    expect(lane.items()[0]?.live).toMatchObject({ expanded: true, blocks: [
+        { text: 'old line', streamTone: 'removed' },
+        { text: 'new text', streamTone: 'added' },
+    ] });
 });
 
 test('reasoning shares the live lane, stays bounded, and replaces retries independently of tools', () => {
@@ -235,7 +241,7 @@ test('reasoning shares the live lane, stays bounded, and replaces retries indepe
     };
     handler({ type: 'snapshot', calls: [writeCall('body')], reasoning: [reasoning] });
     handler({ type: 'reasoningAppend', toolIds: [], invocationId: 'inv_root', text: '\n思考' });
-    expect(lane.items()[0]?.live).toEqual({ tail: '…l2\nl3\n思考', truncated: true, streamTone: 'reasoning', toolLabel: '' });
+    expect(lane.items()[0]?.live).toMatchObject({ tail: '…l2\nl3\n思考', truncated: true, streamTone: 'reasoning', toolLabel: '', expanded: false });
     handler({ type: 'reasoningAppend', invocationId: 'inv_root', text: '', toolIds: ['builtin:workspace.read_file'] });
     expect(lane.items()[0]?.live).toMatchObject({ toolLabel: 'reading a file', tail: '…l2\nl3\n思考' });
     handler({ type: 'reasoningAppend', invocationId: 'inv_root', text: '', toolIds: ['mcp/a:search', 'mcp/b:search'] });
@@ -243,8 +249,13 @@ test('reasoning shares the live lane, stays bounded, and replaces retries indepe
     handler({ type: 'reasoningReplace', reasoning: { ...reasoning, invocationId: 'child', invocationExitPolicy: 'task_return_required' } });
     handler({ type: 'reasoningAppend', toolIds: [], invocationId: 'child', text: 'hidden' });
     expect(lane.items()).toHaveLength(2);
+    const item = lane.items()[0];
+    if (!item) throw new Error('expected reasoning preview');
+    lane.toggleExpanded(item.id);
+    handler({ type: 'reasoningAppend', toolIds: [], invocationId: 'inv_root', text: '\nmore' });
+    expect(lane.items()[0]?.live).toMatchObject({ expanded: true, blocks: [{ text: 'l1\nl2\nl3\n思考\nmore' }] });
     handler({ type: 'reasoningReplace', reasoning: { ...reasoning, text: 'retry' } });
-    expect(lane.items()[0]?.live).toMatchObject({ tail: 'retry', toolLabel: '' });
+    expect(lane.items()[0]?.live).toMatchObject({ tail: 'retry', toolLabel: '', expanded: false });
     handler({ type: 'reasoningRemove', invocationId: 'inv_root' });
     expect(lane.items().map(item => item.live?.tail)).toEqual(['body']);
     handler({ type: 'reasoningReplace', reasoning });

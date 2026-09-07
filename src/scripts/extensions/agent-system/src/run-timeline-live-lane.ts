@@ -1,4 +1,4 @@
-import type { TimelineItem, TimelineLiveToolId } from './RunTimelineContract';
+import type { TimelineItem } from './RunTimelineContract';
 import { displayToolLabel, displayToolName } from './run-tool-labels';
 
 // Non-authoritative previews of streaming tool arguments and reasoning.
@@ -16,24 +16,16 @@ const TAIL_MAX_LINES = 3;
 
 type LiveStreamField = 'content' | 'oldString' | 'newString';
 
-type LiveLaneReasoning = {
-    toolIds: string[];
+type LiveLaneState = {
     insertionIndex: number;
+    expanded: boolean;
     tail: string;
     truncated: boolean;
 };
 
-type LiveLaneCall = {
-    invocationId: string;
-    toolCallIndex: number;
-    toolId: TimelineLiveToolId;
-    insertionIndex: number;
+type LiveLaneReasoning = TauriTavernAgentRunLiveReasoning & LiveLaneState;
+type LiveLaneCall = TauriTavernAgentRunLiveToolCall & LiveLaneState & {
     activeField: LiveStreamField | null;
-    path: string;
-    tail: string;
-    truncated: boolean;
-    addedWords: number;
-    removedWords: number;
 };
 
 export type RunTimelineLiveLaneOptions = {
@@ -46,6 +38,7 @@ export type RunTimelineLiveLaneOptions = {
 export type RunTimelineLiveLane = {
     version: () => number;
     items: () => TimelineItem[];
+    toggleExpanded: (id: string) => void;
     attach: (runId: string) => void;
     detach: () => void;
     dispose: () => void;
@@ -83,18 +76,19 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
                 changed = upsertReasoning(update.reasoning);
                 break;
             case 'reasoningAppend': {
-                const current = reasoning.get(update.invocationId);
+                const current = reasoning.get(reasoningKey(update.invocationId));
                 if (!current) return;
                 const preview = streamPreview(current.tail + update.text);
-                reasoning.set(update.invocationId, {
+                reasoning.set(reasoningKey(update.invocationId), {
                     ...current, ...preview, truncated: current.truncated || preview.truncated,
+                    text: current.text + update.text,
                     toolIds: [...current.toolIds, ...update.toolIds],
                 });
                 changed = true;
                 break;
             }
             case 'reasoningRemove':
-                changed = reasoning.delete(update.invocationId);
+                changed = reasoning.delete(reasoningKey(update.invocationId));
                 break;
             case 'replace':
                 changed = upsertCall(update.call);
@@ -103,7 +97,7 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
                 changed = appendField(update);
                 break;
             case 'remove':
-                changed = calls.delete(keyOf(update.invocationId, update.toolCallIndex));
+                changed = calls.delete(toolCallKey(update.invocationId, update.toolCallIndex));
                 break;
             default:
                 throw new Error('agent.timeline_live_update_invalid: unsupported live update');
@@ -122,17 +116,19 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
 
     function upsertReasoning(item: TauriTavernAgentRunLiveReasoning): boolean {
         if (item.invocationExitPolicy !== 'run_finish_allowed') return false;
-        reasoning.set(item.invocationId, {
-            toolIds: item.toolIds,
-            insertionIndex: reasoning.get(item.invocationId)?.insertionIndex ?? insertionCounter++,
+        const key = reasoningKey(item.invocationId);
+        reasoning.set(key, {
+            ...item,
+            expanded: false,
+            insertionIndex: reasoning.get(key)?.insertionIndex ?? insertionCounter++,
             ...streamPreview(item.text),
         });
         return true;
     }
 
-    function presentReasoning([invocationId, item]: [string, LiveLaneReasoning]): TimelineItem {
+    function presentReasoning([id, item]: [string, LiveLaneReasoning]): TimelineItem {
         return {
-            id: `live:reasoning:${invocationId}`,
+            id,
             seq: LIVE_SEQ_BASE + item.insertionIndex,
             runId,
             type: 'live_reasoning',
@@ -149,6 +145,8 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
                 tail: `${item.truncated ? '…' : ''}${item.tail}`,
                 truncated: item.truncated,
                 streamTone: 'reasoning',
+                expanded: item.expanded,
+                blocks: [{ text: item.text, streamTone: 'reasoning' }],
                 toolLabel: item.toolIds.map(displayToolLabel).join(' · '),
             },
         };
@@ -156,7 +154,7 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
 
     function upsertCall(call: TauriTavernAgentRunLiveToolCall): boolean {
         if (call.invocationExitPolicy !== 'run_finish_allowed') return false;
-        const key = keyOf(call.invocationId, call.toolCallIndex);
+        const key = toolCallKey(call.invocationId, call.toolCallIndex);
         const existing = calls.get(key);
         const isWrite = call.toolId === WRITE_TOOL_ID;
         const activeField = isWrite
@@ -165,43 +163,40 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
                 : call.oldString ? 'oldString' : null;
         const preview = streamPreview(isWrite ? call.content : call.newString || call.oldString);
         calls.set(key, {
-            invocationId: call.invocationId,
-            toolCallIndex: call.toolCallIndex,
-            toolId: call.toolId,
+            ...call,
+            expanded: false,
             insertionIndex: existing?.insertionIndex ?? insertionCounter++,
             activeField,
-            path: call.path,
             ...preview,
-            addedWords: isWrite ? call.contentWords : call.newStringWords,
-            removedWords: isWrite ? 0 : call.oldStringWords,
         });
         return true;
     }
 
     function appendField(update: Extract<TauriTavernAgentRunLiveUpdate, { type: 'append' }>): boolean {
-        const key = keyOf(update.invocationId, update.toolCallIndex);
+        const key = toolCallKey(update.invocationId, update.toolCallIndex);
         const call = calls.get(key);
         if (!call) return false;
-        const next = { ...call };
         if (update.field === 'path') {
-            next.path += update.text;
+            call.path += update.text;
         } else if (update.field === 'content' && call.toolId === WRITE_TOOL_ID) {
-            next.addedWords += update.wordDelta;
+            call.content += update.text;
+            call.contentWords += update.wordDelta;
         } else if (update.field === 'oldString' && call.toolId === PATCH_TOOL_ID) {
-            next.removedWords += update.wordDelta;
+            call.oldString += update.text;
+            call.oldStringWords += update.wordDelta;
         } else if (update.field === 'newString' && call.toolId === PATCH_TOOL_ID) {
-            next.addedWords += update.wordDelta;
+            call.newString += update.text;
+            call.newStringWords += update.wordDelta;
         } else {
             throw new Error('agent.timeline_live_update_invalid: field does not match tool call');
         }
         if (update.field !== 'path') {
             const continuing = call.activeField === update.field;
             const preview = streamPreview(`${continuing ? call.tail : ''}${update.text}`);
-            next.activeField = update.field;
-            next.tail = preview.tail;
-            next.truncated = (continuing && call.truncated) || preview.truncated;
+            call.activeField = update.field;
+            call.tail = preview.tail;
+            call.truncated = (continuing && call.truncated) || preview.truncated;
         }
-        calls.set(key, next);
         return true;
     }
 
@@ -214,7 +209,7 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
             : call.activeField === 'oldString' ? 'removed'
                 : 'neutral';
         return {
-            id: `live:${call.invocationId}:${call.toolCallIndex}`,
+            id: toolCallKey(call.invocationId, call.toolCallIndex),
             seq: LIVE_SEQ_BASE + call.insertionIndex,
             runId,
             type: 'live_tool_call',
@@ -236,8 +231,15 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
                 tail: `${call.truncated ? '…' : ''}${call.tail}`,
                 truncated: call.truncated,
                 streamTone,
-                addedWords: call.addedWords,
-                removedWords: call.removedWords,
+                expanded: call.expanded,
+                blocks: isWrite
+                    ? [{ text: call.content, streamTone: 'neutral' }]
+                    : [
+                        { text: call.oldString, streamTone: 'removed', labelKey: 'timelinePatchOriginal' },
+                        { text: call.newString, streamTone: 'added', labelKey: 'timelinePatchReplacement' },
+                    ],
+                addedWords: isWrite ? call.contentWords : call.newStringWords,
+                removedWords: isWrite ? 0 : call.oldStringWords,
             },
         };
     }
@@ -266,6 +268,13 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
             ...[...reasoning.entries()].map(presentReasoning),
             ...[...calls.values()].map(presentCall),
         ].sort((a, b) => a.seq - b.seq),
+        toggleExpanded(id) {
+            const item = calls.get(id) ?? reasoning.get(id);
+            if (!item) return; // A completed preview may disappear before the click is delivered.
+            item.expanded = !item.expanded;
+            storeVersion += 1;
+            publishSoon();
+        },
         attach(nextRunId) {
             const normalized = nextRunId.trim();
             if (!normalized) throw new Error('Agent run id is required.');
@@ -291,8 +300,12 @@ function defaultScheduleFrame(callback: () => void): void {
     setTimeout(callback, 16);
 }
 
-function keyOf(invocationId: string, toolCallIndex: number): string {
-    return `${invocationId} ${toolCallIndex}`;
+function toolCallKey(invocationId: string, toolCallIndex: number): string {
+    return `live:${invocationId}:${toolCallIndex}`;
+}
+
+function reasoningKey(invocationId: string): string {
+    return `live:reasoning:${invocationId}`;
 }
 
 function streamPreview(text: string): { tail: string; truncated: boolean } {
