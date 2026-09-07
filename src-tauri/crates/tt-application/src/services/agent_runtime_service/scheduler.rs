@@ -6,7 +6,7 @@ use tokio::sync::watch;
 
 use super::AgentRuntimeService;
 use super::guidance::AgentGuidanceMailbox;
-use super::tool_call_projection::AgentRunLiveProjection;
+use super::model_stream_projection::AgentRunLiveProjection;
 use crate::errors::ApplicationError;
 use tt_domain::models::agent::{
     AgentDelegationContinuation, AgentInvocationStatus, AgentTaskRecord, AgentTaskStatus,

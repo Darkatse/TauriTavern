@@ -12,8 +12,8 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::endpoint_url::append_endpoint_path;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamSender,
-    ChatCompletionToolCallDelta,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamDelta,
+    ChatCompletionStreamSender,
 };
 
 mod aws_bedrock;
@@ -849,102 +849,83 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
         }
     }
 
-    async fn generate_with_tool_call_deltas(
+    async fn generate_with_deltas(
         &self,
         source: ChatCompletionSource,
         config: &ChatCompletionApiConfig,
         endpoint_path: &str,
         payload: &Value,
-        on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+        on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
     ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
         let source_name = source.display_name();
         let source = provider_transport_source(source, endpoint_path)?;
 
         match (source, endpoint_path) {
             (ChatCompletionSource::OpenAi, "/responses") => {
-                openai_responses::generate_with_tool_call_deltas(
+                openai_responses::generate_with_deltas(
                     self,
                     config,
                     endpoint_path,
                     payload,
                     "OpenAI Responses",
-                    on_tool_call_delta,
+                    on_delta,
                 )
                 .await
             }
             (ChatCompletionSource::Custom, "/responses") => {
-                openai_responses::generate_with_tool_call_deltas(
+                openai_responses::generate_with_deltas(
                     self,
                     config,
                     endpoint_path,
                     payload,
                     "Custom OpenAI Responses",
-                    on_tool_call_delta,
+                    on_delta,
                 )
                 .await
             }
             (ChatCompletionSource::Custom, "/interactions") => {
-                gemini_interactions::generate_with_tool_call_deltas(
+                gemini_interactions::generate_with_deltas(
                     self,
                     config,
                     endpoint_path,
                     payload,
                     "Custom Gemini Interactions",
-                    on_tool_call_delta,
+                    on_delta,
                 )
                 .await
             }
             (ChatCompletionSource::Custom, "/messages") => {
-                claude::generate_with_tool_call_deltas(
+                claude::generate_with_deltas(
                     self,
                     config,
                     endpoint_path,
                     payload,
                     "Custom Claude Messages",
-                    on_tool_call_delta,
+                    on_delta,
                 )
                 .await
             }
             (ChatCompletionSource::Claude, _) => {
-                claude::generate_with_tool_call_deltas(
+                claude::generate_with_deltas(
                     self,
                     config,
                     endpoint_path,
                     payload,
                     source_name,
-                    on_tool_call_delta,
+                    on_delta,
                 )
                 .await
             }
             (ChatCompletionSource::Makersuite, _) => {
-                makersuite::generate_with_tool_call_deltas(
-                    self,
-                    config,
-                    endpoint_path,
-                    payload,
-                    on_tool_call_delta,
-                )
-                .await
+                makersuite::generate_with_deltas(self, config, endpoint_path, payload, on_delta)
+                    .await
             }
             (ChatCompletionSource::VertexAi, _) => {
-                vertexai::generate_with_tool_call_deltas(
-                    self,
-                    config,
-                    endpoint_path,
-                    payload,
-                    on_tool_call_delta,
-                )
-                .await
+                vertexai::generate_with_deltas(self, config, endpoint_path, payload, on_delta).await
             }
             (ChatCompletionSource::AwsBedrock, _) => {
-                aws_bedrock::generate_with_tool_call_deltas(
-                    self,
-                    config,
-                    endpoint_path,
-                    payload,
-                    on_tool_call_delta,
-                )
-                .await
+                aws_bedrock::generate_with_deltas(self, config, endpoint_path, payload, on_delta)
+                    .await
             }
             (
                 ChatCompletionSource::OpenAi
@@ -961,13 +942,13 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 | ChatCompletionSource::MiniMax,
                 "/chat/completions",
             ) => {
-                openai::generate_with_tool_call_deltas(
+                openai::generate_with_deltas(
                     self,
                     config,
                     endpoint_path,
                     payload,
                     source_name,
-                    on_tool_call_delta,
+                    on_delta,
                 )
                 .await
             }

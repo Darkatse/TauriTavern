@@ -344,6 +344,7 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     --ttas-run-tone-warn: #c59a50;
     --ttas-run-tone-error: var(--ttas-run-tone-error-public);
     --ttas-run-reasoning-color: var(--reasoning-body-color, var(--SmartThemeEmColor));
+    --ttas-run-reasoning-text-color: color-mix(in srgb, var(--ttas-run-reasoning-color) 76%, var(--SmartThemeBodyColor) 24%);
     --ttas-run-reasoning-bg: color-mix(in srgb, var(--ttas-run-reasoning-color) 9%, transparent);
     --ttas-run-reasoning-border: color-mix(in srgb, var(--ttas-run-reasoning-color) 52%, var(--ttas-run-panel-border-soft));
     --ttas-run-detail-block-bg: color-mix(in srgb, var(--SmartThemeBodyColor) 3%, transparent);
@@ -1033,6 +1034,41 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     background-color: color-mix(in srgb, var(--ttas-run-diff-delete-color) 62%, transparent);
 }
 
+.ttas-run-event.kind-reasoning {
+    --ttas-run-panel-accent: var(--ttas-run-reasoning-color);
+    --ttas-run-tone-active: var(--ttas-run-reasoning-color);
+    --ttas-run-line-bg-active: var(--ttas-run-reasoning-bg);
+}
+
+.ttas-run-event-tool-names {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 58%;
+    margin-inline-end: 5px;
+    padding: 1px 5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border: 1px solid var(--ttas-run-reasoning-border);
+    border-radius: 4px;
+    background-color: var(--ttas-run-reasoning-bg);
+    color: var(--ttas-run-reasoning-text-color);
+    font-size: 0.72rem;
+    font-weight: 500;
+}
+
+.ttas-run-event-live.is-reasoning {
+    color: var(--ttas-run-reasoning-text-color);
+    background: linear-gradient(90deg, var(--ttas-run-reasoning-bg), transparent 72%);
+}
+
+.ttas-run-event-live.is-reasoning::before {
+    background-color: var(--ttas-run-reasoning-border);
+}
+
+.ttas-run-event-live.is-reasoning .ttas-run-event-live-stream {
+    font-family: inherit;
+}
+
 .ttas-run-event-live-stream {
     display: -webkit-box;
     overflow: hidden;
@@ -1608,7 +1644,7 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
 }
 
 .ttas-run-detail-block[data-ttas-block-kind="reasoning"] pre {
-    color: color-mix(in srgb, var(--ttas-run-reasoning-color) 76%, var(--SmartThemeBodyColor) 24%);
+    color: var(--ttas-run-reasoning-text-color);
     font-family: inherit;
     font-size: 0.74rem;
     line-height: 1.5;

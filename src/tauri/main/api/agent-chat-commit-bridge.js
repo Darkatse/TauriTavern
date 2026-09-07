@@ -254,6 +254,9 @@ function applyLiveProjectionUpdate(state, update) {
             scheduleLiveWriteFrame(state);
             return;
         }
+        case 'reasoningReplace':
+        case 'reasoningAppend':
+        case 'reasoningRemove':
         case 'remove':
             // Removal means the live projection no longer owns this call. It
             // does not revoke content the user has already received.

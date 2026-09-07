@@ -369,6 +369,23 @@ test('active timeline renders a streaming write card with tail and metric', asyn
     expect(card?.querySelector('.ttas-run-event-live-stream')?.textContent).toBe('a streamed tail line');
     expect(card?.textContent).toContain('timelineLiveWriting');
     expect(card?.querySelector('.ttas-run-event-live-metric')?.textContent).toBe('+timelineWordCount');
+    act(() => {
+        liveHandler?.({ type: 'reasoningReplace', reasoning: {
+            invocationId: 'inv_root', invocationExitPolicy: 'run_finish_allowed', text: 'Planning', toolIds: [],
+        } });
+        liveHandler?.({ type: 'reasoningAppend', toolIds: [], invocationId: 'inv_root', text: ' the edit' });
+    });
+    const thinking = document.querySelector('.ttas-run-event-live.is-reasoning');
+    expect(thinking?.querySelector('.ttas-run-event-live-stream')?.textContent).toBe('Planning the edit');
+    expect(thinking?.closest('.ttas-run-event')?.textContent).toContain('timelineLiveReasoning');
+    expect(thinking?.closest('.ttas-run-event')?.querySelector('.ttas-run-event-live-metric')).toBeNull();
+    act(() => {
+        liveHandler?.({ type: 'reasoningAppend', invocationId: 'inv_root', text: '', toolIds: ['builtin:workspace.write_file'] });
+    });
+    const toolNames = thinking?.closest('.ttas-run-event')?.querySelector('.ttas-run-event-tool-names');
+    expect(toolNames?.textContent).toBe('writing a file');
+    expect(toolNames?.getAttribute('title')).toBe('writing a file');
+    expect(toolNames?.parentElement?.textContent).toContain('writing a filetimelineLiveReasoning');
 });
 
 test('SubAgent tray opens and closes its native dialog through controller-local state', async () => {

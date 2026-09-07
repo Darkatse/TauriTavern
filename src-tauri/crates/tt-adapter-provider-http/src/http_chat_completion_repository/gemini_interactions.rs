@@ -5,8 +5,8 @@ use tokio::sync::mpsc;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
-    ChatCompletionToolCallDelta,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
+    ChatCompletionStreamSender,
 };
 
 use super::normalizers;
@@ -53,7 +53,7 @@ impl InteractionsStreamState {
         &mut self,
         sender: Option<&ChatCompletionStreamSender>,
         raw_payload: &[u8],
-        on_tool_call_delta: &mut dyn FnMut(ChatCompletionToolCallDelta),
+        on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<(), DomainError> {
         if self.completed.is_some() {
             return Ok(());
@@ -81,8 +81,8 @@ impl InteractionsStreamState {
             | "interaction.status_update"
             | "interaction.in_progress"
             | "interaction.requires_action" => Ok(()),
-            "step.start" => self.apply_step_start(event_object, sender),
-            "step.delta" => self.apply_step_delta(event_object, sender, on_tool_call_delta),
+            "step.start" => self.apply_step_start(event_object, sender, on_delta),
+            "step.delta" => self.apply_step_delta(event_object, sender, on_delta),
             "step.stop" => self.apply_step_stop(event_object, sender),
             "interaction.completed" => self.apply_interaction_completed(event_object, sender),
             "error" => Err(stream_error(event_object)),
@@ -94,6 +94,7 @@ impl InteractionsStreamState {
         &mut self,
         event: &Map<String, Value>,
         sender: Option<&ChatCompletionStreamSender>,
+        on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<(), DomainError> {
         if self.active_step.is_some() {
             return Err(invalid_stream(
@@ -106,6 +107,14 @@ impl InteractionsStreamState {
         let step_type = required_string(&step, "type", "step.start step")?;
         if step_type.trim().is_empty() {
             return Err(invalid_stream("step.start step type must not be empty"));
+        }
+
+        if step_type == "function_call" {
+            on_delta(ChatCompletionStreamDelta::ToolCall {
+                tool_call_index: self.tool_call_count,
+                name: required_string(&step, "name", "function_call step")?.to_string(),
+                arguments_fragment: String::new(),
+            });
         }
 
         let projection = match step_type {
@@ -131,6 +140,11 @@ impl InteractionsStreamState {
                 if text.is_empty() {
                     continue;
                 }
+                if field == "reasoning_content" {
+                    on_delta(ChatCompletionStreamDelta::Reasoning {
+                        text: text.to_string(),
+                    });
+                }
                 self.saw_text |= field == "content";
                 self.send_delta(sender, projection_delta(field, text));
             }
@@ -149,7 +163,7 @@ impl InteractionsStreamState {
         &mut self,
         event: &Map<String, Value>,
         sender: Option<&ChatCompletionStreamSender>,
-        on_tool_call_delta: &mut dyn FnMut(ChatCompletionToolCallDelta),
+        on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<(), DomainError> {
         let index = required_index(event, "step.delta event")?;
         let delta = required_object(event, "delta", "step.delta event")?;
@@ -209,7 +223,7 @@ impl InteractionsStreamState {
                     let arguments =
                         required_string(delta, "arguments", "arguments_delta")?.to_string();
                     active.argument_fragments.push_str(&arguments);
-                    on_tool_call_delta(ChatCompletionToolCallDelta {
+                    on_delta(ChatCompletionStreamDelta::ToolCall {
                         tool_call_index,
                         name: required_string(&active.step, "name", "function_call step")?
                             .to_string(),
@@ -237,6 +251,9 @@ impl InteractionsStreamState {
         if let Some((field, text)) = projection
             && !text.is_empty()
         {
+            if field == "reasoning_content" {
+                on_delta(ChatCompletionStreamDelta::Reasoning { text: text.clone() });
+            }
             self.saw_text |= field == "content";
             self.send_delta(sender, projection_delta(field, &text));
         }
@@ -481,13 +498,13 @@ pub(super) async fn generate_stream(
     state.ensure_completed(was_cancelled)
 }
 
-pub(super) async fn generate_with_tool_call_deltas(
+pub(super) async fn generate_with_deltas(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-    on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+    on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let response =
         send_stream_request(repository, config, endpoint_path, payload, provider_name).await?;
@@ -499,7 +516,7 @@ pub(super) async fn generate_with_tool_call_deltas(
     let mut state = InteractionsStreamState::new(model);
 
     HttpChatCompletionRepository::consume_sse_response(provider_name, response, |event| {
-        state.handle_event(None, event, on_tool_call_delta)
+        state.handle_event(None, event, on_delta)
     })
     .await?;
 
@@ -748,10 +765,18 @@ mod tests {
         state: &mut InteractionsStreamState,
         sender: &ChatCompletionStreamSender,
         events: Value,
-    ) {
+    ) -> Vec<ChatCompletionStreamDelta> {
+        let mut deltas = Vec::new();
         for event in events.as_array().unwrap() {
-            apply(state, sender, event.clone()).unwrap();
+            state
+                .handle_event(
+                    Some(sender),
+                    &serde_json::to_vec(event).unwrap(),
+                    &mut |delta| deltas.push(delta),
+                )
+                .unwrap();
         }
+        deltas
     }
 
     fn drain(receiver: &mut mpsc::UnboundedReceiver<String>) -> (Vec<Value>, bool) {
@@ -772,7 +797,7 @@ mod tests {
         let (sender, mut receiver) = mpsc::unbounded_channel();
         let mut state = InteractionsStreamState::new("gemini-3.6-flash".to_string());
 
-        apply_all(
+        let deltas = apply_all(
             &mut state,
             &sender,
             json!([
@@ -862,6 +887,17 @@ mod tests {
             ]),
         );
 
+        assert_eq!(
+            deltas,
+            vec![
+                ChatCompletionStreamDelta::Reasoning {
+                    text: "think ".to_string()
+                },
+                ChatCompletionStreamDelta::Reasoning {
+                    text: "more".to_string()
+                },
+            ]
+        );
         let (chunks, done) = drain(&mut receiver);
         let reasoning = chunks
             .iter()
@@ -962,12 +998,17 @@ mod tests {
         assert_eq!(
             deltas,
             vec![
-                ChatCompletionToolCallDelta {
+                ChatCompletionStreamDelta::ToolCall {
+                    tool_call_index: 0,
+                    name: "get_weather".to_string(),
+                    arguments_fragment: String::new(),
+                },
+                ChatCompletionStreamDelta::ToolCall {
                     tool_call_index: 0,
                     name: "get_weather".to_string(),
                     arguments_fragment: "{\"city\":\"".to_string(),
                 },
-                ChatCompletionToolCallDelta {
+                ChatCompletionStreamDelta::ToolCall {
                     tool_call_index: 0,
                     name: "get_weather".to_string(),
                     arguments_fragment: "Paris\"}".to_string(),

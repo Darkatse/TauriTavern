@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 use super::commit_ledger::RunCommitLedger;
 use super::delegation::workspace_policy::InvocationWorkspaceRepository;
 use super::markdown::render_markdown_value;
-use super::tool_call_projection::remove_live_tool_call;
+use super::model_stream_projection::remove_live_tool_call;
 use super::{AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
 use crate::services::hashing::hex_lower;

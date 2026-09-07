@@ -305,6 +305,7 @@
     "agent_system.timelineIdle": "等待執行",
     "agent_system.timelineLoading": "正在載入事件...",
     "agent_system.timelineLoadingDetails": "正在載入詳情...",
+    "agent_system.timelineLiveReasoning": "正在思考",
     "agent_system.timelineLivePatching": "正在修改 {path}",
     "agent_system.timelineLiveWriting": "正在寫入 {path}",
     "agent_system.timelineMatches": "匹配結果",

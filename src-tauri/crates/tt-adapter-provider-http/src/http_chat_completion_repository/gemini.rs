@@ -1,19 +1,19 @@
 use serde_json::{Map, Value};
 
 use tt_domain::errors::DomainError;
-use tt_ports::repositories::chat_completion_repository::ChatCompletionToolCallDelta;
+use tt_ports::repositories::chat_completion_repository::ChatCompletionStreamDelta;
 
 use super::HttpChatCompletionRepository;
 
 pub(super) async fn consume_generate_content_stream(
     provider_name: &str,
     response: reqwest::Response,
-    on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+    on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
 ) -> Result<Value, DomainError> {
     let mut accumulator = GeminiStreamAccumulator::default();
 
     HttpChatCompletionRepository::consume_sse_response(provider_name, response, |event| {
-        accumulator.apply_event(event, on_tool_call_delta)
+        accumulator.apply_event(event, on_delta)
     })
     .await?;
 
@@ -33,7 +33,7 @@ impl GeminiStreamAccumulator {
     fn apply_event(
         &mut self,
         raw_event: &[u8],
-        on_tool_call_delta: &mut dyn FnMut(ChatCompletionToolCallDelta),
+        on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<(), DomainError> {
         let mut event = match serde_json::from_slice::<Value>(raw_event)
             .map_err(|error| invalid_stream(format!("event is not valid JSON: {error}")))?
@@ -77,7 +77,7 @@ impl GeminiStreamAccumulator {
         self.content.extend(content);
 
         for (index, part) in parts.into_iter().enumerate() {
-            self.apply_part(part, index == 0, on_tool_call_delta);
+            self.apply_part(part, index == 0, on_delta);
         }
 
         Ok(())
@@ -87,7 +87,7 @@ impl GeminiStreamAccumulator {
         &mut self,
         part: Value,
         merge_with_previous: bool,
-        on_tool_call_delta: &mut dyn FnMut(ChatCompletionToolCallDelta),
+        on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) {
         let mut part = match part {
             Value::Object(part) => part,
@@ -104,7 +104,7 @@ impl GeminiStreamAccumulator {
                 function_call.get("name").and_then(Value::as_str),
                 function_call.get("args"),
             ) {
-                on_tool_call_delta(ChatCompletionToolCallDelta {
+                on_delta(ChatCompletionStreamDelta::ToolCall {
                     tool_call_index,
                     name: name.to_string(),
                     arguments_fragment: arguments.to_string(),
@@ -120,6 +120,10 @@ impl GeminiStreamAccumulator {
         };
         if text.is_empty() && part.len() == 1 {
             return;
+        }
+
+        if part.get("thought").and_then(Value::as_bool) == Some(true) && !text.is_empty() {
+            on_delta(ChatCompletionStreamDelta::Reasoning { text: text.clone() });
         }
 
         if merge_with_previous
@@ -191,11 +195,19 @@ mod tests {
 
         assert_eq!(
             deltas,
-            vec![ChatCompletionToolCallDelta {
-                tool_call_index: 0,
-                name: "write_file".to_string(),
-                arguments_fragment: "{\"content\":\"hello\",\"path\":\"a.md\"}".to_string(),
-            }]
+            vec![
+                ChatCompletionStreamDelta::Reasoning {
+                    text: "Plan ".to_string()
+                },
+                ChatCompletionStreamDelta::Reasoning {
+                    text: "then act".to_string()
+                },
+                ChatCompletionStreamDelta::ToolCall {
+                    tool_call_index: 0,
+                    name: "write_file".to_string(),
+                    arguments_fragment: "{\"content\":\"hello\",\"path\":\"a.md\"}".to_string(),
+                }
+            ]
         );
 
         let response = accumulator.finish().unwrap();

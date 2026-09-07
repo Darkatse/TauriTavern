@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use super::tool_call_projection::ToolCallProjector;
+use super::model_stream_projection::ModelStreamProjector;
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::errors::ApplicationError;
 use crate::services::agent_model_gateway::AgentModelExchange;
@@ -39,7 +39,7 @@ impl AgentRuntimeService {
             .await?;
 
             let mut projector = stream.then(|| {
-                ToolCallProjector::new(
+                ModelStreamProjector::new(
                     invocation_id,
                     invocation.exit_policy,
                     round,
@@ -62,7 +62,12 @@ impl AgentRuntimeService {
             };
 
             match result {
-                Ok(exchange) => return Ok(exchange),
+                Ok(exchange) => {
+                    if let Some(projector) = projector {
+                        projector.clear_reasoning();
+                    }
+                    return Ok(exchange);
+                }
                 Err(error) => {
                     if let Some(projector) = projector {
                         projector.clear();

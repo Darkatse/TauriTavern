@@ -232,13 +232,13 @@ test('Agent live projection subscription owns Channel callbacks and detaches ide
         dto: { runId: 'run-live' },
         channel: { kind: 'test-channel' },
     });
-    onmessage({ type: 'snapshot', calls: [] });
+    onmessage({ type: 'snapshot', calls: [], reasoning: [] });
     unsubscribe();
     unsubscribe();
     onmessage({ type: 'remove', invocationId: 'inv_root', toolCallIndex: 0 });
     resolveInvoke();
     await Promise.resolve();
-    assert.deepEqual(updates, [{ type: 'snapshot', calls: [] }]);
+    assert.deepEqual(updates, [{ type: 'snapshot', calls: [], reasoning: [] }]);
 });
 
 test('Agent live projection subscription reports command rejection', async () => {
@@ -541,6 +541,12 @@ test('agent live write keeps one real partial chat message and saves it on failu
         await waitFor(() => script.chat[0]?.mes === 'partial');
         const message = script.chat[0];
         assert.equal(message.extra.tauritavern, undefined);
+        liveListener({ type: 'reasoningReplace', reasoning: {
+            invocationId: 'inv_root', invocationExitPolicy: 'run_finish_allowed', text: 'Plan', toolIds: [],
+        } });
+        liveListener({ type: 'reasoningAppend', toolIds: [], invocationId: 'inv_root', text: ' the edit' });
+        liveListener({ type: 'reasoningRemove', invocationId: 'inv_root' });
+        assert.equal(message.mes, 'partial');
 
         suspendFrames = true;
         liveListener({

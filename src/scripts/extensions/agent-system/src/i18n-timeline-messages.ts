@@ -75,6 +75,7 @@ export const TIMELINE_MESSAGES = {
     "timelineErrorDetails": "Error details",
     "timelineFailed": "Agent failed",
     "timelineIdle": "Waiting for a run",
+    "timelineLiveReasoning": "Thinking",
     "timelineLivePatching": "Editing {path}",
     "timelineLiveWriting": "Writing {path}",
     "timelineLoading": "Loading events...",

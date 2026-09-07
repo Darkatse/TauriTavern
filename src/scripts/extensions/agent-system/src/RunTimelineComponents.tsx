@@ -120,6 +120,11 @@ export function RunTimelineEventList(props: TimelineEventListProps) {
                                     </span>
                                     <span className="ttas-run-event-copy">
                                         <span className="ttas-run-event-title">
+                                            {live?.streamTone === 'reasoning' && live.toolLabel && (
+                                                <span className="ttas-run-event-tool-names" title={live.toolLabel}>
+                                                    {live.toolLabel}
+                                                </span>
+                                            )}
                                             {timelineItemTitle(item, props.tr)}
                                             {live && <TimelineLiveMetric live={live} tr={props.tr} />}
                                             {active && (
@@ -162,6 +167,7 @@ export function RunTimelineEventList(props: TimelineEventListProps) {
 }
 
 function TimelineLiveMetric({ live, tr }: { live: TimelineLiveContent; tr: AgentSystemTr }) {
+    if (live.streamTone === 'reasoning') return null;
     if (live.addedWords === 0 && live.removedWords === 0) return null;
     if (live.toolId === 'builtin:workspace.apply_patch') {
         return (

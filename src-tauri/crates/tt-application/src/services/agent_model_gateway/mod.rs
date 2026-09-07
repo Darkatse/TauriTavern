@@ -8,7 +8,7 @@ use crate::errors::ApplicationError;
 use crate::services::chat_completion_service::ChatCompletionService;
 use tt_domain::models::agent::{AgentModelRequest, AgentModelResponse};
 use tt_domain::models::tool::ToolId;
-use tt_ports::repositories::chat_completion_repository::ChatCompletionToolCallDelta;
+use tt_ports::repositories::chat_completion_repository::ChatCompletionStreamDelta;
 
 mod decode;
 mod encode;
@@ -28,7 +28,7 @@ pub trait AgentModelGateway: Send + Sync {
     async fn generate_with_cancel(
         &self,
         request: &AgentModelRequest,
-        on_tool_call_delta: Option<&mut (dyn FnMut(AgentToolCallDelta) + Send)>,
+        on_delta: Option<&mut (dyn FnMut(AgentModelStreamDelta) + Send)>,
         cancel: watch::Receiver<bool>,
     ) -> Result<AgentModelExchange, ApplicationError>;
 
@@ -42,10 +42,15 @@ pub struct AgentModelExchange {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct AgentToolCallDelta {
-    pub tool_call_index: usize,
-    pub tool_id: ToolId,
-    pub arguments_fragment: String,
+pub enum AgentModelStreamDelta {
+    ToolCall {
+        tool_call_index: usize,
+        tool_id: ToolId,
+        arguments_fragment: String,
+    },
+    Reasoning {
+        text: String,
+    },
 }
 
 pub struct ChatCompletionAgentModelGateway {
@@ -65,24 +70,31 @@ impl AgentModelGateway for ChatCompletionAgentModelGateway {
     async fn generate_with_cancel(
         &self,
         request: &AgentModelRequest,
-        on_tool_call_delta: Option<&mut (dyn FnMut(AgentToolCallDelta) + Send)>,
+        on_delta: Option<&mut (dyn FnMut(AgentModelStreamDelta) + Send)>,
         cancel: watch::Receiver<bool>,
     ) -> Result<AgentModelExchange, ApplicationError> {
         let websocket_session_id =
             provider_state::responses_websocket_session_id(request).map(str::to_string);
-        let dto = encode::encode_chat_completion_request(request, on_tool_call_delta.is_some())?;
-        let exchange = match on_tool_call_delta {
-            Some(on_tool_call_delta) => {
-                let mut forward_delta = |delta: ChatCompletionToolCallDelta| {
-                    let Some(tool) = decode::model_tool_for_alias(&request.tools, &delta.name)
-                    else {
-                        return;
-                    };
-                    on_tool_call_delta(AgentToolCallDelta {
-                        tool_call_index: delta.tool_call_index,
-                        tool_id: tool.tool_id.clone(),
-                        arguments_fragment: delta.arguments_fragment,
-                    });
+        let dto = encode::encode_chat_completion_request(request, on_delta.is_some())?;
+        let exchange = match on_delta {
+            Some(on_delta) => {
+                let mut forward_delta = |delta: ChatCompletionStreamDelta| match delta {
+                    ChatCompletionStreamDelta::Reasoning { text } => {
+                        on_delta(AgentModelStreamDelta::Reasoning { text });
+                    }
+                    ChatCompletionStreamDelta::ToolCall {
+                        tool_call_index,
+                        name,
+                        arguments_fragment,
+                    } => {
+                        if let Some(tool) = decode::model_tool_for_alias(&request.tools, &name) {
+                            on_delta(AgentModelStreamDelta::ToolCall {
+                                tool_call_index,
+                                tool_id: tool.tool_id.clone(),
+                                arguments_fragment,
+                            });
+                        }
+                    }
                 };
                 self.chat_completion_service
                     .generate_exchange_with_cancel(dto, Some(&mut forward_delta), cancel)

@@ -14,8 +14,8 @@ use tokio_tungstenite::tungstenite::protocol::Role;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
-    ChatCompletionToolCallDelta, OPENAI_RESPONSES_WEBSOCKET_TRANSPORT,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
+    ChatCompletionStreamSender, OPENAI_RESPONSES_WEBSOCKET_TRANSPORT,
 };
 
 use super::normalizers;
@@ -90,7 +90,7 @@ struct ResponsesStreamState {
 }
 
 #[derive(Default)]
-struct ResponsesToolCallObserver {
+struct ResponsesDeltaObserver {
     calls: HashMap<usize, ObservedFunctionCall>,
 }
 
@@ -99,11 +99,11 @@ struct ObservedFunctionCall {
     name: String,
 }
 
-impl ResponsesToolCallObserver {
+impl ResponsesDeltaObserver {
     fn handle_event(
         &mut self,
         event: &Value,
-        on_tool_call_delta: &mut dyn FnMut(ChatCompletionToolCallDelta),
+        on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<(), DomainError> {
         match event.get("type").and_then(Value::as_str) {
             Some("response.output_item.added") => {
@@ -130,6 +130,26 @@ impl ResponsesToolCallObserver {
                         name: name.to_string(),
                     },
                 );
+                on_delta(ChatCompletionStreamDelta::ToolCall {
+                    tool_call_index,
+                    name: name.to_string(),
+                    arguments_fragment: String::new(),
+                });
+            }
+            Some(
+                "response.reasoning_text.delta"
+                | "response.reasoning_summary_text.delta"
+                | "response.reasoning.delta",
+            ) => {
+                let text = event
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid_responses_stream("reasoning delta is missing"))?;
+                if !text.is_empty() {
+                    on_delta(ChatCompletionStreamDelta::Reasoning {
+                        text: text.to_string(),
+                    });
+                }
             }
             Some("response.function_call_arguments.delta") => {
                 let output_index = response_output_index(event)?;
@@ -143,7 +163,7 @@ impl ResponsesToolCallObserver {
                     .and_then(Value::as_str)
                     .ok_or_else(|| invalid_responses_stream("arguments delta is missing"))?;
                 if !fragment.is_empty() {
-                    on_tool_call_delta(ChatCompletionToolCallDelta {
+                    on_delta(ChatCompletionStreamDelta::ToolCall {
                         tool_call_index: call.tool_call_index,
                         name: call.name.clone(),
                         arguments_fragment: fragment.to_string(),
@@ -406,13 +426,13 @@ pub(super) async fn generate_stream(
     .await
 }
 
-pub(super) async fn generate_with_tool_call_deltas(
+pub(super) async fn generate_with_deltas(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-    on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+    on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     if let Some(session_id) = provider_session_id(payload)? {
         return generate_persistent_ws(
@@ -421,14 +441,14 @@ pub(super) async fn generate_with_tool_call_deltas(
             endpoint_path,
             payload,
             &session_id,
-            Some(on_tool_call_delta),
+            Some(on_delta),
         )
         .await;
     }
 
     let response =
         send_stream_request(repository, config, endpoint_path, payload, provider_name).await?;
-    let mut observer = ResponsesToolCallObserver::default();
+    let mut observer = ResponsesDeltaObserver::default();
     let mut completed_response = None;
 
     HttpChatCompletionRepository::consume_sse_response(provider_name, response, |payload| {
@@ -436,7 +456,7 @@ pub(super) async fn generate_with_tool_call_deltas(
             return Ok(());
         }
         let event = parse_sse_event(payload, OPERATION_GENERATE_STREAM_HTTP)?;
-        observer.handle_event(&event, on_tool_call_delta)?;
+        observer.handle_event(&event, on_delta)?;
         if let Some(response) = terminal_response_from_event(&event)? {
             completed_response = Some(response.clone());
         }
@@ -523,7 +543,7 @@ async fn generate_persistent_ws(
     endpoint_path: &str,
     payload: &Value,
     session_id: &str,
-    on_tool_call_delta: Option<&mut (dyn FnMut(ChatCompletionToolCallDelta) + Send)>,
+    on_delta: Option<&mut (dyn FnMut(ChatCompletionStreamDelta) + Send)>,
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let pool = &repository.openai_responses_ws_sessions;
     let event = response_create_event(payload)?;
@@ -532,7 +552,7 @@ async fn generate_persistent_ws(
         .await?;
     let result = {
         let mut session = session.lock().await;
-        session.generate(event, on_tool_call_delta).await
+        session.generate(event, on_delta).await
     };
 
     match result {
@@ -554,7 +574,7 @@ impl ResponsesWsSession {
     async fn generate(
         &mut self,
         event: Value,
-        mut on_tool_call_delta: Option<&mut (dyn FnMut(ChatCompletionToolCallDelta) + Send)>,
+        mut on_delta: Option<&mut (dyn FnMut(ChatCompletionStreamDelta) + Send)>,
     ) -> Result<Value, DomainError> {
         self.socket
             .send(Message::Text(event.to_string().into()))
@@ -563,7 +583,7 @@ impl ResponsesWsSession {
                 DomainError::transient(format!("OpenAI Responses WebSocket send failed: {error}"))
             })?;
 
-        let mut observer = ResponsesToolCallObserver::default();
+        let mut observer = ResponsesDeltaObserver::default();
         loop {
             let Some(message) = self.socket.next().await else {
                 return Err(DomainError::transient(
@@ -605,8 +625,8 @@ impl ResponsesWsSession {
                 continue;
             };
 
-            if let Some(on_tool_call_delta) = on_tool_call_delta.as_deref_mut() {
-                observer.handle_event(&event, on_tool_call_delta)?;
+            if let Some(on_delta) = on_delta.as_deref_mut() {
+                observer.handle_event(&event, on_delta)?;
             }
             if let Some(response) = terminal_response_from_event(&event)? {
                 return Ok(response.clone());
@@ -1142,7 +1162,7 @@ mod tests {
 
     #[test]
     fn responses_agent_stream_maps_output_items_to_tool_call_order() {
-        let mut observer = ResponsesToolCallObserver::default();
+        let mut observer = ResponsesDeltaObserver::default();
         let mut deltas = Vec::new();
         for event in [
             json!({
@@ -1150,6 +1170,9 @@ mod tests {
                 "output_index": 0,
                 "item": { "type": "reasoning" }
             }),
+            json!({ "type": "response.reasoning_summary_text.delta", "delta": "Plan " }),
+            json!({ "type": "response.reasoning_summary_text.delta", "delta": "now" }),
+            json!({ "type": "response.output_item.done", "item": { "type": "reasoning", "encrypted_content": "opaque" } }),
             json!({
                 "type": "response.output_item.added",
                 "output_index": 1,
@@ -1168,14 +1191,27 @@ mod tests {
 
         assert_eq!(
             deltas,
-            vec![ChatCompletionToolCallDelta {
-                tool_call_index: 0,
-                name: "workspace_write_file".to_string(),
-                arguments_fragment: "{\"content\":\"draft".to_string(),
-            }]
+            vec![
+                ChatCompletionStreamDelta::Reasoning {
+                    text: "Plan ".to_string()
+                },
+                ChatCompletionStreamDelta::Reasoning {
+                    text: "now".to_string()
+                },
+                ChatCompletionStreamDelta::ToolCall {
+                    tool_call_index: 0,
+                    name: "workspace_write_file".to_string(),
+                    arguments_fragment: String::new(),
+                },
+                ChatCompletionStreamDelta::ToolCall {
+                    tool_call_index: 0,
+                    name: "workspace_write_file".to_string(),
+                    arguments_fragment: "{\"content\":\"draft".to_string(),
+                }
+            ]
         );
 
-        let mut observer = ResponsesToolCallObserver::default();
+        let mut observer = ResponsesDeltaObserver::default();
         assert!(
             observer
                 .handle_event(

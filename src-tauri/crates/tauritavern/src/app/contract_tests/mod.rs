@@ -38,7 +38,7 @@ use tt_application::dto::character_dto::{
 use tt_application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use tt_application::errors::ApplicationError;
 use tt_application::services::agent_model_gateway::{
-    AgentModelExchange, AgentModelGateway, AgentToolCallDelta, decode_chat_completion_response,
+    AgentModelExchange, AgentModelGateway, AgentModelStreamDelta, decode_chat_completion_response,
 };
 use tt_application::services::agent_profile_service::{
     AgentProfileResolveInput, AgentProfileService,
@@ -864,13 +864,10 @@ impl AgentModelGateway for MockAgentModelGateway {
     async fn generate_with_cancel(
         &self,
         request: &AgentModelRequest,
-        on_tool_call_delta: Option<&mut (dyn FnMut(AgentToolCallDelta) + Send)>,
+        on_delta: Option<&mut (dyn FnMut(AgentModelStreamDelta) + Send)>,
         _cancel: watch::Receiver<bool>,
     ) -> Result<AgentModelExchange, ApplicationError> {
-        self.stream_requests
-            .lock()
-            .await
-            .push(on_tool_call_delta.is_some());
+        self.stream_requests.lock().await.push(on_delta.is_some());
         self.requests.lock().await.push((*request).clone());
         let response = self.responses.lock().await.pop_front().ok_or_else(|| {
             ApplicationError::ValidationError(

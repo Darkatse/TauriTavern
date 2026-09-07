@@ -4,8 +4,8 @@ use serde_json::{Value, json};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
-    ChatCompletionToolCallDelta,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
+    ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
@@ -131,17 +131,15 @@ pub(super) async fn generate_stream(
         .await
 }
 
-pub(super) async fn generate_with_tool_call_deltas(
+pub(super) async fn generate_with_deltas(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
-    on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+    on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let response = send_stream_request(repository, config, endpoint_path, payload).await?;
-    let body =
-        gemini::consume_generate_content_stream("Google Gemini", response, on_tool_call_delta)
-            .await?;
+    let body = gemini::consume_generate_content_stream("Google Gemini", response, on_delta).await?;
 
     Ok(normalizers::normalize_gemini_response(body))
 }

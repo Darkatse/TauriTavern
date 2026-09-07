@@ -19,6 +19,7 @@ export function timelineItemShortLabel(item: TimelineItem, tr: AgentSystemTr): s
         fail: 'timelineOpFail',
         cancel: 'timelineOpCancel',
         model: 'timelineOpModel',
+        reasoning: 'timelineReasoning',
         narration: 'timelineOpNarration',
         handoff: 'timelineOpHandoff',
         subagent: 'timelineOpSubAgent',

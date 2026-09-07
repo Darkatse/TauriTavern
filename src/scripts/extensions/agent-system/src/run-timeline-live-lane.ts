@@ -1,10 +1,9 @@
 import type { TimelineItem, TimelineLiveToolId } from './RunTimelineContract';
-import { displayToolName } from './run-tool-labels';
+import { displayToolLabel, displayToolName } from './run-tool-labels';
 
-// Live projection is a non-authoritative preview: a call appears here only
-// while the model is streaming its arguments. Durable journal events remain an
-// independent timeline source. This lane owns subscription, projection, and
-// per-frame publish coalescing.
+// Non-authoritative previews of streaming tool arguments and reasoning.
+// Durable journal events remain independent. This lane owns subscription,
+// projection, and per-frame publish coalescing.
 //
 // Only `run_finish_allowed` calls are presented, so the main lane never shows
 // SubAgent internals. The chat consumer separately selects write_file content.
@@ -16,6 +15,13 @@ const TAIL_MAX_CHARS = 420;
 const TAIL_MAX_LINES = 3;
 
 type LiveStreamField = 'content' | 'oldString' | 'newString';
+
+type LiveLaneReasoning = {
+    toolIds: string[];
+    insertionIndex: number;
+    tail: string;
+    truncated: boolean;
+};
 
 type LiveLaneCall = {
     invocationId: string;
@@ -51,6 +57,7 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
     let runId = '';
     let unsubscribe: TauriTavernHostUnsubscribe | null = null;
     const calls = new Map<string, LiveLaneCall>();
+    const reasoning = new Map<string, LiveLaneReasoning>();
     let insertionCounter = 0;
     let storeVersion = 0;
     let frameScheduled = false;
@@ -70,7 +77,24 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
         let changed: boolean;
         switch (update.type) {
             case 'snapshot':
-                changed = replaceSnapshot(update.calls);
+                changed = replaceSnapshot(update);
+                break;
+            case 'reasoningReplace':
+                changed = upsertReasoning(update.reasoning);
+                break;
+            case 'reasoningAppend': {
+                const current = reasoning.get(update.invocationId);
+                if (!current) return;
+                const preview = streamPreview(current.tail + update.text);
+                reasoning.set(update.invocationId, {
+                    ...current, ...preview, truncated: current.truncated || preview.truncated,
+                    toolIds: [...current.toolIds, ...update.toolIds],
+                });
+                changed = true;
+                break;
+            }
+            case 'reasoningRemove':
+                changed = reasoning.delete(update.invocationId);
                 break;
             case 'replace':
                 changed = upsertCall(update.call);
@@ -89,10 +113,45 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
         publishSoon();
     }
 
-    function replaceSnapshot(snapshot: readonly TauriTavernAgentRunLiveToolCall[]): boolean {
-        let changed = resetCalls();
-        for (const call of snapshot) changed = upsertCall(call) || changed;
+    function replaceSnapshot(snapshot: Extract<TauriTavernAgentRunLiveUpdate, { type: 'snapshot' }>): boolean {
+        let changed = resetProjection();
+        for (const item of snapshot.reasoning) changed = upsertReasoning(item) || changed;
+        for (const call of snapshot.calls) changed = upsertCall(call) || changed;
         return changed;
+    }
+
+    function upsertReasoning(item: TauriTavernAgentRunLiveReasoning): boolean {
+        if (item.invocationExitPolicy !== 'run_finish_allowed') return false;
+        reasoning.set(item.invocationId, {
+            toolIds: item.toolIds,
+            insertionIndex: reasoning.get(item.invocationId)?.insertionIndex ?? insertionCounter++,
+            ...streamPreview(item.text),
+        });
+        return true;
+    }
+
+    function presentReasoning([invocationId, item]: [string, LiveLaneReasoning]): TimelineItem {
+        return {
+            id: `live:reasoning:${invocationId}`,
+            seq: LIVE_SEQ_BASE + item.insertionIndex,
+            runId,
+            type: 'live_reasoning',
+            level: 'info',
+            timestamp: '',
+            icon: 'fa-brain',
+            tone: 'active',
+            kind: 'reasoning',
+            titleKey: 'timelineLiveReasoning',
+            titleParams: {},
+            summary: '',
+            rowSpan: 2,
+            live: {
+                tail: `${item.truncated ? '…' : ''}${item.tail}`,
+                truncated: item.truncated,
+                streamTone: 'reasoning',
+                toolLabel: item.toolIds.map(displayToolLabel).join(' · '),
+            },
+        };
     }
 
     function upsertCall(call: TauriTavernAgentRunLiveToolCall): boolean {
@@ -183,9 +242,10 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
         };
     }
 
-    function resetCalls(): boolean {
-        const changed = calls.size > 0;
+    function resetProjection(): boolean {
+        const changed = calls.size > 0 || reasoning.size > 0;
         calls.clear();
+        reasoning.clear();
         insertionCounter = 0;
         return changed;
     }
@@ -194,7 +254,7 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
         const stop = unsubscribe;
         unsubscribe = null;
         if (stop) void stop();
-        if (resetCalls()) {
+        if (resetProjection()) {
             storeVersion += 1;
             publishSoon();
         }
@@ -202,7 +262,10 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
 
     return {
         version: () => storeVersion,
-        items: () => [...calls.values()].map(presentCall),
+        items: () => [
+            ...[...reasoning.entries()].map(presentReasoning),
+            ...[...calls.values()].map(presentCall),
+        ].sort((a, b) => a.seq - b.seq),
         attach(nextRunId) {
             const normalized = nextRunId.trim();
             if (!normalized) throw new Error('Agent run id is required.');

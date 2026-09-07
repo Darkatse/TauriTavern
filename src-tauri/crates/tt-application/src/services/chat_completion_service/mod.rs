@@ -19,7 +19,7 @@ use tt_ports::generation_background::{GenerationBackgroundOutcome, GenerationBac
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
     ChatCompletionNormalizationReport, ChatCompletionRepository, ChatCompletionSource,
-    ChatCompletionStreamSender, ChatCompletionToolCallDelta,
+    ChatCompletionStreamDelta, ChatCompletionStreamSender,
 };
 use tt_ports::repositories::prompt_cache_repository::{PromptCacheKey, PromptCacheRepository};
 use tt_ports::repositories::secret_repository::SecretRepository;
@@ -412,7 +412,7 @@ impl ChatCompletionService {
     async fn execute_generate(
         &self,
         dto: ChatCompletionGenerateRequestDto,
-        on_tool_call_delta: Option<&mut (dyn FnMut(ChatCompletionToolCallDelta) + Send)>,
+        on_delta: Option<&mut (dyn FnMut(ChatCompletionStreamDelta) + Send)>,
     ) -> Result<ChatCompletionExecution, ApplicationError> {
         let source = self.resolve_generate_source(&dto)?;
         let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
@@ -422,15 +422,15 @@ impl ChatCompletionService {
             .prepare_generate_request(dto, source, additional_parameters)
             .await?;
 
-        let response = match on_tool_call_delta {
-            Some(on_tool_call_delta) => {
+        let response = match on_delta {
+            Some(on_delta) => {
                 self.chat_completion_repository
-                    .generate_with_tool_call_deltas(
+                    .generate_with_deltas(
                         prepared.source,
                         &prepared.config,
                         &prepared.endpoint_path,
                         &prepared.upstream_payload,
-                        on_tool_call_delta,
+                        on_delta,
                     )
                     .await
             }
@@ -496,9 +496,9 @@ impl ChatCompletionService {
     pub(crate) async fn generate_exchange(
         &self,
         dto: ChatCompletionGenerateRequestDto,
-        on_tool_call_delta: Option<&mut (dyn FnMut(ChatCompletionToolCallDelta) + Send)>,
+        on_delta: Option<&mut (dyn FnMut(ChatCompletionStreamDelta) + Send)>,
     ) -> Result<ChatCompletionExchange, ApplicationError> {
-        let execution = self.execute_generate(dto, on_tool_call_delta).await?;
+        let execution = self.execute_generate(dto, on_delta).await?;
         let normalized_response = NormalizedChatCompletionResponse::from_value(execution.body)?;
 
         Ok(ChatCompletionExchange {
@@ -552,10 +552,10 @@ impl ChatCompletionService {
     pub(crate) async fn generate_exchange_with_cancel(
         &self,
         dto: ChatCompletionGenerateRequestDto,
-        on_tool_call_delta: Option<&mut (dyn FnMut(ChatCompletionToolCallDelta) + Send)>,
+        on_delta: Option<&mut (dyn FnMut(ChatCompletionStreamDelta) + Send)>,
         mut cancel: ChatCompletionCancelReceiver,
     ) -> Result<ChatCompletionExchange, ApplicationError> {
-        let generation = self.generate_exchange(dto, on_tool_call_delta);
+        let generation = self.generate_exchange(dto, on_delta);
         tokio::pin!(generation);
 
         tokio::select! {

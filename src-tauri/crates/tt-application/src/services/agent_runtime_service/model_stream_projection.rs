@@ -1,4 +1,4 @@
-//! Non-authoritative live projections of the two workspace edit tools.
+//! Non-authoritative live projections of model reasoning and workspace edit tools.
 //! Canonical arguments continue through the existing final-response path.
 
 use std::collections::BTreeMap;
@@ -7,7 +7,7 @@ use tokio::sync::watch;
 use tt_domain::models::agent::AgentInvocationExitPolicy;
 use tt_domain::models::tool::ToolId;
 
-use crate::services::agent_model_gateway::AgentToolCallDelta;
+use crate::services::agent_model_gateway::AgentModelStreamDelta;
 use crate::services::agent_tools::{WORKSPACE_APPLY_PATCH, WORKSPACE_WRITE_FILE};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,20 +42,30 @@ pub struct AgentRunLiveCall {
     pub projection: ToolCallProjection,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRunLiveReasoning {
+    pub generation: ModelAttemptGeneration,
+    pub invocation_exit_policy: AgentInvocationExitPolicy,
+    pub text: String,
+    pub tool_ids: Vec<ToolId>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AgentRunLiveProjection {
     pub calls: BTreeMap<AgentRunLiveCallKey, AgentRunLiveCall>,
+    pub reasoning: BTreeMap<String, AgentRunLiveReasoning>,
 }
 
-pub(super) struct ToolCallProjector {
+pub(super) struct ModelStreamProjector {
     invocation_id: String,
     invocation_exit_policy: AgentInvocationExitPolicy,
     generation: ModelAttemptGeneration,
     sender: watch::Sender<AgentRunLiveProjection>,
     calls: BTreeMap<usize, IncrementalToolCall>,
+    tool_ids: Vec<ToolId>,
 }
 
-impl ToolCallProjector {
+impl ModelStreamProjector {
     pub(super) fn new(
         invocation_id: impl Into<String>,
         invocation_exit_policy: AgentInvocationExitPolicy,
@@ -69,22 +79,61 @@ impl ToolCallProjector {
             generation: ModelAttemptGeneration { round, attempt },
             sender,
             calls: BTreeMap::new(),
+            tool_ids: Vec::new(),
         }
     }
 
-    pub(super) fn observe(&mut self, delta: AgentToolCallDelta) {
-        let Some(kind) = ProjectionKind::for_tool(&delta.tool_id) else {
+    pub(super) fn observe(&mut self, delta: AgentModelStreamDelta) {
+        let (tool_call_index, tool_id, arguments_fragment) = match delta {
+            AgentModelStreamDelta::Reasoning { text } => {
+                if !text.is_empty() {
+                    self.sender.send_modify(|state| {
+                        let reasoning = state
+                            .reasoning
+                            .entry(self.invocation_id.clone())
+                            .or_insert_with(|| AgentRunLiveReasoning {
+                                generation: self.generation,
+                                invocation_exit_policy: self.invocation_exit_policy,
+                                text: String::new(),
+                                tool_ids: self.tool_ids.clone(),
+                            });
+                        reasoning.text.push_str(&text);
+                    });
+                }
+                return;
+            }
+            AgentModelStreamDelta::ToolCall {
+                tool_call_index,
+                tool_id,
+                arguments_fragment,
+            } => (tool_call_index, tool_id, arguments_fragment),
+        };
+        if !self.tool_ids.contains(&tool_id) {
+            self.tool_ids.push(tool_id.clone());
+            self.sender.send_if_modified(|state| {
+                let Some(reasoning) = state
+                    .reasoning
+                    .get_mut(&self.invocation_id)
+                    .filter(|reasoning| reasoning.generation == self.generation)
+                else {
+                    return false;
+                };
+                reasoning.tool_ids.push(tool_id.clone());
+                true
+            });
+        }
+        let Some(kind) = ProjectionKind::for_tool(&tool_id) else {
             return;
         };
         let parsed = {
             let call = self
                 .calls
-                .entry(delta.tool_call_index)
+                .entry(tool_call_index)
                 .or_insert_with(|| IncrementalToolCall::new(kind));
             if call.disabled {
                 return;
             }
-            match call.scanner.push_fragment(&delta.arguments_fragment) {
+            match call.scanner.push_fragment(&arguments_fragment) {
                 Ok(suffix) if !suffix.is_empty() => Ok(Some(suffix)),
                 Ok(_) => Ok(None),
                 Err(()) => {
@@ -97,12 +146,12 @@ impl ToolCallProjector {
             Ok(Some(parsed)) => parsed,
             Ok(None) => return,
             Err(()) => {
-                self.remove_generation_call(delta.tool_call_index);
+                self.remove_generation_call(tool_call_index);
                 return;
             }
         };
 
-        let key = self.key(delta.tool_call_index);
+        let key = self.key(tool_call_index);
         let generation = self.generation;
         let invocation_exit_policy = self.invocation_exit_policy;
         self.sender.send_if_modified(|state| {
@@ -116,7 +165,22 @@ impl ToolCallProjector {
         });
     }
 
+    pub(super) fn clear_reasoning(&self) {
+        self.sender.send_if_modified(|state| {
+            if state
+                .reasoning
+                .get(&self.invocation_id)
+                .map(|reasoning| reasoning.generation)
+                != Some(self.generation)
+            {
+                return false;
+            }
+            state.reasoning.remove(&self.invocation_id).is_some()
+        });
+    }
+
     pub(super) fn clear(&self) {
+        self.clear_reasoning();
         let invocation_id = self.invocation_id.as_str();
         let generation = self.generation;
         self.sender.send_if_modified(|state| {
@@ -165,11 +229,12 @@ pub(super) fn clear_live_invocation(
     invocation_id: &str,
 ) {
     sender.send_if_modified(|state| {
+        let removed_reasoning = state.reasoning.remove(invocation_id).is_some();
         let before = state.calls.len();
         state
             .calls
             .retain(|key, _| key.invocation_id != invocation_id);
-        state.calls.len() != before
+        removed_reasoning || state.calls.len() != before
     });
 }
 
@@ -564,7 +629,7 @@ mod tests {
     #[test]
     fn unsupported_shape_removes_only_that_preview() {
         let (sender, receiver) = watch::channel(AgentRunLiveProjection::default());
-        let mut projector = ToolCallProjector::new(
+        let mut projector = ModelStreamProjector::new(
             "inv_a",
             AgentInvocationExitPolicy::RunFinishAllowed,
             1,
@@ -572,14 +637,14 @@ mod tests {
             sender,
         );
         let tool_id = ToolId::builtin(WORKSPACE_WRITE_FILE).unwrap();
-        projector.observe(AgentToolCallDelta {
+        projector.observe(AgentModelStreamDelta::ToolCall {
             tool_call_index: 0,
             tool_id: tool_id.clone(),
             arguments_fragment: r#"{"path":"output/a.md","content":"visible","extra":"#.to_string(),
         });
         assert_eq!(receiver.borrow().calls.len(), 1);
 
-        projector.observe(AgentToolCallDelta {
+        projector.observe(AgentModelStreamDelta::ToolCall {
             tool_call_index: 0,
             tool_id,
             arguments_fragment: r#"{"nested":true}}"#.to_string(),
@@ -588,17 +653,45 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_keeps_same_named_tools_from_different_providers() {
+        let (sender, receiver) = watch::channel(AgentRunLiveProjection::default());
+        let mut projector = ModelStreamProjector::new(
+            "inv",
+            AgentInvocationExitPolicy::RunFinishAllowed,
+            1,
+            1,
+            sender,
+        );
+        let tools = [
+            ToolId::parse("mcp/a:search").unwrap(),
+            ToolId::parse("mcp/b:search").unwrap(),
+        ];
+        for (tool_call_index, tool_id) in [(0, &tools[0]), (1, &tools[1]), (0, &tools[0])] {
+            projector.observe(AgentModelStreamDelta::ToolCall {
+                tool_call_index,
+                tool_id: tool_id.clone(),
+                arguments_fragment: String::new(),
+            });
+        }
+        assert!(receiver.borrow().reasoning.is_empty());
+        projector.observe(AgentModelStreamDelta::Reasoning {
+            text: "plan".to_string(),
+        });
+        assert_eq!(receiver.borrow().reasoning["inv"].tool_ids, tools);
+    }
+
+    #[test]
     fn cleanup_is_scoped_to_one_attempt_or_durable_call() {
         let (sender, receiver) = watch::channel(AgentRunLiveProjection::default());
         let tool_id = ToolId::builtin(WORKSPACE_WRITE_FILE).unwrap();
-        let mut first = ToolCallProjector::new(
+        let mut first = ModelStreamProjector::new(
             "inv_a",
             AgentInvocationExitPolicy::RunFinishAllowed,
             1,
             1,
             sender.clone(),
         );
-        let mut sibling = ToolCallProjector::new(
+        let mut sibling = ModelStreamProjector::new(
             "inv_b",
             AgentInvocationExitPolicy::TaskReturnRequired,
             1,
@@ -606,14 +699,37 @@ mod tests {
             sender.clone(),
         );
         for projector in [&mut first, &mut sibling] {
-            projector.observe(AgentToolCallDelta {
+            projector.observe(AgentModelStreamDelta::Reasoning {
+                text: "Plan ".to_string(),
+            });
+            projector.observe(AgentModelStreamDelta::Reasoning {
+                text: "now".to_string(),
+            });
+            projector.observe(AgentModelStreamDelta::ToolCall {
                 tool_call_index: 0,
                 tool_id: tool_id.clone(),
                 arguments_fragment: r#"{"content":"body"}"#.to_string(),
             });
         }
 
+        assert_eq!(receiver.borrow().reasoning["inv_a"].text, "Plan now");
+        let read = AgentModelStreamDelta::ToolCall {
+            tool_call_index: 1,
+            tool_id: ToolId::builtin("workspace.read_file").unwrap(),
+            arguments_fragment: String::new(),
+        };
+        first.observe(read);
+        assert_eq!(
+            receiver.borrow().reasoning["inv_a"].tool_ids,
+            [
+                ToolId::builtin(WORKSPACE_WRITE_FILE).unwrap(),
+                ToolId::builtin("workspace.read_file").unwrap()
+            ]
+        );
+
         first.clear();
+        assert!(!receiver.borrow().reasoning.contains_key("inv_a"));
+        assert_eq!(receiver.borrow().reasoning["inv_b"].text, "Plan now");
         assert_eq!(receiver.borrow().calls.len(), 1);
         assert!(
             receiver
@@ -623,20 +739,28 @@ mod tests {
                 .all(|key| key.invocation_id == "inv_b")
         );
 
-        let mut retry = ToolCallProjector::new(
+        let mut retry = ModelStreamProjector::new(
             "inv_a",
             AgentInvocationExitPolicy::RunFinishAllowed,
             1,
             2,
             sender.clone(),
         );
-        retry.observe(AgentToolCallDelta {
+        retry.observe(AgentModelStreamDelta::ToolCall {
             tool_call_index: 0,
             tool_id,
             arguments_fragment: r#"{"content":"retry"}"#.to_string(),
         });
+        retry.observe(AgentModelStreamDelta::Reasoning {
+            text: "Retry".to_string(),
+        });
         first.clear();
         let state = receiver.borrow();
+        assert_eq!(state.reasoning["inv_a"].text, "Retry");
+        assert_eq!(
+            state.reasoning["inv_a"].tool_ids,
+            [ToolId::builtin(WORKSPACE_WRITE_FILE).unwrap()]
+        );
         assert_eq!(state.calls.len(), 2);
         assert!(
             state.calls.iter().any(|(key, call)| {
@@ -645,7 +769,11 @@ mod tests {
         );
         drop(state);
 
-        remove_live_tool_call(&sender, "inv_b", 0);
+        retry.clear_reasoning();
+        assert!(!receiver.borrow().reasoning.contains_key("inv_a"));
+        assert_eq!(receiver.borrow().calls.len(), 2);
+        clear_live_invocation(&sender, "inv_b");
+        assert!(receiver.borrow().reasoning.is_empty());
         assert_eq!(receiver.borrow().calls.len(), 1);
         remove_live_tool_call(&sender, "inv_a", 0);
         assert!(receiver.borrow().calls.is_empty());
@@ -654,7 +782,7 @@ mod tests {
     fn assert_every_split(tool_name: &str, arguments: &str, expected: ToolCallProjection) {
         for split in (0..=arguments.len()).filter(|split| arguments.is_char_boundary(*split)) {
             let (sender, receiver) = watch::channel(AgentRunLiveProjection::default());
-            let mut projector = ToolCallProjector::new(
+            let mut projector = ModelStreamProjector::new(
                 "inv",
                 AgentInvocationExitPolicy::RunFinishAllowed,
                 2,
@@ -664,7 +792,7 @@ mod tests {
             let tool_id = ToolId::builtin(tool_name).unwrap();
             for fragment in [&arguments[..split], &arguments[split..]] {
                 if !fragment.is_empty() {
-                    projector.observe(AgentToolCallDelta {
+                    projector.observe(AgentModelStreamDelta::ToolCall {
                         tool_call_index: 0,
                         tool_id: tool_id.clone(),
                         arguments_fragment: fragment.to_string(),

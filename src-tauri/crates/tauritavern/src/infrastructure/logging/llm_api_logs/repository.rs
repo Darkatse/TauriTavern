@@ -14,8 +14,8 @@ use super::types::{LlmApiLogMeta, LlmApiRawKind};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamSender,
-    ChatCompletionToolCallDelta,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamDelta,
+    ChatCompletionStreamSender,
 };
 
 pub struct LoggingChatCompletionRepository {
@@ -268,24 +268,18 @@ impl ChatCompletionRepository for LoggingChatCompletionRepository {
         result
     }
 
-    async fn generate_with_tool_call_deltas(
+    async fn generate_with_deltas(
         &self,
         source: ChatCompletionSource,
         config: &ChatCompletionApiConfig,
         endpoint_path: &str,
         payload: &Value,
-        on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+        on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
     ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
         let log = JsonGenerationLog::start(source, config, endpoint_path, payload, true);
         let result = self
             .inner
-            .generate_with_tool_call_deltas(
-                source,
-                config,
-                endpoint_path,
-                payload,
-                on_tool_call_delta,
-            )
+            .generate_with_deltas(source, config, endpoint_path, payload, on_delta)
             .await;
         self.record_json_generation(log, &result).await;
         result

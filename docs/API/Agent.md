@@ -34,7 +34,7 @@ const unsubscribe = agent.subscribe(run.runId, event => {
 | `cancel(runId)` | 请求取消，返回 Run handle；终态通过事件观察 |
 | `submitGuidance({ runId, text, clientGuidanceId? })` | 向活跃 Run 补充指令，返回 `guidanceId` 与 `status: 'queued'` |
 | `subscribe(runId, handler, options?)` | 订阅持久事件，返回可重复调用的 unsubscribe |
-| `subscribeLiveProjection(runId, handler, options?)` | 订阅当前工具参数预览，返回 unsubscribe |
+| `subscribeLiveProjection(runId, handler, options?)` | 订阅当前工具参数和推理文字预览，返回 unsubscribe |
 
 补充指令在下一次前台模型请求前加入上下文，已经发出的请求保持原样。待处理指令若因 Run 结束而未使用，会记录丢弃事件。该接口不创建聊天消息。
 

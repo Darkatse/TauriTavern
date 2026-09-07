@@ -4,8 +4,8 @@ use serde_json::{Map, Value};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
-    ChatCompletionToolCallDelta,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
+    ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
@@ -67,7 +67,14 @@ pub(super) async fn generate(
     )
     .await?;
 
-    let body = read_upstream_json_body(provider_name, "generate", response).await?;
+    let mut body = read_upstream_json_body(provider_name, "generate", response).await?;
+    if let Some(choices) = body.get_mut("choices").and_then(Value::as_array_mut) {
+        for choice in choices {
+            if let Some(message) = choice.get_mut("message").and_then(Value::as_object_mut) {
+                normalize_message_reasoning(message)?;
+            }
+        }
+    }
 
     if super::payload_contains_cache_control(payload) {
         let model = payload.get("model").and_then(Value::as_str);
@@ -109,20 +116,20 @@ pub(super) async fn generate_stream(
     }
 }
 
-pub(super) async fn generate_with_tool_call_deltas(
+pub(super) async fn generate_with_deltas(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-    on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+    on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let response =
         send_stream_request(repository, config, endpoint_path, payload, provider_name).await?;
     let mut accumulator = OpenAiChatAccumulator::default();
 
     HttpChatCompletionRepository::consume_sse_response(provider_name, response, |event| {
-        accumulator.apply_event(event, on_tool_call_delta)
+        accumulator.apply_event(event, on_delta)
     })
     .await?;
 
@@ -182,20 +189,21 @@ impl OpenAiChatAccumulator {
     fn apply_event(
         &mut self,
         raw_event: &[u8],
-        on_tool_call_delta: &mut dyn FnMut(ChatCompletionToolCallDelta),
+        on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<(), DomainError> {
         if raw_event == b"[DONE]" {
             return Ok(());
         }
 
-        let mut event = serde_json::from_slice::<Value>(raw_event)
-            .map_err(|error| invalid_openai_stream(format!("event is not valid JSON: {error}")))?;
+        let mut event = serde_json::from_slice::<Value>(raw_event).map_err(|error| {
+            invalid_openai_response(format!("event is not valid JSON: {error}"))
+        })?;
         let event = event
             .as_object_mut()
-            .ok_or_else(|| invalid_openai_stream("event must be an object"))?;
+            .ok_or_else(|| invalid_openai_response("event must be an object"))?;
 
         if let Some(error) = event.get("error").filter(|error| !error.is_null()) {
-            return Err(invalid_openai_stream(format!(
+            return Err(invalid_openai_response(format!(
                 "upstream returned an error event: {error}"
             )));
         }
@@ -223,21 +231,23 @@ impl OpenAiChatAccumulator {
         let choices = event
             .get_mut("choices")
             .and_then(Value::as_array_mut)
-            .ok_or_else(|| invalid_openai_stream("event is missing choices"))?;
+            .ok_or_else(|| invalid_openai_response("event is missing choices"))?;
         if choices.is_empty() {
             return Ok(());
         }
         if choices.len() != 1 {
-            return Err(invalid_openai_stream(
+            return Err(invalid_openai_response(
                 "Agent stream must contain exactly one choice",
             ));
         }
 
         let choice = choices[0]
             .as_object_mut()
-            .ok_or_else(|| invalid_openai_stream("choice must be an object"))?;
+            .ok_or_else(|| invalid_openai_response("choice must be an object"))?;
         if choice.get("index").and_then(Value::as_u64) != Some(0) {
-            return Err(invalid_openai_stream("Agent stream choice index must be 0"));
+            return Err(invalid_openai_response(
+                "Agent stream choice index must be 0",
+            ));
         }
         if let Some(value) = take_optional_string(choice, "finish_reason")? {
             self.finish_reason = Some(value);
@@ -246,24 +256,28 @@ impl OpenAiChatAccumulator {
         let delta = choice
             .get_mut("delta")
             .and_then(Value::as_object_mut)
-            .ok_or_else(|| invalid_openai_stream("choice is missing delta"))?;
+            .ok_or_else(|| invalid_openai_response("choice is missing delta"))?;
         if let Some(value) = take_optional_string(delta, "content")? {
             append_string_fragment(&mut self.content, value);
         }
         if let Some(value) = take_optional_string(delta, "refusal")? {
             append_string_fragment(&mut self.refusal, value);
         }
+        normalize_message_reasoning(delta)?;
         if let Some(value) = take_optional_string(delta, "reasoning")? {
             append_string_fragment(&mut self.reasoning, value);
         }
-        if let Some(value) = take_optional_string(delta, "reasoning_content")? {
-            append_string_fragment(&mut self.reasoning_content, value);
+        if let Some(text) = take_optional_string(delta, "reasoning_content")?
+            && !text.is_empty()
+        {
+            self.reasoning_content.push_str(&text);
+            on_delta(ChatCompletionStreamDelta::Reasoning { text });
         }
         match delta.remove("reasoning_details") {
             None | Some(Value::Null) => {}
             Some(Value::Array(details)) => self.reasoning_details.extend(details),
             Some(_) => {
-                return Err(invalid_openai_stream(
+                return Err(invalid_openai_response(
                     "delta.reasoning_details must be an array",
                 ));
             }
@@ -272,9 +286,9 @@ impl OpenAiChatAccumulator {
         if let Some(tool_calls) = delta.get_mut("tool_calls") {
             let tool_calls = tool_calls
                 .as_array_mut()
-                .ok_or_else(|| invalid_openai_stream("delta.tool_calls must be an array"))?;
+                .ok_or_else(|| invalid_openai_response("delta.tool_calls must be an array"))?;
             for tool_call in tool_calls {
-                self.apply_tool_call_delta(tool_call, on_tool_call_delta)?;
+                self.apply_tool_call_delta(tool_call, on_delta)?;
             }
         }
 
@@ -284,11 +298,11 @@ impl OpenAiChatAccumulator {
     fn apply_tool_call_delta(
         &mut self,
         raw_delta: &mut Value,
-        on_tool_call_delta: &mut dyn FnMut(ChatCompletionToolCallDelta),
+        on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<(), DomainError> {
         let delta = raw_delta
             .as_object_mut()
-            .ok_or_else(|| invalid_openai_stream("tool call delta must be an object"))?;
+            .ok_or_else(|| invalid_openai_response("tool call delta must be an object"))?;
         let explicit_index = delta
             .get("index")
             .and_then(Value::as_u64)
@@ -301,7 +315,7 @@ impl OpenAiChatAccumulator {
                     .and_then(Value::as_str)
                     .filter(|id| !id.is_empty())
                     .ok_or_else(|| {
-                        invalid_openai_stream("tool call delta is missing index and id")
+                        invalid_openai_response("tool call delta is missing index and id")
                     })?;
                 self.tool_calls
                     .iter()
@@ -313,7 +327,7 @@ impl OpenAiChatAccumulator {
         if tool_call_index == self.tool_calls.len() {
             self.tool_calls.push(OpenAiToolCallAccumulator::default());
         } else if tool_call_index > self.tool_calls.len() {
-            return Err(invalid_openai_stream(format!(
+            return Err(invalid_openai_response(format!(
                 "tool call index {tool_call_index} skipped the next index {}",
                 self.tool_calls.len()
             )));
@@ -336,7 +350,7 @@ impl OpenAiChatAccumulator {
             None | Some(Value::Null) => None,
             Some(Value::Object(function)) => Some(function),
             Some(_) => {
-                return Err(invalid_openai_stream(
+                return Err(invalid_openai_response(
                     "tool call delta function must be an object",
                 ));
             }
@@ -349,8 +363,8 @@ impl OpenAiChatAccumulator {
             if let Some(name) = take_optional_string(function, "name")? {
                 state.name = name;
             }
-            if !state.name.is_empty() && !state.arguments.is_empty() {
-                on_tool_call_delta(ChatCompletionToolCallDelta {
+            if !state.name.is_empty() {
+                on_delta(ChatCompletionStreamDelta::ToolCall {
                     tool_call_index,
                     name: state.name.clone(),
                     arguments_fragment: state.arguments.clone(),
@@ -367,7 +381,7 @@ impl OpenAiChatAccumulator {
         if state.name.is_empty() {
             return Ok(());
         }
-        on_tool_call_delta(ChatCompletionToolCallDelta {
+        on_delta(ChatCompletionStreamDelta::ToolCall {
             tool_call_index,
             name: state.name.clone(),
             arguments_fragment,
@@ -378,9 +392,9 @@ impl OpenAiChatAccumulator {
     fn finish(self) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
         let finish_reason = self
             .finish_reason
-            .ok_or_else(|| invalid_openai_stream("ended without a finish reason"))?;
+            .ok_or_else(|| invalid_openai_response("ended without a finish reason"))?;
         if finish_reason == "tool_calls" && self.tool_calls.is_empty() {
-            return Err(invalid_openai_stream(
+            return Err(invalid_openai_response(
                 "ended with tool_calls finish reason but no tool calls",
             ));
         }
@@ -480,6 +494,51 @@ impl OpenAiChatAccumulator {
     }
 }
 
+// A message and a stream delta use the same visible fields. Normalize before
+// accumulation so the final reasoning is exactly what the live observer saw.
+fn normalize_message_reasoning(message: &mut Map<String, Value>) -> Result<(), DomainError> {
+    for field in ["reasoning_content", "reasoning"] {
+        match message.get(field) {
+            Some(Value::String(text)) if !text.is_empty() => {
+                if field != "reasoning_content" {
+                    message.insert("reasoning_content".to_string(), Value::String(text.clone()));
+                }
+                return Ok(());
+            }
+            None | Some(Value::Null | Value::String(_)) => {}
+            Some(_) => {
+                return Err(invalid_openai_response(format!(
+                    "field `{field}` must be a string or null"
+                )));
+            }
+        }
+    }
+    let details = match message.get("reasoning_details") {
+        None | Some(Value::Null) => return Ok(()),
+        Some(Value::Array(details)) => details,
+        Some(_) => {
+            return Err(invalid_openai_response(
+                "reasoning_details must be an array",
+            ));
+        }
+    };
+    let mut text = String::new();
+    for detail in details {
+        let field = match detail.get("type").and_then(Value::as_str) {
+            Some("reasoning.text") => "text",
+            Some("reasoning.summary") => "summary",
+            _ => continue,
+        };
+        if let Some(fragment) = detail.get(field).and_then(Value::as_str) {
+            text.push_str(fragment);
+        }
+    }
+    if !text.is_empty() {
+        message.insert("reasoning_content".to_string(), Value::String(text));
+    }
+    Ok(())
+}
+
 fn take_optional_string(
     object: &mut Map<String, Value>,
     key: &str,
@@ -487,7 +546,7 @@ fn take_optional_string(
     match object.remove(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(value)) => Ok(Some(value)),
-        Some(_) => Err(invalid_openai_stream(format!(
+        Some(_) => Err(invalid_openai_response(format!(
             "field `{key}` must be a string or null"
         ))),
     }
@@ -501,9 +560,9 @@ fn append_string_fragment(target: &mut String, fragment: String) {
     }
 }
 
-fn invalid_openai_stream(message: impl std::fmt::Display) -> DomainError {
+fn invalid_openai_response(message: impl std::fmt::Display) -> DomainError {
     DomainError::transient(format!(
-        "model.upstream_invalid_response: OpenAI Chat stream {message}"
+        "model.upstream_invalid_response: OpenAI Chat response {message}"
     ))
 }
 
@@ -511,8 +570,78 @@ fn invalid_openai_stream(message: impl std::fmt::Display) -> DomainError {
 mod tests {
     use serde_json::json;
 
-    use super::OpenAiChatAccumulator;
-    use tt_ports::repositories::chat_completion_repository::ChatCompletionToolCallDelta;
+    use super::{OpenAiChatAccumulator, normalize_message_reasoning};
+    use tt_ports::repositories::chat_completion_repository::ChatCompletionStreamDelta;
+
+    #[test]
+    fn reasoning_aliases_and_details_expose_text_once_without_opaque_state() {
+        let mut accumulator = OpenAiChatAccumulator::default();
+        let mut streamed = String::new();
+        for delta in [
+            json!({"reasoning": "plan", "reasoning_details": [{"type": "reasoning.text", "text": "plan"}]}),
+            json!({"reasoning_details": [
+                {"type": "reasoning.text", "text": " then"},
+                {"type": "reasoning.summary", "summary": " act"},
+                {"type": "reasoning.encrypted", "data": "opaque", "text": "not visible"}
+            ]}),
+        ] {
+            let event = json!({"choices": [{"index": 0, "delta": delta}]});
+            accumulator
+                .apply_event(&serde_json::to_vec(&event).unwrap(), &mut |delta| {
+                    if let ChatCompletionStreamDelta::Reasoning { text } = delta {
+                        streamed.push_str(&text);
+                    }
+                })
+                .unwrap();
+        }
+        accumulator
+            .apply_event(
+                br#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+                &mut |_| {},
+            )
+            .unwrap();
+        let response = accumulator.finish().unwrap().body;
+        assert_eq!(streamed, "plan then act");
+        assert_eq!(
+            response["choices"][0]["message"]["reasoning_content"],
+            streamed
+        );
+        assert_eq!(
+            response["choices"][0]["message"]["reasoning_details"][3]["data"],
+            "opaque"
+        );
+    }
+
+    #[test]
+    fn complete_messages_normalize_the_same_visible_fields_and_preserve_continuation() {
+        for (mut message, expected) in [
+            (
+                json!({"reasoning_content": "canonical", "reasoning": "alias"}),
+                json!("canonical"),
+            ),
+            (json!({"reasoning": "plan"}), json!("plan")),
+            (
+                json!({"reasoning_details": [
+                    {"type": "reasoning.summary", "summary": "plan"},
+                    {"type": "reasoning.encrypted", "data": "opaque"}
+                ]}),
+                json!("plan"),
+            ),
+            (
+                json!({"reasoning_details": [{"type": "reasoning.encrypted", "data": "opaque", "text": "not visible"}]}),
+                json!(null),
+            ),
+        ] {
+            let original = message.clone();
+            normalize_message_reasoning(message.as_object_mut().unwrap()).unwrap();
+            assert_eq!(message["reasoning_content"], expected);
+            assert_eq!(message["reasoning"], original["reasoning"]);
+            assert_eq!(message["reasoning_details"], original["reasoning_details"]);
+        }
+        let mut invalid =
+            json!({"reasoning_content": 42, "reasoning": "must not mask invalid data"});
+        assert!(normalize_message_reasoning(invalid.as_object_mut().unwrap()).is_err());
+    }
 
     #[test]
     fn openai_chat_stream_projects_tool_fragments_and_builds_agent_final() {
@@ -527,7 +656,7 @@ mod tests {
             b"[DONE]".as_slice(),
         ];
         let mut accumulator = OpenAiChatAccumulator::default();
-        let mut deltas = Vec::<ChatCompletionToolCallDelta>::new();
+        let mut deltas = Vec::<ChatCompletionStreamDelta>::new();
         for event in events {
             accumulator
                 .apply_event(event, &mut |delta| deltas.push(delta))
@@ -537,23 +666,34 @@ mod tests {
         assert_eq!(
             deltas,
             vec![
-                ChatCompletionToolCallDelta {
+                ChatCompletionStreamDelta::Reasoning {
+                    text: "Need ".to_string()
+                },
+                ChatCompletionStreamDelta::Reasoning {
+                    text: "files.".to_string()
+                },
+                ChatCompletionStreamDelta::ToolCall {
                     tool_call_index: 0,
                     name: "workspace_write_file".to_string(),
                     arguments_fragment: "{\"path\":\"a.md\",\"content\":\"hel".to_string(),
                 },
-                ChatCompletionToolCallDelta {
+                ChatCompletionStreamDelta::ToolCall {
+                    tool_call_index: 1,
+                    name: "workspace_apply_patch".to_string(),
+                    arguments_fragment: String::new(),
+                },
+                ChatCompletionStreamDelta::ToolCall {
                     tool_call_index: 1,
                     name: "workspace_apply_patch".to_string(),
                     arguments_fragment:
                         "{\"path\":\"b.md\",\"old_string\":\"x\",\"new_string\":\"n".to_string(),
                 },
-                ChatCompletionToolCallDelta {
+                ChatCompletionStreamDelta::ToolCall {
                     tool_call_index: 0,
                     name: "workspace_write_file".to_string(),
                     arguments_fragment: "lo\"}".to_string(),
                 },
-                ChatCompletionToolCallDelta {
+                ChatCompletionStreamDelta::ToolCall {
                     tool_call_index: 1,
                     name: "workspace_apply_patch".to_string(),
                     arguments_fragment: "ew\"}".to_string(),

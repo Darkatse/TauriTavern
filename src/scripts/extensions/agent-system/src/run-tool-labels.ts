@@ -32,6 +32,22 @@ export function displayToolName(name: unknown): string {
     return key ? tr(key) : readableUnknownToolName(normalized);
 }
 
+export function displayToolLabel(toolId: string): string {
+    const name = nativeToolName(toolId);
+    return toolId.startsWith('builtin:')
+        ? displayToolName(name)
+        : `${readableUnknownToolName(name)} [${toolId}]`;
+}
+
+export function nativeToolName(toolId: unknown): string {
+    if (typeof toolId !== 'string') throw new TypeError('a canonical toolId is required');
+    const separator = toolId.indexOf(':');
+    if (separator <= 0 || separator === toolId.length - 1) {
+        throw new TypeError('a canonical toolId is required');
+    }
+    return toolId.slice(separator + 1);
+}
+
 function readableUnknownToolName(name: string): string {
     return name
         .slice(name.lastIndexOf('.') + 1)

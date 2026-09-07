@@ -22,8 +22,8 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::bedrock_model::{BedrockModelFamily, BedrockModelSpec, extract_provider};
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
-    ChatCompletionToolCallDelta,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
+    ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
@@ -314,12 +314,12 @@ pub(super) async fn generate_stream(
     forward_eventstream_response(response, sender, cancel, stream_mode).await
 }
 
-pub(super) async fn generate_with_tool_call_deltas(
+pub(super) async fn generate_with_deltas(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
-    on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+    on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let stream_mode = stream_mode_from_endpoint(
         endpoint_path,
@@ -338,7 +338,7 @@ pub(super) async fn generate_with_tool_call_deltas(
     let mut accumulator = claude::ClaudeMessageAccumulator::default();
     let mut completed = None;
     consume_eventstream_response(response, &stream_mode, |event| {
-        if let Some(message) = accumulator.apply_event(event.as_bytes(), on_tool_call_delta)? {
+        if let Some(message) = accumulator.apply_event(event.as_bytes(), on_delta)? {
             completed = Some(message);
         }
         Ok(())

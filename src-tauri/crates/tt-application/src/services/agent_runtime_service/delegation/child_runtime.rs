@@ -9,6 +9,7 @@ use crate::services::agent_profile_service::{
     AgentProfileResolveInput, ensure_profile_model_configured, materialize_agent_system_prompt,
 };
 use crate::services::agent_runtime_service::commit_ledger::RunCommitLedger;
+use crate::services::agent_runtime_service::model_stream_projection::clear_live_invocation;
 use crate::services::agent_runtime_service::prompt_snapshot::{
     frozen_macros_from_snapshot, prepare_agent_tool_request, request_from_prompt_snapshot,
     request_summary,
@@ -16,7 +17,6 @@ use crate::services::agent_runtime_service::prompt_snapshot::{
 use crate::services::agent_runtime_service::skill_scope::{
     skill_event_summary, skill_scope_order_for_profile,
 };
-use crate::services::agent_runtime_service::tool_call_projection::clear_live_invocation;
 use crate::services::agent_runtime_service::tool_snapshot::tool_snapshot_summary;
 use crate::services::agent_runtime_service::{
     AgentCancelReceiver, AgentRuntimeService, PreparedInvocation,

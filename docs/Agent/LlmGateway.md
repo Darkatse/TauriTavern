@@ -31,9 +31,9 @@ OpenAI Responses 有两种续接方式：
 
 ## 流式调用
 
-Profile 的 `run.stream` 控制当前 Invocation 的默认行为，启动参数 `options.stream` 可覆盖整次 Run。当前流式工具参数投影支持 OpenAI Chat-compatible 和 Custom OpenAI Responses 路径。
+Profile 的 `run.stream` 控制当前 Invocation 的默认行为，启动参数 `options.stream` 可覆盖整次 Run。支持的 provider 流式路由把工具参数与可见推理文字通过同一增量通道交给运行时。
 
-流式过程供前端显示正在写入或修改的内容，最终完整响应仍进入相同的工具执行路径。不支持的流式路由会返回错误。
+Timeline 实时预览正在写入、修改的内容，以及模型提供的推理文字或摘要；签名和加密内容不进入预览。同轮已返回的工具保留完整 `ToolId`，前端复用现有名称映射生成标题前缀，并保留 MCP 身份以区分同名工具；尚未返回名称时仅显示“正在思考”。预览按 Invocation 和模型尝试隔离，推理在模型返回或尝试失败时清除。OpenAI 兼容格式的流式与完整响应共用推理字段归一化规则，最终完整响应仍进入相同的存储与工具执行路径。不支持的流式路由会返回错误。
 
 ## 修改入口
 

@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
 use tt_application::dto::agent_dto::{
-    AgentRunLiveFieldDto, AgentRunLiveToolCallDto, AgentRunLiveUpdateDto,
+    AgentRunLiveFieldDto, AgentRunLiveReasoningDto, AgentRunLiveToolCallDto, AgentRunLiveUpdateDto,
 };
 use tt_application::services::agent_runtime_service::{
-    AgentRunLiveCall, AgentRunLiveCallKey, AgentRunLiveProjection, ModelAttemptGeneration,
-    ToolCallProjection,
+    AgentRunLiveCall, AgentRunLiveCallKey, AgentRunLiveProjection, AgentRunLiveReasoning,
+    ModelAttemptGeneration, ToolCallProjection,
 };
 use tt_domain::text_metrics::TextMetrics;
 
@@ -14,6 +14,23 @@ use crate::presentation::errors::CommandError;
 #[derive(Default)]
 pub(super) struct AgentRunLivePresenter {
     calls: BTreeMap<AgentRunLiveCallKey, PresentedCall>,
+    reasoning: BTreeMap<String, PresentedReasoning>,
+}
+
+struct PresentedReasoning {
+    generation: ModelAttemptGeneration,
+    text_bytes: usize,
+    tool_count: usize,
+}
+
+impl From<&AgentRunLiveReasoning> for PresentedReasoning {
+    fn from(reasoning: &AgentRunLiveReasoning) -> Self {
+        Self {
+            generation: reasoning.generation,
+            text_bytes: reasoning.text.len(),
+            tool_count: reasoning.tool_ids.len(),
+        }
+    }
 }
 
 struct PresentedCall {
@@ -45,7 +62,17 @@ impl AgentRunLivePresenter {
             presented.insert(key.clone(), PresentedCall::from(call));
         }
         self.calls = presented;
-        AgentRunLiveUpdateDto::Snapshot { calls }
+        let reasoning = projection
+            .reasoning
+            .iter()
+            .map(|(id, reasoning)| to_reasoning_dto(id, reasoning))
+            .collect();
+        self.reasoning = projection
+            .reasoning
+            .iter()
+            .map(|(id, reasoning)| (id.clone(), PresentedReasoning::from(reasoning)))
+            .collect();
+        AgentRunLiveUpdateDto::Snapshot { calls, reasoning }
     }
 
     pub(super) fn updates(
@@ -65,26 +92,75 @@ impl AgentRunLivePresenter {
 
         for (key, call) in &projection.calls {
             match self.calls.get(key) {
-                None => updates.push(AgentRunLiveUpdateDto::Replace {
+                Some(previous) if previous.generation == call.generation => {
+                    append_projection_updates(
+                        &mut updates,
+                        key,
+                        &previous.fields,
+                        &call.projection,
+                    )?
+                }
+                _ => updates.push(AgentRunLiveUpdateDto::Replace {
                     call: to_call_dto(key, call),
                 }),
-                Some(previous) if previous.generation != call.generation => {
-                    updates.push(AgentRunLiveUpdateDto::Replace {
-                        call: to_call_dto(key, call),
-                    });
-                }
-                Some(previous) => append_projection_updates(
-                    &mut updates,
-                    key,
-                    &previous.fields,
-                    &call.projection,
-                )?,
             }
             presented.insert(key.clone(), PresentedCall::from(call));
         }
 
         self.calls = presented;
+        for id in self
+            .reasoning
+            .keys()
+            .filter(|id| !projection.reasoning.contains_key(*id))
+        {
+            updates.push(AgentRunLiveUpdateDto::ReasoningRemove {
+                invocation_id: id.clone(),
+            });
+        }
+        for (id, reasoning) in &projection.reasoning {
+            match self.reasoning.get(id) {
+                Some(previous) if previous.generation == reasoning.generation => {
+                    let Some(text) = reasoning.text.get(previous.text_bytes..) else {
+                        return Err(CommandError::InternalServerError(format!(
+                            "agent.live_projection_cursor_invalid: reasoning shrank for invocation `{id}`"
+                        )));
+                    };
+                    let Some(tool_ids) = reasoning.tool_ids.get(previous.tool_count..) else {
+                        return Err(CommandError::InternalServerError(format!(
+                            "agent.live_projection_cursor_invalid: reasoning tool IDs shrank for invocation `{id}`"
+                        )));
+                    };
+                    if !text.is_empty() || !tool_ids.is_empty() {
+                        updates.push(AgentRunLiveUpdateDto::ReasoningAppend {
+                            invocation_id: id.clone(),
+                            text: text.to_string(),
+                            tool_ids: tool_ids.to_vec(),
+                        });
+                    }
+                }
+                _ => updates.push(AgentRunLiveUpdateDto::ReasoningReplace {
+                    reasoning: to_reasoning_dto(id, reasoning),
+                }),
+            }
+        }
+        self.reasoning = projection
+            .reasoning
+            .iter()
+            .map(|(id, reasoning)| (id.clone(), PresentedReasoning::from(reasoning)))
+            .collect();
         Ok(updates)
+    }
+}
+
+fn to_reasoning_dto(
+    invocation_id: &str,
+    reasoning: &AgentRunLiveReasoning,
+) -> AgentRunLiveReasoningDto {
+    AgentRunLiveReasoningDto {
+        invocation_id: invocation_id.to_string(),
+        invocation_exit_policy: reasoning.invocation_exit_policy,
+        text: reasoning.text.clone(),
+        tool_ids: reasoning.tool_ids.clone(),
     }
 }
 
@@ -225,8 +301,79 @@ fn append_field(
 mod tests {
     use serde_json::json;
     use tt_domain::models::agent::AgentInvocationExitPolicy;
+    use tt_domain::models::tool::ToolId;
 
     use super::*;
+
+    #[test]
+    fn reasoning_cursors_survive_unicode_and_coalesced_retry() {
+        let mut projection = AgentRunLiveProjection::default();
+        projection.reasoning.insert(
+            "inv_root".to_string(),
+            AgentRunLiveReasoning {
+                generation: ModelAttemptGeneration {
+                    round: 1,
+                    attempt: 1,
+                },
+                invocation_exit_policy: AgentInvocationExitPolicy::RunFinishAllowed,
+                text: "思考".to_string(),
+                tool_ids: Vec::new(),
+            },
+        );
+        let mut presenter = AgentRunLivePresenter::default();
+        let snapshot = serde_json::to_value(presenter.snapshot(&projection)).unwrap();
+        assert_eq!(
+            snapshot["reasoning"],
+            json!([{
+                "invocationId": "inv_root", "invocationExitPolicy": "run_finish_allowed", "text": "思考", "toolIds": []
+            }])
+        );
+        projection
+            .reasoning
+            .get_mut("inv_root")
+            .unwrap()
+            .text
+            .push_str("一下😀");
+        assert_eq!(
+            presenter.updates(&projection).unwrap(),
+            vec![AgentRunLiveUpdateDto::ReasoningAppend {
+                invocation_id: "inv_root".to_string(),
+                text: "一下😀".to_string(),
+                tool_ids: Vec::new(),
+            }]
+        );
+        projection
+            .reasoning
+            .get_mut("inv_root")
+            .unwrap()
+            .tool_ids
+            .push(ToolId::builtin("workspace.read_file").unwrap());
+        assert_eq!(
+            presenter.updates(&projection).unwrap(),
+            vec![AgentRunLiveUpdateDto::ReasoningAppend {
+                invocation_id: "inv_root".to_string(),
+                text: String::new(),
+                tool_ids: vec![ToolId::builtin("workspace.read_file").unwrap()],
+            }]
+        );
+        // watch may coalesce clear + retry: a new generation must replace, not append.
+        let reasoning = projection.reasoning.get_mut("inv_root").unwrap();
+        reasoning.generation.attempt = 2;
+        reasoning.text = "retry".to_string();
+        assert_eq!(
+            presenter.updates(&projection).unwrap(),
+            vec![AgentRunLiveUpdateDto::ReasoningReplace {
+                reasoning: to_reasoning_dto("inv_root", &projection.reasoning["inv_root"]),
+            }]
+        );
+        projection.reasoning.clear();
+        assert_eq!(
+            presenter.updates(&projection).unwrap(),
+            vec![AgentRunLiveUpdateDto::ReasoningRemove {
+                invocation_id: "inv_root".to_string(),
+            }]
+        );
+    }
 
     #[test]
     fn presenter_emits_snapshot_append_replace_and_remove() {
@@ -248,7 +395,8 @@ mod tests {
                     "path": "out",
                     "content": "你",
                     "contentWords": 1
-                }]
+                }],
+                "reasoning": []
             })
         );
 
@@ -311,6 +459,7 @@ mod tests {
                     },
                 },
             )]),
+            ..Default::default()
         }
     }
 }

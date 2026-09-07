@@ -8,8 +8,8 @@ use serde_json::{Map, Value};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
-    ChatCompletionToolCallDelta,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
+    ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
@@ -121,17 +121,17 @@ pub(super) async fn generate_stream(
     }
 }
 
-pub(super) async fn generate_with_tool_call_deltas(
+pub(super) async fn generate_with_deltas(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-    on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+    on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let response =
         send_stream_request(repository, config, endpoint_path, payload, provider_name).await?;
-    let body = consume_message_stream(provider_name, response, on_tool_call_delta).await?;
+    let body = consume_message_stream(provider_name, response, on_delta).await?;
 
     if super::payload_contains_cache_control(payload) {
         let model = payload.get("model").and_then(Value::as_str);
@@ -144,13 +144,13 @@ pub(super) async fn generate_with_tool_call_deltas(
 pub(super) async fn consume_message_stream(
     provider_name: &str,
     response: reqwest::Response,
-    on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+    on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
 ) -> Result<Value, DomainError> {
     let mut accumulator = ClaudeMessageAccumulator::default();
     let mut completed = None;
 
     HttpChatCompletionRepository::consume_sse_response(provider_name, response, |event| {
-        if let Some(message) = accumulator.apply_event(event, on_tool_call_delta)? {
+        if let Some(message) = accumulator.apply_event(event, on_delta)? {
             completed = Some(message);
         }
         Ok(())
@@ -241,7 +241,7 @@ impl ClaudeMessageAccumulator {
     pub(super) fn apply_event(
         &mut self,
         raw_event: &[u8],
-        on_tool_call_delta: &mut dyn FnMut(ChatCompletionToolCallDelta),
+        on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<Option<Value>, DomainError> {
         let event: ClaudeStreamEvent = serde_json::from_slice(raw_event)
             .map_err(|error| invalid_claude_stream(format!("event is invalid: {error}")))?;
@@ -258,10 +258,34 @@ impl ClaudeMessageAccumulator {
                 if index != content.len() {
                     return Err(invalid_claude_stream("content block index is out of order"));
                 }
+                if content_block.get("type").and_then(Value::as_str) == Some("tool_use")
+                    && let Some(name) = content_block.get("name").and_then(Value::as_str)
+                {
+                    on_delta(ChatCompletionStreamDelta::ToolCall {
+                        tool_call_index: content
+                            .iter()
+                            .filter(|block| {
+                                block.get("type").and_then(Value::as_str) == Some("tool_use")
+                            })
+                            .count(),
+                        name: name.to_string(),
+                        arguments_fragment: String::new(),
+                    });
+                }
+                if content_block.get("type").and_then(Value::as_str) == Some("thinking")
+                    && let Some(text) = content_block
+                        .get("thinking")
+                        .and_then(Value::as_str)
+                        .filter(|text| !text.is_empty())
+                {
+                    on_delta(ChatCompletionStreamDelta::Reasoning {
+                        text: text.to_string(),
+                    });
+                }
                 content.push(content_block);
             }
             ClaudeStreamEvent::ContentBlockDelta { index, delta } => {
-                self.apply_content_delta(index, delta, on_tool_call_delta)?;
+                self.apply_content_delta(index, delta, on_delta)?;
             }
             ClaudeStreamEvent::ContentBlockStop { index } => {
                 let input_json = std::mem::take(&mut self.input_json);
@@ -315,14 +339,18 @@ impl ClaudeMessageAccumulator {
         &mut self,
         index: usize,
         delta: ClaudeContentDelta,
-        on_tool_call_delta: &mut dyn FnMut(ChatCompletionToolCallDelta),
+        on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<(), DomainError> {
         match delta {
             ClaudeContentDelta::TextDelta { text } => {
                 append_block_string(self.block_mut(index)?, "text", &text)
             }
             ClaudeContentDelta::ThinkingDelta { thinking } => {
-                append_block_string(self.block_mut(index)?, "thinking", &thinking)
+                append_block_string(self.block_mut(index)?, "thinking", &thinking)?;
+                if !thinking.is_empty() {
+                    on_delta(ChatCompletionStreamDelta::Reasoning { text: thinking });
+                }
+                Ok(())
             }
             ClaudeContentDelta::SignatureDelta { signature } => {
                 append_block_string(self.block_mut(index)?, "signature", &signature)
@@ -360,7 +388,7 @@ impl ClaudeMessageAccumulator {
                             block.get("type").and_then(Value::as_str) == Some("tool_use")
                         })
                         .count();
-                    on_tool_call_delta(ChatCompletionToolCallDelta {
+                    on_delta(ChatCompletionStreamDelta::ToolCall {
                         tool_call_index,
                         name: name.to_string(),
                         arguments_fragment: partial_json,
@@ -515,7 +543,7 @@ mod tests {
         configured_anthropic_beta_values, require_message_stop,
     };
     use tt_ports::repositories::chat_completion_repository::{
-        AnthropicBetaHeaderMode, ChatCompletionToolCallDelta,
+        AnthropicBetaHeaderMode, ChatCompletionStreamDelta,
     };
 
     #[test]
@@ -532,12 +560,16 @@ mod tests {
             br#"{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"a.md\",\"content\":\"hel"}}"#.as_slice(),
             br#"{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"lo\"}"}}"#.as_slice(),
             br#"{"type":"content_block_stop","index":2}"#.as_slice(),
+            br#"{"type":"content_block_start","index":3,"content_block":{"type":"thinking","thinking":"Plan "}}"#.as_slice(),
+            br#"{"type":"content_block_delta","index":3,"delta":{"type":"thinking_delta","thinking":"now"}}"#.as_slice(),
+            br#"{"type":"content_block_delta","index":3,"delta":{"type":"signature_delta","signature":"opaque"}}"#.as_slice(),
+            br#"{"type":"content_block_stop","index":3}"#.as_slice(),
             br#"{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":8}}"#.as_slice(),
             br#"{"type":"message_stop"}"#.as_slice(),
         ];
         let mut accumulator = ClaudeMessageAccumulator::default();
         let mut completed = None;
-        let mut deltas = Vec::<ChatCompletionToolCallDelta>::new();
+        let mut deltas = Vec::<ChatCompletionStreamDelta>::new();
 
         for event in events {
             if let Some(message) = accumulator
@@ -551,15 +583,26 @@ mod tests {
         assert_eq!(
             deltas,
             vec![
-                ChatCompletionToolCallDelta {
+                ChatCompletionStreamDelta::ToolCall {
+                    tool_call_index: 0,
+                    name: "workspace_write_file".to_string(),
+                    arguments_fragment: String::new(),
+                },
+                ChatCompletionStreamDelta::ToolCall {
                     tool_call_index: 0,
                     name: "workspace_write_file".to_string(),
                     arguments_fragment: "{\"path\":\"a.md\",\"content\":\"hel".to_string(),
                 },
-                ChatCompletionToolCallDelta {
+                ChatCompletionStreamDelta::ToolCall {
                     tool_call_index: 0,
                     name: "workspace_write_file".to_string(),
                     arguments_fragment: "lo\"}".to_string(),
+                },
+                ChatCompletionStreamDelta::Reasoning {
+                    text: "Plan ".to_string()
+                },
+                ChatCompletionStreamDelta::Reasoning {
+                    text: "now".to_string()
                 },
             ]
         );

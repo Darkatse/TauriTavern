@@ -4,8 +4,8 @@ use serde_json::{Map, Value, json};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
-    ChatCompletionToolCallDelta,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
+    ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
@@ -214,26 +214,24 @@ async fn generate_claude_stream(
     }
 }
 
-pub(super) async fn generate_with_tool_call_deltas(
+pub(super) async fn generate_with_deltas(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
     endpoint_path: &str,
     payload: &Value,
-    on_tool_call_delta: &mut (dyn FnMut(ChatCompletionToolCallDelta) + Send),
+    on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
 ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     if !is_anthropic_raw_predict_endpoint(endpoint_path) {
         let response =
             send_gemini_stream_request(repository, config, endpoint_path, payload).await?;
         let body =
-            gemini::consume_generate_content_stream(PROVIDER_NAME, response, on_tool_call_delta)
-                .await?;
+            gemini::consume_generate_content_stream(PROVIDER_NAME, response, on_delta).await?;
         return Ok(normalizers::normalize_gemini_response(body));
     }
 
     let (model, response) =
         send_claude_stream_request(repository, config, endpoint_path, payload).await?;
-    let body =
-        claude::consume_message_stream(CLAUDE_PROVIDER_NAME, response, on_tool_call_delta).await?;
+    let body = claude::consume_message_stream(CLAUDE_PROVIDER_NAME, response, on_delta).await?;
 
     if super::payload_contains_cache_control(payload) {
         let _ = super::log_prompt_cache_performance_if_present(

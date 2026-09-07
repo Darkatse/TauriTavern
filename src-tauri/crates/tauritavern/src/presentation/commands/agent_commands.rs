@@ -65,7 +65,10 @@ pub async fn subscribe_agent_run_live_projection(
             "Failed to subscribe to agent run live projection",
         ))?
     else {
-        let _ = channel.send(AgentRunLiveUpdateDto::Snapshot { calls: Vec::new() });
+        let _ = channel.send(AgentRunLiveUpdateDto::Snapshot {
+            calls: Vec::new(),
+            reasoning: Vec::new(),
+        });
         return Ok(());
     };
 

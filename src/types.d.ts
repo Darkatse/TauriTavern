@@ -206,8 +206,18 @@ type TauriTavernAgentRunLiveToolCall =
         newStringWords: number;
     };
 
+type TauriTavernAgentRunLiveReasoning = {
+    invocationId: string;
+    invocationExitPolicy: TauriTavernAgentInvocationExitPolicy;
+    text: string;
+    toolIds: string[];
+};
+
 type TauriTavernAgentRunLiveUpdate =
-    | { type: 'snapshot'; calls: TauriTavernAgentRunLiveToolCall[] }
+    | { type: 'reasoningReplace'; reasoning: TauriTavernAgentRunLiveReasoning }
+    | { type: 'reasoningAppend'; invocationId: string; text: string; toolIds: string[] }
+    | { type: 'reasoningRemove'; invocationId: string }
+    | { type: 'snapshot'; calls: TauriTavernAgentRunLiveToolCall[]; reasoning: TauriTavernAgentRunLiveReasoning[] }
     | {
         type: 'append';
         invocationId: string;
