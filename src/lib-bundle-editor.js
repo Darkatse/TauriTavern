@@ -1,6 +1,6 @@
-import { EditorState } from '@codemirror/state';
+import { Compartment, EditorState } from '@codemirror/state';
 import { undo, redo, undoDepth, redoDepth } from '@codemirror/commands';
-import { keymap, showPanel } from '@codemirror/view';
+import { keymap, placeholder, showPanel } from '@codemirror/view';
 import { openSearchPanel, closeSearchPanel, searchPanelOpen, searchKeymap, search } from '@codemirror/search';
 import { EditorView, minimalSetup } from 'codemirror';
 import { createSearchPanel } from './editor-search-panel.js';
@@ -126,7 +126,14 @@ const theme = EditorView.theme({
     },
 });
 
-export function createCodeMirrorView(parent, { doc, readOnly, ariaLabel, onChange, onCopy, phrases = {} }) {
+export function createCodeMirrorView(parent, { doc, readOnly, ariaLabel, onChange, onCopy, phrases = {}, placeholder: hint = '', selection = undefined }) {
+    const permissions = new Compartment();
+    const editability = disabled => [
+        EditorState.readOnly.of(disabled),
+        EditorView.editable.of(!disabled),
+        EditorView.contentAttributes.of({ 'aria-label': ariaLabel, 'aria-readonly': String(disabled), tabindex: '0' }),
+    ];
+
     function toolbar(view) {
         const dom = document.createElement('div');
         dom.className = 'cm-editor-tools';
@@ -166,29 +173,32 @@ export function createCodeMirrorView(parent, { doc, readOnly, ariaLabel, onChang
         return { dom, top: true, update };
     }
 
-    const createState = (value, disabled) => EditorState.create({
+    const createState = (value, disabled, selection = undefined) => EditorState.create({
         doc: value,
+        selection,
         extensions: [
             minimalSetup,
             keymap.of(searchKeymap),
             showPanel.of(toolbar),
             search({ top: true, createPanel: createSearchPanel }),
             EditorState.phrases.of(phrases),
-            EditorState.readOnly.of(disabled),
+            permissions.of(editability(disabled)),
             EditorView.lineWrapping,
-            EditorView.editable.of(!disabled),
-            EditorView.contentAttributes.of({ 'aria-label': ariaLabel }),
+            placeholder(hint),
             EditorView.updateListener.of(update => update.docChanged && onChange?.()),
             theme,
         ],
     });
 
-    const view = new EditorView({ state: createState(doc, readOnly), parent });
+    const view = new EditorView({ state: createState(doc, readOnly, selection), parent });
 
     return {
         getValue: () => view.state.doc.toString(),
         reset(value, disabled = false) {
             view.setState(createState(value, disabled));
+        },
+        setReadOnly(disabled) {
+            if (view.state.readOnly !== disabled) view.dispatch({ effects: permissions.reconfigure(editability(disabled)) });
         },
         focus: () => view.focus(),
         requestMeasure: () => view.requestMeasure(),

@@ -90,9 +90,7 @@ export function createSearchPanel(view) {
     });
     expand.className = 'cm-search-expand';
     expand.setAttribute('aria-expanded', 'false');
-    expand.hidden = view.state.readOnly;
     dom.append(expand, findBox, previous, next, close);
-    if (!view.state.readOnly) dom.append(replaceRow);
     dom.append(status);
 
     function commit() {
@@ -101,6 +99,9 @@ export function createSearchPanel(view) {
     }
 
     function sync() {
+        expand.hidden = view.state.readOnly;
+        if (view.state.readOnly) replaceRow.remove();
+        else if (!replaceRow.parentNode) dom.insertBefore(replaceRow, status);
         query = getSearchQuery(view.state);
         searchField.value = query.search;
         replaceField.value = query.replace;
@@ -123,7 +124,7 @@ export function createSearchPanel(view) {
         dom, top: true,
         mount() { searchField.focus(); searchField.select(); },
         update(update) {
-            if (!getSearchQuery(update.state).eq(query)) sync();
+            if (!getSearchQuery(update.state).eq(query) || update.startState.readOnly !== update.state.readOnly) sync();
             else if (update.docChanged && query.valid) status.textContent = '';
         },
     };

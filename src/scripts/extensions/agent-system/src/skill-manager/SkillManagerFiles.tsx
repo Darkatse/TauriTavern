@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import { CodeMirrorTextarea } from '../CodeMirrorTextarea';
 import type { SkillManagerTr } from './SkillManagerContract';
 
 export type SkillFileTreeNode =
@@ -165,11 +166,13 @@ export function SkillFileViewer(props: {
                     </button>
                 </div>
             </header>
-            {editing ? (
-                <textarea className="text_pole textarea_compact ttas-file-content ttas-file-editor" spellCheck={false} value={draft} onChange={event => setDraft(event.target.value)} />
-            ) : (
-                <pre className="ttas-file-content">{file.content}</pre>
-            )}
+            <CodeMirrorTextarea
+                className="text_pole textarea_compact ttas-file-content ttas-file-editor"
+                label={file.path}
+                value={editing ? draft : file.content}
+                onChange={setDraft}
+                readOnly={!editing || saving}
+            />
         </div>
     );
 }

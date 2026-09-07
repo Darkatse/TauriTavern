@@ -46,6 +46,12 @@ export function requireSkillApi(): TauriTavernSkillApi {
     return requireHostApi('skill');
 }
 
+export function loadCodeMirrorEditor() {
+    // Keep the initialized host module shared with the unbundled frontend.
+    const url = '/scripts/tauri/codemirror-editor.js';
+    return import(url /* webpackIgnore: true */) as Promise<typeof import('../../../tauri/codemirror-editor.js')>;
+}
+
 export function requireLlmConnectionsApi(): TauriTavernLlmConnectionsApi {
     return requireHostApi('llmConnections');
 }

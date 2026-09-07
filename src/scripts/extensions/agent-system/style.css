@@ -5182,6 +5182,14 @@ textarea.ttas-json {
     line-height: 1.55;
 }
 
+.ttas-codemirror-field {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+}
+
 .ttas-file-editor {
     border: 0;
     border-radius: 0;
@@ -5480,6 +5488,10 @@ textarea.ttas-json {
 
     .ttas-file-viewer-titlebar > div:first-child {
         min-width: 0;
+    }
+
+    .ttas-file-viewer-titlebar .ttas-close-button {
+        position: static;
     }
 
     .ttas-file-viewer-titlebar h3 {

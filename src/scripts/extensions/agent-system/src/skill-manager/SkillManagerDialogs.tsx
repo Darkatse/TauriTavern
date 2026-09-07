@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from 'react';
 
+import { CodeMirrorTextarea } from '../CodeMirrorTextarea';
 import type { SkillManagerController, SkillManagerSnapshot, SkillManagerTr } from './SkillManagerContract';
 import { buildSkillFileTree, SkillFileTree, SkillFileViewer } from './SkillManagerFiles';
 
@@ -158,29 +159,30 @@ export function SkillSourceDialog(props: {
                         </button>
                     </header>
                     <div className="ttas-skill-source-body">
-                        <label className="ttas-field ttas-skill-source-field">
+                        <div className="ttas-field ttas-skill-source-field">
                             <span>{tr(download ? 'skillDownloadUrl' : 'skillMdContent')}</span>
                             {download ? (
                                 <input
                                     className="text_pole"
                                     type="url"
+                                    aria-label={tr('skillDownloadUrl')}
                                     disabled={state.loading}
                                     placeholder={tr('skillDownloadUrlPlaceholder')}
                                     value={state.url}
                                     onChange={event => controller.setSourceUrl(event.target.value)}
                                 />
                             ) : (
-                                <textarea
+                                <CodeMirrorTextarea
                                     className="text_pole textarea_compact ttas-skill-source-textarea"
+                                    label={tr('skillMdContent')}
                                     rows={16}
-                                    spellCheck={false}
                                     disabled={state.loading}
                                     placeholder={tr('skillMdContentPlaceholder')}
                                     value={state.content}
-                                    onChange={event => controller.setSourceContent(event.target.value)}
+                                    onChange={controller.setSourceContent}
                                 />
                             )}
-                        </label>
+                        </div>
                     </div>
                     <footer className="ttas-scope-picker-actions">
                         <button type="button" className="menu_button menu_button_icon" disabled={state.loading} onClick={controller.closeSourceDialog}>

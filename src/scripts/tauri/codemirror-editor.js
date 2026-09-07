@@ -8,7 +8,19 @@ import { copyText } from '../utils.js';
 /** @type {boolean | null} */
 let enabled = null;
 
-/** @type {WeakMap<HTMLTextAreaElement, any>} */
+/**
+ * @typedef {object} CodeMirrorEditorHandle
+ * @property {HTMLDivElement} wrapper
+ * @property {number} height
+ * @property {() => void} focus
+ * @property {() => void} requestMeasure
+ * @property {() => void} reset
+ * @property {() => void} updateReadOnly
+ * @property {(options?: { input?: boolean }) => boolean} flush
+ * @property {() => void} destroy
+ */
+
+/** @type {WeakMap<HTMLTextAreaElement, CodeMirrorEditorHandle>} */
 const mountedEditors = new WeakMap();
 
 /** @param {Record<string, any>} settings */
@@ -22,9 +34,10 @@ export function initializeCodeMirrorEditor(settings) {
 
 /**
  * @param {HTMLTextAreaElement} source
- * @param {{ onChange?: () => void }} [options]
+ * @param {{ onChange?: () => void, signal?: AbortSignal }} [options]
  */
-export async function mountCodeMirrorEditor(source, { onChange } = {}) {
+export async function mountCodeMirrorEditor(source, { onChange, signal } = {}) {
+    if (signal?.aborted) return null;
     if (enabled === null) {
         throw new Error('CodeMirror editor is not initialized');
     }
@@ -41,7 +54,7 @@ export async function mountCodeMirrorEditor(source, { onChange } = {}) {
     }
 
     const { createCodeMirrorView } = await getCodeMirrorEditor();
-    if (!source.isConnected) {
+    if (signal?.aborted || !source.isConnected) {
         return null;
     }
     const loadedEditor = mountedEditors.get(source);
@@ -64,12 +77,18 @@ export async function mountCodeMirrorEditor(source, { onChange } = {}) {
     source.insertAdjacentElement('afterend', wrapper);
 
     const sourceDisplay = source.style.display;
-    const label = source.labels?.[0]?.textContent?.trim();
+    const focused = document.activeElement === source;
+    const [anchor, head] = source.selectionDirection === 'backward'
+        ? [source.selectionEnd, source.selectionStart]
+        : [source.selectionStart, source.selectionEnd];
+    const label = source.getAttribute('aria-label') || source.labels?.[0]?.textContent?.trim();
 
     const editor = createCodeMirrorView(wrapper, {
         doc: source.value,
         readOnly: source.disabled || source.readOnly,
         ariaLabel: label || source.placeholder || 'Text editor',
+        placeholder: source.placeholder,
+        selection: focused ? { anchor, head } : undefined,
         onChange,
         phrases: {
             Undo: t`Undo`, Redo: t`Redo`, 'Copy all': t`Copy all`, 'Editor tools': t`Editor tools`,
@@ -93,11 +112,15 @@ export async function mountCodeMirrorEditor(source, { onChange } = {}) {
         },
     });
 
+    /** @type {CodeMirrorEditorHandle} */
     const handle = {
         wrapper,
         height,
         focus: editor.focus,
         requestMeasure: editor.requestMeasure,
+        updateReadOnly() {
+            editor.setReadOnly(source.disabled || source.readOnly);
+        },
         reset() {
             editor.reset(source.value, source.disabled || source.readOnly);
         },
@@ -120,6 +143,7 @@ export async function mountCodeMirrorEditor(source, { onChange } = {}) {
 
     mountedEditors.set(source, handle);
     source.style.display = 'none';
+    if (focused) editor.focus();
     return handle;
 }
 

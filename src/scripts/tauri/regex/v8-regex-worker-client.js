@@ -39,7 +39,8 @@ function execute(tasks) {
     const target = getWorker();
 
     return new Promise((resolve, reject) => {
-        let timeoutId = 0;
+        /** @type {ReturnType<typeof setTimeout> | undefined} */
+        let timeoutId;
 
         const cleanup = () => {
             clearTimeout(timeoutId);
