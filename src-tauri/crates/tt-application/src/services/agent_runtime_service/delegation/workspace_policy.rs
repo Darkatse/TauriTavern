@@ -27,6 +27,16 @@ impl<'a> InvocationWorkspaceRepository<'a> {
 
 #[async_trait]
 impl WorkspaceRepository for InvocationWorkspaceRepository<'_> {
+    async fn validate_persistent_state(
+        &self,
+        workspace_id: &str,
+        state_id: &str,
+    ) -> Result<(), DomainError> {
+        self.inner
+            .validate_persistent_state(workspace_id, state_id)
+            .await
+    }
+
     async fn initialize_run(
         &self,
         run: &AgentRun,

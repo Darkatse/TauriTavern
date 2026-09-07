@@ -48,6 +48,13 @@ pub enum WorkspaceWriteGuard {
 
 #[async_trait]
 pub trait WorkspaceRepository: Send + Sync {
+    /// Check the inherited version before creating a run or its workspace.
+    async fn validate_persistent_state(
+        &self,
+        workspace_id: &str,
+        state_id: &str,
+    ) -> Result<(), DomainError>;
+
     async fn initialize_run(
         &self,
         run: &AgentRun,

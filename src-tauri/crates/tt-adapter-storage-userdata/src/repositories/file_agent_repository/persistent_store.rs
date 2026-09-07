@@ -35,7 +35,7 @@ pub(super) struct PersistentSnapshotFile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PersistentStateManifest {
+pub(super) struct PersistentStateManifest {
     version: u32,
     state_id: String,
     run_id: String,
@@ -65,13 +65,9 @@ impl FileAgentRepository {
         let base_state = match run.persist_base_state_id.as_deref() {
             Some(state_id) => {
                 let state_dir = self.persistent_state_dir(&run.workspace_id, state_id)?;
-                let state_manifest = self.read_persistent_state_manifest(&state_dir).await?;
-                if state_manifest.state_id != state_id {
-                    return Err(DomainError::InvalidData(format!(
-                        "agent.persistent_state_manifest_mismatch: manifest state `{}` does not match requested state `{state_id}`",
-                        state_manifest.state_id
-                    )));
-                }
+                let state_manifest = self
+                    .read_persistent_state_manifest(&state_dir, state_id)
+                    .await?;
                 Some((state_dir, state_manifest))
             }
             None => None,
@@ -286,9 +282,10 @@ impl FileAgentRepository {
         Ok(changes)
     }
 
-    async fn read_persistent_state_manifest(
+    pub(super) async fn read_persistent_state_manifest(
         &self,
         state_dir: &Path,
+        state_id: &str,
     ) -> Result<PersistentStateManifest, DomainError> {
         let metadata = fs::symlink_metadata(state_dir).await.map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -317,6 +314,12 @@ impl FileAgentRepository {
             return Err(DomainError::InvalidData(format!(
                 "agent.persistent_state_version_unsupported: {}",
                 manifest.version
+            )));
+        }
+        if manifest.state_id != state_id {
+            return Err(DomainError::InvalidData(format!(
+                "agent.persistent_state_manifest_mismatch: manifest state `{}` does not match requested state `{state_id}`",
+                manifest.state_id
             )));
         }
         Ok(manifest)

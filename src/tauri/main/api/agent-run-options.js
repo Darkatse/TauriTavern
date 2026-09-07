@@ -9,6 +9,9 @@ export function normalizeAgentRunOptions(value, presentationOverride = undefined
     if (Object.prototype.hasOwnProperty.call(options, 'stream') && typeof options.stream !== 'boolean') {
         throw new Error('agent.stream_invalid: stream must be a boolean');
     }
+    if (Object.prototype.hasOwnProperty.call(options, 'startWithEmptyPersist') && typeof options.startWithEmptyPersist !== 'boolean') {
+        throw new Error('agent.start_with_empty_persist_invalid: startWithEmptyPersist must be a boolean');
+    }
     if (Object.prototype.hasOwnProperty.call(options, 'autoCommit')) {
         throw new Error('agent.auto_commit_removed: Agent chat commits are driven by workspace.commit');
     }

@@ -338,6 +338,7 @@ async fn start_contract_agent_run(
             options: AgentStartRunOptionsDto {
                 stream,
                 presentation: Some(presentation),
+                ..Default::default()
             },
         })
         .await

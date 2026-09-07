@@ -15,6 +15,7 @@ impl AgentRuntimeService {
         &self,
         chat_ref: &AgentChatRef,
         generation_type: &str,
+        start_with_empty_persist: bool,
     ) -> Result<AgentRunInputContext, ApplicationError> {
         let last_message = self.find_last_chat_message(chat_ref).await?;
         let raw_message_count = last_message
@@ -23,9 +24,12 @@ impl AgentRuntimeService {
             .unwrap_or(0);
         let input_message_count =
             resolve_input_message_count(generation_type, last_message.as_ref())?;
-        let persist_base_state_id = self
-            .resolve_persist_base_state_id(chat_ref, raw_message_count, input_message_count)
-            .await?;
+        let persist_base_state_id = if start_with_empty_persist {
+            None
+        } else {
+            self.resolve_persist_base_state_id(chat_ref, raw_message_count, input_message_count)
+                .await?
+        };
 
         Ok(AgentRunInputContext {
             input_message_count,

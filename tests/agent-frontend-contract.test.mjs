@@ -400,6 +400,16 @@ test('Agent run controller waits for retained chat output to settle', async () =
 
 
 
+test('Agent startup cancellation finishes without activating a run or reporting a failure', async () => {
+    installWindow({ agent: {
+        async startRunWithPromptSnapshot() { throw new DOMException('Cancelled by user', 'AbortError'); },
+        subscribe() { assert.fail('A cancelled start must not subscribe'); },
+    } });
+    const controller = await importFresh('src/scripts/tauritavern/agent/agent-run-controller.js');
+    assert.equal(await controller.startAndWaitForAgentRun({ generationType: 'normal' }), undefined);
+    assert.equal(controller.hasActiveAgentRun(), false);
+});
+
 test('Agent run controller clears active state when subscription setup fails', async () => {
     installWindow({
         agent: {

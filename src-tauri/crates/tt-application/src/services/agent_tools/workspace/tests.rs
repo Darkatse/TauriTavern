@@ -398,6 +398,14 @@ impl TestWorkspaceRepository {
 
 #[async_trait]
 impl WorkspaceRepository for TestWorkspaceRepository {
+    async fn validate_persistent_state(
+        &self,
+        _workspace_id: &str,
+        _state_id: &str,
+    ) -> Result<(), DomainError> {
+        unreachable!("tool tests do not start runs")
+    }
+
     async fn initialize_run(
         &self,
         _run: &AgentRun,

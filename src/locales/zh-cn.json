@@ -4594,5 +4594,9 @@
     "Rust regex acceleration failed and was disabled for this session. The batch will continue in V8.": "Rust 正则加速失败，已在本次会话中停用。该批次将继续由 V8 处理。",
     "Script \"${0}\" exceeded ${1} milliseconds and was paused for this session.": "脚本“${0}”运行超过 ${1} 毫秒，已在本次会话中暂停。",
     "This usually indicates catastrophic backtracking. Common causes include leading .*, nested quantifiers, and unbounded lookahead. Review or replace the pattern before allowing it.": "这通常意味着发生了灾难性回溯。常见原因包括前导 .*、嵌套量词和不受约束的前瞻断言。请在允许继续运行前检查或替换该正则。",
-    "Unnamed regex script": "未命名正则脚本"
+    "Unnamed regex script": "未命名正则脚本",
+    "tauritavern_agent_persist_missing_title": "无法找到 Agent 的持久记忆",
+    "tauritavern_agent_persist_missing_body": "无法找到此聊天之前保存的 persist 状态。是否以空 persist 开始本次运行？聊天记录仍然可用，但本次运行不会继承之前的 Agent 持久记忆。",
+    "tauritavern_agent_persist_missing_continue": "以空 persist 开始",
+    "tauritavern_agent_persist_missing_cancel": "取消"
 }

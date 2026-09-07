@@ -386,6 +386,71 @@ test('api.agent.startRunWithPromptSnapshot refreshes Model Target LLM connection
 });
 
 
+test('Agent startup asks once for missing persist, preserves the input, and propagates other failures', async (t) => {
+    for (const scenario of [
+        { name: 'missing message ID', error: 'Bad request: agent.persist_state_missing: message 4', accept: true },
+        { name: 'missing disk version', error: 'Not found: agent.persistent_state_not_found: state-1', accept: true },
+        { name: 'cancel', error: 'Not found: agent.persistent_state_not_found: state-1', accept: false },
+        { name: 'invalid state', error: 'Bad request: agent.persistent_state_invalid: state-1' },
+        { name: 'permission denied', error: 'Internal server error: Failed to inspect persistent state: Permission denied' },
+        { name: 'retry fails', error: 'Bad request: agent.persist_state_missing: message 4', accept: true, retryError: 'retry failed' },
+    ]) {
+        await t.test(scenario.name, async () => {
+            const starts = [];
+            const popups = [];
+            let subscriptions = 0;
+            const { agent } = await installHarness({
+                safeInvoke: async (command, args) => {
+                    if (command === 'load_agent_profile') return { profile: { preset: { mode: 'ref' } } };
+                    if (command === 'start_agent_run') {
+                        starts.push(structuredClone(args.dto));
+                        if (starts.length === 1) throw new Error(scenario.error);
+                        if (scenario.retryError) throw new Error(scenario.retryError);
+                        return { runId: 'run-empty-persist' };
+                    }
+                    if (command === 'read_agent_run_events') {
+                        subscriptions += 1;
+                        return { events: [{ seq: 1, type: 'run_completed', payload: {} }] };
+                    }
+                    throw new Error(`Unexpected command ${command}`);
+                },
+            });
+            globalThis.window.SillyTavern = {
+                getContext: () => ({
+                    Popup: { show: { confirm: async (...args) => { popups.push(args); return scenario.accept ? 1 : 0; } } },
+                    POPUP_RESULT: { AFFIRMATIVE: 1 },
+                }),
+            };
+            const input = {
+                chatRef: { kind: 'character', characterId: 'Alice', fileName: 'story' },
+                stableChatId: 'stable-story',
+                persistBaseStateId: 'state-1',
+                promptSnapshot: { chatCompletionPayload: { messages: [] } },
+                options: { presentation: 'background', stream: false },
+            };
+            const original = structuredClone(input);
+            const pending = agent.startRunWithPromptSnapshot(input);
+            if (scenario.accept && !scenario.retryError) {
+                assert.deepEqual(await pending, { runId: 'run-empty-persist' });
+                await waitFor(() => subscriptions > 0);
+            } else if (scenario.accept === false) {
+                await assert.rejects(pending, { name: 'AbortError' });
+            } else {
+                await assert.rejects(pending, { message: scenario.retryError ?? scenario.error });
+            }
+            assert.equal(popups.length, scenario.accept === undefined ? 0 : 1);
+            assert.equal(starts.length, scenario.accept ? 2 : 1);
+            assert.deepEqual(input, original);
+            if (starts[1]) {
+                assert.equal(starts[1].persistBaseStateId, undefined);
+                assert.deepEqual(starts[1].options, { ...input.options, startWithEmptyPersist: true });
+                assert.deepEqual(starts[1].promptSnapshot, input.promptSnapshot);
+            }
+            if (!scenario.accept || scenario.retryError) assert.equal(subscriptions, 0);
+        });
+    }
+});
+
 test('api.agent.submitGuidance forwards camelCase DTO and fails fast on invalid input', async () => {
     const { calls, agent } = await installHarness();
 

@@ -103,7 +103,11 @@ impl AgentRuntimeService {
         let run_id = format!("run_{}", Uuid::new_v4().simple());
         let workspace_id = workspace_id_for_stable_chat_id(&dto.chat_ref, &stable_chat_id)?;
         let input_context = self
-            .resolve_agent_run_input_context(&dto.chat_ref, &generation_type)
+            .resolve_agent_run_input_context(
+                &dto.chat_ref,
+                &generation_type,
+                dto.options.start_with_empty_persist,
+            )
             .await?;
         if let Some(requested_state_id) = dto.persist_base_state_id.as_deref() {
             let requested_state_id = requested_state_id.trim();
@@ -119,6 +123,11 @@ impl AgentRuntimeService {
                         .to_string(),
                 ));
             }
+        }
+        if let Some(state_id) = input_context.persist_base_state_id.as_deref() {
+            self.workspace_repository
+                .validate_persistent_state(&workspace_id, state_id)
+                .await?;
         }
         let now = Utc::now();
         let run = AgentRun {

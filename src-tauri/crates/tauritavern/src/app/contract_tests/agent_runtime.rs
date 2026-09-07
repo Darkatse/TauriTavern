@@ -8,6 +8,7 @@ mod delegation;
 mod execution;
 mod mcp;
 mod model_binding;
+mod persist;
 mod task_details;
 
 fn allow_profile_tool(allow: &mut Vec<String>, name: &str) {

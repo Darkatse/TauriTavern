@@ -277,6 +277,9 @@ pub struct AgentLoadProfileResultDto {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentStartRunOptionsDto {
+    /// Explicit user choice; never inferred from an unavailable inherited version.
+    #[serde(default)]
+    pub start_with_empty_persist: bool,
     #[serde(default)]
     pub stream: Option<bool>,
     #[serde(default)]

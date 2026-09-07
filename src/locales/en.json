@@ -60,5 +60,9 @@
     "The current theme is unavailable.": "The current theme is unavailable.",
     "Could not save the theme binding.": "Could not save the theme binding.",
     "Theme binding removed.": "Theme binding removed.",
-    "Current theme bound.": "Current theme bound."
+    "Current theme bound.": "Current theme bound.",
+    "tauritavern_agent_persist_missing_title": "Previous Agent memory is unavailable",
+    "tauritavern_agent_persist_missing_body": "The saved persist state for this chat could not be found. Start this run with empty persist? Chat messages remain available, but this run will not inherit previous Agent memory.",
+    "tauritavern_agent_persist_missing_continue": "Start with empty persist",
+    "tauritavern_agent_persist_missing_cancel": "Cancel"
 }

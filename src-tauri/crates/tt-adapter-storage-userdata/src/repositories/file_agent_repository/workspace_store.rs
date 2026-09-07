@@ -18,6 +18,17 @@ use tt_ports::repositories::workspace_repository::{
 
 #[async_trait]
 impl WorkspaceRepository for FileAgentRepository {
+    async fn validate_persistent_state(
+        &self,
+        workspace_id: &str,
+        state_id: &str,
+    ) -> Result<(), DomainError> {
+        let state_dir = self.persistent_state_dir(workspace_id, state_id)?;
+        self.read_persistent_state_manifest(&state_dir, state_id)
+            .await?;
+        Ok(())
+    }
+
     async fn initialize_run(
         &self,
         run: &AgentRun,

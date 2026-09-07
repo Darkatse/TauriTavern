@@ -109,7 +109,13 @@ export async function startAndWaitForAgentRun(input) {
     }
 
     const agent = requireAgentApi();
-    const handle = await agent.startRunWithPromptSnapshot(input);
+    let handle;
+    try {
+        handle = await agent.startRunWithPromptSnapshot(input);
+    } catch (error) {
+        if (error?.name === 'AbortError') return;
+        throw error;
+    }
     activeRun = handle;
     emitRunStateChanged();
 
