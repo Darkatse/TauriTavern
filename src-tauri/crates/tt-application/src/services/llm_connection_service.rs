@@ -36,6 +36,7 @@ const ALLOWED_CUSTOM_API_FORMATS: &[&str] = &[
     "openai_responses",
     "claude_messages",
     "gemini_interactions",
+    "gemini_generate_content",
 ];
 
 const ADAPTER_HINT_ENABLED: &str = "enabled";

@@ -851,22 +851,38 @@ fn cross_provider_switch_does_not_migrate_private_native_metadata() {
 
 #[test]
 fn same_provider_keeps_matching_private_native_metadata() {
-    let request = basic_request(
-        "claude",
-        None,
-        vec![AgentModelMessage {
-            role: AgentModelRole::Assistant,
-            parts: vec![AgentModelContentPart::Native {
-                provider: "claude".to_string(),
-                value: json!({ "content": [{ "type": "thinking", "signature": "sig_1" }] }),
+    for (source, format, provider, value) in [
+        (
+            "claude",
+            None,
+            "claude",
+            json!({ "content": [{ "type": "thinking", "signature": "sig_1" }] }),
+        ),
+        (
+            "custom",
+            Some("gemini_generate_content"),
+            "gemini",
+            json!({ "content": {
+            "role": "model", "parts": [{ "text": "plan", "thought": true, "thoughtSignature": "sig_1" }]
+        } }),
+        ),
+    ] {
+        let request = basic_request(
+            source,
+            format,
+            vec![AgentModelMessage {
+                role: AgentModelRole::Assistant,
+                parts: vec![AgentModelContentPart::Native {
+                    provider: provider.to_string(),
+                    value: value.clone(),
+                }],
+                provider_metadata: Value::Null,
             }],
-            provider_metadata: Value::Null,
-        }],
-    );
+        );
 
-    let dto = encode_chat_completion_request(&request, false).unwrap();
-    let native = dto.payload["messages"][0]["native"].as_object().unwrap();
-    assert!(native.get("claude").is_some());
+        let dto = encode_chat_completion_request(&request, false).unwrap();
+        assert_eq!(dto.payload["messages"][0]["native"][provider], value);
+    }
 }
 
 fn provider_state_test_request(session_id: &str) -> AgentModelRequest {

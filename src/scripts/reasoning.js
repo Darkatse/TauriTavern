@@ -174,12 +174,16 @@ export function extractReasoningFromData(data, {
  * @param {string|null} [options.mainApi] Override for main API
  * @param {string|null} [options.chatCompletionSource] Override for chat completion source
  * @param {string|null} [options.model] Override for chat completion model
+ * @param {string|null} [options.customApiFormat] Override for Custom API format
+ * @param {string|null} [options.opencodeApiFormat] Override for OpenCode API format
  * @returns {string?} Encrypted signature of the reasoning text
  */
 export function extractReasoningSignatureFromData(data, {
     mainApi = null,
     chatCompletionSource = null,
     model = null,
+    customApiFormat = null,
+    opencodeApiFormat = null,
 } = {}) {
     // Only Gemini models use thought signatures (via MakerSuite/VertexAI or OpenRouter)
     if ((mainApi ?? main_api) !== 'openai') {
@@ -190,6 +194,8 @@ export function extractReasoningSignatureFromData(data, {
     const isVertexAiClaude = source === chat_completion_sources.VERTEXAI
         && isVertexAiClaudeModelId((model ?? data?.model) || null);
     const isGemini = source === chat_completion_sources.MAKERSUITE
+        || (source === chat_completion_sources.CUSTOM && (customApiFormat ?? oai_settings.custom_api_format) === 'gemini_generate_content')
+        || (source === chat_completion_sources.OPENCODE && (opencodeApiFormat ?? oai_settings.opencode_api_format) === 'gemini')
         || (source === chat_completion_sources.VERTEXAI && !isVertexAiClaude);
     const isOpenRouter = source === chat_completion_sources.OPENROUTER;
 

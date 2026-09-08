@@ -36,18 +36,34 @@ const GOOGLE_NO_SEARCH_MODELS: &[&str] = &[
 ];
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
-    build_google_payload_with_mode(payload, false)
+    build_google_payload_with_mode(payload, GoogleTarget::Makersuite)
 }
 
 pub(super) fn build_vertexai(
     payload: Map<String, Value>,
 ) -> Result<(String, Value), ApplicationError> {
-    build_google_payload_with_mode(payload, true)
+    build_google_payload_with_mode(payload, GoogleTarget::VertexAi)
+}
+
+/// Custom `generateContent` endpoints: same wire translation, but the model
+/// name is an opaque alias, so first-party model tables never silently drop
+/// or rewrite explicit user parameters.
+pub(super) fn build_custom(
+    payload: Map<String, Value>,
+) -> Result<(String, Value), ApplicationError> {
+    build_google_payload_with_mode(payload, GoogleTarget::Custom)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GoogleTarget {
+    Makersuite,
+    VertexAi,
+    Custom,
 }
 
 fn build_google_payload_with_mode(
     payload: Map<String, Value>,
-    use_vertex_ai: bool,
+    target: GoogleTarget,
 ) -> Result<(String, Value), ApplicationError> {
     let stream = payload
         .get("stream")
@@ -61,14 +77,16 @@ fn build_google_payload_with_mode(
 
     Ok((
         endpoint.to_string(),
-        Value::Object(build_google_payload(&payload, use_vertex_ai)?),
+        Value::Object(build_google_payload(&payload, target)?),
     ))
 }
 
 fn build_google_payload(
     payload: &Map<String, Value>,
-    use_vertex_ai: bool,
+    target: GoogleTarget,
 ) -> Result<Map<String, Value>, ApplicationError> {
+    let use_vertex_ai = target == GoogleTarget::VertexAi;
+    let is_custom = target == GoogleTarget::Custom;
     let model = payload
         .get("model")
         .and_then(Value::as_str)
@@ -77,6 +95,13 @@ fn build_google_payload(
         .ok_or_else(|| {
             ApplicationError::ValidationError("Gemini request is missing model".to_string())
         })?;
+    // Custom endpoints accept the documented `models/<id>` form; capability
+    // lookups use the bare id so a supported model is still recognised.
+    let capability_model = if is_custom {
+        model.strip_prefix("models/").unwrap_or(model)
+    } else {
+        model
+    };
 
     let enable_web_search = payload
         .get("enable_web_search")
@@ -99,23 +124,24 @@ fn build_google_payload(
     let is_gemma = model.contains("gemma");
     let is_learnlm = model.contains("learnlm");
 
-    let enable_image_modality = request_images && GOOGLE_IMAGE_GENERATION_MODELS.contains(&model);
+    let enable_image_modality =
+        request_images && (is_custom || GOOGLE_IMAGE_GENERATION_MODELS.contains(&model));
 
     let use_system_prompt = payload
         .get("use_sysprompt")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-        && !enable_image_modality
-        && !is_gemma;
+        && (is_custom || (!enable_image_modality && !is_gemma));
 
     let (contents, system_prompt) =
         convert_messages(payload.get("messages"), model, use_system_prompt)?;
 
     let mut generation_config = Map::new();
-    let has_fixed_sampling_parameters = matches!(
-        model,
-        "gemini-3.5-flash-lite" | "gemini-3.6-flash" | "gemini-3.7-flash"
-    );
+    let has_fixed_sampling_parameters = !is_custom
+        && matches!(
+            model,
+            "gemini-3.5-flash-lite" | "gemini-3.6-flash" | "gemini-3.7-flash"
+        );
 
     if let Some(value) = payload.get("max_tokens").filter(|value| !value.is_null()) {
         generation_config.insert("maxOutputTokens".to_string(), value.clone());
@@ -142,6 +168,17 @@ fn build_google_payload(
 
         if let Some(value) = payload.get(source_key).filter(|value| !value.is_null()) {
             generation_config.insert(target_key.to_string(), value.clone());
+        }
+    }
+
+    if is_custom {
+        for (source_key, target_key) in [
+            ("frequency_penalty", "frequencyPenalty"),
+            ("presence_penalty", "presencePenalty"),
+        ] {
+            if let Some(value) = payload.get(source_key).filter(|value| !value.is_null()) {
+                generation_config.insert(target_key.to_string(), value.clone());
+            }
         }
     }
 
@@ -196,7 +233,9 @@ fn build_google_payload(
         if enable_image_config {
             let mut image_config = Map::new();
 
-            if let Some(image_size) = image_size.filter(|_| is_google_image_size_model(model)) {
+            if let Some(image_size) =
+                image_size.filter(|_| is_custom || is_google_image_size_model(model))
+            {
                 image_config.insert(
                     "imageSize".to_string(),
                     Value::String(image_size.to_string()),
@@ -216,7 +255,7 @@ fn build_google_payload(
         }
     }
 
-    inject_google_thinking_config(payload, model, use_vertex_ai, &mut generation_config)?;
+    inject_google_thinking_config(payload, capability_model, target, &mut generation_config)?;
 
     let mut request = Map::new();
     request.insert("model".to_string(), Value::String(model.to_string()));
@@ -252,7 +291,7 @@ fn build_google_payload(
 
     let mut tools = Vec::<Value>::new();
 
-    if !enable_image_modality && !is_gemma {
+    if is_custom || (!enable_image_modality && !is_gemma) {
         if let Some(raw_tools) = payload.get("tools") {
             let (function_declarations, custom_tools) = split_openai_tools(raw_tools);
 
@@ -264,8 +303,7 @@ fn build_google_payload(
         }
 
         if enable_web_search
-            && !is_learnlm
-            && !GOOGLE_NO_SEARCH_MODELS.contains(&model)
+            && (is_custom || (!is_learnlm && !GOOGLE_NO_SEARCH_MODELS.contains(&model)))
             && !tools
                 .iter()
                 .any(|tool| tool.get("function_declarations").is_some())
@@ -369,6 +407,11 @@ fn convert_messages(
             .to_lowercase();
         let mut merge_with_previous = matches!(role.as_str(), "tool" | "function");
 
+        let native_gemini_parts = if role == "assistant" {
+            message_native_gemini_parts(message)
+        } else {
+            None
+        };
         let mut parts = if matches!(role.as_str(), "tool" | "function") {
             let tool_call_id = message_tool_call_id(message);
             let name = message_tool_name(message)
@@ -387,11 +430,6 @@ fn convert_messages(
             };
             vec![build_tool_response_part(&name, &content, response_id)]
         } else {
-            let native_gemini_parts = if role == "assistant" {
-                message_native_gemini_parts(message)
-            } else {
-                None
-            };
             let mut parts = if let Some(native_parts) = native_gemini_parts.clone() {
                 native_parts
             } else {
@@ -423,7 +461,8 @@ fn convert_messages(
 
         let target_role = if role == "assistant" { "model" } else { "user" };
 
-        if supports_signatures {
+        // Native parts already carry their own signatures; never overwrite signed history.
+        if supports_signatures && native_gemini_parts.is_none() {
             let text_signature = message
                 .get("signature")
                 .and_then(Value::as_str)
@@ -792,22 +831,41 @@ fn map_tool_choice_to_makersuite(value: &Value) -> Result<Value, ApplicationErro
 fn inject_google_thinking_config(
     payload: &Map<String, Value>,
     model: &str,
-    use_vertex_ai: bool,
+    target: GoogleTarget,
     generation_config: &mut Map<String, Value>,
 ) -> Result<(), ApplicationError> {
-    let reasoning_effort = match payload.get("reasoning_effort").and_then(Value::as_str) {
-        Some(value) => parse_known_reasoning_effort(value, "Gemini")?,
-        None => RequestedReasoningEffort::Auto,
-    };
-
-    if !is_gemini_thinking_config_model(model) {
-        return Ok(());
-    }
-
     let include_reasoning = payload
         .get("include_reasoning")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+
+    if !is_gemini_thinking_config_model(model) {
+        if target != GoogleTarget::Custom {
+            return Ok(());
+        }
+        // Custom aliases default to thinkingLevel; Additional Parameters can override it.
+        let mut thinking_config = Map::new();
+        if let Some(effort) = payload.get("reasoning_effort").and_then(Value::as_str) {
+            let effort = effort.trim().to_ascii_lowercase();
+            if !effort.is_empty() && effort != "auto" {
+                thinking_config.insert("thinkingLevel".to_string(), Value::String(effort));
+            }
+        }
+        if include_reasoning || !thinking_config.is_empty() {
+            thinking_config.insert(
+                "includeThoughts".to_string(),
+                Value::Bool(include_reasoning),
+            );
+            generation_config.insert("thinkingConfig".to_string(), Value::Object(thinking_config));
+        }
+        return Ok(());
+    }
+
+    let reasoning_effort = match payload.get("reasoning_effort").and_then(Value::as_str) {
+        Some(value) => parse_known_reasoning_effort(value, "Gemini")?,
+        None => RequestedReasoningEffort::Auto,
+    };
+    let use_vertex_ai = target == GoogleTarget::VertexAi;
     let max_output_tokens = generation_config
         .get("maxOutputTokens")
         .and_then(value_to_i64)

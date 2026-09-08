@@ -1,7 +1,9 @@
 use serde_json::{Map, Value};
 
 use tt_domain::errors::DomainError;
-use tt_ports::repositories::chat_completion_repository::ChatCompletionStreamDelta;
+use tt_ports::repositories::chat_completion_repository::{
+    ChatCompletionCancelReceiver, ChatCompletionStreamDelta, ChatCompletionStreamSender,
+};
 
 use super::HttpChatCompletionRepository;
 
@@ -18,6 +20,38 @@ pub(super) async fn consume_generate_content_stream(
     .await?;
 
     accumulator.finish()
+}
+
+pub(super) async fn stream_generate_content_with_native(
+    provider_name: &str,
+    response: reqwest::Response,
+    sender: ChatCompletionStreamSender,
+    cancel: ChatCompletionCancelReceiver,
+) -> Result<(), DomainError> {
+    let mut accumulator = GeminiStreamAccumulator::default();
+    HttpChatCompletionRepository::stream_sse_response_with_hook(
+        provider_name,
+        response,
+        sender.clone(),
+        cancel.clone(),
+        |event| accumulator.apply_event(event, &mut |_| {}),
+    )
+    .await?;
+    if *cancel.borrow() {
+        return Ok(());
+    }
+
+    // Keep Gemini deltas unchanged; publish the complete native turn for history replay.
+    let normalized = super::normalizers::normalize_gemini_response(accumulator.finish()?).body;
+    if let Some(native) = normalized.pointer("/choices/0/message/native") {
+        let _ = sender.send(
+            serde_json::json!({
+                "choices": [{ "index": 0, "delta": { "native": native } }]
+            })
+            .to_string(),
+        );
+    }
+    Ok(())
 }
 
 #[derive(Default)]

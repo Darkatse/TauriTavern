@@ -5,6 +5,7 @@ use crate::errors::ApplicationError;
 use super::super::custom_api_format::CustomApiFormat;
 use super::claude_messages;
 use super::gemini_interactions;
+use super::makersuite;
 use super::openai;
 use super::openai_responses;
 
@@ -19,6 +20,7 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
     match format {
         CustomApiFormat::OpenAiResponses => return openai_responses::build(payload),
         CustomApiFormat::GeminiInteractions => return gemini_interactions::build(payload),
+        CustomApiFormat::GeminiGenerateContent => return makersuite::build_custom(payload),
         CustomApiFormat::OpenAiCompat => {}
         CustomApiFormat::ClaudeMessages => return claude_messages::build(payload),
     }
@@ -32,6 +34,125 @@ mod tests {
     use serde_json::json;
 
     use super::build;
+
+    #[test]
+    fn custom_gemini_replays_native_parts_without_overwriting_signatures() {
+        let native_parts = json!([
+            { "text": "Plan", "thought": true, "thoughtSignature": "thought-sig" },
+            { "text": "Calling tool", "thoughtSignature": "text-sig" },
+            { "functionCall": { "id": "call_1", "name": "weather", "args": {} },
+              "thoughtSignature": "tool-sig", "futureField": true }
+        ]);
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "gemini_generate_content",
+            "model": "gemini-3-pro-preview",
+            "messages": [
+                { "role": "user", "content": "Weather?" },
+                { "role": "assistant", "content": "Calling tool", "signature": "canonical-sig",
+                  "native": { "gemini": { "content": { "role": "model", "parts": native_parts } } },
+                  "tool_calls": [{ "id": "call_1", "type": "function",
+                    "function": { "name": "weather", "arguments": "{}" } }] },
+                { "role": "tool", "tool_call_id": "call_1", "content": "Sunny" }
+            ]
+        });
+        let (_, upstream) = build(payload.as_object().unwrap().clone()).unwrap();
+        assert_eq!(upstream["contents"][1]["parts"], native_parts);
+        assert_eq!(
+            upstream["contents"][2]["parts"][0]["functionResponse"]["name"],
+            "weather"
+        );
+    }
+
+    /// Explicit Custom parameters survive model aliases and documented prefixes.
+    #[test]
+    fn custom_gemini_does_not_gate_explicit_parameters_on_model_alias() {
+        let request = |model: &str, extra: Value| {
+            let mut payload = json!({
+                "chat_completion_source": "custom",
+                "custom_api_format": "gemini_generate_content",
+                "model": model,
+                "max_tokens": 8000,
+                "messages": [{"role": "user", "content": "hi"}]
+            });
+            payload
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            build(payload.as_object().unwrap().clone())
+        };
+
+        let (_, upstream) =
+            request("my-gemini-alias", json!({ "reasoning_effort": "high" })).unwrap();
+        assert_eq!(
+            upstream["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "high"
+        );
+
+        // Unknown alias + include_reasoning: includeThoughts is universal, so it is sent.
+        let (_, upstream) =
+            request("my-gemini-alias", json!({ "include_reasoning": true })).unwrap();
+        assert_eq!(
+            upstream["generationConfig"]["thinkingConfig"],
+            json!({ "includeThoughts": true })
+        );
+
+        // Documented `models/` prefix still resolves the capability table.
+        let (_, upstream) = request(
+            "models/gemini-3-pro-preview",
+            json!({ "reasoning_effort": "high", "include_reasoning": true }),
+        )
+        .unwrap();
+        assert_eq!(upstream["model"], "models/gemini-3-pro-preview");
+        assert_eq!(
+            upstream["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "high"
+        );
+        assert_eq!(
+            upstream["generationConfig"]["thinkingConfig"]["includeThoughts"],
+            true
+        );
+
+        // A first-party fixed-sampling model id keeps the user's sampling on custom.
+        let (_, upstream) = request(
+            "gemini-3.7-flash",
+            json!({ "temperature": 0.3, "top_p": 0.9 }),
+        )
+        .unwrap();
+        assert_eq!(upstream["generationConfig"]["temperature"], 0.3);
+        assert_eq!(upstream["generationConfig"]["topP"], 0.9);
+
+        for model in [
+            "gemini-3-pro-image-preview",
+            "models/gemini-3-pro-image-preview",
+            "my-image-alias",
+        ] {
+            let (_, upstream) = request(model, json!({
+                "frequency_penalty": 0.3, "presence_penalty": 0.5,
+                "request_images": true,
+                "request_image_resolution": "2K", "request_image_aspect_ratio": "16:9",
+                "use_sysprompt": true,
+                "messages": [{"role": "system", "content": "Draw a scene"}, {"role": "user", "content": "hi"}],
+                "tools": [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]
+            })).unwrap();
+            let config = &upstream["generationConfig"];
+            assert_eq!(config["responseModalities"], json!(["text", "image"]));
+            assert_eq!(
+                config["imageConfig"],
+                json!({"imageSize": "2K", "aspectRatio": "16:9"})
+            );
+            assert_eq!(config["frequencyPenalty"], 0.3);
+            assert_eq!(config["presencePenalty"], 0.5);
+            assert_eq!(
+                upstream["systemInstruction"]["parts"][0]["text"],
+                "Draw a scene"
+            );
+            assert_eq!(
+                upstream["tools"][0]["function_declarations"][0]["name"],
+                "lookup"
+            );
+        }
+    }
 
     #[test]
     fn custom_native_formats_only_relocate_reasoning_effort() {

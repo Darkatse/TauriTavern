@@ -124,6 +124,9 @@ fn build_claude_payload_inner(
     let mut request = Map::new();
     request.insert("model".to_string(), Value::String(model.to_string()));
     insert_if_present(&mut request, payload, "stream");
+    // `speed: "fast"` is Anthropic's fast-mode beta; the HTTP adapter adds the
+    // matching `anthropic-beta` value when it sees this field.
+    insert_if_present(&mut request, payload, "speed");
     insert_claude_sampling_params(
         &mut request,
         payload,

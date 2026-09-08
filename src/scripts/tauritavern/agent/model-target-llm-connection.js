@@ -35,6 +35,7 @@ const CUSTOM_API_FORMAT_BY_API = Object.freeze({
     custom_openai_responses: 'openai_responses',
     custom_claude_messages: 'claude_messages',
     custom_gemini_interactions: 'gemini_interactions',
+    custom_gemini_generate_content: 'gemini_generate_content',
 });
 
 /** @type {Readonly<Record<string, string>>} */

@@ -36,6 +36,7 @@ impl ChatCompletionProviderFormat {
                 CustomApiFormat::OpenAiResponses => Self::OpenAiResponses,
                 CustomApiFormat::ClaudeMessages => Self::ClaudeMessages,
                 CustomApiFormat::GeminiInteractions => Self::GeminiInteractions,
+                CustomApiFormat::GeminiGenerateContent => Self::Gemini,
             });
         }
 

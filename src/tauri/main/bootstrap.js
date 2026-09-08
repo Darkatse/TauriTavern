@@ -1,4 +1,5 @@
 import { invoke, isTauri as isTauriRuntime } from '../../tauri-bridge.js';
+import { eventSource, event_types } from '../../scripts/events.js';
 import { createTauriMainContext } from './context.js';
 import { createDownloadBridge } from './download-bridge.js';
 import { createInterceptors } from './interceptors.js';
@@ -410,6 +411,12 @@ export function bootstrapTauriMain() {
         .catch((error) => { console.warn('TauriTavern: Failed to load settings panels:', error); }));
     runAfterTauriReady(() => import('../../scripts/tauri/regex/native-regex-settings.js')
         .then(({ installNativeRegexBackendSetting }) => installNativeRegexBackendSetting()));
+    runAfterTauriReady(() => {
+        // The panel imports upstream modules; wait for their initialization before importing it.
+        eventSource.on(event_types.APP_READY, () => import('../../scripts/tauri/generation-params/panel.js')
+            .then(({ installGenerationParamsPanel }) => installGenerationParamsPanel())
+            .catch((error) => { console.error('TauriTavern: Failed to install generation parameter panel:', error); }));
+    });
     runAfterTauriReady(() => import('./services/dynamic-theme/install.js')
         .then(({ installDynamicTheme }) => installDynamicTheme()));
     if (!isEmbeddedRuntimeTakeoverDisabled()) {

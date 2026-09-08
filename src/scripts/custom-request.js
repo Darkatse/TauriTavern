@@ -5,6 +5,7 @@ import { extractReasoningFromData } from './reasoning.js';
 import { formatInstructModeChat, formatInstructModePrompt, getInstructStoppingSequences } from './instruct-mode.js';
 import { getStreamingReply, tryParseStreamingError, createGenerationParameters, settingsToUpdate, oai_settings } from './openai.js';
 import EventSourceStream from './sse-stream.js';
+import { getChatCompletionRequestContext } from './tauritavern/provider-replay.js';
 
 // #region Type Definitions
 /**
@@ -459,6 +460,7 @@ export class ChatCompletionService {
      * @throws {Error}
      */
     static async sendRequest(data, extractData = true, signal = null) {
+        const requestContext = getChatCompletionRequestContext(data);
         const response = await fetch('/api/backends/chat-completions/generate', {
             method: 'POST',
             headers: getRequestHeaders(),
@@ -481,14 +483,13 @@ export class ChatCompletionService {
                 content: extractMessageFromData(json, this.TYPE),
                 reasoning: extractReasoningFromData(json, {
                     mainApi: this.TYPE,
-                    chatCompletionSource: data.chat_completion_source,
-                    model: data.model,
+                    ...requestContext,
                     ignoreShowThoughts: true,
                 }),
             };
             // Try parse JSON
             if (data.json_schema) {
-                result.content = JSON.parse(extractJsonFromData(json, { mainApi: this.TYPE, chatCompletionSource: data.chat_completion_source, model: data.model }));
+                result.content = JSON.parse(extractJsonFromData(json, requestContext));
             }
             return result;
         }
@@ -506,7 +507,7 @@ export class ChatCompletionService {
         return async function* streamData() {
             let text = '';
             const swipes = [];
-            const state = { reasoning: '', image: '' };
+            const state = { reasoning: '', images: [], signature: '', toolSignatures: {} };
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) return;
@@ -516,8 +517,7 @@ export class ChatCompletionService {
                 const parsed = JSON.parse(rawData);
 
                 const reply = getStreamingReply(parsed, state, {
-                    chatCompletionSource: data.chat_completion_source,
-                    model: data.model,
+                    ...requestContext,
                     overrideShowThoughts: true,
                 });
                 if (Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0) {
@@ -578,8 +578,8 @@ export class ChatCompletionService {
             throw new Error('Invalid preset: must be an object');
         }
 
-        // apply preset overrides
-        preset = { ...preset, ...overridePreset };
+        // Fast mode requires an explicit preset opt-in, including for old presets.
+        preset = { claude_fast_mode: false, ...preset, ...overridePreset };
 
         // Fix any fields before converting to settings
         preset.bias_preset_selected = preset.bias_presets !== undefined ? preset.bias_preset_selected : undefined;  // presets might have bias_preset_selected but not bias_presets, but settings need both or neither.

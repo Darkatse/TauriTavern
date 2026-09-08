@@ -1,0 +1,178 @@
+/* Generation parameter management for the Chat Completion settings panel.
+   Uses only SmartTheme variables so user themes keep applying. */
+
+.tt-gp-bar {
+    margin: 6px 0 4px;
+}
+
+.tt-gp-title {
+    margin-bottom: 4px;
+    font-size: calc(var(--mainFontSize) * 0.85);
+    font-weight: 600;
+    opacity: 0.75;
+}
+
+.tt-gp-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.tt-gp-add {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin: 0;
+}
+
+.tt-gp-mode {
+    flex: none;
+    margin: 0;
+}
+
+.tt-gp-mode[aria-pressed="true"] {
+    color: var(--SmartThemeQuoteColor);
+}
+
+.tt-gp-add:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* Author `display` values outrank the UA `[hidden]` rule; restate for every element we hide. */
+.tt-gp-add[hidden],
+.tt-gp-picker[hidden],
+.tt-gp-json[hidden] {
+    display: none;
+}
+
+.tt-gp-json {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 6px;
+}
+
+.tt-gp-json-hint {
+    opacity: 0.7;
+}
+
+.tt-gp-json-text {
+    width: 100%;
+    margin: 0;
+    font-family: var(--monoFontFamily, monospace);
+    font-size: calc(var(--mainFontSize) * 0.9);
+    resize: vertical;
+}
+
+.tt-gp-json-error {
+    color: var(--fullred);
+    white-space: pre-wrap;
+}
+
+.tt-gp-json-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.tt-gp-json-actions .menu_button {
+    margin: 0;
+}
+
+.tt-gp-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 4px 2px;
+}
+
+.tt-gp-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+}
+
+.tt-gp-group-title {
+    flex-basis: 100%;
+    font-size: calc(var(--mainFontSize) * 0.8);
+    opacity: 0.6;
+}
+
+.tt-gp-chip {
+    padding: 3px 10px;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 80%, transparent);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--SmartThemeBodyColor);
+    font-size: calc(var(--mainFontSize) * 0.9);
+    cursor: pointer;
+}
+
+.tt-gp-chip:hover,
+.tt-gp-chip:focus-visible {
+    border-color: var(--SmartThemeQuoteColor);
+    color: var(--SmartThemeQuoteColor);
+}
+
+.tt-gp-block.tt-gp-inactive {
+    display: none !important;
+}
+
+.tt-gp-block > .range-block-title {
+    width: auto;
+}
+
+/* Slider blocks: label left, number box right, no range track. */
+.tt-gp-compact {
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 2px;
+}
+
+.tt-gp-compact > .range-block-title {
+    flex: 1 1 auto;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.tt-gp-compact > .range-block-range-and-counter {
+    flex: 0 0 auto;
+}
+
+.tt-gp-compact .range-block-range {
+    display: none;
+}
+
+.tt-gp-compact .range-block-counter {
+    flex: none;
+    margin: 0;
+}
+
+.tt-gp-compact .range-block-counter input {
+    width: 5.5em;
+    text-align: right;
+}
+
+/* Sits inline after the block's own label, so it never covers controls. */
+.tt-gp-remove {
+    margin-left: 6px;
+    padding: 0 4px;
+    border: 0;
+    background: transparent;
+    color: var(--SmartThemeBodyColor);
+    font-size: inherit;
+    line-height: 1;
+    vertical-align: middle;
+    cursor: pointer;
+    opacity: 0.35;
+    transition: opacity 0.15s;
+}
+
+.tt-gp-block:hover .tt-gp-remove,
+.tt-gp-remove:focus-visible {
+    opacity: 0.9;
+}

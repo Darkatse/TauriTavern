@@ -21,6 +21,7 @@ const ANTHROPIC_BETA_OUTPUT_128K: &str = "output-128k-2025-02-19";
 const ANTHROPIC_BETA_CONTEXT_1M: &str = "context-1m-2025-08-07";
 const ANTHROPIC_BETA_PROMPT_CACHING: &str = "prompt-caching-2024-07-31";
 const ANTHROPIC_BETA_EXTENDED_CACHE_TTL: &str = "extended-cache-ttl-2025-04-11";
+const ANTHROPIC_BETA_FAST_MODE: &str = "fast-mode-2026-02-01";
 
 pub(super) async fn list_models(
     repository: &HttpChatCompletionRepository,
@@ -512,6 +513,13 @@ fn build_anthropic_beta_values(
         }
     }
 
+    // Body `speed: "fast"` is only honoured alongside the fast-mode beta.
+    if payload.get("speed").and_then(Value::as_str) == Some("fast")
+        && !beta_values.iter().any(|existing| existing == ANTHROPIC_BETA_FAST_MODE)
+    {
+        beta_values.push(ANTHROPIC_BETA_FAST_MODE.to_string());
+    }
+
     beta_values
 }
 
@@ -538,9 +546,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        ANTHROPIC_BETA_CONTEXT_1M, ANTHROPIC_BETA_EXTENDED_CACHE_TTL, ANTHROPIC_BETA_OUTPUT_128K,
-        ANTHROPIC_BETA_PROMPT_CACHING, ClaudeMessageAccumulator, build_anthropic_beta_values,
-        configured_anthropic_beta_values, require_message_stop,
+        ANTHROPIC_BETA_CONTEXT_1M, ANTHROPIC_BETA_EXTENDED_CACHE_TTL, ANTHROPIC_BETA_FAST_MODE,
+        ANTHROPIC_BETA_OUTPUT_128K, ANTHROPIC_BETA_PROMPT_CACHING, ClaudeMessageAccumulator,
+        build_anthropic_beta_values, configured_anthropic_beta_values, require_message_stop,
     };
     use tt_ports::repositories::chat_completion_repository::{
         AnthropicBetaHeaderMode, ChatCompletionStreamDelta,
@@ -667,6 +675,31 @@ mod tests {
         );
         assert!(beta_values.contains(&ANTHROPIC_BETA_OUTPUT_128K.to_string()));
         assert!(beta_values.contains(&ANTHROPIC_BETA_CONTEXT_1M.to_string()));
+    }
+
+    #[test]
+    fn fast_speed_adds_fast_mode_beta_value() {
+        let headers = HashMap::new();
+        let payload = json!({ "speed": "fast", "messages": [] });
+
+        let beta_values = build_anthropic_beta_values(
+            &headers,
+            &payload,
+            AnthropicBetaHeaderMode::ClaudeDefaults,
+        );
+        assert!(beta_values.contains(&ANTHROPIC_BETA_FAST_MODE.to_string()));
+
+        let without_speed = build_anthropic_beta_values(
+            &headers,
+            &json!({ "messages": [] }),
+            AnthropicBetaHeaderMode::ClaudeDefaults,
+        );
+        assert!(!without_speed.contains(&ANTHROPIC_BETA_FAST_MODE.to_string()));
+
+        // Custom Claude-Messages proxies run with no default betas; fast mode must still pair.
+        let custom_proxy =
+            build_anthropic_beta_values(&headers, &payload, AnthropicBetaHeaderMode::None);
+        assert_eq!(custom_proxy, vec![ANTHROPIC_BETA_FAST_MODE.to_string()]);
     }
 
     #[test]
