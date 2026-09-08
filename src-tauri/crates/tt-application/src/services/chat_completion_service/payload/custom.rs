@@ -20,7 +20,7 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
     match format {
         CustomApiFormat::OpenAiResponses => return openai_responses::build(payload),
         CustomApiFormat::GeminiInteractions => return gemini_interactions::build(payload),
-        CustomApiFormat::GeminiGenerateContent => return makersuite::build(payload),
+        CustomApiFormat::GeminiGenerateContent => return makersuite::build_custom(payload),
         CustomApiFormat::OpenAiCompat => {}
         CustomApiFormat::ClaudeMessages => return claude_messages::build(payload),
     }
@@ -97,6 +97,62 @@ mod tests {
             assert!(upstream.get("custom_api_format").is_none());
             assert!(upstream.get("custom_url").is_none());
         }
+    }
+
+    /// Custom Gemini treats the model name as an alias: explicit parameters
+    /// are never dropped by first-party model tables, and unmappable explicit
+    /// requests fail instead of silently no-op.
+    #[test]
+    fn custom_gemini_does_not_gate_explicit_parameters_on_model_alias() {
+        let request = |model: &str, extra: Value| {
+            let mut payload = json!({
+                "chat_completion_source": "custom",
+                "custom_api_format": "gemini_generate_content",
+                "model": model,
+                "max_tokens": 8000,
+                "messages": [{"role": "user", "content": "hi"}]
+            });
+            payload
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            build(payload.as_object().unwrap().clone())
+        };
+
+        // Unknown alias + explicit effort: visible failure, not a silent no-op.
+        let error = request("my-gemini-alias", json!({ "reasoning_effort": "high" }))
+            .expect_err("unknown alias cannot map reasoning_effort");
+        assert!(error.to_string().contains("my-gemini-alias"), "{error}");
+
+        // Unknown alias + include_reasoning: includeThoughts is universal, so it is sent.
+        let (_, upstream) =
+            request("my-gemini-alias", json!({ "include_reasoning": true })).unwrap();
+        assert_eq!(
+            upstream["generationConfig"]["thinkingConfig"],
+            json!({ "includeThoughts": true })
+        );
+
+        // Documented `models/` prefix still resolves the capability table.
+        let (_, upstream) = request(
+            "models/gemini-3-pro-preview",
+            json!({ "reasoning_effort": "high", "include_reasoning": true }),
+        )
+        .unwrap();
+        assert_eq!(upstream["model"], "models/gemini-3-pro-preview");
+        assert_eq!(
+            upstream["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "high"
+        );
+        assert_eq!(
+            upstream["generationConfig"]["thinkingConfig"]["includeThoughts"],
+            true
+        );
+
+        // A first-party fixed-sampling model id keeps the user's sampling on custom.
+        let (_, upstream) =
+            request("gemini-3.7-flash", json!({ "temperature": 0.3, "top_p": 0.9 })).unwrap();
+        assert_eq!(upstream["generationConfig"]["temperature"], 0.3);
+        assert_eq!(upstream["generationConfig"]["topP"], 0.9);
     }
 
     #[test]

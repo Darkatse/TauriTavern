@@ -59,7 +59,7 @@ Connection Profiles（Connection Manager 扩展）：
 - `openai_responses` → 构造 `/responses`
 - `claude_messages` → 复用 Claude Messages 构造，并应用 include/exclude overrides
 - `gemini_interactions` → 构造 `/interactions`
-- `gemini_generate_content` → 复用 MakerSuite builder，构造 `/generateContent` 或 `/streamGenerateContent`，由 repository 将模型名放入 URL；仍在 service 层应用 Custom include/exclude/header overrides
+- `gemini_generate_content` → 复用 MakerSuite 翻译器（`build_custom`，Custom 参数策略见 §4.4），构造 `/generateContent` 或 `/streamGenerateContent`，由 repository 将模型名放入 URL；仍在 service 层应用 Custom include/exclude/header overrides
 
 ### 2.3 HTTP 调用 + Stream 处理（Rust repository）
 
@@ -211,6 +211,11 @@ streaming 语义：
 - 非流式 POST `{version-base}/models/{model}:generateContent`；流式 POST `{version-base}/models/{model}:streamGenerateContent?alt=sse`；模型列表 GET `{version-base}/models`，过滤支持 `generateContent` 的模型。
 - 使用 **Custom API Key**，沿用 MakerSuite 的 `x-goog-api-key` header 和 `key` query 鉴权；流式另带 `alt=sse`。Additional Headers 最后应用，渠道若要求 Bearer 可显式填写 `Authorization`；若不需要 Gemini key，应清空 Custom API Key，避免多余鉴权。
 - Custom 参数覆盖作用于翻译后的 Gemini body（如 `generationConfig`、`safetySettings`），不绕过 builder 校验。`model` 是 URL 路由字段，发往上游前从 body 移除。
+
+参数策略（`makersuite::build_custom`，与第一方 MakerSuite/Vertex 分开）：
+- 模型名是不透明别名：第一方“固定采样模型”表不删除 `temperature`/`top_p`/`top_k`，用户显式值原样转发。
+- `models/<id>` 前缀仅在能力查询时剥离，受支持的 `gemini-*` id 仍按既有契约映射 `thinkingConfig`（budget / level）。
+- 未识别的别名：`include_reasoning` 映射为通用的 `thinkingConfig.includeThoughts`；显式 `reasoning_effort`（非 auto）无法按模型映射时返回 ValidationError，不静默丢弃。
 
 响应与历史：
 - 非流式复用 Gemini normalizer：文本、`reasoning_content`、function calls、usage 与 `native.gemini.content` 保留。
