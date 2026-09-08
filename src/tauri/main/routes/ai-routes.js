@@ -226,7 +226,58 @@ async function attachOpenCodeStableChatId(payload) {
         return;
     }
 
-    payload[OPENCODE_STABLE_CHAT_ID_FIELD] = await globalThis.__TAURITAVERN__.api.chat.current.handle().stableId();
+    payload[OPENCODE_STABLE_CHAT_ID_FIELD] = await resolveOpenCodeChatId();
+}
+
+// 未保存的新聊天没有 integrity：给它一个本页生命周期内稳定的临时身份，
+// 请求能发出去（冷缓存），存盘后 integrity 出现即自动切到稳定身份（一次会话切换）。
+// key 取当前聊天引用而非句柄：同一未保存聊天多次生成复用同一临时身份。
+const opencodeEphemeralChatIds = new Map();
+
+function getOpenCodeEphemeralChatKey() {
+    try {
+        const ref = globalThis.__TAURITAVERN__?.api?.chat?.current?.ref?.();
+        if (!ref || typeof ref !== 'object') {
+            return null;
+        }
+        if (ref.kind === 'character') {
+            // 空字段不组 key：不同非法引用共用 'character::' 会串临时身份，退回不缓存
+            if (!ref.characterId || !ref.fileName) {
+                return null;
+            }
+            return `character:${ref.characterId}:${ref.fileName}`;
+        }
+        if (ref.kind === 'group') {
+            if (!ref.chatId) {
+                return null;
+            }
+            return `group:${ref.chatId}`;
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+async function resolveOpenCodeChatId() {
+    try {
+        const stable = String(await globalThis.__TAURITAVERN__.api.chat.current.handle().stableId() ?? '').trim();
+        if (stable) {
+            return stable;
+        }
+    } catch {
+        // integrity 缺失的新聊天：下面走临时身份，不抛错阻断生成
+    }
+
+    const key = getOpenCodeEphemeralChatKey();
+    if (key && opencodeEphemeralChatIds.has(key)) {
+        return opencodeEphemeralChatIds.get(key);
+    }
+    const ephemeral = `ephemeral-${createStreamId()}`;
+    if (key) {
+        opencodeEphemeralChatIds.set(key, ephemeral);
+    }
+    return ephemeral;
 }
 
 function buildErrorAssistantText(error) {

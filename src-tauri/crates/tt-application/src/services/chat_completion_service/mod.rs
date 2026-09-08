@@ -48,6 +48,10 @@ use self::stream_session::{StreamAppendOutcome, StreamSessionRegistry};
 const OPENAI_SOURCE: &str = ChatCompletionSource::OpenAi.key();
 pub(crate) const OPENCODE_STABLE_CHAT_ID_FIELD: &str = "_tauritavern_stable_chat_id";
 const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
+/// 会话命名空间：内部聊天身份只做派生输入，不原文暴露给第三方；
+/// 同一聊天恒得同一会话，不同聊天恒不同（见 derive_opencode_session_id）。
+const OPENCODE_SESSION_ID_DOMAIN: &str = "tt-opencode-session-v1";
+const OPENCODE_SESSION_ID_PREFIX: &str = "tt-oc-";
 const VERTEXAI_PROMPT_CACHE_SESSION_HEADER: &str = "X-Vertex-Ai-Session-Id";
 const AGENT_STRUCTURAL_BODY_OVERRIDE_KEYS: &[&str] = &[
     "messages",
@@ -927,6 +931,14 @@ fn has_configured_header(config: &ChatCompletionApiConfig, header_name: &str) ->
         .any(|key| key.eq_ignore_ascii_case(header_name))
 }
 
+/// 每个聊天独立的会话 token：派生自稳定聊天身份（vertexai 的 tt-pc- 同款做法），
+/// 内部身份不原文出境；相同输入恒得相同输出，无持久化需求。
+fn derive_opencode_session_id(stable_chat_id: &str) -> String {
+    let digest_input = format!("{OPENCODE_SESSION_ID_DOMAIN}:{stable_chat_id}");
+    let digest = Sha256::digest(digest_input.as_bytes());
+    format!("{OPENCODE_SESSION_ID_PREFIX}{}", &hex_lower(&digest)[..32])
+}
+
 fn apply_opencode_session_header(
     source: ChatCompletionSource,
     payload: &Map<String, Value>,
@@ -950,7 +962,7 @@ fn apply_opencode_session_header(
         })?;
     config.extra_headers.insert(
         OPENCODE_SESSION_HEADER.to_string(),
-        stable_chat_id.to_string(),
+        derive_opencode_session_id(stable_chat_id),
     );
     Ok(())
 }
@@ -1002,7 +1014,8 @@ mod tests {
     use super::{
         AdditionalParameters, ChatCompletionService, apply_nanogpt_claude_cache_control,
         apply_opencode_session_header, apply_vertexai_prompt_cache_session_header,
-        ensure_vertexai_claude_prompt_cache_ttl, resolve_status_model_list_source,
+        derive_opencode_session_id, ensure_vertexai_claude_prompt_cache_ttl,
+        resolve_status_model_list_source,
     };
     use crate::errors::ApplicationError;
     use tokio::sync::watch;
@@ -1105,13 +1118,85 @@ mod tests {
         )
         .unwrap();
 
+        // 头值是派生会话 token，不再原文回显内部聊天身份（金色值 pin 住派生算法）
         assert_eq!(
             config
                 .extra_headers
                 .get("x-opencode-session")
                 .map(String::as_str),
-            Some("stable-chat")
+            Some("tt-oc-4581999545c841e20ce4536943fe8339")
         );
+        assert_eq!(
+            derive_opencode_session_id("stable-chat"),
+            "tt-oc-4581999545c841e20ce4536943fe8339"
+        );
+    }
+
+    #[test]
+    fn opencode_session_header_edge_cases() {
+        let mut config = ChatCompletionApiConfig {
+            base_url: "https://opencode.ai/zen/v1".to_string(),
+            user_configured_endpoint: false,
+            api_key: "secret".to_string(),
+            authorization_header: None,
+            vertexai_service_account_json: None,
+            extra_headers: Default::default(),
+            additional_headers: Default::default(),
+            anthropic_beta_header_mode: AnthropicBetaHeaderMode::None,
+            aws_bedrock_custom_response_path: None,
+            aws_bedrock_custom_stream_path: None,
+        };
+        // 空白身份仍拒绝（fail-fast intact）
+        let blank_id = json!({ "_tauritavern_stable_chat_id": "   " });
+        assert!(
+            apply_opencode_session_header(
+                ChatCompletionSource::OpenCode,
+                blank_id.as_object().unwrap(),
+                &mut config,
+            )
+            .is_err()
+        );
+        // 非 opencode 渠道不写头
+        let payload = json!({ "_tauritavern_stable_chat_id": "stable-chat" });
+        apply_opencode_session_header(
+            ChatCompletionSource::OpenAi,
+            payload.as_object().unwrap(),
+            &mut config,
+        )
+        .unwrap();
+        assert!(!config.extra_headers.contains_key("x-opencode-session"));
+        // 用户预置头优先，不覆盖
+        config
+            .additional_headers
+            .insert("X-OpenCode-Session".to_string(), "user-pinned".to_string());
+        apply_opencode_session_header(
+            ChatCompletionSource::OpenCode,
+            payload.as_object().unwrap(),
+            &mut config,
+        )
+        .unwrap();
+        assert_eq!(
+            config
+                .extra_headers
+                .get("x-opencode-session")
+                .map(String::as_str),
+            None
+        );
+    }
+
+    #[test]
+    fn opencode_session_id_is_stable_per_chat_and_independent_across_chats() {
+        let first = derive_opencode_session_id("stable-chat");
+        assert_eq!(first, derive_opencode_session_id("stable-chat"));
+        assert!(first.starts_with("tt-oc-"));
+        assert_eq!(first.len(), "tt-oc-".len() + 32);
+        assert!(
+            first["tt-oc-".len()..]
+                .chars()
+                .all(|c| c.is_ascii_hexdigit())
+        );
+        assert!(!first.contains("stable-chat"));
+        assert_ne!(first, derive_opencode_session_id("another-chat"));
     }
 
     #[test]

@@ -116,3 +116,160 @@ test('OpenCode generation carries the current stable chat id', async () => {
     const generate = calls.find(call => call.command === 'generate_chat_completion');
     assert.equal(generate.args.dto._tauritavern_stable_chat_id, 'stable-chat');
 });
+
+test('OpenCode generation falls back to a stable ephemeral id for unsaved chats', async () => {
+    const ref = { kind: 'character', characterId: 'Alice', fileName: 'unsaved-chat' };
+    globalThis.__TAURITAVERN__ = {
+        api: {
+            chat: {
+                current: {
+                    ref: () => ref,
+                    handle: () => ({
+                        stableId: async () => {
+                            throw new Error('Chat metadata integrity is missing');
+                        },
+                    }),
+                },
+            },
+        },
+    };
+    const calls = [];
+    const router = await createAiRouter(async (command, args) => {
+        calls.push({ command, args });
+        return {};
+    });
+
+    for (let index = 0; index < 2; index += 1) {
+        await router.handle({
+            method: 'POST',
+            path: '/api/backends/chat-completions/generate',
+            body: { chat_completion_source: 'opencode', type: 'quiet' },
+        });
+    }
+
+    const ids = calls
+        .filter(call => call.command === 'generate_chat_completion')
+        .map(call => call.args.dto._tauritavern_stable_chat_id);
+    assert.equal(ids.length, 2);
+    assert.match(ids[0], /^ephemeral-/);
+    assert.equal(ids[1], ids[0]);
+});
+
+test('OpenCode ephemeral ids are independent per unsaved chat', async () => {
+    let currentRef = { kind: 'character', characterId: 'Alice', fileName: 'unsaved-one' };
+    globalThis.__TAURITAVERN__ = {
+        api: {
+            chat: {
+                current: {
+                    ref: () => currentRef,
+                    handle: () => ({
+                        stableId: async () => {
+                            throw new Error('Chat metadata integrity is missing');
+                        },
+                    }),
+                },
+            },
+        },
+    };
+    const calls = [];
+    const router = await createAiRouter(async (command, args) => {
+        calls.push({ command, args });
+        return {};
+    });
+
+    await router.handle({
+        method: 'POST',
+        path: '/api/backends/chat-completions/generate',
+        body: { chat_completion_source: 'opencode', type: 'quiet' },
+    });
+    currentRef = { kind: 'character', characterId: 'Bob', fileName: 'unsaved-two' };
+    await router.handle({
+        method: 'POST',
+        path: '/api/backends/chat-completions/generate',
+        body: { chat_completion_source: 'opencode', type: 'quiet' },
+    });
+
+    const ids = calls
+        .filter(call => call.command === 'generate_chat_completion')
+        .map(call => call.args.dto._tauritavern_stable_chat_id);
+    assert.equal(ids.length, 2);
+    assert.match(ids[0], /^ephemeral-/);
+    assert.match(ids[1], /^ephemeral-/);
+    assert.notEqual(ids[0], ids[1]);
+});
+
+test('OpenCode falls back to an uncached ephemeral id when the chat ref is missing', async () => {
+    globalThis.__TAURITAVERN__ = {
+        api: {
+            chat: {
+                current: {
+                    handle: () => ({
+                        stableId: async () => {
+                            throw new Error('Chat metadata integrity is missing');
+                        },
+                    }),
+                },
+            },
+        },
+    };
+    const calls = [];
+    const router = await createAiRouter(async (command, args) => {
+        calls.push({ command, args });
+        return {};
+    });
+
+    await router.handle({
+        method: 'POST',
+        path: '/api/backends/chat-completions/generate',
+        body: { chat_completion_source: 'opencode', type: 'quiet' },
+    });
+
+    const generate = calls.find(call => call.command === 'generate_chat_completion');
+    assert.match(generate.args.dto._tauritavern_stable_chat_id, /^ephemeral-/);
+});
+
+test('OpenCode switches to the stable id once the chat is saved', async () => {
+    let saved = false;
+    const ref = { kind: 'character', characterId: 'Alice', fileName: 'new-chat' };
+    globalThis.__TAURITAVERN__ = {
+        api: {
+            chat: {
+                current: {
+                    ref: () => ref,
+                    handle: () => ({
+                        stableId: async () => {
+                            if (!saved) {
+                                throw new Error('Chat metadata integrity is missing');
+                            }
+                            return 'stable-after-save';
+                        },
+                    }),
+                },
+            },
+        },
+    };
+    const calls = [];
+    const router = await createAiRouter(async (command, args) => {
+        calls.push({ command, args });
+        return {};
+    });
+
+    await router.handle({
+        method: 'POST',
+        path: '/api/backends/chat-completions/generate',
+        body: { chat_completion_source: 'opencode', type: 'quiet' },
+    });
+    saved = true;
+    await router.handle({
+        method: 'POST',
+        path: '/api/backends/chat-completions/generate',
+        body: { chat_completion_source: 'opencode', type: 'quiet' },
+    });
+
+    const ids = calls
+        .filter(call => call.command === 'generate_chat_completion')
+        .map(call => call.args.dto._tauritavern_stable_chat_id);
+    assert.equal(ids.length, 2);
+    assert.match(ids[0], /^ephemeral-/);
+    assert.equal(ids[1], 'stable-after-save');
+});
