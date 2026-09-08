@@ -289,6 +289,97 @@ async fn repository_round_trips_run_workspace_and_event() {
 }
 
 #[tokio::test]
+async fn checkpoint_replaces_previous_bytes_and_survives_reopening() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let mut run = sample_run();
+    run.status = AgentRunStatus::Completed;
+    repository.create_run(&run).await.expect("create run");
+    assert!(
+        repository
+            .load_run_checkpoint(&run.id)
+            .await
+            .expect("load missing checkpoint")
+            .is_none()
+    );
+
+    repository
+        .save_run_checkpoint(&run.id, br#"{"round":1}"#)
+        .await
+        .expect("save first checkpoint");
+    let latest = br#"{"round":2,"message":"Finished writing."}"#;
+    repository
+        .save_run_checkpoint(&run.id, latest)
+        .await
+        .expect("replace checkpoint");
+
+    let reopened = FileAgentRepository::new(root.clone());
+    assert_eq!(
+        reopened
+            .load_run_checkpoint(&run.id)
+            .await
+            .expect("load persisted checkpoint")
+            .as_deref(),
+        Some(latest.as_slice())
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn reset_event_sequence_observes_externally_updated_journal() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run();
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .append_event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "run_created",
+            Value::Null,
+        )
+        .await
+        .expect("append local event");
+
+    let other_repository = FileAgentRepository::new(root.clone());
+    other_repository
+        .append_event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "run_cancelled",
+            Value::Null,
+        )
+        .await
+        .expect("append external event");
+
+    repository
+        .reset_event_sequence(&run.id)
+        .await
+        .expect("reset append cursor");
+    let resumed = repository
+        .append_event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "run_resumed",
+            Value::Null,
+        )
+        .await
+        .expect("append after journal replacement");
+    assert_eq!(resumed.seq, 3);
+    assert_eq!(
+        repository
+            .read_all_events(&run.id)
+            .await
+            .expect("read contiguous journal")
+            .len(),
+        3
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
 async fn repository_rejects_non_contiguous_event_sequences() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());
@@ -650,14 +741,19 @@ async fn slim_run_heavy_artifacts_removes_only_non_core_run_files() {
         })
         .await
         .expect("save summary");
+    let checkpoint = br#"{"round":3}"#;
+    repository
+        .save_run_checkpoint(&run.id, checkpoint)
+        .await
+        .expect("save checkpoint");
 
     let removed = repository
         .slim_run_heavy_artifacts(&run)
         .await
         .expect("slim heavy artifacts");
 
-    assert_eq!(removed.file_count, 3);
-    assert_eq!(removed.byte_count, 9);
+    assert_eq!(removed.file_count, 4);
+    assert_eq!(removed.byte_count, 9 + checkpoint.len() as u64);
     assert!(run_dir.join("run.json").exists());
     assert!(run_dir.join("events.jsonl").exists());
     assert!(root.join("index/runs/run_prune_slim.json").exists());
@@ -668,6 +764,13 @@ async fn slim_run_heavy_artifacts_removes_only_non_core_run_files() {
     assert!(!run_dir.join("manifest.json").exists());
     assert!(!run_dir.join("input").exists());
     assert!(!run_dir.join("output").exists());
+    assert!(
+        repository
+            .load_run_checkpoint(&run.id)
+            .await
+            .expect("load pruned checkpoint")
+            .is_none()
+    );
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
+use tokio::sync::{Mutex, MutexGuard};
 
 use crate::errors::ApplicationError;
 use crate::services::agent_identity::{validate_stable_chat_id, workspace_id_for_stable_chat_id};
@@ -30,17 +31,24 @@ pub trait AgentRunActivity: Send + Sync {
 pub struct AgentWorkspaceLifecycleService {
     repository: Arc<dyn AgentWorkspaceLifecycleRepository>,
     run_activity: Arc<dyn AgentRunActivity>,
+    run_lifecycle_lock: Arc<Mutex<()>>,
 }
 
 impl AgentWorkspaceLifecycleService {
     pub fn new(
         repository: Arc<dyn AgentWorkspaceLifecycleRepository>,
         run_activity: Arc<dyn AgentRunActivity>,
+        run_lifecycle_lock: Arc<Mutex<()>>,
     ) -> Self {
         Self {
             repository,
             run_activity,
+            run_lifecycle_lock,
         }
+    }
+
+    pub(crate) async fn lock_run_lifecycle(&self) -> MutexGuard<'_, ()> {
+        self.run_lifecycle_lock.lock().await
     }
 
     pub fn character_target_from_metadata(
@@ -112,7 +120,8 @@ impl AgentWorkspaceLifecycleService {
         Ok(())
     }
 
-    pub async fn delete_chat_workspace(
+    /// The owning chat deletion holds the lifecycle lock through its entire operation.
+    pub(crate) async fn delete_chat_workspace_locked(
         &self,
         target: &AgentChatWorkspaceTarget,
     ) -> Result<AgentChatWorkspaceDeletion, ApplicationError> {
@@ -135,7 +144,7 @@ impl AgentWorkspaceLifecycleService {
             .map_err(Into::into)
     }
 
-    pub async fn delete_chat_workspaces(
+    pub(crate) async fn delete_chat_workspaces_locked(
         &self,
         targets: &[AgentChatWorkspaceTarget],
     ) -> Result<Vec<AgentChatWorkspaceDeletion>, ApplicationError> {
@@ -158,6 +167,7 @@ impl AgentWorkspaceLifecycleService {
         target: &AgentChatWorkspaceTarget,
         request: AgentPersistentStatePruneRequest,
     ) -> Result<AgentPersistentStatePrune, ApplicationError> {
+        let _guard = self.lock_run_lifecycle().await;
         self.ensure_chat_workspace_inactive(target).await?;
         let workspace_id = self.workspace_id(target)?;
         self.repository
@@ -276,11 +286,13 @@ mod tests {
             Arc::new(MockRunActivity {
                 active_run_ids: vec!["run_active".to_string()],
             }),
+            Arc::new(Mutex::new(())),
         );
 
         let target = AgentWorkspaceLifecycleService::group_target("group-chat").expect("target");
+        let _guard = service.lock_run_lifecycle().await;
         let error = service
-            .delete_chat_workspace(&target)
+            .delete_chat_workspace_locked(&target)
             .await
             .expect_err("active run should block deletion");
 

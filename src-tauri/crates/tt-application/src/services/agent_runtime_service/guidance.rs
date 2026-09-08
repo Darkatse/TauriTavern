@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -21,7 +22,8 @@ const GUIDANCE_PREVIEW_CHARS: usize = 240;
 const USER_GUIDANCE_OPEN_TAG: &str = "<user_guidance>";
 const USER_GUIDANCE_CLOSE_TAG: &str = "</user_guidance>";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct AgentGuidanceItem {
     pub(super) guidance_id: String,
     pub(super) client_guidance_id: Option<String>,
@@ -211,23 +213,6 @@ impl AgentRuntimeService {
         .await?;
 
         Ok(())
-    }
-
-    pub(super) async fn close_guidance_mailbox_for_run(
-        &self,
-        run_id: &str,
-        reason: &str,
-        level: AgentRunEventLevel,
-    ) -> Result<(), ApplicationError> {
-        let Some(handle) = self.active_runs.read().await.get(run_id).cloned() else {
-            return Ok(());
-        };
-        let items = handle.guidance_mailbox.close_and_drain().await;
-        if items.is_empty() {
-            return Ok(());
-        }
-        self.emit_guidance_discarded(run_id, &items, reason, level)
-            .await
     }
 
     async fn drain_pending_guidance(&self, run_id: &str) -> Vec<AgentGuidanceItem> {

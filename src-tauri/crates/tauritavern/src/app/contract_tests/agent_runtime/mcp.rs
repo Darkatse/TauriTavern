@@ -203,10 +203,28 @@ async fn agent_runtime_stops_after_unknown_mcp_call_outcome() {
         Some(false),
     )
     .await;
-    let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;
-    assert_eq!(run.status, AgentRunStatus::Failed);
-
-    wait_for_event_type(&fixture.agent_repository, &handle.run_id, "run_failed").await;
+    let checkpoint = super::resume::wait_for_checkpoint(&fixture, &handle.run_id).await;
+    assert_eq!(checkpoint.run.status, AgentRunStatus::Failed);
+    assert!(checkpoint.blocked_reason.is_some());
+    let run = fixture
+        .agent_repository
+        .load_run(&handle.run_id)
+        .await
+        .unwrap();
+    let error = fixture
+        .service
+        .resume_run(tt_application::dto::agent_dto::AgentResumeRunDto {
+            run_id: run.id,
+            expected_terminal_seq: checkpoint.terminal_seq,
+            chat_ref: run.chat_ref,
+            stable_chat_id: run.stable_chat_id,
+            additional_rounds: 0,
+            host_presentation: false,
+        })
+        .await
+        .expect_err("unknown MCP effect must prevent resuming");
+    assert!(error.to_string().contains("mcp.call_outcome_unknown"));
+    assert_eq!(fixture.mcp_gateway.calls.lock().await.len(), 1);
     let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
     assert!(events.iter().any(|event| {
         event.event_type == "run_failed" && event.payload["code"] == "mcp.call_outcome_unknown"
@@ -226,7 +244,7 @@ async fn agent_runtime_stops_after_unknown_mcp_call_outcome() {
     let _ = fs::remove_dir_all(root).await;
 }
 
-async fn configure_mcp_profile(
+pub(super) async fn configure_mcp_profile(
     fixture: &AgentRuntimeFixture,
     profile_id: &str,
     max_rounds: usize,

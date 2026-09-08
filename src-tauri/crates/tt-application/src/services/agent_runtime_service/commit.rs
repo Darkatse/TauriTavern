@@ -16,8 +16,8 @@ use crate::services::agent_tools::{
     AgentToolDispatchOutcome, AgentToolEffect, classify_workspace_io_error,
 };
 use tt_domain::models::agent::{
-    AgentChatCommitMode, AgentInvocationStatus, AgentRun, AgentRunEventLevel, AgentRunStatus,
-    AgentToolResult, ArtifactTarget, WorkspacePath, WorkspacePersistentChangeSet,
+    AgentChatCommitMode, AgentRun, AgentRunEventLevel, AgentRunStatus, AgentToolResult,
+    ArtifactTarget, WorkspacePath, WorkspacePersistentChangeSet,
 };
 use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
@@ -430,55 +430,58 @@ impl AgentRuntimeService {
     pub(super) async fn finish_run(
         &self,
         run_id: &str,
-        final_invocation_id: &str,
         incoming_handoff_task_id: Option<&str>,
         commit_ledger: &RunCommitLedger,
+        published_state: &mut Option<WorkspacePersistentChangeSet>,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
-        self.cancel_unfinished_child_tasks(run_id).await?;
-        self.close_guidance_mailbox_for_run(
-            run_id,
-            "run_finished_before_next_model_request",
-            AgentRunEventLevel::Info,
-        )
-        .await?;
         self.transition_status(run_id, AgentRunStatus::Finishing)
             .await?;
         let run = self.run_repository.load_run(run_id).await?;
 
-        let persistent_changes = match self
-            .workspace_repository
-            .commit_persistent_changes(run_id)
-            .await
-        {
-            Ok(changes) => changes,
-            Err(error) => {
-                self.event(
-                    run_id,
-                    AgentRunEventLevel::Error,
-                    "persistent_changes_commit_failed",
-                    json!({ "message": error.to_string() }),
-                )
-                .await?;
-                return Err(error.into());
-            }
-        };
-        self.event(
-            run_id,
-            AgentRunEventLevel::Info,
-            "persistent_changes_committed",
-            json!({
-                "stateId": persistent_changes.state_id,
-                "baseStateId": persistent_changes.base_state_id,
-                "changeCount": persistent_changes.changes.len(),
-                "changes": persistent_change_payloads(&persistent_changes),
-            }),
-        )
-        .await?;
+        // Publication is atomic. Once it succeeds, only metadata remains to retry.
+        if published_state.is_none() {
+            let persistent_changes = match self
+                .workspace_repository
+                .commit_persistent_changes(run_id)
+                .await
+            {
+                Ok(changes) => changes,
+                Err(error) => {
+                    self.event(
+                        run_id,
+                        AgentRunEventLevel::Error,
+                        "persistent_changes_commit_failed",
+                        json!({ "message": error.to_string() }),
+                    )
+                    .await?;
+                    return Err(error.into());
+                }
+            };
+            *published_state = Some(persistent_changes);
+            let persistent_changes = published_state
+                .as_ref()
+                .expect("published persistent state");
+            self.event(
+                run_id,
+                AgentRunEventLevel::Info,
+                "persistent_changes_committed",
+                json!({
+                    "stateId": persistent_changes.state_id,
+                    "baseStateId": persistent_changes.base_state_id,
+                    "changeCount": persistent_changes.changes.len(),
+                    "changes": persistent_change_payloads(persistent_changes),
+                }),
+            )
+            .await?;
+        }
+        let persistent_changes = published_state
+            .as_ref()
+            .expect("published persistent state");
 
         self.request_persistent_state_metadata_update(
             &run,
-            &persistent_changes,
+            persistent_changes,
             commit_ledger,
             cancel,
         )
@@ -494,24 +497,6 @@ impl AgentRuntimeService {
             )
             .await?;
         }
-        self.finish_invocation(
-            run_id,
-            final_invocation_id,
-            AgentInvocationStatus::Completed,
-        )
-        .await?;
-        self.transition_status(run_id, AgentRunStatus::Completed)
-            .await?;
-        self.event(
-            run_id,
-            AgentRunEventLevel::Info,
-            "run_completed",
-            Value::Null,
-        )
-        .await?;
-        self.active_runs.write().await.remove(run_id);
-        self.clear_pending_host_requests_for_run(run_id).await;
-
         Ok(())
     }
 

@@ -94,6 +94,17 @@ pub(super) fn responses_websocket_session_id(request: &AgentModelRequest) -> Opt
     string_value(&request.provider_state, "sessionId")
 }
 
+/// A resumed run opens a new connection and sends its complete native history.
+pub fn reset_transport_for_resume(request: &mut AgentModelRequest) {
+    if let Some(state) = request.provider_state.as_object_mut()
+        && state.get("transport").and_then(Value::as_str)
+            == Some(OPENAI_RESPONSES_WEBSOCKET_TRANSPORT)
+    {
+        state.remove("previousResponseId");
+        state.remove("messageCursor");
+    }
+}
+
 fn native_part_count(response: &AgentModelResponse, provider: &str) -> usize {
     response
         .message

@@ -473,7 +473,7 @@ async fn agent_runtime_recovers_handoff_before_trailing_tool() {
     let _ = fs::remove_dir_all(root).await;
 }
 
-async fn configure_return_mode_profiles(
+pub(super) async fn configure_return_mode_profiles(
     fixture: &AgentRuntimeFixture,
 ) -> tt_domain::models::agent::profile::ResolvedAgentProfile {
     let mut root = fixture

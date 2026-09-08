@@ -215,6 +215,10 @@ impl ChatService {
         file_name: &str,
     ) -> Result<(), ApplicationError> {
         tracing::info!("Deleting chat: {}/{}", character_name, file_name);
+        let _run_guard = self
+            .agent_workspace_lifecycle_service
+            .lock_run_lifecycle()
+            .await;
 
         let summary = self
             .chat_repository
@@ -651,7 +655,7 @@ impl ChatService {
             return Ok(());
         }
         self.agent_workspace_lifecycle_service
-            .delete_chat_workspace(target)
+            .delete_chat_workspace_locked(target)
             .await
             .map(|_| ())
     }

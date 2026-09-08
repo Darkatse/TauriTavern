@@ -104,6 +104,10 @@ impl GroupService {
     /// Delete a group
     pub async fn delete_group(&self, dto: DeleteGroupDto) -> Result<(), ApplicationError> {
         tracing::debug!("GroupService: Deleting group {}", dto.id);
+        let _run_guard = self
+            .agent_workspace_lifecycle_service
+            .lock_run_lifecycle()
+            .await;
         let group =
             self.repository.get_group(&dto.id).await?.ok_or_else(|| {
                 ApplicationError::NotFound(format!("Group not found: {}", dto.id))
@@ -138,7 +142,7 @@ impl GroupService {
         }
         drop(execution_guard);
         self.agent_workspace_lifecycle_service
-            .delete_chat_workspaces(&targets)
+            .delete_chat_workspaces_locked(&targets)
             .await?;
         Ok(())
     }

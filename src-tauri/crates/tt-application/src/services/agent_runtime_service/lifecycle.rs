@@ -34,6 +34,7 @@ impl AgentRuntimeService {
         self: &Arc<Self>,
         mut dto: AgentStartRunDto,
     ) -> Result<AgentRunHandleDto, ApplicationError> {
+        let _admission = self.run_lifecycle_lock.lock().await;
         let stream_override = dto.options.stream;
         let Some(prompt_snapshot) = dto.prompt_snapshot.take() else {
             return Err(ApplicationError::ValidationError(
@@ -196,6 +197,7 @@ impl AgentRuntimeService {
             run_id.clone(),
             cancel_sender,
             stream_override,
+            dto.options.host_presentation,
         ));
         self.active_runs
             .write()
@@ -223,6 +225,7 @@ impl AgentRuntimeService {
             stable_chat_id,
             generation_type,
             status: AgentRunStatus::Created,
+            after_seq: None,
         })
     }
 
@@ -261,6 +264,7 @@ impl AgentRuntimeService {
         &self,
         dto: AgentCancelRunDto,
     ) -> Result<AgentRunHandleDto, ApplicationError> {
+        let _admission = self.run_lifecycle_lock.lock().await;
         let run = self.run_repository.load_run(&dto.run_id).await?;
         match run.status {
             AgentRunStatus::Completed
@@ -273,9 +277,17 @@ impl AgentRuntimeService {
                     stable_chat_id: run.stable_chat_id,
                     generation_type: run.generation_type,
                     status: run.status,
+                    after_seq: None,
                 });
             }
             _ => {}
+        }
+
+        let active_handle = self.active_runs.read().await.get(&dto.run_id).cloned();
+        if let Some(handle) = &active_handle
+            && let Some(checkpoint) = handle.pending_checkpoint.lock().await.as_ref()
+        {
+            return Ok(checkpoint.handle());
         }
 
         self.event(
@@ -286,19 +298,13 @@ impl AgentRuntimeService {
         )
         .await?;
 
-        let active_handle = self.active_runs.read().await.get(&dto.run_id).cloned();
-
         let next = if let Some(handle) = active_handle {
-            self.close_guidance_mailbox_for_run(
-                &dto.run_id,
-                "run_cancel_requested",
-                AgentRunEventLevel::Info,
-            )
-            .await?;
+            let next = self
+                .transition_status(&dto.run_id, AgentRunStatus::Cancelling)
+                .await?;
             let _ = handle.cancel_sender.send(true);
             handle.scheduler.cancel_all_unfinished().await?;
-            self.transition_status(&dto.run_id, AgentRunStatus::Cancelling)
-                .await?
+            next
         } else {
             let cancelled = self
                 .transition_status(&dto.run_id, AgentRunStatus::Cancelled)
@@ -319,6 +325,7 @@ impl AgentRuntimeService {
             stable_chat_id: next.stable_chat_id,
             generation_type: next.generation_type,
             status: next.status,
+            after_seq: None,
         })
     }
 

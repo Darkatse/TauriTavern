@@ -319,6 +319,24 @@ impl AgentRunRepository for TestAgentRunRepository {
         Ok(())
     }
 
+    async fn save_run_checkpoint(&self, _run_id: &str, _data: &[u8]) -> Result<(), DomainError> {
+        Err(DomainError::InternalError(
+            "Unexpected save_run_checkpoint call in retention test".to_string(),
+        ))
+    }
+
+    async fn load_run_checkpoint(&self, _run_id: &str) -> Result<Option<Vec<u8>>, DomainError> {
+        Err(DomainError::InternalError(
+            "Unexpected load_run_checkpoint call in retention test".to_string(),
+        ))
+    }
+
+    async fn reset_event_sequence(&self, _run_id: &str) -> Result<(), DomainError> {
+        Err(DomainError::InternalError(
+            "Unexpected reset_event_sequence call in retention test".to_string(),
+        ))
+    }
+
     async fn append_event(
         &self,
         run_id: &str,

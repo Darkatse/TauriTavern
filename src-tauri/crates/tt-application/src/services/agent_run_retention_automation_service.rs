@@ -209,6 +209,7 @@ mod tests {
             run_repository,
             settings_repository.clone(),
             Arc::new(TestRunActivity),
+            Arc::new(tokio::sync::Mutex::new(())),
         ));
         Arc::new(AgentRunRetentionAutomationService::new(
             settings_repository,

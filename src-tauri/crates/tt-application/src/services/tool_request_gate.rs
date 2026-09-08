@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tt_domain::models::tool::{
     InvocationToolSnapshot, ToolChoice, ToolId, ToolInvocation, ToolSnapshotId, ToolTurnContract,
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ToolRequestGate {
     total_calls: usize,
     calls_per_tool: HashMap<ToolId, usize>,

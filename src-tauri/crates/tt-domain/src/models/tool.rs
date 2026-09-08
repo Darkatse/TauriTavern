@@ -147,7 +147,7 @@ impl<'de> Deserialize<'de> for ToolId {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolDescriptor {
     pub id: ToolId,
@@ -250,6 +250,15 @@ impl fmt::Display for ToolSnapshotId {
     }
 }
 
+impl<'de> Deserialize<'de> for ToolSnapshotId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::parse(String::deserialize(deserializer)?).map_err(de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolBinding {
@@ -299,6 +308,25 @@ impl ToolBinding {
 
     pub fn max_calls(&self) -> Option<usize> {
         self.max_calls
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolBinding {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Binding {
+            descriptor: ToolDescriptor,
+            model_alias: String,
+            max_calls: Option<usize>,
+        }
+
+        let binding = Binding::deserialize(deserializer)?;
+        Self::new(binding.descriptor, binding.model_alias, binding.max_calls)
+            .map_err(de::Error::custom)
     }
 }
 
@@ -369,6 +397,36 @@ impl InvocationToolSnapshot {
         self.bindings
             .iter()
             .find(|binding| binding.tool_id() == tool_id)
+    }
+}
+
+impl<'de> Deserialize<'de> for InvocationToolSnapshot {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Snapshot {
+            schema_version: u32,
+            id: ToolSnapshotId,
+            bindings: Vec<ToolBinding>,
+            max_calls_per_invocation: usize,
+        }
+
+        let snapshot = Snapshot::deserialize(deserializer)?;
+        if snapshot.schema_version != Self::SCHEMA_VERSION {
+            return Err(de::Error::custom(format!(
+                "tool.snapshot_schema_unsupported: unsupported tool snapshot version {}",
+                snapshot.schema_version
+            )));
+        }
+        Self::try_new(
+            snapshot.id,
+            snapshot.bindings,
+            snapshot.max_calls_per_invocation,
+        )
+        .map_err(de::Error::custom)
     }
 }
 
@@ -453,6 +511,22 @@ impl ToolTurnContract {
             .map(|binding| binding.tool_id().clone())
             .collect::<Vec<_>>();
 
+        Self::from_tools(snapshot.id().clone(), tools, choice)
+    }
+
+    fn from_tools(
+        snapshot_id: ToolSnapshotId,
+        tools: Vec<ToolId>,
+        choice: ToolChoice,
+    ) -> Result<Self, DomainError> {
+        let mut unique = HashSet::with_capacity(tools.len());
+        for tool_id in &tools {
+            if !unique.insert(tool_id) {
+                return Err(DomainError::InvalidData(format!(
+                    "tool.turn_duplicate_id: duplicate tool id `{tool_id}`"
+                )));
+            }
+        }
         if matches!(choice, ToolChoice::Required) && tools.is_empty() {
             return Err(DomainError::InvalidData(
                 "tool.turn_required_empty: required tool choice needs at least one tool"
@@ -460,16 +534,15 @@ impl ToolTurnContract {
             ));
         }
         if let ToolChoice::Specific(tool_id) = &choice
-            && snapshot.binding(tool_id).is_none()
+            && !tools.contains(tool_id)
         {
             return Err(DomainError::InvalidData(format!(
-                "tool.turn_specific_not_available: specific tool `{tool_id}` is not available in snapshot `{}`",
-                snapshot.id()
+                "tool.turn_specific_not_available: specific tool `{tool_id}` is not available in snapshot `{snapshot_id}`"
             )));
         }
 
         Ok(Self {
-            snapshot_id: snapshot.id().clone(),
+            snapshot_id,
             tools,
             choice,
         })
@@ -485,6 +558,24 @@ impl ToolTurnContract {
 
     pub fn choice(&self) -> &ToolChoice {
         &self.choice
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolTurnContract {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Turn {
+            snapshot_id: ToolSnapshotId,
+            tools: Vec<ToolId>,
+            choice: ToolChoice,
+        }
+
+        let turn = Turn::deserialize(deserializer)?;
+        Self::from_tools(turn.snapshot_id, turn.tools, turn.choice).map_err(de::Error::custom)
     }
 }
 
@@ -611,6 +702,47 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_restore_preserves_policy_and_rejects_invalid_bindings() {
+        let snapshot = InvocationToolSnapshot::try_new(
+            ToolSnapshotId::parse("inv_root").unwrap(),
+            vec![
+                ToolBinding::new(
+                    descriptor(ToolId::builtin("read").unwrap()),
+                    "read",
+                    Some(2),
+                )
+                .unwrap(),
+                ToolBinding::new(descriptor(ToolId::builtin("write").unwrap()), "write", None)
+                    .unwrap(),
+            ],
+            4,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(
+            serde_json::from_value::<InvocationToolSnapshot>(serialized.clone()).unwrap(),
+            snapshot
+        );
+
+        for (path, value) in [
+            ("/schemaVersion", json!(2)),
+            ("/id", json!("")),
+            ("/maxCallsPerInvocation", json!(0)),
+            ("/bindings/0/modelAlias", json!("")),
+            ("/bindings/0/maxCalls", json!(0)),
+            ("/bindings/1/modelAlias", json!("read")),
+            ("/bindings/1/descriptor/id", json!("builtin:read")),
+        ] {
+            let mut invalid = serialized.clone();
+            *invalid.pointer_mut(path).unwrap() = value;
+            assert!(
+                serde_json::from_value::<InvocationToolSnapshot>(invalid).is_err(),
+                "accepted invalid snapshot field {path}"
+            );
+        }
+    }
+
+    #[test]
     fn turn_uses_the_complete_snapshot_and_validates_choice() {
         let first_id = ToolId::builtin("first").unwrap();
         let second_id = ToolId::builtin("second").unwrap();
@@ -627,6 +759,16 @@ mod tests {
         let expected = vec![first_id, second_id.clone()];
         let turn = ToolTurnContract::all(&snapshot, ToolChoice::Specific(second_id)).unwrap();
         assert_eq!(turn.tools(), expected.as_slice());
+        let serialized = serde_json::to_value(&turn).unwrap();
+        assert_eq!(
+            serde_json::from_value::<ToolTurnContract>(serialized.clone()).unwrap(),
+            turn
+        );
+        for tools in [json!([]), json!(["builtin:first", "builtin:first"])] {
+            let mut invalid = serialized.clone();
+            invalid["tools"] = tools;
+            assert!(serde_json::from_value::<ToolTurnContract>(invalid).is_err());
+        }
 
         let unknown = ToolId::builtin("unknown").unwrap();
         assert!(ToolTurnContract::all(&snapshot, ToolChoice::Specific(unknown)).is_err());

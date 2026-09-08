@@ -125,7 +125,14 @@ impl AgentRuntimeService {
         let scheduler = self.active_run_handle(run_id).await?.scheduler.clone();
         let mut task_events = scheduler.subscribe();
         let (tasks, timed_out) = loop {
-            self.ensure_not_cancelled(cancel)?;
+            if *cancel.borrow() {
+                return Ok(tool_error_outcome(
+                    call,
+                    "agent.await_interrupted",
+                    "Waiting ended because this run stopped. Query the delegated tasks again after resuming.",
+                    started.elapsed().as_millis(),
+                ));
+            }
             let tasks = match self
                 .selected_child_tasks(run_id, invocation_id, selected_ids.as_ref())
                 .await
@@ -167,7 +174,6 @@ impl AgentRuntimeService {
                 _ = tokio::time::sleep(remaining) => {}
                 changed = cancel.changed() => {
                     let _ = changed;
-                    self.ensure_not_cancelled(cancel)?;
                 }
             }
         };

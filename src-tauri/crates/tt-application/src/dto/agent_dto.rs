@@ -277,6 +277,9 @@ pub struct AgentLoadProfileResultDto {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentStartRunOptionsDto {
+    /// The Host API supplies the final chat presentation before checkpointing.
+    #[serde(default)]
+    pub host_presentation: bool,
     /// Explicit user choice; never inferred from an unavailable inherited version.
     #[serde(default)]
     pub start_with_empty_persist: bool,
@@ -294,6 +297,47 @@ pub struct AgentRunHandleDto {
     pub stable_chat_id: String,
     pub generation_type: String,
     pub status: AgentRunStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after_seq: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentReadRunCheckpointDto {
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentReadRunCheckpointResultDto {
+    pub run: AgentRunHandleDto,
+    pub terminal_seq: u64,
+    pub presentation: Option<Value>,
+    pub next_step: String,
+    pub round: usize,
+    pub max_rounds: usize,
+    pub blocked_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentResumeRunDto {
+    pub run_id: String,
+    pub expected_terminal_seq: u64,
+    pub chat_ref: AgentChatRef,
+    pub stable_chat_id: String,
+    #[serde(default)]
+    pub additional_rounds: usize,
+    #[serde(default)]
+    pub host_presentation: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentFinishRunPresentationDto {
+    pub run_id: String,
+    pub terminal_seq: u64,
+    pub presentation: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

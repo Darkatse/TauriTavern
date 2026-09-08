@@ -1,9 +1,11 @@
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, hash_map::Entry};
 
 use tt_domain::models::skill::{SkillIndexEntry, SkillScope};
 use tt_ports::repositories::workspace_repository::WorkspaceFile;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkspaceReadState {
     pub sha256: String,
     pub full_read: bool,
@@ -34,12 +36,15 @@ impl WorkspaceReadState {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentToolSession {
+    #[serde(skip)]
     pub(crate) frozen_macros: std::sync::Arc<tt_domain::frozen_macros::FrozenMacros>,
     read_state: HashMap<String, WorkspaceReadState>,
     skill_read_chars: usize,
-    effective_skills: Vec<SkillIndexEntry>,
+    #[serde(skip)]
+    pub(crate) effective_skills: Vec<SkillIndexEntry>,
 }
 
 impl AgentToolSession {

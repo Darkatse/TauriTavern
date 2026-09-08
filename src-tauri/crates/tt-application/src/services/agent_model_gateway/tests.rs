@@ -2,7 +2,9 @@ use serde_json::{Value, json};
 
 use super::decode::{decode_chat_completion_exchange, decode_chat_completion_response};
 use super::encode::encode_chat_completion_request;
-use super::provider_state::{next_provider_state, responses_websocket_session_id};
+use super::provider_state::{
+    next_provider_state, reset_transport_for_resume, responses_websocket_session_id,
+};
 use super::providers::AgentProviderAdapter;
 use super::schema::sanitize_schema_for_provider;
 use crate::services::agent_tools::BuiltinAgentToolRegistry;
@@ -471,7 +473,24 @@ fn claude_schema_sanitizer_only_removes_transport_metadata() {
 #[test]
 fn openai_responses_continuation_sends_only_new_tool_results() {
     let registry = BuiltinAgentToolRegistry::all();
-    let request = AgentModelRequest {
+    let native_output = json!({
+        "responseId": "resp_1",
+        "output": [
+            {
+                "type": "reasoning",
+                "id": "reasoning_1",
+                "encrypted_content": "opaque-reasoning",
+            },
+            {
+                "type": "function_call",
+                "id": "function_1",
+                "call_id": "call_1",
+                "name": "workspace_write_file",
+                "arguments": "{\"path\":\"output/main.md\",\"content\":\"hi\"}",
+            },
+        ],
+    });
+    let mut request = AgentModelRequest {
         payload: json!({
             "chat_completion_source": "custom",
             "custom_api_format": "openai_responses",
@@ -485,14 +504,20 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
             text_message(AgentModelRole::User, "hi"),
             AgentModelMessage {
                 role: AgentModelRole::Assistant,
-                parts: vec![AgentModelContentPart::ToolCall {
-                    call: ToolInvocation {
-                        call_id: "call_1".to_string(),
-                        tool_id: ToolId::builtin("workspace.write_file").unwrap(),
-                        arguments: json!({"path":"output/main.md","content":"hi"}),
-                        provider_metadata: Value::Null,
+                parts: vec![
+                    AgentModelContentPart::ToolCall {
+                        call: ToolInvocation {
+                            call_id: "call_1".to_string(),
+                            tool_id: ToolId::builtin("workspace.write_file").unwrap(),
+                            arguments: json!({"path":"output/main.md","content":"hi"}),
+                            provider_metadata: Value::Null,
+                        },
                     },
-                }],
+                    AgentModelContentPart::Native {
+                        provider: "openai_responses".to_string(),
+                        value: native_output.clone(),
+                    },
+                ],
                 provider_metadata: Value::Null,
             },
             tool_result_message("call_1", "workspace.write_file", "ok"),
@@ -519,6 +544,21 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
             .get(CHAT_COMPLETION_PROVIDER_STATE_FIELD)
             .is_some()
     );
+
+    reset_transport_for_resume(&mut request);
+    let resumed = encode_chat_completion_request(&request, false).unwrap();
+    let messages = resumed.payload["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 4);
+    assert_eq!(messages[0]["content"], "sys");
+    assert_eq!(messages[1]["content"], "hi");
+    assert_eq!(messages[2]["native"]["openai_responses"], native_output);
+    assert_eq!(messages[3]["tool_call_id"], "call_1");
+    assert!(resumed.payload.get("previous_response_id").is_none());
+    assert_eq!(
+        resumed.payload[CHAT_COMPLETION_PROVIDER_STATE_FIELD]["transport"],
+        "responses_websocket"
+    );
+    assert_eq!(responses_websocket_session_id(&request), Some("run_1"));
 }
 
 #[test]

@@ -29,6 +29,11 @@ use tt_ports::repositories::workspace_repository::WorkspaceWriteGuard;
 const TOOL_CALL_AUDIT_DIGEST_BYTES: usize = 8;
 const MCP_RESULT_CONTENT_CHUNK_CHARS: usize = 3_000;
 
+pub(super) struct ToolCallFailure {
+    pub error: ApplicationError,
+    pub started: bool,
+}
+
 impl AgentRuntimeService {
     #[expect(
         clippy::too_many_arguments,
@@ -45,72 +50,20 @@ impl AgentRuntimeService {
         is_last_call: bool,
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut super::AgentCancelReceiver,
-    ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
-        let run_id = prepared.invocation.run_id.as_str();
-        let invocation_id = prepared.invocation.id.as_str();
-        let exit_policy = prepared.invocation.exit_policy;
-        let profile = &prepared.profile;
-        let tool_name = tool_invocation.tool_id.native_name();
-        let snapshot_id = prepared.tool_snapshot.id().as_str();
-        let arguments_ref = self.store_tool_arguments(run_id, tool_invocation).await?;
-        self.event(
-            run_id,
-            AgentRunEventLevel::Info,
-            "tool_call_requested",
-            json!({
-                "round": round,
-                "invocationId": invocation_id,
-                "callId": tool_invocation.call_id.as_str(),
-                "toolId": tool_invocation.tool_id.as_str(),
-                "snapshotId": snapshot_id,
-                "name": tool_name,
-                "argumentsRef": arguments_ref.as_str(),
-            }),
-        )
-        .await?;
-        let active_run = self.active_run_handle(run_id).await?;
-        remove_live_tool_call(&active_run.live_projection, invocation_id, tool_call_index);
-        let started = Instant::now();
-
-        if let Err(rejection) = gate.authorize_and_reserve(
-            &prepared.tool_snapshot,
-            &prepared.tool_turn,
-            tool_invocation,
-        ) {
-            let budget_message = match &rejection {
-                ToolRequestGateError::InvocationBudgetExhausted { max_calls } => Some(format!(
-                    "Agent tool call budget is exhausted for this invocation (max {max_calls})."
-                )),
-                ToolRequestGateError::ToolBudgetExhausted { max_calls, .. } => Some(format!(
-                    "Agent profile tool call budget for `{tool_name}` is exhausted (max {max_calls})."
-                )),
-                _ => None,
-            };
-            if let Some(message) = budget_message {
-                let outcome = recoverable_tool_error(
-                    tool_invocation,
-                    "agent.tool_budget_exhausted",
-                    &message,
-                    started.elapsed().as_millis(),
-                );
-                let _ = self
-                    .record_tool_outcome(run_id, invocation_id, round, snapshot_id, &outcome)
-                    .await?;
-                return Ok(outcome);
-            }
-
-            let error = if matches!(
-                &rejection,
-                ToolRequestGateError::TurnSnapshotMismatch { .. }
-            ) {
-                ApplicationError::InternalError(rejection.to_string())
-            } else {
-                ApplicationError::ValidationError(rejection.to_string())
-            };
+    ) -> Result<AgentToolDispatchOutcome, ToolCallFailure> {
+        let mut started_tool = false;
+        let result = async {
+            let run_id = prepared.invocation.run_id.as_str();
+            let invocation_id = prepared.invocation.id.as_str();
+            let exit_policy = prepared.invocation.exit_policy;
+            let profile = &prepared.profile;
+            let tool_name = tool_invocation.tool_id.native_name();
+            let snapshot_id = prepared.tool_snapshot.id().as_str();
+            let arguments_ref = self.store_tool_arguments(run_id, tool_invocation).await?;
             self.event(
                 run_id,
-                AgentRunEventLevel::Error,
-                "tool_call_failed",
+                AgentRunEventLevel::Info,
+                "tool_call_requested",
                 json!({
                     "round": round,
                     "invocationId": invocation_id,
@@ -118,225 +71,302 @@ impl AgentRuntimeService {
                     "toolId": tool_invocation.tool_id.as_str(),
                     "snapshotId": snapshot_id,
                     "name": tool_name,
-                    "message": error.to_string(),
+                    "argumentsRef": arguments_ref.as_str(),
                 }),
             )
             .await?;
-            return Err(error);
-        }
+            let active_run = self.active_run_handle(run_id).await?;
+            remove_live_tool_call(&active_run.live_projection, invocation_id, tool_call_index);
+            let started = Instant::now();
 
-        let call = tool_invocation;
-        if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed {
-            self.transition_status(run_id, AgentRunStatus::DispatchingTool)
-                .await?;
-        }
-        self.event(
-            run_id,
-            AgentRunEventLevel::Info,
-            "tool_call_started",
-            json!({
-                "round": round,
-                "invocationId": invocation_id,
-                "callId": call.call_id.as_str(),
-                "toolId": tool_invocation.tool_id.as_str(),
-                "snapshotId": snapshot_id,
-                "name": tool_name,
-            }),
-        )
-        .await?;
-
-        let builtin_name = call.tool_id.is_builtin().then_some(tool_name);
-        let dispatch_result = if !is_last_call && builtin_name.is_some_and(is_completion_tool) {
-            Ok(recoverable_tool_error(
-                call,
-                "agent.tool_after_finish",
-                &format!(
-                    "{} must be the final tool call in a model turn; complete the other work first, then call it again.",
-                    call.tool_id.native_name()
-                ),
-                started.elapsed().as_millis(),
-            ))
-        } else if builtin_name == Some(AGENT_LIST) {
-            self.dispatch_agent_list_tool(call, profile).await
-        } else if builtin_name == Some(AGENT_DELEGATE) {
-            Box::pin(self.dispatch_agent_delegate_tool(
-                run_id,
-                invocation_id,
-                call,
-                profile,
-                cancel,
-            ))
-            .await
-        } else if builtin_name == Some(AGENT_AWAIT) {
-            self.dispatch_agent_await_tool(prepared, call, commit_ledger.explicit_count(), cancel)
-                .await
-        } else if builtin_name == Some(AGENT_HANDOFF) {
-            self.dispatch_agent_handoff_tool(run_id, invocation_id, call, profile)
-                .await
-        } else if builtin_name == Some(TASK_RETURN) {
-            self.dispatch_task_return_tool(run_id, invocation_id, call, exit_policy, profile)
-                .await
-        } else if !call.tool_id.is_builtin() {
-            match self.call_mcp_tool(call, cancel).await? {
-                McpCallOutcome::KnownResponse(response) => Ok(AgentToolDispatchOutcome {
-                    result: mcp_known_response_result(call, response),
-                    effect: AgentToolEffect::None,
-                    elapsed_ms: started.elapsed().as_millis(),
-                }),
-                McpCallOutcome::NotSent(issue) => Ok(recoverable_tool_error(
-                    call,
-                    issue.code.as_str(),
-                    issue.message.as_str(),
-                    started.elapsed().as_millis(),
-                )),
-                McpCallOutcome::OutcomeUnknown(issue) => {
-                    let message = format!(
-                        "mcp.call_outcome_unknown: {} The MCP tool may have executed; this call will not be retried.",
-                        issue.message
-                    );
+            if let Err(rejection) = gate.authorize_and_reserve(
+                &prepared.tool_snapshot,
+                &prepared.tool_turn,
+                tool_invocation,
+            ) {
+                let budget_message = match &rejection {
+                    ToolRequestGateError::InvocationBudgetExhausted { max_calls } => Some(format!(
+                        "Agent tool call budget is exhausted for this invocation (max {max_calls})."
+                    )),
+                    ToolRequestGateError::ToolBudgetExhausted { max_calls, .. } => Some(format!(
+                        "Agent profile tool call budget for `{tool_name}` is exhausted (max {max_calls})."
+                    )),
+                    _ => None,
+                };
+                if let Some(message) = budget_message {
                     let outcome = recoverable_tool_error(
-                        call,
-                        "mcp.call_outcome_unknown",
+                        tool_invocation,
+                        "agent.tool_budget_exhausted",
                         &message,
                         started.elapsed().as_millis(),
                     );
-                    let _ = self
-                        .record_tool_outcome(run_id, invocation_id, round, snapshot_id, &outcome)
-                        .await?;
-                    return Err(if *cancel.borrow() {
-                        ApplicationError::Cancelled(message)
-                    } else {
-                        ApplicationError::ValidationError(message)
-                    });
+                    return Ok(outcome);
                 }
-            }
-        } else if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
-            let workspace_repository =
-                InvocationWorkspaceRepository::new(self.workspace_repository.as_ref(), profile);
-            self.tool_dispatcher
-                .dispatch_with_model_workspace_repository(
-                    run_id,
-                    call,
-                    session,
-                    profile,
-                    &workspace_repository,
-                )
-                .await
-        } else {
-            self.tool_dispatcher
-                .dispatch(run_id, call, session, profile)
-                .await
-        };
 
-        match dispatch_result {
-            Ok(outcome) => {
-                ensure_tool_result_identity(tool_invocation, &outcome.result)?;
-                let mut outcome = match outcome.effect.clone() {
-                    AgentToolEffect::Finish => {
-                        if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
-                            recoverable_tool_error(
-                                tool_invocation,
-                                "agent.child_finish_denied",
-                                "Return-mode child Agent invocations must complete with task.return, not workspace.finish.",
-                                outcome.elapsed_ms,
-                            )
-                        } else if !commit_ledger.has_explicit_commit()
-                            && self.run_repository.load_run(run_id).await?.presentation
-                                == AgentRunPresentation::Foreground
-                        {
-                            recoverable_tool_error(
-                                tool_invocation,
-                                "agent.foreground_commit_required",
-                                "Foreground Agent runs must call workspace.commit successfully before workspace.finish.",
-                                outcome.elapsed_ms,
-                            )
-                        } else {
-                            if self.has_pending_child_tasks(run_id, invocation_id).await? {
-                                self.active_run_handle(run_id)
-                                    .await?
-                                    .scheduler
-                                    .cancel_unfinished_for_parent(invocation_id)
-                                    .await?;
-                            }
-                            outcome
-                        }
-                    }
-                    AgentToolEffect::ChatCommitRequested { path, mode, reason } => {
-                        self.perform_explicit_host_chat_commit(
-                            run_id,
-                            call,
-                            path,
-                            mode,
-                            reason,
-                            outcome.elapsed_ms,
-                            round,
-                            invocation_id,
-                            commit_ledger,
-                            cancel,
-                        )
-                        .await?
-                    }
-                    _ => outcome,
+                let error = if matches!(
+                    &rejection,
+                    ToolRequestGateError::TurnSnapshotMismatch { .. }
+                ) {
+                    ApplicationError::InternalError(rejection.to_string())
+                } else {
+                    ApplicationError::ValidationError(rejection.to_string())
                 };
-                let result_path = self
-                    .record_tool_outcome(run_id, invocation_id, round, snapshot_id, &outcome)
-                    .await?;
-                if !outcome.result.tool_id.is_builtin() {
-                    let readable_path = WorkspacePath::parse(format!(
-                        "tool-results/{}.txt",
-                        tool_call_audit_file_stem(&outcome.result.call_id)
-                    ))?;
-                    if let Some(readable) = project_mcp_result_for_model(
-                        &mut outcome.result,
-                        &result_path,
-                        &readable_path,
-                        &prepared.tool_snapshot,
-                        profile.tools.mcp_result_inline_char_limit,
-                    )? {
-                        self.workspace_repository
-                            .write_text_guarded(
-                                run_id,
-                                &readable_path,
-                                &readable,
-                                WorkspaceWriteGuard::MustNotExist,
-                            )
-                            .await?;
-                        self.event(
-                            run_id,
-                            AgentRunEventLevel::Debug,
-                            "tool_result_readable_view_stored",
-                            json!({
-                                "round": round,
-                                "callId": outcome.result.call_id.as_str(),
-                                "toolId": outcome.result.tool_id.as_str(),
-                                "path": readable_path.as_str(),
-                                "auditPath": result_path.as_str(),
-                            }),
-                        )
-                        .await?;
-                    }
-                }
-                Ok(outcome)
-            }
-            Err(error) => {
                 self.event(
                     run_id,
                     AgentRunEventLevel::Error,
                     "tool_call_failed",
                     json!({
+                        "round": round,
+                        "invocationId": invocation_id,
+                        "callId": tool_invocation.call_id.as_str(),
+                        "toolId": tool_invocation.tool_id.as_str(),
+                        "snapshotId": snapshot_id,
+                        "name": tool_name,
+                        "message": error.to_string(),
+                    }),
+                )
+                .await?;
+                return Err(error);
+            }
+
+            let call = tool_invocation;
+            if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed {
+                self.transition_status(run_id, AgentRunStatus::DispatchingTool)
+                    .await?;
+            }
+            self.event(
+                run_id,
+                AgentRunEventLevel::Info,
+                "tool_call_started",
+                json!({
                     "round": round,
                     "invocationId": invocation_id,
                     "callId": call.call_id.as_str(),
                     "toolId": tool_invocation.tool_id.as_str(),
                     "snapshotId": snapshot_id,
                     "name": tool_name,
-                    "message": error.to_string(),
+                }),
+            )
+            .await?;
+
+            let builtin_name = call.tool_id.is_builtin().then_some(tool_name);
+            started_tool = true;
+            let dispatch_result = if !is_last_call && builtin_name.is_some_and(is_completion_tool) {
+                Ok(recoverable_tool_error(
+                    call,
+                    "agent.tool_after_finish",
+                    &format!(
+                        "{} must be the final tool call in a model turn; complete the other work first, then call it again.",
+                        call.tool_id.native_name()
+                    ),
+                    started.elapsed().as_millis(),
+                ))
+            } else if builtin_name == Some(AGENT_LIST) {
+                self.dispatch_agent_list_tool(call, profile).await
+            } else if builtin_name == Some(AGENT_DELEGATE) {
+                Box::pin(self.dispatch_agent_delegate_tool(
+                    run_id,
+                    invocation_id,
+                    call,
+                    profile,
+                    cancel,
+                ))
+                .await
+            } else if builtin_name == Some(AGENT_AWAIT) {
+                self.dispatch_agent_await_tool(prepared, call, commit_ledger.explicit_count(), cancel)
+                    .await
+            } else if builtin_name == Some(AGENT_HANDOFF) {
+                self.dispatch_agent_handoff_tool(run_id, invocation_id, call, profile)
+                    .await
+            } else if builtin_name == Some(TASK_RETURN) {
+                self.dispatch_task_return_tool(run_id, invocation_id, call, exit_policy, profile)
+                    .await
+            } else if !call.tool_id.is_builtin() {
+                // The MCP service reports sent-but-unconfirmed calls explicitly.
+                started_tool = false;
+                let outcome = self.call_mcp_tool(call, cancel).await?;
+                started_tool = true;
+                match outcome {
+                    McpCallOutcome::KnownResponse(response) => Ok(AgentToolDispatchOutcome {
+                        result: mcp_known_response_result(call, response),
+                        effect: AgentToolEffect::None,
+                        elapsed_ms: started.elapsed().as_millis(),
+                    }),
+                    McpCallOutcome::NotSent(issue) => Ok(recoverable_tool_error(
+                        call,
+                        issue.code.as_str(),
+                        issue.message.as_str(),
+                        started.elapsed().as_millis(),
+                    )),
+                    McpCallOutcome::OutcomeUnknown(issue) => {
+                        let message = format!(
+                            "mcp.call_outcome_unknown: {} The MCP tool may have executed; this call will not be retried.",
+                            issue.message
+                        );
+                        let outcome = recoverable_tool_error(
+                            call,
+                            "mcp.call_outcome_unknown",
+                            &message,
+                            started.elapsed().as_millis(),
+                        );
+                        let _ = self
+                            .record_tool_outcome(run_id, invocation_id, round, snapshot_id, &outcome)
+                            .await?;
+                        return Err(if *cancel.borrow() {
+                            ApplicationError::Cancelled(message)
+                        } else {
+                            ApplicationError::ValidationError(message)
+                        });
+                    }
+                }
+            } else if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
+                let workspace_repository =
+                    InvocationWorkspaceRepository::new(self.workspace_repository.as_ref(), profile);
+                self.tool_dispatcher
+                    .dispatch_with_model_workspace_repository(
+                        run_id,
+                        call,
+                        session,
+                        profile,
+                        &workspace_repository,
+                    )
+                    .await
+            } else {
+                self.tool_dispatcher
+                    .dispatch(run_id, call, session, profile)
+                    .await
+            };
+
+            match dispatch_result {
+                Ok(outcome) => {
+                    ensure_tool_result_identity(tool_invocation, &outcome.result)?;
+                    let outcome = match outcome.effect.clone() {
+                        AgentToolEffect::Finish => {
+                            if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
+                                recoverable_tool_error(
+                                    tool_invocation,
+                                    "agent.child_finish_denied",
+                                    "Return-mode child Agent invocations must complete with task.return, not workspace.finish.",
+                                    outcome.elapsed_ms,
+                                )
+                            } else if !commit_ledger.has_explicit_commit()
+                                && self.run_repository.load_run(run_id).await?.presentation
+                                    == AgentRunPresentation::Foreground
+                            {
+                                recoverable_tool_error(
+                                    tool_invocation,
+                                    "agent.foreground_commit_required",
+                                    "Foreground Agent runs must call workspace.commit successfully before workspace.finish.",
+                                    outcome.elapsed_ms,
+                                )
+                            } else {
+                                if self.has_pending_child_tasks(run_id, invocation_id).await? {
+                                    self.active_run_handle(run_id)
+                                        .await?
+                                        .scheduler
+                                        .cancel_unfinished_for_parent(invocation_id)
+                                        .await?;
+                                }
+                                outcome
+                            }
+                        }
+                        AgentToolEffect::ChatCommitRequested { path, mode, reason } => {
+                            self.perform_explicit_host_chat_commit(
+                                run_id,
+                                call,
+                                path,
+                                mode,
+                                reason,
+                                outcome.elapsed_ms,
+                                round,
+                                invocation_id,
+                                commit_ledger,
+                                cancel,
+                            )
+                            .await?
+                        }
+                        _ => outcome,
+                    };
+                    Ok(outcome)
+                }
+                Err(error) => {
+                    self.event(
+                        run_id,
+                        AgentRunEventLevel::Error,
+                        "tool_call_failed",
+                        json!({
+                            "round": round,
+                            "invocationId": invocation_id,
+                            "callId": call.call_id.as_str(),
+                            "toolId": tool_invocation.tool_id.as_str(),
+                            "snapshotId": snapshot_id,
+                            "name": tool_name,
+                            "message": error.to_string(),
+                        }),
+                    )
+                    .await?;
+                    Err(error)
+                }
+            }
+        }
+        .await;
+        result.map_err(|error| ToolCallFailure {
+            error,
+            started: started_tool,
+        })
+    }
+
+    pub(super) async fn record_tool_outcome_for_model(
+        &self,
+        prepared: &PreparedInvocation,
+        round: usize,
+        outcome: &mut AgentToolDispatchOutcome,
+    ) -> Result<(), ApplicationError> {
+        let run_id = prepared.invocation.run_id.as_str();
+        let invocation_id = prepared.invocation.id.as_str();
+        let snapshot_id = prepared.tool_snapshot.id().as_str();
+        let profile = &prepared.profile;
+        let result_path = self
+            .record_tool_outcome(run_id, invocation_id, round, snapshot_id, outcome)
+            .await?;
+        if !outcome.result.tool_id.is_builtin() {
+            let readable_path = WorkspacePath::parse(format!(
+                "tool-results/{}.txt",
+                tool_call_audit_file_stem(&outcome.result.call_id)
+            ))?;
+            let mut projected = outcome.result.clone();
+            if let Some(readable) = project_mcp_result_for_model(
+                &mut projected,
+                &result_path,
+                &readable_path,
+                &prepared.tool_snapshot,
+                profile.tools.mcp_result_inline_char_limit,
+            )? {
+                self.workspace_repository
+                    .write_text_guarded(
+                        run_id,
+                        &readable_path,
+                        &readable,
+                        WorkspaceWriteGuard::MustNotExist,
+                    )
+                    .await?;
+                self.event(
+                    run_id,
+                    AgentRunEventLevel::Debug,
+                    "tool_result_readable_view_stored",
+                    json!({
+                        "round": round,
+                        "callId": outcome.result.call_id.as_str(),
+                        "toolId": outcome.result.tool_id.as_str(),
+                        "path": readable_path.as_str(),
+                        "auditPath": result_path.as_str(),
                     }),
                 )
                 .await?;
-                Err(error)
             }
+            outcome.result = projected;
         }
+        Ok(())
     }
 
     async fn call_mcp_tool(
@@ -713,7 +743,7 @@ fn is_completion_tool(tool_name: &str) -> bool {
     matches!(tool_name, WORKSPACE_FINISH | AGENT_HANDOFF | TASK_RETURN)
 }
 
-fn recoverable_tool_error(
+pub(super) fn recoverable_tool_error(
     call: &ToolInvocation,
     code: &str,
     message: &str,

@@ -447,6 +447,10 @@ impl CharacterService {
     /// Delete a character
     pub async fn delete_character(&self, dto: DeleteCharacterDto) -> Result<(), ApplicationError> {
         tracing::debug!("Deleting character: {}", dto.name);
+        let _run_guard = self
+            .agent_workspace_lifecycle_service
+            .lock_run_lifecycle()
+            .await;
         let linked_world = match self.repository.read_character_card_json(&dto.name).await {
             Ok(raw_json) => match serde_json::from_str::<Value>(&raw_json) {
                 Ok(card) => card
@@ -498,7 +502,7 @@ impl CharacterService {
         drop(execution_guard);
         if let Err(error) = self
             .agent_workspace_lifecycle_service
-            .delete_chat_workspaces(&workspace_targets)
+            .delete_chat_workspaces_locked(&workspace_targets)
             .await
         {
             tracing::error!(

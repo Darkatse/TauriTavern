@@ -34,7 +34,7 @@ pub struct AgentRunHistoryService {
     run_repository: Arc<dyn AgentRunRepository>,
     settings_repository: Arc<dyn SettingsRepository>,
     run_activity: Arc<dyn AgentRunActivity>,
-    run_prune_apply_lock: Mutex<()>,
+    run_lifecycle_lock: Arc<Mutex<()>>,
 }
 
 impl AgentRunHistoryService {
@@ -42,12 +42,13 @@ impl AgentRunHistoryService {
         run_repository: Arc<dyn AgentRunRepository>,
         settings_repository: Arc<dyn SettingsRepository>,
         run_activity: Arc<dyn AgentRunActivity>,
+        run_lifecycle_lock: Arc<Mutex<()>>,
     ) -> Self {
         Self {
             run_repository,
             settings_repository,
             run_activity,
-            run_prune_apply_lock: Mutex::new(()),
+            run_lifecycle_lock,
         }
     }
 
@@ -114,7 +115,7 @@ impl AgentRunHistoryService {
         dto: AgentApplyRunPruneDto,
     ) -> Result<AgentRunPruneApplyResultDto, ApplicationError> {
         let detail_limit = normalize_prune_detail_limit(dto.detail_limit)?;
-        let _guard = self.run_prune_apply_lock.lock().await;
+        let _guard = self.run_lifecycle_lock.lock().await;
         self.apply_run_prune_locked(dto, detail_limit).await
     }
 
@@ -123,7 +124,7 @@ impl AgentRunHistoryService {
         dto: AgentApplyRunPruneDto,
     ) -> Result<Option<AgentRunPruneApplyResultDto>, ApplicationError> {
         let detail_limit = normalize_prune_detail_limit(dto.detail_limit)?;
-        let Ok(_guard) = self.run_prune_apply_lock.try_lock() else {
+        let Ok(_guard) = self.run_lifecycle_lock.try_lock() else {
             return Ok(None);
         };
         self.apply_run_prune_locked(dto, detail_limit)
@@ -756,6 +757,7 @@ mod tests {
             run_repository,
             settings_repository,
             TestRunActivity::none(),
+            Arc::new(Mutex::new(())),
         );
         let plan = service
             .plan_run_prune(AgentPlanRunPruneDto {
@@ -816,6 +818,7 @@ mod tests {
             run_repository,
             settings_repository,
             TestRunActivity::none(),
+            Arc::new(Mutex::new(())),
         );
         let plan = service
             .plan_run_prune(AgentPlanRunPruneDto {
@@ -855,6 +858,7 @@ mod tests {
             run_repository,
             settings_repository,
             TestRunActivity::none(),
+            Arc::new(Mutex::new(())),
         );
         let plan = service
             .plan_run_prune(AgentPlanRunPruneDto {
@@ -895,6 +899,7 @@ mod tests {
             run_repository,
             settings_repository,
             TestRunActivity::with_active(vec![run.id.clone()]),
+            Arc::new(Mutex::new(())),
         );
         let plan = service
             .plan_run_prune(AgentPlanRunPruneDto {
@@ -932,6 +937,7 @@ mod tests {
             run_repository,
             settings_repository,
             TestRunActivity::none(),
+            Arc::new(Mutex::new(())),
         );
         let result = service
             .apply_run_prune(AgentApplyRunPruneDto {
@@ -966,6 +972,7 @@ mod tests {
             run_repository,
             settings_repository,
             TestRunActivity::none(),
+            Arc::new(Mutex::new(())),
         ));
         let dto = AgentApplyRunPruneDto {
             retention: Some(AgentRunPruneRetentionDto {
@@ -991,16 +998,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn try_apply_run_prune_for_automation_skips_when_apply_lock_is_held() {
+    async fn try_apply_run_prune_for_automation_skips_during_run_admission() {
         let run_repository = TestAgentRunRepository::new();
         let settings_repository = TestSettingsRepository::new();
+        let lifecycle_lock = Arc::new(Mutex::new(()));
         let service = AgentRunHistoryService::new(
             run_repository,
             settings_repository,
             TestRunActivity::none(),
+            lifecycle_lock.clone(),
         );
 
-        let _guard = service.run_prune_apply_lock.lock().await;
+        let _guard = lifecycle_lock.lock().await;
         let result = service
             .try_apply_run_prune_for_automation(AgentApplyRunPruneDto {
                 retention: Some(AgentRunPruneRetentionDto {
@@ -1042,6 +1051,7 @@ mod tests {
             run_repository.clone(),
             settings_repository,
             TestRunActivity::none(),
+            Arc::new(Mutex::new(())),
         );
         let result = service
             .apply_run_prune(AgentApplyRunPruneDto {

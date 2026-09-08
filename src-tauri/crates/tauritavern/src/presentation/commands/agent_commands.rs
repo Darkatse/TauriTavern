@@ -13,15 +13,16 @@ use tt_application::dto::agent_dto::{
     AgentApplyCurrentModelConnectionSnapshotDto, AgentApplyCurrentModelConnectionSnapshotResultDto,
     AgentApplyRunPruneDto, AgentBuildCurrentModelConnectionSnapshotDto,
     AgentBuildCurrentModelConnectionSnapshotResultDto, AgentCancelRunDto,
-    AgentCopyChatPersistentStatesDto, AgentListProfilesResultDto, AgentListRunsDto,
-    AgentListRunsResultDto, AgentListToolsResultDto, AgentLoadProfileResultDto,
+    AgentCopyChatPersistentStatesDto, AgentFinishRunPresentationDto, AgentListProfilesResultDto,
+    AgentListRunsDto, AgentListRunsResultDto, AgentListToolsResultDto, AgentLoadProfileResultDto,
     AgentModelTurnDisplayDto, AgentPlanRunPruneDto, AgentPreparePromptAssemblyDto,
     AgentPreparePromptAssemblyResultDto, AgentProfileIdDto, AgentPromptAssemblyBrokerRequestDto,
     AgentPruneChatPersistentStatesDto, AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto,
     AgentReadEventsResultDto, AgentReadModelTurnDto, AgentReadPromptAssemblyRequestDto,
-    AgentReadTaskDetailDto, AgentReadWorkspaceFileDto, AgentRepairProfileFileDto,
-    AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto,
-    AgentResolvePromptAssemblyDto, AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto,
+    AgentReadRunCheckpointDto, AgentReadRunCheckpointResultDto, AgentReadTaskDetailDto,
+    AgentReadWorkspaceFileDto, AgentRepairProfileFileDto, AgentResolveChatCommitDto,
+    AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
+    AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentResumeRunDto,
     AgentRetargetPresetRefsDto, AgentRetargetPresetRefsResultDto, AgentRunHandleDto,
     AgentRunLiveUpdateDto, AgentRunPruneApplyResultDto, AgentRunPrunePlanDto, AgentSaveProfileDto,
     AgentStartRunDto, AgentSubmitGuidanceDto, AgentSubmitGuidanceResultDto,
@@ -46,6 +47,51 @@ pub async fn start_agent_run(
         .start_run(dto)
         .await
         .map_err(map_command_error("Failed to start agent run"))
+}
+
+#[tauri::command]
+pub async fn read_agent_run_checkpoint(
+    dto: AgentReadRunCheckpointDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentReadRunCheckpointResultDto, CommandError> {
+    log_command("read_agent_run_checkpoint");
+
+    app_state
+        .services
+        .agent_runtime_service
+        .read_run_checkpoint(dto)
+        .await
+        .map_err(map_command_error("Failed to read agent run checkpoint"))
+}
+
+#[tauri::command]
+pub async fn resume_agent_run(
+    dto: AgentResumeRunDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentRunHandleDto, CommandError> {
+    log_command("resume_agent_run");
+
+    app_state
+        .services
+        .agent_runtime_service
+        .resume_run(dto)
+        .await
+        .map_err(map_command_error("Failed to resume agent run"))
+}
+
+#[tauri::command]
+pub async fn finish_agent_run_presentation(
+    dto: AgentFinishRunPresentationDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("finish_agent_run_presentation");
+
+    app_state
+        .services
+        .agent_runtime_service
+        .finish_run_presentation(dto)
+        .await
+        .map_err(map_command_error("Failed to finish agent run presentation"))
 }
 
 #[tauri::command]

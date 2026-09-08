@@ -12,12 +12,12 @@ Runtime 创建 Run，初始化工作区，保存输入和解析后的 Profile，
 
 ## 每一轮
 
-`run_tool_loop()` 按 Profile 的轮数上限执行：
+每个 Invocation 在累计预算内交替调用模型与工具：
 
 1. 将待处理的用户补充指令加入前台上下文，记录模型请求。
-2. 通过 Agent Model Gateway 调用模型，保存响应和本轮续接状态。
-3. 按返回顺序处理工具调用，记录结果及文件、提交或任务等效果。
-4. 把 assistant 消息和 tool results 加入上下文，进入下一轮。
+2. 通过 Agent Model Gateway 调用模型，保存响应并将完整 assistant 消息加入请求历史。
+3. 按返回顺序执行工具，将已确认的结果加入上下文。
+4. 本轮工具全部结算后才进入下一次模型请求。
 
 委派结果也在轮次之间进入调用方上下文。工具参数等可由模型修正的问题作为 tool result 返回；模型请求、存储或运行状态错误交给 Run 收尾处理。模型若直接输出正文，runtime 会把正文保存为文件，并在剩余轮数内提示它继续通过工具完成工作。
 
@@ -31,6 +31,14 @@ return-mode 子 Agent 使用 `task.return` 结束，把结果交给调用方。`
 
 Run 正常完成后进入 `completed`。取消进入 `cancelled`；错误发生在已确认聊天提交之后时进入 `partial_success`，此前则进入 `failed`。工作区与日志保留下来，便于查看已有结果和失败位置。
 
+## Checkpoint 与恢复
+
+每次执行结束时保存 checkpoint，由 runtime 的执行状态与宿主的消息呈现共同构成。续接沿用原 Run、冻结输入和工作区，保留已确认结果与累计预算；已完成的 Run 只供读取，不再续接。
+
+恢复依赖完整且匹配的保存材料。运行活跃、材料缺失或外部副作用无法确认时拒绝恢复；可恢复的保存错误允许重试。恢复与清理须互斥，已确认的工具和提交效果不得重放。
+
+此能力用于已结束执行的续接，不提供进程崩溃时的任意位置恢复。Checkpoint 随运行材料传输和清理。调用方式见 [Agent API](../API/Agent.md)，跨设备恢复的范围见 [同步](../CurrentState/Sync.md)。
+
 ## 修改代码从哪里开始
 
 以下路径相对于 `src-tauri/crates/tt-application/src/services/`：
@@ -39,6 +47,7 @@ Run 正常完成后进入 `completed`。取消进入 `cancelled`；错误发生�
 | --- | --- |
 | [agent_runtime_service/lifecycle.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/lifecycle.rs) | 输入校验、创建与取消 Run |
 | [agent_runtime_service/executor.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/executor.rs) | 准备根 Invocation、推进交接链、处理终态 |
+| [agent_runtime_service/checkpoint.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/checkpoint.rs) | Checkpoint 保存、读取与恢复准入 |
 | [agent_runtime_service/loop_runner.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/loop_runner.rs) | 模型与工具循环 |
 | [agent_runtime_service/tool_execution.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/tool_execution.rs) | 工具调用、结果与副作用记录 |
 | [agent_runtime_service/commit.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/commit.rs) | 聊天提交与 Run 收尾 |

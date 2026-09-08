@@ -3,20 +3,23 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use tokio::sync::watch;
+use tokio::task::JoinHandle;
 
 use super::AgentRuntimeService;
+use super::checkpoint::RunCheckpoint;
+use super::continuation::InvocationFrame;
 use super::guidance::AgentGuidanceMailbox;
 use super::model_stream_projection::AgentRunLiveProjection;
 use crate::errors::ApplicationError;
-use tt_domain::models::agent::{
-    AgentDelegationContinuation, AgentInvocationStatus, AgentTaskRecord, AgentTaskStatus,
-};
+use tt_domain::models::agent::{AgentDelegationContinuation, AgentTaskRecord, AgentTaskStatus};
 
 pub(super) struct ActiveRunHandle {
     pub(super) cancel_sender: watch::Sender<bool>,
     pub(super) scheduler: Arc<AgentTaskScheduler>,
     pub(super) guidance_mailbox: Arc<AgentGuidanceMailbox>,
     pub(super) stream_override: Option<bool>,
+    pub(super) host_presentation: bool,
+    pub(super) pending_checkpoint: tokio::sync::Mutex<Option<RunCheckpoint>>,
     pub(super) live_projection: watch::Sender<AgentRunLiveProjection>,
 }
 
@@ -26,6 +29,7 @@ impl ActiveRunHandle {
         run_id: String,
         cancel_sender: watch::Sender<bool>,
         stream_override: Option<bool>,
+        host_presentation: bool,
     ) -> Self {
         let (live_projection, _) = watch::channel(AgentRunLiveProjection::default());
         Self {
@@ -33,6 +37,8 @@ impl ActiveRunHandle {
             scheduler: Arc::new(AgentTaskScheduler::new(service, run_id)),
             guidance_mailbox: Arc::new(AgentGuidanceMailbox::new()),
             stream_override,
+            host_presentation,
+            pending_checkpoint: tokio::sync::Mutex::new(None),
             live_projection,
         }
     }
@@ -44,6 +50,7 @@ impl ActiveRunHandle {
 
 struct AgentTaskWorker {
     cancel_sender: watch::Sender<bool>,
+    join: JoinHandle<Result<Option<InvocationFrame>, ApplicationError>>,
 }
 
 pub(super) struct AgentTaskScheduler {
@@ -71,43 +78,71 @@ impl AgentTaskScheduler {
         task_id: String,
         child_invocation_id: String,
     ) -> Result<(), ApplicationError> {
+        self.submit_worker(task_id, child_invocation_id, None)
+    }
+
+    pub(super) fn submit_resumed(
+        self: &Arc<Self>,
+        frame: InvocationFrame,
+    ) -> Result<(), ApplicationError> {
+        let task_id = frame.prepared.delegation_task_id.clone().ok_or_else(|| {
+            ApplicationError::InternalError(format!(
+                "agent.child_task_id_missing: resumed invocation `{}` has no task",
+                frame.prepared.invocation.id
+            ))
+        })?;
+        self.submit_worker(task_id, frame.prepared.invocation.id.clone(), Some(frame))
+    }
+
+    fn submit_worker(
+        self: &Arc<Self>,
+        task_id: String,
+        child_invocation_id: String,
+        frame: Option<InvocationFrame>,
+    ) -> Result<(), ApplicationError> {
         let service = self.service()?;
         let (cancel_sender, mut cancel_receiver) = watch::channel(false);
-        {
-            let mut workers = self
-                .workers
-                .lock()
-                .expect("agent task scheduler mutex poisoned");
-            if workers.contains_key(&task_id) {
-                return Err(ApplicationError::InternalError(format!(
-                    "agent.task_already_scheduled: task `{task_id}` is already scheduled"
-                )));
-            }
-            workers.insert(task_id.clone(), AgentTaskWorker { cancel_sender });
+        let mut workers = self
+            .workers
+            .lock()
+            .expect("agent task scheduler mutex poisoned");
+        if workers.contains_key(&task_id) {
+            return Err(ApplicationError::InternalError(format!(
+                "agent.task_already_scheduled: task `{task_id}` is already scheduled"
+            )));
         }
-        self.notify_change();
-
         let scheduler = Arc::clone(self);
         let run_id = self.run_id.clone();
-        tokio::spawn(async move {
+        let worker_task_id = task_id.clone();
+        let join = tokio::spawn(async move {
             let result = service
                 .run_child_task_to_terminal(
                     run_id.as_str(),
-                    task_id.as_str(),
+                    worker_task_id.as_str(),
                     child_invocation_id.as_str(),
+                    frame,
                     &mut cancel_receiver,
                 )
                 .await;
-            if let Err(error) = result {
+            if let Err(error) = &result {
                 tracing::error!(
                     target: tt_contracts::observability::USER_VISIBLE_ERROR,
-                    "Agent child task worker failed to record terminal state for task {}: {}",
-                    task_id,
+                    "Agent child task worker failed for task {}: {}",
+                    worker_task_id,
                     error
                 );
             }
-            scheduler.finish_worker(task_id.as_str());
+            scheduler.notify_change();
+            result
         });
+        workers.insert(
+            task_id,
+            AgentTaskWorker {
+                cancel_sender,
+                join,
+            },
+        );
+        self.notify_change();
 
         Ok(())
     }
@@ -121,65 +156,68 @@ impl AgentTaskScheduler {
             .invocation_repository
             .list_tasks(&self.run_id)
             .await?;
-        let tasks = tasks
+        for task in tasks
             .into_iter()
             .filter(|task| task.parent_invocation_id == parent_invocation_id)
             .filter(|task| task.continuation == AgentDelegationContinuation::ReturnToParent)
             .filter(task_is_unfinished)
-            .collect::<Vec<_>>();
-        self.cancel_unfinished_tasks(
-            &service,
-            tasks,
-            "cancelled because the parent Agent finished the run",
-        )
-        .await
+        {
+            self.cancel_task_worker(&task.id);
+        }
+        Ok(())
     }
 
     pub(super) async fn cancel_all_unfinished(&self) -> Result<(), ApplicationError> {
-        let service = self.service()?;
-        let tasks = service
-            .invocation_repository
-            .list_tasks(&self.run_id)
-            .await?;
-        let tasks = tasks
-            .into_iter()
-            .filter(|task| task.continuation == AgentDelegationContinuation::ReturnToParent)
-            .filter(task_is_unfinished)
-            .collect::<Vec<_>>();
-        self.cancel_unfinished_tasks(&service, tasks, "cancelled because the Agent run stopped")
-            .await
+        for worker in self
+            .workers
+            .lock()
+            .expect("agent task scheduler mutex poisoned")
+            .values()
+        {
+            if !worker.join.is_finished() {
+                let _ = worker.cancel_sender.send(true);
+            }
+        }
+        Ok(())
     }
 
-    async fn cancel_unfinished_tasks(
-        &self,
-        service: &AgentRuntimeService,
-        tasks: Vec<AgentTaskRecord>,
-        reason: &str,
-    ) -> Result<(), ApplicationError> {
-        for task in tasks {
-            let transition = service
-                .transition_child_task_with_change(
-                    &self.run_id,
-                    task.id.as_str(),
-                    AgentTaskStatus::Cancelled,
-                    None,
-                    Some(reason.to_string()),
-                )
-                .await?;
-            if !transition.changed {
-                continue;
+    pub(super) async fn stop_and_join(&self) -> Result<Vec<InvocationFrame>, ApplicationError> {
+        let workers = std::mem::take(
+            &mut *self
+                .workers
+                .lock()
+                .expect("agent task scheduler mutex poisoned"),
+        );
+        for worker in workers.values() {
+            if !worker.join.is_finished() {
+                let _ = worker.cancel_sender.send(true);
             }
-            self.cancel_task_worker(task.id.as_str());
-            service
-                .finish_child_invocation(
-                    &self.run_id,
-                    task.child_invocation_id.as_str(),
-                    AgentInvocationStatus::Cancelled,
-                )
-                .await?;
         }
-        self.notify_change();
-        Ok(())
+        let mut frames = Vec::new();
+        let mut first_error = None;
+        // Every worker must exit before the run can publish a consistent checkpoint.
+        for (task_id, worker) in workers {
+            let result = worker
+                .join
+                .await
+                .map_err(|error| {
+                    ApplicationError::InternalError(format!(
+                        "agent.child_worker_failed: task `{task_id}` did not exit normally: {error}"
+                    ))
+                })
+                .flatten();
+            match result {
+                Ok(Some(frame)) => frames.push(frame),
+                Ok(None) => {}
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                }
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(frames),
+        }
     }
 
     pub(super) fn subscribe(&self) -> watch::Receiver<u64> {
@@ -187,21 +225,15 @@ impl AgentTaskScheduler {
     }
 
     fn cancel_task_worker(&self, task_id: &str) {
-        let mut workers = self
+        let workers = self
             .workers
             .lock()
             .expect("agent task scheduler mutex poisoned");
-        if let Some(worker) = workers.remove(task_id) {
+        if let Some(worker) = workers.get(task_id)
+            && !worker.join.is_finished()
+        {
             let _ = worker.cancel_sender.send(true);
         }
-    }
-
-    fn finish_worker(&self, task_id: &str) {
-        self.workers
-            .lock()
-            .expect("agent task scheduler mutex poisoned")
-            .remove(task_id);
-        self.notify_change();
     }
 
     fn notify_change(&self) {
@@ -241,15 +273,5 @@ impl AgentRuntimeService {
                     "agent.active_run_missing: active run handle for `{run_id}` is missing"
                 ))
             })
-    }
-
-    pub(super) async fn cancel_unfinished_child_tasks(
-        &self,
-        run_id: &str,
-    ) -> Result<(), ApplicationError> {
-        let Some(handle) = self.active_runs.read().await.get(run_id).cloned() else {
-            return Ok(());
-        };
-        handle.scheduler.cancel_all_unfinished().await
     }
 }

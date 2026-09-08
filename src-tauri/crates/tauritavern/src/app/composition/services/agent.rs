@@ -71,6 +71,7 @@ pub(super) fn build(
         repositories.agent_run_repository.clone(),
         repositories.settings_repository.clone(),
         agent_runtime_service.clone() as Arc<dyn AgentRunActivity>,
+        agent_runtime_service.run_lifecycle_lock(),
     ));
     let agent_run_retention_automation_service = Arc::new(AgentRunRetentionAutomationService::new(
         repositories.settings_repository.clone(),
@@ -79,6 +80,7 @@ pub(super) fn build(
     let agent_workspace_lifecycle_service = Arc::new(AgentWorkspaceLifecycleService::new(
         repositories.agent_workspace_lifecycle_repository.clone(),
         agent_runtime_service.clone() as Arc<dyn AgentRunActivity>,
+        agent_runtime_service.run_lifecycle_lock(),
     ));
 
     AgentServices {

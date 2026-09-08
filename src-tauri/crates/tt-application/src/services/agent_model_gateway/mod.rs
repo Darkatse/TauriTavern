@@ -22,6 +22,7 @@ mod tests;
 
 #[cfg(feature = "test-support")]
 pub use decode::decode_chat_completion_response;
+pub use provider_state::reset_transport_for_resume;
 
 #[async_trait]
 pub trait AgentModelGateway: Send + Sync {

@@ -1,8 +1,10 @@
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use tt_domain::models::agent::{AgentChatCommitMode, WorkspacePath};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CommittedChatMessage {
     path: String,
     mode: AgentChatCommitMode,
@@ -10,7 +12,8 @@ struct CommittedChatMessage {
     round: usize,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct RunCommitLedger {
     commits: Vec<CommittedChatMessage>,
     explicit_count: usize,
