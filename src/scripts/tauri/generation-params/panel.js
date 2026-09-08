@@ -230,12 +230,13 @@ export function installGenerationParamsPanel() {
     const json = q('.tt-gp-json');
     const jsonText = /** @type {HTMLTextAreaElement} */ (q('.tt-gp-json-text'));
     const jsonError = q('.tt-gp-json-error');
+    const jsonHint = q('.tt-gp-json-hint');
+    const defaultJsonHint = jsonHint.textContent;
 
     // Local blocks are display preferences, not request configuration; JSON covers the rest.
     const jsonEntries = entries.filter(entry => entry.param.kind !== 'local');
-    // Built per parse: upstream rewrites `min`/`max` per source (e.g. temperature 1.0 on Claude).
-    const schema = () => new Map(jsonEntries.map(entry => [entry.param.key, fieldTypeOf(entry)]));
     let jsonMode = false;
+    let jsonSnapshot = '';
 
     const addable = () => entries.filter(entry => isSupported(entry) && !isActive(entry));
 
@@ -284,6 +285,8 @@ export function installGenerationParamsPanel() {
         jsonText.value = serializeParams(jsonEntries
             .filter(isSupported)
             .map(entry => ({ key: entry.param.key, active: isActive(entry), value: readValue(entry) })));
+        jsonSnapshot = jsonText.value;
+        jsonHint.textContent = defaultJsonHint;
         showJsonError([]);
     }
 
@@ -293,7 +296,7 @@ export function installGenerationParamsPanel() {
         jsonError.textContent = errors.map(error => {
             switch (error.kind) {
                 case 'syntax': return `${translate('Invalid JSON format')}: ${error.detail}`;
-                case 'unknown': return `${translate('Unknown parameter')}: ${error.key}`;
+                case 'unknown': return `${translate('Unknown or unsupported parameter for the current API format')}: ${error.key}`;
                 case 'invalid': return `${translate('Invalid value')}: ${error.key}`;
             }
         }).join('\n');
@@ -301,11 +304,12 @@ export function installGenerationParamsPanel() {
 
     /** @returns {boolean} whether the text was applied */
     function applyJson() {
-        const { values, errors } = parseParams(jsonText.value, schema());
+        const supportedEntries = jsonEntries.filter(isSupported);
+        const schema = new Map(supportedEntries.map(entry => [entry.param.key, fieldTypeOf(entry)]));
+        const { values, errors } = parseParams(jsonText.value, schema);
         showJsonError(errors);
         if (errors.length) return false;
-        for (const entry of jsonEntries) {
-            if (!isSupported(entry)) continue;
+        for (const entry of supportedEntries) {
             const value = values.get(entry.param.key);
             const active = entry.param.kind === 'toggle' ? value === true : value !== undefined;
             setActive(entry, active);
@@ -376,7 +380,7 @@ export function installGenerationParamsPanel() {
         const label = labelElementOf(entry);
         if (label) label.after(remove); else entry.block.append(remove);
         if (entry.param.kind === 'toggle') {
-            entry.control.addEventListener('change', sync);
+            $(entry.control).on('input change', sync);
         }
     }
 
@@ -387,7 +391,10 @@ export function installGenerationParamsPanel() {
     ]) {
         eventSource.on(eventName, () => {
             sync();
-            if (jsonMode) renderJson();
+            if (jsonMode) {
+                if (jsonText.value === jsonSnapshot) renderJson();
+                else jsonHint.textContent = translate('Settings changed. Your draft is kept. Apply to use it here, or Reset to reload.');
+            }
         });
     }
     sync();

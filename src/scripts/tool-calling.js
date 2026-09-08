@@ -737,6 +737,7 @@ export class ToolManager {
             chat_completion_sources.MOONSHOT,
         ];
         return settings.n > 1
+            && !(settings.chat_completion_source === chat_completion_sources.CUSTOM && settings.custom_api_format === 'gemini_generate_content')
             && !['quiet', 'impersonate', 'continue'].includes(type)
             && supportedSources.includes(settings.chat_completion_source);
     }

@@ -5919,9 +5919,11 @@ export class ChatCompletion {
  */
 function migrateChatCompletionSettings(settings) {
     let changed = false;
-    if (settings.strip_old_tool_calls === undefined) {
-        settings.strip_old_tool_calls = false;
-        changed = true;
+    for (const key of ['strip_old_tool_calls', 'claude_fast_mode']) {
+        if (settings[key] === undefined) {
+            settings[key] = false;
+            changed = true;
+        }
     }
     const migrateMap = [
         { oldKey: 'names_in_completion', oldValue: true, newKey: 'names_behavior', newValue: character_names_behavior.COMPLETION },
@@ -8848,7 +8850,7 @@ export function initOpenAI() {
         saveSettingsDebounced();
     });
 
-    $('#claude_fast_mode').on('change', function () {
+    $('#claude_fast_mode').on('input change', function () {
         oai_settings.claude_fast_mode = !!$('#claude_fast_mode').prop('checked');
         saveSettingsDebounced();
     });

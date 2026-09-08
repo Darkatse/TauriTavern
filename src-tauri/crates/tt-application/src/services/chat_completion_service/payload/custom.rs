@@ -64,9 +64,7 @@ mod tests {
         );
     }
 
-    /// Custom Gemini treats the model name as an alias: explicit parameters
-    /// are never dropped by first-party model tables, and unmappable explicit
-    /// requests fail instead of silently no-op.
+    /// Explicit Custom parameters survive model aliases and documented prefixes.
     #[test]
     fn custom_gemini_does_not_gate_explicit_parameters_on_model_alias() {
         let request = |model: &str, extra: Value| {
@@ -123,6 +121,37 @@ mod tests {
         .unwrap();
         assert_eq!(upstream["generationConfig"]["temperature"], 0.3);
         assert_eq!(upstream["generationConfig"]["topP"], 0.9);
+
+        for model in [
+            "gemini-3-pro-image-preview",
+            "models/gemini-3-pro-image-preview",
+            "my-image-alias",
+        ] {
+            let (_, upstream) = request(model, json!({
+                "frequency_penalty": 0.3, "presence_penalty": 0.5,
+                "request_images": true,
+                "request_image_resolution": "2K", "request_image_aspect_ratio": "16:9",
+                "use_sysprompt": true,
+                "messages": [{"role": "system", "content": "Draw a scene"}, {"role": "user", "content": "hi"}],
+                "tools": [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]
+            })).unwrap();
+            let config = &upstream["generationConfig"];
+            assert_eq!(config["responseModalities"], json!(["text", "image"]));
+            assert_eq!(
+                config["imageConfig"],
+                json!({"imageSize": "2K", "aspectRatio": "16:9"})
+            );
+            assert_eq!(config["frequencyPenalty"], 0.3);
+            assert_eq!(config["presencePenalty"], 0.5);
+            assert_eq!(
+                upstream["systemInstruction"]["parts"][0]["text"],
+                "Draw a scene"
+            );
+            assert_eq!(
+                upstream["tools"][0]["function_declarations"][0]["name"],
+                "lookup"
+            );
+        }
     }
 
     #[test]

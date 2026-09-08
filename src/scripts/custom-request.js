@@ -578,8 +578,8 @@ export class ChatCompletionService {
             throw new Error('Invalid preset: must be an object');
         }
 
-        // apply preset overrides
-        preset = { ...preset, ...overridePreset };
+        // Fast mode requires an explicit preset opt-in, including for old presets.
+        preset = { claude_fast_mode: false, ...preset, ...overridePreset };
 
         // Fix any fields before converting to settings
         preset.bias_preset_selected = preset.bias_presets !== undefined ? preset.bias_preset_selected : undefined;  // presets might have bias_preset_selected but not bias_presets, but settings need both or neither.

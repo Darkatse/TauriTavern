@@ -653,7 +653,7 @@
                                         <input type="number" id="openai_max_tokens" name="openai_max_tokens" class="text_pole" min="1" max="128000" step="1">
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,custom,xai,aimlapi,moonshot,azure_openai">
+                                <div class="range-block" data-source="openai,custom,xai,aimlapi,moonshot,azure_openai" data-custom-api-format="openai_compat,openai_responses,claude_messages,gemini_interactions">
                                     <div class="range-block-title" data-i18n="Multiple swipes per generation">
                                         Multiple swipes per generation
                                     </div>
@@ -1992,8 +1992,8 @@
                                             </span>
                                         </label>
                                         <div class="toggle-description justifyLeft marginBot5">
-                                            <span data-i18n="Request faster output at premium pricing. Only supported by some models; unsupported models return an error.">
-                                                Request faster output at premium pricing. Only supported by some models; unsupported models return an error.
+                                            <span data-i18n="Request fast mode at premium pricing. Some models may use standard speed and pricing instead.">
+                                                Request fast mode at premium pricing. Some models may use standard speed and pricing instead.
                                             </span>
                                         </div>
                                     </div>
@@ -2106,12 +2106,12 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <div id="request_images_block" class="range-block" data-source="makersuite,vertexai">
+                                    <div id="request_images_block" class="range-block" data-source="makersuite,vertexai,custom" data-custom-api-format="gemini_generate_content">
                                         <label for="openai_request_images" class="checkbox_label widthFreeExpand">
                                             <input id="openai_request_images" type="checkbox" />
                                             <span>
                                                 <span data-i18n="Request inline images">Request inline images</span>
-                                                <i class="opacity50p fa-solid fa-circle-info" title="Gemini 2.5 Flash Image / Gemini 3 Pro Image"></i>
+                                                <i class="opacity50p fa-solid fa-circle-info" data-source="makersuite,vertexai" title="Gemini 2.5 Flash Image / Gemini 3 Pro Image"></i>
                                             </span>
                                         </label>
                                         <div class="toggle-description justifyLeft marginBot5">
@@ -3009,8 +3009,7 @@
                                 <div class="wide100p">
                                     <input id="openai_reverse_proxy" type="text" class="text_pole" placeholder="https://api.openai.com/v1" />
                                     <small class="reverse_proxy_warning">
-                                        <span id="custom_endpoint_version_hint"><span data-i18n="Doesn't work? Try adding">Doesn't work? Try adding</span> <code>/v1</code> <span data-i18n="at the end!">at the end!</span></span>
-                                    <span id="custom_gemini_endpoint_hint" style="display: none;" data-i18n="Gemini Base URL accepts /v1 or /v1beta; otherwise /v1beta is added. Do not include /models or a generation method.">Gemini Base URL accepts /v1 or /v1beta; otherwise /v1beta is added. Do not include /models or a generation method.</span>
+                                        <span data-i18n="Doesn't work? Try adding">Doesn't work? Try adding</span> <code>/v1</code> <span data-i18n="at the end!">at the end!</span>
                                         <span data-i18n="completions note prefix"></span><code>/chat/completions</code> <b data-i18n="suffix will be added automatically.">suffix will be added automatically.</b>
                                     </small>
                                 </div>
@@ -4018,8 +4017,11 @@
                                 <small>
                                     <span data-i18n="Custom endpoint preview">Custom endpoint preview</span><span>:</span> <code id="custom_endpoint_preview"></code>
                                     <br>
-                                    <span data-i18n="Doesn't work? Try adding">Doesn't work? Try adding</span> <code>/v1</code> <span data-i18n="at the end!">at the end!</span>
-                                    <span data-i18n="completions note prefix"></span><code id="custom_endpoint_preview_suffix"></code> <b data-i18n="suffix will be added automatically.">suffix will be added automatically.</b>
+                                    <span id="custom_endpoint_version_hint">
+                                        <span data-i18n="Doesn't work? Try adding">Doesn't work? Try adding</span> <code>/v1</code> <span data-i18n="at the end!">at the end!</span>
+                                        <span data-i18n="completions note prefix"></span><code id="custom_endpoint_preview_suffix"></code> <b data-i18n="suffix will be added automatically.">suffix will be added automatically.</b>
+                                    </span>
+                                    <span id="custom_gemini_endpoint_hint" style="display: none;" data-i18n="Gemini Base URL accepts /v1 or /v1beta; otherwise /v1beta is added. Do not include /models or a generation method.">Gemini Base URL accepts /v1 or /v1beta; otherwise /v1beta is added. Do not include /models or a generation method.</span>
                                 </small>
                             </div>
                             <div id="custom_claude_prompt_caching_section" data-source="custom" data-custom-api-format="claude_messages" style="display: none;">

@@ -124,14 +124,14 @@ fn build_google_payload(
     let is_gemma = model.contains("gemma");
     let is_learnlm = model.contains("learnlm");
 
-    let enable_image_modality = request_images && GOOGLE_IMAGE_GENERATION_MODELS.contains(&model);
+    let enable_image_modality =
+        request_images && (is_custom || GOOGLE_IMAGE_GENERATION_MODELS.contains(&model));
 
     let use_system_prompt = payload
         .get("use_sysprompt")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-        && !enable_image_modality
-        && !is_gemma;
+        && (is_custom || (!enable_image_modality && !is_gemma));
 
     let (contents, system_prompt) =
         convert_messages(payload.get("messages"), model, use_system_prompt)?;
@@ -168,6 +168,17 @@ fn build_google_payload(
 
         if let Some(value) = payload.get(source_key).filter(|value| !value.is_null()) {
             generation_config.insert(target_key.to_string(), value.clone());
+        }
+    }
+
+    if is_custom {
+        for (source_key, target_key) in [
+            ("frequency_penalty", "frequencyPenalty"),
+            ("presence_penalty", "presencePenalty"),
+        ] {
+            if let Some(value) = payload.get(source_key).filter(|value| !value.is_null()) {
+                generation_config.insert(target_key.to_string(), value.clone());
+            }
         }
     }
 
@@ -222,7 +233,9 @@ fn build_google_payload(
         if enable_image_config {
             let mut image_config = Map::new();
 
-            if let Some(image_size) = image_size.filter(|_| is_google_image_size_model(model)) {
+            if let Some(image_size) =
+                image_size.filter(|_| is_custom || is_google_image_size_model(model))
+            {
                 image_config.insert(
                     "imageSize".to_string(),
                     Value::String(image_size.to_string()),
@@ -278,7 +291,7 @@ fn build_google_payload(
 
     let mut tools = Vec::<Value>::new();
 
-    if !enable_image_modality && !is_gemma {
+    if is_custom || (!enable_image_modality && !is_gemma) {
         if let Some(raw_tools) = payload.get("tools") {
             let (function_declarations, custom_tools) = split_openai_tools(raw_tools);
 
@@ -290,8 +303,7 @@ fn build_google_payload(
         }
 
         if enable_web_search
-            && !is_learnlm
-            && !GOOGLE_NO_SEARCH_MODELS.contains(&model)
+            && (is_custom || (!is_learnlm && !GOOGLE_NO_SEARCH_MODELS.contains(&model)))
             && !tools
                 .iter()
                 .any(|tool| tool.get("function_declarations").is_some())
