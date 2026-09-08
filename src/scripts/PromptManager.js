@@ -308,6 +308,12 @@ class PromptManager {
     #isVisible = false;
     #dryRunPending = false;
     #previewPending = false;
+    /**
+     * Bumped on every UI render. Renders are async and may overlap (e.g. the
+     * immediate preview and the debounced refresh); a render whose generation
+     * is no longer current must stop writing to the DOM after each await.
+     */
+    #renderGeneration = 0;
     #visibilityObserver = null;
 
     get promptSources() {
@@ -926,12 +932,15 @@ class PromptManager {
     }
 
     async #renderPromptManagerUi() {
+        const generation = ++this.#renderGeneration;
         this.profileStart('render');
         const scrollPosition = this.#getScrollPosition();
         try {
-            await this.renderPromptManager();
+            await this.renderPromptManager(generation);
+            if (generation !== this.#renderGeneration) return;
             this.makeDraggable();
-            await this.renderPromptManagerListItems();
+            await this.renderPromptManagerListItems(generation);
+            if (generation !== this.#renderGeneration) return;
             this.#setScrollPosition(scrollPosition);
         } finally {
             this.profileEnd('render');
@@ -1863,8 +1872,9 @@ class PromptManager {
 
     /**
      * Empties, then re-assembles the container containing the prompt list.
+     * @param {number} [generation] Render generation; stale renders stop after each await.
      */
-    async renderPromptManager() {
+    async renderPromptManager(generation = this.#renderGeneration) {
         let selectedPromptIndex = 0;
         const existingAppendSelect = document.getElementById(`${this.configuration.prefix}prompt_manager_footer_append_prompt`);
         if (existingAppendSelect instanceof HTMLSelectElement) {
@@ -1882,6 +1892,7 @@ class PromptManager {
         const totalActiveTokens = this.#previewPending ? '-' : this.tokenUsage;
 
         const headerHtml = await renderTemplateAsync('promptManagerHeader', { error: this.error, errorDiv, prefix: this.configuration.prefix, totalActiveTokens });
+        if (generation !== this.#renderGeneration) return;
         promptManagerDiv.insertAdjacentHTML('beforeend', headerHtml);
 
         this.listElement = promptManagerDiv.querySelector(`#${this.configuration.prefix}prompt_manager_list`);
@@ -1903,6 +1914,7 @@ class PromptManager {
             const rangeBlockDiv = promptManagerDiv.querySelector('.range-block');
             const headerDiv = promptManagerDiv.querySelector('.completion_prompt_manager_header');
             const footerHtml = await renderTemplateAsync('promptManagerFooter', { promptsHtml, prefix: this.configuration.prefix });
+            if (generation !== this.#renderGeneration) return;
             headerDiv.insertAdjacentHTML('afterend', footerHtml);
             rangeBlockDiv.querySelector('#prompt-manager-reset-character').addEventListener('click', this.handleCharacterReset);
 
@@ -1920,8 +1932,9 @@ class PromptManager {
 
     /**
      * Empties, then re-assembles the prompt list
+     * @param {number} [generation] Render generation; stale renders stop after each await.
      */
-    async renderPromptManagerListItems() {
+    async renderPromptManagerListItems(generation = this.#renderGeneration) {
         if (!this.serviceSettings.prompts) return;
 
         const promptManagerList = this.listElement;
@@ -1932,6 +1945,7 @@ class PromptManager {
         const dragHandleClass = isMobile() ? ' ui-sortable-handle' : '';
 
         let listItemHtml = await renderTemplateAsync('promptManagerListHeader', { prefix });
+        if (generation !== this.#renderGeneration) return;
 
         this.getPromptsForCharacter(this.activeCharacter).forEach(prompt => {
             if (!prompt) return;
