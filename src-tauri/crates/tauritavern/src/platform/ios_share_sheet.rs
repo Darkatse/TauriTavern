@@ -135,11 +135,11 @@ pub async fn share_file(
 
             unsafe { controller.setCompletionWithItemsHandler(RcBlock::as_ptr(&completion_block)) };
 
-            if let Some(popover) = controller.popoverPresentationController() {
-                if let Some(source_view) = presenting.view() {
-                    popover.setSourceView(Some(&source_view));
-                    popover.setSourceRect(source_view.bounds());
-                }
+            if let Some(popover) = controller.popoverPresentationController()
+                && let Some(source_view) = presenting.view()
+            {
+                popover.setSourceView(Some(&source_view));
+                popover.setSourceRect(source_view.bounds());
             }
 
             presenting.presentViewController_animated_completion(&controller, true, None);

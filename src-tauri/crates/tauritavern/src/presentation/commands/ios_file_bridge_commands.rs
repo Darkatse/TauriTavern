@@ -132,14 +132,14 @@ impl CleanupTempFile {
 
 impl Drop for CleanupTempFile {
     fn drop(&mut self) {
-        if let Err(error) = fs::remove_file(&self.path) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                tracing::warn!(
-                    "Failed to cleanup temporary file {}: {}",
-                    self.path.display(),
-                    error
-                );
-            }
+        if let Err(error) = fs::remove_file(&self.path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                "Failed to cleanup temporary file {}: {}",
+                self.path.display(),
+                error
+            );
         }
     }
 }
@@ -279,14 +279,14 @@ fn cleanup_stale_character_import_files(staging_root: &Path) {
             continue;
         }
 
-        if let Err(error) = fs::remove_file(&path) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                tracing::warn!(
-                    "Failed to cleanup stale iOS character import staging file {}: {}",
-                    path.display(),
-                    error
-                );
-            }
+        if let Err(error) = fs::remove_file(&path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                "Failed to cleanup stale iOS character import staging file {}: {}",
+                path.display(),
+                error
+            );
         }
     }
 }

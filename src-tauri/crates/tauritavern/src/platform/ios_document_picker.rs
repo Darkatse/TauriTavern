@@ -244,15 +244,15 @@ async fn pick_document_with_content_types(
 
             picker.setAllowsMultipleSelection(allows_multiple_selection);
             picker.setShouldShowFileExtensions(true);
-            picker.setDelegate(Some(&delegate_protocol_object));
+            picker.setDelegate(Some(delegate_protocol_object));
 
-            unsafe { retain_delegate(&picker, &*delegate) };
+            unsafe { retain_delegate(&picker, &delegate) };
 
-            if let Some(popover) = picker.popoverPresentationController() {
-                if let Some(source_view) = presenting.view() {
-                    popover.setSourceView(Some(&source_view));
-                    popover.setSourceRect(source_view.bounds());
-                }
+            if let Some(popover) = picker.popoverPresentationController()
+                && let Some(source_view) = presenting.view()
+            {
+                popover.setSourceView(Some(&source_view));
+                popover.setSourceRect(source_view.bounds());
             }
 
             presenting.presentViewController_animated_completion(&picker, true, None);
