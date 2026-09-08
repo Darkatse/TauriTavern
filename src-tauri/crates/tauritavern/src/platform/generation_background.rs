@@ -17,7 +17,7 @@ pub(crate) fn runtime(_app_handle: &AppHandle) -> Option<Arc<dyn GenerationBackg
             return None;
         };
         let runtime: Arc<dyn GenerationBackgroundRuntime> = state.inner().clone();
-        return Some(runtime);
+        Some(runtime)
     }
 
     #[cfg(target_os = "ios")]

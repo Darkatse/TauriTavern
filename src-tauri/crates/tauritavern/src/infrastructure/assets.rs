@@ -46,10 +46,10 @@ pub fn read_resource_bytes(
             return Ok(bytes.to_vec());
         }
 
-        return Err(DomainError::NotFound(format!(
+        Err(DomainError::NotFound(format!(
             "Embedded resource not found: {}",
             normalized
-        )));
+        )))
     }
 
     #[cfg(not(target_os = "android"))]

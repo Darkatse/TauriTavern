@@ -288,7 +288,7 @@ fn resolve_executable_directory() -> Result<PathBuf, Box<dyn Error>> {
 pub fn resolve_app_data_dir(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn Error>> {
     #[cfg(target_os = "android")]
     {
-        return resolve_android_app_data_dir(app_handle);
+        resolve_android_app_data_dir(app_handle)
     }
 
     #[cfg(not(target_os = "android"))]
@@ -319,14 +319,14 @@ fn resolve_android_app_data_dir(app_handle: &AppHandle) -> Result<PathBuf, Box<d
         }
     }
 
-    if let Ok(document_dir) = app_handle.path().document_dir() {
-        if let Some(derived_external_dir) = derive_android_external_app_data_dir(&document_dir) {
-            tracing::debug!(
-                "Using Android external app data directory derived from document_dir: {:?}",
-                derived_external_dir
-            );
-            return Ok(derived_external_dir);
-        }
+    if let Ok(document_dir) = app_handle.path().document_dir()
+        && let Some(derived_external_dir) = derive_android_external_app_data_dir(&document_dir)
+    {
+        tracing::debug!(
+            "Using Android external app data directory derived from document_dir: {:?}",
+            derived_external_dir
+        );
+        return Ok(derived_external_dir);
     }
 
     if let Some(path) = reported_app_data_dir {
