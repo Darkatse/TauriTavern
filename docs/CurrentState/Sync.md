@@ -32,6 +32,8 @@ LAN 上传保留发起方的覆盖策略，但实际回拉使用目标设备的�
 
 本机广播随接收服务启停，只下载时可以独立发现。发现失败不删除配对或停用仍可用的 HTTPS 连接；停止接收服务不取消已接受的本地下载作业。
 
+附近发现使用 mDNS / DNS-SD。iOS 与 macOS 使用系统 Bonjour，Android、Windows 与 Linux 使用 Rust mDNS；两套后端共享服务信息与设备目录，记录更新和过期由发现后端处理。
+
 LAN 功能受宿主 `sync.lan` 能力门禁和平台权限约束。移动端权限、签名与生命周期要求见 [Android](../AndroidDevelopment.md) 和 [iOS](../iOSDevelopment.md)。
 
 ## 面板、事件与自动同步

@@ -225,6 +225,10 @@ impl LanSyncService {
         self.discovery.discover_devices().await
     }
 
+    pub async fn refresh_discovery_if_started(&self) -> Result<(), DomainError> {
+        self.discovery.refresh_if_started().await
+    }
+
     pub async fn set_device_name(&self, name: &str) -> Result<(), DomainError> {
         let name = name.trim();
         validate_device_name(name)?;

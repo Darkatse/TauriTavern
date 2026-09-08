@@ -15,7 +15,6 @@ reqwest = { workspace = true, features = ["json", "rustls", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-socket2 = { version = "0.6", features = ["all"] }
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"
 tt-contracts = { path = "../tt-contracts" }
@@ -28,5 +27,16 @@ ttsync-http = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
 
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+async-dnssd = "0.5.1"
+futures-util = "0.3"
+
+[target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "android"))'.dependencies]
+mdns-sd = "0.21.3"
+
 [dev-dependencies]
 base64 = "0.23"
+socket2 = { version = "0.6", features = ["all"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+mdns-sd = "0.21.3"

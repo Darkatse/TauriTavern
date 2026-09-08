@@ -265,6 +265,10 @@ struct NoopDeviceDiscovery;
 
 #[async_trait]
 impl LanDeviceDiscovery for NoopDeviceDiscovery {
+    async fn refresh_if_started(&self) -> Result<(), DomainError> {
+        Ok(())
+    }
+
     async fn set_device_name(&self, _name: &str) -> Result<(), DomainError> {
         Ok(())
     }
@@ -419,6 +423,10 @@ impl LanPairingClient for ManualPairingClient {
 
 #[async_trait]
 impl LanDeviceDiscovery for ManualPairingClient {
+    async fn refresh_if_started(&self) -> Result<(), DomainError> {
+        Ok(())
+    }
+
     async fn set_device_name(&self, _name: &str) -> Result<(), DomainError> {
         Ok(())
     }

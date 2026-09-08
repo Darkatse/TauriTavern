@@ -39,6 +39,7 @@ targets:
       path: tauritavern_iOS/Info.plist
       properties:
         LSRequiresIPhoneOS: true
+        NSBonjourServices: ["_tauritavern._tcp"]
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
         UISupportedInterfaceOrientations:
@@ -54,8 +55,6 @@ targets:
         CFBundleVersion: "1.0.0"
     entitlements:
       path: tauritavern_iOS/tauritavern_iOS.entitlements
-      properties:
-        com.apple.developer.networking.multicast: true
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full

@@ -58,12 +58,7 @@ pub(super) fn handle_run_event(app_handle: &tauri::AppHandle, event: tauri::RunE
     {
         let service = state.services.lan_sync_service.clone();
         tauri::async_runtime::spawn(async move {
-            if service
-                .get_status()
-                .await
-                .is_ok_and(|status| status.running)
-                && let Err(error) = service.discover_devices().await
-            {
+            if let Err(error) = service.refresh_discovery_if_started().await {
                 tracing::warn!("Failed to refresh LAN discovery after resume: {error}");
             }
         });

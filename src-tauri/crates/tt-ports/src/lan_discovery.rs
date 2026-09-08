@@ -6,6 +6,7 @@ use tt_domain::errors::DomainError;
 pub trait LanDeviceDiscovery: Send + Sync {
     async fn discover_devices(&self) -> Result<Vec<LanDiscoveredDevice>, DomainError>;
     async fn set_device_name(&self, name: &str) -> Result<(), DomainError>;
+    async fn refresh_if_started(&self) -> Result<(), DomainError>;
 }
 
 #[async_trait]

@@ -509,6 +509,6 @@ Tauri 版本升级后也必须重新验证运行时 envelope，不能仅凭 API 
 
 ## 12. LAN Sync 多播发现
 
-Android 多播发现需要 `CHANGE_WIFI_MULTICAST_STATE` 权限。宿主只在前台持有 `MulticastLock`，进入后台或停止发现时释放；网络逻辑由 Rust 负责。
+Android 的 Rust mDNS 发现需要 `CHANGE_WIFI_MULTICAST_STATE` 权限。宿主只在前台持有 `MulticastLock`，进入后台或停止发现时释放，回到前台后为已启动的发现重新获取；网络逻辑由 Rust 负责。
 
 平台适配见 [LanDiscoveryPlugin](../src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/LanDiscoveryPlugin.kt)，功能边界见[同步总览](CurrentState/Sync.md)。
