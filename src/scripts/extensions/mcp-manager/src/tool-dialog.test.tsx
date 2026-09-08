@@ -139,35 +139,6 @@ test('resets the complete override through the popup custom action', async () =>
     expect(saved).toEqual([null]);
 });
 
-test('vetoes another close while saving', async () => {
-    installPopupHost();
-    let finishSave: (() => void) | undefined;
-    const pendingSave = new Promise<void>(resolve => {
-        finishSave = resolve;
-    });
-    let calls = 0;
-    const opened = openToolDialog({
-        tool: tool(),
-        override: undefined,
-        save: () => {
-            calls += 1;
-            return pendingSave;
-        },
-    });
-    const popup = currentPopup();
-
-    const user = userEvent.setup();
-    const draft = await screen.findByLabelText<HTMLTextAreaElement>('Custom description');
-    await user.type(draft, 'Custom text');
-
-    const saving = popup.close(1);
-    await waitFor(() => expect(calls).toBe(1));
-    expect(await popup.close(0)).toBe(false);
-    finishSave?.();
-    expect(await saving).toBe(true);
-    await opened;
-});
-
 test('keeps the dialog open with the error in place when saving fails', async () => {
     installPopupHost();
     let attempts = 0;

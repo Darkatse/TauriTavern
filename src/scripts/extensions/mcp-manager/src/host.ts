@@ -194,22 +194,7 @@ function createTypedPopup(content: Element, options: PopupOptions, type: number 
         throw new Error(tr('popupUnavailable'));
     }
     const Popup = requirePopup();
-    const onClosing = options.onClosing;
-    let closing = false;
-    return new Popup(content, type, '', onClosing ? {
-        ...options,
-        onClosing: async popup => {
-            if (closing) {
-                return false;
-            }
-            closing = true;
-            try {
-                return await onClosing(popup);
-            } finally {
-                closing = false;
-            }
-        },
-    } : options);
+    return new Popup(content, type, '', options);
 }
 
 export function createTextPopup(content: Element, options: PopupOptions): PopupInstance {
