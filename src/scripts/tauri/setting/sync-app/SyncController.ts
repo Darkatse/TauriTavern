@@ -7,6 +7,7 @@ import {
     type SyncDatasetSelection,
     type SyncJobReport,
     type SyncLanDevice,
+    type SyncNearbyDevice,
     type SyncLoadedState,
     type SyncOperationOptions,
     type SyncOverwritePolicy,
@@ -17,27 +18,20 @@ import {
     type SyncTranslate,
     type SyncTtSyncServer,
 } from './SyncContract';
+import { createSyncDiscovery, type SyncDiscoveryState } from './SyncDiscovery';
 
-/**
- * Mount-local owner of the Sync Main panel state. It is the single source of
- * truth that both the React view (via subscribe/getSnapshot) and the public
- * mount handle (refresh/refreshAutomationStatus) talk to, so neither depends
- * on a committed React render. Every transition produces a new immutable
- * snapshot and notifies listeners synchronously.
- */
+/** Panel state shared by the React view and the mount's refresh handles. */
 
-export type SyncMainState = {
+export type SyncMainState = SyncDiscoveryState & {
     status: SyncStatus | null;
     devices: SyncLanDevice[];
     servers: SyncTtSyncServer[];
-    selectedAddress: string;
     pairingInfo: SyncPairingInfo | null;
     datasetCatalog: SyncScopeDatasetCatalog | null;
     syncSelection: SyncDatasetSelection | null;
     automationConfig: SyncAutomationConfig;
     automationStatus: SyncAutomationStatus;
-    automationExpanded: boolean;
-    automationDraftDirty: boolean;
+    automationDraft: Partial<SyncAutomationConfig> | null;
     requestPairUri: string;
     loading: boolean;
     busy: string;
@@ -48,6 +42,8 @@ export type SyncController = {
     subscribe: (listener: () => void) => () => void;
     refresh: () => Promise<void>;
     refreshAutomationStatus: () => Promise<void>;
+    refreshNearbyDevices: () => Promise<void>;
+    dispose: () => void;
     changeSyncMode: () => Promise<void>;
     showOverwritePolicyHelp: () => void;
     setOverwritePolicy: (overwritePolicy: SyncOverwritePolicy) => Promise<void>;
@@ -58,14 +54,15 @@ export type SyncController = {
     setAutomationInterval: (value: string) => void;
     setAutomationMode: (value: string) => void;
     setAutomationTarget: (value: string) => void;
-    setAutomationExpanded: (open: boolean) => void;
-    selectAddress: (address: string) => Promise<void>;
     startServer: () => Promise<void>;
     stopServer: () => Promise<void>;
-    enablePairing: () => Promise<void>;
+    showPairingInfo: () => Promise<void>;
+    pairNearbyDevice: (device: SyncNearbyDevice) => Promise<void>;
     copyPairUri: () => Promise<void>;
     scanPairing: () => Promise<void>;
     connectPairing: () => Promise<void>;
+    connectLanAddress: () => Promise<void>;
+    renameLocalDevice: () => Promise<void>;
     setRequestPairUri: (value: string) => void;
     renameTarget: (target: SyncTarget) => Promise<void>;
     pullTarget: (target: SyncTarget) => Promise<void>;
@@ -79,7 +76,6 @@ const DEFAULT_AUTOMATION_CONFIG: SyncAutomationConfig = {
     intervalMinutes: 30,
     target: null,
     syncMode: 'Incremental',
-    selection: null,
 };
 
 const DEFAULT_AUTOMATION_STATUS: SyncAutomationStatus = {
@@ -97,14 +93,15 @@ function initialState(): SyncMainState {
         status: null,
         devices: [],
         servers: [],
-        selectedAddress: '',
+        nearbyDevices: [],
+        discovering: false,
+        discoveryError: '',
         pairingInfo: null,
         datasetCatalog: null,
         syncSelection: null,
         automationConfig: { ...DEFAULT_AUTOMATION_CONFIG },
         automationStatus: { ...DEFAULT_AUTOMATION_STATUS },
-        automationExpanded: false,
-        automationDraftDirty: false,
+        automationDraft: null,
         requestPairUri: '',
         loading: false,
         busy: '',
@@ -122,6 +119,7 @@ export function createSyncController({
 }): SyncController {
     let state = initialState();
     const listeners = new Set<() => void>();
+    const discovery = createSyncDiscovery(client, setState);
 
     function getSnapshot(): SyncMainState {
         return state;
@@ -141,10 +139,8 @@ export function createSyncController({
         }
     }
 
-    /** Patches the automation config; `dirty` marks unsaved user edits. */
-    function patchAutomationConfig(patch: Partial<SyncAutomationConfig>, dirty: boolean): void {
-        const automationConfig = { ...state.automationConfig, ...patch };
-        setState(dirty ? { automationConfig, automationDraftDirty: true } : { automationConfig });
+    function patchAutomationDraft(patch: Partial<SyncAutomationConfig>): void {
+        setState({ automationDraft: { ...state.automationDraft, ...patch } });
     }
 
     function reportError(error: unknown): void {
@@ -152,26 +148,13 @@ export function createSyncController({
     }
 
     async function withBusy(name: string, task: () => Promise<void>): Promise<void> {
-        const busyName = String(name || '').trim();
-        setState({ busy: busyName });
+        setState({ busy: name });
         try {
             await task();
         } catch (error) {
             reportError(error);
         } finally {
-            if (state.busy === busyName) {
-                setState({ busy: '' });
-            }
-        }
-    }
-
-    async function withBusyStrict<T>(name: string, task: () => Promise<T>): Promise<T> {
-        const busyName = String(name || '').trim();
-        setState({ busy: busyName });
-        try {
-            return await task();
-        } finally {
-            if (state.busy === busyName) {
+            if (state.busy === name) {
                 setState({ busy: '' });
             }
         }
@@ -180,16 +163,13 @@ export function createSyncController({
     function applySnapshot(snapshot: SyncLoadedState): void {
         setState({
             status: snapshot.status,
+            pairingInfo: snapshot.status.running ? state.pairingInfo : null,
             devices: snapshot.devices,
             servers: snapshot.servers,
-            selectedAddress: snapshot.selectedAddress || '',
             datasetCatalog: snapshot.datasetCatalog,
             syncSelection: snapshot.syncSelection,
-            // A dirty automation draft is the user's unsaved edit; a background
-            // refresh must not clobber it.
-            automationConfig: state.automationDraftDirty
-                ? state.automationConfig
-                : snapshot.automationConfig,
+            // Refresh persisted facts; unsaved edits remain in automationDraft.
+            automationConfig: snapshot.automationConfig,
             automationStatus: snapshot.automationStatus,
         });
     }
@@ -213,13 +193,10 @@ export function createSyncController({
         }
     }
 
-    async function persistAutomationConfig(): Promise<void> {
-        const saved = await client.updateAutomationConfig(state.automationConfig, state.syncSelection);
-        setState({
-            automationConfig: saved,
-            automationDraftDirty: false,
-        });
-        setState({ automationStatus: await client.getAutomationStatus() });
+    async function persistAutomationConfig(config: SyncAutomationConfig): Promise<void> {
+        const saved = await client.updateAutomationConfig(config, state.syncSelection);
+        setState({ automationConfig: saved });
+        await refreshAutomationStatus();
     }
 
     async function runSyncCommand(command: () => Promise<SyncJobReport>): Promise<SyncJobReport> {
@@ -259,16 +236,18 @@ export function createSyncController({
             return;
         }
 
-        const previous = state.status.overwritePolicy;
-        setState({ status: { ...state.status, overwritePolicy } });
-        try {
-            await withBusyStrict('overwrite-policy', () => client.setOverwritePolicy(overwritePolicy));
-        } catch (error) {
-            if (state.status) {
-                setState({ status: { ...state.status, overwritePolicy: previous } });
+        const previous = state.status;
+        await withBusy('overwrite-policy', async () => {
+            setState({ status: { ...previous, overwritePolicy } });
+            try {
+                await client.setOverwritePolicy(overwritePolicy);
+            } catch (error) {
+                if (state.status) {
+                    setState({ status: { ...state.status, overwritePolicy: previous.overwritePolicy } });
+                }
+                throw error;
             }
-            reportError(error);
-        }
+        });
     }
 
     async function editSyncScope(): Promise<void> {
@@ -279,75 +258,58 @@ export function createSyncController({
             });
             if (next) {
                 setState({ syncSelection: next });
-                setState({ automationConfig: { ...state.automationConfig, selection: next } });
-                await persistAutomationConfig();
+                await persistAutomationConfig(state.automationConfig);
             }
         });
     }
 
     async function saveAutomation(): Promise<void> {
-        await withBusy('automation', persistAutomationConfig);
+        await withBusy('automation', async () => {
+            await persistAutomationConfig({ ...state.automationConfig, ...state.automationDraft });
+            setState({ automationDraft: null });
+        });
+    }
+
+    async function saveAutomationPatch(patch: Partial<SyncAutomationConfig>): Promise<void> {
+        await withBusy('automation', async () => {
+            const previous = state.automationConfig;
+            setState({ automationConfig: { ...previous, ...patch } });
+            try {
+                await persistAutomationConfig(state.automationConfig);
+            } catch (error) {
+                setState({ automationConfig: previous });
+                throw error;
+            }
+        });
     }
 
     async function setLanServerAutoStart(enabled: boolean): Promise<void> {
-        const previous = state.automationConfig.lanServerAutoStart;
-        patchAutomationConfig({ lanServerAutoStart: enabled }, false);
-        try {
-            await withBusyStrict('automation-port', persistAutomationConfig);
-        } catch (error) {
-            patchAutomationConfig({ lanServerAutoStart: previous }, false);
-            reportError(error);
-        }
+        await saveAutomationPatch({ lanServerAutoStart: enabled });
     }
 
     async function setAutoSyncEnabled(enabled: boolean): Promise<void> {
-        if (enabled && !state.automationConfig.target) {
-            patchAutomationConfig({ autoSyncEnabled: true }, true);
-            setState({ automationExpanded: true });
+        if (!state.automationConfig.target) {
+            // A first-time target and its enable flag are committed together by Save.
+            patchAutomationDraft({ autoSyncEnabled: enabled });
             return;
         }
-
-        const previous = state.automationConfig.autoSyncEnabled;
-        patchAutomationConfig({ autoSyncEnabled: enabled }, false);
-        if (enabled) {
-            setState({ automationExpanded: true });
-        }
-        try {
-            await withBusyStrict('automation', persistAutomationConfig);
-        } catch (error) {
-            patchAutomationConfig({ autoSyncEnabled: previous }, false);
-            reportError(error);
-        }
+        await saveAutomationPatch({ autoSyncEnabled: enabled });
     }
 
     function setAutomationInterval(value: string): void {
-        patchAutomationConfig({ intervalMinutes: Number(value) }, true);
+        patchAutomationDraft({ intervalMinutes: Number(value) });
     }
 
     function setAutomationMode(value: string): void {
-        patchAutomationConfig({ syncMode: value === 'Mirror' ? 'Mirror' : 'Incremental' }, true);
+        patchAutomationDraft({ syncMode: value === 'Mirror' ? 'Mirror' : 'Incremental' });
     }
 
     function setAutomationTarget(value: string): void {
-        patchAutomationConfig({ target: parseAutomationTargetValue(value) }, true);
-    }
-
-    function setAutomationExpanded(open: boolean): void {
-        setState({ automationExpanded: open });
+        patchAutomationDraft({ target: parseAutomationTargetValue(value) });
     }
 
     function showOverwritePolicyHelp(): void {
         void actions.showOverwritePolicyHelp();
-    }
-
-    async function selectAddress(address: string): Promise<void> {
-        setState({ selectedAddress: address });
-        await withBusy('address', async () => {
-            client.setAdvertiseAddress(address);
-            if (state.status?.pairingEnabled && address) {
-                setState({ pairingInfo: await client.getLanPairingInfo(address) });
-            }
-        });
     }
 
     async function startServer(): Promise<void> {
@@ -365,11 +327,17 @@ export function createSyncController({
         });
     }
 
-    async function enablePairing(): Promise<void> {
-        await withBusy('pairing', async () => {
-            setState({ pairingInfo: await client.enableLanPairing(state.selectedAddress || null) });
-            await refresh();
+    async function showPairingInfo(): Promise<void> {
+        await withBusy('pairing-info', async () => {
+            setState({ pairingInfo: await client.getLanPairingInfo() });
         });
+    }
+
+    async function pairNearbyDevice(device: SyncNearbyDevice): Promise<void> {
+        await withBusy(`pair:${device.id}`, async () => {
+            await client.pairLanDevice(device.id);
+        });
+        await refresh();
     }
 
     async function copyPairUri(): Promise<void> {
@@ -392,8 +360,8 @@ export function createSyncController({
                 return;
             }
             setState({ requestPairUri: '' });
-            await refresh();
         });
+        await refresh();
     }
 
     async function scanPairing(): Promise<void> {
@@ -471,6 +439,8 @@ export function createSyncController({
         subscribe,
         refresh,
         refreshAutomationStatus,
+        refreshNearbyDevices: discovery.refresh,
+        dispose: discovery.dispose,
         changeSyncMode,
         setOverwritePolicy,
         editSyncScope,
@@ -480,15 +450,21 @@ export function createSyncController({
         setAutomationInterval,
         setAutomationMode,
         setAutomationTarget,
-        setAutomationExpanded,
         showOverwritePolicyHelp,
-        selectAddress,
         startServer,
         stopServer,
-        enablePairing,
+        showPairingInfo,
+        pairNearbyDevice,
         copyPairUri,
         scanPairing,
         connectPairing,
+        connectLanAddress: () => withBusy('manual-connect', async () => {
+            await actions.connectLanAddress();
+            await refresh();
+        }),
+        renameLocalDevice: () => withBusy('rename-local', async () => {
+            if (state.status && await actions.renameLocalDevice(state.status.deviceName)) await refresh();
+        }),
         setRequestPairUri,
         renameTarget,
         pullTarget,

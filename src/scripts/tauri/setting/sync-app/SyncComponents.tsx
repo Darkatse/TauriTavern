@@ -1,7 +1,61 @@
-import type { ReactNode } from 'react';
-
 import { formatTimestampValue } from './format';
-import type { SyncTarget, SyncTranslate } from './SyncContract';
+import type { SyncDeviceCard } from './SyncDevices';
+import { targetDisplayName } from './SyncText';
+import type {
+    SyncNearbyDevice,
+    SyncStatus,
+    SyncTarget,
+    SyncTranslate,
+} from './SyncContract';
+
+const PLATFORM_ICONS: Record<string, { icon: string; label: string }> = {
+    windows: { icon: 'fa-brands fa-windows', label: 'Windows' },
+    macos: { icon: 'fa-brands fa-apple', label: 'macOS' },
+    ios: { icon: 'fa-brands fa-app-store-ios', label: 'iOS' },
+    android: { icon: 'fa-brands fa-android', label: 'Android' },
+    linux: { icon: 'fa-brands fa-linux', label: 'Linux' },
+};
+
+function SyncPlatformIcon({ platform = '', server = false, tr }: { platform?: string; server?: boolean; tr: SyncTranslate }) {
+    const { icon, label } = PLATFORM_ICONS[platform] || {
+        icon: `fa-solid ${server ? 'fa-server' : 'fa-display'}`,
+        label: tr(server ? 'Server' : 'Device'),
+    };
+    return <i className={`${icon} tt-sync-platform-icon`} role="img" aria-label={label} title={label}></i>;
+}
+
+export function SyncOverview({ status, disabled, tr, onStart, onStop }: {
+    status: SyncStatus | null;
+    disabled: boolean;
+    tr: SyncTranslate;
+    onStart: () => void;
+    onStop: () => void;
+}) {
+    const running = Boolean(status?.running);
+    return (
+        <section className="tt-sync-overview">
+            <div className="tt-sync-status-line">
+                <span>{tr('Status')}</span>
+                <b className={`tt-sync-status-pill ${running ? 'running' : 'stopped'}`}>
+                    {tr(running ? 'Running' : 'Stopped')}
+                </b>
+                {running && status?.address && (
+                    <span className="tt-sync-muted tt-sync-status-address" title={status.address}>
+                        {status.address}
+                    </span>
+                )}
+                <SyncButton label={tr(running ? 'Stop' : 'Start')} icon={running ? 'fa-stop' : 'fa-play'}
+                    disabled={disabled} onClick={running ? onStop : onStart} />
+            </div>
+            <details className="tt-sync-connection-details">
+                <summary>{tr('Connection details')}</summary>
+                <div className="tt-sync-connection-addresses">
+                    {status?.availableAddresses.length ? status.availableAddresses.join(' · ') : tr('N/A')}
+                </div>
+            </details>
+        </section>
+    );
+}
 
 type SyncButtonProps = {
     label: string;
@@ -38,133 +92,131 @@ export function SyncButton({
     );
 }
 
-type SyncSectionProps = {
-    title: string;
-    actions?: ReactNode;
-    children: ReactNode;
-};
-
-export function SyncSection({ title, actions, children }: SyncSectionProps) {
-    return (
-        <section className="tt-sync-section">
-            <div className="tt-sync-section-header">
-                <b>{title}</b>
-                {actions}
-            </div>
-            {children}
-        </section>
-    );
-}
-
 type SyncSwitchProps = {
     checked: boolean;
     disabled?: boolean;
-    label?: string;
-    title?: string;
+    title: string;
     onChange: (checked: boolean) => void;
 };
 
 export function SyncSwitch({
     checked,
     disabled = false,
-    label = '',
-    title = '',
+    title,
     onChange,
 }: SyncSwitchProps) {
-    const text = title || label;
     return (
-        <label className={`tt-sync-switch${disabled ? ' is-disabled' : ''}`} title={text}>
+        <label className={`tt-sync-switch${disabled ? ' is-disabled' : ''}`} title={title}>
             <input
                 type="checkbox"
                 checked={checked}
                 disabled={disabled}
-                aria-label={text}
+                aria-label={title}
                 onChange={event => onChange(event.target.checked)}
             />
             <span className="tt-sync-switch-track" aria-hidden="true"></span>
-            {label && <span className="tt-sync-switch-label">{label}</span>}
         </label>
     );
 }
 
-type SyncTargetRowProps = {
-    target: SyncTarget;
+type SyncDeviceCardProps = {
+    card: SyncDeviceCard;
     running: boolean;
     tr: SyncTranslate;
     disabled?: boolean;
+    onPair: (device: SyncNearbyDevice) => void;
     onRename: (target: SyncTarget) => void;
     onPull: (target: SyncTarget) => void;
     onPush: (target: SyncTarget) => void;
     onRemove: (target: SyncTarget) => void;
 };
 
-export function SyncTargetRow({
-    target,
+export function SyncDeviceCard({
+    card,
     running,
     tr,
     disabled = false,
+    onPair,
     onRename,
     onPull,
     onPush,
     onRemove,
-}: SyncTargetRowProps) {
+}: SyncDeviceCardProps) {
+    if (card.kind === 'nearby') {
+        return (
+            <div className="tt-sync-device-card is-lan">
+                <div className="tt-sync-device-info">
+                    <div className="tt-sync-device-title">
+                        <SyncPlatformIcon platform={card.device.platform} tr={tr} />
+                        <b>{card.device.name}</b>
+                        <span className="tt-sync-device-pill is-new">{tr('New device')}</span>
+                    </div>
+                    {card.address && <div className="tt-sync-device-meta">{card.address}</div>}
+                </div>
+                <div className="tt-sync-device-actions">
+                    <SyncButton
+                        label={tr('Pair')}
+                        icon="fa-link"
+                        title={`${tr('Pair')} ${card.device.name}`}
+                        disabled={disabled}
+                        onClick={() => onPair(card.device)}
+                    />
+                </div>
+            </div>
+        );
+    }
+
+    const target = card.target;
     const isLan = target.type === 'lan';
-    const protocolLabel = isLan ? 'LAN' : 'TT-Sync';
     const lastSyncText = target.lastSyncMs
         ? formatTimestampValue(target.lastSyncMs, tr)
         : tr('Never');
     const secondaryLine = isLan
-        ? target.lastKnownAddress || tr('Address: N/A (reconnect needed)')
+        ? target.lastKnownAddress || tr('N/A')
         : target.baseUrl;
-    const pullDisabled = disabled || (isLan && !target.lastKnownAddress);
-    const pushDisabled = disabled || (isLan && (!target.lastKnownAddress || !running));
-    const pullTitle = isLan && !target.lastKnownAddress
-        ? tr('Address missing. Reconnect using Pair URI.')
-        : tr(isLan ? 'Download (pull from this device)' : 'Download (pull from this server)');
+    const pushDisabled = disabled || (isLan && !running);
+    const pullTitle = tr(isLan ? 'Download (pull from this device)' : 'Download (pull from this server)');
     const pushTitle = (() => {
-        if (isLan && !target.lastKnownAddress) {
-            return tr('Address missing. Reconnect using Pair URI.');
-        }
         if (isLan && !running) {
             return tr('Start LAN Sync server first (peer needs to download from you).');
         }
         return tr(isLan ? 'Upload (request device to pull from you)' : 'Upload (push to this server)');
     })();
-    const removeTitle = tr(isLan ? 'Remove device' : 'Remove server');
 
     return (
-        <div className={`tt-sync-target-row ${isLan ? 'tt-sync-target-lan' : 'tt-sync-target-tt'}`}>
-            <div className="tt-sync-target-main">
-                <button
-                    type="button"
-                    className="tt-sync-target-name"
-                    title={tr('Click to rename')}
-                    disabled={disabled}
-                    onClick={() => onRename(target)}
-                >
-                    <b>{target.displayName}</b>
-                    <i className="fa-solid fa-pen-to-square" aria-hidden="true"></i>
-                </button>
-                <div className="tt-sync-target-muted">{target.id}</div>
-                <div className="tt-sync-target-muted tt-sync-target-address">
-                    <span>{secondaryLine}</span>
-                    <code>{protocolLabel}</code>
+        <div className={`tt-sync-device-card ${isLan ? 'is-lan' : 'is-tt'}`}>
+            <div className="tt-sync-device-info">
+                <div className="tt-sync-device-title">
+                    <SyncPlatformIcon platform={isLan ? target.platform : ''} server={!isLan} tr={tr} />
+                    <button
+                        type="button"
+                        className="tt-sync-device-name"
+                        title={tr('Click to rename')}
+                        disabled={disabled}
+                        onClick={() => onRename(target)}
+                    >
+                        <b>{targetDisplayName(target)}</b>
+                        <i className="fa-solid fa-pen-to-square" aria-hidden="true"></i>
+                    </button>
+                    {card.online && <span className="tt-sync-device-pill is-online">{tr('Online')}</span>}
                 </div>
-                <div className="tt-sync-target-muted">{tr('Last sync')}: {lastSyncText}</div>
+                <div className="tt-sync-device-meta">
+                    <code>{isLan ? 'LAN' : 'TT-Sync'}</code>
+                    <span>{secondaryLine}</span>
+                    <span>{tr('Last sync')}: {lastSyncText}</span>
+                </div>
             </div>
-            <div className="tt-sync-target-actions">
+            <div className="tt-sync-device-actions">
                 <SyncButton
                     label={tr('Download')}
                     icon="fa-download"
-                    iconOnly
                     title={pullTitle}
-                    disabled={pullDisabled}
+                    disabled={disabled}
                     onClick={() => onPull(target)}
                 />
                 <SyncButton
                     label={tr('Upload')}
                     icon="fa-upload"
-                    iconOnly
                     title={pushTitle}
                     disabled={pushDisabled}
                     onClick={() => onPush(target)}
@@ -173,7 +225,7 @@ export function SyncTargetRow({
                     label={tr('Remove')}
                     icon="fa-trash-can"
                     iconOnly
-                    title={removeTitle}
+                    title={tr(isLan ? 'Remove device' : 'Remove server')}
                     disabled={disabled}
                     onClick={() => onRemove(target)}
                 />

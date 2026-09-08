@@ -50,22 +50,6 @@ export function automationStatusText(status: SyncAutomationStatus, tr: SyncTrans
     return tr('Idle');
 }
 
-export function formatShortTimestamp(ms: number | null | undefined, tr: SyncTranslate): string {
-    if (!ms) {
-        return tr('N/A');
-    }
-    const date = new Date(Number(ms));
-    if (Number.isNaN(date.getTime())) {
-        return tr('Invalid time');
-    }
-    // Pairing codes live for minutes: the time of day is the useful precision,
-    // the date only matters once the expiry crosses midnight.
-    const sameDay = date.toDateString() === new Date().toDateString();
-    return sameDay
-        ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        : date.toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
-
 function defaultDatasetSelected(
     selection: SyncDatasetSelection | null,
     catalog: SyncScopeDatasetCatalog | null,
@@ -98,6 +82,10 @@ export type AutomationTargetOption = {
     disabled: boolean;
 };
 
+export function targetDisplayName(target: SyncTarget): string {
+    return target.alias || target.name;
+}
+
 export function automationTargetOptions(
     targets: SyncTarget[],
     config: SyncAutomationConfig,
@@ -107,8 +95,8 @@ export function automationTargetOptions(
         if (target.type === 'lan') {
             return {
                 value: automationTargetValue(target),
-                label: `LAN · ${target.displayName}`,
-                disabled: !target.lastKnownAddress,
+                label: `LAN · ${targetDisplayName(target)}`,
+                disabled: false,
             };
         }
 
@@ -116,7 +104,7 @@ export function automationTargetOptions(
         const canMirror = Boolean(target.permissions.mirror_delete);
         return {
             value: automationTargetValue(target),
-            label: `TT-Sync · ${target.displayName}`,
+            label: `TT-Sync · ${targetDisplayName(target)}`,
             disabled: !canWrite || (automationMirror && !canMirror),
         };
     });

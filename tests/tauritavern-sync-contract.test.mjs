@@ -120,3 +120,15 @@ test('sync dataset selection migrates once and rejects corrupt current state', a
         /Stored sync content selection is invalid/,
     );
 });
+
+test('LAN pairing links carry a pinned endpoint and optional device identity', async () => {
+    const { parseLanSyncPairUri } = await importSyncState();
+    const uri = 'tauritavern://lan-sync/pair?v=2&url=https%3A%2F%2F192.168.1.2%3A4567&spki=test-pin';
+    assert.deepEqual(parseLanSyncPairUri(uri), {
+        baseUrl: 'https://192.168.1.2:4567', spki: 'test-pin', deviceId: null,
+    });
+    assert.equal(parseLanSyncPairUri(`${uri}&device_id=peer-1`).deviceId, 'peer-1');
+    assert.throws(() => parseLanSyncPairUri(uri.replace('lan-sync/pair', 'tt-sync/pair')), /not a LAN Sync pairing link/);
+    assert.throws(() => parseLanSyncPairUri(uri.replace('v=2', 'v=1')), /must be v=2/);
+    assert.throws(() => parseLanSyncPairUri(uri.replace('&spki=test-pin', '')), /missing spki/);
+});

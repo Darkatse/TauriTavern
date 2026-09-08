@@ -27,11 +27,10 @@ export type SyncScopeDatasetCatalog = {
 export type SyncOverwritePolicy = 'exact' | 'prefer-newer';
 
 export type SyncStatus = {
+    deviceName: string;
     running: boolean;
     address: string;
     availableAddresses: string[];
-    pairingEnabled: boolean;
-    pairingExpiresAtMs: number | null;
     syncMode: string;
     syncModeOverridden: boolean;
     overwritePolicy: SyncOverwritePolicy;
@@ -41,34 +40,37 @@ export type SyncLanDevice = {
     type: 'lan';
     id: string;
     name: string;
-    displayName: string;
+    alias: string;
+    platform: string;
     lastKnownAddress: string;
-    pairedAtMs: number | null;
     lastSyncMs: number | null;
+};
+
+export type SyncNearbyDevice = {
+    id: string;
+    name: string;
+    platform: string;
+    baseUrls: string[];
 };
 
 export type SyncTtSyncServer = {
     type: 'tt';
     id: string;
     name: string;
-    displayName: string;
+    alias: string;
     baseUrl: string;
-    spkiSha256: string;
     permissions: {
         write?: boolean;
         mirror_delete?: boolean;
     };
-    pairedAtMs: number | null;
     lastSyncMs: number | null;
 };
 
 export type SyncTarget = SyncLanDevice | SyncTtSyncServer;
 
 export type SyncPairingInfo = {
-    address: string;
     pairUri: string;
     qrSvg: string;
-    expiresAtMs: number | null;
 };
 
 export type SyncAutomationTarget = {
@@ -82,7 +84,6 @@ export type SyncAutomationConfig = {
     intervalMinutes: number;
     target: SyncAutomationTarget | null;
     syncMode: string;
-    selection: SyncDatasetSelection | null;
 };
 
 export type SyncAutomationStatus = {
@@ -97,7 +98,6 @@ export type SyncAutomationStatus = {
 
 export type SyncLoadedState = {
     status: SyncStatus;
-    selectedAddress: string;
     datasetCatalog: SyncScopeDatasetCatalog;
     syncSelection: SyncDatasetSelection;
     automationConfig: SyncAutomationConfig;
@@ -123,11 +123,12 @@ export type SyncJobReport = {
 
 export type SyncClient = {
     loadState: () => Promise<SyncLoadedState>;
-    setAdvertiseAddress: (address: string) => void;
     startLanServer: () => Promise<unknown>;
     stopLanServer: () => Promise<unknown>;
-    enableLanPairing: (address: string | null) => Promise<SyncPairingInfo | null>;
-    getLanPairingInfo: (address: string) => Promise<SyncPairingInfo | null>;
+    getLanPairingInfo: () => Promise<SyncPairingInfo>;
+    discoverLanDevices: () => Promise<SyncNearbyDevice[]>;
+    subscribeLanDevices: (handler: (devices: SyncNearbyDevice[]) => void) => Promise<() => void>;
+    pairLanDevice: (deviceId: string) => Promise<unknown>;
     removeLanDevice: (deviceId: string) => Promise<unknown>;
     pullLanDevice: (deviceId: string, options: SyncOperationOptions) => Promise<SyncJobReport>;
     pushLanDevice: (deviceId: string, options: SyncOperationOptions) => Promise<SyncJobReport>;
@@ -143,6 +144,8 @@ export type SyncClient = {
 };
 
 export type SyncActions = {
+    connectLanAddress: () => Promise<boolean>;
+    renameLocalDevice: (name: string) => Promise<boolean>;
     copyText: (text: string) => Promise<unknown>;
     scanPairUri: () => Promise<string | null>;
     changeSyncMode: (status: SyncStatus | null) => Promise<boolean>;
@@ -175,11 +178,12 @@ export type SyncMainHandle = {
 
 const REQUIRED_CLIENT_METHODS = [
     'loadState',
-    'setAdvertiseAddress',
     'startLanServer',
     'stopLanServer',
-    'enableLanPairing',
     'getLanPairingInfo',
+    'discoverLanDevices',
+    'subscribeLanDevices',
+    'pairLanDevice',
     'removeLanDevice',
     'pullLanDevice',
     'pushLanDevice',
@@ -199,6 +203,8 @@ const REQUIRED_ACTIONS = [
     'showOverwritePolicyHelp',
     'renameTarget',
     'connectPairUri',
+    'connectLanAddress',
+    'renameLocalDevice',
     'notifyLanPushRequested',
     'reportError',
     'showSyncReportResult',

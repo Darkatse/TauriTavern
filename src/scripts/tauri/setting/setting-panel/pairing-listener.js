@@ -14,6 +14,9 @@ export function installPairingListener() {
     const listen = window.__TAURI__.event.listen;
 
     void (async () => {
+        await listen('lan_sync:pairing_completed', () => {
+            window.dispatchEvent(new Event(LAN_SYNC_DEVICES_CHANGED_EVENT));
+        });
         await listen('lan_sync:pair_request', async (event) => {
             const payload = event.payload;
             const requestId = payload.request_id;
@@ -53,10 +56,6 @@ export function installPairingListener() {
 
             const accept = result === POPUP_RESULT.AFFIRMATIVE;
             await invoke('lan_sync_confirm_pairing', { requestId, accept });
-            if (accept) {
-                window.dispatchEvent(new Event(LAN_SYNC_DEVICES_CHANGED_EVENT));
-            }
         });
     })();
 }
-

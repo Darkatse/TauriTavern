@@ -13,16 +13,13 @@ import { formatTimestamp } from './formatters.js';
 import { runTaskOrPopup, showErrorPopup } from './popup-utils.js';
 import { callTauriTavernPanelPopup } from '../panel-popup.js';
 import { showSyncReportResult } from './sync-listeners.js';
+import { connectLanAddress, renameLocalDevice } from './sync-device-dialogs.js';
 import {
     clearSyncTargetAlias,
-    getLanSyncAdvertiseAddress,
     getSyncDatasetSelection,
     getSyncTargetAlias,
-    getSyncTargetDisplayName,
     parseLanSyncPairUri,
     parseTtSyncPairUri,
-    selectLanSyncAdvertiseAddress,
-    setLanSyncAdvertiseAddress,
     setSyncDatasetSelection,
     setSyncTargetAlias,
 } from './sync-state.js';
@@ -125,12 +122,11 @@ function normalizeStatus(status) {
 
     return {
         running: Boolean(status?.running),
+        deviceName: String(status?.device_name || 'TauriTavern'),
         address: String(status?.address || ''),
         availableAddresses: Array.isArray(status?.available_addresses)
             ? status.available_addresses
             : [],
-        pairingEnabled: Boolean(status?.pairing_enabled),
-        pairingExpiresAtMs: status?.pairing_expires_at_ms ?? null,
         syncMode: status?.sync_mode ?? 'Incremental',
         syncModeOverridden: Boolean(status?.sync_mode_overridden),
         overwritePolicy,
@@ -138,15 +134,9 @@ function normalizeStatus(status) {
 }
 
 function normalizePairingInfo(pairingInfo) {
-    if (!pairingInfo) {
-        return null;
-    }
-
     return {
-        address: String(pairingInfo.address || ''),
         pairUri: String(pairingInfo.pair_uri || ''),
         qrSvg: String(pairingInfo.qr_svg || ''),
-        expiresAtMs: pairingInfo.expires_at_ms ?? null,
     };
 }
 
@@ -163,10 +153,6 @@ function normalizeDatasetCatalog(catalog) {
     return {
         policyVersion: Number(catalog?.policy_version),
         supportedDatasetIds,
-        supportedProfileIds: ensureArray(
-            catalog?.supported_profile_ids,
-            'sync_get_dataset_catalog.supported_profile_ids',
-        ).map(String),
         defaultDatasetIds,
     };
 }
@@ -179,11 +165,20 @@ function normalizeLanDevice(device) {
         type: 'lan',
         id,
         name,
-        displayName: getSyncTargetDisplayName('lan', id, name),
+        alias: getSyncTargetAlias('lan', id),
+        platform: String(device.platform || ''),
         lastKnownAddress: device.last_known_address || '',
-        pairedAtMs: device.paired_at_ms ?? null,
         lastSyncMs: device.last_sync_ms ?? null,
     };
+}
+
+function normalizeNearbyDevices(devices) {
+    return ensureArray(devices, 'lan_sync_discover_devices').map(device => ({
+        id: String(device.device_id),
+        name: String(device.device_name || device.device_id),
+        platform: String(device.platform || ''),
+        baseUrls: ensureArray(device.base_urls, 'LAN discovery base_urls').map(String),
+    }));
 }
 
 function normalizeTtSyncServer(server) {
@@ -194,11 +189,9 @@ function normalizeTtSyncServer(server) {
         type: 'tt',
         id,
         name,
-        displayName: getSyncTargetDisplayName('tt', id, name),
+        alias: getSyncTargetAlias('tt', id),
         baseUrl: String(server.base_url || ''),
-        spkiSha256: String(server.spki_sha256 || ''),
         permissions: server.permissions || {},
-        pairedAtMs: server.paired_at_ms ?? null,
         lastSyncMs: server.last_sync_ms ?? null,
     };
 }
@@ -241,14 +234,13 @@ function serializeAutomationTarget(target) {
     throw new Error(`Unsupported auto sync target type: ${target.type}`);
 }
 
-function normalizeAutomationConfig(config, syncSelection) {
+function normalizeAutomationConfig(config) {
     return {
         lanServerAutoStart: Boolean(config?.lan_server_auto_start),
         autoSyncEnabled: Boolean(config?.auto_sync_enabled),
         intervalMinutes: Number(config?.interval_minutes || 30),
         target: normalizeAutomationTarget(config?.target),
         syncMode: config?.sync_mode || 'Incremental',
-        selection: syncSelection,
     };
 }
 
@@ -303,29 +295,33 @@ function createSyncClient() {
                 invoke('sync_automation_get_status'),
             ]);
             const status = normalizeStatus(rawStatus);
-            const selectedAddress = selectLanSyncAdvertiseAddress(status, getLanSyncAdvertiseAddress());
-            setLanSyncAdvertiseAddress(selectedAddress);
             const datasetCatalog = normalizeDatasetCatalog(rawCatalog);
             const syncSelection = getSyncDatasetSelection(datasetCatalog);
 
             return {
                 status,
-                selectedAddress,
                 datasetCatalog,
                 syncSelection,
-                automationConfig: normalizeAutomationConfig(rawAutomationConfig, syncSelection),
+                automationConfig: normalizeAutomationConfig(rawAutomationConfig),
                 automationStatus: normalizeAutomationStatus(rawAutomationStatus),
                 devices: ensureArray(rawDevices, 'lan_sync_list_devices').map(normalizeLanDevice),
                 servers: ensureArray(rawServers, 'tt_sync_list_servers').map(normalizeTtSyncServer),
             };
         },
-        setAdvertiseAddress(address) {
-            setLanSyncAdvertiseAddress(address);
-        },
         startLanServer: () => invoke('lan_sync_start_server'),
         stopLanServer: () => invoke('lan_sync_stop_server'),
-        enableLanPairing: (address) => invoke('lan_sync_enable_pairing', { address }).then(normalizePairingInfo),
-        getLanPairingInfo: (address) => invoke('lan_sync_get_pairing_info', { address }).then(normalizePairingInfo),
+        getLanPairingInfo: () => invoke('lan_sync_get_pairing_info').then(normalizePairingInfo),
+        discoverLanDevices: () => invoke('lan_sync_discover_devices').then(normalizeNearbyDevices),
+        async subscribeLanDevices(handler) {
+            const listen = window.__TAURI__?.event?.listen;
+            if (typeof listen !== 'function') {
+                throw new Error('Tauri event API is unavailable');
+            }
+            return listen('lan_sync:devices_changed', event => handler(normalizeNearbyDevices(event.payload)));
+        },
+        pairLanDevice: (deviceId) => invoke('lan_sync_pair_device', { deviceId }),
+        connectLanAddress: (address) => invoke('lan_sync_connect_address', { address }),
+        setDeviceName: (name) => invoke('lan_sync_set_device_name', { name }),
         requestLanPairing: (pairUri) => invoke('lan_sync_request_pairing', { pairUri }),
         removeLanDevice: (deviceId) => invoke('lan_sync_remove_device', { deviceId }),
         pullLanDevice: (deviceId, options) => invoke('lan_sync_sync_from_device', { deviceId, options }),
@@ -334,15 +330,12 @@ function createSyncClient() {
         clearLanSyncModeOverride: () => invoke('lan_sync_clear_sync_mode_override'),
         setOverwritePolicy: (overwritePolicy) => invoke('lan_sync_set_overwrite_policy', { overwritePolicy }),
         pairTtSync: (pairUri) => invoke('tt_sync_pair', { pairUri }),
-        removeTtSyncServer: async (serverDeviceId) => {
-            await invoke('tt_sync_remove_server', { serverDeviceId });
-            window.dispatchEvent(new Event(TT_SYNC_SERVERS_CHANGED_EVENT));
-        },
+        removeTtSyncServer: (serverDeviceId) => invoke('tt_sync_remove_server', { serverDeviceId }),
         pullTtSyncServer: (serverDeviceId, mode, options) => invoke('tt_sync_pull', { serverDeviceId, mode, options }),
         pushTtSyncServer: (serverDeviceId, mode, options) => invoke('tt_sync_push', { serverDeviceId, mode, options }),
         updateAutomationConfig: (config, syncSelection) => invoke('sync_automation_update_config', {
             config: serializeAutomationConfig(config, syncSelection),
-        }).then((saved) => normalizeAutomationConfig(saved, syncSelection)),
+        }).then(normalizeAutomationConfig),
         getAutomationStatus: () => invoke('sync_automation_get_status').then(normalizeAutomationStatus),
     };
 }
@@ -508,6 +501,8 @@ async function editSyncScope(catalog, selection) {
 
 function createSyncActions(client) {
     return {
+        connectLanAddress: () => connectLanAddress(client),
+        renameLocalDevice: (name) => renameLocalDevice(client, name),
         copyText: async (text) => {
             await writeClipboardText(String(text ?? ''));
         },
@@ -553,7 +548,6 @@ function createSyncActions(client) {
                     return false;
                 }
                 await client.pairTtSync(trimmed);
-                window.dispatchEvent(new Event(TT_SYNC_SERVERS_CHANGED_EVENT));
                 return true;
             }
 

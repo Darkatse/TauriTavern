@@ -1,215 +1,9 @@
 import { act, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, test } from '@rstest/core';
+import { expect, test } from '@rstest/core';
 
 import { mountTauriTavernSyncApp } from './SyncApp';
-import type {
-    SyncActions,
-    SyncClient,
-    SyncJobReport,
-    SyncLoadedState,
-    SyncMainHandle,
-    SyncMainOptions,
-} from './SyncContract';
-
-declare global {
-    // The mount under test creates its React root directly instead of going
-    // through Testing Library's render(), so act() needs the explicit opt-in.
-    var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
-}
-globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-
-const tr = (key: string) => key;
-
-const handles: SyncMainHandle[] = [];
-const containers: HTMLElement[] = [];
-
-afterEach(() => {
-    for (const handle of handles.splice(0)) {
-        act(() => handle.unmount());
-    }
-    for (const container of containers.splice(0)) {
-        container.remove();
-    }
-});
-
-function createSnapshot(): SyncLoadedState {
-    return {
-        status: {
-            running: true,
-            address: 'http://127.0.0.1:4567',
-            availableAddresses: ['http://127.0.0.1:4567'],
-            pairingEnabled: false,
-            pairingExpiresAtMs: null,
-            syncMode: 'Incremental',
-            syncModeOverridden: false,
-            overwritePolicy: 'exact',
-        },
-        selectedAddress: 'http://127.0.0.1:4567',
-        datasetCatalog: {
-            policyVersion: 1,
-            supportedDatasetIds: ['settings.core', 'chat.character.history'],
-            defaultDatasetIds: ['settings.core'],
-        },
-        syncSelection: { policy_version: 1, dataset_ids: ['settings.core'] },
-        automationConfig: {
-            lanServerAutoStart: false,
-            autoSyncEnabled: false,
-            intervalMinutes: 30,
-            target: null,
-            syncMode: 'Incremental',
-            selection: { policy_version: 1, dataset_ids: ['settings.core'] },
-        },
-        automationStatus: {
-            running: false,
-            nextRunAtMs: null,
-            lastAttemptAtMs: null,
-            lastSuccessAtMs: 2000,
-            lastRequestAcceptedAtMs: 1000,
-            lastErrorAtMs: null,
-            lastError: '',
-        },
-        devices: [{
-            type: 'lan',
-            id: 'lan-1',
-            name: 'My Phone',
-            displayName: 'My Phone',
-            lastKnownAddress: 'http://192.168.1.2:4567',
-            pairedAtMs: null,
-            lastSyncMs: null,
-        }],
-        servers: [{
-            type: 'tt',
-            id: 'tt-1',
-            name: 'Relay',
-            displayName: 'Relay',
-            baseUrl: 'https://relay.example.com',
-            spkiSha256: '',
-            permissions: { write: true, mirror_delete: false },
-            pairedAtMs: null,
-            lastSyncMs: null,
-        }],
-    };
-}
-
-function createFakes() {
-    const snapshot = createSnapshot();
-    const events: string[] = [];
-    const errors: unknown[] = [];
-    const reports: SyncJobReport[] = [];
-    const automationSaves: Array<{ config: unknown; selection: unknown }> = [];
-    let pushReport: SyncJobReport = { result: { status: 'remote_request_accepted' } };
-
-    const client: SyncClient = {
-        loadState: () => {
-            events.push('loadState');
-            return Promise.resolve(snapshot);
-        },
-        setAdvertiseAddress: () => {
-            events.push('setAdvertiseAddress');
-        },
-        startLanServer: () => Promise.resolve(),
-        stopLanServer: () => Promise.resolve(),
-        enableLanPairing: () => Promise.resolve(null),
-        getLanPairingInfo: () => Promise.resolve(null),
-        removeLanDevice: () => Promise.resolve(),
-        pullLanDevice: (id, options) => {
-            events.push(`pullLanDevice:${id}:${options.overwrite_policy}:${options.require_bundle_zstd}`);
-            return Promise.resolve({ result: { status: 'completed' } });
-        },
-        pushLanDevice: (id, options) => {
-            events.push(`pushLanDevice:${id}:${options.overwrite_policy}:${options.require_bundle_zstd}`);
-            return Promise.resolve(pushReport);
-        },
-        setOverwritePolicy: () => {
-            events.push('setOverwritePolicy');
-            return Promise.resolve();
-        },
-        removeTtSyncServer: () => Promise.resolve(),
-        pullTtSyncServer: (id, mode, options) => {
-            events.push(`pullTtSyncServer:${id}:${mode}:${options.overwrite_policy}`);
-            return Promise.resolve({ result: { status: 'completed' } });
-        },
-        pushTtSyncServer: (id, mode, options) => {
-            events.push(`pushTtSyncServer:${id}:${mode}:${options.overwrite_policy}`);
-            return Promise.resolve({ result: { status: 'completed' } });
-        },
-        updateAutomationConfig: (config, selection) => {
-            events.push('updateAutomationConfig');
-            automationSaves.push({ config: { ...config }, selection });
-            return Promise.resolve(config);
-        },
-        getAutomationStatus: () => {
-            events.push('getAutomationStatus');
-            return Promise.resolve(snapshot.automationStatus);
-        },
-    };
-
-    const actions: SyncActions = {
-        copyText: () => Promise.resolve(),
-        scanPairUri: () => Promise.resolve(null),
-        changeSyncMode: () => Promise.resolve(false),
-        editSyncScope: () => Promise.resolve(null),
-        showOverwritePolicyHelp: () => Promise.resolve(),
-        renameTarget: () => Promise.resolve(false),
-        connectPairUri: () => Promise.resolve(false),
-        notifyLanPushRequested: () => {
-            events.push('notifyLanPushRequested');
-        },
-        reportError: (error) => {
-            errors.push(error);
-        },
-        showSyncReportResult: (report) => {
-            events.push('showSyncReportResult');
-            reports.push(report);
-            return Promise.resolve();
-        },
-    };
-
-    return {
-        snapshot,
-        events,
-        errors,
-        reports,
-        automationSaves,
-        client,
-        actions,
-        setPushReport(report: SyncJobReport) {
-            pushReport = report;
-        },
-    };
-}
-
-type Fakes = ReturnType<typeof createFakes>;
-
-async function mountMain(fakes: Fakes, options?: Partial<SyncMainOptions>): Promise<{
-    container: HTMLElement;
-    handle: SyncMainHandle;
-}> {
-    const container = document.createElement('div');
-    document.body.append(container);
-    containers.push(container);
-
-    let handle!: SyncMainHandle;
-    await act(async () => {
-        handle = mountTauriTavernSyncApp(container, {
-            client: fakes.client,
-            actions: fakes.actions,
-            tr,
-            ...options,
-        });
-        // Flush the mount-owned initial refresh's first microtask turn.
-        await Promise.resolve();
-    });
-    handles.push(handle);
-
-    // Settle the mount-owned initial refresh before assertions.
-    await waitFor(() => expect(fakes.events).toContain('loadState'));
-    await waitFor(() => {
-        expect(within(container).queryByText('Running') ?? within(container).queryByText('Stopped')).toBeTruthy();
-    });
-    return { container, handle };
-}
+import { createFakes, handles, mountMain, tr } from './SyncMainTestHarness';
 
 test('sync main mount validates its boundary arguments', () => {
     const fakes = createFakes();
@@ -241,20 +35,62 @@ test('sync main renders the initial snapshot and loads exactly once', async () =
 
     const view = within(container);
     expect(view.getByText('Running')).toBeTruthy();
-    expect(view.getByRole<HTMLSelectElement>('combobox', { name: 'Address' }).value)
-        .toBe('http://127.0.0.1:4567');
-    expect(container.querySelector('.tt-sync-preference-copy .tt-sync-muted')?.textContent)
-        .toBe('Recommended default (1 / 2)');
-    expect(container.querySelector('.tt-sync-automation-summary-meta small')?.textContent)
+    const user = userEvent.setup();
+    await user.click(view.getByText('Connection details'));
+    const connectionDetails = container.querySelector<HTMLElement>('.tt-sync-connection-details');
+    expect(connectionDetails && within(connectionDetails)
+        .getByText('https://127.0.0.1:4567')).toBeTruthy();
+    expect(view.getByText('Recommended default (1 / 2)')).toBeTruthy();
+    expect(container.querySelector('.tt-sync-automation-head .tt-sync-muted')?.textContent)
         .toMatch(/^Off · Last success: /);
     expect(view.getByText('My Phone')).toBeTruthy();
     expect(view.getByText('Relay')).toBeTruthy();
 
     // Nothing has been edited yet, so there is nothing to save.
     expect(view.getByRole<HTMLButtonElement>('button', { name: 'Save' }).disabled).toBe(true);
-    // Pairing is inactive: the section offers the action, not a dead QR block.
-    expect(view.getByRole('button', { name: 'Enable Pairing' })).toBeTruthy();
-    expect(view.queryByText('No QR')).toBeNull();
+    // Rare flows start folded away from the golden zone.
+    expect(container.querySelector<HTMLDetailsElement>('.tt-sync-pairing-fold')?.open).toBe(false);
+    expect(container.querySelector<HTMLDetailsElement>('.tt-sync-preferences-fold')?.open).toBe(false);
+});
+
+test('sync main keeps at most three device cards visible until expanded', async () => {
+    const fakes = createFakes();
+    for (const id of ['tt-2', 'tt-3']) {
+        fakes.snapshot.servers.push({
+            type: 'tt',
+            alias: '',
+            id,
+            name: id,
+            baseUrl: `https://${id}.example.com`,
+            permissions: { write: true },
+            lastSyncMs: null,
+        });
+    }
+    const { container } = await mountMain(fakes);
+    const view = within(container);
+
+    expect(container.querySelectorAll('.tt-sync-device-card')).toHaveLength(3);
+    const user = userEvent.setup();
+    await user.click(view.getByRole('button', { name: 'Show all devices (4)' }));
+    expect(container.querySelectorAll('.tt-sync-device-card')).toHaveLength(4);
+    await user.click(view.getByRole('button', { name: 'Show fewer devices' }));
+    expect(container.querySelectorAll('.tt-sync-device-card')).toHaveLength(3);
+});
+
+test('sync main guides the empty state into the pairing fold', async () => {
+    const fakes = createFakes();
+    fakes.snapshot.devices = [];
+    fakes.snapshot.servers = [];
+    const { container } = await mountMain(fakes);
+    const view = within(container);
+
+    expect(view.getByText('No devices yet')).toBeTruthy();
+    const pairingFold = container.querySelector<HTMLDetailsElement>('.tt-sync-pairing-fold');
+    expect(pairingFold?.open).toBe(false);
+
+    const user = userEvent.setup();
+    await user.click(view.getByRole('button', { name: 'Pair via link or QR code' }));
+    expect(pairingFold?.open).toBe(true);
 });
 
 test('sync main stages first-time auto sync until a target is selected', async () => {
@@ -262,9 +98,7 @@ test('sync main stages first-time auto sync until a target is selected', async (
     const { container } = await mountMain(fakes);
     const view = within(container);
     const user = userEvent.setup();
-    const disclosure = container.querySelector<HTMLDetailsElement>('.tt-sync-automation-disclosure');
-    const track = container.querySelector<HTMLElement>('.tt-sync-automation-switch-wrap .tt-sync-switch-track');
-    expect(disclosure?.open).toBe(false);
+    const track = container.querySelector<HTMLElement>('.tt-sync-automation-head .tt-sync-switch-track');
     if (!track) {
         throw new Error('Auto sync switch track is missing');
     }
@@ -273,20 +107,25 @@ test('sync main stages first-time auto sync until a target is selected', async (
     expect(view.getByRole<HTMLInputElement>('checkbox', {
         name: 'Auto upload while app is running',
     }).checked).toBe(true);
-    expect(disclosure?.open).toBe(true);
+
+    await user.click(view.getByRole('checkbox', { name: 'Start sync port with app startup' }));
+    await waitFor(() => expect(fakes.automationSaves).toHaveLength(1));
+    expect(fakes.automationSaves[0]?.config).toMatchObject({
+        lanServerAutoStart: true, autoSyncEnabled: false, target: null,
+    });
 
     await user.selectOptions(view.getByRole('combobox', { name: 'Target' }), 'lan:lan-1');
     await user.click(view.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(fakes.automationSaves).toHaveLength(1));
-    expect(fakes.automationSaves[0]?.config).toMatchObject({
+    await waitFor(() => expect(fakes.automationSaves).toHaveLength(2));
+    expect(fakes.automationSaves[1]?.config).toMatchObject({
+        lanServerAutoStart: true,
         autoSyncEnabled: true,
         target: { type: 'lan', id: 'lan-1' },
     });
 
     await user.click(track);
-    await waitFor(() => expect(fakes.automationSaves).toHaveLength(2));
-    expect(fakes.automationSaves[1]?.config).toMatchObject({ autoSyncEnabled: false });
-    expect(disclosure?.open).toBe(true);
+    await waitFor(() => expect(fakes.automationSaves).toHaveLength(3));
+    expect(fakes.automationSaves[2]?.config).toMatchObject({ autoSyncEnabled: false });
 });
 
 test('sync main public refresh reloads but keeps an unsaved automation draft', async () => {
@@ -308,13 +147,50 @@ test('sync main public refresh reloads but keeps an unsaved automation draft', a
     // The dirty draft survives the background refresh.
     expect(interval.value).toBe('60');
     expect(fakes.events.filter(event => event === 'loadState')).toHaveLength(2);
+
+    const user = userEvent.setup();
+    const view = within(container);
+    await user.click(view.getByRole('checkbox', { name: 'Start sync port with app startup' }));
+    await waitFor(() => expect(fakes.automationSaves).toHaveLength(1));
+    expect(fakes.automationSaves[0]?.config).toMatchObject({ intervalMinutes: 5, lanServerAutoStart: true });
+    expect(interval.value).toBe('60');
+    await user.click(view.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(fakes.automationSaves).toHaveLength(2));
+    expect(fakes.automationSaves[1]?.config).toMatchObject({ intervalMinutes: 60, lanServerAutoStart: true });
+});
+
+test('automation rolls back failed writes but keeps successful saves when status refresh fails', async () => {
+    const fakes = createFakes();
+    const persist = fakes.client.updateAutomationConfig;
+    fakes.client.updateAutomationConfig = () => Promise.reject(new Error('write failed'));
+    fakes.client.getAutomationStatus = () => Promise.reject(new Error('status unavailable'));
+    const { container } = await mountMain(fakes);
+    const view = within(container);
+    const port = view.getByRole<HTMLInputElement>('checkbox', { name: 'Start sync port with app startup' });
+    const interval = view.getByRole<HTMLSelectElement>('combobox', { name: 'Interval' });
+    fireEvent.change(interval, { target: { value: '60' } });
+    const user = userEvent.setup();
+
+    await user.click(port);
+    await waitFor(() => expect(fakes.errors).toHaveLength(1));
+    expect(port.checked).toBe(false);
+    expect(fakes.automationSaves).toHaveLength(0);
+    expect(interval.value).toBe('60');
+
+    fakes.client.updateAutomationConfig = persist;
+    await user.click(port);
+    await waitFor(() => expect(fakes.errors).toHaveLength(2));
+    expect(port.checked).toBe(true);
+    expect(fakes.snapshot.automationConfig.lanServerAutoStart).toBe(true);
+    expect(interval.value).toBe('60');
+    expect(view.getByRole<HTMLButtonElement>('button', { name: 'Save' }).disabled).toBe(false);
 });
 
 test('sync main public refreshAutomationStatus only reloads the automation status', async () => {
     const fakes = createFakes();
     const { container, handle } = await mountMain(fakes);
 
-    const statusLine = container.querySelector('.tt-sync-scope-current .tt-sync-muted');
+    const statusLine = container.querySelector('.tt-sync-automation-foot .tt-sync-muted');
     expect(statusLine?.textContent).toContain('Last success:');
 
     fakes.snapshot.automationStatus = {
@@ -397,35 +273,33 @@ test('sync main applies a new scope selection to the UI and the automation confi
     const { container } = await mountMain(fakes);
 
     const user = userEvent.setup();
+    const interval = within(container).getByRole<HTMLSelectElement>('combobox', { name: 'Interval' });
+    fireEvent.change(interval, { target: { value: '60' } });
     await user.click(within(container).getByRole('button', { name: 'Choose' }));
 
     await waitFor(() => {
-        expect(container.querySelector('.tt-sync-preference-copy .tt-sync-muted')?.textContent)
-            .toBe('2 / 2 datasets selected');
+        expect(within(container).getByText('2 / 2 datasets selected')).toBeTruthy();
     });
     await waitFor(() => expect(fakes.automationSaves).toHaveLength(1));
+    expect(fakes.automationSaves[0]?.config).toMatchObject({ intervalMinutes: 30 });
     expect(fakes.automationSaves[0]?.selection).toEqual(nextSelection);
+    expect(interval.value).toBe('60');
 });
 
-test('sync main enables pairing and reveals the QR affordances', async () => {
+test('sync main shows the optional QR link without changing server state', async () => {
     const fakes = createFakes();
-    fakes.client.enableLanPairing = () => Promise.resolve({
-        address: 'http://127.0.0.1:4567',
-        pairUri: 'tauritavern://lan-sync/pair?v=2&token=abc',
-        qrSvg: '<svg xmlns="http://www.w3.org/2000/svg"/>',
-        expiresAtMs: 1760000000000,
-    });
     const { container } = await mountMain(fakes);
     const view = within(container);
     const user = userEvent.setup();
 
-    await user.click(view.getByRole('button', { name: 'Enable Pairing' }));
+    await user.click(view.getByText('QR code or pairing link'));
+    await user.click(view.getByRole('button', { name: 'Show QR code' }));
 
     await waitFor(() => expect(container.querySelector('.tt-sync-qr-wrap img')).toBeTruthy());
     expect(container.querySelector<HTMLTextAreaElement>('.tt-sync-pair-fields textarea')?.value)
-        .toBe('tauritavern://lan-sync/pair?v=2&token=abc');
-    expect(view.queryByRole('button', { name: 'Enable Pairing' })).toBeNull();
-    expect(view.getByRole('button', { name: 'Regenerate' })).toBeTruthy();
+        .toBe('tauritavern://lan-sync/pair?v=2&url=https%3A%2F%2F127.0.0.1%3A4567&spki=test-pin');
+    expect(view.getByText('Running')).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Refresh QR code' })).toBeTruthy();
     expect(view.getByRole('button', { name: 'Copy URI' })).toBeTruthy();
 });
 
@@ -450,8 +324,8 @@ test('sync main only toasts a LAN push request that was actually accepted', asyn
     const fakes = createFakes();
     const { container } = await mountMain(fakes);
     const view = within(container);
-    const user = userEvent.setup();
     const upload = () => view.getByRole('button', { name: 'Upload (request device to pull from you)' });
+    const user = userEvent.setup();
 
     fakes.setPushReport({ result: { status: 'failed' } });
     await user.click(upload());
@@ -471,4 +345,5 @@ test('sync main unmount clears the mount element', async () => {
     act(() => handle.unmount());
     handles.splice(handles.indexOf(handle), 1);
     expect(container.innerHTML).toBe('');
+    expect(fakes.nearbyListeners.size).toBe(0);
 });
