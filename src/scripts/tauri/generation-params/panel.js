@@ -193,12 +193,6 @@ function fieldTypeOf({ control }) {
 }
 
 export function installGenerationParamsPanel() {
-    // APP_READY is replayed by the event source, so late registration still
-    // fires once i18n and settings are available.
-    eventSource.on(event_types.APP_READY, mountPanel);
-}
-
-function mountPanel() {
     const entries = resolveEntries();
     const anchor = entries[0]?.block;
     if (!anchor?.parentElement) {

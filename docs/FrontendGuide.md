@@ -168,6 +168,7 @@ src/
 ## 6.4 Chat Completion 可选参数的移除与预设扩展槽
 
 - 实现位置：`src/scripts/tauri/generation-params/`（`catalog.js` 不可推导的静态知识、`omission.js` 纯逻辑、`json-view.js` 纯逻辑、`panel.js` DOM 层）。
+- 启动时序：宿主就绪后由 `bootstrap.js` 订阅上游 `APP_READY`，收到事件后才动态导入并挂载面板。`panel.js` 静态依赖上游应用模块，因此不能在 Tauri bridge 就绪时提前导入；页面就绪事件支持晚订阅回放。
 - 参数发现是自动的：`panel.js` 枚举上游 `settingsToUpdate`（预设 key → 选择器 / 设置字段 / 是否 checkbox），只保留控件位于 `#range_block_openai` 或 `#openai_settings` 内的条目，块 = `closest('[data-source], .range-block, .inline-drawer')`；嵌套在另一个受管块内的控件（如媒体内联下的图像质量、函数调用下的递归上限）归属父块，不单独成项。标签直接取自上游标记（`<label for>` / `{id}_text` / `.range-block-title` / drawer header），不维护平行 i18n 表。上游新增设置无需改目录即可出现。
 - 种类按条目判定：checkbox → `toggle`（“可见 ⇔ 启用”，添加即打开，移除即关闭并隐藏，不存额外状态）；预设 key 在 `catalog.PAYLOAD_KEYS` 中 → `request`（移除后对应 payload key 不再出现在请求中，由服务端默认值接管，数值保留）；其余 → `local`（移除只隐藏，值继续生效，可见性存 `localStorage['tt:generationParams:hiddenBlocks']`，设备级偏好，不进预设）。`local` 是未知上游 key 的安全默认；上游新增的设置若其实是 payload 字段，需补进 `PAYLOAD_KEYS`。上下文预算、输出上限、流式在 `EXCLUDED_PRESET_KEYS`，始终显示。
 - 作用域（`scope`）：块的 `[data-source]` 列表 ≤ `SOURCE_SPECIFIC_MAX_SOURCES`（3）个渠道 → `source`（渠道特有功能，如 Middle-out、Assistant Prefill），否则 → `common`（通用参数，只是部分渠道不支持）。是否支持仍由上游显隐决定。添加面板按此分两组：“通用”与当前渠道名（取自上游 `#chat_completion_source` 选中项文本）。每个受管块打上 `data-tt-param` / `data-tt-kind` / `data-tt-scope`，供 CSS、测试与后续第一方面板（如 Agent 设置）复用同一套钩子。
