@@ -50,6 +50,7 @@ import {
     createLegacyMcpGenerationContext,
     LegacyMcpOutcomeUnknownError,
 } from './scripts/tauritavern/legacy-mcp-tools.js';
+import { applyOutputPatches, buildOutputRevisionRequest } from './scripts/tauritavern/legacy-output-revision.js';
 import { getAgentGenerationOptions } from './scripts/tauritavern/agent/agent-generation-router.js';
 import {
     cancelActiveAgentRun,
@@ -2446,13 +2447,8 @@ function substituteFirstMessage(mes, chName, isSystem, isUser, messageId, isReas
     if (Number(messageId) !== 0 || isSystem || isUser || isReasoning) {
         return mes;
     }
-    const source = mes;
-    mes = substituteParams(mes, undefined, chName);
-    const message = chat[messageId];
-    if (message && message.mes === source && message.extra?.display_text !== source) {
-        message.mes = mes;
-    }
-    return mes;
+    // Rendering must not rewrite saved text or desynchronize the selected swipe.
+    return substituteParams(mes, undefined, chName);
 }
 
 function removeMessagePromptBias(mes, chName, isSystem, isUser) {
@@ -5206,6 +5202,11 @@ function hideMessageBeforeRemoval(messageId) {
  * @property {boolean} [strict] If true, the schema will be used in strict mode, meaning that only the fields defined in the schema will be allowed.
  * @property {boolean} [returnInvalid] If true, a string that can't be parsed as a JSON will be returned as is, instead of an empty object.
  *
+ * @typedef {object} QuietToolRequest
+ * @property {string} prompt Literal control message, included in the context budget.
+ * @property {object} toolData Explicit tools for this request.
+ * @property {(data: unknown, signal: AbortSignal) => Promise<void>} onResponse Consumes the response before generation finishes.
+ *
  * @typedef {object} GenerateOptions
  * @property {boolean} [automatic_trigger] If the generation was triggered automatically (e.g. group auto mode).
  * @property {boolean} [force_name2] If a char name should be forced to add to the prompt's last line (Text Completion, non-Instruct only).
@@ -5222,6 +5223,7 @@ function hideMessageBeforeRemoval(messageId) {
  * @property {string|null} [agentProfileId] Agent profile to use when agentMode is active.
  * @property {{ initialChatHistoryMessages: number, includeActivatedWorldInfo: boolean }|null} [agentContextPolicy] Agent prompt context policy.
  * @property {string|null} [agentSystemPrompt] Resolved Agent system prompt to materialize through PromptManager.
+ * @property {QuietToolRequest|null} [quietToolRequest] Internal one-shot tool request without a chat tool turn.
  */
 
 const generationIdleGate = createGenerationIdleGate();
@@ -5335,7 +5337,7 @@ async function prepareLegacyMcpGenerationContext() {
     }
 }
 
-async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, agentMode = false, agentProfileId = null, agentContextPolicy = null, agentSystemPrompt = null, [LEGACY_MCP_GENERATION_CONTEXT]: inheritedLegacyMcpContext = null } = {}, dryRun = false) {
+async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, agentMode = false, agentProfileId = null, agentContextPolicy = null, agentSystemPrompt = null, quietToolRequest = null, [LEGACY_MCP_GENERATION_CONTEXT]: inheritedLegacyMcpContext = null } = {}, dryRun = false) {
     console.log('Generate entered');
     setGenerationProgress(0);
     generation_started = new Date();
@@ -5400,7 +5402,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     if (selected_group && !is_group_generating) {
         if (!dryRun) {
             // Returns the promise that generateGroupWrapper returns; resolves when generation is done
-            return generateGroupWrapper(false, type, { quiet_prompt, force_chid, signal: abortController.signal, quietImage, jsonSchema });
+            return generateGroupWrapper(false, type, { quiet_prompt, force_chid, signal: abortController.signal, quietImage, jsonSchema, quietToolRequest });
         }
 
         const characterIndexMap = new Map(characters.map((char, index) => [char.avatar, index]));
@@ -5538,7 +5540,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     let this_max_context = getMaxPromptTokens();
 
     // First message in fresh 1-on-1 chat reacts to user/character settings changes
-    if (chat.length) {
+    if (chat.length && !quietToolRequest) {
         chat[0].mes = substituteParams(chat[0].mes);
     }
 
@@ -6395,6 +6397,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 agentContextPolicy: resolvedAgentContextPolicy,
                 agentSystemPrompt: resolvedAgentSystemPrompt,
                 legacyMcpToolRound,
+                quietToolRequest,
             }, dryRun);
             toolData = evaluatedToolData;
             generate_data = { prompt: prompt };
@@ -6619,6 +6622,10 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
                 toastr.error(data.response, t`API Error`, { preventDuplicates: true });
             }
             throw new Error(data?.response);
+        }
+
+        if (quietToolRequest) {
+            return await quietToolRequest.onResponse(data, abortController.signal);
         }
 
         if (jsonSchema) {
@@ -6886,6 +6893,55 @@ export async function resumeAgentRunInChat({ runId, generationType, additionalRo
     } finally {
         unblockGeneration(generationType);
         await exitGeneration();
+    }
+}
+
+export async function reviseLegacyOutputInChat(guidance, commandAbortController) {
+    if (commandAbortController?.signal.aborted) return;
+    if (is_send_press || is_group_generating || hasActiveAgentRun()) {
+        throw new Error('output_revision.generation_active: wait for the current generation to finish');
+    }
+    if (main_api !== 'openai' || !ToolManager.supportsToolCalling()) {
+        throw new Error('output_revision.tools_required: select a Chat Completion model with tool calling');
+    }
+    if (online_status === 'no_connection') {
+        throw new Error('output_revision.connection_required: connect to a Chat Completion API before revising the reply');
+    }
+    if (this_edit_mes_id === chat.length - 1) {
+        throw new Error('output_revision.message_editing: finish editing the message before revising it');
+    }
+    const message = chat.at(-1);
+    const { mes: originalText, swipe_id: swipeId } = message;
+    const controller = new AbortController();
+    abortController = controller;
+    const cancel = () => stopGeneration();
+    commandAbortController?.addEventListener('abort', cancel);
+    setSendButtonState(true);
+    try {
+        await Generate('quiet', {
+            signal: controller.signal,
+            quietToolRequest: {
+                ...buildOutputRevisionRequest(originalText, guidance),
+                async onResponse(data, signal) {
+                    signal.throwIfAborted();
+                    const text = applyOutputPatches(originalText, ToolManager.getToolCallsFromData(data));
+                    const messageId = chat.length - 1;
+                    if (chat.at(-1) !== message || message.swipe_id !== swipeId
+                        || message.mes !== originalText || this_edit_mes_id === messageId) {
+                        throw new Error('output_revision.message_changed: the reply changed while the revision was being generated');
+                    }
+                    if (text === originalText) return;
+                    setMessageText(messageId, text);
+                    await eventSource.emit(event_types.MESSAGE_EDITED, messageId);
+                    updateMessageBlock(messageId, message);
+                    await finalizeMessageContent(messageId, event_types.MESSAGE_UPDATED);
+                    await saveChatConditional();
+                },
+            },
+        });
+    } finally {
+        commandAbortController?.removeEventListener('abort', cancel);
+        unblockGeneration('quiet');
     }
 }
 
@@ -9738,25 +9794,30 @@ function updateMessage(div) {
     if (bias) {
         text = removeMacros(text);
     }
-    if (mes.mes !== text) {
-        delete mes.extra.reasoning_signature;
-        delete mes.extra.native;
-    }
-    mes.mes = text;
-
     if (mes?.is_system || mes?.is_user || mes.extra?.type === system_message_types.NARRATOR) {
         mes.extra.bias = bias ?? null;
     } else {
         mes.extra.bias = null;
     }
 
-    chat_metadata.tainted = true;
-    if (mes.swipe_id !== undefined) {
-        ensureSwipes(mes);
-        syncMesToSwipe(this_edit_mes_id);
-    }
+    setMessageText(messageId, text);
 
     return { mesBlock, text, mes, bias };
+}
+
+function setMessageText(messageId, text) {
+    const message = chat[messageId];
+    message.extra ??= {};
+    if (message.mes !== text) {
+        delete message.extra.reasoning_signature;
+        delete message.extra.native;
+    }
+    message.mes = text;
+    chat_metadata.tainted = true;
+    if (message.swipe_id !== undefined) {
+        ensureSwipes(message);
+        syncMesToSwipe(messageId);
+    }
 }
 
 function openMessageDelete(fromSlashCommand) {

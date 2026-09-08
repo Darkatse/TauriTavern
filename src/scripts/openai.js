@@ -2038,14 +2038,15 @@ export function getPromptRole(role) {
  * @param {string|null} [options.agentTaskPrompt] Invocation task prompt content.
  * @param {boolean} [options.allowToolCalls] Whether this request can register legacy frontend tools.
  * @param {object|null} [options.legacyMcpToolRound] Private MCP tools for this Legacy generation round.
+ * @param {import('../script.js').QuietToolRequest|null} [options.quietToolRequest] One-shot tools and a literal control message.
  * @returns {Promise<[number, object|null]>} Raw chat record count and evaluated legacy tool data.
  */
-async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode = false, agentContextPolicy = null, agentSystemPrompt = null, agentTaskPrompt = null, allowToolCalls = true, legacyMcpToolRound = null }, runtime = null) {
+async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode = false, agentContextPolicy = null, agentSystemPrompt = null, agentTaskPrompt = null, allowToolCalls = true, legacyMcpToolRound = null, quietToolRequest = null }, runtime = null) {
     const assemblyRuntime = getPromptAssemblyRuntime(runtime);
     const activePromptManager = assemblyRuntime.promptManager;
     const settings = assemblyRuntime.settings;
     const assemblyTokenHandler = assemblyRuntime.tokenHandler;
-    let toolData = null;
+    let toolData = quietToolRequest?.toolData ?? null;
 
     if (!agentMode) {
         removeAgentOnlyPrompts(prompts);
@@ -2113,6 +2114,10 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
         controlPrompts.add(quietPromptMessage);
     }
 
+    if (quietToolRequest) {
+        // Exact edits need the saved text, without prompt regex or macro expansion.
+        controlPrompts.add(await Message.createAsync('user', quietToolRequest.prompt, 'quietToolRequest', assemblyTokenHandler));
+    }
     chatCompletion.reserveBudget(controlPrompts);
 
     // Add ordered system and user prompts
@@ -2178,10 +2183,12 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     }
 
     // Pre-allocation of tokens for tool data
-    if (!agentMode && allowToolCalls && ToolManager.canAdvertiseToolCalls(type, settings)) {
+    if (!toolData && !agentMode && allowToolCalls && ToolManager.canAdvertiseToolCalls(type, settings)) {
         toolData = {};
         await ToolManager.registerFunctionToolsOpenAI(toolData);
         legacyMcpToolRound?.mergeIntoToolData(toolData);
+    }
+    if (toolData) {
         const toolMessage = [{ role: 'user', content: JSON.stringify(toolData) }];
         const toolTokens = await assemblyTokenHandler.countAsync(toolMessage);
         chatCompletion.reserveBudget(toolTokens);
@@ -2424,6 +2431,7 @@ async function preparePromptsForChatCompletion({ scenario, charPersonality, name
  * @param {string|null} [content.agentSystemPrompt] Resolved Agent system prompt content.
  * @param {string|null} [content.agentTaskPrompt] Invocation task prompt content.
  * @param {object|null} [content.legacyMcpToolRound] Private MCP tools for this Legacy generation round.
+ * @param {import('../script.js').QuietToolRequest|null} [content.quietToolRequest] One-shot tools and a literal control message.
  * @param dryRun - Whether this is a live call or not.
  * @returns {Promise<[ChatCompletionMessage[]|null, object|boolean, object|null|undefined]>} Prepared chat, token counts, and evaluated legacy tool data.
  */
@@ -2450,6 +2458,7 @@ export async function prepareOpenAIMessages({
     agentTaskPrompt = null,
     allowToolCalls = true,
     legacyMcpToolRound = null,
+    quietToolRequest = null,
 }, dryRun, runtime = null) {
     const assemblyRuntime = runtime
         ? getPromptAssemblyRuntime({
@@ -2499,7 +2508,7 @@ export async function prepareOpenAIMessages({
         };
 
         // Fill the chat completion with as much context as the budget allows
-        [chatSourceCount, toolData] = await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode, agentContextPolicy, agentSystemPrompt, agentTaskPrompt, allowToolCalls, legacyMcpToolRound }, assemblyRuntime);
+        [chatSourceCount, toolData] = await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode, agentContextPolicy, agentSystemPrompt, agentTaskPrompt, allowToolCalls, legacyMcpToolRound, quietToolRequest }, assemblyRuntime);
     } catch (error) {
         if (error instanceof TokenBudgetExceededError) {
             assemblyRuntime.showToasts && toastr.error(t`Mandatory prompts exceed the context size.`);
@@ -2516,7 +2525,7 @@ export async function prepareOpenAIMessages({
             chatCompletion.log(error.stack);
             chatCompletion.log('----------------------------------------------------');
         }
-        if (agentMode) {
+        if (agentMode || quietToolRequest) {
             throw error;
         }
     } finally {
@@ -4366,12 +4375,10 @@ export async function createGenerationParameters(settings, model, type, messages
         }
     }
 
-    if (!agentMode && allowToolCalls && ToolManager.canAdvertiseToolCalls(type, settings, model)) {
-        if (toolData === undefined) {
-            await ToolManager.registerFunctionToolsOpenAI(generate_data);
-        } else if (toolData) {
-            Object.assign(generate_data, toolData);
-        }
+    if (toolData) {
+        Object.assign(generate_data, toolData);
+    } else if (toolData === undefined && !agentMode && allowToolCalls && ToolManager.canAdvertiseToolCalls(type, settings, model)) {
+        await ToolManager.registerFunctionToolsOpenAI(generate_data);
     }
 
     // Empty array will produce a validation error

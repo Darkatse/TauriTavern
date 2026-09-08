@@ -1057,6 +1057,9 @@ async function generateGroupWrapper(byAutoMode, type = null, params = {}) {
     const group = groups.find((x) => x.id === selected_group);
 
     if (!group || !Array.isArray(group.members) || !group.members.length) {
+        if (params.quietToolRequest) {
+            throw new Error('output_revision.character_missing: the group has no available members');
+        }
         sendSystemMessage(system_message_types.EMPTY, '', { isSmallSys: true });
         return Promise.resolve();
     }
@@ -1096,6 +1099,9 @@ async function generateGroupWrapper(byAutoMode, type = null, params = {}) {
             activatedMembers = activateSwipe(group.members, { allowSystem: true }).slice(0, 1);
 
             if (activatedMembers.length === 0) {
+                if (params?.quietToolRequest) {
+                    throw new Error('output_revision.character_missing: the author of the reply is no longer available');
+                }
                 activatedMembers = activateListOrder(group.members.slice(0, 1));
             }
         }

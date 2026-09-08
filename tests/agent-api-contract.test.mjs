@@ -1275,7 +1275,7 @@ test('Agent resume attaches from its returned cursor and saves completed present
 });
 
 test('Agent output revision reads the selected reply and passes its current text to the runtime', async () => {
-    const { reviseAgentOutput } = await import('../src/scripts/tauritavern/agent/agent-output-revision.js');
+    const { reviseOutput } = await import('../src/scripts/tauritavern/output-revision.js');
     const chatRef = { kind: 'character', characterId: 'Writer', fileName: 'story' };
     const script = createFakeCommitScript(({ getMessage }) => getMessage);
     const message = {
@@ -1313,14 +1313,15 @@ test('Agent output revision reads the selected reply and passes its current text
         const handle = await agent.resume(input);
         await agent.settleChatPresentation(handle);
     };
-    await reviseAgentOutput('  Make the ending quieter.  ', null, script);
+    await reviseOutput('  Make the ending quieter.  ', null, script);
     assert.deepEqual(admitted.revision, { guidance: 'Make the ending quieter.', previousOutput: 'A hand-edited ending.' });
     assert.equal(admitted.stableChatId, 'stable-story');
     assert.equal(script.chat[0], message);
     assert.equal(message.swipe_id, 1);
     assert.deepEqual(message.swipes, ['Another ending.', 'A hand-edited ending.']);
     delete message.extra.tauritavern.agent;
-    await assert.rejects(reviseAgentOutput('Change this.', null, script), /select an Agent reply/);
+    message.is_user = true;
+    await assert.rejects(reviseOutput('Change this.', null, script), /select an assistant reply/);
 });
 
 async function waitFor(predicate) {
