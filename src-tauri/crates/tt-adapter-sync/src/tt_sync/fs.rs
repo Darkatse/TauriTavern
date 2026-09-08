@@ -108,10 +108,8 @@ fn scan_dir_recursive(
         }
 
         if file_type.is_dir() {
-            if ttsync_core::dataset::is_agent_run_root_dir(&relative)
-                && !agent_run_file_is_terminal(&entry_path.join("run.json"))?
-            {
-                continue;
+            if ttsync_core::dataset::is_agent_run_root_dir(&relative) {
+                ensure_agent_run_is_terminal(&entry_path.join("run.json"))?;
             }
 
             if !policy.should_descend_dir(&relative) {
@@ -123,10 +121,8 @@ fn scan_dir_recursive(
         }
 
         if file_type.is_file() && policy.contains_path(&relative) {
-            if ttsync_core::dataset::is_agent_run_index_file(&relative)
-                && !agent_run_file_is_terminal(&entry_path)?
-            {
-                continue;
+            if ttsync_core::dataset::is_agent_run_index_file(&relative) {
+                ensure_agent_run_is_terminal(&entry_path)?;
             }
 
             entries.push(make_entry(sync_root, &entry_path)?);
@@ -136,11 +132,7 @@ fn scan_dir_recursive(
     Ok(())
 }
 
-fn agent_run_file_is_terminal(path: &Path) -> Result<bool, DomainError> {
-    if !path.exists() {
-        return Ok(false);
-    }
-
+fn ensure_agent_run_is_terminal(path: &Path) -> Result<(), DomainError> {
     let text = std::fs::read_to_string(path).map_err(|error| {
         DomainError::InternalError(format!(
             "Failed to read agent run {}: {}",
@@ -148,8 +140,15 @@ fn agent_run_file_is_terminal(path: &Path) -> Result<bool, DomainError> {
             error
         ))
     })?;
-    ttsync_core::dataset::agent_run_json_is_terminal(&text)
-        .map_err(|error| DomainError::InvalidData(format!("{}: {}", path.display(), error)))
+    let terminal = ttsync_core::dataset::agent_run_json_is_terminal(&text)
+        .map_err(|error| DomainError::InvalidData(format!("{}: {}", path.display(), error)))?;
+    if !terminal {
+        return Err(DomainError::Conflict(format!(
+            "sync.agent_run_active: finish or stop the Agent run before synchronizing its history: {}",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 fn is_tauritavern_runtime_cache(relative: &str) -> bool {
@@ -216,6 +215,7 @@ mod tests {
     use ttsync_core::dataset::ResolvedDatasetPolicy;
 
     use super::scan_manifest_sync;
+    use tt_domain::errors::DomainError;
 
     fn unique_temp_root() -> PathBuf {
         std::env::temp_dir().join(format!("tauritavern-tt-sync-{}", random::<u64>()))
@@ -460,7 +460,26 @@ mod tests {
         )
         .expect("write active run index");
 
+        let context_policy = ResolvedDatasetPolicy::from_selection(&DatasetSelection::new(
+            DATASET_POLICY_VERSION,
+            vec!["agent.run_context".to_string()],
+        ))
+        .expect("resolve Agent context dataset");
+        let error = scan_manifest_sync(&root, &context_policy)
+            .expect_err("active run directory must fail the scan");
+        assert!(matches!(error, DomainError::Conflict(_)));
+        std::fs::remove_dir_all(
+            root.join("_tauritavern/agent-workspaces/chats/workspace/runs/run-active"),
+        )
+        .expect("remove active run directory");
+
         let policy = ResolvedDatasetPolicy::tauri_tavern_default();
+        let error =
+            scan_manifest_sync(&root, &policy).expect_err("active run index must fail the scan");
+        assert!(matches!(error, DomainError::Conflict(_)));
+        std::fs::remove_file(root.join("_tauritavern/agent-workspaces/index/runs/run-active.json"))
+            .expect("remove active run index");
+
         let manifest = scan_manifest_sync(&root, &policy).expect("scan manifest");
         let paths = manifest
             .entries
@@ -521,18 +540,6 @@ mod tests {
         );
         assert!(
             paths.contains(&"_tauritavern/agent-workspaces/index/runs/run-done.json".to_string())
-        );
-        assert!(
-            !paths.contains(
-                &"_tauritavern/agent-workspaces/chats/workspace/runs/run-active/events.jsonl"
-                    .to_string()
-            ),
-            "active agent runs must not be included"
-        );
-        assert!(
-            !paths
-                .contains(&"_tauritavern/agent-workspaces/index/runs/run-active.json".to_string()),
-            "active agent run index entries must not be included"
         );
 
         std::fs::remove_dir_all(&root).expect("remove temp root");

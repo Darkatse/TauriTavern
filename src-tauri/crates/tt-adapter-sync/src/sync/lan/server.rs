@@ -474,7 +474,7 @@ mod tests {
     use ttsync_contract::peer::Permissions;
     use ttsync_contract::sync::SyncMode;
     use ttsync_core::bundle::{FEATURE_BUNDLE_V1, FEATURE_ZSTD_V1};
-    use ttsync_core::dataset::tauri_tavern_default_selection;
+    use ttsync_core::dataset::{tauri_tavern_default_selection, tauri_tavern_full_selection};
     use uuid::Uuid;
 
     use crate::sync::http_client::{bearer_auth_value, ensure_dataset_scope_v1, new_sync_client};
@@ -1005,13 +1005,45 @@ mod tests {
             .unwrap_or_default();
         assert_eq!(content_encoding, "zstd");
 
+        let agent_files: [(&str, &[u8]); 5] = [
+            (
+                "_tauritavern/agent-workspaces/index/runs/run-completed.json",
+                br#"{"status":"completed"}"#,
+            ),
+            (
+                "_tauritavern/agent-workspaces/chats/workspace/runs/run-completed/run.json",
+                br#"{"status":"completed"}"#,
+            ),
+            (
+                "_tauritavern/agent-workspaces/chats/workspace/runs/run-completed/events.jsonl",
+                b"{\"seq\":1,\"type\":\"run_completed\"}\n",
+            ),
+            (
+                "_tauritavern/agent-workspaces/chats/workspace/runs/run-completed/checkpoints/latest.json",
+                br#"{"round":3,"status":"completed"}"#,
+            ),
+            (
+                "_tauritavern/agent-workspaces/chats/workspace/runs/run-completed/output/main.md",
+                b"Completed Agent output.",
+            ),
+        ];
+        for (relative, bytes) in agent_files {
+            let path = sync_root.join(relative);
+            tokio::fs::create_dir_all(path.parent().unwrap())
+                .await
+                .expect("create Agent artifact directory");
+            tokio::fs::write(path, bytes)
+                .await
+                .expect("write Agent artifact");
+        }
+
         let target_root = temp_default_user_dir();
         tokio::fs::create_dir_all(&target_root)
             .await
             .expect("create target root");
         let workspace = Arc::new(TauriTavernSyncWorkspace::new(target_root.clone()));
         let mut options =
-            ClientSyncOptions::new(SyncMode::Incremental, tauri_tavern_default_selection());
+            ClientSyncOptions::new(SyncMode::Incremental, tauri_tavern_full_selection());
         options.require_bundle_zstd = true;
         let report = ClientSyncEngine::new(
             client,
@@ -1025,12 +1057,18 @@ mod tests {
         .pull(options, &NoopSyncObserver)
         .await
         .expect("shared client pull");
-        assert_eq!(report.summary.files_total, 1);
-        assert_eq!(report.local_applied.files_written, 1);
+        assert_eq!(report.summary.files_total, 1 + agent_files.len());
+        assert_eq!(report.local_applied.files_written, 1 + agent_files.len());
         let bundle_bytes = tokio::fs::read(target_root.join("default-user/chats/hello.json"))
             .await
             .expect("read bundle file");
         assert_eq!(&bundle_bytes, br#"{"hello":true}"#);
+        for (relative, expected) in agent_files {
+            let bytes = tokio::fs::read(target_root.join(relative))
+                .await
+                .expect("read transferred Agent artifact");
+            assert_eq!(bytes, expected, "{relative}");
+        }
 
         handle.shutdown();
         let _ = tokio::fs::remove_dir_all(target_root).await;
