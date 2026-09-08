@@ -59,7 +59,7 @@ impl AgentRuntimeService {
             let profile = &prepared.profile;
             let tool_name = tool_invocation.tool_id.native_name();
             let snapshot_id = prepared.tool_snapshot.id().as_str();
-            let arguments_ref = self.store_tool_arguments(run_id, tool_invocation).await?;
+            let arguments_ref = self.store_tool_arguments(run_id, invocation_id, round, tool_invocation).await?;
             self.event(
                 run_id,
                 AgentRunEventLevel::Info,
@@ -331,7 +331,7 @@ impl AgentRuntimeService {
             .await?;
         if !outcome.result.tool_id.is_builtin() {
             let readable_path = WorkspacePath::parse(format!(
-                "tool-results/{}.txt",
+                "tool-results/{invocation_id}/round-{round:03}-{}.txt",
                 tool_call_audit_file_stem(&outcome.result.call_id)
             ))?;
             let mut projected = outcome.result.clone();
@@ -355,6 +355,7 @@ impl AgentRuntimeService {
                     AgentRunEventLevel::Debug,
                     "tool_result_readable_view_stored",
                     json!({
+                        "invocationId": invocation_id,
                         "round": round,
                         "callId": outcome.result.call_id.as_str(),
                         "toolId": outcome.result.tool_id.as_str(),
@@ -409,7 +410,7 @@ impl AgentRuntimeService {
         outcome: &AgentToolDispatchOutcome,
     ) -> Result<WorkspacePath, ApplicationError> {
         let path = self
-            .store_tool_result(run_id, round, &outcome.result)
+            .store_tool_result(run_id, invocation_id, round, &outcome.result)
             .await?;
         let error_message = outcome.result.is_error.then(|| {
             if outcome.result.tool_id.is_builtin() {
@@ -451,11 +452,12 @@ impl AgentRuntimeService {
     async fn store_tool_result(
         &self,
         run_id: &str,
+        invocation_id: &str,
         round: usize,
         result: &AgentToolResult,
     ) -> Result<WorkspacePath, ApplicationError> {
         let path = WorkspacePath::parse(format!(
-            "tool-results/{}.json",
+            "tool-results/{invocation_id}/round-{round:03}-{}.json",
             tool_call_audit_file_stem(&result.call_id)
         ))?;
         let text = serde_json::to_string_pretty(result).map_err(|error| {
@@ -471,6 +473,7 @@ impl AgentRuntimeService {
             AgentRunEventLevel::Debug,
             "tool_result_stored",
             json!({
+                "invocationId": invocation_id,
                 "round": round,
                 "callId": result.call_id.as_str(),
                 "toolId": result.tool_id.as_str(),
@@ -484,10 +487,12 @@ impl AgentRuntimeService {
     async fn store_tool_arguments(
         &self,
         run_id: &str,
+        invocation_id: &str,
+        round: usize,
         call: &ToolInvocation,
     ) -> Result<WorkspacePath, ApplicationError> {
         let path = WorkspacePath::parse(format!(
-            "tool-args/{}.json",
+            "tool-args/{invocation_id}/round-{round:03}-{}.json",
             tool_call_audit_file_stem(&call.call_id)
         ))?;
         let text = serde_json::to_string_pretty(&call.arguments).map_err(|error| {

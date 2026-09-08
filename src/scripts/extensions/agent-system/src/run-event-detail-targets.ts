@@ -34,7 +34,6 @@ export function buildEventDetailTargets(
     const payload = plainObject(event.payload) ? event.payload : {};
     const targets: TimelineDetailTarget[] = [];
     const seenPaths = new Set<string>();
-    const seenReasoningRounds = new Set<number>();
 
     const addFile = (labelKey: AgentSystemMessageKey, path: unknown, metricsSource: unknown = null): void => {
         const normalized = stringValue(path).trim();
@@ -52,8 +51,6 @@ export function buildEventDetailTargets(
         if (!Number.isInteger(normalized) || normalized <= 0) return;
         const normalizedInvocationId = normalizeInvocationId(invocationId);
         if (!modelTurnHasReasoning(allEvents, normalized, normalizedInvocationId)) return;
-        if (seenReasoningRounds.has(normalized)) return;
-        seenReasoningRounds.add(normalized);
         targets.push({
             type: 'modelReasoning',
             labelKey: 'timelineReasoning',
@@ -74,8 +71,7 @@ export function buildEventDetailTargets(
     };
 
     addModelNarration(payload.round, payload.invocationId);
-    addModelReasoning(payload.round, payload.invocationId);
-    const associatedTurn = findAssociatedToolTurn(event, allEvents);
+    const associatedTurn = payload.round === undefined ? findAssociatedToolTurn(event, allEvents) : payload;
     addModelReasoning(associatedTurn?.round, associatedTurn?.invocationId);
     addFile('timelineArguments', payload.argumentsRef);
 
@@ -90,7 +86,7 @@ export function buildEventDetailTargets(
     }
 
     if (event.type === 'tool_call_completed' || event.type === 'tool_call_failed') {
-        addFile('timelineToolResult', findToolResultPath(allEvents, payload.callId));
+        addFile('timelineToolResult', findToolResultPath(allEvents, event));
     }
 
     if (event.type === 'workspace_patch_applied') {
@@ -138,9 +134,7 @@ function buildPatchDiffTarget(
     const payload = plainObject(event.payload) ? event.payload : {};
     const path = stringValue(payload.path).trim();
     const completed = findSideEffectToolCompletion(events, event, 'builtin:workspace.apply_patch', path);
-    const completedPayload = plainObject(completed?.payload) ? completed.payload : {};
-    const callId = stringValue(completedPayload.callId).trim();
-    const requested = callId ? findToolRequest(events, callId) : null;
+    const requested = completed ? findToolRequest(events, completed) : null;
     const requestPayload = plainObject(requested?.payload) ? requested.payload : {};
     const argumentsRef = stringValue(requestPayload.argumentsRef).trim();
     const replacements = optionalNumber(payload.replacements);
@@ -157,12 +151,20 @@ function buildPatchDiffTarget(
     };
 }
 
-function findToolResultPath(events: readonly TauriTavernAgentRunEvent[], callId: unknown): string {
-    const normalized = stringValue(callId).trim();
-    if (!normalized) return '';
+function findToolResultPath(
+    events: readonly TauriTavernAgentRunEvent[],
+    source: TauriTavernAgentRunEvent,
+): string {
+    const sourcePayload = plainObject(source.payload) ? source.payload : {};
+    const callId = stringValue(sourcePayload.callId).trim();
+    if (!callId) return '';
     const resultEvent = [...events].reverse().find((event) => {
         const payload = plainObject(event.payload) ? event.payload : {};
-        return event.type === 'tool_result_stored' && stringValue(payload.callId) === normalized;
+        return event.type === 'tool_result_stored' && event.seq < source.seq
+            && stringValue(payload.callId) === callId && payload.round === sourcePayload.round
+            // Older result events lack invocationId; their sequence still bounds the lookup.
+            && (payload.invocationId === undefined
+                || normalizeInvocationId(payload.invocationId) === normalizeInvocationId(sourcePayload.invocationId));
     });
     const payload = plainObject(resultEvent?.payload) ? resultEvent.payload : {};
     return stringValue(payload.path);
@@ -174,7 +176,11 @@ function findAssociatedToolTurn(
 ): { round: unknown; invocationId: unknown } | null {
     const payload = plainObject(event.payload) ? event.payload : {};
     const callId = stringValue(payload.callId).trim();
-    if (callId) return findToolEventTurn(events, callId);
+    if (callId) {
+        const requested = findToolRequest(events, event);
+        const requestPayload = plainObject(requested?.payload) ? requested.payload : null;
+        return requestPayload ? { round: requestPayload.round, invocationId: requestPayload.invocationId } : null;
+    }
 
     const toolId = SIDE_EFFECT_TOOL_BY_EVENT_TYPE[event.type];
     if (!toolId) return null;
@@ -185,42 +191,36 @@ function findAssociatedToolTurn(
         : null;
 }
 
-function findToolEventTurn(
-    events: readonly TauriTavernAgentRunEvent[],
-    callId: string,
-): { round: unknown; invocationId: unknown } | null {
-    const event = events.find((candidate) => {
-        if (candidate.type !== 'tool_call_requested'
-            && candidate.type !== 'tool_call_completed'
-            && candidate.type !== 'tool_call_failed') return false;
-        const payload = plainObject(candidate.payload) ? candidate.payload : {};
-        return stringValue(payload.callId) === callId;
-    });
-    const payload = plainObject(event?.payload) ? event.payload : null;
-    return payload ? { round: payload.round, invocationId: payload.invocationId } : null;
-}
-
 function findSideEffectToolCompletion(
     events: readonly TauriTavernAgentRunEvent[],
     sideEffectEvent: TauriTavernAgentRunEvent,
     toolId: string,
     path: string,
 ): TauriTavernAgentRunEvent | undefined {
+    const sourcePayload = plainObject(sideEffectEvent.payload) ? sideEffectEvent.payload : {};
     return [...events].reverse().find((event) => {
         if (event.type !== 'tool_call_completed' || event.seq >= sideEffectEvent.seq) return false;
         const payload = plainObject(event.payload) ? event.payload : {};
         if (payload.toolId !== toolId) return false;
+        if (sourcePayload.invocationId !== undefined
+            && normalizeInvocationId(payload.invocationId) !== normalizeInvocationId(sourcePayload.invocationId)) return false;
         return !path || (Array.isArray(payload.resourceRefs) && payload.resourceRefs.includes(path));
     });
 }
 
 function findToolRequest(
     events: readonly TauriTavernAgentRunEvent[],
-    callId: string,
+    source: TauriTavernAgentRunEvent,
 ): TauriTavernAgentRunEvent | null {
-    return events.find((event) => {
+    const sourcePayload = plainObject(source.payload) ? source.payload : {};
+    const callId = stringValue(sourcePayload.callId).trim();
+    if (!callId) return null;
+    return [...events].reverse().find((event) => {
         const payload = plainObject(event.payload) ? event.payload : {};
-        return event.type === 'tool_call_requested' && stringValue(payload.callId) === callId;
+        return event.type === 'tool_call_requested' && event.seq < source.seq
+            && stringValue(payload.callId) === callId
+            && normalizeInvocationId(payload.invocationId) === normalizeInvocationId(sourcePayload.invocationId)
+            && (sourcePayload.round === undefined || payload.round === sourcePayload.round);
     }) ?? null;
 }
 

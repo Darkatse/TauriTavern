@@ -127,8 +127,8 @@ export function timelineItemsFromEvents(
     for (const event of events) {
         const payload = plainObject(event.payload) ? event.payload : {};
         if (event.type === 'tool_call_completed' || event.type === 'tool_call_failed') {
-            const callId = stringValue(payload.callId).trim();
-            if (callId) completedToolCalls.add(callId);
+            const key = toolCallKey(payload);
+            if (key) completedToolCalls.add(key);
         }
         if (event.type === 'chat_commit_completed' || event.type === 'chat_commit_failed') {
             const commitId = stringValue(payload.commitId).trim();
@@ -191,8 +191,7 @@ function shouldShowEvent(
 
     const payload = plainObject(event.payload) ? event.payload : {};
     if (event.type === 'tool_call_requested') {
-        const callId = stringValue(payload.callId).trim();
-        return !callId || !completedToolCalls.has(callId);
+        return !completedToolCalls.has(toolCallKey(payload));
     }
     if (event.type === 'tool_call_completed') {
         return !SIDE_EFFECT_TOOL_COMPLETIONS.has(stringValue(payload.toolId));
@@ -202,6 +201,11 @@ function shouldShowEvent(
         return !commitId || !resolvedCommits.has(commitId);
     }
     return true;
+}
+
+function toolCallKey(payload: RunEventPayload): string {
+    const callId = stringValue(payload.callId).trim();
+    return callId ? JSON.stringify([normalizeInvocationId(payload.invocationId), payload.round, callId]) : '';
 }
 
 function normalizeForegroundInvocationIds(values?: readonly string[]): ReadonlySet<string> | null {

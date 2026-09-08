@@ -259,3 +259,53 @@ test('model turns stay hidden while associated reasoning remains lazily addressa
         { type: 'modelReasoning', labelKey: 'timelineReasoning', round: 2 },
     ]);
 });
+
+test('reused tool call IDs keep pending calls and detail links within their invocation and round', () => {
+    const events: TauriTavernAgentRunEvent[] = [];
+    const calls = [
+        { invocationId: 'inv_root', round: 1 },
+        { invocationId: 'inv-revision', round: 1 },
+        { invocationId: 'inv-revision', round: 2 },
+    ].map((scope) => {
+        const payload = { ...scope, callId: 'patch', toolId: 'builtin:workspace.apply_patch' };
+        const argumentsRef = `tool-args/${scope.invocationId}/round-${scope.round}-patch.json`;
+        const resultPath = `tool-results/${scope.invocationId}/round-${scope.round}-patch.json`;
+        const requested = event(events.length + 2, 'tool_call_requested', { ...payload, argumentsRef });
+        events.push(event(events.length + 1, 'model_completed', { ...scope, hasReasoning: true }), requested);
+        expect(timelineItemsFromEvents(events).some(item => item.seq === requested.seq)).toBe(true);
+
+        const completed = event(events.length + 2, 'tool_call_completed', {
+            ...payload, resourceRefs: ['output/result.md'],
+        });
+        const patched = event(events.length + 3, 'workspace_patch_applied', {
+            invocationId: scope.invocationId, path: 'output/result.md', replacements: 1,
+        });
+        events.push(
+            event(events.length + 1, 'tool_result_stored', {
+                ...payload,
+                // Keep an old result event readable after newer invocations reuse its call ID.
+                invocationId: scope.invocationId === 'inv_root' ? undefined : scope.invocationId,
+                path: resultPath,
+            }),
+            completed,
+            patched,
+        );
+        expect(timelineItemsFromEvents(events).some(item => item.seq === requested.seq)).toBe(false);
+        return { ...scope, completed, patched, argumentsRef, resultPath };
+    });
+
+    for (const call of calls) {
+        const toolTargets = buildEventDetailTargets(presentRunEvent(call.completed), events);
+        expect(toolTargets).toContainEqual({ type: 'file', labelKey: 'timelineToolResult', path: call.resultPath });
+        const patchTargets = buildEventDetailTargets(presentRunEvent(call.patched), events);
+        expect(patchTargets.find(target => target.type === 'patchDiff')).toMatchObject({
+            path: 'output/result.md', argumentsRef: call.argumentsRef, errorKey: '',
+        });
+        for (const targets of [toolTargets, patchTargets]) {
+            expect(targets.filter(target => target.type === 'modelReasoning')).toEqual([{
+                type: 'modelReasoning', labelKey: 'timelineReasoning', round: call.round,
+                ...(call.invocationId === 'inv_root' ? {} : { invocationId: call.invocationId }),
+            }]);
+        }
+    }
+});

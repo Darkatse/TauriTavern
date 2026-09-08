@@ -114,7 +114,6 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
     let arguments_ref = tool_requested.payload["argumentsRef"]
         .as_str()
         .expect("arguments ref");
-    assert!(arguments_ref.starts_with("tool-args/call_"));
     let arguments = read_workspace_json(&fixture.agent_repository, &run.id, arguments_ref).await;
     assert_eq!(arguments["path"], "output/main.md");
     let result_stored = events
@@ -128,7 +127,6 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
         "builtin:workspace.write_file"
     );
     let result_ref = result_stored.payload["path"].as_str().expect("result ref");
-    assert!(result_ref.starts_with("tool-results/call_"));
     let result = read_workspace_json(&fixture.agent_repository, &run.id, result_ref).await;
     assert_eq!(result["toolId"], "builtin:workspace.write_file");
     let tool_snapshot = read_workspace_json(
