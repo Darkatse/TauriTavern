@@ -3163,6 +3163,14 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     animation: ttas-run-history-enter 160ms ease-out both;
 }
 
+.ttas-run-history-row .ttas-run-history-resume {
+    display: inline-flex;
+    width: auto;
+    min-height: 0;
+    margin: 0.4rem 0;
+    padding: 0.4rem 0.8rem;
+}
+
 .ttas-run-history-row button {
     position: relative;
     display: grid;

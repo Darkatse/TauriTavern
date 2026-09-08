@@ -211,6 +211,15 @@ export function RunTimelineApp(props: { controller: RunTimelineController; tr: A
 
             {!snapshot.collapsed && (
                 <div ref={bodyRef} className="ttas-run-body">
+                    {snapshot.presentationError && (
+                        <div className="ttas-run-detail-error" role="alert">
+                            <span>{tr('timelinePresentationSaveFailed')}: {snapshot.presentationError}</span>
+                            <button type="button" className="menu_button" disabled={snapshot.savingPresentation}
+                                onClick={() => void controller.retryPresentation()}>
+                                {tr('timelineRetryPresentation')}
+                            </button>
+                        </div>
+                    )}
                     <section
                         className="ttas-run-view ttas-run-view-events"
                         style={{ display: snapshot.detailsOpen ? 'none' : undefined }}

@@ -44,3 +44,13 @@ export function heightFromTopEdgeDrag(input: {
 }): number {
     return clampRunTimelineHeightPx(input.startHeight + input.startY - input.currentY, input.bounds);
 }
+
+export function heightFromResizeKey(key: string, currentHeight: number, bounds: TimelineResizeBounds): number | null {
+    const current = clampRunTimelineHeightPx(currentHeight, bounds);
+    const next = key === 'ArrowUp' ? current + RUN_TIMELINE_KEYBOARD_STEP_PX
+        : key === 'ArrowDown' ? current - RUN_TIMELINE_KEYBOARD_STEP_PX
+            : key === 'PageUp' ? current + RUN_TIMELINE_PAGE_STEP_PX
+                : key === 'PageDown' ? current - RUN_TIMELINE_PAGE_STEP_PX
+                    : key === 'Home' ? bounds.min : key === 'End' ? bounds.max : null;
+    return next == null ? null : clampRunTimelineHeightPx(next, bounds);
+}

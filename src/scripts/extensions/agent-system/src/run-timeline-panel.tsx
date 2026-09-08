@@ -12,10 +12,11 @@ import { translateAgentSystem as tr } from './i18n';
 import { loadSettings, patchSettings, subscribeSettings } from './settings-store';
 import {
     getActiveAgentRun,
+    retryAgentRunPresentation,
     subscribeAgentRunEvents,
     subscribeAgentRunState,
 } from '../../../tauritavern/agent/agent-run-controller.js';
-import { retryAgentRunFailure } from '../../../tauritavern/agent/agent-run-retry.js';
+import { resumeAgentRun, retryAgentRunFailure } from '../../../tauritavern/agent/agent-run-retry.js';
 
 const MOUNT_ID = 'ttas_agent_run_timeline_mount';
 let historyTimelineDialogCounter = 0;
@@ -110,6 +111,8 @@ export async function mountAgentRunTimelinePanel(): Promise<void> {
             subscribeRunEvents: listener => subscribeAgentRunEvents(listener),
             subscribeLiveProjection: (runId, handler, options) => requireAgentApi().subscribeLiveProjection(runId, handler, options),
             retryFailure: input => retryAgentRunFailure(input),
+            resumeRun: runId => resumeAgentRun(runId),
+            retryPresentation: runId => retryAgentRunPresentation(runId),
         },
     });
     const root = createRoot(mount);

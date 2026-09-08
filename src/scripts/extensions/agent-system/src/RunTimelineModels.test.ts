@@ -72,6 +72,17 @@ test('paging keeps all pages and stale reads cannot replace a reset session', as
     expect(session.events.map(item => item.runId)).toEqual(['new-run']);
 });
 
+test('older terminal pages cannot override a resumed run or its newest terminal', () => {
+    const session = createRunTimelineSession({ runId: 'run-1' });
+    session.receiveEvents([event(10, 'run-1', 'run_failed'), event(11, 'run-1', 'run_resumed')]);
+    expect(session.terminalEvent).toBeNull();
+    session.receiveEvents([event(2, 'run-1', 'run_cancelled')]);
+    expect(session.terminalEvent).toBeNull();
+    session.receiveEvents([event(15, 'run-1', 'run_completed')]);
+    session.receiveEvents([event(5, 'run-1', 'run_failed')]);
+    expect(session.terminalEvent?.seq).toBe(15);
+});
+
 test('detail state ignores stale async loads', async () => {
     const pending: Array<{
         input: TimelineDetailReadInput;

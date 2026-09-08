@@ -170,6 +170,7 @@
 - `api.agent`：运行控制、历史、工作区详情与 Profile 管理，见 [Agent API](API/Agent.md)。
   - 前端准备聊天输入，Rust 执行模型与工具循环；Agent Mode 关闭时沿用 Legacy Generate。
   - Host API 解析稳定聊天身份，宿主提交桥复用聊天保存流程，持久版本发布后再关联到消息 metadata。分叉使用新身份并复制持久版本。
+  - 运行结束包含执行与宿主呈现的收尾；前端等待保存成功或明确失败后释放生成状态。续接保留原 Run 身份。
   - Run 事件供历史与 Timeline 使用，实时参数预览供当前显示使用；它们与 SillyTavern 生成事件分别订阅。
   - 运行控制属于 Public Contract；模型回合、任务详情、工具目录和 Timeline 关系是 Project Contract，由对应 API 提供展示 DTO。
 

@@ -182,6 +182,17 @@ type TauriTavernAgentRunHandle = {
     stableChatId: string;
     generationType: string;
     status: TauriTavernAgentRunStatus;
+    afterSeq?: number;
+};
+
+type TauriTavernAgentRunCheckpoint = {
+    run: TauriTavernAgentRunHandle;
+    terminalSeq: number;
+    presentation: Record<string, any> | null;
+    nextStep: 'model' | 'tools' | 'handoff' | 'finalize' | 'finished' | 'unavailable';
+    round: number;
+    maxRounds: number;
+    blockedReason: string | null;
 };
 
 type TauriTavernAgentRunLiveToolCall =
@@ -622,6 +633,8 @@ type TauriTavernAgentRetentionApi = {
 };
 
 type TauriTavernAgentApi = {
+    readCheckpoint: (runId: string) => Promise<TauriTavernAgentRunCheckpoint>;
+    resume: (input: { runId: string; additionalRounds?: number; checkpoint?: TauriTavernAgentRunCheckpoint }) => Promise<TauriTavernAgentRunHandle>;
     startRunWithPromptSnapshot: (input: {
         chatRef: TauriTavernChatRef;
         stableChatId?: string;
@@ -685,7 +698,7 @@ type TauriTavernAgentApi = {
         handler: (update: TauriTavernAgentRunLiveUpdate) => void,
         options?: { onError?: (error: unknown) => void },
     ) => TauriTavernHostUnsubscribe;
-    settleChatPresentation: (handle: TauriTavernAgentRunHandle) => Promise<void>;
+    settleChatPresentation: (handle: Pick<TauriTavernAgentRunHandle, 'runId'>) => Promise<void>;
     profiles: TauriTavernAgentProfilesApi;
     tools: TauriTavernAgentToolsApi;
     promptAssembly: TauriTavernAgentPromptAssemblyApi;

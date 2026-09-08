@@ -50,6 +50,7 @@ const EVENT_META: Readonly<Record<string, EventMeta>> = Object.freeze({
     user_guidance_discarded: { icon: 'fa-ban', tone: 'warn', kind: 'guidance', titleKey: 'timelineEventGuidanceDiscarded' },
     model_completed: { icon: 'fa-quote-left', tone: 'info', kind: 'narration', titleKey: 'timelineEventNarration' },
     run_completed: { icon: 'fa-circle-check', tone: 'success', kind: 'done', titleKey: 'timelineEventRunCompleted' },
+    run_resumed: { icon: 'fa-play', tone: 'active', titleKey: 'timelineEventRunResumed' },
     run_partial_success: { icon: 'fa-circle-exclamation', tone: 'warn', kind: 'partial', titleKey: 'timelineEventRunPartialSuccess' },
     run_cancelled: { icon: 'fa-ban', tone: 'warn', kind: 'cancel', titleKey: 'timelineEventRunCancelled' },
     run_failed: { icon: 'fa-circle-xmark', tone: 'error', kind: 'fail', titleKey: 'timelineEventRunFailed' },

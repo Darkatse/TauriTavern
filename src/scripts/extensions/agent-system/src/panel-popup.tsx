@@ -25,6 +25,7 @@ import { loadSettings, patchSettings } from './settings-store';
 import { downloadBlobWithRuntime } from '../../../file-export.js';
 import { subscribeAgentProfilesChanged } from '../../../tauritavern/agent/agent-profile-events.js';
 import { subscribeLlmConnectionsChanged } from '../../../tauritavern/agent/llm-connection-events.js';
+import { resumeAgentRun } from '../../../tauritavern/agent/agent-run-retry.js';
 
 let activePanel: HTMLDialogElement | null = null;
 
@@ -107,6 +108,15 @@ export function openAgentSystemPanel(): void {
             return agent.listRuns(input);
         },
         currentChatRunFilter,
+        async resumeRun(runId) {
+            dialog.close();
+            try {
+                return await resumeAgentRun(runId);
+            } catch (error) {
+                reportAgentSystemError(error);
+                throw error;
+            }
+        },
         openRun: (run) => {
             try {
                 openAgentRunTimelineDialog(run);

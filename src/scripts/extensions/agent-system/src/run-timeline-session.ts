@@ -42,6 +42,7 @@ type RunTimelineSession = {
 
 export function createRunTimelineSession(options: RunTimelineSessionOptions = {}): RunTimelineSession {
     let eventStore = createRunTimelineEventStore();
+    let lifecycleSeq = 0;
     const session: RunTimelineSession = {
         runId: '',
         invocationId: '',
@@ -61,6 +62,7 @@ export function createRunTimelineSession(options: RunTimelineSessionOptions = {}
             session.events = [];
             session.timelineProjection = emptyTimelineProjection();
             session.terminalEvent = null;
+            lifecycleSeq = 0;
             session.loading = false;
             session.loadingOlder = false;
             session.hasMoreBefore = false;
@@ -75,7 +77,10 @@ export function createRunTimelineSession(options: RunTimelineSessionOptions = {}
             if (!eventStore.addMany(accepted)) return false;
             session.events = eventStore.events();
             for (const event of accepted) {
-                if (TERMINAL_EVENT_TYPES.includes(event.type)) session.terminalEvent = event;
+                if (event.seq > lifecycleSeq && (TERMINAL_EVENT_TYPES.includes(event.type) || event.type === 'run_resumed')) {
+                    lifecycleSeq = event.seq;
+                    session.terminalEvent = event.type === 'run_resumed' ? null : event;
+                }
             }
             return true;
         },

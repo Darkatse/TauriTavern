@@ -65,6 +65,7 @@ const DISPLAY_EVENT_TYPES: ReadonlySet<string> = new Set([
     'user_guidance_applied',
     'user_guidance_discarded',
     'run_completed',
+    'run_resumed',
     'run_partial_success',
     'run_cancelled',
     'run_failed',

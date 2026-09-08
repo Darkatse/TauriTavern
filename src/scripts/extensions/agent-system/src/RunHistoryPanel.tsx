@@ -222,6 +222,17 @@ export function RunHistoryPanel({ controller, retention, tr }: RunHistoryPanelPr
                                         <i className="fa-solid fa-arrow-up-right-from-square"></i>
                                     </span>
                                 </button>
+                                {filter === 'current' && ['failed', 'cancelled', 'partial_success'].includes(run.status) && (
+                                    <button
+                                        type="button"
+                                        className="menu_button ttas-run-history-resume"
+                                        disabled={snapshot.resumingRunId !== null}
+                                        onClick={() => void controller.resumeRun(run.runId)}
+                                    >
+                                        <i className="fa-solid fa-play"></i>
+                                        <span>{tr('timelineActionResume')}</span>
+                                    </button>
+                                )}
                             </li>
                         );
                     })}

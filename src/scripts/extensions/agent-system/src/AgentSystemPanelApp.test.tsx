@@ -174,6 +174,7 @@ function renderPanel(controller: AgentSystemPanelController): void {
             stableChatId: 'stable-group',
         }),
         openRun: () => undefined,
+        resumeRun: () => Promise.resolve(),
     });
     const runRetention = createRunRetentionController({
         getRetentionApi: () => ({

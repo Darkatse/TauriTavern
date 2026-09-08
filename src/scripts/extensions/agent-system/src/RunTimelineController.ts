@@ -1,3 +1,4 @@
+import { errorText } from './host-api';
 import type { AgentSystemSettings } from './settings-store';
 import type {
     RunTimelineController,
@@ -29,8 +30,7 @@ import {
     clampRunTimelineHeightPx,
     heightFromTopEdgeDrag,
     normalizeRunTimelineHeightPx,
-    RUN_TIMELINE_KEYBOARD_STEP_PX,
-    RUN_TIMELINE_PAGE_STEP_PX,
+    heightFromResizeKey,
 } from './run-timeline-resize';
 import { createRunTimelineSession } from './run-timeline-session';
 import { createRunTimelineLiveLane } from './run-timeline-live-lane';
@@ -64,6 +64,8 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
     let settings: AgentSystemSettings | null = null;
     let currentRun: TimelineRun | null = options.mode === 'history' ? options.run : null;
     let activeRun: TimelineRun | null = null;
+    let presentationError = '';
+    let savingPresentation = false;
     let collapsed = options.mode === 'active';
     let detailsOpen = false;
     let selectedSeq: number | null = null;
@@ -144,8 +146,7 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
 
     function buildSnapshot(): RunTimelineSnapshot {
         const view = currentDerived();
-        const selection = currentSelection(view);
-        const selectedItem = selection.item;
+        const { item: selectedItem, targets } = currentSelection(view);
         const latest = view.items.at(-1) ?? null;
         const terminalType = main.terminalEvent?.type ?? '';
         const isRunning = Boolean(activeRun?.runId && currentRun?.runId === activeRun.runId);
@@ -167,6 +168,8 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
             loading: main.loading,
             loadingOlder: main.loadingOlder,
             detail: { loading: detail.loading, error: detail.error, sections: detail.sections },
+            presentationError,
+            savingPresentation,
             collapsed,
             detailsOpen,
             autoStick: viewport.nearBottom,
@@ -181,7 +184,7 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
             headerSubtitle: latest ? timelineItemTitle(latest, deps.tr)
                 : currentRun?.runId ? shortRunId(currentRun.runId) : deps.tr('timelineIdle'),
             detailTitle: selectedItem ? timelineItemTitle(selectedItem, deps.tr) : deps.tr('timelineDetails'),
-            selectedHasDetails: selection.targets.length > 0,
+            selectedHasDetails: targets.length > 0,
             emptyText: isRunning ? deps.tr('timelineThinking') : deps.tr('timelineNoEvents'),
             subAgentTasks: view.subAgentTasks,
             subAgentTrayTitle: subAgentTrayTitle(view.subAgentTasks, deps.tr),
@@ -206,13 +209,12 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
         try {
             const pending = page === 'older' ? main.loadOlder(deps.readEvents) : main.loadInitial(deps.readEvents);
             publish();
-            const applied = await pending;
-            publish();
-            return applied;
+            return await pending;
         } catch (error) {
-            publish();
             deps.reportError(error);
             return false;
+        } finally {
+            publish();
         }
     }
 
@@ -231,15 +233,17 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
         await loadEventPage('initial');
     }
 
-    async function handleRunState(run: TimelineRun | null, lastEvent: TauriTavernAgentRunEvent | null): Promise<void> {
+    async function handleRunState(run: TimelineRun | null, lastEvent: TauriTavernAgentRunEvent | null, saveError = ''): Promise<void> {
+        presentationError = saveError;
+        if (saveError) collapsed = false;
         activeRun = run;
         if (run?.runId && run.runId !== currentRun?.runId) await startTrackingRun(run);
-        else publish();
+        else {
+            if (run) currentRun = run;
+            publish();
+        }
         if (lastEvent) receiveRunEvent(lastEvent);
-    }
-
-    function eventShowsDetails(event: TauriTavernAgentRunEvent): boolean {
-        return isDisplayableRunEvent(event) || hasModelTurnNarration(event);
+        if (!run && lastEvent && detailsOpen) void loadDetails();
     }
 
     function receiveRunEvent(event: TauriTavernAgentRunEvent): void {
@@ -248,16 +252,21 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
         const added = main.receiveEvent(event);
         const addedToSub = subAgent.receiveEvent(event);
         if (!added && !addedToSub) return;
+        if (added && event.type === 'run_resumed') {
+            selectedSeq = null;
+            detailsOpen = false;
+            detail.reset();
+            liveLane.attach(event.runId);
+        }
         if (added && main.terminalEvent === event) liveLane.detach();
-        if (added && options.mode === 'active' && event.type === 'run_failed'
-            && eventPayload(event).userRetryable === true) {
+        if (added && options.mode === 'active' && ['run_failed', 'run_cancelled', 'run_partial_success'].includes(event.type)) {
             collapsed = false;
             selectedSeq = event.seq;
             detailsOpen = true;
         }
         publish();
         if (added && isTimelineProjectionStructuralEvent(event.type)) scheduleProjectionRefresh();
-        if (added && detailsOpen && (selectedSeq == null || selectedSeq === event.seq) && eventShowsDetails(event)) {
+        if (added && detailsOpen && (selectedSeq == null || selectedSeq === event.seq) && (isDisplayableRunEvent(event) || hasModelTurnNarration(event))) {
             void loadDetails();
         }
     }
@@ -266,22 +275,12 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
         if (projectionTimer) clearTimeout(projectionTimer);
         projectionTimer = setTimeout(() => {
             projectionTimer = null;
-            void refreshProjection();
+            void main.refreshProjection(deps.readEvents).then(publish).catch(deps.reportError);
         }, 120);
     }
 
-    async function refreshProjection(): Promise<void> {
-        try {
-            await main.refreshProjection(deps.readEvents);
-            publish();
-        } catch (error) {
-            deps.reportError(error);
-        }
-    }
-
     async function loadDetails(): Promise<void> {
-        const selection = currentSelection(currentDerived());
-        const item = selection.item;
+        const { item, targets } = currentSelection(currentDerived());
         if (!item || !currentRun?.runId) {
             detail.reset();
             publish();
@@ -289,8 +288,8 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
         }
         const pending = detail.load({
             runId: currentRun.runId,
-            targets: selection.targets,
-            readOnly: options.mode === 'history',
+            targets,
+            readOnly: options.mode === 'history' || Boolean(activeRun) || item.seq !== main.terminalEvent?.seq,
         });
         publish();
         await pending;
@@ -316,7 +315,7 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
                     panelHeightPx = normalizeRunTimelineHeightPx(next.runTimelineHeightPx);
                     publish();
                 }));
-                unsubscribes.push(options.deps.subscribeRunState(state => fire(handleRunState(state.activeRun, state.lastEvent))));
+                unsubscribes.push(options.deps.subscribeRunState(state => fire(handleRunState(state.activeRun, state.lastEvent, state.presentationError))));
                 unsubscribes.push(options.deps.subscribeRunEvents(event => receiveRunEvent(event)));
                 settings = await options.deps.loadSettings();
                 if (disposed) return;
@@ -391,20 +390,30 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
             if (!currentRun?.runId) throw new Error('Agent run id is required.');
             subAgent.open(currentRun.runId, normalized);
         },
-        closeSubAgent() {
-            subAgent.close();
-        },
-        async loadOlderSubAgent() {
-            return subAgent.loadOlder();
-        },
-        selectSubAgentItem(seq) {
-            subAgent.select(seq);
+        closeSubAgent: () => subAgent.close(),
+        loadOlderSubAgent: () => subAgent.loadOlder(),
+        selectSubAgentItem: seq => subAgent.select(seq),
+        async retryPresentation() {
+            if (options.mode !== 'active' || !currentRun || savingPresentation) return;
+            savingPresentation = true;
+            publish();
+            try {
+                await options.deps.retryPresentation(currentRun.runId);
+                presentationError = '';
+            } catch (error) {
+                presentationError = errorText(error);
+            } finally {
+                savingPresentation = false;
+                publish();
+            }
         },
         invokeDetailAction(action) {
             if (action.kind === 'openSubAgent') {
                 controller.openSubAgent(action.invocationId);
             } else if (action.kind === 'retry' && options.mode === 'active') {
                 fire(options.deps.retryFailure({ run: currentRun, events: main.events, terminalEvent: main.terminalEvent }));
+            } else if (action.kind === 'resume' && options.mode === 'active' && currentRun && !activeRun) {
+                fire(options.deps.resumeRun(currentRun.runId));
             }
         },
         setTimelineViewport(next) {
@@ -413,9 +422,7 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
             viewport = next;
             publish();
         },
-        setSubAgentViewport(next) {
-            subAgent.setViewport(next);
-        },
+        setSubAgentViewport: next => subAgent.setViewport(next),
         startViewGesture(event) {
             if (viewGesture || !canStartRunTimelineViewGesture({
                 event,
@@ -470,14 +477,9 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
         },
         resizeByKey(key, currentHeight, bounds) {
             if (options.mode !== 'active') return false;
-            const current = clampRunTimelineHeightPx(panelHeightPx ?? currentHeight, bounds);
-            const next = key === 'ArrowUp' ? current + RUN_TIMELINE_KEYBOARD_STEP_PX
-                : key === 'ArrowDown' ? current - RUN_TIMELINE_KEYBOARD_STEP_PX
-                    : key === 'PageUp' ? current + RUN_TIMELINE_PAGE_STEP_PX
-                        : key === 'PageDown' ? current - RUN_TIMELINE_PAGE_STEP_PX
-                            : key === 'Home' ? bounds.min : key === 'End' ? bounds.max : null;
+            const next = heightFromResizeKey(key, panelHeightPx ?? currentHeight, bounds);
             if (next == null) return false;
-            panelHeightPx = clampRunTimelineHeightPx(next, bounds);
+            panelHeightPx = next;
             publish();
             fire(savePanelHeight(panelHeightPx));
             return true;
@@ -490,10 +492,4 @@ export function createRunTimelineController(options: RunTimelineOptions): RunTim
         },
     };
     return controller;
-}
-
-function eventPayload(event: TauriTavernAgentRunEvent): Record<string, unknown> {
-    return event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload)
-        ? event.payload as Record<string, unknown>
-        : {};
 }

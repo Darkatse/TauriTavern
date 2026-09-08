@@ -5,6 +5,7 @@ import type { TimelineVirtualResult } from './run-timeline-virtual-list';
 export type TimelineRun = {
     runId: string;
     generationType?: string;
+    afterSeq?: number;
 };
 
 export type TimelineReadInput = Parameters<TauriTavernAgentApi['readEvents']>[0] & { limit: number };
@@ -139,7 +140,7 @@ type TimelineDetailActionBase = {
 
 export type TimelineDetailAction =
     | TimelineDetailActionBase & { kind: 'openSubAgent'; invocationId: string }
-    | TimelineDetailActionBase & { kind: 'retry' };
+    | TimelineDetailActionBase & { kind: 'retry' | 'resume' };
 
 export type TimelineDetailField = {
     label: string;
@@ -244,6 +245,8 @@ export type RunTimelineSnapshot = {
     loading: boolean;
     loadingOlder: boolean;
     detail: TimelineDetailSnapshot;
+    presentationError: string;
+    savingPresentation: boolean;
     collapsed: boolean;
     detailsOpen: boolean;
     autoStick: boolean;
@@ -292,6 +295,7 @@ export type RunTimelineController = {
     loadOlderSubAgent: () => Promise<boolean>;
     selectSubAgentItem: (seq: number) => void;
     invokeDetailAction: (action: TimelineDetailAction) => void;
+    retryPresentation: () => Promise<void>;
     setTimelineViewport: (viewport: TimelineViewport) => void;
     setSubAgentViewport: (viewport: TimelineViewport) => void;
     startViewGesture: (event: PointerEvent) => void;
@@ -325,6 +329,7 @@ export type ActiveTimelineOptions = {
         subscribeRunState: (listener: (state: {
             activeRun: TimelineRun | null;
             lastEvent: TauriTavernAgentRunEvent | null;
+            presentationError?: string;
         }) => void) => () => void;
         subscribeRunEvents: (listener: (event: TauriTavernAgentRunEvent) => void) => () => void;
         subscribeLiveProjection?: TauriTavernAgentApi['subscribeLiveProjection'];
@@ -334,6 +339,8 @@ export type ActiveTimelineOptions = {
             events: readonly TauriTavernAgentRunEvent[];
             terminalEvent: TauriTavernAgentRunEvent | null;
         }) => Promise<unknown>;
+        resumeRun: (runId: string) => Promise<unknown>;
+        retryPresentation: (runId: string) => Promise<void>;
     };
 };
 

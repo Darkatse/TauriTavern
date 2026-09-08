@@ -70,6 +70,7 @@ export function captureMessageTarget(state, chat, messageId, lengthBefore) {
     if (!state.createdMessage) {
         restoreAgentExtra(message, null);
     }
+    mergeAgentExtra(message, { runId: state.runId });
 }
 
 export function assertActiveAgentMessage(chat, state) {

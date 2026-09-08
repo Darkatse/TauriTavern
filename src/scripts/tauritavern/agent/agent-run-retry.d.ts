@@ -1,3 +1,4 @@
+export function resumeAgentRun(runId: string, runtime?: unknown): Promise<unknown>;
 export function retryAgentRunFailure(input: {
     run?: { runId: string; generationType?: string } | null;
     events?: readonly TauriTavernAgentRunEvent[];

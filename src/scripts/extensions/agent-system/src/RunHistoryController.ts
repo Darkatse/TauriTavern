@@ -25,12 +25,14 @@ export type RunHistorySnapshot = {
     loadingMore: boolean;
     filter: RunHistoryFilter;
     error: string;
+    resumingRunId: string | null;
 };
 
 export type RunHistoryControllerDeps = {
     listRuns: (input: RunHistoryListInput) => ReturnType<TauriTavernAgentApi['listRuns']>;
     currentChatRunFilter: () => Promise<{ chatRef: TauriTavernChatRef; stableChatId: string }>;
     openRun: (run: TauriTavernAgentRunSummary) => void;
+    resumeRun: (runId: string) => Promise<unknown>;
 };
 
 export type RunHistoryController = {
@@ -40,6 +42,7 @@ export type RunHistoryController = {
     loadMore: () => Promise<void>;
     setFilter: (filter: string) => Promise<void>;
     openRun: (run: TauriTavernAgentRunSummary) => void;
+    resumeRun: (runId: string) => Promise<void>;
     dispose: () => void;
 };
 
@@ -56,6 +59,7 @@ export function createRunHistoryController(deps: RunHistoryControllerDeps): RunH
         loadingMore: false,
         filter: 'all',
         error: '',
+        resumingRunId: null,
     };
     const listeners = new Set<() => void>();
     let disposed = false;
@@ -156,6 +160,18 @@ export function createRunHistoryController(deps: RunHistoryControllerDeps): RunH
         },
         openRun(run) {
             deps.openRun(run);
+        },
+        async resumeRun(runId) {
+            if (snapshot.resumingRunId) return;
+            commit({ resumingRunId: runId, error: '' });
+            try {
+                await deps.resumeRun(runId);
+                await refresh();
+            } catch (error) {
+                commit({ error: errorText(error) });
+            } finally {
+                commit({ resumingRunId: null });
+            }
         },
         dispose(): void {
             if (disposed) {

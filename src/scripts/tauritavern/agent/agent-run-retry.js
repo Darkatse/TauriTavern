@@ -1,5 +1,28 @@
 const SUPPORTED_AGENT_RETRY_GENERATION_TYPES = new Set(['normal', 'regenerate', 'swipe']);
 
+export async function resumeAgentRun(runId, runtime = null) {
+    const agent = window.__TAURITAVERN__?.api?.agent;
+    if (!agent) throw new Error('TauriTavern Agent API is unavailable');
+    const checkpoint = await agent.readCheckpoint(runId);
+    if (checkpoint.blockedReason || checkpoint.nextStep === 'finished') {
+        throw new Error(`agent.resume_unavailable: ${checkpoint.blockedReason || 'this run has already finished'}`);
+    }
+    const script = runtime || await import('/script.js' /* webpackIgnore: true */);
+    let additionalRounds = 0;
+    if (checkpoint.round > checkpoint.maxRounds && checkpoint.nextStep === 'model') {
+        const { Popup } = runtime || await import('/scripts/popup.js' /* webpackIgnore: true */);
+        additionalRounds = checkpoint.maxRounds;
+        const translate = window.SillyTavern?.getContext?.()?.translate ?? (text => text);
+        const confirmed = await Popup.show.confirm(
+            translate('Resume Agent run', 'agent_system.timelineResumeTitle'),
+            translate('This run reached its round limit. Add {rounds} rounds and continue from the saved state?', 'agent_system.timelineResumeRounds')
+                .replace('{rounds}', String(additionalRounds)),
+        );
+        if (!confirmed) return;
+    }
+    return script.resumeAgentRunInChat({ runId, generationType: checkpoint.run.generationType, additionalRounds, checkpoint });
+}
+
 export async function retryAgentRunFailure({
     run = null,
     events = [],

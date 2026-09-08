@@ -560,10 +560,58 @@ test('Agent retry resolves typed generation intent instead of clicking regenerat
     );
 });
 
+test('Agent resume asks for additional rounds only when the frozen round limit is exhausted', async () => {
+    const { resumeAgentRun } = await importFresh('src/scripts/tauritavern/agent/agent-run-retry.js');
+    const resumed = [];
+    const confirmations = [];
+    let round = 6;
+    let accept = 1;
+    installWindow({ agent: { readCheckpoint: async () => ({
+        run: { generationType: 'swipe' }, round, maxRounds: 5, nextStep: 'model', blockedReason: null,
+    }) } });
+    const runtime = {
+        Popup: { show: { confirm: async (...args) => { confirmations.push(args); return accept; } } },
+        resumeAgentRunInChat: async input => { resumed.push(input); },
+    };
+    await resumeAgentRun('run-stop', runtime);
+    assert.equal(resumed[0].runId, 'run-stop');
+    assert.equal(resumed[0].additionalRounds, 5);
+    assert.equal(resumed[0].checkpoint.round, 6);
+    assert.equal(confirmations.length, 1);
+    accept = 0;
+    await resumeAgentRun('run-stop', runtime);
+    assert.equal(resumed.length, 1);
+    round = 4;
+    await resumeAgentRun('run-stop', runtime);
+    assert.equal(confirmations.length, 2);
+    assert.equal(resumed[1].additionalRounds, 0);
+});
 
-
-
-
+test('Agent resumed controller uses the new cursor and waits for presentation saving', async () => {
+    const subscribed = Promise.withResolvers();
+    const saveStarted = Promise.withResolvers();
+    const saving = Promise.withResolvers();
+    installWindow({ agent: {
+        resume: async () => ({ runId: 'run-stop', afterSeq: 40 }),
+        subscribe(_runId, callback, options) {
+            assert.equal(options.afterSeq, 40);
+            subscribed.resolve(callback);
+            return () => {};
+        },
+        settleChatPresentation() { saveStarted.resolve(); return saving.promise; },
+    } });
+    const controller = await importFresh('src/scripts/tauritavern/agent/agent-run-controller.js');
+    const resumed = controller.resumeAndWaitForAgentRun({ runId: 'run-stop' });
+    const listener = await subscribed.promise;
+    listener({ seq: 41, type: 'run_resumed' });
+    assert.equal(controller.hasActiveAgentRun(), true);
+    listener({ seq: 45, type: 'run_completed' });
+    await saveStarted.promise;
+    assert.equal(controller.hasActiveAgentRun(), true);
+    saving.resolve();
+    await resumed;
+    assert.equal(controller.hasActiveAgentRun(), false);
+});
 
 test('Rollback helper deletes drift messages back-to-front and dedupes targets', async () => {
     const { rollbackAgentRunDriftMessages } = await importFresh('src/scripts/tauritavern/agent/agent-run-message-rollback.js');

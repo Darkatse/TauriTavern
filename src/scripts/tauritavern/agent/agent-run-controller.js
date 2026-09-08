@@ -7,6 +7,7 @@ const TERMINAL_EVENTS = new Set(['run_completed', 'run_partial_success', 'run_ca
 const ROLLBACK_EVENT_TYPE = 'run_rollback_targets';
 
 let activeRun = null;
+let startingRun = false;
 let rollbackScriptOverride = null;
 let guidanceSequence = 0;
 
@@ -18,11 +19,12 @@ function requireAgentApi() {
     return agent;
 }
 
-function emitRunStateChanged(lastEvent = null) {
+function emitRunStateChanged(lastEvent = null, presentationError = '') {
     window.dispatchEvent(new CustomEvent(AGENT_RUN_STATE_CHANGED, {
         detail: {
             activeRun,
             lastEvent,
+            presentationError,
         },
     }));
 }
@@ -90,6 +92,11 @@ export async function cancelActiveAgentRun() {
     return true;
 }
 
+export async function retryAgentRunPresentation(runId) {
+    await requireAgentApi().settleChatPresentation({ runId });
+    emitRunStateChanged();
+}
+
 export async function submitGuidanceToActiveAgentRun(text) {
     const runId = String(activeRun?.runId || '').trim();
     if (!runId) {
@@ -104,17 +111,25 @@ export async function submitGuidanceToActiveAgentRun(text) {
 }
 
 export async function startAndWaitForAgentRun(input) {
-    if (activeRun?.runId) {
-        throw new Error(`Agent run ${activeRun.runId} is already active`);
-    }
+    return runAndWait(agent => agent.startRunWithPromptSnapshot(input));
+}
 
+export async function resumeAndWaitForAgentRun(input) {
+    return runAndWait(agent => agent.resume(input));
+}
+
+async function runAndWait(start) {
+    if (activeRun || startingRun) throw new Error('An Agent run is already active');
     const agent = requireAgentApi();
+    startingRun = true;
     let handle;
     try {
-        handle = await agent.startRunWithPromptSnapshot(input);
+        handle = await start(agent);
     } catch (error) {
         if (error?.name === 'AbortError') return;
         throw error;
+    } finally {
+        startingRun = false;
     }
     activeRun = handle;
     emitRunStateChanged();
@@ -127,9 +142,9 @@ export async function startAndWaitForAgentRun(input) {
         // observes the intended chat state.
         let pendingRollback = Promise.resolve();
 
-        const clearActiveRun = (lastEvent = null) => {
+        const clearActiveRun = (lastEvent = null, presentationError = '') => {
             activeRun = null;
-            emitRunStateChanged(lastEvent);
+            emitRunStateChanged(lastEvent, presentationError);
         };
 
         try {
@@ -167,10 +182,11 @@ export async function startAndWaitForAgentRun(input) {
                     clearActiveRun(event);
                     reject(errorFromRollbackFailure(rollbackError, event));
                 }).catch((error) => {
-                    clearActiveRun(event);
+                    clearActiveRun(event, String(error?.message ?? error));
                     reject(error);
                 });
             }, {
+                afterSeq: handle.afterSeq ?? 0,
                 onError(error) {
                     stop();
                     clearActiveRun();

@@ -54,6 +54,7 @@ import { getAgentGenerationOptions } from './scripts/tauritavern/agent/agent-gen
 import {
     cancelActiveAgentRun,
     hasActiveAgentRun,
+    resumeAndWaitForAgentRun,
     startAndWaitForAgentRun,
     submitGuidanceToActiveAgentRun,
     subscribeAgentRunState,
@@ -6866,6 +6867,23 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
         generationIntent,
         options: { presentation: 'foreground' },
     });
+}
+
+export async function resumeAgentRunInChat({ runId, generationType, additionalRounds = 0, checkpoint }) {
+    if (is_send_press || is_group_generating || hasActiveAgentRun()) {
+        throw new Error('agent.resume_generation_active: wait for the current generation to finish');
+    }
+    setSendButtonState(true);
+    await enterGeneration(false);
+    try {
+        generation_started = new Date();
+        deactivateSendButtons();
+        await eventSource.emit(event_types.GENERATION_STARTED, generationType, { agentResume: true, runId }, false);
+        return await resumeAndWaitForAgentRun({ runId, additionalRounds, checkpoint });
+    } finally {
+        unblockGeneration(generationType);
+        await exitGeneration();
+    }
 }
 
 async function prepareAgentPromptAssemblyForRun(input) {

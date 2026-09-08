@@ -168,11 +168,18 @@ export function formatRunFailureDetail(
     target: RunFailureDetailTarget,
     options: { allowRetry?: boolean } = {},
 ): TimelineDetailSection {
-    if (target.event.type === 'run_partial_success') return formatRunPartialSuccessDetail(target);
+    const resume: TimelineDetailAction[] = options.allowRetry === false ? [] : [{
+        kind: 'resume', labelKey: 'timelineActionResume', hintKey: 'timelineActionResumeHint', icon: 'fa-play',
+    }];
+    if (target.event.type === 'run_partial_success') return { ...formatRunPartialSuccessDetail(target), actions: resume };
+    if (target.event.type === 'run_cancelled') return {
+        labelKey: target.labelKey, path: '', fields: [],
+        blocks: [textBlock('timelineResultText', tr('timelineCancelled'))], actions: resume,
+    };
     const presentation = presentAgentRunFailure(target.event);
     const fields: TimelineDetailField[] = [];
     const blocks: TimelineDetailBlock[] = [];
-    const actions: TimelineDetailAction[] = [];
+    const actions: TimelineDetailAction[] = [...resume];
     if (presentation.code) fields.push(field(tr('timelineDetailFieldErrorCode'), presentation.code));
     fields.push(field(tr('timelineDetailFieldRetryable'), presentation.retryable));
     fields.push(field(tr('timelineDetailFieldUserRetryable'), presentation.userRetryable));

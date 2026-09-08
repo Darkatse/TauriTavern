@@ -134,6 +134,8 @@ function activeHarness(overrides: Partial<ActiveTimelineOptions['deps']> = {}) {
             state.retries += 1;
             return Promise.resolve();
         },
+        retryPresentation: async () => {},
+        resumeRun: () => Promise.resolve(),
         ...overrides,
     };
     return { controller: createRunTimelineController({ mode: 'active', deps }), state };
@@ -237,10 +239,13 @@ test('retry is typed, history is read-only, and resize persistence follows compl
     state.eventListener?.(failure);
     expect(controller.getSnapshot().detailsOpen).toBe(true);
     await flushMicrotasks();
-    const retry = controller.getSnapshot().detail.sections.flatMap(section => section.actions ?? [])[0];
+    state.runStateListener?.({ activeRun: null, lastEvent: failure });
+    await flushMicrotasks();
+    const retry = controller.getSnapshot().detail.sections.flatMap(section => section.actions ?? []).find(action => action.kind === 'retry');
     expect(retry?.kind).toBe('retry');
     if (retry) controller.invokeDetailAction(retry);
     expect(state.retries).toBe(1);
+
 
     controller.startResize(500, 300, { min: 132, max: 600 });
     controller.moveResize(450);
@@ -332,11 +337,20 @@ test('active mode removes transient writes immediately and detaches at terminal'
     emit({ type: 'replace', call: liveCall });
     emit({ type: 'append', invocationId: 'inv_root', toolCallIndex: 0, field: 'content', text: 'again', wordDelta: 1 });
     expect(controller.getSnapshot().displayItems.at(-1)?.live?.tail).toBe('again');
-    state.eventListener?.(event(3, 'run_completed', {}, 'run-1'));
+    const stopped = event(3, 'run_cancelled', {}, 'run-1');
+    state.eventListener?.(stopped);
     expect(controller.getSnapshot().displayItems.every(item => !item.live)).toBe(true);
     expect(liveUnsubscribed).toBe(1);
 
+    state.runStateListener?.({ activeRun: null, lastEvent: stopped });
+    state.runStateListener?.({ activeRun: { runId: 'run-1' }, lastEvent: null });
+    state.eventListener?.(event(4, 'run_resumed'));
+    emit({ type: 'replace', call: liveCall });
+    emit({ type: 'append', invocationId: 'inv_root', toolCallIndex: 0, field: 'content', text: 'resumed', wordDelta: 1 });
+    expect(controller.getSnapshot().terminalType).toBe('');
+    expect(controller.getSnapshot().displayItems.at(-1)?.live?.tail).toBe('resumed');
+
     controller.dispose();
     expect(state.unsubscribed).toBe(3);
-    expect(liveUnsubscribed).toBe(1);
+    expect(liveUnsubscribed).toBe(2);
 });

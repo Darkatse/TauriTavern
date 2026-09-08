@@ -32,13 +32,17 @@ const unsubscribe = agent.subscribe(run.runId, event => {
 | 方法 | 行为 |
 | --- | --- |
 | `cancel(runId)` | 请求取消，返回 Run handle；终态通过事件观察 |
+| `readCheckpoint(runId)` | 读取保存状态及可恢复性信息 |
+| `resume({ runId, additionalRounds? })` | 续接同一 Run，返回含订阅游标 `afterSeq` 的 Run handle |
 | `submitGuidance({ runId, text, clientGuidanceId? })` | 向活跃 Run 补充指令，返回 `guidanceId` 与 `status: 'queued'` |
 | `subscribe(runId, handler, options?)` | 订阅持久事件，返回可重复调用的 unsubscribe |
 | `subscribeLiveProjection(runId, handler, options?)` | 订阅当前工具参数和推理文字预览，返回 unsubscribe |
 
-补充指令在下一次前台模型请求前加入上下文，已经发出的请求保持原样。待处理指令若因 Run 结束而未使用，会记录丢弃事件。该接口不创建聊天消息。
+补充指令在下一次前台模型请求前加入上下文，已经发出的请求保持原样。尚未消费的指令随续接保留。该接口不创建聊天消息。
 
 `subscribe` 的选项是 `afterSeq`、`limit`、`intervalMs`、`onError`，默认从起点读取。实时预览只接受 `onError` 选项；它用于当前显示，历史过程从持久事件读取。
+
+`resume` 保留原始输入与累计预算，要求当前聊天及消息仍属于原 Run；普通重新生成仍创建新 Run。轮数不足时可经用户明确选择追加 `additionalRounds`。续接订阅使用返回的 `afterSeq`，恢复条件见 [运行循环](../Agent/Runtime.md#checkpoint-与恢复)。
 
 ## 历史与详情
 
@@ -111,16 +115,17 @@ const plan = await agent.retention.planPrune({ detailLimit: 20 });
 
 ## 宿主生命周期
 
-聊天提交由 runtime 与 host bridge 协作完成；模型用 `workspace.commit` 请求提交。宿主生成适配器使用 `settleChatPresentation(handle)` 等待该 handle 的聊天展示收尾。
+聊天提交由 runtime 与宿主协作完成；模型用 `workspace.commit` 请求提交。宿主调用 `settleChatPresentation({ runId })` 等待消息呈现与 checkpoint 保存；失败后可重试，已完成的消息写入不会重复执行。
 
 聊天分叉时，`copyChatPersistentStates({ sourceChatRef, sourceStableChatId, targetChatRef, targetStableChatId })` 复制持久版本。删除消息或 swipe 后，`pruneChatPersistentStates({ chatRef?, stableChatId?, candidateStateIds })` 清理明确列出的、已不再被当前聊天引用的版本；该清理入口目前支持角色聊天。
 
-`approveToolCall()` 是未实现的预留入口，调用会抛错。当前没有恢复 Run 或通用 rollback API。
+`approveToolCall()` 是未实现的预留入口，调用会抛错。当前没有通用 rollback API。
 
 ## 错误与实现
 
 异步方法失败时 reject；订阅错误通过 `onError` 传递。运行失败原因保存在日志，错误发生在已有确认提交之后时，Run 会保留输出并以 `partial_success` 结束。
 
+- [types.d.ts](../../src/types.d.ts)：接口参数与返回类型。
 - [agent.js](../../src/tauri/main/api/agent.js)：API 安装、启动与宿主桥接。
 - [agent-run-runtime.js](../../src/tauri/main/api/agent-run-runtime.js)：控制、订阅和读取。
 - [agent_commands.rs](../../src-tauri/crates/tauritavern/src/presentation/commands/agent_commands.rs)：Rust command 边界。

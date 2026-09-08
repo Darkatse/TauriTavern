@@ -75,6 +75,8 @@ test('active hide/show and timeline/detail switches preserve the mounted event s
         subscribeRunState: () => () => undefined,
         subscribeRunEvents: () => () => undefined,
         retryFailure: () => Promise.resolve(),
+        retryPresentation: async () => {},
+        resumeRun: () => Promise.resolve(),
     };
     const controller = createRunTimelineController({ mode: 'active', deps });
     controllers.push(controller);
@@ -331,6 +333,8 @@ test('active timeline renders a streaming write card with tail and metric', asyn
         },
         scheduleFrame: callback => callback(),
         retryFailure: () => Promise.resolve(),
+        retryPresentation: async () => {},
+        resumeRun: () => Promise.resolve(),
     };
     const controller = createRunTimelineController({ mode: 'active', deps });
     controllers.push(controller);
@@ -462,6 +466,8 @@ test('SubAgent tray opens and closes its native dialog through controller-local 
             subscribeRunState: () => () => undefined,
             subscribeRunEvents: () => () => undefined,
             retryFailure: () => Promise.resolve(),
+            retryPresentation: async () => {},
+            resumeRun: () => Promise.resolve(),
         },
     });
     controllers.push(controller);

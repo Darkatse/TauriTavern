@@ -97,7 +97,7 @@ export function buildEventDetailTargets(
         targets.push(buildPatchDiffTarget(event, allEvents));
     }
 
-    if (event.type === 'run_failed' || event.type === 'run_partial_success') {
+    if (event.type === 'run_failed' || event.type === 'run_partial_success' || event.type === 'run_cancelled') {
         targets.push({ type: 'runFailure', labelKey: 'timelineErrorDetails', event });
     }
 

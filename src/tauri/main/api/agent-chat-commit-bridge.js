@@ -24,6 +24,7 @@ import {
     trackCommitReasoningEvent,
 } from './agent-chat-commit-reasoning.js';
 import { CHAT_COMMIT_REASON } from '../../../scripts/chat-payload-transport.js';
+import { finishHostPresentation } from './agent-chat-presentation-checkpoint.js';
 
 const TERMINAL_EVENTS = new Set(['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed']);
 
@@ -39,13 +40,15 @@ export function attachHostCommitBridge({
     subscribeLiveProjection = null,
     loadScript = loadMainScript,
     persistChat = persistActiveChat,
+    presentation = null,
+    chatLength = null,
+    finishPresentation = null,
 }) {
     const normalizedRunId = requireRunId(runId);
+    let resolveTerminal;
+    const terminal = new Promise(resolve => { resolveTerminal = resolve; });
     const state = {
         runId: normalizedRunId,
-        chatRef,
-        stableChatId,
-        generationType: String(generationType || 'normal').trim() || 'normal',
         messageId: null,
         messageRef: null,
         swipeId: null,
@@ -62,37 +65,53 @@ export function attachHostCommitBridge({
         commitSeq: 0,
         reasoning: createCommitReasoningState(),
         current: null,
+        pendingWrite: null,
         pendingFrame: null,
         liveMessageEventsEmitted: false,
         settlement: null,
+        presentationCheckpoint: null,
+        chatLength,
         loadScript,
         persistChat,
+        liveEnabled: typeof subscribeLiveProjection === 'function',
+        finishPresentation,
+        terminalEvent: null,
+        terminal,
+        pendingMutation: Promise.resolve(),
         stop: null,
         stopLive: null,
+        ...presentation,
+        chatRef,
+        stableChatId,
+        generationType: String(generationType || 'normal').trim() || 'normal',
     };
     const stop = subscribe(normalizedRunId, (event) => {
         trackCommitReasoningEvent(state.reasoning, event);
         if (event?.type === 'chat_commit_requested') {
-            void handleChatCommitRequested({
+            state.pendingMutation = handleChatCommitRequested({
                 state,
                 event,
                 safeInvoke,
                 readWorkspaceFile,
                 readModelTurn,
-            }).catch(reportAsyncError);
+            });
+            void state.pendingMutation.catch(reportAsyncError);
             return;
         }
 
         if (event?.type === 'persistent_state_metadata_update_requested') {
-            void handlePersistentStateMetadataUpdateRequested({
+            state.pendingMutation = handlePersistentStateMetadataUpdateRequested({
                 state,
                 event,
                 safeInvoke,
-            }).catch(reportAsyncError);
+            });
+            void state.pendingMutation.catch(reportAsyncError);
             return;
         }
 
         if (TERMINAL_EVENTS.has(event?.type)) {
+            state.terminalEvent = event;
+            resolveTerminal();
             void settleHostCommitBridge(state).catch(reportAsyncError);
         }
     }, { onError: reportAsyncError });
@@ -111,8 +130,14 @@ export function settleHostCommitBridge(state) {
         throw new Error('agent.host_commit_bridge_invalid: bridge state is required');
     }
     if (!state.settlement) {
-        state.settlement = finalizeLivePartial(state)
-            .finally(() => detachHostCommitBridge(state));
+        // Another poller may see the terminal first. Finish only after this
+        // bridge has consumed all preceding commit and reasoning events.
+        state.settlement = (state.terminalEvent ? Promise.resolve() : state.terminal)
+            .then(() => finishHostPresentation(state, finalizeLivePartial, detachHostCommitBridge))
+            .catch(error => {
+                state.settlement = null;
+                throw error;
+            });
     }
     return state.settlement;
 }
@@ -211,15 +236,16 @@ async function handleChatCommitRequested({ state, event, safeInvoke, readWorkspa
             error: String(error?.message ?? error),
         };
     }
-    await safeInvoke('resolve_agent_chat_commit', {
-        dto: { runId: state.runId, commitId, ...resolution },
-    });
     if (!resolution.error) {
         state.current = null;
+        state.pendingWrite = null;
         if (isExplicit) {
             stopLiveProjection(state);
         }
     }
+    await safeInvoke('resolve_agent_chat_commit', {
+        dto: { runId: state.runId, commitId, ...resolution },
+    });
 }
 
 function applyLiveProjectionUpdate(state, update) {
@@ -387,6 +413,7 @@ async function finalizeLiveMessage(state, script, messageId, generationType) {
 }
 
 function stopLiveProjection(state) {
+    state.liveEnabled = false;
     if (typeof state.stopLive === 'function') {
         state.stopLive();
         state.stopLive = null;
