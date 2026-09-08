@@ -1315,19 +1315,6 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/core-graphics/core-graphics-0.24.0.crate",
-        "sha256": "fa95a34622365fa5bbf40b20b75dba8dfa8c94c734aea8ac9a5ca38af14316f1",
-        "dest": "cargo/vendor/core-graphics-0.24.0"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"fa95a34622365fa5bbf40b20b75dba8dfa8c94c734aea8ac9a5ca38af14316f1\", \"files\": {}}",
-        "dest": "cargo/vendor/core-graphics-0.24.0",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/core-graphics/core-graphics-0.25.0.crate",
         "sha256": "064badf302c3194842cf2c5d61f56cc88e54a759313879cdf03abdd27d0c3b97",
         "dest": "cargo/vendor/core-graphics-0.25.0"
@@ -8790,14 +8777,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/tauri-plugin-pilot/tauri-plugin-pilot-0.7.2.crate",
-        "sha256": "3a3f8680d3e28e7e8e4a3ca104a45f2cbbe24b53b01abe34447e62c65ae25b5b",
-        "dest": "cargo/vendor/tauri-plugin-pilot-0.7.2"
+        "url": "https://static.crates.io/crates/tauri-plugin-pilot/tauri-plugin-pilot-0.7.3.crate",
+        "sha256": "5533e31cc94a9ee5e6c32271bdef0ee7b05fc432d9e41f299623b51b40c8dbaf",
+        "dest": "cargo/vendor/tauri-plugin-pilot-0.7.3"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"3a3f8680d3e28e7e8e4a3ca104a45f2cbbe24b53b01abe34447e62c65ae25b5b\", \"files\": {}}",
-        "dest": "cargo/vendor/tauri-plugin-pilot-0.7.2",
+        "contents": "{\"package\": \"5533e31cc94a9ee5e6c32271bdef0ee7b05fc432d9e41f299623b51b40c8dbaf\", \"files\": {}}",
+        "dest": "cargo/vendor/tauri-plugin-pilot-0.7.3",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -10454,6 +10441,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/windows/windows-0.62.2.crate",
+        "sha256": "527fadee13e0c05939a6a05d5bd6eec6cd2e3dbd648b9f8e447c6518133d8580",
+        "dest": "cargo/vendor/windows-0.62.2"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"527fadee13e0c05939a6a05d5bd6eec6cd2e3dbd648b9f8e447c6518133d8580\", \"files\": {}}",
+        "dest": "cargo/vendor/windows-0.62.2",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/windows-collections/windows-collections-0.2.0.crate",
         "sha256": "3beeceb5e5cfd9eb1d76b381630e82c4241ccd0d27f1a39ed41b2760b255c5e8",
         "dest": "cargo/vendor/windows-collections-0.2.0"
@@ -10462,6 +10462,19 @@
         "type": "inline",
         "contents": "{\"package\": \"3beeceb5e5cfd9eb1d76b381630e82c4241ccd0d27f1a39ed41b2760b255c5e8\", \"files\": {}}",
         "dest": "cargo/vendor/windows-collections-0.2.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/windows-collections/windows-collections-0.3.2.crate",
+        "sha256": "23b2d95af1a8a14a3c7367e1ed4fc9c20e0a26e79551b1454d72583c97cc6610",
+        "dest": "cargo/vendor/windows-collections-0.3.2"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"23b2d95af1a8a14a3c7367e1ed4fc9c20e0a26e79551b1454d72583c97cc6610\", \"files\": {}}",
+        "dest": "cargo/vendor/windows-collections-0.3.2",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -10501,6 +10514,19 @@
         "type": "inline",
         "contents": "{\"package\": \"fc6a41e98427b19fe4b73c550f060b59fa592d7d686537eebf9385621bfbad8e\", \"files\": {}}",
         "dest": "cargo/vendor/windows-future-0.2.1",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/windows-future/windows-future-0.3.2.crate",
+        "sha256": "e1d6f90251fe18a279739e78025bd6ddc52a7e22f921070ccdc67dde84c605cb",
+        "dest": "cargo/vendor/windows-future-0.3.2"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"e1d6f90251fe18a279739e78025bd6ddc52a7e22f921070ccdc67dde84c605cb\", \"files\": {}}",
+        "dest": "cargo/vendor/windows-future-0.3.2",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -10566,6 +10592,19 @@
         "type": "inline",
         "contents": "{\"package\": \"9150af68066c4c5c07ddc0ce30421554771e528bde427614c61038bc2c92c2b1\", \"files\": {}}",
         "dest": "cargo/vendor/windows-numerics-0.2.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/windows-numerics/windows-numerics-0.3.1.crate",
+        "sha256": "6e2e40844ac143cdb44aead537bbf727de9b044e107a0f1220392177d15b0f26",
+        "dest": "cargo/vendor/windows-numerics-0.3.1"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"6e2e40844ac143cdb44aead537bbf727de9b044e107a0f1220392177d15b0f26\", \"files\": {}}",
+        "dest": "cargo/vendor/windows-numerics-0.3.1",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -10735,6 +10774,19 @@
         "type": "inline",
         "contents": "{\"package\": \"b66463ad2e0ea3bbf808b7f1d371311c80e115c0b71d60efc142cafbcfb057a6\", \"files\": {}}",
         "dest": "cargo/vendor/windows-threading-0.1.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/windows-threading/windows-threading-0.2.1.crate",
+        "sha256": "3949bd5b99cafdf1c7ca86b43ca564028dfe27d66958f2470940f73d86d75b37",
+        "dest": "cargo/vendor/windows-threading-0.2.1"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"3949bd5b99cafdf1c7ca86b43ca564028dfe27d66958f2470940f73d86d75b37\", \"files\": {}}",
+        "dest": "cargo/vendor/windows-threading-0.2.1",
         "dest-filename": ".cargo-checksum.json"
     },
     {
