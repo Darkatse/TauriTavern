@@ -506,3 +506,9 @@ begin_chat_commit(logical target, force)
 - bounded base64 达到实机目标后即停止；只有 profile 证明其仍是主要热点时，才评估 text frame 或 AndroidX binary bridge。
 
 Tauri 版本升级后也必须重新验证运行时 envelope，不能仅凭 API 表面接受 `Uint8Array` 就假定 Android Raw IPC 已可用。
+
+## 12. LAN Sync 多播发现
+
+Android 多播发现需要 `CHANGE_WIFI_MULTICAST_STATE` 权限。宿主只在前台持有 `MulticastLock`，进入后台或停止发现时释放；网络逻辑由 Rust 负责。
+
+平台适配见 [LanDiscoveryPlugin](../src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/LanDiscoveryPlugin.kt)，功能边界见[同步总览](CurrentState/Sync.md)。

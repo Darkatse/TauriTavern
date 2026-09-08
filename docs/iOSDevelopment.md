@@ -274,3 +274,9 @@ iOS Chat Completion 的后台租约由 Rust `ChatCompletionService` 持有，不
 - 无法取得后台租约只记录明确警告，不阻塞仍在前台可正常完成的生成。
 
 当前不使用 `BGAppRefreshTask` / `BGProcessingTask`，因为它们由系统择机调度，不能表达用户点击后立即开始的聊天生成。`BGContinuedProcessingTask` 只拥有系统后台执行权和展示状态；真正的网络请求、取消和流会话生命周期仍由既有 Rust 服务负责，不引入第二套生成调度状态机。
+
+## 8. LAN Sync 多播发现权限
+
+LAN 发现需要本地网络用途声明和 [Multicast Networking entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.networking.multicast)。签名使用的 App ID 与 provisioning profile 必须获得相应授权并包含该 entitlement；仓库声明不能代替 Apple 授权。
+
+权限行为以真机签名包验证，后台发现受 iOS 生命周期限制。配置入口见 [Apple host 工程](../src-tauri/crates/tauritavern/gen/apple/project.yml)，功能边界见[同步总览](CurrentState/Sync.md)。
