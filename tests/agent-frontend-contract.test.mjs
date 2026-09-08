@@ -613,6 +613,31 @@ test('Agent resumed controller uses the new cursor and waits for presentation sa
     assert.equal(controller.hasActiveAgentRun(), false);
 });
 
+test('Stopping a revision during admission cancels it as soon as the run is available', async () => {
+    const { SlashCommandAbortController } = await import('../src/scripts/slash-commands/SlashCommandAbortController.js');
+    const admitted = Promise.withResolvers();
+    const cancelled = Promise.withResolvers();
+    let listener;
+    let cancelCount = 0;
+    installWindow({ agent: {
+        resume: () => admitted.promise,
+        subscribe(_id, callback) { listener = callback; return () => {}; },
+        cancel(input) { cancelCount += 1; cancelled.resolve(input); return Promise.resolve(); },
+        settleChatPresentation: async () => {},
+    } });
+    const controller = await importFresh('src/scripts/tauritavern/agent/agent-run-controller.js');
+    const abortController = new SlashCommandAbortController();
+    const running = controller.resumeAndWaitForAgentRun({ runId: 'run-fix' }, abortController);
+    abortController.abort();
+    admitted.resolve({ runId: 'run-fix', afterSeq: 10 });
+    assert.deepEqual(await cancelled.promise, { runId: 'run-fix' });
+    listener({ seq: 12, type: 'run_cancelled' });
+    await running;
+    assert.equal(controller.hasActiveAgentRun(), false);
+    abortController.abort();
+    assert.equal(cancelCount, 1, 'the completed operation no longer responds to cancellation');
+});
+
 test('Rollback helper deletes drift messages back-to-front and dedupes targets', async () => {
     const { rollbackAgentRunDriftMessages } = await importFresh('src/scripts/tauritavern/agent/agent-run-message-rollback.js');
 

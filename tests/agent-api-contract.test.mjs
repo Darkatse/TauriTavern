@@ -1119,8 +1119,8 @@ test('Agent presentation survives a stop and reload without duplicating text or 
         persistChat: async () => { persistCount += 1; },
         finishPresentation: async dto => { saved.push(structuredClone(dto)); },
     });
-    const commit = async (round, pathName, mode) => {
-        listener({ type: 'model_completed', payload: { round, invocationId: 'inv_root', hasReasoning: true, reasoningChars: 8 } });
+    const commit = async (round, pathName, mode, invocationId = 'inv_root') => {
+        listener({ type: 'model_completed', payload: { round, invocationId, hasReasoning: true, reasoningChars: 8 } });
         const resolved = new Promise(resolve => { resolveCommit = resolve; });
         listener({ type: 'chat_commit_requested', payload: agentCommitPayload(chatRef, {
             runId: 'run-resume', commitId: `commit-${round}`, path: pathName, mode,
@@ -1151,11 +1151,38 @@ test('Agent presentation survives a stop and reload without duplicating text or 
     assert.equal(saved[1].presentation.reasoning.cursor, 2);
     assert.equal(persistCount, 2);
 
-    script.chat[0].swipe_id = 1;
-    await assert.rejects(() => restoreHostPresentation('run-resume', saved[1].presentation, script), /active chat message changed/);
-    script.chat[0].swipe_id = 0;
-    script.chat[0].extra.tauritavern.agent.runId = 'another-run';
-    await assert.rejects(() => restoreHostPresentation('run-resume', saved[1].presentation, script), /belongs to another run/);
+    script.chat[0].mes = 'Edited by hand';
+    script.chat[0].swipes[0] = script.chat[0].mes;
+    const revision = await restoreHostPresentation('run-resume', saved[1].presentation, script, true);
+    const third = attach(revision);
+    listener({ type: 'agent_invocation_created', payload: { invocationId: 'inv-revision', exitPolicy: 'run_finish_allowed' } });
+    await commit(3, 'second', 'append', 'inv-revision');
+    listener({ seq: 30, type: 'run_completed' });
+    await settleHostCommitBridge(third);
+    assert.equal(script.chat.length, 1);
+    assert.equal(script.chat[0].mes, 'Edited by handed]');
+    assert.equal(script.chat[0].extra.reasoning, 'reason 1\n\nreason 2\n\nreason 3');
+
+    script.chat.unshift({ mes: 'Earlier message', is_user: true });
+    const moved = await restoreHostPresentation('run-resume', saved[2].presentation, script, true);
+    const fourth = attach(moved);
+    const metadataResolved = new Promise(resolve => { resolveCommit = resolve; });
+    listener({ type: 'persistent_state_metadata_update_requested', payload: {
+        chatRef, runId: 'run-resume', updateId: 'no-op-revision', messageId: '0', stateId: 'same-state',
+    } });
+    assert.equal((await metadataResolved).error, undefined);
+    listener({ seq: 40, type: 'run_completed' });
+    await settleHostCommitBridge(fourth);
+    const message = script.chat.at(-1);
+    assert.equal(message.mes, 'Edited by handed]');
+    assert.equal(message.extra.tauritavern.agent.persistStateId, 'same-state');
+    assert.equal(script.chat[0].extra, undefined);
+
+    message.swipe_id = 1;
+    await assert.rejects(() => restoreHostPresentation('run-resume', saved[3].presentation, script), /active chat message changed/);
+    message.swipe_id = 0;
+    message.extra.tauritavern.agent.runId = 'another-run';
+    await assert.rejects(() => restoreHostPresentation('run-resume', saved[3].presentation, script), /belongs to another run/);
 });
 
 test('Agent stop retains the last raw frame and retries a failed chat save', async t => {
@@ -1245,6 +1272,55 @@ test('Agent resume attaches from its returned cursor and saves completed present
     assert.deepEqual(calls.find(call => call.command === 'resume_agent_run').args.dto, {
         runId: 'run-resume', expectedTerminalSeq: 10, chatRef, stableChatId: 'stable-story', additionalRounds: 5, hostPresentation: true,
     });
+});
+
+test('Agent output revision reads the selected reply and passes its current text to the runtime', async () => {
+    const { reviseAgentOutput } = await import('../src/scripts/tauritavern/agent/agent-output-revision.js');
+    const chatRef = { kind: 'character', characterId: 'Writer', fileName: 'story' };
+    const script = createFakeCommitScript(({ getMessage }) => getMessage);
+    const message = {
+        mes: 'A hand-edited ending.',
+        swipe_id: 1,
+        swipes: ['Another ending.', 'A hand-edited ending.'],
+        extra: { reasoning: '', tauritavern: { agent: { runId: 'selected-run' } } },
+    };
+    script.chat = [message];
+    const presentation = {
+        chatRef, stableChatId: 'stable-story', generationType: 'swipe', liveEnabled: false,
+        chatLength: 2, messageId: 1, swipeId: 2, createdMessage: false,
+        rawCommittedText: 'Original ending.', commitSeq: 1, pendingWrite: null,
+        reasoning: { commitInvocationIds: ['inv_root'], turns: [], cursor: 0 },
+    };
+    let admitted;
+    const { agent } = await installHarness({ script, safeInvoke: async (command, args) => {
+        if (command === 'read_agent_run_checkpoint') {
+            assert.equal(args.dto.runId, 'selected-run');
+            return { run: { runId: 'selected-run', generationType: 'swipe', status: 'completed' }, terminalSeq: 10, nextStep: 'finished', presentation };
+        }
+        if (command === 'resume_agent_run') {
+            admitted = args.dto;
+            return { runId: 'selected-run', generationType: 'swipe', afterSeq: 10 };
+        }
+        if (command === 'read_agent_run_events') return { events: [{ seq: 11, type: 'run_completed' }] };
+        if (command === 'finish_agent_run_presentation') return;
+        throw new Error(`Unexpected command ${command}`);
+    } });
+    window.__TAURITAVERN__.api.chat = {
+        current: { ref: () => chatRef },
+        open: () => ({ stableId: async () => 'stable-story' }),
+    };
+    script.resumeAgentRunInChat = async input => {
+        const handle = await agent.resume(input);
+        await agent.settleChatPresentation(handle);
+    };
+    await reviseAgentOutput('  Make the ending quieter.  ', null, script);
+    assert.deepEqual(admitted.revision, { guidance: 'Make the ending quieter.', previousOutput: 'A hand-edited ending.' });
+    assert.equal(admitted.stableChatId, 'stable-story');
+    assert.equal(script.chat[0], message);
+    assert.equal(message.swipe_id, 1);
+    assert.deepEqual(message.swipes, ['Another ending.', 'A hand-edited ending.']);
+    delete message.extra.tauritavern.agent;
+    await assert.rejects(reviseAgentOutput('Change this.', null, script), /select an Agent reply/);
 });
 
 async function waitFor(predicate) {

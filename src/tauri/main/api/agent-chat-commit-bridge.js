@@ -428,7 +428,8 @@ async function handlePersistentStateMetadataUpdateRequested({ state, event, safe
     try {
         await assertCurrentChat(payload.chatRef, payload.stableChatId);
         const script = await state.loadScript();
-        const messageId = normalizeMessageId(payload.messageId ?? state.messageId);
+        assertActiveAgentMessage(script.chat, state);
+        const messageId = Number(state.messageId);
         const stateId = requirePayloadString(payload, 'stateId');
         mergePersistentStateExtraIntoMessage(script.chat, messageId, payload, stateId);
         await state.persistChat(script, CHAT_COMMIT_REASON.MUTATION);
@@ -460,14 +461,6 @@ function requireRunId(value) {
         throw new Error('runId is required');
     }
     return runId;
-}
-
-function normalizeMessageId(value) {
-    const messageId = Number(value);
-    if (!Number.isInteger(messageId) || messageId < 0) {
-        throw new Error('agent.persistent_state_message_id_invalid: messageId must be a non-negative integer');
-    }
-    return messageId;
 }
 
 function requirePayloadString(payload, key) {

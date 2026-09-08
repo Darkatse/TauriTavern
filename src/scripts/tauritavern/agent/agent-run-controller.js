@@ -114,11 +114,12 @@ export async function startAndWaitForAgentRun(input) {
     return runAndWait(agent => agent.startRunWithPromptSnapshot(input));
 }
 
-export async function resumeAndWaitForAgentRun(input) {
-    return runAndWait(agent => agent.resume(input));
+export async function resumeAndWaitForAgentRun(input, abortController = null) {
+    return runAndWait(agent => agent.resume(input), abortController);
 }
 
-async function runAndWait(start) {
+async function runAndWait(start, abortController = null) {
+    if (abortController?.signal.aborted) return;
     if (activeRun || startingRun) throw new Error('An Agent run is already active');
     const agent = requireAgentApi();
     startingRun = true;
@@ -143,9 +144,16 @@ async function runAndWait(start) {
         let pendingRollback = Promise.resolve();
 
         const clearActiveRun = (lastEvent = null, presentationError = '') => {
+            abortController?.removeEventListener('abort', cancel);
             activeRun = null;
             emitRunStateChanged(lastEvent, presentationError);
         };
+        const onError = error => {
+            stop();
+            clearActiveRun();
+            reject(error);
+        };
+        const cancel = () => { void agent.cancel({ runId: handle.runId }).catch(onError); };
 
         try {
             stop = agent.subscribe(handle.runId, (event) => {
@@ -187,12 +195,11 @@ async function runAndWait(start) {
                 });
             }, {
                 afterSeq: handle.afterSeq ?? 0,
-                onError(error) {
-                    stop();
-                    clearActiveRun();
-                    reject(error);
-                },
+                onError,
             });
+            abortController?.addEventListener('abort', cancel);
+            // A slash command can be stopped while the backend is admitting the run.
+            if (abortController?.signal.aborted) cancel();
         } catch (error) {
             clearActiveRun();
             reject(error);

@@ -101,17 +101,18 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
         return safeInvoke('read_agent_run_checkpoint', { dto: { runId } });
     }
 
-    async function resume({ runId, additionalRounds = 0, checkpoint = null } = {}) {
+    async function resume({ runId, additionalRounds = 0, checkpoint = null, revisionGuidance = null } = {}) {
         runId = String(runId || '').trim();
         if (!Number.isInteger(additionalRounds) || additionalRounds < 0) {
             throw new Error('agent.resume_rounds_invalid: additionalRounds must be a non-negative integer');
         }
         checkpoint ??= await readCheckpoint(runId);
         if (checkpoint.run.runId !== runId) throw new Error('agent.resume_checkpoint_mismatch: checkpoint belongs to another run');
-        if (checkpoint.blockedReason || checkpoint.nextStep === 'finished') {
+        const revision = revisionGuidance !== null;
+        if (checkpoint.blockedReason || (!revision && checkpoint.nextStep === 'finished')) {
             throw new Error(`agent.resume_unavailable: ${checkpoint.blockedReason || 'this run has already finished'}`);
         }
-        const presentation = await restoreHostPresentation(runId, checkpoint.presentation, await loadScript());
+        const presentation = await restoreHostPresentation(runId, checkpoint.presentation, await loadScript(), revision);
         const chatRef = window.__TAURITAVERN__?.api?.chat?.current?.ref?.();
         const stableChatId = await resolveStableChatId(chatRef);
         const handle = await safeInvoke('resume_agent_run', { dto: {
@@ -121,6 +122,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
             stableChatId,
             additionalRounds,
             hostPresentation: true,
+            ...(revision ? { revision: { guidance: revisionGuidance, previousOutput: presentation.rawCommittedText } } : {}),
         } });
         attachRunBridges(handle, {
             chatRef,

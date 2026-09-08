@@ -6869,9 +6869,12 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
     });
 }
 
-export async function resumeAgentRunInChat({ runId, generationType, additionalRounds = 0, checkpoint }) {
+export async function resumeAgentRunInChat({ runId, generationType, additionalRounds = 0, checkpoint, revisionGuidance, abortController: commandAbortController }) {
     if (is_send_press || is_group_generating || hasActiveAgentRun()) {
         throw new Error('agent.resume_generation_active: wait for the current generation to finish');
+    }
+    if (this_edit_mes_id === chat.length - 1) {
+        throw new Error('agent.resume_message_editing: finish editing the message before continuing');
     }
     setSendButtonState(true);
     await enterGeneration(false);
@@ -6879,7 +6882,7 @@ export async function resumeAgentRunInChat({ runId, generationType, additionalRo
         generation_started = new Date();
         deactivateSendButtons();
         await eventSource.emit(event_types.GENERATION_STARTED, generationType, { agentResume: true, runId }, false);
-        return await resumeAndWaitForAgentRun({ runId, additionalRounds, checkpoint });
+        return await resumeAndWaitForAgentRun({ runId, additionalRounds, checkpoint, revisionGuidance }, commandAbortController);
     } finally {
         unblockGeneration(generationType);
         await exitGeneration();

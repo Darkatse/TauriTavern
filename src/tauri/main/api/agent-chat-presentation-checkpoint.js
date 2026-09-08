@@ -25,11 +25,24 @@ export function captureHostPresentation(state, script, pendingWrite) {
     };
 }
 
-export async function restoreHostPresentation(runId, presentation, script) {
+export async function restoreHostPresentation(runId, presentation, script, revision = false) {
     if (!presentation || typeof presentation !== 'object') {
         throw new Error('agent.resume_presentation_missing: this run has no saved chat presentation');
     }
     await assertCurrentChat(presentation.chatRef, presentation.stableChatId);
+    if (revision) {
+        const message = script.chat.at(-1);
+        if (message?.extra?.tauritavern?.agent?.runId !== runId) {
+            throw new Error('agent.resume_message_changed: the selected message belongs to another run');
+        }
+        presentation = {
+            ...presentation,
+            chatLength: script.chat.length,
+            messageId: script.chat.length - 1,
+            swipeId: message.swipe_id,
+            rawCommittedText: message.mes,
+        };
+    }
     if (script.chat.length !== presentation.chatLength) {
         throw new Error('agent.resume_chat_changed: the chat has advanced since this run stopped');
     }

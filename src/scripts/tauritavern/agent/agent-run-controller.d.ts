@@ -1,5 +1,5 @@
 export function getActiveAgentRun(): TauriTavernAgentRunHandle | null;
-export function resumeAndWaitForAgentRun(input: { runId: string; additionalRounds?: number; checkpoint?: TauriTavernAgentRunCheckpoint }): Promise<unknown>;
+export function resumeAndWaitForAgentRun(input: { runId: string; additionalRounds?: number; checkpoint?: TauriTavernAgentRunCheckpoint; revisionGuidance?: string }, abortController?: EventTarget & { signal: { aborted: boolean } }): Promise<unknown>;
 export function subscribeAgentRunState(listener: (state: {
     activeRun: TauriTavernAgentRunHandle | null;
     lastEvent: TauriTavernAgentRunEvent | null;

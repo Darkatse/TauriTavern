@@ -33,7 +33,7 @@ const unsubscribe = agent.subscribe(run.runId, event => {
 | --- | --- |
 | `cancel(runId)` | 请求取消，返回 Run handle；终态通过事件观察 |
 | `readCheckpoint(runId)` | 读取保存状态及可恢复性信息 |
-| `resume({ runId, additionalRounds? })` | 续接同一 Run，返回含订阅游标 `afterSeq` 的 Run handle |
+| `resume({ runId, additionalRounds?, revisionGuidance? })` | 续接同一 Run，或根据新要求修订已完成输出；返回含订阅游标 `afterSeq` 的 Run handle |
 | `submitGuidance({ runId, text, clientGuidanceId? })` | 向活跃 Run 补充指令，返回 `guidanceId` 与 `status: 'queued'` |
 | `subscribe(runId, handler, options?)` | 订阅持久事件，返回可重复调用的 unsubscribe |
 | `subscribeLiveProjection(runId, handler, options?)` | 订阅当前工具参数和推理文字预览，返回 unsubscribe |
@@ -43,6 +43,8 @@ const unsubscribe = agent.subscribe(run.runId, event => {
 `subscribe` 的选项是 `afterSeq`、`limit`、`intervalMs`、`onError`，默认从起点读取。实时预览只接受 `onError` 选项；它用于当前显示，历史过程从持久事件读取。
 
 `resume` 保留原始输入与累计预算，要求当前聊天及消息仍属于原 Run；普通重新生成仍创建新 Run。轮数不足时可经用户明确选择追加 `additionalRounds`。续接订阅使用返回的 `afterSeq`，恢复条件见 [运行循环](../Agent/Runtime.md#checkpoint-与恢复)。
+
+传入 `revisionGuidance` 时，从已完成的 checkpoint 开始新的前台 Invocation，继承上下文并使用原 Profile 的预算。聊天命令 `/fix 修改要求` 使用这一入口，原地修改最后一条 Agent 回复的当前 swipe，以当前已保存的正文为基准。
 
 ## 历史与详情
 

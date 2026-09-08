@@ -634,7 +634,7 @@ type TauriTavernAgentRetentionApi = {
 
 type TauriTavernAgentApi = {
     readCheckpoint: (runId: string) => Promise<TauriTavernAgentRunCheckpoint>;
-    resume: (input: { runId: string; additionalRounds?: number; checkpoint?: TauriTavernAgentRunCheckpoint }) => Promise<TauriTavernAgentRunHandle>;
+    resume: (input: { runId: string; additionalRounds?: number; checkpoint?: TauriTavernAgentRunCheckpoint; revisionGuidance?: string }) => Promise<TauriTavernAgentRunHandle>;
     startRunWithPromptSnapshot: (input: {
         chatRef: TauriTavernChatRef;
         stableChatId?: string;

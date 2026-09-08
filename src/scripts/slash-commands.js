@@ -97,6 +97,7 @@ import { SlashCommandNamedArgumentAssignment } from './slash-commands/SlashComma
 import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandEnumValue.js';
 import { getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
 import { getAgentGenerationOptions } from './tauritavern/agent/agent-generation-router.js';
+import { reviseAgentOutput } from './tauritavern/agent/agent-output-revision.js';
 import { agentErrorMessage } from './tauritavern/agent/agent-error-presenter.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { commonEnumProviders, enumIcons, commonEnumMatchProviders } from './slash-commands/SlashCommandCommonEnumsProvider.js';
@@ -1542,6 +1543,19 @@ export function initDefaultSlashCommands() {
         callback: setFlatModeCallback,
         aliases: ['default'],
         helpString: t`Sets the message style to flat chat mode.`,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'fix',
+        callback: async (args, value) => {
+            await reviseAgentOutput(value, args._abortController);
+            return '';
+        },
+        unnamedArgumentList: [SlashCommandArgument.fromProps({
+            description: t`Changes to make to the last Agent reply`,
+            typeList: [ARGUMENT_TYPE.STRING],
+            isRequired: true,
+        })],
+        helpString: t`Revises the selected swipe of the last completed Agent reply. Example: /fix Make the ending quieter.`,
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'continue',
