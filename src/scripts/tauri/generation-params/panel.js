@@ -103,7 +103,7 @@ function sourceLabel() {
     return option?.textContent?.trim() || String(oai_settings.chat_completion_source);
 }
 
-/** Upstream element carrying the block's label; also hosts the remove button. */
+/** Upstream element carrying the block's label. */
 function labelElementOf(/** @type {Entry} */ { block, control }) {
     return /** @type {HTMLInputElement} */ (control).labels?.[0]
         ?? document.getElementById(`${control.id}_text`)
@@ -372,8 +372,9 @@ export function installGenerationParamsPanel() {
             setActive(entry, false);
             sync();
         });
-        // Inline next to the label: never overlaps the block's own controls.
-        (labelElementOf(entry) ?? entry.block).append(remove);
+        // Localization replaces label contents; keep the button outside that node.
+        const label = labelElementOf(entry);
+        if (label) label.after(remove); else entry.block.append(remove);
         if (entry.param.kind === 'toggle') {
             entry.control.addEventListener('change', sync);
         }

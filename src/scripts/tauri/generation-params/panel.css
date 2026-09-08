@@ -121,6 +121,10 @@
     display: none !important;
 }
 
+.tt-gp-block > .range-block-title {
+    width: auto;
+}
+
 /* Slider blocks: label left, number box right, no range track. */
 .tt-gp-compact {
     flex-wrap: nowrap;
@@ -131,7 +135,6 @@
 
 .tt-gp-compact > .range-block-title {
     flex: 1 1 auto;
-    width: auto;
     text-align: left;
     white-space: nowrap;
 }
