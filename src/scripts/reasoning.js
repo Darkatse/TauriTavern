@@ -190,6 +190,7 @@ export function extractReasoningSignatureFromData(data, {
     const isVertexAiClaude = source === chat_completion_sources.VERTEXAI
         && isVertexAiClaudeModelId((model ?? data?.model) || null);
     const isGemini = source === chat_completion_sources.MAKERSUITE
+        || (source === chat_completion_sources.CUSTOM && oai_settings.custom_api_format === 'gemini_generate_content')
         || (source === chat_completion_sources.VERTEXAI && !isVertexAiClaude);
     const isOpenRouter = source === chat_completion_sources.OPENROUTER;
 

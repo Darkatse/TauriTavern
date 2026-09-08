@@ -369,6 +369,11 @@ fn convert_messages(
             .to_lowercase();
         let mut merge_with_previous = matches!(role.as_str(), "tool" | "function");
 
+        let native_gemini_parts = if role == "assistant" {
+            message_native_gemini_parts(message)
+        } else {
+            None
+        };
         let mut parts = if matches!(role.as_str(), "tool" | "function") {
             let tool_call_id = message_tool_call_id(message);
             let name = message_tool_name(message)
@@ -387,11 +392,6 @@ fn convert_messages(
             };
             vec![build_tool_response_part(&name, &content, response_id)]
         } else {
-            let native_gemini_parts = if role == "assistant" {
-                message_native_gemini_parts(message)
-            } else {
-                None
-            };
             let mut parts = if let Some(native_parts) = native_gemini_parts.clone() {
                 native_parts
             } else {
@@ -423,7 +423,8 @@ fn convert_messages(
 
         let target_role = if role == "assistant" { "model" } else { "user" };
 
-        if supports_signatures {
+        // Native parts already carry their own signatures; never overwrite signed history.
+        if supports_signatures && native_gemini_parts.is_none() {
             let text_signature = message
                 .get("signature")
                 .and_then(Value::as_str)

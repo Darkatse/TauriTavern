@@ -127,8 +127,7 @@ pub(super) async fn generate_stream(
 ) -> Result<(), DomainError> {
     let response = send_stream_request(repository, config, endpoint_path, payload).await?;
 
-    HttpChatCompletionRepository::stream_sse_response("Google Gemini", response, sender, cancel)
-        .await
+    gemini::stream_generate_content_with_native("Google Gemini", response, sender, cancel).await
 }
 
 pub(super) async fn generate_with_deltas(

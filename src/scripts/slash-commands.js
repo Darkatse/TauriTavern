@@ -196,6 +196,11 @@ function setupConnectAPIMap() {
             button: '#api_button_openai',
             source: chat_completion_sources.CUSTOM,
         },
+        'custom_gemini_generate_content': {
+            selected: 'openai',
+            button: '#api_button_openai',
+            source: chat_completion_sources.CUSTOM,
+        },
         'custom_gemini_interactions': {
             selected: 'openai',
             button: '#api_button_openai',
@@ -477,7 +482,7 @@ export function initDefaultSlashCommands() {
                 return normalized;
             }
 
-            const allowed = ['openai_compat', 'openai_responses', 'claude_messages', 'gemini_interactions'];
+            const allowed = ['openai_compat', 'openai_responses', 'claude_messages', 'gemini_interactions', 'gemini_generate_content'];
             if (!allowed.includes(normalized)) {
                 toastr.error(t`Error: ${rawFormat} is not a valid custom API format`);
                 return '';
@@ -495,6 +500,9 @@ export function initDefaultSlashCommands() {
                     break;
                 case 'claude_messages':
                     sourceSelectValue = 'custom_claude_messages';
+                    break;
+                case 'gemini_generate_content':
+                    sourceSelectValue = 'custom_gemini_generate_content';
                     break;
                 case 'gemini_interactions':
                     sourceSelectValue = 'custom_gemini_interactions';
@@ -516,12 +524,13 @@ export function initDefaultSlashCommands() {
                     new SlashCommandEnumValue('openai_responses'),
                     new SlashCommandEnumValue('claude_messages'),
                     new SlashCommandEnumValue('gemini_interactions'),
+                    new SlashCommandEnumValue('gemini_generate_content'),
                 ],
             }),
         ],
         helpString: `
             <div>
-                ${t`Get or set the custom API format (OpenAI-compatible / OpenAI Responses / Claude Messages / Gemini Interactions).`}
+                ${t`Get or set the custom API format (OpenAI-compatible / OpenAI Responses / Claude Messages / Gemini Interactions / Gemini generateContent).`}
             </div>
         `,
     }));

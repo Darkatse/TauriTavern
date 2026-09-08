@@ -8,6 +8,7 @@ pub(super) enum CustomApiFormat {
     OpenAiResponses,
     ClaudeMessages,
     GeminiInteractions,
+    GeminiGenerateContent,
 }
 
 impl CustomApiFormat {
@@ -17,6 +18,7 @@ impl CustomApiFormat {
             "openai_responses" => Ok(Self::OpenAiResponses),
             "claude_messages" => Ok(Self::ClaudeMessages),
             "gemini_interactions" => Ok(Self::GeminiInteractions),
+            "gemini_generate_content" => Ok(Self::GeminiGenerateContent),
             other => Err(ApplicationError::ValidationError(format!(
                 "Unsupported custom_api_format: {other}"
             ))),
@@ -27,7 +29,9 @@ impl CustomApiFormat {
         match self {
             Self::OpenAiCompat | Self::OpenAiResponses => ChatCompletionSource::Custom,
             Self::ClaudeMessages => ChatCompletionSource::Claude,
-            Self::GeminiInteractions => ChatCompletionSource::Makersuite,
+            Self::GeminiInteractions | Self::GeminiGenerateContent => {
+                ChatCompletionSource::Makersuite
+            }
         }
     }
 }

@@ -410,6 +410,9 @@ export function bootstrapTauriMain() {
         .catch((error) => { console.warn('TauriTavern: Failed to load settings panels:', error); }));
     runAfterTauriReady(() => import('../../scripts/tauri/regex/native-regex-settings.js')
         .then(({ installNativeRegexBackendSetting }) => installNativeRegexBackendSetting()));
+    runAfterTauriReady(() => import('../../scripts/tauri/generation-params/panel.js')
+        .then(({ installGenerationParamsPanel }) => installGenerationParamsPanel())
+        .catch((error) => { console.error('TauriTavern: Failed to install generation parameter panel:', error); }));
     runAfterTauriReady(() => import('./services/dynamic-theme/install.js')
         .then(({ installDynamicTheme }) => installDynamicTheme()));
     if (!isEmbeddedRuntimeTakeoverDisabled()) {

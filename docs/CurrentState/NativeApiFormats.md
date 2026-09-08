@@ -1,8 +1,8 @@
 # 原生 API 格式（Custom）兼容现状
 
-最后更新：2026-08-21
+最后更新：2026-09-08
 
-本文件描述 **TauriTavern 已落地** 的三家原生 API 格式兼容（OpenAI Responses / Claude Messages / Gemini Interactions）的当前实现快照与持续开发约束。
+本文件描述 **TauriTavern 已落地** 的三家原生 API 格式兼容（OpenAI Responses / Claude Messages / Gemini generateContent / Gemini Interactions）的当前实现快照与持续开发约束。
 
 目标边界（回滚兼容）：
 - “倒回 SillyTavern”后，ST 1.16.0 **能启动且设置不崩** 即可（不追求 ST 原生理解新字段）。
@@ -11,10 +11,11 @@
 
 ## 1. 当前解决了什么问题
 
-在保持前端尽量沿用 SillyTavern 语义（`chat.completion` / tool loop / 事件流）前提下，为 `Custom` 入口新增三种“原生协议”变体：
+在保持前端尽量沿用 SillyTavern 语义（`chat.completion` / tool loop / 事件流）前提下，为 `Custom` 入口新增四种“原生协议”变体：
 
 - **OpenAI Responses**：`/v1/responses`（支持 stream + tool calling）
 - **Claude Messages**：`/v1/messages`（Custom 变体默认不注入 `anthropic-beta`；仅在用户显式启用 Claude prompt caching 时自动补充 caching 所需 header）
+- **Gemini generateContent**：`/v1beta/models/{model}:generateContent` / `:streamGenerateContent?alt=sse`（复用 Google AI Studio 链路，支持 stream + tool calling + native parts 回放）
 - **Gemini Interactions**：`/v1beta/interactions`（支持 stream + tool calling + thought signature/native blocks 回放）
 
 核心原则：
@@ -27,15 +28,16 @@
 
 ### 2.1 配置与选择（前端）
 
-UI：OpenAI 设置的 `Chat Completion Source` 增加 3 个选项：
+UI：OpenAI 设置的 `Chat Completion Source` 增加 4 个选项：
 - `Custom (OpenAI Responses)`
 - `Custom (Claude Messages)`
+- `Custom (Gemini generateContent)`
 - `Custom (Gemini Interactions)`
 
 落盘语义（关键契约）：
 - 任何 “Custom (*)” 变体最终都落到：
   - `oai_settings.chat_completion_source = "custom"`
-  - `oai_settings.custom_api_format ∈ {"openai_compat","openai_responses","claude_messages","gemini_interactions"}`
+  - `oai_settings.custom_api_format ∈ {"openai_compat","openai_responses","claude_messages","gemini_interactions","gemini_generate_content"}`
 
 这保证把配置文件拷回 ST 1.16.0 时：
 - `chat_completion_source` 仍是 ST 已知的 `custom`
@@ -46,8 +48,9 @@ Connection Profiles（Connection Manager 扩展）：
 - Custom 变体由单独字段 `custom-api-format` 记录与回放（等价于执行 `/custom-api-format <format>`）。
 
 自定义端点预览（UI 文案）：
-- 端点预览只展示 **当前所选格式** 的最终 endpoint（base URL + suffix），并保留“末尾加 `/v1` 试试”的提示。
-- suffix 映射：OpenAI-compatible→`/chat/completions`，Responses→`/responses`，Claude→`/messages`，Gemini→`/interactions`。
+- 端点预览只展示 **当前所选格式** 的最终 endpoint，不显示密钥。
+- suffix 映射：OpenAI-compatible→`/chat/completions`，Responses→`/responses`，Claude→`/messages`，Gemini Interactions→`/interactions`。
+- Gemini generateContent 的预览随 Base URL、模型名及流式开关更新：保留显式 `/v1` 或 `/v1beta`，否则补 `/v1beta`，再追加 `/models/{model}:generateContent` 或 `/models/{model}:streamGenerateContent?alt=sse`。此格式不显示“试着追加 `/v1`”的通用提示，地址规则见 §4.4。
 
 ### 2.2 请求构建（Rust payload builder）
 
@@ -56,6 +59,7 @@ Connection Profiles（Connection Manager 扩展）：
 - `openai_responses` → 构造 `/responses`
 - `claude_messages` → 复用 Claude Messages 构造，并应用 include/exclude overrides
 - `gemini_interactions` → 构造 `/interactions`
+- `gemini_generate_content` → 复用 MakerSuite builder，构造 `/generateContent` 或 `/streamGenerateContent`，由 repository 将模型名放入 URL；仍在 service 层应用 Custom include/exclude/header overrides
 
 ### 2.3 HTTP 调用 + Stream 处理（Rust repository）
 
@@ -63,6 +67,7 @@ Connection Profiles（Connection Manager 扩展）：
 - `/responses` → OpenAI Responses repository（语义 SSE → 归一化 chunk）
 - `/interactions` → Gemini Interactions repository（语义 SSE → 归一化 chunk）
 - `/messages` → Claude repository（沿用 Claude 的事件流语义）
+- `/generateContent` / `/streamGenerateContent` → MakerSuite repository（常规 Gemini 原生 API）
 - 其他 → Custom OpenAI-compatible（`/chat/completions`）
 
 > 备注：Claude 的 streaming 仍保持“Anthropic 事件流 JSON”语义；Responses/Interactions streaming 则统一归一化为 OpenAI `chat.completion.chunk`。
@@ -78,12 +83,13 @@ Connection Profiles（Connection Manager 扩展）：
 | OpenAI-compatible (`/chat/completions`) | ✅ | ✅ | ✅（上游 ST 语义） | ✅（`tool_calls[].extra_content` opaque round-trip） | ✅ |
 | OpenAI Responses (`/responses`) | ✅（normalize→chat.completion） | ✅（Responses events→chat.completion.chunk） | ✅（full transcript replay / `previous_response_id`） | ✅（backend normalizer / Agent gateway 保留 raw `output` 与 `responseId`） | ✅ |
 | Claude Messages (`/messages`) | ✅（normalize→chat.completion） | ✅（Anthropic events） | ✅（沿用 Claude tool loop） | ✅（现有链路） | ✅ |
+| Gemini generateContent (`/models/{model}:…`) | ✅（normalize→chat.completion，含 native） | ✅（Gemini 原生 events，末包带 native） | ✅ | ✅（`message.extra.native.gemini.content` 回放） | ✅ |
 | Gemini Interactions (`/interactions`) | ✅（normalize→chat.completion，含 native） | ✅（SSE→chat.completion.chunk，末包带 native） | ✅ | ✅（`message.extra.native` 回放 steps） | ✅ |
 
 ### 3.2 明确的当前限制
 
 - **Custom OpenAI Responses 不再维护 call_id → response_id 内存缓存**。普通 Custom 请求和默认关闭增强模式的 Agent 请求依赖完整 transcript / native output replay；显式启用 Responses WebSocket 模式后，Agent 才通过 run-scoped `provider_state` 使用 `previous_response_id` 与 incremental input。
-- **Custom 的 model list / status check** 已按 `custom_api_format` 对齐传输协议：OpenAI-compatible / Responses 继续使用兼容 `/models`，Claude Messages 使用 Claude `/models`，Gemini Interactions 使用 Gemini `/models`。
+- **Custom 的 model list / status check** 已按 `custom_api_format` 对齐传输协议：OpenAI-compatible / Responses 继续使用兼容 `/models`，Claude Messages 使用 Claude `/models`，Gemini generateContent / Interactions 均使用 Gemini `/models`。
 - **Claude streaming 不做 chunk 归一化**：前端需走 Anthropic events 分支解析（现状就是如此，优先复用既有 Claude 语义）。
 
 ---
@@ -196,6 +202,22 @@ streaming 语义：
 - 前端在 `message_delta` / 非流式响应的 `stop_reason` 上显式处理终态：`refusal` 保留 provider 输出、显示 toast，并将同一警告追加到最终 `message.mes`；`max_tokens` / `model_context_window_exceeded` 保留部分文本、显示截断警告；这些终态都不会执行或回放未完成的 tool call
 - 只有包含 client `tool_use` 的 assistant turn 才把完整 `content[]` 保存到 `message.extra.native.claude` 并在同 provider/model 的后续请求原样回放；普通 assistant turn 继续使用 SillyTavern canonical content，避免历史 thinking 绕过 token budget 与消息编辑语义
 - SillyTavern 将一次 tool turn 拆成相邻可见消息与 invocation 消息时，translator 仅在两者 native content 完全相等时折叠为一次，内容不一致则 fail-fast；编辑其中任一消息会同时使两份 native metadata 失效
+
+### 4.4 Gemini generateContent（常规原生 API）
+
+地址与鉴权：
+- Base URL 填服务根地址或版本根地址，例如 `https://example.com`、`https://example.com/v1beta`、`https://example.com/proxy/v1`。末尾斜杠会被移除；显式 `/v1`、`/v1beta` 原样保留，其他路径末尾补 `/v1beta`。
+- 不要在 Base URL 中填写 `/models`、模型名、`:generateContent`、`:streamGenerateContent` 或 `/interactions`。模型单独填写 `gemini-…`，也接受 `models/gemini-…`。
+- 非流式 POST `{version-base}/models/{model}:generateContent`；流式 POST `{version-base}/models/{model}:streamGenerateContent?alt=sse`；模型列表 GET `{version-base}/models`，过滤支持 `generateContent` 的模型。
+- 使用 **Custom API Key**，沿用 MakerSuite 的 `x-goog-api-key` header 和 `key` query 鉴权；流式另带 `alt=sse`。Additional Headers 最后应用，渠道若要求 Bearer 可显式填写 `Authorization`；若不需要 Gemini key，应清空 Custom API Key，避免多余鉴权。
+- Custom 参数覆盖作用于翻译后的 Gemini body（如 `generationConfig`、`safetySettings`），不绕过 builder 校验。`model` 是 URL 路由字段，发往上游前从 body 移除。
+
+响应与历史：
+- 非流式复用 Gemini normalizer：文本、`reasoning_content`、function calls、usage 与 `native.gemini.content` 保留。
+- 浏览器流式复用 Gemini 原生 events 解析文本、思考和工具调用；MakerSuite transport 复用 Rust accumulator 汇总完整 content，在正常结束后发送 `choices[0].delta.native` metadata 终包。取消不发送伪造的完整 native turn，异常与缺失终态 fail-fast。
+- 同 API/model 历史复用 native parts；已有 thought signatures 不被 canonical signature 或占位签名覆盖。native parts 优先于 canonical 工具调用，避免重复 functionCall。
+- Connection Profiles 与 Agent Model Targets 仍保存 `api=custom`，以 `custom-api-format=gemini_generate_content` 区分协议。Agent gateway 复用 Gemini provider format 与 delta/native 回放链路。
+- 不自动探测协议，也不在 Interactions 失败后回退；仅支持 Interactions 的地址仍需选择原有变体。
 
 ---
 

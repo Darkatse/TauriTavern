@@ -22,6 +22,8 @@ mod cohere;
 mod gemini;
 mod gemini_interactions;
 mod makersuite;
+#[cfg(test)]
+mod makersuite_tests;
 mod normalizers;
 mod openai;
 mod openai_responses;
@@ -586,6 +588,12 @@ fn provider_transport_source(
     source: ChatCompletionSource,
     endpoint_path: &str,
 ) -> Result<ChatCompletionSource, DomainError> {
+    if source == ChatCompletionSource::Custom
+        && matches!(endpoint_path, "/generateContent" | "/streamGenerateContent")
+    {
+        return Ok(ChatCompletionSource::Makersuite);
+    }
+
     if source != ChatCompletionSource::OpenCode {
         return Ok(source);
     }

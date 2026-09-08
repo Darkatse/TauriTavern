@@ -737,7 +737,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="opencode,claude,aws_bedrock,aimlapi,openrouter,makersuite,vertexai,cohere,perplexity,electronhub,chutes,nanogpt,workers_ai">
+                                <div class="range-block" data-source="opencode,claude,aws_bedrock,aimlapi,openrouter,makersuite,vertexai,cohere,perplexity,electronhub,chutes,nanogpt,workers_ai,custom" data-custom-api-format="claude_messages,gemini_generate_content">
                                     <div class="range-block-title" data-i18n="Top K">
                                         Top K
                                     </div>
@@ -1971,7 +1971,7 @@
                                             </span>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="opencode,claude,aws_bedrock,makersuite,vertexai">
+                                    <div class="range-block" data-source="opencode,claude,aws_bedrock,makersuite,vertexai,custom" data-custom-api-format="claude_messages,gemini_generate_content">
                                         <label for="use_sysprompt" class="checkbox_label widthFreeExpand">
                                             <input id="use_sysprompt" type="checkbox" />
                                             <span>
@@ -1984,7 +1984,20 @@
                                             </span>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="makersuite,vertexai,aimlapi,openrouter,claude,electronhub,chutes,nanogpt,custom" data-custom-api-format="claude_messages,openai_responses">
+                                    <div class="range-block" data-source="claude,custom" data-custom-api-format="claude_messages">
+                                        <label for="claude_fast_mode" class="checkbox_label widthFreeExpand">
+                                            <input id="claude_fast_mode" type="checkbox" />
+                                            <span>
+                                                <span data-i18n="Fast mode">Fast mode</span>
+                                            </span>
+                                        </label>
+                                        <div class="toggle-description justifyLeft marginBot5">
+                                            <span data-i18n="Request faster output at premium pricing. Only supported by some models; unsupported models return an error.">
+                                                Request faster output at premium pricing. Only supported by some models; unsupported models return an error.
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div class="range-block" data-source="makersuite,vertexai,aimlapi,openrouter,claude,electronhub,chutes,nanogpt,custom" data-custom-api-format="claude_messages,openai_responses,gemini_generate_content">
                                         <label for="openai_enable_web_search" class="checkbox_label flexWrap widthFreeExpand">
                                             <input id="openai_enable_web_search" type="checkbox" />
                                             <span data-i18n="Enable web search">Enable web search</span>
@@ -2182,10 +2195,10 @@
                                             <strong class="toggle-description justifyLeft marginBot5" data-source="openrouter">
                                                 Request model reasoning = Off with Reasoning Effort = Minimum disables reasoning entirely on models that support that, but can cause errors with some models.
                                             </strong>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock,vertexai" data-i18n="Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default. Claude 5 models think by default.">
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock,vertexai,custom" data-custom-api-format="claude_messages" data-i18n="Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default. Claude 5 models think by default.">
                                                 Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default. Claude 5 models think by default.
                                             </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="makersuite,vertexai">
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="makersuite,vertexai,custom" data-custom-api-format="gemini_generate_content">
                                                 <span data-i18n="Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.">
                                                     Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.
                                                 </span>
@@ -2210,12 +2223,12 @@
                                             <div class="toggle-description justifyLeft marginBot5" data-i18n="Constrains the verbosity of the model's response.">
                                                 Constrains the verbosity of the model's response.
                                             </div>
-                                            <strong class="toggle-description justifyLeft marginBot5" data-source="claude">
+                                            <strong class="toggle-description justifyLeft marginBot5" data-source="claude,custom" data-custom-api-format="claude_messages">
                                                 On Opus 4.6 / Sonnet 4.6, a non-automatic Reasoning Effort takes precedence over Verbosity.
                                             </strong>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="claude">
+                                    <div class="range-block" data-source="claude,custom" data-custom-api-format="claude_messages">
                                         <div class="wide100p">
                                             <div class="flex-container alignItemsCenter">
                                                 <span id="claude_assistant_prefill_text" data-i18n="Assistant Prefill">Assistant Prefill</span>
@@ -2918,6 +2931,7 @@
                                 <option value="custom" data-i18n="Custom (OpenAI-compatible)">Custom (OpenAI-compatible)</option>
                                 <option value="custom_openai_responses" data-i18n="Custom (OpenAI Responses)">Custom (OpenAI Responses)</option>
                                 <option value="custom_claude_messages" data-i18n="Custom (Claude Messages)">Custom (Claude Messages)</option>
+                                <option value="custom_gemini_generate_content" data-i18n="Custom (Gemini generateContent)">Custom (Gemini generateContent)</option>
                                 <option value="custom_gemini_interactions" data-i18n="Custom (Gemini Interactions)">Custom (Gemini Interactions)</option>
                             </optgroup>
                             <optgroup>
@@ -2995,7 +3009,8 @@
                                 <div class="wide100p">
                                     <input id="openai_reverse_proxy" type="text" class="text_pole" placeholder="https://api.openai.com/v1" />
                                     <small class="reverse_proxy_warning">
-                                        <span data-i18n="Doesn't work? Try adding">Doesn't work? Try adding</span> <code>/v1</code> <span data-i18n="at the end!">at the end!</span>
+                                        <span id="custom_endpoint_version_hint"><span data-i18n="Doesn't work? Try adding">Doesn't work? Try adding</span> <code>/v1</code> <span data-i18n="at the end!">at the end!</span></span>
+                                    <span id="custom_gemini_endpoint_hint" style="display: none;" data-i18n="Gemini Base URL accepts /v1 or /v1beta; otherwise /v1beta is added. Do not include /models or a generation method.">Gemini Base URL accepts /v1 or /v1beta; otherwise /v1beta is added. Do not include /models or a generation method.</span>
                                         <span data-i18n="completions note prefix"></span><code>/chat/completions</code> <b data-i18n="suffix will be added automatically.">suffix will be added automatically.</b>
                                     </small>
                                 </div>
