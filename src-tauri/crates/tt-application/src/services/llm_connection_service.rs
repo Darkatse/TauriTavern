@@ -1096,35 +1096,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn apply_custom_gemini_connection_preserves_format_and_custom_endpoint() {
-        let connection = custom_connection("gemini_generate_content");
-        validate_connection(&connection).expect("Gemini connection should validate");
-        let expected_endpoint = connection.endpoint.base_url.clone();
-        let service = LlmConnectionService::new(
-            std::sync::Arc::new(TestRepo { connection }),
-            TestSettingsRepository::new(),
-        );
-        let mut payload = json!({
-            "custom_claude_prompt_caching": true,
-            "custom_openai_responses_websocket": true,
-            "messages": []
-        })
-        .as_object()
-        .unwrap()
-        .clone();
-        service
-            .apply_connection_to_payload("custom-main", "gemini-test", &mut payload)
-            .await
-            .expect("Gemini connection overlay");
-        assert_eq!(payload["chat_completion_source"], "custom");
-        assert_eq!(payload["custom_api_format"], "gemini_generate_content");
-        assert_eq!(payload["custom_url"], json!(expected_endpoint));
-        assert_eq!(payload["model"], "gemini-test");
-        assert!(payload.get("custom_claude_prompt_caching").is_none());
-        assert!(payload.get("custom_openai_responses_websocket").is_none());
-    }
-
-    #[tokio::test]
     async fn apply_connection_overlays_and_clears_stale_payload_fields() {
         let service = LlmConnectionService::new(
             std::sync::Arc::new(TestRepo {

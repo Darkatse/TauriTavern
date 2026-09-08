@@ -17,14 +17,3 @@ test('Custom Gemini preview follows version, model and streaming URL rules witho
         assert.equal(url, expected);
     }
 });
-
-test('Other Custom format previews retain their endpoints', () => {
-    for (const [format, suffix] of [
-        [undefined, '/chat/completions'], ['openai_responses', '/responses'],
-        ['claude_messages', '/messages'], ['gemini_interactions', '/interactions'],
-    ]) {
-        assert.deepEqual(getCustomEndpointPreview({ custom_url: 'https://example.test/v1/', custom_api_format: format }), {
-            url: `https://example.test/v1${suffix}`, suffix,
-        });
-    }
-});

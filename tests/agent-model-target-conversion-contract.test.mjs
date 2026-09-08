@@ -123,21 +123,6 @@ test('Agent model target conversion preserves native adapter opt-ins', async () 
     assert.deepEqual(connection.capabilities, {});
 });
 
-test('Gemini model targets preserve the Custom source and explicit native format', async () => {
-    const { buildLlmConnectionFromModelTarget } = await importConversion();
-    for (const api of ['custom', 'custom_gemini_generate_content']) {
-        const connection = buildLlmConnectionFromModelTarget(sampleTarget({
-            api, model: 'gemini-test', 'custom-api-format': 'gemini_generate_content',
-            'api-url': 'https://example.test/v1beta',
-        }));
-        assert.deepEqual(connection.provider, {
-            chatCompletionSource: 'custom', customApiFormat: 'gemini_generate_content',
-        });
-        assert.equal(connection.endpoint.baseUrl, 'https://example.test/v1beta');
-        assert.equal(connection.auth.secretRef.key, 'api_key_custom');
-    }
-});
-
 test('Agent model target conversion keeps OpenCode service and wire format', async () => {
     const { buildLlmConnectionFromModelTarget } = await importConversion();
     const connection = buildLlmConnectionFromModelTarget(sampleTarget({

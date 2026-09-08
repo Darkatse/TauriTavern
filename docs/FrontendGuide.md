@@ -165,17 +165,14 @@ src/
 - Theme 文件只保存可移植的外观快照，不包含本机角色或聊天身份。聊天绑定随 JSONL header metadata 持久化；角色与群组绑定随 settings 持久化。
 - 所有生效切换必须经 `src/scripts/power-user.js` 的统一入口；Tauri appearance adapter 不模拟 `#themes` 的 DOM change 事件。
 
-## 6.4 Chat Completion 可选参数的移除与预设扩展槽
+## 6.4 Chat Completion 参数管理
 
-- 实现位置：`src/scripts/tauri/generation-params/`（`catalog.js` 不可推导的静态知识、`omission.js` 纯逻辑、`json-view.js` 纯逻辑、`panel.js` DOM 层）。
-- 启动时序：宿主就绪后由 `bootstrap.js` 订阅上游 `APP_READY`，收到事件后才动态导入并挂载面板。`panel.js` 静态依赖上游应用模块，因此不能在 Tauri bridge 就绪时提前导入；页面就绪事件支持晚订阅回放。
-- 参数发现是自动的：`panel.js` 枚举上游 `settingsToUpdate`（预设 key → 选择器 / 设置字段 / 是否 checkbox），只保留控件位于 `#range_block_openai` 或 `#openai_settings` 内的条目，块 = `closest('[data-source], .range-block, .inline-drawer')`；嵌套在另一个受管块内的控件（如媒体内联下的图像质量、函数调用下的递归上限）归属父块，不单独成项。标签直接取自上游标记（`<label for>` / `{id}_text` / `.range-block-title` / drawer header），不维护平行 i18n 表。上游新增设置无需改目录即可出现。
-- 种类按条目判定：checkbox → `toggle`（“可见 ⇔ 启用”，添加即打开，移除即关闭并隐藏，不存额外状态）；预设 key 在 `catalog.PAYLOAD_KEYS` 中 → `request`（移除后对应 payload key 不再出现在请求中，由服务端默认值接管，数值保留）；其余 → `local`（移除只隐藏，值继续生效，可见性存 `localStorage['tt:generationParams:hiddenBlocks']`，设备级偏好，不进预设）。`local` 是未知上游 key 的安全默认；上游新增的设置若其实是 payload 字段，需补进 `PAYLOAD_KEYS`。上下文预算、输出上限、流式在 `EXCLUDED_PRESET_KEYS`，始终显示。
-- 作用域（`scope`）：块的 `[data-source]` 列表 ≤ `SOURCE_SPECIFIC_MAX_SOURCES`（3）个渠道 → `source`（渠道特有功能，如 Middle-out、Assistant Prefill），否则 → `common`（通用参数，只是部分渠道不支持）。是否支持仍由上游显隐决定。添加面板按此分两组：“通用”与当前渠道名（取自上游 `#chat_completion_source` 选中项文本）。每个受管块打上 `data-tt-param` / `data-tt-kind` / `data-tt-scope`，供 CSS、测试与后续第一方面板（如 Agent 设置）复用同一套钩子。
-- 唯一接入点：`createGenerationParameters()` 返回前调用 `applyParamOmissions()`，覆盖普通生成、prompt 快照与 Agent 路径；Rust provider 层本就只转发存在的 key，无需改动（例外：AWS Bedrock 自定义模板在 `temperature` 缺失时填 0.7）。上游“Additional Parameters”的 `include_body` 在 Rust 侧最后合并，因此显式直通优先于面板的移除。
-- 持久化：仅 `request` 类需要，`oai_settings.extensions.tauritavern.omit_params: string[]`（payload key），随上游预设 `extensions` 槽保存/载入/导出。无该字段的旧预设行为不变；导出到上游 SillyTavern 时该子键被忽略。只有 `PAYLOAD_KEYS` 的值会被尊重，外来预设无法借此删除 `messages` 等结构字段。
-- “当前渠道是否支持”直接读取上游 `[data-source]` 块的 inline `display`，不复制渠道列表；移除状态用独立 class 叠加，不重建、不搬动上游控件。上游用 jQuery `.toggle()` 切换显隐，它在 show 时若发现元素被计算样式隐藏会写入 inline `display:block`；`sync()` 把非 `none` 的 inline 值归一为空，保住 `.range-block` 的 flex 布局。
-- JSON 视图（`json-view.js` 纯逻辑）：对象键为参数 key，键存在即启用，缺失即移除；toggle 只序列化为 `true`；`local` 不入 JSON。类型与范围直接取自上游控件（`min/max/options`，textarea 为自由文本）；未知 key 或非法值报错且整体不应用，不做部分写入。写回通过上游控件的 `input` 事件，与预设加载同路径。这是参数配置，不是最终请求预览；上游按渠道/模型的裁剪仍在之后发生。
+实现位于 `src/scripts/tauri/generation-params/`，在 `APP_READY` 后导入并挂载。参数发现、渠道支持与值的读写沿用上游设置和控件。
+
+- 移除请求参数表示从生成参数中省略该字段，保留原值；移除开关表示关闭；隐藏本地区块不改变其内容或行为。
+- 请求参数的移除状态保存在预设 `extensions.tauritavern.omit_params`，本地区块显隐仅保存在设备上。旧预设保持原行为，移除范围限于可选参数，不能删除 `messages`、`model` 等结构字段。
+- 参数移除统一在 `createGenerationParameters()` 出口应用；用户显式配置的 Additional Parameters 仍拥有最终覆盖权。
+- JSON 视图编辑参数配置，非法输入整体不应用；它不是最终请求预览，后续仍遵循渠道与模型的转换规则。
 
 ## 7. 插件系统前端适配
 

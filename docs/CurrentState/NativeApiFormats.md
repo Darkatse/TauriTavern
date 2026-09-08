@@ -14,7 +14,7 @@
 在保持前端尽量沿用 SillyTavern 语义（`chat.completion` / tool loop / 事件流）前提下，为 `Custom` 入口新增四种“原生协议”变体：
 
 - **OpenAI Responses**：`/v1/responses`（支持 stream + tool calling）
-- **Claude Messages**：`/v1/messages`（Custom 变体默认不注入 `anthropic-beta`；仅在用户显式启用 Claude prompt caching 时自动补充 caching 所需 header）
+- **Claude Messages**：`/v1/messages`（显式启用 prompt caching 或快速模式时补充所需 beta header）
 - **Gemini generateContent**：`/v1beta/models/{model}:generateContent` / `:streamGenerateContent?alt=sse`（复用 Google AI Studio 链路，支持 stream + tool calling + native parts 回放）
 - **Gemini Interactions**：`/v1beta/interactions`（支持 stream + tool calling + thought signature/native blocks 回放）
 
@@ -47,10 +47,7 @@ Connection Profiles（Connection Manager 扩展）：
 - profile 中的 `api` 对 Custom 统一记录为 `custom`，避免把 UI 变体值写入配置造成回滚风险。
 - Custom 变体由单独字段 `custom-api-format` 记录与回放（等价于执行 `/custom-api-format <format>`）。
 
-自定义端点预览（UI 文案）：
-- 端点预览只展示 **当前所选格式** 的最终 endpoint，不显示密钥。
-- suffix 映射：OpenAI-compatible→`/chat/completions`，Responses→`/responses`，Claude→`/messages`，Gemini Interactions→`/interactions`。
-- Gemini generateContent 的预览随 Base URL、模型名及流式开关更新：保留显式 `/v1` 或 `/v1beta`，否则补 `/v1beta`，再追加 `/models/{model}:generateContent` 或 `/models/{model}:streamGenerateContent?alt=sse`。此格式不显示“试着追加 `/v1`”的通用提示，地址规则见 §4.4。
+端点预览由所选协议和连接设置推导；Gemini generateContent 另取模型与流式状态，地址规则与后端保持一致。
 
 ### 2.2 请求构建（Rust payload builder）
 
@@ -59,7 +56,7 @@ Connection Profiles（Connection Manager 扩展）：
 - `openai_responses` → 构造 `/responses`
 - `claude_messages` → 复用 Claude Messages 构造，并应用 include/exclude overrides
 - `gemini_interactions` → 构造 `/interactions`
-- `gemini_generate_content` → 复用 MakerSuite 翻译器（`build_custom`，Custom 参数策略见 §4.4），构造 `/generateContent` 或 `/streamGenerateContent`，由 repository 将模型名放入 URL；仍在 service 层应用 Custom include/exclude/header overrides
+- `gemini_generate_content` → 复用 MakerSuite 翻译器与传输链路，Custom 语义见 §4.4
 
 ### 2.3 HTTP 调用 + Stream 处理（Rust repository）
 
@@ -184,11 +181,8 @@ hosted web search：
 - Vertex Claude 与内建 Bedrock Claude 不继承该开关；它们有各自的 hosted-tool 能力边界。
 
 header 策略（关键契约）：
-- **Custom Claude Messages 默认不自动添加 `anthropic-beta`**，避免第三方兼容端报错。
-- 当前新增显式 opt-in：只有当用户为 `custom_api_format=claude_messages` 勾选“Apply Claude Prompt Caching Strategy”且 TT 的 Claude Prompt Cache 未关闭时，后端才会：
-  - 复用 Claude prompt caching 断点策略
-  - 为请求自动补充 prompt caching 所需的 `anthropic-beta` caching header
-- 未勾选时，仍保持“仅透传用户自定义 headers”的兼容策略。
+- Custom Claude Messages 默认不自动启用 beta 特性；显式开启 prompt caching 或快速模式时，后端补充对应的 `anthropic-beta` header。
+- Prompt caching 仍需同时满足连接 opt-in 与 TT 缓存策略，用户自定义 headers 沿用现有覆盖规则。
 
 image 输入：
 - Claude Messages 复用 shared `content_parts` parser：`image_url` data URL 转成 `source.type=base64`，direct/custom Claude Messages 的远端 `http(s)` URL 转成 `source.type=url`。
@@ -205,24 +199,12 @@ streaming 语义：
 
 ### 4.4 Gemini generateContent（常规原生 API）
 
-地址与鉴权：
-- Base URL 填服务根地址或版本根地址，例如 `https://example.com`、`https://example.com/v1beta`、`https://example.com/proxy/v1`。末尾斜杠会被移除；显式 `/v1`、`/v1beta` 原样保留，其他路径末尾补 `/v1beta`。
-- 不要在 Base URL 中填写 `/models`、模型名、`:generateContent`、`:streamGenerateContent` 或 `/interactions`。模型单独填写 `gemini-…`，也接受 `models/gemini-…`。
-- 非流式 POST `{version-base}/models/{model}:generateContent`；流式 POST `{version-base}/models/{model}:streamGenerateContent?alt=sse`；模型列表 GET `{version-base}/models`，过滤支持 `generateContent` 的模型。
-- 使用 **Custom API Key**，沿用 MakerSuite 的 `x-goog-api-key` header 和 `key` query 鉴权；流式另带 `alt=sse`。Additional Headers 最后应用，渠道若要求 Bearer 可显式填写 `Authorization`；若不需要 Gemini key，应清空 Custom API Key，避免多余鉴权。
-- Custom 参数覆盖作用于翻译后的 Gemini body（如 `generationConfig`、`safetySettings`），不绕过 builder 校验。`model` 是 URL 路由字段，发往上游前从 body 移除。
+- Custom 入口复用 MakerSuite 的翻译与传输链路，通过 `custom_api_format=gemini_generate_content` 显式选择协议。
+- Base URL 与模型分开配置：保留显式 `/v1` 或 `/v1beta`，否则补 `/v1beta`。鉴权使用 Custom API Key；Additional Parameters 在翻译后应用。
+- Custom 模型名按别名处理，保留用户显式采样参数。推理参数需要模型能力映射时，无法识别的别名返回错误，不静默忽略。
+- 原生 parts 与签名在同 API/model 的历史中保真回放；流式请求仅在完整结束后提交 native 历史，错误或取消不提交完整的 native 历史。
 
-参数策略（`makersuite::build_custom`，与第一方 MakerSuite/Vertex 分开）：
-- 模型名是不透明别名：第一方“固定采样模型”表不删除 `temperature`/`top_p`/`top_k`，用户显式值原样转发。
-- `models/<id>` 前缀仅在能力查询时剥离，受支持的 `gemini-*` id 仍按既有契约映射 `thinkingConfig`（budget / level）。
-- 未识别的别名：`include_reasoning` 映射为通用的 `thinkingConfig.includeThoughts`；显式 `reasoning_effort`（非 auto）无法按模型映射时返回 ValidationError，不静默丢弃。
-
-响应与历史：
-- 非流式复用 Gemini normalizer：文本、`reasoning_content`、function calls、usage 与 `native.gemini.content` 保留。
-- 浏览器流式复用 Gemini 原生 events 解析文本、思考和工具调用；MakerSuite transport 复用 Rust accumulator 汇总完整 content，在正常结束后发送 `choices[0].delta.native` metadata 终包。取消不发送伪造的完整 native turn，异常与缺失终态 fail-fast。
-- 同 API/model 历史复用 native parts；已有 thought signatures 不被 canonical signature 或占位签名覆盖。native parts 优先于 canonical 工具调用，避免重复 functionCall。
-- Connection Profiles 与 Agent Model Targets 仍保存 `api=custom`，以 `custom-api-format=gemini_generate_content` 区分协议。Agent gateway 复用 Gemini provider format 与 delta/native 回放链路。
-- 不自动探测协议，也不在 Interactions 失败后回退；仅支持 Interactions 的地址仍需选择原有变体。
+实现入口：[`payload/custom.rs`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/payload/custom.rs)、[`makersuite.rs`](../../src-tauri/crates/tt-adapter-provider-http/src/http_chat_completion_repository/makersuite.rs)。
 
 ---
 

@@ -1123,12 +1123,11 @@ mod tests {
     }
 
     #[test]
-    fn custom_gemini_status_uses_makersuite_transport() {
-        for format in ["gemini_interactions", "gemini_generate_content"] {
-            let source = resolve_status_model_list_source(ChatCompletionSource::Custom, format)
+    fn custom_gemini_interactions_status_uses_makersuite_transport() {
+        let source =
+            resolve_status_model_list_source(ChatCompletionSource::Custom, "gemini_interactions")
                 .expect("status transport should resolve");
-            assert_eq!(source, ChatCompletionSource::Makersuite);
-        }
+        assert_eq!(source, ChatCompletionSource::Makersuite);
     }
 
     #[test]

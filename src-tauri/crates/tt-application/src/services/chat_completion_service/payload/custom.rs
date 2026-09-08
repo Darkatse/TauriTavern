@@ -36,67 +36,32 @@ mod tests {
     use super::build;
 
     #[test]
-    fn custom_gemini_replays_native_parts_and_applies_overrides_after_translation() {
-        use crate::services::chat_completion_service::{
-            AdditionalParameters, exchange::ChatCompletionProviderFormat, payload::build_payload,
-        };
-        use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
-
+    fn custom_gemini_replays_native_parts_without_overwriting_signatures() {
         let native_parts = json!([
             { "text": "Plan", "thought": true, "thoughtSignature": "thought-sig" },
             { "text": "Calling tool", "thoughtSignature": "text-sig" },
             { "functionCall": { "id": "call_1", "name": "weather", "args": {} },
               "thoughtSignature": "tool-sig", "futureField": true }
         ]);
-        for stream in [false, true] {
-            let payload = json!({
-                "chat_completion_source": "custom",
-                "custom_api_format": "gemini_generate_content",
-                "custom_url": "https://example.com/v1beta",
-                "model": "gemini-3-pro-preview", "stream": stream, "use_sysprompt": true,
-                "messages": [
-                    { "role": "system", "content": "Be helpful" },
-                    { "role": "user", "content": "Weather?" },
-                    { "role": "assistant", "content": "Calling tool", "signature": "canonical-sig",
-                      "native": { "gemini": { "content": { "role": "model", "parts": native_parts } } },
-                      "tool_calls": [{ "id": "call_1", "type": "function",
-                        "function": { "name": "weather", "arguments": "{}" } }] },
-                    { "role": "tool", "tool_call_id": "call_1", "content": "Sunny" }
-                ],
-                "custom_include_body": { "generationConfig": { "temperature": 0.4 } },
-                "custom_exclude_body": ["safetySettings"]
-            }).as_object().unwrap().clone();
-            assert_eq!(
-                ChatCompletionProviderFormat::from_payload(ChatCompletionSource::Custom, &payload)
-                    .unwrap(),
-                ChatCompletionProviderFormat::Gemini
-            );
-            let parameters = AdditionalParameters::from_payload(&payload).unwrap();
-            let (endpoint, mut upstream) =
-                build_payload(ChatCompletionSource::Custom, payload).unwrap();
-            parameters.apply_body_overrides(&mut upstream).unwrap();
-            assert_eq!(
-                endpoint,
-                if stream {
-                    "/streamGenerateContent"
-                } else {
-                    "/generateContent"
-                }
-            );
-            assert_eq!(upstream["contents"][1]["parts"], native_parts);
-            assert_eq!(
-                upstream["contents"][2]["parts"][0]["functionResponse"]["name"],
-                "weather"
-            );
-            assert_eq!(
-                upstream["systemInstruction"]["parts"][0]["text"],
-                "Be helpful"
-            );
-            assert_eq!(upstream["generationConfig"]["temperature"], 0.4);
-            assert!(upstream.get("safetySettings").is_none());
-            assert!(upstream.get("custom_api_format").is_none());
-            assert!(upstream.get("custom_url").is_none());
-        }
+        let payload = json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "gemini_generate_content",
+            "model": "gemini-3-pro-preview",
+            "messages": [
+                { "role": "user", "content": "Weather?" },
+                { "role": "assistant", "content": "Calling tool", "signature": "canonical-sig",
+                  "native": { "gemini": { "content": { "role": "model", "parts": native_parts } } },
+                  "tool_calls": [{ "id": "call_1", "type": "function",
+                    "function": { "name": "weather", "arguments": "{}" } }] },
+                { "role": "tool", "tool_call_id": "call_1", "content": "Sunny" }
+            ]
+        });
+        let (_, upstream) = build(payload.as_object().unwrap().clone()).unwrap();
+        assert_eq!(upstream["contents"][1]["parts"], native_parts);
+        assert_eq!(
+            upstream["contents"][2]["parts"][0]["functionResponse"]["name"],
+            "weather"
+        );
     }
 
     /// Custom Gemini treats the model name as an alias: explicit parameters

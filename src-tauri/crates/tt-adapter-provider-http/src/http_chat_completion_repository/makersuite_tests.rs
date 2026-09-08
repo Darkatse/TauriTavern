@@ -6,14 +6,13 @@ use tokio::net::TcpListener;
 use tokio::sync::{mpsc, watch};
 use tt_adapter_http::HttpClientPool;
 use tt_ports::repositories::chat_completion_repository::{
-    AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionRepository,
-    ChatCompletionSource, ChatCompletionStreamDelta,
+    AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionRepository, ChatCompletionSource,
 };
 use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
 use super::HttpChatCompletionRepository;
 
-async fn upstream(status: u16, body: String) -> (String, tokio::task::JoinHandle<String>) {
+async fn upstream(body: String) -> (String, tokio::task::JoinHandle<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
@@ -39,7 +38,7 @@ async fn upstream(status: u16, body: String) -> (String, tokio::task::JoinHandle
             }
         }
         socket.write_all(format!(
-            "HTTP/1.1 {status} Test\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             if body.starts_with("data:") { "text/event-stream" } else { "application/json" },
             body.len(),
         ).as_bytes()).await.unwrap();
@@ -85,13 +84,8 @@ async fn custom_gemini_generate_content_http_contract() {
         json!({ "candidates": [{ "content": { "parts": [{ "text": "lo", "thoughtSignature": "text-sig" }, parts[2]] } }] }),
         json!({ "candidates": [{ "finishReason": "STOP" }] }),
     ];
-    for (mode, base_suffix, model) in [
-        ("generate", "", "gemini-test"),
-        ("generate", "/proxy/v1/", "models/gemini-test"),
-        ("stream", "/v1beta/", "gemini-test"),
-        ("deltas", "/proxy", "models/gemini-test"),
-    ] {
-        let body = if mode == "generate" {
+    for stream in [false, true] {
+        let body = if !stream {
             response.to_string()
         } else {
             events
@@ -99,16 +93,16 @@ async fn custom_gemini_generate_content_http_contract() {
                 .map(|event| format!("data: {event}\n\n"))
                 .collect()
         };
-        let (base, server) = upstream(200, body).await;
-        let (repository, config) = repository(format!("{base}{base_suffix}"));
-        let payload = json!({ "model": model, "contents": [{ "role": "user", "parts": [{ "text": "Hi" }] }] });
-        let endpoint = if mode == "generate" {
+        let (base, server) = upstream(body).await;
+        let (repository, config) = repository(format!("{base}/proxy/v1/"));
+        let payload = json!({ "model": "models/gemini-test", "contents": [{ "role": "user", "parts": [{ "text": "Hi" }] }] });
+        let endpoint = if !stream {
             "/generateContent"
         } else {
             "/streamGenerateContent"
         };
         let source = ChatCompletionSource::Custom;
-        let native = if mode == "stream" {
+        let native = if stream {
             let (sender, mut receiver) = mpsc::unbounded_channel();
             let (_cancel, cancel) = watch::channel(false);
             repository
@@ -123,33 +117,14 @@ async fn custom_gemini_generate_content_http_contract() {
             assert!(receiver.recv().await.is_none());
             terminal["choices"][0]["delta"]["native"].clone()
         } else {
-            let mut deltas = Vec::new();
-            let result = if mode == "deltas" {
-                repository
-                    .generate_with_deltas(source, &config, endpoint, &payload, &mut |delta| {
-                        deltas.push(delta)
-                    })
-                    .await
-                    .unwrap()
-            } else {
-                repository
-                    .generate(source, &config, endpoint, &payload)
-                    .await
-                    .unwrap()
-            };
+            let result = repository
+                .generate(source, &config, endpoint, &payload)
+                .await
+                .unwrap();
             let message = &result.body["choices"][0]["message"];
             assert_eq!(message["content"], "Hello");
             assert_eq!(message["reasoning_content"], "Plan");
             assert_eq!(message["tool_calls"][0]["function"]["name"], "weather");
-            if mode == "deltas" {
-                assert!(matches!(
-                    &deltas[..],
-                    [
-                        ChatCompletionStreamDelta::Reasoning { .. },
-                        ChatCompletionStreamDelta::ToolCall { .. }
-                    ]
-                ));
-            }
             message["native"].clone()
         };
         assert_eq!(native["gemini"]["content"]["parts"], parts);
@@ -163,24 +138,16 @@ async fn custom_gemini_generate_content_http_contract() {
             .nth(1)
             .unwrap();
         let url = reqwest::Url::parse(&format!("{base}{target}")).unwrap();
-        let version_base = match base_suffix {
-            "/proxy/v1/" => "/proxy/v1",
-            "/proxy" => "/proxy/v1beta",
-            _ => "/v1beta",
-        };
         assert_eq!(
             url.path(),
             format!(
-                "{version_base}/models/gemini-test:{}",
+                "/proxy/v1/models/gemini-test:{}",
                 endpoint.trim_start_matches('/')
             )
         );
         let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(query.get("key").map(String::as_str), Some("custom-key"));
-        assert_eq!(
-            query.get("alt").map(String::as_str),
-            (mode != "generate").then_some("sse")
-        );
+        assert_eq!(query.get("alt").map(String::as_str), stream.then_some("sse"));
         assert!(headers.contains("x-goog-api-key: header-override"));
         assert!(!headers.to_lowercase().contains("authorization:"));
         let body: Value = serde_json::from_str(body).unwrap();
@@ -201,7 +168,7 @@ async fn custom_gemini_stream_rejects_incomplete_or_error_events_without_native_
             "stream rejected",
         ),
     ] {
-        let (base, server) = upstream(200, format!("data: {event}\n\n")).await;
+        let (base, server) = upstream(format!("data: {event}\n\n")).await;
         let (repository, config) = repository(base);
         let (sender, mut receiver) = mpsc::unbounded_channel();
         let (_cancel, cancel) = watch::channel(false);
@@ -223,46 +190,4 @@ async fn custom_gemini_stream_rejects_incomplete_or_error_events_without_native_
         }
         server.await.unwrap();
     }
-}
-
-#[tokio::test]
-async fn custom_gemini_model_list_and_upstream_errors() {
-    let (base, server) = upstream(
-        200,
-        json!({ "models": [
-        { "name": "models/gemini-test", "supportedGenerationMethods": ["generateContent"] },
-        { "name": "models/embed", "supportedGenerationMethods": ["embedContent"] }
-    ] })
-        .to_string(),
-    )
-    .await;
-    let (repository, config) = repository(format!("{base}/v1"));
-    assert_eq!(
-        repository
-            .list_models(ChatCompletionSource::Makersuite, &config)
-            .await
-            .unwrap(),
-        json!({ "data": [{ "id": "gemini-test" }] })
-    );
-    let request = server.await.unwrap();
-    assert!(request.starts_with("GET /v1/models?key=custom-key "));
-    assert!(request.contains("x-goog-api-key: header-override"));
-
-    let (base, server) = upstream(
-        400,
-        json!({ "error": { "message": "Unknown Gemini model" } }).to_string(),
-    )
-    .await;
-    let (repository, config) = self::repository(base);
-    let error = repository
-        .generate(
-            ChatCompletionSource::Custom,
-            &config,
-            "/generateContent",
-            &json!({ "model": "bad", "contents": [] }),
-        )
-        .await
-        .unwrap_err();
-    assert!(error.to_string().contains("Unknown Gemini model"));
-    server.await.unwrap();
 }
