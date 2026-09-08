@@ -20,6 +20,10 @@ pub struct SyncHttpClient {
 }
 
 impl SyncHttpClient {
+    pub(crate) fn into_sync_client(self) -> SyncClient {
+        self.inner
+    }
+
     pub fn new(
         base_url: String,
         spki_sha256: String,

@@ -13,6 +13,7 @@ pub use sync::job_executor::InfrastructureSyncJobExecutor;
 pub use sync::lan::client::HttpLanPairingClient;
 pub use sync::lan::control::AxumLanServerControl;
 pub use sync::lan::discovery::LocalLanAddressDiscovery;
+pub use sync::lan::peer_discovery::LanPeerDiscovery;
 pub use sync::lan::store::LanPeerStore;
 pub use sync_automation_store::SyncAutomationStore;
 pub use tt_sync::runtime::TtSyncRuntime;

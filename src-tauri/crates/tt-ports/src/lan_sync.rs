@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use ttsync_contract::peer::DeviceId;
 
+use tt_contracts::lan_discovery::LanDiscoveryAnnouncement;
 use tt_contracts::sync::SyncOperationOptions;
 use tt_domain::errors::DomainError;
 use tt_domain::models::lan_sync::{
@@ -34,6 +35,14 @@ pub trait LanSyncSettingsRepository: Send + Sync {
 #[async_trait]
 pub trait LanPeerRepository: Send + Sync {
     async fn load_or_create_identity(&self) -> Result<LanSyncIdentity, DomainError>;
+    async fn set_device_name(&self, name: &str) -> Result<(), DomainError>;
+    async fn update_paired_connection(
+        &self,
+        device_id: &DeviceId,
+        base_url: &str,
+        device_name: &str,
+        platform: Option<&str>,
+    ) -> Result<(), DomainError>;
     async fn load_paired_devices(&self) -> Result<Vec<LanSyncPairedDevice>, DomainError>;
     async fn upsert_paired_device(&self, device: LanSyncPairedDevice) -> Result<(), DomainError>;
     async fn remove_paired_device(&self, device_id: &DeviceId) -> Result<(), DomainError>;
@@ -46,8 +55,9 @@ pub trait LanServerControl: Send + Sync {
     async fn running_info(&self) -> Option<LanServerInfo>;
 }
 
-pub trait LanServerErrorReporter: Send + Sync {
+pub trait LanServerEvents: Send + Sync {
     fn report_lan_server_error(&self, message: String);
+    fn pairing_completed(&self);
 }
 
 #[async_trait]
@@ -67,13 +77,21 @@ pub trait LanAddressDiscovery: Send + Sync {
 
 #[async_trait]
 pub trait LanPairingClient: Send + Sync {
-    async fn complete_pairing(
+    /// An unpinned probe reads public identity only; pairing must then verify the advertised pin.
+    async fn probe_device(
         &self,
         base_url: &str,
+        spki_sha256: Option<&str>,
+    ) -> Result<LanDiscoveryAnnouncement, DomainError>;
+
+    async fn complete_pairing(
+        &self,
+        base_urls: &[String],
         spki_sha256: &str,
-        token: &str,
-        request: &LanPairCompleteRequest,
-    ) -> Result<LanPairCompleteResponse, DomainError>;
+        expected_device_id: Option<&DeviceId>,
+        local_device: &LanDiscoveryAnnouncement,
+        device_pubkey: &str,
+    ) -> Result<(LanPairCompleteResponse, String), DomainError>;
 }
 
 #[async_trait]
@@ -87,7 +105,6 @@ pub trait PairingApproval: Send + Sync {
 pub trait LanInboundRequestHandler: Send + Sync {
     async fn complete_pairing(
         &self,
-        token: String,
         request: LanPairCompleteRequest,
     ) -> Result<LanPairCompleteResponse, DomainError>;
 

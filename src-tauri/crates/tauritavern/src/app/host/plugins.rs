@@ -30,7 +30,9 @@ pub(super) fn install<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::B
         .plugin(tauri_plugin_opener::init());
 
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(crate::platform::generation_background::plugin());
+    let builder = builder
+        .plugin(crate::platform::generation_background::plugin())
+        .plugin(crate::platform::lan_discovery::plugin());
 
     #[cfg(all(
         feature = "devtools-pilot",

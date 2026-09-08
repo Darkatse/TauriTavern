@@ -8,12 +8,13 @@ use uuid::Uuid;
 
 use crate::json_file::{read_json_file, write_json_file};
 use tt_domain::errors::DomainError;
-use tt_domain::models::lan_sync::{LanSyncIdentity, LanSyncPairedDevice};
+use tt_domain::models::lan_sync::{LanSyncIdentity, LanSyncPairedDevice, validate_device_name};
 use tt_ports::lan_sync::LanPeerRepository;
 
 #[derive(Debug, Clone)]
 pub struct LanPeerStore {
     state_dir: PathBuf,
+    identity_lock: Arc<Mutex<()>>,
     paired_devices_lock: Arc<Mutex<()>>,
 }
 
@@ -21,6 +22,29 @@ pub struct LanPeerStore {
 impl LanPeerRepository for LanPeerStore {
     async fn load_or_create_identity(&self) -> Result<LanSyncIdentity, DomainError> {
         LanPeerStore::load_or_create_identity(self).await
+    }
+
+    async fn set_device_name(&self, name: &str) -> Result<(), DomainError> {
+        validate_device_name(name)?;
+        let _guard = self.identity_lock.lock().await;
+        let mut identity = self.load_or_create_identity_unlocked().await?;
+        identity.device_name = name.to_string();
+        write_json_file(&self.identity_path(), &identity).await
+    }
+
+    async fn update_paired_connection(
+        &self,
+        device_id: &DeviceId,
+        base_url: &str,
+        device_name: &str,
+        platform: Option<&str>,
+    ) -> Result<(), DomainError> {
+        self.update_paired_device(device_id, |peer| {
+            peer.base_url = base_url.to_string();
+            peer.grant.device_name = device_name.to_string();
+            peer.platform = platform.map(str::to_string);
+        })
+        .await
     }
 
     async fn load_paired_devices(&self) -> Result<Vec<LanSyncPairedDevice>, DomainError> {
@@ -40,6 +64,7 @@ impl LanPeerStore {
     pub fn new(default_user_dir: PathBuf) -> Self {
         Self {
             state_dir: default_user_dir.join("user").join("lan-sync").join("v2"),
+            identity_lock: Arc::new(Mutex::new(())),
             paired_devices_lock: Arc::new(Mutex::new(())),
         }
     }
@@ -57,15 +82,23 @@ impl LanPeerStore {
     }
 
     pub async fn load_or_create_identity(&self) -> Result<LanSyncIdentity, DomainError> {
+        let _guard = self.identity_lock.lock().await;
+        self.load_or_create_identity_unlocked().await
+    }
+
+    async fn load_or_create_identity_unlocked(&self) -> Result<LanSyncIdentity, DomainError> {
         let path = self.identity_path();
         if path.is_file() {
-            return read_json_file(&path).await;
+            let mut identity: LanSyncIdentity = read_json_file(&path).await?;
+            identity.platform = std::env::consts::OS.to_string();
+            return Ok(identity);
         }
 
         let identity = LanSyncIdentity {
             device_id: DeviceId::new(Uuid::new_v4().to_string())
                 .expect("generated uuid must be valid"),
             device_name: "TauriTavern".to_string(),
+            platform: std::env::consts::OS.to_string(),
             ed25519_seed: random_base64url(32),
         };
         write_json_file(&path, &identity).await?;
@@ -181,6 +214,7 @@ mod tests {
 
     fn test_paired_device(device_id: DeviceId) -> LanSyncPairedDevice {
         LanSyncPairedDevice {
+            platform: Some("linux".to_string()),
             grant: PeerGrant {
                 device_id,
                 device_name: "Peer".to_string(),

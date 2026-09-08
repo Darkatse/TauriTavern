@@ -5,3 +5,4 @@ pub mod ios_document_picker;
 pub mod ios_share_sheet;
 #[cfg(target_os = "ios")]
 pub mod ios_ui;
+pub mod lan_discovery;

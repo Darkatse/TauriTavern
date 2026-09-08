@@ -59,14 +59,37 @@ impl LanSyncSettingsRepository for MemorySettingsRepository {
 }
 
 struct MemoryPeerRepository {
-    identity: LanSyncIdentity,
+    identity: Mutex<LanSyncIdentity>,
     paired_devices: Mutex<Vec<LanSyncPairedDevice>>,
 }
 
 #[async_trait]
 impl LanPeerRepository for MemoryPeerRepository {
+    async fn set_device_name(&self, name: &str) -> Result<(), DomainError> {
+        self.identity.lock().await.device_name = name.to_string();
+        Ok(())
+    }
+
+    async fn update_paired_connection(
+        &self,
+        device_id: &DeviceId,
+        base_url: &str,
+        device_name: &str,
+        platform: Option<&str>,
+    ) -> Result<(), DomainError> {
+        let mut peers = self.paired_devices.lock().await;
+        let peer = peers
+            .iter_mut()
+            .find(|peer| &peer.grant.device_id == device_id)
+            .expect("paired peer");
+        peer.base_url = base_url.to_string();
+        peer.grant.device_name = device_name.to_string();
+        peer.platform = platform.map(str::to_string);
+        Ok(())
+    }
+
     async fn load_or_create_identity(&self) -> Result<LanSyncIdentity, DomainError> {
-        Ok(self.identity.clone())
+        Ok(self.identity.lock().await.clone())
     }
 
     async fn load_paired_devices(&self) -> Result<Vec<LanSyncPairedDevice>, DomainError> {
@@ -166,26 +189,27 @@ impl DataChangeReconciler for NoopReconciler {
     }
 }
 
-struct MemoryServerControl;
+#[derive(Default)]
+struct MemoryServerControl(Mutex<Option<LanServerInfo>>);
 
 #[async_trait]
 impl LanServerControl for MemoryServerControl {
     async fn start(&self, _port: u16) -> Result<LanServerInfo, DomainError> {
-        Ok(LanServerInfo {
+        let info = LanServerInfo {
             port: 51_234,
             spki_sha256: "server-spki".to_string(),
-        })
+        };
+        *self.0.lock().await = Some(info.clone());
+        Ok(info)
     }
 
     async fn stop(&self) -> Result<(), DomainError> {
+        *self.0.lock().await = None;
         Ok(())
     }
 
     async fn running_info(&self) -> Option<LanServerInfo> {
-        Some(LanServerInfo {
-            port: 51_234,
-            spki_sha256: "server-spki".to_string(),
-        })
+        self.0.lock().await.clone()
     }
 }
 
@@ -218,38 +242,35 @@ struct NoopPairingClient;
 
 #[async_trait]
 impl LanPairingClient for NoopPairingClient {
-    async fn complete_pairing(
+    async fn probe_device(
         &self,
         _base_url: &str,
+        _spki_sha256: Option<&str>,
+    ) -> Result<LanDiscoveryAnnouncement, DomainError> {
+        Err(DomainError::InternalError("not used".to_string()))
+    }
+    async fn complete_pairing(
+        &self,
+        _base_urls: &[String],
         _spki_sha256: &str,
-        _token: &str,
-        _request: &LanPairCompleteRequest,
-    ) -> Result<LanPairCompleteResponse, DomainError> {
+        _expected_device_id: Option<&DeviceId>,
+        _local_device: &LanDiscoveryAnnouncement,
+        _device_pubkey: &str,
+    ) -> Result<(LanPairCompleteResponse, String), DomainError> {
         Err(DomainError::InternalError("not used".to_string()))
     }
 }
 
-struct ReplacingApproval {
-    state: Arc<LanSyncRuntimeState>,
-}
+struct NoopDeviceDiscovery;
 
 #[async_trait]
-impl PairingApproval for ReplacingApproval {
-    async fn request(&self, _request: LanPairingApprovalRequest) -> Result<bool, DomainError> {
-        self.state
-            .set_pairing_session(LanPairingSession {
-                token: "new-token".to_string(),
-                expires_at_ms: now_ms() + 60_000,
-            })
-            .await;
-        Ok(true)
-    }
-
-    async fn confirm(&self, _request_id: &str, _accept: bool) -> Result<(), DomainError> {
+impl LanDeviceDiscovery for NoopDeviceDiscovery {
+    async fn set_device_name(&self, _name: &str) -> Result<(), DomainError> {
         Ok(())
     }
-
-    async fn cancel_all(&self) {}
+    async fn discover_devices(&self) -> Result<Vec<LanDiscoveredDevice>, DomainError> {
+        Ok(Vec::new())
+    }
 }
 
 fn test_device_id(value: &str) -> DeviceId {
@@ -260,6 +281,7 @@ fn test_identity(device_id: DeviceId, device_name: &str) -> LanSyncIdentity {
     LanSyncIdentity {
         device_id,
         device_name: device_name.to_string(),
+        platform: "macos".to_string(),
         ed25519_seed: ttsync_core::crypto::random_base64url(32),
     }
 }
@@ -269,6 +291,7 @@ fn peer_request(device_id: DeviceId, device_name: &str) -> LanPairCompleteReques
     LanPairCompleteRequest {
         device_id,
         device_name: device_name.to_string(),
+        device_platform: Some("android".to_string()),
         device_pubkey: device_pubkey_b64url(&seed).expect("peer public key"),
         client_base_url: "https://192.168.1.23:51000".to_string(),
         client_spki_sha256: "peer-spki".to_string(),
@@ -300,21 +323,14 @@ fn inbound_service(
 }
 
 #[tokio::test]
-async fn inbound_pairing_accepts_peer_and_clears_session() {
+async fn inbound_pairing_accepts_peer_after_confirmation() {
     let state = Arc::new(LanSyncRuntimeState::new());
-    state
-        .set_pairing_session(LanPairingSession {
-            token: "pair-token".to_string(),
-            expires_at_ms: now_ms() + 60_000,
-        })
-        .await;
-
     let identity = test_identity(
         test_device_id("11111111-1111-4111-8111-111111111111"),
         "server",
     );
     let peer_repository = Arc::new(MemoryPeerRepository {
-        identity: identity.clone(),
+        identity: Mutex::new(identity.clone()),
         paired_devices: Mutex::new(Vec::new()),
     });
     let approval = Arc::new(StaticApproval {
@@ -332,22 +348,20 @@ async fn inbound_pairing_accepts_peer_and_clears_session() {
     let peer_id = test_device_id("22222222-2222-4222-8222-222222222222");
 
     let response = inbound
-        .complete_pairing(
-            "pair-token".to_string(),
-            peer_request(peer_id.clone(), "peer"),
-        )
+        .complete_pairing(peer_request(peer_id.clone(), "peer"))
         .await
         .expect("complete pairing");
 
     assert_eq!(response.server_device_id, identity.device_id);
     assert_eq!(response.server_device_name, "server");
+    assert_eq!(response.server_device_platform.as_deref(), Some("macos"));
     assert_eq!(response.granted_permissions, default_lan_permissions());
-    assert!(state.get_pairing_session().await.is_none());
 
     let devices = peer_repository.load_paired_devices().await.unwrap();
     assert_eq!(devices.len(), 1);
     assert_eq!(devices[0].grant.device_id, peer_id);
     assert_eq!(devices[0].grant.device_name, "peer");
+    assert_eq!(devices[0].platform.as_deref(), Some("android"));
     assert_eq!(devices[0].base_url, "https://192.168.1.23:51000");
     assert_eq!(devices[0].spki_sha256, "peer-spki");
     assert_eq!(devices[0].grant.permissions, default_lan_permissions());
@@ -358,58 +372,190 @@ async fn inbound_pairing_accepts_peer_and_clears_session() {
     assert_eq!(approval_requests[0].peer_ip, "192.168.1.23");
 }
 
-#[tokio::test]
-async fn accepted_stale_pairing_request_does_not_clear_new_session() {
-    let state = Arc::new(LanSyncRuntimeState::new());
-    state
-        .set_pairing_session(LanPairingSession {
-            token: "old-token".to_string(),
-            expires_at_ms: now_ms() + 60_000,
-        })
-        .await;
+struct ManualPairingClient {
+    device: Mutex<LanDiscoveryAnnouncement>,
+    pairings: Mutex<usize>,
+}
 
-    let peer_repository = Arc::new(MemoryPeerRepository {
-        identity: test_identity(
-            test_device_id("11111111-1111-4111-8111-111111111111"),
-            "server",
-        ),
+#[async_trait]
+impl LanPairingClient for ManualPairingClient {
+    async fn probe_device(
+        &self,
+        _base_url: &str,
+        pin: Option<&str>,
+    ) -> Result<LanDiscoveryAnnouncement, DomainError> {
+        let device = self.device.lock().await;
+        if pin.is_some_and(|pin| pin != device.spki_sha256) {
+            return Err(DomainError::AuthenticationError("Wrong pin".to_string()));
+        }
+        Ok(device.clone())
+    }
+
+    async fn complete_pairing(
+        &self,
+        urls: &[String],
+        pin: &str,
+        expected: Option<&DeviceId>,
+        _local: &LanDiscoveryAnnouncement,
+        _pubkey: &str,
+    ) -> Result<(LanPairCompleteResponse, String), DomainError> {
+        let device = self.device.lock().await;
+        assert_eq!(pin, device.spki_sha256);
+        assert_eq!(expected, Some(&device.device_id));
+        *self.pairings.lock().await += 1;
+        let identity = test_identity(device.device_id.clone(), &device.device_name);
+        Ok((
+            LanPairCompleteResponse {
+                server_device_id: identity.device_id,
+                server_device_name: identity.device_name,
+                server_device_platform: device.platform.clone(),
+                server_device_pubkey: device_pubkey_b64url(&identity.ed25519_seed)?,
+                granted_permissions: default_lan_permissions(),
+            },
+            urls[0].clone(),
+        ))
+    }
+}
+
+#[async_trait]
+impl LanDeviceDiscovery for ManualPairingClient {
+    async fn set_device_name(&self, _name: &str) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    async fn discover_devices(&self) -> Result<Vec<LanDiscoveredDevice>, DomainError> {
+        let device = self.device.lock().await;
+        Ok(vec![LanDiscoveredDevice {
+            device_id: device.device_id.clone(),
+            device_name: device.device_name.clone(),
+            platform: device.platform.clone(),
+            base_urls: vec!["https://127.0.0.1:50000".to_string()],
+            spki_sha256: device.spki_sha256.clone(),
+        }])
+    }
+}
+
+#[tokio::test]
+async fn pairing_starts_the_server_but_relocating_a_paired_device_preserves_trust_and_grants() {
+    let local_id = test_device_id("11111111-1111-4111-8111-111111111111");
+    let peer_id = test_device_id("22222222-2222-4222-8222-222222222222");
+    let peers = Arc::new(MemoryPeerRepository {
+        identity: Mutex::new(test_identity(local_id.clone(), "Local")),
         paired_devices: Mutex::new(Vec::new()),
     });
+    let client = Arc::new(ManualPairingClient {
+        device: Mutex::new(LanDiscoveryAnnouncement {
+            device_id: peer_id.clone(),
+            device_name: "Phone".to_string(),
+            platform: Some("ios".to_string()),
+            port: 50_000,
+            spki_sha256: "original-pin".to_string(),
+        }),
+        pairings: Mutex::new(0),
+    });
+    let server = Arc::new(MemoryServerControl::default());
     let (jobs, _job_rx) = mpsc::unbounded_channel();
-    let inbound = LanInboundService::new(
-        state.clone(),
+    let service = LanSyncService::new(
+        Arc::new(LanSyncRuntimeState::new()),
         Arc::new(MemorySettingsRepository::new(SyncMode::Incremental)),
-        peer_repository.clone(),
+        peers.clone(),
+        server.clone(),
+        Arc::new(NoopAddressDiscovery),
+        client.clone(),
+        client.clone(),
+        Arc::new(StaticApproval {
+            accept: true,
+            requests: Mutex::new(Vec::new()),
+        }),
         Arc::new(SyncJobCoordinator::new(
             Arc::new(RecordingExecutor { jobs }),
             Arc::new(NoopReconciler),
             Arc::new(NoopEvents),
             Arc::new(Semaphore::new(1)),
         )),
-        Arc::new(ReplacingApproval {
-            state: state.clone(),
-        }),
     );
 
-    let error = inbound
-        .complete_pairing(
-            "old-token".to_string(),
-            peer_request(
-                test_device_id("22222222-2222-4222-8222-222222222222"),
-                "peer",
-            ),
-        )
+    for invalid in [
+        "",
+        "127.0.0.1",
+        "127.0.0.1:0",
+        "0.0.0.0:1234",
+        "224.0.0.1:1234",
+        "https://user@127.0.0.1:1234",
+        "127.0.0.1:1234/path",
+    ] {
+        assert!(service.connect_address(invalid).await.is_err(), "{invalid}");
+    }
+    service.connect_address(" 127.0.0.1:50000 ").await.unwrap();
+    assert!(server.running_info().await.is_some());
+    assert_eq!(*client.pairings.lock().await, 1);
+    let mut saved = peers.load_paired_devices().await.unwrap().remove(0);
+    assert_eq!(saved.platform.as_deref(), Some("ios"));
+    saved.grant.last_sync_ms = Some(42);
+    peers.upsert_paired_device(saved.clone()).await.unwrap();
+    client.device.lock().await.device_name = "Renamed phone".to_string();
+    service.stop_server().await.unwrap();
+
+    service
+        .connect_address("https://127.0.0.1:50001/")
         .await
-        .expect_err("stale pairing should fail");
+        .unwrap();
+    let updated = peers.load_paired_devices().await.unwrap().remove(0);
+    assert!(server.running_info().await.is_none());
+    assert_eq!(*client.pairings.lock().await, 1);
+    assert_eq!(updated.base_url, "https://127.0.0.1:50001");
+    assert_eq!(updated.grant.device_name, "Renamed phone");
+    assert_eq!(updated.grant.public_key, saved.grant.public_key);
+    assert_eq!(updated.grant.permissions, saved.grant.permissions);
+    assert_eq!(updated.grant.paired_at_ms, saved.grant.paired_at_ms);
+    assert_eq!(updated.grant.last_sync_ms, Some(42));
 
-    assert!(matches!(
-        error,
-        DomainError::AuthenticationError(message) if message == "Invalid pairing token"
-    ));
-    assert_eq!(
-        state.get_pairing_session().await.unwrap().token,
-        "new-token"
+    client.device.lock().await.spki_sha256 = "replacement-pin".to_string();
+    assert!(service.connect_address("127.0.0.1:50002").await.is_err());
+    let unchanged = peers.load_paired_devices().await.unwrap().remove(0);
+    assert_eq!(unchanged.base_url, updated.base_url);
+    assert_eq!(unchanged.spki_sha256, "original-pin");
+    client.device.lock().await.device_id = local_id;
+    assert!(service.connect_address("127.0.0.1:50003").await.is_err());
+    assert_eq!(*client.pairings.lock().await, 1);
+    client.device.lock().await.device_id = peer_id.clone();
+    service.pair_device(peer_id.as_str()).await.unwrap();
+    assert!(server.running_info().await.is_some());
+    service.stop_server().await.unwrap();
+    let uri = build_pair_uri("https://127.0.0.1:50000", &peer_id, "replacement-pin").unwrap();
+    service.request_pairing(&uri).await.unwrap();
+    assert!(server.running_info().await.is_some());
+    assert_eq!(*client.pairings.lock().await, 3);
+}
+
+#[tokio::test]
+async fn rejected_pairing_does_not_store_peer() {
+    let peer_repository = Arc::new(MemoryPeerRepository {
+        identity: Mutex::new(test_identity(
+            test_device_id("11111111-1111-4111-8111-111111111111"),
+            "server",
+        )),
+        paired_devices: Mutex::new(Vec::new()),
+    });
+    let approval = Arc::new(StaticApproval {
+        accept: false,
+        requests: Mutex::new(Vec::new()),
+    });
+    let (jobs, _job_rx) = mpsc::unbounded_channel();
+    let inbound = inbound_service(
+        Arc::new(LanSyncRuntimeState::new()),
+        peer_repository.clone(),
+        approval,
+        jobs,
+        SyncMode::Incremental,
     );
+    let result = inbound
+        .complete_pairing(peer_request(
+            test_device_id("22222222-2222-4222-8222-222222222222"),
+            "peer",
+        ))
+        .await;
+    assert!(matches!(result, Err(DomainError::AuthenticationError(_))));
     assert!(
         peer_repository
             .load_paired_devices()
@@ -423,10 +569,10 @@ async fn accepted_stale_pairing_request_does_not_clear_new_session() {
 async fn inbound_pull_request_starts_remote_request_job() {
     let state = Arc::new(LanSyncRuntimeState::new());
     let peer_repository = Arc::new(MemoryPeerRepository {
-        identity: test_identity(
+        identity: Mutex::new(test_identity(
             test_device_id("11111111-1111-4111-8111-111111111111"),
             "server",
-        ),
+        )),
         paired_devices: Mutex::new(Vec::new()),
     });
     let approval = Arc::new(StaticApproval {
@@ -474,10 +620,10 @@ async fn stop_server_does_not_abort_accepted_inbound_job() {
     let state = Arc::new(LanSyncRuntimeState::new());
     let settings_repository = Arc::new(MemorySettingsRepository::new(SyncMode::Incremental));
     let peer_repository = Arc::new(MemoryPeerRepository {
-        identity: test_identity(
+        identity: Mutex::new(test_identity(
             test_device_id("11111111-1111-4111-8111-111111111111"),
             "server",
-        ),
+        )),
         paired_devices: Mutex::new(Vec::new()),
     });
     let approval = Arc::new(StaticApproval {
@@ -509,8 +655,9 @@ async fn stop_server_does_not_abort_accepted_inbound_job() {
         state,
         settings_repository,
         peer_repository,
-        Arc::new(MemoryServerControl),
+        Arc::new(MemoryServerControl::default()),
         Arc::new(NoopAddressDiscovery),
+        Arc::new(NoopDeviceDiscovery),
         Arc::new(NoopPairingClient),
         approval,
         coordinator,

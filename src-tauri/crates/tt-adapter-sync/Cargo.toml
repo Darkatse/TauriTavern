@@ -15,6 +15,7 @@ reqwest = { workspace = true, features = ["json", "rustls", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+socket2 = { version = "0.6", features = ["all"] }
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"
 tt-contracts = { path = "../tt-contracts" }

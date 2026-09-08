@@ -7,8 +7,7 @@ use tt_domain::errors::DomainError;
 
 pub(super) fn build_pair_uri(
     base_url: &str,
-    token: &str,
-    expires_at_ms: u64,
+    device_id: &DeviceId,
     spki_sha256: &str,
 ) -> Result<String, DomainError> {
     validate_https_base_url(base_url)?;
@@ -19,8 +18,7 @@ pub(super) fn build_pair_uri(
     uri.query_pairs_mut()
         .append_pair("v", "2")
         .append_pair("url", base_url)
-        .append_pair("token", token)
-        .append_pair("exp", &expires_at_ms.to_string())
+        .append_pair("device_id", device_id.as_str())
         .append_pair("spki", spki_sha256);
 
     Ok(uri.to_string())
@@ -28,8 +26,7 @@ pub(super) fn build_pair_uri(
 
 pub(super) struct ParsedPairUri {
     pub base_url: String,
-    pub token: String,
-    pub expires_at_ms: u64,
+    pub device_id: Option<DeviceId>,
     pub spki_sha256: String,
 }
 
@@ -56,20 +53,12 @@ pub(super) fn parse_pair_uri(pair_uri: &str) -> Result<ParsedPairUri, DomainErro
 
 fn parse_lan_pair_uri_payload(uri: &Url) -> Result<ParsedPairUri, DomainError> {
     let mut base_url = None;
-    let mut token = None;
-    let mut expires_at_ms = None;
+    let mut device_id = None;
     let mut spki_sha256 = None;
     for (key, value) in uri.query_pairs() {
         match key.as_ref() {
             "url" => base_url = Some(value.to_string()),
-            "token" => token = Some(value.to_string()),
-            "exp" => {
-                expires_at_ms = Some(
-                    value
-                        .parse::<u64>()
-                        .map_err(|_| DomainError::InvalidData("Invalid exp".to_string()))?,
-                )
-            }
+            "device_id" => device_id = Some(parse_device_id(&value)?),
             "spki" => spki_sha256 = Some(value.to_string()),
             _ => {}
         }
@@ -80,11 +69,7 @@ fn parse_lan_pair_uri_payload(uri: &Url) -> Result<ParsedPairUri, DomainError> {
 
     Ok(ParsedPairUri {
         base_url,
-        token: token
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| DomainError::InvalidData("Missing token".to_string()))?,
-        expires_at_ms: expires_at_ms
-            .ok_or_else(|| DomainError::InvalidData("Missing exp".to_string()))?,
+        device_id,
         spki_sha256: spki_sha256
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| DomainError::InvalidData("Missing spki".to_string()))?,
@@ -157,27 +142,50 @@ pub(super) fn parse_device_id(device_id: &str) -> Result<DeviceId, DomainError> 
         .map_err(|error| DomainError::InvalidData(error.to_string()))
 }
 
+pub(super) fn parse_manual_address(address: &str) -> Result<String, DomainError> {
+    let address = address.trim().trim_end_matches('/');
+    let address = address.strip_prefix("https://").unwrap_or(address);
+    let socket = address.parse::<std::net::SocketAddrV4>().map_err(|_| {
+        DomainError::InvalidData(
+            "Enter an IP address and port, for example 192.168.1.10:50000".to_string(),
+        )
+    })?;
+    if socket.port() == 0
+        || socket.ip().is_unspecified()
+        || socket.ip().is_multicast()
+        || socket.ip().is_broadcast()
+    {
+        return Err(DomainError::InvalidData(
+            "Invalid LAN device address or port".to_string(),
+        ));
+    }
+    Ok(format!("https://{socket}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn pair_uri_round_trips_required_fields() {
-        let uri = build_pair_uri("https://127.0.0.1:50000", "token", 1234, "spki")
-            .expect("build pair uri");
+        let id = parse_device_id("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let uri = build_pair_uri("https://127.0.0.1:50000", &id, "spki").expect("build pair uri");
 
         let parsed = parse_pair_uri(&uri).expect("parse pair uri");
 
         assert_eq!(parsed.base_url, "https://127.0.0.1:50000");
-        assert_eq!(parsed.token, "token");
-        assert_eq!(parsed.expires_at_ms, 1234);
+        assert_eq!(parsed.device_id, Some(id));
         assert_eq!(parsed.spki_sha256, "spki");
     }
 
     #[test]
     fn pair_uri_rejects_http_base_url() {
         assert!(matches!(
-            build_pair_uri("http://127.0.0.1:50000", "token", 1234, "spki"),
+            build_pair_uri(
+                "http://127.0.0.1:50000",
+                &parse_device_id("550e8400-e29b-41d4-a716-446655440000").unwrap(),
+                "spki"
+            ),
             Err(DomainError::InvalidData(_))
         ));
     }
@@ -223,10 +231,12 @@ mod tests {
     }
 
     #[test]
-    fn default_permissions_allow_read_and_mirror_delete_only() {
-        let permissions = default_lan_permissions();
-        assert!(permissions.read);
-        assert!(permissions.mirror_delete);
-        assert!(!permissions.write);
+    fn pair_uri_accepts_an_address_without_device_id() {
+        let parsed = parse_pair_uri(
+            "tauritavern://lan-sync/pair?v=2&url=https%3A%2F%2F127.0.0.1%3A50000&spki=pin",
+        )
+        .expect("address-only pairing link");
+        assert_eq!(parsed.device_id, None);
+        assert_eq!(parsed.base_url, "https://127.0.0.1:50000");
     }
 }

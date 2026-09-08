@@ -95,6 +95,9 @@
         }
       }
     },
+    "macOS": {
+      "infoPlist": "Info.macos.plist"
+    },
     "iOS": {
       "minimumSystemVersion": "15.0",
       "developmentTeam": "Y82Q3U47CB"

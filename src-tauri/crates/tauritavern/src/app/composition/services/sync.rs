@@ -6,7 +6,8 @@ use tokio::sync::Semaphore;
 use tt_adapter_storage_core::file_system::DataDirectory;
 use tt_adapter_sync::{
     AxumLanServerControl, HttpLanPairingClient, HttpTtPairingClient, InfrastructureSyncJobExecutor,
-    LanPeerStore, LanSyncStore, LocalLanAddressDiscovery, SyncAutomationStore, TtSyncRuntime,
+    LanPeerDiscovery, LanPeerStore, LanSyncStore, LocalLanAddressDiscovery, SyncAutomationStore,
+    TtSyncRuntime,
 };
 use tt_application::services::lan_sync_service::{
     LanInboundService, LanSyncRuntimeState, LanSyncService,
@@ -43,6 +44,7 @@ pub(super) fn build(
     let lan_peer_repository: Arc<dyn LanPeerRepository> = Arc::new(lan_peer_store.clone());
     let sync_job_events = adapters::sync_job_events(app_handle);
     let pairing_approval = adapters::pairing_approval(app_handle);
+    let lan_discovery = LanPeerDiscovery::new(adapters::lan_discovery_host(app_handle));
     let tt_runtime = Arc::new(TtSyncRuntime::new(
         data_directory.root().to_path_buf(),
         data_directory.default_user().to_path_buf(),
@@ -51,6 +53,7 @@ pub(super) fn build(
         data_directory.root().to_path_buf(),
         sync_job_events.clone(),
         lan_peer_store.clone(),
+        lan_discovery.clone(),
         tt_runtime.clone(),
         product_user_agent,
     ));
@@ -71,7 +74,8 @@ pub(super) fn build(
         data_directory.root().to_path_buf(),
         lan_peer_store.clone(),
         lan_inbound_service.clone(),
-        adapters::lan_server_errors(),
+        adapters::lan_server_events(app_handle),
+        lan_discovery.clone(),
     ));
     let lan_sync_service = Arc::new(LanSyncService::new(
         lan_runtime_state,
@@ -79,6 +83,7 @@ pub(super) fn build(
         lan_peer_repository,
         lan_server_control,
         Arc::new(LocalLanAddressDiscovery),
+        Arc::new(lan_discovery),
         Arc::new(HttpLanPairingClient::new(product_user_agent)),
         pairing_approval,
         sync_job_coordinator.clone(),

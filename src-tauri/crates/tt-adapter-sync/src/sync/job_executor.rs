@@ -9,7 +9,8 @@ use ttsync_contract::peer::DeviceId;
 use ttsync_contract::sync::SyncMode;
 
 use crate::sync::http_client::{new_sync_client, sync_error_to_domain};
-use crate::sync::lan::client::request_peer_pull as request_lan_peer_pull;
+use crate::sync::lan::client::{connect_peer, request_peer_pull as request_lan_peer_pull};
+use crate::sync::lan::peer_discovery::LanPeerDiscovery;
 use crate::sync::lan::store::LanPeerStore;
 use crate::sync::observer::SyncJobProgressObserver;
 use crate::sync::workspace::TauriTavernSyncWorkspace;
@@ -26,6 +27,7 @@ pub struct InfrastructureSyncJobExecutor {
     lan_sync_root: std::path::PathBuf,
     events: Arc<dyn SyncJobEventPublisher>,
     lan_peer_store: LanPeerStore,
+    lan_discovery: LanPeerDiscovery,
     tt_runtime: Arc<TtSyncRuntime>,
     product_user_agent: String,
 }
@@ -37,6 +39,7 @@ impl InfrastructureSyncJobExecutor {
         lan_sync_root: std::path::PathBuf,
         events: Arc<dyn SyncJobEventPublisher>,
         lan_peer_store: LanPeerStore,
+        lan_discovery: LanPeerDiscovery,
         tt_runtime: Arc<TtSyncRuntime>,
         product_user_agent: impl Into<String>,
     ) -> Self {
@@ -50,6 +53,7 @@ impl InfrastructureSyncJobExecutor {
             lan_sync_root,
             events,
             lan_peer_store,
+            lan_discovery,
             tt_runtime,
             product_user_agent,
         }
@@ -64,14 +68,11 @@ impl InfrastructureSyncJobExecutor {
     ) -> Result<SyncExecutionReport, SyncExecutionFailure> {
         let peer = self.lan_peer_store.get_paired_device(&device_id).await?;
         let identity = self.lan_peer_store.load_or_create_identity().await?;
-        let client = new_sync_client(
-            peer.base_url.clone(),
-            peer.spki_sha256.clone(),
-            &self.product_user_agent,
-        )?;
+        let (client, status, base_url) =
+            connect_peer(&peer, &self.lan_discovery, &self.product_user_agent).await?;
         let workspace = Arc::new(TauriTavernSyncWorkspace::new(self.lan_sync_root.clone()));
         let engine = ClientSyncEngine::new(
-            client,
+            client.into_sync_client(),
             workspace,
             ClientSyncTarget {
                 device_id: identity.device_id,
@@ -94,6 +95,7 @@ impl InfrastructureSyncJobExecutor {
                 let last_sync_ms = sync_transfer::now_ms();
                 self.lan_peer_store
                     .update_paired_device(&device_id, |peer| {
+                        status.update_peer(peer, &base_url);
                         peer.grant.permissions = permissions;
                         peer.grant.last_sync_ms = Some(last_sync_ms);
                     })
@@ -106,6 +108,7 @@ impl InfrastructureSyncJobExecutor {
                 if let Some(permissions) = failure.granted_permissions {
                     self.lan_peer_store
                         .update_paired_device(&device_id, |peer| {
+                            status.update_peer(peer, &base_url);
                             peer.grant.permissions = permissions;
                         })
                         .await
@@ -254,6 +257,7 @@ impl SyncJobExecutor for InfrastructureSyncJobExecutor {
             ) => {
                 request_lan_peer_pull(
                     self.lan_peer_store.clone(),
+                    &self.lan_discovery,
                     device_id,
                     options.clone(),
                     &self.product_user_agent,

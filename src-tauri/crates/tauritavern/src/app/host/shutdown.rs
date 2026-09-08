@@ -46,6 +46,29 @@ pub(super) fn handle_run_event(app_handle: &tauri::AppHandle, event: tauri::RunE
         }
     }
 
+    #[cfg(mobile)]
+    if matches!(
+        event,
+        tauri::RunEvent::WindowEvent {
+            event: tauri::WindowEvent::Resumed,
+            ..
+        }
+    ) && let Some(state) = app_handle.try_state::<Arc<AppState>>()
+        && state.ios_policy.capabilities.sync.lan
+    {
+        let service = state.services.lan_sync_service.clone();
+        tauri::async_runtime::spawn(async move {
+            if service
+                .get_status()
+                .await
+                .is_ok_and(|status| status.running)
+                && let Err(error) = service.discover_devices().await
+            {
+                tracing::warn!("Failed to refresh LAN discovery after resume: {error}");
+            }
+        });
+    }
+
     // AppState may not exist if startup failed or the user exits during async
     // initialization, so this must remain `try_state` rather than `state`.
     if matches!(
