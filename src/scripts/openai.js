@@ -34,7 +34,8 @@ import { extension_prompt_roles, extension_prompt_types } from './extension-prom
 import { allowlistSettingAllows, getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
 import { materializeInitialChatHistoryMessages } from './tauritavern/agent/agent-context-policy.js';
 import { projectToolTurns } from './tauritavern/tool-turn-projection.js';
-import { applyParamOmissions } from './tauri/generation-params/omission.js';
+import { canReplayProviderMetadata, getChatCompletionRequestContext } from './tauritavern/provider-replay.js';
+import { applyParamOmissions, getEffectiveGenerationSettings } from './tauri/generation-params/omission.js';
 
 import {
     chatCompletionDefaultPrompts,
@@ -997,6 +998,7 @@ function setOpenAIMessages(chat, stripOldToolCalls = false) {
     // Get current API and model for thought signature validation
     const currentApi = oai_settings.chat_completion_source;
     const currentModel = getChatCompletionModel();
+    const requestContext = getChatCompletionRequestContext(oai_settings, currentModel);
     const includeClaudeNative = usesClaudeMessagesSemantics(oai_settings, currentModel);
     const includeNative = includeClaudeNative
         || (currentApi === chat_completion_sources.CUSTOM
@@ -1058,9 +1060,10 @@ function setOpenAIMessages(chat, stripOldToolCalls = false) {
         const originModel = metadataMessage?.extra?.model;
         const isSameModel = originApi === currentApi && originModel === currentModel;
         const isOtherGroupMember = selected_group && sourceMessage.name !== name2 && !Array.isArray(invocations);
-        const canReplayProviderTurnMetadata = isSameModel && !isOtherGroupMember;
+        const canReplayProviderTurnMetadata = !isOtherGroupMember
+            && canReplayProviderMetadata(metadataMessage, contentMessage?.mes ?? '', requestContext);
         const signature = canReplayProviderTurnMetadata ? contentMessage?.extra?.reasoning_signature : null;
-        const reasoning = canReplayProviderTurnMetadata ? String(contentMessage?.extra?.reasoning ?? '') : '';
+        const reasoning = isSameModel && !isOtherGroupMember ? String(contentMessage?.extra?.reasoning ?? '') : '';
         const native = includeNative
             && canReplayProviderTurnMetadata
             && (!includeClaudeNative || hasClaudeToolUse(metadataMessage?.extra?.native))
@@ -1068,7 +1071,7 @@ function setOpenAIMessages(chat, stripOldToolCalls = false) {
             : null;
         const shouldReplayReasoningContent = currentApi === chat_completion_sources.DEEPSEEK
             && oai_settings.show_thoughts
-            && canReplayProviderTurnMetadata;
+            && isSameModel && !isOtherGroupMember;
         const reasoningContent = shouldReplayReasoningContent ? metadataMessage?.extra?.tool_reasoning_content : null;
         // Remove provider metadata from invocations if the API/model/speaker don't match.
         if (Array.isArray(invocations) && invocations.length > 0) {
@@ -1196,7 +1199,7 @@ function createPromptAssemblyRuntime({
 
     return {
         promptManager: assemblyPromptManager,
-        settings: serviceSettings,
+        settings: getEffectiveGenerationSettings(serviceSettings),
         tokenHandler: serviceTokenHandler,
         macroContext: normalizePromptAssemblyMacroContext(macroContext),
         extensionPrompts: normalizePromptAssemblyExtensionPrompts(extensionPrompts),
@@ -4251,6 +4254,7 @@ function getVerbosity(settings = null) {
  * @returns {Promise<object>} Final generation parameters object appropriate for the chat completion source
  */
 export async function createGenerationParameters(settings, model, type, messages, { jsonSchema = null, agentMode = false, allowToolCalls = true, macroContext = null, extensionPrompts = null, toolData = undefined } = {}) {
+    settings = getEffectiveGenerationSettings(settings);
     // HACK: Filter out null and non-object messages
     if (!Array.isArray(messages)) {
         throw new Error('messages must be an array');
@@ -4697,6 +4701,8 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
     const { generate_data, stream, canMultiSwipe } = await createGenerationParameters(oai_settings, model, type, messages, { jsonSchema, allowToolCalls, toolData });
     await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, generate_data);
     legacyMcpToolRound?.finalizeAdvertisedTools(generate_data);
+    const requestContext = getChatCompletionRequestContext(generate_data);
+    const isClaudeMessagesRequest = usesClaudeMessagesSemantics(generate_data, requestContext.model);
 
     const generate_url = '/api/backends/chat-completions/generate';
     const response = await fetch(generate_url, {
@@ -4710,8 +4716,6 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
         tryParseStreamingError(response, await response.text());
         throw new Error(`Got response status ${response.status}`);
     }
-    const requestModel = generate_data.model ?? model;
-    const isClaudeMessagesRequest = usesClaudeMessagesSemantics(generate_data, requestModel);
     if (stream) {
         const eventStream = getEventSourceStream();
         response.body.pipeThrough(eventStream);
@@ -4720,8 +4724,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
             let text = '';
             const swipes = [];
             const toolCalls = [];
-            const state = { reasoning: '', images: [], signature: '', toolSignatures: {}, native: null, usage: {} };
-            const requestSource = generate_data.chat_completion_source ?? oai_settings.chat_completion_source;
+            const state = { reasoning: '', images: [], signature: '', toolSignatures: {}, native: null, usage: {}, requestContext };
             const claudeNative = isClaudeMessagesRequest
                 ? new ClaudeNativeStreamAccumulator()
                 : null;
@@ -4754,9 +4757,9 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
                 if (canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0) {
                     const swipeIndex = parsed.choices[0].index - 1;
                     // FIXME: state.reasoning should be an array to support multi-swipe
-                    swipes[swipeIndex] = (swipes[swipeIndex] || '') + getStreamingReply(parsed, state, { chatCompletionSource: requestSource, model: requestModel, opencodeApiFormat: generate_data.opencode_api_format, customApiFormat: generate_data.custom_api_format, overrideShowThoughts: false });
+                    swipes[swipeIndex] = (swipes[swipeIndex] || '') + getStreamingReply(parsed, state, { ...requestContext, overrideShowThoughts: false });
                 } else {
-                    text += getStreamingReply(parsed, state, { chatCompletionSource: requestSource, model: requestModel, opencodeApiFormat: generate_data.opencode_api_format, customApiFormat: generate_data.custom_api_format });
+                    text += getStreamingReply(parsed, state, requestContext);
                 }
 
                 ToolManager.parseToolCalls(toolCalls, parsed, state.toolSignatures);
@@ -4779,6 +4782,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
     }
     else {
         const data = await response.json();
+        data.requestContext = requestContext;
 
         checkQuotaError(data);
         checkModerationError(data);

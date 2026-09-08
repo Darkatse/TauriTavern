@@ -822,10 +822,6 @@ fn inject_google_thinking_config(
     target: GoogleTarget,
     generation_config: &mut Map<String, Value>,
 ) -> Result<(), ApplicationError> {
-    let reasoning_effort = match payload.get("reasoning_effort").and_then(Value::as_str) {
-        Some(value) => parse_known_reasoning_effort(value, "Gemini")?,
-        None => RequestedReasoningEffort::Auto,
-    };
     let include_reasoning = payload
         .get("include_reasoning")
         .and_then(Value::as_bool)
@@ -835,25 +831,28 @@ fn inject_google_thinking_config(
         if target != GoogleTarget::Custom {
             return Ok(());
         }
-        // An unrecognised custom alias carries no capability information:
-        // honour what maps universally (`includeThoughts`) and fail visibly
-        // on what does not, instead of guessing from the name.
-        if reasoning_effort != RequestedReasoningEffort::Auto {
-            return Err(ApplicationError::ValidationError(format!(
-                "Custom Gemini model `{model}` is not a recognised Gemini model id, so \
-                 reasoning_effort cannot be mapped to thinkingConfig; use a gemini-* model id \
-                 or set reasoning_effort to auto"
-            )));
+        // Custom aliases default to thinkingLevel; Additional Parameters can override it.
+        let mut thinking_config = Map::new();
+        if let Some(effort) = payload.get("reasoning_effort").and_then(Value::as_str) {
+            let effort = effort.trim().to_ascii_lowercase();
+            if !effort.is_empty() && effort != "auto" {
+                thinking_config.insert("thinkingLevel".to_string(), Value::String(effort));
+            }
         }
-        if include_reasoning {
-            generation_config.insert(
-                "thinkingConfig".to_string(),
-                json!({ "includeThoughts": true }),
+        if include_reasoning || !thinking_config.is_empty() {
+            thinking_config.insert(
+                "includeThoughts".to_string(),
+                Value::Bool(include_reasoning),
             );
+            generation_config.insert("thinkingConfig".to_string(), Value::Object(thinking_config));
         }
         return Ok(());
     }
 
+    let reasoning_effort = match payload.get("reasoning_effort").and_then(Value::as_str) {
+        Some(value) => parse_known_reasoning_effort(value, "Gemini")?,
+        None => RequestedReasoningEffort::Auto,
+    };
     let use_vertex_ai = target == GoogleTarget::VertexAi;
     let max_output_tokens = generation_config
         .get("maxOutputTokens")

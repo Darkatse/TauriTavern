@@ -157,7 +157,7 @@ signature / native blocks（关键契约）：
 - 后端在 streaming 完成事件 `interaction.completed` 时，将聚合后的 `steps[]` 放入：
   - `choices[0].delta.native = { gemini_interactions: { steps } }`
 - 前端在保存消息时将其落到 `message.extra.native`
-- 后续构造 stateless history 时：若 `extra.native.gemini_interactions.steps` 存在，则 **原样回放** steps（满足 thought-signatures 相关要求）
+- 后续构造 stateless history 时，仅在正文与原响应一致、请求目标匹配时原样回放 steps。
 - SillyTavern 将带前导文本的 function-call turn 拆成相邻的可见消息与 tool invocation 时，payload translator 只对两者完全相同的 native steps 去重并回放一次
 
 流式归一化：
@@ -194,15 +194,15 @@ streaming 语义：
 - 前端对 direct Claude、Vertex Claude、内建 Bedrock Claude 与 `custom_api_format=claude_messages` 走 Claude streaming 分支解析
 - 前端按 content block index 累积 `text_delta`、`thinking_delta`、`signature_delta` 与 `input_json_delta`；`input_json_delta` 按 delta 契约处理，不绑定具体 tool block type
 - 前端在 `message_delta` / 非流式响应的 `stop_reason` 上显式处理终态：`refusal` 保留 provider 输出、显示 toast，并将同一警告追加到最终 `message.mes`；`max_tokens` / `model_context_window_exceeded` 保留部分文本、显示截断警告；这些终态都不会执行或回放未完成的 tool call
-- 只有包含 client `tool_use` 的 assistant turn 才把完整 `content[]` 保存到 `message.extra.native.claude` 并在同 provider/model 的后续请求原样回放；普通 assistant turn 继续使用 SillyTavern canonical content，避免历史 thinking 绕过 token budget 与消息编辑语义
+- 只有包含 client `tool_use` 的 assistant turn 才把完整 `content[]` 保存到 `message.extra.native.claude`，在正文与原响应一致、请求目标匹配时回放；普通 assistant turn 使用 SillyTavern canonical content。
 - SillyTavern 将一次 tool turn 拆成相邻可见消息与 invocation 消息时，translator 仅在两者 native content 完全相等时折叠为一次，内容不一致则 fail-fast；编辑其中任一消息会同时使两份 native metadata 失效
 
 ### 4.4 Gemini generateContent（常规原生 API）
 
 - Custom 入口复用 MakerSuite 的翻译与传输链路，通过 `custom_api_format=gemini_generate_content` 显式选择协议。
 - Base URL 与模型分开配置：保留显式 `/v1` 或 `/v1beta`，否则补 `/v1beta`。鉴权使用 Custom API Key；Additional Parameters 在翻译后应用。
-- Custom 模型名按别名处理，保留用户显式采样参数。推理参数需要模型能力映射时，无法识别的别名返回错误，不静默忽略。
-- 原生 parts 与签名在同 API/model 的历史中保真回放；流式请求仅在完整结束后提交 native 历史，错误或取消不提交完整的 native 历史。
+- Custom 模型名按别名处理，保留用户显式采样参数。未知别名的 `reasoning_effort` 默认映射为 `thinkingLevel`，`auto` 不发送；Additional Parameters 可覆盖，上游错误正常返回。
+- 原生 parts 与签名仅在正文与原响应一致、API/format/model 匹配时回放。无法核对的旧记录保留正文与可见 reasoning；流式请求仅在完整结束后提交 native 历史。
 
 实现入口：[`payload/custom.rs`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/payload/custom.rs)、[`makersuite.rs`](../../src-tauri/crates/tt-adapter-provider-http/src/http_chat_completion_repository/makersuite.rs)。
 

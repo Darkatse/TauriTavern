@@ -4687,6 +4687,13 @@ class StreamingProcessor {
             if (this.native) {
                 message.extra.native = this.native;
             }
+            if (this.requestContext) {
+                message.extra.api = this.requestContext.chatCompletionSource;
+                message.extra.model = this.requestContext.model;
+                if (this.native || this.reasoningSignature || hasToolCalls) {
+                    message.extra.provider_replay = { ...this.requestContext, text: this.result };
+                }
+            }
         }
 
         syncMesToSwipe(messageId);
@@ -4810,6 +4817,7 @@ class StreamingProcessor {
                 this.images = state?.images ?? [];
                 this.reasoningSignature = state?.signature ?? null;
                 this.native = state?.native ?? null;
+                this.requestContext = state?.requestContext ?? null;
                 this.promptCache = getPromptCacheUsage(state?.usage);
                 await eventSource.emit(event_types.STREAM_TOKEN_RECEIVED, text);
                 sw.interval = getStreamingRenderInterval({
@@ -6623,34 +6631,26 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         if (jsonSchema) {
             unblockGeneration(type);
             return extractJsonFromData(data, {
-                chatCompletionSource: generate_data?.prompt?.chat_completion_source,
-                model: generate_data?.prompt?.model,
+                ...data.requestContext,
                 returnInvalidJson: jsonSchema.returnInvalid ?? false,
             });
         }
 
         //const getData = await response.json();
-        let getMessage = extractMessageFromData(data);
+        const requestContext = data.requestContext;
+        let getMessage = extractMessageFromData(data, requestContext?.mainApi);
         let title = extractTitleFromData(data);
-        const requestChatCompletionSource = generate_data?.prompt?.chat_completion_source;
-        const requestModel = generate_data?.prompt?.model;
-        let reasoning = extractReasoningFromData(data, {
-            chatCompletionSource: requestChatCompletionSource,
-            model: requestModel,
-        });
+        let reasoning = extractReasoningFromData(data, requestContext);
         const toolReasoning = extractReasoningFromData(data, {
-            chatCompletionSource: requestChatCompletionSource,
-            model: requestModel,
+            ...requestContext,
             ignoreShowThoughts: true,
         });
-        let imageUrls = extractImagesFromData(data, { chatCompletionSource: requestChatCompletionSource });
-        const reasoningSignature = extractReasoningSignatureFromData(data, {
-            chatCompletionSource: requestChatCompletionSource,
-            model: requestModel,
-        });
+        let imageUrls = extractImagesFromData(data, requestContext);
+        const reasoningSignature = extractReasoningSignatureFromData(data, requestContext);
         const native = data?.choices?.[0]?.message?.native ?? null;
         const promptCache = getPromptCacheUsage(data?.usage);
         const hasToolCalls = canPerformToolCalls && ToolManager.hasToolCalls(data);
+        const providerReplay = requestContext ? { ...requestContext, text: getMessage } : null;
         kobold_horde_model = title;
 
         const swipes = extractMultiSwipes(data, type);
@@ -6692,9 +6692,9 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         } else {
             // Without streaming we'll be having a full message on continuation. Treat it as a last chunk.
             if (originalType !== 'continue') {
-                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native, promptCache, hasToolCalls }));
+                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native, providerReplay, promptCache, hasToolCalls }));
             } else {
-                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native, promptCache, hasToolCalls }));
+                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, native, providerReplay, promptCache, hasToolCalls }));
             }
             toolTurnOwner = chat.at(-1) ?? null;
 
@@ -8022,6 +8022,7 @@ async function processImageAttachment(message, { imageUrls }) {
  * @property {string[]} [imageUrls] Links to images
  * @property {string?} [reasoningSignature] Encrypted signature of the reasoning text
  * @property {any?} [native] Provider-native metadata that must be preserved across turns
+ * @property {object?} [providerReplay] Original response text and request connection for provider replay
  * @property {{ input_tokens: number, cached_tokens: number }?} [promptCache] Prompt cache usage for this request
  * @property {boolean} [hasToolCalls] Whether the message owns tool calls
  *
@@ -8029,7 +8030,7 @@ async function processImageAttachment(message, { imageUrls }) {
  * @property {string} type Type of generation
  * @property {string} getMessage Generated message
  */
-export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], reasoning = '', imageUrls = [], reasoningSignature = null, native = null, promptCache = null, hasToolCalls = false }) {
+export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], reasoning = '', imageUrls = [], reasoningSignature = null, native = null, providerReplay = null, promptCache = null, hasToolCalls = false }) {
     // Backward compatibility
     if (arguments.length > 1 && typeof arguments[0] !== 'object') {
         console.trace('saveReply called with positional arguments. Please use an object instead.');
@@ -8059,6 +8060,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         reasoning = '';
     }
 
+    const replayMetadata = native || reasoningSignature || hasToolCalls ? providerReplay : undefined;
+
     let oldMessage = '';
     const generationFinished = new Date();
     if (type === 'swipe') {
@@ -8070,16 +8073,15 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             lastMessage.gen_started = generation_started;
             lastMessage.gen_finished = generationFinished;
             lastMessage.send_date = getMessageTimeStamp();
-            lastMessage.extra.api = getGeneratingApi();
-            lastMessage.extra.model = getGeneratingModel();
+            lastMessage.extra.api = providerReplay?.chatCompletionSource ?? getGeneratingApi();
+            lastMessage.extra.model = providerReplay?.model ?? getGeneratingModel();
             lastMessage.extra.reasoning = reasoning;
             lastMessage.extra.reasoning_duration = null;
             lastMessage.extra.reasoning_signature = reasoningSignature;
             lastMessage.extra.prompt_cache = promptCache ?? undefined;
             delete lastMessage.extra.time_to_first_token;
-            if (native !== null && native !== undefined) {
-                lastMessage.extra.native = native;
-            }
+            lastMessage.extra.native = native ?? undefined;
+            lastMessage.extra.provider_replay = replayMetadata;
             await processImageAttachment(lastMessage, { imageUrls });
             if (shouldCountMessageTokens()) {
                 const tokenCountText = (reasoning || '') + lastMessage.mes;
@@ -8101,16 +8103,15 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         lastMessage.gen_started = generation_started;
         lastMessage.gen_finished = generationFinished;
         lastMessage.send_date = getMessageTimeStamp();
-        lastMessage.extra.api = getGeneratingApi();
-        lastMessage.extra.model = getGeneratingModel();
+        lastMessage.extra.api = providerReplay?.chatCompletionSource ?? getGeneratingApi();
+        lastMessage.extra.model = providerReplay?.model ?? getGeneratingModel();
         lastMessage.extra.reasoning = reasoning;
         lastMessage.extra.reasoning_duration = null;
         lastMessage.extra.reasoning_signature = reasoningSignature;
         lastMessage.extra.prompt_cache = promptCache ?? undefined;
         delete lastMessage.extra.time_to_first_token;
-        if (native !== null && native !== undefined) {
-            lastMessage.extra.native = native;
-        }
+        lastMessage.extra.native = native ?? undefined;
+        lastMessage.extra.provider_replay = replayMetadata;
         await processImageAttachment(lastMessage, { imageUrls });
         if (shouldCountMessageTokens()) {
             const tokenCountText = (reasoning || '') + lastMessage.mes;
@@ -8129,15 +8130,14 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         lastMessage.gen_started = generation_started;
         lastMessage.gen_finished = generationFinished;
         lastMessage.send_date = getMessageTimeStamp();
-        lastMessage.extra.api = getGeneratingApi();
-        lastMessage.extra.model = getGeneratingModel();
+        lastMessage.extra.api = providerReplay?.chatCompletionSource ?? getGeneratingApi();
+        lastMessage.extra.model = providerReplay?.model ?? getGeneratingModel();
         lastMessage.extra.reasoning += reasoning;
         lastMessage.extra.reasoning_signature = reasoningSignature;
         lastMessage.extra.prompt_cache = promptCache ?? undefined;
         delete lastMessage.extra.time_to_first_token;
-        if (native !== null && native !== undefined) {
-            lastMessage.extra.native = native;
-        }
+        lastMessage.extra.native = native ?? undefined;
+        lastMessage.extra.provider_replay = replayMetadata;
         await processImageAttachment(lastMessage, { imageUrls });
         // We don't know if the reasoning duration extended, so we don't update it here on purpose.
         if (shouldCountMessageTokens()) {
@@ -8163,13 +8163,14 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             gen_started: generation_started,
             gen_finished: generationFinished,
             extra: {
-                api: getGeneratingApi(),
-                model: getGeneratingModel(),
+                api: providerReplay?.chatCompletionSource ?? getGeneratingApi(),
+                model: providerReplay?.model ?? getGeneratingModel(),
                 reasoning,
                 reasoning_duration: null,
                 reasoning_signature: reasoningSignature,
                 ...(promptCache ? { prompt_cache: promptCache } : {}),
                 ...(native !== null && native !== undefined ? { native } : {}),
+                ...(replayMetadata ? { provider_replay: replayMetadata } : {}),
             },
         };
 

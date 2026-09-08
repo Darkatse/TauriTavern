@@ -84,10 +84,12 @@ mod tests {
             build(payload.as_object().unwrap().clone())
         };
 
-        // Unknown alias + explicit effort: visible failure, not a silent no-op.
-        let error = request("my-gemini-alias", json!({ "reasoning_effort": "high" }))
-            .expect_err("unknown alias cannot map reasoning_effort");
-        assert!(error.to_string().contains("my-gemini-alias"), "{error}");
+        let (_, upstream) =
+            request("my-gemini-alias", json!({ "reasoning_effort": "high" })).unwrap();
+        assert_eq!(
+            upstream["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "high"
+        );
 
         // Unknown alias + include_reasoning: includeThoughts is universal, so it is sent.
         let (_, upstream) =
@@ -114,8 +116,11 @@ mod tests {
         );
 
         // A first-party fixed-sampling model id keeps the user's sampling on custom.
-        let (_, upstream) =
-            request("gemini-3.7-flash", json!({ "temperature": 0.3, "top_p": 0.9 })).unwrap();
+        let (_, upstream) = request(
+            "gemini-3.7-flash",
+            json!({ "temperature": 0.3, "top_p": 0.9 }),
+        )
+        .unwrap();
         assert_eq!(upstream["generationConfig"]["temperature"], 0.3);
         assert_eq!(upstream["generationConfig"]["topP"], 0.9);
     }

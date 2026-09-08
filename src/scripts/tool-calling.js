@@ -12,6 +12,7 @@ import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { slashCommandReturnHelper } from './slash-commands/SlashCommandReturnHelper.js';
 import { isTrueBoolean } from './utils.js';
 import { getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
+import { getEffectiveGenerationSettings } from './tauri/generation-params/omission.js';
 
 /**
  * @typedef {object} ToolInvocation
@@ -726,7 +727,7 @@ export class ToolManager {
     }
 
     static canPerformMultiSwipe(type, settings = null) {
-        settings = settings ?? oai_settings;
+        settings = getEffectiveGenerationSettings(settings ?? oai_settings);
         const supportedSources = [
             chat_completion_sources.OPENAI,
             chat_completion_sources.AZURE_OPENAI,

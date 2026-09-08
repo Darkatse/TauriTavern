@@ -68,3 +68,17 @@ export function applyParamOmissions(generateData, settings) {
     }
     return generateData;
 }
+
+/**
+ * Disable omitted settings that affect prompt assembly or local generation decisions.
+ * @param {Record<string, any>} settings
+ */
+export function getEffectiveGenerationSettings(settings) {
+    const omitted = getOmittedParams(settings);
+    return {
+        ...settings,
+        ...(omitted.includes('n') ? { n: 1 } : {}),
+        ...(omitted.includes('assistant_prefill') ? { assistant_prefill: '', assistant_impersonation: '' } : {}),
+        ...(omitted.includes('reasoning_effort') ? { reasoning_effort: 'auto' } : {}),
+    };
+}

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { projectToolTurns, stripOldToolTurns } from '../src/scripts/tauritavern/tool-turn-projection.js';
+import { canReplayProviderMetadata, getChatCompletionRequestContext } from '../src/scripts/tauritavern/provider-replay.js';
 
 const call = (id = 'call-1', overrides = {}) => ({
     id,
@@ -34,6 +35,33 @@ const legacyFloor = (invocations, overrides = {}) => ({
     mes: '<details>legacy tool floor</details>',
     extra: { tool_invocations: invocations },
     ...overrides,
+});
+
+test('provider replay follows the original body and request target through tool projection', () => {
+    const context = getChatCompletionRequestContext({ chat_completion_source: 'custom', custom_api_format: 'gemini_generate_content', model: 'alias' });
+    const owner = assistant([call()], {
+        mes: 'Original',
+        extra: {
+            api: 'custom', model: 'alias', reasoning: 'Summary',
+            native: { gemini: { content: { parts: [{ text: 'Original', thoughtSignature: 'opaque' }] } } },
+            provider_replay: { ...context, text: 'Original' },
+        },
+    });
+    const [turn] = projectToolTurns([owner, tool()]);
+    const canReplay = () => canReplayProviderMetadata(turn.metadataMessage, turn.assistantMessage.mes, context);
+    assert.equal(canReplay(), true);
+    owner.mes += ' continuation';
+    assert.equal(canReplay(), false);
+    assert.equal(owner.extra.reasoning, 'Summary');
+    owner.mes = 'Original';
+    assert.equal(canReplayProviderMetadata(owner, owner.mes, { ...context, model: 'different' }), false);
+    assert.equal(canReplayProviderMetadata(owner, owner.mes, { ...context, customApiFormat: 'openai_compat' }), false);
+    delete owner.extra.provider_replay;
+    assert.equal(canReplay(), true);
+    owner.mes = 'Edited by extension';
+    assert.equal(canReplay(), false);
+    delete owner.extra.native;
+    assert.equal(canReplay(), false);
 });
 
 
