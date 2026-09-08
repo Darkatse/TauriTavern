@@ -33,7 +33,9 @@ Run 正常完成后进入 `completed`。取消进入 `cancelled`；错误发生�
 
 ## Checkpoint 与恢复
 
-每次执行结束时保存 checkpoint，由 runtime 的执行状态与宿主的消息呈现共同构成。续接沿用原 Run、冻结输入和工作区，保留已确认结果与累计预算；已完成的 Run 只供读取，不再续接。
+每次执行结束时保存 checkpoint，由 runtime 的执行状态与宿主的消息呈现共同构成。中断后的续接沿用原 Run、冻结输入和工作区，保留已确认结果与累计预算。
+
+`/fix 修改要求` 用于修改最后一条已完成 Agent 回复的当前 swipe。当前正文保存到 `output/previous_output.md`，作为包含手工编辑的修改基准。新的前台 Invocation 继承上一前台的完整上下文，在原 Run 中获得正常预算；原提交记录与工作材料继续保留。
 
 恢复依赖完整且匹配的保存材料。运行活跃、材料缺失或外部副作用无法确认时拒绝恢复；可恢复的保存错误允许重试。恢复与清理须互斥，已确认的工具和提交效果不得重放。
 
@@ -48,6 +50,7 @@ Run 正常完成后进入 `completed`。取消进入 `cancelled`；错误发生�
 | [agent_runtime_service/lifecycle.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/lifecycle.rs) | 输入校验、创建与取消 Run |
 | [agent_runtime_service/executor.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/executor.rs) | 准备根 Invocation、推进交接链、处理终态 |
 | [agent_runtime_service/checkpoint.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/checkpoint.rs) | Checkpoint 保存、读取与恢复准入 |
+| [agent_runtime_service/revision.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/revision.rs) | 已完成输出的后续修订 |
 | [agent_runtime_service/loop_runner.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/loop_runner.rs) | 模型与工具循环 |
 | [agent_runtime_service/tool_execution.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/tool_execution.rs) | 工具调用、结果与副作用记录 |
 | [agent_runtime_service/commit.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/commit.rs) | 聊天提交与 Run 收尾 |

@@ -106,7 +106,7 @@ type TauriTavernAgentRunEvent = {
     payload?: unknown;
 };
 
-type TauriTavernAgentInvocationKind = 'root' | 'subagent' | 'handoff';
+type TauriTavernAgentInvocationKind = 'root' | 'subagent' | 'handoff' | 'revision';
 
 type TauriTavernAgentInvocationStatus =
     | 'created'

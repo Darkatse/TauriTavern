@@ -126,7 +126,10 @@ impl WorkspaceRepository for InvocationWorkspaceRepository<'_> {
     async fn commit_persistent_changes(
         &self,
         run_id: &str,
+        previous_state_id: Option<&str>,
     ) -> Result<WorkspacePersistentChangeSet, DomainError> {
-        self.inner.commit_persistent_changes(run_id).await
+        self.inner
+            .commit_persistent_changes(run_id, previous_state_id)
+            .await
     }
 }

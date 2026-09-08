@@ -21,6 +21,9 @@ pub(super) struct RunExecutionState {
     pub commits: RunCommitLedger,
     pub guidance: Vec<AgentGuidanceItem>,
     pub published_state: Option<WorkspacePersistentChangeSet>,
+    /// The preceding revision's version can be reused when persistent files did not change.
+    #[serde(default)]
+    pub previous_published_state_id: Option<String>,
     pub blocked_reason: Option<String>,
 }
 

@@ -433,6 +433,7 @@ impl AgentRuntimeService {
         incoming_handoff_task_id: Option<&str>,
         commit_ledger: &RunCommitLedger,
         published_state: &mut Option<WorkspacePersistentChangeSet>,
+        previous_published_state_id: Option<&str>,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
         self.transition_status(run_id, AgentRunStatus::Finishing)
@@ -443,7 +444,7 @@ impl AgentRuntimeService {
         if published_state.is_none() {
             let persistent_changes = match self
                 .workspace_repository
-                .commit_persistent_changes(run_id)
+                .commit_persistent_changes(run_id, previous_published_state_id)
                 .await
             {
                 Ok(changes) => changes,

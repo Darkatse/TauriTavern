@@ -8,7 +8,7 @@
 
 模型看到的名称由 Invocation 创建时生成。例如 `builtin:workspace.read_file` 对应 `workspace_read_file`。MCP 名称根据服务器和工具名生成。稳定 ID 用于记录和配置，模型名称用于这次调用，两者的对应关系保存在工具快照中。
 
-每个 Invocation 根据工具目录、Profile 和结束方式创建一份工具快照，包含描述、参数、名称映射及调用预算。调用先经过 `ToolRequestGate`，再进入内置工具或 MCP 的执行路径。
+Invocation 使用的工具快照包含描述、参数、名称映射及预算上限，按工具目录、Profile 和结束方式创建；输出修订沿用原快照。每个 Invocation 的调用计数独立，由 `ToolRequestGate` 检查后进入内置工具或 MCP 的执行路径。
 
 ## 内置工具
 

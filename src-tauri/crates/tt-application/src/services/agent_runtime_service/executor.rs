@@ -411,6 +411,7 @@ impl AgentRuntimeService {
                         frame.prepared.delegation_task_id.as_deref(),
                         &state.commits,
                         &mut state.published_state,
+                        state.previous_published_state_id.as_deref(),
                         cancel,
                     )
                     .await?;

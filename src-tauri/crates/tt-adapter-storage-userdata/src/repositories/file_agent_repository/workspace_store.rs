@@ -347,10 +347,12 @@ impl WorkspaceRepository for FileAgentRepository {
     async fn commit_persistent_changes(
         &self,
         run_id: &str,
+        previous_state_id: Option<&str>,
     ) -> Result<WorkspacePersistentChangeSet, DomainError> {
         let _guard = self.persist_lock.lock().await;
         let changes = self.compute_persistent_changes(run_id).await?;
-        self.commit_persistent_state(run_id, changes).await
+        self.commit_persistent_state(run_id, changes, previous_state_id)
+            .await
     }
 }
 

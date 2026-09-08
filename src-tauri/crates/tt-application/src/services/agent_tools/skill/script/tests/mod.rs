@@ -397,6 +397,7 @@ impl WorkspaceRepository for FakeWorkspaceRepo {
     async fn commit_persistent_changes(
         &self,
         _run_id: &str,
+        _previous_state_id: Option<&str>,
     ) -> Result<WorkspacePersistentChangeSet, DomainError> {
         unreachable!("not needed")
     }

@@ -106,5 +106,6 @@ pub trait WorkspaceRepository: Send + Sync {
     async fn commit_persistent_changes(
         &self,
         run_id: &str,
+        previous_state_id: Option<&str>,
     ) -> Result<WorkspacePersistentChangeSet, DomainError>;
 }

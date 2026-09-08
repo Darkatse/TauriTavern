@@ -1,7 +1,7 @@
 use super::*;
 use tt_application::dto::agent_dto::{
-    AgentCancelRunDto, AgentFinishRunPresentationDto, AgentReadRunCheckpointDto,
-    AgentReadRunCheckpointResultDto, AgentResumeRunDto,
+    AgentCancelRunDto, AgentFinishRunPresentationDto, AgentOutputRevisionDto,
+    AgentReadRunCheckpointDto, AgentReadRunCheckpointResultDto, AgentResumeRunDto,
 };
 
 #[tokio::test]
@@ -331,10 +331,14 @@ async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_public
         matches!(&final_message.parts[0], AgentModelContentPart::ToolResult { result }
         if result.call_id == "call_finish" && !result.is_error)
     );
-    assert_eq!(
-        checkpoint["state"]["publishedState"]["stateId"],
-        handle.run_id
-    );
+    let published_state_id = checkpoint["state"]["publishedState"]["stateId"]
+        .as_str()
+        .unwrap();
+    fixture
+        .agent_repository
+        .validate_persistent_state(&handle.workspace_id, published_state_id)
+        .await
+        .unwrap();
 
     let run = fixture
         .agent_repository
@@ -350,6 +354,7 @@ async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_public
             stable_chat_id: run.stable_chat_id,
             additional_rounds: 0,
             host_presentation: false,
+            revision: None,
         })
         .await
         .expect_err("completed execution cannot resume");
@@ -743,6 +748,257 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
     }
 }
 
+#[tokio::test]
+async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_work() {
+    let root = temp_root("agent-output-revision");
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![model_tool_response(vec![
+            model_tool_call(
+                "write",
+                "workspace_write_file",
+                json!({ "path": "output/main.md", "content": "Original ending." }),
+            ),
+            model_tool_call("commit", "workspace_commit", json!({})),
+            model_tool_call("finish", "workspace_finish", json!({})),
+        ])],
+    );
+    let profile = configure_resume_profile(&fixture, 2, Some(1)).await;
+    let handle = start_contract_agent_run(
+        &fixture,
+        &profile,
+        AgentRunPresentation::Foreground,
+        "revision",
+        Some(false),
+    )
+    .await;
+    let state_id =
+        acknowledge_revision_output(&fixture, &handle.run_id, 0, Some("Original ending.")).await;
+    let completed = wait_for_checkpoint(&fixture, &handle.run_id).await;
+
+    fixture
+        .model_gateway
+        .wait_for_cancel_on_request
+        .store(2, Ordering::SeqCst);
+    revise_checkpoint(
+        &fixture,
+        &completed,
+        "Make the ending quieter.",
+        "An ending edited by hand.",
+    )
+    .await;
+    let mut requests = fixture.model_gateway.request_count.subscribe();
+    tokio::time::timeout(
+        AGENT_CONTRACT_ASYNC_TIMEOUT,
+        requests.wait_for(|count| *count == 2),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    fixture
+        .service
+        .cancel_run(AgentCancelRunDto {
+            run_id: handle.run_id.clone(),
+        })
+        .await
+        .unwrap();
+    let stopped = wait_for_checkpoint(&fixture, &handle.run_id).await;
+    assert_eq!(stopped.run.status, AgentRunStatus::Cancelled);
+    let request = fixture.model_gateway.requests().await.pop().unwrap();
+    assert!(request.messages.iter().flat_map(|message| &message.parts).any(|part| {
+        matches!(part, AgentModelContentPart::ToolResult { result } if result.call_id == "finish" && !result.is_error)
+    }), "the original completed tool turn remains in context");
+    assert!(request.messages.iter().flat_map(|message| &message.parts).any(|part| {
+        matches!(part, AgentModelContentPart::Text { text } if text.contains("Make the ending quieter."))
+    }));
+    let revision_id = request.provider_state["invocationId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(revision_id, ROOT_AGENT_INVOCATION_ID);
+    assert_eq!(
+        fixture
+            .agent_repository
+            .read_text(
+                &handle.run_id,
+                &WorkspacePath::parse("output/previous_output.md").unwrap()
+            )
+            .await
+            .unwrap()
+            .text,
+        "An ending edited by hand."
+    );
+    drop(fixture);
+
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![model_tool_response(vec![
+            model_tool_call(
+                "read",
+                "workspace_read_file",
+                json!({ "path": "output/previous_output.md" }),
+            ),
+            model_tool_call(
+                "write",
+                "workspace_write_file",
+                json!({ "path": "output/revised.md", "content": "A quieter ending edited by hand." }),
+            ),
+            model_tool_call(
+                "commit",
+                "workspace_commit",
+                json!({ "path": "output/revised.md" }),
+            ),
+            model_tool_call("finish", "workspace_finish", json!({})),
+        ])],
+    );
+    resume_checkpoint(&fixture, &stopped, 0).await;
+    let revised_state = acknowledge_revision_output(
+        &fixture,
+        &handle.run_id,
+        stopped.terminal_seq,
+        Some("A quieter ending edited by hand."),
+    )
+    .await;
+    let revised = wait_for_checkpoint(&fixture, &handle.run_id).await;
+    assert_eq!(revised.run.status, AgentRunStatus::Completed);
+    assert_eq!(
+        revised_state, state_id,
+        "body-only revisions reuse the persistent version"
+    );
+    assert_eq!(
+        fixture.model_gateway.requests().await[0].provider_state["invocationId"],
+        revision_id
+    );
+
+    fixture
+        .model_gateway
+        .responses
+        .lock()
+        .await
+        .push_back(Ok(model_tool_response(vec![model_tool_call(
+            "finish",
+            "workspace_finish",
+            json!({}),
+        )])));
+    revise_checkpoint(
+        &fixture,
+        &revised,
+        "Keep this version.",
+        "A quieter ending edited by hand.",
+    )
+    .await;
+    assert_eq!(
+        acknowledge_revision_output(&fixture, &handle.run_id, revised.terminal_seq, None).await,
+        state_id
+    );
+    assert_eq!(
+        wait_for_checkpoint(&fixture, &handle.run_id)
+            .await
+            .run
+            .status,
+        AgentRunStatus::Completed
+    );
+    let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_type == "chat_commit_requested")
+            .count(),
+        2,
+        "a revision does not require a redundant chat commit"
+    );
+    let invocations = fixture
+        .agent_repository
+        .list_invocations(&handle.run_id)
+        .await
+        .unwrap();
+    assert_eq!(invocations.len(), 3);
+    assert!(
+        invocations
+            .iter()
+            .all(|invocation| invocation.status == AgentInvocationStatus::Completed)
+    );
+    fs::remove_dir_all(root).await.unwrap();
+}
+
+async fn revise_checkpoint(
+    fixture: &AgentRuntimeFixture,
+    checkpoint: &AgentReadRunCheckpointResultDto,
+    guidance: &str,
+    previous_output: &str,
+) {
+    let run = fixture
+        .agent_repository
+        .load_run(&checkpoint.run.run_id)
+        .await
+        .unwrap();
+    let handle = fixture
+        .service
+        .resume_run(AgentResumeRunDto {
+            run_id: run.id,
+            expected_terminal_seq: checkpoint.terminal_seq,
+            chat_ref: run.chat_ref,
+            stable_chat_id: run.stable_chat_id,
+            additional_rounds: 0,
+            host_presentation: false,
+            revision: Some(AgentOutputRevisionDto {
+                guidance: guidance.to_string(),
+                previous_output: previous_output.to_string(),
+            }),
+        })
+        .await
+        .unwrap();
+    assert_eq!(handle.after_seq, Some(checkpoint.terminal_seq));
+}
+
+async fn acknowledge_revision_output(
+    fixture: &AgentRuntimeFixture,
+    run_id: &str,
+    after_seq: u64,
+    output: Option<&str>,
+) -> String {
+    if let Some(output) = output {
+        let commit = wait_for_event(fixture, run_id, "chat_commit_requested", after_seq).await;
+        let path = WorkspacePath::parse(commit.payload["path"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            fixture
+                .agent_repository
+                .read_text(run_id, &path)
+                .await
+                .unwrap()
+                .text,
+            output
+        );
+        fixture
+            .service
+            .resolve_chat_commit(AgentResolveChatCommitDto {
+                run_id: run_id.to_string(),
+                commit_id: commit.payload["commitId"].as_str().unwrap().to_string(),
+                message_id: Some("0".to_string()),
+                error: None,
+            })
+            .await
+            .unwrap();
+    }
+    let update = wait_for_event(
+        fixture,
+        run_id,
+        "persistent_state_metadata_update_requested",
+        after_seq,
+    )
+    .await;
+    fixture
+        .service
+        .resolve_persistent_state_metadata_update(AgentResolvePersistentStateMetadataUpdateDto {
+            run_id: run_id.to_string(),
+            update_id: update.payload["updateId"].as_str().unwrap().to_string(),
+            error: None,
+        })
+        .await
+        .unwrap();
+    update.payload["stateId"].as_str().unwrap().to_string()
+}
+
 async fn configure_resume_profile(
     fixture: &AgentRuntimeFixture,
     max_rounds: usize,
@@ -814,6 +1070,7 @@ async fn resume_checkpoint(
             stable_chat_id: run.stable_chat_id,
             additional_rounds,
             host_presentation: false,
+            revision: None,
         })
         .await
         .expect("resume saved execution");

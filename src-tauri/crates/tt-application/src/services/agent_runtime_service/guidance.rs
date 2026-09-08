@@ -33,6 +33,30 @@ pub(super) struct AgentGuidanceItem {
     pub(super) submitted_at: DateTime<Utc>,
 }
 
+impl AgentGuidanceItem {
+    pub(super) fn new(
+        text: &str,
+        client_guidance_id: Option<&str>,
+    ) -> Result<Self, ApplicationError> {
+        let text = normalize_guidance_text(text)?;
+        let metrics = TextMetrics::from_text(&text);
+        if metrics.chars > MAX_GUIDANCE_TEXT_CHARS {
+            return Err(ApplicationError::ValidationError(format!(
+                "agent.guidance_too_large: guidance is {} chars; maximum is {}",
+                metrics.chars, MAX_GUIDANCE_TEXT_CHARS
+            )));
+        }
+        Ok(Self {
+            guidance_id: format!("guidance_{}", Uuid::new_v4().simple()),
+            client_guidance_id: normalize_optional(client_guidance_id),
+            preview: guidance_preview(&text),
+            text,
+            metrics,
+            submitted_at: Utc::now(),
+        })
+    }
+}
+
 #[derive(Debug, Default)]
 pub(super) struct AgentGuidanceMailbox {
     state: Mutex<AgentGuidanceMailboxState>,
@@ -85,14 +109,7 @@ impl AgentRuntimeService {
         dto: AgentSubmitGuidanceDto,
     ) -> Result<AgentSubmitGuidanceResultDto, ApplicationError> {
         let run_id = normalize_required("runId", &dto.run_id)?;
-        let text = normalize_guidance_text(&dto.text)?;
-        let metrics = TextMetrics::from_text(&text);
-        if metrics.chars > MAX_GUIDANCE_TEXT_CHARS {
-            return Err(ApplicationError::ValidationError(format!(
-                "agent.guidance_too_large: guidance is {} chars; maximum is {}",
-                metrics.chars, MAX_GUIDANCE_TEXT_CHARS
-            )));
-        }
+        let item = AgentGuidanceItem::new(&dto.text, dto.client_guidance_id.as_deref())?;
 
         let run = self.run_repository.load_run(run_id.as_str()).await?;
         if !run_status_accepts_guidance(run.status) {
@@ -115,35 +132,11 @@ impl AgentRuntimeService {
 
         active_handle
             .guidance_mailbox
-            .ensure_can_accept(metrics.chars)
+            .ensure_can_accept(item.metrics.chars)
             .await?;
 
-        let item = AgentGuidanceItem {
-            guidance_id: format!("guidance_{}", Uuid::new_v4().simple()),
-            client_guidance_id: normalize_optional(dto.client_guidance_id.as_deref()),
-            preview: guidance_preview(&text),
-            text,
-            metrics,
-            submitted_at: Utc::now(),
-        };
-
-        self.event(
-            &run.id,
-            AgentRunEventLevel::Info,
-            "user_guidance_submitted",
-            json!({
-                "guidanceId": item.guidance_id.as_str(),
-                "clientGuidanceId": item.client_guidance_id.as_deref(),
-                "invocationId": ROOT_AGENT_INVOCATION_ID,
-                "chars": item.metrics.chars,
-                "words": item.metrics.words,
-                "preview": item.preview.as_str(),
-                "text": item.text.as_str(),
-                "submittedAt": item.submitted_at,
-                "status": "queued",
-            }),
-        )
-        .await?;
+        self.record_guidance_submission(&run.id, ROOT_AGENT_INVOCATION_ID, &item)
+            .await?;
 
         let pending_count = match active_handle.guidance_mailbox.enqueue(item.clone()).await {
             Ok(pending_count) => pending_count,
@@ -169,6 +162,32 @@ impl AgentRuntimeService {
             words: item.metrics.words,
             pending_count,
         })
+    }
+
+    pub(super) async fn record_guidance_submission(
+        &self,
+        run_id: &str,
+        invocation_id: &str,
+        item: &AgentGuidanceItem,
+    ) -> Result<(), ApplicationError> {
+        self.event(
+            run_id,
+            AgentRunEventLevel::Info,
+            "user_guidance_submitted",
+            json!({
+                "guidanceId": item.guidance_id,
+                "clientGuidanceId": item.client_guidance_id,
+                "invocationId": invocation_id,
+                "chars": item.metrics.chars,
+                "words": item.metrics.words,
+                "preview": item.preview,
+                "text": item.text,
+                "submittedAt": item.submitted_at,
+                "status": "queued",
+            }),
+        )
+        .await?;
+        Ok(())
     }
 
     pub(super) async fn apply_pending_guidance_to_request(
@@ -329,7 +348,7 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
 fn build_guidance_message(items: &[AgentGuidanceItem]) -> String {
     let mut text = String::from(USER_GUIDANCE_OPEN_TAG);
     text.push_str(
-        "\nThe user sent the following guidance while you were working. \
+        "\nThe user provided the following guidance. \
          Apply the guidance in order as the user's latest direction for your next step, \
          within your existing instructions and tool rules.",
     );

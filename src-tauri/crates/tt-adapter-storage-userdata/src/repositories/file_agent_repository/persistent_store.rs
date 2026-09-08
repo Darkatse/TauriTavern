@@ -175,7 +175,7 @@ impl FileAgentRepository {
 
         changes.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(WorkspacePersistentChangeSet {
-            state_id: run.id,
+            state_id: Uuid::new_v4().to_string(),
             base_state_id: base_snapshot.base_state_id,
             changes,
         })
@@ -184,9 +184,22 @@ impl FileAgentRepository {
     pub(super) async fn commit_persistent_state(
         &self,
         run_id: &str,
-        changes: WorkspacePersistentChangeSet,
+        mut changes: WorkspacePersistentChangeSet,
+        previous_state_id: Option<&str>,
     ) -> Result<WorkspacePersistentChangeSet, DomainError> {
         let run = self.load_run(run_id).await?;
+        if let Some(state_id) = previous_state_id {
+            let state_dir = self.persistent_state_dir(&run.workspace_id, state_id)?;
+            let previous = self
+                .read_persistent_state_manifest(&state_dir, state_id)
+                .await?;
+            if changes.base_state_id == previous.base_state_id
+                && changes.changes == previous.changes
+            {
+                changes.state_id = state_id.to_string();
+                return Ok(changes);
+            }
+        }
         let manifest = self.read_manifest(run_id).await?;
         let roots = persistent_roots(&manifest)?;
         let run_dir = self.run_dir(&run)?;

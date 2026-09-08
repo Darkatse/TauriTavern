@@ -57,6 +57,7 @@ mod model_stream_projection;
 mod model_turn_display;
 mod prompt_assembly;
 mod prompt_snapshot;
+mod revision;
 mod scheduler;
 mod skill_scope;
 mod task_details;

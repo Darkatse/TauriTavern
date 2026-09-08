@@ -330,6 +330,15 @@ pub struct AgentResumeRunDto {
     pub additional_rounds: usize,
     #[serde(default)]
     pub host_presentation: bool,
+    #[serde(default)]
+    pub revision: Option<AgentOutputRevisionDto>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentOutputRevisionDto {
+    pub guidance: String,
+    pub previous_output: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

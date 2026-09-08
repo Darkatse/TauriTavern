@@ -65,7 +65,7 @@ agent-workspaces/
 
 `persist/` 的起点由 `persistBaseStateId` 指定。初始化时，仓储把对应持久版本复制到本次 Run；模型随后像处理普通文件一样修改它。
 
-`workspace.finish` 收尾时发布一个新的 `persistent-states/<state-id>/`，并将其 ID 写入已提交消息的 Agent metadata。后续生成根据当前消息或 swipe 选择起点，因此不同候选可以保有各自的持久内容。前端负责选择版本，仓储负责保存版本。当前持久内容支持新增与修改。
+`workspace.finish` 收尾时发布持久版本，并将其 ID 写入已提交消息的 Agent metadata。首次完成或持久内容发生变化时创建新的 `persistent-states/<state-id>/`；修订未改变持久内容时复用上一版本。后续生成根据当前消息或 swipe 选择起点，因此不同候选可以保有各自的持久内容。前端负责选择版本，仓储负责保存版本。当前持久内容支持新增与修改。
 
 聊天分叉会复制持久版本并使用新聊天身份。运行历史清理与持久版本清理分别处理：缩减旧 Run 的材料不会删除仍被聊天使用的持久内容。
 

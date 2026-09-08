@@ -7,8 +7,10 @@ use tokio::sync::watch;
 
 use super::AgentRuntimeService;
 use super::continuation::{InvocationFrame, InvocationStep, RunExecutionState};
+use super::guidance::AgentGuidanceItem;
 use super::loop_runner::AgentLoopExit;
 use super::prompt_snapshot::frozen_macros_from_snapshot;
+use super::revision::PREVIOUS_OUTPUT_PATH;
 use super::scheduler::ActiveRunHandle;
 use crate::dto::agent_dto::{
     AgentFinishRunPresentationDto, AgentReadRunCheckpointDto, AgentReadRunCheckpointResultDto,
@@ -185,7 +187,12 @@ impl AgentRuntimeService {
                 "a newer checkpoint exists; read it before resuming",
             ));
         }
-        if checkpoint.run.status == AgentRunStatus::Completed {
+        if dto.revision.is_some() && checkpoint.run.status != AgentRunStatus::Completed {
+            return Err(invalid(
+                "continue the unfinished run before revising its output",
+            ));
+        }
+        if dto.revision.is_none() && checkpoint.run.status == AgentRunStatus::Completed {
             return Err(invalid("completed runs cannot be resumed"));
         }
         if let Some(reason) = checkpoint.blocked_reason() {
@@ -197,6 +204,21 @@ impl AgentRuntimeService {
                 != checkpoint.run.workspace_id
         {
             return Err(invalid("resume must target the original chat workspace"));
+        }
+        let revision_guidance = dto
+            .revision
+            .as_ref()
+            .map(|revision| AgentGuidanceItem::new(&revision.guidance, None))
+            .transpose()?;
+        if let Some(revision) = &dto.revision {
+            self.workspace_repository
+                .write_text(
+                    &dto.run_id,
+                    &WorkspacePath::parse(PREVIOUS_OUTPUT_PATH)?,
+                    &revision.previous_output,
+                )
+                .await?;
+            checkpoint.state.begin_output_revision()?;
         }
         // Rehydrate shared frozen context once. The workspace and invocation snapshots
         // remain the originals; no profile resolution or prompt assembly occurs here.
@@ -249,20 +271,44 @@ impl AgentRuntimeService {
         for item in checkpoint.state.guidance.drain(..) {
             handle.guidance_mailbox.enqueue(item).await?;
         }
+        if let Some(item) = &revision_guidance {
+            handle.guidance_mailbox.enqueue(item.clone()).await?;
+        }
         let admission = async {
             // Invalidate the old checkpoint durably before resumed execution can write.
             self.run_repository.save_run(&checkpoint.run).await?;
-            self.event(
-                &dto.run_id,
-                AgentRunEventLevel::Info,
-                "run_resumed",
-                json!({
-                    "checkpointTerminalSeq": checkpoint.terminal_seq,
-                    "additionalRounds": dto.additional_rounds,
-                    "invocationId": foreground_id(&checkpoint.state),
-                }),
-            )
-            .await
+            let resumed = self
+                .event(
+                    &dto.run_id,
+                    AgentRunEventLevel::Info,
+                    "run_resumed",
+                    json!({
+                        "checkpointTerminalSeq": checkpoint.terminal_seq,
+                        "additionalRounds": dto.additional_rounds,
+                        "invocationId": foreground_id(&checkpoint.state),
+                        "revision": dto.revision.is_some(),
+                    }),
+                )
+                .await?;
+            if dto.revision.is_some() {
+                self.save_revision_invocation(
+                    checkpoint
+                        .state
+                        .foreground
+                        .as_ref()
+                        .expect("revision foreground"),
+                )
+                .await?;
+            }
+            if let Some(item) = &revision_guidance {
+                self.record_guidance_submission(
+                    &dto.run_id,
+                    foreground_id(&checkpoint.state).expect("revision foreground"),
+                    item,
+                )
+                .await?;
+            }
+            Ok::<_, ApplicationError>(resumed)
         }
         .await;
         let resumed = match admission {
@@ -310,6 +356,18 @@ impl AgentRuntimeService {
         self.invocation_repository
             .save_invocation(invocation)
             .await?;
+        self.event(
+            &invocation.run_id,
+            AgentRunEventLevel::Info,
+            "agent_invocation_started",
+            json!({
+                "invocationId": invocation.id,
+                "profileId": invocation.profile_id,
+                "kind": invocation.kind,
+                "status": invocation.status,
+            }),
+        )
+        .await?;
         if let Some(task_id) = &frame.prepared.delegation_task_id {
             let mut task = self
                 .invocation_repository

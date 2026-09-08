@@ -144,6 +144,7 @@ pub enum AgentInvocationKind {
     Root,
     Subagent,
     Handoff,
+    Revision,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

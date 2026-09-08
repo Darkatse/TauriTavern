@@ -226,6 +226,7 @@ async fn agent_runtime_stops_after_unknown_mcp_call_outcome() {
             stable_chat_id: run.stable_chat_id,
             additional_rounds: 0,
             host_presentation: false,
+            revision: None,
         })
         .await
         .expect_err("unknown MCP effect must prevent resuming");
