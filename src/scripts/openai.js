@@ -3132,6 +3132,11 @@ function applyCustomModelOptionsForSource(source) {
     actionGroup.dataset.tauritavernCustomModels = 'true';
     appendOption(actionGroup, t`Manage custom models...`, manage_custom_chat_completion_models_option);
     element.append(actionGroup);
+
+    // Restore the configured model after rebuilding options without triggering change.
+    if (currentModel && element.value !== currentModel) {
+        element.value = currentModel;
+    }
 }
 
 function removeCustomModelOptionsForSource(source) {
