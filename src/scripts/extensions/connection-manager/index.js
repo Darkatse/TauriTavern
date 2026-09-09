@@ -14,7 +14,7 @@ import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommandScope } from '../../slash-commands/SlashCommandScope.js';
 import { collapseSpaces, getUniqueName, isFalseBoolean, isTrueBoolean, uuidv4, waitUntilCondition } from '../../utils.js';
 import { t } from '../../i18n.js';
-import { getSecretLabelById, resolveSecretKey } from '../../secrets.js';
+import { getSecretLabelById, resolveSecretKey, SECRET_KEYS } from '../../secrets.js';
 import { connectCurrentApi } from '../../slash-commands.js';
 import { performFuzzySearch } from '/scripts/power-user.js';
 import { StreamingDisplay } from '/scripts/streaming-display.js';
@@ -878,6 +878,11 @@ async function applyModelTarget(target) {
         try {
             await withConnectionValidationSuspended('Model target application', async () => {
                 await requireManagedCommand('api', target.api);
+
+                if (target.api === 'vertexai') {
+                    const mode = target.secretRef?.key === SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT ? 'full' : 'express';
+                    $('#vertexai_auth_mode').val(mode).trigger('change');
+                }
 
                 if (target['custom-api-format']) {
                     await requireManagedCommand('custom-api-format', target['custom-api-format']);

@@ -3272,6 +3272,7 @@
     "Secret ID copied to clipboard.": "密钥 ID 已复制到剪贴板。",
     "The key exposure might be disabled by the server config.": "关键暴露可能被服务器配置禁用。",
     "Failed to copy secret value": "复制密钥值失败",
+    "Failed to switch the API key. Please try again.": "切换 API 密钥失败，请重试。",
     "Secret value copied to clipboard.": "密钥值已复制到剪贴板。",
     "Enter new label for the secret:": "输入新的密钥标签：",
     "Rename Secret": "重命名密钥",

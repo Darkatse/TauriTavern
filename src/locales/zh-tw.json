@@ -3712,6 +3712,7 @@
     "The key exposure might be disabled by the server config.": "主要暴露可能被伺服器設定所禁用。",
     "No value entered": "未輸入數值",
     "Failed to copy secret value": "複製機密值失敗",
+    "Failed to switch the API key. Please try again.": "切換 API 金鑰失敗，請重試。",
     "Secret value copied to clipboard.": "秘密值已複製到剪貼簿。",
     "Enter new label for the secret:": "輸入秘密的新標籤：",
     "Rename Secret": "重新命名秘密",

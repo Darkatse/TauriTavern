@@ -140,6 +140,19 @@ test('Agent model target conversion keeps OpenCode service and wire format', asy
     });
 });
 
+test('Vertex AI targets preserve credential type and region', async () => {
+    const { buildLlmConnectionFromModelTarget } = await importConversion();
+    for (const [key, mode] of [['vertexai_service_account_json', 'full'], ['api_key_vertexai', 'express']]) {
+        const connection = buildLlmConnectionFromModelTarget(sampleTarget({
+            api: 'vertexai', model: 'gemini-2.5-pro', 'api-url': 'europe-west4',
+            secretRef: { key, id: 'vertex-secret' },
+        }));
+        assert.equal(connection.endpoint.sourceSpecific.vertexai_auth_mode ?? 'express', mode);
+        assert.equal(connection.endpoint.sourceSpecific.vertexai_region, 'europe-west4');
+        assert.deepEqual(connection.auth.secretRef, { key, id: 'vertex-secret' });
+    }
+});
+
 
 
 test('Agent run model target ensure refreshes by connection ref without adopting target model changes', async () => {

@@ -151,7 +151,7 @@ export function buildLlmConnectionFromModelTarget(target) {
         endpoint.sourceSpecific[SOURCE_SPECIFIC_API_URL_KEYS[source]] = apiUrl;
     }
 
-    if (source === 'vertexai' && target.secretRef?.key === 'api_key_vertexai_service_account') {
+    if (source === 'vertexai' && target.secretRef?.key === 'vertexai_service_account_json') {
         endpoint.sourceSpecific.vertexai_auth_mode = 'full';
     }
 
