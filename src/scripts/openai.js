@@ -3062,6 +3062,14 @@ function applyCustomModelOptionsForSource(source) {
     actionGroup.dataset.tauritavernCustomModels = 'true';
     appendOption(actionGroup, t`Manage custom models...`, manage_custom_chat_completion_models_option);
     element.append(actionGroup);
+
+    // Removing the previously selected option above can make the browser fall
+    // back to selecting whatever option is now first, silently diverging from
+    // the saved setting. Restore it directly (no synthetic 'change' dispatch,
+    // so this can't feed back into onModelChange and re-corrupt the setting).
+    if (currentModel && element.value !== currentModel) {
+        element.value = currentModel;
+    }
 }
 
 function removeCustomModelOptionsForSource(source) {
@@ -7273,14 +7281,8 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_vertexai_select')) {
-        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.VERTEXAI, value))) {
-            console.debug('Null Vertex AI model selected. Ignoring.');
-            return;
-        }
-
         console.log('Vertex AI model changed to', value);
         oai_settings.vertexai_model = value;
-        $('#model_vertexai_select').val(oai_settings.vertexai_model);
     }
 
     if ($(this).is('#model_mistralai_select')) {
