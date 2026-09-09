@@ -1,0 +1,34 @@
+name: PR target branch
+
+on:
+  pull_request_target:
+    # Reopening is the explicit exception for urgent fixes.
+    types: [opened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  check-target:
+    if: github.event.pull_request.base.ref != 'dev'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain the contribution policy and close the PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            const guide = `https://github.com/${owner}/${repo}/blob/dev/CONTRIBUTING.md`;
+
+            await github.rest.pulls.update({ owner, repo, pull_number, state: 'closed' });
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: pull_number,
+              body: [
+                `感谢您对 TauriTavern 的贡献！本项目的常规 PR 请提交到 \`dev\` 分支。由于此 PR 的目标分支不是 \`dev\`，机器人已将其关闭。请阅读 [贡献指南](${guide})，将目标分支改为 \`dev\` 后重新打开。如果这是必须直接提交到 \`main\` 的紧急修复，请说明原因并重新打开此 PR。`,
+                `Thank you for contributing to TauriTavern! Regular PRs should target \`dev\`. This PR has been automatically closed because it targets another branch. Please read [CONTRIBUTING.md](${guide}), change the target branch to \`dev\`, and reopen the PR. If this is an urgent fix that must go directly to \`main\`, please explain why and reopen this PR.`,
+              ].join('\n\n'),
+            });
