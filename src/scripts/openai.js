@@ -3062,6 +3062,14 @@ function applyCustomModelOptionsForSource(source) {
     actionGroup.dataset.tauritavernCustomModels = 'true';
     appendOption(actionGroup, t`Manage custom models...`, manage_custom_chat_completion_models_option);
     element.append(actionGroup);
+
+    // Removing the previously selected option above can make the browser fall
+    // back to selecting whatever option is now first, silently diverging from
+    // the saved setting. Restore it directly (no synthetic 'change' dispatch,
+    // so this can't feed back into onModelChange and re-corrupt the setting).
+    if (currentModel && element.value !== currentModel) {
+        element.value = currentModel;
+    }
 }
 
 function removeCustomModelOptionsForSource(source) {
