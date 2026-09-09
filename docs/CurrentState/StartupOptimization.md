@@ -51,6 +51,7 @@
   - 设置 readiness：
     - `window.__TAURITAVERN_MAIN_READY__ = readyPromise`
     - 前端用 `waitForTauriMainReady()` 等它，确保首次 `/api/*` 调用前 Host 已就绪，且 Rust `BackendReadiness` 已完成。
+  - Host Ready 后只加载不会传递导入主应用的模块。设置入口先注册同步/配对监听，事件呈现与设置 UI 共用一个 `APP_READY` Promise；请求参数面板本身依赖主应用，直接在 `APP_READY` 后导入。
 
 ### 2.4 前端启动编排：Shell → Core → Full（保持 APP_READY 语义）
 
@@ -198,6 +199,7 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
   - `src/script.js`：`tt:startup:shell/core/full` + `tt:startup:ready`
 - 运行时提示：
   - `src/scripts/tauri/startup/startup-status-overlay.js`：右下角非阻塞启动状态 overlay（`APP_READY` 后移除）
+- `pnpm run check:startup` 构建 vendor bundle 并运行 `tests/browser/startup-order.mjs`，验证 Host-ready 模块先加载时主应用仍能正常初始化、早到的事件等待应用就绪后呈现。该检查包含在默认 `pnpm run check` 中。
 
 ---
 

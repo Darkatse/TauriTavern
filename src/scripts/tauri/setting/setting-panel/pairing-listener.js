@@ -1,23 +1,15 @@
-import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
+import { invoke, listen } from '../../../../tauri-bridge.js';
 import { translate } from '../../../i18n.js';
 import { LAN_SYNC_DEVICES_CHANGED_EVENT } from './constants.js';
 
-let pairingListenerInstalled = false;
-
-export function installPairingListener() {
-    if (pairingListenerInstalled) {
-        return;
-    }
-    pairingListenerInstalled = true;
-
-    const invoke = window.__TAURI__.core.invoke;
-    const listen = window.__TAURI__.event.listen;
-
-    void (async () => {
-        await listen('lan_sync:pairing_completed', () => {
+export async function installPairingListener(appReady) {
+    await Promise.all([
+        listen('lan_sync:pairing_completed', () => {
             window.dispatchEvent(new Event(LAN_SYNC_DEVICES_CHANGED_EVENT));
-        });
-        await listen('lan_sync:pair_request', async (event) => {
+        }),
+        listen('lan_sync:pair_request', async (event) => {
+            await appReady;
+            const { callGenericPopup, POPUP_RESULT, POPUP_TYPE } = await import('../../../popup.js');
             const payload = event.payload;
             const requestId = payload.request_id;
             const peerDeviceName = payload.peer_device_name;
@@ -56,6 +48,6 @@ export function installPairingListener() {
 
             const accept = result === POPUP_RESULT.AFFIRMATIVE;
             await invoke('lan_sync_confirm_pairing', { requestId, accept });
-        });
-    })();
+        }),
+    ]);
 }

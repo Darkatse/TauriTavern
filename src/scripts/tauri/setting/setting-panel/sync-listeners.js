@@ -1,4 +1,4 @@
-import { callGenericPopup, POPUP_TYPE, Popup } from '../../../popup.js';
+import { listen } from '../../../../tauri-bridge.js';
 import { t, translate } from '../../../i18n.js';
 import {
     SYNC_AUTOMATION_CHANGED_EVENT,
@@ -10,7 +10,6 @@ import { resolveSyncJobEventAction, syncFailureRequiresReload } from './sync-job
 
 const SYNC_STYLE_ID = 'tauritavern-sync-style';
 
-let syncListenerInstalled = false;
 let syncProgressPopup = null;
 let syncProgressApp = null;
 let syncProgressOpening = null;
@@ -28,40 +27,23 @@ function ensureSyncStyle() {
     document.head.appendChild(link);
 }
 
-async function importSyncBundle() {
-    return import(new URL('../dist/sync.bundle.js', import.meta.url).href);
-}
-
-function getListen() {
-    const listen = window.__TAURI__?.event?.listen;
-    if (typeof listen !== 'function') {
-        throw new Error('Tauri event API is unavailable');
-    }
-    return listen;
-}
-
-export function installSyncListeners() {
-    if (syncListenerInstalled) {
-        return;
-    }
-    syncListenerInstalled = true;
-
-    const listen = getListen();
-
-    void (async () => {
-        await listen('sync:job', async (event) => {
+export async function installSyncListeners(appReady) {
+    await Promise.all([
+        listen('sync:job', async (event) => {
+            await appReady;
             await handleSyncJobEvent(event.payload);
-        });
+        }),
 
-        await listen('sync_auto:status', () => {
+        listen('sync_auto:status', () => {
             window.dispatchEvent(new Event(SYNC_AUTOMATION_STATUS_CHANGED_EVENT));
-        });
+        }),
 
-        await listen('sync_auto:toast', (event) => {
+        listen('sync_auto:toast', async (event) => {
+            await appReady;
             showSyncAutomationToast(event.payload);
             window.dispatchEvent(new Event(SYNC_AUTOMATION_CHANGED_EVENT));
-        });
-    })();
+        }),
+    ]);
 }
 
 async function handleSyncJobEvent(payload) {
@@ -90,7 +72,8 @@ export async function showSyncReportResult(report) {
             window.dispatchEvent(new Event(TT_SYNC_SERVERS_CHANGED_EVENT));
         }
         await closeSyncProgressPopup();
-        await showSyncError({ message: result.message || 'Sync failed.' });
+        const { showErrorPopup } = await import('./popup-utils.js');
+        await showErrorPopup(result.message || 'Sync failed.');
         if (shouldReload) {
             window.location.reload();
         }
@@ -121,6 +104,7 @@ export async function showSyncReportResult(report) {
 
 async function showLanSyncCompleted(payload) {
     await closeSyncProgressPopup();
+    const { callGenericPopup, POPUP_TYPE } = await import('../../../popup.js');
 
     const files = payload.files_total;
     const bytes = payload.bytes_total;
@@ -145,6 +129,7 @@ async function showLanSyncCompleted(payload) {
 
 async function showTtSyncCompleted(payload) {
     await closeSyncProgressPopup();
+    const { callGenericPopup, POPUP_TYPE } = await import('../../../popup.js');
     window.dispatchEvent(new Event(TT_SYNC_SERVERS_CHANGED_EVENT));
 
     const files = payload.files_total;
@@ -231,7 +216,8 @@ async function ensureSyncProgressPopup() {
 
     syncProgressOpening = (async () => {
         ensureSyncStyle();
-        const bundle = await importSyncBundle();
+        const { Popup, POPUP_TYPE } = await import('../../../popup.js');
+        const bundle = await import(new URL('../dist/sync.bundle.js', import.meta.url).href);
         const mount = document.createElement('div');
         const initialState = syncProgressState || {
             title: 'Sync progress',
@@ -292,14 +278,4 @@ function cleanupSyncProgressPopup(popup) {
     syncProgressApp = null;
     syncProgressOpening = null;
     syncProgressState = null;
-}
-
-async function showSyncError(payload) {
-    const message = translate(payload.message);
-    await callGenericPopup(String(message), POPUP_TYPE.TEXT, '', {
-        okButton: translate('OK'),
-        allowVerticalScrolling: true,
-        wide: false,
-        large: false,
-    });
 }
