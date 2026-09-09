@@ -7273,8 +7273,14 @@ async function onModelChange() {
     }
 
     if ($(this).is('#model_vertexai_select')) {
+        if (!value || (!hasModelsLoaded && !isCustomModelValueForSource(chat_completion_sources.VERTEXAI, value))) {
+            console.debug('Null Vertex AI model selected. Ignoring.');
+            return;
+        }
+
         console.log('Vertex AI model changed to', value);
         oai_settings.vertexai_model = value;
+        $('#model_vertexai_select').val(oai_settings.vertexai_model);
     }
 
     if ($(this).is('#model_mistralai_select')) {
