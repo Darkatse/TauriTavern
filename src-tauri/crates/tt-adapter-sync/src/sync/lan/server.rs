@@ -468,7 +468,9 @@ mod tests {
     use tt_contracts::lan_discovery::LanDiscoveryAnnouncement;
     use tt_ports::lan_sync::LanPairingClient;
     use ttsync_client::{ClientSyncEngine, ClientSyncOptions, ClientSyncTarget, NoopSyncObserver};
-    use ttsync_contract::dataset::{DATASET_POLICY_VERSION, DATASET_SCOPE_FEATURE_V1};
+    use ttsync_contract::dataset::{
+        DATASET_POLICY_VERSION, DATASET_SCOPE_FEATURE_V1, DatasetSelection,
+    };
     use ttsync_contract::manifest::ManifestV2;
     use ttsync_contract::path::SyncPath;
     use ttsync_contract::peer::Permissions;
@@ -1042,10 +1044,15 @@ mod tests {
             .await
             .expect("create target root");
         let workspace = Arc::new(TauriTavernSyncWorkspace::new(target_root.clone()));
-        let mut options =
-            ClientSyncOptions::new(SyncMode::Incremental, tauri_tavern_full_selection());
+        let mut options = ClientSyncOptions::new(
+            SyncMode::Incremental,
+            DatasetSelection::new(
+                DATASET_POLICY_VERSION,
+                vec!["agent.workspace_outputs".to_string()],
+            ),
+        );
         options.require_bundle_zstd = true;
-        let report = ClientSyncEngine::new(
+        let engine = ClientSyncEngine::new(
             client,
             workspace,
             ClientSyncTarget {
@@ -1053,12 +1060,26 @@ mod tests {
                 ed25519_seed_b64url: peer_seed,
             },
             "LAN Sync peer",
-        )
-        .pull(options, &NoopSyncObserver)
-        .await
-        .expect("shared client pull");
-        assert_eq!(report.summary.files_total, 1 + agent_files.len());
-        assert_eq!(report.local_applied.files_written, 1 + agent_files.len());
+        );
+        let report = engine
+            .pull(options.clone(), &NoopSyncObserver)
+            .await
+            .expect("pull only Agent outputs");
+        assert_eq!(report.local_applied.files_written, 1);
+        assert!(
+            !target_root
+                .join("_tauritavern/agent-workspaces/chats/workspace/runs/run-completed/run.json")
+                .exists()
+        );
+
+        options.selection = tauri_tavern_full_selection();
+        let report = engine
+            .pull(options, &NoopSyncObserver)
+            .await
+            .expect("complete the partial Agent history");
+        // The existing output stays in the manifest and does not need another transfer.
+        assert_eq!(report.summary.files_total, agent_files.len());
+        assert_eq!(report.local_applied.files_written, agent_files.len());
         let bundle_bytes = tokio::fs::read(target_root.join("default-user/chats/hello.json"))
             .await
             .expect("read bundle file");

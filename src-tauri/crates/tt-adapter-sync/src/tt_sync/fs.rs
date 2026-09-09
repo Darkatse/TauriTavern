@@ -109,7 +109,7 @@ fn scan_dir_recursive(
 
         if file_type.is_dir() {
             if ttsync_core::dataset::is_agent_run_root_dir(&relative) {
-                ensure_agent_run_is_terminal(&entry_path.join("run.json"))?;
+                check_agent_run_sync_status(&entry_path.join("run.json"))?;
             }
 
             if !policy.should_descend_dir(&relative) {
@@ -122,7 +122,7 @@ fn scan_dir_recursive(
 
         if file_type.is_file() && policy.contains_path(&relative) {
             if ttsync_core::dataset::is_agent_run_index_file(&relative) {
-                ensure_agent_run_is_terminal(&entry_path)?;
+                check_agent_run_sync_status(&entry_path)?;
             }
 
             entries.push(make_entry(sync_root, &entry_path)?);
@@ -132,14 +132,21 @@ fn scan_dir_recursive(
     Ok(())
 }
 
-fn ensure_agent_run_is_terminal(path: &Path) -> Result<(), DomainError> {
-    let text = std::fs::read_to_string(path).map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to read agent run {}: {}",
-            path.display(),
-            error
-        ))
-    })?;
+fn check_agent_run_sync_status(path: &Path) -> Result<(), DomainError> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // Scoped or interrupted sync can leave run artifacts without their record.
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(DomainError::InternalError(format!(
+                "Failed to read agent run {}: {}",
+                path.display(),
+                error
+            )));
+        }
+    };
     let terminal = ttsync_core::dataset::agent_run_json_is_terminal(&text)
         .map_err(|error| DomainError::InvalidData(format!("{}: {}", path.display(), error)))?;
     if !terminal {
