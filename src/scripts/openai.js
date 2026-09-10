@@ -641,7 +641,7 @@ const default_settings = {
     nanogpt_model: 'gpt-4o-mini',
     nanogpt_provider: '',
     nanogpt_payg_override: false,
-    deepseek_model: 'deepseek-v4-flash',
+    deepseek_model: 'deepseek-flash',
     aimlapi_model: 'chatgpt-4o-latest',
     xai_model: 'grok-3-beta',
     pollinations_model: 'openai',
@@ -7796,7 +7796,7 @@ async function onModelChange() {
     if (oai_settings.chat_completion_source === chat_completion_sources.DEEPSEEK) {
         if (oai_settings.max_context_unlocked) {
             $('#openai_max_context').attr('max', unlocked_max);
-        } else if (['deepseek-chat', 'deepseek-reasoner'].includes(oai_settings.deepseek_model) || oai_settings.deepseek_model.startsWith('deepseek-v4')) {
+        } else if (['deepseek-chat', 'deepseek-reasoner', 'deepseek-flash'].includes(oai_settings.deepseek_model) || oai_settings.deepseek_model.startsWith('deepseek-v4')) {
             $('#openai_max_context').attr('max', max_1mil);
         } else if (oai_settings.deepseek_model == 'deepseek-coder') {
             $('#openai_max_context').attr('max', max_16k);
@@ -8312,7 +8312,7 @@ export function isImageInliningSupported(settings = oai_settings) {
         case chat_completion_sources.CLAUDE:
             return visionSupportedModels.some(model => settings.claude_model.includes(model));
         case chat_completion_sources.DEEPSEEK:
-            return ['deepseek-v4-flash-vision-exp', 'deepseek-v4.1-flash-expires-on-0910'].includes(settings.deepseek_model);
+            return ['deepseek-v4-flash-vision-exp', 'deepseek-flash'].includes(settings.deepseek_model);
         case chat_completion_sources.OPENROUTER:
             return (Array.isArray(model_list) && model_list.find(m => m.id === settings.openrouter_model)?.architecture?.input_modalities?.includes('image'));
         case chat_completion_sources.CUSTOM:

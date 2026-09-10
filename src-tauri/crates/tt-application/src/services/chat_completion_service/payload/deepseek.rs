@@ -95,8 +95,7 @@ fn resolve_thinking_mode(
                 }
             })
             .or_else(|| {
-                model
-                    .starts_with("deepseek-v4")
+                (model.starts_with("deepseek-v4") || model == "deepseek-flash")
                     .then_some(DeepSeekThinkingMode::Enabled)
             }),
     }
@@ -269,7 +268,7 @@ mod tests {
         for model in [
             "deepseek-v4-flash",
             "deepseek-v4-flash-vision-exp",
-            "deepseek-v4.1-flash-expires-on-0910",
+            "deepseek-flash",
             "deepseek-v4-pro",
         ] {
             let payload = json!({
