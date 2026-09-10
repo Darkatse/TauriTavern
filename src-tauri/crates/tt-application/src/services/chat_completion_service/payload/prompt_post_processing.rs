@@ -499,7 +499,7 @@ fn normalize_message_content(content: &mut Value, content_tokens: &mut HashMap<S
     }
 }
 
-fn prefix_if_missing(
+pub(super) fn prefix_if_missing(
     content: &str,
     prefix: &str,
     should_skip: impl FnOnce(&str) -> bool,

@@ -85,6 +85,21 @@ pub(super) fn map_openrouter_reasoning_effort(
     }
 }
 
+pub(super) fn map_xai_reasoning_effort(
+    value: &str,
+) -> Result<Option<&'static str>, ApplicationError> {
+    match parse_known_reasoning_effort(value, "xAI")? {
+        RequestedReasoningEffort::Auto => Ok(None),
+        RequestedReasoningEffort::None => Err(unsupported_reasoning_effort("xAI", value)),
+        RequestedReasoningEffort::Minimal => Ok(Some("minimal")),
+        RequestedReasoningEffort::Low => Ok(Some("low")),
+        RequestedReasoningEffort::Medium => Ok(Some("medium")),
+        RequestedReasoningEffort::High
+        | RequestedReasoningEffort::XHigh
+        | RequestedReasoningEffort::Max => Ok(Some("high")),
+    }
+}
+
 pub(super) fn map_zai_reasoning_effort(
     model: &str,
     value: &str,

@@ -32,6 +32,7 @@ mod response_body;
 mod vertexai;
 pub(crate) mod vertexai_auth;
 mod workers_ai;
+mod xai;
 
 #[derive(Debug, Clone, Copy)]
 struct PromptCachePerformanceUsage {
@@ -639,6 +640,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
             }
             ChatCompletionSource::WorkersAi => workers_ai::list_models(self, config).await,
             ChatCompletionSource::Pollinations => pollinations::list_models(self, config).await,
+            ChatCompletionSource::Xai => xai::list_models(self, config).await,
             ChatCompletionSource::Cohere => cohere::list_models(self, config).await,
             ChatCompletionSource::NanoGpt => {
                 openai::list_models_with_path(self, config, source_name, "/models?detailed=true")
@@ -712,6 +714,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 | ChatCompletionSource::WorkersAi
                 | ChatCompletionSource::Zai
                 | ChatCompletionSource::MiniMax
+                | ChatCompletionSource::Xai
                 | ChatCompletionSource::Pollinations,
                 _,
             ) => openai::generate(self, config, endpoint_path, payload, source_name)
@@ -814,6 +817,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 | ChatCompletionSource::WorkersAi
                 | ChatCompletionSource::Zai
                 | ChatCompletionSource::MiniMax
+                | ChatCompletionSource::Xai
                 | ChatCompletionSource::Pollinations,
                 _,
             ) => {
@@ -952,6 +956,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 | ChatCompletionSource::WorkersAi
                 | ChatCompletionSource::Zai
                 | ChatCompletionSource::MiniMax
+                | ChatCompletionSource::Xai
                 | ChatCompletionSource::Pollinations,
                 "/chat/completions",
             ) => {

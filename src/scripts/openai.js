@@ -148,6 +148,7 @@ const max_128k = 128 * 1000;
 const max_200k = 200 * 1000;
 const max_256k = 256 * 1000;
 const max_400k = 400 * 1000;
+const max_500k = 500 * 1000;
 const max_1mil = 1000 * 1000;
 const max_2mil = 2000 * 1000;
 const unlocked_max = max_2mil;
@@ -649,7 +650,7 @@ const default_settings = {
     nanogpt_payg_override: false,
     deepseek_model: 'deepseek-flash',
     aimlapi_model: 'chatgpt-4o-latest',
-    xai_model: 'grok-3-beta',
+    xai_model: 'grok-4.6',
     pollinations_model: 'openai',
     pollinations_endpoint: POLLINATIONS_ENDPOINT.AUTHENTICATED,
     cometapi_model: 'gpt-4o',
@@ -4538,23 +4539,18 @@ export async function createGenerationParameters(settings, model, type, messages
     }
 
     if (settings.chat_completion_source === chat_completion_sources.XAI) {
-        if (model.includes('grok-3-mini')) {
-            delete generate_data.presence_penalty;
-            delete generate_data.frequency_penalty;
+        // As of 2026-09-10, no Grok model accepts penalties, only the
+        // non-reasoning variants accept stop, and only Grok 4.3 and newer
+        // accept reasoning_effort.
+        delete generate_data.presence_penalty;
+        delete generate_data.frequency_penalty;
+
+        if (!model.includes('non-reasoning')) {
             delete generate_data.stop;
-        } else {
-            // As of 2025/09/21, only grok-3-mini accepts reasoning_effort
-            delete generate_data.reasoning_effort;
         }
 
-        if (model.includes('grok-4') || model.includes('grok-code')) {
-            delete generate_data.presence_penalty;
-            delete generate_data.frequency_penalty;
-
-            // grok-4-fast-non-reasoning accepts stop
-            if (!model.includes('grok-4-fast-non-reasoning')) {
-                delete generate_data.stop;
-            }
+        if (!['grok-4.3', 'grok-4.5', 'grok-4.6'].some(x => model.includes(x))) {
+            delete generate_data.reasoning_effort;
         }
     }
 
@@ -7842,17 +7838,12 @@ async function onModelChange() {
     if (oai_settings.chat_completion_source === chat_completion_sources.XAI) {
         if (oai_settings.max_context_unlocked) {
             $('#openai_max_context').attr('max', unlocked_max);
-        } else if (oai_settings.xai_model.includes('grok-2-vision')) {
-            $('#openai_max_context').attr('max', max_32k);
-        } else if (oai_settings.xai_model.includes('grok-4-fast')) {
-            $('#openai_max_context').attr('max', max_2mil);
-        } else if (oai_settings.xai_model.includes('grok-4')) {
-            $('#openai_max_context').attr('max', max_256k);
-        } else if (oai_settings.xai_model.includes('grok-code')) {
+        } else if (['grok-4.5', 'grok-4.6'].some(x => oai_settings.xai_model.includes(x))) {
+            $('#openai_max_context').attr('max', max_500k);
+        } else if (['grok-build', 'grok-code'].some(x => oai_settings.xai_model.includes(x))) {
             $('#openai_max_context').attr('max', max_256k);
         } else {
-            // grok 2 and grok 3
-            $('#openai_max_context').attr('max', max_128k);
+            $('#openai_max_context').attr('max', max_1mil);
         }
 
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
@@ -8288,9 +8279,6 @@ export function isImageInliningSupported(settings = oai_settings) {
         'mistral-medium-2505',
         'mistral-medium-2508',
         'pixtral',
-        // xAI (Grok)
-        'grok-4',
-        'grok-2-vision',
         // Moonshot
         'moonshot-v1-8k-vision-preview',
         'moonshot-v1-32k-vision-preview',
@@ -8338,8 +8326,7 @@ export function isImageInliningSupported(settings = oai_settings) {
         case chat_completion_sources.COHERE:
             return visionSupportedModels.some(model => settings.cohere_model.includes(model));
         case chat_completion_sources.XAI:
-            // TODO: xAI's /models endpoint doesn't return modality info
-            return visionSupportedModels.some(model => settings.xai_model.includes(model));
+            return (Array.isArray(model_list) && model_list.find(m => m.id === settings.xai_model)?.input_modalities?.includes('image'));
         case chat_completion_sources.AIMLAPI:
             return (Array.isArray(model_list) && model_list.find(m => m.id === settings.aimlapi_model)?.features?.includes('openai/chat-completion.vision'));
         case chat_completion_sources.CHUTES:

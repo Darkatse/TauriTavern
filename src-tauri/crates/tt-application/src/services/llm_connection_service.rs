@@ -845,6 +845,7 @@ fn expected_secret_key(
         ChatCompletionSource::Zai => Ok(SecretKeys::ZAI),
         ChatCompletionSource::MiniMax => Ok(SecretKeys::MINIMAX),
         ChatCompletionSource::AwsBedrock => Ok(SecretKeys::AWS_BEDROCK),
+        ChatCompletionSource::Xai => Ok(SecretKeys::XAI),
         ChatCompletionSource::Pollinations => Ok(SecretKeys::POLLINATIONS),
         ChatCompletionSource::VertexAi => unreachable!("Vertex AI handled above"),
     }
@@ -860,6 +861,7 @@ fn supports_reverse_proxy(source: ChatCompletionSource) -> bool {
             | ChatCompletionSource::DeepSeek
             | ChatCompletionSource::Moonshot
             | ChatCompletionSource::Zai
+            | ChatCompletionSource::Xai
     )
 }
 

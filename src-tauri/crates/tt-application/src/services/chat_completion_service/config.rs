@@ -42,6 +42,7 @@ const ZAI_API_BASE_CODING: &str = "https://api.z.ai/api/coding/paas/v4";
 const MINIMAX_API_BASE: &str = "https://api.minimax.io/v1";
 const MINIMAX_API_BASE_CN: &str = "https://api.minimaxi.com/v1";
 const AWS_BEDROCK_DEFAULT_REGION: &str = "us-east-1";
+const XAI_API_BASE: &str = "https://api.x.ai/v1";
 const POLLINATIONS_API_BASE: &str = "https://gen.pollinations.ai/v1";
 const POLLINATIONS_API_BASE_ANONYMOUS: &str = "https://text.pollinations.ai/v1";
 const POLLINATIONS_STATUS_API_BASE: &str = "https://gen.pollinations.ai/text";
@@ -498,6 +499,7 @@ fn default_base_url(
         }
         ChatCompletionSource::MiniMax => minimax_base_url(hints.minimax_endpoint)?.to_string(),
         ChatCompletionSource::AwsBedrock => aws_bedrock_base_url(hints.aws_bedrock_region),
+        ChatCompletionSource::Xai => XAI_API_BASE.to_string(),
         ChatCompletionSource::Pollinations => match purpose {
             ApiConfigPurpose::Status => POLLINATIONS_STATUS_API_BASE.to_string(),
             ApiConfigPurpose::Generate
@@ -535,6 +537,7 @@ fn source_secret_key(
         ChatCompletionSource::Zai => Some(SecretKeys::ZAI),
         ChatCompletionSource::MiniMax => Some(SecretKeys::MINIMAX),
         ChatCompletionSource::AwsBedrock => Some(SecretKeys::AWS_BEDROCK),
+        ChatCompletionSource::Xai => Some(SecretKeys::XAI),
         ChatCompletionSource::Pollinations => {
             (!is_pollinations_anonymous(hints.pollinations_endpoint))
                 .then_some(SecretKeys::POLLINATIONS)
@@ -553,6 +556,7 @@ fn supports_reverse_proxy(source: ChatCompletionSource) -> bool {
             | ChatCompletionSource::DeepSeek
             | ChatCompletionSource::Moonshot
             | ChatCompletionSource::Zai
+            | ChatCompletionSource::Xai
     )
 }
 
