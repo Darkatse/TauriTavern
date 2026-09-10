@@ -182,11 +182,9 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
   - **白名单永远保持连接**：`regex_container`、`qr_container`
     - 目的：避免 SPresets 等脚本在抽屉关闭时找不到 `#saved_regex_scripts` 触发 `MutationObserver.observe(target not Node)`。
 - `src/tauri/main/adapters/panel-runtime/top-settings-panel-parking.js`
-  - `compat` 档会为左侧 Chat Completion 面板保留最小兼容面：
-    - `#openai_api-presets`
-    - `#completion_prompt_manager`
-    - `#openai_api`
-  - 目的：在左侧抽屉关闭时，仍保持 OpenAI 预设/Prompt Manager/上下文控制面可被第三方脚本访问，避免出现“世界书扫描 budget 与最终 ChatCompletion budget 脱节”的兼容问题。
+  - 左栏 pinned 锚点分两类，判据不同：
+    - `LEFT_NAV_REQUIRED_ANCHORS`（所有档位，正确性）：**永远在线的代码会读写的 DOM 不允许被 park**。当前是 `#range_block_openai` —— `onModelChange` 位于从不 park 的 `#rm_api_block`，却把 `#openai_max_context` 的 `max` 当暂存读回，被 park 即得到 `NaN`。
+    - `LEFT_NAV_COMPAT_ANCHORS`（仅 `compat`，兼容让步）：`#openai_api-presets`、`#completion_prompt_manager`，让第三方脚本在抽屉关闭时仍能选中。
 
 ---
 

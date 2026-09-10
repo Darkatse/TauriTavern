@@ -2913,6 +2913,7 @@
     "Panel Runtime help: compact": "精簡：通常可減輕約 40% 的 DOM 壓力，相容性最佳。",
     "Panel Runtime help: aggressive": "激進：通常可減輕約 60% 的 DOM 壓力，但部分腳本可能無法使用（例如 SPresets）。",
     "Panel Runtime help: off": "關閉：保持舊版行為（不做 DOM 停放）。",
+    "Panel Runtime failed to install and is inactive. Check the console for details.": "Panel Runtime 安裝失敗，本次工作階段未生效。詳情請見主控台。",
     "Embedded Runtime help: auto": "自動：依你的裝置自動選擇設定。",
     "Embedded Runtime help: balanced": "均衡：保留更多執行階段為活躍狀態，以提升相容性。",
     "Embedded Runtime help: saver": "省電：更積極地停放執行階段，降低記憶體/CPU 壓力。",

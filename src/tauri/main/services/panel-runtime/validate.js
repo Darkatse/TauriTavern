@@ -1,24 +1,21 @@
 // @ts-check
 
 /**
- * @param {string} id
+ * @param {string} selector
  * @returns {HTMLElement}
  */
-function mustGetConnectedElementById(id) {
-    const el = document.getElementById(id);
+function mustGetConnectedElement(selector) {
+    const el = document.querySelector(selector);
     if (!(el instanceof HTMLElement)) {
-        throw new Error(`PanelRuntime validate: #${id} not found`);
-    }
-    if (!el.isConnected) {
-        throw new Error(`PanelRuntime validate: #${id} is not connected`);
+        throw new Error(`PanelRuntime validate: ${selector} is missing or disconnected`);
     }
     return el;
 }
 
 /**
- * @param {{ profileName: string }} options
+ * @param {{ profileName: string; pinnedSelectors: readonly string[] }} options
  */
-export function validatePanelRuntimeInvariants({ profileName }) {
+export function validatePanelRuntimeInvariants({ profileName, pinnedSelectors }) {
     const profile = String(profileName || '').trim();
     if (!profile) {
         throw new Error('PanelRuntime validate: profileName is required');
@@ -28,39 +25,30 @@ export function validatePanelRuntimeInvariants({ profileName }) {
     }
 
     // Extensions mount points.
-    mustGetConnectedElementById('rm_extensions_block');
-    mustGetConnectedElementById('extensions_settings');
-    mustGetConnectedElementById('regex_container');
-    mustGetConnectedElementById('qr_container');
+    mustGetConnectedElement('#rm_extensions_block');
+    mustGetConnectedElement('#extensions_settings');
+    mustGetConnectedElement('#regex_container');
+    mustGetConnectedElement('#qr_container');
 
-    // Compat anchor-zone surface: keep the OpenAI preset / prompt / control hosts selectable while parked.
-    if (profile === 'compat') {
-        mustGetConnectedElementById('openai_api-presets');
-        mustGetConnectedElementById('completion_prompt_manager');
-        mustGetConnectedElementById('openai_api');
+    for (const selector of pinnedSelectors) {
+        mustGetConnectedElement(selector);
     }
 
-    // API connections control surface (only meaningful when left-nav is hydrated).
-    const leftNavScrollable = document.querySelector('#left-nav-panel .scrollableInner');
-    const isLeftNavHydrated = leftNavScrollable instanceof HTMLElement && leftNavScrollable.isConnected;
-    if (!isLeftNavHydrated) {
-        return;
-    }
-
-    const mainApiEl = mustGetConnectedElementById('main_api');
+    // #rm_api_block is subtree-gated, not drawer-parked: these hold in any park state.
+    const mainApiEl = mustGetConnectedElement('#main_api');
     if (!(mainApiEl instanceof HTMLSelectElement)) {
         throw new Error('PanelRuntime validate: #main_api is not a <select>');
     }
-    mustGetConnectedElementById('kobold_horde');
-    mustGetConnectedElementById('kobold_api');
-    mustGetConnectedElementById('novel_api');
-    mustGetConnectedElementById('textgenerationwebui_api');
-    mustGetConnectedElementById('openai_api');
+    mustGetConnectedElement('#kobold_horde');
+    mustGetConnectedElement('#kobold_api');
+    mustGetConnectedElement('#novel_api');
+    mustGetConnectedElement('#textgenerationwebui_api');
+    mustGetConnectedElement('#openai_api');
 
     if (String(mainApiEl.value || '').trim() === 'openai') {
-        mustGetConnectedElementById('chat_completion_source');
+        mustGetConnectedElement('#chat_completion_source');
     }
     if (String(mainApiEl.value || '').trim() === 'textgenerationwebui') {
-        mustGetConnectedElementById('textgen_type');
+        mustGetConnectedElement('#textgen_type');
     }
 }

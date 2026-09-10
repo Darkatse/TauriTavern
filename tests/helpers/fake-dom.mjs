@@ -228,6 +228,7 @@ export function installFakeDom({
         HTMLPreElement: window.HTMLPreElement,
         HTMLTemplateElement: window.HTMLTemplateElement,
         HTMLIFrameElement: window.HTMLIFrameElement,
+        HTMLSelectElement: window.HTMLSelectElement,
         DocumentFragment: window.DocumentFragment,
         MutationObserver,
         IntersectionObserver,

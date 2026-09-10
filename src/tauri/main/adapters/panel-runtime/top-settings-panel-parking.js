@@ -47,12 +47,16 @@ const LEFT_NAV_MAIN_API_BLOCKS = Object.freeze({
     },
 });
 
-// Keep the OpenAI control surface connected in compat mode so third-party
-// scripts can continue to drive preset/context settings while the drawer is parked.
-const LEFT_NAV_COMPAT_PINNED_SELECTORS = Object.freeze([
+// Every profile: openai.js `onModelChange` runs from the never-parked #rm_api_block
+// and reads these controls' `max` back through the DOM, which yields NaN once parked.
+const LEFT_NAV_REQUIRED_ANCHORS = Object.freeze([
+    '#range_block_openai',
+]);
+
+// `compat` only: keep these selectable while parked, for third-party scripts.
+const LEFT_NAV_COMPAT_ANCHORS = Object.freeze([
     '#openai_api-presets',
     '#completion_prompt_manager',
-    '#openai_api',
 ]);
 
 /**
@@ -297,11 +301,13 @@ function registerDrawerParking(manager, { panelId, parkedSelector, pinnedSelecto
  * Controlled by `tauritavern-settings.panel_runtime_profile` (default: off).
  *
  * @param {{ manager: EmbeddedRuntimeManager }} options
+ * @returns {{ pinnedSelectors: string[] }}
  */
 export function installTopSettingsPanelParking({ manager }) {
-    const leftNavPinnedSelectors = manager.profile === 'compat'
-        ? LEFT_NAV_COMPAT_PINNED_SELECTORS
-        : [];
+    const leftNavPinnedSelectors = [
+        ...LEFT_NAV_REQUIRED_ANCHORS,
+        ...(manager.profile === 'compat' ? LEFT_NAV_COMPAT_ANCHORS : []),
+    ];
 
     const registrations = [
         registerDrawerParking(manager, {
@@ -348,4 +354,6 @@ export function installTopSettingsPanelParking({ manager }) {
     }, true);
 
     manager.reconcile();
+
+    return { pinnedSelectors: leftNavPinnedSelectors };
 }
