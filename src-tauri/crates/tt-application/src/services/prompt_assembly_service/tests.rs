@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde_json::json;
 
 use super::*;
@@ -15,6 +17,7 @@ fn model_binding(
         chat_completion_source: source.to_string(),
         custom_api_format: custom_api_format.map(str::to_string),
         model_id: model_id.to_string(),
+        source_specific: BTreeMap::new(),
         secret_ref: Some(ResolvedLlmSecretRef {
             key: "api_key_deepseek".to_string(),
             id: "secret-1".to_string(),
@@ -185,7 +188,26 @@ fn builds_current_model_connection_snapshot_with_backend_owned_fields() {
 }
 
 #[test]
-fn current_model_connection_snapshot_rejects_unmapped_source() {
+fn current_model_connection_snapshot_carries_opencode_model() {
+    let snapshot = build_current_model_connection_snapshot(
+        &json!({
+            "chat_completion_source": "opencode",
+            "opencode_endpoint": "go",
+            "opencode_api_format": "claude_messages"
+        }),
+        "claude-sonnet-4-5",
+        None,
+    )
+    .unwrap();
+    let settings = snapshot["settings"].as_object().unwrap();
+
+    assert_eq!(settings["opencode_model"], "claude-sonnet-4-5");
+    assert_eq!(settings["opencode_endpoint"], "go");
+    assert_eq!(settings["opencode_api_format"], "claude_messages");
+}
+
+#[test]
+fn current_model_connection_snapshot_rejects_unsupported_source() {
     let error = build_current_model_connection_snapshot(
         &json!({
             "chat_completion_source": "unsupported",
@@ -199,7 +221,7 @@ fn current_model_connection_snapshot_rejects_unmapped_source() {
     assert!(
         error
             .to_string()
-            .contains("prompt_assembly.model_source_unmapped")
+            .contains("prompt_assembly.model_source_unsupported")
     );
 }
 
@@ -239,6 +261,25 @@ fn connection_ref_model_overrides_conflicting_preset_source() {
     assert_eq!(settings["chat_completion_source"], "deepseek");
     assert_eq!(settings["deepseek_model"], "deepseek-v4-flash");
     assert!(settings.get("openrouter_model").is_none());
+}
+
+#[test]
+fn connection_ref_overlays_source_specific_endpoint_fields() {
+    let mut settings = json!({
+        "chat_completion_source": "opencode",
+        "opencode_api_format": "openai_compat"
+    });
+    let mut binding = model_binding("opencode", "claude-sonnet-4-5", None);
+    binding.source_specific = BTreeMap::from([
+        ("opencode_endpoint".to_string(), json!("go")),
+        ("opencode_api_format".to_string(), json!("claude_messages")),
+    ]);
+
+    apply_model_binding_to_prompt_settings(&mut settings, &binding).unwrap();
+
+    assert_eq!(settings["opencode_model"], "claude-sonnet-4-5");
+    assert_eq!(settings["opencode_endpoint"], "go");
+    assert_eq!(settings["opencode_api_format"], "claude_messages");
 }
 
 #[test]

@@ -21,6 +21,27 @@ pub enum ChatCompletionSource {
 }
 
 impl ChatCompletionSource {
+    pub const ALL: &'static [Self] = &[
+        Self::OpenAi,
+        Self::OpenCode,
+        Self::OpenRouter,
+        Self::Custom,
+        Self::Claude,
+        Self::Makersuite,
+        Self::VertexAi,
+        Self::DeepSeek,
+        Self::Cohere,
+        Self::Groq,
+        Self::Moonshot,
+        Self::NanoGpt,
+        Self::Chutes,
+        Self::SiliconFlow,
+        Self::WorkersAi,
+        Self::Zai,
+        Self::MiniMax,
+        Self::AwsBedrock,
+    ];
+
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_lowercase().as_str() {
             "" | "openai" => Some(Self::OpenAi),
@@ -67,6 +88,29 @@ impl ChatCompletionSource {
             Self::Zai => "zai",
             Self::MiniMax => "minimax",
             Self::AwsBedrock => "aws_bedrock",
+        }
+    }
+
+    pub const fn prompt_model_setting_key(self) -> &'static str {
+        match self {
+            Self::OpenAi => "openai_model",
+            Self::OpenCode => "opencode_model",
+            Self::OpenRouter => "openrouter_model",
+            Self::Custom => "custom_model",
+            Self::Claude => "claude_model",
+            Self::Makersuite => "google_model",
+            Self::VertexAi => "vertexai_model",
+            Self::DeepSeek => "deepseek_model",
+            Self::Cohere => "cohere_model",
+            Self::Groq => "groq_model",
+            Self::Moonshot => "moonshot_model",
+            Self::NanoGpt => "nanogpt_model",
+            Self::Chutes => "chutes_model",
+            Self::SiliconFlow => "siliconflow_model",
+            Self::WorkersAi => "workers_ai_model",
+            Self::Zai => "zai_model",
+            Self::MiniMax => "minimax_model",
+            Self::AwsBedrock => "aws_bedrock_model",
         }
     }
 

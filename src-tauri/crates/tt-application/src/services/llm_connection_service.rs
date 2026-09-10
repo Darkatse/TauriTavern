@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -161,6 +162,8 @@ pub struct ResolvedLlmModelBinding {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_api_format: Option<String>,
     pub model_id: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub source_specific: BTreeMap<String, Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secret_ref: Option<ResolvedLlmSecretRef>,
 }
@@ -196,6 +199,7 @@ impl ResolvedConnectionBinding {
             chat_completion_source: self.source.key().to_string(),
             custom_api_format: self.custom_api_format.clone(),
             model_id: self.model_id.clone(),
+            source_specific: self.connection.endpoint.source_specific.clone(),
             secret_ref: self.connection.auth.secret_ref.as_ref().map(|secret_ref| {
                 ResolvedLlmSecretRef {
                     key: secret_ref.key.trim().to_string(),

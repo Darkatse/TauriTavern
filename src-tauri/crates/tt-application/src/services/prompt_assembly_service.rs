@@ -23,6 +23,7 @@ use tt_domain::models::agent::profile::{
 };
 use tt_domain::models::preset::{Preset, PresetType};
 use tt_domain::models::tool::ToolCatalog;
+use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 use tt_ports::repositories::preset_repository::PresetRepository;
 
 const PROMPT_ASSEMBLY_REQUEST_KIND: &str = "tauritavern.agentPromptAssemblyRequest";
@@ -31,35 +32,6 @@ const FROZEN_RUN_INPUT_SNAPSHOT_KIND: &str = "tauritavern.agentFrozenRunInputSna
 const FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 const CURRENT_MODEL_CONNECTION_SNAPSHOT_KIND: &str = "tauritavern.currentModelConnectionSnapshot";
 const CURRENT_MODEL_CONNECTION_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
-const MODEL_PROMPT_SETTING_KEYS: &[&str] = &[
-    "openai_model",
-    "claude_model",
-    "google_model",
-    "vertexai_model",
-    "openrouter_model",
-    "ai21_model",
-    "mistralai_model",
-    "custom_model",
-    "cohere_model",
-    "perplexity_model",
-    "groq_model",
-    "siliconflow_model",
-    "minimax_model",
-    "aws_bedrock_model",
-    "electronhub_model",
-    "chutes_model",
-    "nanogpt_model",
-    "deepseek_model",
-    "aimlapi_model",
-    "xai_model",
-    "pollinations_model",
-    "cometapi_model",
-    "moonshot_model",
-    "fireworks_model",
-    "azure_openai_model",
-    "zai_model",
-    "workers_ai_model",
-];
 const PROMPT_CONNECTION_EXTRA_SETTING_KEYS: &[&str] = &[
     "additional_parameters_by_source",
     "azure_base_url",
@@ -709,6 +681,10 @@ fn apply_model_binding_to_prompt_settings(
         );
     }
 
+    for (key, value) in &binding.source_specific {
+        object.insert(key.clone(), value.clone());
+    }
+
     Ok(())
 }
 
@@ -762,47 +738,23 @@ fn apply_current_model_connection_snapshot_to_prompt_settings(
 }
 
 fn connection_prompt_setting_keys() -> impl Iterator<Item = &'static str> {
-    MODEL_PROMPT_SETTING_KEYS
+    ChatCompletionSource::ALL
         .iter()
         .copied()
+        .map(ChatCompletionSource::prompt_model_setting_key)
         .chain(llm_connection_service::connection_payload_keys())
         .chain(llm_connection_service::source_specific_payload_keys())
         .chain(PROMPT_CONNECTION_EXTRA_SETTING_KEYS.iter().copied())
 }
 
 fn prompt_model_setting_key(source: &str) -> Result<&'static str, ApplicationError> {
-    match source {
-        "openai" => Ok("openai_model"),
-        "openrouter" => Ok("openrouter_model"),
-        "custom" => Ok("custom_model"),
-        "claude" => Ok("claude_model"),
-        "makersuite" => Ok("google_model"),
-        "vertexai" => Ok("vertexai_model"),
-        "ai21" => Ok("ai21_model"),
-        "mistralai" => Ok("mistralai_model"),
-        "deepseek" => Ok("deepseek_model"),
-        "cohere" => Ok("cohere_model"),
-        "perplexity" => Ok("perplexity_model"),
-        "groq" => Ok("groq_model"),
-        "moonshot" => Ok("moonshot_model"),
-        "electronhub" => Ok("electronhub_model"),
-        "nanogpt" => Ok("nanogpt_model"),
-        "chutes" => Ok("chutes_model"),
-        "siliconflow" => Ok("siliconflow_model"),
-        "workers_ai" => Ok("workers_ai_model"),
-        "zai" => Ok("zai_model"),
-        "minimax" => Ok("minimax_model"),
-        "aimlapi" => Ok("aimlapi_model"),
-        "xai" => Ok("xai_model"),
-        "pollinations" => Ok("pollinations_model"),
-        "cometapi" => Ok("cometapi_model"),
-        "fireworks" => Ok("fireworks_model"),
-        "azure_openai" => Ok("azure_openai_model"),
-        "aws_bedrock" => Ok("aws_bedrock_model"),
-        other => Err(ApplicationError::InternalError(format!(
-            "prompt_assembly.model_source_unmapped: no prompt settings model key for source `{other}`"
-        ))),
-    }
+    ChatCompletionSource::parse(source)
+        .map(ChatCompletionSource::prompt_model_setting_key)
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "prompt_assembly.model_source_unsupported: chat completion source `{source}` is not supported"
+            ))
+        })
 }
 
 fn string_field<'a>(
