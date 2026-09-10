@@ -386,6 +386,11 @@ export const MOONSHOT_ENDPOINT = {
     CN: 'cn',
 };
 
+export const POLLINATIONS_ENDPOINT = {
+    AUTHENTICATED: 'authenticated',
+    ANONYMOUS: 'anonymous',
+};
+
 export const AWS_BEDROCK_REGION_DEFAULT = 'us-east-1';
 
 export function getAwsBedrockModelMetadata(modelId = null) {
@@ -511,6 +516,7 @@ export const settingsToUpdate = {
     aimlapi_model: ['#model_aimlapi_select', 'aimlapi_model', false, true],
     xai_model: ['#model_xai_select', 'xai_model', false, true],
     pollinations_model: ['#model_pollinations_select', 'pollinations_model', false, true],
+    pollinations_endpoint: ['#pollinations_endpoint', 'pollinations_endpoint', false, true],
     moonshot_model: ['#model_moonshot_select', 'moonshot_model', false, true],
     moonshot_endpoint: ['#moonshot_endpoint', 'moonshot_endpoint', false, true],
     fireworks_model: ['#model_fireworks_select', 'fireworks_model', false, true],
@@ -645,6 +651,7 @@ const default_settings = {
     aimlapi_model: 'chatgpt-4o-latest',
     xai_model: 'grok-3-beta',
     pollinations_model: 'openai',
+    pollinations_endpoint: POLLINATIONS_ENDPOINT.AUTHENTICATED,
     cometapi_model: 'gpt-4o',
     moonshot_model: 'kimi-k3',
     moonshot_endpoint: MOONSHOT_ENDPOINT.GLOBAL,
@@ -4576,6 +4583,10 @@ export async function createGenerationParameters(settings, model, type, messages
         generate_data.siliconflow_endpoint = settings.siliconflow_endpoint || SILICONFLOW_ENDPOINT.GLOBAL;
     }
 
+    if (settings.chat_completion_source === chat_completion_sources.POLLINATIONS) {
+        generate_data.pollinations_endpoint = settings.pollinations_endpoint || POLLINATIONS_ENDPOINT.AUTHENTICATED;
+    }
+
     if (settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
         const capabilities = getAwsBedrockModelCapabilities(settings.aws_bedrock_model);
         generate_data.aws_bedrock_region = (settings.aws_bedrock_region || AWS_BEDROCK_REGION_DEFAULT).trim();
@@ -6393,6 +6404,10 @@ async function getStatusOpen() {
         data.moonshot_endpoint = oai_settings.moonshot_endpoint;
     }
 
+    if (oai_settings.chat_completion_source === chat_completion_sources.POLLINATIONS) {
+        data.pollinations_endpoint = oai_settings.pollinations_endpoint;
+    }
+
     if (oai_settings.chat_completion_source === chat_completion_sources.AWS_BEDROCK) {
         data.aws_bedrock_region = (oai_settings.aws_bedrock_region || AWS_BEDROCK_REGION_DEFAULT).trim();
     }
@@ -8004,7 +8019,7 @@ async function onConnectButtonClick(e) {
         [chat_completion_sources.AZURE_OPENAI]: { key: SECRET_KEYS.AZURE_OPENAI, selector: '#api_key_azure_openai', proxy: false },
         [chat_completion_sources.ZAI]: { key: SECRET_KEYS.ZAI, selector: '#api_key_zai', proxy: true },
         [chat_completion_sources.CHUTES]: { key: SECRET_KEYS.CHUTES, selector: '#api_key_chutes', proxy: false },
-        [chat_completion_sources.POLLINATIONS]: { key: SECRET_KEYS.POLLINATIONS, selector: '#api_key_pollinations', proxy: false },
+        [chat_completion_sources.POLLINATIONS]: { key: SECRET_KEYS.POLLINATIONS, selector: '#api_key_pollinations', proxy: false, keyless: oai_settings.pollinations_endpoint === POLLINATIONS_ENDPOINT.ANONYMOUS },
         [chat_completion_sources.WORKERS_AI]: { key: SECRET_KEYS.WORKERS_AI, selector: '#api_key_workers_ai', proxy: false },
         [chat_completion_sources.MINIMAX]: { key: SECRET_KEYS.MINIMAX, selector: '#api_key_minimax', proxy: false },
         [chat_completion_sources.AWS_BEDROCK]: { key: SECRET_KEYS.AWS_BEDROCK, selector: '#api_key_aws_bedrock', proxy: false },
@@ -8124,6 +8139,7 @@ function toggleChatCompletionForms() {
         $('#model_xai_select').trigger('change');
     }
     else if (oai_settings.chat_completion_source == chat_completion_sources.POLLINATIONS) {
+        $('#pollinations_key_section').toggle(oai_settings.pollinations_endpoint === POLLINATIONS_ENDPOINT.AUTHENTICATED);
         $('#model_pollinations_select').trigger('change');
     }
     else if (oai_settings.chat_completion_source == chat_completion_sources.MOONSHOT) {
@@ -9394,6 +9410,12 @@ export function initOpenAI() {
         oai_settings.siliconflow_endpoint = String($(this).val());
         saveSettingsDebounced();
     });
+    $('#pollinations_endpoint').on('input', function () {
+        oai_settings.pollinations_endpoint = String($(this).val());
+        $('#pollinations_key_section').toggle(oai_settings.pollinations_endpoint === POLLINATIONS_ENDPOINT.AUTHENTICATED);
+        saveSettingsDebounced();
+    });
+
     $('#minimax_endpoint').on('input', function () {
         oai_settings.minimax_endpoint = String($(this).val());
         saveSettingsDebounced();

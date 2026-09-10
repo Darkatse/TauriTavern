@@ -3,7 +3,7 @@ import { getContext, getApiUrl, doExtrasFetch, extension_settings, modules, rend
 import { appendMediaToMessage, chat_metadata, eventSource, event_types, getRequestHeaders, saveChatConditional, saveSettingsDebounced, substituteParamsExtended, withChatSurfaceStructureMutation } from '../../../script.js';
 import { getMessageTimeStamp } from '../../RossAscends-mods.js';
 import { SECRET_KEYS, secret_state } from '../../secrets.js';
-import { oai_settings } from '../../openai.js';
+import { oai_settings, POLLINATIONS_ENDPOINT } from '../../openai.js';
 import { getMultimodalCaption, NATIVE_CAPTION_UNAVAILABLE_MESSAGE } from '../shared.js';
 import { textgen_types, textgenerationwebui_settings } from '../../textgen-settings.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
@@ -547,8 +547,8 @@ export async function init() {
                         return true;
                     }
 
-                    // Custom API doesn't need additional checks
-                    if (api === 'custom') {
+                    // Custom API and anonymous Pollinations don't need additional checks
+                    if (api === 'custom' || (api === 'pollinations' && oai_settings.pollinations_endpoint === POLLINATIONS_ENDPOINT.ANONYMOUS)) {
                         return true;
                     }
                 }

@@ -103,6 +103,11 @@ const SOURCE_SPECIFIC_FIELD_SPECS: &[SourceSpecificFieldSpec] = &[
         kind: SourceSpecificValueKind::NonEmptyString,
     },
     SourceSpecificFieldSpec {
+        key: "pollinations_endpoint",
+        source: ChatCompletionSource::Pollinations,
+        kind: SourceSpecificValueKind::NonEmptyString,
+    },
+    SourceSpecificFieldSpec {
         key: "workers_ai_account_id",
         source: ChatCompletionSource::WorkersAi,
         kind: SourceSpecificValueKind::NonEmptyString,
@@ -840,6 +845,7 @@ fn expected_secret_key(
         ChatCompletionSource::Zai => Ok(SecretKeys::ZAI),
         ChatCompletionSource::MiniMax => Ok(SecretKeys::MINIMAX),
         ChatCompletionSource::AwsBedrock => Ok(SecretKeys::AWS_BEDROCK),
+        ChatCompletionSource::Pollinations => Ok(SecretKeys::POLLINATIONS),
         ChatCompletionSource::VertexAi => unreachable!("Vertex AI handled above"),
     }
 }

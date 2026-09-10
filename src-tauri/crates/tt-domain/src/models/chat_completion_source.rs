@@ -18,6 +18,7 @@ pub enum ChatCompletionSource {
     Zai,
     MiniMax,
     AwsBedrock,
+    Pollinations,
 }
 
 impl ChatCompletionSource {
@@ -40,6 +41,7 @@ impl ChatCompletionSource {
         Self::Zai,
         Self::MiniMax,
         Self::AwsBedrock,
+        Self::Pollinations,
     ];
 
     pub fn parse(raw: &str) -> Option<Self> {
@@ -64,6 +66,7 @@ impl ChatCompletionSource {
             "zai" | "z.ai" | "glm" => Some(Self::Zai),
             "minimax" | "mini-max" | "mini max" => Some(Self::MiniMax),
             "aws_bedrock" | "aws-bedrock" | "aws bedrock" | "bedrock" => Some(Self::AwsBedrock),
+            "pollinations" => Some(Self::Pollinations),
             _ => None,
         }
     }
@@ -88,6 +91,7 @@ impl ChatCompletionSource {
             Self::Zai => "zai",
             Self::MiniMax => "minimax",
             Self::AwsBedrock => "aws_bedrock",
+            Self::Pollinations => "pollinations",
         }
     }
 
@@ -111,6 +115,7 @@ impl ChatCompletionSource {
             Self::Zai => "zai_model",
             Self::MiniMax => "minimax_model",
             Self::AwsBedrock => "aws_bedrock_model",
+            Self::Pollinations => "pollinations_model",
         }
     }
 
@@ -134,6 +139,7 @@ impl ChatCompletionSource {
             Self::Zai => "Z.AI (GLM)",
             Self::MiniMax => "MiniMax",
             Self::AwsBedrock => "AWS Bedrock",
+            Self::Pollinations => "Pollinations",
         }
     }
 }

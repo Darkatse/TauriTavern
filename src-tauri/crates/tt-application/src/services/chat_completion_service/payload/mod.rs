@@ -60,7 +60,8 @@ pub(super) fn build_payload(
     match source {
         ChatCompletionSource::OpenAi
         | ChatCompletionSource::Groq
-        | ChatCompletionSource::SiliconFlow => openai::build(payload),
+        | ChatCompletionSource::SiliconFlow
+        | ChatCompletionSource::Pollinations => openai::build(payload),
         ChatCompletionSource::OpenCode => {
             match opencode_format.expect("OpenCode format resolved") {
                 OpenCodeApiFormat::OpenAiCompat => openai::build_chat(payload),
