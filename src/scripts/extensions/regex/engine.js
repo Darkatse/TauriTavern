@@ -422,10 +422,11 @@ function canApplyNativeUnicodeSemantics(nativeScripts, rawString) {
     return nativeScripts.every(script => script.flags.includes('u') || script.flags.includes('v'));
 }
 
-function toPortableRegexScript(regexScript, rawString) {
-    const regexString = resolveRegexString(regexScript);
-    const findRegex = regexFromString(regexString);
-
+/**
+ * Describes a script for the batch backends, or returns null when it needs the main thread's macro substitution.
+ */
+function toPortableRegexScript(regexScript) {
+    const findRegex = regexFromString(resolveRegexString(regexScript));
     if (!findRegex) {
         return null;
     }
@@ -435,16 +436,8 @@ function toPortableRegexScript(regexScript, rawString) {
     }
 
     const replacement = regexScript.replaceString.replace(/{{match}}/gi, '$0');
-    if (hasSubstituteParamToken(replacement)) {
-        return null;
-    }
-
-    if (hasSubstituteParamToken(rawString) && REPLACEMENT_CAPTURE_REF_REGEX.test(replacement)) {
-        return null;
-    }
-
     const trimStrings = regexScript.trimStrings ?? [];
-    if (trimStrings.some(hasSubstituteParamToken)) {
+    if ([replacement, ...trimStrings].some(hasSubstituteParamToken)) {
         return null;
     }
 
@@ -456,6 +449,8 @@ function toPortableRegexScript(regexScript, rawString) {
         pattern: findRegex.source,
         flags: findRegex.flags,
         global: findRegex.global,
+        // Captured text is macro-substituted on the main thread; the backends cannot do that.
+        insertsCaptures: REPLACEMENT_CAPTURE_REF_REGEX.test(replacement),
         replacement,
         trimStrings,
     };
@@ -464,7 +459,7 @@ function toPortableRegexScript(regexScript, rawString) {
 function toNativeRegexTask(task) {
     return {
         text: task.text,
-        scripts: task.scripts.map(({ scriptKey: _, allowSlow: __, ...script }) => script),
+        scripts: task.scripts.map(({ scriptKey: _, allowSlow: __, insertsCaptures: ___, ...script }) => script),
     };
 }
 
@@ -548,6 +543,8 @@ export async function getRegexedStringBatchAsync(items) {
     const results = new Array(items.length);
     const portableTasks = [];
     const portableIndexes = [];
+    // Shared across tasks so the structured clone carries each script once.
+    const portableByScript = new Map();
     const nativeBackendAvailable = isNativeRegexBackendAvailable()
         && isNativeRegexBackendEnabled()
         && !nativeRegexCircuitOpen;
@@ -576,8 +573,14 @@ export async function getRegexedStringBatchAsync(items) {
             continue;
         }
 
-        const portableScripts = scripts.map(script => toPortableRegexScript(script, rawString));
-        if (portableScripts.every(Boolean)) {
+        const portableScripts = scripts.map(script => {
+            if (!portableByScript.has(script)) {
+                portableByScript.set(script, toPortableRegexScript(script));
+            }
+            return portableByScript.get(script);
+        });
+        const inputHasMacros = hasSubstituteParamToken(rawString);
+        if (portableScripts.every(script => script && !(inputHasMacros && script.insertsCaptures))) {
             const activeScripts = portableScripts.filter(script => !pausedRegexScriptKeys.has(script.scriptKey));
             portableIndexes.push(index);
             portableTasks.push({ text: rawString, scripts: activeScripts });
