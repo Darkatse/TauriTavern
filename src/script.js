@@ -1395,16 +1395,31 @@ async function getPersistedCharacterChats(characterId) {
 }
 
 /**
+ * Resolves the chat a character opens: its current chat while it still exists, otherwise its most recent one.
+ * A character without persisted chats keeps its current chat name so a new chat can be created under it.
+ * @param {{ file_name: string }[]} persistedChats Persisted chats, most recent first
+ * @param {string} currentChat Chat name stored in the character
+ * @returns {string} Chat name to open
+ */
+function resolvePersistedChat(persistedChats, currentChat) {
+    if (persistedChats.length === 0 || persistedChats.some(chat => normalizeChatFileName(chat.file_name) === currentChat)) {
+        return currentChat;
+    }
+    return normalizeChatFileName(persistedChats[0].file_name);
+}
+
+/**
  * Switches the currently selected character to the one with the given ID. (character index, not the character key!)
  *
  * If the character ID doesn't exist, if the chat is being saved, or if a group is being generated, this function does nothing.
- * If the character is different from the currently selected one, it will clear the chat and reset any selected character or group.
+ * Switching characters or explicitly opening a chat clears the chat and resets any selected character or group.
  * @param {number} id The ID of the character to switch to.
  * @param {object} [options] Options for the switch.
  * @param {boolean} [options.switchMenu=true] Whether to switch the right menu to the character edit menu if the character is already selected.
+ * @param {string} [options.chatFile] Existing chat to open instead of the character's current chat.
  * @returns {Promise<void>} A promise that resolves when the character is switched.
  */
-export async function selectCharacterById(id, { switchMenu = true } = {}) {
+export async function selectCharacterById(id, { switchMenu = true, chatFile } = {}) {
     if (characters[id] === undefined) {
         return;
     }
@@ -1418,11 +1433,10 @@ export async function selectCharacterById(id, { switchMenu = true } = {}) {
         return;
     }
 
-    if (selected_group || String(this_chid) !== String(id)) {
-        //if clicked on a different character from what was currently selected
+    if (selected_group || String(this_chid) !== String(id) || chatFile !== undefined) {
         if (!is_send_press) {
-            const persistedChats = await getPersistedCharacterChats(id);
-            const allowNewChat = persistedChats.length === 0;
+            const persistedChats = chatFile === undefined ? await getPersistedCharacterChats(id) : [];
+            const allowNewChat = chatFile === undefined && persistedChats.length === 0;
             setCharacterId(undefined);
             setCharacterName('');
             resetSelectedGroup();
@@ -1438,19 +1452,20 @@ export async function selectCharacterById(id, { switchMenu = true } = {}) {
                 return;
             }
 
-            const currentChatExists = persistedChats.some(chat => normalizeChatFileName(chat.file_name) === characters[id].chat);
-            if (!allowNewChat && !currentChatExists) {
-                const recoveredChat = normalizeChatFileName(persistedChats[0].file_name);
-                const persisted = await updateRemoteChatName(id, recoveredChat);
-                if (!persisted) {
-                    toastr.warning(t`The chat was recovered, but the character's current chat could not be saved.`);
-                }
-            }
+            const previousChat = characters[id].chat;
+            const targetChat = chatFile ?? resolvePersistedChat(persistedChats, previousChat);
+            characters[id].chat = targetChat;
+            await getChat({ allowNewChat });
 
-            if (selected_group || String(this_chid) !== String(id)) {
+            if (selected_group || String(this_chid) !== String(id) || characters[id]?.chat !== targetChat) {
                 return;
             }
-            await getChat({ allowNewChat });
+            if (chatFile !== undefined || targetChat !== previousChat) {
+                const persisted = await updateRemoteChatName(id, targetChat);
+                if (!persisted) {
+                    toastr.warning(t`The character's current chat could not be saved.`);
+                }
+            }
         }
     } else {
         //if clicked on character that was already selected
@@ -9303,14 +9318,13 @@ function getFirstMessage() {
     return message;
 }
 
+/**
+ * Opens an existing chat of the selected character.
+ * @param {string} file_name Chat file name without extension
+ */
 export async function openCharacterChat(file_name) {
     await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
-    await clearChat({ clearData: true });
-    characters[this_chid].chat = file_name;
-    chat_metadata = {};
-    await getChat();
-    $('#selected_chat_pole').val(file_name);
-    await createOrEditCharacter(new CustomEvent('newChat'));
+    await selectCharacterById(this_chid, { chatFile: file_name });
 }
 
 ////////// OPTIMZED MAIN API CHANGE FUNCTION ////////////

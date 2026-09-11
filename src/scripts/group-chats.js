@@ -233,11 +233,9 @@ async function hasPersistedGroupChats(groupId) {
 /**
  * Validates a group by checking if all members exist and removing duplicates.
  * @param {Group} group Group to validate
- * @returns {Promise<void>}
+ * @returns {boolean} Whether the group was changed
  */
-async function validateGroup(group) {
-    if (!group) return;
-
+function validateGroup(group) {
     // Validate that all members exist as characters
     let dirty = false;
     group.members = group.members.filter(member => {
@@ -261,9 +259,7 @@ async function validateGroup(group) {
         }
     }
 
-    if (dirty) {
-        await editGroup(group.id, true, false);
-    }
+    return dirty;
 }
 
 /**
@@ -283,11 +279,7 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
     const startedChatId = group.chat_id;
     const isStillActive = () => selected_group === startedGroupId && getCurrentChatId() === startedChatId;
 
-    // Run validation before any loading
-    await validateGroup(group);
-    if (!isStillActive()) {
-        return;
-    }
+    const groupChanged = validateGroup(group);
     await unshallowGroupMembers(groupId);
     if (!isStillActive()) {
         return;
@@ -364,6 +356,13 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
     updateChatMetadata(metadata, true);
     if (!isStillActive()) {
         return;
+    }
+
+    if (groupChanged) {
+        await editGroup(groupId, true, false);
+        if (!isStillActive()) {
+            return;
+        }
     }
 
     if (reload) {
@@ -2115,25 +2114,28 @@ function updateFavButtonState(state) {
 /**
  * Opens a group chat by its ID and updates the UI accordingly.
  * @param {string} groupId ID of the group to open
+ * @param {object} [options] Options for opening the group
+ * @param {string} [options.chatId] Existing chat to open instead of the group's current chat.
  * @returns {Promise<boolean>} Whether the group was opened
  */
-export async function openGroupById(groupId) {
+export async function openGroupById(groupId, { chatId } = {}) {
     if (isChatSaving) {
         toastr.info(t`Please wait until the chat is saved before switching characters.`, t`Your chat is still saving...`);
         return false;
     }
 
-    if (!groups.find(x => x.id === groupId)) {
+    const group = groups.find(x => x.id === groupId);
+    if (!group) {
         console.log('Group not found', groupId);
         return false;
     }
 
     if (!is_send_press && !is_group_generating) {
         const switchingGroup = selected_group !== groupId;
-        const allowNewChat = switchingGroup ? !(await hasPersistedGroupChats(groupId)) : false;
+        const allowNewChat = switchingGroup && chatId === undefined && !(await hasPersistedGroupChats(groupId));
         select_group_chats(groupId, false);
 
-        if (switchingGroup) {
+        if (switchingGroup || chatId !== undefined) {
             groupChatQueueOrder = new Map();
             setCharacterId(undefined);
             setCharacterName('');
@@ -2143,7 +2145,17 @@ export async function openGroupById(groupId) {
             selected_group = groupId;
             setEditedMessageId(undefined);
             updateChatMetadata({}, true);
+            const targetChat = chatId ?? group.chat_id;
+            group.chat_id = targetChat;
             await getGroupChat(groupId, false, { allowNewChat });
+
+            if (selected_group !== groupId || getCurrentChatId() !== targetChat) {
+                return false;
+            }
+            if (chatId !== undefined) {
+                group.date_last_chat = Date.now();
+                await editGroup(groupId, true, false);
+            }
             return true;
         }
     }
@@ -2298,19 +2310,7 @@ export async function getGroupPastChats(groupId) {
  */
 export async function openGroupChat(groupId, chatId) {
     await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
-    const group = groups.find(x => x.id === groupId);
-
-    if (!group || !group.chats.includes(chatId)) {
-        return;
-    }
-
-    await clearChat({ clearData: true });
-    group.chat_id = chatId;
-    group.date_last_chat = Date.now();
-    updateChatMetadata({}, true);
-
-    await editGroup(groupId, true, false);
-    await getGroupChat(groupId);
+    await openGroupById(groupId, { chatId });
 }
 
 /**
