@@ -344,12 +344,13 @@ TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板�
 - 宿主在主文档及其同源 iframe 中捕获该快捷键；独立 popup、移动端和带修饰键的 `F11` 不属于此契约。
 - 原生窗口状态是唯一真值；全屏不写入 SillyTavern 设置，也不纳入窗口几何持久化。切换失败会记录错误，后续按键仍可重试。
 
-### 5.6 Windows 文件拖放（Public in practice）
+### 5.6 桌面文件拖放（Public in practice）
 
-- 主窗口将文件拖放交给 WebView2 的 HTML5 `DataTransfer` / `drop`，由前端已有的拖放处理器执行导入。
-- Windows 主窗口关闭 Tauri 原生拖放处理，避免文件仅触发 `tauri://drag-drop` 而无法到达网页；不新增原生文件读取或第二条导入链路。
+- Windows/macOS/Linux 主窗口在创建时关闭 Tauri 原生拖放处理，将文件拖放交给 WebView 的 HTML5 `DataTransfer` / `drop`。
+- 由实际落点的前端处理器执行角色卡导入、聊天导入或附件/图库上传；不新增原生文件读取或第二条导入链路。
+- 此入口不再产生 Tauri 原生 `tauri://drag-*` 事件；扩展应使用 DOM 拖放事件。
 - 文件格式校验、导入提示和持久化继续由原有前端/后端导入流程负责；普通文件选择器入口不变。
-- 其他平台与独立 popup 的拖放策略不变。
+- 移动端与独立 popup WebView 的拖放策略不变；主页面内的 HTML 弹窗仍由各自的 DOM 拖放处理器负责。
 
 ## 6. Smoke Tests（Public 回归用例）
 
