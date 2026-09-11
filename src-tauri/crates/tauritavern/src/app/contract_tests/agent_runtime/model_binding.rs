@@ -6,7 +6,10 @@ use tt_ports::repositories::settings_repository::SettingsRepository;
 #[tokio::test]
 async fn agent_model_binding_uses_the_named_proxy_without_copying_credentials() {
     let root = temp_root("agent-proxy-binding");
-    let settings = Arc::new(FileSettingsRepository::new(root.join("default-user")));
+    let settings = Arc::new(FileSettingsRepository::new(
+        root.join("default-user"),
+        UserSettings::default(),
+    ));
     let service = LlmConnectionService::new(
         Arc::new(FileLlmConnectionRepository::new(
             root.join("llm-connections"),

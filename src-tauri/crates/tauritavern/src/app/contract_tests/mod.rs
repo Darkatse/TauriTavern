@@ -68,6 +68,7 @@ use tt_domain::models::mcp::{
     McpEndpoint, McpProtocolVersionPreference, McpRequestHeaders, McpToolPermission,
 };
 use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
+use tt_domain::models::settings::UserSettings;
 use tt_ports::mcp::{
     McpCallIssue, McpCallOutcome, McpDiscoveredTool, McpDiscoveryResult, McpGateway,
     McpKnownResponse, McpTextContent, McpToolCallResult,
@@ -214,7 +215,10 @@ fn agent_runtime_fixture_with_results(
         Arc::new(FileLlmConnectionRepository::new(
             root.join("_tauritavern/llm-connections"),
         )),
-        Arc::new(FileSettingsRepository::new(default_user.clone())),
+        Arc::new(FileSettingsRepository::new(
+            default_user.clone(),
+            UserSettings::default(),
+        )),
     ));
     let prompt_assembly_service = Arc::new(PromptAssemblyService::new(
         profile_service.clone(),

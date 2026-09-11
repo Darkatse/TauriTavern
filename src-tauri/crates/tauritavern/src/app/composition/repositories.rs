@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepository;
+use crate::infrastructure::assets::read_resource_json;
 use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
@@ -35,7 +36,7 @@ use tt_adapter_storage_userdata::{FileSkillRepository, FileSpriteRepository};
 use tt_adapter_tokenization::MiktikTokenizerRepository;
 use tt_adapter_vector::{CandleLocalEmbeddingRepository, RedbVectorRepository};
 use tt_domain::errors::DomainError;
-use tt_domain::models::settings::ChatBackupSettings;
+use tt_domain::models::settings::{ChatBackupSettings, UserSettings};
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
 use tt_ports::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
@@ -176,8 +177,19 @@ pub(super) async fn build(
         data_directory.user_data().to_path_buf(),
     ));
 
+    let default_user_settings: UserSettings = {
+        let app_handle = app_handle.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            read_resource_json(&app_handle, "default/content/settings.json")
+        })
+        .await
+        .map_err(|error| {
+            DomainError::InternalError(format!("Default user settings load task failed: {error}"))
+        })??
+    };
     let settings_repository: Arc<dyn SettingsRepository> = Arc::new(FileSettingsRepository::new(
         data_directory.settings().to_path_buf(),
+        default_user_settings,
     ));
 
     let prompt_cache_repository: Arc<dyn PromptCacheRepository> = Arc::new(
