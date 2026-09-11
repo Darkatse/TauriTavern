@@ -288,7 +288,7 @@ async fn finalize_failure(
 
     SyncJobReportResultWithError {
         report,
-        error: Some(error),
+        error: Some(*error),
     }
 }
 

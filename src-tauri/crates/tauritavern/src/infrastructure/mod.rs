@@ -16,6 +16,7 @@ pub mod repositories;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 pub mod runtime_paths_config_store;
 pub mod zipkit;
+pub mod trivium_store;
 
 #[cfg(test)]
 mod platform_boundary_contract_tests;
