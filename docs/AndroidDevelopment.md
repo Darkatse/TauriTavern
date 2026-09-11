@@ -468,12 +468,14 @@ Android WebView 可能暴露 `navigator.clipboard.writeText()`，却在调用时
 当前契约：
 
 - `api.skill.pickImportArchive()` 与 `pickImportArchives()` 统一使用 Tauri dialog 的 Android 文件选择能力，分别取得一个或多个 `content://` URI；
+- 该能力由 `capabilities/system-file-picker.json` 授予 android 平台的 `dialog:allow-open`；
 - 前端 `android-archive-service.js` 逐个把 URI 物化到 app cache/temp 下的 `tauritavern-skill-import-staging`；
 - Host API 对 UI 只返回一个或多个 `{ kind: 'archiveFile', path }`，保持 Skill 后端只消费普通文件路径；
 - 如果用户放弃某个输入，UI 调用 `api.skill.discardPickedImport(input)`；放弃整个批次时调用无参数的 `discardPickedImport()`。`installImport()` 完成后会自动清理对应输入。
 
 维护原则：
 
+- 新增平台分支调用 `plugin:*|*` 时，必须同步扩展对应 capability 的 `platforms`。`removeUnusedCommands` 会把未授权平台的命令直接裁掉，缺口只会在实机上以 ACL 错误暴露。
 - 不把 `content://` 透传到 Rust Skill repository；仓储层只处理真实路径与归档内容。
 - 导入不把完整文件整体 base64 物化，避免把内存占用集中到 JS heap 与单个 IPC payload。
 - 选择器取消不是错误；staging、预览、安装、清理失败都应直接暴露，避免静默遗留坏状态。
