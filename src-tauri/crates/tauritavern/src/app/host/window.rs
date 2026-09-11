@@ -69,6 +69,11 @@ pub(super) fn create_main_window(
             handle_tauri_web_resource_request(host_resource_service.as_ref(), &request, response);
         });
 
+    // Tauri's native handler intercepts WebView2 file drops before the frontend
+    // can receive them. Keep file imports on the existing HTML5 drop handlers.
+    #[cfg(windows)]
+    let builder = builder.disable_drag_drop_handler();
+
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     let builder = {
         let app_handle = app.handle().clone();
