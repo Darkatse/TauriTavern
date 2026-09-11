@@ -1,9 +1,11 @@
 // @ts-check
 
+import { planReplace } from './gated-replace.js';
+
 /**
- * Applies the portable regex subset shared with the native backend.
+ * Applies scripts whose replacement needs no main-thread macro substitution.
  * @param {{ text: string, scripts: any[] }[]} tasks
- * @param {(script: any) => void} onScriptStart
+ * @param {(script: any) => void} onScriptStart Announces a script whose regex is about to run
  * @returns {{ text: string }[]}
  */
 export function applyV8RegexTasks(tasks, onScriptStart) {
@@ -11,13 +13,12 @@ export function applyV8RegexTasks(tasks, onScriptStart) {
         let text = task.text;
 
         for (const script of task.scripts) {
-            if (script.requiredLiteral && !text.includes(script.requiredLiteral)) {
+            const replace = planReplace(text, new RegExp(script.pattern, script.flags));
+            if (replace === null) {
                 continue;
             }
-
             onScriptStart(script);
-            const regex = new RegExp(script.pattern, script.flags);
-            text = text.replace(regex, (...args) => script.replacement.replaceAll(
+            text = replace((...args) => script.replacement.replaceAll(
                 /\$(\d+)|\$<([^>]+)>/g,
                 (_, index, name) => {
                     const groups = args.at(-1);

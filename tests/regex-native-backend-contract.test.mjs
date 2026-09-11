@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getRequiredTagLiteral } from '../src/scripts/extensions/regex/literal-gate.js';
 import {
     applyV8RegexBatch,
     REGEX_EXECUTION_TIMEOUT_MS,
@@ -8,34 +7,12 @@ import {
 } from '../src/scripts/tauri/regex/v8-regex-worker-client.js';
 import { applyV8RegexTasks } from '../src/scripts/tauri/regex/v8-regex-worker.js';
 
-test('literal gate only accepts provable case-sensitive tag prefixes', () => {
-    const tagPatterns = [
-        [/<UpdateVariable>[\s\S]*?<\/UpdateVariable>/gm, '<UpdateVariable'],
-        [/<StatusBlock[^>]*>[\s\S]*?<\/StatusBlock>/g, '<StatusBlock'],
-        [/^.*?<\/customize_cot>/s, '</customize_cot'],
-        [/<safe>.*?<\/safe>/gs, '<safe'],
-        [/<宿命>[\s\S]*?<\/宿命>/gm, '<宿命'],
-        [/<StatusPlaceHolderImpl\/>/g, '<StatusPlaceHolderImpl'],
-        [/<Dice1\/>/g, '<Dice1'],
-    ];
-
-    for (const [regex, literal] of tagPatterns) {
-        assert.equal(getRequiredTagLiteral(regex), literal);
-    }
-
-    assert.equal(getRequiredTagLiteral(/<safe>|plain/g), null);
-    assert.equal(getRequiredTagLiteral(/<safe>.*?<\/safe>/gi), null);
-    assert.equal(getRequiredTagLiteral(/<(safe)>/g), null);
-    assert.equal(getRequiredTagLiteral(/<safe?>/g), null);
-});
-
-test('V8 worker preserves portable replacement semantics', () => {
+test('V8 worker preserves portable replacement semantics and announces only scripts that run', () => {
     const starts = [];
     const script = {
         scriptKey: 'test-key',
         pattern: '(?<value>\\w+)-(?<suffix>x)',
         flags: 'g',
-        requiredLiteral: '<tag',
         replacement: '$<value>:$2:$0:$$',
         trimStrings: ['a'],
     };

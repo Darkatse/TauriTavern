@@ -5,6 +5,7 @@ import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../popup.js';
 import { getPresetManager } from '../../preset-manager.js';
 import { regexFromString } from '../../utils.js';
 import { lodash } from '../../../lib.js';
+import { gatedReplace } from '../../tauri/regex/gated-replace.js';
 import { applyNativeRegexBatch, isNativeRegexBackendAvailable } from '../../tauri/regex/native-regex-transform.js';
 import { isNativeRegexBackendEnabled } from '../../tauri/regex/native-regex-settings.js';
 import {
@@ -12,7 +13,6 @@ import {
     REGEX_EXECUTION_TIMEOUT_MS,
     V8RegexTimeoutError,
 } from '../../tauri/regex/v8-regex-worker-client.js';
-import { getRequiredTagLiteral } from './literal-gate.js';
 
 /**
  * @readonly
@@ -456,7 +456,6 @@ function toPortableRegexScript(regexScript, rawString) {
         pattern: findRegex.source,
         flags: findRegex.flags,
         global: findRegex.global,
-        requiredLiteral: getRequiredTagLiteral(findRegex),
         replacement,
         trimStrings,
     };
@@ -580,19 +579,10 @@ export async function getRegexedStringBatchAsync(items) {
         const portableScripts = scripts.map(script => toPortableRegexScript(script, rawString));
         if (portableScripts.every(Boolean)) {
             const activeScripts = portableScripts.filter(script => !pausedRegexScriptKeys.has(script.scriptKey));
-            const firstRunnableScript = activeScripts.findIndex(script =>
-                !script.requiredLiteral || rawString.includes(script.requiredLiteral));
-            if (firstRunnableScript === -1) {
-                results[index] = rawString;
-                continue;
-            }
-
-            // Earlier replacements may introduce a tag required by a later script.
-            const runnableScripts = activeScripts.slice(firstRunnableScript);
             portableIndexes.push(index);
-            portableTasks.push({ text: rawString, scripts: runnableScripts });
-            nativeUnicodeSemanticsSafe &&= canApplyNativeUnicodeSemantics(runnableScripts, rawString);
-            requiresV8 ||= runnableScripts.some(script => script.allowSlow);
+            portableTasks.push({ text: rawString, scripts: activeScripts });
+            nativeUnicodeSemanticsSafe &&= canApplyNativeUnicodeSemantics(activeScripts, rawString);
+            requiresV8 ||= activeScripts.some(script => script.allowSlow);
         } else {
             results[index] = runRegexScripts(scripts, rawString, params);
         }
@@ -697,13 +687,8 @@ export function runRegexScript(regexScript, rawString, { characterOverride } = {
         return newString;
     }
 
-    const requiredLiteral = getRequiredTagLiteral(findRegex);
-    if (requiredLiteral && !rawString.includes(requiredLiteral)) {
-        return newString;
-    }
-
     // Run replacement. Currently does not support the Overlay strategy
-    newString = rawString.replace(findRegex, function (match) {
+    newString = gatedReplace(rawString, findRegex, function (match) {
         const args = [...arguments];
         const replaceString = regexScript.replaceString.replace(/{{match}}/gi, '$0');
         const replaceWithGroups = replaceString.replaceAll(/\$(\d+)|\$<([^>]+)>/g, (_, num, groupName) => {
