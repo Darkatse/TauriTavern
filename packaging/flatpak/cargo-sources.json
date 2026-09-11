@@ -7269,19 +7269,6 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/regress/regress-0.11.1.crate",
-        "sha256": "158a764437582235e3501f683b93a0a6f8d825d04a789dbe5ed30b8799b8908a",
-        "dest": "cargo/vendor/regress-0.11.1"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"158a764437582235e3501f683b93a0a6f8d825d04a789dbe5ed30b8799b8908a\", \"files\": {}}",
-        "dest": "cargo/vendor/regress-0.11.1",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/relative-path/relative-path-2.0.1.crate",
         "sha256": "bca40a312222d8ba74837cb474edef44b37f561da5f773981007a10bbaa992b0",
         "dest": "cargo/vendor/relative-path-2.0.1"
