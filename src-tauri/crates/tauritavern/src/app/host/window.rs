@@ -71,6 +71,9 @@ pub(super) fn create_main_window(
 
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     let builder = {
+        // Use the frontend's HTML5 drop handlers instead of Tauri's native
+        // drag-drop events so each drop target keeps its existing behavior.
+        let builder = builder.disable_drag_drop_handler();
         let app_handle = app.handle().clone();
 
         // `window.open()` semantics belong to the host/runtime boundary. Keep
