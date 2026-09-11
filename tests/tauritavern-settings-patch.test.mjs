@@ -28,7 +28,6 @@ function createSettings(overrides = {}) {
         },
         allow_keys_exposure: false,
         avatar_persona_original_images_enabled: false,
-        native_regex_backend_enabled: true,
         dynamic_theme: {
             enabled: false,
             day_theme: 'Default',
@@ -68,9 +67,7 @@ function createDraft(initial, overrides = {}) {
 }
 
 test('buildTauriTavernSettingsUpdate returns an empty patch for unchanged settings', () => {
-    const initial = createTauriTavernSettingsState(createSettings(), {
-        nativeRegexBackendEnabled: true,
-    });
+    const initial = createTauriTavernSettingsState(createSettings());
 
     assert.equal(initial.dynamicTheme.dayWallpaper, ' Day.png');
     assert.equal(initial.dynamicTheme.nightWallpaper, 'Night .png');
@@ -91,9 +88,7 @@ test('buildTauriTavernSettingsUpdate returns an empty patch for unchanged settin
 
 
 test('buildTauriTavernSettingsUpdate preserves minimal nested patch semantics', () => {
-    const initial = createTauriTavernSettingsState(createSettings(), {
-        nativeRegexBackendEnabled: true,
-    });
+    const initial = createTauriTavernSettingsState(createSettings());
 
     const update = buildTauriTavernSettingsUpdate(initial, createDraft(initial, {
         promptCacheTtl: '5m',
@@ -128,9 +123,7 @@ test('unchanged storage display does not rewrite a non-MiB-aligned byte limit', 
             max_total_files: 500,
             max_total_bytes: 1024 * 1024 + 1,
         },
-    }), {
-        nativeRegexBackendEnabled: true,
-    });
+    }));
 
     const update = buildTauriTavernSettingsUpdate(initial, createDraft(initial));
 
@@ -140,9 +133,7 @@ test('unchanged storage display does not rewrite a non-MiB-aligned byte limit', 
 });
 
 test('buildTauriTavernSettingsUpdate flags the destructive zero limit transition', () => {
-    const initial = createTauriTavernSettingsState(createSettings(), {
-        nativeRegexBackendEnabled: true,
-    });
+    const initial = createTauriTavernSettingsState(createSettings());
 
     const update = buildTauriTavernSettingsUpdate(initial, createDraft(initial, {
         chatBackups: {
@@ -160,9 +151,7 @@ test('buildTauriTavernSettingsUpdate flags the destructive zero limit transition
 
 
 test('buildTauriTavernSettingsUpdate rejects invalid chat backup limits', () => {
-    const initial = createTauriTavernSettingsState(createSettings(), {
-        nativeRegexBackendEnabled: true,
-    });
+    const initial = createTauriTavernSettingsState(createSettings());
 
     assert.throws(
         () => buildTauriTavernSettingsUpdate(initial, createDraft(initial, {
@@ -184,9 +173,7 @@ test('buildTauriTavernSettingsUpdate rejects invalid chat backup limits', () => 
 });
 
 test('MiB and GiB chat backup inputs save the same byte limit', () => {
-    const initial = createTauriTavernSettingsState(createSettings(), {
-        nativeRegexBackendEnabled: true,
-    });
+    const initial = createTauriTavernSettingsState(createSettings());
 
     const fromMiB = buildTauriTavernSettingsUpdate(initial, createDraft(initial, {
         chatBackups: {

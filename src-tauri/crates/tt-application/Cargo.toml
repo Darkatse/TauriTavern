@@ -16,7 +16,6 @@ http = "1"
 mime_guess = "2.0.5"
 percent-encoding = "2"
 rand = { workspace = true }
-regress = "0.11.1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 yaml_serde = "0.10"

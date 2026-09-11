@@ -30,7 +30,6 @@ use tt_application::services::group_service::GroupService;
 use tt_application::services::image_metadata_service::ImageMetadataService;
 use tt_application::services::llm_connection_service::LlmConnectionService;
 use tt_application::services::mcp_service::McpService;
-use tt_application::services::native_regex_service::NativeRegexService;
 use tt_application::services::preset_service::PresetService;
 use tt_application::services::provider_metadata_service::ProviderMetadataService;
 use tt_application::services::quick_reply_service::QuickReplyService;
@@ -162,7 +161,6 @@ pub(super) async fn build(
     let tokenization_service = Arc::new(TokenizationService::new(
         repositories.tokenizer_repository.clone(),
     ));
-    let native_regex_service = Arc::new(NativeRegexService::new());
     let stable_diffusion_service = Arc::new(StableDiffusionService::new(
         repositories.stable_diffusion_repository.clone(),
         repositories.secret_repository.clone(),
@@ -295,6 +293,5 @@ pub(super) async fn build(
         sync_automation_service: sync_services.sync_automation_service,
         data_archive_service,
         update_service,
-        native_regex_service,
     })
 }

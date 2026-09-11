@@ -5,7 +5,6 @@ import {
     setEmbeddedRuntimeBootstrapProfileName,
 } from '../../../../tauri/main/services/embedded-runtime/embedded-runtime-profile-state.js';
 import { DYNAMIC_THEME_CHANGED_EVENT } from '../../../../tauri/main/services/dynamic-theme/constants.js';
-import { syncNativeRegexBackendEnabledFromSettings } from '../../regex/native-regex-settings.js';
 
 /**
  * @param {ReturnType<import('./settings-patch.js').buildTauriTavernSettingsUpdate>} update
@@ -13,10 +12,6 @@ import { syncNativeRegexBackendEnabledFromSettings } from '../../regex/native-re
  */
 export function applyTauriTavernSettingsUpdateEffects(update, updatedSettings) {
     const { changes, next } = update;
-
-    if (changes.nativeRegexBackendEnabled) {
-        syncNativeRegexBackendEnabledFromSettings(updatedSettings);
-    }
 
     if (changes.dynamicTheme) {
         window.dispatchEvent(new CustomEvent(DYNAMIC_THEME_CHANGED_EVENT, {

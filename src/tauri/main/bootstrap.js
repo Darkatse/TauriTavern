@@ -409,8 +409,6 @@ export function bootstrapTauriMain() {
     runAfterTauriReady(() => import('../../scripts/tauri/setting/setting-panel.js')
         .then(({ installTauriTavernSettingsPanel }) => installTauriTavernSettingsPanel())
         .catch((error) => { console.warn('TauriTavern: Failed to load settings panels:', error); }));
-    runAfterTauriReady(() => import('../../scripts/tauri/regex/native-regex-settings.js')
-        .then(({ installNativeRegexBackendSetting }) => installNativeRegexBackendSetting()));
     // This panel imports application state as well as rendering it.
     eventSource.once(event_types.APP_READY, () => {
         void import('../../scripts/tauri/generation-params/panel.js')

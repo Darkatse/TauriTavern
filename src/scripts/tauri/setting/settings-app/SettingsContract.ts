@@ -51,7 +51,6 @@ export type SettingsValues = {
     };
     allowKeysExposure: boolean;
     avatarPersonaOriginalImagesEnabled: boolean;
-    nativeRegexBackendEnabled: boolean;
     dynamicTheme: {
         themeEnabled: boolean;
         dayTheme: string;
@@ -119,7 +118,6 @@ export type SettingsDraft = {
     };
     allowKeysExposure: boolean;
     avatarPersonaOriginalImagesEnabled: boolean;
-    nativeRegexBackendEnabled: boolean;
     dynamicTheme: {
         themeEnabled: boolean;
         dayTheme: string;
@@ -165,7 +163,6 @@ export function createSettingsDraft(values: SettingsValues): SettingsDraft {
         },
         allowKeysExposure: values.allowKeysExposure,
         avatarPersonaOriginalImagesEnabled: values.avatarPersonaOriginalImagesEnabled,
-        nativeRegexBackendEnabled: values.nativeRegexBackendEnabled,
         dynamicTheme: {
             themeEnabled: values.dynamicTheme.themeEnabled,
             dayTheme: values.dynamicTheme.dayTheme,

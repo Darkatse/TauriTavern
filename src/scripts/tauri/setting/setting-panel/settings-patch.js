@@ -91,7 +91,6 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
 
     const nextAllowKeysExposure = Boolean(draft.allowKeysExposure);
     const nextAvatarPersonaOriginalImagesEnabled = Boolean(draft.avatarPersonaOriginalImagesEnabled);
-    const nextNativeRegexBackendEnabled = Boolean(draft.nativeRegexBackendEnabled);
     const nextPromptCacheTtl = String(draft.promptCacheTtl || '').trim();
 
     const nextRequestProxyEnabled = Boolean(draft.requestProxy?.enabled);
@@ -136,8 +135,6 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     const hasAllowKeysExposureChange = nextAllowKeysExposure !== initial.allowKeysExposure;
     const hasAvatarPersonaOriginalImagesEnabledChange =
         nextAvatarPersonaOriginalImagesEnabled !== initial.avatarPersonaOriginalImagesEnabled;
-    const hasNativeRegexBackendEnabledChange =
-        nextNativeRegexBackendEnabled !== initial.nativeRegexBackendEnabled;
     const hasPromptCacheTtlChange = nextPromptCacheTtl !== initial.promptCacheTtlSource;
     const hasModelsChange = hasPromptCacheTtlChange;
     const hasRequestProxyChange = nextRequestProxyEnabled !== initial.requestProxy.enabled
@@ -154,7 +151,6 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         dynamicTheme: hasDynamicThemeChange,
         allowKeysExposure: hasAllowKeysExposureChange,
         avatarPersonaOriginalImagesEnabled: hasAvatarPersonaOriginalImagesEnabledChange,
-        nativeRegexBackendEnabled: hasNativeRegexBackendEnabledChange,
         promptCacheTtl: hasPromptCacheTtlChange,
         models: hasModelsChange,
         requestProxy: hasRequestProxyChange,
@@ -215,9 +211,6 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     if (hasAvatarPersonaOriginalImagesEnabledChange) {
         patch.avatar_persona_original_images_enabled = nextAvatarPersonaOriginalImagesEnabled;
     }
-    if (hasNativeRegexBackendEnabledChange) {
-        patch.native_regex_backend_enabled = nextNativeRegexBackendEnabled;
-    }
     if (hasModelsChange) {
         /** @type {Record<string, unknown>} */
         const claude = {};
@@ -268,7 +261,6 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
             },
             allowKeysExposure: nextAllowKeysExposure,
             avatarPersonaOriginalImagesEnabled: nextAvatarPersonaOriginalImagesEnabled,
-            nativeRegexBackendEnabled: nextNativeRegexBackendEnabled,
             promptCacheTtl: nextPromptCacheTtl,
             requestProxy: {
                 enabled: nextRequestProxyEnabled,

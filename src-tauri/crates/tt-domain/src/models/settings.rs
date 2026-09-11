@@ -39,10 +39,6 @@ fn default_avatar_persona_original_images_enabled() -> bool {
     false
 }
 
-fn default_native_regex_backend_enabled() -> bool {
-    true
-}
-
 fn default_codemirror_editor_enabled() -> bool {
     true
 }
@@ -353,8 +349,6 @@ pub struct TauriTavernSettings {
     /// cached/generated thumbnails. Background thumbnails are intentionally unaffected.
     #[serde(default = "default_avatar_persona_original_images_enabled")]
     pub avatar_persona_original_images_enabled: bool,
-    #[serde(default = "default_native_regex_backend_enabled")]
-    pub native_regex_backend_enabled: bool,
     #[serde(default)]
     pub dev: DevLoggingSettings,
     #[serde(default)]
@@ -388,7 +382,6 @@ impl Default for TauriTavernSettings {
             allow_keys_exposure: false,
             avatar_persona_original_images_enabled: default_avatar_persona_original_images_enabled(
             ),
-            native_regex_backend_enabled: default_native_regex_backend_enabled(),
             dev: DevLoggingSettings::default(),
             dynamic_theme: DynamicThemeSettings::default(),
             models: default_model_settings(),

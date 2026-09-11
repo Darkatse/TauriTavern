@@ -12,7 +12,6 @@ pub mod group_dto;
 pub mod image_metadata_dto;
 pub mod llm_connection_dto;
 pub mod mcp_dto;
-pub mod native_regex_dto;
 pub mod preset_dto;
 pub mod provider_metadata_dto;
 pub mod searxng_search_dto;

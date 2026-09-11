@@ -32,8 +32,7 @@ const DEFAULT_MAX_TOTAL_OUTPUT_BYTES: usize = 1024 * 1024;
 const MEMORY_LIMIT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_STACK_BYTES: usize = 256 * 1024;
 
-/// 全局并发执行上限（固定值，与 NativeRegexService 一致；
-/// 每次 QuickJS 执行独立 Runtime，2 个并发 ≈ 64MB 峰值内存）。
+/// 全局并发执行上限（固定值；每次 QuickJS 执行独立 Runtime，2 个并发 ≈ 64MB 峰值内存）。
 const MAX_CONCURRENT_EXECUTIONS: usize = 2;
 
 /// 一次执行的引擎限制集合。

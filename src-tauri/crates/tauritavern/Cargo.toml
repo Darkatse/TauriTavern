@@ -42,7 +42,6 @@ uuid = { workspace = true }
 async-trait = "0.1"
 url = { workspace = true }
 percent-encoding = "2"
-regress = "0.11.1"
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 mime_guess = "2.0.5"
 filetime = "0.2"

@@ -172,14 +172,6 @@ function SettingsApp({
                     />
                 </SettingRow>
 
-                <SettingRow label={tr('Rust Regex Backend')}>
-                    <ToggleSwitch
-                        checked={draft.nativeRegexBackendEnabled}
-                        ariaLabel={tr('Rust Regex Backend')}
-                        onChange={checked => controller.updateDraft('nativeRegexBackendEnabled', checked)}
-                    />
-                </SettingRow>
-
                 <small className="tt-settings-section-note">{tr('Requires reload to apply.')}</small>
             </SettingsSection>
 

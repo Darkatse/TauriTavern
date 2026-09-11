@@ -4,7 +4,6 @@ import {
     normalizeEmbeddedRuntimeProfileName,
     resolveEffectiveEmbeddedRuntimeProfileName,
 } from '../../../../tauri/main/services/embedded-runtime/embedded-runtime-profile-state.js';
-import { readNativeRegexBackendEnabledFromSettings } from '../../regex/native-regex-settings.js';
 
 export const PROMPT_CACHE_TTL_VALUES = ['off', '5m', '1h'];
 
@@ -51,9 +50,8 @@ export function arraysEqual(left, right) {
 
 /**
  * @param {Record<string, any>} settings
- * @param {{ nativeRegexBackendEnabled?: boolean }} [options]
  */
-export function createTauriTavernSettingsState(settings, options = {}) {
+export function createTauriTavernSettingsState(settings) {
     const rawPanelRuntimeProfile = settings.panel_runtime_profile;
     const panelRuntimeProfile = typeof rawPanelRuntimeProfile === 'string' && rawPanelRuntimeProfile
         ? rawPanelRuntimeProfile
@@ -125,9 +123,6 @@ export function createTauriTavernSettingsState(settings, options = {}) {
         },
         allowKeysExposure: Boolean(settings.allow_keys_exposure),
         avatarPersonaOriginalImagesEnabled,
-        nativeRegexBackendEnabled: typeof options.nativeRegexBackendEnabled === 'boolean'
-            ? options.nativeRegexBackendEnabled
-            : readNativeRegexBackendEnabledFromSettings(settings),
         dynamicTheme: {
             themeEnabled: Boolean(dynamicTheme.enabled),
             dayTheme: String(dynamicTheme.day_theme || '').trim(),

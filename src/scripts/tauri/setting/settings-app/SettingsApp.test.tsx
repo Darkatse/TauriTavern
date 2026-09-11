@@ -61,7 +61,6 @@ function createValues(overrides: ValuesOverrides = {}): SettingsValues {
         requestProxy: { enabled: false, url: '', bypass: [], ...overrides.requestProxy },
         allowKeysExposure: false,
         avatarPersonaOriginalImagesEnabled: false,
-        nativeRegexBackendEnabled: true,
         dynamicTheme: {
             themeEnabled: false,
             dayTheme: '',

@@ -27,7 +27,6 @@ use tt_application::services::image_metadata_service::ImageMetadataService;
 use tt_application::services::lan_sync_service::LanSyncService;
 use tt_application::services::llm_connection_service::LlmConnectionService;
 use tt_application::services::mcp_service::McpService;
-use tt_application::services::native_regex_service::NativeRegexService;
 use tt_application::services::preset_service::PresetService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::provider_metadata_service::ProviderMetadataService;
@@ -123,7 +122,6 @@ pub(crate) struct AppServices {
     pub(crate) sync_automation_service: Arc<SyncAutomationService>,
     pub(crate) data_archive_service: Arc<DataArchiveService>,
     pub(crate) update_service: Arc<UpdateService>,
-    pub(crate) native_regex_service: Arc<NativeRegexService>,
 }
 
 impl AppState {

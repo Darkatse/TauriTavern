@@ -35,7 +35,6 @@ window.__TAURI__ = {
                 case 'wait_for_backend_ready': return;
                 case 'get_tauritavern_settings': return {
                     panel_runtime_profile: 'off', embedded_runtime_profile: 'off',
-                    native_regex_backend_enabled: true,
                     dynamic_theme: { enabled: false, wallpaper_enabled: false },
                 };
                 default: throw new Error(`Unexpected IPC command: ${command}`);

@@ -8,10 +8,6 @@ import {
     getTauriTavernSettings,
 } from '../../../../tauri-bridge.js';
 import { getActiveIosPolicyCapabilities } from '../../../tauritavern/ios-policy.js';
-import {
-    isNativeRegexBackendEnabled,
-    syncNativeRegexBackendEnabledFromSettings,
-} from '../../regex/native-regex-settings.js';
 import { createDataRootState, createTauriTavernSettingsState } from './settings-state.js';
 
 export function isWindowsPlatform() {
@@ -62,13 +58,9 @@ export async function loadTauriTavernSettingsViewModel() {
     const { supportsDataRootSelection } = capabilities;
     const runtimePaths = supportsDataRootSelection ? await getRuntimePaths() : null;
 
-    syncNativeRegexBackendEnabledFromSettings(settings);
-
     return {
         capabilities,
         dataRoot: createDataRootState(runtimePaths),
-        values: createTauriTavernSettingsState(settings, {
-            nativeRegexBackendEnabled: isNativeRegexBackendEnabled(),
-        }),
+        values: createTauriTavernSettingsState(settings),
     };
 }
