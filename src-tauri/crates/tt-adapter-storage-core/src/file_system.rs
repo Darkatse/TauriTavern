@@ -1,7 +1,7 @@
 use serde::{Serialize, de::DeserializeOwned};
 use std::io;
 use std::path::{Path, PathBuf};
-use tokio::fs::{self as tokio_fs, create_dir_all, read_to_string};
+use tokio::fs::{self as tokio_fs, create_dir_all};
 use tokio::io as tokio_io;
 use tt_domain::errors::DomainError;
 use uuid::Uuid;
@@ -195,23 +195,37 @@ impl DataDirectory {
 
 /// Read a JSON file and deserialize it
 ///
-/// This is an async function that reads a JSON file from disk and deserializes it
-/// into the specified type. It uses tokio's async file I/O operations for better
-/// performance and non-blocking behavior.
+/// File I/O and UTF-8 validation run together on Tokio's blocking pool.
 pub async fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T, DomainError> {
     tracing::debug!("Reading JSON file: {:?}", path);
 
-    // Use tokio's async file operations
-    let contents = read_to_string(path).await.map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            DomainError::NotFound(format!("File not found: {}", path.display()))
-        } else {
-            DomainError::InternalError(format!("Failed to read file: {}", e))
-        }
-    })?;
+    let read_path = path.to_owned();
+    let contents = tokio::task::spawn_blocking(move || {
+        let bytes = std::fs::read(&read_path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                DomainError::NotFound(format!("File not found: {}", read_path.display()))
+            } else {
+                DomainError::InternalError(format!(
+                    "Failed to read {}: {error}",
+                    read_path.display()
+                ))
+            }
+        })?;
+        String::from_utf8(bytes).map_err(|error| {
+            DomainError::InvalidData(format!("Invalid UTF-8 in {}: {error}", read_path.display()))
+        })
+    })
+    .await
+    .map_err(|error| {
+        DomainError::InternalError(format!(
+            "JSON read task failed for {}: {error}",
+            path.display()
+        ))
+    })??;
 
-    serde_json::from_str(&contents)
-        .map_err(|e| DomainError::InvalidData(format!("Invalid JSON: {}", e)))
+    serde_json::from_str(&contents).map_err(|error| {
+        DomainError::InvalidData(format!("Invalid JSON in {}: {error}", path.display()))
+    })
 }
 
 /// Generate a unique temporary file path adjacent to `target_path`.

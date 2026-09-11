@@ -12,4 +12,5 @@ pub use repositories::{
     FileLlmConnectionRepository, FileMcpServerRepository, FilePromptCacheRepository,
     FileQuickReplyRepository, FileSecretRepository, FileSettingsRepository, FileThemeRepository,
     FileUserDirectoryRepository, FileUserEndpointGrantRepository, FileUserRepository,
+    load_tauritavern_settings_blocking,
 };
