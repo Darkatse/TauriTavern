@@ -599,6 +599,17 @@ export let name2 = systemUserName;
 export let chat = [];
 
 /**
+ * Keeps the canonical array without expanding the history into function arguments.
+ * @param {ChatMessage[]} messages
+ */
+export function replaceChatContents(messages) {
+    for (let index = 0; index < messages.length; index++) {
+        chat[index] = messages[index];
+    }
+    chat.length = messages.length;
+}
+
+/**
  * @type {import('./scripts/constants.js').SWIPE_STATE}
  */
 export let swipeState = SWIPE_STATE.NONE;
@@ -8608,7 +8619,7 @@ export function resetChatState() {
     //unsets expected chid before reloading (related to getCharacters/printCharacters from using old arrays)
     setCharacterId(undefined);
     // sets up system user to tell user about having deleted a character
-    chat.splice(0, chat.length, ...SAFETY_CHAT);
+    replaceChatContents(SAFETY_CHAT);
     // resets chat metadata
     chat_metadata = {};
     // resets the characters array, forcing getcharacters to reset
@@ -9215,7 +9226,7 @@ export async function getChat({ allowNewChat = false } = {}) {
             /** @type {ChatHeader} */
             const chatHeader = data.shift();
             chat_metadata = chatHeader?.chat_metadata ?? {};
-            chat.splice(0, chat.length, ...data);
+            replaceChatContents(data);
             chat.forEach(ensureMessageMediaIsArray);
         } else if (allowNewChat) {
             chat.splice(0, chat.length);

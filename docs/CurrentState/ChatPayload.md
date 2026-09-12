@@ -9,6 +9,7 @@
 - `chat[]` 包含 header 之后的全部消息，顺序与磁盘一致。
 - `chat[i]` 始终是 0-based 绝对消息索引。
 - generation、扩展、编辑、swipe、删除和保存共享同一个 canonical `chat[]`。
+- 完整替换聊天内容通过 `replaceChatContents()` 逐项写入消息引用并调整长度，保持 `chat[]` 实例稳定，不把历史展开成函数参数。这是为了保证 Android 上的 V8 引擎不会在超过 65536 条时抛出 RangeError。
 - 任一 JSONL 记录无法解析时，加载整体失败；不得提交部分历史。
 - 未显式切换聊天时，角色的 `chat` 文件 stem 在浅层、完整和重复读取之间保持稳定。
 

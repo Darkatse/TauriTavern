@@ -25,6 +25,7 @@ import { debounce_timeout } from './constants.js';
 
 import {
     chat,
+    replaceChatContents,
     sendSystemMessage,
     printMessages,
     substituteParams,
@@ -347,7 +348,7 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
         if (!isStillActive()) {
             return;
         }
-        chat.splice(0, chat.length, ...data);
+        replaceChatContents(data);
         chat.forEach(ensureMessageMediaIsArray);
         resetChatSurfaceView();
         await printMessages({ frontendSourceHandoffEvent: event_types.CHAT_CHANGED });
