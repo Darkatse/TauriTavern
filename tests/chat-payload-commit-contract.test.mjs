@@ -237,7 +237,7 @@ test('chat payload commit aborts ACK failures', async () => {
     }
 });
 
-test('chat payload commit preserves non-integrity finish errors', async () => {
+test('chat payload commit surfaces non-integrity finish errors as Errors without aborting the consumed session', async () => {
     for (const finishError of [
         new Error('finish failed'),
         { InternalServerError: 'Could not read integrity metadata' },
@@ -248,15 +248,20 @@ test('chat payload commit preserves non-integrity finish errors', async () => {
         const restore = installRuntime('Mozilla/5.0 (Macintosh)', host.invoke);
 
         try {
-            await assert.rejects(() => commit([{ mes: 'failure' }]), error => error === finishError);
-            assert.equal(host.calls.filter(call => call.command === 'abort_chat_commit').length, 1);
+            await assert.rejects(() => commit([{ mes: 'failure' }]), error => {
+                assert.ok(error instanceof Error);
+                assert.equal(error.code, undefined);
+                assert.equal(finishError instanceof Error ? error : error.cause, finishError);
+                return true;
+            });
+            assert.equal(host.calls.filter(call => call.command === 'abort_chat_commit').length, 0);
         } finally {
             restore();
         }
     }
 });
 
-test('chat payload commit classifies integrity conflicts and aborts the session', async () => {
+test('chat payload commit classifies integrity conflicts and leaves the consumed session alone', async () => {
     const finishError = { BadRequest: 'integrity' };
     const host = createCommitHost({ finishError });
     const restore = installRuntime('Mozilla/5.0 (Macintosh)', host.invoke);
@@ -268,7 +273,7 @@ test('chat payload commit classifies integrity conflicts and aborts the session'
             assert.equal(error.cause, finishError);
             return true;
         });
-        assert.equal(host.calls.filter(call => call.command === 'abort_chat_commit').length, 1);
+        assert.equal(host.calls.filter(call => call.command === 'abort_chat_commit').length, 0);
     } finally {
         restore();
     }
@@ -305,25 +310,6 @@ test('chat payload commit does not abort after finish already published', async 
     }
 });
 
-test('chat payload commit does not classify failed conflict cleanup as an overwriteable error', async () => {
-    const finishError = { BadRequest: 'integrity' };
-    const abortError = new Error('abort failed');
-    const host = createCommitHost({ finishError, abortError });
-    const restore = installRuntime('Mozilla/5.0 (Macintosh)', host.invoke);
-
-    try {
-        await assert.rejects(() => commit([{ mes: 'conflict' }]), error => {
-            assert.ok(error instanceof AggregateError);
-            assert.equal(error.code, undefined);
-            assert.equal(error.errors[0].cause, finishError);
-            assert.equal(error.errors[1], abortError);
-            return true;
-        });
-    } finally {
-        restore();
-    }
-});
-
 for (const route of [
     {
         path: '/api/chats/save',
@@ -346,12 +332,19 @@ for (const route of [
         }, { jsonResponse });
 
         for (const scenario of [
-            { status: 200, error: undefined },
-            { status: 400, error: 'integrity', finishError: { BadRequest: 'integrity' } },
-            { status: 500, error: route.failure, finishError: { InternalServerError: 'Could not read integrity metadata' } },
-            { status: 500, error: route.failure, finishError: { BadRequest: 'integrity' }, abortError: new Error('abort failed') },
+            { status: 200, body: { ok: true } },
+            {
+                status: 400,
+                body: { error: 'integrity' },
+                finishError: { BadRequest: 'integrity' },
+            },
+            {
+                status: 500,
+                body: { error: route.failure, details: '{"InternalServerError":"Could not read integrity metadata"}' },
+                finishError: { InternalServerError: 'Could not read integrity metadata' },
+            },
         ]) {
-            const host = createCommitHost({ ...scenario, expectedTarget: route.target });
+            const host = createCommitHost({ finishError: scenario.finishError, expectedTarget: route.target });
             const restore = installRuntime('Mozilla/5.0 (Macintosh)', host.invoke);
 
             try {
@@ -361,12 +354,7 @@ for (const route of [
                     body: { ...route.body, chat: [{ chat_metadata: { integrity: 'chat' } }, { mes: 'saved' }] },
                 });
                 assert.equal(response.status, scenario.status);
-                const body = await response.json();
-                if (scenario.status === 200) {
-                    assert.deepEqual(body, { ok: true });
-                } else {
-                    assert.equal(body.error, scenario.error);
-                }
+                assert.deepEqual(await response.json(), scenario.body);
             } finally {
                 restore();
             }

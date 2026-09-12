@@ -42,11 +42,11 @@ transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方
 
 commit 在首次异步让出前同步逐记录 `JSON.stringify()`，捕获本次提交私有的 JSON 文本快照。之后的消息或嵌套 metadata 修改不会混入本次保存。快照在任务执行时捕获，不提前为排队任务生成；不深拷贝聊天对象图，也不拼接整份 JSONL 字符串。它仍占用与 payload 大小成正比的临时文本空间，单条记录仍需完整编码，帧预算不是整个保存过程的内存上限。
 
-facade 使用 target-local commit session，按 host 返回的帧预算编码并传输快照，每次只有一帧在途。Android 使用 base64 帧，其他平台使用 raw bytes；finish 阶段校验 ACK 并原子发布。序列化失败不会创建会话；会话内失败继续走 abort，清理失败与原始错误一并传播。
+facade 使用 target-local commit session，按 host 返回的帧预算编码并传输快照，每次只有一帧在途。Android 使用 base64 帧，其他平台使用 raw bytes；finish 阶段校验 ACK 并原子发布。序列化失败不会创建会话；begin 成功后到 finish 之前的失败走 abort，清理失败与原始错误以 `AggregateError` 一并传播。host 的 finish 无论成败都消费会话并清理 stage，因此 finish 之后不再 abort。
 
 `POST /api/chats/save` 与 `POST /api/chats/group/save` 保留为扩展和脚本主动调用的兼容路由，复用同一 transport。成功仍返回 `{ ok: true }`，integrity 冲突仍返回 `400 { error: 'integrity' }`。第一方保存不再产生这些 Fetch 请求，依赖 monkeypatch Fetch 观察保存的扩展不再收到它们；兼容路由不额外加入核心前端保存队列。
 
-commit 只将 host 的 `{ BadRequest: 'integrity' }` 转为带 `code: 'integrity'` 和原始 cause 的 Error，其他错误原样传播，不按错误文案猜测冲突。当前聊天冲突由共享弹窗确认后强制全量保存，拒绝则 reload；abort 失败不进入强制覆盖恢复。不存在保存失败后静默改走另一条写路径的降级逻辑。
+host 以 serde 外部标签形状 `{ Variant: payload }` 拒绝，该值本身不是 Error。聊天提交 command 的拒绝在 commit facade 离开 IPC 边界时归一为 Error 并保留原值为 `cause`（其他 command 由 `safeInvoke` 归一）：`{ BadRequest: 'integrity' }` 得到 `code: 'integrity'`，其他对象以其 JSON 文本为 message，字符串原文为 message。这是无损的形状转换，不按错误文案猜测冲突。当前聊天冲突由共享弹窗确认后强制全量保存，拒绝则 reload。不存在保存失败后静默改走另一条写路径的降级逻辑。
 
 完整提交、导入、metadata extension 更新和备份发布共用 storage-core 的 `persist_file`：完成写入与 flush 后，将原写入句柄交给 helper 执行 `sync_all`，关闭后再严格 rename。备份编码器返回原写入句柄，保留到时间戳设置和内容同步完成。分块传输期间不逐块同步；聊天扩展 JSON store 使用同一发布机制，摘要缓存不强制同步。此保证覆盖文件内容同步和运行时原子替换，不包含 rename 后父目录项的断电持久化。
 
@@ -135,6 +135,6 @@ Rust：
 - 缺少本地 `chat` 字段的角色在浅层、完整读取和重启后解析为同一个 stem；已有失配聊天按需恢复。
 - 完整保存后重开，编辑、删除、swipe、隐藏范围和 metadata 均保持。
 - 保存开始后修改消息和嵌套 metadata，不会改变正在传输的快照；后续保存读取新的状态。
-- integrity 冲突与其他失败保持区分，清理失败不得触发强制覆盖；兼容保存路由保持成功和错误响应语义。
+- integrity 冲突与其他失败保持区分；非 integrity 的 host 拒绝以可读 message 到达调用方和兼容路由的 `details`；兼容保存路由保持成功和错误响应语义。
 - tail/before 对角色和群聊返回相同索引语义，stale cursor 明确失败。
 - 旧 settings 中的 `chat_history_mode` 被 serde 作为未知字段忽略，重新序列化时不会保留。
