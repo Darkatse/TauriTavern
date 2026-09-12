@@ -62,7 +62,8 @@ import {
     getBiasStrings,
     saveChatConditional,
     enqueueChatSave,
-    confirmChatIntegrityOverwrite,
+    runChatSave,
+    persistedChatMetadata,
     deactivateSendButtons,
     activateSendButtons,
     eventSource,
@@ -688,34 +689,23 @@ async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false, comm
     }
     const chatId = group.chat_id;
     group.date_last_chat = Date.now();
-    const metadata = { ...chat_metadata };
-    delete metadata.lastInContextMessageId;
     /** @type {ChatHeader} */
     const chatHeader = {
-        chat_metadata: metadata,
+        chat_metadata: persistedChatMetadata(),
         user_name: 'unused',
         character_name: 'unused',
     };
-    const payload = [chatHeader, ...chat];
-    try {
-        await saveGroupChatPayload({ id: chatId, payload, force, commitReason });
-
-        if (shouldSaveGroup) {
-            await editGroup(groupId, false, false);
-        }
-    } catch (error) {
-        if (error?.code !== 'integrity' || force) {
-            toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group Chat could not be saved`);
-            console.error('Group chat could not be saved', error);
-            throw error;
-        }
-
-        if (!await confirmChatIntegrityOverwrite()) {
-            return;
-        }
-
-        await saveGroupChatUnsafe(groupId, shouldSaveGroup, true, commitReason);
-    }
+    await runChatSave({
+        title: t`Group Chat could not be saved`,
+        save: async () => {
+            await saveGroupChatPayload({ id: chatId, payload: [chatHeader, ...chat], force, commitReason });
+            if (shouldSaveGroup) {
+                await editGroup(groupId, false, false);
+            }
+        },
+        // A forced save skips the integrity check, so nothing is left to recover.
+        recover: force ? undefined : () => saveGroupChatUnsafe(groupId, shouldSaveGroup, true, commitReason),
+    });
 }
 
 /**

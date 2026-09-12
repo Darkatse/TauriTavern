@@ -8918,7 +8918,7 @@ export async function saveChat(...args) {
 }
 
 /** Prompts for an integrity overwrite; reloads if the user declines. */
-export async function confirmChatIntegrityOverwrite() {
+async function confirmChatIntegrityOverwrite() {
     const popupResult = await Popup.show.input(
         t`ERROR: Chat integrity check failed while saving the file.`,
         t`<p>After you click OK, the page will be reloaded to prevent data corruption.</p>
@@ -8936,14 +8936,39 @@ export async function confirmChatIntegrityOverwrite() {
     return false;
 }
 
+/**
+ * Runs one chat write under the shared failure policy: an integrity conflict asks the user
+ * before `recover` overwrites the file; every other failure is reported and rethrown.
+ * @param {{ save: () => Promise<void>, recover?: () => Promise<void>, title: string }} options
+ */
+export async function runChatSave({ save, recover, title }) {
+    try {
+        await save();
+    } catch (error) {
+        if (error?.code !== 'integrity' || !recover) {
+            console.error(error);
+            toastr.error(t`Check the server connection and reload the page to prevent data loss.`, title);
+            throw error;
+        }
+        if (await confirmChatIntegrityOverwrite()) {
+            await recover();
+        }
+    }
+}
+
+/** The `chat_metadata` that goes to disk: the canonical object without its transient in-context marker. */
+export function persistedChatMetadata(overrides) {
+    const metadata = { ...chat_metadata, ...overrides };
+    delete metadata.lastInContextMessageId;
+    return metadata;
+}
+
 async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, chatData = undefined, commitReason = CHAT_COMMIT_REASON.MUTATION } = {}) {
     if (arguments.length > 0 && typeof arguments[0] !== 'object') {
         console.trace('saveChat called with positional arguments. Please use an object instead.');
         [chatName, withMetadata, mesId, force] = arguments;
     }
 
-    const metadata = { ...chat_metadata, ...(withMetadata || {}) };
-    delete metadata.lastInContextMessageId;
     const fileName = chatName ?? characters[this_chid]?.chat;
 
     if (!fileName && name2 === neutralCharacterName) {
@@ -8966,34 +8991,25 @@ async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, ch
 
     /** @type {ChatHeader} */
     const chatHeader = {
-        chat_metadata: metadata,
+        chat_metadata: persistedChatMetadata(withMetadata),
         user_name: 'unused',
         character_name: 'unused',
     };
     const payload = [chatHeader, ...trimmedChat];
 
-    try {
-        await saveCharacterChatPayload({
+    await runChatSave({
+        title: t`Chat could not be saved`,
+        save: () => saveCharacterChatPayload({
             characterName: characters[this_chid].name,
             avatarUrl: characters[this_chid].avatar,
             fileName,
             payload,
             force,
             commitReason,
-        });
-    } catch (error) {
-        if (error?.code !== 'integrity' || force) {
-            console.error(error);
-            toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Chat could not be saved`);
-            throw error;
-        }
-
-        if (!await confirmChatIntegrityOverwrite()) {
-            return;
-        }
-
-        await saveChatUnsafe({ chatName, withMetadata, mesId, force: true, chatData, commitReason });
-    }
+        }),
+        // A forced save skips the integrity check, so nothing is left to recover.
+        recover: force ? undefined : () => saveChatUnsafe({ chatName, withMetadata, mesId, force: true, chatData, commitReason }),
+    });
 }
 
 /**

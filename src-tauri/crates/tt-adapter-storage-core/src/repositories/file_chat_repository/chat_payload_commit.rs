@@ -105,6 +105,24 @@ impl FileChatRepository {
         }
     }
 
+    /// Drops cached reads of a chat whose file was just replaced.
+    pub(super) async fn invalidate_chat_caches(
+        &self,
+        target: &ChatPayloadTarget,
+        path: &Path,
+    ) -> Result<(), DomainError> {
+        if let ChatPayloadTarget::Character {
+            character_id,
+            file_name,
+        } = target
+        {
+            let cache_key = self.get_cache_key(character_id, file_name)?;
+            self.memory_cache.lock().await.remove(&cache_key);
+        }
+        self.remove_summary_cache_for_path(path).await;
+        Ok(())
+    }
+
     async fn remove_chat_commit_stage(&self, stage_path: &Path) {
         match fs::remove_file(stage_path).await {
             Ok(()) => {}
@@ -316,13 +334,6 @@ impl ChatPayloadCommitRepository for FileChatRepository {
 
             let incoming_integrity =
                 Self::read_incoming_integrity_from_file(&stage_path).await?;
-            let character_cache_key = match &target {
-                ChatPayloadTarget::Character {
-                    character_id,
-                    file_name,
-                } => Some(self.get_cache_key(character_id, file_name)?),
-                ChatPayloadTarget::Group { .. } => None,
-            };
 
             let _write_guard = self.acquire_payload_mutation_lock(&target_path).await;
             if !force {
@@ -341,11 +352,7 @@ impl ChatPayloadCommitRepository for FileChatRepository {
                     .await;
             }
             drop(_write_guard);
-
-            if let Some(cache_key) = character_cache_key {
-                self.memory_cache.lock().await.remove(&cache_key);
-            }
-            self.remove_summary_cache_for_path(&target_path).await;
+            self.invalidate_chat_caches(&target, &target_path).await?;
 
             Ok(CommittedChatPayload {
                 target,
