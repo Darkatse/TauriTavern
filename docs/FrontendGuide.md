@@ -133,7 +133,8 @@ src/
 - 统一入口：上游只 import `src/scripts/chat-payload-transport.js`，不要直接依赖 `src/scripts/tauri/chat/*`。
 - 第一方当前聊天通过 `src/scripts/chat-payload-transport.js` 直接加载完整 JSONL；`/api/chats/get` 与 `/api/chats/group/get` 保留为扩展和脚本的兼容路由。header 与完整、有序的消息数组分离后，generation、扩展和保存共享同一个 canonical `chat[]`。
 - `chat_truncation` 只限制初始 DOM。Show More 从完整 `chat[]` 补挂楼层，不发起分页 I/O，不改变消息绝对索引。
-- 保存始终通过 `/api/chats/save` 或 `/api/chats/group/save`，并经过 `enqueueChatSave()` 与 target-local commit session 原子发布。保存前不要落盘 `chat_metadata.lastInContextMessageId`。
+- 第一方完整保存通过统一 transport 直连；`/api/chats/save` 与 `/api/chats/group/save` 保留为扩展兼容路由。当前聊天业务入口仍经 `enqueueChatSave()`，transport 自身不重复入队。保存前不要落盘 `chat_metadata.lastInContextMessageId`。
+- commit 在首次异步让出前捕获逐记录 JSON 文本快照，再经 target-local commit session 编码、分帧和原子发布；保存期间的消息修改不混入本次提交。integrity 错误按明确的 `code` 处理，不按错误文案猜测。
 - tail/before/beforePages 只属于 `api.chat.history` 与 Agent 的显式只读查询，不参与前端当前聊天状态。
 - 合法 JSONL 任一记录解析失败时整体加载失败；不得提交部分历史或静默降级。
 

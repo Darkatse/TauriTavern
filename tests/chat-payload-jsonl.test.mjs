@@ -28,13 +28,18 @@ test('jsonl: jsonlToPayload surfaces line numbers on invalid JSON', async () => 
     assert.throws(() => jsonlToPayload('{"a":1}\n{bad}\n'), /Invalid JSONL at line 2/);
 });
 
-test('jsonl: payloadToJsonlByteChunks round-trips and respects maxChunkBytes', async () => {
+test('jsonl: serialized records round-trip through bounded byte chunks', async () => {
     const mod = await importFresh(path.join(REPO_ROOT, 'src/scripts/tauri/chat/jsonl.js'));
-    const { payloadToJsonl, payloadToJsonlByteChunks } = mod;
+    const { serializeChatPayload, jsonlRecordsToByteChunks } = mod;
 
-    const payload = [{ a: 1 }, { b: 2 }, { c: 3 }];
+    const payload = [
+        { chat_metadata: { integrity: 'chat', variables: { score: 3 } } },
+        { mes: '你好 👋\nnext line', swipes: ['first', 'second'] },
+        { mes: '' },
+        {},
+    ];
     const maxChunkBytes = 16;
-    const chunks = Array.from(payloadToJsonlByteChunks(payload, { maxChunkBytes }));
+    const chunks = Array.from(jsonlRecordsToByteChunks(serializeChatPayload(payload), { maxChunkBytes }));
 
     assert.ok(chunks.length > 1);
     for (const chunk of chunks) {
@@ -42,7 +47,7 @@ test('jsonl: payloadToJsonlByteChunks round-trips and respects maxChunkBytes', a
     }
 
     const combined = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
-    assert.equal(combined.toString('utf8'), payloadToJsonl(payload));
+    assert.equal(combined.toString('utf8'), payload.map(entry => JSON.stringify(entry)).join('\n'));
 });
 
 

@@ -62,6 +62,7 @@ import {
     getBiasStrings,
     saveChatConditional,
     enqueueChatSave,
+    confirmChatIntegrityOverwrite,
     deactivateSendButtons,
     activateSendButtons,
     eventSource,
@@ -90,8 +91,7 @@ import { isExternalMediaAllowed } from './chats.js';
 import { POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
-import { CHAT_COMMIT_REASON, loadGroupChatPayload } from './chat-payload-transport.js';
-import { compressRequest } from './request-compression.js';
+import { CHAT_COMMIT_REASON, loadGroupChatPayload, saveGroupChatPayload } from './chat-payload-transport.js';
 
 export {
     selected_group,
@@ -697,62 +697,24 @@ async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false, comm
         character_name: 'unused',
     };
     const payload = [chatHeader, ...chat];
-    const isIntegrityTransportError = (error) =>
-        String(error?.code || '').toLowerCase() === 'integrity'
-        || /integrity/i.test(String(error?.message || ''));
-
     try {
-        const saveChatRequest = await compressRequest({
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ id: chatId, chat: payload, force, commit_reason: commitReason }),
-        });
-        const response = await fetch('/api/chats/group/save', saveChatRequest);
+        await saveGroupChatPayload({ id: chatId, payload, force, commitReason });
 
-        if (response.ok) {
-            if (shouldSaveGroup) {
-                await editGroup(groupId, false, false);
-            }
-            return;
+        if (shouldSaveGroup) {
+            await editGroup(groupId, false, false);
         }
-
-        const errorData = await response.json();
-        if (errorData?.error === 'integrity' && !force) {
-            const integrityError = new Error('integrity');
-            integrityError.code = 'integrity';
-            throw integrityError;
-        }
-
-        throw new Error(response.statusText || 'Group chat save failed');
     } catch (error) {
-        const isIntegrityError = isIntegrityTransportError(error) && !force;
-        if (!isIntegrityError) {
+        if (error?.code !== 'integrity' || force) {
             toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group Chat could not be saved`);
             console.error('Group chat could not be saved', error);
             throw error;
         }
 
-        const popupResult = await Popup.show.input(
-            t`ERROR: Chat integrity check failed while saving the file.`,
-            t`<p>After you click OK, the page will be reloaded to prevent data corruption.</p>
-              <p>To confirm an overwrite (and potentially <b>LOSE YOUR DATA</b>), enter <code>OVERWRITE</code> (in all caps) in the box below before clicking OK.</p>`,
-            '',
-            { okButton: 'OK', cancelButton: false },
-        );
-
-        const forceSaveConfirmed = popupResult === 'OVERWRITE';
-
-        if (!forceSaveConfirmed) {
-            console.warn('Chat integrity check failed, and user did not confirm the overwrite. Reloading the page.');
-            window.location.reload();
+        if (!await confirmChatIntegrityOverwrite()) {
             return;
         }
 
         await saveGroupChatUnsafe(groupId, shouldSaveGroup, true, commitReason);
-    }
-
-    if (shouldSaveGroup) {
-        await editGroup(groupId, false, false);
     }
 }
 
@@ -811,16 +773,7 @@ export async function renameGroupMember(oldAvatar, newAvatar, newName) {
 
                     if (hadChanges) {
                         await eventSource.emit(event_types.CHARACTER_RENAMED_IN_PAST_CHAT, messages, oldAvatar, newAvatar);
-                        const saveChatRequest = await compressRequest({
-                            method: 'POST',
-                            headers: getRequestHeaders(),
-                            body: JSON.stringify({ id: chatId, chat: [...messages] }),
-                        });
-                        const saveChatResponse = await fetch('/api/chats/group/save', saveChatRequest);
-
-                        if (!saveChatResponse.ok) {
-                            throw new Error('Group member could not be renamed');
-                        }
+                        await saveGroupChatPayload({ id: chatId, payload: messages });
 
                         console.log(`Renamed character ${newName} in group chat: ${chatId}`);
                     }
@@ -2482,16 +2435,7 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, chat
             : chat;
 
     try {
-        const saveChatRequest = await compressRequest({
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ id: name, chat: [chatHeader, ...trimmedChat] }),
-        });
-        const response = await fetch('/api/chats/group/save', saveChatRequest);
-
-        if (!response.ok) {
-            throw new Error(response.statusText || 'Group chat save failed');
-        }
+        await saveGroupChatPayload({ id: name, payload: [chatHeader, ...trimmedChat] });
     } catch (error) {
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group chat could not be saved`);
         console.error('Group chat could not be saved', error);

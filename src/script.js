@@ -34,6 +34,7 @@ import {
     loadCharacterChatPayload,
     loadGroupChatPayload,
     normalizeChatFileName,
+    saveCharacterChatPayload,
 } from './scripts/chat-payload-transport.js';
 import { getActiveChatSnapshot } from './tauri/main/adapters/st/active-chat-ref.js';
 import { extension_prompt_roles, extension_prompt_types } from './scripts/extension-prompts.js';
@@ -6774,7 +6775,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             return await swipe(null, SWIPE_DIRECTION.RIGHT, { source: SWIPE_SOURCE.AUTO_SWIPE, repeated: true, forceMesId: chat.length - 1 });
         }
 
-        console.debug('/api/chats/save called by /Generate');
+        console.debug('Chat save called by /Generate');
         await saveChatConditional(isImpersonate
             ? CHAT_COMMIT_REASON.MUTATION
             : CHAT_COMMIT_REASON.GENERATION_CHECKPOINT);
@@ -8839,22 +8840,12 @@ async function renamePastChats(oldAvatar, newAvatar, newName) {
 
                 await eventSource.emit(event_types.CHARACTER_RENAMED_IN_PAST_CHAT, currentChat, oldAvatar, newAvatar);
 
-                const saveChatRequest = await compressRequest({
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: JSON.stringify({
-                        ch_name: newName,
-                        file_name: fileNameWithoutExtension,
-                        chat: currentChat,
-                        avatar_url: newAvatar,
-                    }),
-                    cache: 'no-cache',
+                await saveCharacterChatPayload({
+                    characterName: newName,
+                    avatarUrl: newAvatar,
+                    fileName: fileNameWithoutExtension,
+                    payload: currentChat,
                 });
-                const saveChatResponse = await fetch('/api/chats/save', saveChatRequest);
-
-                if (!saveChatResponse.ok) {
-                    throw new Error('Could not save chat');
-                }
             }
         } catch (error) {
             toastr.error(t`Past chat could not be updated: ${file_name}`);
@@ -8926,6 +8917,25 @@ export async function saveChat(...args) {
     return enqueueChatSave(() => saveChatUnsafe(...args));
 }
 
+/** Prompts for an integrity overwrite; reloads if the user declines. */
+export async function confirmChatIntegrityOverwrite() {
+    const popupResult = await Popup.show.input(
+        t`ERROR: Chat integrity check failed while saving the file.`,
+        t`<p>After you click OK, the page will be reloaded to prevent data corruption.</p>
+              <p>To confirm an overwrite (and potentially <b>LOSE YOUR DATA</b>), enter <code>OVERWRITE</code> (in all caps) in the box below before clicking OK.</p>`,
+        '',
+        { okButton: 'OK', cancelButton: false },
+    );
+
+    if (popupResult === 'OVERWRITE') {
+        return true;
+    }
+
+    console.warn('Chat integrity check failed, and user did not confirm the overwrite. Reloading the page.');
+    window.location.reload();
+    return false;
+}
+
 async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, chatData = undefined, commitReason = CHAT_COMMIT_REASON.MUTATION } = {}) {
     if (arguments.length > 0 && typeof arguments[0] !== 'object') {
         console.trace('saveChat called with positional arguments. Please use an object instead.');
@@ -8963,57 +8973,22 @@ async function saveChatUnsafe({ chatName, withMetadata, mesId, force = false, ch
     const payload = [chatHeader, ...trimmedChat];
 
     try {
-        const saveChatRequest = await compressRequest({
-            method: 'POST',
-            cache: 'no-cache',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                ch_name: characters[this_chid].name,
-                file_name: fileName,
-                chat: payload,
-                avatar_url: characters[this_chid].avatar,
-                force: force,
-                commit_reason: commitReason,
-            }),
+        await saveCharacterChatPayload({
+            characterName: characters[this_chid].name,
+            avatarUrl: characters[this_chid].avatar,
+            fileName,
+            payload,
+            force,
+            commitReason,
         });
-        const result = await fetch('/api/chats/save', saveChatRequest);
-
-        if (result.ok) {
-            return;
-        }
-
-        const errorData = await result.json();
-        const isIntegrityError = errorData?.error === 'integrity' && !force;
-        if (isIntegrityError) {
-            const integrityError = new Error('integrity');
-            integrityError.code = 'integrity';
-            throw integrityError;
-        }
-        throw new Error(result.statusText);
     } catch (error) {
-        const isIntegrityError = (
-            String(error?.code || '').toLowerCase() === 'integrity'
-            || /integrity/i.test(String(error?.message || ''))
-        ) && !force;
-        if (!isIntegrityError) {
+        if (error?.code !== 'integrity' || force) {
             console.error(error);
             toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Chat could not be saved`);
             throw error;
         }
 
-        const popupResult = await Popup.show.input(
-            t`ERROR: Chat integrity check failed while saving the file.`,
-            t`<p>After you click OK, the page will be reloaded to prevent data corruption.</p>
-              <p>To confirm an overwrite (and potentially <b>LOSE YOUR DATA</b>), enter <code>OVERWRITE</code> (in all caps) in the box below before clicking OK.</p>`,
-            '',
-            { okButton: 'OK', cancelButton: false },
-        );
-
-        const forceSaveConfirmed = popupResult === 'OVERWRITE';
-
-        if (!forceSaveConfirmed) {
-            console.warn('Chat integrity check failed, and user did not confirm the overwrite. Reloading the page.');
-            window.location.reload();
+        if (!await confirmChatIntegrityOverwrite()) {
             return;
         }
 

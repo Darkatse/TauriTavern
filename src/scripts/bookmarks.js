@@ -35,7 +35,7 @@ import { commonEnumProviders } from './slash-commands/SlashCommandCommonEnumsPro
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { createTagMapFromList } from './tags.js';
 import { renderTemplateAsync } from './templates.js';
-import { compressRequest } from './request-compression.js';
+import { saveGroupChatPayload } from './chat-payload-transport.js';
 import { t } from './i18n.js';
 
 import {
@@ -458,17 +458,12 @@ export async function convertSoloToGroupChat() {
     }
 
     // Save group chat
-    const createChatRequest = await compressRequest({
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ id: chatName, chat: [chatHeader, ...groupChat] }),
-    });
-    const createChatResponse = await fetch('/api/chats/group/save', createChatRequest);
-
-    if (!createChatResponse.ok) {
-        console.error('Group chat creation unsuccessful');
+    try {
+        await saveGroupChatPayload({ id: chatName, payload: [chatHeader, ...groupChat] });
+    } catch (error) {
+        console.error('Group chat creation unsuccessful', error);
         toastr.error('Group chat creation unsuccessful');
-        return;
+        throw error;
     }
 
     // Click on the freshly selected group to open it

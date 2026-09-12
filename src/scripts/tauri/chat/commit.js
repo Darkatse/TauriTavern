@@ -1,7 +1,14 @@
 import { invoke } from '../../../tauri-bridge.js';
 import { encodeBytesToBase64 } from '../../../tauri/main/binary-utils.js';
 import { isAndroidRuntime } from '../../util/mobile-runtime.js';
-import { payloadToJsonlByteChunks } from './jsonl.js';
+import { jsonlRecordsToByteChunks, serializeChatPayload } from './jsonl.js';
+
+function toChatCommitError(error) {
+    if (error?.BadRequest === 'integrity') {
+        return Object.assign(new Error('integrity', { cause: error }), { code: 'integrity' });
+    }
+    return error;
+}
 
 function positiveSafeInteger(value, label) {
     const number = Number(value);
@@ -12,6 +19,7 @@ function positiveSafeInteger(value, label) {
 }
 
 export async function commitChatPayload({ target, payload, force, commitReason }) {
+    const records = serializeChatPayload(payload);
     let sessionId = '';
     const normalizedCommitReason = commitReason ?? 'mutation';
 
@@ -26,7 +34,7 @@ export async function commitChatPayload({ target, payload, force, commitReason }
         const android = isAndroidRuntime();
         let offset = 0;
 
-        for (const frame of payloadToJsonlByteChunks(payload, { maxChunkBytes: maxFrameBytes })) {
+        for (const frame of jsonlRecordsToByteChunks(records, { maxChunkBytes: maxFrameBytes })) {
             const headers = {
                 'session-id': sessionId,
                 offset: String(offset),
@@ -50,6 +58,8 @@ export async function commitChatPayload({ target, payload, force, commitReason }
             sessionId,
             expectedSize: offset,
             commitReason: normalizedCommitReason,
+        }).catch((error) => {
+            throw toChatCommitError(error);
         });
         sessionId = '';
 

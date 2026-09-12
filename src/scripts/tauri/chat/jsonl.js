@@ -53,9 +53,10 @@ function assertPayloadArray(payload) {
     return payload;
 }
 
-export function payloadToJsonl(payload) {
+/** Captures all records before asynchronous transport can observe later mutations. */
+export function serializeChatPayload(payload) {
     const normalized = assertPayloadArray(payload);
-    let result = '';
+    const records = [];
 
     for (let index = 0; index < normalized.length; index += 1) {
         const entry = normalized[index];
@@ -63,13 +64,14 @@ export function payloadToJsonl(payload) {
             throw new Error(`Chat payload entry at index ${index} must be an object`);
         }
 
-        if (index > 0) {
-            result += '\n';
-        }
-        result += JSON.stringify(entry);
+        records.push(JSON.stringify(entry));
     }
 
-    return result;
+    return records;
+}
+
+export function payloadToJsonl(payload) {
+    return serializeChatPayload(payload).join('\n');
 }
 
 export function jsonlToPayload(text) {
@@ -194,8 +196,7 @@ function concatChunks(chunks, totalLength) {
     return output;
 }
 
-export function* payloadToJsonlByteChunks(payload, { maxChunkBytes = 4 * 1024 * 1024 } = {}) {
-    const normalized = assertPayloadArray(payload);
+export function* jsonlRecordsToByteChunks(records, { maxChunkBytes = 4 * 1024 * 1024 } = {}) {
     if (!Number.isSafeInteger(maxChunkBytes) || maxChunkBytes <= 0) {
         throw new Error('maxChunkBytes must be a positive safe integer');
     }
@@ -204,13 +205,7 @@ export function* payloadToJsonlByteChunks(payload, { maxChunkBytes = 4 * 1024 * 
     let totalLength = 0;
     let isFirstLine = true;
 
-    for (let index = 0; index < normalized.length; index += 1) {
-        const entry = normalized[index];
-        if (!entry || typeof entry !== 'object') {
-            throw new Error(`Chat payload entry at index ${index} must be an object`);
-        }
-
-        const line = JSON.stringify(entry);
+    for (const line of records) {
         const text = isFirstLine ? line : `\n${line}`;
         isFirstLine = false;
         const bytes = textEncoder.encode(text);

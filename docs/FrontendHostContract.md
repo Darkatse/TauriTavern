@@ -228,6 +228,8 @@
 
 路由定义集中在 `src/tauri/main/routes/*`，其路径本身属于 Public Contract（上游/插件会直接请求）。
 
+第一方聊天完整加载与保存直接调用内部 payload transport；兼容 `/api/chats/get`、`/api/chats/group/get`、`/api/chats/save`、`/api/chats/group/save` 仍可由扩展主动调用。第一方操作不再产生这些 Fetch 请求，不能依赖 monkeypatch Fetch 观察它们；公开保存入口及既有业务事件不变。兼容保存成功仍为 `200 { ok: true }`，明确的 integrity 冲突仍为 `400 { error: 'integrity' }`，其他提交或清理失败不得仅因文案包含 integrity 而返回该冲突响应。
+
 最关键的启动依赖：
 
 - `/csrf-token`：返回固定 token（用于兼容上游初始化对 CSRF 的假设）
@@ -286,6 +288,8 @@
 
 用途：将 DevTools Network 中的单次请求，与 console 日志 / perf-hud 数据关联起来，定位第三方脚本导致的异常与性能热点。
 header 名也可从 `window.__TAURITAVERN__?.traceHeader` 获取（用于避免硬编码）。
+
+第一方聊天 transport 直连不产生兼容路由 Response，因此没有该响应 header；扩展主动请求兼容路由时仍按上述规则追踪。
 
 ---
 
