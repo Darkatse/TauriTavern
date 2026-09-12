@@ -600,7 +600,7 @@ export function runRegexScript(regexScript, rawString, { characterOverride } = {
         return newString;
     }
 
-    if (pausedRegexScriptKeys.has(getRegexScriptKey(regexScript, findRegex))) {
+    if (pausedRegexScriptKeys.size > 0 && pausedRegexScriptKeys.has(getRegexScriptKey(regexScript, findRegex))) {
         return newString;
     }
 
