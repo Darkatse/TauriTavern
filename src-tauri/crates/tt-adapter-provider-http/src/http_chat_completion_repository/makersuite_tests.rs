@@ -6,7 +6,8 @@ use tokio::net::TcpListener;
 use tokio::sync::{mpsc, watch};
 use tt_adapter_http::HttpClientPool;
 use tt_ports::repositories::chat_completion_repository::{
-    AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionRepository, ChatCompletionSource,
+    AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionRepository,
+    ChatCompletionSource,
 };
 use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
@@ -147,7 +148,10 @@ async fn custom_gemini_generate_content_http_contract() {
         );
         let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(query.get("key").map(String::as_str), Some("custom-key"));
-        assert_eq!(query.get("alt").map(String::as_str), stream.then_some("sse"));
+        assert_eq!(
+            query.get("alt").map(String::as_str),
+            stream.then_some("sse")
+        );
         assert!(headers.contains("x-goog-api-key: header-override"));
         assert!(!headers.to_lowercase().contains("authorization:"));
         let body: Value = serde_json::from_str(body).unwrap();

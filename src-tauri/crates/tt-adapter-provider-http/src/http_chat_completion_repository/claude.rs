@@ -515,7 +515,9 @@ fn build_anthropic_beta_values(
 
     // Body `speed: "fast"` is only honoured alongside the fast-mode beta.
     if payload.get("speed").and_then(Value::as_str) == Some("fast")
-        && !beta_values.iter().any(|existing| existing == ANTHROPIC_BETA_FAST_MODE)
+        && !beta_values
+            .iter()
+            .any(|existing| existing == ANTHROPIC_BETA_FAST_MODE)
     {
         beta_values.push(ANTHROPIC_BETA_FAST_MODE.to_string());
     }

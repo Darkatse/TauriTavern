@@ -12,14 +12,16 @@ pub(super) async fn list_models(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
 ) -> Result<Value, DomainError> {
-    let body =
-        openai::list_models_with_path(repository, config, "xAI", "/language-models").await?;
+    let body = openai::list_models_with_path(repository, config, "xAI", "/language-models").await?;
 
-    let models = body.get("models").and_then(Value::as_array).ok_or_else(|| {
-        DomainError::InternalError(
-            "Invalid xAI models response: models is not an array".to_string(),
-        )
-    })?;
+    let models = body
+        .get("models")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            DomainError::InternalError(
+                "Invalid xAI models response: models is not an array".to_string(),
+            )
+        })?;
 
     Ok(json!({ "data": models }))
 }
