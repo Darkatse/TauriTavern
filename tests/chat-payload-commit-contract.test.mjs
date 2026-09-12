@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { commitChatPayload } from '../src/scripts/tauri/chat/commit.js';
+import { commitChatMetadata, commitChatPayload } from '../src/scripts/tauri/chat/commit.js';
 import {
+    saveCharacterChatMetadata,
     saveCharacterChatPayload,
+    saveGroupChatMetadata,
     saveGroupChatPayload,
 } from '../src/scripts/chat-payload-transport.js';
 import { jsonResponse } from '../src/tauri/main/http-utils.js';
@@ -109,6 +111,78 @@ function commit(payload) {
         commitReason: 'mutation',
     });
 }
+
+for (const scenario of [
+    {
+        kind: 'character', target: TARGET,
+        save: chatMetadata => saveCharacterChatMetadata({
+            characterName: 'Display name', avatarUrl: 'Alice.png', fileName: 'Story.jsonl', chatMetadata,
+        }),
+    },
+    {
+        kind: 'group', target: { kind: 'group', chatId: 'Story' },
+        save: chatMetadata => saveGroupChatMetadata({ id: 'Story.jsonl', chatMetadata }),
+    },
+]) {
+    test(`${scenario.kind} metadata save captures only its JSON snapshot before yielding`, async () => {
+        const release = Promise.withResolvers();
+        const calls = [];
+        const restore = installRuntime('Mozilla/5.0 (Linux; Android 14)', async (command, args) => {
+            await release.promise;
+            calls.push({ command, args: JSON.parse(JSON.stringify(args)) });
+        });
+        const chatMetadata = { integrity: 'chat', variables: { score: 1 } };
+        try {
+            const pending = scenario.save(chatMetadata);
+            chatMetadata.variables.score = 2;
+            release.resolve();
+            await pending;
+            assert.deepEqual(calls, [{
+                command: 'commit_chat_metadata',
+                args: { target: scenario.target, chatMetadata: { integrity: 'chat', variables: { score: 1 } } },
+            }]);
+        } finally {
+            restore();
+        }
+    });
+}
+
+test('metadata commit rejects unserializable metadata before invoking the host', async () => {
+    let invoked = false;
+    const restore = installRuntime('Mozilla/5.0 (Macintosh)', async () => { invoked = true; });
+    const cyclic = {};
+    cyclic.self = cyclic;
+    try {
+        for (const chatMetadata of [cyclic, { value: 1n }]) {
+            await assert.rejects(() => commitChatMetadata({ target: TARGET, chatMetadata }));
+        }
+        assert.equal(invoked, false);
+    } finally {
+        restore();
+    }
+});
+
+test('metadata commit normalizes host rejections and classifies only explicit integrity conflicts', async () => {
+    for (const [failure, expected] of [
+        [{ BadRequest: 'integrity' }, { code: 'integrity', message: 'integrity' }],
+        [{ BadRequest: 'Invalid chat header' }, { code: undefined, message: '{"BadRequest":"Invalid chat header"}' }],
+        [{ NotFound: 'Chat missing' }, { code: undefined, message: '{"NotFound":"Chat missing"}' }],
+        ['integrity', { code: undefined, message: 'integrity' }],
+    ]) {
+        const restore = installRuntime('Mozilla/5.0 (Macintosh)', async () => { throw failure; });
+        try {
+            await assert.rejects(() => commitChatMetadata({ target: TARGET, chatMetadata: {} }), error => {
+                assert.ok(error instanceof Error);
+                assert.equal(error.code, expected.code);
+                assert.equal(error.message, expected.message);
+                assert.equal(error.cause, failure);
+                return true;
+            });
+        } finally {
+            restore();
+        }
+    }
+});
 
 test('chat payload commit uses bounded Android base64 frames and exact offsets', async () => {
     const host = createCommitHost();

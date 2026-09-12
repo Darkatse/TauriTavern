@@ -236,6 +236,268 @@ async fn chat_commit_preserves_exact_bytes_across_multiple_frames() {
 }
 
 #[tokio::test]
+async fn metadata_commit_preserves_header_fields_and_exact_body_bytes() {
+    let (repository, root) = setup_repository().await;
+    let header = json!({
+        "user_name": "Original user", "character_name": "Original character",
+        "create_date": "legacy date", "unknown": { "keep": [1, true] },
+        "chat_metadata": { "integrity": "metadata", "deleted": true },
+    });
+    let body = format!(
+        "\r\n{{ \"mes\": \"你好{}\", \"unknown\": [1, 2] }}\r\n\n{{\"mes\":\"last\"}}",
+        "x".repeat(20_000)
+    );
+    for target in [
+        character_target("Alice", "metadata"),
+        ChatPayloadTarget::Group {
+            chat_id: "metadata".into(),
+        },
+    ] {
+        let path = repository
+            .resolve_chat_commit_target(&target)
+            .await
+            .unwrap();
+        for original in [format!("{header}\r\n{body}"), header.to_string()] {
+            commit_payload_bytes(&repository, target.clone(), original.as_bytes(), false)
+                .await
+                .unwrap();
+            let metadata = json!({ "integrity": "metadata", "variables": { "new": "value" } });
+            repository
+                .commit_metadata(target.clone(), metadata.clone())
+                .await
+                .unwrap();
+            let updated = fs::read(&path).await.unwrap();
+            let split = updated.iter().position(|byte| *byte == b'\n').unwrap();
+            let mut expected_header = header.clone();
+            expected_header["chat_metadata"] = metadata;
+            assert_eq!(
+                serde_json::from_slice::<Value>(&updated[..split]).unwrap(),
+                expected_header
+            );
+            let original_body = original
+                .find('\n')
+                .map_or("", |index| &original[index + 1..]);
+            assert_eq!(&updated[split + 1..], original_body.as_bytes());
+        }
+    }
+    fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
+async fn metadata_commit_rejects_invalid_updates_without_changing_the_file() {
+    let (repository, root) = setup_repository().await;
+    for target in [
+        character_target("Alice", "metadata"),
+        ChatPayloadTarget::Group {
+            chat_id: "metadata".into(),
+        },
+    ] {
+        let path = repository
+            .resolve_chat_commit_target(&target)
+            .await
+            .unwrap();
+        let missing = repository
+            .commit_metadata(target.clone(), json!({}))
+            .await
+            .unwrap_err();
+        assert!(matches!(missing, DomainError::NotFound(_)));
+        assert!(!path.exists());
+
+        let original = payload_to_jsonl(&payload_with_integrity("metadata"));
+        commit_payload_bytes(&repository, target.clone(), original.as_bytes(), false)
+            .await
+            .unwrap();
+        for metadata in [
+            json!({ "integrity": "other" }),
+            json!({}),
+            Value::Null,
+            json!([]),
+            json!(1),
+        ] {
+            let error = repository
+                .commit_metadata(target.clone(), metadata.clone())
+                .await
+                .unwrap_err();
+            assert!(matches!(&error, DomainError::InvalidData(_)));
+            if metadata.is_object() {
+                assert!(
+                    matches!(error, DomainError::InvalidData(message) if message == "integrity")
+                );
+            }
+            assert_eq!(fs::read(&path).await.unwrap(), original.as_bytes());
+        }
+        for malformed in ["", "\n", "{broken}\n", "[]\n"] {
+            fs::write(&path, malformed).await.unwrap();
+            assert!(matches!(
+                repository
+                    .commit_metadata(target.clone(), json!({}))
+                    .await
+                    .unwrap_err(),
+                DomainError::InvalidData(_)
+            ));
+            assert_eq!(fs::read(&path).await.unwrap(), malformed.as_bytes());
+        }
+        fs::write(&path, "{\"chat_metadata\":{}}\n").await.unwrap();
+        repository
+            .commit_metadata(target.clone(), json!({ "integrity": "adopted" }))
+            .await
+            .unwrap();
+        assert_eq!(
+            repository
+                .read_chat_metadata_from_path(&path)
+                .await
+                .unwrap(),
+            json!({ "integrity": "adopted" })
+        );
+        let mut files = fs::read_dir(path.parent().unwrap()).await.unwrap();
+        while let Some(file) = files.next_entry().await.unwrap() {
+            assert_eq!(
+                file.path(),
+                path,
+                "rejected updates must not leave staging files"
+            );
+        }
+    }
+    fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
+async fn metadata_writers_invalidate_cached_reads_and_preserve_extension_semantics() {
+    let (repository, root) = setup_repository().await;
+    let target = character_target("Alice", "metadata");
+    let original = payload_to_jsonl(&payload_with_integrity("metadata"));
+    commit_payload_bytes(&repository, target.clone(), original.as_bytes(), false)
+        .await
+        .unwrap();
+    repository.get_chat("Alice", "metadata").await.unwrap();
+    repository
+        .get_character_chat_summary("Alice", "metadata", true)
+        .await
+        .unwrap();
+
+    let metadata = json!({ "integrity": "metadata", "variables": { "score": "1" } });
+    repository
+        .commit_metadata(target, metadata.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .get_chat("Alice", "metadata")
+            .await
+            .unwrap()
+            .chat_metadata
+            .variables["score"],
+        "1"
+    );
+    assert_eq!(
+        repository
+            .get_character_chat_summary("Alice", "metadata", true)
+            .await
+            .unwrap()
+            .chat_metadata,
+        Some(metadata)
+    );
+
+    for value in [json!({ "floor": 42 }), Value::Null] {
+        repository
+            .set_character_chat_metadata_extension("Alice", "metadata", "example", value.clone())
+            .await
+            .unwrap();
+        let cached = repository.get_chat("Alice", "metadata").await.unwrap();
+        assert_eq!(
+            cached.chat_metadata.extensions.unwrap().get("example"),
+            value.as_object().map(|_| &value)
+        );
+        let summary = repository
+            .get_character_chat_summary("Alice", "metadata", true)
+            .await
+            .unwrap()
+            .chat_metadata
+            .unwrap();
+        assert_eq!(summary["variables"]["score"], "1");
+        assert_eq!(
+            summary["extensions"].get("example"),
+            value.as_object().map(|_| &value)
+        );
+    }
+
+    commit_payload_bytes(
+        &repository,
+        ChatPayloadTarget::Group {
+            chat_id: "group-metadata".into(),
+        },
+        original.as_bytes(),
+        false,
+    )
+    .await
+    .unwrap();
+    repository
+        .set_group_chat_metadata_extension("group-metadata", "example", json!({ "floor": 42 }))
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .get_group_chat_metadata("group-metadata")
+            .await
+            .unwrap()["extensions"]["example"]["floor"],
+        42
+    );
+    repository
+        .set_group_chat_metadata_extension("group-metadata", "example", Value::Null)
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .get_group_chat_metadata("group-metadata")
+            .await
+            .unwrap(),
+        json!({ "integrity": "metadata", "extensions": {} })
+    );
+    fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
+async fn metadata_commit_does_not_skip_backup_after_an_equal_length_change() {
+    let (repository, root) = setup_repository().await;
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    let target = character_target("Alice", "metadata");
+    let mut payload = payload_with_integrity("metadata");
+    payload[0]["chat_metadata"]["variables"] = json!({ "score": "1" });
+    let original = payload_to_jsonl(&payload);
+    commit_payload_bytes(&repository, target.clone(), original.as_bytes(), false)
+        .await
+        .unwrap();
+    repository
+        .backup_chat_automatic("Alice", "metadata")
+        .await
+        .unwrap();
+    let before = backup_file_names(&root).await;
+
+    payload[0]["chat_metadata"]["variables"]["score"] = json!("2");
+    repository
+        .commit_metadata(target, payload[0]["chat_metadata"].clone())
+        .await
+        .unwrap();
+    let updated = repository
+        .get_chat_payload_bytes("Alice", "metadata")
+        .await
+        .unwrap();
+    assert_eq!(updated.len(), original.len());
+    repository
+        .backup_chat_automatic("Alice", "metadata")
+        .await
+        .unwrap();
+    let after = backup_file_names(&root).await;
+    assert_eq!(after.len(), before.len() + 1);
+    let added = after.iter().find(|file| !before.contains(file)).unwrap();
+    assert_eq!(
+        read_backup_payload(&repository, added, 1024).await.unwrap(),
+        updated
+    );
+    fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
 async fn global_invalidation_prevents_an_inflight_commit_from_restoring_old_provenance() {
     let (repository, root) = setup_repository().await;
     let payload = payload_to_jsonl(&payload_with_integrity("signature-epoch"));

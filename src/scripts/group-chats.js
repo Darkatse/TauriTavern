@@ -92,7 +92,7 @@ import { isExternalMediaAllowed } from './chats.js';
 import { POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
-import { CHAT_COMMIT_REASON, loadGroupChatPayload, saveGroupChatPayload } from './chat-payload-transport.js';
+import { CHAT_COMMIT_REASON, loadGroupChatPayload, saveGroupChatMetadata, saveGroupChatPayload } from './chat-payload-transport.js';
 
 export {
     selected_group,
@@ -309,9 +309,12 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
         return;
     }
 
+    updateChatMetadata(metadata, true);
     if (group && Array.isArray(group.members) && freshChat) {
         chat.splice(0, chat.length);
         resetChatSurfaceView();
+        // Greeting hooks may save metadata; establish the chat and its identity first.
+        await saveGroupChat(groupId, false, false, CHAT_COMMIT_REASON.MAINTENANCE);
         for (let member of group.members) {
             if (!isStillActive()) {
                 return;
@@ -354,7 +357,6 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
 
     }
 
-    updateChatMetadata(metadata, true);
     if (!isStillActive()) {
         return;
     }
@@ -679,6 +681,17 @@ function resetSelectedGroup() {
  */
 async function saveGroupChat(groupId, shouldSaveGroup, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION) {
     return enqueueChatSave(() => saveGroupChatUnsafe(groupId, shouldSaveGroup, force, commitReason));
+}
+
+export function saveGroupMetadata(groupId) {
+    return enqueueChatSave(() => runChatSave({
+        title: t`Group Chat could not be saved`,
+        save: () => saveGroupChatMetadata({
+            id: groups.find(x => x.id == groupId).chat_id,
+            chatMetadata: persistedChatMetadata(),
+        }),
+        recover: () => saveGroupChatUnsafe(groupId, true, true),
+    }));
 }
 
 async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION) {

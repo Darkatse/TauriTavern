@@ -21,6 +21,7 @@ export {};
  *   | 'cancel_mcp_test_call'
  *   | 'cleanup_export_data_archive'
  *   | 'cleanup_user_backup_archive'
+ *   | 'commit_chat_metadata'
  *   | 'count_openai_token_prefixes'
  *   | 'count_openai_tokens_batch'
  *   | 'assign_images_to_metadata_folder'

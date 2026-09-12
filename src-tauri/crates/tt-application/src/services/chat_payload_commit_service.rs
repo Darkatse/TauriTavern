@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use serde_json::Value;
 use tt_ports::repositories::chat_payload_commit_repository::{
     ChatPayloadCommitBegin, ChatPayloadCommitRepository, ChatPayloadTarget,
 };
@@ -9,7 +10,7 @@ use crate::errors::ApplicationError;
 use crate::services::chat_file_validation::validate_chat_history_locator;
 use crate::services::chat_history_coordinator::ChatHistoryCoordinator;
 
-/// Coordinates streamed full-payload commits with chat-history scheduling.
+/// Coordinates full-payload and metadata commits with chat-history scheduling.
 pub struct ChatPayloadCommitService {
     repository: Arc<dyn ChatPayloadCommitRepository>,
     chat_history_coordinator: Arc<ChatHistoryCoordinator>,
@@ -36,6 +37,21 @@ impl ChatPayloadCommitService {
             .repository
             .begin(target_from_locator(locator), force)
             .await?)
+    }
+
+    pub async fn commit_metadata(
+        &self,
+        locator: ChatHistoryLocator,
+        chat_metadata: Value,
+    ) -> Result<(), ApplicationError> {
+        validate_chat_history_locator(&locator)?;
+        self.repository
+            .commit_metadata(target_from_locator(locator.clone()), chat_metadata)
+            .await?;
+        self.chat_history_coordinator
+            .note_current_committed(locator, CurrentCommitReason::Mutation)
+            .await;
+        Ok(())
     }
 
     pub async fn append(

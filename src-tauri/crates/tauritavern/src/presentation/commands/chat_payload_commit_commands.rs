@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use serde::Serialize;
+use serde_json::Value;
 use tauri::State;
 
 use crate::app::AppState;
@@ -31,6 +32,20 @@ fn required_header(request: &tauri::ipc::Request<'_>, name: &str) -> Result<Stri
         .to_str()
         .map(str::to_string)
         .map_err(|_| CommandError::BadRequest(format!("Invalid chat commit header: {name}")))
+}
+
+#[tauri::command]
+pub async fn commit_chat_metadata(
+    target: ChatHistoryLocator,
+    chat_metadata: Value,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    app_state
+        .services
+        .chat_payload_commit_service
+        .commit_metadata(target, chat_metadata)
+        .await
+        .map_err(Into::into)
 }
 
 #[tauri::command]

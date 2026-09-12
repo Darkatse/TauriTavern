@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use serde_json::Value;
 use tt_domain::errors::DomainError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -24,10 +25,17 @@ pub struct CommittedChatPayload {
     pub size: u64,
 }
 
-/// Streams a complete chat payload into private, target-volume staging and
-/// publishes it atomically when the session is finished.
+/// Atomically publishes full chat payloads or metadata-only updates.
 #[async_trait]
 pub trait ChatPayloadCommitRepository: Send + Sync {
+    /// Replaces `chat_metadata` on an existing chat, preserving all body bytes.
+    /// The incoming integrity must match any identity already in the header.
+    async fn commit_metadata(
+        &self,
+        target: ChatPayloadTarget,
+        chat_metadata: Value,
+    ) -> Result<(), DomainError>;
+
     async fn begin(
         &self,
         target: ChatPayloadTarget,

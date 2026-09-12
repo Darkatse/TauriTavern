@@ -15,6 +15,7 @@ use crate::jsonl_utils::{
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage, strip_jsonl_extension};
+use tt_ports::repositories::chat_payload_commit_repository::ChatPayloadTarget;
 use tt_ports::repositories::chat_repository::{
     ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat, ChatMessageSearchHit,
     ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor,
@@ -725,10 +726,11 @@ impl ChatRepository for FileChatRepository {
         namespace: &str,
         value: Value,
     ) -> Result<(), DomainError> {
-        let path = self
-            .resolve_character_chat_path(character_name, file_name)
-            .await?;
-        self.set_chat_metadata_extension_in_path(&path, namespace, value)
+        let target = ChatPayloadTarget::Character {
+            character_id: character_name.to_owned(),
+            file_name: file_name.to_owned(),
+        };
+        self.set_chat_metadata_extension(target, namespace, value)
             .await
     }
 

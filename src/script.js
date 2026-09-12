@@ -35,6 +35,7 @@ import {
     loadGroupChatPayload,
     normalizeChatFileName,
     saveCharacterChatPayload,
+    saveCharacterChatMetadata,
 } from './scripts/chat-payload-transport.js';
 import { getActiveChatSnapshot } from './tauri/main/adapters/st/active-chat-ref.js';
 import { extension_prompt_roles, extension_prompt_types } from './scripts/extension-prompts.js';
@@ -140,6 +141,7 @@ import {
     groups,
     selected_group,
     saveGroupChat,
+    saveGroupMetadata,
     getGroups,
     applyGroupsSnapshot,
     generateGroupWrapper,
@@ -11096,7 +11098,26 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
 }
 
 export async function saveMetadata() {
-    return await saveChatConditional();
+    if (selected_group) {
+        return saveGroupMetadata(selected_group);
+    }
+    if (this_chid === undefined) {
+        return;
+    }
+
+    return enqueueChatSave(() => runChatSave({
+        title: t`Chat could not be saved`,
+        save: () => {
+            const character = characters[this_chid];
+            return saveCharacterChatMetadata({
+                characterName: character.name,
+                avatarUrl: character.avatar,
+                fileName: character.chat,
+                chatMetadata: persistedChatMetadata(),
+            });
+        },
+        recover: () => saveChatUnsafe({ force: true }),
+    }));
 }
 
 export async function saveChatConditional(commitReason = CHAT_COMMIT_REASON.MUTATION) {

@@ -5,6 +5,8 @@ export {
     resolveCharacterDirectoryId,
     loadCharacterChatPayload,
     saveCharacterChatPayload,
+    saveCharacterChatMetadata,
     loadGroupChatPayload,
     saveGroupChatPayload,
+    saveGroupChatMetadata,
 } from './tauri/chat/transport.js';

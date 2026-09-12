@@ -5,7 +5,7 @@ import {
     hasCharacterAvatarIdentity,
 } from '../../../tauri/main/services/characters/character-identity.js';
 import { createReadableFileStreamService } from '../../../tauri/main/services/files/readable-file-stream-service.js';
-import { commitChatPayload } from './commit.js';
+import { commitChatMetadata, commitChatPayload } from './commit.js';
 import { jsonlStreamToPayload } from './jsonl.js';
 
 const { createReadableFileStream } = createReadableFileStreamService({ invoke });
@@ -73,6 +73,10 @@ export async function saveCharacterChatPayload({ characterName, avatarUrl, fileN
     await commitChatPayload({ target: characterTarget({ characterName, avatarUrl, fileName }), payload, force, commitReason });
 }
 
+export async function saveCharacterChatMetadata({ characterName, avatarUrl, fileName, chatMetadata }) {
+    await commitChatMetadata({ target: characterTarget({ characterName, avatarUrl, fileName }), chatMetadata });
+}
+
 export async function loadGroupChatPayload({ id, allowNotFound = false }) {
     const target = groupTarget(id);
     const path = await invoke('get_group_chat_path', { id: target.chatId, allowNotFound });
@@ -90,4 +94,8 @@ export async function loadGroupChatPayload({ id, allowNotFound = false }) {
 
 export async function saveGroupChatPayload({ id, payload, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION }) {
     await commitChatPayload({ target: groupTarget(id), payload, force, commitReason });
+}
+
+export async function saveGroupChatMetadata({ id, chatMetadata }) {
+    await commitChatMetadata({ target: groupTarget(id), chatMetadata });
 }

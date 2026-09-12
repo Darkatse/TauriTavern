@@ -34,6 +34,12 @@ function positiveSafeInteger(value, label) {
     return number;
 }
 
+export async function commitChatMetadata({ target, chatMetadata }) {
+    // Snapshot before yielding: Tauri re-reads live arguments when its custom protocol falls back to postMessage.
+    const snapshot = JSON.parse(JSON.stringify(chatMetadata));
+    await invokeChatCommit('commit_chat_metadata', { target, chatMetadata: snapshot });
+}
+
 export async function commitChatPayload({ target, payload, force, commitReason }) {
     const records = serializeChatPayload(payload);
     const begin = await invokeChatCommit('begin_chat_commit', { target, force });

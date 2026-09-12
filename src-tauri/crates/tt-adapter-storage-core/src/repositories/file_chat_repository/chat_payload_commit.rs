@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::file_system::persist_file;
 use async_trait::async_trait;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -89,7 +90,7 @@ impl FileChatRepository {
             .map_err(|_| DomainError::InvalidData("Invalid chat commit session id".to_string()))
     }
 
-    async fn resolve_chat_commit_target(
+    pub(super) async fn resolve_chat_commit_target(
         &self,
         target: &ChatPayloadTarget,
     ) -> Result<PathBuf, DomainError> {
@@ -138,6 +139,14 @@ impl FileChatRepository {
 
 #[async_trait]
 impl ChatPayloadCommitRepository for FileChatRepository {
+    async fn commit_metadata(
+        &self,
+        target: ChatPayloadTarget,
+        chat_metadata: Value,
+    ) -> Result<(), DomainError> {
+        self.replace_chat_metadata(target, chat_metadata).await
+    }
+
     async fn begin(
         &self,
         target: ChatPayloadTarget,

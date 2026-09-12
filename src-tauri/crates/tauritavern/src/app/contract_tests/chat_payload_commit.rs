@@ -58,7 +58,7 @@ async fn chat_payload_commit_notifies_history_only_after_successful_publish() {
 
     coordinator.invalidate_all_pending().await;
     let rejected = service
-        .begin(target, false)
+        .begin(target.clone(), false)
         .await
         .expect("begin rejected commit");
     service
@@ -74,6 +74,20 @@ async fn chat_payload_commit_notifies_history_only_after_successful_publish() {
         .await
         .expect_err("size mismatch must reject commit");
     assert_eq!(coordinator.commit_sequence_for_test().await, 1);
+
+    service
+        .commit_metadata(
+            target.clone(),
+            serde_json::json!({ "integrity": "metadata" }),
+        )
+        .await
+        .expect("commit metadata on the existing legacy header");
+    assert_eq!(coordinator.commit_sequence_for_test().await, 2);
+    service
+        .commit_metadata(target, serde_json::json!({ "integrity": "different" }))
+        .await
+        .expect_err("metadata identity conflict must not notify history");
+    assert_eq!(coordinator.commit_sequence_for_test().await, 2);
 
     fs::remove_dir_all(root).await.expect("remove test root");
 }

@@ -1,6 +1,6 @@
 # Chat Payload 现状
 
-本文档描述当前聊天 payload 的三个独立机制：前端完整历史契约、完整 payload 原子提交、后端只读分页。三者不得重新耦合成前端数据窗口。
+本文档描述前端完整历史契约、完整 payload 与 metadata 原子提交、后端只读分页。这些机制不得重新耦合成前端数据窗口。
 
 ## 1. 核心契约
 
@@ -48,7 +48,21 @@ facade 使用 target-local commit session，按 host 返回的帧预算编码并
 
 host 以 serde 外部标签形状 `{ Variant: payload }` 拒绝，该值本身不是 Error。聊天提交 command 的拒绝在 commit facade 离开 IPC 边界时归一为 Error 并保留原值为 `cause`（其他 command 由 `safeInvoke` 归一）：`{ BadRequest: 'integrity' }` 得到 `code: 'integrity'`，其他对象以其 JSON 文本为 message，字符串原文为 message。这是无损的形状转换，不按错误文案猜测冲突。当前聊天冲突由共享弹窗确认后强制全量保存，拒绝则 reload。不存在保存失败后静默改走另一条写路径的降级逻辑。
 
-完整提交、导入、metadata extension 更新和备份发布共用 storage-core 的 `persist_file`：完成写入与 flush 后，将原写入句柄交给 helper 执行 `sync_all`，关闭后再严格 rename。备份编码器返回原写入句柄，保留到时间戳设置和内容同步完成。分块传输期间不逐块同步；聊天扩展 JSON store 使用同一发布机制，摘要缓存不强制同步。此保证覆盖文件内容同步和运行时原子替换，不包含 rename 后父目录项的断电持久化。
+完整提交、导入、metadata 更新和备份发布共用 storage-core 的 `persist_file` / `persist_file_blocking`：完成写入与必要的 flush 后，将原写入句柄交给 helper 执行 `sync_all`，关闭后再严格 rename。备份编码器返回原写入句柄，保留到时间戳设置和内容同步完成。分块传输期间不逐块同步；聊天扩展 JSON store 使用同一发布机制，摘要缓存不强制同步。此保证覆盖文件内容同步和运行时原子替换，不包含 rename 后父目录项的断电持久化。
+
+### 3.1 Metadata 保存
+
+`saveMetadata()` 与 `getContext().saveMetadata()` 只持久化 JSONL header 中的整个 `chat_metadata`，不保存消息修改。字段删除会落盘；header 其他 JSON 字段保留，正文逐字节保留。这是相对 SillyTavern 1.18.0 的语义收窄：修改消息的扩展必须显式调用完整保存，否则重载前未提交的消息修改可能丢失。
+
+角色与群聊分别通过 `saveCharacterChatMetadata()` / `saveGroupChatMetadata()` 进入同一个 `commit_chat_metadata` command。业务入口在队列任务执行时以 `persistedChatMetadata()` 取得去掉 `lastInContextMessageId` 的副本，与完整保存的 header 同源；facade 在首次异步让出前捕获它的 JSON 快照。canonical metadata 不被修改。正常路径不遍历 `chat[]`、不启动完整 commit session，也不保存 token cache / itemized prompts。
+
+metadata 业务保存复用 `enqueueChatSave()`，不取消挂起的 `saveChatDebounced()`。`saveMetadataDebounced()` 保持 1000 ms debounce，`clearChat()` 仍取消两种 debounce。integrity 冲突的弹窗与恢复在同一次队列任务内完成；确认后强制完整保存，拒绝则 reload。metadata command 没有 force，缺文件和普通错误不触发完整保存回退。
+
+文件存在是 metadata 提交的前提。新群聊先绑定本次 metadata 和 integrity，并以 MAINTENANCE 发布初始 header，再触发首次问候扩展事件；问候消息生成后仍执行完整提交。事件写入的 metadata 不会再被旧的局部初始化值覆盖。
+
+storage-core 的 `chat_metadata.rs` 统一承担整体替换和 `metadata.setExtension()` 的 header 写入。在路径 mutation lock 内，以单次 Tokio blocking 任务读取 header，继续从同一个 reader 复制正文，再同步发布。现有 mutation lock 已清除 content signature；发布成功后清除角色 memory cache 与 summary cache，application 随后以 Mutation 通知既有备份协调器。namespace set/delete 语义不变，也不新增与前端活 metadata 的自动合并。
+
+JS 与 IPC 成本为 Θ(header)，Rust 工作内存不随正文大小增长；磁盘仍需复制正文并写出完整替代文件，为 Θ(文件大小)。正常 metadata 保存不手动更新角色/群组日期或调用 `editGroup()`，但文件 mtime 会变化，依赖它的群聊统计与同步仍按原规则运行。integrity 是身份而非内容版本，进程内路径锁不提供跨进程或 Sync 冲突隔离。
 
 ## 4. First-class Tool 消息
 
@@ -134,6 +148,7 @@ Rust：
 - character/group stale load 结果不会覆盖新选择。
 - 缺少本地 `chat` 字段的角色在浅层、完整读取和重启后解析为同一个 stem；已有失配聊天按需恢复。
 - 完整保存后重开，编辑、删除、swipe、隐藏范围和 metadata 均保持。
+- metadata 保存后 header 字段更新且正文逐字节不变；待保存的消息删除不被取消，新群聊的问候事件可立即保存 metadata。
 - 保存开始后修改消息和嵌套 metadata，不会改变正在传输的快照；后续保存读取新的状态。
 - integrity 冲突与其他失败保持区分；非 integrity 的 host 拒绝以可读 message 到达调用方和兼容路由的 `details`；兼容保存路由保持成功和错误响应语义。
 - tail/before 对角色和群聊返回相同索引语义，stale cursor 明确失败。

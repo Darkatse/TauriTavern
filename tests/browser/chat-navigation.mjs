@@ -9,7 +9,7 @@ function chatPayload(fileName) {
     ].map(entry => JSON.stringify(entry)).join('\n');
 }
 
-test('persisted chat navigation', async (context) => {
+test('chat persistence and navigation', async (context) => {
     const { window, getModule, load, startHost } = createBrowserRuntime();
     window.happyDOM.settings.timer.maxIntervalIterations = 1;
     window.happyDOM.settings.timer.maxIntervalTime = 0;
@@ -21,14 +21,60 @@ test('persisted chat navigation', async (context) => {
     const loads = [];
     const writes = [];
     const changed = [];
+    const commits = [];
+    const sessions = new Map();
     let nextHandle = 1;
     let listReads = 0;
     let storedChat;
     let entityKind;
+    let fullSaveError;
+
+    function readHeader(fileName) {
+        return JSON.parse(payloads.get(fileName).split('\n')[0]);
+    }
+
+    function checkIntegrity(fileName, metadata, force = false) {
+        const existing = payloads.has(fileName) && readHeader(fileName).chat_metadata?.integrity;
+        if (!force && existing && existing !== metadata?.integrity) throw { BadRequest: 'integrity' };
+    }
 
     const hostInvoke = window.__TAURI__.core.invoke;
-    window.__TAURI__.core.invoke = async (command, args) => {
+    window.__TAURI__.core.invoke = async (command, args, options) => {
         switch (command) {
+            case 'commit_chat_metadata': {
+                const fileName = args.target.fileName ?? args.target.chatId;
+                if (!payloads.has(fileName)) throw { NotFound: 'Chat missing' };
+                checkIntegrity(fileName, args.chatMetadata);
+                const header = readHeader(fileName);
+                header.chat_metadata = args.chatMetadata;
+                const original = payloads.get(fileName);
+                const newline = original.indexOf('\n');
+                payloads.set(fileName, JSON.stringify(header) + '\n' + (newline < 0 ? '' : original.slice(newline + 1)));
+                commits.push({ kind: 'metadata', fileName });
+                return;
+            }
+            case 'begin_chat_commit': {
+                const sessionId = String(nextHandle++);
+                sessions.set(sessionId, { ...args, frames: [] });
+                return { sessionId, maxFrameBytes: 1024 * 1024 };
+            }
+            case 'append_chat_commit_chunk': {
+                const session = sessions.get(options.headers['session-id']);
+                session.frames.push(Buffer.from(args));
+                return session.frames.reduce((sum, frame) => sum + frame.length, 0);
+            }
+            case 'finish_chat_commit': {
+                if (fullSaveError) throw fullSaveError;
+                const session = sessions.get(args.sessionId);
+                const fileName = session.target.fileName ?? session.target.chatId;
+                const jsonl = Buffer.concat(session.frames).toString();
+                checkIntegrity(fileName, JSON.parse(jsonl.split('\n')[0]).chat_metadata, session.force);
+                payloads.set(fileName, jsonl);
+                commits.push({ kind: 'full', fileName, force: session.force, reason: args.commitReason });
+                sessions.delete(args.sessionId);
+                return { size: args.expectedSize };
+            }
+            case 'abort_chat_commit': sessions.delete(args.sessionId); return;
             case 'get_chat_payload_path':
             case 'get_group_chat_path': {
                 const fileName = args.fileName ?? args.id;
@@ -55,7 +101,7 @@ test('persisted chat navigation', async (context) => {
             case 'plugin:resources|close':
                 handles.delete(args.rid);
                 return;
-            default: return hostInvoke(command, args);
+            default: return hostInvoke(command, args, options);
         }
     };
 
@@ -126,6 +172,8 @@ test('persisted chat navigation', async (context) => {
                 chats: [...payloads.keys()], members: [], disabled_members: [],
             }] : []);
             loads.length = writes.length = changed.length = errors.length = 0;
+            commits.length = 0;
+            fullSaveError = undefined;
             listReads = 0;
         }
 
@@ -207,6 +255,128 @@ test('persisted chat navigation', async (context) => {
                     assert.deepEqual(errors, []);
                 } finally {
                     main.eventSource.removeListener(main.event_types.CHAT_CHANGED, redirect);
+                }
+            });
+
+            await context.test(`${kind}: metadata saves preserve the body and pending message deletion`, async () => {
+                await reset(kind);
+                await openExplicit('target-chat');
+                const original = payloads.get('target-chat');
+                const entityWrites = writes.length;
+                main.chat_metadata.variables = { score: '1' };
+                main.chat_metadata.lastInContextMessageId = 42;
+                main.chat[0].mes = 'not saved by metadata';
+                await main.saveMetadata();
+                const updated = payloads.get('target-chat');
+                assert.equal(updated.slice(updated.indexOf('\n')), original.slice(original.indexOf('\n')));
+                assert.equal(readHeader('target-chat').chat_metadata.variables.score, '1');
+                assert.equal(readHeader('target-chat').chat_metadata.lastInContextMessageId, undefined);
+                assert.equal(main.chat_metadata.lastInContextMessageId, 42);
+                assert.equal(writes.length, entityWrites);
+                assert.deepEqual(commits.map(commit => commit.kind), ['metadata']);
+
+                await main.deleteMessage(0);
+                main.chat_metadata.variables.score = '2';
+                await main.saveMetadata();
+                assert.equal(payloads.get('target-chat').split('\n').length, 2);
+                const pending = main.flushDebouncedChatSave();
+                assert.ok(pending, 'metadata must not cancel the pending full save');
+                await pending;
+                assert.equal(payloads.get('target-chat').split('\n').length, 1);
+                assert.equal(readHeader('target-chat').chat_metadata.variables.score, '2');
+                assert.deepEqual(commits.map(commit => commit.kind), ['metadata', 'metadata', 'full']);
+                assert.deepEqual(errors, []);
+            });
+
+            await context.test(`${kind}: metadata conflict recovery owns the save queue until complete`, async () => {
+                await reset(kind);
+                await openExplicit('target-chat');
+                payloads.set('target-chat', chatPayload('external'));
+                main.chat[0].mes = 'local body';
+                const { Popup } = getModule('scripts/popup.js').namespace;
+                const originalInput = Popup.show.input;
+                const entered = Promise.withResolvers();
+                const answer = Promise.withResolvers();
+                Popup.show.input = () => { entered.resolve(); return answer.promise; };
+                try {
+                    const pending = main.saveMetadata();
+                    await entered.promise;
+                    assert.equal(main.isChatSaving, true);
+                    let nextEntered = false;
+                    const next = main.enqueueChatSave(async () => { nextEntered = true; });
+                    await Promise.resolve();
+                    assert.equal(nextEntered, false);
+                    answer.resolve('OVERWRITE');
+                    await Promise.all([pending, next]);
+                    assert.equal(main.isChatSaving, false);
+                    assert.equal(nextEntered, true);
+                    assert.deepEqual(commits, [{ kind: 'full', fileName: 'target-chat', force: true, reason: 'mutation' }]);
+                    assert.equal(readHeader('target-chat').chat_metadata.integrity, 'target-chat');
+                    assert.equal(JSON.parse(payloads.get('target-chat').split('\n')[1]).mes, 'local body');
+                } finally {
+                    Popup.show.input = originalInput;
+                }
+            });
+
+            await context.test(`${kind}: declining a metadata overwrite reloads and failures stay failures`, async () => {
+                await reset(kind);
+                await openExplicit('target-chat');
+                const external = chatPayload('external');
+                payloads.set('target-chat', external);
+                const { Popup } = getModule('scripts/popup.js').namespace;
+                const originalInput = Popup.show.input;
+                const originalReload = window.location.reload;
+                let reloads = 0;
+                Popup.show.input = async () => '';
+                window.location.reload = () => { reloads += 1; };
+                try {
+                    await main.saveMetadata();
+                    assert.equal(reloads, 1);
+                    assert.equal(payloads.get('target-chat'), external);
+                    assert.deepEqual(commits, []);
+
+                    Popup.show.input = async () => 'OVERWRITE';
+                    fullSaveError = { InternalServerError: 'publish failed' };
+                    await assert.rejects(() => main.saveMetadata(), error => error.cause === fullSaveError && error.code === undefined);
+                    assert.equal(payloads.get('target-chat'), external);
+                    assert.deepEqual(commits, []);
+                    assert.equal(main.isChatSaving, false);
+
+                    payloads.delete('target-chat');
+                    Popup.show.input = () => { throw new Error('NotFound must not prompt for overwrite'); };
+                    await assert.rejects(() => main.saveMetadata(), error => error.cause.NotFound === 'Chat missing' && error.code === undefined);
+                    assert.equal(payloads.has('target-chat'), false);
+                } finally {
+                    Popup.show.input = originalInput;
+                    window.location.reload = originalReload;
+                }
+            });
+        }
+
+        for (const greeting of ['', 'Hello']) {
+            await context.test(`new group establishes metadata before greeting hooks (${greeting || 'empty'})`, async () => {
+                await reset('group');
+                payloads.clear();
+                groupChats.groups[0].members = ['Review.png'];
+                main.characters[0].first_mes = greeting;
+                const onGreeting = async () => {
+                    const identity = main.chat_metadata.integrity;
+                    assert.ok(identity);
+                    assert.equal(readHeader('default-chat').chat_metadata.integrity, identity);
+                    main.chat_metadata.variables = { fromGreeting: 'saved' };
+                    await main.saveMetadata();
+                };
+                main.eventSource.on(main.event_types.CHARACTER_FIRST_MESSAGE_SELECTED, onGreeting);
+                try {
+                    await groupChats.openGroupById('review-group');
+                    assert.equal(readHeader('default-chat').chat_metadata.variables.fromGreeting, 'saved');
+                    assert.equal(main.chat_metadata.variables.fromGreeting, 'saved');
+                    assert.equal(payloads.get('default-chat').split('\n').length, greeting ? 2 : 1);
+                    assert.deepEqual(commits.map(commit => commit.kind), ['full', 'metadata', 'full']);
+                    assert.ok(commits.filter(commit => commit.kind === 'full').every(commit => commit.reason === 'maintenance'));
+                    assert.deepEqual(errors, []);
+                } finally {
+                    main.eventSource.removeListener(main.event_types.CHARACTER_FIRST_MESSAGE_SELECTED, onGreeting);
                 }
             });
         }
