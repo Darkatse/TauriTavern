@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::rendering::{DelegatedResultContinuationHint, render_await_content};
 use super::task_status::task_is_terminal;
@@ -68,6 +68,7 @@ impl AgentRuntimeService {
         &self,
         prepared: &PreparedInvocation,
         call: &ToolInvocation,
+        args: &Map<String, Value>,
         committed_count: usize,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
@@ -76,7 +77,7 @@ impl AgentRuntimeService {
         let profile = &prepared.profile;
         let parent_tools = &prepared.request.tools;
         let started = Instant::now();
-        let args = match serde_json::from_value::<AgentAwaitArgs>(call.arguments.clone()) {
+        let args = match serde_json::from_value::<AgentAwaitArgs>(Value::Object(args.clone())) {
             Ok(args) => args,
             Err(error) => {
                 return Ok(tool_error_outcome(

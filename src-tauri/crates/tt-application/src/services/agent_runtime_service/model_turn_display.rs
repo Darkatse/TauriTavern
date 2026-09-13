@@ -281,7 +281,7 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
 mod tests {
     use super::*;
     use tt_domain::models::agent::{AgentModelMessage, AgentModelRole};
-    use tt_domain::models::tool::{ToolId, ToolInvocation, ToolProviderId};
+    use tt_domain::models::tool::{ToolArguments, ToolId, ToolInvocation, ToolProviderId};
 
     #[test]
     fn model_turn_projection_preserves_canonical_tool_identity() {
@@ -295,7 +295,7 @@ mod tests {
             vec![ToolInvocation {
                 call_id: "call_mcp".to_string(),
                 tool_id: tool_id.clone(),
-                arguments: Value::Null,
+                arguments: ToolArguments::empty(),
                 provider_metadata: Value::Null,
             }],
         );
@@ -361,7 +361,7 @@ mod tests {
         ToolInvocation {
             call_id: "call_1".to_string(),
             tool_id: ToolId::builtin("workspace.write_file").unwrap(),
-            arguments: json!({}),
+            arguments: ToolArguments::empty(),
             provider_metadata: Value::Null,
         }
     }

@@ -1,9 +1,10 @@
 use rand::RngExt;
 use serde::Serialize;
+use serde_json::{Map, Value};
 
 use super::{MAX_ABS_MODIFIER, MAX_DICE, MAX_SIDES};
 use crate::errors::ApplicationError;
-use crate::services::agent_tools::common::{object_args, required_trimmed_string_arg, tool_error};
+use crate::services::agent_tools::common::{required_trimmed_string_arg, tool_error};
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
 use crate::services::agent_tools::structured::structured_value;
 use tt_domain::models::agent::AgentToolResult;
@@ -32,17 +33,8 @@ struct DiceRollStructured<'a> {
 
 pub(in crate::services::agent_tools) async fn roll(
     call: &ToolInvocation,
+    args: &Map<String, Value>,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let Some(args) = object_args(call) else {
-        return Ok((
-            tool_error(
-                call,
-                "tool.invalid_arguments",
-                "arguments must be an object",
-            ),
-            AgentToolEffect::None,
-        ));
-    };
     let Some(formula) = required_trimmed_string_arg(args, "formula") else {
         return Ok((
             tool_error(call, "tool.invalid_arguments", "formula is required"),
@@ -224,7 +216,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{MAX_DICE, MAX_SIDES, parse_formula};
-    use tt_domain::models::tool::{ToolId, ToolInvocation};
+    use tt_domain::models::tool::{ToolArguments, ToolId, ToolInvocation};
 
     #[test]
     fn reject_invalid_or_unbounded_formulas() {
@@ -251,11 +243,13 @@ mod tests {
         let call = ToolInvocation {
             call_id: "call_dice".to_string(),
             tool_id: ToolId::builtin("dice.roll").unwrap(),
-            arguments: json!({ "formula": "1d1+2" }),
+            arguments: ToolArguments::decode(Some(&json!({ "formula": "1d1+2" }))),
             provider_metadata: Value::Null,
         };
 
-        let (result, effect) = super::roll(&call).await.expect("dice roll result");
+        let (result, effect) = super::roll(&call, call.arguments.as_map().unwrap())
+            .await
+            .expect("dice roll result");
 
         assert!(matches!(
             effect,

@@ -6,7 +6,7 @@ use super::{
     MAX_WORLDINFO_TOTAL_READ_CHARS,
 };
 use crate::errors::ApplicationError;
-use crate::services::agent_tools::common::{object_args, tool_error};
+use crate::services::agent_tools::common::tool_error;
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
 use tt_domain::models::agent::AgentToolResult;
 use tt_domain::models::tool::ToolInvocation;
@@ -104,17 +104,8 @@ struct RenderedEntry {
 pub(in crate::services::agent_tools) fn read_activated(
     prompt_snapshot: &Value,
     call: &ToolInvocation,
+    args: &Map<String, Value>,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let Some(args) = object_args(call) else {
-        return Ok((
-            tool_error(
-                call,
-                "tool.invalid_arguments",
-                "arguments must be an object",
-            ),
-            AgentToolEffect::None,
-        ));
-    };
     let request = match parse_request(args) {
         Ok(request) => request,
         Err(message) => {

@@ -2,9 +2,7 @@ use std::collections::HashMap;
 
 use serde_json::{Map, Value, json};
 
-use super::super::common::{
-    ensure_only_args, object_args, required_trimmed_string_arg, tool_error,
-};
+use super::super::common::{ensure_only_args, required_trimmed_string_arg, tool_error};
 use super::super::dispatcher::AgentToolEffect;
 use super::super::session::AgentToolSession;
 use super::super::workspace::workspace_access_policy;
@@ -44,6 +42,7 @@ pub(in crate::services::agent_tools) struct ScriptContext<'a> {
 pub(in crate::services::agent_tools) async fn script(
     context: ScriptContext<'_>,
     call: &ToolInvocation,
+    args: &Map<String, Value>,
     session: &AgentToolSession,
     profile: &ResolvedAgentProfile,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
@@ -54,16 +53,6 @@ pub(in crate::services::agent_tools) async fn script(
         run_id,
         prompt_snapshot,
     } = context;
-    let Some(args) = object_args(call) else {
-        return Ok((
-            tool_error(
-                call,
-                "tool.invalid_arguments",
-                "arguments must be an object",
-            ),
-            AgentToolEffect::None,
-        ));
-    };
     if let Err(message) = ensure_only_args(args, &["skill", "script", "args"]) {
         return Ok((
             tool_error(call, "tool.invalid_arguments", &message),
@@ -83,7 +72,7 @@ pub(in crate::services::agent_tools) async fn script(
         ));
     };
     let script_args = match args.get("args") {
-        None => Value::Object(serde_json::Map::new()),
+        None => Value::Object(Map::new()),
         Some(value) if value.is_object() => value.clone(),
         Some(_) => {
             return Ok((

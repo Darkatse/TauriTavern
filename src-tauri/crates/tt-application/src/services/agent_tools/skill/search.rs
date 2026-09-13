@@ -1,8 +1,7 @@
 use serde::Serialize;
+use serde_json::{Map, Value};
 
-use super::super::common::{
-    object_args, optional_usize_arg, required_trimmed_string_arg, tool_error,
-};
+use super::super::common::{optional_usize_arg, required_trimmed_string_arg, tool_error};
 use super::super::dispatcher::AgentToolEffect;
 use super::super::session::AgentToolSession;
 use super::list::skill_is_visible;
@@ -51,19 +50,10 @@ struct SkillSearchHitStructured<'a> {
 pub(in crate::services::agent_tools) async fn search(
     skill_service: &SkillService,
     call: &ToolInvocation,
+    args: &Map<String, Value>,
     session: &mut AgentToolSession,
     profile: &ResolvedAgentProfile,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let Some(args) = object_args(call) else {
-        return Ok((
-            tool_error(
-                call,
-                "tool.invalid_arguments",
-                "arguments must be an object",
-            ),
-            AgentToolEffect::None,
-        ));
-    };
     let Some(name) = required_trimmed_string_arg(args, "name") else {
         return Ok((
             tool_error(call, "tool.invalid_arguments", "name is required"),

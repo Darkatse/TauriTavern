@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use serde_json::{Map, Value};
+
 use super::chat;
 use super::dice;
 use super::session::AgentToolSession;
@@ -96,12 +98,14 @@ impl AgentToolDispatcher {
         &self,
         run_id: &str,
         call: &ToolInvocation,
+        args: &Map<String, Value>,
         session: &mut AgentToolSession,
         profile: &ResolvedAgentProfile,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         self.dispatch_with_model_workspace_repository(
             run_id,
             call,
+            args,
             session,
             profile,
             self.workspace_repository.as_ref(),
@@ -113,6 +117,7 @@ impl AgentToolDispatcher {
         &self,
         run_id: &str,
         call: &ToolInvocation,
+        args: &Map<String, Value>,
         session: &mut AgentToolSession,
         profile: &ResolvedAgentProfile,
         model_workspace_repository: &dyn WorkspaceRepository,
@@ -126,6 +131,7 @@ impl AgentToolDispatcher {
                     self.group_chat_repository.as_ref(),
                     run_id,
                     call,
+                    args,
                     &session.frozen_macros,
                 )
                 .await?
@@ -137,6 +143,7 @@ impl AgentToolDispatcher {
                     self.group_chat_repository.as_ref(),
                     run_id,
                     call,
+                    args,
                     &session.frozen_macros,
                 )
                 .await?
@@ -145,15 +152,15 @@ impl AgentToolDispatcher {
                 // WorldInfo activation is a hidden run input fact, not a model-visible
                 // workspace file; invocation workspace policy must not gate this read.
                 let prompt_snapshot = self.read_run_prompt_snapshot(run_id).await?;
-                world_info::read_activated(&prompt_snapshot, call)?
+                world_info::read_activated(&prompt_snapshot, call, args)?
             }
-            dice::DICE_ROLL => dice::roll(call).await?,
+            dice::DICE_ROLL => dice::roll(call, args).await?,
             skill::SKILL_LIST => skill::list(call, session, profile).await?,
             skill::SKILL_SEARCH => {
-                skill::search(self.skill_service.as_ref(), call, session, profile).await?
+                skill::search(self.skill_service.as_ref(), call, args, session, profile).await?
             }
             skill::SKILL_READ => {
-                skill::read(self.skill_service.as_ref(), call, session, profile).await?
+                skill::read(self.skill_service.as_ref(), call, args, session, profile).await?
             }
             skill::SKILL_SCRIPT => {
                 let prompt_snapshot = self.read_run_prompt_snapshot(run_id).await?;
@@ -166,30 +173,34 @@ impl AgentToolDispatcher {
                         prompt_snapshot,
                     },
                     call,
+                    args,
                     session,
                     profile,
                 )
                 .await?
             }
             workspace::WORKSPACE_LIST_FILES => {
-                workspace::list_files(model_workspace_repository, run_id, call).await?
+                workspace::list_files(model_workspace_repository, run_id, call, args).await?
             }
             workspace::WORKSPACE_SEARCH_FILES => {
-                workspace::search_files(model_workspace_repository, run_id, call).await?
+                workspace::search_files(model_workspace_repository, run_id, call, args).await?
             }
             workspace::WORKSPACE_READ_FILE => {
-                workspace::read_file(model_workspace_repository, run_id, call, session).await?
+                workspace::read_file(model_workspace_repository, run_id, call, args, session)
+                    .await?
             }
             workspace::WORKSPACE_WRITE_FILE => {
-                workspace::write_file(model_workspace_repository, run_id, call, session).await?
+                workspace::write_file(model_workspace_repository, run_id, call, args, session)
+                    .await?
             }
             workspace::WORKSPACE_APPLY_PATCH => {
-                workspace::apply_patch(model_workspace_repository, run_id, call, session).await?
+                workspace::apply_patch(model_workspace_repository, run_id, call, args, session)
+                    .await?
             }
             workspace::WORKSPACE_COMMIT => {
-                workspace::commit(model_workspace_repository, run_id, call, profile).await?
+                workspace::commit(model_workspace_repository, run_id, call, args, profile).await?
             }
-            workspace::WORKSPACE_FINISH => workspace::finish(call)?,
+            workspace::WORKSPACE_FINISH => workspace::finish(call, args)?,
             other => {
                 return Err(ApplicationError::InternalError(format!(
                     "tool.dispatch_handler_missing: admitted builtin tool `builtin:{other}` has no execution handler"

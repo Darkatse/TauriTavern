@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tokio::sync::Mutex;
 
 use super::*;
@@ -26,7 +26,7 @@ use tt_domain::models::skill::{
     SkillScope, SkillScopeFilter, SkillScopeRetargetRequest, SkillScopeRetargetResult,
     SkillSearchRequest, SkillSearchResult, SkillWriteRequest,
 };
-use tt_domain::models::tool::ToolId;
+use tt_domain::models::tool::{ToolArguments, ToolId};
 use tt_ports::repositories::skill_repository::SkillRepository;
 use tt_ports::repositories::workspace_repository::{
     WorkspaceAppendResult, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFile, WorkspaceFileList,
@@ -506,9 +506,13 @@ fn call(arguments: Value) -> ToolInvocation {
     ToolInvocation {
         call_id: "call_skill_script".to_string(),
         tool_id: ToolId::builtin("skill.run_script").unwrap(),
-        arguments,
+        arguments: ToolArguments::decode(Some(&arguments)),
         provider_metadata: Value::Null,
     }
+}
+
+fn call_args(call: &ToolInvocation) -> &Map<String, Value> {
+    call.arguments.as_map().expect("test arguments are objects")
 }
 
 fn empty_prompt_snapshot() -> Value {
@@ -529,6 +533,7 @@ async fn run_with_repo_and_outcome(
         outcome,
         requests: Mutex::new(Vec::new()),
     });
+    let tool_call = call(arguments);
     script(
         ScriptContext {
             skill_service: &SkillService::new(Arc::new(repo)),
@@ -543,7 +548,8 @@ async fn run_with_repo_and_outcome(
             run_id: "run-1",
             prompt_snapshot: empty_prompt_snapshot(),
         },
-        &call(arguments),
+        &tool_call,
+        call_args(&tool_call),
         &session,
         &profile,
     )

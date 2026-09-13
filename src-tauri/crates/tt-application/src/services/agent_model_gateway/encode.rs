@@ -290,10 +290,6 @@ fn encode_openai_tool_call(
     let model_alias = model_tool_for_id(&call.tool_id, tools)
         .map(|tool| tool.model_alias.as_str())
         .ok_or_else(|| tool_history_not_advertised(&call.tool_id))?;
-    let arguments = serde_json::to_string(&call.arguments).map_err(|error| {
-        ApplicationError::ValidationError(format!("agent.tool_call_serialize_failed: {error}"))
-    })?;
-
     let mut object = Map::new();
     object.insert("id".to_string(), Value::String(call.call_id.clone()));
     object.insert("type".to_string(), Value::String("function".to_string()));
@@ -301,7 +297,7 @@ fn encode_openai_tool_call(
         "function".to_string(),
         json!({
             "name": model_alias,
-            "arguments": arguments,
+            "arguments": call.arguments.encode_for_replay(),
         }),
     );
 

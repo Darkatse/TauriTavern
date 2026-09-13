@@ -118,8 +118,8 @@ pub(crate) enum ToolRequestGateError {
 mod tests {
     use serde_json::{Value, json};
     use tt_domain::models::tool::{
-        InvocationToolSnapshot, ToolBinding, ToolChoice, ToolDescriptor, ToolId, ToolInvocation,
-        ToolProviderId, ToolSnapshotId, ToolTurnContract,
+        InvocationToolSnapshot, ToolArguments, ToolBinding, ToolChoice, ToolDescriptor, ToolId,
+        ToolInvocation, ToolProviderId, ToolSnapshotId, ToolTurnContract,
     };
 
     use super::{ToolRequestGate, ToolRequestGateError};
@@ -145,7 +145,7 @@ mod tests {
         ToolInvocation {
             call_id: call_id.to_string(),
             tool_id,
-            arguments: json!({}),
+            arguments: ToolArguments::empty(),
             provider_metadata: Value::Null,
         }
     }

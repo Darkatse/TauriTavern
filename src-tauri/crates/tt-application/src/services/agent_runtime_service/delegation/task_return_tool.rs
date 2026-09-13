@@ -23,6 +23,7 @@ impl AgentRuntimeService {
         run_id: &str,
         invocation_id: &str,
         call: &ToolInvocation,
+        args: &Map<String, Value>,
         exit_policy: AgentInvocationExitPolicy,
         profile: &ResolvedAgentProfile,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
@@ -35,14 +36,6 @@ impl AgentRuntimeService {
                 started.elapsed().as_millis(),
             ));
         }
-        let Some(args) = call.arguments.as_object() else {
-            return Ok(tool_error_outcome(
-                call,
-                "tool.invalid_arguments",
-                "arguments must be an object",
-                started.elapsed().as_millis(),
-            ));
-        };
         let summary = match required_trimmed_string(args, "summary") {
             Ok(summary) => summary,
             Err(message) => {
@@ -83,7 +76,7 @@ impl AgentRuntimeService {
         }
         let result_ref = WorkspacePath::parse(format!("agent-results/{invocation_id}.json"))?;
         let summary_ref = task_result_summary_path(&task.workspace_key)?;
-        let result_payload = match normalize_task_return_arguments(&call.arguments, profile) {
+        let result_payload = match normalize_task_return_arguments(args, profile) {
             Ok(arguments) => arguments,
             Err(error) => {
                 return Ok(tool_error_outcome(
@@ -230,13 +223,10 @@ impl TaskReturnArgumentError {
 }
 
 fn normalize_task_return_arguments(
-    arguments: &Value,
+    arguments: &Map<String, Value>,
     profile: &ResolvedAgentProfile,
 ) -> Result<Value, TaskReturnArgumentError> {
-    let Some(args) = arguments.as_object() else {
-        return Ok(arguments.clone());
-    };
-    let mut args = args.clone();
+    let mut args = arguments.clone();
     let Some(artifacts_value) = args.get("artifacts") else {
         return Ok(Value::Object(args));
     };

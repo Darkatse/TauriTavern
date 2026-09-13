@@ -1,4 +1,5 @@
 use serde::Serialize;
+use serde_json::{Map, Value};
 
 use crate::errors::ApplicationError;
 use tt_domain::models::agent::AgentToolResult;
@@ -15,16 +16,14 @@ struct WorkspaceFinishStructured<'a> {
 
 pub(in crate::services::agent_tools) fn finish(
     call: &ToolInvocation,
+    args: &Map<String, Value>,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let args = call.arguments.as_object();
     let result = AgentToolResult {
         call_id: call.call_id.clone(),
         tool_id: call.tool_id.clone(),
         content: "Finished the Agent run.".to_string(),
         structured: structured_value(WorkspaceFinishStructured {
-            reason: args
-                .and_then(|args| args.get("reason"))
-                .and_then(serde_json::Value::as_str),
+            reason: args.get("reason").and_then(Value::as_str),
         }),
         is_error: false,
         error_code: None,

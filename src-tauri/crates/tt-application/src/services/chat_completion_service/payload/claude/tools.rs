@@ -15,7 +15,7 @@ pub(super) fn convert_openai_tool_calls_to_claude_blocks(
                 "type": "tool_use",
                 "id": tool_call.id,
                 "name": tool_call.name,
-                "input": tool_call.arguments,
+                "input": tool_call.arguments.to_replay_object(),
             })
         })
         .collect()

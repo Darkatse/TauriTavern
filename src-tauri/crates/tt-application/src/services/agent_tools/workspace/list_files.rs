@@ -1,8 +1,8 @@
 use serde::Serialize;
+use serde_json::{Map, Value};
 
 use super::args::{
-    ensure_visible_workspace_path, object_args, optional_list_path_arg, optional_usize_arg,
-    tool_error,
+    ensure_visible_workspace_path, optional_list_path_arg, optional_usize_arg, tool_error,
 };
 use super::policy::workspace_access_policy;
 use super::render::{filter_visible_entries, render_file_list};
@@ -34,18 +34,9 @@ pub(in crate::services::agent_tools) async fn list_files(
     workspace_repository: &dyn WorkspaceRepository,
     run_id: &str,
     call: &ToolInvocation,
+    args: &Map<String, Value>,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let policy = workspace_access_policy(workspace_repository, run_id).await?;
-    let Some(args) = object_args(call) else {
-        return Ok((
-            tool_error(
-                call,
-                "tool.invalid_arguments",
-                "arguments must be an object",
-            ),
-            AgentToolEffect::None,
-        ));
-    };
     let path = match optional_list_path_arg(args, "path") {
         Ok(path) => path,
         Err(message) => {

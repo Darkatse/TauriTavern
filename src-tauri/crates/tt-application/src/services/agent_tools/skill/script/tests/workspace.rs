@@ -23,6 +23,7 @@ async fn script_writes_produce_workspace_file_written_effect() {
     let session = session_with_skill("demo");
     let profile = profile(true);
 
+    let tool_call = call(json!({ "skill": "demo", "script": "helper" }));
     let (result, effect) = script(
         ScriptContext {
             skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
@@ -33,7 +34,8 @@ async fn script_writes_produce_workspace_file_written_effect() {
             run_id: "run-1",
             prompt_snapshot: empty_prompt_snapshot(),
         },
-        &call(json!({ "skill": "demo", "script": "helper" })),
+        &tool_call,
+        call_args(&tool_call),
         &session,
         &profile,
     )
@@ -95,6 +97,7 @@ async fn multiple_files_written_produce_batch_effect() {
     let session = session_with_skill("demo");
     let profile = profile(true);
 
+    let tool_call = call(json!({ "skill": "demo", "script": "helper" }));
     let (result, effect) = script(
         ScriptContext {
             skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
@@ -105,7 +108,8 @@ async fn multiple_files_written_produce_batch_effect() {
             run_id: "run-1",
             prompt_snapshot: empty_prompt_snapshot(),
         },
-        &call(json!({ "skill": "demo", "script": "helper" })),
+        &tool_call,
+        call_args(&tool_call),
         &session,
         &profile,
     )
@@ -165,6 +169,7 @@ async fn write_outside_writable_roots_is_rejected_before_any_disk_write() {
     let session = session_with_skill("demo");
     let profile = profile(true);
 
+    let tool_call = call(json!({ "skill": "demo", "script": "helper" }));
     let (result, effect) = script(
         ScriptContext {
             skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
@@ -175,7 +180,8 @@ async fn write_outside_writable_roots_is_rejected_before_any_disk_write() {
             run_id: "run-1",
             prompt_snapshot: empty_prompt_snapshot(),
         },
-        &call(json!({ "skill": "demo", "script": "helper" })),
+        &tool_call,
+        call_args(&tool_call),
         &session,
         &profile,
     )
@@ -223,6 +229,7 @@ async fn existing_file_write_uses_snapshot_sha_guard() {
     let session = session_with_skill("demo");
     let profile = profile(true);
 
+    let tool_call = call(json!({ "skill": "demo", "script": "helper" }));
     let (result, effect) = script(
         ScriptContext {
             skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
@@ -233,7 +240,8 @@ async fn existing_file_write_uses_snapshot_sha_guard() {
             run_id: "run-1",
             prompt_snapshot: empty_prompt_snapshot(),
         },
-        &call(json!({ "skill": "demo", "script": "helper" })),
+        &tool_call,
+        call_args(&tool_call),
         &session,
         &profile,
     )
@@ -280,6 +288,7 @@ async fn stale_conflict_fails_without_side_effects() {
     let session = session_with_skill("demo");
     let profile = profile(true);
 
+    let tool_call = call(json!({ "skill": "demo", "script": "helper" }));
     let (result, effect) = script(
         ScriptContext {
             skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
@@ -290,7 +299,8 @@ async fn stale_conflict_fails_without_side_effects() {
             run_id: "run-1",
             prompt_snapshot: empty_prompt_snapshot(),
         },
-        &call(json!({ "skill": "demo", "script": "helper" })),
+        &tool_call,
+        call_args(&tool_call),
         &session,
         &profile,
     )
@@ -338,6 +348,7 @@ async fn mid_batch_failure_preserves_already_written_files_in_effect() {
     let session = session_with_skill("demo");
     let profile = profile(true);
 
+    let tool_call = call(json!({ "skill": "demo", "script": "helper" }));
     let (result, effect) = script(
         ScriptContext {
             skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
@@ -348,7 +359,8 @@ async fn mid_batch_failure_preserves_already_written_files_in_effect() {
             run_id: "run-1",
             prompt_snapshot: empty_prompt_snapshot(),
         },
-        &call(json!({ "skill": "demo", "script": "helper" })),
+        &tool_call,
+        call_args(&tool_call),
         &session,
         &profile,
     )
@@ -391,6 +403,7 @@ async fn truncated_workspace_snapshot_returns_tool_error() {
     let session = session_with_skill("demo");
     let profile = profile(true);
 
+    let tool_call = call(json!({ "skill": "demo", "script": "helper" }));
     let (result, effect) = script(
         ScriptContext {
             skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
@@ -407,7 +420,8 @@ async fn truncated_workspace_snapshot_returns_tool_error() {
             run_id: "run-1",
             prompt_snapshot: empty_prompt_snapshot(),
         },
-        &call(json!({ "skill": "demo", "script": "helper" })),
+        &tool_call,
+        call_args(&tool_call),
         &session,
         &profile,
     )

@@ -723,7 +723,7 @@ fn convert_openai_tool_calls_to_parts(
         .map(|tool_call| {
             let mut function_call = json!({
                 "name": tool_call.name,
-                "args": tool_call.arguments,
+                "args": tool_call.arguments.to_replay_object(),
             });
             if supports_function_call_ids {
                 function_call["id"] = Value::String(tool_call.id.clone());

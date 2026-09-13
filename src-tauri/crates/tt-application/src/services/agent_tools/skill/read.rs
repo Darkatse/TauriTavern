@@ -1,7 +1,8 @@
 use serde::Serialize;
+use serde_json::{Map, Value};
 
 use super::super::common::{
-    ensure_only_args, object_args, optional_usize_arg, required_trimmed_string_arg, tool_error,
+    ensure_only_args, optional_usize_arg, required_trimmed_string_arg, tool_error,
 };
 use super::super::dispatcher::AgentToolEffect;
 use super::super::session::AgentToolSession;
@@ -31,19 +32,10 @@ struct SkillReadStructured<'a> {
 pub(in crate::services::agent_tools) async fn read(
     skill_service: &SkillService,
     call: &ToolInvocation,
+    args: &Map<String, Value>,
     session: &mut AgentToolSession,
     profile: &ResolvedAgentProfile,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let Some(args) = object_args(call) else {
-        return Ok((
-            tool_error(
-                call,
-                "tool.invalid_arguments",
-                "arguments must be an object",
-            ),
-            AgentToolEffect::None,
-        ));
-    };
     if let Err(message) = ensure_only_args(args, &["name", "path", "start_line", "line_count"]) {
         return Ok((
             tool_error(call, "tool.invalid_arguments", &message),
@@ -58,7 +50,7 @@ pub(in crate::services::agent_tools) async fn read(
     };
     let path = args
         .get("path")
-        .and_then(serde_json::Value::as_str)
+        .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("SKILL.md");

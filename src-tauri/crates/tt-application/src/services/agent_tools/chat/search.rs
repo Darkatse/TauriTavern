@@ -9,7 +9,7 @@ use super::{
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::common::{
-    object_args, optional_usize_arg, required_trimmed_string_arg, tool_error,
+    optional_usize_arg, required_trimmed_string_arg, tool_error,
 };
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
 use tt_domain::errors::DomainError;
@@ -51,18 +51,9 @@ pub(in crate::services::agent_tools) async fn search(
     group_chat_repository: &dyn GroupChatRepository,
     run_id: &str,
     call: &ToolInvocation,
+    args: &Map<String, Value>,
     macros: &Arc<FrozenMacros>,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let Some(args) = object_args(call) else {
-        return Ok((
-            tool_error(
-                call,
-                "tool.invalid_arguments",
-                "arguments must be an object",
-            ),
-            AgentToolEffect::None,
-        ));
-    };
     let query = match required_trimmed_string_arg(args, "query") {
         Some(query) => query.to_string(),
         None => {

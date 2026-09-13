@@ -414,7 +414,7 @@ fn build_function_call_step(tool_call: &OpenAiToolCall) -> Value {
         "type": "function_call",
         "id": tool_call.id.clone(),
         "name": tool_call.name.clone(),
-        "arguments": tool_call.arguments.clone(),
+        "arguments": tool_call.arguments.to_replay_object(),
     });
 
     if let Some(signature) = tool_call.signature.as_deref()

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
@@ -129,6 +129,19 @@ impl AgentRuntimeService {
                 return Err(error);
             }
 
+            // Charge the budget before rejecting arguments so malformed calls cannot retry for free.
+            let args = match tool_invocation.arguments.as_map() {
+                Ok(args) => args,
+                Err(message) => {
+                    return Ok(recoverable_tool_error(
+                        tool_invocation,
+                        "tool.invalid_arguments",
+                        &message,
+                        started.elapsed().as_millis(),
+                    ));
+                }
+            };
+
             let call = tool_invocation;
             if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed {
                 self.transition_status(run_id, AgentRunStatus::DispatchingTool)
@@ -162,29 +175,43 @@ impl AgentRuntimeService {
                     started.elapsed().as_millis(),
                 ))
             } else if builtin_name == Some(AGENT_LIST) {
-                self.dispatch_agent_list_tool(call, profile).await
+                self.dispatch_agent_list_tool(call, args, profile).await
             } else if builtin_name == Some(AGENT_DELEGATE) {
                 Box::pin(self.dispatch_agent_delegate_tool(
                     run_id,
                     invocation_id,
                     call,
+                    args,
                     profile,
                     cancel,
                 ))
                 .await
             } else if builtin_name == Some(AGENT_AWAIT) {
-                self.dispatch_agent_await_tool(prepared, call, commit_ledger.explicit_count(), cancel)
-                    .await
+                self.dispatch_agent_await_tool(
+                    prepared,
+                    call,
+                    args,
+                    commit_ledger.explicit_count(),
+                    cancel,
+                )
+                .await
             } else if builtin_name == Some(AGENT_HANDOFF) {
-                self.dispatch_agent_handoff_tool(run_id, invocation_id, call, profile)
+                self.dispatch_agent_handoff_tool(run_id, invocation_id, call, args, profile)
                     .await
             } else if builtin_name == Some(TASK_RETURN) {
-                self.dispatch_task_return_tool(run_id, invocation_id, call, exit_policy, profile)
-                    .await
+                self.dispatch_task_return_tool(
+                    run_id,
+                    invocation_id,
+                    call,
+                    args,
+                    exit_policy,
+                    profile,
+                )
+                .await
             } else if !call.tool_id.is_builtin() {
                 // The MCP service reports sent-but-unconfirmed calls explicitly.
                 started_tool = false;
-                let outcome = self.call_mcp_tool(call, cancel).await?;
+                let outcome = self.call_mcp_tool(call, args, cancel).await?;
                 started_tool = true;
                 match outcome {
                     McpCallOutcome::KnownResponse(response) => Ok(AgentToolDispatchOutcome {
@@ -226,6 +253,7 @@ impl AgentRuntimeService {
                     .dispatch_with_model_workspace_repository(
                         run_id,
                         call,
+                        args,
                         session,
                         profile,
                         &workspace_repository,
@@ -233,7 +261,7 @@ impl AgentRuntimeService {
                     .await
             } else {
                 self.tool_dispatcher
-                    .dispatch(run_id, call, session, profile)
+                    .dispatch(run_id, call, args, session, profile)
                     .await
             };
 
@@ -373,6 +401,7 @@ impl AgentRuntimeService {
     async fn call_mcp_tool(
         &self,
         call: &ToolInvocation,
+        args: &Map<String, Value>,
         cancel: &mut super::AgentCancelReceiver,
     ) -> Result<McpCallOutcome, ApplicationError> {
         let cancellation = CancellationToken::new();
@@ -392,7 +421,7 @@ impl AgentRuntimeService {
         };
         let outcome = self
             .mcp_service
-            .call_permitted_tool(&call.tool_id, call.arguments.clone(), cancellation)
+            .call_permitted_tool(&call.tool_id, Value::Object(args.clone()), cancellation)
             .await;
         if let Some(watcher) = watcher {
             watcher.abort();
@@ -793,7 +822,7 @@ mod tests {
     use tt_domain::models::agent::AgentToolResult;
     use tt_domain::models::agent::WorkspacePath;
     use tt_domain::models::tool::{
-        InvocationToolSnapshot, ToolBinding, ToolDescriptor, ToolId, ToolInvocation,
+        InvocationToolSnapshot, ToolArguments, ToolBinding, ToolDescriptor, ToolId, ToolInvocation,
         ToolProviderId, ToolSnapshotId,
     };
 
@@ -807,7 +836,7 @@ mod tests {
         let invocation = ToolInvocation {
             call_id: "call_1".to_string(),
             tool_id: ToolId::builtin("workspace.finish").unwrap(),
-            arguments: Value::Null,
+            arguments: ToolArguments::empty(),
             provider_metadata: Value::Null,
         };
         let result = AgentToolResult {

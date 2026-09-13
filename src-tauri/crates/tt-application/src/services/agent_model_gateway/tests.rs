@@ -15,7 +15,7 @@ use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentModelTool,
     AgentToolResult,
 };
-use tt_domain::models::tool::{ToolChoice, ToolId, ToolInvocation, ToolProviderId};
+use tt_domain::models::tool::{ToolArguments, ToolChoice, ToolId, ToolInvocation, ToolProviderId};
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionNormalizationReport, ChatCompletionSource,
 };
@@ -509,7 +509,9 @@ fn openai_responses_continuation_sends_only_new_tool_results() {
                         call: ToolInvocation {
                             call_id: "call_1".to_string(),
                             tool_id: ToolId::builtin("workspace.write_file").unwrap(),
-                            arguments: json!({"path":"output/main.md","content":"hi"}),
+                            arguments: ToolArguments::decode(Some(
+                                &json!({"path":"output/main.md","content":"hi"}),
+                            )),
                             provider_metadata: Value::Null,
                         },
                     },

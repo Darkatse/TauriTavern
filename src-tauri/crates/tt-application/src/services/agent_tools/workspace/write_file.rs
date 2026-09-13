@@ -2,7 +2,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::args::{
-    classify_workspace_io_error, ensure_writable_workspace_path, object_args, parse_workspace_path,
+    classify_workspace_io_error, ensure_writable_workspace_path, parse_workspace_path,
     required_raw_string_arg, required_trimmed_string_arg, tool_error,
 };
 use super::policy::workspace_access_policy;
@@ -34,19 +34,10 @@ pub(in crate::services::agent_tools) async fn write_file(
     workspace_repository: &dyn WorkspaceRepository,
     run_id: &str,
     call: &ToolInvocation,
+    args: &Map<String, Value>,
     session: &mut AgentToolSession,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let policy = workspace_access_policy(workspace_repository, run_id).await?;
-    let Some(args) = object_args(call) else {
-        return Ok((
-            tool_error(
-                call,
-                "tool.invalid_arguments",
-                "arguments must be an object",
-            ),
-            AgentToolEffect::None,
-        ));
-    };
     let Some(path) = required_trimmed_string_arg(args, "path") else {
         return Ok((
             tool_error(call, "tool.invalid_arguments", "path is required"),

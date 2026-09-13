@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use serde_json::{Map, Number, Value, json};
 
 use crate::errors::ApplicationError;
+use tt_domain::models::tool::ToolArguments;
 use tt_ports::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
 
 use super::content_parts::{InputPart, MediaPart, MediaSource, parse_openai_chat_content};
@@ -483,7 +484,7 @@ fn assistant_function_calls(
                     "Assistant tool_call function is missing name".to_string(),
                 )
             })?;
-            let arguments = function_call_arguments(function.get("arguments"))?;
+            let arguments = ToolArguments::decode(function.get("arguments")).encode_for_replay();
 
             Ok(ResponsesFunctionCall {
                 call_id,
@@ -492,18 +493,6 @@ fn assistant_function_calls(
             })
         })
         .collect()
-}
-
-fn function_call_arguments(value: Option<&Value>) -> Result<String, ApplicationError> {
-    match value {
-        Some(Value::String(arguments)) => Ok(arguments.clone()),
-        Some(Value::Null) | None => Ok("{}".to_string()),
-        Some(value) => serde_json::to_string(value).map_err(|error| {
-            ApplicationError::ValidationError(format!(
-                "Assistant tool_call arguments are not serializable: {error}"
-            ))
-        }),
-    }
 }
 
 fn message_native_openai_responses_output(

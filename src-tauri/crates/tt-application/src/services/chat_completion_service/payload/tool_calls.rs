@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use serde_json::{Map, Value, json};
+use tt_domain::models::tool::ToolArguments;
 
 use crate::errors::ApplicationError;
 
@@ -12,7 +13,7 @@ const DEFAULT_TOOL_NAME: &str = "tool";
 pub(super) struct OpenAiToolCall {
     pub id: String,
     pub name: String,
-    pub arguments: Value,
+    pub arguments: ToolArguments,
     pub signature: Option<String>,
 }
 
@@ -37,9 +38,8 @@ pub(super) fn extract_openai_tool_calls(value: Option<&Value>) -> Vec<OpenAiTool
 
             let id =
                 non_empty_string(object.get("id")).unwrap_or_else(|| format!("tool_call_{index}"));
-            let arguments = parse_tool_call_arguments(
-                function.get("arguments").or_else(|| function.get("args")),
-            );
+            let arguments =
+                ToolArguments::decode(function.get("arguments").or_else(|| function.get("args")));
             let signature = non_empty_string(object.get("signature"));
 
             Some(OpenAiToolCall {
@@ -156,20 +156,6 @@ pub(super) fn validate_openai_chat_tool_transcript(
     Ok(())
 }
 
-fn parse_tool_call_arguments(value: Option<&Value>) -> Value {
-    let Some(value) = value else {
-        return Value::Object(Map::new());
-    };
-
-    match value {
-        Value::String(raw) => {
-            serde_json::from_str::<Value>(raw).unwrap_or_else(|_| Value::String(raw.to_string()))
-        }
-        Value::Null => Value::Object(Map::new()),
-        other => other.clone(),
-    }
-}
-
 fn strict_tool_call_ids(
     value: Option<&Value>,
     message_index: usize,
@@ -249,7 +235,7 @@ mod tests {
         assert_eq!(calls[0].id, "call_1");
         assert_eq!(calls[0].name, "weather");
         assert_eq!(calls[0].signature.as_deref(), Some("sig_1"));
-        assert_eq!(calls[0].arguments["city"], "Paris");
+        assert_eq!(calls[0].arguments.as_map().unwrap()["city"], "Paris");
     }
 
     #[test]

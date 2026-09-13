@@ -48,18 +48,10 @@ impl AgentRuntimeService {
     pub(in crate::services::agent_runtime_service) async fn dispatch_agent_list_tool(
         &self,
         call: &ToolInvocation,
+        args: &Map<String, Value>,
         profile: &ResolvedAgentProfile,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
-        let Some(args) = call.arguments.as_object() else {
-            return Ok(tool_error_outcome(
-                call,
-                "tool.invalid_arguments",
-                "arguments must be an object",
-                started.elapsed().as_millis(),
-            ));
-        };
-
         let purpose = match agent_list_purpose(args) {
             Ok(purpose) => purpose,
             Err(message) => {

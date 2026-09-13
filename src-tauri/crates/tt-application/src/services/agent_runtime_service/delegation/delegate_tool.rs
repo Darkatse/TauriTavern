@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::policy::validate_subagent_target;
 use super::tool_error::tool_error_outcome;
@@ -29,11 +29,12 @@ impl AgentRuntimeService {
         run_id: &str,
         invocation_id: &str,
         call: &ToolInvocation,
+        args: &Map<String, Value>,
         profile: &ResolvedAgentProfile,
         _cancel: &AgentCancelReceiver,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
-        let args = match serde_json::from_value::<AgentDelegateArgs>(call.arguments.clone()) {
+        let args = match serde_json::from_value::<AgentDelegateArgs>(Value::Object(args.clone())) {
             Ok(args) => args,
             Err(error) => {
                 return Ok(tool_error_outcome(

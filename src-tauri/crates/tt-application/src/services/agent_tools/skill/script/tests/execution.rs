@@ -106,6 +106,7 @@ async fn success_builds_result_and_passes_workspace_context() {
     profile.workspace.visible_roots = vec!["profile-only".to_string()];
     profile.workspace.writable_roots = vec!["profile-only".to_string()];
 
+    let tool_call = call(json!({ "skill": "demo", "script": "helper", "args": { "n": 7 } }));
     let (result, effect) = script(
         ScriptContext {
             skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
@@ -122,7 +123,8 @@ async fn success_builds_result_and_passes_workspace_context() {
             run_id: "run-1",
             prompt_snapshot: empty_prompt_snapshot(),
         },
-        &call(json!({ "skill": "demo", "script": "helper", "args": { "n": 7 } })),
+        &tool_call,
+        call_args(&tool_call),
         &session,
         &profile,
     )
@@ -163,6 +165,7 @@ async fn module_snapshot_contains_only_script_modules() {
     });
     let session = session_with_skill("demo");
     let profile = profile(true);
+    let tool_call = call(json!({ "skill": "demo", "script": "helper" }));
     let (result, _) = script(
         ScriptContext {
             skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
@@ -182,7 +185,8 @@ async fn module_snapshot_contains_only_script_modules() {
             run_id: "run-1",
             prompt_snapshot: empty_prompt_snapshot(),
         },
-        &call(json!({ "skill": "demo", "script": "helper" })),
+        &tool_call,
+        call_args(&tool_call),
         &session,
         &profile,
     )
@@ -230,6 +234,7 @@ async fn frozen_host_context_is_passed_to_engine() {
         }
     });
 
+    let tool_call = call(json!({ "skill": "demo", "script": "helper" }));
     let (result, _) = script(
         ScriptContext {
             skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
@@ -246,7 +251,8 @@ async fn frozen_host_context_is_passed_to_engine() {
             run_id: "run-1",
             prompt_snapshot,
         },
-        &call(json!({ "skill": "demo", "script": "helper" })),
+        &tool_call,
+        call_args(&tool_call),
         &session,
         &profile,
     )

@@ -5,10 +5,6 @@ use super::structured::{ToolErrorStructured, structured_value};
 use tt_domain::models::agent::AgentToolResult;
 use tt_domain::models::tool::ToolInvocation;
 
-pub(super) fn object_args(call: &ToolInvocation) -> Option<&Map<String, Value>> {
-    call.arguments.as_object()
-}
-
 pub(super) fn required_trimmed_string_arg<'a>(
     args: &'a Map<String, Value>,
     key: &str,

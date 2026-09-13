@@ -114,7 +114,7 @@ mod tests {
     use super::{build_result, skill_is_visible};
     use tt_domain::models::agent::profile::AgentSkillPolicy;
     use tt_domain::models::skill::{SkillIndexEntry, SkillScope, SkillSourceRef};
-    use tt_domain::models::tool::{ToolId, ToolInvocation};
+    use tt_domain::models::tool::{ToolArguments, ToolId, ToolInvocation};
 
     #[test]
     fn wildcard_deny_hides_skills_even_when_visible_allows_all() {
@@ -141,7 +141,7 @@ mod tests {
         let call = ToolInvocation {
             call_id: "call_skill_list".to_string(),
             tool_id: ToolId::builtin("skill.list").unwrap(),
-            arguments: json!({}),
+            arguments: ToolArguments::empty(),
             provider_metadata: Value::Null,
         };
 

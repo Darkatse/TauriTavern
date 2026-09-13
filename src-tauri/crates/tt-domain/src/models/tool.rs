@@ -4,7 +4,7 @@ use std::{
 };
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::errors::DomainError;
 
@@ -485,12 +485,93 @@ pub enum ToolChoice {
     Specific(ToolId),
 }
 
+const INVALID_ARGUMENTS_QUOTE_CHARS: usize = 200;
+
+/// Invalid arguments retain their raw text in storage but replay as `{}`.
+/// The paired tool error carries the rejection back to the model.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ToolArguments {
+    Object(Map<String, Value>),
+    Invalid(String),
+}
+
+impl ToolArguments {
+    pub fn empty() -> Self {
+        Self::Object(Map::new())
+    }
+
+    pub fn decode(raw: Option<&Value>) -> Self {
+        match raw {
+            None | Some(Value::Null) => Self::empty(),
+            Some(Value::String(text)) if text.trim().is_empty() => Self::empty(),
+            Some(Value::String(text)) => match serde_json::from_str::<Value>(text) {
+                Ok(Value::Object(map)) => Self::Object(map),
+                Ok(Value::Null) => Self::empty(),
+                _ => Self::Invalid(text.clone()),
+            },
+            Some(Value::Object(map)) => Self::Object(map.clone()),
+            Some(value) => Self::Invalid(value.to_string()),
+        }
+    }
+
+    pub fn as_map(&self) -> Result<&Map<String, Value>, String> {
+        match self {
+            Self::Object(map) => Ok(map),
+            Self::Invalid(raw) => Err(format!(
+                "arguments must be a JSON object; send `{{}}` when the call takes no arguments. Received: `{}`",
+                quote_invalid_arguments(raw)
+            )),
+        }
+    }
+
+    pub fn encode_for_replay(&self) -> String {
+        match self {
+            Self::Object(map) => {
+                serde_json::to_string(map).expect("JSON argument objects are serializable")
+            }
+            Self::Invalid(_) => "{}".to_string(),
+        }
+    }
+
+    pub fn to_replay_object(&self) -> Value {
+        match self {
+            Self::Object(map) => Value::Object(map.clone()),
+            Self::Invalid(_) => Value::Object(Map::new()),
+        }
+    }
+}
+
+impl Serialize for ToolArguments {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Object(map) => map.serialize(serializer),
+            Self::Invalid(raw) => serializer.serialize_str(raw),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolArguments {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(match Value::deserialize(deserializer)? {
+            Value::Object(map) => Self::Object(map),
+            value => Self::decode(Some(&value)),
+        })
+    }
+}
+
+fn quote_invalid_arguments(raw: &str) -> String {
+    match raw.char_indices().nth(INVALID_ARGUMENTS_QUOTE_CHARS) {
+        Some((index, _)) => format!("{}…", &raw[..index]),
+        None => raw.to_string(),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolInvocation {
     pub call_id: String,
     pub tool_id: ToolId,
-    pub arguments: Value,
+    pub arguments: ToolArguments,
     #[serde(default)]
     pub provider_metadata: Value,
 }
@@ -586,8 +667,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        InvocationToolSnapshot, ToolBinding, ToolCatalog, ToolChoice, ToolDescriptionOverride,
-        ToolDescriptor, ToolId, ToolProviderId, ToolSnapshotId, ToolTurnContract,
+        InvocationToolSnapshot, ToolArguments, ToolBinding, ToolCatalog, ToolChoice,
+        ToolDescriptionOverride, ToolDescriptor, ToolId, ToolProviderId, ToolSnapshotId,
+        ToolTurnContract,
     };
     use crate::errors::DomainError;
 
@@ -777,6 +859,40 @@ mod tests {
             InvocationToolSnapshot::try_new(ToolSnapshotId::parse("empty").unwrap(), Vec::new(), 4)
                 .unwrap();
         assert!(ToolTurnContract::all(&empty, ToolChoice::Required).is_err());
+    }
+
+    #[test]
+    fn both_wire_encodings_of_a_value_decode_to_the_same_arguments() {
+        let object = ToolArguments::decode(Some(&json!({ "depth": 2 })));
+        for (raw, expected) in [
+            (None, ToolArguments::empty()),
+            (Some(json!(null)), ToolArguments::empty()),
+            (Some(json!("null")), ToolArguments::empty()),
+            (Some(json!("  ")), ToolArguments::empty()),
+            (Some(json!("{}")), ToolArguments::empty()),
+            (Some(json!(r#"{"depth":2}"#)), object.clone()),
+            (Some(json!([1, 2])), ToolArguments::Invalid("[1,2]".into())),
+            (Some(json!("[1,2]")), ToolArguments::Invalid("[1,2]".into())),
+            (
+                Some(json!(r#"{"path":"#)),
+                ToolArguments::Invalid(r#"{"path":"#.into()),
+            ),
+        ] {
+            assert_eq!(ToolArguments::decode(raw.as_ref()), expected, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn invalid_arguments_are_stored_verbatim_but_replay_as_an_empty_object() {
+        let invalid = ToolArguments::decode(Some(&json!("x".repeat(500))));
+
+        assert_eq!(
+            serde_json::to_value(&invalid).unwrap(),
+            json!("x".repeat(500))
+        );
+        assert_eq!(invalid.encode_for_replay(), "{}");
+        let message = invalid.as_map().unwrap_err();
+        assert!(message.contains('…') && message.len() < 400, "{message}");
     }
 
     #[test]

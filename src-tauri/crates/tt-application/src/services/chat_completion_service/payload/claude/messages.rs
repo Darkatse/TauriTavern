@@ -133,11 +133,9 @@ pub(super) fn convert_messages(
                     if use_tools {
                         blocks.extend(convert_openai_tool_calls_to_claude_blocks(&tool_calls));
                     } else {
-                        blocks.extend(
-                            tool_calls.iter().map(|call| {
-                                normalize_claude_text_block(&call.arguments.to_string())
-                            }),
-                        );
+                        blocks.extend(tool_calls.iter().map(|call| {
+                            normalize_claude_text_block(&call.arguments.encode_for_replay())
+                        }));
                     }
                     blocks
                 } else {

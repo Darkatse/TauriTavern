@@ -1,4 +1,5 @@
 use super::*;
+use tt_domain::models::tool::ToolId;
 use tt_domain::models::upstream_failure::{UPSTREAM_NETWORK_TIMEOUT, UpstreamFailure};
 
 #[tokio::test]
@@ -352,6 +353,98 @@ async fn agent_runtime_returns_missing_chat_reads_to_the_agent() {
     assert_eq!(saved.status, AgentRunStatus::Completed);
 
     let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn agent_runtime_normalizes_empty_arguments_and_recovers_from_invalid_arguments() {
+    let root = temp_root("agent-tool-arguments");
+    let mut malformed = model_tool_call("call_invalid", "workspace_list_files", json!({}));
+    malformed["function"]["arguments"] = json!(r#"{"path":"#);
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![
+            model_tool_response(vec![
+                // The helper encodes this as the wire string "null".
+                model_tool_call("call_empty", "workspace_list_files", Value::Null),
+                malformed,
+            ]),
+            model_tool_response(vec![
+                model_tool_call("call_over_budget", "workspace_list_files", json!({})),
+                model_tool_call(
+                    "call_write",
+                    "workspace_write_file",
+                    json!({ "path": "output/main.md", "content": "continued after invalid arguments" }),
+                ),
+                model_tool_call("call_finish", "workspace_finish", json!({})),
+            ]),
+        ],
+    );
+    let mut profile = resolve_contract_profile(&fixture).await;
+    profile.tools.max_rounds = 2;
+    profile
+        .tools
+        .max_calls_per_tool
+        .insert(ToolId::builtin("workspace.list_files").unwrap(), 2);
+    let run = contract_run("run_arguments", AgentRunPresentation::Background, &profile);
+    fixture.agent_repository.create_run(&run).await.unwrap();
+    let request = chat_request("list files and write an output");
+    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+
+    fixture
+        .service
+        .execute_agent_loop_run_inner(
+            &run.id,
+            prompt_snapshot,
+            request,
+            profile,
+            &mut cancel_receiver,
+        )
+        .await
+        .expect("argument errors remain recoverable");
+
+    let requests = fixture.model_gateway.requests().await;
+    let results = requests[1]
+        .messages
+        .iter()
+        .flat_map(|message| &message.parts)
+        .filter_map(|part| match part {
+            AgentModelContentPart::ToolResult { result } => Some(result),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].call_id, "call_empty");
+    assert!(!results[0].is_error);
+    assert!(results[0].structured["entries"].is_array());
+    assert_eq!(
+        results[1].error_code.as_deref(),
+        Some("tool.invalid_arguments")
+    );
+    assert!(results[1].content.contains(r#"{"path":"#));
+
+    let events = read_agent_events(&fixture.agent_repository, &run.id).await;
+    assert!(events.iter().any(|event| {
+        event.event_type == "tool_call_failed"
+            && event.payload["callId"] == "call_over_budget"
+            && event.payload["errorCode"] == "agent.tool_budget_exhausted"
+    }));
+    let artifact = fixture
+        .agent_repository
+        .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
+        .await
+        .unwrap();
+    assert_eq!(artifact.text, "continued after invalid arguments");
+    assert_eq!(
+        fixture
+            .agent_repository
+            .load_run(&run.id)
+            .await
+            .unwrap()
+            .status,
+        AgentRunStatus::Completed
+    );
+    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]

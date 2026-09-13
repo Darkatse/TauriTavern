@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::args::classify_workspace_io_error;
@@ -19,7 +19,7 @@ use tt_domain::models::agent::{
     WorkspaceInputManifest, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
     WorkspaceRootCommit, WorkspaceRootLifecycle, WorkspaceRootMount, WorkspaceRootScope,
 };
-use tt_domain::models::tool::{ToolId, ToolInvocation};
+use tt_domain::models::tool::{ToolArguments, ToolId, ToolInvocation};
 use tt_ports::repositories::workspace_repository::{
     WorkspaceAppendResult, WorkspaceEntry, WorkspaceFile, WorkspaceFileList, WorkspaceRepository,
     WorkspaceWriteGuard,
@@ -69,7 +69,7 @@ fn make_test_tool_call(name: &str) -> ToolInvocation {
     ToolInvocation {
         call_id: "call_test".to_string(),
         tool_id: ToolId::builtin(name).unwrap(),
-        arguments: json!({}),
+        arguments: ToolArguments::empty(),
         provider_metadata: json!({}),
     }
 }
@@ -92,7 +92,7 @@ async fn workspace_read_invalid_path_returns_canonical_tool_error() {
     let mut session = AgentToolSession::default();
     let call = workspace_call("workspace.read_file", json!({ "path": "../secrets.json" }));
 
-    let (result, effect) = read_file(&repository, "run", &call, &mut session)
+    let (result, effect) = read_file(&repository, "run", &call, call_args(&call), &mut session)
         .await
         .expect("invalid model path must remain recoverable");
 
@@ -124,7 +124,7 @@ async fn workspace_read_hidden_path_returns_recoverable_tool_error() {
         json!({ "path": "input/prompt_snapshot.json" }),
     );
 
-    let (result, effect) = read_file(&repository, "run", &call, &mut session)
+    let (result, effect) = read_file(&repository, "run", &call, call_args(&call), &mut session)
         .await
         .expect("hidden model path must remain recoverable");
 
@@ -150,7 +150,7 @@ async fn workspace_read_defaults_to_a_preview_for_oversized_files() {
     let mut session = AgentToolSession::default();
     let call = workspace_call("workspace.read_file", json!({ "path": "output/large.md" }));
 
-    let (result, _) = read_file(&repository, "run", &call, &mut session)
+    let (result, _) = read_file(&repository, "run", &call, call_args(&call), &mut session)
         .await
         .expect("large read should return a preview");
 
@@ -169,7 +169,7 @@ async fn workspace_read_keeps_a_large_single_line_out_of_the_next_model_request(
     let mut session = AgentToolSession::default();
     let call = workspace_call("workspace.read_file", json!({ "path": "output/large.txt" }));
 
-    let (result, _) = read_file(&repository, "run", &call, &mut session)
+    let (result, _) = read_file(&repository, "run", &call, call_args(&call), &mut session)
         .await
         .expect("large read should return a preview");
 
@@ -191,7 +191,7 @@ async fn workspace_write_root_returns_recoverable_tool_error() {
         }),
     );
 
-    let (result, effect) = write_file(&repository, "run", &call, &mut session)
+    let (result, effect) = write_file(&repository, "run", &call, call_args(&call), &mut session)
         .await
         .expect("non-writable model path must remain recoverable");
 
@@ -212,16 +212,18 @@ async fn workspace_write_existing_file_requires_prior_read() {
     let repository = TestWorkspaceRepository::with_file("output/main.md", "old text");
     let mut session = AgentToolSession::default();
 
+    let write_call = workspace_call(
+        "workspace.write_file",
+        json!({
+            "path": "output/main.md",
+            "content": "new text",
+        }),
+    );
     let (result, _) = write_file(
         &repository,
         "run",
-        &workspace_call(
-            "workspace.write_file",
-            json!({
-                "path": "output/main.md",
-                "content": "new text",
-            }),
-        ),
+        &write_call,
+        call_args(&write_call),
         &mut session,
     )
     .await
@@ -242,19 +244,20 @@ async fn workspace_write_existing_file_requires_prior_read() {
     );
 
     let read_call = workspace_call("workspace.read_file", json!({ "path": "output/main.md" }));
-    read_file(&repository, "run", &read_call, &mut session)
-        .await
-        .expect("read file");
+    read_file(
+        &repository,
+        "run",
+        &read_call,
+        call_args(&read_call),
+        &mut session,
+    )
+    .await
+    .expect("read file");
     let (result, effect) = write_file(
         &repository,
         "run",
-        &workspace_call(
-            "workspace.write_file",
-            json!({
-                "path": "output/main.md",
-                "content": "new text",
-            }),
-        ),
+        &write_call,
+        call_args(&write_call),
         &mut session,
     )
     .await
@@ -275,17 +278,37 @@ async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
     let repository = TestWorkspaceRepository::with_file("output/main.md", "alpha beta\ngamma");
     let mut session = AgentToolSession::default();
 
+    let partial_read = workspace_call(
+        "workspace.read_file",
+        json!({
+            "path": "output/main.md",
+            "start_line": 1,
+            "line_count": 1
+        }),
+    );
+    let full_read = workspace_call("workspace.read_file", json!({ "path": "output/main.md" }));
+    let missing_patch = workspace_call(
+        "workspace.apply_patch",
+        json!({
+            "path": "output/main.md",
+            "old_string": "delta",
+            "new_string": "omega"
+        }),
+    );
+    let patch = workspace_call(
+        "workspace.apply_patch",
+        json!({
+            "path": "output/main.md",
+            "old_string": "alpha",
+            "new_string": "omega"
+        }),
+    );
+
     read_file(
         &repository,
         "run",
-        &workspace_call(
-            "workspace.read_file",
-            json!({
-                "path": "output/main.md",
-                "start_line": 1,
-                "line_count": 1
-            }),
-        ),
+        &partial_read,
+        call_args(&partial_read),
         &mut session,
     )
     .await
@@ -294,14 +317,8 @@ async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
     let (result, _) = apply_patch(
         &repository,
         "run",
-        &workspace_call(
-            "workspace.apply_patch",
-            json!({
-                "path": "output/main.md",
-                "old_string": "delta",
-                "new_string": "omega"
-            }),
-        ),
+        &missing_patch,
+        call_args(&missing_patch),
         &mut session,
     )
     .await
@@ -311,21 +328,9 @@ async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
         Some("workspace.patch_requires_full_read")
     );
 
-    let (result, _) = apply_patch(
-        &repository,
-        "run",
-        &workspace_call(
-            "workspace.apply_patch",
-            json!({
-                "path": "output/main.md",
-                "old_string": "alpha",
-                "new_string": "omega"
-            }),
-        ),
-        &mut session,
-    )
-    .await
-    .expect("patch blocked after partial failure");
+    let (result, _) = apply_patch(&repository, "run", &patch, call_args(&patch), &mut session)
+        .await
+        .expect("patch blocked after partial failure");
     assert_eq!(
         result.error_code.as_deref(),
         Some("workspace.patch_requires_full_read")
@@ -334,26 +339,15 @@ async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
     read_file(
         &repository,
         "run",
-        &workspace_call("workspace.read_file", json!({ "path": "output/main.md" })),
+        &full_read,
+        call_args(&full_read),
         &mut session,
     )
     .await
     .expect("full read");
-    let (result, _) = apply_patch(
-        &repository,
-        "run",
-        &workspace_call(
-            "workspace.apply_patch",
-            json!({
-                "path": "output/main.md",
-                "old_string": "alpha",
-                "new_string": "omega"
-            }),
-        ),
-        &mut session,
-    )
-    .await
-    .expect("patch after full read");
+    let (result, _) = apply_patch(&repository, "run", &patch, call_args(&patch), &mut session)
+        .await
+        .expect("patch after full read");
 
     assert!(!result.is_error);
     assert_eq!(
@@ -370,9 +364,13 @@ fn workspace_call(name: &str, arguments: serde_json::Value) -> ToolInvocation {
     ToolInvocation {
         call_id: format!("call_{}", name.replace('.', "_")),
         tool_id: ToolId::builtin(name).unwrap(),
-        arguments,
+        arguments: ToolArguments::decode(Some(&arguments)),
         provider_metadata: serde_json::Value::Null,
     }
+}
+
+fn call_args(call: &ToolInvocation) -> &Map<String, Value> {
+    call.arguments.as_map().expect("test arguments are objects")
 }
 
 struct TestWorkspaceRepository {

@@ -7,7 +7,7 @@ use crate::services::chat_completion_service::exchange::{
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelResponse, AgentModelRole, AgentModelTool,
 };
-use tt_domain::models::tool::ToolInvocation;
+use tt_domain::models::tool::{ToolArguments, ToolInvocation};
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn decode_chat_completion_response(
@@ -201,7 +201,7 @@ fn parse_tool_call(
         ))
     })?;
     let arguments =
-        parse_tool_call_arguments(function.get("arguments").or_else(|| function.get("args")));
+        ToolArguments::decode(function.get("arguments").or_else(|| function.get("args")));
 
     Ok(ToolInvocation {
         call_id: id.to_string(),
@@ -220,16 +220,6 @@ pub(super) fn model_tool_for_alias<'a>(
     alias: &str,
 ) -> Option<&'a AgentModelTool> {
     tools.iter().find(|tool| tool.model_alias == alias)
-}
-
-fn parse_tool_call_arguments(value: Option<&Value>) -> Value {
-    match value {
-        Some(Value::String(raw)) => {
-            serde_json::from_str::<Value>(raw).unwrap_or_else(|_| Value::String(raw.to_string()))
-        }
-        Some(Value::Null) | None => Value::Object(Map::new()),
-        Some(value) => value.clone(),
-    }
 }
 
 fn extract_text_from_message(message: &Map<String, Value>) -> String {

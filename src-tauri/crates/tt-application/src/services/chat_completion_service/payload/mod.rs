@@ -108,6 +108,66 @@ mod tests {
     use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
     #[test]
+    fn converted_tool_call_history_replays_unusable_arguments_as_an_empty_object() {
+        let error = "## Tool error\n\nRequest rejected";
+        for arguments in ["null", "[1,2]", r#"{"path":"#] {
+            for (format, arguments_path, error_path) in [
+                ("openai_responses", "/input/1/arguments", "/input/2/output"),
+                (
+                    "claude_messages",
+                    "/messages/1/content/0/input",
+                    "/messages/2/content/0/content",
+                ),
+                (
+                    "gemini_generate_content",
+                    "/contents/1/parts/0/functionCall/args",
+                    "/contents/2/parts/0/functionResponse/response/content",
+                ),
+                (
+                    "gemini_interactions",
+                    "/input/1/arguments",
+                    "/input/2/result/0/text",
+                ),
+            ] {
+                let payload = json!({
+                    "chat_completion_source": "custom",
+                    "custom_api_format": format,
+                    "model": "test-model",
+                    "tools": [{ "type": "function", "function": {
+                        "name": "read_file", "parameters": { "type": "object" }
+                    } }],
+                    "messages": [
+                        { "role": "user", "content": "Read a file" },
+                        { "role": "assistant", "tool_calls": [{
+                            "id": "call_1", "type": "function",
+                            "function": { "name": "read_file", "arguments": arguments }
+                        }] },
+                        { "role": "tool", "tool_call_id": "call_1", "content": error }
+                    ]
+                });
+                let (_, upstream) = build_payload(
+                    ChatCompletionSource::Custom,
+                    payload.as_object().unwrap().clone(),
+                )
+                .unwrap();
+                let replay = upstream
+                    .pointer(arguments_path)
+                    .unwrap_or_else(|| panic!("{format} missing {arguments_path}: {upstream}"));
+                let replay = match replay.as_str() {
+                    Some(encoded) => serde_json::from_str::<Value>(encoded).unwrap(),
+                    None => replay.clone(),
+                };
+                assert_eq!(replay, json!({}), "{format}: {arguments}");
+                assert_eq!(
+                    upstream.pointer(error_path),
+                    Some(&json!(error)),
+                    "{format}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn claude_leaves_additional_body_overrides_to_service_layer() {
         let payload = json!({
             "chat_completion_source": "claude",

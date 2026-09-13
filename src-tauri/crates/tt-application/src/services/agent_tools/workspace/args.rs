@@ -6,8 +6,8 @@ use tt_domain::models::agent::{AgentToolResult, WorkspacePath};
 use tt_domain::models::tool::ToolInvocation;
 
 pub(super) use crate::services::agent_tools::common::{
-    WORKSPACE_PATH_IS_DIRECTORY_CODE, ensure_only_args, object_args, optional_bool_arg,
-    optional_usize_arg, required_raw_string_arg, required_trimmed_string_arg, tool_error,
+    WORKSPACE_PATH_IS_DIRECTORY_CODE, ensure_only_args, optional_bool_arg, optional_usize_arg,
+    required_raw_string_arg, required_trimmed_string_arg, tool_error,
     workspace_path_is_directory_message,
 };
 
