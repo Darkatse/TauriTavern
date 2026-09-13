@@ -335,6 +335,8 @@ pub struct TauriTavernSettings {
     pub embedded_runtime_profile: String,
     #[serde(default)]
     pub chat_virtualization_enabled: bool,
+    #[serde(default)]
+    pub cold_swipes_enabled: bool,
     #[serde(default = "default_codemirror_editor_enabled")]
     pub codemirror_editor_enabled: bool,
     #[serde(default)]
@@ -375,6 +377,7 @@ impl Default for TauriTavernSettings {
             panel_runtime_profile: default_panel_runtime_profile(),
             embedded_runtime_profile: default_embedded_runtime_profile(),
             chat_virtualization_enabled: false,
+            cold_swipes_enabled: false,
             codemirror_editor_enabled: default_codemirror_editor_enabled(),
             chat_backups: ChatBackupSettings::default(),
             close_to_tray_on_close: default_close_to_tray_on_close(),

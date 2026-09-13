@@ -16,6 +16,8 @@ const handle = api.current.handle();
 
 ## 1. 核心入口
 
+启用[历史滑动按需加载](../CurrentState/ChatPayload.md#21-历史滑动按需加载)时，`getContext().chat` 的历史候选槽位可能为 null；本页后端读取 API 仍返回完整内容。
+
 | 方法 | 返回值 | 说明 |
 | --- | --- | --- |
 | `api.chat.open(ref)` | `ChatHandle` | 打开指定聊天 |

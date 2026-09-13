@@ -38,6 +38,7 @@ export function applyTauriTavernSettingsUpdateEffects(update, updatedSettings) {
         changes.panelRuntimeProfile
         || changes.embeddedRuntimeProfile
         || changes.chatVirtualizationEnabled
+        || changes.coldSwipesEnabled
         || changes.codeMirrorEditorEnabled
         || changes.avatarPersonaOriginalImagesEnabled
     ) {

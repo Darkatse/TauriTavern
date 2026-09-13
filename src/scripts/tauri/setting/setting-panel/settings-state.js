@@ -107,6 +107,7 @@ export function createTauriTavernSettingsState(settings) {
         configuredEmbeddedRuntimeProfile,
         embeddedRuntimeProfile,
         chatVirtualizationEnabled,
+        coldSwipesEnabled: settings.cold_swipes_enabled,
         codeMirrorEditorEnabled,
         chatBackups: {
             automaticEnabled: chatBackups.automatic_enabled,

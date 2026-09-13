@@ -160,6 +160,19 @@ function SettingsApp({
                 </SettingRow>
 
                 <SettingRow
+                    label={tr('Load historical swipes on demand')}
+                    helpTopic="coldSwipes"
+                    helpTitle={tr('Learn more')}
+                    onHelp={showHelp}
+                >
+                    <ToggleSwitch
+                        checked={draft.coldSwipesEnabled}
+                        ariaLabel={tr('Load historical swipes on demand')}
+                        onChange={checked => controller.updateDraft('coldSwipesEnabled', checked)}
+                    />
+                </SettingRow>
+
+                <SettingRow
                     label={tr('CodeMirror Editor')}
                     helpTopic="codeMirrorEditor"
                     helpTitle={tr('Learn more')}

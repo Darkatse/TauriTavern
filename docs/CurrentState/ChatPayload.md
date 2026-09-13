@@ -13,7 +13,7 @@
 - 任一 JSONL 记录无法解析时，加载整体失败；不得提交部分历史。
 - 未显式切换聊天时，角色的 `chat` 文件 stem 在浅层、完整和重复读取之间保持稳定。
 
-这与 SillyTavern 1.18.0 的前端契约一致。TauriTavern 不再提供 `chat_history_mode`，也不存在前端 window state、生成时 backfill 或局部 patch 保存。
+消息集合与索引遵循 SillyTavern 1.18.0；显式开启历史滑动按需加载时，候选内容采用下述受限表示。TauriTavern 不再提供 `chat_history_mode`，也不存在前端 window state、生成时 backfill 或局部 patch 保存。
 
 ## 2. 完整加载与受限 DOM
 
@@ -28,11 +28,21 @@ transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方
 
 显式打开指定聊天（首页 recent、聊天管理器、书签、分支）统一经由 `selectCharacterById(id, { chatFile })` 与 `openGroupById(id, { chatId })`：不预扫聊天列表、不恢复、不新建；角色 `chat` 与群组 `chat_id` 只在目标加载成功后写回。
 
-所有平台通过共享的 Tauri FileHandle pull stream 有界读取 JSONL。每次加载始终复用同一个文件 handle，并在 EOF、取消或失败时关闭资源；桌面标准模式、portable 模式及自定义数据目录使用同一个已解析 `data_root` runtime scope。
+默认完整加载通过共享的 Tauri FileHandle pull stream 有界读取 JSONL。每次加载始终复用同一个文件 handle，并在 EOF、取消或失败时关闭资源；桌面标准模式、portable 模式及自定义数据目录使用同一个已解析 `data_root` runtime scope。
 
 读取前对已打开的 handle 调用 `fstat`，之后按剩余字节数请求，每次不超过共享 reader 的块上限，读满声明长度即止，不额外发 EOF 空读。正数短读继续读取，提前 EOF 或非法响应长度直接报错并关闭资源；读取和关闭同时失败时保留两个错误。
 
 `power_user.chat_truncation` 只限制首次挂载的 DOM 数量，不裁剪 `chat[]`。`Show more messages` 从完整数组中补挂更早楼层，不发起历史 I/O，也不改变数组索引。后续 DOM virtualization 若实施，也只能替换渲染层，不能改变 canonical data contract。
+
+### 2.1 历史滑动按需加载
+
+`cold_swipes_enabled` 默认关闭，重载生效，与 DOM 虚拟化独立。启用后，仅当前聊天采用冷表示；兼容 get、导出和落盘 JSONL 保持完整。
+
+- 加载时保留全部楼层、当前正文、变量、`swipe_id` 和数组长度；符合条件的历史消息将非当前滑动槽位置为 null，末楼完整。后续按需读回，不自动冷藏。
+- `tt_swipe_cold: { sourceId, record }` 引用本次加载的源记录：`record` 按非空记录从 0 编号，header 为 0，不随消息重排改变。源文件由当前聊天持有，路径替换不改变来源；切换聊天或重载时释放。
+- null 表示未加载，非 null 值及追加槽位以运行时数据为准；读回与保存按槽位补齐，保留运行时 `swipe_id`。读取其他滑动或删除槽位前需读回；未读回就缩短数组会被拒绝。保存时移除标记并原子发布。
+
+投影与合并位于 storage-core 的 `cold_swipes.rs`，前端通过 `chat-payload-transport.js` 接入，Tauri 资源寿命由 host 管理。
 
 ## 3. 完整保存
 
@@ -45,7 +55,7 @@ transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方
 
 commit 在首次异步让出前同步逐记录 `JSON.stringify()`，捕获本次提交私有的 JSON 文本快照。之后的消息或嵌套 metadata 修改不会混入本次保存。快照在任务执行时捕获，不提前为排队任务生成；不深拷贝聊天对象图，也不拼接整份 JSONL 字符串。它仍占用与 payload 大小成正比的临时文本空间，单条记录仍需完整编码，帧预算不是整个保存过程的内存上限。
 
-facade 使用 target-local commit session，按 host 返回的帧预算编码并传输快照，每次只有一帧在途。Android 使用 base64 帧，其他平台使用 raw bytes；finish 阶段校验 ACK 并原子发布。序列化失败不会创建会话；begin 成功后到 finish 之前的失败走 abort，清理失败与原始错误以 `AggregateError` 一并传播。host 的 finish 无论成败都消费会话并清理 stage，因此 finish 之后不再 abort。
+facade 使用 target-local commit session，按 host 返回的帧预算编码并传输快照，每次只有一帧在途。Android 使用 base64 帧，其他平台使用 raw bytes；finish 阶段校验 ACK 并原子发布。ACK 比较接收字节数 `acceptedSize`；`size` 表示补回冷内容后的发布字节数。序列化失败不会创建会话；begin 成功后到 finish 之前的失败走 abort，清理失败与原始错误以 `AggregateError` 一并传播。host 的 finish 无论成败都消费会话并清理 stage，因此 finish 之后不再 abort。
 
 帧预算由 storage-core 按平台统一定义，begin 返回值与 append 上限校验共用同一处定义。Android 使用较小预算以缩短同步字符串 IPC 的阻塞；iOS 和桌面保留各自的 raw bytes 预算。
 

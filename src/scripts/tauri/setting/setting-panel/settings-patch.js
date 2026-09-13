@@ -62,6 +62,11 @@ function isChatBackupHistoryDisabled(settings) {
 export function buildTauriTavernSettingsUpdate(initial, draft) {
     const nextPanelRuntimeProfile = String(draft.panelRuntimeProfile || '').trim();
     const nextEmbeddedRuntimeProfile = normalizeEmbeddedRuntimeProfileName(draft.embeddedRuntimeProfile);
+    const nextColdSwipesEnabled = draft.coldSwipesEnabled;
+    if (typeof nextColdSwipesEnabled !== 'boolean') {
+        throw new TypeError('Cold swipes setting must be a boolean');
+    }
+    const hasColdSwipesChange = nextColdSwipesEnabled !== initial.coldSwipesEnabled;
     const nextChatVirtualizationEnabled = draft.chatVirtualizationEnabled;
     if (typeof nextChatVirtualizationEnabled !== 'boolean') {
         throw new TypeError('Chat virtualization setting must be a boolean');
@@ -145,6 +150,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         panelRuntimeProfile: hasPanelRuntimeChange,
         embeddedRuntimeProfile: hasEmbeddedRuntimeChange,
         chatVirtualizationEnabled: hasChatVirtualizationEnabledChange,
+        coldSwipesEnabled: hasColdSwipesChange,
         codeMirrorEditorEnabled: hasCodeMirrorEditorEnabledChange,
         chatBackups: hasChatBackupsChange,
         closeToTrayOnClose: hasCloseToTrayOnCloseChange,
@@ -165,6 +171,9 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     }
     if (hasEmbeddedRuntimeChange) {
         patch.embedded_runtime_profile = nextEmbeddedRuntimeProfile;
+    }
+    if (hasColdSwipesChange) {
+        patch.cold_swipes_enabled = nextColdSwipesEnabled;
     }
     if (hasChatVirtualizationEnabledChange) {
         patch.chat_virtualization_enabled = nextChatVirtualizationEnabled;
@@ -242,6 +251,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
             panelRuntimeProfile: nextPanelRuntimeProfile,
             embeddedRuntimeProfile: nextEmbeddedRuntimeProfile,
             chatVirtualizationEnabled: nextChatVirtualizationEnabled,
+            coldSwipesEnabled: nextColdSwipesEnabled,
             codeMirrorEditorEnabled: nextCodeMirrorEditorEnabled,
             chatBackups: {
                 automaticEnabled: nextChatBackupAutomaticEnabled,

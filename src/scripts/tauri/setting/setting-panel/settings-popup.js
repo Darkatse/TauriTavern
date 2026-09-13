@@ -41,6 +41,13 @@ const HELP_TOPICS = {
             'When enabled, only messages near the viewport and the newest message stay mounted. Turn it off to use upstream SillyTavern chat rendering. Renderer extensions must support ChatSurface.',
         ],
     },
+    coldSwipes: {
+        title: 'Load historical swipes on demand',
+        lines: [
+            'Reduces memory use by loading alternate swipes of older messages only when needed. Opening a chat loads current text and all swipes of the last message.',
+            'Only affects display, not saving or exporting. Requires reload to apply.',
+        ],
+    },
     codeMirrorEditor: {
         title: 'CodeMirror Editor',
         lines: [

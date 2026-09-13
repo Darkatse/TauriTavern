@@ -232,6 +232,8 @@
 
 `saveMetadata()` / `getContext().saveMetadata()` 的持久化范围为 header 内的整个 `chat_metadata`，正文保持原字节，不再顺带保存消息。这是相对 SillyTavern 1.18.0 的明确语义变化；消息修改必须调用完整保存，不能依赖下一次 metadata 写入。metadata 的 debounce 保持 1000 ms，不取消待执行的完整保存；integrity 确认后仍强制完整保存，拒绝则 reload，普通失败不回退。该能力通过内部 transport 调用一个 metadata command，不新增兼容 HTTP route 或 Host ABI 别名。新群聊在首次问候事件前已有带 identity 的 header，事件写入不会被初始化覆盖。完整语义与成本见 `docs/CurrentState/ChatPayload.md` §3.1。
 
+启用[历史滑动按需加载](CurrentState/ChatPayload.md#21-历史滑动按需加载)时，`getContext().chat` 的历史候选槽位允许为 null；兼容 get、导出与保存文件保持完整。
+
 最关键的启动依赖：
 
 - `/csrf-token`：返回固定 token（用于兼容上游初始化对 CSRF 的假设）

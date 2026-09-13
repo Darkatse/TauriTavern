@@ -12,6 +12,7 @@ function createSettings(overrides = {}) {
         panel_runtime_profile: 'off',
         embedded_runtime_profile: 'off',
         chat_virtualization_enabled: false,
+        cold_swipes_enabled: false,
         codemirror_editor_enabled: false,
         chat_backups: {
             automatic_enabled: true,

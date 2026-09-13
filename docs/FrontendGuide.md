@@ -131,7 +131,7 @@ src/
 
 - 上游接管点：`src/script.js`（character chat）与 `src/scripts/group-chats.js`（group chat）。
 - 统一入口：上游只 import `src/scripts/chat-payload-transport.js`，不要直接依赖 `src/scripts/tauri/chat/*`。
-- 第一方当前聊天通过 `src/scripts/chat-payload-transport.js` 直接加载完整 JSONL；`/api/chats/get` 与 `/api/chats/group/get` 保留为扩展和脚本的兼容路由。header 与完整、有序的消息数组分离后，generation、扩展和保存共享同一个 canonical `chat[]`。
+- 第一方当前聊天通过 `src/scripts/chat-payload-transport.js` 加载全部楼层，可选[历史滑动按需加载](CurrentState/ChatPayload.md#21-历史滑动按需加载)；`/api/chats/get` 与 `/api/chats/group/get` 保留为扩展和脚本的兼容路由。header 与完整、有序的消息数组分离后，generation、扩展和保存共享同一个 canonical `chat[]`。
 - `chat_truncation` 只限制初始 DOM。Show More 从完整 `chat[]` 补挂楼层，不发起分页 I/O，不改变消息绝对索引。
 - 第一方完整保存通过统一 transport 直连；`/api/chats/save` 与 `/api/chats/group/save` 保留为扩展兼容路由。当前聊天业务入口仍经 `enqueueChatSave()`，transport 自身不重复入队。落盘的 header metadata 统一取自 `persistedChatMetadata()`，它去掉 `chat_metadata.lastInContextMessageId`；不要另行拼装。
 - commit 在首次异步让出前捕获逐记录 JSON 文本快照，再经 target-local commit session 编码、分帧和原子发布；保存期间的消息修改不混入本次提交。integrity 错误按明确的 `code` 处理，不按错误文案猜测。

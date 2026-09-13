@@ -48,6 +48,7 @@ function createValues(overrides: ValuesOverrides = {}): SettingsValues {
         panelRuntimeProfile: 'off',
         embeddedRuntimeProfile: 'off',
         chatVirtualizationEnabled: false,
+        coldSwipesEnabled: false,
         codeMirrorEditorEnabled: false,
         chatBackups: {
             automaticEnabled: true,
