@@ -1,20 +1,7 @@
 // @ts-check
 
-const FS_READ_CHUNK_BYTES = 512 * 1024;
-
-/** @param {Uint8Array} bytes */
-function readBigEndianUint64(bytes) {
-    let value = 0;
-    for (let i = 0; i < bytes.length; i += 1) {
-        const byte = bytes[i];
-        if (byte === undefined) {
-            throw new Error('Unexpected fs read trailer byte');
-        }
-        value *= 0x100;
-        value += byte;
-    }
-    return value;
-}
+// Amortize IPC roundtrips while bounding each response and decode burst.
+const FS_READ_MAX_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** @param {any} data */
 function normalizeReadResponse(data) {
@@ -57,6 +44,9 @@ export function createReadableFileStreamService({ invoke }) {
         return new ReadableStream({
             async pull(controller) {
                 const rid = await ridPromise;
+                if (closed) {
+                    return;
+                }
 
                 try {
                     const bytes = await readChunk(rid);
@@ -68,7 +58,11 @@ export function createReadableFileStreamService({ invoke }) {
 
                     controller.enqueue(bytes);
                 } catch (error) {
-                    await closeOnce();
+                    try {
+                        await closeOnce();
+                    } catch (closeError) {
+                        throw new AggregateError([error, closeError], 'Failed to read and close resource');
+                    }
                     throw error;
                 }
             },
@@ -80,18 +74,42 @@ export function createReadableFileStreamService({ invoke }) {
 
     /** @param {string} filePath */
     function createReadableFileStream(filePath) {
+        /** @type {number | undefined} */
+        let remaining;
         return createReadableResourceStream(
             invoke('plugin:fs|open', {
                 path: filePath,
                 options: { read: true },
             }),
             async (rid) => {
+                // Keep stat inside the resource owner's error handling: open may succeed even if stat fails.
+                if (remaining === undefined) {
+                    /** @type {{ size: number }} */
+                    const { size } = await invoke('plugin:fs|fstat', { rid });
+                    if (!Number.isSafeInteger(size) || size < 0) {
+                        throw new Error(`Invalid file size for ${filePath}: ${size}`);
+                    }
+                    remaining = size;
+                }
+                if (remaining === 0) {
+                    return new Uint8Array(0);
+                }
+
+                // plugin-fs returns the requested length even on a short read, plus its 8-byte trailer.
+                const len = Math.min(FS_READ_MAX_CHUNK_BYTES, remaining);
                 const data = await invoke('plugin:fs|read', {
                     rid,
-                    len: FS_READ_CHUNK_BYTES,
+                    len,
                 });
                 const bytes = normalizeReadResponse(data);
-                const bytesRead = readBigEndianUint64(bytes.subarray(bytes.byteLength - 8));
+                const bytesRead = Number(new DataView(bytes.buffer, bytes.byteOffset + bytes.byteLength - 8, 8).getBigUint64(0));
+                if (bytesRead > len || bytesRead > bytes.byteLength - 8) {
+                    throw new Error(`Invalid fs read length for ${filePath}: ${bytesRead}`);
+                }
+                if (bytesRead === 0) {
+                    throw new Error(`File shorter than its declared size: ${filePath} (${remaining} bytes remaining)`);
+                }
+                remaining -= bytesRead;
                 return bytes.subarray(0, bytesRead);
             },
         );

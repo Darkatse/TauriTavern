@@ -30,6 +30,8 @@ transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方
 
 所有平台通过共享的 Tauri FileHandle pull stream 有界读取 JSONL。每次加载始终复用同一个文件 handle，并在 EOF、取消或失败时关闭资源；桌面标准模式、portable 模式及自定义数据目录使用同一个已解析 `data_root` runtime scope。
 
+读取前对已打开的 handle 调用 `fstat`，之后按剩余字节数请求，每次不超过共享 reader 的块上限，读满声明长度即止，不额外发 EOF 空读。正数短读继续读取，提前 EOF 或非法响应长度直接报错并关闭资源；读取和关闭同时失败时保留两个错误。
+
 `power_user.chat_truncation` 只限制首次挂载的 DOM 数量，不裁剪 `chat[]`。`Show more messages` 从完整数组中补挂更早楼层，不发起历史 I/O，也不改变数组索引。后续 DOM virtualization 若实施，也只能替换渲染层，不能改变 canonical data contract。
 
 ## 3. 完整保存

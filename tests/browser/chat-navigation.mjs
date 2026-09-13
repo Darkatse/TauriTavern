@@ -90,12 +90,14 @@ test('chat persistence and navigation', async (context) => {
                 handles.set(rid, new TextEncoder().encode(payloads.get(args.path)));
                 return rid;
             }
+            case 'plugin:fs|fstat': return { size: handles.get(args.rid).length };
             case 'plugin:fs|read': {
                 const content = handles.get(args.rid);
-                const bytes = new window.Uint8Array(content.length + 8);
-                bytes.set(content);
-                new window.DataView(bytes.buffer).setBigUint64(content.length, BigInt(content.length));
-                handles.set(args.rid, new Uint8Array());
+                const chunk = content.subarray(0, args.len);
+                const bytes = new window.Uint8Array(args.len + 8);
+                bytes.set(chunk);
+                new window.DataView(bytes.buffer).setBigUint64(args.len, BigInt(chunk.length));
+                handles.set(args.rid, content.subarray(chunk.length));
                 return bytes;
             }
             case 'plugin:resources|close':
