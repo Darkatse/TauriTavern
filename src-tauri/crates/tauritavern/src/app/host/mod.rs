@@ -25,6 +25,13 @@ pub(crate) fn run() {
     plugins::install(tauri::Builder::default())
         .setup(setup::setup)
         .invoke_handler(invoke_handler())
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                crate::presentation::commands::chat_swipe_commands::close_page_chat_resources(
+                    webview,
+                );
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(shutdown::handle_run_event);

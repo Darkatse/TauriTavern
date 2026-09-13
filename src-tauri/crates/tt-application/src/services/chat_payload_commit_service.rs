@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use tt_ports::repositories::chat_payload_commit_repository::{
-    ChatPayloadCommitBegin, ChatPayloadCommitRepository, ChatPayloadTarget,
+    ChatPayloadCommitBegin, ChatPayloadCommitRepository, ChatPayloadTarget, ChatSwipeSource,
+    ColdSwipeCommitSource, CommittedChatPayload,
 };
 
 use crate::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
@@ -31,12 +32,30 @@ impl ChatPayloadCommitService {
         &self,
         locator: ChatHistoryLocator,
         force: bool,
+        cold_source: Option<ColdSwipeCommitSource>,
     ) -> Result<ChatPayloadCommitBegin, ApplicationError> {
         validate_chat_history_locator(&locator)?;
         Ok(self
             .repository
-            .begin(target_from_locator(locator), force)
+            .begin(target_from_locator(locator), force, cold_source)
             .await?)
+    }
+
+    pub async fn open_swipe_source(
+        &self,
+        locator: ChatHistoryLocator,
+        allow_not_found: bool,
+    ) -> Result<Option<Arc<dyn ChatSwipeSource>>, ApplicationError> {
+        validate_chat_history_locator(&locator)?;
+        match self
+            .repository
+            .open_swipe_source(target_from_locator(locator))
+            .await
+        {
+            Ok(source) => Ok(Some(source)),
+            Err(tt_domain::errors::DomainError::NotFound(_)) if allow_not_found => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub async fn commit_metadata(
@@ -68,12 +87,12 @@ impl ChatPayloadCommitService {
         session_id: &str,
         expected_size: u64,
         commit_reason: CurrentCommitReason,
-    ) -> Result<u64, ApplicationError> {
+    ) -> Result<CommittedChatPayload, ApplicationError> {
         let committed = self.repository.finish(session_id, expected_size).await?;
         self.chat_history_coordinator
-            .note_current_committed(committed.target.into(), commit_reason)
+            .note_current_committed(committed.target.clone().into(), commit_reason)
             .await;
-        Ok(committed.size)
+        Ok(committed)
     }
 
     pub async fn abort(&self, session_id: &str) -> Result<(), ApplicationError> {

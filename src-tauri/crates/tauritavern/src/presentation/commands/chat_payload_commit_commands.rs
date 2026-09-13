@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use serde_json::Value;
-use tauri::State;
+use tauri::{ResourceId, State, Webview};
 
 use crate::app::AppState;
 use crate::presentation::commands::chunk_body::chunk_bytes_from_request;
@@ -20,7 +20,9 @@ pub struct BeginChatCommitResult {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FinishChatCommitResult {
+    accepted_size: u64,
     size: u64,
 }
 
@@ -52,12 +54,17 @@ pub async fn commit_chat_metadata(
 pub async fn begin_chat_commit(
     target: ChatHistoryLocator,
     force: bool,
+    cold_source_id: Option<ResourceId>,
+    webview: Webview,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<BeginChatCommitResult, CommandError> {
+    let cold_source = cold_source_id
+        .map(|id| super::chat_swipe_commands::commit_source(&webview, id))
+        .transpose()?;
     let session = app_state
         .services
         .chat_payload_commit_service
-        .begin(target, force)
+        .begin(target, force, cold_source)
         .await?;
 
     Ok(BeginChatCommitResult {
@@ -92,13 +99,16 @@ pub async fn finish_chat_commit(
     commit_reason: CurrentCommitReason,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<FinishChatCommitResult, CommandError> {
-    let size = app_state
+    let committed = app_state
         .services
         .chat_payload_commit_service
         .finish(&session_id, expected_size, commit_reason)
         .await?;
 
-    Ok(FinishChatCommitResult { size })
+    Ok(FinishChatCommitResult {
+        accepted_size: committed.accepted_size,
+        size: committed.size,
+    })
 }
 
 #[tauri::command]

@@ -11,7 +11,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_payload_commit_repository::{
-    ChatPayloadCommitBegin, ChatPayloadCommitRepository, ChatPayloadTarget, CommittedChatPayload,
+    ChatPayloadCommitBegin, ChatPayloadCommitRepository, ChatPayloadTarget, ChatSwipeSource,
+    ColdSwipeCommitSource, CommittedChatPayload,
 };
 use uuid::Uuid;
 
@@ -64,6 +65,7 @@ pub(super) struct CommitSession {
     content_hasher: Option<(u64, Sha256)>,
     accepted_offset: u64,
     force: bool,
+    cold_source: Option<ColdSwipeCommitSource>,
 }
 
 impl FileChatRepository {
@@ -143,6 +145,14 @@ impl FileChatRepository {
 
 #[async_trait]
 impl ChatPayloadCommitRepository for FileChatRepository {
+    async fn open_swipe_source(
+        &self,
+        target: ChatPayloadTarget,
+    ) -> Result<Arc<dyn ChatSwipeSource>, DomainError> {
+        let path = self.resolve_chat_commit_target(&target).await?;
+        super::cold_swipes::FileSwipeSource::open(&path).await
+    }
+
     async fn commit_metadata(
         &self,
         target: ChatPayloadTarget,
@@ -155,6 +165,7 @@ impl ChatPayloadCommitRepository for FileChatRepository {
         &self,
         target: ChatPayloadTarget,
         force: bool,
+        cold_source: Option<ColdSwipeCommitSource>,
     ) -> Result<ChatPayloadCommitBegin, DomainError> {
         let target_path = self.resolve_chat_commit_target(&target).await?;
         if let Some(parent) = target_path.parent() {
@@ -213,6 +224,7 @@ impl ChatPayloadCommitRepository for FileChatRepository {
             content_hasher,
             accepted_offset: 0,
             force,
+            cold_source,
         }));
 
         let mut sessions = self.chat_commit_sessions.lock().await;
@@ -280,7 +292,9 @@ impl ChatPayloadCommitRepository for FileChatRepository {
                 "Failed to append chat commit session {session_id}: {error}"
             ))
         })?;
-        if let Some((_, content_hasher)) = session.content_hasher.as_mut() {
+        if session.cold_source.is_none()
+            && let Some((_, content_hasher)) = session.content_hasher.as_mut()
+        {
             content_hasher.update(bytes);
         }
         session.accepted_offset += bytes.len() as u64;
@@ -307,12 +321,16 @@ impl ChatPayloadCommitRepository for FileChatRepository {
         let stage_path = session.stage_path.clone();
         let accepted_offset = session.accepted_offset;
         let content_hasher = session.content_hasher.take();
+        let cold_source = session.cold_source.take();
+        let expands_cold_swipes = cold_source.is_some();
         let force = session.force;
         let mut file = session
             .file
             .take()
             .expect("claimed chat commit session must own an open stage");
         drop(session);
+
+        let expanded_path = stage_path.with_extension("expanded");
 
         let result = async {
             file.flush().await.map_err(|error| {
@@ -335,12 +353,25 @@ impl ChatPayloadCommitRepository for FileChatRepository {
                     "Chat commit size mismatch: expected {expected_size}, accepted {accepted_offset}, staged {actual_size}"
                 )));
             }
+            let (file, publish_path, published_size, digest) = if let Some(cold) = cold_source {
+                drop(file);
+                let restored = cold.source.restore_payload(cold.id, &stage_path, &expanded_path, content_hasher.is_some()).await?;
+                let file = fs::OpenOptions::new().write(true).open(&expanded_path).await
+                    .map_err(|error| DomainError::InternalError(format!("Failed to open expanded chat stage: {error}")))?;
+                (file, &expanded_path, restored.size, restored.sha256)
+            } else {
+                (file, &stage_path, accepted_offset, None)
+            };
             let content_signature = content_hasher.map(|(epoch, content_hasher)| {
                 (
                     epoch,
                     ContentSignature {
-                        byte_len: accepted_offset,
-                        sha256: content_hasher.finalize().into(),
+                        byte_len: published_size,
+                        sha256: if expands_cold_swipes {
+                            digest.expect("cold restoration computes the requested digest")
+                        } else {
+                            content_hasher.finalize().into()
+                        },
                     },
                 )
             });
@@ -359,7 +390,7 @@ impl ChatPayloadCommitRepository for FileChatRepository {
                 )?;
             }
 
-            persist_file(file, &stage_path, &target_path).await?;
+            persist_file(file, publish_path, &target_path).await?;
             if let Some((epoch, content_signature)) = content_signature {
                 self.record_current_content_signature(&target_path, epoch, content_signature)
                     .await;
@@ -369,13 +400,17 @@ impl ChatPayloadCommitRepository for FileChatRepository {
 
             Ok(CommittedChatPayload {
                 target,
-                size: expected_size,
+                accepted_size: accepted_offset,
+                size: published_size,
             })
         }
         .await;
 
-        if result.is_err() {
+        if result.is_err() || expands_cold_swipes {
             self.remove_chat_commit_stage(&stage_path).await;
+        }
+        if result.is_err() && expands_cold_swipes {
+            self.remove_chat_commit_stage(&expanded_path).await;
         }
         result
     }

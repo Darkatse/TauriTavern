@@ -12,7 +12,7 @@ pub use super::chat_types::{
 };
 
 #[async_trait]
-pub trait ChatBackupReader: Send {
+pub trait ChatByteReader: Send {
     async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, DomainError>;
 }
 
@@ -118,7 +118,7 @@ pub trait ChatRepository: Send + Sync {
     async fn open_chat_backup_download(
         &self,
         backup_file_name: &str,
-    ) -> Result<Box<dyn ChatBackupReader>, DomainError>;
+    ) -> Result<Box<dyn ChatByteReader>, DomainError>;
 
     /// Restore a character chat directly from a logical backup name.
     async fn restore_character_chat_backup(

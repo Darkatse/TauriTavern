@@ -512,8 +512,7 @@ impl ChatRepository for FileChatRepository {
     async fn open_chat_backup_download(
         &self,
         backup_file_name: &str,
-    ) -> Result<Box<dyn tt_ports::repositories::chat_repository::ChatBackupReader>, DomainError>
-    {
+    ) -> Result<Box<dyn tt_ports::repositories::chat_repository::ChatByteReader>, DomainError> {
         self.open_chat_backup_download_file(backup_file_name).await
     }
 

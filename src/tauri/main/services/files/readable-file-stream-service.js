@@ -118,16 +118,22 @@ export function createReadableFileStreamService({ invoke }) {
     /** @param {string} name */
     async function createChatBackupDownloadStream(name) {
         const rid = await invoke('open_chat_backup_download', { name });
+        return createChatByteStream(rid);
+    }
+
+    /** @param {number} rid */
+    function createChatByteStream(rid) {
         return createReadableResourceStream(
             Promise.resolve(rid),
             async (rid) => normalizeReadResponse(
-                await invoke('read_chat_backup_download', { rid }),
+                await invoke('read_chat_bytes', { rid }),
             ),
         );
     }
 
     return {
         createChatBackupDownloadStream,
+        createChatByteStream,
         createReadableFileStream,
     };
 }

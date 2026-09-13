@@ -30,7 +30,7 @@ async fn chat_payload_commit_notifies_history_only_after_successful_publish() {
     let payload = br#"{"user_name":"User","character_name":"Alice","chat_metadata":{}}"#;
 
     let successful = service
-        .begin(target.clone(), false)
+        .begin(target.clone(), false, None)
         .await
         .expect("begin successful commit");
     service
@@ -58,7 +58,7 @@ async fn chat_payload_commit_notifies_history_only_after_successful_publish() {
 
     coordinator.invalidate_all_pending().await;
     let rejected = service
-        .begin(target.clone(), false)
+        .begin(target.clone(), false, None)
         .await
         .expect("begin rejected commit");
     service

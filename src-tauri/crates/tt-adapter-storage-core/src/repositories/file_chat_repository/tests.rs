@@ -77,7 +77,7 @@ async fn commit_payload_bytes(
     bytes: &[u8],
     force: bool,
 ) -> Result<CommittedChatPayload, DomainError> {
-    let session = repository.begin(target, force).await?;
+    let session = repository.begin(target, force, None).await?;
     let frame_bytes = session.max_frame_bytes as usize;
     let mut offset = 0;
     for frame in bytes.chunks(frame_bytes) {
@@ -143,7 +143,7 @@ fn character_target(character_id: &str, file_name: &str) -> ChatPayloadTarget {
 async fn chat_commit_protocol_rejects_invalid_frames_and_abort_is_idempotent() {
     let (repository, root) = setup_repository().await;
     let session = repository
-        .begin(character_target("alice", "session"), false)
+        .begin(character_target("alice", "session"), false, None)
         .await
         .expect("begin chat commit");
 
@@ -195,7 +195,7 @@ async fn chat_commit_preserves_exact_bytes_across_multiple_frames() {
 {"name":"Alice","mes":"你好"}"#
         .as_bytes();
     let session = repository
-        .begin(character_target("alice", "multi-frame"), false)
+        .begin(character_target("alice", "multi-frame"), false, None)
         .await
         .expect("begin multi-frame commit");
     let boundaries = [1, 13, payload.len()];
@@ -502,7 +502,7 @@ async fn global_invalidation_prevents_an_inflight_commit_from_restoring_old_prov
     let (repository, root) = setup_repository().await;
     let payload = payload_to_jsonl(&payload_with_integrity("signature-epoch"));
     let session = repository
-        .begin(character_target("Alice", "session"), false)
+        .begin(character_target("Alice", "session"), false, None)
         .await
         .expect("begin commit");
     repository
@@ -554,7 +554,7 @@ async fn chat_commit_size_mismatch_preserves_current_and_consumes_session() {
         "Assistant",
     ));
     let session = repository
-        .begin(character_target("alice", "session"), false)
+        .begin(character_target("alice", "session"), false, None)
         .await
         .expect("begin replacement");
     repository
@@ -619,7 +619,7 @@ async fn streaming_chat_commit_keeps_old_current_visible_until_finish() {
         "Assistant",
     ));
     let session = repository
-        .begin(character_target("alice", "session"), false)
+        .begin(character_target("alice", "session"), false, None)
         .await
         .expect("begin replacement");
     let split = new_payload.len() / 2;
@@ -660,10 +660,13 @@ async fn same_target_sessions_are_complete_and_last_finish_wins() {
     ));
     let target = character_target("alice", "session");
     let session_a = repository
-        .begin(target.clone(), false)
+        .begin(target.clone(), false, None)
         .await
         .expect("begin a");
-    let session_b = repository.begin(target, false).await.expect("begin b");
+    let session_b = repository
+        .begin(target, false, None)
+        .await
+        .expect("begin b");
     repository
         .append(&session_a.session_id, 0, payload_a.as_bytes())
         .await
@@ -708,14 +711,14 @@ async fn chat_commit_sessions_have_a_small_hard_limit() {
     for _ in 0..MAX_ACTIVE_CHAT_COMMIT_SESSIONS {
         sessions.push(
             repository
-                .begin(target.clone(), false)
+                .begin(target.clone(), false, None)
                 .await
                 .expect("begin within session limit"),
         );
     }
 
     assert!(matches!(
-        repository.begin(target.clone(), false).await,
+        repository.begin(target.clone(), false, None).await,
         Err(DomainError::Conflict(_))
     ));
 
@@ -725,7 +728,7 @@ async fn chat_commit_sessions_have_a_small_hard_limit() {
         .await
         .expect("release session capacity");
     let replacement = repository
-        .begin(target, false)
+        .begin(target, false, None)
         .await
         .expect("begin after releasing capacity");
 
@@ -2064,11 +2067,11 @@ async fn concurrent_chat_commits_publish_only_complete_payloads() {
     ));
     let target = character_target("alice", "session");
     let session_a = repository
-        .begin(target.clone(), false)
+        .begin(target.clone(), false, None)
         .await
         .expect("begin concurrent a");
     let session_b = repository
-        .begin(target, false)
+        .begin(target, false, None)
         .await
         .expect("begin concurrent b");
     repository
@@ -3521,4 +3524,328 @@ fn payload_to_jsonl(payload: &[Value]) -> String {
         .map(|item| serde_json::to_string(item).expect("serialize line"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+async fn read_chat_stream_bytes(
+    mut reader: Box<dyn tt_ports::repositories::chat_repository::ChatByteReader>,
+) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0; 37];
+    loop {
+        let n = reader.read(&mut buffer).await.expect("read chat stream");
+        if n == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..n]);
+    }
+    bytes
+}
+
+async fn read_chat_stream(
+    reader: Box<dyn tt_ports::repositories::chat_repository::ChatByteReader>,
+) -> Vec<Value> {
+    String::from_utf8(read_chat_stream_bytes(reader).await)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+fn swipe_fixture() -> Vec<Value> {
+    vec![
+        json!({"chat_metadata":{"integrity":"cold-test"},"user_name":"User"}),
+        json!({"mes":"current body", "is_user":false, "swipe_id":2,
+            "swipes":["历史零", "history one", "active two"],
+            "swipe_info":[{"extra":{"tauritavern":{"agent":{"persistStateId":"old"}}}}, {"extra":{}}, {"extra":{"live":true}}],
+            "variables":[{"v":0},{"v":1},{"v":2}], "escaped\"key":{"unchanged":true}, "extra":{"live":"body"}}),
+        json!({"mes":"user", "is_user":true, "swipe_id":0,"swipes":["user","alternate"],"swipe_info":[{},{}]}),
+        json!({"mes":"irregular", "swipe_id":0,"swipes":["irregular","alternate"],"swipe_info":[{}]}),
+        json!({"mes":"tail", "swipe_id":1,"swipes":["tail old","tail"],"swipe_info":[{},{}]}),
+    ]
+}
+
+#[tokio::test]
+async fn cold_swipes_round_trip_retains_source_across_metadata_publish_reorder_and_copy() {
+    use tt_ports::repositories::chat_payload_commit_repository::ColdSwipeCommitSource;
+    for target in [
+        character_target("Alice", "cold"),
+        ChatPayloadTarget::Group {
+            chat_id: "cold".into(),
+        },
+    ] {
+        let (repository, root) = setup_repository().await;
+        let original = swipe_fixture();
+        let input = format!(
+            "{}\r\n \t\r\n",
+            original
+                .iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\r\n\r\n")
+        );
+        commit_payload_bytes(&repository, target.clone(), input.as_bytes(), false)
+            .await
+            .unwrap();
+        let source = repository.open_swipe_source(target.clone()).await.unwrap();
+        let projected = read_chat_stream(source.clone().projection(7)).await;
+        assert_eq!(projected[1]["swipes"], json!([null, null, "active two"]));
+        assert_eq!(
+            projected[1]["tt_swipe_cold"],
+            json!({"sourceId":7,"record":1})
+        );
+        assert_eq!(projected[1]["variables"], original[1]["variables"]);
+        assert_eq!(projected[2]["swipes"], json!(["user", null]));
+        assert_eq!(&projected[3..], &original[3..]);
+
+        repository
+            .commit_metadata(
+                target.clone(),
+                json!({"integrity":"cold-test","note":"longer metadata"}),
+            )
+            .await
+            .unwrap();
+        let mut staged = vec![
+            projected[0].clone(),
+            projected[2].clone(),
+            projected[1].clone(),
+            projected[1].clone(),
+        ];
+        staged[2]["mes"] = json!("edited body");
+        staged[2]["swipes"][2] = json!("edited active swipe");
+        staged[2]["swipe_info"][2] = json!({"extra":{"edited":true}});
+        staged[2]["variables"][2] = json!({"v":99});
+        staged[2]["escaped\"key"] = json!({"edited":true});
+        staged[2]["swipes"][0] = json!("edited historical slot");
+        staged[2]["swipe_info"][1] = json!({"extra":{"historicalEdit":true}});
+        staged[2]["swipes"]
+            .as_array_mut()
+            .unwrap()
+            .extend([json!("appended one"), json!("appended two")]);
+        staged[2]["swipe_info"]
+            .as_array_mut()
+            .unwrap()
+            .extend([json!({}), json!({"extra":{"appended":true}})]);
+        staged[2]["swipe_id"] = json!(4);
+        staged[3]["swipe_id"] = json!(0);
+        let bytes = payload_to_jsonl(&staged).into_bytes();
+        let session = repository
+            .begin(
+                target.clone(),
+                false,
+                Some(ColdSwipeCommitSource {
+                    id: 7,
+                    source: source.clone(),
+                }),
+            )
+            .await
+            .unwrap();
+        // A started commit and an opened record remain valid after the page releases its source owner.
+        let record = source.clone().record(1).await.unwrap();
+        drop(source);
+        repository
+            .append(&session.session_id, 0, &bytes)
+            .await
+            .unwrap();
+        let committed = repository
+            .finish(&session.session_id, bytes.len() as u64)
+            .await
+            .unwrap();
+        assert_eq!(committed.accepted_size, bytes.len() as u64);
+        assert_eq!(read_chat_stream(record).await, vec![original[1].clone()]);
+        let path = repository
+            .resolve_chat_commit_target(&target)
+            .await
+            .unwrap();
+        let saved = fs::read(&path).await.unwrap();
+        assert_eq!(committed.size, saved.len() as u64);
+        let signature = repository
+            .current_content_signature_for_size(&path, committed.size)
+            .await
+            .unwrap();
+        assert_eq!(signature.sha256, <[u8; 32]>::from(Sha256::digest(&saved)));
+        let restored: Vec<Value> = std::str::from_utf8(&saved)
+            .unwrap()
+            .lines()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .collect();
+        let mut expected = staged;
+        expected[1] = original[2].clone();
+        expected[2]["swipes"] = json!([
+            "edited historical slot",
+            "history one",
+            "edited active swipe",
+            "appended one",
+            "appended two"
+        ]);
+        expected[2]["swipe_info"][0] = original[1]["swipe_info"][0].clone();
+        expected[2].as_object_mut().unwrap().remove("tt_swipe_cold");
+        expected[3] = original[1].clone();
+        expected[3]["swipe_id"] = json!(0);
+        assert_eq!(restored, expected);
+        fs::remove_dir_all(root).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn cold_swipes_reject_invalid_merges_without_publishing_or_leaving_stages() {
+    use tt_ports::repositories::chat_payload_commit_repository::ColdSwipeCommitSource;
+    let (repository, root) = setup_repository().await;
+    let target = ChatPayloadTarget::Group {
+        chat_id: "reject-cold".into(),
+    };
+    let original = payload_to_jsonl(&swipe_fixture());
+    commit_payload_bytes(&repository, target.clone(), original.as_bytes(), false)
+        .await
+        .unwrap();
+    let source = repository.open_swipe_source(target.clone()).await.unwrap();
+    let projected = read_chat_stream(source.clone().projection(8)).await;
+    for mutation in ["shortened", "info", "record", "source", "index"] {
+        let mut staged = projected.clone();
+        match mutation {
+            "shortened" => {
+                staged[1]["swipes"].as_array_mut().unwrap().pop();
+                staged[1]["swipe_info"].as_array_mut().unwrap().pop();
+                staged[1]["swipe_id"] = json!(1);
+            }
+            "info" => {
+                staged[1]["swipe_info"].as_array_mut().unwrap().pop();
+            }
+            "record" => staged[1]["tt_swipe_cold"]["record"] = json!(99),
+            "source" => staged[1]["tt_swipe_cold"]["sourceId"] = json!(99),
+            "index" => staged[1]["swipe_id"] = json!(99),
+            _ => unreachable!(),
+        }
+        let bytes = payload_to_jsonl(&staged);
+        let session = repository
+            .begin(
+                target.clone(),
+                true,
+                Some(ColdSwipeCommitSource {
+                    id: 8,
+                    source: source.clone(),
+                }),
+            )
+            .await
+            .unwrap();
+        repository
+            .append(&session.session_id, 0, bytes.as_bytes())
+            .await
+            .unwrap();
+        assert!(
+            repository
+                .finish(&session.session_id, bytes.len() as u64)
+                .await
+                .is_err()
+        );
+        let path = repository
+            .resolve_chat_commit_target(&target)
+            .await
+            .unwrap();
+        assert_eq!(fs::read(&path).await.unwrap(), original.as_bytes());
+        assert!(
+            fs::read_dir(&repository.chat_commit_staging_dir)
+                .await
+                .unwrap()
+                .next_entry()
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+    drop(source);
+    fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
+async fn cold_swipes_lookahead_handles_empty_header_only_and_unterminated_tail() {
+    let (repository, root) = setup_repository().await;
+    let target = ChatPayloadTarget::Group {
+        chat_id: "boundaries".into(),
+    };
+    let path = repository
+        .resolve_chat_commit_target(&target)
+        .await
+        .unwrap();
+    let fixture = swipe_fixture();
+    for messages in [
+        vec![],
+        vec![fixture[0].clone()],
+        vec![fixture[0].clone(), fixture[1].clone()],
+        fixture,
+    ] {
+        for (prefix, suffix) in [("", ""), ("\r\n\u{feff}", "\n \t\n")] {
+            fs::write(
+                &path,
+                format!("{}{}{}", prefix, payload_to_jsonl(&messages), suffix),
+            )
+            .await
+            .unwrap();
+            let source = repository.open_swipe_source(target.clone()).await.unwrap();
+            let projected = read_chat_stream(source.clone().projection(9)).await;
+            assert_eq!(projected.len(), messages.len());
+            assert_eq!(projected.last(), messages.last());
+            drop(source);
+        }
+    }
+    fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
+async fn cold_swipes_preserve_record_key_order_and_project_all_message_roles() {
+    use tt_ports::repositories::chat_payload_commit_repository::ColdSwipeCommitSource;
+    let (repository, root) = setup_repository().await;
+    let target = ChatPayloadTarget::Group {
+        chat_id: "ordered-cold".into(),
+    };
+    let message = r#"{"z-extension":{"z":1,"a":2},"mes":"active","swipe_id":1,"swipes":["old","active"],"swipe_info":[{},{}],"a-extension":true}"#;
+    let records: Vec<_> = [
+        r#""is_user":true"#,
+        r#""role":"tool","tool_calls":[]"#,
+        r#""extra":{"isSmallSys":true}"#,
+    ]
+    .into_iter()
+    .map(|fields| format!("{{{fields},{}", &message[1..]))
+    .collect();
+    let input = format!("{{}}\n{}\n{}", records.join("\n"), message);
+    commit_payload_bytes(&repository, target.clone(), input.as_bytes(), false)
+        .await
+        .unwrap();
+    let source = repository.open_swipe_source(target.clone()).await.unwrap();
+    let projected = read_chat_stream_bytes(source.clone().projection(0)).await;
+    let projected_text = std::str::from_utf8(&projected).unwrap();
+    for (line, original) in projected_text.lines().skip(1).zip(&records) {
+        let fields: indexmap::IndexMap<String, Value> = serde_json::from_str(line).unwrap();
+        let original: indexmap::IndexMap<String, Value> = serde_json::from_str(original).unwrap();
+        assert_eq!(fields["swipes"], json!([null, "active"]));
+        assert_eq!(
+            fields.keys().take(original.len()).collect::<Vec<_>>(),
+            original.keys().collect::<Vec<_>>()
+        );
+    }
+    let session = repository
+        .begin(
+            target.clone(),
+            false,
+            Some(ColdSwipeCommitSource { id: 0, source }),
+        )
+        .await
+        .unwrap();
+    repository
+        .append(&session.session_id, 0, &projected)
+        .await
+        .unwrap();
+    repository
+        .finish(&session.session_id, projected.len() as u64)
+        .await
+        .unwrap();
+    let path = repository
+        .resolve_chat_commit_target(&target)
+        .await
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(path).await.unwrap(),
+        format!("{input}\n")
+    );
+    fs::remove_dir_all(root).await.unwrap();
 }

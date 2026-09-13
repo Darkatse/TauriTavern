@@ -8,7 +8,7 @@ use tokio::fs;
 use tokio::io::AsyncReadExt;
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::ChatBackupSettings;
-use tt_ports::repositories::chat_repository::ChatBackupReader;
+use tt_ports::repositories::chat_repository::ChatByteReader;
 use tt_ports::settings::{ChatBackupRuntime, ChatBackupStorageStats};
 
 use super::FileChatRepository;
@@ -42,7 +42,7 @@ struct FileChatBackupReader {
 }
 
 #[async_trait]
-impl ChatBackupReader for FileChatBackupReader {
+impl ChatByteReader for FileChatBackupReader {
     async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, DomainError> {
         self.reader.read(buffer).await.map_err(|error| {
             DomainError::InternalError(format!(
@@ -57,7 +57,7 @@ impl FileChatRepository {
     pub(super) async fn open_chat_backup_download_file(
         &self,
         backup_file_name: &str,
-    ) -> Result<Box<dyn ChatBackupReader>, DomainError> {
+    ) -> Result<Box<dyn ChatByteReader>, DomainError> {
         let logical_file_name = Self::normalize_backup_file_name(backup_file_name)?;
         let mut state = self.backup_history.lock().await;
         self.ensure_backup_inventory_ready(&mut state).await?;

@@ -8471,6 +8471,7 @@ dependencies = [
  "chrono",
  "icu_collator",
  "icu_locale_core",
+ "indexmap 2.14.0",
  "percent-encoding",
  "rand 0.10.2",
  "serde",

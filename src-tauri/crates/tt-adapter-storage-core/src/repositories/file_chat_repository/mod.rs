@@ -15,6 +15,7 @@ mod cache;
 mod chat_dir_resolver;
 mod chat_metadata;
 mod chat_payload_commit;
+mod cold_swipes;
 mod extension_store;
 mod group_chat_repository_impl;
 mod importing;
