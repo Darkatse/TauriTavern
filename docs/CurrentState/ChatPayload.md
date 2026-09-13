@@ -47,6 +47,8 @@ commit 在首次异步让出前同步逐记录 `JSON.stringify()`，捕获本次
 
 facade 使用 target-local commit session，按 host 返回的帧预算编码并传输快照，每次只有一帧在途。Android 使用 base64 帧，其他平台使用 raw bytes；finish 阶段校验 ACK 并原子发布。序列化失败不会创建会话；begin 成功后到 finish 之前的失败走 abort，清理失败与原始错误以 `AggregateError` 一并传播。host 的 finish 无论成败都消费会话并清理 stage，因此 finish 之后不再 abort。
 
+帧预算由 storage-core 按平台统一定义，begin 返回值与 append 上限校验共用同一处定义。Android 使用较小预算以缩短同步字符串 IPC 的阻塞；iOS 和桌面保留各自的 raw bytes 预算。
+
 共享 base64 encoder 在引擎支持时直接使用 `Uint8Array.prototype.toBase64()`，缺失时使用既有分块编码；两者均输出带 padding 的标准 Base64。原生调用失败直接传播，不切换编码路径。
 
 `POST /api/chats/save` 与 `POST /api/chats/group/save` 保留为扩展和脚本主动调用的兼容路由，复用同一 transport。成功仍返回 `{ ok: true }`，integrity 冲突仍返回 `400 { error: 'integrity' }`。第一方保存不再产生这些 Fetch 请求，依赖 monkeypatch Fetch 观察保存的扩展不再收到它们；兼容路由不额外加入核心前端保存队列。

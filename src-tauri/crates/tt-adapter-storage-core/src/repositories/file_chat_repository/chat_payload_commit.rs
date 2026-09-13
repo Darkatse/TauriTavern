@@ -18,7 +18,9 @@ use uuid::Uuid;
 use super::integrity::verify_integrity_match;
 use super::{ContentSignature, FileChatRepository};
 
-const MOBILE_MAX_FRAME_BYTES: u64 = 1024 * 1024;
+// Smaller frames shorten Android's synchronous string IPC calls.
+const ANDROID_MAX_FRAME_BYTES: u64 = 256 * 1024;
+const IOS_MAX_FRAME_BYTES: u64 = 1024 * 1024;
 const DESKTOP_MAX_FRAME_BYTES: u64 = 4 * 1024 * 1024;
 pub(super) const MAX_ACTIVE_CHAT_COMMIT_SESSIONS: usize = 8;
 
@@ -78,8 +80,10 @@ impl FileChatRepository {
     }
 
     fn chat_commit_max_frame_bytes() -> u64 {
-        if cfg!(any(target_os = "android", target_os = "ios")) {
-            MOBILE_MAX_FRAME_BYTES
+        if cfg!(target_os = "android") {
+            ANDROID_MAX_FRAME_BYTES
+        } else if cfg!(target_os = "ios") {
+            IOS_MAX_FRAME_BYTES
         } else {
             DESKTOP_MAX_FRAME_BYTES
         }
