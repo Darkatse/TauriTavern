@@ -494,6 +494,10 @@ async fn metadata_commit_does_not_skip_backup_after_an_equal_length_change() {
         read_backup_payload(&repository, added, 1024).await.unwrap(),
         updated
     );
+    // Finish background index writes before removing the test directory.
+    FileChatRepository::flush_backup_summary_cache(&repository.backup_summary_cache)
+        .await
+        .unwrap();
     fs::remove_dir_all(root).await.unwrap();
 }
 

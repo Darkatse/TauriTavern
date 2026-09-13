@@ -299,7 +299,7 @@ impl FileChatRepository {
         });
     }
 
-    async fn flush_backup_summary_cache(
+    pub(super) async fn flush_backup_summary_cache(
         cache: &Arc<Mutex<BackupSummaryCache>>,
     ) -> Result<(), DomainError> {
         let mut cache = cache.lock().await;
