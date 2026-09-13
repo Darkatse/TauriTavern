@@ -17,6 +17,7 @@ import {
     newAssistantChat,
     printCharactersDebounced,
     renameGroupOrCharacterChat,
+    replaceChatContents,
     resetChatSurfaceView,
     saveSettingsDebounced,
     selectCharacterById,
@@ -244,7 +245,7 @@ export async function openWelcomeScreen({ force = false, expand = false } = {}) 
 
     if (chatAfterFetch === undefined && force) {
         console.debug('Forcing welcome screen open.');
-        chat.splice(0, chat.length);
+        replaceChatContents([]);
         resetChatSurfaceView({ includeAuxiliary: true });
     }
 

@@ -93,7 +93,7 @@ import { isExternalMediaAllowed } from './chats.js';
 import { POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
-import { CHAT_COMMIT_REASON, loadGroupChatPayload, saveGroupChatMetadata, saveGroupChatPayload } from './chat-payload-transport.js';
+import { CHAT_COMMIT_REASON, coldSwipesEnabled, discardColdChatPayload, loadGroupChatPayload, saveGroupChatMetadata, saveGroupChatPayload } from './chat-payload-transport.js';
 
 export {
     selected_group,
@@ -201,7 +201,7 @@ async function regenerateGroup() {
  * @param {string} chatId Chat ID
  * @returns {Promise<ChatFile>} Array of chat messages
  */
-async function loadGroupChat(chatId, { allowNotFound = false } = {}) {
+async function loadGroupChat(chatId, { allowNotFound = false, coldSwipes = false } = {}) {
     const normalizedChatId = String(chatId || '').trim();
     if (!normalizedChatId) {
         if (allowNotFound) {
@@ -210,7 +210,7 @@ async function loadGroupChat(chatId, { allowNotFound = false } = {}) {
         throw new Error('Invalid group chat payload request');
     }
 
-    return loadGroupChatPayload({ id: normalizedChatId, allowNotFound });
+    return loadGroupChatPayload({ id: normalizedChatId, allowNotFound, coldSwipes });
 }
 
 async function hasPersistedGroupChats(groupId) {
@@ -288,93 +288,97 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
     }
 
     const chat_id = group.chat_id;
-    const data = await loadGroupChat(chat_id, { allowNotFound: allowNewChat });
-    if (!isStillActive()) {
-        return;
-    }
-    const metadata = data?.[0]?.chat_metadata ?? {};
-    const freshChat = allowNewChat && !metadata.tainted && (!Array.isArray(data) || !data.length);
+    const data = await loadGroupChat(chat_id, { allowNotFound: allowNewChat, coldSwipes: coldSwipesEnabled() });
+    try {
+        if (!isStillActive()) {
+            return;
+        }
+        const metadata = data?.[0]?.chat_metadata ?? {};
+        const freshChat = allowNewChat && !metadata.tainted && (!Array.isArray(data) || !data.length);
 
-    // Remove chat file header if present
-    if (Array.isArray(data) && data.length && Object.hasOwn(data[0], 'chat_metadata')) {
-        data.shift();
-    }
+        // Remove chat file header if present
+        if (Array.isArray(data) && data.length && Object.hasOwn(data[0], 'chat_metadata')) {
+            data.shift();
+        }
 
-    // Add integrity slug if missing
-    if (!metadata.integrity) {
-        metadata.integrity = uuidv4();
-    }
+        // Add integrity slug if missing
+        if (!metadata.integrity) {
+            metadata.integrity = uuidv4();
+        }
 
-    await loadItemizedPrompts(getCurrentChatId());
-    if (!isStillActive()) {
-        return;
-    }
+        await loadItemizedPrompts(getCurrentChatId());
+        if (!isStillActive()) {
+            return;
+        }
 
-    updateChatMetadata(metadata, true);
-    if (group && Array.isArray(group.members) && freshChat) {
-        chat.splice(0, chat.length);
-        resetChatSurfaceView();
-        // Greeting hooks may save metadata; establish the chat and its identity first.
-        await saveGroupChat(groupId, false, false, CHAT_COMMIT_REASON.MAINTENANCE);
-        for (let member of group.members) {
+        updateChatMetadata(metadata, true);
+        if (group && Array.isArray(group.members) && freshChat) {
+            replaceChatContents(data);
+            resetChatSurfaceView();
+            // Greeting hooks may save metadata; establish the chat and its identity first.
+            await saveGroupChat(groupId, false, false, CHAT_COMMIT_REASON.MAINTENANCE);
+            for (let member of group.members) {
+                if (!isStillActive()) {
+                    return;
+                }
+                const character = characters.find(x => x.avatar === member || x.name === member);
+                if (!character) {
+                    continue;
+                }
+
+                const mes = await getFirstCharacterMessage(character);
+                if (!isStillActive()) {
+                    return;
+                }
+
+                // No first message
+                if (!(mes?.mes)) {
+                    continue;
+                }
+
+                const messageId = chat.length;
+                await withChatSurfaceStructureMutation(async () => {
+                    chat.push(mes);
+                    await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'first_message');
+                    addOneMessage(mes);
+                });
+                await finalizeMessageContent(messageId, event_types.CHARACTER_MESSAGE_RENDERED, 'first_message');
+            }
+            await saveGroupChat(groupId, false, false, CHAT_COMMIT_REASON.MAINTENANCE);
+        } else if (Array.isArray(data) && data.length) {
             if (!isStillActive()) {
                 return;
             }
-            const character = characters.find(x => x.avatar === member || x.name === member);
-            if (!character) {
-                continue;
-            }
-
-            const mes = await getFirstCharacterMessage(character);
+            replaceChatContents(data);
+            chat.forEach(ensureMessageMediaIsArray);
+            resetChatSurfaceView();
+            await printMessages({ frontendSourceHandoffEvent: event_types.CHAT_CHANGED });
             if (!isStillActive()) {
                 return;
             }
 
-            // No first message
-            if (!(mes?.mes)) {
-                continue;
+        }
+
+        if (!isStillActive()) {
+            return;
+        }
+
+        if (groupChanged) {
+            await editGroup(groupId, true, false);
+            if (!isStillActive()) {
+                return;
             }
-
-            const messageId = chat.length;
-            await withChatSurfaceStructureMutation(async () => {
-                chat.push(mes);
-                await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'first_message');
-                addOneMessage(mes);
-            });
-            await finalizeMessageContent(messageId, event_types.CHARACTER_MESSAGE_RENDERED, 'first_message');
-        }
-        await saveGroupChat(groupId, false, false, CHAT_COMMIT_REASON.MAINTENANCE);
-    } else if (Array.isArray(data) && data.length) {
-        if (!isStillActive()) {
-            return;
-        }
-        replaceChatContents(data);
-        chat.forEach(ensureMessageMediaIsArray);
-        resetChatSurfaceView();
-        await printMessages({ frontendSourceHandoffEvent: event_types.CHAT_CHANGED });
-        if (!isStillActive()) {
-            return;
         }
 
-    }
-
-    if (!isStillActive()) {
-        return;
-    }
-
-    if (groupChanged) {
-        await editGroup(groupId, true, false);
-        if (!isStillActive()) {
-            return;
+        if (reload) {
+            select_group_chats(groupId, true);
         }
-    }
 
-    if (reload) {
-        select_group_chats(groupId, true);
+        await eventSource.emit(event_types.CHAT_CHANGED, getCurrentChatId());
+        if (freshChat) await eventSource.emit(event_types.GROUP_CHAT_CREATED);
+    } finally {
+        discardColdChatPayload(data);
     }
-
-    await eventSource.emit(event_types.CHAT_CHANGED, getCurrentChatId());
-    if (freshChat) await eventSource.emit(event_types.GROUP_CHAT_CREATED);
 }
 
 /**

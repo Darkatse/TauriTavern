@@ -49,6 +49,8 @@ function createCommitHost({
     maxFrameBytes = 4,
     onAppend,
     finishSizeDelta = 0,
+    publishedSizeDelta = 0,
+    expectedColdSourceId,
     finishError,
     abortError,
     expectedTarget = TARGET,
@@ -65,7 +67,7 @@ function createCommitHost({
             calls.push({ command, args, options });
 
             if (command === 'begin_chat_commit') {
-                assert.deepEqual(args, { target: expectedTarget, force: expectedForce });
+                assert.deepEqual(args, { target: expectedTarget, force: expectedForce, ...(expectedColdSourceId === undefined ? {} : { coldSourceId: expectedColdSourceId }) });
                 return { sessionId: SESSION_ID, maxFrameBytes };
             }
 
@@ -87,7 +89,7 @@ function createCommitHost({
                 if (finishError) {
                     throw finishError;
                 }
-                return { size: args.expectedSize + finishSizeDelta };
+                return { acceptedSize: args.expectedSize + finishSizeDelta, size: args.expectedSize + publishedSizeDelta };
             }
 
             if (command === 'abort_chat_commit') {
@@ -377,7 +379,7 @@ test('chat payload commit does not abort after finish already published', async 
     const restore = installRuntime('Mozilla/5.0 (Macintosh)', host.invoke);
 
     try {
-        await assert.rejects(() => commit([{ mes: 'finished' }]), /unexpected size/i);
+        await assert.rejects(() => commit([{ mes: 'finished' }]), /unexpected accepted size/i);
         assert.equal(host.calls.filter((call) => call.command === 'abort_chat_commit').length, 0);
     } finally {
         restore();
@@ -435,3 +437,29 @@ for (const route of [
         }
     });
 }
+
+
+test('cold commit preserves the captured marker and accepts an expanded published size', async () => {
+    const payload = [{ chat_metadata:{} }, {mes:'active',swipe_id:1,swipes:[null,'active'],swipe_info:[null,{}],tt_swipe_cold:{sourceId:7,record:3}}];
+    const host = createCommitHost({ expectedColdSourceId:7, publishedSizeDelta:500 });
+    const restore = installRuntime('Desktop', host.invoke);
+    try {
+        const pending = commit(payload);
+        payload[1].tt_swipe_cold.sourceId = 99;
+        payload[1].mes = 'later';
+        await pending;
+        const sent = Buffer.concat(host.frames.map(frame => Buffer.from(frame.bytes))).toString();
+        const message = JSON.parse(sent.split('\n')[1]);
+        assert.equal(message.tt_swipe_cold.sourceId, 7);
+        assert.equal(message.mes, 'active');
+    } finally { restore(); }
+});
+
+test('mixed cold sources reject before starting a commit', async () => {
+    const host = createCommitHost();
+    const restore = installRuntime('Desktop', host.invoke);
+    try {
+        await assert.rejects(commit([{tt_swipe_cold:{sourceId:7,record:1}},{tt_swipe_cold:{sourceId:8,record:2}}]), /mixed cold swipe sources/);
+        assert.equal(host.calls.length, 0);
+    } finally { restore(); }
+});

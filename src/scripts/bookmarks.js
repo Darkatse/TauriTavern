@@ -3,6 +3,7 @@ import {
     saveChat,
     system_message_types,
     syncSwipeToMes,
+    hydrateChatMessageSwipes,
     this_chid,
     openCharacterChat,
     chat_metadata,
@@ -253,6 +254,8 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
         return;
     }
 
+    if (selectedSwipeId !== null && !await hydrateChatMessageSwipes(mesId)) return;
+    if (chat[mesId] !== lastMes) return;
     const branchChatSnapshot = getBranchChatSnapshot(mesId, { swipeId: selectedSwipeId });
     if (!branchChatSnapshot) {
         toastr.warning('Could not prepare the selected swipe for branching.', 'Branch creation failed');

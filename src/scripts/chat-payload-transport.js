@@ -10,3 +10,13 @@ export {
     saveGroupChatPayload,
     saveGroupChatMetadata,
 } from './tauri/chat/transport.js';
+
+export {
+    initializeColdSwipes,
+    coldSwipesEnabled,
+    acceptColdChatPayload,
+    discardColdChatPayload,
+    releaseCurrentSwipeSource,
+    hydrateMessageSwipes,
+    readColdSwipeRecord,
+} from './tauri/chat/cold-swipes.js';

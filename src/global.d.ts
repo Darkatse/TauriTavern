@@ -75,8 +75,9 @@ declare global {
         is_system?: boolean;
         force_avatar?: string;
         original_avatar?: string;
-        swipes?: string[];
-        swipe_info?: SwipeInfo[];
+        swipes?: (string | null)[];
+        swipe_info?: (SwipeInfo | null)[];
+        tt_swipe_cold?: { sourceId: number; record: number };
         swipe_id?: number;
         /** Present only on first-class tool result messages. */
         role?: 'tool';

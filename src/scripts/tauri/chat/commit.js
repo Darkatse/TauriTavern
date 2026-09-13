@@ -2,6 +2,7 @@ import { invoke } from '../../../tauri-bridge.js';
 import { encodeBytesToBase64 } from '../../../tauri/main/binary-utils.js';
 import { isAndroidRuntime } from '../../util/mobile-runtime.js';
 import { jsonlRecordsToByteChunks, serializeChatPayload } from './jsonl.js';
+import { coldSourceForPayload } from './cold-swipes.js';
 
 const INTEGRITY = 'integrity';
 
@@ -42,7 +43,8 @@ export async function commitChatMetadata({ target, chatMetadata }) {
 
 export async function commitChatPayload({ target, payload, force, commitReason }) {
     const records = serializeChatPayload(payload);
-    const begin = await invokeChatCommit('begin_chat_commit', { target, force });
+    const coldSourceId = coldSourceForPayload(payload);
+    const begin = await invokeChatCommit('begin_chat_commit', { target, force, ...(coldSourceId === undefined ? {} : { coldSourceId }) });
     const sessionId = String(begin?.sessionId || '').trim();
     if (!sessionId) {
         throw new Error('Host chat commit did not return a session id');
@@ -86,7 +88,7 @@ export async function commitChatPayload({ target, payload, force, commitReason }
         expectedSize: offset,
         commitReason,
     });
-    if (Number(finished?.size) !== offset) {
-        throw new Error(`Host chat commit returned unexpected size ${finished?.size}`);
+    if (Number(finished?.acceptedSize) !== offset) {
+        throw new Error(`Host chat commit returned unexpected accepted size ${finished?.acceptedSize}`);
     }
 }
