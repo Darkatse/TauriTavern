@@ -6,6 +6,19 @@ import { Window } from 'happy-dom';
 
 const root = fileURLToPath(new URL('../../src/', import.meta.url));
 
+// These tests drive the application through happyDOM.waitUntilComplete(), which drains its
+// pending timers in real time: one navigation run schedules ~57 s of nominal delay, mostly
+// 1 s save debounces and 200 ms utility delays.
+//
+// What the assertions actually depend on is the order these timers fire in, not their length,
+// so every delay is divided rather than capped. happy-dom's own timer.maxTimeout caps instead,
+// which flattens a 200 ms debounce and a 1 s save onto the same deadline and stops the debounce
+// from coalescing two saves; dividing keeps them 5:1 apart at any factor. The suite passes
+// unchanged from 5 up to 400, where the shortest window is down to 1 ms, so the work inside
+// these windows is sub-millisecond and 10 keeps ~20 ms of room for a much slower machine.
+// Past 10 the remaining gain is under 0.1 s, which is not worth spending that margin on.
+const TIMER_SCALE = 10;
+
 export function createBrowserRuntime() {
     const window = new Window({
         url: 'http://localhost/',
@@ -21,6 +34,9 @@ export function createBrowserRuntime() {
     // Exercise actual module evaluation without starting chat/settings IO through DOM-ready callbacks.
     window.jQuery.holdReady(true);
     window.structuredClone = structuredClone;
+    const scheduleTimeout = window.setTimeout.bind(window);
+    window.setTimeout = (callback, delay = 0, ...args) =>
+        scheduleTimeout(callback, Math.ceil(delay / TIMER_SCALE), ...args);
     window.fetch = async () => { throw new Error('Unexpected network request'); };
     window.localStorage.setItem('tt:embeddedRuntimeProfile', 'off');
     const listeners = new Map();
