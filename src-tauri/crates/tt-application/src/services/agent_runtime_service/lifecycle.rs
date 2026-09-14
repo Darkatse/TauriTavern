@@ -329,6 +329,37 @@ impl AgentRuntimeService {
         })
     }
 
+    /// Marks runs that a killed process left nonterminal as cancelled.
+    ///
+    /// Runs without an in-memory handle cannot make progress anymore, and sync
+    /// rejects their history while they stay nonterminal. Called once at startup
+    /// before any run can be active.
+    pub async fn recover_interrupted_runs(&self) -> Result<(), ApplicationError> {
+        let _admission = self.run_lifecycle_lock.lock().await;
+        for run in self.run_repository.list_all_runs().await? {
+            if run.status.is_terminal() || self.active_runs.read().await.contains_key(&run.id) {
+                continue;
+            }
+
+            let mut run = run;
+            run.status = AgentRunStatus::Cancelled;
+            run.updated_at = Utc::now();
+            self.run_repository.save_run(&run).await?;
+            self.event(
+                &run.id,
+                AgentRunEventLevel::Warn,
+                "run_interrupted_recovered",
+                json!({ "status": AgentRunStatus::Cancelled }),
+            )
+            .await?;
+            tracing::warn!(
+                "Agent run {} was left nonterminal by an interrupted process and has been marked cancelled",
+                run.id
+            );
+        }
+        Ok(())
+    }
+
     pub async fn read_events(
         &self,
         dto: AgentReadEventsDto,

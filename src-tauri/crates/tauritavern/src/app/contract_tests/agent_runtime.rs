@@ -9,6 +9,7 @@ mod execution;
 mod mcp;
 mod model_binding;
 mod persist;
+mod recovery;
 mod resume;
 mod task_details;
 

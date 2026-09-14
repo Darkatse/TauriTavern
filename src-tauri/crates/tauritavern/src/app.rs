@@ -68,6 +68,15 @@ pub fn spawn_initialization(
 
                 backend_readiness.mark_ready();
 
+                if let Err(error) = state
+                    .services
+                    .agent_runtime_service
+                    .recover_interrupted_runs()
+                    .await
+                {
+                    tracing::warn!("Failed to recover interrupted Agent runs: {error}");
+                }
+
                 state
                     .services
                     .settings_service
