@@ -16,6 +16,10 @@
     opacity: 1;
 }
 
+#loader {
+    transition: all var(--animation-duration-2x) ease-out;
+}
+
 #load-spinner {
     --spinner-size: 2em;
     transition: all var(--animation-duration-2x) ease-out;
@@ -63,7 +67,6 @@
     gap: 4rem;
     width: 100%;
     height: 100%;
-    transition: all var(--animation-duration-2x) ease-out;
 }
 
 #loader.splash-screen #load-spinner {

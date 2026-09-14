@@ -10291,11 +10291,13 @@ export async function displayPastChats(hightlightNames = []) {
         debouncedDisplay(searchQuery);
     });
 
-    // UX convenience: Focus the search field when the Manage Chat Files view opens.
-    setTimeout(function () {
-        const textSearchElement = $('#select_chat_search');
-        textSearchElement.trigger('click').trigger('focus').trigger('select');
-    }, 200);
+    // On mobile, let the user choose when to open the keyboard.
+    if (!isMobile()) {
+        setTimeout(function () {
+            const textSearchElement = $('#select_chat_search');
+            textSearchElement.trigger('click').trigger('focus').trigger('select');
+        }, 200);
+    }
 
     addChatBackupsBrowser();
 }
