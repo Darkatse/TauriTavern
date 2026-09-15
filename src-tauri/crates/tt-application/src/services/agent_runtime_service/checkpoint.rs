@@ -101,8 +101,7 @@ impl AgentRuntimeService {
         self.run_repository
             .save_run_checkpoint(&checkpoint.run.id, &bytes)
             .await?;
-        // Keep the persisted Run nonterminal while the host finishes presentation.
-        // Sync must not export the previous checkpoint as this execution's final state.
+        // Publish matching Run metadata only after its checkpoint is saved.
         self.run_repository.save_run(&checkpoint.run).await?;
         Ok(())
     }

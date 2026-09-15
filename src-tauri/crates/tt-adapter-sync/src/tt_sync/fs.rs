@@ -108,10 +108,6 @@ fn scan_dir_recursive(
         }
 
         if file_type.is_dir() {
-            if ttsync_core::dataset::is_agent_run_root_dir(&relative) {
-                check_agent_run_sync_status(&entry_path.join("run.json"))?;
-            }
-
             if !policy.should_descend_dir(&relative) {
                 continue;
             }
@@ -121,40 +117,10 @@ fn scan_dir_recursive(
         }
 
         if file_type.is_file() && policy.contains_path(&relative) {
-            if ttsync_core::dataset::is_agent_run_index_file(&relative) {
-                check_agent_run_sync_status(&entry_path)?;
-            }
-
             entries.push(make_entry(sync_root, &entry_path)?);
         }
     }
 
-    Ok(())
-}
-
-fn check_agent_run_sync_status(path: &Path) -> Result<(), DomainError> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            // Scoped or interrupted sync can leave run artifacts without their record.
-            return Ok(());
-        }
-        Err(error) => {
-            return Err(DomainError::InternalError(format!(
-                "Failed to read agent run {}: {}",
-                path.display(),
-                error
-            )));
-        }
-    };
-    let terminal = ttsync_core::dataset::agent_run_json_is_terminal(&text)
-        .map_err(|error| DomainError::InvalidData(format!("{}: {}", path.display(), error)))?;
-    if !terminal {
-        return Err(DomainError::Conflict(format!(
-            "sync.agent_run_active: finish or stop the Agent run before synchronizing its history: {}",
-            path.display()
-        )));
-    }
     Ok(())
 }
 
@@ -222,7 +188,6 @@ mod tests {
     use ttsync_core::dataset::ResolvedDatasetPolicy;
 
     use super::scan_manifest_sync;
-    use tt_domain::errors::DomainError;
 
     fn unique_temp_root() -> PathBuf {
         std::env::temp_dir().join(format!("tauritavern-tt-sync-{}", random::<u64>()))
@@ -314,15 +279,6 @@ mod tests {
                 .join("chats")
                 .join("workspace")
                 .join("runs")
-                .join("run-done"),
-        )
-        .expect("create terminal run directory");
-        std::fs::create_dir_all(
-            root.join("_tauritavern")
-                .join("agent-workspaces")
-                .join("chats")
-                .join("workspace")
-                .join("runs")
                 .join("run-done")
                 .join("input"),
         )
@@ -337,15 +293,6 @@ mod tests {
                 .join("model-responses"),
         )
         .expect("create terminal run model responses directory");
-        std::fs::create_dir_all(
-            root.join("_tauritavern")
-                .join("agent-workspaces")
-                .join("chats")
-                .join("workspace")
-                .join("runs")
-                .join("run-active"),
-        )
-        .expect("create active run directory");
         std::fs::create_dir_all(
             root.join("_tauritavern")
                 .join("agent-workspaces")
@@ -387,17 +334,6 @@ mod tests {
                 .join("workspace")
                 .join("runs")
                 .join("run-done")
-                .join("run.json"),
-            br#"{"status":"completed"}"#,
-        )
-        .expect("write terminal run");
-        std::fs::write(
-            root.join("_tauritavern")
-                .join("agent-workspaces")
-                .join("chats")
-                .join("workspace")
-                .join("runs")
-                .join("run-done")
                 .join("events.jsonl"),
             b"{}\n",
         )
@@ -429,64 +365,14 @@ mod tests {
         std::fs::write(
             root.join("_tauritavern")
                 .join("agent-workspaces")
-                .join("chats")
-                .join("workspace")
-                .join("runs")
-                .join("run-active")
-                .join("run.json"),
-            br#"{"status":"calling_model"}"#,
-        )
-        .expect("write active run");
-        std::fs::write(
-            root.join("_tauritavern")
-                .join("agent-workspaces")
-                .join("chats")
-                .join("workspace")
-                .join("runs")
-                .join("run-active")
-                .join("events.jsonl"),
-            b"{}\n",
-        )
-        .expect("write active event");
-        std::fs::write(
-            root.join("_tauritavern")
-                .join("agent-workspaces")
                 .join("index")
                 .join("runs")
                 .join("run-done.json"),
             br#"{"status":"completed"}"#,
         )
         .expect("write terminal run index");
-        std::fs::write(
-            root.join("_tauritavern")
-                .join("agent-workspaces")
-                .join("index")
-                .join("runs")
-                .join("run-active.json"),
-            br#"{"status":"calling_model"}"#,
-        )
-        .expect("write active run index");
-
-        let context_policy = ResolvedDatasetPolicy::from_selection(&DatasetSelection::new(
-            DATASET_POLICY_VERSION,
-            vec!["agent.run_context".to_string()],
-        ))
-        .expect("resolve Agent context dataset");
-        let error = scan_manifest_sync(&root, &context_policy)
-            .expect_err("active run directory must fail the scan");
-        assert!(matches!(error, DomainError::Conflict(_)));
-        std::fs::remove_dir_all(
-            root.join("_tauritavern/agent-workspaces/chats/workspace/runs/run-active"),
-        )
-        .expect("remove active run directory");
 
         let policy = ResolvedDatasetPolicy::tauri_tavern_default();
-        let error =
-            scan_manifest_sync(&root, &policy).expect_err("active run index must fail the scan");
-        assert!(matches!(error, DomainError::Conflict(_)));
-        std::fs::remove_file(root.join("_tauritavern/agent-workspaces/index/runs/run-active.json"))
-            .expect("remove active run index");
-
         let manifest = scan_manifest_sync(&root, &policy).expect("scan manifest");
         let paths = manifest
             .entries

@@ -1007,26 +1007,23 @@ mod tests {
             .unwrap_or_default();
         assert_eq!(content_encoding, "zstd");
 
-        let agent_files: [(&str, &[u8]); 5] = [
+        // Run records are opaque sync files, including incomplete or invalid history.
+        let agent_files: [(&str, &[u8]); 4] = [
             (
-                "_tauritavern/agent-workspaces/index/runs/run-completed.json",
-                br#"{"status":"completed"}"#,
+                "_tauritavern/agent-workspaces/index/runs/run-history.json",
+                b"{invalid json",
             ),
             (
-                "_tauritavern/agent-workspaces/chats/workspace/runs/run-completed/run.json",
-                br#"{"status":"completed"}"#,
+                "_tauritavern/agent-workspaces/chats/workspace/runs/run-history/run.json",
+                br#"{"status":"calling_model"}"#,
             ),
             (
-                "_tauritavern/agent-workspaces/chats/workspace/runs/run-completed/events.jsonl",
-                b"{\"seq\":1,\"type\":\"run_completed\"}\n",
+                "_tauritavern/agent-workspaces/chats/workspace/runs/run-history/output/main.md",
+                b"Agent output.",
             ),
             (
-                "_tauritavern/agent-workspaces/chats/workspace/runs/run-completed/checkpoints/latest.json",
-                br#"{"round":3,"status":"completed"}"#,
-            ),
-            (
-                "_tauritavern/agent-workspaces/chats/workspace/runs/run-completed/output/main.md",
-                b"Completed Agent output.",
+                "_tauritavern/agent-workspaces/chats/workspace/runs/run-orphan/events.jsonl",
+                b"{}\n",
             ),
         ];
         for (relative, bytes) in agent_files {
@@ -1068,18 +1065,21 @@ mod tests {
         assert_eq!(report.local_applied.files_written, 1);
         assert!(
             !target_root
-                .join("_tauritavern/agent-workspaces/chats/workspace/runs/run-completed/run.json")
+                .join("_tauritavern/agent-workspaces/chats/workspace/runs/run-history/run.json")
                 .exists()
         );
 
         options.selection = tauri_tavern_full_selection();
+        options.mode = SyncMode::Mirror;
         let report = engine
             .pull(options, &NoopSyncObserver)
             .await
-            .expect("complete the partial Agent history");
+            .expect("mirror completes the partial Agent history");
         // The existing output stays in the manifest and does not need another transfer.
         assert_eq!(report.summary.files_total, agent_files.len());
         assert_eq!(report.local_applied.files_written, agent_files.len());
+        assert_eq!(report.summary.files_deleted, 0);
+
         let bundle_bytes = tokio::fs::read(target_root.join("default-user/chats/hello.json"))
             .await
             .expect("read bundle file");
