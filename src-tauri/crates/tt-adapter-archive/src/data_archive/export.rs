@@ -6,6 +6,8 @@ use zip::{CompressionMethod, ZipWriter};
 
 use crate::zipkit::export_file_options;
 use tt_domain::errors::DomainError;
+use tt_domain::json_merge::merge_json_value;
+use tt_domain::models::settings::UserSettings;
 
 use super::DataArchiveExportResult;
 use super::shared::{
@@ -226,6 +228,20 @@ fn write_export_entries(
             .start_file(&entry_path, file_options)
             .map_err(|error| internal_error("Failed to add file to archive", error))?;
 
+        if matches!(
+            archive_relative_path.as_str(),
+            "settings.json" | "default-user/settings.json"
+        ) {
+            let source_bytes = write_export_settings(writer, &path)?;
+            progress.advance(
+                source_bytes,
+                "zipping",
+                "Writing archive data",
+                report_progress,
+            );
+            continue;
+        }
+
         let mut source_file = File::open(&path)
             .map_err(|error| internal_error("Failed to open export source file", error))?;
         let mut on_bytes_copied = |bytes| {
@@ -243,6 +259,48 @@ fn write_export_entries(
     }
 
     Ok(())
+}
+
+fn write_export_settings(writer: &mut impl Write, path: &Path) -> Result<u64, DomainError> {
+    let user_root = path.parent().expect("settings file parent");
+    let mut settings = serde_json::json!({});
+    let mut source_bytes = 0;
+    for name in [
+        "settings.json",
+        "settings/appearance.json",
+        "settings/presets.json",
+        "settings/layout.json",
+    ] {
+        let section_path = user_root.join(name);
+        let bytes = match fs::read(&section_path) {
+            Ok(bytes) => bytes,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound && name != "settings.json" =>
+            {
+                continue;
+            }
+            Err(error) => {
+                return Err(internal_error(
+                    &format!("Failed to read {}", section_path.display()),
+                    error,
+                ));
+            }
+        };
+        // Progress uses scanned source sizes; the section files are also archived.
+        if name == "settings.json" {
+            source_bytes = bytes.len() as u64;
+        }
+        let section: UserSettings = serde_json::from_slice(&bytes).map_err(|error| {
+            DomainError::InvalidData(format!(
+                "Invalid settings {}: {error}",
+                section_path.display()
+            ))
+        })?;
+        merge_json_value(&mut settings, section.data);
+    }
+    serde_json::to_writer_pretty(writer, &settings)
+        .map_err(|error| internal_error("Failed to write settings to archive", error))?;
+    Ok(source_bytes)
 }
 
 fn archive_entry_path(archive_root_prefix: &str, archive_relative_path: &str) -> String {

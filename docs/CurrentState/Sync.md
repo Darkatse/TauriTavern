@@ -27,9 +27,9 @@ LAN Sync 与远端 TT-Sync 共用 v2 的数据集、计划、传输和提交语�
 
 核心设置、当前外观与主题、当前预设与提示词、当前布局可独立同步。当前生效配置与预设库、主题库分别选择；Persona 数据仍属于核心设置。
 
-[设置仓储](../../src-tauri/crates/tt-adapter-storage-core/src/repositories/file_settings_repository/)负责分区与旧数据迁移，API 继续提供完整设置对象。同步与归档按普通文件处理，数据集规则统一维护在 TT-Sync。
+[设置仓储](../../src-tauri/crates/tt-adapter-storage-core/src/repositories/file_settings_repository/)负责分区与旧数据迁移，API 继续提供完整设置对象。同步按普通文件处理，数据集规则统一维护在 TT-Sync；归档导出将 `settings.json` 还原为上游单体格式。
 
-两端客户端须支持分区格式。旧设置可迁入；原版 SillyTavern 无法从新格式文件或归档中直接还原完整设置。
+两端同步客户端须支持分区格式；旧设置可迁入。
 
 ## LAN 发现与信任
 
