@@ -14,6 +14,15 @@ const theme = EditorView.theme({
     '&.cm-focused': {
         outline: '1px solid var(--SmartThemeQuoteColor)',
     },
+    '.cm-content': { caretColor: 'var(--SmartThemeBodyColor)' },
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--SmartThemeBodyColor)' },
+    '.cm-selectionBackground': {
+        backgroundColor: 'color-mix(in srgb, var(--SmartThemeBodyColor) 15%, transparent)',
+    },
+    '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, ::selection': {
+        backgroundColor: 'color-mix(in srgb, var(--SmartThemeBodyColor) 25%, transparent)',
+    },
+    '::selection': { color: 'var(--SmartThemeBodyColor)' },
     '.cm-scroller': {
         fontFamily: 'inherit',
         lineHeight: 'inherit',
