@@ -311,9 +311,9 @@ TauriTavern 用户数据中的私有状态放在 `_tauritavern` 下，例如 age
 - `src-tauri/crates/tt-domain/src/models/user_directory.rs`
 - 桌面数据目录选择现状见 `docs/CurrentState/DataDirectorySelection.md`
 
-文件写入 helper 用 `persist_*` 表示文件同步后发布，用 `_blocking` 表示阻塞执行版本。`replace_file` / `replace_file_blocking` 只严格 rename 已完成写入的临时文件；`persist_file` / `persist_file_blocking` 接收原写入句柄，执行 `sync_all` 后关闭并 rename，不重新打开路径。调用方必须先 flush 自己的 buffered writer，临时文件与目标必须位于同一文件系统。设置使用 `persist_json_file`，启动时使用 `persist_json_file_blocking`；普通 `write_json_file` 保留不强制同步的原子写入，供缓存等现有调用方使用。失败向上传播，不退回覆盖复制或先删除目标再重试。
+设置分区与迁移归 `tt-adapter-storage-core` 的设置仓储，前端 API 保持完整设置对象。同步约定见 [Sync](CurrentState/Sync.md#独立设置范围)。
 
-文件同步只在完整提交时执行。当前不包含 rename 后的父目录同步，因此不承诺目录项在所有平台、文件系统上的断电持久性；文件同步失败发生在发布前。跨 adapter 的单次写入直接使用相同的标准库/Tokio 顺序，不为文件 helper 增加 storage-core 仓储依赖。
+文件写入以单文件原子发布为边界，持久化写入在发布前同步文件；失败不回退为覆盖复制。具体保证见[文件系统实现](../src-tauri/crates/tt-adapter-storage-core/src/file_system.rs)。跨 adapter 不为复用文件 helper 引入仓储依赖。
 
 ## 12. 专题文档导航
 

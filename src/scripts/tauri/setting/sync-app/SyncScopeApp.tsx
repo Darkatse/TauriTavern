@@ -45,6 +45,9 @@ export type SyncScopeHandle = {
 
 const DATASET_META: Record<string, DatasetMeta> = {
     'settings.core': { label: 'Core settings' },
+    'settings.appearance': { label: 'Appearance & theme state' },
+    'settings.presets': { label: 'Current presets & prompts' },
+    'settings.layout': { label: 'Current layout' },
     'secrets.api_keys': { label: 'API keys', tone: 'sensitive' },
     'chat.character.history': { label: 'Character chats' },
     'chat.group.metadata': { label: 'Group metadata' },
@@ -97,6 +100,9 @@ const DATASET_GROUPS: DatasetGroup[] = [
         icon: 'fa-sliders',
         datasetIds: [
             'settings.core',
+            'settings.appearance',
+            'settings.presets',
+            'settings.layout',
             'chat.character.history',
             'chat.group.metadata',
             'chat.group.history',

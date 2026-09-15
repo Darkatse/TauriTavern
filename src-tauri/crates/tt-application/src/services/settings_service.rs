@@ -61,11 +61,10 @@ impl SettingsService {
         *self.sillytavern_settings_cache.lock().await = None;
     }
 
-    pub async fn clear_cache(&self) {
+    pub async fn reload(&self) -> Result<(), tt_domain::errors::DomainError> {
+        let _guard = self.user_settings_save_lock.lock().await;
         self.clear_sillytavern_settings_cache().await;
-    }
-
-    pub async fn reload_chat_backup_settings(&self) -> Result<(), tt_domain::errors::DomainError> {
+        self.settings_repository.load_user_settings().await?;
         let settings = self.settings_repository.load_tauritavern_settings().await?;
         self.chat_backup_runtime
             .apply_chat_backup_settings(settings.chat_backups)

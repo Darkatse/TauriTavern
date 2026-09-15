@@ -397,9 +397,7 @@ impl Default for TauriTavernSettings {
 impl TauriTavernSettings {
     /// Deserializes settings while keeping backward compatibility with older
     /// `tauritavern-settings.json` schemas.
-    pub fn from_json_str_with_compat(raw: &str) -> Result<Self, serde_json::Error> {
-        let mut value: Value = serde_json::from_str(raw)?;
-
+    pub fn from_json_value_with_compat(mut value: Value) -> Result<Self, serde_json::Error> {
         if let Value::Object(map) = &mut value {
             // Migration: `avatar_persona_thumbnails_enabled` (legacy, default true) ->
             // `avatar_persona_original_images_enabled` (current, default false).
@@ -465,8 +463,8 @@ mod tests {
 
     #[test]
     fn avatar_persona_original_images_enabled_migrates_legacy_thumbnail_setting() {
-        let settings = TauriTavernSettings::from_json_str_with_compat(
-            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}},"avatar_persona_thumbnails_enabled":false}"#,
+        let settings = TauriTavernSettings::from_json_value_with_compat(
+            serde_json::json!({"updates":{"startup_popup":{"dismissed_release_token":null}},"avatar_persona_thumbnails_enabled":false}),
         )
         .expect("parse settings");
 
@@ -475,8 +473,8 @@ mod tests {
 
     #[test]
     fn new_settings_default_when_loading_older_settings() {
-        let settings = TauriTavernSettings::from_json_str_with_compat(
-            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}}}"#,
+        let settings = TauriTavernSettings::from_json_value_with_compat(
+            serde_json::json!({"updates":{"startup_popup":{"dismissed_release_token":null}}}),
         )
         .expect("parse settings");
 
@@ -494,12 +492,10 @@ mod tests {
 
     #[test]
     fn chat_backup_settings_default_missing_nested_fields() {
-        let settings = TauriTavernSettings::from_json_str_with_compat(
-            r#"{
-                "updates":{"startup_popup":{"dismissed_release_token":null}},
-                "chat_backups":{"max_total_files":12}
-            }"#,
-        )
+        let settings = TauriTavernSettings::from_json_value_with_compat(serde_json::json!({
+            "updates":{"startup_popup":{"dismissed_release_token":null}},
+            "chat_backups":{"max_total_files":12}
+        }))
         .expect("parse settings");
 
         assert!(settings.chat_backups.automatic_enabled);

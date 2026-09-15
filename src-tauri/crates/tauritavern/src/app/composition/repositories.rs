@@ -191,6 +191,8 @@ pub(super) async fn build(
         data_directory.settings().to_path_buf(),
         default_user_settings,
     ));
+    // Materialize settings sections before background sync can scan the data directory.
+    settings_repository.load_user_settings().await?;
 
     let prompt_cache_repository: Arc<dyn PromptCacheRepository> = Arc::new(
         FilePromptCacheRepository::new(data_root.join("_tauritavern").join("prompt-cache")),
