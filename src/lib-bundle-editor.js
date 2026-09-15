@@ -203,6 +203,7 @@ export function createCodeMirrorView(parent, { doc, readOnly, ariaLabel, onChang
 
     return {
         getValue: () => view.state.doc.toString(),
+        getSelection: () => view.state.selection.main,
         reset(value, disabled = false) {
             view.setState(createState(value, disabled));
         },

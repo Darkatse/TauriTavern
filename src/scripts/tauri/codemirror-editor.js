@@ -16,7 +16,7 @@ let enabled = null;
  * @property {() => void} requestMeasure
  * @property {() => void} reset
  * @property {() => void} updateReadOnly
- * @property {(options?: { input?: boolean }) => boolean} flush
+ * @property {(options?: { input?: boolean, selection?: boolean }) => boolean} flush
  * @property {() => void} destroy
  */
 
@@ -124,14 +124,16 @@ export async function mountCodeMirrorEditor(source, { onChange, signal } = {}) {
         reset() {
             editor.reset(source.value, source.disabled || source.readOnly);
         },
-        flush({ input = false } = {}) {
+        flush({ input = false, selection = false } = {}) {
             const value = editor.getValue();
-            if (source.value === value) {
-                return false;
+            const changed = source.value !== value;
+            if (changed) source.value = value;
+            if (selection) {
+                const { from, to, anchor, head } = editor.getSelection();
+                source.setSelectionRange(from, to, anchor > head ? 'backward' : 'forward');
             }
-            source.value = value;
-            input && source.dispatchEvent(new Event('input', { bubbles: true }));
-            return true;
+            if (changed && input) source.dispatchEvent(new Event('input', { bubbles: true }));
+            return changed;
         },
         destroy() {
             mountedEditors.delete(source);
