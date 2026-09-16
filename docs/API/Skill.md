@@ -31,10 +31,11 @@ const installed = await skill.list();
 | 方法 | 返回内容 |
 | --- | --- |
 | `pickImportArchive()` | 单个归档输入，取消时为 `null` |
-| `pickImportArchives()` | 选择归档并递归返回其中的 Skill 输入，取消时为 `null` |
-| `pickImportDirectories()` | 桌面端选择父目录并递归返回其中的 Skill 输入，取消时为 `null` |
+| `pickImportArchives()` | 选择一个或多个归档来源，取消时为 `null` |
+| `pickImportDirectories()` | 桌面端选择一个或多个目录来源，取消时为 `null` |
+| `discoverImports({ input })` | 递归展开目录或归档中的 Skill；其他输入返回单个候选 |
 | `downloadImport({ url })` | 下载 HTTPS raw `SKILL.md`，返回单文件导入输入 |
-| `discardPickedImport(input?)` | 释放放弃导入的临时归档；无参数时释放全部待处理输入 |
+| `discardPickedImport(input?)` | 释放指定来源的临时资源；无参数时释放整批来源 |
 
 导入输入有三种形式：
 
@@ -56,11 +57,11 @@ type SkillImportInput =
     };
 ```
 
-`skillRoot` 标识后端在多 Skill 归档中发现的相对根路径。目录命中普通文件 `SKILL.md` 后即作为 Skill 根，不再扫描其内部。`source` 记录来源关系，角色卡和预设用它关联嵌入的 Skill。ZIP 和历史 `.ttskill` 归档都可导入，导出统一使用 ZIP。
+`skillRoot` 是归档内的 Skill 根路径；发现过程遇到 `SKILL.md` 后不再深入该目录。`source` 记录来源关系，角色卡和预设用它关联嵌入的 Skill。ZIP 和历史 `.ttskill` 归档都可导入，导出统一使用 ZIP。
 
 ## 预览与安装
 
-先用 `previewImport({ input, targetScope? })` 查看内容和同名冲突，再调用 `installImport({ input, targetScope?, conflictStrategy? })`。
+选取来源后调用 `discoverImports({ input })`，对返回的候选逐项调用 `previewImport({ input, targetScope? })` 查看内容和同名冲突，再调用 `installImport({ input, targetScope?, conflictStrategy? })`。
 
 | `conflict.kind` | 含义 | 安装方式 |
 | --- | --- | --- |
@@ -70,8 +71,6 @@ type SkillImportInput =
 
 安装结果的 `action` 为 `installed`、`replaced`、`already_installed` 或 `skipped`。多个来源逐项预览和安装，每项单独提交并返回结果；已完成的安装会保留。
 
-集合 ZIP 在发现时解压一次，预览和安装复用临时内容。`installImport` 完成后释放该候选的引用，同包所有候选处理完后清理解压目录和移动端临时归档。用户放弃预览或取消整个批次时，由调用方使用 `discardPickedImport` 释放。
-
-复数选择器按来源发现；失败来源仍保留为一个输入，`previewImport` 会报告原始发现错误，其他来源继续预览。同包候选通过 `path` 和 `skillRoot` 区分，失败标签显示归档名和包内路径。
+同一宿主一次处理一批导入。单项安装不会释放来源；整批结束或取消后，调用方须等待进行中的请求完成，再调用 `discardPickedImport()`，成功或失败均需清理。
 
 模型在 Run 中通过 `skill.list`、`skill.read`、`skill.search` 和 `skill.run_script` 使用已安装内容，运行过程见 [Agent 工具](../Agent/ToolSystem.md)。
