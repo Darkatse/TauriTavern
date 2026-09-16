@@ -72,7 +72,7 @@ jobs:
             portable: true
             portable_name: windows-x64
           - platform: windows-latest
-            target_args: --debug --bundles nsis --features devtools-pilot --config src-tauri/crates/tauritavern/tauri.pilot.conf.json
+            target_args: --debug --bundles nsis --features devtools-pilot
             artifact_prefix: debug-
             portable: false
           - platform: macos-latest
@@ -80,7 +80,7 @@ jobs:
             artifact_prefix: ""
             portable: false
           - platform: macos-latest
-            target_args: --target x86_64-apple-darwin --debug --bundles dmg --features devtools-pilot --config src-tauri/crates/tauritavern/tauri.pilot.conf.json
+            target_args: --target x86_64-apple-darwin --debug --bundles dmg --features devtools-pilot
             artifact_prefix: debug-
             portable: false
           - platform: macos-latest
@@ -88,7 +88,7 @@ jobs:
             artifact_prefix: ""
             portable: false
           - platform: macos-latest
-            target_args: --target aarch64-apple-darwin --debug --bundles dmg --features devtools-pilot --config src-tauri/crates/tauritavern/tauri.pilot.conf.json
+            target_args: --target aarch64-apple-darwin --debug --bundles dmg --features devtools-pilot
             artifact_prefix: debug-
             portable: false
           - platform: ubuntu-22.04
@@ -168,7 +168,9 @@ jobs:
         with:
           projectPath: src-tauri/crates/tauritavern
           tauriScript: node ../../../scripts/tauri-app.mjs
-          args: ${{ startsWith(matrix.platform, 'ubuntu-22.04') && format('{0} --config {1}', matrix.target_args, steps.linux-version.outputs.config_path) || matrix.target_args }}
+          args: >-
+            ${{ startsWith(matrix.platform, 'ubuntu-22.04') && format('{0} --config {1}', matrix.target_args, steps.linux-version.outputs.config_path) || matrix.target_args }}
+            ${{ matrix.artifact_prefix == 'debug-' && format('--config "{0}/src-tauri/crates/tauritavern/tauri.pilot.conf.json"', github.workspace) || '' }}
           uploadWorkflowArtifacts: true
           uploadUpdaterJson: false
           uploadUpdaterSignatures: false
