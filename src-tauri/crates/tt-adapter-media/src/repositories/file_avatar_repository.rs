@@ -3,6 +3,7 @@ use image::ImageFormat;
 use mime_guess::from_path;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tokio::fs as tokio_fs;
 
 use crate::persona_cards;
@@ -18,6 +19,7 @@ const AVATAR_HEIGHT: u32 = 600;
 /// File-based implementation of AvatarRepository
 pub struct FileAvatarRepository {
     avatars_dir: PathBuf,
+    persona_cache: Arc<Mutex<persona_cards::PersonaCache>>,
 }
 
 impl FileAvatarRepository {
@@ -26,7 +28,10 @@ impl FileAvatarRepository {
         // Create directory if it doesn't exist
         fs::create_dir_all(&avatars_dir).expect("Failed to create avatars directory");
 
-        Self { avatars_dir }
+        Self {
+            avatars_dir,
+            persona_cache: Arc::default(),
+        }
     }
 
     /// Process an image file with optional cropping
@@ -98,9 +103,16 @@ impl AvatarRepository for FileAvatarRepository {
             .parent()
             .expect("user directory")
             .to_path_buf();
-        tokio::task::spawn_blocking(move || persona_cards::read_personas(&root))
-            .await
-            .map_err(|error| DomainError::InternalError(error.to_string()))?
+        let cache = Arc::clone(&self.persona_cache);
+        tokio::task::spawn_blocking(move || {
+            // ponytail: library reads serialize here; split only if contention becomes measurable.
+            let mut cache = cache.lock().map_err(|error| {
+                DomainError::InternalError(format!("Persona cache lock poisoned: {error}"))
+            })?;
+            cache.read_personas(&root)
+        })
+        .await
+        .map_err(|error| DomainError::InternalError(error.to_string()))?
     }
 
     async fn save_persona(&self, avatar: &str, persona: &Persona) -> Result<(), DomainError> {
@@ -350,7 +362,7 @@ mod tests {
         let repository = FileAvatarRepository::new(root.join("User Avatars"));
         let source = dir.path().join("incoming.png");
         write_png(&source);
-        let persona = Persona {
+        let mut persona = Persona {
             name: Some("中文 🌸".into()),
             description: Some(serde_json::json!({"description":"Keep", "title":"Title"})),
         };
@@ -368,7 +380,30 @@ mod tests {
             .unwrap();
         assert_eq!(repository.get_personas().await.unwrap()["one.png"], persona);
         let card_path = root.join("User Avatars/one.png");
+        let modified = fs::metadata(&card_path).unwrap().modified().unwrap();
+        // First change only the size, then only mtime; neither needs a cache notification.
+        for (name, modified) in [
+            ("Alice", modified),
+            ("Robin", modified + std::time::Duration::from_secs(2)),
+        ] {
+            persona.name = Some(name.into());
+            let image = fs::read(&card_path).unwrap();
+            fs::write(
+                &card_path,
+                persona_cards::with_persona(&image, &persona).unwrap(),
+            )
+            .unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&card_path)
+                .unwrap()
+                .set_modified(modified)
+                .unwrap();
+            assert_eq!(repository.get_personas().await.unwrap()["one.png"], persona);
+        }
         // One broken card must not hide or rewrite the other cards.
+        fs::copy(&card_path, root.join("User Avatars/broken.png")).unwrap();
+        assert_eq!(repository.get_personas().await.unwrap().len(), 2);
         fs::write(
             root.join("User Avatars/broken.png"),
             b"\x89PNG\r\n\x1a\n\0\0\0\x10iTXt",

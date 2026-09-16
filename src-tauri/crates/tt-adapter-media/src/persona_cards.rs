@@ -1,6 +1,8 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path};
+use std::time::SystemTime;
 
 use serde_json::Value;
 use tt_adapter_storage_core::file_system::{
@@ -14,6 +16,46 @@ use tt_domain::models::persona::{Persona, Personas, take_personas};
 
 const KEYWORD: &str = "persona";
 const DEFAULT_AVATAR: &[u8] = include_bytes!("../../../../default/content/user-default.png");
+
+struct CachedPersona {
+    size: u64,
+    modified: SystemTime,
+    persona: Persona,
+}
+
+#[derive(Default)]
+pub(crate) struct PersonaCache {
+    entries: BTreeMap<String, CachedPersona>,
+}
+
+impl PersonaCache {
+    pub(crate) fn read_personas(&mut self, user_root: &Path) -> Result<Personas, DomainError> {
+        let personas = read_personas_with(user_root, |id, path| {
+            let metadata = fs::metadata(path).map_err(io_error)?;
+            let size = metadata.len();
+            let modified = metadata.modified().map_err(io_error)?;
+            if let Some(cached) = self.entries.get(id)
+                && cached.size == size
+                && cached.modified == modified
+            {
+                return Ok(cached.persona.clone());
+            }
+            let persona = read(path)?;
+            self.entries.insert(
+                id.to_owned(),
+                CachedPersona {
+                    size,
+                    modified,
+                    persona: persona.clone(),
+                },
+            );
+            Ok(persona)
+        })?;
+        // Deleted or unreadable cards must not retain stale data.
+        self.entries.retain(|id, _| personas.contains_key(id));
+        Ok(personas)
+    }
+}
 
 pub(crate) fn avatar_path(directory: &Path, id: &str) -> Result<std::path::PathBuf, DomainError> {
     let mut components = Path::new(id).components();
@@ -134,6 +176,13 @@ pub(crate) fn import_persona(
 
 /// One PNG is one Persona. A bad card is reported without hiding healthy cards.
 pub fn read_personas(user_root: &Path) -> Result<Personas, DomainError> {
+    read_personas_with(user_root, |_, path| read(path))
+}
+
+fn read_personas_with(
+    user_root: &Path,
+    mut read_persona: impl FnMut(&str, &Path) -> Result<Persona, DomainError>,
+) -> Result<Personas, DomainError> {
     let directory = user_root.join("User Avatars");
     let entries = match fs::read_dir(&directory) {
         Ok(entries) => entries,
@@ -155,7 +204,7 @@ pub fn read_personas(user_root: &Path) -> Result<Personas, DomainError> {
             .file_name()
             .into_string()
             .map_err(|_| DomainError::InvalidData("Persona filename is not UTF-8".into()))?;
-        match read(&path) {
+        match read_persona(&id, &path) {
             Ok(persona) => {
                 personas.insert(id, persona);
             }
