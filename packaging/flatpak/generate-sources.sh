@@ -6,6 +6,7 @@ readonly BUILDER_TOOLS_REPOSITORY="https://github.com/flatpak/flatpak-builder-to
 readonly BUILDER_TOOLS_COMMIT="737c0085912f9f7dabf9341d4608e2a77a51a73a"
 readonly PNPM_OUTPUT="packaging/flatpak/pnpm-sources.json"
 readonly CARGO_OUTPUT="packaging/flatpak/cargo-sources.json"
+readonly FLATPAK_MANIFEST="packaging/flatpak/com.tauritavern.client.yml"
 
 die() {
     printf 'error: %s\n' "$*" >&2
@@ -24,7 +25,7 @@ case "${1:-}" in
         ;;
 esac
 
-for command_name in git uv; do
+for command_name in git node uv; do
     command -v "$command_name" >/dev/null 2>&1 ||
         die "$command_name is required"
 done
@@ -32,6 +33,19 @@ done
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" ||
     die "run this script from the TauriTavern Git checkout"
 cd "$repo_root"
+
+package_manager="$(node -p 'require("./package.json").packageManager')"
+if [[ "$package_manager" =~ ^pnpm@([0-9]+)\.[0-9]+\.[0-9]+$ ]]; then
+    pnpm_major="${BASH_REMATCH[1]}"
+    pnpm_version="${package_manager#pnpm@}"
+    pnpm_store_version="v$pnpm_major"
+else
+    die "package.json must declare an exact pnpm version"
+fi
+
+grep -F "url: https://registry.npmjs.org/pnpm/-/pnpm-$pnpm_version.tgz" \
+    "$FLATPAK_MANIFEST" >/dev/null ||
+    die "$FLATPAK_MANIFEST does not match package.json pnpm version"
 
 temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/tauritavern-flatpak-sources.XXXXXX")"
 cleanup() {
@@ -52,7 +66,7 @@ UV_LINK_MODE=copy uv run \
     --project "$tools_dir/node" \
     flatpak-node-generator \
     pnpm \
-    --pnpm-store-version v10 \
+    --pnpm-store-version "$pnpm_store_version" \
     --node-sdk-extension org.freedesktop.Sdk.Extension.node22//25.08 \
     --output "$pnpm_generated" \
     pnpm-lock.yaml

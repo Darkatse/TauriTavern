@@ -29,6 +29,8 @@ export TAURITAVERN_BUILD_BRANCH
 export TAURITAVERN_BUILD_REVISION
 
 mkdir -p .flatpak-bin
+# pnpm 11 publishes this entry point without an executable bit.
+chmod 0755 "$PNPM_CLI"
 ln -s "../$PNPM_CLI" .flatpak-bin/pnpm
 export PATH="$PWD/.flatpak-bin:$PATH"
 

@@ -22,7 +22,12 @@ if ! command -v corepack >/dev/null 2>&1; then
 fi
 
 corepack enable
-corepack prepare pnpm@9 --activate
+package_manager="$(node -p 'require(process.argv[1]).packageManager' "$REPO_ROOT/package.json")"
+[[ "$package_manager" == pnpm@* ]] || {
+  echo "error: package.json does not declare pnpm." >&2
+  exit 1
+}
+corepack prepare "$package_manager" --activate
 
 if ! command -v rustup >/dev/null 2>&1; then
   curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal

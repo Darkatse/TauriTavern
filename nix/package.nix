@@ -13,7 +13,7 @@
   nodejs_22,
   openssl,
   pkg-config,
-  pnpm_10,
+  pnpm_11,
   pnpmConfigHook,
   webkitgtk_4_1,
   wrapGAppsHook4,
@@ -40,16 +40,16 @@ rustPlatform.buildRustPackage (finalAttrs: {
       version
       src
       ;
-    pnpm = pnpm_10;
+    pnpm = pnpm_11;
     fetcherVersion = 3;
-    hash = "sha256-sIDLugDbiYNERUDMDjZv1RyoVPFGZZz5ussYcb/YmnY=";
+    hash = "sha256-EUFwuJmJt9T+qEITMg/XDiT57CDVLDBR2Z2XJvTyCsc=";
   };
 
   nativeBuildInputs = [
     cargo-tauri.hook
     nodejs_22
     pkg-config
-    pnpm_10
+    pnpm_11
     pnpmConfigHook
     wrapGAppsHook4
   ];
