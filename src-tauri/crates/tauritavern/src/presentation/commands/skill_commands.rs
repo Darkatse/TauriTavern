@@ -80,6 +80,36 @@ pub async fn list_skill_files(
 }
 
 #[tauri::command]
+pub async fn discover_skill_imports(
+    input: SkillImportInput,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<SkillImportInput>, CommandError> {
+    log_command("discover_skill_imports");
+
+    app_state
+        .services
+        .skill_service
+        .discover_imports(input)
+        .await
+        .map_err(map_command_error("Failed to discover Agent Skill imports"))
+}
+
+#[tauri::command]
+pub async fn discard_skill_import_archive(
+    path: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("discard_skill_import_archive");
+
+    app_state
+        .services
+        .skill_service
+        .discard_import_archive(&path)
+        .await
+        .map_err(map_command_error("Failed to discard Agent Skill archive"))
+}
+
+#[tauri::command]
 pub async fn preview_skill_import(
     input: SkillImportInput,
     target_scope: Option<SkillScope>,

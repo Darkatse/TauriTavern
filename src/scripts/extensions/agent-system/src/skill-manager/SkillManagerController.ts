@@ -1,6 +1,6 @@
 import { DEFAULT_PROFILE_ID } from '../constants';
 import { skillScopeLabel } from '../skill-scope';
-import { installSkillImports, manualSkillImportInput, previewSkillImports, skillImportItemLabel } from './SkillImportOperation';
+import { discoverSkillImports, installSkillImports, manualSkillImportInput, previewSkillImports, skillImportItemLabel } from './SkillImportOperation';
 import {
     deleteSkillMutation,
     exportSkillArchive,
@@ -29,6 +29,7 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
         selectedProfileId: DEFAULT_PROFILE_ID,
         sections: [],
         importDraft: emptySkillImportDraft(sequence),
+        importBusy: false,
         scopeDialog: { mode: '' },
         sourceDialog: { mode: '' },
         searchQuery: '',
@@ -74,7 +75,7 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
         if (snapshot.preview && changed.includes(snapshot.preview.sectionId)) closePreview();
         if (snapshot.importDraft.sectionId && changed.includes(snapshot.importDraft.sectionId)) {
             try {
-                await finishDraft();
+                await clearDraft();
             } catch (error) {
                 report(error);
             }
@@ -175,15 +176,16 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
     async function clearDraft(expectedId = snapshot.importDraft.id): Promise<void> {
         if (snapshot.importDraft.id !== expectedId) return;
         const hasItems = snapshot.importDraft.items.length > 0;
-        if (hasItems) await deps.getSkillApi().discardPickedImport();
-        if (snapshot.importDraft.id === expectedId) commit({ importDraft: emptySkillImportDraft(++sequence) });
-    }
-
-    async function finishDraft(expectedId = snapshot.importDraft.id): Promise<void> {
-        if (snapshot.importDraft.id !== expectedId) return;
-        const hasItems = snapshot.importDraft.items.length > 0;
         commit({ importDraft: emptySkillImportDraft(++sequence) });
-        if (hasItems) await deps.getSkillApi().discardPickedImport();
+        // A running operation releases its sources after its current IO finishes.
+        if (hasItems && !snapshot.importBusy) {
+            commit({ importBusy: true });
+            try {
+                await deps.getSkillApi().discardPickedImport();
+            } finally {
+                commit({ importBusy: false });
+            }
+        }
     }
 
     function patchImportItem(draftId: number, index: number, patch: Partial<SkillImportItem>): void {
@@ -194,21 +196,32 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
         } });
     }
 
-    async function previewInputs(target: SkillSection, inputs: readonly TauriTavernSkillImportInput[]): Promise<void> {
+    async function prepareImports(
+        target: SkillSection,
+        pickInputs: () => Promise<readonly TauriTavernSkillImportInput[] | null>,
+    ): Promise<void> {
+        if (snapshot.importBusy) return;
         if (!target.scope) throw new Error(deps.tr('skillScopeNotFound', { id: target.id }));
+        const api = deps.getSkillApi();
         const draft: SkillImportDraft = {
-            id: ++sequence,
-            sectionId: target.id,
-            installing: false,
-            items: inputs.map(input => ({ input, preview: null, error: '', conflictStrategy: 'skip' })),
+            ...emptySkillImportDraft(++sequence), sectionId: target.id, scope: target.scope,
         };
-        commit({ importDraft: draft });
+        commit({ importDraft: draft, importBusy: true });
+        const isActive = () => !disposed && snapshot.importDraft.id === draft.id;
         try {
+            const inputs = await pickInputs();
+            if (!isActive()) return;
+            if (!inputs) return await clearDraft(draft.id);
+            const items = await discoverSkillImports({
+                inputs, discover: request => api.discoverImports(request), isActive, errorText: deps.errorText,
+            });
+            if (!isActive()) return;
+            commit({ importDraft: { ...draft, items } });
             await previewSkillImports({
-                items: draft.items,
+                items,
                 targetScope: target.scope,
-                preview: request => deps.getSkillApi().previewImport(request),
-                isActive: () => !disposed && snapshot.importDraft.id === draft.id,
+                preview: request => api.previewImport(request),
+                isActive,
                 onPreview: (index, preview) => patchImportItem(draft.id, index, { preview }),
                 onError: (index, error) => {
                     patchImportItem(draft.id, index, { error: deps.errorText(error) });
@@ -216,19 +229,14 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
                 },
             });
         } catch (error) {
-            try {
-                await finishDraft(draft.id);
-            } catch (cleanupError) {
-                report(cleanupError);
-            }
+            await clearDraft(draft.id);
             throw error;
+        } finally {
+            if (!isActive() || !snapshot.importDraft.items.some(item => item.preview && !item.error)) {
+                await api.discardPickedImport();
+            }
+            commit({ importBusy: false });
         }
-    }
-
-    async function pickAndPreview(target: SkillSection, kind: 'archive' | 'directory'): Promise<void> {
-        const api = deps.getSkillApi();
-        const inputs = kind === 'directory' ? await api.pickImportDirectories() : await api.pickImportArchives();
-        if (inputs) await previewInputs(target, inputs);
     }
 
     async function confirmSource(): Promise<void> {
@@ -242,7 +250,7 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
                 : manualSkillImportInput(request.content, deps.tr);
             if (snapshot.sourceDialog.mode && snapshot.sourceDialog.id === request.id) {
                 commit({ sourceDialog: { mode: '' } });
-                await previewInputs(target, [input]);
+                await prepareImports(target, () => Promise.resolve([input]));
             }
         } catch (error) {
             if (snapshot.sourceDialog.mode && snapshot.sourceDialog.id === request.id) {
@@ -253,16 +261,19 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
     }
 
     async function confirmScope(): Promise<void> {
+        if (snapshot.importBusy) return;
         const request = snapshot.scopeDialog;
         if (!request.mode) return;
         const target = availableSection(request.selectedSectionId);
         if (request.mode === 'import') {
-            await clearDraft();
             commit({ scopeDialog: { mode: '' } });
             if (request.importKind === 'manual' || request.importKind === 'download') {
+                await clearDraft();
                 commit({ sourceDialog: { id: ++sequence, mode: request.importKind, sectionId: target.id, content: '', url: '', loading: false } });
             } else {
-                await pickAndPreview(target, request.importKind);
+                const api = deps.getSkillApi();
+                await prepareImports(target, () => request.importKind === 'directory'
+                    ? api.pickImportDirectories() : api.pickImportArchives());
             }
             return;
         }
@@ -271,53 +282,37 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
     }
 
     async function installDraft(): Promise<void> {
+        if (snapshot.importBusy) return;
         const draft = snapshot.importDraft;
-        const target = availableSection(draft.sectionId);
         const items = draft.items.filter(item => item.preview && !item.error);
-        if (items.length === 0) throw new Error(deps.tr('previewSkillImportFirst'));
-        commit({ importDraft: { ...draft, installing: true } });
-        let results: TauriTavernSkillInstallResult[];
-        let hostCommitted = false;
+        if (!draft.scope || !draft.sectionId || items.length === 0) throw new Error(deps.tr('previewSkillImportFirst'));
+        commit({ importBusy: true, importDraft: { ...draft, installing: true } });
         try {
-            results = await installSkillImports({
+            const results = await installSkillImports({
                 items,
-                targetScope: target.scope,
+                targetScope: draft.scope,
                 install: request => deps.getSkillApi().installImport(request),
-                onInstalled: () => { hostCommitted = true; },
                 syncPortability: deps.syncInstallPortability,
                 onError: (item, error) => {
                     deps.logError('Failed to install Skill import', error);
                     deps.toastError(deps.tr('skillImportItemFailed', { name: skillImportItemLabel(item, deps.tr), error: deps.errorText(error) }));
                 },
             });
-        } catch (error) {
-            if (!hostCommitted && snapshot.importDraft.id === draft.id) commit({ importDraft: { ...draft, installing: false } });
-            if (!hostCommitted) throw error;
-            try {
-                await finishDraft(draft.id);
-            } catch (cleanupError) {
-                report(cleanupError);
+            if (draft.items.length === 1) {
+                const result = results[0];
+                if (!result) throw new Error('Skill install returned no result');
+                deps.toastSuccess(deps.tr('skillInstallToast', { action: deps.translateInstallAction(result.action), name: result.name }));
+            } else {
+                if (results.length) deps.toastSuccess(deps.tr('skillBatchInstallToast', { count: results.length, total: draft.items.length }));
+                const failures = draft.items.length - results.length;
+                if (failures) deps.toastError(deps.tr('skillBatchInstallFailed', { count: failures }));
             }
-            await refreshCommittedSections([target.id]);
-            throw error;
+        } finally {
+            await clearDraft(draft.id);
+            await deps.getSkillApi().discardPickedImport();
+            commit({ importBusy: false });
+            await refreshCommittedSections([draft.sectionId]);
         }
-        let cleanupError: unknown = null;
-        try {
-            await finishDraft(draft.id);
-        } catch (error) {
-            cleanupError = error;
-        }
-        await refreshCommittedSections([target.id]);
-        if (draft.items.length === 1) {
-            const result = results[0];
-            if (!result) throw new Error('Skill install returned no result');
-            deps.toastSuccess(deps.tr('skillInstallToast', { action: deps.translateInstallAction(result.action), name: result.name }));
-        } else {
-            if (results.length) deps.toastSuccess(deps.tr('skillBatchInstallToast', { count: results.length, total: draft.items.length }));
-            const failures = draft.items.length - results.length;
-            if (failures) deps.toastError(deps.tr('skillBatchInstallFailed', { count: failures }));
-        }
-        if (cleanupError) throw cleanupError;
     }
 
     async function loadPreviewFiles(previewId: number): Promise<void> {
@@ -421,7 +416,7 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
         init,
         dispose() {
             if (disposed) return;
-            const discard = snapshot.importDraft.items.length > 0;
+            const discard = snapshot.importDraft.items.length > 0 && !snapshot.importBusy;
             disposed = true;
             unsubscribes.splice(0).reverse().forEach(unsubscribe => unsubscribe());
             listeners.clear();
@@ -446,6 +441,7 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
             await Promise.all(snapshot.sections.map(item => refreshSection(item.id)));
         }),
         openImportScopeDialog(kind) {
+            if (snapshot.importBusy) return;
             const target = snapshot.sections.find(item => item.available);
             if (!target) { fire(() => Promise.reject(new Error(deps.tr('skillScopeUnavailable')))); return; }
             commit({ scopeDialog: { mode: 'import', importKind: kind, selectedSectionId: target.id } });

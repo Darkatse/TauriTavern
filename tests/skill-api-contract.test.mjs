@@ -65,11 +65,6 @@ test('api.skill forwards install conflict strategy without implicit replace', as
     assert.equal(calls[1].args.request.conflictStrategy, 'replace');
 });
 
-
-
-
-
-
 test('api.skill writes text files with optimistic hash', async () => {
     const { calls, skill } = await installHarness();
 
@@ -104,35 +99,6 @@ test('api.skill rejects non-string file writes', async () => {
 });
 
 
-test('api.skill picks multiple archives and Skill folders through desktop dialogs', async () => {
-    const calls = [];
-    const { skill } = await installHarness({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            return args.options.directory
-                ? ['/tmp/skill-one', '/tmp/skill-two']
-                : ['/tmp/one.zip', '/tmp/two.ttskill'];
-        },
-    });
-
-    assert.deepEqual(await skill.pickImportArchives(), [
-        { kind: 'archiveFile', path: '/tmp/one.zip' },
-        { kind: 'archiveFile', path: '/tmp/two.ttskill' },
-    ]);
-    assert.deepEqual(await skill.pickImportDirectories(), [
-        { kind: 'directory', path: '/tmp/skill-one' },
-        { kind: 'directory', path: '/tmp/skill-two' },
-    ]);
-    assert.deepEqual(calls.map(({ command }) => command), ['plugin:dialog|open', 'plugin:dialog|open']);
-    assert.equal(calls[0].args.options.multiple, true);
-    assert.equal(calls[0].args.options.directory, false);
-    assert.equal(calls[1].args.options.multiple, true);
-    assert.equal(calls[1].args.options.directory, true);
-    assert.equal(calls[1].args.options.recursive, true);
-});
-
-
-
 test('api.skill cleans staged Android archives when a later selection cannot be staged', async () => {
     await withNavigatorUserAgent('Mozilla/5.0 (Linux; Android 15)', async () => {
         const cleanups = [];
@@ -155,32 +121,34 @@ test('api.skill cleans staged Android archives when a later selection cannot be 
 });
 
 
-test('api.skill stages and cleans multiple iOS archives', async () => {
+test('api.skill imports shared iOS candidates and releases all sources at batch end', async () => {
     await withNavigatorUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', async () => {
-        const calls = [];
+        const released = [];
         const cleanups = [];
         const { skill } = await installHarness({
             safeInvoke: async (command, args) => {
-                calls.push({ command, args });
-                return {
-                    cancelled: false,
-                    filePaths: ['/cache/one.zip', '/cache/two.zip'],
-                };
+                if (command === 'ios_pick_skill_import_archives') return { cancelled: false, filePaths: ['/cache/skills.zip', '/cache/broken.zip'] };
+                if (command === 'discover_skill_imports') {
+                    if (args.input.path.endsWith('broken.zip')) throw new Error('Invalid ZIP');
+                    return ['one', 'two'].map(skill_root => ({ ...args.input, skill_root }));
+                }
+                if (command === 'install_skill_import') return { name: args.request.input.skill_root };
+                if (command === 'discard_skill_import_archive') released.push(args.path);
+                return {};
             },
-            removeTemporaryFile: async (filePath) => cleanups.push(filePath),
+            removeTemporaryFile: async path => cleanups.push(path),
         });
-
-        assert.deepEqual(await skill.pickImportArchives(), [
-            { kind: 'archiveFile', path: '/cache/one.zip' },
-            { kind: 'archiveFile', path: '/cache/two.zip' },
-        ]);
-        assert.deepEqual(calls[0], {
-            command: 'ios_pick_skill_import_archives',
-            args: { multiple: true },
-        });
-
+        const sources = await skill.pickImportArchives();
+        const candidates = await skill.discoverImports({ input: sources[0] });
+        await assert.rejects(skill.discoverImports({ input: sources[1] }), /Invalid ZIP/);
+        const installed = [];
+        for (const input of candidates) installed.push((await skill.installImport({ input })).name);
+        assert.deepEqual(installed, ['one', 'two']);
+        assert.deepEqual(released, []);
+        assert.deepEqual(cleanups, []);
         await skill.discardPickedImport();
-        assert.deepEqual(cleanups, ['/cache/one.zip', '/cache/two.zip']);
+        assert.deepEqual(released, ['/cache/skills.zip', '/cache/broken.zip']);
+        assert.deepEqual(cleanups, released);
         await assert.rejects(() => skill.pickImportDirectories(), /only available on desktop/);
     });
 });

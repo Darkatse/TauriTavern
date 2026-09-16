@@ -69,6 +69,7 @@ export type SkillImportDraft = {
     id: number;
     items: readonly SkillImportItem[];
     installing: boolean;
+    scope: TauriTavernSkillScope | null;
     sectionId: SkillSectionId | '';
 };
 
@@ -121,6 +122,7 @@ export type SkillManagerSnapshot = {
     selectedProfileId: string;
     sections: readonly SkillSection[];
     importDraft: SkillImportDraft;
+    importBusy: boolean;
     scopeDialog: SkillScopeDialog;
     sourceDialog: SkillSourceDialog;
     searchQuery: string;
@@ -207,5 +209,5 @@ export function skillArchiveBlob(content: string): Blob {
 }
 
 export function emptySkillImportDraft(id: number): SkillImportDraft {
-    return { id, items: [], installing: false, sectionId: '' };
+    return { id, items: [], installing: false, scope: null, sectionId: '' };
 }

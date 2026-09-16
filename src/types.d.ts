@@ -958,6 +958,7 @@ type TauriTavernSkillImportInput =
     | {
         kind: 'archiveFile';
         path: string;
+        skillRoot?: string;
         source?: unknown;
     }
     | {
@@ -1025,6 +1026,7 @@ type TauriTavernSkillApi = {
     pickImportArchive: () => Promise<TauriTavernSkillImportInput | null>;
     pickImportArchives: () => Promise<TauriTavernSkillImportInput[] | null>;
     pickImportDirectories: () => Promise<TauriTavernSkillImportInput[] | null>;
+    discoverImports: (options: { input: TauriTavernSkillImportInput }) => Promise<TauriTavernSkillImportInput[]>;
     discardPickedImport: (input?: TauriTavernSkillImportInput | null) => Promise<void>;
     downloadImport: (options: { url: string }) => Promise<TauriTavernSkillImportInput>;
     previewImport: (options: {

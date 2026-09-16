@@ -62,6 +62,7 @@ function createViewController() {
             subtitle: 'Global', scope: { kind: 'global' }, skills: [skill('writer')], loading: false,
         }],
         importDraft: emptySkillImportDraft(0),
+        importBusy: false,
         scopeDialog: { mode: 'import', importKind: 'archive', selectedSectionId: 'global' },
         sourceDialog: { mode: '' },
         searchQuery: '',

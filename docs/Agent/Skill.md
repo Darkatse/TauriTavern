@@ -27,7 +27,7 @@ description: 检查场景中的人物动机与叙事衔接。
 
 ## 安装与作用域
 
-Skill Manager 可以从本地目录或 ZIP 导入，预览内容后安装；支持一次选择多个来源。角色卡和预设也可以携带 Skill。导出得到包含原始文件的 ZIP。
+Skill Manager 可从目录或 ZIP 递归发现 Skill，逐项预览和安装；支持一次选择多个来源。角色卡和预设也可以携带 Skill。导出得到包含原始文件的 ZIP。
 
 Skill 可以属于全局、预设、Profile 或角色。运行时按 `global → preset → profile → character` 解析，同名 Skill 由靠后的作用域覆盖，再按 Profile 的 `skills.visible` 和 `deny` 筛选。
 

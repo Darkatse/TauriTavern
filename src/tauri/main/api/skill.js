@@ -24,7 +24,7 @@ function normalizePickedImportPaths(value) {
         return null;
     }
 
-    return values.map((path) => requireNonEmptyString(path, 'Skill import path'));
+    return [...new Set(values.map((path) => requireNonEmptyString(path, 'Skill import path')))];
 }
 
 /**
@@ -39,20 +39,9 @@ function createSkillApi({
     materializeAndroidSkillImportArchive,
     removeTemporaryFile,
 }) {
-    /** @type {Map<string, () => Promise<void>>} */
+    // One active picked-import batch; add batch ownership only if concurrent imports are supported.
+    /** @type {Map<string, (() => Promise<void>) | null>} */
     const pendingPickedImports = new Map();
-
-    function pickedImportPath(input) {
-        if (input === null || input === undefined) {
-            return null;
-        }
-        try {
-            const normalized = normalizeSkillImportInput(input);
-            return normalized.kind === 'archiveFile' ? normalized.path : null;
-        } catch {
-            return null;
-        }
-    }
 
     function rememberPickedImport(input, cleanup) {
         pendingPickedImports.set(input.path, cleanup);
@@ -60,23 +49,40 @@ function createSkillApi({
     }
 
     async function discardPickedImport(input = null) {
-        const pickedPath = pickedImportPath(input);
-        const paths = input === null || input === undefined
+        const selected = input == null ? null : normalizeSkillImportInput(input);
+        const paths = selected === null
             ? [...pendingPickedImports.keys()]
-            : pickedPath ? [pickedPath] : [];
+            : selected.kind === 'archiveFile' ? [selected.path] : [];
 
         for (const path of paths) {
             const cleanup = pendingPickedImports.get(path);
-            if (!cleanup) {
-                continue;
-            }
             pendingPickedImports.delete(path);
             try {
-                await cleanup();
+                await safeInvoke('discard_skill_import_archive', { path });
+            } catch (error) {
+                console.warn('Failed to cleanup extracted Skill import archive:', error);
+            }
+            try {
+                await cleanup?.();
             } catch (error) {
                 console.warn('Failed to cleanup staged Skill import archive:', error);
             }
         }
+    }
+
+    async function discoverImports(options) {
+        const input = normalizeSkillImportInput(options?.input);
+        if (input.kind !== 'directory' && input.kind !== 'archiveFile') return [input];
+        if (input.kind === 'archiveFile' && !pendingPickedImports.has(input.path)) {
+            rememberPickedImport(input, null);
+        }
+        const discovered = await safeInvoke('discover_skill_imports', {
+            input: toSkillImportCommandInput(input),
+        });
+        if (!Array.isArray(discovered) || discovered.length === 0) {
+            throw new Error('Skill import discovery returned no Skills');
+        }
+        return discovered.map(normalizeSkillImportInput);
     }
 
     async function stageAndroidSkillImportArchive(contentUri) {
@@ -157,28 +163,28 @@ function createSkillApi({
     async function pickImportArchiveInputs(multiple) {
         await discardPickedImport();
 
+        let inputs;
         if (isAndroidRuntime()) {
-            return pickAndroidSkillImportArchives(multiple);
+            inputs = await pickAndroidSkillImportArchives(multiple);
+        } else if (isIosRuntime()) {
+            inputs = await pickIosSkillImportArchives(multiple);
+        } else {
+            const paths = normalizePickedImportPaths(await safeInvoke('plugin:dialog|open', {
+                options: {
+                    title: multiple ? 'Import Agent Skill Archives' : 'Import Agent Skill',
+                    multiple,
+                    directory: false,
+                    filters: [
+                        {
+                            name: 'Agent Skill Archive',
+                            extensions: ['zip', 'ttskill'],
+                        },
+                    ],
+                },
+            }));
+            inputs = paths?.map((path) => rememberPickedImport({ kind: 'archiveFile', path }, null)) ?? null;
         }
-
-        if (isIosRuntime()) {
-            return pickIosSkillImportArchives(multiple);
-        }
-
-        const paths = normalizePickedImportPaths(await safeInvoke('plugin:dialog|open', {
-            options: {
-                title: multiple ? 'Import Agent Skill Archives' : 'Import Agent Skill',
-                multiple,
-                directory: false,
-                filters: [
-                    {
-                        name: 'Agent Skill Archive',
-                        extensions: ['zip', 'ttskill'],
-                    },
-                ],
-            },
-        }));
-        return paths?.map((path) => ({ kind: 'archiveFile', path })) ?? null;
+        return inputs;
     }
 
     async function list(options = {}) {
@@ -232,25 +238,16 @@ function createSkillApi({
         const request = requirePlainObject(options, 'skill import preview request');
         const input = normalizeSkillImportInput(request.input);
         const targetScope = normalizeSkillScope(request.targetScope ?? request.target_scope, 'targetScope');
-        try {
-            return await safeInvoke('preview_skill_import', {
-                input: toSkillImportCommandInput(input),
-                ...(targetScope ? { targetScope } : {}),
-            });
-        } catch (error) {
-            await discardPickedImport(request.input);
-            throw error;
-        }
+        return safeInvoke('preview_skill_import', {
+            input: toSkillImportCommandInput(input),
+            ...(targetScope ? { targetScope } : {}),
+        });
     }
 
     async function installImport(request) {
-        try {
-            return await safeInvoke('install_skill_import', {
-                request: normalizeSkillInstallRequest(request),
-            });
-        } finally {
-            await discardPickedImport(request?.input);
-        }
+        return safeInvoke('install_skill_import', {
+            request: normalizeSkillInstallRequest(request),
+        });
     }
 
     async function readFile(options) {
@@ -322,6 +319,7 @@ function createSkillApi({
         pickImportArchives,
         pickImportDirectories,
         discardPickedImport,
+        discoverImports,
         downloadImport,
         previewImport,
         installImport,

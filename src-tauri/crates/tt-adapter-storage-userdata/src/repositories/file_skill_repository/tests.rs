@@ -171,6 +171,106 @@ async fn installs_inline_skill_and_reads_file() {
 }
 
 #[tokio::test]
+async fn discovers_nested_skill_collections_in_directories_and_archives() {
+    let source_root = temp_root("discover-source");
+    for (path, content) in [
+        ("one/SKILL.md", "---\nname: one\ndescription: Test.\n---\n"),
+        (
+            "one/examples/SKILL.md",
+            "---\nname: not-a-package\ndescription: Example.\n---\n",
+        ),
+        ("nested/bad/SKILL.md", "invalid frontmatter"),
+        (
+            "nested/deep/two/SKILL.md",
+            "---\nname: two\ndescription: Test.\n---\n",
+        ),
+    ] {
+        let file = source_root.join(path);
+        tokio_fs::create_dir_all(file.parent().expect("fixture parent"))
+            .await
+            .expect("create skill root");
+        tokio_fs::write(file, content)
+            .await
+            .expect("write SKILL.md");
+    }
+
+    let repository_root = temp_root("discover-repository");
+    let repository = FileSkillRepository::new(repository_root.clone());
+    let directory_inputs = repository
+        .discover_imports(SkillImportInput::Directory {
+            path: source_root.to_string_lossy().into_owned(),
+            source: json!({"kind": "test"}),
+        })
+        .await
+        .expect("discover directory skills");
+    assert_eq!(directory_inputs.len(), 3);
+    let archive_path = repository_root.join("skills.zip");
+    tokio_fs::write(
+        &archive_path,
+        archive::export_skill_dir(&source_root).expect("build collection archive"),
+    )
+    .await
+    .expect("write collection archive");
+    let archive_inputs = repository
+        .discover_imports(SkillImportInput::ArchiveFile {
+            path: archive_path.to_string_lossy().into_owned(),
+            skill_root: None,
+            source: json!({"kind": "test"}),
+        })
+        .await
+        .expect("discover archive skills");
+    assert_eq!(archive_inputs.len(), 3);
+    // Preview and install must use the retained extraction, not reopen the ZIP.
+    tokio_fs::remove_file(&archive_path)
+        .await
+        .expect("remove source archive");
+
+    let mut names = std::collections::BTreeSet::new();
+    for input in &archive_inputs {
+        let preview = repository
+            .preview_import(input.clone(), global_scope())
+            .await;
+        if matches!(input, SkillImportInput::ArchiveFile { skill_root: Some(root), .. } if root == "nested/bad")
+        {
+            assert!(preview.is_err());
+            continue;
+        }
+        preview.expect("preview from shared extraction");
+        let installed = repository
+            .install_import(SkillInstallRequest {
+                input: input.clone(),
+                target_scope: global_scope(),
+                conflict_strategy: None,
+            })
+            .await
+            .expect("install from shared extraction");
+        names.insert(installed.name);
+    }
+    assert_eq!(names, ["one", "two"].map(str::to_string).into());
+
+    repository
+        .discard_import_archive(&archive_path.to_string_lossy())
+        .await
+        .expect("discard archive");
+    assert!(
+        tokio_fs::read_dir(repository.staging_root())
+            .await
+            .expect("read staging")
+            .next_entry()
+            .await
+            .expect("read staging entry")
+            .is_none()
+    );
+
+    tokio_fs::remove_dir_all(source_root)
+        .await
+        .expect("cleanup source");
+    tokio_fs::remove_dir_all(repository_root)
+        .await
+        .expect("cleanup repository");
+}
+
+#[tokio::test]
 async fn large_skill_reads_return_a_line_preview() {
     let root = temp_root("read-budget");
     let repository = FileSkillRepository::new(root.clone());
@@ -1279,6 +1379,7 @@ async fn exported_skill_archive_can_be_reimported() {
         .preview_import(
             SkillImportInput::ArchiveFile {
                 path: archive_path.to_string_lossy().to_string(),
+                skill_root: None,
                 source: json!({"kind": "test"}),
             },
             global_scope(),
