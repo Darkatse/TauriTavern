@@ -1,5 +1,6 @@
 mod host_resources;
 mod persistence;
+pub mod persona_cards;
 mod repositories;
 mod thumbnails;
 mod user_media_store;

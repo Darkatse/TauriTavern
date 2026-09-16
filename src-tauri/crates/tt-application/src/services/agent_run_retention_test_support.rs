@@ -55,7 +55,7 @@ impl SettingsRepository for TestSettingsRepository {
         Err(unused_settings_method("load_user_settings"))
     }
 
-    async fn create_snapshot(&self) -> Result<(), DomainError> {
+    async fn create_snapshot(&self, _settings: &UserSettings) -> Result<(), DomainError> {
         Err(unused_settings_method("create_snapshot"))
     }
 
@@ -65,10 +65,6 @@ impl SettingsRepository for TestSettingsRepository {
 
     async fn load_snapshot(&self, _name: &str) -> Result<UserSettings, DomainError> {
         Err(unused_settings_method("load_snapshot"))
-    }
-
-    async fn restore_snapshot(&self, _name: &str) -> Result<(), DomainError> {
-        Err(unused_settings_method("restore_snapshot"))
     }
 
     async fn get_sillytavern_settings_signature(

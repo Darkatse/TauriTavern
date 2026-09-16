@@ -6,7 +6,8 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use super::fields::{
-    APPEARANCE_FILE, DYNAMIC_THEME_FILE, LAYOUT_FILE, PRESETS_FILE, UserSettingsSections,
+    APPEARANCE_FILE, DYNAMIC_THEME_FILE, LAYOUT_FILE, PERSONA_STATE_FILE, PRESETS_FILE,
+    UserSettingsSections,
 };
 use crate::file_system::persist_json_file_blocking;
 use tt_domain::errors::DomainError;
@@ -34,6 +35,11 @@ pub(super) fn load_user(root: &Path, defaults: &UserSettings) -> Result<UserSett
         ),
         (PRESETS_FILE, &mut sections.presets, defaults.presets),
         (LAYOUT_FILE, &mut sections.layout, defaults.layout),
+        (
+            PERSONA_STATE_FILE,
+            &mut sections.persona_state,
+            defaults.persona_state,
+        ),
     ] {
         if section.as_object().is_some_and(|fields| !fields.is_empty()) {
             persist_changed(&root.join(name), section)?;
@@ -55,6 +61,7 @@ pub(super) fn save_user(root: &Path, settings: &UserSettings) -> Result<(), Doma
     persist_changed(&root.join(APPEARANCE_FILE), &sections.appearance)?;
     persist_changed(&root.join(PRESETS_FILE), &sections.presets)?;
     persist_changed(&root.join(LAYOUT_FILE), &sections.layout)?;
+    persist_changed(&root.join(PERSONA_STATE_FILE), &sections.persona_state)?;
     persist_changed(&root.join("settings.json"), &sections.core)
 }
 

@@ -76,6 +76,7 @@ export {};
  *   | 'get_all_characters'
  *   | 'get_all_groups'
  *   | 'get_avatars'
+ *   | 'get_personas'
  *   | 'get_assets_library'
  *   | 'get_background_folders'
  *   | 'get_character'

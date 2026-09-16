@@ -16,7 +16,7 @@ use tt_ports::repositories::settings_repository::{SettingsAggregateSignature, Se
 mod fields;
 mod sections;
 
-use fields::{APPEARANCE_FILE, LAYOUT_FILE, PRESETS_FILE};
+use fields::{APPEARANCE_FILE, LAYOUT_FILE, PERSONA_STATE_FILE, PRESETS_FILE};
 
 pub struct FileSettingsRepository {
     base_directory: PathBuf,
@@ -270,9 +270,8 @@ impl SettingsRepository for FileSettingsRepository {
             .map_err(|error| DomainError::InternalError(error.to_string()))?
     }
 
-    async fn create_snapshot(&self) -> Result<(), DomainError> {
+    async fn create_snapshot(&self, settings: &UserSettings) -> Result<(), DomainError> {
         let snapshots_dir = self.ensure_snapshots_directory_exists().await?;
-        let settings = self.load_user_settings().await?;
         let timestamp = self.get_timestamp_ms();
         let snapshot_file = snapshots_dir.join(format!("settings_{}.json", timestamp));
 
@@ -339,19 +338,18 @@ impl SettingsRepository for FileSettingsRepository {
         Ok(settings)
     }
 
-    async fn restore_snapshot(&self, name: &str) -> Result<(), DomainError> {
-        let settings = self.load_snapshot(name).await?;
-        self.save_user_settings(&settings).await?;
-
-        Ok(())
-    }
-
     async fn get_sillytavern_settings_signature(
         &self,
     ) -> Result<SettingsAggregateSignature, DomainError> {
         let mut entries = Vec::new();
 
-        for name in ["settings.json", APPEARANCE_FILE, PRESETS_FILE, LAYOUT_FILE] {
+        for name in [
+            "settings.json",
+            APPEARANCE_FILE,
+            PRESETS_FILE,
+            LAYOUT_FILE,
+            PERSONA_STATE_FILE,
+        ] {
             Self::push_file_signature(
                 &mut entries,
                 name.to_string(),
@@ -363,6 +361,33 @@ impl SettingsRepository for FileSettingsRepository {
         for dir_name in SILLYTAVERN_SETTINGS_AGGREGATE_DIRECTORIES {
             self.push_directory_signature(&mut entries, dir_name)
                 .await?;
+        }
+
+        let avatars_dir = self.base_directory.join("User Avatars");
+        match fs::read_dir(&avatars_dir).await {
+            Ok(mut avatars) => {
+                while let Some(avatar) = avatars
+                    .next_entry()
+                    .await
+                    .map_err(|error| DomainError::InternalError(error.to_string()))?
+                {
+                    if avatar
+                        .file_type()
+                        .await
+                        .map_err(|error| DomainError::InternalError(error.to_string()))?
+                        .is_file()
+                    {
+                        Self::push_file_signature(
+                            &mut entries,
+                            format!("User Avatars/{}", avatar.file_name().to_string_lossy()),
+                            &avatar.path(),
+                        )
+                        .await?;
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(DomainError::InternalError(error.to_string())),
         }
 
         entries.sort_by(|left, right| left.label.cmp(&right.label));
@@ -502,8 +527,7 @@ mod tests {
                 "oai_settings": {"preset_settings_openai": "Local", "temp_openai": 0.7},
                 "selected_proxy": {"name": "Local proxy", "url": "https://local.example"},
                 "power_user": {
-                    "theme": "Local theme", "charListGrid": true,
-                    "personas": {"alice.png": "Alice"}
+                    "theme": "Local theme", "charListGrid": true
                 },
                 "accountStorage": {"SelectedNavTab": "characters", "plugin.data": "keep"}
             }),
@@ -534,13 +558,13 @@ mod tests {
                 stamp
             );
         }
-        repository.create_snapshot().await.unwrap();
+        repository.create_snapshot(&settings).await.unwrap();
         let snapshot = repository.get_snapshots().await.unwrap().remove(0);
 
         // Incoming core settings carry no appearance, preset or layout fields.
         let incoming = json!({
             "username": "Remote",
-            "power_user": {"personas": settings.data["power_user"]["personas"]},
+            "power_user": {},
             "accountStorage": {"plugin.data": "keep"}
         });
         fs::write(&core_path, incoming.to_string()).unwrap();
@@ -562,7 +586,8 @@ mod tests {
         );
 
         fs::write(dir.path().join(APPEARANCE_FILE), b"{broken").unwrap();
-        repository.restore_snapshot(&snapshot.name).await.unwrap();
+        let restored = repository.load_snapshot(&snapshot.name).await.unwrap();
+        repository.save_user_settings(&restored).await.unwrap();
         assert_eq!(
             repository.load_user_settings().await.unwrap().data,
             settings.data

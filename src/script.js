@@ -94,7 +94,6 @@ import {
     clearSettingsSaveBaseline,
     isSettingsPatchConflictError,
     prepareSettingsSavePayload,
-    requireSettingsRevision,
     trySaveSettingsDelta,
 } from './scripts/tauri/setting/settings-delta-save.js';
 
@@ -9775,7 +9774,6 @@ async function saveSettingsNow(loopCounter = 0) {
         const preparedPayload = prepareSettingsSavePayload(payload);
         const headers = getRequestHeaders();
         const deltaResult = await trySaveSettingsDelta(preparedPayload, headers);
-        let savedRevision = deltaResult.saved ? deltaResult.revision : null;
 
         if (!deltaResult.saved) {
             const saveSettingsRequest = await compressRequest({
@@ -9789,19 +9787,18 @@ async function saveSettingsNow(loopCounter = 0) {
             if (!result.ok) {
                 throw new Error(`Failed to save settings: ${result.statusText}`);
             }
-
-            if (deltaResult.reason === 'fallback') {
-                savedRevision = requireSettingsRevision(await result.json());
-            }
         }
 
-        if (savedRevision) {
-            captureSettingsSaveBaseline(preparedPayload.value, savedRevision);
-        } else {
+        if (!deltaResult.saved) {
             clearSettingsSaveBaseline();
         }
         settings = payload;
         await eventSource.emit(event_types.SETTINGS_UPDATED);
+        if (deltaResult.saved && deltaResult.personaErrors) {
+            for (const [id, message] of Object.entries(deltaResult.personaErrors)) {
+                toastr.error(`${id}: ${message}`, t`Persona could not be saved`);
+            }
+        }
         return true;
     } catch (error) {
         console.error('Error saving settings:', error);

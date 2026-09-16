@@ -53,7 +53,7 @@ const DATASET_META: Record<string, DatasetMeta> = {
     'chat.group.metadata': { label: 'Group metadata' },
     'chat.group.history': { label: 'Group chats' },
     'character.cards': { label: 'Character cards' },
-    'character.avatars': { label: 'User avatars' },
+    'character.avatars': { label: 'Personas' },
     'world.info': { label: 'World info' },
     'preset.openai': { label: 'OpenAI presets' },
     'preset.novelai': { label: 'NovelAI presets' },

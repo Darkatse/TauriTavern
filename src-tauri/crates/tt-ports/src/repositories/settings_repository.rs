@@ -22,10 +22,9 @@ pub trait SettingsRepository: Send + Sync {
     async fn save_user_settings(&self, settings: &UserSettings) -> Result<(), DomainError>;
     async fn load_user_settings(&self) -> Result<UserSettings, DomainError>;
 
-    async fn create_snapshot(&self) -> Result<(), DomainError>;
+    async fn create_snapshot(&self, settings: &UserSettings) -> Result<(), DomainError>;
     async fn get_snapshots(&self) -> Result<Vec<SettingsSnapshot>, DomainError>;
     async fn load_snapshot(&self, name: &str) -> Result<UserSettings, DomainError>;
-    async fn restore_snapshot(&self, name: &str) -> Result<(), DomainError>;
 
     async fn get_sillytavern_settings_signature(
         &self,

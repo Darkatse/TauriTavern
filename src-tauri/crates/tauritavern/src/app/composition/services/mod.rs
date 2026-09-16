@@ -220,6 +220,7 @@ pub(super) async fn build(
     ));
     let user_service = Arc::new(UserService::new(repositories.user_repository.clone()));
     let settings_service = Arc::new(SettingsService::new(
+        repositories.avatar_repository.clone(),
         repositories.settings_repository.clone(),
         request_proxy_runtime,
         repositories.chat_backup_runtime.clone(),

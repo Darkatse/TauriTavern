@@ -16,6 +16,10 @@ impl AvatarService {
         Self { avatar_repository }
     }
 
+    pub async fn get_personas(&self) -> Result<tt_domain::models::persona::Personas, DomainError> {
+        self.avatar_repository.get_personas().await
+    }
+
     /// Get all avatars
     pub async fn get_avatars(&self) -> Result<Vec<String>, DomainError> {
         tracing::debug!("Getting all avatars");

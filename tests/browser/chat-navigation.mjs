@@ -209,6 +209,10 @@ test('chat persistence and navigation', async (context) => {
             }
         };
         await main.getSettings();
+        // These chat fixtures skip settings bootstrap; establish its normal save baseline.
+        getModule('scripts/tauri/setting/settings-delta-save.js').namespace.captureSettingsSaveBaseline({}, {
+            hash_algorithm: 'tt-user-settings-stable-sha256-v1', settings_hash: '0'.repeat(64),
+        });
         main.setAnimationDuration(0);
 
         async function reset(kind) {

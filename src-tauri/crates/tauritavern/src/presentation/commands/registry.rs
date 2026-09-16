@@ -284,6 +284,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::image_commands::delete_user_image,
         // Avatar commands
         super::avatar_commands::get_avatars,
+        super::avatar_commands::get_personas,
         super::avatar_commands::delete_avatar,
         super::avatar_commands::upload_avatar,
         // Group commands

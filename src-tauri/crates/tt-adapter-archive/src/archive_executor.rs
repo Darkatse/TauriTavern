@@ -10,7 +10,11 @@ use crate::data_archive::{
     run_export_data_archive, run_export_user_backup_archive, run_import_data_archive,
 };
 
-pub struct FileDataArchiveExecutor;
+pub struct FileDataArchiveExecutor {
+    pub prepare_personas: fn(&std::path::Path, &std::path::Path) -> Result<(), DomainError>,
+    pub read_personas:
+        fn(&std::path::Path) -> Result<tt_domain::models::persona::Personas, DomainError>,
+}
 
 impl DataArchiveExecutor for FileDataArchiveExecutor {
     fn import_full_data(
@@ -25,6 +29,7 @@ impl DataArchiveExecutor for FileDataArchiveExecutor {
             &request.workspace_root,
             report_progress,
             is_cancelled,
+            self.prepare_personas,
         )?;
 
         Ok(ArchiveImportExecutionReport {
@@ -46,6 +51,7 @@ impl DataArchiveExecutor for FileDataArchiveExecutor {
             &request.output_path,
             report_progress,
             is_cancelled,
+            self.read_personas,
         )?;
 
         Ok(ArchiveExportExecutionReport {
@@ -66,6 +72,7 @@ impl DataArchiveExecutor for FileDataArchiveExecutor {
             request.include_secrets,
             report_progress,
             is_cancelled,
+            self.read_personas,
         )?;
 
         Ok(())

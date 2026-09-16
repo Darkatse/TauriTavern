@@ -172,6 +172,8 @@ pub struct UserSettingsPatchDto {
     pub hash_algorithm: String,
     pub base_hash: String,
     pub ops: Vec<UserSettingsPatchOpDto>,
+    #[serde(default)]
+    pub persona_updates: tt_domain::models::persona::Personas,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,6 +189,8 @@ pub struct UserSettingsSaveResultDto {
     pub mode: String,
     pub hash_algorithm: String,
     pub settings_hash: String,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub persona_errors: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

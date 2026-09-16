@@ -187,12 +187,22 @@ pub(super) async fn build(
             DomainError::InternalError(format!("Default user settings load task failed: {error}"))
         })??
     };
+    let avatar_repository: Arc<dyn AvatarRepository> = Arc::new(FileAvatarRepository::new(
+        default_user_dir.join("User Avatars"),
+    ));
+
     let settings_repository: Arc<dyn SettingsRepository> = Arc::new(FileSettingsRepository::new(
         data_directory.settings().to_path_buf(),
         default_user_settings,
     ));
     // Materialize settings sections before background sync can scan the data directory.
     settings_repository.load_user_settings().await?;
+    let persona_root = default_user_dir.clone();
+    tokio::task::spawn_blocking(move || {
+        tt_adapter_media::persona_cards::migrate_personas(&persona_root, &persona_root)
+    })
+    .await
+    .map_err(|error| DomainError::InternalError(error.to_string()))??;
 
     let prompt_cache_repository: Arc<dyn PromptCacheRepository> = Arc::new(
         FilePromptCacheRepository::new(data_root.join("_tauritavern").join("prompt-cache")),
@@ -234,10 +244,6 @@ pub(super) async fn build(
     let extension_store_repository: Arc<dyn ExtensionStoreRepository> = Arc::new(
         FileExtensionStoreRepository::new(data_root.join("_tauritavern").join("extension-store")),
     );
-
-    let avatar_repository: Arc<dyn AvatarRepository> = Arc::new(FileAvatarRepository::new(
-        default_user_dir.join("User Avatars"),
-    ));
 
     let group_repository: Arc<dyn GroupRepository> = Arc::new(FileGroupRepository::new(
         data_directory.groups().to_path_buf(),

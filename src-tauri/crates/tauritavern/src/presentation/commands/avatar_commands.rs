@@ -11,6 +11,18 @@ use crate::presentation::errors::CommandError;
 use tt_domain::models::avatar::{AvatarUploadResult, CropInfo};
 
 #[tauri::command]
+pub async fn get_personas(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<tt_domain::models::persona::Personas, CommandError> {
+    app_state
+        .services
+        .avatar_service
+        .get_personas()
+        .await
+        .map_err(map_command_error("Failed to get personas"))
+}
+
+#[tauri::command]
 pub async fn get_avatars(app_state: State<'_, Arc<AppState>>) -> Result<Vec<String>, CommandError> {
     log_command("get_avatars");
 

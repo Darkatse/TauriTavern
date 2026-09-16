@@ -6,6 +6,8 @@ pub(super) const DYNAMIC_THEME_FILE: &str = "settings/dynamic-theme.json";
 pub(super) const PRESETS_FILE: &str = "settings/presets.json";
 pub(super) const LAYOUT_FILE: &str = "settings/layout.json";
 
+pub(super) const PERSONA_STATE_FILE: &str = "settings/persona-state.json";
+
 type FieldGroup = (&'static [&'static str], &'static [&'static str]);
 
 // Keep the appearance snapshot aligned with getThemeObject in power-user.js.
@@ -91,6 +93,24 @@ const PRESET_FIELDS: &[FieldGroup] = &[
     ),
 ];
 
+const PERSONA_STATE_FIELDS: &[FieldGroup] = &[
+    (&[], &["username", "user_avatar"]),
+    (
+        &["power_user"],
+        &[
+            "default_persona",
+            "persona_description",
+            "persona_description_position",
+            "persona_description_depth",
+            "persona_description_role",
+            "persona_description_lorebook",
+            "persona_show_notifications",
+            "persona_auto_lock",
+            "persona_allow_multi_connections",
+        ],
+    ),
+];
+
 const LAYOUT_FIELDS: &[FieldGroup] = &[
     (
         &[],
@@ -151,6 +171,7 @@ pub(super) struct UserSettingsSections {
     pub(super) appearance: Value,
     pub(super) presets: Value,
     pub(super) layout: Value,
+    pub(super) persona_state: Value,
 }
 
 impl UserSettingsSections {
@@ -158,14 +179,17 @@ impl UserSettingsSections {
         let mut appearance = json!({});
         let mut presets = json!({});
         let mut layout = json!({});
+        let mut persona_state = json!({});
         move_fields(&mut settings, &mut appearance, APPEARANCE_FIELDS);
         move_fields(&mut settings, &mut presets, PRESET_FIELDS);
         move_fields(&mut settings, &mut layout, LAYOUT_FIELDS);
+        move_fields(&mut settings, &mut persona_state, PERSONA_STATE_FIELDS);
         Self {
             core: settings,
             appearance,
             presets,
             layout,
+            persona_state,
         }
     }
 
@@ -174,6 +198,11 @@ impl UserSettingsSections {
         move_fields(&mut self.appearance, &mut self.core, APPEARANCE_FIELDS);
         move_fields(&mut self.presets, &mut self.core, PRESET_FIELDS);
         move_fields(&mut self.layout, &mut self.core, LAYOUT_FIELDS);
+        move_fields(
+            &mut self.persona_state,
+            &mut self.core,
+            PERSONA_STATE_FIELDS,
+        );
         self.core
     }
 }

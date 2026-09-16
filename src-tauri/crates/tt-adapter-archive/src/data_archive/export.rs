@@ -7,7 +7,10 @@ use zip::{CompressionMethod, ZipWriter};
 use crate::zipkit::export_file_options;
 use tt_domain::errors::DomainError;
 use tt_domain::json_merge::merge_json_value;
+use tt_domain::models::persona::{Personas, insert_personas};
 use tt_domain::models::settings::UserSettings;
+
+type ReadPersonas = fn(&Path) -> Result<Personas, DomainError>;
 
 use super::DataArchiveExportResult;
 use super::shared::{
@@ -21,6 +24,7 @@ pub(crate) fn run_export_data_archive(
     output_path: &Path,
     report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
+    read_personas: ReadPersonas,
 ) -> Result<DataArchiveExportResult, DomainError> {
     run_export_archive(
         data_root,
@@ -29,6 +33,7 @@ pub(crate) fn run_export_data_archive(
         &|relative_path| !is_transient_chat_entry(relative_path),
         report_progress,
         is_cancelled,
+        read_personas,
     )
 }
 
@@ -38,6 +43,7 @@ pub(crate) fn run_export_user_backup_archive(
     include_secrets: bool,
     report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
+    read_personas: ReadPersonas,
 ) -> Result<DataArchiveExportResult, DomainError> {
     run_export_archive(
         user_root,
@@ -46,6 +52,7 @@ pub(crate) fn run_export_user_backup_archive(
         &|relative_path| should_include_user_backup_entry(relative_path, include_secrets),
         report_progress,
         is_cancelled,
+        read_personas,
     )
 }
 
@@ -56,6 +63,7 @@ fn run_export_archive(
     include_entry: &dyn Fn(&Path) -> bool,
     report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
+    read_personas: ReadPersonas,
 ) -> Result<DataArchiveExportResult, DomainError> {
     report_progress("preparing", 0.0, "Preparing export");
     ensure_not_cancelled(is_cancelled)?;
@@ -107,6 +115,7 @@ fn run_export_archive(
         &mut copy_buffer,
         report_progress,
         is_cancelled,
+        read_personas,
     )?;
     progress.complete("zipping", "Archive data written", report_progress);
 
@@ -181,6 +190,7 @@ fn write_export_entries(
     copy_buffer: &mut [u8],
     report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
+    read_personas: ReadPersonas,
 ) -> Result<(), DomainError> {
     for entry in read_directory_sorted(current)? {
         ensure_not_cancelled(is_cancelled)?;
@@ -215,6 +225,7 @@ fn write_export_entries(
                 copy_buffer,
                 report_progress,
                 is_cancelled,
+                read_personas,
             )?;
             continue;
         }
@@ -232,7 +243,7 @@ fn write_export_entries(
             archive_relative_path.as_str(),
             "settings.json" | "default-user/settings.json"
         ) {
-            let source_bytes = write_export_settings(writer, &path)?;
+            let source_bytes = write_export_settings(writer, &path, read_personas)?;
             progress.advance(
                 source_bytes,
                 "zipping",
@@ -261,7 +272,11 @@ fn write_export_entries(
     Ok(())
 }
 
-fn write_export_settings(writer: &mut impl Write, path: &Path) -> Result<u64, DomainError> {
+fn write_export_settings(
+    writer: &mut impl Write,
+    path: &Path,
+    read_personas: ReadPersonas,
+) -> Result<u64, DomainError> {
     let user_root = path.parent().expect("settings file parent");
     let mut settings = serde_json::json!({});
     let mut source_bytes = 0;
@@ -270,6 +285,7 @@ fn write_export_settings(writer: &mut impl Write, path: &Path) -> Result<u64, Do
         "settings/appearance.json",
         "settings/presets.json",
         "settings/layout.json",
+        "settings/persona-state.json",
     ] {
         let section_path = user_root.join(name);
         let bytes = match fs::read(&section_path) {
@@ -298,6 +314,7 @@ fn write_export_settings(writer: &mut impl Write, path: &Path) -> Result<u64, Do
         })?;
         merge_json_value(&mut settings, section.data);
     }
+    insert_personas(&mut settings, &read_personas(user_root)?);
     serde_json::to_writer_pretty(writer, &settings)
         .map_err(|error| internal_error("Failed to write settings to archive", error))?;
     Ok(source_bytes)
@@ -431,8 +448,13 @@ mod tests {
         fs::write(&output_path, b"keep me").expect("write existing output");
 
         let mut report_progress = |_stage: &str, _progress_percent: f32, _message: &str| {};
-        let result =
-            run_export_data_archive(&source_root, &output_path, &mut report_progress, &|| false);
+        let result = run_export_data_archive(
+            &source_root,
+            &output_path,
+            &mut report_progress,
+            &|| false,
+            |_| Ok(Personas::new()),
+        );
 
         assert!(result.is_err());
         assert_eq!(
@@ -458,8 +480,14 @@ mod tests {
                 reports.push(percent);
             }
         };
-        run_export_data_archive(&source_root, &output_path, &mut report_progress, &|| false)
-            .expect("export archive");
+        run_export_data_archive(
+            &source_root,
+            &output_path,
+            &mut report_progress,
+            &|| false,
+            |_| Ok(Personas::new()),
+        )
+        .expect("export archive");
 
         assert!(reports.iter().any(|percent| (3.8..4.1).contains(percent)));
         assert_eq!(reports.last().copied(), Some(96.0));

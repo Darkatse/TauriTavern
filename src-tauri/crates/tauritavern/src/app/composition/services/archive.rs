@@ -16,7 +16,10 @@ pub(super) fn build(
     Arc::new(DataArchiveService::new(
         Arc::new(DataArchiveJobRegistry::new()),
         tauri::async_runtime::handle().inner().clone(),
-        Arc::new(FileDataArchiveExecutor),
+        Arc::new(FileDataArchiveExecutor {
+            prepare_personas: tt_adapter_media::persona_cards::migrate_personas,
+            read_personas: tt_adapter_media::persona_cards::read_personas,
+        }),
         Arc::new(TauriDataArchiveFileGateway::new(app_handle.clone())),
         Arc::new(DataDirectoryDataRootInitializer),
         data_change_reconciler,
