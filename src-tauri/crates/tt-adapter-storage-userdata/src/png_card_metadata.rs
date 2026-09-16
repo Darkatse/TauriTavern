@@ -1,10 +1,17 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use crc32fast::Hasher;
-use flate2::read::ZlibDecoder;
 use image::ImageFormat;
-use std::io::{Cursor, Read, SeekFrom};
+use std::io::Cursor;
 use std::path::Path;
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+#[cfg(test)]
+use tt_adapter_storage_core::png_metadata::write_chunk;
+#[cfg(test)]
+use tt_adapter_storage_core::png_metadata::{
+    CHUNK_TYPE_IEND, CHUNK_TYPE_ITXT, CHUNK_TYPE_ZTXT, PNG_SIGNATURE, read_next_png_chunk,
+};
+pub use tt_adapter_storage_core::png_metadata::{TextChunk, read_text_chunks_from_png};
+use tt_adapter_storage_core::png_metadata::{
+    read_preferred_text_chunk, replace_text_chunks, write_text_chunk,
+};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::character_repository::ImageCrop;
 
@@ -12,459 +19,38 @@ use tt_ports::repositories::character_repository::ImageCrop;
 const CHUNK_NAME_V2: &str = "chara";
 const CHUNK_NAME_V3: &str = "ccv3";
 
-const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-const CHUNK_TYPE_TEXT: [u8; 4] = *b"tEXt";
-const CHUNK_TYPE_ZTXT: [u8; 4] = *b"zTXt";
-const CHUNK_TYPE_ITXT: [u8; 4] = *b"iTXt";
-const CHUNK_TYPE_IEND: [u8; 4] = *b"IEND";
-
-/// Logical text entry parsed from PNG metadata (tEXt/zTXt/iTXt).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TextChunk {
-    pub keyword: String,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct PngChunkRef<'a> {
-    chunk_type: [u8; 4],
-    data: &'a [u8],
-    raw: &'a [u8],
-}
-
-fn ensure_png_signature(image_data: &[u8]) -> Result<(), DomainError> {
-    if image_data.len() < PNG_SIGNATURE.len() || image_data[..PNG_SIGNATURE.len()] != PNG_SIGNATURE
-    {
-        return Err(DomainError::InvalidData(
-            "Failed to read PNG header: invalid PNG signature".to_string(),
-        ));
-    }
-
-    Ok(())
-}
-
-fn read_next_png_chunk<'a>(
-    image_data: &'a [u8],
-    offset: &mut usize,
-) -> Result<Option<PngChunkRef<'a>>, DomainError> {
-    if *offset + 8 > image_data.len() {
-        return Ok(None);
-    }
-
-    let start = *offset;
-
-    let length = u32::from_be_bytes(
-        image_data[*offset..*offset + 4]
-            .try_into()
-            .expect("slice has 4 bytes"),
-    ) as usize;
-    let chunk_type: [u8; 4] = image_data[*offset + 4..*offset + 8]
-        .try_into()
-        .expect("slice has 4 bytes");
-
-    *offset += 8;
-
-    let data_end = offset.checked_add(length).ok_or_else(|| {
-        DomainError::InvalidData("Failed to parse PNG metadata: chunk too large".to_string())
-    })?;
-    let crc_end = data_end.checked_add(4).ok_or_else(|| {
-        DomainError::InvalidData("Failed to parse PNG metadata: chunk too large".to_string())
-    })?;
-
-    if crc_end > image_data.len() {
-        return Err(DomainError::InvalidData(
-            "Failed to parse PNG metadata: truncated PNG chunk".to_string(),
-        ));
-    }
-
-    let data = &image_data[*offset..data_end];
-    let raw = &image_data[start..crc_end];
-    *offset = crc_end;
-
-    Ok(Some(PngChunkRef {
-        chunk_type,
-        data,
-        raw,
-    }))
-}
-
-fn decode_latin1(bytes: &[u8]) -> String {
-    bytes.iter().copied().map(char::from).collect()
-}
-
-fn split_keyword<'a>(
-    data: &'a [u8],
-    chunk_name: &str,
-) -> Result<(&'a [u8], &'a [u8]), DomainError> {
-    let Some(nul) = data.iter().position(|&byte| byte == 0) else {
-        return Err(DomainError::InvalidData(format!(
-            "Failed to parse PNG metadata: invalid {} chunk",
-            chunk_name
-        )));
-    };
-
-    Ok((&data[..nul], &data[nul + 1..]))
-}
-
-fn parse_text_chunk(chunk_type: [u8; 4], data: &[u8]) -> Result<Option<TextChunk>, DomainError> {
-    if chunk_type == CHUNK_TYPE_TEXT {
-        let (keyword, text) = split_keyword(data, "tEXt")?;
-        return Ok(Some(TextChunk {
-            keyword: decode_latin1(keyword),
-            text: decode_latin1(text),
-        }));
-    }
-
-    if chunk_type == CHUNK_TYPE_ZTXT {
-        let (keyword, rest) = split_keyword(data, "zTXt")?;
-        let Some((&compression_method, compressed_text)) = rest.split_first() else {
-            return Err(DomainError::InvalidData(
-                "Failed to decode zTXt metadata: missing compression method".to_string(),
-            ));
-        };
-
-        if compression_method != 0 {
-            return Err(DomainError::InvalidData(
-                "Failed to decode zTXt metadata: unsupported compression method".to_string(),
-            ));
-        }
-
-        let mut decoder = ZlibDecoder::new(compressed_text);
-        let mut decoded = Vec::new();
-        decoder.read_to_end(&mut decoded).map_err(|error| {
-            DomainError::InvalidData(format!("Failed to decode zTXt metadata: {}", error))
-        })?;
-
-        return Ok(Some(TextChunk {
-            keyword: decode_latin1(keyword),
-            text: decode_latin1(&decoded),
-        }));
-    }
-
-    if chunk_type == CHUNK_TYPE_ITXT {
-        let (keyword, rest) = split_keyword(data, "iTXt")?;
-        if rest.len() < 2 {
-            return Err(DomainError::InvalidData(
-                "Failed to decode iTXt metadata: missing compression fields".to_string(),
-            ));
-        }
-
-        let compression_flag = rest[0];
-        let compression_method = rest[1];
-        let mut cursor = &rest[2..];
-
-        let (_, after_language) = split_keyword(cursor, "iTXt")?;
-        cursor = after_language;
-        let (_, after_translated) = split_keyword(cursor, "iTXt")?;
-        cursor = after_translated;
-
-        let text_bytes = if compression_flag == 0 {
-            cursor.to_vec()
-        } else if compression_flag == 1 {
-            if compression_method != 0 {
-                return Err(DomainError::InvalidData(
-                    "Failed to decode iTXt metadata: unsupported compression method".to_string(),
-                ));
-            }
-
-            let mut decoder = ZlibDecoder::new(cursor);
-            let mut decoded = Vec::new();
-            decoder.read_to_end(&mut decoded).map_err(|error| {
-                DomainError::InvalidData(format!("Failed to decode iTXt metadata: {}", error))
-            })?;
-            decoded
-        } else {
-            return Err(DomainError::InvalidData(
-                "Failed to decode iTXt metadata: invalid compression flag".to_string(),
-            ));
-        };
-
-        let text = String::from_utf8(text_bytes).map_err(|error| {
-            DomainError::InvalidData(format!("Failed to decode iTXt metadata: {}", error))
-        })?;
-
-        return Ok(Some(TextChunk {
-            keyword: decode_latin1(keyword),
-            text,
-        }));
-    }
-
-    Ok(None)
-}
-
-fn write_chunk(output: &mut Vec<u8>, chunk_type: [u8; 4], data: &[u8]) {
-    output.extend_from_slice(&(data.len() as u32).to_be_bytes());
-    output.extend_from_slice(&chunk_type);
-    output.extend_from_slice(data);
-
-    let mut hasher = Hasher::new();
-    hasher.update(&chunk_type);
-    hasher.update(data);
-    output.extend_from_slice(&hasher.finalize().to_be_bytes());
-}
-
-fn write_text_chunk(output: &mut Vec<u8>, keyword: &str, text: &str) {
-    let mut data = Vec::with_capacity(keyword.len() + 1 + text.len());
-    data.extend_from_slice(keyword.as_bytes());
-    data.push(0);
-    data.extend_from_slice(text.as_bytes());
-
-    write_chunk(output, CHUNK_TYPE_TEXT, &data);
-}
-
-fn text_chunk_keyword(chunk_type: [u8; 4], data: &[u8]) -> Result<Option<&[u8]>, DomainError> {
-    let keyword = match chunk_type {
-        CHUNK_TYPE_TEXT => split_keyword(data, "tEXt")?.0,
-        CHUNK_TYPE_ZTXT => split_keyword(data, "zTXt")?.0,
-        CHUNK_TYPE_ITXT => split_keyword(data, "iTXt")?.0,
-        _ => return Ok(None),
-    };
-
-    Ok(Some(keyword))
-}
-
-fn is_character_text_chunk(chunk_type: [u8; 4], data: &[u8]) -> Result<bool, DomainError> {
-    let Some(keyword) = text_chunk_keyword(chunk_type, data)? else {
-        return Ok(false);
-    };
-
-    Ok(keyword.eq_ignore_ascii_case(CHUNK_NAME_V2.as_bytes())
-        || keyword.eq_ignore_ascii_case(CHUNK_NAME_V3.as_bytes()))
-}
-
-fn is_text_chunk_type(chunk_type: [u8; 4]) -> bool {
-    matches!(
-        chunk_type,
-        CHUNK_TYPE_TEXT | CHUNK_TYPE_ZTXT | CHUNK_TYPE_ITXT
-    )
-}
-
-fn select_character_text_chunk(
-    chunk_type: [u8; 4],
-    data: &[u8],
-    v2_payload: &mut Option<String>,
-) -> Result<Option<String>, DomainError> {
-    let Some(keyword) = text_chunk_keyword(chunk_type, data)? else {
-        return Ok(None);
-    };
-
-    if !keyword.eq_ignore_ascii_case(CHUNK_NAME_V3.as_bytes())
-        && !keyword.eq_ignore_ascii_case(CHUNK_NAME_V2.as_bytes())
-    {
-        return Ok(None);
-    }
-
-    let Some(text_chunk) = parse_text_chunk(chunk_type, data)? else {
-        return Ok(None);
-    };
-
-    if text_chunk.keyword.eq_ignore_ascii_case(CHUNK_NAME_V3) {
-        return decode_base64(&text_chunk.text).map(Some);
-    }
-
-    if text_chunk.keyword.eq_ignore_ascii_case(CHUNK_NAME_V2) && v2_payload.is_none() {
-        *v2_payload = Some(text_chunk.text);
-    }
-
-    Ok(None)
-}
-
-fn finish_character_metadata_read(
-    saw_text_chunk: bool,
-    v2_payload: Option<String>,
-) -> Result<String, DomainError> {
-    if let Some(payload) = v2_payload {
-        return decode_base64(&payload);
-    }
-
-    if !saw_text_chunk {
-        return Err(DomainError::InvalidData(
-            "PNG metadata does not contain any text chunks".to_string(),
-        ));
-    }
-
-    Err(DomainError::InvalidData(
-        "PNG metadata does not contain character data".to_string(),
-    ))
-}
-
-/// Reads all text metadata chunks from a PNG image.
-///
-/// This includes `tEXt`, `zTXt`, and `iTXt` chunks.
-pub fn read_text_chunks_from_png(image_data: &[u8]) -> Result<Vec<TextChunk>, DomainError> {
-    ensure_png_signature(image_data)?;
-
-    let mut chunks = Vec::new();
-    let mut offset = PNG_SIGNATURE.len();
-
-    while let Some(chunk) = read_next_png_chunk(image_data, &mut offset)? {
-        if let Some(text_chunk) = parse_text_chunk(chunk.chunk_type, chunk.data)? {
-            chunks.push(text_chunk);
-        }
-
-        if chunk.chunk_type == CHUNK_TYPE_IEND {
-            break;
-        }
-    }
-
-    Ok(chunks)
-}
-
-/// Reads character data from PNG metadata.
-///
-/// It prefers V3 (`ccv3`) and falls back to V2 (`chara`).
+/// V3 takes precedence; once found, unrelated metadata cannot invalidate the card.
 pub fn read_character_data_from_png(image_data: &[u8]) -> Result<String, DomainError> {
-    tracing::debug!("Reading character data from PNG");
-
-    ensure_png_signature(image_data)?;
-
-    let mut saw_text_chunk = false;
-    let mut v2_payload: Option<String> = None;
-    let mut offset = PNG_SIGNATURE.len();
-
-    while let Some(chunk) = read_next_png_chunk(image_data, &mut offset)? {
-        if chunk.chunk_type == CHUNK_TYPE_IEND {
-            break;
-        }
-
-        if is_text_chunk_type(chunk.chunk_type) {
-            saw_text_chunk = true;
-
-            if let Some(payload) =
-                select_character_text_chunk(chunk.chunk_type, chunk.data, &mut v2_payload)?
-            {
-                return Ok(payload);
-            }
-        }
-    }
-
-    finish_character_metadata_read(saw_text_chunk, v2_payload)
+    decode_character_chunk(read_preferred_text_chunk(
+        Cursor::new(image_data),
+        &[CHUNK_NAME_V3, CHUNK_NAME_V2],
+    )?)
 }
 
-/// Reads character data from a PNG file without loading image chunks into memory.
+/// Read metadata without loading or decoding image pixels.
 pub async fn read_character_data_from_png_file(path: &Path) -> Result<String, DomainError> {
-    tracing::debug!("Streaming character data from PNG: {}", path.display());
-
-    let mut file = tokio::fs::File::open(path).await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to open character PNG '{}': {}",
-            path.display(),
-            error
-        ))
-    })?;
-    let file_len = file
-        .metadata()
-        .await
-        .map_err(|error| {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let file = std::fs::File::open(&path).map_err(|error| {
             DomainError::InternalError(format!(
-                "Failed to inspect character PNG '{}': {}",
-                path.display(),
-                error
-            ))
-        })?
-        .len();
-
-    let mut signature = [0; PNG_SIGNATURE.len()];
-    file.read_exact(&mut signature).await.map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Failed to read PNG header from '{}': {}",
-            path.display(),
-            error
-        ))
-    })?;
-
-    if signature != PNG_SIGNATURE {
-        return Err(DomainError::InvalidData(
-            "Failed to read PNG header: invalid PNG signature".to_string(),
-        ));
-    }
-
-    let mut saw_text_chunk = false;
-    let mut v2_payload: Option<String> = None;
-    let mut offset = PNG_SIGNATURE.len() as u64;
-
-    while let Some(header_end) = offset.checked_add(8) {
-        if header_end > file_len {
-            break;
-        }
-
-        let mut header = [0u8; 8];
-        file.read_exact(&mut header).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read PNG chunk header from '{}': {}",
-                path.display(),
-                error
+                "Failed to open character PNG {}: {error}",
+                path.display()
             ))
         })?;
+        decode_character_chunk(read_preferred_text_chunk(
+            file,
+            &[CHUNK_NAME_V3, CHUNK_NAME_V2],
+        )?)
+    })
+    .await
+    .map_err(|error| DomainError::InternalError(error.to_string()))?
+}
 
-        let length = u32::from_be_bytes(
-            header[..4]
-                .try_into()
-                .expect("slice has exactly four bytes"),
-        ) as u64;
-        let chunk_type: [u8; 4] = header[4..8]
-            .try_into()
-            .expect("slice has exactly four bytes");
-        let data_start = offset.checked_add(8).ok_or_else(|| {
-            DomainError::InvalidData("Failed to parse PNG metadata: chunk too large".to_string())
-        })?;
-        let data_end = data_start.checked_add(length).ok_or_else(|| {
-            DomainError::InvalidData("Failed to parse PNG metadata: chunk too large".to_string())
-        })?;
-        let chunk_end = data_end.checked_add(4).ok_or_else(|| {
-            DomainError::InvalidData("Failed to parse PNG metadata: chunk too large".to_string())
-        })?;
-
-        if chunk_end > file_len {
-            return Err(DomainError::InvalidData(
-                "Failed to parse PNG metadata: truncated PNG chunk".to_string(),
-            ));
-        }
-
-        if chunk_type == CHUNK_TYPE_IEND {
-            break;
-        }
-
-        if is_text_chunk_type(chunk_type) {
-            saw_text_chunk = true;
-            let mut data = vec![0u8; length as usize];
-            file.read_exact(&mut data).await.map_err(|error| {
-                DomainError::InvalidData(format!(
-                    "Failed to read PNG text metadata from '{}': {}",
-                    path.display(),
-                    error
-                ))
-            })?;
-            file.seek(SeekFrom::Start(chunk_end))
-                .await
-                .map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to skip PNG chunk CRC in '{}': {}",
-                        path.display(),
-                        error
-                    ))
-                })?;
-
-            if let Some(payload) = select_character_text_chunk(chunk_type, &data, &mut v2_payload)?
-            {
-                return Ok(payload);
-            }
-        } else {
-            file.seek(SeekFrom::Start(chunk_end))
-                .await
-                .map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to skip PNG chunk in '{}': {}",
-                        path.display(),
-                        error
-                    ))
-                })?;
-        }
-
-        offset = chunk_end;
-    }
-
-    finish_character_metadata_read(saw_text_chunk, v2_payload)
+fn decode_character_chunk(chunk: Option<TextChunk>) -> Result<String, DomainError> {
+    let chunk = chunk.ok_or_else(|| {
+        DomainError::InvalidData("PNG metadata does not contain character data".into())
+    })?;
+    decode_base64(&chunk.text)
 }
 
 /// Writes character data to PNG metadata.
@@ -480,44 +66,12 @@ pub fn write_character_data_to_png(
 ) -> Result<Vec<u8>, DomainError> {
     tracing::debug!("Writing character data to PNG");
 
-    ensure_png_signature(image_data)?;
-
-    let v2_payload = encode_base64(character_data);
-    let v3_payload = build_v3_payload(character_data)?;
-
-    let extra_capacity = v2_payload.len() + v3_payload.as_ref().map(String::len).unwrap_or(0) + 128;
-    let mut output = Vec::with_capacity(image_data.len() + extra_capacity);
-    output.extend_from_slice(&PNG_SIGNATURE);
-
-    let mut offset = PNG_SIGNATURE.len();
-    let mut wrote_iend = false;
-
-    while let Some(chunk) = read_next_png_chunk(image_data, &mut offset)? {
-        if chunk.chunk_type == CHUNK_TYPE_IEND {
-            write_text_chunk(&mut output, CHUNK_NAME_V2, &v2_payload);
-            if let Some(v3_payload) = &v3_payload {
-                write_text_chunk(&mut output, CHUNK_NAME_V3, v3_payload);
-            }
-
-            output.extend_from_slice(chunk.raw);
-            wrote_iend = true;
-            break;
-        }
-
-        if is_character_text_chunk(chunk.chunk_type, chunk.data)? {
-            continue;
-        }
-
-        output.extend_from_slice(chunk.raw);
+    let mut chunks = Vec::new();
+    write_text_chunk(&mut chunks, CHUNK_NAME_V2, &encode_base64(character_data));
+    if let Some(payload) = build_v3_payload(character_data)? {
+        write_text_chunk(&mut chunks, CHUNK_NAME_V3, &payload);
     }
-
-    if !wrote_iend {
-        return Err(DomainError::InvalidData(
-            "Failed to parse PNG metadata: missing IEND chunk".to_string(),
-        ));
-    }
-
-    Ok(output)
+    replace_text_chunks(image_data, &[CHUNK_NAME_V2, CHUNK_NAME_V3], &chunks)
 }
 
 /// Process an image for use as a character avatar.
@@ -658,19 +212,6 @@ mod tests {
         result
     }
 
-    #[tokio::test]
-    async fn streaming_read_matches_in_memory_png_reader() {
-        let base_png = build_minimal_png();
-        let json =
-            r#"{"spec":"chara_card_v2","spec_version":"2.0","name":"Streamed","chat":"room"}"#;
-        let png = write_character_data_to_png(&base_png, json).expect("write metadata");
-
-        let streamed = read_streamed_temp(&png).await.expect("stream metadata");
-        let in_memory = read_character_data_from_png(&png).expect("read in-memory metadata");
-
-        assert_eq!(streamed, in_memory);
-    }
-
     fn inject_raw_chunks_before_iend(base_png: &[u8], raw_chunks: &[Vec<u8>]) -> Vec<u8> {
         let mut output = Vec::new();
         output.extend_from_slice(&PNG_SIGNATURE);
@@ -738,6 +279,17 @@ mod tests {
             let streamed = read_streamed_temp(&png).await.expect("stream metadata");
             assert_eq!(streamed, json);
         }
+    }
+
+    #[tokio::test]
+    async fn valid_v3_does_not_decode_later_broken_v2_metadata() {
+        let json = r#"{"spec":"chara_card_v3","spec_version":"3.0","name":"Keep"}"#;
+        let mut preferred = Vec::new();
+        write_text_chunk(&mut preferred, "ccv3", &encode_base64(json));
+        let mut broken = Vec::new();
+        write_chunk(&mut broken, CHUNK_TYPE_ZTXT, b"chara\0\0broken");
+        let png = inject_raw_chunks_before_iend(&build_minimal_png(), &[preferred, broken]);
+        assert_eq!(read_streamed_temp(&png).await.unwrap(), json);
     }
 
     #[tokio::test]

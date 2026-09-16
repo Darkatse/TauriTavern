@@ -8469,6 +8469,8 @@ dependencies = [
  "async-compression",
  "async-trait",
  "chrono",
+ "crc32fast",
+ "flate2",
  "icu_collator",
  "icu_locale_core",
  "indexmap 2.14.0",

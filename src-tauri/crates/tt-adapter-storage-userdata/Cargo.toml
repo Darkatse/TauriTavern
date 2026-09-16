@@ -8,8 +8,6 @@ publish = false
 async-trait = "0.1"
 base64 = "0.23"
 chrono = { workspace = true }
-crc32fast = "1"
-flate2 = "1.1.9"
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
 mime_guess = "2.0.5"
 serde = { workspace = true }
@@ -27,4 +25,6 @@ tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 
 [dev-dependencies]
+flate2 = "1.1.9"
+crc32fast = "1"
 rand = { workspace = true }
