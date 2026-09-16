@@ -1,7 +1,7 @@
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Value, json};
 
-use super::{parse_json_error_message, send_with_retry};
+use super::{parse_json_error_message, send_with_retry, unexpected_content_type};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::tts_repository::{MinimaxGenerateRequest, TtsRouteResponse};
 
@@ -103,6 +103,12 @@ pub(super) async fn generate(
         if !audio_response.status().is_success() {
             return upstream_error_response(audio_response, "MiniMax TTS audio URL request failed")
                 .await;
+        }
+        if let Some(message) = unexpected_content_type(&audio_response, audio_content_type) {
+            return Ok(error_response(
+                502,
+                format!("MiniMax TTS audio URL request: {message}"),
+            ));
         }
         let audio = audio_response.bytes().await.map_err(|error| {
             DomainError::InternalError(format!(
@@ -233,9 +239,8 @@ fn hex_nibble(byte: u8) -> Result<u8, String> {
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::{TcpListener, TcpStream};
 
+    use super::super::tests::spawn_one_response;
     use super::{decode_hex_audio, generate, parse_base_response_error, parse_upstream_error};
     use tt_ports::repositories::tts_repository::MinimaxGenerateRequest;
 
@@ -313,24 +318,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetches_audio_url_response() {
-        let (audio_url, audio_server) =
-            spawn_one_response(200, "audio/mpeg", vec![10, 11, 12]).await;
-        let body = format!(
-            r#"{{"data":{{"url":"{audio_url}/audio.mp3"}},"base_resp":{{"status_code":0}}}}"#
-        )
-        .into_bytes();
-        let (api_host, api_server) = spawn_one_response(200, "application/json", body).await;
+    async fn fetches_audio_url_and_rejects_error_documents() {
+        for (content_type, audio, status) in [
+            ("audio/mpeg", vec![10, 11, 12], 200),
+            ("text/html", b"<!DOCTYPE html>".to_vec(), 502),
+        ] {
+            let (audio_url, audio_server) =
+                spawn_one_response(200, content_type, audio.clone()).await;
+            let body = format!(
+                r#"{{"data":{{"url":"{audio_url}/audio.mp3"}},"base_resp":{{"status_code":0}}}}"#
+            )
+            .into_bytes();
+            let (api_host, api_server) = spawn_one_response(200, "application/json", body).await;
 
-        let response = generate(reqwest::Client::new(), minimax_request(api_host, None))
-            .await
-            .unwrap();
-        let api_request = api_server.await.unwrap();
-        let audio_request = audio_server.await.unwrap();
+            let response = generate(reqwest::Client::new(), minimax_request(api_host, None))
+                .await
+                .unwrap();
+            let api_request = api_server.await.unwrap();
+            let audio_request = audio_server.await.unwrap();
 
-        assert_eq!(response.body, [10, 11, 12]);
-        assert!(api_request.starts_with("POST /v1/t2a_v2 HTTP/1.1"));
-        assert!(audio_request.starts_with("GET /audio.mp3 HTTP/1.1"));
+            assert_eq!(response.status, status);
+            if status == 200 {
+                assert_eq!(response.body, audio);
+            } else {
+                assert_eq!(response.content_type, "application/json; charset=utf-8");
+                let error: Value = serde_json::from_slice(&response.body).unwrap();
+                assert!(error["error"].as_str().unwrap().contains(content_type));
+            }
+            assert!(api_request.starts_with("POST /v1/t2a_v2 HTTP/1.1"));
+            assert!(audio_request.starts_with("GET /audio.mp3 HTTP/1.1"));
+        }
     }
 
     #[tokio::test]
@@ -367,65 +384,6 @@ mod tests {
             format: "mp3".to_string(),
             language_boost,
         }
-    }
-
-    async fn spawn_one_response(
-        status: u16,
-        content_type: &'static str,
-        body: Vec<u8>,
-    ) -> (String, tokio::task::JoinHandle<String>) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let handle = tokio::spawn(async move {
-            let (mut stream, _addr) = listener.accept().await.unwrap();
-            let request = read_http_request(&mut stream).await;
-            let response_head = format!(
-                "HTTP/1.1 {status} OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            );
-            stream.write_all(response_head.as_bytes()).await.unwrap();
-            stream.write_all(&body).await.unwrap();
-            request
-        });
-        (url, handle)
-    }
-
-    async fn read_http_request(stream: &mut TcpStream) -> String {
-        let mut bytes = Vec::new();
-        let header_end = loop {
-            let mut buffer = [0_u8; 1024];
-            let read = stream.read(&mut buffer).await.unwrap();
-            assert!(read > 0, "client closed connection before sending headers");
-            bytes.extend_from_slice(&buffer[..read]);
-            if let Some(index) = find_header_end(&bytes) {
-                break index;
-            }
-        };
-        let headers = String::from_utf8_lossy(&bytes[..header_end]).to_string();
-        let content_length = headers
-            .lines()
-            .find_map(|line| {
-                let (name, value) = line.split_once(':')?;
-                name.eq_ignore_ascii_case("content-length")
-                    .then(|| value.trim().parse::<usize>().ok())
-                    .flatten()
-            })
-            .unwrap_or(0);
-        let expected_len = header_end + 4 + content_length;
-        while bytes.len() < expected_len {
-            let mut buffer = [0_u8; 1024];
-            let read = stream.read(&mut buffer).await.unwrap();
-            assert!(
-                read > 0,
-                "client closed connection before sending full body"
-            );
-            bytes.extend_from_slice(&buffer[..read]);
-        }
-        String::from_utf8_lossy(&bytes[..expected_len]).to_string()
-    }
-
-    fn find_header_end(bytes: &[u8]) -> Option<usize> {
-        bytes.windows(4).position(|window| window == b"\r\n\r\n")
     }
 
     fn request_body_json(request: &str) -> Value {

@@ -146,6 +146,9 @@ async fn bytes_response(
     if !response.status().is_success() {
         return upstream_error_response(response, &format!("{label} failed")).await;
     }
+    if let Some(message) = unexpected_content_type(&response, fallback_content_type) {
+        return Ok(TtsRouteResponse::text(502, format!("{label}: {message}")));
+    }
     let content_type = if preserve_content_type {
         response_content_type(&response, fallback_content_type)
     } else {
@@ -155,6 +158,24 @@ async fn bytes_response(
         DomainError::InternalError(format!("{label} response read failed: {error}"))
     })?;
     Ok(TtsRouteResponse::bytes(200, content_type, body.to_vec()))
+}
+
+fn unexpected_content_type(response: &Response, expected: &str) -> Option<String> {
+    let actual = response_content_type(response, expected);
+    let media_type = actual
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let is_json = media_type == "application/json" || media_type.ends_with("+json");
+    if matches!(media_type.as_str(), "text/html" | "application/xhtml+xml")
+        || (expected.starts_with("audio/") && is_json)
+    {
+        Some(format!("Expected {expected}, got {actual}"))
+    } else {
+        None
+    }
 }
 
 fn response_content_type(response: &Response, fallback: &str) -> String {
@@ -214,7 +235,54 @@ fn parse_json_error_message(payload: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_upstream_error_message;
+    use std::sync::Arc;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    use super::{HttpTtsRepository, parse_upstream_error_message};
+    use tt_adapter_http::HttpClientPool;
+    use tt_ports::repositories::tts_repository::{OpenAiTtsRequest, TtsRepository, TtsRequest};
+
+    #[tokio::test]
+    async fn openai_compatible_rejects_error_documents_and_preserves_audio_bytes() {
+        let repository = HttpTtsRepository::new(Arc::new(HttpClientPool::new("TauriTavern/test")));
+        for (content_type, body, status) in [
+            (
+                "text/html; charset=utf-8",
+                b"<!DOCTYPE html>".to_vec(),
+                502,
+            ),
+            (
+                "application/json",
+                br#"{"error":"invalid voice"}"#.to_vec(),
+                502,
+            ),
+            ("application/octet-stream", vec![0, 1, 255], 200),
+        ] {
+            let (url, server) = spawn_one_response(200, content_type, body.clone()).await;
+            let response = repository
+                .handle(TtsRequest::OpenAi(OpenAiTtsRequest::CompatibleGenerate {
+                    api_key: None,
+                    endpoint: url.parse().unwrap(),
+                    input: "hello".into(),
+                    voice: "test".into(),
+                    model: "test".into(),
+                    response_format: "mp3".into(),
+                    speed: 1.0,
+                }))
+                .await
+                .unwrap();
+            server.await.unwrap();
+
+            assert_eq!(response.status, status, "{content_type}");
+            if status == 200 {
+                assert_eq!(response.body, body);
+            } else {
+                assert!(String::from_utf8(response.body).unwrap().contains(content_type));
+            }
+        }
+    }
 
     #[test]
     fn parses_nested_json_error_message() {
@@ -241,5 +309,64 @@ mod tests {
             parse_upstream_error_message(b"  ", "Request failed"),
             "Request failed"
         );
+    }
+
+    pub(super) async fn spawn_one_response(
+        status: u16,
+        content_type: &'static str,
+        body: Vec<u8>,
+    ) -> (String, tokio::task::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = tokio::spawn(async move {
+            let (mut stream, _addr) = listener.accept().await.unwrap();
+            let request = read_http_request(&mut stream).await;
+            let response_head = format!(
+                "HTTP/1.1 {status} OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(response_head.as_bytes()).await.unwrap();
+            stream.write_all(&body).await.unwrap();
+            request
+        });
+        (url, handle)
+    }
+
+    async fn read_http_request(stream: &mut TcpStream) -> String {
+        let mut bytes = Vec::new();
+        let header_end = loop {
+            let mut buffer = [0_u8; 1024];
+            let read = stream.read(&mut buffer).await.unwrap();
+            assert!(read > 0, "client closed connection before sending headers");
+            bytes.extend_from_slice(&buffer[..read]);
+            if let Some(index) = find_header_end(&bytes) {
+                break index;
+            }
+        };
+        let headers = String::from_utf8_lossy(&bytes[..header_end]).to_string();
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())
+                    .flatten()
+            })
+            .unwrap_or(0);
+        let expected_len = header_end + 4 + content_length;
+        while bytes.len() < expected_len {
+            let mut buffer = [0_u8; 1024];
+            let read = stream.read(&mut buffer).await.unwrap();
+            assert!(
+                read > 0,
+                "client closed connection before sending full body"
+            );
+            bytes.extend_from_slice(&buffer[..read]);
+        }
+        String::from_utf8_lossy(&bytes[..expected_len]).to_string()
+    }
+
+    fn find_header_end(bytes: &[u8]) -> Option<usize> {
+        bytes.windows(4).position(|window| window == b"\r\n\r\n")
     }
 }

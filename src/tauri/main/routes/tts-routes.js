@@ -58,6 +58,13 @@ async function handleTtsRoute(context, path, body) {
 }
 
 export function registerTtsRoutes(router, context) {
+    router.all('/api/plugins/edge-tts/*', () => textResponse(
+        'Edge TTS server plugins are not supported by TauriTavern.', 501, 'Not Implemented',
+    ));
+    router.post('/api/speech/synthesize', () => textResponse(
+        'SpeechT5 is not implemented in the TauriTavern native backend.', 501, 'Not Implemented',
+    ));
+
     const routes = [
         '/api/azure/list',
         '/api/azure/generate',
