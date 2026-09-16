@@ -137,46 +137,104 @@ impl FileSkillRepository {
                 ))
             })?;
 
-        let result = match input {
-            SkillImportInput::InlineFiles { files, source } => {
-                let package_root = staging_dir.join("package");
-                fs::create_dir_all(&package_root).map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to create Skill inline package root '{}': {}",
-                        package_root.display(),
-                        error
-                    ))
-                })?;
-                write_inline_files(files, &package_root)?;
-                Ok(PreparedImport {
-                    cleanup_root: staging_dir.clone(),
-                    package_root,
-                    source: source.clone(),
-                })
-            }
-            SkillImportInput::Directory { path, source } => {
-                let source_root = PathBuf::from(path);
-                let selected_root = select_skill_root(&source_root, None)?;
-                let package_root = staging_dir.join("package");
-                copy_dir_contents(&selected_root, &package_root)?;
-                Ok(PreparedImport {
-                    cleanup_root: staging_dir.clone(),
-                    package_root,
-                    source: source.clone(),
-                })
-            }
-            SkillImportInput::ArchiveFile {
-                path,
-                skill_root,
-                source,
-            } => {
-                // Keep the shared extraction alive while materializing this candidate.
-                let discovered = self.discovered_archives.lock().await.get(path).cloned();
-                let archive_root = discovered.as_ref().map_or_else(
-                    || staging_dir.join("archive"),
-                    |archive| archive.root.clone(),
-                );
-                if discovered.is_none() {
+        let result = async {
+            match input {
+                SkillImportInput::InlineFiles { files, source } => {
+                    let package_root = staging_dir.join("package");
+                    fs::create_dir_all(&package_root).map_err(|error| {
+                        DomainError::InternalError(format!(
+                            "Failed to create Skill inline package root '{}': {}",
+                            package_root.display(),
+                            error
+                        ))
+                    })?;
+                    write_inline_files(files, &package_root)?;
+                    Ok(PreparedImport {
+                        cleanup_root: staging_dir.clone(),
+                        package_root,
+                        source: source.clone(),
+                    })
+                }
+                SkillImportInput::Directory { path, source } => {
+                    let source_root = PathBuf::from(path);
+                    let selected_root = select_skill_root(&source_root, None)?;
+                    let package_root = staging_dir.join("package");
+                    copy_dir_contents(&selected_root, &package_root)?;
+                    Ok(PreparedImport {
+                        cleanup_root: staging_dir.clone(),
+                        package_root,
+                        source: source.clone(),
+                    })
+                }
+                SkillImportInput::ArchiveFile {
+                    path,
+                    skill_root,
+                    source,
+                } => {
+                    // Keep the shared extraction alive while materializing this candidate.
+                    let discovered = self.discovered_archives.lock().await.get(path).cloned();
+                    let archive_root = discovered.as_ref().map_or_else(
+                        || staging_dir.join("archive"),
+                        |archive| archive.root.clone(),
+                    );
+                    if discovered.is_none() {
+                        fs::create_dir_all(&archive_root).map_err(|error| {
+                            DomainError::InternalError(format!(
+                                "Failed to create Skill archive extraction root '{}': {}",
+                                archive_root.display(),
+                                error
+                            ))
+                        })?;
+                        extract_archive(Path::new(path), &archive_root)?;
+                    }
+                    let selected_root = select_skill_root(&archive_root, skill_root.as_deref())?;
+                    let package_root = staging_dir.join("package");
+                    copy_dir_contents(&selected_root, &package_root)?;
+                    Ok(PreparedImport {
+                        cleanup_root: staging_dir.clone(),
+                        package_root,
+                        source: source.clone(),
+                    })
+                }
+                SkillImportInput::ArchiveBase64 {
+                    file_name,
+                    content_base64,
+                    sha256,
+                    source,
+                } => {
+                    let archive_path = staging_dir.join(require_archive_file_name(file_name)?);
+                    let bytes =
+                        BASE64_STANDARD
+                            .decode(content_base64.as_bytes())
+                            .map_err(|error| {
+                                DomainError::InvalidData(format!(
+                                    "Invalid base64 Skill archive '{}': {error}",
+                                    file_name
+                                ))
+                            })?;
+                    if bytes.len() as u64 > MAX_TOTAL_BYTES {
+                        return Err(DomainError::InvalidData(format!(
+                            "Embedded Skill archive '{}' exceeds {} bytes",
+                            file_name, MAX_TOTAL_BYTES
+                        )));
+                    }
+                    if let Some(expected_hash) = sha256.as_deref()
+                        && expected_hash.trim().to_ascii_lowercase() != sha256_hex(&bytes)
+                    {
+                        return Err(DomainError::InvalidData(format!(
+                            "Embedded Skill archive '{}' sha256 mismatch",
+                            file_name
+                        )));
+                    }
+                    fs::write(&archive_path, bytes).map_err(|error| {
+                        DomainError::InternalError(format!(
+                            "Failed to write embedded Skill archive '{}': {}",
+                            archive_path.display(),
+                            error
+                        ))
+                    })?;
+
+                    let archive_root = staging_dir.join("archive");
                     fs::create_dir_all(&archive_root).map_err(|error| {
                         DomainError::InternalError(format!(
                             "Failed to create Skill archive extraction root '{}': {}",
@@ -184,73 +242,19 @@ impl FileSkillRepository {
                             error
                         ))
                     })?;
-                    extract_archive(Path::new(path), &archive_root)?;
+                    extract_archive(&archive_path, &archive_root)?;
+                    let selected_root = select_skill_root(&archive_root, None)?;
+                    let package_root = staging_dir.join("package");
+                    copy_dir_contents(&selected_root, &package_root)?;
+                    Ok(PreparedImport {
+                        cleanup_root: staging_dir.clone(),
+                        package_root,
+                        source: source.clone(),
+                    })
                 }
-                let selected_root = select_skill_root(&archive_root, skill_root.as_deref())?;
-                let package_root = staging_dir.join("package");
-                copy_dir_contents(&selected_root, &package_root)?;
-                Ok(PreparedImport {
-                    cleanup_root: staging_dir.clone(),
-                    package_root,
-                    source: source.clone(),
-                })
             }
-            SkillImportInput::ArchiveBase64 {
-                file_name,
-                content_base64,
-                sha256,
-                source,
-            } => (|| {
-                let archive_path = staging_dir.join(require_archive_file_name(file_name)?);
-                let bytes = BASE64_STANDARD
-                    .decode(content_base64.as_bytes())
-                    .map_err(|error| {
-                        DomainError::InvalidData(format!(
-                            "Invalid base64 Skill archive '{}': {error}",
-                            file_name
-                        ))
-                    })?;
-                if bytes.len() as u64 > MAX_TOTAL_BYTES {
-                    return Err(DomainError::InvalidData(format!(
-                        "Embedded Skill archive '{}' exceeds {} bytes",
-                        file_name, MAX_TOTAL_BYTES
-                    )));
-                }
-                if let Some(expected_hash) = sha256.as_deref()
-                    && expected_hash.trim().to_ascii_lowercase() != sha256_hex(&bytes)
-                {
-                    return Err(DomainError::InvalidData(format!(
-                        "Embedded Skill archive '{}' sha256 mismatch",
-                        file_name
-                    )));
-                }
-                fs::write(&archive_path, bytes).map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to write embedded Skill archive '{}': {}",
-                        archive_path.display(),
-                        error
-                    ))
-                })?;
-
-                let archive_root = staging_dir.join("archive");
-                fs::create_dir_all(&archive_root).map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to create Skill archive extraction root '{}': {}",
-                        archive_root.display(),
-                        error
-                    ))
-                })?;
-                extract_archive(&archive_path, &archive_root)?;
-                let selected_root = select_skill_root(&archive_root, None)?;
-                let package_root = staging_dir.join("package");
-                copy_dir_contents(&selected_root, &package_root)?;
-                Ok(PreparedImport {
-                    cleanup_root: staging_dir.clone(),
-                    package_root,
-                    source: source.clone(),
-                })
-            })(),
-        };
+        }
+        .await;
 
         if result.is_err() {
             cleanup_dir(&staging_dir);

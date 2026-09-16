@@ -290,8 +290,8 @@ pub(super) fn rollback_prepared_skill_dir_replacement(
 }
 
 pub(super) fn cleanup_dir(path: &Path) {
-    if path.exists() {
-        let _ = fs::remove_dir_all(path);
+    if let Err(error) = remove_dir_if_exists(path) {
+        tracing::warn!(path = %path.display(), %error, "Failed to clean up temporary Skill directory");
     }
 }
 
