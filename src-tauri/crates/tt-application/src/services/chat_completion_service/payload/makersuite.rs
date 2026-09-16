@@ -337,7 +337,7 @@ fn convert_messages(
 ) -> Result<(Vec<Value>, String), ApplicationError> {
     let mut contents = Vec::new();
     let mut system_parts = Vec::new();
-    let mut tool_name_by_id: HashMap<String, String> = HashMap::new();
+    let mut tool_call_by_id: HashMap<String, (String, Option<String>)> = HashMap::new();
 
     let Some(messages) = messages else {
         return Ok((contents, String::new()));
@@ -356,10 +356,7 @@ fn convert_messages(
     };
 
     let model_lower = model.trim().to_ascii_lowercase();
-    let supports_signatures =
-        model_lower.contains("gemini-3") || model_lower.contains("gemini-2.5");
     let is_gemini3 = model_lower.contains("gemini-3");
-    let supports_function_call_ids = is_gemini3;
     let is_image_model = model_lower.contains("-image");
     let skip_signature_magic = "skip_thought_signature_validator";
 
@@ -413,22 +410,17 @@ fn convert_messages(
             None
         };
         let mut parts = if matches!(role.as_str(), "tool" | "function") {
-            let tool_call_id = message_tool_call_id(message);
+            let previous_call =
+                message_tool_call_id(message).and_then(|id| tool_call_by_id.get(&id));
             let name = message_tool_name(message)
-                .or_else(|| {
-                    tool_call_id
-                        .as_ref()
-                        .and_then(|id| tool_name_by_id.get(id))
-                        .cloned()
-                })
+                .or_else(|| previous_call.map(|(name, _)| name.clone()))
                 .unwrap_or_else(|| fallback_tool_name().to_string());
             let content = message_tool_result_text(message);
-            let response_id = if supports_function_call_ids {
-                tool_call_id.as_deref()
-            } else {
-                None
-            };
-            vec![build_tool_response_part(&name, &content, response_id)]
+            vec![build_tool_response_part(
+                &name,
+                &content,
+                previous_call.and_then(|(_, id)| id.as_deref()),
+            )]
         } else {
             let mut parts = if let Some(native_parts) = native_gemini_parts.clone() {
                 native_parts
@@ -440,14 +432,17 @@ fn convert_messages(
                 let tool_calls = extract_openai_tool_calls(message.get("tool_calls"));
                 if !tool_calls.is_empty() {
                     merge_with_previous = true;
-                    for tool_call in &tool_calls {
-                        tool_name_by_id.insert(tool_call.id.clone(), tool_call.name.clone());
-                    }
                     if native_gemini_parts.is_none() {
-                        parts.extend(convert_openai_tool_calls_to_parts(
-                            &tool_calls,
-                            supports_function_call_ids,
-                        ));
+                        parts.extend(convert_openai_tool_calls_to_parts(&tool_calls));
+                    }
+                    // Canonical calls follow native order; native IDs may be absent.
+                    let replayed_calls = parts.iter().filter_map(|part| part.get("functionCall"));
+                    for (tool_call, replayed_call) in tool_calls.iter().zip(replayed_calls) {
+                        let id = replayed_call
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+                        tool_call_by_id.insert(tool_call.id.clone(), (tool_call.name.clone(), id));
                     }
                 }
             }
@@ -462,7 +457,7 @@ fn convert_messages(
         let target_role = if role == "assistant" { "model" } else { "user" };
 
         // Native parts already carry their own signatures; never overwrite signed history.
-        if supports_signatures && native_gemini_parts.is_none() {
+        if native_gemini_parts.is_none() {
             let text_signature = message
                 .get("signature")
                 .and_then(Value::as_str)
@@ -714,20 +709,15 @@ fn message_native_gemini_parts(message: &Map<String, Value>) -> Option<Vec<Value
         .cloned()
 }
 
-fn convert_openai_tool_calls_to_parts(
-    tool_calls: &[OpenAiToolCall],
-    supports_function_call_ids: bool,
-) -> Vec<Value> {
+fn convert_openai_tool_calls_to_parts(tool_calls: &[OpenAiToolCall]) -> Vec<Value> {
     tool_calls
         .iter()
         .map(|tool_call| {
-            let mut function_call = json!({
+            let function_call = json!({
+                "id": tool_call.id,
                 "name": tool_call.name,
                 "args": tool_call.arguments.to_replay_object(),
             });
-            if supports_function_call_ids {
-                function_call["id"] = Value::String(tool_call.id.clone());
-            }
             let mut part = json!({ "functionCall": function_call });
 
             if let Some(signature) = tool_call.signature.as_ref()
@@ -1365,7 +1355,7 @@ mod tests {
     #[test]
     fn makersuite_tool_result_uses_previous_tool_call_name() {
         let payload = json!({
-            "model": "gemini-3.6-flash",
+            "model": "model-alias",
             "messages": [
                 {
                     "role": "assistant",
@@ -1460,7 +1450,10 @@ mod tests {
             "/contents/0/parts/0/functionCall/id",
             "/contents/1/parts/0/functionResponse/id",
         ] {
-            assert!(legacy.pointer(path).is_none());
+            assert_eq!(
+                legacy.pointer(path).and_then(Value::as_str),
+                Some("call_weather")
+            );
             assert_eq!(
                 vertex.pointer(path).and_then(Value::as_str),
                 Some("call_weather")
@@ -1501,6 +1494,18 @@ mod tests {
         assert_eq!(tool_parts.len(), 2, "parallel tool results share one turn");
         assert_eq!(tool_parts[0]["functionResponse"]["id"], "call_weather");
         assert_eq!(tool_parts[1]["functionResponse"]["id"], "call_time");
+    }
+
+    #[test]
+    fn makersuite_preserves_text_signature_for_model_alias() {
+        let upstream = build_with_messages(
+            "model-alias",
+            json!([{ "role": "assistant", "content": "answer", "signature": "sig_1" }]),
+        );
+        assert_eq!(
+            upstream["contents"][0]["parts"],
+            json!([{ "text": "answer", "thoughtSignature": "sig_1" }]),
+        );
     }
 
     #[test]

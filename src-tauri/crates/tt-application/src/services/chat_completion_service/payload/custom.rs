@@ -36,23 +36,30 @@ mod tests {
     use super::build;
 
     #[test]
-    fn custom_gemini_replays_native_parts_without_overwriting_signatures() {
+    fn custom_gemini_replays_native_parts_and_pairs_tool_results() {
         let native_parts = json!([
             { "text": "Plan", "thought": true, "thoughtSignature": "thought-sig" },
             { "text": "Calling tool", "thoughtSignature": "text-sig" },
             { "functionCall": { "id": "call_1", "name": "weather", "args": {} },
-              "thoughtSignature": "tool-sig", "futureField": true }
+              "thoughtSignature": "tool-sig", "futureField": true },
+            { "functionCall": { "name": "weather", "args": { "city": "Paris" } },
+              "thoughtSignature": "second-tool-sig" }
         ]);
         let payload = json!({
             "chat_completion_source": "custom",
             "custom_api_format": "gemini_generate_content",
-            "model": "gemini-3-pro-preview",
+            "model": "model-alias",
             "messages": [
                 { "role": "user", "content": "Weather?" },
                 { "role": "assistant", "content": "Calling tool", "signature": "canonical-sig",
                   "native": { "gemini": { "content": { "role": "model", "parts": native_parts } } },
-                  "tool_calls": [{ "id": "call_1", "type": "function",
-                    "function": { "name": "weather", "arguments": "{}" } }] },
+                  "tool_calls": [
+                    { "id": "call_1", "type": "function",
+                      "function": { "name": "weather", "arguments": "{}" } },
+                    { "id": "internal_2", "type": "function",
+                      "function": { "name": "weather", "arguments": "{\"city\":\"Paris\"}" } }
+                  ] },
+                { "role": "tool", "tool_call_id": "internal_2", "content": "Cloudy" },
                 { "role": "tool", "tool_call_id": "call_1", "content": "Sunny" }
             ]
         });
@@ -61,6 +68,15 @@ mod tests {
         assert_eq!(
             upstream["contents"][2]["parts"][0]["functionResponse"]["name"],
             "weather"
+        );
+        assert_eq!(
+            upstream["contents"][2]["parts"][1]["functionResponse"]["id"],
+            "call_1"
+        );
+        assert!(
+            upstream["contents"][2]["parts"][0]["functionResponse"]
+                .get("id")
+                .is_none()
         );
     }
 
