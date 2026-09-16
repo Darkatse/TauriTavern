@@ -141,7 +141,7 @@ impl SkillRepository for FakeSkillRepo {
     }
     async fn discover_imports(
         &self,
-        _inputs: Vec<SkillImportInput>,
+        _input: SkillImportInput,
     ) -> Result<Vec<SkillImportInput>, DomainError> {
         unreachable!("not needed")
     }

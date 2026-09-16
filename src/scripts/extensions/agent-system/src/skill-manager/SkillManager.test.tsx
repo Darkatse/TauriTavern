@@ -62,6 +62,7 @@ function createViewController() {
             subtitle: 'Global', scope: { kind: 'global' }, skills: [skill('writer')], loading: false,
         }],
         importDraft: emptySkillImportDraft(0),
+        importBusy: false,
         scopeDialog: { mode: 'import', importKind: 'archive', selectedSectionId: 'global' },
         sourceDialog: { mode: '' },
         searchQuery: '',
@@ -123,27 +124,6 @@ afterEach(() => {
     document.body.replaceChildren();
     rstest.restoreAllMocks();
     loadBundle.mockReset();
-});
-
-test('failed candidates from one archive have distinct labels and list identities', () => {
-    const view = createViewController();
-    const snapshot = view.getSnapshot();
-    snapshot.preview = null;
-    snapshot.fileViewer = null;
-    snapshot.scopeDialog = { mode: '' };
-    snapshot.importDraft = {
-        id: 1, sectionId: 'global', installing: false,
-        items: ['one', 'two'].map(skillRoot => ({
-            input: { kind: 'archiveFile', path: '/tmp/skills.zip', skillRoot },
-            preview: null, error: 'Invalid frontmatter', conflictStrategy: 'skip',
-        })),
-    };
-    const errors = rstest.spyOn(console, 'error');
-    const result = render(<SkillManager controller={view.controller} tr={tr} />);
-    expect(result.getByText('skills.zip / one')).toBeTruthy();
-    expect(result.getByText('skills.zip / two')).toBeTruthy();
-    expect(result.getAllByText('Invalid frontmatter')).toHaveLength(2);
-    expect(errors).not.toHaveBeenCalled();
 });
 
 test('Skill preview and edits share CodeMirror history and submit the current draft', async () => {

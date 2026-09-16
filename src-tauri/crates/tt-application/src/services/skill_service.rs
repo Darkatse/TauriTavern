@@ -61,9 +61,9 @@ impl SkillService {
 
     pub async fn discover_imports(
         &self,
-        inputs: Vec<SkillImportInput>,
+        input: SkillImportInput,
     ) -> Result<Vec<SkillImportInput>, ApplicationError> {
-        Ok(self.repository.discover_imports(inputs).await?)
+        Ok(self.repository.discover_imports(input).await?)
     }
 
     pub async fn discard_import_archive(&self, path: &str) -> Result<(), ApplicationError> {
@@ -388,7 +388,7 @@ mod tests {
 
         async fn discover_imports(
             &self,
-            _inputs: Vec<SkillImportInput>,
+            _input: SkillImportInput,
         ) -> Result<Vec<SkillImportInput>, DomainError> {
             unreachable!("not needed for resolver tests")
         }

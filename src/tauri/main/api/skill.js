@@ -39,92 +39,50 @@ function createSkillApi({
     materializeAndroidSkillImportArchive,
     removeTemporaryFile,
 }) {
-    /** @type {Map<string, { cleanup: () => Promise<void>; remainingRoots: Set<string> | null }>} */
+    // One active picked-import batch; add batch ownership only if concurrent imports are supported.
+    /** @type {Map<string, (() => Promise<void>) | null>} */
     const pendingPickedImports = new Map();
-    const discoveryErrors = new Map();
-
-    function pickedImportRef(input) {
-        if (input === null || input === undefined) {
-            return null;
-        }
-        try {
-            const normalized = normalizeSkillImportInput(input);
-            return normalized.kind === 'archiveFile'
-                ? { path: normalized.path, skillRoot: normalized.skillRoot || '' }
-                : null;
-        } catch {
-            return null;
-        }
-    }
 
     function rememberPickedImport(input, cleanup) {
-        pendingPickedImports.set(input.path, { cleanup, remainingRoots: null });
+        pendingPickedImports.set(input.path, cleanup);
         return input;
     }
 
-    function trackDiscoveredImports(inputs) {
-        for (const [path, pending] of pendingPickedImports) {
-            pending.remainingRoots = new Set(inputs
-                .filter(input => input.kind === 'archiveFile' && input.path === path)
-                .map(input => input.skillRoot || ''));
-        }
-    }
-
     async function discardPickedImport(input = null) {
-        if (input == null) discoveryErrors.clear();
-        const picked = pickedImportRef(input);
-        const paths = input === null || input === undefined
+        const selected = input == null ? null : normalizeSkillImportInput(input);
+        const paths = selected === null
             ? [...pendingPickedImports.keys()]
-            : picked ? [picked.path] : [];
+            : selected.kind === 'archiveFile' ? [selected.path] : [];
 
         for (const path of paths) {
-            const pending = pendingPickedImports.get(path);
-            if (!pending) {
-                continue;
-            }
-            if (picked && pending.remainingRoots) {
-                pending.remainingRoots.delete(picked.skillRoot);
-                if (pending.remainingRoots.size > 0) continue;
-            }
+            const cleanup = pendingPickedImports.get(path);
             pendingPickedImports.delete(path);
             try {
-                await pending.cleanup();
+                await safeInvoke('discard_skill_import_archive', { path });
+            } catch (error) {
+                console.warn('Failed to cleanup extracted Skill import archive:', error);
+            }
+            try {
+                await cleanup?.();
             } catch (error) {
                 console.warn('Failed to cleanup staged Skill import archive:', error);
             }
         }
     }
 
-    async function discoverPickedImports(inputs) {
-        const results = [];
-        for (const raw of inputs) {
-            const input = normalizeSkillImportInput(raw);
-            if (input.kind === 'archiveFile') {
-                const stagedCleanup = pendingPickedImports.get(input.path)?.cleanup;
-                rememberPickedImport(input, async () => {
-                    try {
-                        await safeInvoke('discard_skill_import_archive', { path: input.path });
-                    } finally {
-                        await stagedCleanup?.();
-                    }
-                });
-            }
-            try {
-                const discovered = await safeInvoke('discover_skill_imports', {
-                    inputs: [toSkillImportCommandInput(input)],
-                });
-                if (!Array.isArray(discovered) || discovered.length === 0) {
-                    throw new Error('Skill import discovery returned no Skills');
-                }
-                results.push(...discovered.map(normalizeSkillImportInput));
-            } catch (error) {
-                // Surface this source's original failure through the existing preview UI.
-                discoveryErrors.set(JSON.stringify(input), error);
-                results.push(input);
-            }
+    async function discoverImports(options) {
+        const input = normalizeSkillImportInput(options?.input);
+        if (input.kind !== 'directory' && input.kind !== 'archiveFile') return [input];
+        if (input.kind === 'archiveFile' && !pendingPickedImports.has(input.path)) {
+            rememberPickedImport(input, null);
         }
-        trackDiscoveredImports(results);
-        return results;
+        const discovered = await safeInvoke('discover_skill_imports', {
+            input: toSkillImportCommandInput(input),
+        });
+        if (!Array.isArray(discovered) || discovered.length === 0) {
+            throw new Error('Skill import discovery returned no Skills');
+        }
+        return discovered.map(normalizeSkillImportInput);
     }
 
     async function stageAndroidSkillImportArchive(contentUri) {
@@ -224,9 +182,9 @@ function createSkillApi({
                     ],
                 },
             }));
-            inputs = paths?.map((path) => ({ kind: 'archiveFile', path })) ?? null;
+            inputs = paths?.map((path) => rememberPickedImport({ kind: 'archiveFile', path }, null)) ?? null;
         }
-        return inputs && multiple ? discoverPickedImports(inputs) : inputs;
+        return inputs;
     }
 
     async function list(options = {}) {
@@ -267,9 +225,7 @@ function createSkillApi({
                 recursive: true,
             },
         }));
-        return paths
-            ? discoverPickedImports(paths.map((path) => ({ kind: 'directory', path })))
-            : null;
+        return paths?.map((path) => ({ kind: 'directory', path })) ?? null;
     }
 
     async function downloadImport(options) {
@@ -282,32 +238,16 @@ function createSkillApi({
         const request = requirePlainObject(options, 'skill import preview request');
         const input = normalizeSkillImportInput(request.input);
         const targetScope = normalizeSkillScope(request.targetScope ?? request.target_scope, 'targetScope');
-        try {
-            if (discoveryErrors.has(JSON.stringify(input))) {
-                throw discoveryErrors.get(JSON.stringify(input));
-            }
-            return await safeInvoke('preview_skill_import', {
-                input: toSkillImportCommandInput(input),
-                ...(targetScope ? { targetScope } : {}),
-            });
-        } catch (error) {
-            await discardPickedImport(request.input);
-            throw error;
-        }
+        return safeInvoke('preview_skill_import', {
+            input: toSkillImportCommandInput(input),
+            ...(targetScope ? { targetScope } : {}),
+        });
     }
 
     async function installImport(request) {
-        try {
-            const input = normalizeSkillImportInput(request?.input);
-            if (discoveryErrors.has(JSON.stringify(input))) {
-                throw discoveryErrors.get(JSON.stringify(input));
-            }
-            return await safeInvoke('install_skill_import', {
-                request: normalizeSkillInstallRequest(request),
-            });
-        } finally {
-            await discardPickedImport(request?.input);
-        }
+        return safeInvoke('install_skill_import', {
+            request: normalizeSkillInstallRequest(request),
+        });
     }
 
     async function readFile(options) {
@@ -379,6 +319,7 @@ function createSkillApi({
         pickImportArchives,
         pickImportDirectories,
         discardPickedImport,
+        discoverImports,
         downloadImport,
         previewImport,
         installImport,

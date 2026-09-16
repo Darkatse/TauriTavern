@@ -81,7 +81,7 @@ pub async fn list_skill_files(
 
 #[tauri::command]
 pub async fn discover_skill_imports(
-    inputs: Vec<SkillImportInput>,
+    input: SkillImportInput,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<SkillImportInput>, CommandError> {
     log_command("discover_skill_imports");
@@ -89,7 +89,7 @@ pub async fn discover_skill_imports(
     app_state
         .services
         .skill_service
-        .discover_imports(inputs)
+        .discover_imports(input)
         .await
         .map_err(map_command_error("Failed to discover Agent Skill imports"))
 }

@@ -23,7 +23,7 @@ pub trait SkillRepository: Send + Sync {
 
     async fn discover_imports(
         &self,
-        inputs: Vec<SkillImportInput>,
+        input: SkillImportInput,
     ) -> Result<Vec<SkillImportInput>, DomainError>;
 
     async fn discard_import_archive(&self, path: &str) -> Result<(), DomainError>;

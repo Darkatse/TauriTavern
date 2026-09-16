@@ -73,10 +73,11 @@ function ImportDraft(props: {
     section: SkillSection | null;
     items: readonly SkillImportItem[];
     installing: boolean;
+    busy: boolean;
+    id: number;
 }) {
-    const { controller, tr, section, items, installing } = props;
-    if (items.length === 0) return null;
-    const busy = installing || items.some(item => !item.preview && !item.error);
+    const { controller, tr, section, items, installing, busy, id } = props;
+    if (items.length === 0) return busy ? <div className="ttas-loading">{tr('loadingSkillFiles')}</div> : null;
     if (items.length === 1) {
         const item = items[0];
         if (!item) return null;
@@ -85,8 +86,8 @@ function ImportDraft(props: {
                 <div className="ttas-skill-import-inline-main">
                     <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : importIcon(item)}`}></i>
                     <div>
-                        <strong>{item.preview ? itemLabel(item, tr) : loadingTitle(item, tr)}</strong>
-                        {section && <small>{tr('importTargetScope')}: {tr(section.labelKey)} / {conflictText(item, tr) || tr('loadingSkillFiles')}</small>}
+                        <strong>{item.preview || item.error ? itemLabel(item, tr) : loadingTitle(item, tr)}</strong>
+                        {section && <small>{tr('importTargetScope')}: {tr(section.labelKey)} / {item.error || conflictText(item, tr) || tr('loadingSkillFiles')}</small>}
                     </div>
                 </div>
                 <ImportConflictSelect item={item} index={0} busy={busy} controller={controller} tr={tr} />
@@ -113,7 +114,7 @@ function ImportDraft(props: {
             </header>
             <ol className="ttas-skill-import-batch-list">
                 {items.map((item, index) => (
-                    <li key={JSON.stringify(['path' in item.input ? item.input.path : '', item.input.kind === 'archiveFile' ? item.input.skillRoot : '', index])} className={`ttas-skill-import-batch-item${item.error ? ' has-error' : ''}`}>
+                    <li key={`${id}:${index}`} className={`ttas-skill-import-batch-item${item.error ? ' has-error' : ''}`}>
                         <i className={`fa-solid ttas-skill-import-batch-status ${item.error ? 'fa-triangle-exclamation' : item.preview ? 'fa-circle-check' : 'fa-spinner fa-spin'}`}></i>
                         <div className="ttas-skill-import-batch-copy">
                             <strong>{itemLabel(item, tr)}</strong>
@@ -199,7 +200,7 @@ function SkillSectionView(props: {
 export function SkillManager(props: { controller: SkillManagerController; tr: SkillManagerTr }) {
     const { controller, tr } = props;
     const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
-    const busy = snapshot.importDraft.installing || snapshot.importDraft.items.some(item => !item.preview && !item.error);
+    const busy = snapshot.importBusy;
     const importSection = snapshot.sections.find(section => section.id === snapshot.importDraft.sectionId) ?? null;
     const query = snapshot.searchQuery.trim().toLowerCase();
 
@@ -225,7 +226,7 @@ export function SkillManager(props: { controller: SkillManagerController; tr: Sk
                         </div>
                         <div className="ttas-skill-search"><i className="fa-solid fa-magnifying-glass"></i><input className="text_pole" type="search" aria-label={tr('searchSkills')} placeholder={tr('searchSkills')} value={snapshot.searchQuery} onChange={event => controller.setSearchQuery(event.target.value)} /></div>
                     </div>
-                    <ImportDraft controller={controller} tr={tr} section={importSection} items={snapshot.importDraft.items} installing={snapshot.importDraft.installing} />
+                    <ImportDraft controller={controller} tr={tr} section={importSection} items={snapshot.importDraft.items} installing={snapshot.importDraft.installing} busy={busy} id={snapshot.importDraft.id} />
                     <div className="ttas-skill-section-list">
                         {snapshot.sections.map(section => <SkillSectionView key={section.id} section={section} query={query} controller={controller} tr={tr} />)}
                     </div>

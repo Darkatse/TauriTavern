@@ -136,9 +136,9 @@ impl SkillRepository for FileSkillRepository {
 
     async fn discover_imports(
         &self,
-        inputs: Vec<SkillImportInput>,
+        input: SkillImportInput,
     ) -> Result<Vec<SkillImportInput>, DomainError> {
-        self.discover_inputs(inputs).await
+        self.discover_input(input).await
     }
 
     async fn discard_import_archive(&self, path: &str) -> Result<(), DomainError> {

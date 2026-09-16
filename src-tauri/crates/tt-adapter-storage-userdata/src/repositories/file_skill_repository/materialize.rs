@@ -32,91 +32,79 @@ impl Drop for DiscoveredArchive {
 }
 
 impl FileSkillRepository {
-    pub(super) async fn discover_inputs(
+    pub(super) async fn discover_input(
         &self,
-        inputs: Vec<SkillImportInput>,
+        input: SkillImportInput,
     ) -> Result<Vec<SkillImportInput>, DomainError> {
         self.ensure_layout().await?;
-        let mut discovered = Vec::new();
-
-        for input in inputs {
-            match input {
-                SkillImportInput::Directory { path, source } => {
-                    for skill_root in discover_skill_roots(Path::new(&path))? {
-                        discovered.push(SkillImportInput::Directory {
-                            path: skill_root.to_string_lossy().into_owned(),
+        match input {
+            SkillImportInput::Directory { path, source } => {
+                tokio::task::spawn_blocking(move || {
+                    Ok(discover_skill_roots(Path::new(&path))?
+                        .into_iter()
+                        .map(|root| SkillImportInput::Directory {
+                            path: root.to_string_lossy().into_owned(),
                             source: source.clone(),
-                        });
-                    }
-                }
-                SkillImportInput::ArchiveFile {
-                    path,
-                    skill_root: Some(skill_root),
-                    source,
-                } => discovered.push(SkillImportInput::ArchiveFile {
-                    path,
-                    skill_root: Some(skill_root),
-                    source,
-                }),
-                SkillImportInput::ArchiveFile {
-                    path,
-                    skill_root: None,
-                    source,
-                } => {
-                    let staging_dir = self
-                        .staging_root()
-                        .join(format!("discover-{}", Uuid::new_v4().simple()));
-                    let archive_path = path.clone();
-                    let (archive, archive_inputs) = tokio::task::spawn_blocking(move || {
-                        let archive = Arc::new(DiscoveredArchive {
-                            root: staging_dir.clone(),
-                        });
-                        fs::create_dir_all(&staging_dir).map_err(|error| {
-                            DomainError::InternalError(format!(
-                                "Failed to create Skill discovery directory '{}': {}",
-                                staging_dir.display(),
-                                error
-                            ))
-                        })?;
-                        extract_archive(Path::new(&archive_path), &staging_dir)?;
-                        let inputs = discover_skill_roots(&staging_dir)?
-                            .into_iter()
-                            .map(|root| {
-                                let relative = root.strip_prefix(&staging_dir).map_err(|error| {
-                                    DomainError::InternalError(format!(
-                                        "Failed to compute discovered Skill archive root: {error}"
-                                    ))
-                                })?;
-                                Ok(SkillImportInput::ArchiveFile {
-                                    path: archive_path.clone(),
-                                    skill_root: if relative.as_os_str().is_empty() {
-                                        None
-                                    } else {
-                                        Some(normalize_skill_path(&relative.to_string_lossy())?)
-                                    },
-                                    source: source.clone(),
-                                })
-                            })
-                            .collect::<Result<Vec<_>, DomainError>>()?;
-                        Ok::<_, DomainError>((archive, inputs))
-                    })
-                    .await
-                    .map_err(|error| {
-                        DomainError::InternalError(format!("Skill discovery task failed: {error}"))
-                    })??;
-                    self.discovered_archives.lock().await.insert(path, archive);
-                    discovered.extend(archive_inputs);
-                }
-                _ => {
-                    return Err(DomainError::InvalidData(
-                        "Skill discovery only supports directory and archiveFile inputs"
-                            .to_string(),
-                    ));
-                }
+                        })
+                        .collect())
+                })
+                .await
+                .map_err(|error| {
+                    DomainError::InternalError(format!("Skill discovery task failed: {error}"))
+                })?
             }
+            SkillImportInput::ArchiveFile {
+                path,
+                skill_root: None,
+                source,
+            } => {
+                let staging_dir = self
+                    .staging_root()
+                    .join(format!("discover-{}", Uuid::new_v4().simple()));
+                let archive_path = path.clone();
+                let (archive, inputs) = tokio::task::spawn_blocking(move || {
+                    let archive = Arc::new(DiscoveredArchive {
+                        root: staging_dir.clone(),
+                    });
+                    fs::create_dir_all(&staging_dir).map_err(|error| {
+                        DomainError::InternalError(format!(
+                            "Failed to create Skill discovery directory '{}': {}",
+                            staging_dir.display(),
+                            error
+                        ))
+                    })?;
+                    extract_archive(Path::new(&archive_path), &staging_dir)?;
+                    let inputs = discover_skill_roots(&staging_dir)?
+                        .into_iter()
+                        .map(|root| {
+                            let relative = root.strip_prefix(&staging_dir).map_err(|error| {
+                                DomainError::InternalError(format!(
+                                    "Failed to compute discovered Skill archive root: {error}"
+                                ))
+                            })?;
+                            Ok(SkillImportInput::ArchiveFile {
+                                path: archive_path.clone(),
+                                skill_root: if relative.as_os_str().is_empty() {
+                                    None
+                                } else {
+                                    Some(normalize_skill_path(&relative.to_string_lossy())?)
+                                },
+                                source: source.clone(),
+                            })
+                        })
+                        .collect::<Result<Vec<_>, DomainError>>()?;
+                    Ok::<_, DomainError>((archive, inputs))
+                })
+                .await
+                .map_err(|error| {
+                    DomainError::InternalError(format!("Skill discovery task failed: {error}"))
+                })??;
+                self.discovered_archives.lock().await.insert(path, archive);
+                Ok(inputs)
+            }
+            // Inline, embedded and already-discovered inputs are single candidates.
+            input => Ok(vec![input]),
         }
-
-        Ok(discovered)
     }
 
     pub(super) async fn materialize_input(
