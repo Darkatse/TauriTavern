@@ -1,7 +1,9 @@
 use serde_json::{Map, Value};
+use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
 use crate::errors::ApplicationError;
 
+use super::super::exchange::ChatCompletionProviderFormat;
 use super::super::model_capabilities::{
     RequestedReasoningEffort, parse_known_reasoning_effort, unsupported_reasoning_effort,
 };
@@ -16,24 +18,114 @@ enum DeepSeekThinkingMode {
     Disabled,
 }
 
+/// Resolved from the TT request, before a wire builder can drop provider controls.
+pub(super) struct RequestOptions {
+    thinking_mode: Option<DeepSeekThinkingMode>,
+    reasoning_effort: Option<Value>,
+    strip_sampling: bool,
+}
+
+impl RequestOptions {
+    pub(super) fn from_payload(
+        source: ChatCompletionSource,
+        payload: &Map<String, Value>,
+    ) -> Result<Option<Self>, ApplicationError> {
+        let model = payload
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        if source == ChatCompletionSource::DeepSeek {
+            let thinking_mode = resolve_thinking_mode(payload, model);
+            let reasoning_effort = if thinking_mode == Some(DeepSeekThinkingMode::Enabled) {
+                normalize_reasoning_effort(
+                    payload
+                        .get("reasoning_effort")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                )?
+                .map(|effort| Value::String(effort.to_string()))
+            } else {
+                None
+            };
+            return Ok(Some(Self {
+                thinking_mode,
+                reasoning_effort,
+                strip_sampling: true,
+            }));
+        }
+
+        if !matches!(
+            source,
+            ChatCompletionSource::Custom | ChatCompletionSource::OpenCode
+        ) || ChatCompletionProviderFormat::from_payload(source, payload)?
+            != ChatCompletionProviderFormat::OpenAiCompatible
+            || !is_deepseek_v4_model(model)
+        {
+            return Ok(None);
+        }
+
+        let thinking_mode =
+            if payload.get("include_reasoning").and_then(Value::as_bool) == Some(false) {
+                DeepSeekThinkingMode::Disabled
+            } else {
+                DeepSeekThinkingMode::Enabled
+            };
+        // Compatible gateways own their parameter contract. Preserve explicit values,
+        // including effort that the OpenCode wire builder would otherwise discard.
+        Ok(Some(Self {
+            thinking_mode: Some(thinking_mode),
+            reasoning_effort: payload.get("reasoning_effort").cloned(),
+            strip_sampling: false,
+        }))
+    }
+
+    pub(super) fn apply(self, body: &mut Map<String, Value>) {
+        if let Some(mode) = self.thinking_mode {
+            body.insert(
+                "thinking".to_string(),
+                serde_json::json!({
+                    "type": match mode {
+                        DeepSeekThinkingMode::Enabled => "enabled",
+                        DeepSeekThinkingMode::Disabled => "disabled",
+                    },
+                }),
+            );
+        }
+
+        if let Some(effort) = self.reasoning_effort {
+            body.insert("reasoning_effort".to_string(), effort);
+        } else {
+            body.remove("reasoning_effort");
+        }
+
+        if self.thinking_mode == Some(DeepSeekThinkingMode::Enabled) {
+            if self.strip_sampling {
+                for key in [
+                    "temperature",
+                    "top_p",
+                    "presence_penalty",
+                    "frequency_penalty",
+                ] {
+                    body.remove(key);
+                }
+            }
+            let has_tools = body
+                .get("tools")
+                .and_then(Value::as_array)
+                .is_some_and(|tools| !tools.is_empty());
+            if let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) {
+                fill_missing_tool_reasoning_content(messages, has_tools);
+            }
+        }
+
+        strip_empty_required_arrays_from_tools(body);
+    }
+}
+
+/// The native source owns its prompt preset; compatible sources keep the user's preset.
 pub(super) fn build(mut payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
     let names = PromptNames::from_payload(&payload);
-    let model = payload
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    let thinking_mode = resolve_thinking_mode(&payload, &model);
-    let reasoning_effort = match thinking_mode {
-        Some(DeepSeekThinkingMode::Enabled) => normalize_reasoning_effort(
-            payload
-                .get("reasoning_effort")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-        )?,
-        _ => None,
-    };
     let has_tools = payload
         .get("tools")
         .and_then(Value::as_array)
@@ -54,25 +146,12 @@ pub(super) fn build(mut payload: Map<String, Value>) -> Result<(String, Value), 
             add_assistant_prefix(&mut processed, "prefix");
         }
 
-        if thinking_mode == Some(DeepSeekThinkingMode::Enabled) {
-            ensure_tool_context_reasoning_content(&mut processed, has_tools)?;
-        }
-
         let processed = Value::Array(processed);
         tool_calls::validate_openai_chat_tool_transcript(Some(&processed), false)?;
         payload.insert("messages".to_string(), processed);
     }
 
-    strip_empty_required_arrays_from_tools(&mut payload);
-
-    let (endpoint, mut upstream_payload) = openai::build(payload)?;
-    if endpoint == "/chat/completions"
-        && let (Some(mode), Some(body)) = (thinking_mode, upstream_payload.as_object_mut())
-    {
-        apply_thinking_mode(body, mode, reasoning_effort);
-    }
-
-    Ok((endpoint, upstream_payload))
+    openai::build(payload)
 }
 
 fn resolve_thinking_mode(
@@ -101,79 +180,14 @@ fn resolve_thinking_mode(
     }
 }
 
-/// DeepSeek V4 家族（v4* / flash）判定，用于 OpenAI 兼容源的模型名匹配。
-/// 取 `/` 分隔的最后一段再匹配，容忍网关前缀（如 `GO/deepseek-flash`、
-/// `OR/deepseek-v4.1-flash`、`newapi/openrouter/deepseek-v4`）。
-/// DeepSeek 3.x 不命中。
-pub(super) fn is_deepseek_v4_model(model: &str) -> bool {
+/// Match the final segment to allow gateway prefixes such as `GO/deepseek-flash`.
+fn is_deepseek_v4_model(model: &str) -> bool {
     let normalized = model.trim().to_ascii_lowercase();
     let last_segment = normalized.rsplit('/').next().unwrap_or_default();
 
     last_segment.starts_with("deepseek-v4") || last_segment.starts_with("deepseek-flash")
 }
 
-/// 对 OpenAI 兼容源（Custom/OpenCode OpenAiCompat）构建后的请求体应用
-/// DeepSeek V4 语义对齐：当模型命中 V4 家族时，对齐官方 DeepSeek 渠道的
-/// thinking 控制、effort 归一化、采样参数清理、工具上下文 reasoning_content
-/// 补齐与空 required 剥离。非 V4 模型零改动。`include_reasoning` 由调用方
-/// 在 builder 白名单化之前从 TT payload 读出传入（思考开关意图），它本身
-/// 不透传给上游。
-pub(super) fn apply_deepseek_v4_compat(
-    upstream_payload: &mut Value,
-    include_reasoning: Option<bool>,
-) -> Result<(), ApplicationError> {
-    let Some(body) = upstream_payload.as_object_mut() else {
-        return Ok(());
-    };
-
-    let model = body
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    if !is_deepseek_v4_model(&model) {
-        return Ok(());
-    }
-
-    // 未提供时与官方渠道默认一致：V4 家族默认开启思考。
-    let thinking_mode = match include_reasoning {
-        Some(true) => DeepSeekThinkingMode::Enabled,
-        Some(false) => DeepSeekThinkingMode::Disabled,
-        None => DeepSeekThinkingMode::Enabled,
-    };
-
-    let reasoning_effort = match thinking_mode {
-        DeepSeekThinkingMode::Enabled => normalize_reasoning_effort(
-            body.get("reasoning_effort")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-        )?,
-        DeepSeekThinkingMode::Disabled => None,
-    };
-
-    let has_tools = body
-        .get("tools")
-        .and_then(Value::as_array)
-        .is_some_and(|tools| !tools.is_empty());
-
-    if thinking_mode == DeepSeekThinkingMode::Enabled
-        && let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut)
-    {
-        ensure_tool_context_reasoning_content(messages, has_tools)?;
-    }
-
-    strip_empty_required_arrays_from_tools(body);
-
-    // CUSTOM 源会无条件转发 reasoning_effort；官方渠道语义是 disabled 时
-    // 不发送 effort，这里对齐（enabled 时 apply_thinking_mode 内部会重写）。
-    if thinking_mode == DeepSeekThinkingMode::Disabled {
-        body.remove("reasoning_effort");
-    }
-
-    apply_thinking_mode(body, thinking_mode, reasoning_effort);
-
-    Ok(())
-}
 fn normalize_reasoning_effort(value: &str) -> Result<Option<&'static str>, ApplicationError> {
     match parse_known_reasoning_effort(value, "DeepSeek")? {
         RequestedReasoningEffort::Auto => Ok(None),
@@ -186,44 +200,7 @@ fn normalize_reasoning_effort(value: &str) -> Result<Option<&'static str>, Appli
     }
 }
 
-fn apply_thinking_mode(
-    body: &mut Map<String, Value>,
-    mode: DeepSeekThinkingMode,
-    reasoning_effort: Option<&str>,
-) {
-    body.insert(
-        "thinking".to_string(),
-        serde_json::json!({
-            "type": match mode {
-                DeepSeekThinkingMode::Enabled => "enabled",
-                DeepSeekThinkingMode::Disabled => "disabled",
-            },
-        }),
-    );
-
-    if mode == DeepSeekThinkingMode::Enabled {
-        for key in [
-            "temperature",
-            "top_p",
-            "presence_penalty",
-            "frequency_penalty",
-        ] {
-            body.remove(key);
-        }
-
-        if let Some(reasoning_effort) = reasoning_effort {
-            body.insert(
-                "reasoning_effort".to_string(),
-                Value::String(reasoning_effort.to_string()),
-            );
-        }
-    }
-}
-
-fn ensure_tool_context_reasoning_content(
-    messages: &mut [Value],
-    has_tools: bool,
-) -> Result<(), ApplicationError> {
+fn fill_missing_tool_reasoning_content(messages: &mut [Value], has_tools: bool) {
     let has_tool_context = has_tools
         || messages.iter().any(|message| {
             let Some(message_object) = message.as_object() else {
@@ -238,7 +215,7 @@ fn ensure_tool_context_reasoning_content(
         });
 
     if !has_tool_context {
-        return Ok(());
+        return;
     }
 
     for message in messages {
@@ -250,24 +227,11 @@ fn ensure_tool_context_reasoning_content(
             continue;
         }
 
-        match message_object.get("reasoning_content") {
-            Some(Value::String(_)) => {}
-            Some(_) => {
-                return Err(ApplicationError::ValidationError(
-                    "DeepSeek thinking assistant messages in tool context must have string reasoning_content"
-                        .to_string(),
-                ));
-            }
-            None => {
-                message_object.insert(
-                    "reasoning_content".to_string(),
-                    Value::String(String::new()),
-                );
-            }
-        }
+        // Preserve explicit values for later body overrides and upstream handling.
+        message_object
+            .entry("reasoning_content")
+            .or_insert_with(|| Value::String(String::new()));
     }
-
-    Ok(())
 }
 
 fn strip_empty_required_arrays_from_tools(payload: &mut Map<String, Value>) {
@@ -276,26 +240,16 @@ fn strip_empty_required_arrays_from_tools(payload: &mut Map<String, Value>) {
     };
 
     for tool in tools {
-        let should_remove = tool
-            .as_object()
-            .and_then(|tool| tool.get("function"))
-            .and_then(Value::as_object)
-            .and_then(|function| function.get("parameters"))
-            .and_then(Value::as_object)
-            .and_then(|parameters| parameters.get("required"))
-            .and_then(Value::as_array)
-            .is_some_and(|required| required.is_empty());
-
-        if !should_remove {
+        let Some(parameters) = tool
+            .pointer_mut("/function/parameters")
+            .and_then(Value::as_object_mut)
+        else {
             continue;
-        }
-
-        if let Some(parameters) = tool
-            .as_object_mut()
-            .and_then(|tool| tool.get_mut("function"))
-            .and_then(Value::as_object_mut)
-            .and_then(|function| function.get_mut("parameters"))
-            .and_then(Value::as_object_mut)
+        };
+        if parameters
+            .get("required")
+            .and_then(Value::as_array)
+            .is_some_and(|required| required.is_empty())
         {
             parameters.remove("required");
         }
@@ -304,9 +258,14 @@ fn strip_empty_required_arrays_from_tools(payload: &mut Map<String, Value>) {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{Value, json};
+    use serde_json::{Map, Value, json};
+    use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
-    use super::build;
+    use crate::errors::ApplicationError;
+
+    fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
+        super::super::build_payload(ChatCompletionSource::DeepSeek, payload)
+    }
 
     #[test]
     fn deepseek_build_marks_assistant_prefill_as_prefix() {
@@ -338,16 +297,16 @@ mod tests {
 
     #[test]
     fn deepseek_v4_enables_thinking_and_maps_effort() {
-        for model in [
-            "deepseek-v4-flash",
-            "deepseek-v4-flash-vision-exp",
-            "deepseek-flash",
-            "deepseek-v4-pro",
+        for (model, requested_effort, expected_effort) in [
+            ("deepseek-v4-flash", "medium", Some("high")),
+            ("deepseek-v4-flash-vision-exp", "minimal", Some("low")),
+            ("deepseek-flash", "auto", None),
+            ("deepseek-v4-pro", "max", Some("max")),
         ] {
             let payload = json!({
                 "model": model,
                 "messages": [{"role": "user", "content": "hello"}],
-                "reasoning_effort": "max",
+                "reasoning_effort": requested_effort,
                 "temperature": 1.2,
                 "top_p": 0.7,
                 "presence_penalty": 0.1,
@@ -369,8 +328,8 @@ mod tests {
                 Some("enabled")
             );
             assert_eq!(
-                body.get("reasoning_effort").and_then(Value::as_str),
-                Some("max")
+                body.get("reasoning_effort"),
+                expected_effort.map(|effort| json!(effort)).as_ref()
             );
             assert!(body.get("temperature").is_none());
             assert!(body.get("top_p").is_none());
@@ -488,35 +447,6 @@ mod tests {
                 Some("")
             );
         }
-    }
-
-    #[test]
-    fn deepseek_thinking_tool_context_rejects_non_string_reasoning_content() {
-        let payload = json!({
-            "model": "deepseek-v4-flash",
-            "messages": [
-                {"role":"user","content":"weather"},
-                {
-                    "role":"assistant",
-                    "content":"",
-                    "reasoning_content": {"text":"need weather"},
-                    "tool_calls":[{
-                        "id":"call_1",
-                        "type":"function",
-                        "function":{"name":"weather","arguments":"{}"}
-                    }]
-                },
-                {"role":"tool","tool_call_id":"call_1","content":"cloudy"}
-            ],
-            "include_reasoning": true,
-            "chat_completion_source": "deepseek"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let error = build(payload).expect_err("non-string reasoning_content must fail");
-        assert!(error.to_string().contains("string reasoning_content"));
     }
 
     #[test]
