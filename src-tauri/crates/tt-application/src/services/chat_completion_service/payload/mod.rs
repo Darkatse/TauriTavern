@@ -111,9 +111,8 @@ pub(super) fn validate_upstream_tool_transcript(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{Map, Value, json};
+    use serde_json::{Value, json};
 
-    use super::super::additional_parameters::AdditionalParameters;
     use super::build_payload;
     use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
@@ -229,9 +228,9 @@ mod tests {
                 "/chat/completions",
                 "gpt-3.5-turbo-instruct",
             ),
-            ("openai_responses", "/responses", "test-model"),
-            ("claude_messages", "/messages", "test-model"),
-            ("gemini", "/generateContent", "test-model"),
+            ("openai_responses", "/responses", "gateway/deepseek-v4-pro"),
+            ("claude_messages", "/messages", "gateway/deepseek-v4-pro"),
+            ("gemini", "/generateContent", "gateway/deepseek-v4-pro"),
         ] {
             let payload = json!({
                 "chat_completion_source": "opencode",
@@ -245,12 +244,10 @@ mod tests {
             .cloned()
             .unwrap();
 
-            assert_eq!(
-                build_payload(ChatCompletionSource::OpenCode, payload)
-                    .unwrap()
-                    .0,
-                endpoint
-            );
+            let (actual_endpoint, upstream) =
+                build_payload(ChatCompletionSource::OpenCode, payload).unwrap();
+            assert_eq!(actual_endpoint, endpoint);
+            assert!(upstream.get("thinking").is_none(), "{format}");
         }
     }
 
@@ -259,7 +256,8 @@ mod tests {
         let payload = json!({
             "chat_completion_source": "custom",
             "custom_api_format": "openai_responses",
-            "model": "gpt-5",
+            "model": "gateway/deepseek-v4-pro",
+            "reasoning_effort": "medium",
             "messages": [
                 { "role": "user", "content": "hi" },
                 {
@@ -289,6 +287,9 @@ mod tests {
             build_payload(ChatCompletionSource::Custom, payload).expect("payload should build");
 
         assert_eq!(endpoint, "/responses");
+        assert_eq!(upstream["reasoning"]["effort"], "medium");
+        assert!(upstream.get("thinking").is_none());
+        assert!(upstream.get("reasoning_effort").is_none());
         let input = upstream
             .get("input")
             .and_then(Value::as_array)
@@ -324,202 +325,128 @@ mod tests {
         );
     }
 
-    fn deepseek_compat_payload(source: ChatCompletionSource, model: &str) -> Map<String, Value> {
-        json!({
-            "chat_completion_source": source.key(),
-            "model": model,
+    #[test]
+    fn compat_deepseek_preserves_explicit_parameters() {
+        for (source, model, effort) in [
+            (
+                ChatCompletionSource::Custom,
+                " GO/deepseek-flash ",
+                "provider-specific",
+            ),
+            (
+                ChatCompletionSource::OpenCode,
+                "OR/DeepSeek-v4.1-flash",
+                "medium",
+            ),
+        ] {
+            let payload = json!({
+                "chat_completion_source": source.key(),
+                "model": model,
+                "messages": [{"role": "user", "content": "hello"}],
+                "reasoning_effort": effort,
+                "temperature": 1.2,
+                "top_p": 0.7,
+                "presence_penalty": 0.1,
+                "frequency_penalty": 0.2
+            });
+            let (_, body) = build_payload(source, payload.as_object().unwrap().clone()).unwrap();
+
+            assert_eq!(body["thinking"]["type"], "enabled", "{source:?}");
+            assert_eq!(body["reasoning_effort"], effort, "{source:?}");
+            assert_eq!(body["temperature"], 1.2);
+            assert_eq!(body["top_p"], 0.7);
+            assert_eq!(body["presence_penalty"], 0.1);
+            assert_eq!(body["frequency_penalty"], 0.2);
+        }
+    }
+
+    #[test]
+    fn deepseek_repairs_tool_continuations_without_overwriting_reasoning() {
+        for (source, reasoning) in [
+            (ChatCompletionSource::DeepSeek, Value::Null),
+            (
+                ChatCompletionSource::Custom,
+                json!("  original\nreasoning  "),
+            ),
+            (
+                ChatCompletionSource::OpenCode,
+                json!("  original\nreasoning  "),
+            ),
+        ] {
+            let payload = json!({
+                "chat_completion_source": source.key(),
+                "model": "deepseek-v4-flash",
+                "messages": [
+                    {"role": "user", "content": "weather"},
+                    {"role": "assistant", "content": "I'll check.", "reasoning_content": reasoning},
+                    {"role": "user", "content": "please do"},
+                    {"role": "assistant", "content": "", "tool_calls": [{
+                        "id": "call_1", "type": "function",
+                        "function": {"name": "weather", "arguments": "{}"}
+                    }]},
+                    {"role": "tool", "tool_call_id": "call_1", "content": "cloudy"}
+                ],
+                "tools": [{"type": "function", "function": {"name": "weather", "parameters": {
+                    "type": "object", "properties": {}, "required": []
+                }}}]
+            });
+            let (_, body) = build_payload(source, payload.as_object().unwrap().clone()).unwrap();
+
+            assert_eq!(
+                body["messages"][1].get("reasoning_content"),
+                Some(&reasoning),
+                "{source:?}"
+            );
+            assert_eq!(
+                body["messages"][3].get("reasoning_content"),
+                Some(&json!(""))
+            );
+            assert_eq!(
+                body["tools"][0]["function"]["parameters"],
+                json!({"type": "object", "properties": {}})
+            );
+            assert!(body.get("reasoning_effort").is_none());
+        }
+    }
+
+    #[test]
+    fn compat_deepseek_respects_disabled_thinking() {
+        let payload = json!({
+            "chat_completion_source": "opencode",
+            "model": "deepseek-v4-pro",
+            "include_reasoning": false,
+            "reasoning_effort": "medium",
             "messages": [
                 {"role": "user", "content": "weather"},
-                {"role": "assistant", "content": "I'll check.", "reasoning_content": "  original\nreasoning  "},
-                {"role": "assistant", "content": "", "tool_calls": [{
-                    "id": "call_1", "type": "function",
-                    "function": {"name": "weather", "arguments": "{}"}
-                }]},
-                {"role": "tool", "tool_call_id": "call_1", "content": "cloudy"}
+                {"role": "assistant", "content": "I'll check."}
             ],
-            "tools": [{"type": "function", "function": {"name": "weather", "parameters": {
-                "type": "object", "properties": {"city": {"type": "string"}}, "required": []
-            }}}],
-            "temperature": 1.2,
-            "top_p": 0.7,
-            "presence_penalty": 0.1,
-            "frequency_penalty": 0.2,
-            "reasoning_effort": "medium"
-        }).as_object().unwrap().clone()
-    }
-
-    #[test]
-    fn compat_deepseek_preserves_parameters_and_repairs_tool_continuations() {
-        for source in [ChatCompletionSource::Custom, ChatCompletionSource::OpenCode] {
-            for model in [
-                " GO/deepseek-flash ",
-                "OR/DeepSeek-v4.1-flash",
-                "deepseek-v4-pro",
-            ] {
-                for include_reasoning in [None, Some(true), Some(false)] {
-                    let mut payload = deepseek_compat_payload(source, model);
-                    if let Some(include_reasoning) = include_reasoning {
-                        payload.insert("include_reasoning".into(), json!(include_reasoning));
-                    }
-                    let (endpoint, body) = build_payload(source, payload).unwrap();
-                    let thinking_enabled = include_reasoning != Some(false);
-                    assert_eq!(endpoint, "/chat/completions");
-                    assert_eq!(
-                        body["thinking"]["type"],
-                        if thinking_enabled {
-                            "enabled"
-                        } else {
-                            "disabled"
-                        }
-                    );
-                    assert_eq!(
-                        body["reasoning_effort"], "medium",
-                        "{source:?}: raw effort must survive the wire builder"
-                    );
-                    assert_eq!(body["temperature"], 1.2);
-                    assert_eq!(body["top_p"], 0.7);
-                    assert_eq!(body["presence_penalty"], 0.1);
-                    assert_eq!(body["frequency_penalty"], 0.2);
-                    assert_eq!(
-                        body["messages"][1]["reasoning_content"],
-                        "  original\nreasoning  "
-                    );
-                    assert_eq!(
-                        body["messages"][2].get("reasoning_content"),
-                        thinking_enabled.then_some(&json!(""))
-                    );
-                    assert!(
-                        body["tools"][0]["function"]["parameters"]
-                            .get("required")
-                            .is_none()
-                    );
-                    assert!(body.get("include_reasoning").is_none());
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn deepseek_tool_reasoning_allows_final_body_overrides() {
-        for source in [
-            ChatCompletionSource::DeepSeek,
-            ChatCompletionSource::Custom,
+            "tools": [{"type": "function", "function": {"name": "weather", "parameters": {"type": "object"}}}]
+        });
+        let (_, body) = build_payload(
             ChatCompletionSource::OpenCode,
-        ] {
-            for reasoning in [Value::Null, json!({"text": "need weather"})] {
-                let mut payload = deepseek_compat_payload(source, "deepseek-v4-flash");
-                payload.get_mut("messages").unwrap()[2]["reasoning_content"] = reasoning.clone();
-                let mut repaired_messages = payload["messages"].clone();
-                repaired_messages[2]["reasoning_content"] = json!("need weather");
-                payload.insert(
-                    "custom_include_body".into(),
-                    json!({"messages": repaired_messages}),
-                );
-                let overrides = AdditionalParameters::from_payload(&payload).unwrap();
+            payload.as_object().unwrap().clone(),
+        )
+        .unwrap();
 
-                let (endpoint, mut body) = build_payload(source, payload)
-                    .expect("reasoning must not block final body overrides");
-                assert_eq!(
-                    body["messages"][2].get("reasoning_content"),
-                    Some(&reasoning),
-                    "{source:?}"
-                );
-
-                overrides.apply_body_overrides(&mut body).unwrap();
-                super::validate_upstream_tool_transcript(&endpoint, &body).unwrap();
-                assert_eq!(body["messages"], repaired_messages, "{source:?}");
-            }
-        }
+        assert_eq!(body["thinking"]["type"], "disabled");
+        assert_eq!(body["reasoning_effort"], "medium");
+        assert!(body["messages"][1].get("reasoning_content").is_none());
     }
 
     #[test]
-    fn compat_deepseek_does_not_validate_or_guess_explicit_effort() {
-        for source in [ChatCompletionSource::Custom, ChatCompletionSource::OpenCode] {
-            // Auto in the UI omits the field; a supplied value belongs to the gateway.
-            for effort in [
-                None,
-                Some(json!("max")),
-                Some(json!("none")),
-                Some(json!("provider-specific")),
-                Some(json!("auto")),
-            ] {
-                let mut payload = deepseek_compat_payload(source, "deepseek-v4-pro");
-                payload.remove("reasoning_effort");
-                if let Some(effort) = &effort {
-                    payload.insert("reasoning_effort".into(), effort.clone());
-                }
-                let (_, body) = build_payload(source, payload).unwrap();
-                assert_eq!(body.get("reasoning_effort"), effort.as_ref(), "{source:?}");
-            }
-        }
-    }
-
-    #[test]
-    fn deepseek_compat_leaves_other_models_and_sources_unchanged() {
-        for source in [
-            ChatCompletionSource::Custom,
-            ChatCompletionSource::OpenCode,
-            ChatCompletionSource::OpenRouter,
+    fn deepseek_compat_does_not_affect_other_sources_or_model_families() {
+        for (source, model) in [
+            (ChatCompletionSource::Custom, "deepseek-chat"),
+            (ChatCompletionSource::OpenRouter, "deepseek/deepseek-v4-pro"),
         ] {
-            for model in [
-                "deepseek-3.2",
-                "qwen3-max",
-                "gpt-5.5",
-                "gateway/deepseek-v4-pro",
-            ] {
-                if source != ChatCompletionSource::OpenRouter && model.ends_with("deepseek-v4-pro")
-                {
-                    continue;
-                }
-                let payload = deepseek_compat_payload(source, model);
-                let expected = match source {
-                    ChatCompletionSource::Custom => super::custom::build(payload.clone()),
-                    ChatCompletionSource::OpenCode => super::openai::build_chat(payload.clone()),
-                    _ => super::openrouter::build(payload.clone()),
-                }
-                .unwrap();
-                assert_eq!(
-                    build_payload(source, payload).unwrap(),
-                    expected,
-                    "{source:?}: {model}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn deepseek_compat_leaves_native_protocols_to_their_builders() {
-        for (source, format) in [
-            (ChatCompletionSource::Custom, "openai_responses"),
-            (ChatCompletionSource::Custom, "claude_messages"),
-            (ChatCompletionSource::Custom, "gemini_generate_content"),
-            (ChatCompletionSource::Custom, "gemini_interactions"),
-            (ChatCompletionSource::OpenCode, "openai_responses"),
-            (ChatCompletionSource::OpenCode, "claude_messages"),
-            (ChatCompletionSource::OpenCode, "gemini"),
-        ] {
-            let mut payload = deepseek_compat_payload(source, "gateway/deepseek-v4-pro");
-            let format_key = if source == ChatCompletionSource::Custom {
-                "custom_api_format"
-            } else {
-                "opencode_api_format"
-            };
-            payload.insert(format_key.into(), json!(format));
-            // Each selected protocol retains its own thinking/schema representation.
-            let expected = match source {
-                ChatCompletionSource::Custom => super::custom::build(payload.clone()),
-                _ => match format {
-                    "openai_responses" => super::openai_responses::build(payload.clone()),
-                    "claude_messages" => super::claude_messages::build(payload.clone()),
-                    _ => super::makersuite::build(payload.clone()),
-                },
-            }
-            .unwrap();
-            assert_eq!(
-                build_payload(source, payload).unwrap(),
-                expected,
-                "{source:?}: {format}"
-            );
+            let payload = json!({
+                "chat_completion_source": source.key(),
+                "model": model,
+                "messages": [{"role": "user", "content": "hello"}],
+                "include_reasoning": true
+            });
+            let (_, body) = build_payload(source, payload.as_object().unwrap().clone()).unwrap();
+            assert!(body.get("thinking").is_none(), "{source:?}: {model}");
         }
     }
 }

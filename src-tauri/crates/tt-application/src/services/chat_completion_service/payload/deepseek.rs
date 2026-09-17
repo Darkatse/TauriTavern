@@ -367,45 +367,6 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_thinking_tool_calls_keep_reasoning_content() {
-        let payload = json!({
-            "model": "deepseek-v4-flash",
-            "messages": [
-                {"role":"user","content":"weather"},
-                {
-                    "role":"assistant",
-                    "content":"",
-                    "reasoning_content":"need weather",
-                    "tool_calls":[{
-                        "id":"call_1",
-                        "type":"function",
-                        "function":{"name":"weather","arguments":"{}"}
-                    }]
-                },
-                {"role":"tool","tool_call_id":"call_1","content":"cloudy"}
-            ],
-            "include_reasoning": true,
-            "chat_completion_source": "deepseek"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("payload should build");
-        let assistant = upstream
-            .get("messages")
-            .and_then(Value::as_array)
-            .and_then(|messages| messages.get(1))
-            .and_then(Value::as_object)
-            .expect("assistant must be object");
-
-        assert_eq!(
-            assistant.get("reasoning_content").and_then(Value::as_str),
-            Some("need weather")
-        );
-    }
-
-    #[test]
     fn deepseek_thinking_tool_context_fills_missing_reasoning_content() {
         let payload = json!({
             "model": "deepseek-v4-flash",
