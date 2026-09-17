@@ -58,12 +58,24 @@ const HELP_TOPICS = {
             'Requires reload to apply.',
         ],
     },
+    automaticChatBackups: {
+        title: 'Automatic Chat Backups',
+        lines: [
+            'Create a backup automatically when an eligible chat save completes.',
+        ],
+    },
     zstdCompression: {
         title: 'zstd Compression',
         lines: [
             'zstd compression applies to all chat backups.',
             'When this setting changes, existing backups are converted in the background.',
             'TauriTavern can read zstd backups directly. SillyTavern does not support this backup format.',
+        ],
+    },
+    backupsPerCharacterOrGroup: {
+        title: 'Backups per character or group',
+        lines: [
+            'Maximum backups sharing the same character or group name.',
         ],
     },
     closeToTray: {

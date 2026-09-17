@@ -191,7 +191,9 @@ function SettingsApp({
             <SettingsSection title={tr('Chat Backups')} icon="fa-clock-rotate-left">
                 <SettingRow
                     label={tr('Automatic Chat Backups')}
-                    hint={tr('Create a backup automatically when an eligible chat save completes.')}
+                    helpTopic="automaticChatBackups"
+                    helpTitle={tr('Create a backup automatically when an eligible chat save completes.')}
+                    onHelp={showHelp}
                 >
                     <ToggleSwitch
                         checked={draft.chatBackups.automaticEnabled}
@@ -224,7 +226,9 @@ function SettingsApp({
 
                 <SettingRow
                     label={tr('Backups per character or group')}
-                    hint={tr('Maximum backups sharing the same character or group name.')}
+                    helpTopic="backupsPerCharacterOrGroup"
+                    helpTitle={tr('Maximum backups sharing the same character or group name.')}
+                    onHelp={showHelp}
                 >
                     <input
                         className="text_pole tt-settings-input"

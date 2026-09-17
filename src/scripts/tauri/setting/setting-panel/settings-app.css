@@ -204,7 +204,7 @@
 }
 
 .tt-settings-disclosure {
-    border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 74%, transparent);
+    border: 0;
     border-radius: 8px;
     background: var(--black10a);
 }
@@ -214,7 +214,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 8px 10px;
+    padding: 8px 0;
     cursor: pointer;
     user-select: none;
 }
@@ -258,7 +258,7 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    padding: 0 10px 10px;
+    padding: 0 0 10px;
 }
 
 .tt-settings-path-row {
