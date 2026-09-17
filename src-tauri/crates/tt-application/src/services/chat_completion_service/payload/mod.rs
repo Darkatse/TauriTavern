@@ -64,12 +64,16 @@ pub(super) fn build_payload(
         | ChatCompletionSource::SiliconFlow
         | ChatCompletionSource::Pollinations => openai::build(payload),
         ChatCompletionSource::OpenCode => {
-            match opencode_format.expect("OpenCode format resolved") {
+            let include_reasoning = payload
+                .get("include_reasoning")
+                .and_then(Value::as_bool);
+            let built = match opencode_format.expect("OpenCode format resolved") {
                 OpenCodeApiFormat::OpenAiCompat => openai::build_chat(payload),
                 OpenCodeApiFormat::OpenAiResponses => openai_responses::build(payload),
                 OpenCodeApiFormat::ClaudeMessages => claude_messages::build(payload),
                 OpenCodeApiFormat::Gemini => makersuite::build(payload),
-            }
+            }?;
+            apply_deepseek_v4_compat_if_chat(include_reasoning, built)
         }
         ChatCompletionSource::DeepSeek => deepseek::build(payload),
         ChatCompletionSource::Cohere => Ok(cohere::build(payload)?),
@@ -81,12 +85,33 @@ pub(super) fn build_payload(
         ChatCompletionSource::OpenRouter => openrouter::build(payload),
         ChatCompletionSource::Zai => zai::build(payload),
         ChatCompletionSource::MiniMax => Ok(minimax::build(payload)),
-        ChatCompletionSource::Custom => custom::build(payload),
+        ChatCompletionSource::Custom => {
+            // builder 白名单会丢弃 include_reasoning，先读出思考开关意图。
+            let include_reasoning = payload
+                .get("include_reasoning")
+                .and_then(Value::as_bool);
+            let built = custom::build(payload)?;
+            apply_deepseek_v4_compat_if_chat(include_reasoning, built)
+        }
         ChatCompletionSource::Claude => Ok(claude::build(payload)?),
         ChatCompletionSource::AwsBedrock => Ok(aws_bedrock::build(payload)?),
         ChatCompletionSource::Makersuite => Ok(makersuite::build(payload)?),
         ChatCompletionSource::VertexAi => Ok(vertexai::build(payload)?),
     }
+}
+
+/// OpenAI 兼容源（Custom/OpenCode）经 OpenAI 兼容上游访问 DeepSeek V4 时，
+/// 对齐官方 DeepSeek 渠道语义（thinking 控制、effort 归一化等）。
+/// 仅处理 /chat/completions 端点；模型不命中时零改动。
+fn apply_deepseek_v4_compat_if_chat(
+    include_reasoning: Option<bool>,
+    built: (String, Value),
+) -> Result<(String, Value), ApplicationError> {
+    let (endpoint, mut upstream_payload) = built;
+    if endpoint == "/chat/completions" {
+        deepseek::apply_deepseek_v4_compat(&mut upstream_payload, include_reasoning)?;
+    }
+    Ok((endpoint, upstream_payload))
 }
 
 pub(super) fn validate_upstream_tool_transcript(
@@ -102,7 +127,7 @@ pub(super) fn validate_upstream_tool_transcript(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{Value, json};
+    use serde_json::{Map, Value, json};
 
     use super::build_payload;
     use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
@@ -311,6 +336,227 @@ mod tests {
             error
                 .to_string()
                 .contains("without preceding function_call")
+        );
+    }
+
+    /// 兼容源（Custom/OpenCode OpenAI 兼容格式）命中 DeepSeek V4 模型时，
+    /// 对齐官方 DeepSeek 渠道语义：显式 thinking 控制、effort 归一化、
+    /// 关闭思考时保留采样参数、开启思考时清理采样参数、
+    /// 工具上下文补 reasoning_content、剥离空 required。
+    fn deepseek_v4_compat_payload(model: &str) -> Map<String, Value> {
+        json!({
+            "chat_completion_source": "custom",
+            "custom_api_format": "openai_compat",
+            "opencode_endpoint": "zen",
+            "opencode_api_format": "openai_compat",
+            "model": model,
+            "messages": [
+                {"role":"user","content":"weather"},
+                {"role":"assistant","content":"I'll check."},
+                {
+                    "role":"assistant",
+                    "content":"",
+                    "tool_calls":[{
+                        "id":"call_1",
+                        "type":"function",
+                        "function":{"name":"weather","arguments":"{}"}
+                    }]
+                },
+                {"role":"tool","tool_call_id":"call_1","content":"cloudy"}
+            ],
+            "tools": [{"type":"function","function":{"name":"weather","parameters":{
+                "type":"object","properties":{"city":{"type":"string"}},"required":[]
+            }}}],
+            "temperature": 1.2,
+            "top_p": 0.7,
+            "presence_penalty": 0.1,
+            "frequency_penalty": 0.2,
+            "reasoning_effort": "medium"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object")
+    }
+
+    #[test]
+    fn compat_sources_align_deepseek_v4_thinking_when_show_thoughts_on() {
+        for source in [
+            ChatCompletionSource::Custom,
+            ChatCompletionSource::OpenCode,
+        ] {
+            for model in [
+                "GO/deepseek-flash",
+                "OR/deepseek-v4.1-flash",
+                "deepseek-v4-pro",
+            ] {
+                let (endpoint, upstream) = build_payload(
+                    source,
+                    deepseek_v4_compat_payload(model),
+                )
+                .unwrap_or_else(|error| panic!("{source:?} {model}: {error}"));
+                assert_eq!(endpoint, "/chat/completions");
+
+                let body = upstream.as_object().expect("body must be object");
+                assert_eq!(
+                    body.get("thinking")
+                        .and_then(Value::as_object)
+                        .and_then(|thinking| thinking.get("type"))
+                        .and_then(Value::as_str),
+                    Some("enabled"),
+                    "{source:?} {model}: thinking"
+                );
+                assert_eq!(
+                    body.get("reasoning_effort").and_then(Value::as_str),
+                    Some("high"),
+                    "{source:?} {model}: effort medium 归一化为 high"
+                );
+                assert!(body.get("temperature").is_none(), "{source:?} {model}");
+                assert!(body.get("top_p").is_none(), "{source:?} {model}");
+                assert!(body.get("presence_penalty").is_none(), "{source:?} {model}");
+                assert!(body.get("frequency_penalty").is_none(), "{source:?} {model}");
+
+                let messages = body
+                    .get("messages")
+                    .and_then(Value::as_array)
+                    .expect("messages must be array");
+                for index in [1_usize, 2] {
+                    let assistant = messages
+                        .get(index)
+                        .and_then(Value::as_object)
+                        .unwrap_or_else(|| panic!("{source:?} {model}: message {index}"));
+                    assert_eq!(
+                        assistant.get("reasoning_content").and_then(Value::as_str),
+                        Some(""),
+                        "{source:?} {model}: assistant {index} 补空串"
+                    );
+                }
+
+                let required = &body["tools"][0]["function"]["parameters"]["required"];
+                assert!(
+                    required.is_null(),
+                    "{source:?} {model}: 空 required 必须剥离, got {required}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compat_sources_disable_deepseek_v4_thinking_when_show_thoughts_off() {
+        let mut payload = deepseek_v4_compat_payload("GO/deepseek-flash");
+        payload.insert("include_reasoning".to_string(), Value::Bool(false));
+
+        let (endpoint, upstream) =
+            build_payload(ChatCompletionSource::Custom, payload).expect("payload should build");
+        assert_eq!(endpoint, "/chat/completions");
+
+        let body = upstream.as_object().expect("body must be object");
+        assert_eq!(
+            body.get("thinking")
+                .and_then(Value::as_object)
+                .and_then(|thinking| thinking.get("type"))
+                .and_then(Value::as_str),
+            Some("disabled")
+        );
+        // 关闭思考：不转发 effort，采样参数保留，不补 reasoning_content
+        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(
+            body.get("temperature").and_then(Value::as_f64),
+            Some(1.2),
+            "关闭思考时采样参数必须保留"
+        );
+
+        let messages = body
+            .get("messages")
+            .and_then(Value::as_array)
+            .expect("messages must be array");
+        for index in [1_usize, 2] {
+            let assistant = messages
+                .get(index)
+                .and_then(Value::as_object)
+                .unwrap_or_else(|| panic!("message {index}"));
+            assert!(
+                assistant.get("reasoning_content").is_none(),
+                "关闭思考时不补 reasoning_content at {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn compat_sources_keep_non_deepseek_models_untouched() {
+        for model in ["deepseek-3.2", "qwen3-max", "gpt-5.5"] {
+            let (endpoint, upstream) =
+                build_payload(ChatCompletionSource::Custom, deepseek_v4_compat_payload(model))
+                    .expect("payload should build");
+            assert_eq!(endpoint, "/chat/completions");
+
+            let body = upstream.as_object().expect("body must be object");
+            assert!(
+                body.get("thinking").is_none(),
+                "{model}: 不注入 thinking"
+            );
+            // CUSTOM 源现状：reasoning_effort 无条件转发，保持不动
+            assert_eq!(
+                body.get("reasoning_effort").and_then(Value::as_str),
+                Some("medium"),
+                "{model}: effort 转发行为保持现状"
+            );
+            assert!(body.get("temperature").is_some(), "{model}: 采样参数不动");
+            assert!(
+                !body["tools"][0]["function"]["parameters"]["required"].is_null(),
+                "{model}: required 不动"
+            );
+
+            let messages = body
+                .get("messages")
+                .and_then(Value::as_array)
+                .expect("messages must be array");
+            for index in [1_usize, 2] {
+                let assistant = messages
+                    .get(index)
+                    .and_then(Value::as_object)
+                    .unwrap_or_else(|| panic!("message {index}"));
+                assert!(
+                    assistant.get("reasoning_content").is_none(),
+                    "{model}: 不补 reasoning_content at {index}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compat_sources_reject_invalid_deepseek_v4_reasoning_effort() {
+        let mut payload = deepseek_v4_compat_payload("GO/deepseek-flash");
+        payload.insert("reasoning_effort".to_string(), Value::String("auto-ish".to_string()));
+
+        let error = build_payload(ChatCompletionSource::Custom, payload)
+            .expect_err("非法 effort 必须报错");
+        assert!(
+            error
+                .to_string()
+                .contains("Unsupported DeepSeek reasoning_effort")
+        );
+    }
+
+    #[test]
+    fn openrouter_source_keeps_deepseek_v4_without_thinking_injection() {
+        // OR 源有自己的 reasoning 方言（include_reasoning/reasoning.effort），
+        // fix-up 不得往 OR 请求里注入 DeepSeek 的 thinking 字段。
+        let mut payload = deepseek_v4_compat_payload("deepseek/deepseek-v4.1-flash");
+        payload.insert("include_reasoning".to_string(), Value::Bool(false));
+
+        let (endpoint, upstream) = build_payload(ChatCompletionSource::OpenRouter, payload)
+            .expect("payload should build");
+        assert_eq!(endpoint, "/chat/completions");
+
+        let body = upstream.as_object().expect("body must be object");
+        assert!(
+            body.get("thinking").is_none(),
+            "OR 源不得注入 thinking 字段"
+        );
+        assert_eq!(
+            body.get("include_reasoning").and_then(Value::as_bool),
+            Some(false),
+            "OR 自己的 include_reasoning 方言保持"
         );
     }
 }

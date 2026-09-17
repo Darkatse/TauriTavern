@@ -1077,7 +1077,8 @@ function setOpenAIMessages(chat, stripOldToolCalls = false) {
             && (!includeClaudeNative || hasClaudeToolUse(metadataMessage?.extra?.native))
             ? metadataMessage?.extra?.native
             : null;
-        const shouldReplayReasoningContent = currentApi === chat_completion_sources.DEEPSEEK
+        const shouldReplayReasoningContent = (currentApi === chat_completion_sources.DEEPSEEK
+            || isDeepSeekV4CompatSource(currentApi, currentModel))
             && oai_settings.show_thoughts
             && isSameModel && !isOtherGroupMember;
         const reasoningContent = shouldReplayReasoningContent ? metadataMessage?.extra?.tool_reasoning_content : null;
@@ -1650,7 +1651,10 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             && [custom_api_formats.GEMINI_INTERACTIONS, custom_api_formats.GEMINI_GENERATE_CONTENT].includes(settings.custom_api_format));
     const canIncludeNative = native => includeNative
         && (!includeClaudeNative || hasClaudeToolUse(native));
-    const isToolReasoningProvider = interleaved_reasoning_providers.includes(settings.chat_completion_source);
+    // DeepSeek V4 经兼容源走 reasoning_content 方言，明文 reasoning 与之
+    // 冲突（官方 DeepSeek 渠道同样不发明文 reasoning），这里排除。
+    const isToolReasoningProvider = interleaved_reasoning_providers.includes(settings.chat_completion_source)
+        && !isDeepSeekV4CompatSource(settings.chat_completion_source, getChatCompletionModel(settings));
     const toolReasoningMode = isToolReasoningProvider
         ? getEffectiveToolReasoningMode(settings)
         : tool_reasoning_modes.DISABLED;
@@ -8467,6 +8471,22 @@ function getEffectiveToolReasoningMode(settings = oai_settings) {
 function isCustomGeminiGenerateContent(settings = oai_settings) {
     return settings.chat_completion_source === chat_completion_sources.CUSTOM
         && settings.custom_api_format === custom_api_formats.GEMINI_GENERATE_CONTENT;
+}
+
+/**
+ * Check whether an OpenAI-compatible source points at a DeepSeek V4 family model.
+ * Matches the last `/` segment so gateway-prefixed ids (GO/deepseek-flash,
+ * OR/deepseek-v4.1-flash) resolve; DeepSeek 3.x never matches.
+ * @param {string} source Chat completion source id
+ * @param {string} model Model id
+ * @returns {boolean} True when the compat source serves a DeepSeek V4 model
+ */
+function isDeepSeekV4CompatSource(source, model) {
+    if (source !== chat_completion_sources.CUSTOM && source !== chat_completion_sources.OPENCODE) {
+        return false;
+    }
+    const lastSegment = String(model ?? '').trim().toLowerCase().split('/').pop() ?? '';
+    return lastSegment.startsWith('deepseek-v4') || lastSegment.startsWith('deepseek-flash');
 }
 
 /**

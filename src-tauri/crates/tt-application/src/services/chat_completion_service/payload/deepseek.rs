@@ -101,6 +101,79 @@ fn resolve_thinking_mode(
     }
 }
 
+/// DeepSeek V4 家族（v4* / flash）判定，用于 OpenAI 兼容源的模型名匹配。
+/// 取 `/` 分隔的最后一段再匹配，容忍网关前缀（如 `GO/deepseek-flash`、
+/// `OR/deepseek-v4.1-flash`、`newapi/openrouter/deepseek-v4`）。
+/// DeepSeek 3.x 不命中。
+pub(super) fn is_deepseek_v4_model(model: &str) -> bool {
+    let normalized = model.trim().to_ascii_lowercase();
+    let last_segment = normalized.rsplit('/').next().unwrap_or_default();
+
+    last_segment.starts_with("deepseek-v4") || last_segment.starts_with("deepseek-flash")
+}
+
+/// 对 OpenAI 兼容源（Custom/OpenCode OpenAiCompat）构建后的请求体应用
+/// DeepSeek V4 语义对齐：当模型命中 V4 家族时，对齐官方 DeepSeek 渠道的
+/// thinking 控制、effort 归一化、采样参数清理、工具上下文 reasoning_content
+/// 补齐与空 required 剥离。非 V4 模型零改动。`include_reasoning` 由调用方
+/// 在 builder 白名单化之前从 TT payload 读出传入（思考开关意图），它本身
+/// 不透传给上游。
+pub(super) fn apply_deepseek_v4_compat(
+    upstream_payload: &mut Value,
+    include_reasoning: Option<bool>,
+) -> Result<(), ApplicationError> {
+    let Some(body) = upstream_payload.as_object_mut() else {
+        return Ok(());
+    };
+
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if !is_deepseek_v4_model(&model) {
+        return Ok(());
+    }
+
+    // 未提供时与官方渠道默认一致：V4 家族默认开启思考。
+    let thinking_mode = match include_reasoning {
+        Some(true) => DeepSeekThinkingMode::Enabled,
+        Some(false) => DeepSeekThinkingMode::Disabled,
+        None => DeepSeekThinkingMode::Enabled,
+    };
+
+    let reasoning_effort = match thinking_mode {
+        DeepSeekThinkingMode::Enabled => normalize_reasoning_effort(
+            body.get("reasoning_effort")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        )?,
+        DeepSeekThinkingMode::Disabled => None,
+    };
+
+    let has_tools = body
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| !tools.is_empty());
+
+    if thinking_mode == DeepSeekThinkingMode::Enabled
+        && let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut)
+    {
+        ensure_tool_context_reasoning_content(messages, has_tools)?;
+    }
+
+    strip_empty_required_arrays_from_tools(body);
+
+    // CUSTOM 源会无条件转发 reasoning_effort；官方渠道语义是 disabled 时
+    // 不发送 effort，这里对齐（enabled 时 apply_thinking_mode 内部会重写）。
+    if thinking_mode == DeepSeekThinkingMode::Disabled {
+        body.remove("reasoning_effort");
+    }
+
+    apply_thinking_mode(body, thinking_mode, reasoning_effort);
+
+    Ok(())
+}
 fn normalize_reasoning_effort(value: &str) -> Result<Option<&'static str>, ApplicationError> {
     match parse_known_reasoning_effort(value, "DeepSeek")? {
         RequestedReasoningEffort::Auto => Ok(None),
