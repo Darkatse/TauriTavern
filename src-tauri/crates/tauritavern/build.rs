@@ -25,7 +25,13 @@ fn main() {
         panic!("Failed to generate resource artifacts: {}", error);
     }
 
-    tauri_build::build()
+    tauri_build::try_build(
+        tauri_build::Attributes::new().plugin(
+            "speech-synthesis",
+            tauri_build::InlinedPlugin::new().commands(&["initialize", "speak", "cancel"]),
+        ),
+    )
+    .expect("Failed to build Tauri application")
 }
 
 fn needs_embedded_resources() -> bool {

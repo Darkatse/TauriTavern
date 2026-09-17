@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "android-speech-synthesis",
+  "description": "System speech synthesis for the Android main window and its same-origin frames",
+  "windows": ["main"],
+  "platforms": ["android"],
+  "permissions": [
+    "speech-synthesis:allow-initialize",
+    "speech-synthesis:allow-speak",
+    "speech-synthesis:allow-cancel"
+  ]
+}

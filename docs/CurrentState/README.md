@@ -12,6 +12,7 @@
 | [聊天存储](ChatPayload.md) | 完整历史、分页读取和保存 |
 | [记忆扩展](MemoryExtensionApi.md) | 聊天查询与扩展存储 |
 | [媒体资源](MediaAssetContract.md) | 浏览器资源与 Range 请求 |
+| [系统 TTS](TTS.md) | Android Web Speech 接入与当前边界 |
 | [同步](Sync.md) | LAN Sync 与 TT-Sync |
 | [数据目录](DataDirectorySelection.md) | 桌面目录选择与迁移 |
 | [原生模型 API](NativeApiFormats.md) | Responses、Claude、Gemini 等格式 |

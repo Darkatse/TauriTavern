@@ -1625,6 +1625,11 @@ export async function init() {
     loadSettings(); // Depends on Extension Controls and loadTtsProvider
     loadTtsProvider(extension_settings.tts.currentProvider); // No dependencies
     addAudioControl(); // Depends on Extension Controls
+    window.speechSynthesis?.addEventListener('voiceschanged', () => {
+        if (ttsProviderName === 'System') {
+            void initVoiceMap().catch(handleTtsProviderError);
+        }
+    });
     setInterval(wrapper.update.bind(wrapper), UPDATE_INTERVAL); // Init depends on all the things
     eventSource.on(event_types.MESSAGE_SWIPED, resetTtsPlayback);
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
