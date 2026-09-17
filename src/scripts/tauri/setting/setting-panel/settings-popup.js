@@ -13,6 +13,7 @@ import {
 import { buildTauriTavernSettingsUpdate } from './settings-patch.js';
 import { applyTauriTavernSettingsUpdateEffects } from './settings-effects.js';
 import { callTauriTavernPanelPopup } from '../panel-popup.js';
+import { setOledBackgroundEnabled } from '../oled-background.js';
 
 const SETTINGS_STYLE_ID = 'tauritavern-settings-style';
 
@@ -91,6 +92,12 @@ const HELP_TOPICS = {
         lines: [
             'Character/User avatar originals help: on',
             'Character/User avatar originals help: off',
+        ],
+    },
+    oledBackground: {
+        title: 'OLED Pure Black Background',
+        lines: [
+            'Use pure black backgrounds and hide wallpaper on this device, keeping theme text and accent colors.',
         ],
     },
     dynamicTheme: {
@@ -428,7 +435,8 @@ export async function openTauriTavernSettingsPopup() {
                 }
 
                 try {
-                    const update = buildTauriTavernSettingsUpdate(viewModel.values, appHandle.getDraft());
+                    const draft = appHandle.getDraft();
+                    const update = buildTauriTavernSettingsUpdate(viewModel.values, draft);
 
                     if (
                         update.requiresChatBackupPurgeConfirmation
@@ -444,12 +452,19 @@ export async function openTauriTavernSettingsPopup() {
                         await showChatVirtualizationCompatibility();
                     }
 
-                    if (!update.hasChanges) {
-                        return true;
+                    if (update.hasChanges) {
+                        const updatedSettings = await updateTauriTavernSettings(update.patch);
+                        savedUpdate = { update, updatedSettings };
                     }
 
-                    const updatedSettings = await updateTauriTavernSettings(update.patch);
-                    savedUpdate = { update, updatedSettings };
+                    if (draft.oledBackgroundEnabled !== viewModel.values.oledBackgroundEnabled) {
+                        try {
+                            setOledBackgroundEnabled(draft.oledBackgroundEnabled);
+                        } catch (error) {
+                            console.warn('Could not save OLED background setting:', error);
+                            toastr.warning(translate('Could not save OLED background setting.'));
+                        }
+                    }
                     return true;
                 } catch (error) {
                     await showErrorPopup(error);

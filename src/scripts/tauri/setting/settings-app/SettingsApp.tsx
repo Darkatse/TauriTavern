@@ -335,6 +335,19 @@ function SettingsApp({
                     />
                 </SettingRow>
 
+                <SettingRow
+                    label={tr('OLED Pure Black Background')}
+                    helpTopic="oledBackground"
+                    helpTitle={tr('Use pure black backgrounds and hide wallpaper on this device, keeping theme text and accent colors.')}
+                    onHelp={showHelp}
+                >
+                    <ToggleSwitch
+                        checked={draft.oledBackgroundEnabled}
+                        ariaLabel={tr('OLED Pure Black Background')}
+                        onChange={checked => controller.updateDraft('oledBackgroundEnabled', checked)}
+                    />
+                </SettingRow>
+
                 <SettingsAppearanceSection
                     theme={draft.dynamicTheme}
                     open={appearanceOpen}

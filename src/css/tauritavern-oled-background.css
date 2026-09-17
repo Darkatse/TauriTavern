@@ -1,0 +1,20 @@
+/* Themes can style chat and message backgrounds directly. Preserve selection feedback. */
+html.tt-oled-background,
+html.tt-oled-background body,
+html.tt-oled-background #chat,
+html.tt-oled-background #chat > .mes:not(.selected) {
+    background: #000 !important;
+}
+
+/* Keep root theme values intact: power-user.js reads them as theme defaults. */
+html.tt-oled-background body {
+    --SmartThemeBlurTintColor: #000 !important;
+    --SmartThemeChatTintColor: #000 !important;
+    --SmartThemeUserMesBlurTintColor: #000 !important;
+    --SmartThemeBotMesBlurTintColor: #000 !important;
+}
+
+/* Preserve the current wallpaper so disabling OLED reveals it immediately. */
+html.tt-oled-background #bg1 {
+    visibility: hidden !important;
+}

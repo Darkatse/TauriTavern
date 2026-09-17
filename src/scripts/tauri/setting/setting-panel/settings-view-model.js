@@ -8,6 +8,7 @@ import {
     getTauriTavernSettings,
 } from '../../../../tauri-bridge.js';
 import { getActiveIosPolicyCapabilities } from '../../../tauritavern/ios-policy.js';
+import { isOledBackgroundEnabled } from '../oled-background.js';
 import { createDataRootState, createTauriTavernSettingsState } from './settings-state.js';
 
 export function isWindowsPlatform() {
@@ -61,6 +62,9 @@ export async function loadTauriTavernSettingsViewModel() {
     return {
         capabilities,
         dataRoot: createDataRootState(runtimePaths),
-        values: createTauriTavernSettingsState(settings),
+        values: {
+            ...createTauriTavernSettingsState(settings),
+            oledBackgroundEnabled: isOledBackgroundEnabled(),
+        },
     };
 }

@@ -30,7 +30,7 @@ export type SettingsDataRootState = {
     migrationError: string;
 };
 
-/** The camelCase subset of setting-panel/settings-state.js that the app reads. */
+/** Normalized backend settings and device-local appearance from settings-view-model.js. */
 export type SettingsValues = {
     panelRuntimeProfile: string;
     embeddedRuntimeProfile: string;
@@ -52,6 +52,7 @@ export type SettingsValues = {
     };
     allowKeysExposure: boolean;
     avatarPersonaOriginalImagesEnabled: boolean;
+    oledBackgroundEnabled: boolean;
     dynamicTheme: {
         themeEnabled: boolean;
         dayTheme: string;
@@ -120,6 +121,7 @@ export type SettingsDraft = {
     };
     allowKeysExposure: boolean;
     avatarPersonaOriginalImagesEnabled: boolean;
+    oledBackgroundEnabled: boolean;
     dynamicTheme: {
         themeEnabled: boolean;
         dayTheme: string;
@@ -166,6 +168,7 @@ export function createSettingsDraft(values: SettingsValues): SettingsDraft {
         },
         allowKeysExposure: values.allowKeysExposure,
         avatarPersonaOriginalImagesEnabled: values.avatarPersonaOriginalImagesEnabled,
+        oledBackgroundEnabled: values.oledBackgroundEnabled,
         dynamicTheme: {
             themeEnabled: values.dynamicTheme.themeEnabled,
             dayTheme: values.dynamicTheme.dayTheme,

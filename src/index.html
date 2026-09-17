@@ -11,6 +11,16 @@
     <meta name="darkreader-lock">
     <meta name="robots" content="noindex, nofollow" />
     <meta name="theme-color" content="#333">
+    <script>
+        // Restore the device-local appearance before the application modules load.
+        try {
+            if (localStorage.getItem('tauritavern:oled_background') !== null) {
+                document.documentElement.classList.add('tt-oled-background');
+            }
+        } catch (error) {
+            console.warn('Could not restore OLED background setting:', error);
+        }
+    </script>
     <style>
         /* Put critical CSS here. The rest should go in stylesheets. */
         body {
@@ -43,6 +53,7 @@
     <link rel="stylesheet" type="text/css" href="css/select2-overrides.css">
     <link rel="stylesheet" type="text/css" href="css/mobile-styles.css">
     <link rel="stylesheet" type="text/css" href="css/macros.css">
+    <link rel="stylesheet" type="text/css" href="css/tauritavern-oled-background.css">
     <link rel="stylesheet" type="text/css" href="css/user.css">
     <!-- Module scripts are loaded by init.js; avoid modulepreload on mobile WebView to prevent cached preload failures. -->
     <link rel="icon" type="image/x-icon" href="favicon.ico">

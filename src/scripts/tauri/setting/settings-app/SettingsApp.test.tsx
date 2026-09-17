@@ -62,6 +62,7 @@ function createValues(overrides: ValuesOverrides = {}): SettingsValues {
         requestProxy: { enabled: false, url: '', bypass: [], ...overrides.requestProxy },
         allowKeysExposure: false,
         avatarPersonaOriginalImagesEnabled: false,
+        oledBackgroundEnabled: false,
         dynamicTheme: {
             themeEnabled: false,
             dayTheme: '',
@@ -180,10 +181,13 @@ test('draft preserves stored emptiness and exposes synchronous isolated edits', 
             target: { value: 'aggressive' },
         });
         fireEvent.click(within(container).getByRole('checkbox', { name: 'Automatic Chat Backups' }));
+        fireEvent.click(within(container).getByRole('checkbox', { name: 'OLED Pure Black Background' }));
         snapshot = handle.getDraft();
     });
     expect(snapshot.panelRuntimeProfile).toBe('aggressive');
     expect(snapshot.chatBackups.automaticEnabled).toBe(false);
+    expect(snapshot.oledBackgroundEnabled).toBe(true);
+    expect(options.viewModel.values.oledBackgroundEnabled).toBe(false);
 
     snapshot.chatBackups.maxTotalFiles = 'mutated';
     expect(handle.getDraft().chatBackups.maxTotalFiles).toBe('500');
