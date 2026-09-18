@@ -10,6 +10,7 @@ export {};
  * kernel (`src/tauri/main/**`).
  *
  * @typedef {(
+ *   | 'database_handle'
  *   | 'apply_agent_run_prune'
  *   | 'build_openai_logit_bias'
  *   | 'bulk_merge_character_card_data'

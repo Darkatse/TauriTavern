@@ -121,6 +121,7 @@ const APPLICATION_FORBIDDEN_PACKAGES = new Set([
     'tt-adapter-sync',
     'tt-adapter-tokenization',
     'tt-adapter-vector',
+    'tt-adapter-triviumdb',
     'yup-oauth2',
     'zip',
 ]);
@@ -151,6 +152,7 @@ const APPLICATION_FORBIDDEN_SOURCE_PATTERNS = [
     ['tt-adapter-sync', /\btt_adapter_sync::/],
     ['tt-adapter-tokenization', /\btt_adapter_tokenization::/],
     ['tt-adapter-vector', /\btt_adapter_vector::/],
+    ['tt-adapter-triviumdb', /\btt_adapter_triviumdb::/],
     ['main crate', /\btauritavern(_lib)?::/],
     ['provider oauth client', /\byup_oauth2::/],
     ['concrete hyper client', /\bhyper_util::/],
@@ -516,6 +518,7 @@ const ADAPTER_QUICKJS_FORBIDDEN_PACKAGES = new Set([
     'tt-adapter-sync',
     'tt-adapter-tokenization',
     'tt-adapter-vector',
+    'tt-adapter-triviumdb',
     'tt-application',
     'ttsync-core',
 ]);
@@ -539,6 +542,7 @@ const ADAPTER_QUICKJS_FORBIDDEN_SOURCE_PATTERNS = [
     ['tt-adapter-sync', /\btt_adapter_sync::/],
     ['tt-adapter-tokenization', /\btt_adapter_tokenization::/],
     ['tt-adapter-vector', /\btt_adapter_vector::/],
+    ['tt-adapter-triviumdb', /\btt_adapter_triviumdb::/],
     ['ttsync-core', /\bttsync_core::/],
     ['zip', /\bzip::/],
 ];
@@ -589,6 +593,7 @@ const CRATES = [
     crateConfig('tt-adapter-archive', ADAPTER_ARCHIVE_FORBIDDEN_PACKAGES, ADAPTER_ARCHIVE_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-provider-http', ADAPTER_PROVIDER_HTTP_FORBIDDEN_PACKAGES, ADAPTER_PROVIDER_HTTP_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-vector', ADAPTER_VECTOR_FORBIDDEN_PACKAGES, ADAPTER_VECTOR_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-adapter-triviumdb', new Set(['tauri', 'tauritavern', 'tt-application']), ADAPTER_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-extension', ADAPTER_EXTENSION_FORBIDDEN_PACKAGES, ADAPTER_EXTENSION_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-storage-core', ADAPTER_STORAGE_CORE_FORBIDDEN_PACKAGES, ADAPTER_STORAGE_CORE_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-storage-userdata', ADAPTER_STORAGE_USERDATA_FORBIDDEN_PACKAGES, ADAPTER_STORAGE_USERDATA_FORBIDDEN_SOURCE_PATTERNS),

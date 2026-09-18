@@ -15,6 +15,7 @@ pub mod chat_swipe_commands;
 mod chunk_body;
 pub mod content_commands;
 pub mod data_archive_commands;
+pub mod database_commands;
 pub mod dev_logging_commands;
 pub mod extension_commands;
 pub mod extension_store_commands;

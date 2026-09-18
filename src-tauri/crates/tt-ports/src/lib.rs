@@ -1,5 +1,6 @@
 pub mod bundled_template;
 pub mod data_archive;
+pub mod database;
 pub mod external_import;
 pub mod generation_background;
 pub mod host_resource;

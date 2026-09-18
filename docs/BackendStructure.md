@@ -63,6 +63,7 @@ src-tauri/
     ├── tt-adapter-media
     ├── tt-adapter-extension
     ├── tt-adapter-quickjs
+    ├── tt-adapter-triviumdb
     ├── tt-adapter-sync
     └── tt-adapter-archive
 ```
@@ -79,6 +80,7 @@ src-tauri/
 | `tt-adapter-http` | 共享 HTTP client pool/profile/helper |
 | `tt-adapter-mcp` | RMCP client、Streamable HTTP lifecycle、bounded response、tools/list pagination 与 tool validation |
 | `tt-adapter-provider-http` | LLM、SearXNG、SD、Translate、TTS、embedding、provider metadata 的 HTTP repository |
+| `tt-adapter-triviumdb` | 按命名空间管理 TriviumDB、阻塞执行、原生查询与持久化 |
 | `tt-adapter-vector` | Vector 的 ACID 本地索引与本地 embedding runtime；不承载 provider HTTP |
 | `tt-adapter-tokenization` | tokenizer concrete repository |
 | `tt-adapter-storage-core` | `DataDirectory`、基础文件系统与格式 helper、chat/settings/user/theme/secret/quick reply/prompt cache/asset/llm connection/extension-store |

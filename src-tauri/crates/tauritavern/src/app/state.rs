@@ -19,6 +19,7 @@ use tt_application::services::chat_payload_commit_service::ChatPayloadCommitServ
 use tt_application::services::chat_service::ChatService;
 use tt_application::services::content_service::ContentService;
 use tt_application::services::data_archive_service::DataArchiveService;
+use tt_application::services::database_service::DatabaseService;
 use tt_application::services::extension_service::ExtensionService;
 use tt_application::services::extension_store_service::ExtensionStoreService;
 use tt_application::services::group_chat_service::GroupChatService;
@@ -121,6 +122,7 @@ pub(crate) struct AppServices {
     pub(crate) tt_sync_service: Arc<TtSyncService>,
     pub(crate) sync_automation_service: Arc<SyncAutomationService>,
     pub(crate) data_archive_service: Arc<DataArchiveService>,
+    pub(crate) database_service: Arc<DatabaseService>,
     pub(crate) update_service: Arc<UpdateService>,
 }
 

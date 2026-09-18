@@ -412,6 +412,7 @@ async fn start_import_runs_executor_initializer_reconciler_and_cleanup() {
     let initializer = Arc::new(RecordingInitializer::default());
     let reconciler = Arc::new(RecordingReconciler::default());
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::import_ok(
@@ -466,6 +467,7 @@ async fn start_import_with_no_local_mutation_skips_initializer_and_reconciler() 
     let initializer = Arc::new(RecordingInitializer::default());
     let reconciler = Arc::new(RecordingReconciler::default());
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::import_ok_without_local_mutation(
@@ -513,6 +515,7 @@ async fn partial_import_failure_initializes_reconciles_and_reports_local_mutatio
     let reconciler = Arc::new(RecordingReconciler::default());
     let local_applied = import_local_applied();
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::import_error(
@@ -558,6 +561,7 @@ async fn partial_import_cancel_initializes_reconciles_and_reports_local_mutation
     let reconciler = Arc::new(RecordingReconciler::default());
     let local_applied = import_local_applied();
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::import_error(
@@ -599,6 +603,7 @@ async fn partial_import_failure_reports_reconcile_error() {
     }));
     let local_applied = import_local_applied();
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::import_error(
@@ -632,6 +637,7 @@ async fn start_export_runs_executor_and_marks_completed() {
         file_name: "tauritavern-data.zip".to_string(),
     }));
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::export_ok("tauritavern-data.zip")),
@@ -665,6 +671,7 @@ async fn start_export_cleans_partial_archive_on_failure() {
         file_name: "tauritavern-data.zip".to_string(),
     }));
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::export_error(DomainError::InternalError(
@@ -712,6 +719,7 @@ async fn start_export_protects_claimed_completed_artifact_from_stale_cleanup() {
         file_name: "tauritavern-data.zip".to_string(),
     }));
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::export_ok("tauritavern-data.zip")),
@@ -744,6 +752,7 @@ async fn save_export_marks_artifact_disposed_with_saved_path() {
 
     let saved_path = PathBuf::from("/Downloads/tauritavern-data.zip");
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(UnusedExecutor),
@@ -794,6 +803,7 @@ async fn save_export_restores_available_artifact_on_save_error() {
         DomainError::InvalidData("target exists".to_string()),
     )));
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(UnusedExecutor),
@@ -831,6 +841,7 @@ fn finalize_export_delivery_disposes_even_when_cleanup_fails() {
         DomainError::InternalError("permission denied".to_string()),
     )));
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(UnusedExecutor),
@@ -868,4 +879,22 @@ fn finalize_export_delivery_disposes_even_when_cleanup_fails() {
         Some("/tmp/staged-export.zip")
     );
     assert_eq!(result.saved_path.as_deref(), Some("content://saved-export"));
+}
+
+struct EmptyDatabase;
+
+#[async_trait::async_trait]
+impl tt_ports::database::DatabaseBackend for EmptyDatabase {
+    async fn execute(
+        &self,
+        _: tt_contracts::database::DatabaseRequest,
+    ) -> Result<tt_contracts::database::DatabaseResponse, DomainError> {
+        Ok(tt_contracts::database::DatabaseResponse::Unit)
+    }
+}
+
+fn test_database_service() -> Arc<crate::services::database_service::DatabaseService> {
+    Arc::new(crate::services::database_service::DatabaseService::new(
+        Arc::new(EmptyDatabase),
+    ))
 }
