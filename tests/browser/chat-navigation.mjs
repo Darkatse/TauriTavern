@@ -47,6 +47,8 @@ test('chat persistence and navigation', async (context) => {
     const hostInvoke = window.__TAURI__.core.invoke;
     window.__TAURI__.core.invoke = async (command, args, options) => {
         switch (command) {
+            case 'get_character_chats_by_id':
+                return [...payloads.keys()].map(file_name => ({ file_name, chat_items: 1 }));
             case 'open_cold_chat': {
                 const fileName = args.target.fileName ?? args.target.chatId;
                 loads.push({ fileName, allowNotFound: args.allowNotFound });
@@ -167,6 +169,28 @@ test('chat persistence and navigation', async (context) => {
 
     try {
         await startHost();
+        await context.test('legacy chat reads work through fetch and jQuery', async () => {
+            payloads.set('legacy-chat', chatPayload('legacy-chat'));
+            for (const [url, body, expected] of [
+                ['/getallchatsofcharacter', { avatar_url: 'Review.png' }, 'legacy-chat.jsonl'],
+                ['/getchat', { avatar_url: 'Review.png', file_name: 'legacy-chat' }, 'legacy-chat'],
+                ['/getgroupchat', { id: 'legacy-chat' }, 'legacy-chat'],
+            ]) {
+                const data = JSON.stringify(body);
+                const response = await window.fetch(url, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: data,
+                });
+                assert.equal(response.status, 200, url);
+                const fetched = await response.json();
+                assert.equal(fetched[0].file_name ?? fetched.at(-1).mes, expected);
+                const ajax = await window.jQuery.ajax({ url, type: 'POST', contentType: 'application/json', data });
+                assert.deepEqual(JSON.parse(JSON.stringify(ajax)), JSON.parse(JSON.stringify(fetched)));
+            }
+            const invalid = await window.fetch('/getchat', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+            });
+            assert.equal(invalid.status, 400);
+        });
         const main = (await load('script.js')).namespace;
         const groupChats = getModule('scripts/group-chats.js').namespace;
         const welcome = getModule('scripts/welcome-screen.js').namespace;

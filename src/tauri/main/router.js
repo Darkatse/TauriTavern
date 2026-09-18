@@ -1,3 +1,10 @@
+// Legacy SillyTavern chat endpoints used by third-party extensions.
+const LEGACY_API_PATHS = new Map([
+    ['/getallchatsofcharacter', '/api/characters/chats'],
+    ['/getchat', '/api/chats/get'],
+    ['/getgroupchat', '/api/chats/group/get'],
+]);
+
 function makeRouteKey(method, path) {
     return `${String(method || '*').toUpperCase()} ${path}`;
 }
@@ -55,6 +62,7 @@ export function createRouteRegistry() {
     }
 
     function resolve(method, path) {
+        path = LEGACY_API_PATHS.get(path) ?? path;
         const specific = routes.get(makeRouteKey(method, path));
         if (specific) {
             return { handler: specific, wildcard: '' };
