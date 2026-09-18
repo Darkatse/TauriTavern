@@ -1,5 +1,7 @@
 pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        // TriviumDB commands
+        super::database_commands::database_handle,
         // Character commands
         super::character_commands::get_all_characters,
         super::character_commands::get_character,
@@ -408,32 +410,5 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::bridge::get_notification_permission_state,
         super::bridge::request_notification_permission,
         super::bridge::show_system_notification,
-        // TriviumDB intelligence commands
-        super::intelligence_commands::trivium_open,
-        super::intelligence_commands::trivium_flush,
-        super::intelligence_commands::trivium_compact,
-        super::intelligence_commands::trivium_build_quiver_index,
-        super::intelligence_commands::trivium_close,
-        super::intelligence_commands::trivium_list_namespaces,
-        super::intelligence_commands::trivium_stats,
-        super::intelligence_commands::trivium_insert,
-        super::intelligence_commands::trivium_batch_insert,
-        super::intelligence_commands::trivium_upsert_with_id,
-        super::intelligence_commands::trivium_get,
-        super::intelligence_commands::trivium_update_payload,
-        super::intelligence_commands::trivium_patch_payload,
-        super::intelligence_commands::trivium_update_vector,
-        super::intelligence_commands::trivium_delete,
-        super::intelligence_commands::trivium_link,
-        super::intelligence_commands::trivium_unlink,
-        super::intelligence_commands::trivium_shortest_path,
-        super::intelligence_commands::trivium_subgraph,
-        super::intelligence_commands::trivium_index_text,
-        super::intelligence_commands::trivium_index_keyword,
-        super::intelligence_commands::trivium_build_text_index,
-        super::intelligence_commands::trivium_search,
-        super::intelligence_commands::trivium_search_batch,
-        super::intelligence_commands::trivium_search_advanced,
-        super::intelligence_commands::trivium_query_tql,
     ]
 }

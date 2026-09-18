@@ -6,8 +6,8 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::data_archive::{DataArchiveImportFailure, DataArchiveLocalMutationSummary};
 
 use crate::data_archive::shared::{
-    ByteProgress, COPY_BUFFER_BYTES, copy_stream_with_cancel, ensure_not_cancelled, internal_error,
-    read_directory_sorted,
+    ByteProgress, COPY_BUFFER_BYTES, cleanup_directory_sync, copy_stream_with_cancel,
+    ensure_not_cancelled, internal_error, read_directory_sorted,
 };
 
 pub fn apply_overlay(
@@ -36,6 +36,7 @@ pub fn apply_overlay(
     if let Err(error) = apply_directory_recursive(
         normalized_root,
         data_root,
+        &data_root.join("_tauritavern/databases"),
         &mut copy_buffer,
         &mut progress,
         report_progress,
@@ -49,9 +50,11 @@ pub fn apply_overlay(
     Ok(local_applied)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_directory_recursive(
     source_directory: &Path,
     target_directory: &Path,
+    database_root: &Path,
     copy_buffer: &mut [u8],
     progress: &mut ByteProgress,
     report_progress: &mut dyn FnMut(&str, f32, &str),
@@ -68,10 +71,24 @@ fn apply_directory_recursive(
         let target_path = target_directory.join(entry.file_name());
 
         if file_type.is_dir() {
+            if target_directory == database_root {
+                replace_database_directory(
+                    &source_path,
+                    &target_path,
+                    database_root,
+                    copy_buffer,
+                    progress,
+                    report_progress,
+                    local_applied,
+                    is_cancelled,
+                )?;
+                continue;
+            }
             ensure_target_directory(&target_path, local_applied)?;
             apply_directory_recursive(
                 &source_path,
                 &target_path,
+                database_root,
                 copy_buffer,
                 progress,
                 report_progress,
@@ -105,6 +122,82 @@ fn apply_directory_recursive(
         )?;
     }
 
+    Ok(())
+}
+
+/// A database and its sidecars are one restore unit. Stage beside the destination
+/// so cancellation/copy errors leave the previous database intact, including when
+/// the archive workspace and data root are on different filesystems.
+#[allow(clippy::too_many_arguments)]
+fn replace_database_directory(
+    source_path: &Path,
+    target_path: &Path,
+    database_root: &Path,
+    copy_buffer: &mut [u8],
+    progress: &mut ByteProgress,
+    report_progress: &mut dyn FnMut(&str, f32, &str),
+    local_applied: &mut DataArchiveLocalMutationSummary,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<(), DomainError> {
+    let staged_path = overlay_temp_path(target_path);
+    fs::create_dir(&staged_path)
+        .map_err(|error| internal_error("Failed to stage database import", error))?;
+    let mut staged = DataArchiveLocalMutationSummary::default();
+    let result = apply_directory_recursive(
+        source_path,
+        &staged_path,
+        database_root,
+        copy_buffer,
+        progress,
+        report_progress,
+        &mut staged,
+        is_cancelled,
+    )
+    .and_then(|()| ensure_not_cancelled(is_cancelled))
+    .and_then(|()| replace_directory(&staged_path, target_path, local_applied));
+    if result.is_err() {
+        cleanup_directory_sync(&staged_path);
+    }
+    result?;
+    local_applied.files_written = local_applied
+        .files_written
+        .saturating_add(staged.files_written);
+    local_applied.bytes_written = local_applied
+        .bytes_written
+        .saturating_add(staged.bytes_written);
+    local_applied.mark_target_changed();
+    Ok(())
+}
+
+fn replace_directory(
+    staged_path: &Path,
+    target_path: &Path,
+    local_applied: &mut DataArchiveLocalMutationSummary,
+) -> Result<(), DomainError> {
+    let previous_path = overlay_temp_path(target_path);
+    let had_previous = target_path.exists();
+    if had_previous {
+        fs::rename(target_path, &previous_path)
+            .map_err(|error| internal_error("Failed to move previous database aside", error))?;
+    }
+    if let Err(error) = fs::rename(staged_path, target_path) {
+        if had_previous && let Err(restore_error) = fs::rename(&previous_path, target_path) {
+            local_applied.mark_target_changed();
+            return Err(DomainError::InternalError(format!(
+                "Database import failed: {error}; restoring the previous database failed: \
+                 {restore_error}; previous data remains at {}",
+                previous_path.display()
+            )));
+        }
+        return Err(internal_error("Failed to publish imported database", error));
+    }
+    if had_previous {
+        if previous_path.is_dir() {
+            cleanup_directory_sync(&previous_path);
+        } else {
+            cleanup_temp_file(&previous_path);
+        }
+    }
     Ok(())
 }
 
@@ -283,7 +376,7 @@ fn cleanup_temp_file(temp_path: &Path) {
 mod tests {
     use super::*;
 
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     fn temp_root(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
@@ -304,6 +397,79 @@ mod tests {
                     .starts_with(".tauritavern-import-")
             });
         assert!(!has_temp, "overlay temp file should be cleaned up");
+    }
+
+    #[test]
+    fn database_restore_replaces_the_file_group_without_touching_other_namespaces() {
+        let root = temp_root("database-restore");
+        let normalized_root = root.join("normalized");
+        let data_root = root.join("data");
+        let relative = "_tauritavern/databases/db-memory";
+        let source = normalized_root.join(relative);
+        let target = data_root.join(relative);
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        for name in ["database.tdb", "database.tdb.vec"] {
+            fs::write(source.join(name), b"new").unwrap();
+            fs::write(target.join(name), b"old").unwrap();
+        }
+        fs::write(target.join("database.tdb.text"), b"stale index").unwrap();
+        let other = data_root.join("_tauritavern/databases/db-other");
+        fs::create_dir(&other).unwrap();
+        fs::write(other.join("database.tdb"), b"keep").unwrap();
+
+        let summary = apply_overlay(&normalized_root, &data_root, 6, &mut |_, _, _| {}, &|| {
+            false
+        })
+        .unwrap();
+
+        assert_eq!(summary.files_written, 2);
+        assert_eq!(summary.bytes_written, 6);
+        for name in ["database.tdb", "database.tdb.vec"] {
+            assert_eq!(fs::read(target.join(name)).unwrap(), b"new");
+        }
+        assert!(!target.join("database.tdb.text").exists());
+        assert_eq!(fs::read(other.join("database.tdb")).unwrap(), b"keep");
+        assert_no_overlay_temp_files(target.parent().unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cancelling_database_staging_keeps_the_previous_file_group_intact() {
+        let root = temp_root("database-cancel");
+        let normalized_root = root.join("normalized");
+        let data_root = root.join("data");
+        let relative = "_tauritavern/databases/db-memory";
+        let source = normalized_root.join(relative);
+        let target = data_root.join(relative);
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        for name in ["database.tdb", "database.tdb.vec"] {
+            fs::write(source.join(name), b"new").unwrap();
+            fs::write(target.join(name), b"old").unwrap();
+        }
+        fs::write(target.join("database.tdb.text"), b"keep index").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let failure = apply_overlay(
+            &normalized_root,
+            &data_root,
+            6,
+            &mut |_, _, _| cancelled.store(true, Ordering::SeqCst),
+            &|| cancelled.load(Ordering::SeqCst),
+        )
+        .unwrap_err();
+
+        assert!(matches!(failure.error, DomainError::Cancelled(_)));
+        assert!(!failure.local_applied.changed());
+        for name in ["database.tdb", "database.tdb.vec"] {
+            assert_eq!(fs::read(target.join(name)).unwrap(), b"old");
+        }
+        assert_eq!(
+            fs::read(target.join("database.tdb.text")).unwrap(),
+            b"keep index"
+        );
+        assert_no_overlay_temp_files(target.parent().unwrap());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

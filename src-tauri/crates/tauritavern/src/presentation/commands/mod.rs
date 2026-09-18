@@ -15,6 +15,7 @@ pub mod chat_swipe_commands;
 mod chunk_body;
 pub mod content_commands;
 pub mod data_archive_commands;
+pub mod database_commands;
 pub mod dev_logging_commands;
 pub mod extension_commands;
 pub mod extension_store_commands;
@@ -25,7 +26,6 @@ pub mod group_commands;
 pub mod helpers;
 pub mod image_commands;
 pub mod image_metadata_commands;
-pub mod intelligence_commands;
 #[cfg(target_os = "ios")]
 pub mod ios_file_bridge_commands;
 pub mod lan_sync_commands;

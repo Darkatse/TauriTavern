@@ -1253,6 +1253,7 @@ type TauriTavernChatSurfaceApi = {
 };
 
 type TauriTavernHostApi = {
+    db?: import('./tauri/main/api/db-types').DatabaseApi;
     chat?: TauriTavernChatApi;
     chatSurface?: TauriTavernChatSurfaceApi;
     characterCards?: TauriTavernCharacterCardsApi;

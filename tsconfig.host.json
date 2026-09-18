@@ -21,6 +21,7 @@
   },
   "include": [
     "src/types.d.ts",
+    "src/tauri/main/api/db.js",
     "src/tauri/main/context/**/*.js",
     "src/tauri/main/kernel/**/*.js",
     "src/tauri/main/services/**/*.js",

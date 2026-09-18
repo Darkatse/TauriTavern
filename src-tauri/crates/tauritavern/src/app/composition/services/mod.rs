@@ -13,6 +13,7 @@ use tt_adapter_http::HttpClientPool;
 use tt_adapter_mcp::RmcpMcpGateway;
 use tt_adapter_quickjs::QuickJsScriptEngine;
 use tt_adapter_storage_core::file_system::DataDirectory;
+use tt_adapter_triviumdb::TriviumDatabaseBackend;
 use tt_application::services::asset_service::AssetService;
 use tt_application::services::avatar_service::AvatarService;
 use tt_application::services::background_service::BackgroundService;
@@ -22,6 +23,7 @@ use tt_application::services::chat_history_coordinator::ChatHistoryCoordinator;
 use tt_application::services::chat_payload_commit_service::ChatPayloadCommitService;
 use tt_application::services::chat_service::ChatService;
 use tt_application::services::content_service::ContentService;
+use tt_application::services::database_service::DatabaseService;
 use tt_application::services::extension_service::ExtensionService;
 use tt_application::services::extension_store_service::ExtensionStoreService;
 use tt_application::services::external_import_service::ExternalImportDownloader;
@@ -238,7 +240,14 @@ pub(super) async fn build(
         mcp_service: mcp_service.clone(),
         chat_history_coordinator: chat_history_coordinator.clone(),
     });
-    let data_archive_service = archive::build(app_handle, data_change_reconciler.clone());
+    let database_service = Arc::new(DatabaseService::new(Arc::new(TriviumDatabaseBackend::new(
+        data_directory.root().join("_tauritavern").join("databases"),
+    ))));
+    let data_archive_service = archive::build(
+        app_handle,
+        data_change_reconciler.clone(),
+        database_service.clone(),
+    );
     let sync_services = sync::build(
         app_handle,
         data_directory,
@@ -293,6 +302,7 @@ pub(super) async fn build(
         tt_sync_service: sync_services.tt_sync_service,
         sync_automation_service: sync_services.sync_automation_service,
         data_archive_service,
+        database_service,
         update_service,
     })
 }

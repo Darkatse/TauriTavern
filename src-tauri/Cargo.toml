@@ -17,6 +17,7 @@ members = [
     "crates/tt-adapter-storage-userdata",
     "crates/tt-adapter-media",
     "crates/tt-adapter-quickjs",
+    "crates/tt-adapter-triviumdb",
 ]
 default-members = ["crates/tauritavern"]
 resolver = "3"
@@ -37,7 +38,7 @@ uuid = { version = "1.4", default-features = false, features = ["serde", "std", 
 url = "2.5.8"
 # Keep bundled libzstd target SIMD/assembly auto-detection; `no_asm` and `thin` disable fast paths.
 zstd = { version = "0.13.3", default-features = false }
-triviumdb = "0.8.5"
+triviumdb = "0.8.8"
 
 [profile.dev]
 debug = "line-tables-only"

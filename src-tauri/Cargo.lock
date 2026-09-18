@@ -7814,7 +7814,6 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
- "triviumdb",
  "tt-adapter-archive",
  "tt-adapter-extension",
  "tt-adapter-http",
@@ -7826,6 +7825,7 @@ dependencies = [
  "tt-adapter-storage-userdata",
  "tt-adapter-sync",
  "tt-adapter-tokenization",
+ "tt-adapter-triviumdb",
  "tt-adapter-vector",
  "tt-application",
  "tt-contracts",
@@ -8379,9 +8379,9 @@ dependencies = [
 
 [[package]]
 name = "triviumdb"
-version = "0.8.5"
+version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42a00b133611b48e8ed2642d7a344d46b560a7d6cbb8a37c5e6c76cc58a13deb"
+checksum = "f7e9968036eaaf549faf64ecaa97e5d6f824a858786dbbacbe45dd8740973223"
 dependencies = [
  "aho-corasick",
  "bincode",
@@ -8634,6 +8634,20 @@ dependencies = [
  "serde_json",
  "tokio",
  "tt-adapter-http",
+ "tt-domain",
+ "tt-ports",
+]
+
+[[package]]
+name = "tt-adapter-triviumdb"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "triviumdb",
+ "tt-contracts",
  "tt-domain",
  "tt-ports",
 ]
