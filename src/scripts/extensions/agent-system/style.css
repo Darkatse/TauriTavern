@@ -3420,8 +3420,6 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     display: flex;
     grid-column: 1 / -1;
     align-items: center;
-    justify-content: space-between;
-    gap: 10px;
     min-width: 0;
     padding: 8px 9px;
     border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor) 14%, transparent);
@@ -3518,33 +3516,12 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     line-height: 1.2;
 }
 
-.ttas-retention-auto-copy small,
-.ttas-retention-auto-state {
+.ttas-retention-auto-copy small {
     color: var(--ttas-muted);
     font-size: 0.72rem;
     line-height: 1.2;
 }
 
-.ttas-retention-auto-state {
-    flex: 0 0 auto;
-    padding: 3px 7px;
-    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
-    border-radius: 999px;
-    background-color: color-mix(in srgb, currentColor 6%, transparent);
-}
-
-.ttas-retention-automation[data-ttas-enabled="true"] .ttas-retention-auto-state {
-    color: var(--ttas-accent);
-}
-
-.ttas-retention-band {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 7px;
-    min-width: 0;
-}
-
-.ttas-retention-band span,
 .ttas-retention-note {
     display: inline-flex;
     align-items: center;
@@ -3559,13 +3536,8 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     background-color: color-mix(in srgb, var(--SmartThemeBodyColor) 5%, transparent);
 }
 
-.ttas-retention-band i,
 .ttas-retention-note i {
     color: var(--ttas-accent);
-}
-
-.ttas-retention-auto-pill[data-ttas-enabled="false"] i {
-    color: var(--ttas-muted);
 }
 
 .ttas-retention-error {
@@ -5361,11 +5333,15 @@ textarea.ttas-json {
     }
 
     .ttas-toolbar,
-    .ttas-runs-actions,
-    .ttas-retention-actions,
     .ttas-editor-actions {
         align-items: stretch;
         flex-direction: column;
+    }
+
+    .ttas-runs-actions,
+    .ttas-retention-actions {
+        align-items: center;
+        justify-content: flex-start;
     }
 
     .ttas-runs-header {
@@ -5377,11 +5353,6 @@ textarea.ttas-json {
     .ttas-retention-controls,
     .ttas-retention-stat-grid {
         grid-template-columns: 1fr;
-    }
-
-    .ttas-retention-automation {
-        align-items: flex-start;
-        flex-direction: column;
     }
 
     .ttas-segmented-control {

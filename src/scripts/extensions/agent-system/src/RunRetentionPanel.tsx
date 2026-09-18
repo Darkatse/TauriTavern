@@ -191,9 +191,6 @@ export function RunRetentionPanel({ controller, tr, onPruned }: RunRetentionPane
                         </span>
                         {autoPruneCopy}
                     </label>
-                    <span className="ttas-retention-auto-state">
-                        {draft.autoPruneEnabled ? tr('runRetentionAutoPruneOn') : tr('runRetentionAutoPruneOff')}
-                    </span>
                 </div>
                 <label className="ttas-field">
                     <span>{tr('runRetentionKeepHistory')}</span>
@@ -219,21 +216,6 @@ export function RunRetentionPanel({ controller, tr, onPruned }: RunRetentionPane
                         onChange={(event) => controller.setKeepFullRecentRuns(event.target.value)}
                     />
                 </label>
-            </div>
-
-            <div className="ttas-retention-band">
-                <span>
-                    <i className="fa-solid fa-box-archive" aria-hidden="true"></i>
-                    {tr('runRetentionFullSummary', { count: draft.keepFullRecentRuns })}
-                </span>
-                <span>
-                    <i className="fa-solid fa-scroll" aria-hidden="true"></i>
-                    {tr('runRetentionCoreSummary', { count: draft.keepRecentTerminalRuns })}
-                </span>
-                <span className="ttas-retention-auto-pill" data-ttas-enabled={draft.autoPruneEnabled ? 'true' : 'false'}>
-                    <i className={`fa-solid ${draft.autoPruneEnabled ? 'fa-clock-rotate-left' : 'fa-pause'}`} aria-hidden="true"></i>
-                    {draft.autoPruneEnabled ? tr('runRetentionAutoSummaryOn') : tr('runRetentionAutoSummaryOff')}
-                </span>
             </div>
 
             {error && (
