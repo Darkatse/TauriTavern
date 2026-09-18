@@ -320,7 +320,6 @@ export function installTopSettingsPanelParking({ manager }) {
         registerDrawerParking(manager, { panelId: 'WorldInfo', parkedSelector: '#wi-holder' }),
         registerDrawerParking(manager, { panelId: 'user-settings-block', parkedSelector: '#user-settings-block-content' }),
         registerDrawerParking(manager, { panelId: 'Backgrounds', parkedSelector: '#bg_tabs' }),
-        registerDrawerParking(manager, { panelId: 'PersonaManagement', parkedSelector: '#persona-management-block' }),
     ];
 
     /** @type {Array<[string, string]>} */
