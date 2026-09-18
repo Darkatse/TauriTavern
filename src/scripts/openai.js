@@ -1007,6 +1007,8 @@ function setOpenAIMessages(chat, stripOldToolCalls = false) {
     const currentApi = oai_settings.chat_completion_source;
     const currentModel = getChatCompletionModel();
     const requestContext = getChatCompletionRequestContext(oai_settings, currentModel);
+    const includeReasoningContent = oai_settings.show_thoughts
+        && usesDeepSeekReasoningContent(oai_settings, currentModel);
     const includeClaudeNative = usesClaudeMessagesSemantics(oai_settings, currentModel);
     const includeNative = includeClaudeNative
         || (currentApi === chat_completion_sources.CUSTOM
@@ -1077,10 +1079,8 @@ function setOpenAIMessages(chat, stripOldToolCalls = false) {
             && (!includeClaudeNative || hasClaudeToolUse(metadataMessage?.extra?.native))
             ? metadataMessage?.extra?.native
             : null;
-        const shouldReplayReasoningContent = currentApi === chat_completion_sources.DEEPSEEK
-            && oai_settings.show_thoughts
-            && isSameModel && !isOtherGroupMember;
-        const reasoningContent = shouldReplayReasoningContent ? metadataMessage?.extra?.tool_reasoning_content : null;
+        const reasoningContent = includeReasoningContent && isSameModel && !isOtherGroupMember
+            ? metadataMessage?.extra?.tool_reasoning_content : null;
         // Remove provider metadata from invocations if the API/model/speaker don't match.
         if (Array.isArray(invocations) && invocations.length > 0) {
             invocations.forEach((invocation, index) => {
@@ -1650,7 +1650,9 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
             && [custom_api_formats.GEMINI_INTERACTIONS, custom_api_formats.GEMINI_GENERATE_CONTENT].includes(settings.custom_api_format));
     const canIncludeNative = native => includeNative
         && (!includeClaudeNative || hasClaudeToolUse(native));
-    const isToolReasoningProvider = interleaved_reasoning_providers.includes(settings.chat_completion_source);
+    // DeepSeek tool turns use reasoning_content instead of reasoning.
+    const isToolReasoningProvider = interleaved_reasoning_providers.includes(settings.chat_completion_source)
+        && !usesDeepSeekReasoningContent(settings);
     const toolReasoningMode = isToolReasoningProvider
         ? getEffectiveToolReasoningMode(settings)
         : tool_reasoning_modes.DISABLED;
@@ -1748,15 +1750,13 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
                 return clone;
             });
             const toolResultMessages = await Promise.all(invocations.slice().reverse().map((invocation) => Message.createAsync('tool', invocation.result, invocation.id, assemblyTokenHandler)));
+            chatMessage.reasoningContent = chatPrompt.reasoningContent ?? null;
             await chatMessage.setToolCalls(invocations, includeSignature, includeToolReasoning, assemblyTokenHandler);
             if (includeSignature && chatPrompt.signature) {
                 chatMessage.signature = chatPrompt.signature;
             }
             if (canIncludeNative(chatPrompt.native)) {
                 chatMessage.native = chatPrompt.native;
-            }
-            if (chatPrompt.reasoningContent) {
-                chatMessage.reasoningContent = chatPrompt.reasoningContent;
             }
             if (Array.isArray(chatPrompt.media) && chatPrompt.media.length) {
                 if (chatPrompt.mediaDisplay === MEDIA_DISPLAY.LIST) {
@@ -5246,6 +5246,7 @@ class Message {
             ...(this.name ? { name: this.name } : {}),
             tool_calls: JSON.stringify(this.tool_calls),
             ...(this.reasoning ? { reasoning: this.reasoning } : {}),
+            ...(this.reasoningContent ? { reasoning_content: this.reasoningContent } : {}),
         });
     }
 
@@ -8467,6 +8468,30 @@ function getEffectiveToolReasoningMode(settings = oai_settings) {
 function isCustomGeminiGenerateContent(settings = oai_settings) {
     return settings.chat_completion_source === chat_completion_sources.CUSTOM
         && settings.custom_api_format === custom_api_formats.GEMINI_GENERATE_CONTENT;
+}
+
+/**
+ * Check whether the selected connection replays DeepSeek tool reasoning.
+ * Keep this replay predicate scoped to Chat Completions; native-format continuations
+ * have their own representation. Request normalization remains in the backend.
+ * @param {ChatCompletionSettings} settings Settings object to use
+ * @param {string} model Model id
+ * @returns {boolean} Whether tool turns use DeepSeek reasoning_content
+ */
+function usesDeepSeekReasoningContent(settings, model = getChatCompletionModel(settings)) {
+    const source = settings.chat_completion_source;
+    if (source === chat_completion_sources.DEEPSEEK) {
+        return true;
+    }
+    const isCompat = (source === chat_completion_sources.CUSTOM
+        && (settings.custom_api_format ?? custom_api_formats.OPENAI_COMPAT) === custom_api_formats.OPENAI_COMPAT)
+        || (source === chat_completion_sources.OPENCODE
+            && (settings.opencode_api_format ?? OPENCODE_API_FORMAT.OPENAI_COMPAT) === OPENCODE_API_FORMAT.OPENAI_COMPAT);
+    if (!isCompat) {
+        return false;
+    }
+    const lastSegment = String(model ?? '').trim().toLowerCase().split('/').pop() ?? '';
+    return lastSegment.startsWith('deepseek-v4') || lastSegment.startsWith('deepseek-flash');
 }
 
 /**

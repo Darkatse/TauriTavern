@@ -58,6 +58,8 @@ Connection Profiles（Connection Manager 扩展）：
 - `gemini_interactions` → 构造 `/interactions`
 - `gemini_generate_content` → 复用 MakerSuite 翻译器与传输链路，Custom 语义见 §4.4
 
+DeepSeek 的原生与 Custom/OpenCode 兼容请求共享后端适配，保留各来源的参数与提示词策略；适配在协议构建后、用户覆盖前执行。
+
 ### 2.3 HTTP 调用 + Stream 处理（Rust repository）
 
 仓库层对 `ChatCompletionSource::Custom` 以 **endpoint_path** 再分流（`http_chat_completion_repository/mod.rs`）：

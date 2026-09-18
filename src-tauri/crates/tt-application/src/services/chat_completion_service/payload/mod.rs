@@ -38,6 +38,8 @@ pub(super) fn build_payload(
     payload: Map<String, Value>,
 ) -> Result<(String, Value), ApplicationError> {
     let mut payload = payload;
+    // Capture provider controls before wire builders discard internal fields.
+    let deepseek_options = deepseek::RequestOptions::from_payload(source, &payload)?;
     let opencode_format = (source == ChatCompletionSource::OpenCode)
         .then(|| opencode::format_from_payload(&payload))
         .transpose()?;
@@ -58,7 +60,7 @@ pub(super) fn build_payload(
         return openai_responses::build(payload);
     }
 
-    match source {
+    let (endpoint, mut body) = match source {
         ChatCompletionSource::OpenAi
         | ChatCompletionSource::Groq
         | ChatCompletionSource::SiliconFlow
@@ -86,7 +88,14 @@ pub(super) fn build_payload(
         ChatCompletionSource::AwsBedrock => Ok(aws_bedrock::build(payload)?),
         ChatCompletionSource::Makersuite => Ok(makersuite::build(payload)?),
         ChatCompletionSource::VertexAi => Ok(vertexai::build(payload)?),
+    }?;
+
+    if endpoint == "/chat/completions"
+        && let Some(options) = deepseek_options
+    {
+        options.apply(body.as_object_mut().expect("wire builders return objects"));
     }
+    Ok((endpoint, body))
 }
 
 pub(super) fn validate_upstream_tool_transcript(
@@ -219,9 +228,9 @@ mod tests {
                 "/chat/completions",
                 "gpt-3.5-turbo-instruct",
             ),
-            ("openai_responses", "/responses", "test-model"),
-            ("claude_messages", "/messages", "test-model"),
-            ("gemini", "/generateContent", "test-model"),
+            ("openai_responses", "/responses", "gateway/deepseek-v4-pro"),
+            ("claude_messages", "/messages", "gateway/deepseek-v4-pro"),
+            ("gemini", "/generateContent", "gateway/deepseek-v4-pro"),
         ] {
             let payload = json!({
                 "chat_completion_source": "opencode",
@@ -235,12 +244,10 @@ mod tests {
             .cloned()
             .unwrap();
 
-            assert_eq!(
-                build_payload(ChatCompletionSource::OpenCode, payload)
-                    .unwrap()
-                    .0,
-                endpoint
-            );
+            let (actual_endpoint, upstream) =
+                build_payload(ChatCompletionSource::OpenCode, payload).unwrap();
+            assert_eq!(actual_endpoint, endpoint);
+            assert!(upstream.get("thinking").is_none(), "{format}");
         }
     }
 
@@ -249,7 +256,8 @@ mod tests {
         let payload = json!({
             "chat_completion_source": "custom",
             "custom_api_format": "openai_responses",
-            "model": "gpt-5",
+            "model": "gateway/deepseek-v4-pro",
+            "reasoning_effort": "medium",
             "messages": [
                 { "role": "user", "content": "hi" },
                 {
@@ -279,6 +287,9 @@ mod tests {
             build_payload(ChatCompletionSource::Custom, payload).expect("payload should build");
 
         assert_eq!(endpoint, "/responses");
+        assert_eq!(upstream["reasoning"]["effort"], "medium");
+        assert!(upstream.get("thinking").is_none());
+        assert!(upstream.get("reasoning_effort").is_none());
         let input = upstream
             .get("input")
             .and_then(Value::as_array)
@@ -312,5 +323,130 @@ mod tests {
                 .to_string()
                 .contains("without preceding function_call")
         );
+    }
+
+    #[test]
+    fn compat_deepseek_preserves_explicit_parameters() {
+        for (source, model, effort) in [
+            (
+                ChatCompletionSource::Custom,
+                " GO/deepseek-flash ",
+                "provider-specific",
+            ),
+            (
+                ChatCompletionSource::OpenCode,
+                "OR/DeepSeek-v4.1-flash",
+                "medium",
+            ),
+        ] {
+            let payload = json!({
+                "chat_completion_source": source.key(),
+                "model": model,
+                "messages": [{"role": "user", "content": "hello"}],
+                "reasoning_effort": effort,
+                "temperature": 1.2,
+                "top_p": 0.7,
+                "presence_penalty": 0.1,
+                "frequency_penalty": 0.2
+            });
+            let (_, body) = build_payload(source, payload.as_object().unwrap().clone()).unwrap();
+
+            assert_eq!(body["thinking"]["type"], "enabled", "{source:?}");
+            assert_eq!(body["reasoning_effort"], effort, "{source:?}");
+            assert_eq!(body["temperature"], 1.2);
+            assert_eq!(body["top_p"], 0.7);
+            assert_eq!(body["presence_penalty"], 0.1);
+            assert_eq!(body["frequency_penalty"], 0.2);
+        }
+    }
+
+    #[test]
+    fn deepseek_repairs_tool_continuations_without_overwriting_reasoning() {
+        for (source, reasoning) in [
+            (ChatCompletionSource::DeepSeek, Value::Null),
+            (
+                ChatCompletionSource::Custom,
+                json!("  original\nreasoning  "),
+            ),
+            (
+                ChatCompletionSource::OpenCode,
+                json!("  original\nreasoning  "),
+            ),
+        ] {
+            let payload = json!({
+                "chat_completion_source": source.key(),
+                "model": "deepseek-v4-flash",
+                "messages": [
+                    {"role": "user", "content": "weather"},
+                    {"role": "assistant", "content": "I'll check.", "reasoning_content": reasoning},
+                    {"role": "user", "content": "please do"},
+                    {"role": "assistant", "content": "", "tool_calls": [{
+                        "id": "call_1", "type": "function",
+                        "function": {"name": "weather", "arguments": "{}"}
+                    }]},
+                    {"role": "tool", "tool_call_id": "call_1", "content": "cloudy"}
+                ],
+                "tools": [{"type": "function", "function": {"name": "weather", "parameters": {
+                    "type": "object", "properties": {}, "required": []
+                }}}]
+            });
+            let (_, body) = build_payload(source, payload.as_object().unwrap().clone()).unwrap();
+
+            assert_eq!(
+                body["messages"][1].get("reasoning_content"),
+                Some(&reasoning),
+                "{source:?}"
+            );
+            assert_eq!(
+                body["messages"][3].get("reasoning_content"),
+                Some(&json!(""))
+            );
+            assert_eq!(
+                body["tools"][0]["function"]["parameters"],
+                json!({"type": "object", "properties": {}})
+            );
+            assert!(body.get("reasoning_effort").is_none());
+        }
+    }
+
+    #[test]
+    fn compat_deepseek_respects_disabled_thinking() {
+        let payload = json!({
+            "chat_completion_source": "opencode",
+            "model": "deepseek-v4-pro",
+            "include_reasoning": false,
+            "reasoning_effort": "medium",
+            "messages": [
+                {"role": "user", "content": "weather"},
+                {"role": "assistant", "content": "I'll check."}
+            ],
+            "tools": [{"type": "function", "function": {"name": "weather", "parameters": {"type": "object"}}}]
+        });
+        let (_, body) = build_payload(
+            ChatCompletionSource::OpenCode,
+            payload.as_object().unwrap().clone(),
+        )
+        .unwrap();
+
+        assert_eq!(body["thinking"]["type"], "disabled");
+        assert_eq!(body["reasoning_effort"], "medium");
+        assert!(body["messages"][1].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn deepseek_compat_does_not_affect_other_sources_or_model_families() {
+        for (source, model) in [
+            (ChatCompletionSource::Custom, "deepseek-chat"),
+            (ChatCompletionSource::OpenRouter, "deepseek/deepseek-v4-pro"),
+        ] {
+            let payload = json!({
+                "chat_completion_source": source.key(),
+                "model": model,
+                "messages": [{"role": "user", "content": "hello"}],
+                "include_reasoning": true
+            });
+            let (_, body) = build_payload(source, payload.as_object().unwrap().clone()).unwrap();
+            assert!(body.get("thinking").is_none(), "{source:?}: {model}");
+        }
     }
 }
