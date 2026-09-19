@@ -24,6 +24,19 @@ export function createBrowserRuntime() {
         url: 'http://localhost/',
         settings: { disableCSSFileLoading: true, disableJavaScriptFileLoading: true },
     });
+    // happy-dom #2182: Node's getter must work on subclasses, as it does in browsers.
+    // DOMPurify reads this getter directly to avoid DOM clobbering.
+    const nodeName = Object.getOwnPropertyDescriptor(window.Node.prototype, 'nodeName');
+    Object.defineProperty(window.Node.prototype, 'nodeName', {
+        ...nodeName,
+        get() {
+            for (let proto = Object.getPrototypeOf(this); proto !== window.Node.prototype; proto = Object.getPrototypeOf(proto)) {
+                const getter = Object.getOwnPropertyDescriptor(proto, 'nodeName')?.get;
+                if (getter) return getter.call(this);
+            }
+            return nodeName.get.call(this);
+        },
+    });
     window.document.write(readFileSync(path.join(root, 'index.html'), 'utf8')
         .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, ''));
     for (const file of ['jquery-3.5.1.min.js', 'jquery-ui.min.js', 'jquery.transit.min.js',
