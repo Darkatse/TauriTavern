@@ -24,7 +24,7 @@ Canary Release 必须是 prerelease；Stable latest 不能是 prerelease。返�
 
 ## Canary 发布链路
 
-Windows 与 macOS 的 Canary debug 包启用 Tauri Pilot；常规 release 构建默认不启用。
+Windows 与 macOS 的 Stable、Canary debug 包均启用 Tauri Pilot；常规 release 构建默认不启用。
 
 `.github/workflows/canary-release.yml` 从 `dev` 的同一提交构建桌面端与移动端，完整产物通过后才更新固定的 `Canary` Release 和 tag。Stable 与 Canary 共用面向用户的产物命名契约：
 

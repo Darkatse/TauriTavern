@@ -9531,53 +9531,66 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/ttsync-client/ttsync-client-2.5.1.crate",
-        "sha256": "3c302ce58e39312a53133ac5d02c8d226eb1817b1f9ce1ca2ac1b5f20cd27d50",
-        "dest": "cargo/vendor/ttsync-client-2.5.1"
+        "url": "https://static.crates.io/crates/ttsync-client/ttsync-client-2.6.0.crate",
+        "sha256": "e8c983b982b4512cd047924613488c35f1d9cb7632bfbb43c188742215e1c8d4",
+        "dest": "cargo/vendor/ttsync-client-2.6.0"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"3c302ce58e39312a53133ac5d02c8d226eb1817b1f9ce1ca2ac1b5f20cd27d50\", \"files\": {}}",
-        "dest": "cargo/vendor/ttsync-client-2.5.1",
+        "contents": "{\"package\": \"e8c983b982b4512cd047924613488c35f1d9cb7632bfbb43c188742215e1c8d4\", \"files\": {}}",
+        "dest": "cargo/vendor/ttsync-client-2.6.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/ttsync-contract/ttsync-contract-2.5.1.crate",
-        "sha256": "591fb7945aed185cce477180dfa56b40948b05cca08478e010c6583aee0ff634",
-        "dest": "cargo/vendor/ttsync-contract-2.5.1"
+        "url": "https://static.crates.io/crates/ttsync-contract/ttsync-contract-2.6.0.crate",
+        "sha256": "dd5e07d6bd22fdd95579ef8d7485b3f4e3241fe35c7552a3d5d80f418a65fe1f",
+        "dest": "cargo/vendor/ttsync-contract-2.6.0"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"591fb7945aed185cce477180dfa56b40948b05cca08478e010c6583aee0ff634\", \"files\": {}}",
-        "dest": "cargo/vendor/ttsync-contract-2.5.1",
+        "contents": "{\"package\": \"dd5e07d6bd22fdd95579ef8d7485b3f4e3241fe35c7552a3d5d80f418a65fe1f\", \"files\": {}}",
+        "dest": "cargo/vendor/ttsync-contract-2.6.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/ttsync-core/ttsync-core-2.5.1.crate",
-        "sha256": "af824154f945a6dabdf76f0e26f096a63c5db920a335d1f9792dcb22e6373dcf",
-        "dest": "cargo/vendor/ttsync-core-2.5.1"
+        "url": "https://static.crates.io/crates/ttsync-core/ttsync-core-2.6.0.crate",
+        "sha256": "9a4637907abd6a215c59962fe93356111ae115b402bc757a019d1aff168d442d",
+        "dest": "cargo/vendor/ttsync-core-2.6.0"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"af824154f945a6dabdf76f0e26f096a63c5db920a335d1f9792dcb22e6373dcf\", \"files\": {}}",
-        "dest": "cargo/vendor/ttsync-core-2.5.1",
+        "contents": "{\"package\": \"9a4637907abd6a215c59962fe93356111ae115b402bc757a019d1aff168d442d\", \"files\": {}}",
+        "dest": "cargo/vendor/ttsync-core-2.6.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/ttsync-http/ttsync-http-2.5.1.crate",
-        "sha256": "1e57eeea86d769b7dfaaee324ad5f664185432867a403247ef4327c62c4b399b",
-        "dest": "cargo/vendor/ttsync-http-2.5.1"
+        "url": "https://static.crates.io/crates/ttsync-fs/ttsync-fs-2.6.0.crate",
+        "sha256": "7c997cb81e6f425fcbfeb6bea21c9f4973248ab616fb814c2014ecc114826eb7",
+        "dest": "cargo/vendor/ttsync-fs-2.6.0"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"1e57eeea86d769b7dfaaee324ad5f664185432867a403247ef4327c62c4b399b\", \"files\": {}}",
-        "dest": "cargo/vendor/ttsync-http-2.5.1",
+        "contents": "{\"package\": \"7c997cb81e6f425fcbfeb6bea21c9f4973248ab616fb814c2014ecc114826eb7\", \"files\": {}}",
+        "dest": "cargo/vendor/ttsync-fs-2.6.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/ttsync-http/ttsync-http-2.6.0.crate",
+        "sha256": "983f7707bd9b8191dc133d5bf0dd6b465efcbccd5d8bdccd4b28ea92a0981c35",
+        "dest": "cargo/vendor/ttsync-http-2.6.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"983f7707bd9b8191dc133d5bf0dd6b465efcbccd5d8bdccd4b28ea92a0981c35\", \"files\": {}}",
+        "dest": "cargo/vendor/ttsync-http-2.6.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
