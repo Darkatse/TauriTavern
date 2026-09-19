@@ -2,6 +2,7 @@
 
 <img src="docs/images/tauritavern-readme-hero.webp" alt="TauriTavern" width="720">
 
+
 # TauriTavern
 
 **SillyTavern 的原生应用 —— 桌面与移动，开箱即用**
@@ -21,6 +22,8 @@
 [![Canary](https://img.shields.io/github/actions/workflow/status/Darkatse/TauriTavern/canary-release.yml?style=flat-square&logo=githubactions&label=canary)](https://github.com/Darkatse/TauriTavern/actions/workflows/canary-release.yml)
 
 </div>
+
+<p align="center"><sub>感谢 <a href="https://github.com/shiyue137">@shiyue137</a> 为 TauriTavern 设计 Logo 💛</sub></p>
 
 ## 下载
 

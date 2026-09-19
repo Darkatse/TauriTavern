@@ -22,6 +22,8 @@
 
 </div>
 
+<p align="center"><sub>TauriTavern のロゴをデザインしてくださった <a href="https://github.com/shiyue137">@shiyue137</a> さん、ありがとうございます 💛</sub></p>
+
 ## ダウンロード
 
 <div align="center">

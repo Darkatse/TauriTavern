@@ -22,6 +22,8 @@
 
 </div>
 
+<p align="center"><sub>Спасибо <a href="https://github.com/shiyue137">@shiyue137</a> за логотип TauriTavern 💛</sub></p>
+
 ## Скачать
 
 <div align="center">
