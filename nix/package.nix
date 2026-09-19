@@ -24,7 +24,7 @@
 
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "tauritavern";
-  version = "2.2.0";
+  version = "2.3.0";
 
   inherit src;
 
