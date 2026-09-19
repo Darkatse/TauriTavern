@@ -3,7 +3,7 @@
 # TauriTavern Linux installer.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
+#   curl -fsSL https://get.tauritavern.com/linux.sh | sh
 #   sh scripts/install-linux.sh --dry-run
 #
 # Keep all side effects behind main(). A truncated download therefore cannot run

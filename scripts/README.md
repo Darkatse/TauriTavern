@@ -7,20 +7,20 @@
 `install-linux.sh` 为 Debian 12+、Ubuntu 22.04 LTS+、Fedora 与 openSUSE Leap 16.0 配置签名软件源，并安装或更新 TauriTavern：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
+curl -fsSL https://get.tauritavern.com/linux.sh | sh
 ```
 
 使用 Canary 渠道：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+curl -fsSL https://get.tauritavern.com/linux.sh \
   | sh -s -- --channel canary
 ```
 
 NixOS 会自动使用项目 flake；其他已经安装 Nix 的 Linux 可显式选择 Nix：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+curl -fsSL https://get.tauritavern.com/linux.sh \
   | sh -s -- --method nix
 ```
 
@@ -28,7 +28,7 @@ Nix 安装进入当前用户 profile，不使用 sudo，也不修改 `/etc/nix/n
 
 ```sh
 curl -fsSL \
-  https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+  https://get.tauritavern.com/linux.sh \
   -o install-tauritavern.sh
 sh install-tauritavern.sh --dry-run
 ```
@@ -51,13 +51,13 @@ sh install-tauritavern.sh --dry-run
 Unix / macOS / Linux / Termux:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/export-sillytavern-migration.sh | sh
+curl -fsSL https://get.tauritavern.com/export.sh | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-iex (iwr 'https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/export-sillytavern-migration.ps1').Content
+iex (iwr 'https://get.tauritavern.com/export.ps1').Content
 ```
 
 ### 本地执行

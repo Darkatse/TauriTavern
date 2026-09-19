@@ -57,10 +57,12 @@ OpenPGP 和 Nix cache key 是两套独立的信任机制，不复用私钥。
 
 ## 一键安装
 
+短地址由 Cloudflare Redirect Rules 以 302 指向本仓库 `main` 分支的 `scripts/install-linux.sh`，脚本仍以仓库为唯一来源。
+
 所有受支持的 Linux 用户均可运行：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
+curl -fsSL https://get.tauritavern.com/linux.sh | sh
 ```
 
 脚本使用 POSIX `sh` 语法，支持 sh、Dash、Bash 与 Zsh。Debian、Ubuntu、Fedora 和 openSUSE 会使用原生软件源；NixOS 自动使用 flake。其他已经安装 Nix 的 Linux 可通过 `sh -s -- --method nix` 显式选择 Nix。可先下载脚本并以 `--dry-run` 查看执行计划。
@@ -68,7 +70,7 @@ curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/i
 Canary 使用同一入口：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+curl -fsSL https://get.tauritavern.com/linux.sh \
   | sh -s -- --channel canary
 ```
 
@@ -173,7 +175,7 @@ Rust 依赖直接由 `src-tauri/Cargo.lock` 中的版本和 checksum 固定，�
 通过安装脚本加入当前用户 profile：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+curl -fsSL https://get.tauritavern.com/linux.sh \
   | sh -s -- --method nix
 ```
 
