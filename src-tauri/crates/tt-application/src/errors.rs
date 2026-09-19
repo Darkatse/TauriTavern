@@ -53,6 +53,9 @@ impl From<DomainError> for ApplicationError {
             DomainError::Conflict(msg) => ApplicationError::Conflict(msg),
             DomainError::AuthenticationError(msg) => ApplicationError::Unauthorized(msg),
             DomainError::Cancelled(msg) => ApplicationError::Cancelled(msg),
+            error @ DomainError::FileIo { .. } => {
+                ApplicationError::InternalError(error.to_string())
+            }
             DomainError::InternalError(msg) => ApplicationError::InternalError(msg),
             DomainError::RateLimited { message } => ApplicationError::RateLimited(message),
             DomainError::Transient(msg) => ApplicationError::Transient(msg),

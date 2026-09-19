@@ -6,6 +6,7 @@ use serde_json::{Map, Value, json};
 use tokio::sync::Mutex;
 
 use super::*;
+use crate::services::agent_workspace_scope::WorkspaceAccessPolicy;
 use tt_domain::errors::{DomainError, WorkspaceWriteConflictKind};
 use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
 use tt_domain::models::agent::profile::{
@@ -14,12 +15,7 @@ use tt_domain::models::agent::profile::{
     AgentProfileId, AgentProfileInstructions, AgentProfileSourceTrace, AgentRunPolicy,
     AgentSkillPolicy, AgentToolPolicy, AgentWorkspacePolicy, ResolvedAgentOutputPolicy,
 };
-use tt_domain::models::agent::{
-    AgentChatRef, AgentRun, AgentRunPresentation, ArtifactSpec, ArtifactTarget, CommitPolicy,
-    WorkspaceInputManifest, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
-    WorkspaceRootCommit, WorkspaceRootLifecycle, WorkspaceRootMount, WorkspaceRootScope,
-    WorkspaceRootSpec,
-};
+use tt_domain::models::agent::{AgentRunPresentation, ArtifactSpec, ArtifactTarget, WorkspacePath};
 use tt_domain::models::skill::{
     SkillExportResult, SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry,
     SkillInstallRequest, SkillInstallResult, SkillMoveRequest, SkillReadRequest, SkillReadResult,
@@ -28,8 +24,8 @@ use tt_domain::models::skill::{
 };
 use tt_domain::models::tool::{ToolArguments, ToolId};
 use tt_ports::repositories::skill_repository::SkillRepository;
-use tt_ports::repositories::workspace_repository::{
-    WorkspaceAppendResult, WorkspaceEntry, WorkspaceEntryKind, WorkspaceFile, WorkspaceFileList,
+use tt_ports::workspace_fs::{
+    WorkspaceAppendResult, WorkspaceDirectoryEntry, WorkspaceEntryKind, WorkspaceMetadata,
     WorkspaceWriteGuard,
 };
 
@@ -228,12 +224,12 @@ impl SkillRepository for FakeSkillRepo {
     }
 }
 
-struct FakeWorkspaceRepo {
+struct FakeWorkspaceFs {
     files: HashMap<String, String>,
     written: Mutex<Vec<(String, String)>>,
     /// list_files 是否报告 truncated
     truncated: bool,
-    /// 指定此路径时，write_text_guarded 返回 InternalError 模拟落盘失败
+    /// 指定此路径时，write_file 返回 InternalError 模拟落盘失败
     fail_write_on: Option<String>,
     /// 快照阶段 read_text 的数据源；为 None 时退回 self.files。
     /// 用于模拟"快照后文件被外部修改"的并发场景。
@@ -241,75 +237,18 @@ struct FakeWorkspaceRepo {
 }
 
 fn fake_sha(text: &str) -> String {
-    format!("sha:{text}")
+    tt_ports::workspace_fs::sha256_hex(text.as_bytes())
 }
 
 #[async_trait]
-impl WorkspaceRepository for FakeWorkspaceRepo {
-    async fn validate_persistent_state(
+impl WorkspaceFs for FakeWorkspaceFs {
+    async fn write_file(
         &self,
-        _workspace_id: &str,
-        _state_id: &str,
-    ) -> Result<(), DomainError> {
-        unreachable!("script tests do not start runs")
-    }
-
-    async fn initialize_run(
-        &self,
-        _run: &AgentRun,
-        _manifest: &WorkspaceManifest,
-        _prompt_snapshot: &Value,
-        _resolved_profile: &ResolvedAgentProfile,
-    ) -> Result<(), DomainError> {
-        unreachable!("not needed")
-    }
-    async fn read_manifest(&self, run_id: &str) -> Result<WorkspaceManifest, DomainError> {
-        Ok(WorkspaceManifest {
-            workspace_version: 1,
-            run_id: run_id.to_string(),
-            stable_chat_id: "chat-1".to_string(),
-            chat_ref: AgentChatRef::Character {
-                character_id: "character-1".to_string(),
-                file_name: "character.png".to_string(),
-            },
-            created_at: chrono::Utc::now(),
-            input: WorkspaceInputManifest {
-                mode: "snapshot".to_string(),
-                prompt_snapshot_path: "input/prompt_snapshot.json".to_string(),
-                resolved_profile_path: "input/resolved_profile.json".to_string(),
-            },
-            roots: vec![WorkspaceRootSpec {
-                path: "output".to_string(),
-                lifecycle: WorkspaceRootLifecycle::Run,
-                scope: WorkspaceRootScope::Run,
-                mount: WorkspaceRootMount::Materialized,
-                visible: true,
-                writable: true,
-                commit: WorkspaceRootCommit::Never,
-            }],
-            artifacts: Vec::new(),
-            commit_policy: CommitPolicy {
-                default_target: ArtifactTarget::MessageBody,
-                combine_template: None,
-                store_artifacts_in_extra: false,
-            },
-        })
-    }
-    async fn write_text(
-        &self,
-        _run_id: &str,
-        _path: &WorkspacePath,
-        _text: &str,
-    ) -> Result<WorkspaceFile, DomainError> {
-        unreachable!("not needed")
-    }
-    async fn write_text_guarded(
-        &self,
-        _run_id: &str,
         path: &WorkspacePath,
-        text: &str,
+        bytes: &[u8],
         guard: WorkspaceWriteGuard,
-    ) -> Result<WorkspaceFile, DomainError> {
+    ) -> Result<(), DomainError> {
+        let text = std::str::from_utf8(bytes).unwrap();
         if self.fail_write_on.as_deref() == Some(path.as_str()) {
             return Err(DomainError::InternalError(format!(
                 "simulated write failure: {}",
@@ -346,71 +285,102 @@ impl WorkspaceRepository for FakeWorkspaceRepo {
             .lock()
             .await
             .push((path.as_str().to_string(), text.to_string()));
-        Ok(WorkspaceFile {
-            path: path.clone(),
-            text: text.to_string(),
-            bytes: text.len() as u64,
-            sha256: fake_sha(text),
+        Ok(())
+    }
+
+    async fn read_file(
+        &self,
+        path: &WorkspacePath,
+        _maximum_bytes: usize,
+    ) -> Result<Vec<u8>, DomainError> {
+        self.snapshot_content
+            .as_ref()
+            .unwrap_or(&self.files)
+            .get(path.as_str())
+            .map(|text| text.as_bytes().to_vec())
+            .ok_or_else(|| DomainError::NotFound(path.as_str().to_owned()))
+    }
+    async fn metadata(
+        &self,
+        path: Option<&WorkspacePath>,
+    ) -> Result<WorkspaceMetadata, DomainError> {
+        let text = path.and_then(|p| self.files.get(p.as_str()));
+        Ok(WorkspaceMetadata {
+            kind: if text.is_some() {
+                WorkspaceEntryKind::File
+            } else {
+                WorkspaceEntryKind::Directory
+            },
+            bytes: text.map_or(0, |t| t.len() as u64),
+            modified: None,
+            created: None,
         })
+    }
+    async fn read_dir(
+        &self,
+        path: Option<&WorkspacePath>,
+        _maximum_entries: usize,
+    ) -> Result<Vec<WorkspaceDirectoryEntry>, DomainError> {
+        let prefix = path.map_or(String::new(), |path| format!("{}/", path.as_str()));
+        let mut names: Vec<String> = self
+            .snapshot_content
+            .as_ref()
+            .unwrap_or(&self.files)
+            .keys()
+            .filter(|name| name.starts_with(&prefix))
+            .cloned()
+            .collect();
+        if self.truncated {
+            names.extend((0..1001).map(|i| format!("{prefix}file-{i}")));
+        }
+        names.sort();
+        Ok(names
+            .into_iter()
+            .map(|name| WorkspaceDirectoryEntry {
+                path: WorkspacePath::parse(name).unwrap(),
+                metadata: WorkspaceMetadata {
+                    kind: WorkspaceEntryKind::File,
+                    bytes: 0,
+                    modified: None,
+                    created: None,
+                },
+            })
+            .collect())
+    }
+    async fn create_dir(&self, _path: &WorkspacePath, _recursive: bool) -> Result<(), DomainError> {
+        Ok(())
+    }
+    async fn append_file(&self, _path: &WorkspacePath, _bytes: &[u8]) -> Result<(), DomainError> {
+        unreachable!()
     }
     async fn append_text(
         &self,
-        _run_id: &str,
         _path: &WorkspacePath,
         _text: &str,
     ) -> Result<WorkspaceAppendResult, DomainError> {
-        unreachable!("not needed")
+        unreachable!()
     }
-    async fn read_text(
+    async fn remove(&self, _path: &WorkspacePath, _recursive: bool) -> Result<(), DomainError> {
+        unreachable!()
+    }
+    async fn rename(
         &self,
-        _run_id: &str,
-        path: &WorkspacePath,
-    ) -> Result<WorkspaceFile, DomainError> {
-        let source = self.snapshot_content.as_ref().unwrap_or(&self.files);
-        source
-            .get(path.as_str())
-            .map(|text| WorkspaceFile {
-                path: path.clone(),
-                text: text.clone(),
-                bytes: text.len() as u64,
-                sha256: fake_sha(text),
-            })
-            .ok_or_else(|| DomainError::NotFound(format!("File not found: {}", path.as_str())))
+        _source: &WorkspacePath,
+        _target: &WorkspacePath,
+    ) -> Result<(), DomainError> {
+        unreachable!()
     }
-    async fn list_files(
+    async fn copy_file(
         &self,
-        _run_id: &str,
-        path: Option<&WorkspacePath>,
-        _depth: usize,
-        _max_entries: usize,
-    ) -> Result<WorkspaceFileList, DomainError> {
-        let prefix = path.map(|p| p.as_str().to_string()).unwrap_or_default();
-        let source = self.snapshot_content.as_ref().unwrap_or(&self.files);
-        let entries: Vec<_> = source
-            .keys()
-            .filter_map(|key| {
-                if prefix.is_empty() || key.starts_with(&prefix) {
-                    Some(WorkspaceEntry {
-                        path: WorkspacePath::parse(key).unwrap(),
-                        kind: WorkspaceEntryKind::File,
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect();
-        Ok(WorkspaceFileList {
-            entries,
-            truncated: self.truncated,
-        })
+        _source: &WorkspacePath,
+        _target: &WorkspacePath,
+    ) -> Result<(), DomainError> {
+        unreachable!()
     }
-    async fn commit_persistent_changes(
-        &self,
-        _run_id: &str,
-        _previous_state_id: Option<&str>,
-    ) -> Result<WorkspacePersistentChangeSet, DomainError> {
-        unreachable!("not needed")
-    }
+}
+
+fn scoped_files(files: Arc<FakeWorkspaceFs>) -> ScopedWorkspaceFs {
+    ScopedWorkspaceFs::new(files, WorkspaceAccessPolicy::from_profile(&base_profile()))
 }
 
 // ---- helpers --------------------------------------------------------
@@ -548,14 +518,13 @@ async fn run_with_repo_and_outcome(
         ScriptContext {
             skill_service: &SkillService::new(Arc::new(repo)),
             engine: engine.as_ref(),
-            workspace_repository: &FakeWorkspaceRepo {
+            workspace: &scoped_files(Arc::new(FakeWorkspaceFs {
                 files: HashMap::new(),
                 written: Mutex::new(Vec::new()),
                 truncated: false,
                 fail_write_on: None,
                 snapshot_content: None,
-            },
-            run_id: "run-1",
+            })),
             prompt_snapshot: empty_prompt_snapshot(),
         },
         &tool_call,

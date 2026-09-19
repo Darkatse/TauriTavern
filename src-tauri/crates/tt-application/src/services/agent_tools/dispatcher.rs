@@ -10,6 +10,7 @@ use super::skill;
 use super::workspace;
 use super::world_info;
 use crate::errors::ApplicationError;
+use crate::services::agent_workspace_scope::{ScopedWorkspaceFs, WorkspaceAccessPolicy};
 use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
@@ -19,8 +20,8 @@ use tt_domain::models::tool::{ToolId, ToolInvocation};
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
-use tt_ports::repositories::workspace_repository::{WorkspaceFile, WorkspaceRepository};
 use tt_ports::skill_script::SkillScriptEngine;
+use tt_ports::workspace_fs::{WorkspaceFile, WorkspaceFs};
 
 const RUN_PROMPT_SNAPSHOT_PATH: &str = "input/prompt_snapshot.json";
 
@@ -70,7 +71,6 @@ pub(crate) struct AgentToolDispatcher {
     run_repository: Arc<dyn AgentRunRepository>,
     chat_repository: Arc<dyn ChatRepository>,
     group_chat_repository: Arc<dyn GroupChatRepository>,
-    workspace_repository: Arc<dyn WorkspaceRepository>,
     skill_service: Arc<SkillService>,
     skill_script_engine: Arc<dyn SkillScriptEngine>,
 }
@@ -80,7 +80,6 @@ impl AgentToolDispatcher {
         run_repository: Arc<dyn AgentRunRepository>,
         chat_repository: Arc<dyn ChatRepository>,
         group_chat_repository: Arc<dyn GroupChatRepository>,
-        workspace_repository: Arc<dyn WorkspaceRepository>,
         skill_service: Arc<SkillService>,
         skill_script_engine: Arc<dyn SkillScriptEngine>,
     ) -> Self {
@@ -88,7 +87,6 @@ impl AgentToolDispatcher {
             run_repository,
             chat_repository,
             group_chat_repository,
-            workspace_repository,
             skill_service,
             skill_script_engine,
         }
@@ -101,28 +99,13 @@ impl AgentToolDispatcher {
         args: &Map<String, Value>,
         session: &mut AgentToolSession,
         profile: &ResolvedAgentProfile,
-    ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
-        self.dispatch_with_model_workspace_repository(
-            run_id,
-            call,
-            args,
-            session,
-            profile,
-            self.workspace_repository.as_ref(),
-        )
-        .await
-    }
-
-    pub(crate) async fn dispatch_with_model_workspace_repository(
-        &self,
-        run_id: &str,
-        call: &ToolInvocation,
-        args: &Map<String, Value>,
-        session: &mut AgentToolSession,
-        profile: &ResolvedAgentProfile,
-        model_workspace_repository: &dyn WorkspaceRepository,
+        raw_files: Arc<dyn WorkspaceFs>,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
+        let workspace = ScopedWorkspaceFs::new(
+            raw_files.clone(),
+            WorkspaceAccessPolicy::from_profile(profile),
+        );
         let outcome = match builtin_tool_name(&call.tool_id)? {
             chat::CHAT_SEARCH => {
                 chat::search(
@@ -151,7 +134,7 @@ impl AgentToolDispatcher {
             world_info::WORLDINFO_READ_ACTIVATED => {
                 // WorldInfo activation is a hidden run input fact, not a model-visible
                 // workspace file; invocation workspace policy must not gate this read.
-                let prompt_snapshot = self.read_run_prompt_snapshot(run_id).await?;
+                let prompt_snapshot = Self::read_run_prompt_snapshot(raw_files.as_ref()).await?;
                 world_info::read_activated(&prompt_snapshot, call, args)?
             }
             dice::DICE_ROLL => dice::roll(call, args).await?,
@@ -163,13 +146,12 @@ impl AgentToolDispatcher {
                 skill::read(self.skill_service.as_ref(), call, args, session, profile).await?
             }
             skill::SKILL_SCRIPT => {
-                let prompt_snapshot = self.read_run_prompt_snapshot(run_id).await?;
+                let prompt_snapshot = Self::read_run_prompt_snapshot(raw_files.as_ref()).await?;
                 skill::script(
                     skill::ScriptContext {
                         skill_service: self.skill_service.as_ref(),
                         engine: self.skill_script_engine.as_ref(),
-                        workspace_repository: model_workspace_repository,
-                        run_id,
+                        workspace: &workspace,
                         prompt_snapshot,
                     },
                     call,
@@ -180,25 +162,22 @@ impl AgentToolDispatcher {
                 .await?
             }
             workspace::WORKSPACE_LIST_FILES => {
-                workspace::list_files(model_workspace_repository, run_id, call, args).await?
+                workspace::list_files(&workspace, call, args).await?
             }
             workspace::WORKSPACE_SEARCH_FILES => {
-                workspace::search_files(model_workspace_repository, run_id, call, args).await?
+                workspace::search_files(&workspace, call, args).await?
             }
             workspace::WORKSPACE_READ_FILE => {
-                workspace::read_file(model_workspace_repository, run_id, call, args, session)
-                    .await?
+                workspace::read_file(&workspace, call, args, session).await?
             }
             workspace::WORKSPACE_WRITE_FILE => {
-                workspace::write_file(model_workspace_repository, run_id, call, args, session)
-                    .await?
+                workspace::write_file(&workspace, call, args, session).await?
             }
             workspace::WORKSPACE_APPLY_PATCH => {
-                workspace::apply_patch(model_workspace_repository, run_id, call, args, session)
-                    .await?
+                workspace::apply_patch(&workspace, call, args, session).await?
             }
             workspace::WORKSPACE_COMMIT => {
-                workspace::commit(model_workspace_repository, run_id, call, args, profile).await?
+                workspace::commit(&workspace, call, args, profile).await?
             }
             workspace::WORKSPACE_FINISH => workspace::finish(call, args)?,
             other => {
@@ -216,13 +195,11 @@ impl AgentToolDispatcher {
     }
 
     async fn read_run_prompt_snapshot(
-        &self,
-        run_id: &str,
+        files: &dyn WorkspaceFs,
     ) -> Result<serde_json::Value, ApplicationError> {
         let snapshot_path = WorkspacePath::parse(RUN_PROMPT_SNAPSHOT_PATH)?;
-        let snapshot_file = self
-            .workspace_repository
-            .read_text(run_id, &snapshot_path)
+        let snapshot_file = files
+            .read_text(&snapshot_path)
             .await
             .map_err(ApplicationError::from)?;
         serde_json::from_str(&snapshot_file.text).map_err(|error| {

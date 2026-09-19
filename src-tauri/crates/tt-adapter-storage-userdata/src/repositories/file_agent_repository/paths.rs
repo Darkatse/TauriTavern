@@ -1,8 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::fs;
-use tokio::sync::OwnedMutexGuard;
+use tokio::sync::RwLock;
 
 use super::FileAgentRepository;
 use tt_domain::errors::DomainError;
@@ -64,98 +63,18 @@ impl FileAgentRepository {
         self.run_dir(&run)
     }
 
-    pub(super) async fn safe_workspace_path(
-        &self,
-        run_id: &str,
-        workspace_path: &WorkspacePath,
-        create_parent: bool,
-    ) -> Result<PathBuf, DomainError> {
-        let run_dir = self.load_run_dir(run_id).await?;
-        let target = run_dir.join(workspace_path.as_str());
-
-        let canonical_run_dir = fs::canonicalize(&run_dir).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to resolve agent workspace root {}: {}",
-                run_dir.display(),
-                error
-            ))
-        })?;
-
-        if let Some(parent) = target.parent() {
-            if create_parent {
-                fs::create_dir_all(parent).await.map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to create workspace parent {}: {}",
-                        parent.display(),
-                        error
-                    ))
-                })?;
-            }
-
-            let canonical_parent = fs::canonicalize(parent).await.map_err(|error| {
-                if error.kind() == std::io::ErrorKind::NotFound {
-                    DomainError::NotFound(format!(
-                        "Workspace path parent not found: {}",
-                        workspace_path.as_str()
-                    ))
-                } else {
-                    DomainError::InternalError(format!(
-                        "Failed to resolve workspace parent {}: {}",
-                        parent.display(),
-                        error
-                    ))
-                }
-            })?;
-            if !canonical_parent.starts_with(&canonical_run_dir) {
-                return Err(DomainError::InvalidData(format!(
-                    "Workspace path escapes run directory: {}",
-                    workspace_path.as_str()
-                )));
-            }
+    pub(super) async fn workspace_lock(&self, run_id: &str) -> Arc<RwLock<()>> {
+        let mut locks = self.workspace_locks.lock().await;
+        if locks.len() > 4096 {
+            locks.retain(|_, lock| lock.strong_count() > 0);
         }
-
-        match fs::symlink_metadata(&target).await {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(DomainError::InvalidData(format!(
-                    "Workspace path targets a symlink: {}",
-                    workspace_path.as_str()
-                )));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(DomainError::InternalError(format!(
-                    "Failed to inspect workspace path {}: {}",
-                    target.display(),
-                    error
-                )));
-            }
+        if let Some(lock) = locks.get(run_id).and_then(|lock| lock.upgrade()) {
+            return lock;
         }
-
-        Ok(target)
-    }
-
-    pub(super) async fn acquire_workspace_write_lock(&self, path: &Path) -> OwnedMutexGuard<()> {
-        const MAX_RETAINED_LOCK_ENTRIES: usize = 4096;
-
-        let key = path.to_path_buf();
-        let lock = {
-            let mut locks = self.workspace_write_locks.lock().await;
-            if locks.len() > MAX_RETAINED_LOCK_ENTRIES {
-                locks.retain(|_, value| value.strong_count() > 0);
-            }
-
-            match locks.get(&key).and_then(|value| value.upgrade()) {
-                Some(existing) => existing,
-                None => {
-                    let created = Arc::new(tokio::sync::Mutex::new(()));
-                    locks.insert(key, Arc::downgrade(&created));
-                    created
-                }
-            }
-        };
-
-        lock.lock_owned().await
+        // ponytail: serialize Run mutations; split only if measured contention warrants it.
+        let lock = Arc::new(RwLock::new(()));
+        locks.insert(run_id.to_owned(), Arc::downgrade(&lock));
+        lock
     }
 }
 

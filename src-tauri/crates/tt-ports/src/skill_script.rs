@@ -88,7 +88,7 @@ pub struct SkillScriptResult {
     /// 脚本 `default(args)` 或 `main(args)` 导出的 JSON 返回值。
     pub value: serde_json::Value,
     /// 脚本通过 `workspace.writeText` 产生的写入（按路径排序的最终 delta，
-    /// 同一路径仅保留最终内容）。应用层负责通过 `write_text_guarded` 落盘。
+    /// 同一路径仅保留最终内容）。应用层负责通过 `WorkspaceFs` 的条件写入落盘。
     pub writes: Vec<SkillScriptWrite>,
     /// 脚本最后一次调用 `workspace.writeText` 的逻辑路径。
     /// 与按路径排序的最终 delta 分开保存，供 Application 保留 mutation 顺序语义。

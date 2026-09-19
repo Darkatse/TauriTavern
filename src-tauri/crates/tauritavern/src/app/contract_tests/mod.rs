@@ -666,7 +666,10 @@ async fn read_agent_events(
 
 async fn read_workspace_json(repository: &FileAgentRepository, run_id: &str, path: &str) -> Value {
     let file = repository
-        .read_text(run_id, &WorkspacePath::parse(path).expect("workspace path"))
+        .open_filesystem(run_id)
+        .await
+        .expect("open workspace")
+        .read_text(&WorkspacePath::parse(path).expect("workspace path"))
         .await
         .expect("read workspace json");
     serde_json::from_str(&file.text).expect("parse workspace json")

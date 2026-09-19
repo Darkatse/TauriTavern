@@ -242,10 +242,13 @@ async fn agent_runtime_resumes_after_tool_bookkeeping_failure_without_replaying_
             .join(blocked_directory);
         fixture
             .agent_repository
+            .open_filesystem(&run.id)
+            .await
+            .expect("open workspace")
             .write_text(
-                &run.id,
                 &WorkspacePath::parse("output/main.md").unwrap(),
                 "before:",
+                tt_ports::workspace_fs::WorkspaceWriteGuard::Unchecked,
             )
             .await
             .unwrap();
@@ -735,10 +738,10 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
         if !during_preparation {
             let note = fixture
                 .agent_repository
-                .read_text(
-                    &handle.run_id,
-                    &WorkspacePath::parse("summaries/note.md").unwrap(),
-                )
+                .open_filesystem(&handle.run_id)
+                .await
+                .expect("open workspace")
+                .read_text(&WorkspacePath::parse("summaries/note.md").unwrap())
                 .await
                 .unwrap();
             assert_eq!(note.text, "Add rain.");
@@ -819,10 +822,10 @@ async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_wo
     assert_eq!(
         fixture
             .agent_repository
-            .read_text(
-                &handle.run_id,
-                &WorkspacePath::parse("output/previous_output.md").unwrap()
-            )
+            .open_filesystem(&handle.run_id)
+            .await
+            .expect("open workspace")
+            .read_text(&WorkspacePath::parse("output/previous_output.md").unwrap())
             .await
             .unwrap()
             .text,
@@ -963,7 +966,10 @@ async fn acknowledge_revision_output(
         assert_eq!(
             fixture
                 .agent_repository
-                .read_text(run_id, &path)
+                .open_filesystem(run_id)
+                .await
+                .expect("open workspace")
+                .read_text(&path)
                 .await
                 .unwrap()
                 .text,
@@ -1081,7 +1087,10 @@ async fn resume_checkpoint(
 async fn read_output(fixture: &AgentRuntimeFixture, run_id: &str) -> String {
     fixture
         .agent_repository
-        .read_text(run_id, &WorkspacePath::parse("output/main.md").unwrap())
+        .open_filesystem(run_id)
+        .await
+        .expect("open workspace")
+        .read_text(&WorkspacePath::parse("output/main.md").unwrap())
         .await
         .unwrap()
         .text

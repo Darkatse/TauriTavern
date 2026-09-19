@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use tt_ports::workspace_fs::WorkspaceWriteGuard;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -210,11 +211,12 @@ impl AgentRuntimeService {
             .map(|revision| AgentGuidanceItem::new(&revision.guidance, None))
             .transpose()?;
         if let Some(revision) = &dto.revision {
-            self.workspace_repository
+            self.workspace_files(&dto.run_id)
+                .await?
                 .write_text(
-                    &dto.run_id,
                     &WorkspacePath::parse(PREVIOUS_OUTPUT_PATH)?,
                     &revision.previous_output,
+                    WorkspaceWriteGuard::Unchecked,
                 )
                 .await?;
             checkpoint.state.begin_output_revision()?;
@@ -223,11 +225,9 @@ impl AgentRuntimeService {
         // remain the originals; no profile resolution or prompt assembly occurs here.
         self.workspace_repository.read_manifest(&dto.run_id).await?;
         let snapshot = self
-            .workspace_repository
-            .read_text(
-                &dto.run_id,
-                &WorkspacePath::parse("input/prompt_snapshot.json")?,
-            )
+            .workspace_files(&dto.run_id)
+            .await?
+            .read_text(&WorkspacePath::parse("input/prompt_snapshot.json")?)
             .await?;
         let snapshot: Value = serde_json::from_str(&snapshot.text).map_err(|error| {
             invalid(format!("frozen prompt snapshot cannot be decoded: {error}"))
@@ -263,6 +263,9 @@ impl AgentRuntimeService {
         let mut handle = ActiveRunHandle::new(
             self,
             dto.run_id.clone(),
+            self.workspace_repository
+                .open_filesystem(&dto.run_id)
+                .await?,
             cancel_sender,
             checkpoint.stream_override,
             dto.host_presentation,

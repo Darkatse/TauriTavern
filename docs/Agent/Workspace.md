@@ -19,6 +19,14 @@
 
 工作区读取返回文件原文。脚本需要展开模板时，可以显式调用 `macros.render()`。聊天、世界书和 Skill 的读取由各自工具完成，保留原有数据来源。
 
+## 统一文件链路
+
+文本工具、Skill 写回与 runtime 材料统一通过 `WorkspaceFs` 访问 Run 的真实目录。`WorkspaceRepository` 负责初始化、manifest 与持久版本发布。
+
+模型侧使用当前 Invocation 的 `ScopedWorkspaceFs`，按自己的 Profile 访问；业务根本身不可修改，`tool-results` 只读。宿主记录使用内部视图，两者共享同一文件实现。
+
+同一 Run 允许并行读取，按单次操作串行修改；CAS 的条件检查与写入在同一锁内完成。多步操作不构成事务，已成功的操作立即生效。追加使用原生 append，失败可能部分生效，不自动重放。
+
 ## Run 与聊天的关系
 
 磁盘数据位于数据目录的 `_tauritavern/agent-workspaces/`：
@@ -65,7 +73,7 @@ agent-workspaces/
 
 `persist/` 的起点由 `persistBaseStateId` 指定。初始化时，仓储把对应持久版本复制到本次 Run；模型随后像处理普通文件一样修改它。
 
-`workspace.finish` 收尾时发布持久版本，并将其 ID 写入已提交消息的 Agent metadata。首次完成或持久内容发生变化时创建新的 `persistent-states/<state-id>/`；修订未改变持久内容时复用上一版本。后续生成根据当前消息或 swipe 选择起点，因此不同候选可以保有各自的持久内容。前端负责选择版本，仓储负责保存版本。当前持久内容支持新增与修改。
+`workspace.finish` 将 `persist/` 的文件与目录发布为不可变版本，并将其 ID 写入已提交消息的 Agent metadata。版本反映删除、移动和空目录等变化；修订未改变完整状态时复用上一版本。后续生成根据当前消息或 swipe 选择起点，因此不同候选可以保有各自的持久内容。
 
 聊天分叉会复制持久版本并使用新聊天身份。运行历史清理与持久版本清理分别处理：缩减旧 Run 的材料不会删除仍被聊天使用的持久内容。
 
@@ -79,5 +87,7 @@ agent-workspaces/
 
 - [workspace_policy.rs](../../src-tauri/crates/tt-application/src/services/agent_profile_service/workspace_policy.rs)：目录与 Profile 的对应关系。
 - [workspace 工具](../../src-tauri/crates/tt-application/src/services/agent_tools/workspace)：文件读改与提交请求。
+- [WorkspaceFs](../../src-tauri/crates/tt-ports/src/workspace_fs.rs)：统一文件契约与文本便利方法。
+- [ScopedWorkspaceFs](../../src-tauri/crates/tt-application/src/services/agent_workspace_scope.rs)：Invocation 范围视图。
 - [FileAgentRepository](../../src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_repository)：路径、文件、持久版本与清理。
 - [聊天提交桥](../../src/tauri/main/api/agent-chat-commit-bridge.js)：接入前端聊天保存。

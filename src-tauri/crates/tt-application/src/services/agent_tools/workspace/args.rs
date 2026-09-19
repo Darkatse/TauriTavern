@@ -1,6 +1,6 @@
 use serde_json::{Map, Value};
 
-use super::policy::WorkspaceAccessPolicy;
+use crate::services::agent_workspace_scope::WorkspaceAccessPolicy;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{AgentToolResult, WorkspacePath};
 use tt_domain::models::tool::ToolInvocation;

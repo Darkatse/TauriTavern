@@ -196,6 +196,7 @@ pub(crate) fn domain_error_to_sync(error: DomainError) -> SyncError {
         DomainError::Conflict(message) => SyncError::InvalidData(message),
         DomainError::AuthenticationError(message) => SyncError::Unauthorized(message),
         DomainError::Cancelled(message) => SyncError::Internal(message),
+        error @ DomainError::FileIo { .. } => SyncError::Io(error.to_string()),
         DomainError::InternalError(message) => SyncError::Internal(message),
         DomainError::RateLimited { message } => SyncError::Internal(message),
         DomainError::Transient(message) => SyncError::Io(message),

@@ -1,14 +1,13 @@
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
 use tokio::fs;
+use tokio::io::AsyncReadExt;
 
-use super::persistent_store::PersistentSnapshotFile;
+use super::persistent_store::{PersistentSnapshotFile, PersistentTree};
 use crate::hashing::hex_lower;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::WorkspacePath;
-use tt_ports::repositories::workspace_repository::WorkspaceFile;
 
 pub(super) fn should_skip_platform_metadata_file(
     path: &Path,
@@ -122,6 +121,11 @@ pub(super) async fn copy_directory_contents(
                         error
                     ))
                 })?;
+            } else {
+                return Err(DomainError::InvalidData(format!(
+                    "Unsupported persistent node: {}",
+                    child.display()
+                )));
             }
         }
     }
@@ -129,13 +133,19 @@ pub(super) async fn copy_directory_contents(
     Ok(())
 }
 
-pub(super) async fn scan_workspace_files(
+pub(super) async fn scan_workspace_tree(
     root: &Path,
     root_path: &str,
-) -> Result<Vec<PersistentSnapshotFile>, DomainError> {
+    include_files: bool,
+) -> Result<PersistentTree, DomainError> {
     let root_metadata = match fs::symlink_metadata(root).await {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(DomainError::NotFound(format!(
+                "Persistent root missing: {}",
+                root.display()
+            )));
+        }
         Err(error) => {
             return Err(DomainError::InternalError(format!(
                 "Failed to inspect workspace root {}: {}",
@@ -157,7 +167,7 @@ pub(super) async fn scan_workspace_files(
         )));
     }
 
-    let mut files = Vec::new();
+    let mut tree = PersistentTree::default();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let mut children = fs::read_dir(&dir).await.map_err(|error| {
@@ -196,27 +206,31 @@ pub(super) async fn scan_workspace_files(
             if should_skip_platform_metadata_file(&child, &metadata)? {
                 continue;
             }
+            let path = logical_workspace_path(root, root_path, &child)?;
             if metadata.is_dir() {
+                tree.directories.push(path);
                 stack.push(child);
             } else if metadata.is_file() {
-                let bytes = fs::read(&child).await.map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to read workspace file {}: {}",
-                        child.display(),
-                        error
-                    ))
-                })?;
-                files.push(PersistentSnapshotFile {
-                    path: logical_workspace_path(root, root_path, &child)?,
-                    sha256: sha256_hex(&bytes),
-                    bytes: bytes.len() as u64,
-                });
+                if include_files {
+                    let (sha256, bytes) = hash_file(&child).await?;
+                    tree.files.push(PersistentSnapshotFile {
+                        path,
+                        sha256,
+                        bytes,
+                    });
+                }
+            } else {
+                return Err(DomainError::InvalidData(format!(
+                    "Unsupported persistent node: {}",
+                    child.display()
+                )));
             }
         }
     }
 
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(files)
+    tree.files.sort_by(|a, b| a.path.cmp(&b.path));
+    tree.directories.sort();
+    Ok(tree)
 }
 
 pub(super) fn logical_workspace_path(
@@ -233,8 +247,15 @@ pub(super) fn logical_workspace_path(
     })?;
     let suffix = relative
         .iter()
-        .map(|part| part.to_string_lossy())
-        .collect::<Vec<_>>()
+        .map(|part| {
+            part.to_str().ok_or_else(|| {
+                DomainError::InvalidData(format!(
+                    "Persistent path is not UTF-8: {}",
+                    target.display()
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?
         .join("/");
     let value = if suffix.is_empty() {
         root_path.to_string()
@@ -244,46 +265,23 @@ pub(super) fn logical_workspace_path(
     Ok(WorkspacePath::parse(value)?.as_str().to_string())
 }
 
-pub(super) fn snapshot_map(
-    files: Vec<PersistentSnapshotFile>,
-) -> BTreeMap<String, PersistentSnapshotFile> {
-    files
-        .into_iter()
-        .map(|file| (file.path.clone(), file))
-        .collect()
-}
-
-pub(super) fn workspace_file_from_text(path: WorkspacePath, text: String) -> WorkspaceFile {
-    let bytes = text.len() as u64;
-    let sha256 = sha256_hex(text.as_bytes());
-    WorkspaceFile {
-        path,
-        text,
-        bytes,
-        sha256,
+pub(super) async fn hash_file(path: &Path) -> Result<(String, u64), DomainError> {
+    let mut file = fs::File::open(path)
+        .await
+        .map_err(|e| DomainError::file_io("hash", path.display().to_string(), e))?;
+    let mut hash = Sha256::new();
+    let mut bytes = 0;
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .await
+            .map_err(|e| DomainError::file_io("hash", path.display().to_string(), e))?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+        bytes += count as u64;
     }
-}
-
-pub(super) fn workspace_path_from_run_dir(
-    run_dir: &Path,
-    target: &Path,
-) -> Result<WorkspacePath, DomainError> {
-    let relative = target.strip_prefix(run_dir).map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Workspace path is outside run directory {}: {}",
-            run_dir.display(),
-            error
-        ))
-    })?;
-    let value = relative
-        .iter()
-        .map(|part| part.to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/");
-    WorkspacePath::parse(value)
-}
-
-pub(super) fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    hex_lower(&digest)
+    Ok((hex_lower(&hash.finalize()), bytes))
 }

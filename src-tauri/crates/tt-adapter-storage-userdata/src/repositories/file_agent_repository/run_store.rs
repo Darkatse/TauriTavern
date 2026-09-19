@@ -108,9 +108,14 @@ impl AgentRunRepository for FileAgentRepository {
     }
 
     async fn save_run_checkpoint(&self, run_id: &str, data: &[u8]) -> Result<(), DomainError> {
-        let path = self
-            .safe_workspace_path(run_id, &WorkspacePath::parse(RUN_CHECKPOINT_PATH)?, true)
+        let files = self.open_run_files(run_id).await?;
+        let _guard = files.lock.write().await;
+        let path = files
+            .resolve(&WorkspacePath::parse(RUN_CHECKPOINT_PATH)?)
             .await?;
+        fs::create_dir_all(path.parent().expect("checkpoint parent"))
+            .await
+            .map_err(|error| DomainError::file_io("create checkpoint parent", run_id, error))?;
         let temp_path = unique_temp_path(&path);
         let result = async {
             let mut file = OpenOptions::new()
@@ -145,14 +150,11 @@ impl AgentRunRepository for FileAgentRepository {
     }
 
     async fn load_run_checkpoint(&self, run_id: &str) -> Result<Option<Vec<u8>>, DomainError> {
-        let path = match self
-            .safe_workspace_path(run_id, &WorkspacePath::parse(RUN_CHECKPOINT_PATH)?, false)
-            .await
-        {
-            Ok(path) => path,
-            Err(DomainError::NotFound(_)) => return Ok(None),
-            Err(error) => return Err(error),
-        };
+        let files = self.open_run_files(run_id).await?;
+        let _guard = files.lock.read().await;
+        let path = files
+            .resolve(&WorkspacePath::parse(RUN_CHECKPOINT_PATH)?)
+            .await?;
         match fs::read(&path).await {
             Ok(data) => Ok(Some(data)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),

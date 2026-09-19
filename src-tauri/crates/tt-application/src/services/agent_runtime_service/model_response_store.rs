@@ -1,4 +1,5 @@
 use serde_json::json;
+use tt_ports::workspace_fs::WorkspaceWriteGuard;
 
 use super::AgentRuntimeService;
 use super::model_turn_display::model_response_path_for_invocation;
@@ -25,8 +26,9 @@ impl AgentRuntimeService {
             ))
         })?;
 
-        self.workspace_repository
-            .write_text(run_id, &path, &text)
+        self.workspace_files(run_id)
+            .await?
+            .write_text(&path, &text, WorkspaceWriteGuard::Unchecked)
             .await?;
         self.event(
             run_id,

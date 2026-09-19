@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use tt_ports::workspace_fs::WorkspaceFs;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, oneshot, watch};
@@ -170,7 +171,6 @@ impl AgentRuntimeService {
             run_repository.clone(),
             chat_repository.clone(),
             group_chat_repository.clone(),
-            workspace_repository.clone(),
             skill_service.clone(),
             skill_script_engine,
         );
@@ -351,5 +351,18 @@ impl AgentRuntimeService {
         let visible_tools = self.visible_model_tools(&profile).await?;
 
         Ok(materialize_agent_system_prompt(&visible_tools, &profile))
+    }
+
+    async fn workspace_files(
+        &self,
+        run_id: &str,
+    ) -> Result<Arc<dyn WorkspaceFs>, ApplicationError> {
+        if let Some(handle) = self.active_runs.read().await.get(run_id).cloned() {
+            return Ok(handle.files.clone());
+        }
+        self.workspace_repository
+            .open_filesystem(run_id)
+            .await
+            .map_err(Into::into)
     }
 }

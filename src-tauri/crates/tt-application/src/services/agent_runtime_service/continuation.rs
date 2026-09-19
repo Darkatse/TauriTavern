@@ -10,7 +10,7 @@ use crate::services::agent_tools::AgentToolSession;
 use crate::services::tool_request_gate::ToolRequestGate;
 use tt_domain::models::agent::WorkspacePersistentChangeSet;
 use tt_domain::models::tool::ToolInvocation;
-use tt_ports::repositories::workspace_repository::WorkspaceFile;
+use tt_ports::workspace_fs::WorkspaceFile;
 
 /// The live execution state is also the checkpoint payload. No journal replay is needed.
 #[derive(Debug, Default, Serialize, Deserialize)]

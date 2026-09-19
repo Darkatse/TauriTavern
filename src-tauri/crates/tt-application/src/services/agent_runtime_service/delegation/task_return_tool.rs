@@ -1,4 +1,5 @@
 use std::time::Instant;
+use tt_ports::workspace_fs::WorkspaceWriteGuard;
 
 use serde_json::{Map, Value, json};
 
@@ -108,14 +109,16 @@ impl AgentRuntimeService {
                 "agent.task_return_result_serialize_failed: {error}"
             ))
         })?;
-        self.workspace_repository
-            .write_text(run_id, &result_ref, &result_text)
+        self.workspace_files(run_id)
+            .await?
+            .write_text(&result_ref, &result_text, WorkspaceWriteGuard::Unchecked)
             .await?;
-        self.workspace_repository
+        self.workspace_files(run_id)
+            .await?
             .write_text(
-                run_id,
                 &summary_ref,
                 &render_task_return_summary(&result_doc),
+                WorkspaceWriteGuard::Unchecked,
             )
             .await?;
 

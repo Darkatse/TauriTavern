@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use tt_ports::workspace_fs::WorkspaceWriteGuard;
 
 use serde_json::{Value, json};
 #[cfg(feature = "test-support")]
@@ -221,6 +222,7 @@ impl AgentRuntimeService {
             Arc::new(super::scheduler::ActiveRunHandle::new(
                 self,
                 run_id.to_string(),
+                self.workspace_repository.open_filesystem(run_id).await?,
                 cancel_sender,
                 None,
                 false,
@@ -311,11 +313,12 @@ impl AgentRuntimeService {
                 "agent.resolved_skills_serialize_failed: {error}"
             ))
         })?;
-        self.workspace_repository
+        self.workspace_files(run_id)
+            .await?
             .write_text(
-                run_id,
                 &WorkspacePath::parse("input/resolved_skills.json")?,
                 &resolved_skills,
+                WorkspaceWriteGuard::Unchecked,
             )
             .await?;
 

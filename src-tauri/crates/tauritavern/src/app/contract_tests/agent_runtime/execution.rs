@@ -66,7 +66,10 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
     assert_eq!(saved.status, AgentRunStatus::Completed);
     let artifact = fixture
         .agent_repository
-        .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
+        .open_filesystem(&run.id)
+        .await
+        .expect("open workspace")
+        .read_text(&WorkspacePath::parse("output/main.md").unwrap())
         .await
         .expect("read artifact");
     assert_eq!(artifact.text, "hello from real repo");
@@ -250,10 +253,10 @@ async fn agent_runtime_streaming_keeps_the_existing_final_execution_path() {
     );
     let artifact = fixture
         .agent_repository
-        .read_text(
-            &handle.run_id,
-            &WorkspacePath::parse("output/main.md").unwrap(),
-        )
+        .open_filesystem(&handle.run_id)
+        .await
+        .expect("open workspace")
+        .read_text(&WorkspacePath::parse("output/main.md").unwrap())
         .await
         .expect("read streamed run artifact");
     assert_eq!(artifact.text, "hello from real repo");
@@ -431,7 +434,10 @@ async fn agent_runtime_normalizes_empty_arguments_and_recovers_from_invalid_argu
     }));
     let artifact = fixture
         .agent_repository
-        .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
+        .open_filesystem(&run.id)
+        .await
+        .expect("open workspace")
+        .read_text(&WorkspacePath::parse("output/main.md").unwrap())
         .await
         .unwrap();
     assert_eq!(artifact.text, "continued after invalid arguments");
@@ -987,7 +993,10 @@ async fn agent_runtime_retries_retryable_model_errors_with_real_repositories() {
     assert_eq!(fixture.model_gateway.requests().await.len(), 3);
     let artifact = fixture
         .agent_repository
-        .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
+        .open_filesystem(&run.id)
+        .await
+        .expect("open workspace")
+        .read_text(&WorkspacePath::parse("output/main.md").unwrap())
         .await
         .expect("read artifact");
     assert_eq!(artifact.text, "retry succeeded");
@@ -1218,7 +1227,10 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
     assert_eq!(
         fixture
             .agent_repository
-            .read_text(&run.id, &WorkspacePath::parse("output/main.md").unwrap())
+            .open_filesystem(&run.id)
+            .await
+            .expect("open workspace")
+            .read_text(&WorkspacePath::parse("output/main.md").unwrap())
             .await
             .unwrap()
             .text,

@@ -1,4 +1,5 @@
 use serde_json::{Map, Value, json};
+use tt_ports::workspace_fs::WorkspaceWriteGuard;
 
 use super::super::loop_runner::AgentLoopExit;
 use super::rendering::{render_child_task_prompt, render_handoff_task_prompt};
@@ -247,8 +248,9 @@ impl AgentRuntimeService {
             ),
         };
         let prompt_snapshot = self
-            .workspace_repository
-            .read_text(run_id, &WorkspacePath::parse("input/prompt_snapshot.json")?)
+            .workspace_files(run_id)
+            .await?
+            .read_text(&WorkspacePath::parse("input/prompt_snapshot.json")?)
             .await?;
         let prompt_snapshot: Value = serde_json::from_str(&prompt_snapshot.text).map_err(|error| {
             ApplicationError::ValidationError(format!(
@@ -342,13 +344,14 @@ impl AgentRuntimeService {
                 "agent.resolved_skills_serialize_failed: {error}"
             ))
         })?;
-        self.workspace_repository
+        self.workspace_files(run_id)
+            .await?
             .write_text(
-                run_id,
                 &WorkspacePath::parse(format!(
                     "input/invocations/{invocation_id}/resolved_skills.json"
                 ))?,
                 &resolved_skills,
+                WorkspaceWriteGuard::Unchecked,
             )
             .await?;
         self.event(

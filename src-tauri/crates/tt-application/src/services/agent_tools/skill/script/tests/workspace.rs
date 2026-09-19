@@ -1,73 +1,6 @@
 use super::*;
 
 #[tokio::test]
-async fn script_writes_produce_workspace_file_written_effect() {
-    let engine = Arc::new(FakeScriptEngine {
-        outcome: FakeOutcome::OkWithWrites {
-            value: json!({ "done": true }),
-            writes: vec![tt_ports::skill_script::SkillScriptWrite {
-                path: "output/result.txt".to_string(),
-                text: "generated content".to_string(),
-            }],
-            last_write_path: Some("output/result.txt".to_string()),
-        },
-        requests: Mutex::new(Vec::new()),
-    });
-    let workspace_repo = FakeWorkspaceRepo {
-        files: HashMap::new(),
-        written: Mutex::new(Vec::new()),
-        truncated: false,
-        fail_write_on: None,
-        snapshot_content: None,
-    };
-    let session = session_with_skill("demo");
-    let profile = profile(true);
-
-    let tool_call = call(json!({ "skill": "demo", "script": "helper" }));
-    let (result, effect) = script(
-        ScriptContext {
-            skill_service: &SkillService::new(Arc::new(FakeSkillRepo {
-                script_source: Some("export default function () { return 1; }".to_string()),
-            })),
-            engine: engine.as_ref(),
-            workspace_repository: &workspace_repo,
-            run_id: "run-1",
-            prompt_snapshot: empty_prompt_snapshot(),
-        },
-        &tool_call,
-        call_args(&tool_call),
-        &session,
-        &profile,
-    )
-    .await
-    .expect("script must succeed");
-
-    assert!(!result.is_error);
-    assert!(matches!(
-        effect,
-        AgentToolEffect::WorkspaceFilesWritten { .. }
-    ));
-    assert_eq!(result.resource_refs, vec!["output/result.txt".to_string()]);
-
-    let written = workspace_repo.written.lock().await;
-    assert_eq!(written.len(), 1);
-    assert_eq!(written[0].0, "output/result.txt");
-    assert_eq!(written[0].1, "generated content");
-}
-
-#[tokio::test]
-async fn script_without_writes_produces_none_effect() {
-    let (result, effect) = run(
-        json!({ "skill": "demo", "script": "helper" }),
-        session_with_skill("demo"),
-        profile(true),
-    )
-    .await;
-    assert!(!result.is_error);
-    assert!(matches!(effect, AgentToolEffect::None));
-}
-
-#[tokio::test]
 async fn multiple_files_written_produce_batch_effect() {
     let engine = Arc::new(FakeScriptEngine {
         outcome: FakeOutcome::OkWithWrites {
@@ -87,13 +20,13 @@ async fn multiple_files_written_produce_batch_effect() {
         },
         requests: Mutex::new(Vec::new()),
     });
-    let workspace_repo = FakeWorkspaceRepo {
+    let workspace_repo = Arc::new(FakeWorkspaceFs {
         files: HashMap::new(),
         written: Mutex::new(Vec::new()),
         truncated: false,
         fail_write_on: None,
         snapshot_content: None,
-    };
+    });
     let session = session_with_skill("demo");
     let profile = profile(true);
 
@@ -104,8 +37,7 @@ async fn multiple_files_written_produce_batch_effect() {
                 script_source: Some("export default function () { return 1; }".to_string()),
             })),
             engine: engine.as_ref(),
-            workspace_repository: &workspace_repo,
-            run_id: "run-1",
+            workspace: &scoped_files(workspace_repo.clone()),
             prompt_snapshot: empty_prompt_snapshot(),
         },
         &tool_call,
@@ -137,7 +69,13 @@ async fn multiple_files_written_produce_batch_effect() {
         other => panic!("expected batch effect, got: {other:?}"),
     }
     let written = workspace_repo.written.lock().await;
-    assert_eq!(written.len(), 2);
+    assert_eq!(
+        written.as_slice(),
+        &[
+            ("output/a.txt".to_string(), "alpha".to_string()),
+            ("output/b.txt".to_string(), "beta".to_string()),
+        ]
+    );
 }
 
 #[tokio::test]
@@ -159,13 +97,13 @@ async fn write_outside_writable_roots_is_rejected_before_any_disk_write() {
         },
         requests: Mutex::new(Vec::new()),
     });
-    let workspace_repo = FakeWorkspaceRepo {
+    let workspace_repo = Arc::new(FakeWorkspaceFs {
         files: HashMap::new(),
         written: Mutex::new(Vec::new()),
         truncated: false,
         fail_write_on: None,
         snapshot_content: None,
-    };
+    });
     let session = session_with_skill("demo");
     let profile = profile(true);
 
@@ -176,8 +114,7 @@ async fn write_outside_writable_roots_is_rejected_before_any_disk_write() {
                 script_source: Some("export default function () { return 1; }".to_string()),
             })),
             engine: engine.as_ref(),
-            workspace_repository: &workspace_repo,
-            run_id: "run-1",
+            workspace: &scoped_files(workspace_repo.clone()),
             prompt_snapshot: empty_prompt_snapshot(),
         },
         &tool_call,
@@ -203,9 +140,7 @@ async fn write_outside_writable_roots_is_rejected_before_any_disk_write() {
 }
 
 #[tokio::test]
-async fn existing_file_write_uses_snapshot_sha_guard() {
-    // 快照时文件已存在：guard 必须是 MustMatchSha256(快照 sha)。
-    // 落盘时文件内容未变 → 写入成功。
+async fn script_rewrites_an_existing_snapshot_file() {
     let engine = Arc::new(FakeScriptEngine {
         outcome: FakeOutcome::OkWithWrites {
             value: json!({}),
@@ -219,13 +154,13 @@ async fn existing_file_write_uses_snapshot_sha_guard() {
     });
     let mut files = HashMap::new();
     files.insert("output/existing.txt".to_string(), "original".to_string());
-    let workspace_repo = FakeWorkspaceRepo {
+    let workspace_repo = Arc::new(FakeWorkspaceFs {
         files,
         written: Mutex::new(Vec::new()),
         truncated: false,
         fail_write_on: None,
         snapshot_content: None,
-    };
+    });
     let session = session_with_skill("demo");
     let profile = profile(true);
 
@@ -236,8 +171,7 @@ async fn existing_file_write_uses_snapshot_sha_guard() {
                 script_source: Some("export default function () { return 1; }".to_string()),
             })),
             engine: engine.as_ref(),
-            workspace_repository: &workspace_repo,
-            run_id: "run-1",
+            workspace: &scoped_files(workspace_repo.clone()),
             prompt_snapshot: empty_prompt_snapshot(),
         },
         &tool_call,
@@ -278,13 +212,13 @@ async fn stale_conflict_fails_without_side_effects() {
         "output/stale.txt".to_string(),
         "changed-by-someone-else".to_string(),
     );
-    let workspace_repo = FakeWorkspaceRepo {
+    let workspace_repo = Arc::new(FakeWorkspaceFs {
         files: disk_files,
         written: Mutex::new(Vec::new()),
         truncated: false,
         fail_write_on: None,
         snapshot_content: Some(snapshot_files),
-    };
+    });
     let session = session_with_skill("demo");
     let profile = profile(true);
 
@@ -295,8 +229,7 @@ async fn stale_conflict_fails_without_side_effects() {
                 script_source: Some("export default function () { return 1; }".to_string()),
             })),
             engine: engine.as_ref(),
-            workspace_repository: &workspace_repo,
-            run_id: "run-1",
+            workspace: &scoped_files(workspace_repo.clone()),
             prompt_snapshot: empty_prompt_snapshot(),
         },
         &tool_call,
@@ -338,13 +271,13 @@ async fn mid_batch_failure_preserves_already_written_files_in_effect() {
         },
         requests: Mutex::new(Vec::new()),
     });
-    let workspace_repo = FakeWorkspaceRepo {
+    let workspace_repo = Arc::new(FakeWorkspaceFs {
         files: HashMap::new(),
         written: Mutex::new(Vec::new()),
         truncated: false,
         fail_write_on: Some("output/second.txt".to_string()),
         snapshot_content: None,
-    };
+    });
     let session = session_with_skill("demo");
     let profile = profile(true);
 
@@ -355,8 +288,7 @@ async fn mid_batch_failure_preserves_already_written_files_in_effect() {
                 script_source: Some("export default function () { return 1; }".to_string()),
             })),
             engine: engine.as_ref(),
-            workspace_repository: &workspace_repo,
-            run_id: "run-1",
+            workspace: &scoped_files(workspace_repo.clone()),
             prompt_snapshot: empty_prompt_snapshot(),
         },
         &tool_call,
@@ -410,14 +342,13 @@ async fn truncated_workspace_snapshot_returns_tool_error() {
                 script_source: Some("export default function () { return 1; }".to_string()),
             })),
             engine: engine.as_ref(),
-            workspace_repository: &FakeWorkspaceRepo {
+            workspace: &scoped_files(Arc::new(FakeWorkspaceFs {
                 files: HashMap::new(),
                 written: Mutex::new(Vec::new()),
                 truncated: true,
                 fail_write_on: None,
                 snapshot_content: None,
-            },
-            run_id: "run-1",
+            })),
             prompt_snapshot: empty_prompt_snapshot(),
         },
         &tool_call,

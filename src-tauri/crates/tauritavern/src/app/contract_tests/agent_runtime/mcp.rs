@@ -140,10 +140,10 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
     assert_eq!(stored["structured"]["structuredContent"]["issueId"], 42);
     let readable = fixture
         .agent_repository
-        .read_text(
-            &handle.run_id,
-            &WorkspacePath::parse(readable_path).unwrap(),
-        )
+        .open_filesystem(&handle.run_id)
+        .await
+        .expect("open workspace")
+        .read_text(&WorkspacePath::parse(readable_path).unwrap())
         .await
         .expect("read line-addressable MCP result");
     assert!(

@@ -410,11 +410,11 @@ pub async fn replace_file(temp_path: &Path, target_path: &Path) -> Result<(), Do
     tokio_fs::rename(temp_path, target_path)
         .await
         .map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to replace {} with {}: {error}",
-                target_path.display(),
-                temp_path.display()
-            ))
+            DomainError::file_io(
+                "replace",
+                format!("{} from {}", target_path.display(), temp_path.display()),
+                error,
+            )
         })
 }
 

@@ -56,6 +56,9 @@ impl From<DomainError> for CommandError {
             DomainError::Conflict(msg) => CommandError::Conflict(msg),
             DomainError::AuthenticationError(msg) => CommandError::Unauthorized(msg),
             DomainError::Cancelled(msg) => CommandError::Cancelled(msg),
+            error @ DomainError::FileIo { .. } => {
+                CommandError::InternalServerError(error.to_string())
+            }
             DomainError::InternalError(msg) => CommandError::InternalServerError(msg),
             DomainError::RateLimited { message } => CommandError::TooManyRequests(message),
             DomainError::Transient(msg) => CommandError::InternalServerError(msg),

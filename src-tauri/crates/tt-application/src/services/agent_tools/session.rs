@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, hash_map::Entry};
 
 use tt_domain::models::skill::{SkillIndexEntry, SkillScope};
-use tt_ports::repositories::workspace_repository::WorkspaceFile;
+use tt_ports::workspace_fs::WorkspaceFile;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

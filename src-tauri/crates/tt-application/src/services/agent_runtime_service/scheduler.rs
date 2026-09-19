@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
+use tt_ports::workspace_fs::WorkspaceFs;
 
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -14,6 +15,7 @@ use crate::errors::ApplicationError;
 use tt_domain::models::agent::{AgentDelegationContinuation, AgentTaskRecord, AgentTaskStatus};
 
 pub(super) struct ActiveRunHandle {
+    pub(super) files: Arc<dyn WorkspaceFs>,
     pub(super) cancel_sender: watch::Sender<bool>,
     pub(super) scheduler: Arc<AgentTaskScheduler>,
     pub(super) guidance_mailbox: Arc<AgentGuidanceMailbox>,
@@ -27,12 +29,14 @@ impl ActiveRunHandle {
     pub(super) fn new(
         service: &Arc<AgentRuntimeService>,
         run_id: String,
+        files: Arc<dyn WorkspaceFs>,
         cancel_sender: watch::Sender<bool>,
         stream_override: Option<bool>,
         host_presentation: bool,
     ) -> Self {
         let (live_projection, _) = watch::channel(AgentRunLiveProjection::default());
         Self {
+            files,
             cancel_sender,
             scheduler: Arc::new(AgentTaskScheduler::new(service, run_id)),
             guidance_mailbox: Arc::new(AgentGuidanceMailbox::new()),

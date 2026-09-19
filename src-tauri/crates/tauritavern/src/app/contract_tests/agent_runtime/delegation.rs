@@ -184,14 +184,39 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
                     }),
                 ),
             ]),
-            model_tool_response(vec![model_tool_call(
-                "call_target_finish",
-                "workspace_finish",
-                json!({}),
-            )]),
+            model_tool_response(vec![
+                model_tool_call(
+                    "call_target_denied",
+                    "workspace_write_file",
+                    json!({
+                        "path": "scratch/forbidden.md", "content": "must not be written"
+                    }),
+                ),
+                model_tool_call(
+                    "call_target_write",
+                    "workspace_write_file",
+                    json!({
+                        "path": "summaries/review.md", "content": "Reviewed."
+                    }),
+                ),
+                model_tool_call("call_target_finish", "workspace_finish", json!({})),
+            ]),
         ],
     );
     let profile = configure_handoff_profiles(&fixture).await;
+    let mut editor = fixture
+        .profile_service
+        .load_profile("final-editor")
+        .await
+        .unwrap()
+        .unwrap();
+    editor.workspace.visible_roots = vec!["output".into(), "summaries".into()];
+    editor.workspace.writable_roots = vec!["output".into(), "summaries".into()];
+    fixture
+        .profile_service
+        .save_profile(editor, fixture.service.tool_catalog())
+        .await
+        .unwrap();
     let handle = start_contract_agent_run(
         &fixture,
         &profile,
@@ -244,6 +269,32 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
 
     wait_for_event_type(&fixture.agent_repository, &handle.run_id, "run_completed").await;
     let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+    let files = fixture
+        .agent_repository
+        .open_filesystem(&handle.run_id)
+        .await
+        .unwrap();
+    assert!(
+        files
+            .metadata(Some(&WorkspacePath::parse("scratch/forbidden.md").unwrap()))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        files
+            .read_text(&WorkspacePath::parse("summaries/review.md").unwrap())
+            .await
+            .unwrap()
+            .text,
+        "Reviewed."
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "tool_call_failed"
+                && event.payload["callId"] == "call_target_denied"
+                && event.payload["isError"] == true)
+    );
     let commit = events
         .iter()
         .find(|event| event.event_type == "chat_commit_recorded")
@@ -455,10 +506,10 @@ async fn agent_runtime_recovers_handoff_before_trailing_tool() {
     assert_eq!(root_invocation.status, AgentInvocationStatus::Transferred);
     let artifact = fixture
         .agent_repository
-        .read_text(
-            &handle.run_id,
-            &WorkspacePath::parse("output/main.md").unwrap(),
-        )
+        .open_filesystem(&handle.run_id)
+        .await
+        .expect("open workspace")
+        .read_text(&WorkspacePath::parse("output/main.md").unwrap())
         .await
         .expect("read artifact");
     assert_eq!(artifact.text, "Complete this work before handing off.");

@@ -4,7 +4,7 @@ use super::AgentRuntimeService;
 use crate::errors::ApplicationError;
 use tt_domain::models::agent::WorkspacePath;
 use tt_domain::models::tool::InvocationToolSnapshot;
-use tt_ports::repositories::workspace_repository::WorkspaceWriteGuard;
+use tt_ports::workspace_fs::WorkspaceWriteGuard;
 
 impl AgentRuntimeService {
     pub(super) async fn persist_tool_snapshot(
@@ -21,8 +21,9 @@ impl AgentRuntimeService {
                 "agent.tool_snapshot_serialize_failed: {error}"
             ))
         })?;
-        self.workspace_repository
-            .write_text_guarded(run_id, &path, &text, WorkspaceWriteGuard::MustNotExist)
+        self.workspace_files(run_id)
+            .await?
+            .write_text(&path, &text, WorkspaceWriteGuard::MustNotExist)
             .await?;
         Ok(path)
     }

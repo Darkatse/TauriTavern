@@ -40,7 +40,14 @@ async fn task_details_preserve_output_and_validate_persisted_sources_only_when_r
     });
     fixture
         .agent_repository
-        .write_text(&run.id, &result_path, &result.to_string())
+        .open_filesystem(&run.id)
+        .await
+        .expect("open workspace")
+        .write_text(
+            &result_path,
+            &result.to_string(),
+            tt_ports::workspace_fs::WorkspaceWriteGuard::Unchecked,
+        )
         .await
         .unwrap();
     let detail = fixture
@@ -63,7 +70,14 @@ async fn task_details_preserve_output_and_validate_persisted_sources_only_when_r
     result["runtime"]["taskId"] = json!("another-task");
     fixture
         .agent_repository
-        .write_text(&run.id, &result_path, &result.to_string())
+        .open_filesystem(&run.id)
+        .await
+        .expect("open workspace")
+        .write_text(
+            &result_path,
+            &result.to_string(),
+            tt_ports::workspace_fs::WorkspaceWriteGuard::Unchecked,
+        )
         .await
         .unwrap();
     let brief_query = AgentReadTaskDetailDto {

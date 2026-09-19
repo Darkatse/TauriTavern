@@ -195,6 +195,7 @@ impl AgentRuntimeService {
         let active_handle = Arc::new(super::scheduler::ActiveRunHandle::new(
             self,
             run_id.clone(),
+            self.workspace_repository.open_filesystem(&run_id).await?,
             cancel_sender,
             stream_override,
             dto.options.host_presentation,
@@ -369,8 +370,9 @@ impl AgentRuntimeService {
     ) -> Result<AgentWorkspaceFileDto, ApplicationError> {
         let path = WorkspacePath::parse(dto.path)?;
         let file = self
-            .workspace_repository
-            .read_text(&dto.run_id, &path)
+            .workspace_files(&dto.run_id)
+            .await?
+            .read_text(&path)
             .await?;
 
         let metrics = TextMetrics::from_text(&file.text);

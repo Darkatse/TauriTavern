@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
+use tt_ports::workspace_fs::WorkspaceWriteGuard;
 use uuid::Uuid;
 
 use super::{
@@ -242,9 +243,9 @@ impl AgentRuntimeService {
                 let assembly_path = WorkspacePath::parse(format!(
                     "input/invocations/{invocation_id}/prompt_assembly.json"
                 ))?;
-                self.workspace_repository
+                self.workspace_files(run_id)
+                    .await?
                     .write_text(
-                        run_id,
                         &snapshot_path,
                         &serde_json::to_string_pretty(&result.prompt_snapshot).map_err(
                             |error| {
@@ -253,11 +254,12 @@ impl AgentRuntimeService {
                                 ))
                             },
                         )?,
+                        WorkspaceWriteGuard::Unchecked,
                     )
                     .await?;
-                self.workspace_repository
+                self.workspace_files(run_id)
+                    .await?
                     .write_text(
-                        run_id,
                         &assembly_path,
                         &serde_json::to_string_pretty(&json!({
                             "assemblyId": assembly_id.as_str(),
@@ -274,6 +276,7 @@ impl AgentRuntimeService {
                                 "agent.prompt_assembly_metadata_serialize_failed: {error}"
                             ))
                         })?,
+                        WorkspaceWriteGuard::Unchecked,
                     )
                     .await?;
                 self.event(

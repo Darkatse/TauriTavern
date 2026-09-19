@@ -514,19 +514,39 @@ pub struct WorkspacePersistentChangeSet {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspacePersistentChange {
-    pub path: String,
-    pub kind: WorkspacePersistentChangeKind,
-    pub sha256: String,
-    pub bytes: u64,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkspacePersistentChange {
+    Added {
+        path: String,
+        sha256: String,
+        bytes: u64,
+    },
+    Modified {
+        path: String,
+        sha256: String,
+        bytes: u64,
+    },
+    Deleted {
+        path: String,
+    },
+    DirectoryAdded {
+        path: String,
+    },
+    DirectoryDeleted {
+        path: String,
+    },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkspacePersistentChangeKind {
-    Added,
-    Modified,
+impl WorkspacePersistentChange {
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Added { path, .. }
+            | Self::Modified { path, .. }
+            | Self::Deleted { path }
+            | Self::DirectoryAdded { path }
+            | Self::DirectoryDeleted { path } => path,
+        }
+    }
 }
 
 #[cfg(test)]

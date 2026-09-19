@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use tt_ports::workspace_fs::WorkspaceWriteGuard;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -457,8 +458,9 @@ impl AgentRuntimeService {
 
         let path = direct_output_path(profile)?;
         let file = self
-            .workspace_repository
-            .write_text(run_id, &path, text)
+            .workspace_files(run_id)
+            .await?
+            .write_text(&path, text, WorkspaceWriteGuard::Unchecked)
             .await?;
         let metrics = TextMetrics::from_text(&file.text);
         self.event(

@@ -106,6 +106,18 @@ async fn success_builds_result_and_passes_workspace_context() {
     profile.workspace.visible_roots = vec!["profile-only".to_string()];
     profile.workspace.writable_roots = vec!["profile-only".to_string()];
 
+    let mut scope_profile = base_profile();
+    scope_profile.workspace.visible_roots.push("output".into());
+    let workspace = ScopedWorkspaceFs::new(
+        Arc::new(FakeWorkspaceFs {
+            files: HashMap::new(),
+            written: Mutex::new(Vec::new()),
+            truncated: false,
+            fail_write_on: None,
+            snapshot_content: None,
+        }),
+        WorkspaceAccessPolicy::from_profile(&scope_profile),
+    );
     let tool_call = call(json!({ "skill": "demo", "script": "helper", "args": { "n": 7 } }));
     let (result, effect) = script(
         ScriptContext {
@@ -113,14 +125,7 @@ async fn success_builds_result_and_passes_workspace_context() {
                 script_source: Some("export default function() { return {}; }".to_string()),
             })),
             engine: engine.as_ref(),
-            workspace_repository: &FakeWorkspaceRepo {
-                files: HashMap::new(),
-                written: Mutex::new(Vec::new()),
-                truncated: false,
-                fail_write_on: None,
-                snapshot_content: None,
-            },
-            run_id: "run-1",
+            workspace: &workspace,
             prompt_snapshot: empty_prompt_snapshot(),
         },
         &tool_call,
@@ -139,8 +144,11 @@ async fn success_builds_result_and_passes_workspace_context() {
     // SKILL.md 不在 scripts/ 下，不得进入模块快照
     assert!(!requests[0].modules.contains_key("SKILL.md"));
     assert_eq!(requests[0].args, json!({ "n": 7 }));
-    // Workspace authority 来自调用级 repository manifest，而不是 Profile 副本。
-    assert_eq!(requests[0].visible_roots, vec!["output".to_string()]);
+    // Workspace authority comes from the supplied invocation scope.
+    assert_eq!(
+        requests[0].visible_roots,
+        vec!["output".to_string(), "tool-results".to_string()]
+    );
     assert_eq!(requests[0].writable_roots, vec!["output".to_string()]);
     assert_eq!(
         requests[0].context,
@@ -175,14 +183,13 @@ async fn module_snapshot_contains_only_script_modules() {
                 ),
             })),
             engine: engine.as_ref(),
-            workspace_repository: &FakeWorkspaceRepo {
+            workspace: &scoped_files(Arc::new(FakeWorkspaceFs {
                 files: HashMap::new(),
                 written: Mutex::new(Vec::new()),
                 truncated: false,
                 fail_write_on: None,
                 snapshot_content: None,
-            },
-            run_id: "run-1",
+            })),
             prompt_snapshot: empty_prompt_snapshot(),
         },
         &tool_call,
@@ -241,14 +248,13 @@ async fn frozen_host_context_is_passed_to_engine() {
                 script_source: Some("export default function() { return {}; }".to_string()),
             })),
             engine: engine.as_ref(),
-            workspace_repository: &FakeWorkspaceRepo {
+            workspace: &scoped_files(Arc::new(FakeWorkspaceFs {
                 files: HashMap::new(),
                 written: Mutex::new(Vec::new()),
                 truncated: false,
                 fail_write_on: None,
                 snapshot_content: None,
-            },
-            run_id: "run-1",
+            })),
             prompt_snapshot,
         },
         &tool_call,

@@ -4,12 +4,11 @@ use serde_json::{Map, Value};
 use super::args::{
     ensure_visible_workspace_path, parse_workspace_path, required_trimmed_string_arg, tool_error,
 };
-use super::policy::workspace_access_policy;
 use crate::errors::ApplicationError;
+use crate::services::agent_workspace_scope::ScopedWorkspaceFs;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{AgentChatCommitMode, AgentToolResult};
 use tt_domain::models::tool::ToolInvocation;
-use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 
 use super::super::dispatcher::AgentToolEffect;
 use super::super::structured::structured_value;
@@ -23,20 +22,19 @@ struct WorkspaceCommitStructured<'a> {
 }
 
 pub(in crate::services::agent_tools) async fn commit(
-    workspace_repository: &dyn WorkspaceRepository,
-    run_id: &str,
+    workspace: &ScopedWorkspaceFs,
     call: &ToolInvocation,
     args: &Map<String, Value>,
     profile: &ResolvedAgentProfile,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let policy = workspace_access_policy(workspace_repository, run_id).await?;
+    let policy = &workspace.policy;
     let path = required_trimmed_string_arg(args, "path")
         .unwrap_or(profile.output.message_body_path.as_str());
     let path = match parse_workspace_path(path) {
         Ok(path) => path,
         Err(error) => return Ok((error.into_tool_result(call), AgentToolEffect::None)),
     };
-    if let Err(error) = ensure_visible_workspace_path(&policy, &path) {
+    if let Err(error) = ensure_visible_workspace_path(policy, &path) {
         return Ok((error.into_tool_result(call), AgentToolEffect::None));
     }
 

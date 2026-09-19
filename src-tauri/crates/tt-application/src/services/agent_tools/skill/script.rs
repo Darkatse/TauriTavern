@@ -5,18 +5,16 @@ use serde_json::{Map, Value, json};
 use super::super::common::{ensure_only_args, required_trimmed_string_arg, tool_error};
 use super::super::dispatcher::AgentToolEffect;
 use super::super::session::AgentToolSession;
-use super::super::workspace::workspace_access_policy;
 use super::list::skill_is_visible;
 use crate::errors::ApplicationError;
+use crate::services::agent_workspace_scope::ScopedWorkspaceFs;
 use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{AgentToolResult, WorkspacePath};
 use tt_domain::models::skill::{SkillFileKind, SkillFileRef, SkillScope};
 use tt_domain::models::tool::ToolInvocation;
-use tt_ports::repositories::workspace_repository::{
-    WorkspaceEntryKind, WorkspaceFile, WorkspaceRepository, WorkspaceWriteGuard,
-};
 use tt_ports::skill_script::{SkillScriptEngine, SkillScriptEngineError, SkillScriptRequest};
+use tt_ports::workspace_fs::{WorkspaceEntryKind, WorkspaceFile, WorkspaceFs, WorkspaceWriteGuard};
 
 const SKILL_SCRIPT_INVALID_NAME: &str = "skill.run_script_invalid_name";
 const SKILL_SCRIPT_SKILL_NOT_VISIBLE: &str = "skill.run_script_skill_not_visible";
@@ -34,8 +32,7 @@ const MAX_SCRIPT_MODULE_TOTAL_BYTES: usize = 2 * 1024 * 1024;
 pub(in crate::services::agent_tools) struct ScriptContext<'a> {
     pub(in crate::services::agent_tools) skill_service: &'a SkillService,
     pub(in crate::services::agent_tools) engine: &'a dyn SkillScriptEngine,
-    pub(in crate::services::agent_tools) workspace_repository: &'a dyn WorkspaceRepository,
-    pub(in crate::services::agent_tools) run_id: &'a str,
+    pub(in crate::services::agent_tools) workspace: &'a ScopedWorkspaceFs,
     pub(in crate::services::agent_tools) prompt_snapshot: Value,
 }
 
@@ -49,10 +46,10 @@ pub(in crate::services::agent_tools) async fn script(
     let ScriptContext {
         skill_service,
         engine,
-        workspace_repository,
-        run_id,
+        workspace,
         prompt_snapshot,
     } = context;
+    let workspace_files: &dyn WorkspaceFs = workspace;
     if let Err(message) = ensure_only_args(args, &["skill", "script", "args"]) {
         return Ok((
             tool_error(call, "tool.invalid_arguments", &message),
@@ -137,21 +134,16 @@ pub(in crate::services::agent_tools) async fn script(
         ));
     }
 
-    // invocation repository 的 manifest 是本次调用唯一的 Workspace policy。
-    let workspace_policy = workspace_access_policy(workspace_repository, run_id).await?;
+    // Use the same invocation scope for snapshot reads and every write.
+    let workspace_policy = &workspace.policy;
 
     // 构建工作区文件快照：列出 visible_roots 下的文件并读取内容（含 sha256）。
-    let workspace_snapshot = match build_workspace_snapshot(
-        workspace_repository,
-        run_id,
-        &workspace_policy.visible_roots,
-    )
-    .await
-    {
-        Ok(snapshot) => snapshot,
-        Err(error) => return reject_preparation(call, error),
-    };
-    let workspace_files = workspace_snapshot
+    let workspace_snapshot =
+        match build_workspace_snapshot(workspace, &workspace_policy.visible_roots).await {
+            Ok(snapshot) => snapshot,
+            Err(error) => return reject_preparation(call, error),
+        };
+    let script_files = workspace_snapshot
         .iter()
         .map(|(path, file)| (path.clone(), file.text.clone()))
         .collect::<HashMap<_, _>>();
@@ -169,7 +161,7 @@ pub(in crate::services::agent_tools) async fn script(
             entry_module: entry_module.clone(),
             modules,
             args: script_args,
-            workspace_files,
+            workspace_files: script_files,
             visible_roots: workspace_policy.visible_roots.clone(),
             writable_roots: workspace_policy.writable_roots.clone(),
             context: script_context,
@@ -277,10 +269,7 @@ pub(in crate::services::agent_tools) async fn script(
     // ---- 批量落盘：最终 delta 逐文件提交；中途失败保留已发生副作用 ----
     let mut written_files: Vec<WorkspaceFile> = Vec::with_capacity(guards.len());
     for (write, path, guard) in guards {
-        match workspace_repository
-            .write_text_guarded(run_id, &path, &write.text, guard)
-            .await
-        {
+        match workspace_files.write_text(&path, &write.text, guard).await {
             Ok(file) => {
                 tracing::info!(
                     "skill.run_script wrote workspace file: {} ({} bytes)",
@@ -413,8 +402,7 @@ async fn build_script_modules(
 /// 列表截断或任一文件读取失败时拒绝本次脚本调用，
 /// 不给脚本一个不完整却不可知的 VFS。
 async fn build_workspace_snapshot(
-    repo: &dyn WorkspaceRepository,
-    run_id: &str,
+    repo: &dyn WorkspaceFs,
     visible_roots: &[String],
 ) -> Result<HashMap<String, WorkspaceFile>, ApplicationError> {
     const MAX_DEPTH: usize = 10;
@@ -428,7 +416,7 @@ async fn build_workspace_snapshot(
         }
         let root_path = WorkspacePath::parse(root).map_err(ApplicationError::from)?;
         let listing = repo
-            .list_files(run_id, Some(&root_path), MAX_DEPTH, MAX_ENTRIES)
+            .list_files(Some(&root_path), MAX_DEPTH, MAX_ENTRIES)
             .await
             .map_err(ApplicationError::from)?;
         if listing.truncated {
@@ -441,7 +429,7 @@ async fn build_workspace_snapshot(
         for entry in listing.entries {
             if entry.kind == WorkspaceEntryKind::File {
                 let file = repo
-                    .read_text(run_id, &entry.path)
+                    .read_text(&entry.path)
                     .await
                     .map_err(ApplicationError::from)?;
                 snapshot.insert(entry.path.as_str().to_string(), file);

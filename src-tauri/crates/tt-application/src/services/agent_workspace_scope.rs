@@ -1,5 +1,13 @@
+use crate::errors::ApplicationError;
+use async_trait::async_trait;
+use std::sync::Arc;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::WorkspacePath;
+use tt_domain::models::agent::profile::ResolvedAgentProfile;
+use tt_ports::workspace_fs::{
+    WorkspaceAppendResult, WorkspaceDirectoryEntry, WorkspaceEntryKind, WorkspaceFs,
+    WorkspaceMetadata, WorkspaceWriteGuard,
+};
 
 pub(crate) const AGENT_TOOL_RESULTS_ROOT: &str = "tool-results";
 
@@ -68,5 +76,198 @@ mod tests {
             &WorkspacePath::parse("output_extra/main.md").unwrap(),
             &roots
         ));
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct WorkspaceAccessPolicy {
+    pub(crate) visible_roots: Vec<String>,
+    pub(crate) writable_roots: Vec<String>,
+}
+
+impl WorkspaceAccessPolicy {
+    pub(crate) fn from_profile(profile: &ResolvedAgentProfile) -> Self {
+        let mut visible_roots = profile.workspace.visible_roots.clone();
+        if !visible_roots
+            .iter()
+            .any(|root| root == AGENT_TOOL_RESULTS_ROOT)
+        {
+            visible_roots.push(AGENT_TOOL_RESULTS_ROOT.to_string());
+        }
+        visible_roots.sort();
+        visible_roots.dedup();
+        let mut writable_roots: Vec<_> = profile
+            .workspace
+            .writable_roots
+            .iter()
+            .filter(|root| root.as_str() != AGENT_TOOL_RESULTS_ROOT)
+            .cloned()
+            .collect();
+        writable_roots.sort();
+        writable_roots.dedup();
+        Self {
+            visible_roots,
+            writable_roots,
+        }
+    }
+
+    pub(crate) fn ensure_visible(&self, path: &WorkspacePath) -> Result<(), ApplicationError> {
+        if self.is_visible(path) {
+            return Ok(());
+        }
+
+        let value = path.as_str();
+        Err(ApplicationError::PermissionDenied(format!(
+            "agent.workspace_read_denied: path `{value}` is not visible in the current workspace policy"
+        )))
+    }
+
+    pub(crate) fn ensure_writable(&self, path: &WorkspacePath) -> Result<(), ApplicationError> {
+        if self.is_writable(path) {
+            return Ok(());
+        }
+
+        let value = path.as_str();
+        Err(ApplicationError::PermissionDenied(format!(
+            "agent.workspace_write_denied: path `{value}` is not writable in the current workspace policy"
+        )))
+    }
+
+    pub(crate) fn is_visible(&self, path: &WorkspacePath) -> bool {
+        workspace_path_is_under_any_root(path, &self.visible_roots)
+    }
+
+    pub(crate) fn is_writable(&self, path: &WorkspacePath) -> bool {
+        is_writable_workspace_path(path, &self.writable_roots)
+    }
+}
+
+/// Invocation policy is a view over the Run's shared filesystem, not a copy.
+pub(crate) struct ScopedWorkspaceFs {
+    inner: Arc<dyn WorkspaceFs>,
+    pub(crate) policy: WorkspaceAccessPolicy,
+}
+
+impl ScopedWorkspaceFs {
+    pub(crate) fn new(inner: Arc<dyn WorkspaceFs>, policy: WorkspaceAccessPolicy) -> Self {
+        Self { inner, policy }
+    }
+
+    fn check(&self, path: &WorkspacePath, write: bool) -> Result<(), DomainError> {
+        if if write {
+            self.policy.is_writable(path)
+        } else {
+            self.policy.is_visible(path)
+        } {
+            Ok(())
+        } else {
+            Err(DomainError::file_io(
+                if write { "write" } else { "read" },
+                path.as_str(),
+                std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "path is outside the invocation workspace scope",
+                ),
+            ))
+        }
+    }
+}
+
+#[async_trait]
+impl WorkspaceFs for ScopedWorkspaceFs {
+    async fn read_file(
+        &self,
+        path: &WorkspacePath,
+        maximum_bytes: usize,
+    ) -> Result<Vec<u8>, DomainError> {
+        self.check(path, false)?;
+        self.inner.read_file(path, maximum_bytes).await
+    }
+    async fn write_file(
+        &self,
+        path: &WorkspacePath,
+        bytes: &[u8],
+        guard: WorkspaceWriteGuard,
+    ) -> Result<(), DomainError> {
+        self.check(path, true)?;
+        self.inner.write_file(path, bytes, guard).await
+    }
+    async fn append_file(&self, path: &WorkspacePath, bytes: &[u8]) -> Result<(), DomainError> {
+        self.check(path, true)?;
+        self.inner.append_file(path, bytes).await
+    }
+    async fn append_text(
+        &self,
+        path: &WorkspacePath,
+        text: &str,
+    ) -> Result<WorkspaceAppendResult, DomainError> {
+        self.check(path, true)?;
+        self.inner.append_text(path, text).await
+    }
+    async fn metadata(
+        &self,
+        path: Option<&WorkspacePath>,
+    ) -> Result<WorkspaceMetadata, DomainError> {
+        match path {
+            Some(path) => {
+                self.check(path, false)?;
+                self.inner.metadata(Some(path)).await
+            }
+            None => Ok(WorkspaceMetadata {
+                kind: WorkspaceEntryKind::Directory,
+                bytes: 0,
+                modified: None,
+                created: None,
+            }),
+        }
+    }
+    async fn read_dir(
+        &self,
+        path: Option<&WorkspacePath>,
+        maximum_entries: usize,
+    ) -> Result<Vec<WorkspaceDirectoryEntry>, DomainError> {
+        if let Some(path) = path {
+            self.check(path, false)?;
+            return self.inner.read_dir(Some(path), maximum_entries).await;
+        }
+        if self.policy.visible_roots.len() > maximum_entries {
+            return Err(DomainError::InvalidData(format!(
+                "Workspace root exceeds {maximum_entries} entries"
+            )));
+        }
+        let mut entries = Vec::new();
+        for root in &self.policy.visible_roots {
+            let path = WorkspacePath::parse(root)?;
+            let metadata = self.inner.metadata(Some(&path)).await?;
+            entries.push(WorkspaceDirectoryEntry { path, metadata });
+        }
+        entries.sort_by(|a, b| a.path.as_str().cmp(b.path.as_str()));
+        Ok(entries)
+    }
+    async fn create_dir(&self, path: &WorkspacePath, recursive: bool) -> Result<(), DomainError> {
+        self.check(path, true)?;
+        self.inner.create_dir(path, recursive).await
+    }
+    async fn remove(&self, path: &WorkspacePath, recursive: bool) -> Result<(), DomainError> {
+        self.check(path, true)?;
+        self.inner.remove(path, recursive).await
+    }
+    async fn rename(
+        &self,
+        source: &WorkspacePath,
+        target: &WorkspacePath,
+    ) -> Result<(), DomainError> {
+        self.check(source, true)?;
+        self.check(target, true)?;
+        self.inner.rename(source, target).await
+    }
+    async fn copy_file(
+        &self,
+        source: &WorkspacePath,
+        target: &WorkspacePath,
+    ) -> Result<(), DomainError> {
+        self.check(source, false)?;
+        self.check(target, true)?;
+        self.inner.copy_file(source, target).await
     }
 }

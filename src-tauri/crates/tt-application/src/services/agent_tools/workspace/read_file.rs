@@ -5,14 +5,14 @@ use super::args::{
     classify_workspace_io_error, ensure_only_args, ensure_visible_workspace_path,
     optional_usize_arg, parse_workspace_path, required_trimmed_string_arg, tool_error,
 };
-use super::policy::workspace_access_policy;
 use super::{MAX_READ_BYTES, MAX_READ_CHARS, MAX_READ_LINES};
 use crate::errors::ApplicationError;
+use crate::services::agent_workspace_scope::ScopedWorkspaceFs;
 use tt_domain::models::agent::AgentToolResult;
 use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_lines::TextLineSelection;
 use tt_domain::text_metrics::TextMetrics;
-use tt_ports::repositories::workspace_repository::WorkspaceRepository;
+use tt_ports::workspace_fs::WorkspaceFs;
 
 use super::super::dispatcher::AgentToolEffect;
 use super::super::session::AgentToolSession;
@@ -29,13 +29,13 @@ struct WorkspaceReadFileStructured<'a> {
 }
 
 pub(in crate::services::agent_tools) async fn read_file(
-    workspace_repository: &dyn WorkspaceRepository,
-    run_id: &str,
+    workspace: &ScopedWorkspaceFs,
     call: &ToolInvocation,
     args: &Map<String, Value>,
     session: &mut AgentToolSession,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let policy = workspace_access_policy(workspace_repository, run_id).await?;
+    let policy = &workspace.policy;
+    let workspace_files: &dyn WorkspaceFs = workspace;
     if let Err(message) = ensure_only_args(args, &["path", "start_line", "line_count"]) {
         return Ok((
             tool_error(call, "tool.invalid_arguments", &message),
@@ -52,7 +52,7 @@ pub(in crate::services::agent_tools) async fn read_file(
         Ok(path) => path,
         Err(error) => return Ok((error.into_tool_result(call), AgentToolEffect::None)),
     };
-    if let Err(error) = ensure_visible_workspace_path(&policy, &path) {
+    if let Err(error) = ensure_visible_workspace_path(policy, &path) {
         return Ok((error.into_tool_result(call), AgentToolEffect::None));
     }
 
@@ -75,7 +75,7 @@ pub(in crate::services::agent_tools) async fn read_file(
         }
     };
 
-    let file = match workspace_repository.read_text(run_id, &path).await {
+    let file = match workspace_files.read_text(&path).await {
         Ok(file) => file,
         Err(error) => match classify_workspace_io_error(call, error) {
             Ok(result) => return Ok((result, AgentToolEffect::None)),

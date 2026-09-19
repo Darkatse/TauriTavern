@@ -5,13 +5,13 @@ use super::args::{
     classify_workspace_io_error, ensure_writable_workspace_path, optional_bool_arg,
     parse_workspace_path, required_raw_string_arg, required_trimmed_string_arg, tool_error,
 };
-use super::policy::workspace_access_policy;
 use crate::errors::ApplicationError;
+use crate::services::agent_workspace_scope::ScopedWorkspaceFs;
 use tt_domain::errors::{DomainError, WorkspaceWriteConflictKind};
 use tt_domain::models::agent::AgentToolResult;
 use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
-use tt_ports::repositories::workspace_repository::{WorkspaceRepository, WorkspaceWriteGuard};
+use tt_ports::workspace_fs::{WorkspaceFs, WorkspaceWriteGuard};
 
 use super::super::dispatcher::AgentToolEffect;
 use super::super::session::AgentToolSession;
@@ -29,13 +29,13 @@ struct WorkspaceApplyPatchStructured<'a> {
 }
 
 pub(in crate::services::agent_tools) async fn apply_patch(
-    workspace_repository: &dyn WorkspaceRepository,
-    run_id: &str,
+    workspace: &ScopedWorkspaceFs,
     call: &ToolInvocation,
     args: &Map<String, Value>,
     session: &mut AgentToolSession,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let policy = workspace_access_policy(workspace_repository, run_id).await?;
+    let policy = &workspace.policy;
+    let workspace_files: &dyn WorkspaceFs = workspace;
     let Some(path) = required_trimmed_string_arg(args, "path") else {
         return Ok((
             tool_error(call, "tool.invalid_arguments", "path is required"),
@@ -89,7 +89,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
         Ok(path) => path,
         Err(error) => return Ok((error.into_tool_result(call), AgentToolEffect::None)),
     };
-    if let Err(error) = ensure_writable_workspace_path(&policy, &path) {
+    if let Err(error) = ensure_writable_workspace_path(policy, &path) {
         return Ok((error.into_tool_result(call), AgentToolEffect::None));
     }
     let path_key = path.as_str().to_string();
@@ -137,7 +137,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
         ));
     }
 
-    let file = match workspace_repository.read_text(run_id, &path).await {
+    let file = match workspace_files.read_text(&path).await {
         Ok(file) => file,
         Err(error) => match classify_workspace_io_error(call, error) {
             Ok(result) => return Ok((result, AgentToolEffect::None)),
@@ -200,9 +200,8 @@ pub(in crate::services::agent_tools) async fn apply_patch(
         file.text.replacen(old_string, new_string, 1)
     };
     let old_sha256 = file.sha256.clone();
-    let file = match workspace_repository
-        .write_text_guarded(
-            run_id,
+    let file = match workspace_files
+        .write_text(
             &path,
             &updated,
             WorkspaceWriteGuard::MustMatchSha256(old_sha256.clone()),

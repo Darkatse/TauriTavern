@@ -23,6 +23,14 @@ pub enum DomainError {
     #[error("{0}")]
     Cancelled(String),
 
+    #[error("{operation} {path}: {source}")]
+    FileIo {
+        operation: &'static str,
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
     #[error("Internal error: {0}")]
     InternalError(String),
 
@@ -85,6 +93,25 @@ impl fmt::Display for WorkspaceWriteConflictKind {
 }
 
 impl DomainError {
+    pub fn file_io(
+        operation: &'static str,
+        path: impl Into<String>,
+        source: std::io::Error,
+    ) -> Self {
+        let path = path.into();
+        if source.kind() == std::io::ErrorKind::NotFound {
+            Self::NotFound(format!("{operation} {path}: {source}"))
+        } else if source.kind() == std::io::ErrorKind::IsADirectory {
+            Self::workspace_path_is_directory(path)
+        } else {
+            Self::FileIo {
+                operation,
+                path,
+                source,
+            }
+        }
+    }
+
     pub fn cancelled(message: impl Into<String>) -> Self {
         Self::Cancelled(message.into())
     }

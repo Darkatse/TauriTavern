@@ -345,6 +345,9 @@ impl IntoResponse for ApiError {
             }
             DomainError::AuthenticationError(message) => (StatusCode::UNAUTHORIZED, message),
             DomainError::Cancelled(message) => (StatusCode::SERVICE_UNAVAILABLE, message),
+            error @ DomainError::FileIo { .. } => {
+                (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+            }
             DomainError::InternalError(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
             DomainError::RateLimited { message } => (StatusCode::TOO_MANY_REQUESTS, message),
             DomainError::Transient(message) => (StatusCode::SERVICE_UNAVAILABLE, message),

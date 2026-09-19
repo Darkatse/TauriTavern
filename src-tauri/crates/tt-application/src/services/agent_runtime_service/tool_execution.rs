@@ -5,7 +5,6 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 use super::commit_ledger::RunCommitLedger;
-use super::delegation::workspace_policy::InvocationWorkspaceRepository;
 use super::markdown::render_markdown_value;
 use super::model_stream_projection::remove_live_tool_call;
 use super::{AgentRuntimeService, PreparedInvocation};
@@ -24,7 +23,7 @@ use tt_domain::models::agent::{
 use tt_domain::models::tool::{InvocationToolSnapshot, ToolId, ToolInvocation};
 use tt_domain::text_metrics::TextMetrics;
 use tt_ports::mcp::{McpCallOutcome, McpKnownResponse};
-use tt_ports::repositories::workspace_repository::WorkspaceWriteGuard;
+use tt_ports::workspace_fs::WorkspaceWriteGuard;
 
 const TOOL_CALL_AUDIT_DIGEST_BYTES: usize = 8;
 const MCP_RESULT_CONTENT_CHUNK_CHARS: usize = 3_000;
@@ -246,22 +245,9 @@ impl AgentRuntimeService {
                         });
                     }
                 }
-            } else if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
-                let workspace_repository =
-                    InvocationWorkspaceRepository::new(self.workspace_repository.as_ref(), profile);
-                self.tool_dispatcher
-                    .dispatch_with_model_workspace_repository(
-                        run_id,
-                        call,
-                        args,
-                        session,
-                        profile,
-                        &workspace_repository,
-                    )
-                    .await
             } else {
                 self.tool_dispatcher
-                    .dispatch(run_id, call, args, session, profile)
+                    .dispatch(run_id, call, args, session, profile, active_run.files.clone())
                     .await
             };
 
@@ -370,13 +356,9 @@ impl AgentRuntimeService {
                 &prepared.tool_snapshot,
                 profile.tools.mcp_result_inline_char_limit,
             )? {
-                self.workspace_repository
-                    .write_text_guarded(
-                        run_id,
-                        &readable_path,
-                        &readable,
-                        WorkspaceWriteGuard::MustNotExist,
-                    )
+                self.workspace_files(run_id)
+                    .await?
+                    .write_text(&readable_path, &readable, WorkspaceWriteGuard::MustNotExist)
                     .await?;
                 self.event(
                     run_id,
@@ -494,8 +476,9 @@ impl AgentRuntimeService {
                 "agent.tool_result_serialize_failed: {error}"
             ))
         })?;
-        self.workspace_repository
-            .write_text_guarded(run_id, &path, &text, WorkspaceWriteGuard::MustNotExist)
+        self.workspace_files(run_id)
+            .await?
+            .write_text(&path, &text, WorkspaceWriteGuard::MustNotExist)
             .await?;
         self.event(
             run_id,
@@ -529,8 +512,9 @@ impl AgentRuntimeService {
                 "agent.tool_arguments_serialize_failed: {error}"
             ))
         })?;
-        self.workspace_repository
-            .write_text_guarded(run_id, &path, &text, WorkspaceWriteGuard::MustNotExist)
+        self.workspace_files(run_id)
+            .await?
+            .write_text(&path, &text, WorkspaceWriteGuard::MustNotExist)
             .await?;
         Ok(path)
     }

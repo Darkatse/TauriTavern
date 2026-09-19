@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::json;
 use std::path::Path;
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -21,7 +21,7 @@ use tt_domain::models::agent::{
 };
 use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
-use tt_ports::repositories::workspace_repository::WorkspaceFile;
+use tt_ports::workspace_fs::WorkspaceFile;
 
 const AUTO_COMMIT_TEXT_EXTENSIONS: &[&str] = &["md", "markdown", "txt", "text"];
 
@@ -144,7 +144,7 @@ impl AgentRuntimeService {
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
-        let file = match self.workspace_repository.read_text(run_id, &path).await {
+        let file = match self.workspace_files(run_id).await?.read_text(&path).await {
             Ok(file) => file,
             Err(error) => match classify_workspace_io_error(call, error) {
                 Ok(result) => {
@@ -471,7 +471,7 @@ impl AgentRuntimeService {
                     "stateId": persistent_changes.state_id,
                     "baseStateId": persistent_changes.base_state_id,
                     "changeCount": persistent_changes.changes.len(),
-                    "changes": persistent_change_payloads(persistent_changes),
+                    "changes": persistent_changes.changes,
                 }),
             )
             .await?;
@@ -552,7 +552,7 @@ impl AgentRuntimeService {
                 "stateId": persistent_changes.state_id.as_str(),
                 "baseStateId": persistent_changes.base_state_id.as_deref(),
                 "changeCount": persistent_changes.changes.len(),
-                "changes": persistent_change_payloads(persistent_changes),
+                "changes": persistent_changes.changes,
             }),
         )
         .await?;
@@ -625,20 +625,6 @@ impl AgentRuntimeService {
             .await
             .retain(|_, pending| pending.run_id != run_id);
     }
-}
-
-fn persistent_change_payloads(changes: &WorkspacePersistentChangeSet) -> Vec<Value> {
-    changes
-        .changes
-        .iter()
-        .map(|change| {
-            json!({
-                "path": change.path.as_str(),
-                "kind": change.kind,
-                "sha256": change.sha256.as_str(),
-            })
-        })
-        .collect()
 }
 
 fn is_auto_commit_text_path(path: &WorkspacePath) -> bool {

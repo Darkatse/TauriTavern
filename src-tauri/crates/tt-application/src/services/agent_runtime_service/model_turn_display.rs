@@ -45,8 +45,9 @@ impl AgentRuntimeService {
         let invocation_id = normalize_model_turn_invocation_id(dto.invocation_id.as_deref())?;
         let path = model_response_path_for_invocation(&invocation_id, dto.round)?;
         let file = self
-            .workspace_repository
-            .read_text(&dto.run_id, &path)
+            .workspace_files(&dto.run_id)
+            .await?
+            .read_text(&path)
             .await?;
         let document: StoredModelResponse = serde_json::from_str(&file.text).map_err(|error| {
             ApplicationError::ValidationError(format!("agent.model_response_parse_failed: {error}"))

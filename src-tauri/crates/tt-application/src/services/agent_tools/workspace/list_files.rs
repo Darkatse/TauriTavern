@@ -4,14 +4,14 @@ use serde_json::{Map, Value};
 use super::args::{
     ensure_visible_workspace_path, optional_list_path_arg, optional_usize_arg, tool_error,
 };
-use super::policy::workspace_access_policy;
-use super::render::{filter_visible_entries, render_file_list};
+use super::render::render_file_list;
 use super::{DEFAULT_LIST_DEPTH, MAX_LIST_DEPTH, MAX_LIST_ENTRIES};
 use crate::errors::ApplicationError;
+use crate::services::agent_workspace_scope::ScopedWorkspaceFs;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::AgentToolResult;
 use tt_domain::models::tool::ToolInvocation;
-use tt_ports::repositories::workspace_repository::{WorkspaceEntryKind, WorkspaceRepository};
+use tt_ports::workspace_fs::{WorkspaceEntryKind, WorkspaceFs};
 
 use super::super::dispatcher::AgentToolEffect;
 use super::super::structured::structured_value;
@@ -31,12 +31,12 @@ struct WorkspaceListEntryStructured<'a> {
 }
 
 pub(in crate::services::agent_tools) async fn list_files(
-    workspace_repository: &dyn WorkspaceRepository,
-    run_id: &str,
+    workspace: &ScopedWorkspaceFs,
     call: &ToolInvocation,
     args: &Map<String, Value>,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let policy = workspace_access_policy(workspace_repository, run_id).await?;
+    let policy = &workspace.policy;
+    let workspace_files: &dyn WorkspaceFs = workspace;
     let path = match optional_list_path_arg(args, "path") {
         Ok(path) => path,
         Err(message) => {
@@ -47,7 +47,7 @@ pub(in crate::services::agent_tools) async fn list_files(
         }
     };
     if let Some(path) = &path
-        && let Err(error) = ensure_visible_workspace_path(&policy, path)
+        && let Err(error) = ensure_visible_workspace_path(policy, path)
     {
         return Ok((error.into_tool_result(call), AgentToolEffect::None));
     }
@@ -71,11 +71,11 @@ pub(in crate::services::agent_tools) async fn list_files(
         ));
     }
 
-    let list = match workspace_repository
-        .list_files(run_id, path.as_ref(), depth, MAX_LIST_ENTRIES)
+    let list = match workspace_files
+        .list_files(path.as_ref(), depth, MAX_LIST_ENTRIES)
         .await
     {
-        Ok(list) => filter_visible_entries(list, &policy),
+        Ok(list) => list,
         Err(DomainError::NotFound(message)) => {
             return Ok((
                 tool_error(call, "workspace.path_not_found", &message),

@@ -30,7 +30,8 @@ use tt_ports::repositories::agent_run_repository::{
 use tt_ports::repositories::agent_workspace_lifecycle_repository::{
     AgentPersistentStatePruneRequest, AgentWorkspaceLifecycleRepository,
 };
-use tt_ports::repositories::workspace_repository::{WorkspaceRepository, WorkspaceWriteGuard};
+use tt_ports::repositories::workspace_repository::WorkspaceRepository;
+use tt_ports::workspace_fs::WorkspaceWriteGuard;
 fn temp_root() -> PathBuf {
     std::env::temp_dir().join(format!("tauritavern-agent-repo-{}", Uuid::new_v4()))
 }
@@ -207,7 +208,14 @@ async fn repository_round_trips_run_workspace_and_event() {
 
     let path = WorkspacePath::parse("output/main.md").expect("workspace path");
     let written = repository
-        .write_text(&run.id, &path, "hello")
+        .open_filesystem(&run.id)
+        .await
+        .expect("open workspace")
+        .write_text(
+            &path,
+            "hello",
+            tt_ports::workspace_fs::WorkspaceWriteGuard::Unchecked,
+        )
         .await
         .expect("write text");
     assert_eq!(written.sha256.len(), 64);
@@ -280,7 +288,10 @@ async fn repository_round_trips_run_workspace_and_event() {
     );
 
     let file = repository
-        .read_text(&run.id, &path)
+        .open_filesystem(&run.id)
+        .await
+        .expect("open workspace")
+        .read_text(&path)
         .await
         .expect("read workspace file");
     assert_eq!(file.text, "hello");
@@ -866,7 +877,7 @@ async fn list_runs_rejects_index_file_with_mismatched_run_id() {
 }
 
 #[tokio::test]
-async fn guarded_workspace_writes_are_atomic_per_path() {
+async fn concurrent_workspace_edits_reject_stale_content() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());
     let run = sample_run_with_id("run_guarded_workspace_write");
@@ -886,16 +897,17 @@ async fn guarded_workspace_writes_are_atomic_per_path() {
 
     let path = WorkspacePath::parse("output/main.md").expect("workspace path");
     let seeded = repository
-        .write_text_guarded(&run.id, &path, "first", WorkspaceWriteGuard::MustNotExist)
+        .open_filesystem(&run.id)
+        .await
+        .expect("open workspace")
+        .write_text(&path, "first", WorkspaceWriteGuard::MustNotExist)
         .await
         .expect("seed text");
     let duplicate = repository
-        .write_text_guarded(
-            &run.id,
-            &path,
-            "replacement",
-            WorkspaceWriteGuard::MustNotExist,
-        )
+        .open_filesystem(&run.id)
+        .await
+        .expect("open workspace")
+        .write_text(&path, "replacement", WorkspaceWriteGuard::MustNotExist)
         .await
         .expect_err("must-not-exist guard must reject replacement");
     assert!(matches!(
@@ -904,7 +916,10 @@ async fn guarded_workspace_writes_are_atomic_per_path() {
     ));
     assert_eq!(
         repository
-            .read_text(&run.id, &path)
+            .open_filesystem(&run.id)
+            .await
+            .expect("open workspace")
+            .read_text(&path)
             .await
             .expect("read original text")
             .text,
@@ -912,9 +927,11 @@ async fn guarded_workspace_writes_are_atomic_per_path() {
     );
     let guard = WorkspaceWriteGuard::MustMatchSha256(seeded.sha256);
 
+    let left_files = repository.open_filesystem(&run.id).await.unwrap();
+    let right_files = repository.open_filesystem(&run.id).await.unwrap();
     let (left, right) = tokio::join!(
-        repository.write_text_guarded(&run.id, &path, "left", guard.clone()),
-        repository.write_text_guarded(&run.id, &path, "right", guard),
+        left_files.write_text(&path, "left", guard.clone()),
+        right_files.write_text(&path, "right", guard),
     );
 
     let successes = [&left, &right]
@@ -928,18 +945,32 @@ async fn guarded_workspace_writes_are_atomic_per_path() {
     assert_eq!(successes, 1);
     assert_eq!(conflicts, 1);
 
-    let final_text = repository
-        .read_text(&run.id, &path)
+    let edited = left_files.read_text(&path).await.unwrap();
+    assert!(edited.text == "left" || edited.text == "right");
+    right_files
+        .write_file(&path, b"program update", WorkspaceWriteGuard::Unchecked)
         .await
-        .expect("read final text")
-        .text;
-    assert!(final_text == "left" || final_text == "right");
+        .unwrap();
+    assert!(matches!(
+        left_files
+            .write_text(
+                &path,
+                "stale edit",
+                WorkspaceWriteGuard::MustMatchSha256(edited.sha256)
+            )
+            .await,
+        Err(DomainError::WorkspaceWriteConflict { .. })
+    ));
+    assert_eq!(
+        left_files.read_text(&path).await.unwrap().text,
+        "program update"
+    );
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }
 
 #[tokio::test]
-async fn append_text_is_atomic_per_path_and_creates_missing_files() {
+async fn append_text_serializes_results_and_creates_missing_files() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());
     let run = sample_run_with_id("run_append_workspace_write");
@@ -959,21 +990,42 @@ async fn append_text_is_atomic_per_path_and_creates_missing_files() {
 
     let path = WorkspacePath::parse("output/main.md").expect("workspace path");
     let created = repository
-        .append_text(&run.id, &path, "first")
+        .open_filesystem(&run.id)
+        .await
+        .expect("open workspace")
+        .append_text(&path, "first")
         .await
         .expect("append missing file");
     assert_eq!(created.previous_sha256, None);
     assert_eq!(created.file.text, "first");
 
+    let left_files = repository.open_filesystem(&run.id).await.unwrap();
+    let right_files = repository.open_filesystem(&run.id).await.unwrap();
     let (left, right) = tokio::join!(
-        repository.append_text(&run.id, &path, " left"),
-        repository.append_text(&run.id, &path, " right"),
+        left_files.append_text(&path, " left"),
+        right_files.append_text(&path, " right"),
     );
-    assert!(left.expect("append left").previous_sha256.is_some());
-    assert!(right.expect("append right").previous_sha256.is_some());
+    let left = left.expect("append left");
+    let right = right.expect("append right");
+    let (first, second) = if left.previous_sha256.as_deref() == Some(&created.file.sha256) {
+        (&left, &right)
+    } else {
+        (&right, &left)
+    };
+    assert_eq!(
+        first.previous_sha256.as_deref(),
+        Some(created.file.sha256.as_str())
+    );
+    assert_eq!(
+        second.previous_sha256.as_deref(),
+        Some(first.file.sha256.as_str())
+    );
 
     let final_text = repository
-        .read_text(&run.id, &path)
+        .open_filesystem(&run.id)
+        .await
+        .expect("open workspace")
+        .read_text(&path)
         .await
         .expect("read final text")
         .text;
@@ -981,6 +1033,7 @@ async fn append_text_is_atomic_per_path_and_creates_missing_files() {
         final_text == "first left right" || final_text == "first right left",
         "unexpected final text: {final_text}"
     );
+    assert_eq!(second.file.text, final_text);
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -1032,48 +1085,6 @@ async fn repository_round_trips_invocations() {
         .expect("invocation exists");
     assert_eq!(loaded_optional.profile_id, "default-writer");
     assert_eq!(repository.list_invocations(&run.id).await.unwrap().len(), 1);
-
-    fs::remove_dir_all(root).await.expect("cleanup");
-}
-
-#[tokio::test]
-async fn read_text_returns_typed_error_for_non_utf8_file() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
-    let run = sample_run_with_id("run_non_utf8_read");
-    let manifest = sample_manifest(&run);
-    let profile = sample_resolved_profile(&manifest);
-
-    repository.create_run(&run).await.expect("create run");
-    repository
-        .initialize_run(
-            &run,
-            &manifest,
-            &serde_json::json!({"messages": []}),
-            &profile,
-        )
-        .await
-        .expect("initialize workspace");
-
-    let path = WorkspacePath::parse("output/image.bin").expect("workspace path");
-    fs::write(
-        repository
-            .run_dir(&run)
-            .expect("run directory")
-            .join(path.as_str()),
-        [0xff, 0xfe],
-    )
-    .await
-    .expect("write non-UTF-8 file");
-
-    let error = repository
-        .read_text(&run.id, &path)
-        .await
-        .expect_err("a non-UTF-8 file is not readable as text");
-    assert!(matches!(
-        error,
-        DomainError::WorkspaceFileNotText { path } if path == "output/image.bin"
-    ));
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -1242,7 +1253,14 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
 
     let persist_path = WorkspacePath::parse("persist/MEMORY.md").unwrap();
     repository
-        .write_text(&run.id, &persist_path, "long running thread note")
+        .open_filesystem(&run.id)
+        .await
+        .expect("open workspace")
+        .write_text(
+            &persist_path,
+            "long running thread note",
+            tt_ports::workspace_fs::WorkspaceWriteGuard::Unchecked,
+        )
         .await
         .expect("write persist projection");
     fs::write(
@@ -1273,7 +1291,10 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
         .expect("initialize pre-commit run");
     assert!(
         repository
-            .read_text(&pre_commit_run.id, &persist_path)
+            .open_filesystem(&pre_commit_run.id)
+            .await
+            .expect("open workspace")
+            .read_text(&persist_path)
             .await
             .is_err(),
         "uncommitted persist projection must not leak into another run"
@@ -1284,14 +1305,21 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
         .await
         .expect("commit persist changes");
     assert_eq!(changes.changes.len(), 1);
-    assert_eq!(changes.changes[0].path, "persist/MEMORY.md");
+    assert_eq!(changes.changes[0].path(), "persist/MEMORY.md");
     let unchanged = repository
         .commit_persistent_changes(&run.id, Some(&changes.state_id))
         .await
         .expect("reuse unchanged persistent files");
     assert_eq!(unchanged, changes);
     repository
-        .write_text(&run.id, &persist_path, "revised thread note")
+        .open_filesystem(&run.id)
+        .await
+        .expect("open workspace")
+        .write_text(
+            &persist_path,
+            "revised thread note",
+            tt_ports::workspace_fs::WorkspaceWriteGuard::Unchecked,
+        )
         .await
         .unwrap();
     let revised = repository
@@ -1342,7 +1370,10 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
         .expect("initialize empty next run");
     assert!(
         repository
-            .read_text(&empty_next_run.id, &persist_path)
+            .open_filesystem(&empty_next_run.id)
+            .await
+            .expect("open workspace")
+            .read_text(&persist_path)
             .await
             .is_err(),
         "result-scoped persist must not leak into runs without an explicit base state"
@@ -1364,7 +1395,10 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
         .await
         .expect("initialize next run");
     let projected = repository
-        .read_text(&next_run.id, &persist_path)
+        .open_filesystem(&next_run.id)
+        .await
+        .expect("open workspace")
+        .read_text(&persist_path)
         .await
         .expect("read committed persist projection");
     assert_eq!(projected.text, "long running thread note");
@@ -1393,7 +1427,10 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
         .expect("initialize fork from copied state");
     assert_eq!(
         repository
-            .read_text(&fork_run.id, &persist_path)
+            .open_filesystem(&fork_run.id)
+            .await
+            .expect("open workspace")
+            .read_text(&persist_path)
             .await
             .expect("read copied persist projection")
             .text,
@@ -1427,7 +1464,14 @@ async fn persistent_workspace_commits_parallel_branch_states() {
     }
 
     repository
-        .write_text(&first.id, &persist_path, "first")
+        .open_filesystem(&first.id)
+        .await
+        .expect("open workspace")
+        .write_text(
+            &persist_path,
+            "first",
+            tt_ports::workspace_fs::WorkspaceWriteGuard::Unchecked,
+        )
         .await
         .expect("write first projection");
     let first_state = repository
@@ -1436,7 +1480,14 @@ async fn persistent_workspace_commits_parallel_branch_states() {
         .expect("commit first projection");
 
     repository
-        .write_text(&second.id, &persist_path, "second")
+        .open_filesystem(&second.id)
+        .await
+        .expect("open workspace")
+        .write_text(
+            &persist_path,
+            "second",
+            tt_ports::workspace_fs::WorkspaceWriteGuard::Unchecked,
+        )
         .await
         .expect("write second projection");
     let second_state = repository
@@ -1461,7 +1512,10 @@ async fn persistent_workspace_commits_parallel_branch_states() {
         .expect("initialize child of first");
     assert_eq!(
         repository
-            .read_text(&child_of_first.id, &persist_path)
+            .open_filesystem(&child_of_first.id)
+            .await
+            .expect("open workspace")
+            .read_text(&persist_path)
             .await
             .expect("read first branch state")
             .text,
@@ -1485,7 +1539,10 @@ async fn persistent_workspace_commits_parallel_branch_states() {
         .expect("initialize child of second");
     assert_eq!(
         repository
-            .read_text(&child_of_second.id, &persist_path)
+            .open_filesystem(&child_of_second.id)
+            .await
+            .expect("open workspace")
+            .read_text(&persist_path)
             .await
             .expect("read second branch state")
             .text,
@@ -1494,3 +1551,5 @@ async fn persistent_workspace_commits_parallel_branch_states() {
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }
+
+mod workspace_fs;
