@@ -36,11 +36,12 @@ jobs:
           --no-build
 
       - name: Verify fixed dependency closures
-        run: >-
-          nix
-          --accept-flake-config
-          build
-          .#packages.x86_64-linux.canary.cargoDeps
-          .#packages.x86_64-linux.canary.pnpmDeps
-          --no-link
-          --print-build-logs
+        # Rebuild so a cached output cannot hide a stale lockfile hash.
+        run: |
+          nix --accept-flake-config build \
+            .#packages.x86_64-linux.canary.cargoDeps \
+            .#packages.x86_64-linux.canary.pnpmDeps \
+            --no-link --print-build-logs
+          nix --accept-flake-config build \
+            .#packages.x86_64-linux.canary.pnpmDeps \
+            --rebuild --no-link --print-build-logs
