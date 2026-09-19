@@ -254,6 +254,7 @@ pub(super) async fn build(
         data_change_reconciler,
         &ios_policy,
         local_mutation_gate,
+        database_service.clone(),
     );
 
     Ok(AppServices {

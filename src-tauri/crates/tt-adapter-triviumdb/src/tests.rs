@@ -336,3 +336,61 @@ async fn queued_close_then_reopen_share_one_instance_owner() {
     );
     close(&backend).await.unwrap();
 }
+
+#[tokio::test]
+async fn transfer_maintenance_preserves_namespace_time_across_retries_and_writes() {
+    use std::time::{Duration, SystemTime};
+    let root = tempfile::tempdir().unwrap();
+    let backend = TriviumDatabaseBackend::new(root.path().into());
+    open(&backend, json!({"dim": 2, "autoBuildQuiver": false}))
+        .await
+        .unwrap();
+    operation(
+        &backend,
+        json!({"type": "upsert", "id": 42, "vector": [1, 0], "payload": {"name": "before"}}),
+    )
+    .await
+    .unwrap();
+    let directory = root.path().join("db-memory");
+    let original = SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
+    // Only WAL exists before the first flush. Lock and temporary file times are irrelevant.
+    let temporary = directory.join("database.tdb.unused.tmp");
+    let lock = directory.join("database.tdb.lock");
+    let wal = directory.join("database.tdb.wal");
+    let namespace_time = || {
+        std::fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path != &temporary && path != &lock)
+            .map(|path| path.metadata().unwrap().modified().unwrap())
+            .max()
+            .unwrap()
+    };
+    std::fs::write(&temporary, b"temporary").unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&wal)
+        .unwrap()
+        .set_modified(original)
+        .unwrap();
+    for request in [
+        DatabaseRequest::FlushAll,
+        DatabaseRequest::FlushAll,
+        DatabaseRequest::CloseAll,
+    ] {
+        backend.execute(request).await.unwrap();
+        assert!(directory.join("database.tdb").exists());
+        assert_eq!(namespace_time(), original);
+    }
+    open(&backend, json!({})).await.unwrap();
+    operation(
+        &backend,
+        json!({"type": "updatePayload", "id": 42, "payload": {"name": "after"}}),
+    )
+    .await
+    .unwrap();
+    let written = wal.metadata().unwrap().modified().unwrap();
+    assert!(written > original);
+    backend.execute(DatabaseRequest::CloseAll).await.unwrap();
+    assert_eq!(namespace_time(), written);
+}

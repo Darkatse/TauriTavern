@@ -1,4 +1,5 @@
 {
+    "TriviumDB databases": "TriviumDB資料庫",
     "Load historical swipes on demand": "按需載入歷史滑動",
     "Reduces memory use by loading alternate swipes of older messages only when needed. Opening a chat loads current text and all swipes of the last message.": "僅在需要時載入舊樓層的備用滑動，以減少記憶體用量。開啟聊天時載入目前正文及末樓的全部滑動。",
     "Only affects display, not saving or exporting. Requires reload to apply.": "只影響顯示，不會影響儲存與匯出。重新載入後生效。",

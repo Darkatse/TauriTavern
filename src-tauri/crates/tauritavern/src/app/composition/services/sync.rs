@@ -33,6 +33,7 @@ pub(super) fn build(
     data_change_reconciler: Arc<dyn DataChangeReconciler>,
     ios_policy: &IosPolicyActivationReport,
     local_mutation_gate: Arc<Semaphore>,
+    database: Arc<dyn tt_ports::database::DatabaseFileAccess>,
 ) -> SyncServices {
     let product_user_agent = crate::product::USER_AGENT;
     let lan_runtime_state = Arc::new(LanSyncRuntimeState::new());
@@ -56,6 +57,7 @@ pub(super) fn build(
         lan_discovery.clone(),
         tt_runtime.clone(),
         product_user_agent,
+        database.clone(),
     ));
     let sync_job_coordinator = Arc::new(SyncJobCoordinator::new(
         sync_job_executor,
@@ -76,6 +78,7 @@ pub(super) fn build(
         lan_inbound_service.clone(),
         adapters::lan_server_events(app_handle),
         lan_discovery.clone(),
+        database,
     ));
     let lan_sync_service = Arc::new(LanSyncService::new(
         lan_runtime_state,

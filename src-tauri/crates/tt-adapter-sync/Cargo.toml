@@ -23,6 +23,7 @@ tt-ports = { path = "../tt-ports" }
 ttsync-client = { workspace = true }
 ttsync-contract = { workspace = true }
 ttsync-core = { workspace = true }
+ttsync-fs = { workspace = true }
 ttsync-http = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }

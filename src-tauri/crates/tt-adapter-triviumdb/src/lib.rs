@@ -6,8 +6,9 @@ mod options;
 mod tql;
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use async_trait::async_trait;
 use tokio::sync::Mutex as AsyncMutex;
@@ -149,7 +150,27 @@ impl TriviumDatabaseBackend {
     async fn maintain_all(&self, close: bool) -> Result<DatabaseResponse, DomainError> {
         let mut first_error = None;
         for (namespace, slot) in self.slots()? {
-            let result = Self::run(slot, move |store| maintain(store, &namespace, close)).await;
+            let directory = self.root.join(format!("db-{namespace}"));
+            let result = Self::run(slot, move |store| {
+                if store.is_none() {
+                    return Ok(DatabaseResponse::Unit);
+                }
+                // ponytail: use file time; track memory-only writes only if users need finer ordering.
+                let modified = database_modified(&directory).map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Read database {namespace} modification time: {error}"
+                    ))
+                })?;
+                let result = maintain(store, &namespace, close);
+                // A transfer preparation must not make an old copy look newer, even on retry.
+                let restored = restore_database_modified(&directory, modified).map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Restore database {namespace} modification time: {error}"
+                    ))
+                });
+                result.and(restored.map(|()| DatabaseResponse::Unit))
+            })
+            .await;
             if let Err(error) = result {
                 first_error.get_or_insert(error);
             }
@@ -159,6 +180,46 @@ impl TriviumDatabaseBackend {
             None => Ok(DatabaseResponse::Unit),
         }
     }
+}
+
+fn database_files(directory: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if (name == "database.tdb" || name.starts_with("database.tdb."))
+            && name != "database.tdb.lock"
+            && !name.ends_with(".tmp")
+            && entry.file_type()?.is_file()
+        {
+            files.push(entry.path());
+        }
+    }
+    Ok(files)
+}
+
+fn database_modified(directory: &Path) -> std::io::Result<Option<SystemTime>> {
+    let mut modified = None;
+    for path in database_files(directory)? {
+        modified = modified.max(Some(path.metadata()?.modified()?));
+    }
+    Ok(modified)
+}
+
+fn restore_database_modified(
+    directory: &Path,
+    modified: Option<SystemTime>,
+) -> std::io::Result<()> {
+    if let Some(modified) = modified {
+        for path in database_files(directory)? {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(path)?
+                .set_modified(modified)?;
+        }
+    }
+    Ok(())
 }
 
 fn maintain(

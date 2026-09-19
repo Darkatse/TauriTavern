@@ -11,11 +11,9 @@ use axum::{
     routing::{get, post},
 };
 use serde_json::json;
-use tokio::io::AsyncRead;
 use ttsync_contract::peer::{DeviceId, PeerGrant};
-use ttsync_core::dataset::ResolvedDatasetPolicy;
 use ttsync_core::error::SyncError;
-use ttsync_core::ports::{ManifestStore, PeerStore};
+use ttsync_core::ports::PeerStore;
 use ttsync_core::session::{SessionManager, SessionManagerConfig};
 use ttsync_http::server::{ServerState, build_transfer_router, default_status_response};
 use ttsync_http::tls::{SelfManagedTls, TlsProvider};
@@ -23,12 +21,12 @@ use ttsync_http::tls::{SelfManagedTls, TlsProvider};
 use super::LanStatusResponse;
 use crate::sync::http_client::{domain_error_to_sync, sync_error_to_domain};
 use crate::sync::lan::store::LanPeerStore;
-use crate::tt_sync::fs::scan_manifest_with_policy;
-use crate::{sync_fs, sync_transfer};
+use crate::sync::workspace::TauriTavernSyncWorkspace as LanManifestStore;
 use tt_contracts::sync::PAIRING_REJECTED_MESSAGE;
 use tt_contracts::sync::SyncOperationOptions;
 use tt_domain::errors::DomainError;
 use tt_domain::models::lan_sync::{LanPairCompleteRequest, LanPairCompleteResponse};
+use tt_ports::database::DatabaseFileAccess;
 use tt_ports::lan_sync::{LanInboundRequestHandler, LanServerEvents, LanServerInfo};
 
 const LAN_HTTPS_FEATURE_V1: &str = "lan_https_v1";
@@ -65,13 +63,14 @@ pub async fn spawn_lan_sync_server(
     store: LanPeerStore,
     inbound: Arc<dyn LanInboundRequestHandler>,
     events: Arc<dyn LanServerEvents>,
+    database: Arc<dyn DatabaseFileAccess>,
 ) -> Result<LanSyncServerHandle, DomainError> {
     install_rustls_crypto_provider();
     let identity = store.load_or_create_identity().await?;
     let tls = SelfManagedTls::load_or_create(&store.state_dir()).map_err(sync_error_to_domain)?;
     let spki_sha256 = tls.spki_sha256().to_string();
 
-    let manifest_store = Arc::new(LanManifestStore::new(sync_root));
+    let manifest_store = Arc::new(LanManifestStore::new(sync_root, database));
     let peer_store = Arc::new(LanServerPeerStore::new(store.clone()));
     let session_manager = Arc::new(SessionManager::new(SessionManagerConfig::default()));
 
@@ -173,77 +172,6 @@ fn report_server_task_failure(error: impl std::fmt::Display, events: &dyn LanSer
     let message = format!("LAN Sync server stopped unexpectedly: {error}");
     tracing::error!("{message}");
     events.report_lan_server_error(message);
-}
-
-#[derive(Clone)]
-struct LanManifestStore {
-    sync_root: PathBuf,
-}
-
-impl LanManifestStore {
-    fn new(sync_root: PathBuf) -> Self {
-        Self { sync_root }
-    }
-}
-
-impl ManifestStore for LanManifestStore {
-    fn scan(
-        &self,
-        policy: ResolvedDatasetPolicy,
-    ) -> impl std::future::Future<Output = Result<ttsync_contract::manifest::ManifestV2, SyncError>> + Send
-    {
-        let sync_root = self.sync_root.clone();
-        async move {
-            scan_manifest_with_policy(sync_root, policy)
-                .await
-                .map_err(domain_error_to_sync)
-        }
-    }
-
-    fn read_file(
-        &self,
-        path: &ttsync_contract::path::SyncPath,
-    ) -> impl std::future::Future<Output = Result<Box<dyn AsyncRead + Send + Unpin>, SyncError>> + Send
-    {
-        let sync_root = self.sync_root.clone();
-        let path = path.clone();
-        async move {
-            let full_path = sync_transfer::resolve_to_local(&sync_root, &path);
-            let file = tokio::fs::File::open(&full_path)
-                .await
-                .map_err(|error| SyncError::Io(error.to_string()))?;
-            Ok(Box::new(file) as Box<dyn AsyncRead + Send + Unpin>)
-        }
-    }
-
-    fn write_file(
-        &self,
-        path: &ttsync_contract::path::SyncPath,
-        data: &mut (dyn AsyncRead + Send + Unpin),
-        modified_ms: u64,
-    ) -> impl std::future::Future<Output = Result<(), SyncError>> + Send {
-        let sync_root = self.sync_root.clone();
-        let path = path.clone();
-        async move {
-            let full_path = sync_transfer::resolve_to_local(&sync_root, &path);
-            sync_fs::write_file_atomic(&full_path, data, modified_ms)
-                .await
-                .map_err(|error| error.into_error())
-        }
-    }
-
-    fn delete_file(
-        &self,
-        path: &ttsync_contract::path::SyncPath,
-    ) -> impl std::future::Future<Output = Result<(), SyncError>> + Send {
-        let sync_root = self.sync_root.clone();
-        let path = path.clone();
-        async move {
-            sync_fs::delete_sync_file(&sync_root, &path)
-                .await
-                .map_err(|error| error.into_error())
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -630,9 +558,14 @@ mod tests {
             .await
             .expect("write HEAD");
 
-        let store = LanManifestStore::new(sync_root.clone());
+        let store = LanManifestStore::new(
+            sync_root.clone(),
+            crate::sync::workspace::empty_database_access(),
+        );
         let path = SyncPath::new("extensions/third-party/example/.git/HEAD".to_string()).unwrap();
-        store.delete_file(&path).await.expect("delete file");
+        ttsync_core::ports::ManifestStore::delete_file(&store, &path)
+            .await
+            .expect("delete file");
 
         assert!(!sync_root.join("extensions/third-party/example").exists());
         assert!(sync_root.join("extensions/third-party").exists());
@@ -653,6 +586,7 @@ mod tests {
             store.clone(),
             noop_inbound(),
             recording_events(),
+            crate::sync::workspace::empty_database_access(),
         )
         .await
         .expect("spawn LAN Sync server");
@@ -768,6 +702,7 @@ mod tests {
             store.clone(),
             inbound.clone(),
             events.clone(),
+            crate::sync::workspace::empty_database_access(),
         )
         .await
         .expect("spawn LAN Sync server");
@@ -921,6 +856,7 @@ mod tests {
             store,
             noop_inbound(),
             recording_events(),
+            crate::sync::workspace::empty_database_access(),
         )
         .await
         .expect("spawn LAN Sync server");
@@ -1040,7 +976,10 @@ mod tests {
         tokio::fs::create_dir_all(&target_root)
             .await
             .expect("create target root");
-        let workspace = Arc::new(TauriTavernSyncWorkspace::new(target_root.clone()));
+        let workspace = Arc::new(TauriTavernSyncWorkspace::new(
+            target_root.clone(),
+            crate::sync::workspace::empty_database_access(),
+        ));
         let mut options = ClientSyncOptions::new(
             SyncMode::Incremental,
             DatasetSelection::new(

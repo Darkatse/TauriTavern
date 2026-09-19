@@ -78,6 +78,7 @@ const DATASET_META: Record<string, DatasetMeta> = {
     'extensions.third_party': { label: 'Third-party extensions' },
     'extensions.sources': { label: 'Extension sources' },
     'extensions.store': { label: 'Extension store' },
+    'extensions.databases': { label: 'TriviumDB databases', tone: 'large' },
     'agent.profiles': { label: 'Agent profiles' },
     'agent.llm_connections': { label: 'Agent LLM connections' },
     'agent.skills': { label: 'Agent skills' },
@@ -150,6 +151,7 @@ const DATASET_GROUPS: DatasetGroup[] = [
             'extensions.third_party',
             'extensions.sources',
             'extensions.store',
+            'extensions.databases',
         ],
     },
     {

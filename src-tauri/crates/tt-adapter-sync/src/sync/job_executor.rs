@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use tt_ports::database::DatabaseFileAccess;
 
 use async_trait::async_trait;
 use ttsync_client::{
@@ -30,6 +31,7 @@ pub struct InfrastructureSyncJobExecutor {
     lan_discovery: LanPeerDiscovery,
     tt_runtime: Arc<TtSyncRuntime>,
     product_user_agent: String,
+    database: Arc<dyn DatabaseFileAccess>,
 }
 
 // Sync failures intentionally carry the error and any partial local mutation state together.
@@ -42,6 +44,7 @@ impl InfrastructureSyncJobExecutor {
         lan_discovery: LanPeerDiscovery,
         tt_runtime: Arc<TtSyncRuntime>,
         product_user_agent: impl Into<String>,
+        database: Arc<dyn DatabaseFileAccess>,
     ) -> Self {
         let product_user_agent = product_user_agent.into();
         assert!(
@@ -50,6 +53,7 @@ impl InfrastructureSyncJobExecutor {
         );
 
         Self {
+            database,
             lan_sync_root,
             events,
             lan_peer_store,
@@ -70,7 +74,10 @@ impl InfrastructureSyncJobExecutor {
         let identity = self.lan_peer_store.load_or_create_identity().await?;
         let (client, status, base_url) =
             connect_peer(&peer, &self.lan_discovery, &self.product_user_agent).await?;
-        let workspace = Arc::new(TauriTavernSyncWorkspace::new(self.lan_sync_root.clone()));
+        let workspace = Arc::new(TauriTavernSyncWorkspace::new(
+            self.lan_sync_root.clone(),
+            self.database.clone(),
+        ));
         let engine = ClientSyncEngine::new(
             client.into_sync_client(),
             workspace,
@@ -135,6 +142,7 @@ impl InfrastructureSyncJobExecutor {
         )?;
         let workspace = Arc::new(TauriTavernSyncWorkspace::new(
             self.tt_runtime.sync_root.clone(),
+            self.database.clone(),
         ));
         let engine = ClientSyncEngine::new(
             client,
@@ -194,6 +202,7 @@ impl InfrastructureSyncJobExecutor {
         )?;
         let workspace = Arc::new(TauriTavernSyncWorkspace::new(
             self.tt_runtime.sync_root.clone(),
+            self.database.clone(),
         ));
         let engine = ClientSyncEngine::new(
             client,

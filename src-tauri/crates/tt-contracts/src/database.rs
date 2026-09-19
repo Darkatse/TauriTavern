@@ -104,7 +104,7 @@ pub enum DatabaseRequest {
         namespace: String,
         operation: Box<DatabaseOperation>,
     },
-    /// Internal lifecycle requests used by the host, not additional public methods.
+    /// Internal transfer maintenance; preserves namespace file time for Sync and archives.
     FlushAll,
     CloseAll,
 }

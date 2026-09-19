@@ -107,6 +107,8 @@ const byId = await db.query('MATCH (n) WHERE n.id == $id RETURN n', { id });
 
 输入、未打开、冲突与实际 IO/恢复错误通过 Promise rejection 返回。调用方可以修正配置或数据后重试；宿主不自动重试写入，不为查询设置缓存、去重或延迟写回。停止等待不等于取消已经进入原生执行的操作。
 
-完整 data-root 导出会 flush，并在整个归档任务期间暂停数据库操作；导入开始时关闭实例，成功、失败或取消后调用方都需要重新 open。当前采用直接的维护锁，若大型归档造成实际等待问题，再引入导出快照以缩短暂停。
+数据位于 `_tauritavern/databases/db-<namespace>/`。归档导入按 namespace 整体替换，保留备份未包含的 namespace。
 
-数据位于 `_tauritavern/databases/db-<namespace>/`。导入按命名空间替换整个文件组，清除旧版本残留的 sidecar；备份未包含的命名空间保持原样。替换前在目标文件系统完成暂存，复制失败或取消时保留原数据库。目录发布失败时尝试恢复原目录；不承诺整个归档的事务性或进程崩溃时的原子目录切换。清理旧目录失败只记录警告，不让已完成的导入报错。
+归档和数据库同步期间暂停数据库操作。导入或同步接收会关闭实例，任务结束后（包括失败或取消）调用方需重新 `open(namespace)`。
+
+同步范围与覆盖策略见 [Sync](../CurrentState/Sync.md#triviumdb数据库)。

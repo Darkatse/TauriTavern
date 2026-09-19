@@ -1,6 +1,7 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tt_ports::database::DatabaseFileAccess;
 
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -21,6 +22,7 @@ pub struct AxumLanServerControl {
     events: Arc<dyn LanServerEvents>,
     discovery: LanPeerDiscovery,
     server: Mutex<Option<LanSyncServerHandle>>,
+    database: Arc<dyn DatabaseFileAccess>,
 }
 
 impl AxumLanServerControl {
@@ -30,8 +32,10 @@ impl AxumLanServerControl {
         inbound: Arc<dyn LanInboundRequestHandler>,
         events: Arc<dyn LanServerEvents>,
         discovery: LanPeerDiscovery,
+        database: Arc<dyn DatabaseFileAccess>,
     ) -> Self {
         Self {
+            database,
             sync_root,
             store,
             inbound,
@@ -58,6 +62,7 @@ impl LanServerControl for AxumLanServerControl {
             self.store.clone(),
             self.inbound.clone(),
             self.events.clone(),
+            self.database.clone(),
         )
         .await?;
         let info = handle.info();

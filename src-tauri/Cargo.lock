@@ -8619,6 +8619,7 @@ dependencies = [
  "ttsync-client",
  "ttsync-contract",
  "ttsync-core",
+ "ttsync-fs",
  "ttsync-http",
  "url",
  "uuid",
@@ -8744,15 +8745,16 @@ dependencies = [
 
 [[package]]
 name = "ttsync-client"
-version = "2.5.1"
+version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c302ce58e39312a53133ac5d02c8d226eb1817b1f9ce1ca2ac1b5f20cd27d50"
+checksum = "e8c983b982b4512cd047924613488c35f1d9cb7632bfbb43c188742215e1c8d4"
 dependencies = [
  "async-compression",
  "futures-util",
  "reqwest",
  "tokio",
  "tokio-util",
+ "tracing",
  "ttsync-contract",
  "ttsync-core",
  "ttsync-http",
@@ -8760,9 +8762,9 @@ dependencies = [
 
 [[package]]
 name = "ttsync-contract"
-version = "2.5.1"
+version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "591fb7945aed185cce477180dfa56b40948b05cca08478e010c6583aee0ff634"
+checksum = "dd5e07d6bd22fdd95579ef8d7485b3f4e3241fe35c7552a3d5d80f418a65fe1f"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -8772,9 +8774,9 @@ dependencies = [
 
 [[package]]
 name = "ttsync-core"
-version = "2.5.1"
+version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af824154f945a6dabdf76f0e26f096a63c5db920a335d1f9792dcb22e6373dcf"
+checksum = "9a4637907abd6a215c59962fe93356111ae115b402bc757a019d1aff168d442d"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
@@ -8790,10 +8792,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "ttsync-http"
-version = "2.5.1"
+name = "ttsync-fs"
+version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e57eeea86d769b7dfaaee324ad5f664185432867a403247ef4327c62c4b399b"
+checksum = "7c997cb81e6f425fcbfeb6bea21c9f4973248ab616fb814c2014ecc114826eb7"
+dependencies = [
+ "filetime",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "ttsync-contract",
+ "ttsync-core",
+ "uuid",
+]
+
+[[package]]
+name = "ttsync-http"
+version = "2.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "983f7707bd9b8191dc133d5bf0dd6b465efcbccd5d8bdccd4b28ea92a0981c35"
 dependencies = [
  "async-compression",
  "axum",

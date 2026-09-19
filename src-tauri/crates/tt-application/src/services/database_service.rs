@@ -47,6 +47,30 @@ impl DatabaseService {
     }
 }
 
+#[async_trait::async_trait]
+impl tt_ports::database::DatabaseFileAccess for DatabaseService {
+    async fn prepare_sync(
+        &self,
+        receiving: bool,
+    ) -> Result<OwnedRwLockWriteGuard<()>, DomainError> {
+        // Concurrent transfers in opposite directions must not wait on each other's lock.
+        let guard = self.maintenance.clone().try_write_owned().map_err(|_| {
+            DomainError::InvalidData(
+                "Database is busy; retry synchronization when the current operation finishes"
+                    .into(),
+            )
+        })?;
+        self.backend
+            .execute(if receiving {
+                DatabaseRequest::CloseAll
+            } else {
+                DatabaseRequest::FlushAll
+            })
+            .await?;
+        Ok(guard)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,6 +78,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::task::Poll;
     use tokio::sync::Semaphore;
+    use tt_ports::database::DatabaseFileAccess;
 
     struct BlockingBackend {
         entered: AtomicUsize,
@@ -73,7 +98,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn archive_waits_for_inflight_operations_and_excludes_new_operations_until_io_finishes() {
+    async fn file_maintenance_excludes_operations_and_conflicting_sync_fails_without_waiting() {
         let backend = Arc::new(BlockingBackend {
             entered: AtomicUsize::new(0),
             finish: Semaphore::new(0),
@@ -94,6 +119,11 @@ mod tests {
         backend.finish.add_permits(1);
         first.await.unwrap();
         let guard = archive.await.unwrap();
+        let mut conflicting_sync = Box::pin(service.prepare_sync(true));
+        assert!(matches!(
+            poll_fn(|cx| Poll::Ready(conflicting_sync.as_mut().poll(cx))).await,
+            Poll::Ready(Err(_))
+        ));
         let mut second = Box::pin(service.execute(DatabaseRequest::ListNamespaces));
         assert!(
             poll_fn(|cx| Poll::Ready(second.as_mut().poll(cx)))
@@ -105,5 +135,15 @@ mod tests {
         backend.finish.add_permits(1);
         second.await.unwrap();
         assert_eq!(backend.entered.load(Ordering::SeqCst), 2);
+        let guard = service.prepare_sync(false).await.unwrap();
+        let mut during_sync = Box::pin(service.execute(DatabaseRequest::ListNamespaces));
+        assert!(
+            poll_fn(|cx| Poll::Ready(during_sync.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
+        drop(guard);
+        backend.finish.add_permits(1);
+        during_sync.await.unwrap();
     }
 }
