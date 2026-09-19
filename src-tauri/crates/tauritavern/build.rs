@@ -12,8 +12,6 @@ fn main() {
         println!("cargo:rerun-if-changed=../../../src/scripts/templates");
         println!("cargo:rerun-if-changed=../../../src/scripts/extensions");
     }
-    println!("cargo:rerun-if-changed=../../../.git/HEAD");
-    println!("cargo:rerun-if-changed=../../../.git/refs");
     println!("cargo:rerun-if-env-changed=GITHUB_REF_NAME");
     println!("cargo:rerun-if-env-changed=GITHUB_SHA");
     println!("cargo:rerun-if-env-changed=TAURITAVERN_BUILD_BRANCH");
@@ -25,12 +23,10 @@ fn main() {
         panic!("Failed to generate resource artifacts: {}", error);
     }
 
-    tauri_build::try_build(
-        tauri_build::Attributes::new().plugin(
-            "speech-synthesis",
-            tauri_build::InlinedPlugin::new().commands(&["initialize", "speak", "cancel"]),
-        ),
-    )
+    tauri_build::try_build(tauri_build::Attributes::new().plugin(
+        "speech-synthesis",
+        tauri_build::InlinedPlugin::new().commands(&["initialize", "speak", "cancel"]),
+    ))
     .expect("Failed to build Tauri application")
 }
 
@@ -40,6 +36,25 @@ fn needs_embedded_resources() -> bool {
 }
 
 fn emit_git_build_metadata() {
+    let head_ref = normalize_git_value(run_git_command(&["symbolic-ref", "--quiet", "HEAD"]));
+    for reference in ["HEAD", "packed-refs"]
+        .into_iter()
+        .chain(head_ref.as_deref())
+    {
+        if let Some(path) =
+            normalize_git_value(run_git_command(&["rev-parse", "--git-path", reference]))
+        {
+            let path = Path::new(&path);
+            if reference == "packed-refs" && !path.exists() {
+                continue;
+            }
+            // A packed branch gets a loose ref on its next commit; watch its parent until then.
+            if let Some(path) = path.ancestors().find(|path| path.exists()) {
+                println!("cargo:rerun-if-changed={}", path.display());
+            }
+        }
+    }
+
     let git_branch = normalize_git_branch(
         std::env::var("TAURITAVERN_BUILD_BRANCH")
             .ok()
