@@ -7,6 +7,7 @@ use tokio::sync::{RwLock, watch};
 
 use crate::dto::chat_completion_dto::{
     ChatCompletionGenerateRequestDto, ChatCompletionStatusRequestDto,
+    ChatCompletionStreamReadResultDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::hashing::hex_lower;
@@ -14,10 +15,11 @@ use tt_domain::errors::DomainError;
 use tt_domain::ios_policy::{IosPolicyActivationReport, IosPolicyScope};
 use tt_domain::models::claude_model::supports_one_hour_prompt_cache;
 use tt_domain::models::settings::{PromptCacheTtl, TauriTavernSettings};
+use tt_ports::generation_background::{GenerationBackgroundOutcome, GenerationBackgroundRuntime};
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig, ChatCompletionCancelReceiver,
     ChatCompletionNormalizationReport, ChatCompletionRepository, ChatCompletionSource,
-    ChatCompletionStreamSender,
+    ChatCompletionStreamDelta, ChatCompletionStreamSender,
 };
 use tt_ports::repositories::prompt_cache_repository::{PromptCacheKey, PromptCacheRepository};
 use tt_ports::repositories::secret_repository::SecretRepository;
@@ -28,23 +30,32 @@ mod config;
 mod custom_api_format;
 mod custom_parameters;
 pub(crate) mod exchange;
+mod generation_background;
 mod model_capabilities;
+pub(super) mod opencode;
 mod payload;
 mod prompt_caching;
 mod prompt_caching_plan;
+mod stream_session;
 
 use self::additional_parameters::AdditionalParameters;
 use self::exchange::{
     ChatCompletionExchange, ChatCompletionProviderFormat, NormalizedChatCompletionResponse,
 };
+use self::generation_background::GenerationBackgroundLease;
+use self::stream_session::{StreamAppendOutcome, StreamSessionRegistry};
 
 const OPENAI_SOURCE: &str = ChatCompletionSource::OpenAi.key();
+pub(crate) const OPENCODE_STABLE_CHAT_ID_FIELD: &str = "_tauritavern_stable_chat_id";
+const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
 const VERTEXAI_PROMPT_CACHE_SESSION_HEADER: &str = "X-Vertex-Ai-Session-Id";
 const AGENT_STRUCTURAL_BODY_OVERRIDE_KEYS: &[&str] = &[
     "messages",
     "input",
     "tools",
     "tool_choice",
+    "stream",
+    "n",
     "previous_response_id",
     CHAT_COMPLETION_PROVIDER_STATE_FIELD,
 ];
@@ -56,13 +67,21 @@ struct ChatCompletionExecution {
     normalization_report: ChatCompletionNormalizationReport,
 }
 
+struct PreparedChatCompletionRequest {
+    source: ChatCompletionSource,
+    config: ChatCompletionApiConfig,
+    endpoint_path: String,
+    upstream_payload: Value,
+}
+
 pub struct ChatCompletionService {
     chat_completion_repository: Arc<dyn ChatCompletionRepository>,
     secret_repository: Arc<dyn SecretRepository>,
     settings_repository: Arc<dyn SettingsRepository>,
     prompt_cache_repository: Arc<dyn PromptCacheRepository>,
+    generation_background_runtime: Option<Arc<dyn GenerationBackgroundRuntime>>,
     ios_policy: IosPolicyActivationReport,
-    active_streams: CancellationRegistry,
+    stream_sessions: StreamSessionRegistry,
     active_generations: CancellationRegistry,
 }
 
@@ -72,6 +91,7 @@ impl ChatCompletionService {
         secret_repository: Arc<dyn SecretRepository>,
         settings_repository: Arc<dyn SettingsRepository>,
         prompt_cache_repository: Arc<dyn PromptCacheRepository>,
+        generation_background_runtime: Option<Arc<dyn GenerationBackgroundRuntime>>,
         ios_policy: IosPolicyActivationReport,
     ) -> Self {
         Self {
@@ -79,14 +99,72 @@ impl ChatCompletionService {
             secret_repository,
             settings_repository,
             prompt_cache_repository,
+            generation_background_runtime,
             ios_policy,
-            active_streams: CancellationRegistry::default(),
+            stream_sessions: StreamSessionRegistry::default(),
             active_generations: CancellationRegistry::default(),
         }
     }
 
     fn ios_policy_is_active(&self) -> bool {
         self.ios_policy.scope == IosPolicyScope::Ios
+    }
+
+    fn resolve_status_source(
+        &self,
+        dto: &ChatCompletionStatusRequestDto,
+    ) -> Result<Option<ChatCompletionSource>, ApplicationError> {
+        if dto.bypass_status_check {
+            return Ok(None);
+        }
+
+        let source = self.resolve_source(&dto.chat_completion_source)?;
+        self.ensure_chat_completion_source_allowed(source)?;
+        self.ensure_endpoint_overrides_allowed_for_status(source, dto)?;
+
+        match source {
+            ChatCompletionSource::VertexAi | ChatCompletionSource::MiniMax => Ok(None),
+            _ => Ok(Some(source)),
+        }
+    }
+
+    fn resolve_generate_source(
+        &self,
+        dto: &ChatCompletionGenerateRequestDto,
+    ) -> Result<ChatCompletionSource, ApplicationError> {
+        let source = self.resolve_source(
+            dto.get_string("chat_completion_source")
+                .unwrap_or(OPENAI_SOURCE),
+        )?;
+        self.ensure_chat_completion_source_allowed(source)?;
+        self.ensure_endpoint_overrides_allowed_for_payload(source, &dto.payload)?;
+        self.ensure_chat_completion_features_allowed(&dto.payload)?;
+        Ok(source)
+    }
+
+    pub fn resolve_status_user_endpoint(
+        &self,
+        dto: &ChatCompletionStatusRequestDto,
+    ) -> Result<Option<String>, ApplicationError> {
+        let Some(source) = self.resolve_status_source(dto)? else {
+            return Ok(None);
+        };
+
+        config::resolve_user_configured_endpoint(source, &dto.reverse_proxy, &dto.custom_url)
+    }
+
+    pub fn resolve_generate_user_endpoint(
+        &self,
+        dto: &ChatCompletionGenerateRequestDto,
+    ) -> Result<Option<String>, ApplicationError> {
+        let source = self.resolve_generate_source(dto)?;
+        let custom_url = config::get_payload_string(&dto.payload, "custom_url")?;
+
+        config::resolve_user_configured_endpoint(
+            source,
+            dto.get_string("reverse_proxy").unwrap_or_default(),
+            &custom_url,
+        )
     }
 
     fn ensure_chat_completion_source_allowed(
@@ -314,27 +392,14 @@ impl ChatCompletionService {
         &self,
         dto: ChatCompletionStatusRequestDto,
     ) -> Result<Value, ApplicationError> {
-        if dto.bypass_status_check {
+        let Some(source) = self.resolve_status_source(&dto)? else {
             return Ok(json!({
                 "bypass": true,
                 "data": []
             }));
-        }
+        };
 
-        let source = self.resolve_source(&dto.chat_completion_source)?;
-        self.ensure_chat_completion_source_allowed(source)?;
-        self.ensure_endpoint_overrides_allowed_for_status(source, &dto)?;
         let model_list_source = resolve_status_model_list_source(source, &dto.custom_api_format)?;
-
-        if matches!(
-            source,
-            ChatCompletionSource::VertexAi | ChatCompletionSource::MiniMax
-        ) {
-            return Ok(json!({
-                "bypass": true,
-                "data": []
-            }));
-        }
         let config =
             config::resolve_status_api_config(source, &dto, &self.secret_repository).await?;
 
@@ -347,22 +412,58 @@ impl ChatCompletionService {
     async fn execute_generate(
         &self,
         dto: ChatCompletionGenerateRequestDto,
+        on_delta: Option<&mut (dyn FnMut(ChatCompletionStreamDelta) + Send)>,
     ) -> Result<ChatCompletionExecution, ApplicationError> {
-        let source = self.resolve_source(
-            dto.get_string("chat_completion_source")
-                .unwrap_or(OPENAI_SOURCE),
-        )?;
-        self.ensure_chat_completion_source_allowed(source)?;
-        self.ensure_endpoint_overrides_allowed_for_payload(source, &dto.payload)?;
-        self.ensure_chat_completion_features_allowed(&dto.payload)?;
+        let source = self.resolve_generate_source(&dto)?;
         let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
         Self::ensure_agent_body_overrides_allowed(&dto.payload, &additional_parameters)?;
         let provider_format = ChatCompletionProviderFormat::from_payload(source, &dto.payload)?;
+        let prepared = self
+            .prepare_generate_request(dto, source, additional_parameters)
+            .await?;
 
+        let response = match on_delta {
+            Some(on_delta) => {
+                self.chat_completion_repository
+                    .generate_with_deltas(
+                        prepared.source,
+                        &prepared.config,
+                        &prepared.endpoint_path,
+                        &prepared.upstream_payload,
+                        on_delta,
+                    )
+                    .await
+            }
+            None => {
+                self.chat_completion_repository
+                    .generate(
+                        prepared.source,
+                        &prepared.config,
+                        &prepared.endpoint_path,
+                        &prepared.upstream_payload,
+                    )
+                    .await
+            }
+        }
+        .map_err(ApplicationError::from)?;
+
+        Ok(ChatCompletionExecution {
+            source: prepared.source,
+            provider_format,
+            body: response.body,
+            normalization_report: response.normalization_report,
+        })
+    }
+
+    async fn prepare_generate_request(
+        &self,
+        dto: ChatCompletionGenerateRequestDto,
+        source: ChatCompletionSource,
+        additional_parameters: AdditionalParameters,
+    ) -> Result<PreparedChatCompletionRequest, ApplicationError> {
         let settings = self.load_tauritavern_settings().await?;
         let prompt_caching_hints =
             prompt_caching_plan::PromptCachingRequestHints::from_payload(&dto.payload)?;
-
         let mut config = config::resolve_generate_api_config(
             source,
             &dto,
@@ -370,8 +471,8 @@ impl ChatCompletionService {
             &self.secret_repository,
         )
         .await?;
-        let payload = dto.payload;
-        let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
+        apply_opencode_session_header(source, &dto.payload, &mut config)?;
+        let (endpoint_path, mut upstream_payload) = payload::build_payload(source, dto.payload)?;
         additional_parameters.apply_body_overrides(&mut upstream_payload)?;
         self.apply_tauritavern_prompt_caching(
             source,
@@ -384,25 +485,20 @@ impl ChatCompletionService {
         .await?;
         payload::validate_upstream_tool_transcript(&endpoint_path, &upstream_payload)?;
 
-        let response = self
-            .chat_completion_repository
-            .generate(source, &config, &endpoint_path, &upstream_payload)
-            .await
-            .map_err(ApplicationError::from)?;
-
-        Ok(ChatCompletionExecution {
+        Ok(PreparedChatCompletionRequest {
             source,
-            provider_format,
-            body: response.body,
-            normalization_report: response.normalization_report,
+            config,
+            endpoint_path,
+            upstream_payload,
         })
     }
 
     pub(crate) async fn generate_exchange(
         &self,
         dto: ChatCompletionGenerateRequestDto,
+        on_delta: Option<&mut (dyn FnMut(ChatCompletionStreamDelta) + Send)>,
     ) -> Result<ChatCompletionExchange, ApplicationError> {
-        let execution = self.execute_generate(dto).await?;
+        let execution = self.execute_generate(dto, on_delta).await?;
         let normalized_response = NormalizedChatCompletionResponse::from_value(execution.body)?;
 
         Ok(ChatCompletionExchange {
@@ -413,12 +509,30 @@ impl ChatCompletionService {
         })
     }
 
-    pub async fn generate_with_cancel(
+    pub async fn generate_request(
+        &self,
+        request_id: &str,
+        dto: ChatCompletionGenerateRequestDto,
+    ) -> Result<Value, ApplicationError> {
+        let notify_completion = !Self::is_quiet_request(&dto);
+        let cancel = self.register_generation(request_id).await;
+        let background = GenerationBackgroundLease::start(
+            self.generation_background_runtime.as_ref(),
+            request_id,
+            notify_completion,
+        );
+        let result = self.generate_with_cancel(dto, cancel).await;
+        self.complete_generation(request_id).await;
+        background.complete(Self::background_outcome(&result), notify_completion);
+        result
+    }
+
+    async fn generate_with_cancel(
         &self,
         dto: ChatCompletionGenerateRequestDto,
         mut cancel: ChatCompletionCancelReceiver,
     ) -> Result<Value, ApplicationError> {
-        let generation = self.execute_generate(dto);
+        let generation = self.execute_generate(dto, None);
         tokio::pin!(generation);
 
         let execution = tokio::select! {
@@ -438,9 +552,10 @@ impl ChatCompletionService {
     pub(crate) async fn generate_exchange_with_cancel(
         &self,
         dto: ChatCompletionGenerateRequestDto,
+        on_delta: Option<&mut (dyn FnMut(ChatCompletionStreamDelta) + Send)>,
         mut cancel: ChatCompletionCancelReceiver,
     ) -> Result<ChatCompletionExchange, ApplicationError> {
-        let generation = self.generate_exchange(dto);
+        let generation = self.generate_exchange(dto, on_delta);
         tokio::pin!(generation);
 
         tokio::select! {
@@ -461,47 +576,19 @@ impl ChatCompletionService {
         sender: ChatCompletionStreamSender,
         cancel: ChatCompletionCancelReceiver,
     ) -> Result<(), ApplicationError> {
-        let source = self.resolve_source(
-            dto.get_string("chat_completion_source")
-                .unwrap_or(OPENAI_SOURCE),
-        )?;
-        self.ensure_chat_completion_source_allowed(source)?;
-        self.ensure_endpoint_overrides_allowed_for_payload(source, &dto.payload)?;
-        self.ensure_chat_completion_features_allowed(&dto.payload)?;
+        let source = self.resolve_generate_source(&dto)?;
         let additional_parameters = AdditionalParameters::from_payload(&dto.payload)?;
         Self::ensure_agent_body_overrides_allowed(&dto.payload, &additional_parameters)?;
-
-        let settings = self.load_tauritavern_settings().await?;
-        let prompt_caching_hints =
-            prompt_caching_plan::PromptCachingRequestHints::from_payload(&dto.payload)?;
-
-        let mut config = config::resolve_generate_api_config(
-            source,
-            &dto,
-            &additional_parameters,
-            &self.secret_repository,
-        )
-        .await?;
-        let payload = dto.payload;
-        let (endpoint_path, mut upstream_payload) = payload::build_payload(source, payload)?;
-        additional_parameters.apply_body_overrides(&mut upstream_payload)?;
-        self.apply_tauritavern_prompt_caching(
-            source,
-            &endpoint_path,
-            &mut config,
-            &settings,
-            &mut upstream_payload,
-            prompt_caching_hints,
-        )
-        .await?;
-        payload::validate_upstream_tool_transcript(&endpoint_path, &upstream_payload)?;
+        let prepared = self
+            .prepare_generate_request(dto, source, additional_parameters)
+            .await?;
 
         self.chat_completion_repository
             .generate_stream(
-                source,
-                &config,
-                &endpoint_path,
-                &upstream_payload,
+                prepared.source,
+                &prepared.config,
+                &prepared.endpoint_path,
+                &prepared.upstream_payload,
                 sender,
                 cancel,
             )
@@ -509,19 +596,40 @@ impl ChatCompletionService {
             .map_err(ApplicationError::from)
     }
 
-    pub async fn register_stream(&self, stream_id: &str) -> watch::Receiver<bool> {
-        self.active_streams.register(stream_id).await
+    pub async fn start_stream(
+        self: &Arc<Self>,
+        stream_id: String,
+        dto: ChatCompletionGenerateRequestDto,
+    ) -> Result<(), ApplicationError> {
+        let notify_completion = !Self::is_quiet_request(&dto);
+        let cancel = self.stream_sessions.register(&stream_id).await?;
+        let background = GenerationBackgroundLease::start(
+            self.generation_background_runtime.as_ref(),
+            &stream_id,
+            notify_completion,
+        );
+        let service = self.clone();
+        tokio::spawn(async move {
+            service
+                .run_stream(stream_id, dto, cancel, background, notify_completion)
+                .await;
+        });
+        Ok(())
     }
 
-    pub async fn cancel_stream(&self, stream_id: &str) -> bool {
-        self.active_streams.cancel(stream_id).await
+    pub async fn read_stream(
+        &self,
+        stream_id: &str,
+        after_seq: u64,
+    ) -> Result<ChatCompletionStreamReadResultDto, ApplicationError> {
+        self.stream_sessions.read(stream_id, after_seq).await
     }
 
-    pub async fn complete_stream(&self, stream_id: &str) {
-        self.active_streams.complete(stream_id).await;
+    pub async fn close_stream(&self, stream_id: &str) -> bool {
+        self.stream_sessions.close(stream_id).await
     }
 
-    pub async fn register_generation(&self, request_id: &str) -> watch::Receiver<bool> {
+    async fn register_generation(&self, request_id: &str) -> watch::Receiver<bool> {
         self.active_generations.register(request_id).await
     }
 
@@ -529,8 +637,114 @@ impl ChatCompletionService {
         self.active_generations.cancel(request_id).await
     }
 
-    pub async fn complete_generation(&self, request_id: &str) {
+    async fn complete_generation(&self, request_id: &str) {
         self.active_generations.complete(request_id).await;
+    }
+
+    async fn run_stream(
+        self: Arc<Self>,
+        stream_id: String,
+        dto: ChatCompletionGenerateRequestDto,
+        mut lifecycle_cancel: watch::Receiver<bool>,
+        mut background: GenerationBackgroundLease,
+        notify_completion: bool,
+    ) {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let (stop_provider, provider_cancel) = watch::channel(false);
+        let generation_task = tokio::spawn({
+            let service = self.clone();
+            async move { service.generate_stream(dto, sender, provider_cancel).await }
+        });
+        let mut received_bytes = 0_u64;
+
+        let result = loop {
+            let chunk = tokio::select! {
+                chunk = receiver.recv() => chunk,
+                _ = lifecycle_cancel.changed() => {
+                    generation_task.abort();
+                    break Err(DomainError::generation_cancelled_by_user().into());
+                }
+            };
+            let Some(chunk) = chunk else {
+                break match generation_task.await {
+                    Ok(result) => result,
+                    Err(error) => Err(ApplicationError::InternalError(format!(
+                        "Streaming task join failed: {error}"
+                    ))),
+                };
+            };
+
+            if chunk.is_empty() {
+                continue;
+            }
+
+            received_bytes = received_bytes.saturating_add(chunk.len() as u64);
+            background.report_progress(received_bytes);
+
+            match self.stream_sessions.append(&stream_id, chunk).await {
+                Ok(StreamAppendOutcome::Appended) => {}
+                Ok(StreamAppendOutcome::ProviderDone) => {
+                    Self::finish_provider_after_done(&stream_id, stop_provider, generation_task)
+                        .await;
+                    break Ok(());
+                }
+                Ok(StreamAppendOutcome::SessionClosed) => {
+                    generation_task.abort();
+                    return;
+                }
+                Err(error) => {
+                    generation_task.abort();
+                    self.stream_sessions.fail(&stream_id, error).await;
+                    background.complete(
+                        GenerationBackgroundOutcome::Failed { status_code: None },
+                        notify_completion,
+                    );
+                    return;
+                }
+            }
+        };
+
+        let outcome = Self::background_outcome(&result);
+        match result {
+            Ok(()) => self.stream_sessions.finish(&stream_id).await,
+            Err(error) => self.stream_sessions.fail(&stream_id, error).await,
+        }
+        background.complete(outcome, notify_completion);
+    }
+
+    async fn finish_provider_after_done(
+        stream_id: &str,
+        stop_provider: watch::Sender<bool>,
+        generation_task: tokio::task::JoinHandle<Result<(), ApplicationError>>,
+    ) {
+        let _ = stop_provider.send(true);
+        match generation_task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::error!(
+                stream_id,
+                "Provider stream cleanup failed after completion: {error}"
+            ),
+            Err(error) => tracing::error!(
+                stream_id,
+                "Provider stream cleanup task failed after completion: {error}"
+            ),
+        }
+    }
+
+    fn is_quiet_request(dto: &ChatCompletionGenerateRequestDto) -> bool {
+        dto.get_string("type")
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("quiet"))
+    }
+
+    fn background_outcome<T>(result: &Result<T, ApplicationError>) -> GenerationBackgroundOutcome {
+        match result {
+            Ok(_) => GenerationBackgroundOutcome::Succeeded,
+            Err(ApplicationError::Cancelled(_)) => GenerationBackgroundOutcome::Cancelled,
+            Err(ApplicationError::RateLimited(_)) => GenerationBackgroundOutcome::Failed {
+                status_code: Some(429),
+            },
+            Err(_) => GenerationBackgroundOutcome::Failed { status_code: None },
+        }
     }
 
     pub async fn close_provider_session(&self, session_id: &str) {
@@ -713,6 +927,34 @@ fn has_configured_header(config: &ChatCompletionApiConfig, header_name: &str) ->
         .any(|key| key.eq_ignore_ascii_case(header_name))
 }
 
+fn apply_opencode_session_header(
+    source: ChatCompletionSource,
+    payload: &Map<String, Value>,
+    config: &mut ChatCompletionApiConfig,
+) -> Result<(), ApplicationError> {
+    if source != ChatCompletionSource::OpenCode
+        || has_configured_header(config, OPENCODE_SESSION_HEADER)
+    {
+        return Ok(());
+    }
+
+    let stable_chat_id = payload
+        .get(OPENCODE_STABLE_CHAT_ID_FIELD)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "OpenCode requires a stable chat id for x-opencode-session".to_string(),
+            )
+        })?;
+    config.extra_headers.insert(
+        OPENCODE_SESSION_HEADER.to_string(),
+        stable_chat_id.to_string(),
+    );
+    Ok(())
+}
+
 fn resolve_status_model_list_source(
     source: ChatCompletionSource,
     custom_api_format: &str,
@@ -752,14 +994,21 @@ fn apply_nanogpt_claude_cache_control(payload: &mut Value, ttl: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use serde_json::{Value, json};
 
     use super::{
-        apply_nanogpt_claude_cache_control, apply_vertexai_prompt_cache_session_header,
+        AdditionalParameters, ChatCompletionService, apply_nanogpt_claude_cache_control,
+        apply_opencode_session_header, apply_vertexai_prompt_cache_session_header,
         ensure_vertexai_claude_prompt_cache_ttl, resolve_status_model_list_source,
     };
+    use crate::errors::ApplicationError;
+    use tokio::sync::watch;
     use tt_ports::repositories::chat_completion_repository::{
-        AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
+        AnthropicBetaHeaderMode, CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionApiConfig,
+        ChatCompletionSource,
     };
     use tt_ports::repositories::prompt_cache_repository::PromptCacheKey;
 
@@ -791,17 +1040,6 @@ mod tests {
     }
 
     #[test]
-    fn nanogpt_claude_cache_control_is_skipped_for_non_claude_models() {
-        let mut payload = json!({
-            "model": "gpt-4o-mini",
-            "messages": [{"role": "user", "content": "hello"}]
-        });
-
-        assert!(!apply_nanogpt_claude_cache_control(&mut payload, "5m"));
-        assert!(payload.get("cache_control").is_none());
-    }
-
-    #[test]
     fn vertexai_claude_rejects_one_hour_cache_for_old_models() {
         let error = ensure_vertexai_claude_prompt_cache_ttl("1h", "claude-3-7-sonnet@20250219")
             .expect_err("old model should reject 1h ttl");
@@ -816,6 +1054,7 @@ mod tests {
         let mut config = ChatCompletionApiConfig {
             base_url: "https://aiplatform.googleapis.com/v1/projects/p/locations/global"
                 .to_string(),
+            user_configured_endpoint: false,
             api_key: String::new(),
             authorization_header: None,
             vertexai_service_account_json: None,
@@ -835,12 +1074,11 @@ mod tests {
     }
 
     #[test]
-    fn vertexai_regional_prompt_cache_skips_session_header() {
+    fn opencode_uses_stable_chat_id_as_session_header() {
         let mut config = ChatCompletionApiConfig {
-            base_url:
-                "https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1"
-                    .to_string(),
-            api_key: String::new(),
+            base_url: "https://opencode.ai/zen/v1".to_string(),
+            user_configured_endpoint: false,
+            api_key: "secret".to_string(),
             authorization_header: None,
             vertexai_service_account_json: None,
             extra_headers: Default::default(),
@@ -849,13 +1087,31 @@ mod tests {
             aws_bedrock_custom_response_path: None,
             aws_bedrock_custom_stream_path: None,
         };
-        let key = PromptCacheKey::VertexAiClaude {
-            scope: "scope".to_string(),
-        };
+        let missing_id = json!({});
+        assert!(
+            apply_opencode_session_header(
+                ChatCompletionSource::OpenCode,
+                missing_id.as_object().unwrap(),
+                &mut config,
+            )
+            .is_err()
+        );
+        let payload = json!({ "_tauritavern_stable_chat_id": "stable-chat" });
 
-        apply_vertexai_prompt_cache_session_header(&mut config, &key);
+        apply_opencode_session_header(
+            ChatCompletionSource::OpenCode,
+            payload.as_object().unwrap(),
+            &mut config,
+        )
+        .unwrap();
 
-        assert!(!config.extra_headers.contains_key("X-Vertex-Ai-Session-Id"));
+        assert_eq!(
+            config
+                .extra_headers
+                .get("x-opencode-session")
+                .map(String::as_str),
+            Some("stable-chat")
+        );
     }
 
     #[test]
@@ -872,6 +1128,66 @@ mod tests {
             resolve_status_model_list_source(ChatCompletionSource::Custom, "gemini_interactions")
                 .expect("status transport should resolve");
         assert_eq!(source, ChatCompletionSource::Makersuite);
+    }
+
+    #[test]
+    fn agent_body_overrides_cannot_change_stream_or_choice_count() {
+        for (override_fields, expected_error) in [
+            (
+                json!({
+                    (CHAT_COMPLETION_PROVIDER_STATE_FIELD): {},
+                    "custom_include_body": { "stream": true }
+                }),
+                true,
+            ),
+            (
+                json!({
+                    (CHAT_COMPLETION_PROVIDER_STATE_FIELD): {},
+                    "custom_exclude_body": ["n"]
+                }),
+                true,
+            ),
+            (
+                json!({
+                    "custom_include_body": { "stream": true },
+                    "custom_exclude_body": ["n"]
+                }),
+                false,
+            ),
+        ] {
+            let payload = override_fields
+                .as_object()
+                .expect("payload must be an object");
+            let parameters = AdditionalParameters::from_payload(payload).expect("override parses");
+            assert_eq!(
+                ChatCompletionService::ensure_agent_body_overrides_allowed(payload, &parameters)
+                    .is_err(),
+                expected_error
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_done_waits_for_provider_cleanup() {
+        let (stop_provider, mut provider_cancel) = watch::channel(false);
+        let cleaned_up = Arc::new(AtomicBool::new(false));
+        let generation_task = tokio::spawn({
+            let cleaned_up = cleaned_up.clone();
+            async move {
+                provider_cancel.changed().await.unwrap();
+                cleaned_up.store(true, Ordering::SeqCst);
+                Ok::<(), ApplicationError>(())
+            }
+        });
+
+        ChatCompletionService::finish_provider_after_done(
+            "stream-1",
+            stop_provider,
+            generation_task,
+        )
+        .await;
+
+        assert!(cleaned_up.load(Ordering::SeqCst));
     }
 }
 

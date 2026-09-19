@@ -1,19 +1,20 @@
 import { estimateTokenCount } from '../brokers/token-count-broker.js';
 import { createAndroidGenerationBridge } from '../adapters/android/android-generation-bridge.js';
 import { confirmAiNotificationPermissionRationale } from '../adapters/st/ai-notification-permission-rationale-popup.js';
-import { translateSillyTavern } from '../adapters/st/sillytavern-i18n.js';
+import { getSillyTavernLocale, translateSillyTavern } from '../adapters/st/sillytavern-i18n.js';
 import { createGenerationLifecycleService } from '../services/ai/generation-lifecycle-service.js';
 import { createGenerationStatusBridge } from '../services/ai/generation-status-bridge.js';
+import { consumeChatCompletionStream } from '../services/ai/chat-completion-stream-consumer.js';
 import { createSystemNotificationService } from '../services/notifications/system-notification-service.js';
-import { registerOpenAiTokenizerRoutes } from './openai-tokenizer-routes.js';
 import {
     asUpstreamFailureDetails,
+    buildLegacyErrorPayload,
     getErrorMessage,
     getUpstreamFailureDetails,
     getUserFacingErrorMessage,
     translateApiErrorLabel,
 } from './ai-error-presenter.js';
-import { createChannel } from '../../../tauri-bridge.js';
+import { registerCaptionRoutes } from './caption-routes.js';
 import { stripCommandErrorPrefixes } from '../../../scripts/util/command-error-utils.js';
 import { createAbortError, isAbortError } from '../kernel/abort-error.js';
 
@@ -44,15 +45,7 @@ const ANDROID_GENERATION_BRIDGE_NAME = 'TauriTavernAndroidAiBridge';
 const FAILURE_NOTIFICATION_MAX_BODY_LENGTH = 180;
 const ANDROID_LIVE_UPDATE_TOKEN_THROTTLE_MS = 4000;
 const ANDROID_LIVE_UPDATE_TOKEN_MIN_CHARS_DELTA = 160;
-const CAPTION_UNAVAILABLE_ROUTES = Object.freeze([
-    '/api/extra/caption',
-    '/api/horde/caption-image',
-    '/api/openai/caption-image',
-    '/api/google/caption-image',
-    '/api/anthropic/caption-image',
-    '/api/backends/text-completions/ollama/caption-image',
-]);
-const CAPTION_UNAVAILABLE_MESSAGE = 'Image captioning is not implemented in the TauriTavern native backend.';
+const OPENCODE_STABLE_CHAT_ID_FIELD = '_tauritavern_stable_chat_id';
 const i18nNotificationKeys = Object.freeze({
     successTitle: 'tauritavern_ai_notification_success_title',
     successBody: 'tauritavern_ai_notification_success_body',
@@ -187,6 +180,11 @@ function isQuietRequest(payload) {
     return String(asObject(payload).type || '').trim().toLowerCase() === 'quiet';
 }
 
+function isRequestCancelled(error) {
+    return isAbortError(error)
+        || /(?:generation|endpoint authorization) cancelled by user/i.test(getErrorMessage(error));
+}
+
 function getCompletionModel(payload) {
     const source = asObject(payload);
     const candidates = [
@@ -218,6 +216,19 @@ function isVertexAiClaudePayload(payload) {
         && getCompletionModel(payload).toLowerCase().startsWith('claude-');
 }
 
+function isOpenCodeFormat(payload, format) {
+    return getChatCompletionSource(payload) === 'opencode'
+        && String(asObject(payload).opencode_api_format || '').trim() === format;
+}
+
+async function attachOpenCodeStableChatId(payload) {
+    if (getChatCompletionSource(payload) !== 'opencode') {
+        return;
+    }
+
+    payload[OPENCODE_STABLE_CHAT_ID_FIELD] = await globalThis.__TAURITAVERN__.api.chat.current.handle().stableId();
+}
+
 function buildErrorAssistantText(error) {
     const normalizedMessage = getUserFacingErrorMessage(error);
     const errorLabel = translateApiErrorLabel();
@@ -226,26 +237,6 @@ function buildErrorAssistantText(error) {
     }
 
     return `${errorLabel}\n${normalizedMessage}`;
-}
-
-function buildLegacyErrorPayload(error) {
-    const details = getUpstreamFailureDetails(error);
-    const payload = {
-        message: getUserFacingErrorMessage(error),
-    };
-
-    if (details) {
-        payload.code = details.code;
-        payload.category = details.category;
-        payload.message_key = details.messageKey;
-        if (details.endpoint) {
-            payload.endpoint = details.endpoint;
-        }
-    }
-
-    return {
-        error: payload,
-    };
 }
 
 function buildErrorCompletionPayload(error, payload) {
@@ -298,7 +289,7 @@ function buildErrorStreamChunk(error, payload) {
     const content = buildErrorAssistantText(error);
     const source = getChatCompletionSource(payload);
 
-    if (source === 'claude' || isVertexAiClaudePayload(payload)) {
+    if (source === 'claude' || isVertexAiClaudePayload(payload) || isOpenCodeFormat(payload, 'claude_messages')) {
         return {
             delta: {
                 text: content,
@@ -306,7 +297,7 @@ function buildErrorStreamChunk(error, payload) {
         };
     }
 
-    if (source === 'makersuite' || source === 'vertexai') {
+    if (source === 'makersuite' || source === 'vertexai' || isOpenCodeFormat(payload, 'gemini')) {
         return {
             candidates: [
                 {
@@ -366,6 +357,7 @@ async function invokeChatCompletionWithAbort(context, payload, signal) {
     if (signal?.aborted) {
         throw createAbortError();
     }
+    await attachOpenCodeStableChatId(payload);
 
     const requestId = createStreamId();
     let abortRequested = false;
@@ -385,6 +377,7 @@ async function invokeChatCompletionWithAbort(context, payload, signal) {
         const result = await context.safeInvoke('generate_chat_completion', {
             requestId,
             dto: payload,
+            locale: getSillyTavernLocale(),
         });
 
         if (abortRequested) {
@@ -400,12 +393,12 @@ async function invokeChatCompletionWithAbort(context, payload, signal) {
 }
 
 async function createChatCompletionStreamResponse(context, payload, signal, lifecycle) {
+    await attachOpenCodeStableChatId(payload);
     const streamId = createStreamId();
     const encoder = new TextEncoder();
 
     let isClosed = false;
     let sawDone = false;
-    let channel = null;
     let flushTimer = null;
     let abortHandler = null;
     let controllerRef = null;
@@ -413,11 +406,11 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
     let cancelAfterStart = false;
     const pendingFrames = [];
 
-    const requestUpstreamCancel = async () => {
+    const closeSession = async () => {
         try {
-            await context.safeInvoke('cancel_chat_completion_stream', { streamId });
+            await context.safeInvoke('close_chat_completion_stream', { streamId });
         } catch (error) {
-            console.debug('Failed to cancel chat completion stream:', error);
+            console.debug('Failed to close chat completion stream:', error);
         }
     };
 
@@ -483,17 +476,13 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
             abortHandler = null;
         }
 
-        if (channel) {
-            channel.onmessage = () => {};
-            channel = null;
-        }
-
         if (cancelUpstream) {
             if (!streamStartSettled) {
                 cancelAfterStart = true;
             }
-
-            await requestUpstreamCancel();
+        }
+        if (cancelUpstream || streamStartSettled) {
+            await closeSession();
         }
 
         const isSuccessfulCompletion = sawDone && !cancelUpstream && !errorPayload;
@@ -524,7 +513,6 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
             if (data === '[DONE]') {
                 sawDone = true;
                 flushFrames();
-                void closeStream();
                 return;
             }
 
@@ -556,21 +544,36 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
         }
     };
 
+    const pumpStream = async () => {
+        try {
+            const status = await consumeChatCompletionStream({
+                safeInvoke: context.safeInvoke,
+                streamId,
+                onEvent: onStreamEvent,
+                isClosed: () => isClosed,
+            });
+            if (status === 'done') {
+                await closeStream({ appendDone: true });
+            } else if (status === 'cancelled') {
+                await closeStream({ cancelUpstream: true });
+            }
+        } catch (error) {
+            if (isClosed) {
+                return;
+            }
+
+            const message = getUserFacingErrorMessage(error);
+            await closeStream({
+                appendDone: true,
+                errorPayload: buildErrorStreamChunk(message, payload),
+                failureMessage: message,
+            });
+        }
+    };
+
     const readable = new ReadableStream({
         async start(controller) {
             controllerRef = controller;
-
-            try {
-                channel = createChannel(onStreamEvent);
-            } catch (error) {
-                const message = getUserFacingErrorMessage(error);
-                await closeStream({
-                    appendDone: true,
-                    errorPayload: buildErrorStreamChunk(message, payload),
-                    failureMessage: message,
-                });
-                return;
-            }
 
             if (signal) {
                 abortHandler = () => {
@@ -589,16 +592,20 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
                 await context.safeInvoke('start_chat_completion_stream', {
                     streamId,
                     dto: payload,
-                    onEvent: channel,
+                    locale: getSillyTavernLocale(),
                 });
 
                 // If abort happened while stream registration was in-flight, run cancellation again
                 // after start settles to avoid a missed pre-registration cancel race.
                 if (cancelAfterStart) {
                     cancelAfterStart = false;
-                    await requestUpstreamCancel();
+                    await closeSession();
                 }
             } catch (error) {
+                if (isRequestCancelled(error)) {
+                    await closeStream({ cancelUpstream: true });
+                    return;
+                }
                 const message = getUserFacingErrorMessage(error);
                 await closeStream({
                     appendDone: true,
@@ -607,6 +614,10 @@ async function createChatCompletionStreamResponse(context, payload, signal, life
                 });
             } finally {
                 streamStartSettled = true;
+            }
+
+            if (!isClosed) {
+                void pumpStream();
             }
         },
         async cancel() {
@@ -631,24 +642,23 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
         shouldNotifyCompletion,
         getNotificationTexts: getGenerationNotificationTexts,
         normalizeFailureNotificationBody,
-        extractFailureStatusCode: extractHttpStatusCode,
         estimateTokenCount,
         progressThrottleMs: ANDROID_LIVE_UPDATE_TOKEN_THROTTLE_MS,
         progressMinCharsDelta: ANDROID_LIVE_UPDATE_TOKEN_MIN_CHARS_DELTA,
     });
 
-    for (const route of CAPTION_UNAVAILABLE_ROUTES) {
-        router.post(route, async () => jsonResponse({
-            error: true,
-            message: CAPTION_UNAVAILABLE_MESSAGE,
-        }, 501));
-    }
+    registerCaptionRoutes(router, {
+        jsonResponse,
+        invokeChatCompletion: (payload, signal) => invokeChatCompletionWithAbort(context, payload, signal),
+    });
 
     router.post('/api/backends/chat-completions/status', async ({ body }) => {
         const payload = asObject(body);
         const dto = {
             chat_completion_source: String(payload.chat_completion_source || ''),
             custom_api_format: String(payload.custom_api_format || ''),
+            opencode_endpoint: String(payload.opencode_endpoint || ''),
+            opencode_api_format: String(payload.opencode_api_format || ''),
             reverse_proxy: String(payload.reverse_proxy || ''),
             proxy_password: String(payload.proxy_password || ''),
             custom_url: String(payload.custom_url || ''),
@@ -663,9 +673,15 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
         };
 
         try {
-            const result = await context.safeInvoke('get_chat_completions_status', { dto });
+            const result = await context.safeInvoke('get_chat_completions_status', {
+                dto,
+                locale: getSillyTavernLocale(),
+            });
             return jsonResponse(result || { data: [] });
         } catch (error) {
+            if (isRequestCancelled(error)) {
+                return jsonResponse({ cancelled: true, data: [] });
+            }
             console.error('Chat completion status failed:', error);
             const details = getUpstreamFailureDetails(error);
             return jsonResponse(
@@ -702,10 +718,8 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
             await lifecycle.finish({ success: true });
             return jsonResponse(completion || {});
         } catch (error) {
-            const rawErrorMessage = getErrorMessage(error);
             const errorMessage = getUserFacingErrorMessage(error);
-            const aborted = isAbortError(error)
-                || /generation cancelled by user/i.test(rawErrorMessage);
+            const aborted = isRequestCancelled(error);
 
             await lifecycle.finish({
                 success: false,
@@ -735,6 +749,4 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
             return jsonResponse(buildErrorCompletionPayload(error, payload));
         }
     });
-
-    registerOpenAiTokenizerRoutes(router, context, { jsonResponse });
 }

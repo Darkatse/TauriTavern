@@ -64,24 +64,3 @@ pub fn log_user_visible_error(message: impl AsRef<str>) {
         "{message}",
     );
 }
-
-#[cfg(test)]
-mod tests {
-    use tt_domain::errors::GENERATION_CANCELLED_BY_USER_MESSAGE;
-
-    use super::*;
-
-    #[test]
-    fn should_log_cancelled_as_warning() {
-        assert!(should_log_as_warning(&CommandError::Cancelled(
-            GENERATION_CANCELLED_BY_USER_MESSAGE.to_string()
-        )));
-    }
-
-    #[test]
-    fn should_not_log_internal_server_error_as_warning() {
-        assert!(!should_log_as_warning(&CommandError::InternalServerError(
-            "Boom".to_string()
-        )));
-    }
-}

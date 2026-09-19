@@ -7,6 +7,7 @@ pub(super) use read_messages::read_messages;
 pub(super) use search::search;
 
 use crate::errors::ApplicationError;
+use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{AgentChatRef, AgentRun};
 use tt_ports::repositories::chat_repository::ChatMessageRole;
 use tt_ports::repositories::chat_repository::{ChatRepository, FindLastMessageQuery};
@@ -19,8 +20,8 @@ const DEFAULT_SEARCH_LIMIT: usize = 20;
 const MAX_SEARCH_LIMIT: usize = 50;
 const MAX_SEARCH_SCAN_LIMIT: usize = 100_000;
 const MAX_MESSAGES_PER_READ: usize = 20;
-const MAX_FULL_MESSAGE_CHARS: usize = 8_000;
-const MAX_MESSAGE_RANGE_CHARS: usize = 8_000;
+const MAX_MESSAGE_READ_LINES: usize = 1_200;
+const MAX_MESSAGE_READ_CHARS: usize = 8_000;
 const MAX_TOTAL_READ_CHARS: usize = 20_000;
 
 fn role_as_str(role: ChatMessageRole) -> &'static str {
@@ -46,7 +47,7 @@ async fn raw_total_messages(
     chat_repository: &dyn ChatRepository,
     group_chat_repository: &dyn GroupChatRepository,
     chat_ref: &AgentChatRef,
-) -> Result<usize, ApplicationError> {
+) -> Result<usize, DomainError> {
     let query = FindLastMessageQuery {
         role: None,
         has_top_level_keys: None,
@@ -72,6 +73,12 @@ async fn raw_total_messages(
     Ok(last
         .map(|message| message.index.saturating_add(1))
         .unwrap_or(0))
+}
+
+fn chat_unavailable_message(message: &str) -> String {
+    format!(
+        "{message}\n\nThe current chat is no longer available. Continue with the context already present in this run. If you need the missing history, ask the user to retry from an available chat."
+    )
 }
 
 fn visible_total_messages(

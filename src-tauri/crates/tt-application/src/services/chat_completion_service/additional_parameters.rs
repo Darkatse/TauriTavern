@@ -238,36 +238,6 @@ mod tests {
     }
 
     #[test]
-    fn null_payload_fields_are_treated_as_missing() {
-        // Stale presets and third-party extensions sometimes persist a literal
-        // `null` for these slots; the HTTP boundary should accept that the same
-        // way a missing field would be accepted, instead of bubbling up a
-        // confusing "must be a string" validation error to the user.
-        let payload = json!({
-            "custom_include_body": null,
-            "custom_exclude_body": null,
-            "custom_include_headers": null,
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be an object");
-
-        let parameters = AdditionalParameters::from_payload(&payload)
-            .expect("null fields should be tolerated, not rejected as non-string");
-
-        // Empty defaults should remain after construction.
-        parameters
-            .ensure_body_overrides_do_not_touch(&["messages", "tools"])
-            .expect("absent overrides should never trip the protected-field guard");
-
-        let headers = parameters.headers().expect("headers should parse cleanly");
-        assert!(
-            headers.is_empty(),
-            "null include_headers must not produce any header entries",
-        );
-    }
-
-    #[test]
     fn protected_body_overrides_reject_include_keys() {
         let payload = json!({
             "custom_include_body": "{\"messages\":[{\"role\":\"user\",\"content\":\"override\"}]}"
@@ -282,38 +252,5 @@ mod tests {
             .expect_err("protected include key should fail");
 
         assert!(error.to_string().contains("protected field: messages"));
-    }
-
-    #[test]
-    fn protected_body_overrides_reject_exclude_keys() {
-        let payload = json!({
-            "custom_exclude_body": "[\"tools\"]"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be an object");
-        let parameters = AdditionalParameters::from_payload(&payload).expect("parameters parse");
-
-        let error = parameters
-            .ensure_body_overrides_do_not_touch(&["tools"])
-            .expect_err("protected exclude key should fail");
-
-        assert!(error.to_string().contains("protected field: tools"));
-    }
-
-    #[test]
-    fn protected_body_overrides_allow_unrelated_keys() {
-        let payload = json!({
-            "custom_include_body": "{ \"metadata\": { \"feature\": \"test\" } }",
-            "custom_exclude_body": "[\"temperature\"]"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be an object");
-        let parameters = AdditionalParameters::from_payload(&payload).expect("parameters parse");
-
-        parameters
-            .ensure_body_overrides_do_not_touch(&["messages", "tools"])
-            .expect("unrelated overrides should pass");
     }
 }

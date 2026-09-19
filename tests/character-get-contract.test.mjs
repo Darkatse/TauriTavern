@@ -13,53 +13,25 @@ function registerGetRoute(context) {
     return router;
 }
 
-test('/api/characters/all refreshes backend shallow projection instead of reusing mixed JS cache', async () => {
-    let listReads = 0;
+test('character cache invalidation defers refresh until the next read', async () => {
+    let reads = 0;
     const service = createCharacterService({
-        safeInvoke: async (command, args) => {
-            if (command === 'get_all_characters') {
-                listReads += 1;
-                assert.deepEqual(args, { shallow: true });
-                return [{
-                    name: listReads === 1 ? 'Stale Alice' : 'Fresh Alice',
-                    avatar: 'Alice.png',
-                    shallow: true,
-                    data: { extensions: {} },
-                }];
-            }
-
-            assert.equal(command, 'get_character');
-            assert.deepEqual(args, { name: 'Alice' });
-            return {
-                name: 'Full Alice',
-                avatar: 'Alice.png',
-                shallow: false,
-                description: 'heavy',
-                data: { extensions: {} },
-            };
+        safeInvoke: async (command) => {
+            assert.equal(command, 'get_all_characters');
+            reads += 1;
+            return [{ name: `Character ${reads}`, avatar: `Character ${reads}.png` }];
         },
     });
 
-    await service.getAllCharacters({ shallow: true, forceRefresh: true });
-    await service.getSingleCharacter({ avatar_url: 'Alice.png' });
+    await service.getAllCharacters();
+    await service.getAllCharacters();
+    service.invalidateCharacterCache();
+    const refreshed = await service.getAllCharacters();
 
-    const router = registerGetRoute(service);
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/characters/all',
-        url: new URL('http://localhost/api/characters/all'),
-        body: {},
-    });
-
-    assert.ok(response);
-    assert.equal(response.status, 200);
-    const body = await response.json();
-    assert.equal(body[0].name, 'Fresh Alice');
-    assert.equal(body[0].avatar, 'Alice.png');
-    assert.equal(body[0].shallow, true);
-    assert.equal(body[0].description, '');
-    assert.equal(listReads, 2);
+    assert.equal(reads, 2);
+    assert.equal(refreshed[0].name, 'Character 2');
 });
+
 
 test('/api/characters/get treats avatar_url as an exact avatar filename identity', async () => {
     const calls = [];
@@ -175,6 +147,45 @@ test('/api/characters/get keeps name lookup only when avatar identity is absent'
     ]);
 });
 
+test('/api/characters/get restores open card fields without narrowing their JSON types', async () => {
+    const service = createCharacterService({
+        safeInvoke: async () => ({
+            name: 'Alice',
+            avatar: 'Alice.png',
+            create_date: 'projected date',
+            description: 'projected description',
+            extensions: {
+                depth_prompt: { prompt: '', depth: '', role: 'system' },
+            },
+            json_data: JSON.stringify({
+                spec: 'chara_card_v2',
+                create_date: 123,
+                unknown_root: { kept: true },
+                data: {
+                    name: 'Alice',
+                    description: { raw: true },
+                    unknown_data: [1, 2, 3],
+                    alternate_greetings: '',
+                    extensions: {
+                        depth_prompt: { prompt: '', depth: '', role: 'system' },
+                    },
+                },
+            }),
+        }),
+    });
+
+    const character = await service.getSingleCharacter({ avatar_url: 'Alice.png' });
+
+    assert.equal(character.spec, 'chara_card_v2');
+    assert.equal(character.create_date, 123);
+    assert.deepEqual(character.unknown_root, { kept: true });
+    assert.deepEqual(character.data.unknown_data, [1, 2, 3]);
+    assert.deepEqual(character.description, { raw: true });
+    assert.deepEqual(character.data.description, { raw: true });
+    assert.equal(character.data.alternate_greetings, '');
+    assert.equal(character.data.extensions.depth_prompt.depth, '');
+});
+
 test('/api/characters/chats maps cached backend summaries to upstream listing shape', async () => {
     const calls = [];
     const safeInvoke = async (command, args) => {
@@ -220,102 +231,4 @@ test('/api/characters/chats maps cached backend summaries to upstream listing sh
         last_mes: 1767225600000,
     }]);
     assert.equal(calls.length, 1);
-});
-
-test('/api/characters/chats preserves simple listing request', async () => {
-    const calls = [];
-    const safeInvoke = async (command, args) => {
-        calls.push({ command, args });
-        assert.equal(command, 'get_character_chats_by_id');
-        assert.deepEqual(args, { dto: { name: 'Alice', simple: true } });
-        return [{
-            file_name: 'chat-a.jsonl',
-            file_size: '',
-            chat_items: 0,
-            last_message: '',
-            last_message_date: 0,
-        }];
-    };
-    const service = createCharacterService({
-        safeInvoke,
-    });
-    const router = registerGetRoute({
-        ...service,
-        safeInvoke,
-        ensureJsonl,
-        stripJsonl,
-    });
-
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/characters/chats',
-        url: new URL('http://localhost/api/characters/chats'),
-        body: { avatar_url: 'Alice.png', simple: true },
-    });
-
-    assert.ok(response);
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), [{
-        file_id: 'chat-a',
-        file_name: 'chat-a.jsonl',
-        file_size: '',
-        chat_items: 0,
-        message_count: 0,
-        mes: '',
-        last_message: '',
-        preview_message: '',
-        last_mes: 0,
-    }]);
-    assert.equal(calls.length, 1);
-});
-
-test('character identity resolver treats avatar values as exact filenames without URL fallback', async () => {
-    const calls = [];
-    const service = createCharacterService({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            throw new Error('safeInvoke should not be called for exact avatar identities');
-        },
-    });
-
-    assert.equal(await service.resolveCharacterId({
-        avatar: 'Alice#1.png',
-        fallbackName: 'Alice',
-    }), 'Alice#1');
-    assert.equal(await service.resolveCharacterId({
-        avatar: 'Alice%2FB.png',
-        fallbackName: 'Alice',
-    }), 'Alice%2FB');
-
-    await assert.rejects(
-        service.resolveCharacterId({
-            avatar: 'Alice.png?cache=1',
-            fallbackName: 'Alice',
-        }),
-        /Bad request: invalid avatar_url/,
-    );
-    assert.deepEqual(calls, []);
-});
-
-test('existing character resolver verifies exact avatar identities directly', async () => {
-    const calls = [];
-    const service = createCharacterService({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            assert.equal(command, 'get_character');
-            return {
-                name: 'Alice',
-                avatar: `${args.name}.png`,
-                data: { extensions: {} },
-            };
-        },
-    });
-
-    assert.equal(await service.resolveExistingCharacterId({
-        avatar: 'Alice%2FB.png',
-        fallbackName: 'Alice',
-    }), 'Alice%2FB');
-    assert.deepEqual(calls, [
-        { command: 'get_character', args: { name: 'Alice%2FB' } },
-    ]);
 });

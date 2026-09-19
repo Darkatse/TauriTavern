@@ -51,6 +51,7 @@
   - 设置 readiness：
     - `window.__TAURITAVERN_MAIN_READY__ = readyPromise`
     - 前端用 `waitForTauriMainReady()` 等它，确保首次 `/api/*` 调用前 Host 已就绪，且 Rust `BackendReadiness` 已完成。
+  - Host Ready 后只加载不会传递导入主应用的模块。设置入口先注册同步/配对监听，事件呈现与设置 UI 共用一个 `APP_READY` Promise；请求参数面板本身依赖主应用，直接在 `APP_READY` 后导入。
 
 ### 2.4 前端启动编排：Shell → Core → Full（保持 APP_READY 语义）
 
@@ -123,7 +124,8 @@
 ### 4.3 Rust 命令（并发采样）
 
 - `src-tauri/crates/tauritavern/src/presentation/commands/bootstrap_commands.rs:get_bootstrap_snapshot`
-  - 使用 `tokio::try_join!` 并发获取：settings / characters / groups / avatars / secret_state
+  - 使用 `tokio::join!` 并发获取：settings / characters / groups / avatars / secret_state
+  - settings 与 characters 是启动关键数据；groups、avatars、secret_state 失败时保留用户可见错误并仅禁用对应局部能力，不阻止 `APP_READY`
   - 目的：减少启动关键路径的串行 I/O 等待。
 
 ---
@@ -180,11 +182,9 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
   - **白名单永远保持连接**：`regex_container`、`qr_container`
     - 目的：避免 SPresets 等脚本在抽屉关闭时找不到 `#saved_regex_scripts` 触发 `MutationObserver.observe(target not Node)`。
 - `src/tauri/main/adapters/panel-runtime/top-settings-panel-parking.js`
-  - `compat` 档会为左侧 Chat Completion 面板保留最小兼容面：
-    - `#openai_api-presets`
-    - `#completion_prompt_manager`
-    - `#openai_api`
-  - 目的：在左侧抽屉关闭时，仍保持 OpenAI 预设/Prompt Manager/上下文控制面可被第三方脚本访问，避免出现“世界书扫描 budget 与最终 ChatCompletion budget 脱节”的兼容问题。
+  - 左栏 pinned 锚点分两类，判据不同：
+    - `LEFT_NAV_REQUIRED_ANCHORS`（所有档位，正确性）：**永远在线的代码会读写的 DOM 不允许被 park**。当前是 `#range_block_openai` —— `onModelChange` 位于从不 park 的 `#rm_api_block`，却把 `#openai_max_context` 的 `max` 当暂存读回，被 park 即得到 `NaN`。
+    - `LEFT_NAV_COMPAT_ANCHORS`（仅 `compat`，兼容让步）：`#openai_api-presets`、`#completion_prompt_manager`，让第三方脚本在抽屉关闭时仍能选中。
 
 ---
 
@@ -197,6 +197,7 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
   - `src/script.js`：`tt:startup:shell/core/full` + `tt:startup:ready`
 - 运行时提示：
   - `src/scripts/tauri/startup/startup-status-overlay.js`：右下角非阻塞启动状态 overlay（`APP_READY` 后移除）
+- `pnpm run check:startup` 构建 vendor bundle 并运行 `tests/browser/startup-order.mjs`，验证 Host-ready 模块先加载时主应用仍能正常初始化、早到的事件等待应用就绪后呈现。该检查包含在默认 `pnpm run check` 中。
 
 ---
 

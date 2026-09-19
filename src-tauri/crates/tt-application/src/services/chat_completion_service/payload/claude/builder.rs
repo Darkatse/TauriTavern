@@ -124,6 +124,9 @@ fn build_claude_payload_inner(
     let mut request = Map::new();
     request.insert("model".to_string(), Value::String(model.to_string()));
     insert_if_present(&mut request, payload, "stream");
+    // `speed: "fast"` is Anthropic's fast-mode beta; the HTTP adapter adds the
+    // matching `anthropic-beta` value when it sees this field.
+    insert_if_present(&mut request, payload, "speed");
     insert_claude_sampling_params(
         &mut request,
         payload,
@@ -140,8 +143,17 @@ fn build_claude_payload_inner(
 
     let mut claude_tools = payload
         .get("tools")
-        .map(map_openai_tools_to_claude)
+        .map(|tools| map_openai_tools_to_claude(tools, stream))
         .unwrap_or_default();
+    if claude_web_search_enabled(payload) {
+        claude_tools.insert(
+            0,
+            json!({
+                "type": "web_search_20250305",
+                "name": "web_search",
+            }),
+        );
+    }
 
     let mut forced_tool_choice: Option<Value> = None;
     if let Some(json_schema) = payload.get("json_schema").and_then(Value::as_object)
@@ -252,6 +264,11 @@ fn build_claude_payload_inner(
                 }
             }
         }
+    } else if let Some(reasoning_effort) = payload.get("reasoning_effort") {
+        request.insert(
+            "output_config".to_string(),
+            json!({ "effort": reasoning_effort }),
+        );
     }
 
     request.insert("messages".to_string(), Value::Array(messages));
@@ -356,4 +373,21 @@ fn build_claude_adaptive_thinking(payload: &Map<String, Value>) -> Value {
         "type": "adaptive",
         "display": display,
     })
+}
+
+fn claude_web_search_enabled(payload: &Map<String, Value>) -> bool {
+    if payload.get("enable_web_search").and_then(Value::as_bool) != Some(true) {
+        return false;
+    }
+
+    match payload
+        .get("chat_completion_source")
+        .and_then(Value::as_str)
+    {
+        Some("claude") => true,
+        Some("custom") => {
+            payload.get("custom_api_format").and_then(Value::as_str) == Some("claude_messages")
+        }
+        _ => false,
+    }
 }

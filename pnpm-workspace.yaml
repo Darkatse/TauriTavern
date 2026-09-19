@@ -1,2 +1,6 @@
-onlyBuiltDependencies:
-  - protobufjs
+allowBuilds:
+  '@parcel/watcher': true
+  protobufjs: true
+enableGlobalVirtualStore: false
+overrides:
+  lodash-es: 4.18.1

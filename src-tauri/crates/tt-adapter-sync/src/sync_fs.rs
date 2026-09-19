@@ -57,19 +57,28 @@ pub(crate) async fn write_file_atomic(
         .await
         .map_err(|error| FileMutationError::unchanged(SyncError::Internal(error.to_string())))?;
 
-    copy_to_file(data, &mut file)
-        .await
-        .map_err(FileMutationError::unchanged)?;
-
-    file.flush()
-        .await
-        .map_err(|error| FileMutationError::unchanged(SyncError::Internal(error.to_string())))?;
-    drop(file);
-
-    set_file_modified_ms(&tmp_path, modified_ms).map_err(FileMutationError::unchanged)?;
-    rename_with_retry(&tmp_path, path).await?;
-
-    Ok(())
+    let result = async {
+        copy_to_file(data, &mut file).await?;
+        file.flush().await.map_err(|error| {
+            SyncError::Io(format!(
+                "Flush staged sync file {}: {error}",
+                tmp_path.display()
+            ))
+        })?;
+        set_file_modified_ms(&tmp_path, modified_ms)?;
+        file.sync_all().await.map_err(|error| {
+            SyncError::Io(format!("Sync staged file {}: {error}", tmp_path.display()))
+        })?;
+        drop(file);
+        tokio::fs::rename(&tmp_path, path).await.map_err(|error| {
+            SyncError::Io(format!("Replace sync file {}: {error}", path.display()))
+        })
+    }
+    .await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+    }
+    result.map_err(FileMutationError::unchanged)
 }
 
 pub(crate) async fn delete_sync_file(
@@ -196,30 +205,6 @@ fn download_tmp_path(path: &Path) -> PathBuf {
     }
 }
 
-async fn rename_with_retry(from: &Path, to: &Path) -> Result<(), FileMutationError> {
-    match tokio::fs::rename(from, to).await {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            match tokio::fs::remove_file(to).await {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(FileMutationError::unchanged(SyncError::Internal(
-                        error.to_string(),
-                    )));
-                }
-            }
-
-            tokio::fs::rename(from, to)
-                .await
-                .map_err(|error| FileMutationError::changed(SyncError::Internal(error.to_string())))
-        }
-        Err(error) => Err(FileMutationError::unchanged(SyncError::Internal(
-            error.to_string(),
-        ))),
-    }
-}
-
 fn set_file_modified_ms(path: &Path, modified_ms: u64) -> Result<(), SyncError> {
     let secs = (modified_ms / 1000) as i64;
     let nanos = ((modified_ms % 1000) * 1_000_000) as u32;
@@ -238,6 +223,41 @@ mod tests {
     fn unique_temp_root() -> std::path::PathBuf {
         use rand::random;
         std::env::temp_dir().join(format!("tauritavern-sync-fs-{}", random::<u64>()))
+    }
+
+    #[tokio::test]
+    async fn failed_download_keeps_existing_file_and_removes_partial_stage() {
+        use std::{
+            io,
+            pin::Pin,
+            task::{Context, Poll},
+        };
+        use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
+
+        struct FailedRead;
+        impl AsyncRead for FailedRead {
+            fn poll_read(
+                self: Pin<&mut Self>,
+                _: &mut Context<'_>,
+                _: &mut ReadBuf<'_>,
+            ) -> Poll<io::Result<()>> {
+                Poll::Ready(Err(io::Error::other("interrupted download")))
+            }
+        }
+
+        let root = unique_temp_root();
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        let target = root.join("settings.json");
+        tokio::fs::write(&target, b"old").await.unwrap();
+        let mut source = b"partial".as_slice().chain(FailedRead);
+
+        let error = write_file_atomic(&target, &mut source, 0)
+            .await
+            .unwrap_err();
+        assert!(!error.target_changed());
+        assert_eq!(tokio::fs::read(&target).await.unwrap(), b"old");
+        assert!(!download_tmp_path(&target).exists());
+        tokio::fs::remove_dir_all(root).await.unwrap();
     }
 
     #[test]

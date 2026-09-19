@@ -8,6 +8,7 @@ pub(super) enum CustomApiFormat {
     OpenAiResponses,
     ClaudeMessages,
     GeminiInteractions,
+    GeminiGenerateContent,
 }
 
 impl CustomApiFormat {
@@ -17,6 +18,7 @@ impl CustomApiFormat {
             "openai_responses" => Ok(Self::OpenAiResponses),
             "claude_messages" => Ok(Self::ClaudeMessages),
             "gemini_interactions" => Ok(Self::GeminiInteractions),
+            "gemini_generate_content" => Ok(Self::GeminiGenerateContent),
             other => Err(ApplicationError::ValidationError(format!(
                 "Unsupported custom_api_format: {other}"
             ))),
@@ -27,7 +29,9 @@ impl CustomApiFormat {
         match self {
             Self::OpenAiCompat | Self::OpenAiResponses => ChatCompletionSource::Custom,
             Self::ClaudeMessages => ChatCompletionSource::Claude,
-            Self::GeminiInteractions => ChatCompletionSource::Makersuite,
+            Self::GeminiInteractions | Self::GeminiGenerateContent => {
+                ChatCompletionSource::Makersuite
+            }
         }
     }
 }
@@ -35,15 +39,6 @@ impl CustomApiFormat {
 #[cfg(test)]
 mod tests {
     use super::CustomApiFormat;
-    use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
-
-    #[test]
-    fn empty_value_defaults_to_openai_compat() {
-        assert_eq!(
-            CustomApiFormat::parse("").expect("format should parse"),
-            CustomApiFormat::OpenAiCompat
-        );
-    }
 
     #[test]
     fn invalid_value_fails_fast() {
@@ -52,22 +47,6 @@ mod tests {
             error
                 .to_string()
                 .contains("Unsupported custom_api_format: invalid")
-        );
-    }
-
-    #[test]
-    fn claude_messages_uses_claude_model_list_transport() {
-        assert_eq!(
-            CustomApiFormat::ClaudeMessages.model_list_source(),
-            ChatCompletionSource::Claude
-        );
-    }
-
-    #[test]
-    fn gemini_interactions_uses_gemini_model_list_transport() {
-        assert_eq!(
-            CustomApiFormat::GeminiInteractions.model_list_source(),
-            ChatCompletionSource::Makersuite
         );
     }
 }

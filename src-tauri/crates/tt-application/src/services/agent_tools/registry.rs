@@ -5,7 +5,7 @@ use super::agent::{
 use super::chat::{chat_read_messages_descriptor, chat_search_descriptor};
 use super::dice::dice_roll_descriptor;
 use super::skill::{
-    SKILL_READ, skill_list_descriptor, skill_read_descriptor, skill_search_descriptor,
+    skill_list_descriptor, skill_read_descriptor, skill_script_descriptor, skill_search_descriptor,
 };
 use super::workspace::{
     WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
@@ -16,8 +16,10 @@ use super::workspace::{
 };
 use super::world_info::worldinfo_read_activated_descriptor;
 use crate::errors::ApplicationError;
-use crate::services::agent_workspace_scope::format_model_workspace_roots;
-use tt_domain::models::agent::profile::{AgentToolDescriptionOverride, ResolvedAgentProfile};
+use crate::services::agent_workspace_scope::{
+    format_model_visible_workspace_roots, format_model_workspace_roots,
+};
+use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::tool::{ToolCatalog, ToolDescriptor, ToolId};
 
 #[derive(Debug, Clone)]
@@ -40,6 +42,7 @@ impl BuiltinAgentToolRegistry {
             skill_list_descriptor(),
             skill_search_descriptor(),
             skill_read_descriptor(),
+            skill_script_descriptor(),
             workspace_list_files_descriptor(),
             workspace_search_files_descriptor(),
             workspace_read_file_descriptor(),
@@ -70,8 +73,8 @@ impl BuiltinAgentToolRegistry {
             ))
         })?;
         apply_profile_context(&mut descriptor, profile)?;
-        if let Some(override_) = profile.tools.tool_descriptions.get(tool_id.native_name()) {
-            apply_description_override(&mut descriptor, override_)?;
+        if let Some(override_) = profile.tools.tool_descriptions.get(tool_id) {
+            descriptor.apply_description_override(override_)?;
         }
         Ok(descriptor)
     }
@@ -89,15 +92,14 @@ fn apply_return_mode_context(
     descriptor: &mut ToolDescriptor,
     profile: &ResolvedAgentProfile,
 ) -> Result<(), ApplicationError> {
-    let visible_roots = format_model_workspace_roots(&profile.workspace.visible_roots);
+    let visible_roots = format_model_visible_workspace_roots(&profile.workspace.visible_roots);
     let writable_roots = format_model_workspace_roots(&profile.workspace.writable_roots);
     match descriptor.id.native_name() {
         WORKSPACE_LIST_FILES => {
             descriptor.description = Some(format!(
                 "List files visible to this delegated task under {visible_roots}. This is the same logical workspace used by the requesting Agent; use the paths named in the task brief."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!(
                     "Optional task workspace path under {visible_roots}. Omit to list visible roots."
@@ -106,10 +108,9 @@ fn apply_return_mode_context(
         }
         WORKSPACE_READ_FILE => {
             descriptor.description = Some(format!(
-                "Read a visible UTF-8 task workspace file with line numbers. Visible roots are {visible_roots}. Use ordinary workspace paths exactly as they appear in the task brief or file list."
+                "Read a visible UTF-8 task workspace file with line numbers. Omit start_line and line_count to read the full file; oversized files return a bounded preview with the next line to read. Visible roots are {visible_roots}. Use ordinary workspace paths exactly as they appear in the task brief or file list."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!("Visible task workspace file path under {visible_roots}."),
             )?;
@@ -118,8 +119,7 @@ fn apply_return_mode_context(
             descriptor.description = Some(format!(
                 "Search visible UTF-8 task workspace files under {visible_roots}. Use this before reading exact ranges."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 "Optional visible task workspace file or directory path. Omit to search all visible task paths.",
             )?;
@@ -128,8 +128,7 @@ fn apply_return_mode_context(
             descriptor.description = Some(format!(
                 "Write UTF-8 text to a writable workspace file for this delegated task. mode replace writes the complete file; mode append adds content exactly to the end and creates the file when missing. Writable prefixes are {writable_roots}. Use the path requested in the task brief when one is provided."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!(
                     "Writable task path under {writable_roots}. Use the path requested in the task when one is provided."
@@ -140,8 +139,7 @@ fn apply_return_mode_context(
             descriptor.description = Some(format!(
                 "Apply a precise single-file string replacement to a writable delegated-task workspace file. Writable prefixes are {writable_roots}. Fully read an existing file before editing it; if the tool reports that it changed, read it again and retry."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!(
                     "Writable task path under {writable_roots}. Use the path requested in the task when one is provided."
@@ -158,7 +156,7 @@ fn apply_profile_context(
     descriptor: &mut ToolDescriptor,
     profile: &ResolvedAgentProfile,
 ) -> Result<(), ApplicationError> {
-    let visible_roots = format_model_workspace_roots(&profile.workspace.visible_roots);
+    let visible_roots = format_model_visible_workspace_roots(&profile.workspace.visible_roots);
     let writable_roots = format_model_workspace_roots(&profile.workspace.writable_roots);
     let final_path = profile.output.message_body_path.as_str();
 
@@ -167,8 +165,7 @@ fn apply_profile_context(
             descriptor.description = Some(format!(
                 "List visible Agent workspace files under {visible_roots}. Use this before reading when you need to inspect available artifacts."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!(
                     "Optional relative workspace directory or file path under {visible_roots}. Omit to list the visible workspace roots."
@@ -182,10 +179,9 @@ fn apply_profile_context(
                 " Partial reads are only for inspection."
             };
             descriptor.description = Some(format!(
-                "Read a visible UTF-8 Agent workspace file with line numbers.{patch_hint}"
+                "Read a visible UTF-8 Agent workspace file with line numbers. Omit start_line and line_count to read the full file; oversized files return a bounded preview with the next line to read.{patch_hint}"
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!("Relative workspace file path under {visible_roots}."),
             )?;
@@ -194,8 +190,7 @@ fn apply_profile_context(
             descriptor.description = Some(format!(
                 "Search visible UTF-8 Agent workspace files under {visible_roots}. Results return snippets and refs; use workspace_read_file to read exact ranges."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!(
                     "Optional visible workspace file or directory path under {visible_roots}. Omit to search all visible roots."
@@ -206,16 +201,14 @@ fn apply_profile_context(
             descriptor.description = Some(format!(
                 "Write UTF-8 text to a writable Agent workspace file. mode replace writes the complete file; mode append adds content exactly to the end and creates the file when missing. Use {final_path} for the default chat message body."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!("Relative workspace path. Writable prefixes are {writable_roots}."),
             )?;
         }
         WORKSPACE_APPLY_PATCH => {
             descriptor.description = Some("Apply a precise single-file string replacement. old_string must come from text you already read with workspace_read_file or from a file you created/replaced in this run. old_string must match exactly and uniquely unless replace_all is true. If a patch fails, fully read the file before retrying.".to_string());
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!("Relative writable workspace file path under {writable_roots}."),
             )?;
@@ -224,8 +217,7 @@ fn apply_profile_context(
             descriptor.description = Some(format!(
                 "Commit a workspace text file to this run's single chat message. With no arguments, replace the current run message with {final_path}. mode append appends the file text to the same message, creating it when this run has not committed yet."
             ));
-            set_property_description(
-                descriptor,
+            descriptor.set_property_description(
                 "path",
                 &format!(
                     "Relative visible workspace file path to publish. Defaults to {final_path}."
@@ -238,18 +230,6 @@ fn apply_profile_context(
                     .to_string(),
             );
         }
-        SKILL_READ => {
-            let per_call = profile.skills.max_read_chars_per_call;
-            let per_run = profile.skills.max_read_chars_per_run;
-            set_property_description(
-                descriptor,
-                "max_chars",
-                &format!(
-                    "Maximum characters to return in this skill_read call. Current policy allows up to {per_call} characters per call and {per_run} total Skill characters per run; the remaining run budget also applies. Omit to use the available per-call budget."
-                ),
-            )?;
-            set_integer_property_bounds(descriptor, "max_chars", 1, per_call)?;
-        }
         _ => {}
     }
 
@@ -257,90 +237,18 @@ fn apply_profile_context(
 }
 
 fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
-    profile.tools.allow.iter().any(|allowed| allowed == name)
-        && !profile.tools.deny.iter().any(|denied| denied == name)
-}
-
-fn apply_description_override(
-    descriptor: &mut ToolDescriptor,
-    override_: &AgentToolDescriptionOverride,
-) -> Result<(), ApplicationError> {
-    if let Some(description) = override_.description.as_ref() {
-        descriptor.description = Some(description.trim().to_string());
-    }
-
-    if override_.properties.is_empty() {
-        return Ok(());
-    }
-
-    for (property, description) in &override_.properties {
-        set_property_description(descriptor, property, description.trim())?;
-    }
-    Ok(())
-}
-
-fn set_integer_property_bounds(
-    descriptor: &mut ToolDescriptor,
-    property: &str,
-    minimum: usize,
-    maximum: usize,
-) -> Result<(), ApplicationError> {
-    let object = property_schema_object_mut(descriptor, property)?;
-    object.insert("minimum".to_string(), serde_json::json!(minimum));
-    object.insert("maximum".to_string(), serde_json::json!(maximum));
-    Ok(())
-}
-
-fn set_property_description(
-    descriptor: &mut ToolDescriptor,
-    property: &str,
-    description: &str,
-) -> Result<(), ApplicationError> {
-    let object = property_schema_object_mut(descriptor, property)?;
-    object.insert(
-        "description".to_string(),
-        serde_json::Value::String(description.to_string()),
-    );
-    Ok(())
-}
-
-fn property_schema_object_mut<'a>(
-    descriptor: &'a mut ToolDescriptor,
-    property: &str,
-) -> Result<&'a mut serde_json::Map<String, serde_json::Value>, ApplicationError> {
-    let properties = descriptor
-        .input_schema
-        .get_mut("properties")
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| {
-            ApplicationError::ValidationError(format!(
-                "agent.profile_tool_properties_invalid: `{}` has no object properties",
-                descriptor.id.native_name()
-            ))
-        })?;
-    let schema = properties.get_mut(property).ok_or_else(|| {
-        ApplicationError::ValidationError(format!(
-            "agent.profile_unknown_tool_property: `{}` has no property `{property}`",
-            descriptor.id.native_name()
-        ))
-    })?;
-    let object = schema.as_object_mut().ok_or_else(|| {
-        ApplicationError::ValidationError(format!(
-            "agent.profile_tool_property_schema_invalid: `{}` property `{property}` is not an object",
-            descriptor.id.native_name()
-        ))
-    })?;
-    Ok(object)
+    let id = ToolId::builtin(name).expect("builtin Agent tool names form valid ToolIds");
+    profile.tools.allow.iter().any(|allowed| allowed == &id)
+        && !profile.tools.deny.iter().any(|denied| denied == &id)
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::super::agent::{
-        AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, TASK_RETURN,
-    };
-    use super::super::policy::{compile_invocation_tool_snapshot, project_agent_model_tools};
+    use super::super::agent::{AGENT_LIST, TASK_RETURN};
+    use super::super::policy::compile_invocation_tool_snapshot;
+    use super::super::skill::SKILL_READ;
     use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE};
     use super::*;
     use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
@@ -354,7 +262,7 @@ mod tests {
     use tt_domain::models::agent::{
         AgentInvocationExitPolicy, AgentRunPresentation, ArtifactSpec, ArtifactTarget,
     };
-    use tt_domain::models::tool::{ToolChoice, ToolId, ToolSnapshotId, ToolTurnContract};
+    use tt_domain::models::tool::{ToolId, ToolSnapshotId};
 
     #[test]
     fn snapshot_compiler_derives_builtin_model_aliases() {
@@ -363,14 +271,15 @@ mod tests {
         profile.tools.allow = registry
             .catalog()
             .iter()
-            .map(|descriptor| descriptor.id.native_name().to_string())
-            .filter(|name| name != TASK_RETURN)
+            .map(|descriptor| descriptor.id.clone())
+            .filter(|id| id.native_name() != TASK_RETURN)
             .collect();
         let snapshot = compile_invocation_tool_snapshot(
             &registry,
             &profile,
             AgentInvocationExitPolicy::RunFinishAllowed,
             ToolSnapshotId::parse("aliases").unwrap(),
+            &[],
         )
         .unwrap();
 
@@ -383,121 +292,27 @@ mod tests {
     }
 
     #[test]
-    fn registry_declares_canonical_builtin_descriptors() {
-        let registry = BuiltinAgentToolRegistry::all();
-
-        assert_eq!(registry.catalog().len(), 19);
-        for descriptor in registry.catalog().iter() {
-            assert!(descriptor.id.is_builtin());
-            assert!(
-                descriptor
-                    .title
-                    .as_deref()
-                    .is_some_and(|value| !value.is_empty())
-            );
-            assert!(
-                descriptor
-                    .description
-                    .as_deref()
-                    .is_some_and(|value| !value.is_empty())
-            );
-        }
-    }
-
-    #[test]
-    fn agent_delegate_requires_objective_but_not_title() {
-        let registry = BuiltinAgentToolRegistry::all();
-        let delegate = registry
-            .catalog()
-            .get(&ToolId::builtin(AGENT_DELEGATE).unwrap())
-            .expect("agent.delegate descriptor");
-
-        assert_eq!(
-            delegate
-                .input_schema
-                .pointer("/properties/task/required")
-                .expect("task required fields"),
-            &serde_json::json!(["objective"])
-        );
-        assert!(
-            delegate
-                .input_schema
-                .pointer("/properties/task/properties/title")
-                .is_some()
-        );
-        assert!(
-            delegate
-                .input_schema
-                .pointer("/properties/budget")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn visible_model_tools_expose_profile_skill_read_budget() {
-        let registry = BuiltinAgentToolRegistry::all();
-        let profile = profile_with_skill_budget(100_000, 100_000);
-        let snapshot = compile_invocation_tool_snapshot(
-            &registry,
-            &profile,
-            AgentInvocationExitPolicy::RunFinishAllowed,
-            ToolSnapshotId::parse("test").unwrap(),
-        )
-        .expect("snapshot");
-        let turn = ToolTurnContract::all(&snapshot, ToolChoice::Auto).expect("turn");
-        let tools = project_agent_model_tools(&snapshot, &turn).expect("visible model tools");
-        let skill_read = tools
-            .iter()
-            .find(|tool| tool.tool_id.native_name() == SKILL_READ)
-            .expect("skill.read model tool");
-        let max_chars = skill_read
-            .input_schema
-            .pointer("/properties/max_chars")
-            .expect("max_chars schema");
-
-        assert_eq!(max_chars["maximum"], serde_json::json!(100_000));
-        assert_eq!(max_chars["minimum"], serde_json::json!(1));
-        assert!(
-            max_chars["description"]
-                .as_str()
-                .expect("description")
-                .contains("100000")
-        );
-        assert!(
-            !max_chars["description"]
-                .as_str()
-                .expect("description")
-                .contains("80000")
-        );
-        assert!(
-            !max_chars["description"]
-                .as_str()
-                .expect("description")
-                .contains("profile")
-        );
-    }
-
-    #[test]
     fn invocation_policy_preserves_order_and_materializes_return_mode_without_profile_mutation() {
         let registry = BuiltinAgentToolRegistry::all();
         let mut profile = profile_with_skill_budget(100_000, 100_000);
         profile.tools.allow = vec![
-            WORKSPACE_READ_FILE.to_string(),
-            SKILL_READ.to_string(),
-            WORKSPACE_FINISH.to_string(),
-            AGENT_LIST.to_string(),
+            ToolId::builtin(WORKSPACE_READ_FILE).unwrap(),
+            ToolId::builtin(SKILL_READ).unwrap(),
+            ToolId::builtin(WORKSPACE_FINISH).unwrap(),
+            ToolId::builtin(AGENT_LIST).unwrap(),
         ];
-        profile.tools.deny = vec![SKILL_READ.to_string()];
+        profile.tools.deny = vec![ToolId::builtin(SKILL_READ).unwrap()];
         profile
             .tools
             .max_calls_per_tool
-            .insert(WORKSPACE_READ_FILE.to_string(), 2);
+            .insert(ToolId::builtin(WORKSPACE_READ_FILE).unwrap(), 2);
 
         let root = compile_invocation_tool_snapshot(
             &registry,
             &profile,
             AgentInvocationExitPolicy::RunFinishAllowed,
             ToolSnapshotId::parse("root").unwrap(),
+            &[],
         )
         .unwrap();
         assert_eq!(
@@ -508,12 +323,20 @@ mod tests {
             vec![WORKSPACE_READ_FILE, WORKSPACE_FINISH, AGENT_LIST]
         );
         assert_eq!(root.bindings()[0].max_calls(), Some(2));
+        assert!(
+            root.bindings()[0]
+                .descriptor()
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains("Omit start_line and line_count"))
+        );
 
         let child = compile_invocation_tool_snapshot(
             &registry,
             &profile,
             AgentInvocationExitPolicy::TaskReturnRequired,
             ToolSnapshotId::parse("child").unwrap(),
+            &[],
         )
         .unwrap();
         assert_eq!(
@@ -529,51 +352,20 @@ mod tests {
                 .descriptor()
                 .description
                 .as_deref()
-                .is_some_and(|description| description.contains("task workspace file"))
+                .is_some_and(|description| {
+                    description.contains("task workspace file")
+                        && description.contains("Omit start_line and line_count")
+                })
         );
         assert_eq!(
             profile.tools.allow,
             vec![
-                WORKSPACE_READ_FILE.to_string(),
-                SKILL_READ.to_string(),
-                WORKSPACE_FINISH.to_string(),
-                AGENT_LIST.to_string(),
+                ToolId::builtin(WORKSPACE_READ_FILE).unwrap(),
+                ToolId::builtin(SKILL_READ).unwrap(),
+                ToolId::builtin(WORKSPACE_FINISH).unwrap(),
+                ToolId::builtin(AGENT_LIST).unwrap(),
             ]
         );
-    }
-
-    #[test]
-    fn agent_tool_descriptors_keep_runtime_terms_out_of_model_descriptions() {
-        let registry = BuiltinAgentToolRegistry::all();
-        let agent_tools = registry
-            .catalog()
-            .iter()
-            .filter(|tool| {
-                matches!(
-                    tool.id.native_name(),
-                    AGENT_LIST | AGENT_DELEGATE | AGENT_HANDOFF | AGENT_AWAIT | TASK_RETURN
-                )
-            })
-            .collect::<Vec<_>>();
-
-        for tool in agent_tools {
-            let text = format!(
-                "{} {}",
-                tool.description.as_deref().expect("builtin description"),
-                serde_json::to_string(&tool.input_schema).expect("schema JSON")
-            );
-            assert!(!text.contains("invocation"), "{}", tool.id);
-            assert!(!text.contains("parent Agent"), "{}", tool.id);
-            assert!(!text.contains("child Agent"), "{}", tool.id);
-            assert!(!text.contains("This Agent"), "{}", tool.id);
-            assert!(!text.contains("active control"), "{}", tool.id);
-            assert!(!text.contains("active owner"), "{}", tool.id);
-            assert!(!text.contains("delegated result to you"), "{}", tool.id);
-            assert!(!text.contains("workspace_finish"), "{}", tool.id);
-            assert!(!text.contains("to collect it"), "{}", tool.id);
-            assert!(!text.contains("before finalizing"), "{}", tool.id);
-            assert!(!text.contains("first version"), "{}", tool.id);
-        }
     }
 
     fn profile_with_skill_budget(per_call: usize, per_run: usize) -> ResolvedAgentProfile {
@@ -595,6 +387,7 @@ mod tests {
             },
             run: AgentRunPolicy {
                 presentation: AgentRunPresentation::Background,
+                stream: false,
                 direct_runnable: true,
                 model_retry: Default::default(),
             },
@@ -602,11 +395,12 @@ mod tests {
             delegation: AgentDelegationPolicy::default(),
             instructions: AgentProfileInstructions::default(),
             tools: AgentToolPolicy {
-                allow: vec![SKILL_READ.to_string()],
+                allow: vec![ToolId::builtin(SKILL_READ).unwrap()],
                 deny: Vec::new(),
                 tool_descriptions: BTreeMap::new(),
                 max_rounds: 1,
                 max_calls_per_run: 1,
+                mcp_result_inline_char_limit: 50_000,
                 max_calls_per_tool: BTreeMap::new(),
             },
             skills: AgentSkillPolicy {

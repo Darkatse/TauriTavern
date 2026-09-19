@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use tokio::fs;
 
-use crate::file_system::{
-    move_file_no_replace_with_fallback, replace_file_with_fallback, unique_temp_path,
-};
+use crate::file_system::{move_file_no_replace_with_fallback, persist_json_file};
 use tt_domain::errors::DomainError;
 use tt_domain::json_merge::merge_json_value;
 
@@ -92,20 +90,7 @@ async fn update_store_json_entry(dir: &Path, key: &str, value: Value) -> Result<
 
     merge_json_value(&mut current, value);
 
-    let temp = unique_temp_path(&target);
-    let bytes = serde_json::to_vec_pretty(&current).map_err(|error| {
-        DomainError::InvalidData(format!("Failed to serialize chat store JSON: {}", error))
-    })?;
-
-    fs::write(&temp, &bytes).await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to write chat store temp file {}: {}",
-            temp.display(),
-            error
-        ))
-    })?;
-
-    replace_file_with_fallback(&temp, &target).await?;
+    persist_json_file(&target, &current).await?;
     Ok(())
 }
 
@@ -261,20 +246,7 @@ impl FileChatRepository {
         })?;
 
         let target = dir.join(format!("{}.json", key));
-        let temp = unique_temp_path(&target);
-        let bytes = serde_json::to_vec_pretty(&value).map_err(|error| {
-            DomainError::InvalidData(format!("Failed to serialize chat store JSON: {}", error))
-        })?;
-
-        fs::write(&temp, &bytes).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to write chat store temp file {}: {}",
-                temp.display(),
-                error
-            ))
-        })?;
-
-        replace_file_with_fallback(&temp, &target).await?;
+        persist_json_file(&target, &value).await?;
         Ok(())
     }
 
@@ -313,20 +285,7 @@ impl FileChatRepository {
         })?;
 
         let target = dir.join(format!("{}.json", key));
-        let temp = unique_temp_path(&target);
-        let bytes = serde_json::to_vec_pretty(&value).map_err(|error| {
-            DomainError::InvalidData(format!("Failed to serialize chat store JSON: {}", error))
-        })?;
-
-        fs::write(&temp, &bytes).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to write chat store temp file {}: {}",
-                temp.display(),
-                error
-            ))
-        })?;
-
-        replace_file_with_fallback(&temp, &target).await?;
+        persist_json_file(&target, &value).await?;
         Ok(())
     }
 

@@ -7,7 +7,6 @@ use super::task_status::{task_is_terminal, task_return_status, task_status_label
 use super::tool_error::tool_error_outcome;
 use crate::errors::ApplicationError;
 use crate::services::agent_runtime_service::AgentRuntimeService;
-use crate::services::agent_runtime_service::loop_runner::tool_after_finish_error;
 use crate::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
 use crate::services::agent_workspace_scope::{
     format_model_workspace_roots, task_result_summary_path, workspace_path_is_under_any_root,
@@ -24,9 +23,9 @@ impl AgentRuntimeService {
         run_id: &str,
         invocation_id: &str,
         call: &ToolInvocation,
+        args: &Map<String, Value>,
         exit_policy: AgentInvocationExitPolicy,
         profile: &ResolvedAgentProfile,
-        is_last_call: bool,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
         if exit_policy != AgentInvocationExitPolicy::TaskReturnRequired {
@@ -37,14 +36,6 @@ impl AgentRuntimeService {
                 started.elapsed().as_millis(),
             ));
         }
-        let Some(args) = call.arguments.as_object() else {
-            return Ok(tool_error_outcome(
-                call,
-                "tool.invalid_arguments",
-                "arguments must be an object",
-                started.elapsed().as_millis(),
-            ));
-        };
         let summary = match required_trimmed_string(args, "summary") {
             Ok(summary) => summary,
             Err(message) => {
@@ -85,7 +76,7 @@ impl AgentRuntimeService {
         }
         let result_ref = WorkspacePath::parse(format!("agent-results/{invocation_id}.json"))?;
         let summary_ref = task_result_summary_path(&task.workspace_key)?;
-        let result_payload = match normalize_task_return_arguments(&call.arguments, profile) {
+        let result_payload = match normalize_task_return_arguments(args, profile) {
             Ok(arguments) => arguments,
             Err(error) => {
                 return Ok(tool_error_outcome(
@@ -96,9 +87,6 @@ impl AgentRuntimeService {
                 ));
             }
         };
-        if !is_last_call {
-            return Err(tool_after_finish_error("task_return"));
-        }
         let result_doc = json!({
             "schemaVersion": 1,
             "kind": "tauritavern.agentTaskResult",
@@ -235,13 +223,10 @@ impl TaskReturnArgumentError {
 }
 
 fn normalize_task_return_arguments(
-    arguments: &Value,
+    arguments: &Map<String, Value>,
     profile: &ResolvedAgentProfile,
 ) -> Result<Value, TaskReturnArgumentError> {
-    let Some(args) = arguments.as_object() else {
-        return Ok(arguments.clone());
-    };
-    let mut args = args.clone();
+    let mut args = arguments.clone();
     let Some(artifacts_value) = args.get("artifacts") else {
         return Ok(Value::Object(args));
     };

@@ -2,6 +2,7 @@
 
 <img src="docs/images/tauritavern-readme-hero.webp" alt="TauriTavern" width="720">
 
+
 # TauriTavern
 
 **SillyTavern 的原生应用 —— 桌面与移动，开箱即用**
@@ -21,6 +22,8 @@
 [![Canary](https://img.shields.io/github/actions/workflow/status/Darkatse/TauriTavern/canary-release.yml?style=flat-square&logo=githubactions&label=canary)](https://github.com/Darkatse/TauriTavern/actions/workflows/canary-release.yml)
 
 </div>
+
+<p align="center"><sub>感谢 <a href="https://github.com/shiyue137">@shiyue137</a> 为 TauriTavern 设计 Logo 💛</sub></p>
 
 ## 下载
 
@@ -42,6 +45,14 @@
 
 <details>
 <summary><b>📦 使用包管理器安装</b>（Windows · macOS · Linux）</summary>
+
+### Windows · WinGet
+
+在 PowerShell 中运行：
+
+```powershell
+winget install --id TauriTavern.TauriTavern
+```
 
 ### Windows · Scoop
 
@@ -79,7 +90,7 @@ yay -S tauritavern-bin
 **稳定版**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
+curl -fsSL https://get.tauritavern.com/linux.sh | sh
 ```
 
 **Nix / NixOS**
@@ -113,7 +124,7 @@ Windows、macOS 和移动平台可从 [Canary Release](https://github.com/Darkat
 **Linux**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+curl -fsSL https://get.tauritavern.com/linux.sh \
   | sh -s -- --channel canary
 ```
 
@@ -126,7 +137,7 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 </details>
 
 > [!TIP]
-> **iOS 用户**：通过 [TestFlight 公开外测](https://testflight.apple.com/join/gpqAdeTm) 安装，需要 iOS 16 或更高版本。请注意 TestFlight 版本需要遵守苹果的 TestFlight 规则，存在使用限制。
+> **iOS 用户**：通过 [TestFlight 公开外测](https://testflight.apple.com/join/gpqAdeTm) 安装，需要 iOS 15.0 或更高版本。iOS 15.0–16.3 仅提供有限支持，完整支持从 iOS 16.4 开始。请注意 TestFlight 版本需要遵守苹果的 TestFlight 规则，存在使用限制。
 >
 > **Windows 便携版**（Portable）：需系统已安装 WebView2 运行时。
 
@@ -168,7 +179,7 @@ TauriTavern 把 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 移植
 <details>
 <summary><b>🛠 开发与构建</b>（前置要求 · 常用命令 · Tauri Pilot · 便携构建 · FasTools）</summary>
 
-**前置要求**：Rust stable（支持 edition 2024）· Node.js 20.19.x 或 22.12+ · pnpm · Tauri CLI
+**前置要求**：Rust stable（支持 edition 2024）· Node.js 22.13+ · pnpm 11 · Tauri CLI
 
 ```bash
 git clone https://github.com/Darkatse/TauriTavern.git

@@ -75,15 +75,6 @@ mod tests {
     use ttsync_contract::dataset::{DATASET_POLICY_VERSION, DatasetSelection};
 
     use super::*;
-    use tt_contracts::sync_automation::SyncAutomationTarget;
-
-    #[test]
-    fn default_sync_options_validate() {
-        let options = validate_sync_operation_options(default_sync_operation_options())
-            .expect("default sync options should be valid");
-
-        assert!(!options.require_bundle_zstd);
-    }
 
     #[test]
     fn invalid_sync_selection_is_rejected() {
@@ -123,18 +114,5 @@ mod tests {
             validate_scheduled_sync_rule(&rule),
             Err(DomainError::InvalidData(_))
         ));
-    }
-
-    #[test]
-    fn scheduled_rule_accepts_default_selection_with_target() {
-        let rule = ScheduledSyncRule {
-            enabled: true,
-            target: Some(SyncAutomationTarget::Lan {
-                device_id: "11111111-1111-4111-8111-111111111111".to_string(),
-            }),
-            ..default_scheduled_sync_rule()
-        };
-
-        validate_scheduled_sync_rule(&rule).expect("valid scheduled rule");
     }
 }

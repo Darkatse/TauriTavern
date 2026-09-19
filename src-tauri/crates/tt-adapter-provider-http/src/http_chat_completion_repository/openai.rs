@@ -1,9 +1,11 @@
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionCancelReceiver,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
+    ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
@@ -23,26 +25,17 @@ pub(super) async fn list_models_with_path(
     provider_name: &str,
     path: &str,
 ) -> Result<Value, DomainError> {
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, path);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, path)?;
 
-    let client = repository.client()?;
+    let client = repository.metadata_client(config)?;
     let request = client.get(url).header(ACCEPT, "application/json");
     let request = HttpChatCompletionRepository::apply_openai_auth(request, config);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Status request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            provider_name,
-            response,
-            "Failed to list models",
-        )
-        .await);
-    }
+    let response =
+        HttpChatCompletionRepository::send_checked(request, provider_name, "Failed to list models")
+            .await?;
 
     read_upstream_json_body(provider_name, "list_models", response).await
 }
@@ -54,9 +47,9 @@ pub(super) async fn generate(
     payload: &Value,
     provider_name: &str,
 ) -> Result<Value, DomainError> {
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
 
-    let client = repository.client()?;
+    let client = repository.client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -67,20 +60,21 @@ pub(super) async fn generate(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        provider_name,
+        "Generation request failed",
+    )
+    .await?;
 
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            provider_name,
-            response,
-            "Generation request failed",
-        )
-        .await);
+    let mut body = read_upstream_json_body(provider_name, "generate", response).await?;
+    if let Some(choices) = body.get_mut("choices").and_then(Value::as_array_mut) {
+        for choice in choices {
+            if let Some(message) = choice.get_mut("message").and_then(Value::as_object_mut) {
+                normalize_message_reasoning(message)?;
+            }
+        }
     }
-
-    let body = read_upstream_json_body(provider_name, "generate", response).await?;
 
     if super::payload_contains_cache_control(payload) {
         let model = payload.get("model").and_then(Value::as_str);
@@ -99,9 +93,59 @@ pub(super) async fn generate_stream(
     sender: ChatCompletionStreamSender,
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
+    let response =
+        send_stream_request(repository, config, endpoint_path, payload, provider_name).await?;
 
-    let client = repository.stream_client()?;
+    if super::payload_contains_cache_control(payload) {
+        let model = payload
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        HttpChatCompletionRepository::stream_sse_response_with_cache_logging(
+            provider_name,
+            model,
+            response,
+            sender,
+            cancel,
+        )
+        .await
+    } else {
+        HttpChatCompletionRepository::stream_sse_response(provider_name, response, sender, cancel)
+            .await
+    }
+}
+
+pub(super) async fn generate_with_deltas(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+    provider_name: &str,
+    on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+    let response =
+        send_stream_request(repository, config, endpoint_path, payload, provider_name).await?;
+    let mut accumulator = OpenAiChatAccumulator::default();
+
+    HttpChatCompletionRepository::consume_sse_response(provider_name, response, |event| {
+        accumulator.apply_event(event, on_delta)
+    })
+    .await?;
+
+    accumulator.finish()
+}
+
+async fn send_stream_request(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+    provider_name: &str,
+) -> Result<reqwest::Response, DomainError> {
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
+
+    let client = repository.stream_client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -112,62 +156,606 @@ pub(super) async fn generate_stream(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
+    HttpChatCompletionRepository::send_checked(request, provider_name, "Generation request failed")
+        .await
+}
 
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            provider_name,
-            response,
-            "Generation request failed",
-        )
-        .await);
+#[derive(Default)]
+struct OpenAiToolCallAccumulator {
+    id: String,
+    name: String,
+    arguments: String,
+    extra_content: Option<Value>,
+}
+
+#[derive(Default)]
+struct OpenAiChatAccumulator {
+    id: Option<String>,
+    created: Option<u64>,
+    model: Option<String>,
+    service_tier: Option<String>,
+    system_fingerprint: Option<String>,
+    usage: Option<Value>,
+    content: String,
+    refusal: String,
+    reasoning: String,
+    reasoning_content: String,
+    reasoning_details: Vec<Value>,
+    finish_reason: Option<String>,
+    tool_calls: Vec<OpenAiToolCallAccumulator>,
+}
+
+impl OpenAiChatAccumulator {
+    fn apply_event(
+        &mut self,
+        raw_event: &[u8],
+        on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
+    ) -> Result<(), DomainError> {
+        if raw_event == b"[DONE]" {
+            return Ok(());
+        }
+
+        let mut event = serde_json::from_slice::<Value>(raw_event).map_err(|error| {
+            invalid_openai_response(format!("event is not valid JSON: {error}"))
+        })?;
+        let event = event
+            .as_object_mut()
+            .ok_or_else(|| invalid_openai_response("event must be an object"))?;
+
+        if let Some(error) = event.get("error").filter(|error| !error.is_null()) {
+            return Err(invalid_openai_response(format!(
+                "upstream returned an error event: {error}"
+            )));
+        }
+
+        if self.id.is_none() {
+            self.id = take_optional_string(event, "id")?;
+        }
+        if self.created.is_none() {
+            self.created = event.get("created").and_then(Value::as_u64);
+        }
+        if self.model.is_none() {
+            self.model = take_optional_string(event, "model")?;
+        }
+        if self.service_tier.is_none() {
+            self.service_tier = take_optional_string(event, "service_tier")?;
+        }
+        if self.system_fingerprint.is_none() {
+            self.system_fingerprint = take_optional_string(event, "system_fingerprint")?;
+        }
+
+        if let Some(usage) = event.remove("usage").filter(|value| !value.is_null()) {
+            self.usage = Some(usage);
+        }
+
+        let choices = event
+            .get_mut("choices")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| invalid_openai_response("event is missing choices"))?;
+        if choices.is_empty() {
+            return Ok(());
+        }
+        if choices.len() != 1 {
+            return Err(invalid_openai_response(
+                "Agent stream must contain exactly one choice",
+            ));
+        }
+
+        let choice = choices[0]
+            .as_object_mut()
+            .ok_or_else(|| invalid_openai_response("choice must be an object"))?;
+        if choice.get("index").and_then(Value::as_u64) != Some(0) {
+            return Err(invalid_openai_response(
+                "Agent stream choice index must be 0",
+            ));
+        }
+        if let Some(value) = take_optional_string(choice, "finish_reason")? {
+            self.finish_reason = Some(value);
+        }
+
+        let delta = choice
+            .get_mut("delta")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| invalid_openai_response("choice is missing delta"))?;
+        if let Some(value) = take_optional_string(delta, "content")? {
+            append_string_fragment(&mut self.content, value);
+        }
+        if let Some(value) = take_optional_string(delta, "refusal")? {
+            append_string_fragment(&mut self.refusal, value);
+        }
+        normalize_message_reasoning(delta)?;
+        if let Some(value) = take_optional_string(delta, "reasoning")? {
+            append_string_fragment(&mut self.reasoning, value);
+        }
+        if let Some(text) = take_optional_string(delta, "reasoning_content")?
+            && !text.is_empty()
+        {
+            self.reasoning_content.push_str(&text);
+            on_delta(ChatCompletionStreamDelta::Reasoning { text });
+        }
+        match delta.remove("reasoning_details") {
+            None | Some(Value::Null) => {}
+            Some(Value::Array(details)) => self.reasoning_details.extend(details),
+            Some(_) => {
+                return Err(invalid_openai_response(
+                    "delta.reasoning_details must be an array",
+                ));
+            }
+        }
+
+        if let Some(tool_calls) = delta.get_mut("tool_calls") {
+            let tool_calls = tool_calls
+                .as_array_mut()
+                .ok_or_else(|| invalid_openai_response("delta.tool_calls must be an array"))?;
+            for tool_call in tool_calls {
+                self.apply_tool_call_delta(tool_call, on_delta)?;
+            }
+        }
+
+        Ok(())
     }
 
-    if super::payload_contains_cache_control(payload) {
-        let model = payload
-            .get("model")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let mut logged = false;
+    fn apply_tool_call_delta(
+        &mut self,
+        raw_delta: &mut Value,
+        on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
+    ) -> Result<(), DomainError> {
+        let delta = raw_delta
+            .as_object_mut()
+            .ok_or_else(|| invalid_openai_response("tool call delta must be an object"))?;
+        let explicit_index = delta
+            .get("index")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok());
+        let tool_call_index = match explicit_index {
+            Some(index) => index,
+            None => {
+                let id = delta
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                    .ok_or_else(|| {
+                        invalid_openai_response("tool call delta is missing index and id")
+                    })?;
+                self.tool_calls
+                    .iter()
+                    .position(|tool_call| tool_call.id == id)
+                    .unwrap_or(self.tool_calls.len())
+            }
+        };
 
-        HttpChatCompletionRepository::stream_sse_response_internal(
-            provider_name,
-            response,
-            sender,
-            cancel,
-            move |payload| {
-                if logged {
-                    return Ok(());
-                }
+        if tool_call_index == self.tool_calls.len() {
+            self.tool_calls.push(OpenAiToolCallAccumulator::default());
+        } else if tool_call_index > self.tool_calls.len() {
+            return Err(invalid_openai_response(format!(
+                "tool call index {tool_call_index} skipped the next index {}",
+                self.tool_calls.len()
+            )));
+        }
 
-                if !payload
-                    .windows(b"cache_read_input_tokens".len())
-                    .any(|window| window == b"cache_read_input_tokens")
-                    && !payload
-                        .windows(b"cache_creation_input_tokens".len())
-                        .any(|window| window == b"cache_creation_input_tokens")
-                {
-                    return Ok(());
-                }
+        let extra_content = delta
+            .remove("extra_content")
+            .filter(|value| !value.is_null());
+        let state = &mut self.tool_calls[tool_call_index];
+        if state.id.is_empty()
+            && let Some(id) = take_optional_string(delta, "id")?
+        {
+            state.id = id;
+        }
+        if let Some(extra_content) = extra_content {
+            state.extra_content = Some(extra_content);
+        }
 
-                let Ok(value) = serde_json::from_slice::<Value>(payload) else {
-                    return Ok(());
-                };
+        let function = match delta.get_mut("function") {
+            None | Some(Value::Null) => None,
+            Some(Value::Object(function)) => Some(function),
+            Some(_) => {
+                return Err(invalid_openai_response(
+                    "tool call delta function must be an object",
+                ));
+            }
+        };
+        let Some(function) = function else {
+            return Ok(());
+        };
 
-                logged = super::log_prompt_cache_performance_if_present(
-                    provider_name,
-                    Some(model.as_str()),
-                    &value,
-                );
-                Ok(())
+        if state.name.is_empty() {
+            if let Some(name) = take_optional_string(function, "name")? {
+                state.name = name;
+            }
+            if !state.name.is_empty() {
+                on_delta(ChatCompletionStreamDelta::ToolCall {
+                    tool_call_index,
+                    name: state.name.clone(),
+                    arguments_fragment: state.arguments.clone(),
+                });
+            }
+        }
+        let Some(arguments_fragment) = take_optional_string(function, "arguments")? else {
+            return Ok(());
+        };
+        if arguments_fragment.is_empty() {
+            return Ok(());
+        }
+        state.arguments.push_str(&arguments_fragment);
+        if state.name.is_empty() {
+            return Ok(());
+        }
+        on_delta(ChatCompletionStreamDelta::ToolCall {
+            tool_call_index,
+            name: state.name.clone(),
+            arguments_fragment,
+        });
+        Ok(())
+    }
+
+    fn finish(self) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+        let finish_reason = self
+            .finish_reason
+            .ok_or_else(|| invalid_openai_response("ended without a finish reason"))?;
+        if finish_reason == "tool_calls" && self.tool_calls.is_empty() {
+            return Err(invalid_openai_response(
+                "ended with tool_calls finish reason but no tool calls",
+            ));
+        }
+
+        let mut message = Map::new();
+        message.insert("role".to_string(), Value::String("assistant".to_string()));
+        message.insert(
+            "content".to_string(),
+            if self.content.is_empty() {
+                Value::Null
+            } else {
+                Value::String(self.content)
             },
-        )
-        .await
+        );
+        if !self.refusal.is_empty() {
+            message.insert("refusal".to_string(), Value::String(self.refusal));
+        }
+        if !self.reasoning.is_empty() {
+            message.insert("reasoning".to_string(), Value::String(self.reasoning));
+        }
+        if !self.reasoning_content.is_empty() {
+            message.insert(
+                "reasoning_content".to_string(),
+                Value::String(self.reasoning_content),
+            );
+        }
+        if !self.reasoning_details.is_empty() {
+            message.insert(
+                "reasoning_details".to_string(),
+                Value::Array(self.reasoning_details),
+            );
+        }
+        if !self.tool_calls.is_empty() {
+            message.insert(
+                "tool_calls".to_string(),
+                Value::Array(
+                    self.tool_calls
+                        .into_iter()
+                        .map(|tool_call| {
+                            let mut call = Map::new();
+                            if !tool_call.id.is_empty() {
+                                call.insert("id".to_string(), Value::String(tool_call.id));
+                            }
+                            call.insert("type".to_string(), Value::String("function".to_string()));
+                            if let Some(extra_content) = tool_call.extra_content {
+                                call.insert("extra_content".to_string(), extra_content);
+                            }
+                            let mut function = Map::new();
+                            function.insert("name".to_string(), Value::String(tool_call.name));
+                            function.insert(
+                                "arguments".to_string(),
+                                Value::String(tool_call.arguments),
+                            );
+                            call.insert("function".to_string(), Value::Object(function));
+                            Value::Object(call)
+                        })
+                        .collect(),
+                ),
+            );
+        }
+
+        let mut body = Map::new();
+        body.insert(
+            "object".to_string(),
+            Value::String("chat.completion".to_string()),
+        );
+        let mut choice = Map::new();
+        choice.insert("index".to_string(), Value::from(0));
+        choice.insert("message".to_string(), Value::Object(message));
+        choice.insert("finish_reason".to_string(), Value::String(finish_reason));
+        body.insert(
+            "choices".to_string(),
+            Value::Array(vec![Value::Object(choice)]),
+        );
+        if let Some(value) = self.id {
+            body.insert("id".to_string(), Value::String(value));
+        }
+        if let Some(value) = self.created {
+            body.insert("created".to_string(), Value::from(value));
+        }
+        if let Some(value) = self.model {
+            body.insert("model".to_string(), Value::String(value));
+        }
+        if let Some(value) = self.service_tier {
+            body.insert("service_tier".to_string(), Value::String(value));
+        }
+        if let Some(value) = self.system_fingerprint {
+            body.insert("system_fingerprint".to_string(), Value::String(value));
+        }
+        if let Some(value) = self.usage {
+            body.insert("usage".to_string(), value);
+        }
+
+        Ok(ChatCompletionRepositoryGenerateResponse::from_body(
+            Value::Object(body),
+        ))
+    }
+}
+
+// A message and a stream delta use the same visible fields. Normalize before
+// accumulation so the final reasoning is exactly what the live observer saw.
+fn normalize_message_reasoning(message: &mut Map<String, Value>) -> Result<(), DomainError> {
+    for field in ["reasoning_content", "reasoning"] {
+        match message.get(field) {
+            Some(Value::String(text)) if !text.is_empty() => {
+                if field != "reasoning_content" {
+                    message.insert("reasoning_content".to_string(), Value::String(text.clone()));
+                }
+                return Ok(());
+            }
+            None | Some(Value::Null | Value::String(_)) => {}
+            Some(_) => {
+                return Err(invalid_openai_response(format!(
+                    "field `{field}` must be a string or null"
+                )));
+            }
+        }
+    }
+    let details = match message.get("reasoning_details") {
+        None | Some(Value::Null) => return Ok(()),
+        Some(Value::Array(details)) => details,
+        Some(_) => {
+            return Err(invalid_openai_response(
+                "reasoning_details must be an array",
+            ));
+        }
+    };
+    let mut text = String::new();
+    for detail in details {
+        let field = match detail.get("type").and_then(Value::as_str) {
+            Some("reasoning.text") => "text",
+            Some("reasoning.summary") => "summary",
+            _ => continue,
+        };
+        if let Some(fragment) = detail.get(field).and_then(Value::as_str) {
+            text.push_str(fragment);
+        }
+    }
+    if !text.is_empty() {
+        message.insert("reasoning_content".to_string(), Value::String(text));
+    }
+    Ok(())
+}
+
+fn take_optional_string(
+    object: &mut Map<String, Value>,
+    key: &str,
+) -> Result<Option<String>, DomainError> {
+    match object.remove(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value)),
+        Some(_) => Err(invalid_openai_response(format!(
+            "field `{key}` must be a string or null"
+        ))),
+    }
+}
+
+fn append_string_fragment(target: &mut String, fragment: String) {
+    if target.is_empty() {
+        *target = fragment;
     } else {
-        HttpChatCompletionRepository::stream_sse_response(provider_name, response, sender, cancel)
-            .await
+        target.push_str(&fragment);
+    }
+}
+
+fn invalid_openai_response(message: impl std::fmt::Display) -> DomainError {
+    DomainError::transient(format!(
+        "model.upstream_invalid_response: OpenAI Chat response {message}"
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{OpenAiChatAccumulator, normalize_message_reasoning};
+    use tt_ports::repositories::chat_completion_repository::ChatCompletionStreamDelta;
+
+    #[test]
+    fn reasoning_aliases_and_details_expose_text_once_without_opaque_state() {
+        let mut accumulator = OpenAiChatAccumulator::default();
+        let mut streamed = String::new();
+        for delta in [
+            json!({"reasoning": "plan", "reasoning_details": [{"type": "reasoning.text", "text": "plan"}]}),
+            json!({"reasoning_details": [
+                {"type": "reasoning.text", "text": " then"},
+                {"type": "reasoning.summary", "summary": " act"},
+                {"type": "reasoning.encrypted", "data": "opaque", "text": "not visible"}
+            ]}),
+        ] {
+            let event = json!({"choices": [{"index": 0, "delta": delta}]});
+            accumulator
+                .apply_event(&serde_json::to_vec(&event).unwrap(), &mut |delta| {
+                    if let ChatCompletionStreamDelta::Reasoning { text } = delta {
+                        streamed.push_str(&text);
+                    }
+                })
+                .unwrap();
+        }
+        accumulator
+            .apply_event(
+                br#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+                &mut |_| {},
+            )
+            .unwrap();
+        let response = accumulator.finish().unwrap().body;
+        assert_eq!(streamed, "plan then act");
+        assert_eq!(
+            response["choices"][0]["message"]["reasoning_content"],
+            streamed
+        );
+        assert_eq!(
+            response["choices"][0]["message"]["reasoning_details"][3]["data"],
+            "opaque"
+        );
+    }
+
+    #[test]
+    fn complete_messages_normalize_the_same_visible_fields_and_preserve_continuation() {
+        for (mut message, expected) in [
+            (
+                json!({"reasoning_content": "canonical", "reasoning": "alias"}),
+                json!("canonical"),
+            ),
+            (json!({"reasoning": "plan"}), json!("plan")),
+            (
+                json!({"reasoning_details": [
+                    {"type": "reasoning.summary", "summary": "plan"},
+                    {"type": "reasoning.encrypted", "data": "opaque"}
+                ]}),
+                json!("plan"),
+            ),
+            (
+                json!({"reasoning_details": [{"type": "reasoning.encrypted", "data": "opaque", "text": "not visible"}]}),
+                json!(null),
+            ),
+        ] {
+            let original = message.clone();
+            normalize_message_reasoning(message.as_object_mut().unwrap()).unwrap();
+            assert_eq!(message["reasoning_content"], expected);
+            assert_eq!(message["reasoning"], original["reasoning"]);
+            assert_eq!(message["reasoning_details"], original["reasoning_details"]);
+        }
+        let mut invalid =
+            json!({"reasoning_content": 42, "reasoning": "must not mask invalid data"});
+        assert!(normalize_message_reasoning(invalid.as_object_mut().unwrap()).is_err());
+    }
+
+    #[test]
+    fn openai_chat_stream_projects_tool_fragments_and_builds_agent_final() {
+        let events = [
+            br#"{"id":"chat_1","object":"chat.completion.chunk","created":42,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","content":"I will ","reasoning":"Plan ","reasoning_content":"Need ","reasoning_details":[{"type":"reasoning.encrypted","id":"call_0","data":"opaque"}],"tool_calls":[{"id":"call_0","type":"function","extra_content":{"google":{"thought_signature":"signature"}},"function":{"arguments":"{\"path\":\"a.md\",\"content\":\"hel"}}]},"finish_reason":null}]}"#.as_slice(),
+            br#"{"id":"chat_1","created":42,"model":"gpt-test","error":null,"choices":[{"index":0,"delta":{"content":"write.","reasoning":"then act.","reasoning_content":"files.","tool_calls":[{"id":"call_0","function":{"name":"workspace_write_file"}},{"id":"call_1","type":"function","function":{"name":"workspace_apply_patch","arguments":"{\"path\":\"b.md\",\"old_string\":\"x\",\"new_string\":\"n"}}]},"finish_reason":null}]}"#.as_slice(),
+            br#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"lo\"}"}}]},"finish_reason":null}]}"#.as_slice(),
+            br#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"ew\"}"}}]},"finish_reason":null}]}"#.as_slice(),
+            br#"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#.as_slice(),
+            br#"{"choices":[]}"#.as_slice(),
+            br#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#.as_slice(),
+            b"[DONE]".as_slice(),
+        ];
+        let mut accumulator = OpenAiChatAccumulator::default();
+        let mut deltas = Vec::<ChatCompletionStreamDelta>::new();
+        for event in events {
+            accumulator
+                .apply_event(event, &mut |delta| deltas.push(delta))
+                .unwrap();
+        }
+
+        assert_eq!(
+            deltas,
+            vec![
+                ChatCompletionStreamDelta::Reasoning {
+                    text: "Need ".to_string()
+                },
+                ChatCompletionStreamDelta::Reasoning {
+                    text: "files.".to_string()
+                },
+                ChatCompletionStreamDelta::ToolCall {
+                    tool_call_index: 0,
+                    name: "workspace_write_file".to_string(),
+                    arguments_fragment: "{\"path\":\"a.md\",\"content\":\"hel".to_string(),
+                },
+                ChatCompletionStreamDelta::ToolCall {
+                    tool_call_index: 1,
+                    name: "workspace_apply_patch".to_string(),
+                    arguments_fragment: String::new(),
+                },
+                ChatCompletionStreamDelta::ToolCall {
+                    tool_call_index: 1,
+                    name: "workspace_apply_patch".to_string(),
+                    arguments_fragment:
+                        "{\"path\":\"b.md\",\"old_string\":\"x\",\"new_string\":\"n".to_string(),
+                },
+                ChatCompletionStreamDelta::ToolCall {
+                    tool_call_index: 0,
+                    name: "workspace_write_file".to_string(),
+                    arguments_fragment: "lo\"}".to_string(),
+                },
+                ChatCompletionStreamDelta::ToolCall {
+                    tool_call_index: 1,
+                    name: "workspace_apply_patch".to_string(),
+                    arguments_fragment: "ew\"}".to_string(),
+                },
+            ]
+        );
+
+        let body = accumulator.finish().unwrap().body;
+        assert_eq!(body["id"], "chat_1");
+        assert_eq!(body["model"], "gpt-test");
+        assert_eq!(body["choices"][0]["message"]["content"], "I will write.");
+        assert_eq!(body["choices"][0]["message"]["reasoning"], "Plan then act.");
+        assert_eq!(
+            body["choices"][0]["message"]["reasoning_content"],
+            "Need files."
+        );
+        assert_eq!(
+            body["choices"][0]["message"]["reasoning_details"],
+            json!([{"type":"reasoning.encrypted","id":"call_0","data":"opaque"}])
+        );
+        assert_eq!(body["choices"][0]["finish_reason"], "tool_calls");
+        assert_eq!(
+            body["choices"][0]["message"]["tool_calls"][0]["extra_content"],
+            json!({"google":{"thought_signature":"signature"}})
+        );
+        assert_eq!(
+            body["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"],
+            "{\"path\":\"a.md\",\"content\":\"hello\"}"
+        );
+        assert_eq!(
+            body["choices"][0]["message"]["tool_calls"][1]["function"]["arguments"],
+            "{\"path\":\"b.md\",\"old_string\":\"x\",\"new_string\":\"new\"}"
+        );
+        assert_eq!(
+            body["usage"],
+            json!({
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+            })
+        );
+
+        let mut clean_eof = OpenAiChatAccumulator::default();
+        clean_eof
+            .apply_event(
+                br#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+                &mut |_| {},
+            )
+            .unwrap();
+        assert!(clean_eof.finish().is_ok());
+
+        let mut missing_finish = OpenAiChatAccumulator::default();
+        missing_finish.apply_event(b"[DONE]", &mut |_| {}).unwrap();
+        assert!(missing_finish.finish().is_err());
+
+        let mut missing_tool_calls = OpenAiChatAccumulator::default();
+        missing_tool_calls
+            .apply_event(
+                br#"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#,
+                &mut |_| {},
+            )
+            .unwrap();
+        assert!(missing_tool_calls.finish().is_err());
     }
 }

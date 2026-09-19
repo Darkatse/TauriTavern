@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::infrastructure::ios_policy_cache::resolve_effective_raw_policy_sync;
-use tt_adapter_storage_core::FileSettingsRepository;
+use tt_adapter_storage_core::load_tauritavern_settings_blocking;
 use tt_domain::errors::DomainError;
 use tt_domain::ios_policy::{
     IosPolicyActivationReport, IosPolicyScope, resolve_ios_policy_activation_report,
@@ -16,8 +16,8 @@ pub(crate) struct StartupProfile {
 
 impl StartupProfile {
     pub(crate) fn load(data_root: &Path) -> Result<Self, DomainError> {
-        let settings_repository = FileSettingsRepository::new(data_root.join("default-user"));
-        let tauritavern_settings = settings_repository.load_tauritavern_settings_sync()?;
+        let tauritavern_settings =
+            load_tauritavern_settings_blocking(&data_root.join("default-user"))?;
         tauritavern_settings
             .chat_backups
             .validate()

@@ -45,7 +45,7 @@ import {
     secret_state,
 } from './secrets.js';
 import { debounce, getStringHash, isValidUrl } from './utils.js';
-import { chat_completion_sources, oai_settings } from './openai.js';
+import { chat_completion_sources, oai_settings, POLLINATIONS_ENDPOINT } from './openai.js';
 import { getTokenCountAsync } from './tokenizers.js';
 import { textgen_types, textgenerationwebui_settings as textgen_settings, getTextGenServer } from './textgen-settings.js';
 import { debounce_timeout, SWIPE_SOURCE } from './constants.js';
@@ -404,6 +404,7 @@ function RA_autoconnect(PrevApi) {
                 break;
             case 'openai':
                 if (((secret_state[SECRET_KEYS.OPENAI] || oai_settings.reverse_proxy) && oai_settings.chat_completion_source == chat_completion_sources.OPENAI)
+                    || (secret_state[SECRET_KEYS.OPENCODE] && oai_settings.chat_completion_source == chat_completion_sources.OPENCODE)
                     || ((secret_state[SECRET_KEYS.CLAUDE] || oai_settings.reverse_proxy) && oai_settings.chat_completion_source == chat_completion_sources.CLAUDE)
                     || (secret_state[SECRET_KEYS.OPENROUTER] && oai_settings.chat_completion_source == chat_completion_sources.OPENROUTER)
                     || (secret_state[SECRET_KEYS.AI21] && oai_settings.chat_completion_source == chat_completion_sources.AI21)
@@ -425,7 +426,7 @@ function RA_autoconnect(PrevApi) {
                     || (secret_state[SECRET_KEYS.FIREWORKS] && oai_settings.chat_completion_source == chat_completion_sources.FIREWORKS)
                     || (secret_state[SECRET_KEYS.COMETAPI] && oai_settings.chat_completion_source == chat_completion_sources.COMETAPI)
                     || (secret_state[SECRET_KEYS.ZAI] && oai_settings.chat_completion_source == chat_completion_sources.ZAI)
-                    || (secret_state[SECRET_KEYS.POLLINATIONS] && oai_settings.chat_completion_source === chat_completion_sources.POLLINATIONS)
+                    || ((secret_state[SECRET_KEYS.POLLINATIONS] || oai_settings.pollinations_endpoint === POLLINATIONS_ENDPOINT.ANONYMOUS) && oai_settings.chat_completion_source === chat_completion_sources.POLLINATIONS)
                     || (secret_state[SECRET_KEYS.WORKERS_AI] && oai_settings.chat_completion_source == chat_completion_sources.WORKERS_AI)
                     || (secret_state[SECRET_KEYS.MINIMAX] && oai_settings.chat_completion_source == chat_completion_sources.MINIMAX)
                     || (secret_state[SECRET_KEYS.AWS_BEDROCK] && oai_settings.chat_completion_source == chat_completion_sources.AWS_BEDROCK)
@@ -1008,10 +1009,16 @@ export function initRossMods() {
             return;
         }
 
+        // Some WebKit versions dispatch the IME commit keydown after compositionend,
+        // so isComposing is false; keyCode 229 is the legacy IME-processed marker.
+        if (event.isComposing || event.keyCode === 229) {
+            return;
+        }
+
         //Enter to send when send_textarea in focus
         if (document.activeElement == hotkeyTargets.send_textarea) {
             const sendOnEnter = shouldSendOnEnter();
-            if (!event.isComposing && !event.shiftKey && !event.ctrlKey && !event.altKey && event.key == 'Enter' && sendOnEnter) {
+            if (!event.shiftKey && !event.ctrlKey && !event.altKey && event.key == 'Enter' && sendOnEnter) {
                 event.preventDefault();
                 sendTextareaMessage();
                 return;

@@ -5,10 +5,6 @@ use super::structured::{ToolErrorStructured, structured_value};
 use tt_domain::models::agent::AgentToolResult;
 use tt_domain::models::tool::ToolInvocation;
 
-pub(super) fn object_args(call: &ToolInvocation) -> Option<&Map<String, Value>> {
-    call.arguments.as_object()
-}
-
 pub(super) fn required_trimmed_string_arg<'a>(
     args: &'a Map<String, Value>,
     key: &str,
@@ -52,6 +48,13 @@ pub(super) fn optional_bool_arg(
         .as_bool()
         .map(Some)
         .ok_or_else(|| format!("{key} must be a boolean"))
+}
+
+pub(super) fn ensure_only_args(args: &Map<String, Value>, allowed: &[&str]) -> Result<(), String> {
+    match args.keys().find(|key| !allowed.contains(&key.as_str())) {
+        Some(key) => Err(format!("{key} is not supported")),
+        None => Ok(()),
+    }
 }
 
 pub(crate) const WORKSPACE_PATH_IS_DIRECTORY_CODE: &str = "workspace.path_is_directory";

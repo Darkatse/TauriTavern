@@ -6,6 +6,7 @@ use crate::services::agent_model_gateway::providers::AgentProviderAdapter;
 use tt_domain::models::agent::{AgentModelContentPart, AgentModelRequest, AgentModelResponse};
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionSource,
+    OPENAI_RESPONSES_WEBSOCKET_TRANSPORT,
 };
 
 pub(super) fn apply_provider_state_to_payload(
@@ -67,18 +68,41 @@ pub(super) fn next_provider_state(
         });
     }
 
-    if adapter == AgentProviderAdapter::OpenAiResponses {
+    if adapter == AgentProviderAdapter::OpenAiResponses
+        && string_value(&request.provider_state, "transport")
+            == Some(OPENAI_RESPONSES_WEBSOCKET_TRANSPORT)
+    {
         let response_id = response_id.ok_or_else(|| {
             ApplicationError::ValidationError(
                 "agent.provider_state_invalid: OpenAI Responses continuation is missing response id"
                     .to_string(),
             )
         })?;
-        state["transport"] = Value::String("responses_websocket".to_string());
+        state["transport"] = Value::String(OPENAI_RESPONSES_WEBSOCKET_TRANSPORT.to_string());
         state["previousResponseId"] = Value::String(response_id);
     }
 
     Ok(state)
+}
+
+pub(super) fn responses_websocket_session_id(request: &AgentModelRequest) -> Option<&str> {
+    if string_value(&request.provider_state, "transport")
+        != Some(OPENAI_RESPONSES_WEBSOCKET_TRANSPORT)
+    {
+        return None;
+    }
+    string_value(&request.provider_state, "sessionId")
+}
+
+/// A resumed run opens a new connection and sends its complete native history.
+pub fn reset_transport_for_resume(request: &mut AgentModelRequest) {
+    if let Some(state) = request.provider_state.as_object_mut()
+        && state.get("transport").and_then(Value::as_str)
+            == Some(OPENAI_RESPONSES_WEBSOCKET_TRANSPORT)
+    {
+        state.remove("previousResponseId");
+        state.remove("messageCursor");
+    }
 }
 
 fn native_part_count(response: &AgentModelResponse, provider: &str) -> usize {

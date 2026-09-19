@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use tokio::fs;
 use uuid::Uuid;
 
-use crate::file_system::{list_files_with_extension, read_json_file, replace_file_with_fallback};
+use crate::file_system::{list_files_with_extension, read_json_file, replace_file};
 use tt_domain::errors::DomainError;
 use tt_domain::models::llm_connection::{
     LLM_CONNECTION_KIND, LLM_CONNECTION_SCHEMA_VERSION, LlmConnectionDefinition, LlmConnectionId,
@@ -118,7 +118,7 @@ impl LlmConnectionRepository for FileLlmConnectionRepository {
                 error
             ))
         })?;
-        replace_file_with_fallback(&temp, &target).await
+        replace_file(&temp, &target).await
     }
 
     async fn delete_connection(&self, id: &LlmConnectionId) -> Result<(), DomainError> {

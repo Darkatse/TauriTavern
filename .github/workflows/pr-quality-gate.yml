@@ -38,7 +38,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev librsvg2-dev
+            libdbus-1-dev libwebkit2gtk-4.1-dev librsvg2-dev pkg-config
 
       - name: Install latest stable Rust and Clippy
         uses: dtolnay/rust-toolchain@stable
@@ -50,20 +50,25 @@ jobs:
         with:
           workspaces: "src-tauri -> target"
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@v2
         with:
-          version: 10
-          run_install: false
+          runtime: node@22
+          cache: true
+          install: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup uv
+        if: runner.os == 'Linux'
+        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
         with:
-          node-version: 22
-          cache: pnpm
+          version: latest-known
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Verify generated Flatpak dependency sources
+        if: runner.os == 'Linux'
+        run: pnpm run flatpak:sources:check
 
       - name: Run checks and tests
         run: pnpm run check
@@ -106,12 +111,14 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          sysroot="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
           {
             echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
             echo "AR_aarch64_linux_android=$toolchain/llvm-ar"
             echo "CC_aarch64_linux_android=$toolchain/aarch64-linux-android24-clang"
             echo "CXX_aarch64_linux_android=$toolchain/aarch64-linux-android24-clang++"
             echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$toolchain/aarch64-linux-android24-clang"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$sysroot"
           } >> "$GITHUB_ENV"
 
       - name: Cache Rust build artifacts

@@ -3,7 +3,9 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::presentation::commands::helpers::{log_command, map_command_error};
+use crate::presentation::commands::helpers::{
+    log_command, log_user_visible_error, map_command_error,
+};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::character_dto::{
     BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataResultDto, CharacterChatDto,
@@ -199,7 +201,7 @@ pub async fn delete_character(
         .await
         .map_err(map_command_error("Failed to delete character"))?;
 
-    app_state
+    if let Err(error) = app_state
         .services
         .skill_service
         .delete_skills_for_source(
@@ -207,9 +209,12 @@ pub async fn delete_character(
             &character_skill_source_id(&name),
         )
         .await
-        .map_err(map_command_error(
-            "Failed to delete Agent Skills linked to character",
-        ))?;
+    {
+        log_user_visible_error(format!(
+            "Deleted character '{}' but could not delete its linked Agent Skills: {}",
+            name, error
+        ));
+    }
 
     Ok(())
 }
@@ -232,9 +237,16 @@ pub async fn rename_character(
         .await
         .map_err(map_command_error("Failed to rename character"))?;
 
-    let new_character_id = character_id_from_avatar(&renamed.avatar)?;
-    if old_character_id != new_character_id {
-        app_state
+    let Some(new_character_id) = renamed
+        .avatar
+        .strip_suffix(".png")
+        .filter(|id| !id.is_empty())
+    else {
+        log_user_visible_error("Renamed character but could not retarget its linked Agent Skills");
+        return Ok(renamed);
+    };
+    if old_character_id != new_character_id
+        && let Err(error) = app_state
             .services
             .skill_service
             .retarget_scope(SkillScopeRetargetRequest {
@@ -242,13 +254,15 @@ pub async fn rename_character(
                     character_id: old_character_id,
                 },
                 to_scope: SkillScope::Character {
-                    character_id: new_character_id,
+                    character_id: new_character_id.to_string(),
                 },
             })
             .await
-            .map_err(map_command_error(
-                "Failed to retarget Agent Skills linked to character",
-            ))?;
+    {
+        log_user_visible_error(format!(
+            "Renamed character but could not retarget its linked Agent Skills: {}",
+            error
+        ));
     }
 
     Ok(renamed)
@@ -383,25 +397,8 @@ pub async fn clear_character_cache(
 }
 
 fn character_skill_source_id(name: &str) -> String {
-    format!("character:{}", name.trim())
-}
-
-fn character_id_from_avatar(avatar: &str) -> Result<String, CommandError> {
-    let file_name = avatar
-        .trim()
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or_default()
-        .trim();
-    let id = file_name
-        .rsplit_once('.')
-        .map(|(stem, _)| stem)
-        .unwrap_or(file_name)
-        .trim();
-    if id.is_empty() {
-        return Err(CommandError::BadRequest(
-            "Character avatar did not resolve to a character id".to_string(),
-        ));
+    SkillScope::Character {
+        character_id: name.to_string(),
     }
-    Ok(id.to_string())
+    .label()
 }

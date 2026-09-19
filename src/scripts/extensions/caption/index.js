@@ -3,7 +3,7 @@ import { getContext, getApiUrl, doExtrasFetch, extension_settings, modules, rend
 import { appendMediaToMessage, chat_metadata, eventSource, event_types, getRequestHeaders, saveChatConditional, saveSettingsDebounced, substituteParamsExtended, withChatSurfaceStructureMutation } from '../../../script.js';
 import { getMessageTimeStamp } from '../../RossAscends-mods.js';
 import { SECRET_KEYS, secret_state } from '../../secrets.js';
-import { oai_settings } from '../../openai.js';
+import { oai_settings, POLLINATIONS_ENDPOINT } from '../../openai.js';
 import { getMultimodalCaption, NATIVE_CAPTION_UNAVAILABLE_MESSAGE } from '../shared.js';
 import { textgen_types, textgenerationwebui_settings } from '../../textgen-settings.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
@@ -479,9 +479,12 @@ export async function init() {
             const hasCaptionModule = (() => {
                 const settings = extension_settings.caption;
 
-                if (globalThis.__TAURI_RUNNING__ === true && ['local', 'horde', 'multimodal'].includes(settings.source)) {
+                if (globalThis.__TAURI_RUNNING__ === true && ['local', 'horde'].includes(settings.source)) {
                     unavailableReason = NATIVE_CAPTION_UNAVAILABLE_MESSAGE;
                     return false;
+                }
+                if (globalThis.__TAURI_RUNNING__ === true && settings.source === 'multimodal') {
+                    return true;
                 }
 
                 // Handle non-multimodal sources
@@ -544,8 +547,8 @@ export async function init() {
                         return true;
                     }
 
-                    // Custom API doesn't need additional checks
-                    if (api === 'custom') {
+                    // Custom API and anonymous Pollinations don't need additional checks
+                    if (api === 'custom' || (api === 'pollinations' && oai_settings.pollinations_endpoint === POLLINATIONS_ENDPOINT.ANONYMOUS)) {
                         return true;
                     }
                 }
@@ -575,7 +578,11 @@ export async function init() {
         $('#form_sheld').append(imgForm);
     }
     async function switchMultimodalBlocks() {
-        await addRemoteEndpointModels();
+        try {
+            await addRemoteEndpointModels();
+        } catch (error) {
+            console.warn('Caption: multimodal model discovery failed', error);
+        }
         const isMultimodal = extension_settings.caption.source === 'multimodal';
         if (!extension_settings.caption.multimodal_model) {
             const dropdown = $('#caption_multimodal_model');

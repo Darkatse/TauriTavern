@@ -3,7 +3,7 @@ use super::fs_ops::{
     PreparedSkillDirReplacement, SkillDirCleanup, cleanup_committed_skill_dirs,
     copy_skill_dir_to_empty_target, delete_installed_skill_dir, ensure_installed_skill_dir,
     prepare_skill_dir_replacement, rollback_prepared_skill_dir,
-    rollback_prepared_skill_dir_replacement,
+    rollback_prepared_skill_dir_replacement, warn_committed_cleanup_errors,
 };
 use super::index::SkillDirectoryState;
 use super::index::sort_index;
@@ -50,7 +50,7 @@ pub(super) async fn delete_skill(
                 name,
                 path: skill_root,
             }],
-        )?;
+        );
     }
     Ok(())
 }
@@ -68,7 +68,9 @@ pub(super) async fn move_skill(
         ));
     }
 
-    let mut index = repository.load_index().await?;
+    let mut index = repository
+        .repair_index_for_target(&request.to_scope, &name)
+        .await?;
     let Some(from_position) = index
         .skills
         .iter()
@@ -113,7 +115,7 @@ pub(super) async fn move_skill(
                     name: name.clone(),
                     path: source_root,
                 }],
-            )?;
+            );
             return Ok(SkillInstallResult {
                 scope: request.to_scope,
                 name,
@@ -153,7 +155,7 @@ pub(super) async fn move_skill(
                 path: source_root,
             },
             &replacement,
-        )?;
+        );
         return Ok(SkillInstallResult {
             scope: request.to_scope,
             name,
@@ -174,7 +176,7 @@ pub(super) async fn move_skill(
             name: name.clone(),
             path: source_root,
         }],
-    )?;
+    );
 
     Ok(SkillInstallResult {
         scope: request.to_scope,
@@ -244,7 +246,7 @@ pub(super) async fn delete_skills_for_source(
         index.skills = next_skills;
         sort_index(&mut index);
         repository.save_index(&index).await?;
-        cleanup_committed_skill_dirs("delete_skills_for_source", &cleanup_dirs)?;
+        cleanup_committed_skill_dirs("delete_skills_for_source", &cleanup_dirs);
     }
 
     Ok(deleted)
@@ -253,7 +255,7 @@ pub(super) async fn delete_skills_for_source(
 fn cleanup_move_replace_after_commit(
     source_dir: SkillDirCleanup,
     replacement: &PreparedSkillDirReplacement,
-) -> Result<(), DomainError> {
+) {
     let mut errors = Vec::new();
     if let Err(error) = replacement.discard_backup() {
         errors.push(error.to_string());
@@ -261,16 +263,5 @@ fn cleanup_move_replace_after_commit(
     if let Err(error) = delete_installed_skill_dir(&source_dir.path, &source_dir.name) {
         errors.push(format!("{}: {}", source_dir.path.display(), error));
     }
-    committed_cleanup_result("move_skill", errors)
-}
-
-fn committed_cleanup_result(operation: &str, errors: Vec<String>) -> Result<(), DomainError> {
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(DomainError::InternalError(format!(
-            "{operation} committed but failed to clean up Skill directories: {}",
-            errors.join("; ")
-        )))
-    }
+    warn_committed_cleanup_errors("move_skill", errors);
 }

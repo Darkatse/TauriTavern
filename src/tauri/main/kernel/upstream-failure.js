@@ -12,6 +12,7 @@ export const UPSTREAM_FAILURE_FALLBACKS = Object.freeze({
     'network.dns_failed': 'Could not find the target service address.',
     'network.tls_failed': 'Could not establish a secure connection.',
     'network.body_interrupted': 'The response was interrupted while it was being read.',
+    'network.redirect_rejected': 'The endpoint redirect was rejected. Use the final URL on the same origin and try again.',
     'network.request_failed': 'Network request failed.',
 });
 

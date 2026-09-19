@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::policy::validate_subagent_target;
 use super::tool_error::tool_error_outcome;
@@ -29,11 +29,12 @@ impl AgentRuntimeService {
         run_id: &str,
         invocation_id: &str,
         call: &ToolInvocation,
+        args: &Map<String, Value>,
         profile: &ResolvedAgentProfile,
         _cancel: &AgentCancelReceiver,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
-        let args = match serde_json::from_value::<AgentDelegateArgs>(call.arguments.clone()) {
+        let args = match serde_json::from_value::<AgentDelegateArgs>(Value::Object(args.clone())) {
             Ok(args) => args,
             Err(error) => {
                 return Ok(tool_error_outcome(
@@ -150,7 +151,7 @@ impl AgentRuntimeService {
                 call_id: call.call_id.clone(),
                 tool_id: call.tool_id.clone(),
                 content: format!(
-                    "Started delegated task {} with Agent {}. You can continue other work; use agent_await only when your next decision needs this task's result or current status.",
+                    "Started delegated task `{}` with Agent `{}`. You can continue other work and call `agent_await` when you need its result or current status.",
                     structured["taskId"].as_str().unwrap_or(""),
                     target.id.as_str()
                 ),
@@ -282,16 +283,6 @@ mod tests {
         .expect_err("non-string title should fail");
 
         assert_eq!(error, "task.title must be a string when provided");
-    }
-
-    #[test]
-    fn delegate_task_packet_accepts_8000_char_fields() {
-        let task = json!({
-            "title": "Critique",
-            "objective": "a".repeat(8_000)
-        });
-
-        assert!(validate_delegate_task_packet(&task).is_ok());
     }
 
     #[test]

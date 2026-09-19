@@ -4,19 +4,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct OpenAiTokenCountRequestDto {
-    #[serde(default)]
-    pub model: String,
-    #[serde(default)]
-    pub messages: Vec<Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct OpenAiTokenCountResponseDto {
-    pub token_count: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OpenAiTokenCountBatchItemDto {
     #[serde(default)]
     pub messages: Vec<Value>,
@@ -50,7 +37,7 @@ pub struct OpenAiTokenPrefixCountRequestDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct OpenAiEncodeRequestDto {
+pub struct EncodeTokensRequestDto {
     #[serde(default)]
     pub model: String,
     #[serde(default)]
@@ -58,14 +45,14 @@ pub struct OpenAiEncodeRequestDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct OpenAiEncodeResponseDto {
+pub struct EncodeTokensResponseDto {
     pub ids: Vec<u32>,
     pub count: usize,
     pub chunks: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct OpenAiDecodeRequestDto {
+pub struct DecodeTokensRequestDto {
     #[serde(default)]
     pub model: String,
     #[serde(default)]
@@ -73,7 +60,7 @@ pub struct OpenAiDecodeRequestDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct OpenAiDecodeResponseDto {
+pub struct DecodeTokensResponseDto {
     pub text: String,
     pub chunks: Vec<String>,
 }

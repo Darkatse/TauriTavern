@@ -39,7 +39,6 @@ pub enum RuntimeMode {
 #[derive(Debug, Clone)]
 pub struct RuntimePaths {
     pub mode: RuntimeMode,
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub app_root: PathBuf,
     pub data_root: PathBuf,
     pub log_root: PathBuf,
@@ -57,7 +56,6 @@ impl RuntimePaths {
 
         Self {
             mode,
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             app_root,
             data_root,
             log_root,
@@ -290,7 +288,7 @@ fn resolve_executable_directory() -> Result<PathBuf, Box<dyn Error>> {
 pub fn resolve_app_data_dir(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn Error>> {
     #[cfg(target_os = "android")]
     {
-        return resolve_android_app_data_dir(app_handle);
+        resolve_android_app_data_dir(app_handle)
     }
 
     #[cfg(not(target_os = "android"))]
@@ -321,14 +319,14 @@ fn resolve_android_app_data_dir(app_handle: &AppHandle) -> Result<PathBuf, Box<d
         }
     }
 
-    if let Ok(document_dir) = app_handle.path().document_dir() {
-        if let Some(derived_external_dir) = derive_android_external_app_data_dir(&document_dir) {
-            tracing::debug!(
-                "Using Android external app data directory derived from document_dir: {:?}",
-                derived_external_dir
-            );
-            return Ok(derived_external_dir);
-        }
+    if let Ok(document_dir) = app_handle.path().document_dir()
+        && let Some(derived_external_dir) = derive_android_external_app_data_dir(&document_dir)
+    {
+        tracing::debug!(
+            "Using Android external app data directory derived from document_dir: {:?}",
+            derived_external_dir
+        );
+        return Ok(derived_external_dir);
     }
 
     if let Some(path) = reported_app_data_dir {
@@ -532,7 +530,7 @@ pub(crate) async fn request_runtime_data_root_change(
         migration_error: None,
     };
 
-    tt_adapter_storage_core::file_system::write_json_file(&runtime_config_path(app_root), &config)
+    tt_adapter_storage_core::file_system::persist_json_file(&runtime_config_path(app_root), &config)
         .await
 }
 
@@ -620,16 +618,7 @@ fn write_runtime_config_sync(
     path: &std::path::Path,
     config: &TauriTavernRuntimeConfig,
 ) -> Result<(), Box<dyn Error>> {
-    use tt_adapter_storage_core::file_system::{replace_file_with_fallback_sync, unique_temp_path};
-
-    let bytes = serde_json::to_vec_pretty(config)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let temp_path = unique_temp_path(path);
-    std::fs::write(&temp_path, &bytes)?;
-    replace_file_with_fallback_sync(&temp_path, path)
+    tt_adapter_storage_core::file_system::persist_json_file_blocking(path, config)
         .map_err(|error| Box::new(io::Error::other(error.to_string())) as Box<dyn Error>)?;
     Ok(())
 }

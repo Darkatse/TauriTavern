@@ -1,5 +1,6 @@
 import { MacroRegistry, MacroCategory, MacroValueType } from '../engine/MacroRegistry.js';
 import { chat, chat_metadata } from '../../../script.js';
+import { findLastMessageId, getLastSwipeId, getCurrentSwipeId } from '../chat-state.js';
 
 /**
  * Registers macros that inspect the current chat log and swipe state
@@ -18,7 +19,7 @@ export function registerChatMacros() {
         description: 'Index of the last message in the chat.',
         returns: 'Index of the last message in the chat.',
         returnType: MacroValueType.INTEGER,
-        handler: () => String(getLastMessageId() ?? ''),
+        handler: () => String(findLastMessageId(chat) ?? ''),
     });
 
     MacroRegistry.registerMacro('lastUserMessage', {
@@ -53,10 +54,10 @@ export function registerChatMacros() {
 
     MacroRegistry.registerMacro('lastSwipeId', {
         category: MacroCategory.CHAT,
-        description: '1-based index of the last swipe for the last message.',
-        returns: '1-based index of the last swipe.',
+        description: 'Number of existing swipes for the last message, including a pending swipe\'s message.',
+        returns: 'Number of existing swipes.',
         returnType: MacroValueType.INTEGER,
-        handler: () => String(getLastSwipeId() ?? ''),
+        handler: () => String(getLastSwipeId(chat) ?? ''),
     });
 
     MacroRegistry.registerMacro('currentSwipeId', {
@@ -64,7 +65,7 @@ export function registerChatMacros() {
         description: '1-based index of the current swipe.',
         returns: '1-based index of the current swipe.',
         returnType: MacroValueType.INTEGER,
-        handler: () => String(getCurrentSwipeId() ?? ''),
+        handler: () => String(getCurrentSwipeId(chat) ?? ''),
     });
 
     MacroRegistry.registerMacro('allChatRange', {
@@ -80,38 +81,18 @@ export function registerChatMacros() {
     });
 }
 
-function getLastMessageId({ exclude_swipe_in_propress = true, filter = null } = {}) {
-    if (!Array.isArray(chat) || chat.length === 0) {
-        return null;
-    }
-
-    for (let i = chat.length - 1; i >= 0; i--) {
-        const message = chat[i];
-
-        if (exclude_swipe_in_propress && message.swipes && message.swipe_id >= message.swipes.length) {
-            continue;
-        }
-
-        if (!filter || filter(message)) {
-            return i;
-        }
-    }
-
-    return null;
-}
-
 function getLastMessage() {
-    const mid = getLastMessageId();
+    const mid = findLastMessageId(chat);
     return typeof mid === 'number' ? (chat[mid]?.mes ?? '') : '';
 }
 
 function getLastUserMessage() {
-    const mid = getLastMessageId({ filter: m => m.is_user && !m.is_system });
+    const mid = findLastMessageId(chat, { filter: m => Boolean(m.is_user && !m.is_system) });
     return typeof mid === 'number' ? (chat[mid]?.mes ?? '') : '';
 }
 
 function getLastCharMessage() {
-    const mid = getLastMessageId({ filter: m => !m.is_user && !m.is_system });
+    const mid = findLastMessageId(chat, { filter: m => !m.is_user && !m.is_system });
     return typeof mid === 'number' ? (chat[mid]?.mes ?? '') : '';
 }
 
@@ -127,22 +108,4 @@ function getFirstDisplayedMessageId() {
         return mesId;
     }
     return null;
-}
-
-function getLastSwipeId() {
-    const mid = getLastMessageId({ exclude_swipe_in_propress: false });
-    if (typeof mid !== 'number') {
-        return null;
-    }
-    const swipes = chat[mid]?.swipes;
-    return Array.isArray(swipes) ? swipes.length : null;
-}
-
-function getCurrentSwipeId() {
-    const mid = getLastMessageId({ exclude_swipe_in_propress: false });
-    if (typeof mid !== 'number') {
-        return null;
-    }
-    const swipeId = chat[mid]?.swipe_id;
-    return typeof swipeId === 'number' ? swipeId + 1 : null;
 }

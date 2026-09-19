@@ -5,8 +5,7 @@ use crate::dto::agent_dto::{
 };
 use crate::errors::ApplicationError;
 use tt_domain::models::agent::{
-    AgentDelegationContinuation, AgentInvocation, AgentInvocationKind, AgentTaskRecord,
-    ROOT_AGENT_INVOCATION_ID,
+    AgentInvocation, AgentInvocationExitPolicy, AgentTaskRecord, ROOT_AGENT_INVOCATION_ID,
 };
 
 pub(super) fn build_run_timeline_projection(
@@ -15,7 +14,7 @@ pub(super) fn build_run_timeline_projection(
 ) -> Result<AgentRunTimelineProjectionDto, ApplicationError> {
     validate_projection_graph(invocations, tasks)?;
     Ok(AgentRunTimelineProjectionDto {
-        foreground_invocation_ids: foreground_invocation_ids(invocations, tasks),
+        foreground_invocation_ids: foreground_invocation_ids(invocations),
         invocations: invocation_nodes(invocations),
         delegation_edges: delegation_edges(tasks),
     })
@@ -47,32 +46,20 @@ fn validate_projection_graph(
     Ok(())
 }
 
-fn foreground_invocation_ids(
-    invocations: &[AgentInvocation],
-    tasks: &[AgentTaskRecord],
-) -> Vec<String> {
-    let mut candidates = Vec::new();
-    for task in tasks {
-        if task.continuation == AgentDelegationContinuation::TransferControl
-            && task.child_invocation_id != ROOT_AGENT_INVOCATION_ID
-        {
-            candidates.push((task.child_invocation_id.clone(), task.created_at));
-        }
-    }
-    for invocation in invocations {
-        if invocation.kind == AgentInvocationKind::Handoff
-            && invocation.id != ROOT_AGENT_INVOCATION_ID
-        {
-            candidates.push((invocation.id.clone(), invocation.created_at));
-        }
-    }
+fn foreground_invocation_ids(invocations: &[AgentInvocation]) -> Vec<String> {
+    let mut candidates = invocations
+        .iter()
+        .filter(|invocation| {
+            invocation.exit_policy == AgentInvocationExitPolicy::RunFinishAllowed
+                && invocation.id != ROOT_AGENT_INVOCATION_ID
+        })
+        .map(|invocation| (invocation.id.clone(), invocation.created_at))
+        .collect::<Vec<_>>();
     candidates.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
 
     let mut ids = vec![ROOT_AGENT_INVOCATION_ID.to_string()];
     for (invocation_id, _) in candidates {
-        if !ids.iter().any(|existing| existing == &invocation_id) {
-            ids.push(invocation_id);
-        }
+        ids.push(invocation_id);
     }
     ids
 }

@@ -62,9 +62,18 @@ function isChatBackupHistoryDisabled(settings) {
 export function buildTauriTavernSettingsUpdate(initial, draft) {
     const nextPanelRuntimeProfile = String(draft.panelRuntimeProfile || '').trim();
     const nextEmbeddedRuntimeProfile = normalizeEmbeddedRuntimeProfileName(draft.embeddedRuntimeProfile);
+    const nextColdSwipesEnabled = draft.coldSwipesEnabled;
+    if (typeof nextColdSwipesEnabled !== 'boolean') {
+        throw new TypeError('Cold swipes setting must be a boolean');
+    }
+    const hasColdSwipesChange = nextColdSwipesEnabled !== initial.coldSwipesEnabled;
     const nextChatVirtualizationEnabled = draft.chatVirtualizationEnabled;
     if (typeof nextChatVirtualizationEnabled !== 'boolean') {
         throw new TypeError('Chat virtualization setting must be a boolean');
+    }
+    const nextCodeMirrorEditorEnabled = draft.codeMirrorEditorEnabled;
+    if (typeof nextCodeMirrorEditorEnabled !== 'boolean') {
+        throw new TypeError('CodeMirror editor setting must be a boolean');
     }
     const nextChatBackupAutomaticEnabled = Boolean(draft.chatBackups?.automaticEnabled);
     const nextChatBackupZstdCompressionEnabled = Boolean(draft.chatBackups?.zstdCompressionEnabled);
@@ -87,7 +96,6 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
 
     const nextAllowKeysExposure = Boolean(draft.allowKeysExposure);
     const nextAvatarPersonaOriginalImagesEnabled = Boolean(draft.avatarPersonaOriginalImagesEnabled);
-    const nextNativeRegexBackendEnabled = Boolean(draft.nativeRegexBackendEnabled);
     const nextPromptCacheTtl = String(draft.promptCacheTtl || '').trim();
 
     const nextRequestProxyEnabled = Boolean(draft.requestProxy?.enabled);
@@ -105,6 +113,8 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         && (nextEmbeddedRuntimeProfile !== initial.embeddedRuntimeProfile || requiresEmbeddedRuntimeMigration);
     const hasChatVirtualizationEnabledChange =
         nextChatVirtualizationEnabled !== initial.chatVirtualizationEnabled;
+    const hasCodeMirrorEditorEnabledChange =
+        nextCodeMirrorEditorEnabled !== initial.codeMirrorEditorEnabled;
     const hasChatBackupAutomaticEnabledChange =
         nextChatBackupAutomaticEnabled !== initial.chatBackups.automaticEnabled;
     const hasChatBackupZstdCompressionEnabledChange =
@@ -130,8 +140,6 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     const hasAllowKeysExposureChange = nextAllowKeysExposure !== initial.allowKeysExposure;
     const hasAvatarPersonaOriginalImagesEnabledChange =
         nextAvatarPersonaOriginalImagesEnabled !== initial.avatarPersonaOriginalImagesEnabled;
-    const hasNativeRegexBackendEnabledChange =
-        nextNativeRegexBackendEnabled !== initial.nativeRegexBackendEnabled;
     const hasPromptCacheTtlChange = nextPromptCacheTtl !== initial.promptCacheTtlSource;
     const hasModelsChange = hasPromptCacheTtlChange;
     const hasRequestProxyChange = nextRequestProxyEnabled !== initial.requestProxy.enabled
@@ -142,12 +150,13 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         panelRuntimeProfile: hasPanelRuntimeChange,
         embeddedRuntimeProfile: hasEmbeddedRuntimeChange,
         chatVirtualizationEnabled: hasChatVirtualizationEnabledChange,
+        coldSwipesEnabled: hasColdSwipesChange,
+        codeMirrorEditorEnabled: hasCodeMirrorEditorEnabledChange,
         chatBackups: hasChatBackupsChange,
         closeToTrayOnClose: hasCloseToTrayOnCloseChange,
         dynamicTheme: hasDynamicThemeChange,
         allowKeysExposure: hasAllowKeysExposureChange,
         avatarPersonaOriginalImagesEnabled: hasAvatarPersonaOriginalImagesEnabledChange,
-        nativeRegexBackendEnabled: hasNativeRegexBackendEnabledChange,
         promptCacheTtl: hasPromptCacheTtlChange,
         models: hasModelsChange,
         requestProxy: hasRequestProxyChange,
@@ -163,8 +172,14 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     if (hasEmbeddedRuntimeChange) {
         patch.embedded_runtime_profile = nextEmbeddedRuntimeProfile;
     }
+    if (hasColdSwipesChange) {
+        patch.cold_swipes_enabled = nextColdSwipesEnabled;
+    }
     if (hasChatVirtualizationEnabledChange) {
         patch.chat_virtualization_enabled = nextChatVirtualizationEnabled;
+    }
+    if (hasCodeMirrorEditorEnabledChange) {
+        patch.codemirror_editor_enabled = nextCodeMirrorEditorEnabled;
     }
     if (hasChatBackupsChange) {
         /** @type {Record<string, unknown>} */
@@ -205,9 +220,6 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     if (hasAvatarPersonaOriginalImagesEnabledChange) {
         patch.avatar_persona_original_images_enabled = nextAvatarPersonaOriginalImagesEnabled;
     }
-    if (hasNativeRegexBackendEnabledChange) {
-        patch.native_regex_backend_enabled = nextNativeRegexBackendEnabled;
-    }
     if (hasModelsChange) {
         /** @type {Record<string, unknown>} */
         const claude = {};
@@ -239,6 +251,8 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
             panelRuntimeProfile: nextPanelRuntimeProfile,
             embeddedRuntimeProfile: nextEmbeddedRuntimeProfile,
             chatVirtualizationEnabled: nextChatVirtualizationEnabled,
+            coldSwipesEnabled: nextColdSwipesEnabled,
+            codeMirrorEditorEnabled: nextCodeMirrorEditorEnabled,
             chatBackups: {
                 automaticEnabled: nextChatBackupAutomaticEnabled,
                 zstdCompressionEnabled: nextChatBackupZstdCompressionEnabled,
@@ -257,7 +271,6 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
             },
             allowKeysExposure: nextAllowKeysExposure,
             avatarPersonaOriginalImagesEnabled: nextAvatarPersonaOriginalImagesEnabled,
-            nativeRegexBackendEnabled: nextNativeRegexBackendEnabled,
             promptCacheTtl: nextPromptCacheTtl,
             requestProxy: {
                 enabled: nextRequestProxyEnabled,

@@ -12,8 +12,37 @@ function isRequestLike(value) {
         && typeof value.clone === 'function';
 }
 
-function isFormDataLike(value) {
-    return getTypeTag(value) === '[object FormData]';
+/**
+ * Rehome FormData from patched same-origin windows into the current realm.
+ * @param {unknown} value
+ * @returns {FormData | null}
+ */
+function toCurrentRealmFormData(value) {
+    if (value instanceof FormData) {
+        return value;
+    }
+
+    if (getTypeTag(value) !== '[object FormData]') {
+        return null;
+    }
+
+    let entries;
+    try {
+        entries = FormData.prototype.entries.call(value);
+    } catch {
+        return null;
+    }
+
+    const formData = new FormData();
+    for (const [name, entry] of entries) {
+        if (typeof entry === 'string') {
+            formData.append(name, entry);
+        } else {
+            formData.append(name, entry, entry.name);
+        }
+    }
+
+    return formData;
 }
 
 function isUrlSearchParamsLike(value) {
@@ -82,8 +111,9 @@ export async function readRequestBody(input, init) {
         return null;
     }
 
-    if (isFormDataLike(rawBody)) {
-        return rawBody;
+    const formData = toCurrentRealmFormData(rawBody);
+    if (formData) {
+        return formData;
     }
 
     if (typeof rawBody === 'string') {

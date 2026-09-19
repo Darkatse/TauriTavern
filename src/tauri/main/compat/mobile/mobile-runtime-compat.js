@@ -1,3 +1,6 @@
+import { writeClipboardText } from '../../../../tauri-bridge.js';
+import { isAndroidRuntime } from '../../../../scripts/util/mobile-runtime.js';
+
 const COMPAT_KEY = '__TAURITAVERN_MOBILE_RUNTIME_COMPAT__';
 
 function defineMissingMethod(target, key, implementation) {
@@ -161,6 +164,28 @@ function hasOwnPolyfill(target, property) {
     return Object.prototype.hasOwnProperty.call(Object(target), property);
 }
 
+function installAndroidClipboardWriteCompat(targetWindow) {
+    if (!isAndroidRuntime()) {
+        return;
+    }
+
+    const targetNavigator = targetWindow.navigator;
+    const clipboard = targetNavigator.clipboard || {};
+    // Android WebView exposes writeText but can reject it; replace only that method.
+    Object.defineProperty(clipboard, 'writeText', {
+        value: (text) => writeClipboardText(String(text)),
+        configurable: true,
+        writable: true,
+    });
+
+    if (!targetNavigator.clipboard) {
+        Object.defineProperty(targetNavigator, 'clipboard', {
+            value: clipboard,
+            configurable: true,
+        });
+    }
+}
+
 export function installMobileRuntimeCompat(targetWindow = window) {
     if (!targetWindow) {
         return;
@@ -191,6 +216,7 @@ export function installMobileRuntimeCompat(targetWindow = window) {
         console.warn('[TauriTavern] Mobile runtime compat installed a requestIdleCallback polyfill.');
     }
 
+    installAndroidClipboardWriteCompat(targetWindow);
     defineMissingMethod(targetWindow.Array?.prototype, 'at', atPolyfill);
     defineMissingMethod(targetWindow.String?.prototype, 'at', atPolyfill);
     defineMissingMethod(targetWindow.Array?.prototype, 'findLast', findLastPolyfill);

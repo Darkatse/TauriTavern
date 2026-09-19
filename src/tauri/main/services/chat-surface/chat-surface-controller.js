@@ -54,6 +54,7 @@ function normalizeMaterializedElement(result) {
  *   domAdapter: ChatDomAdapter;
  *   scrollAdapter: ReturnType<import('../../adapters/chat-surface/chat-scroll-adapter.js').createChatScrollAdapter>;
  *   participantRegistry: ReturnType<import('./participant-registry.js').createChatSurfaceParticipantRegistry>;
+ *   contentPreparation?: ReturnType<import('./content-preparation.js').createContentPreparation>;
  * }} deps
  */
 export function createChatSurfaceController({
@@ -62,6 +63,7 @@ export function createChatSurfaceController({
     domAdapter,
     scrollAdapter,
     participantRegistry,
+    contentPreparation,
 }) {
     if (typeof getMessages !== 'function' || typeof materializeMessage !== 'function') {
         throw new TypeError('ChatSurface requires getMessages and materializeMessage functions');
@@ -86,9 +88,36 @@ export function createChatSurfaceController({
         assertHealthy,
         root: domAdapter.root,
     });
+
+    /** @param {any[]} candidates */
+    function orderRuntimeCandidates(candidates) {
+        const viewport = domAdapter.root.getBoundingClientRect();
+        const viewportCenter = (viewport.top + viewport.bottom) / 2;
+        return candidates.map((entry, index) => {
+            // Active renderers may hide their claimed source; the parent remains
+            // the stable runtime or placeholder box used for viewport ordering.
+            const host = entry.candidate.source.parentElement;
+            if (!(host instanceof Element)) {
+                throw new Error(`ChatSurface runtime host is missing: ${entry.candidate.participantId}`);
+            }
+            const rect = host.getBoundingClientRect();
+            return {
+                entry,
+                index,
+                distance: Math.max(viewport.top - rect.bottom, rect.top - viewport.bottom, 0),
+                centerDistance: Math.abs(((rect.top + rect.bottom) / 2) - viewportCenter),
+            };
+        }).sort((left, right) => (
+            left.distance - right.distance
+            || left.centerDistance - right.centerDistance
+            || left.index - right.index
+        )).map(item => item.entry);
+    }
+
     const runtimeAdmission = createRuntimeAdmission({
         activate: participants.activateCandidate,
         assertCandidate: participants.assertCandidate,
+        orderCandidates: orderRuntimeCandidates,
         runScheduled: operation => mutate('runtime-admission', operation),
         onFault: setFault,
     });
@@ -131,6 +160,18 @@ export function createChatSurfaceController({
         assertHealthy,
         setFault,
     });
+
+    /** @param {HTMLElement} element @param {{ content: HTMLElement; commit: () => unknown }} transaction @param {{ transient?: boolean }} [options] */
+    function updateContent(element, transaction, { transient = false } = {}) {
+        const record = contentReconciler.resolve(element, transaction);
+        const ready = contentPreparation?.prepare({ message: record.message, messageId: record.messageId, content: transaction.content, transient }) ?? true;
+        return contentReconciler.commit(record, transaction, { notifyParticipants: !transient && ready });
+    }
+
+    /** @param {HTMLElement} element @param {{ content: HTMLElement; commit: () => unknown }} transaction */
+    function commitContent(element, transaction) {
+        return contentReconciler.commit(contentReconciler.resolve(element, transaction), transaction);
+    }
 
     /** @param {HTMLElement[]} elements */
     function reconcileExternalRemovals(elements) {
@@ -205,6 +246,7 @@ export function createChatSurfaceController({
         materializeOptionsByMessageId = new Map(),
     }) {
         const nextProjection = createChatProjection(indices, { count: messages.length });
+        contentPreparation?.reconcile(messages);
         const replacements = new Set(replaceMessageIds);
         const sameProjection = replacements.size === 0
             && residencies.size === nextProjection.indices.length
@@ -278,7 +320,9 @@ export function createChatSurfaceController({
                 };
                 desired.push({ record, messageId, message });
                 added.push(record);
-                prepared.push(item);
+                if (!contentPreparation || contentPreparation.prepare({ message, messageId, content, transient: materializeOptionsByMessageId.get(messageId)?.transient })) {
+                    prepared.push(item);
+                }
             }
             participants.prepare(prepared);
         } catch (error) {
@@ -318,7 +362,8 @@ export function createChatSurfaceController({
         domAdapter.syncLastMessage(messages.length - 1);
         try {
             assertCommittedResidencies(residencies, projection, domAdapter);
-            participants.connected(prepared, ['didMount', 'didCommitContent']);
+            participants.connected(added.map(record => ({ record })), ['didMount']);
+            participants.connected(prepared, ['didCommitContent']);
             runtimeAdmission.register(participants.runtimeCandidates(prepared));
             assertCommittedResidencies(residencies, projection, domAdapter);
             assertHealthy();
@@ -354,6 +399,7 @@ export function createChatSurfaceController({
 
     /** @param {{ includeAuxiliary?: boolean }} [options] */
     function resetEpoch({ includeAuxiliary = false } = {}) {
+        contentPreparation?.reset();
         try {
             closeMessageResidencies([...residencies.values()].reverse(), 'epoch-reset');
             if (participantList) {
@@ -433,7 +479,8 @@ export function createChatSurfaceController({
         reconcileMounted: guardMutation('reconcileMounted', projectionEntrypoints.reconcileMounted),
         reconcileExternalRemovals: guardMutation('reconcileExternalRemovals', reconcileExternalRemovals),
         remountMessage: guardMutation('remountMessage', remountMessage),
-        updateContent: guardMutation('updateContent', contentReconciler.update),
+        updateContent: guardMutation('updateContent', updateContent),
+        commitContent: guardMutation('commitContent', commitContent),
         resetEpoch: guardMutation('resetEpoch', resetEpoch),
         configureRuntimeAdmission: guardMutation('configureRuntimeAdmission', configureRuntimeAdmission),
         setRuntimeDemand: guardMutation('setRuntimeDemand', setRuntimeDemand),

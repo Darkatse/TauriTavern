@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tt_domain::models::tool::{
     InvocationToolSnapshot, ToolChoice, ToolId, ToolInvocation, ToolSnapshotId, ToolTurnContract,
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ToolRequestGate {
     total_calls: usize,
     calls_per_tool: HashMap<ToolId, usize>,
@@ -116,8 +118,8 @@ pub(crate) enum ToolRequestGateError {
 mod tests {
     use serde_json::{Value, json};
     use tt_domain::models::tool::{
-        InvocationToolSnapshot, ToolBinding, ToolChoice, ToolDescriptor, ToolId, ToolInvocation,
-        ToolProviderId, ToolSnapshotId, ToolTurnContract,
+        InvocationToolSnapshot, ToolArguments, ToolBinding, ToolChoice, ToolDescriptor, ToolId,
+        ToolInvocation, ToolProviderId, ToolSnapshotId, ToolTurnContract,
     };
 
     use super::{ToolRequestGate, ToolRequestGateError};
@@ -143,7 +145,7 @@ mod tests {
         ToolInvocation {
             call_id: call_id.to_string(),
             tool_id,
-            arguments: json!({}),
+            arguments: ToolArguments::empty(),
             provider_metadata: Value::Null,
         }
     }

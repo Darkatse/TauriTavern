@@ -3,7 +3,9 @@
 export {};
 
 /**
- * @typedef {'cold' | 'active' | 'parked' | 'disposed'} EmbeddedRuntimeState
+ * Last applied lifecycle result; cold also means invalidated. Actual residency
+ * is supplied by the slot when its renderer can change resources independently.
+ * @typedef {'cold' | 'active' | 'parked' | 'disposed'} EmbeddedRuntimeAppliedState
  */
 
 /**
@@ -21,6 +23,9 @@ export {};
  * @property {EmbeddedRuntimeVisibilityMode} [visibilityMode]
  * @property {boolean} [initialVisible]
  * @property {HTMLElement} [visibilityTarget]
+ * @property {() => boolean} [isResident] Actual residency when the renderer can change it or defer a transition.
+ * @property {() => boolean} [canHydrate] Whether a missing resource can be restored now; omitted for always-ready slots.
+ * @property {() => void} [refresh] Refresh externally owned resource data without moving its DOM.
  * @property {(reason: string) => void} hydrate
  * @property {(reason: string) => void} dehydrate
  * @property {() => void} [dispose]

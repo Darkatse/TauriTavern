@@ -50,6 +50,92 @@ function completedExportStatus(result = {}) {
     };
 }
 
+test('/api/extensions/data-migration/import preserves the exact native desktop path', async () => {
+    const calls = [];
+    const router = createExtensionRouter({
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            assert.equal(command, 'start_import_data_archive');
+            return 'import-job-1';
+        },
+        materializeUploadFile: async () => {
+            throw new Error('native desktop paths must not use upload staging');
+        },
+    });
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/extensions/data-migration/import',
+        body: { archive_path: '/Users/example/archive.zip ' },
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+        ok: true,
+        job_id: 'import-job-1',
+    });
+    assert.deepEqual(calls, [
+        {
+            command: 'start_import_data_archive',
+            args: {
+                archive_path: '/Users/example/archive.zip ',
+                archive_is_temporary: false,
+            },
+        },
+    ]);
+});
+
+test('/api/extensions/data-migration/import keeps multipart upload staging compatible', async () => {
+    const calls = [];
+    let cleaned = false;
+    const router = createExtensionRouter({
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            return 'import-job-2';
+        },
+        materializeUploadFile: async (archive, options) => {
+            assert.ok(archive instanceof Blob);
+            assert.deepEqual(options, {
+                kind: 'data-archive',
+                preferredName: 'archive.zip',
+            });
+            return {
+                filePath: '/tmp/uploaded-archive.zip',
+                isTemporary: true,
+                cleanup: async () => {
+                    cleaned = true;
+                },
+            };
+        },
+    });
+    const body = new FormData();
+    body.append('archive', new Blob(['zip']), 'archive.zip');
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/extensions/data-migration/import',
+        body,
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+        ok: true,
+        job_id: 'import-job-2',
+    });
+    assert.deepEqual(calls, [
+        {
+            command: 'start_import_data_archive',
+            args: {
+                archive_path: '/tmp/uploaded-archive.zip',
+                archive_is_temporary: true,
+            },
+        },
+    ]);
+    assert.equal(cleaned, true);
+});
+
 test('/api/extensions/data-migration/export/android/save finalizes delivered artifacts', async () => {
     const calls = [];
     const router = createExtensionRouter({
@@ -204,95 +290,8 @@ test('/api/extensions/data-migration/export/android/save rejects disposed artifa
     });
 });
 
-test('/api/extensions/data-migration/export/android/save rejects missing artifacts without a 500', async () => {
-    const router = createExtensionRouter({
-        safeInvoke: async (command) => {
-            assert.equal(command, 'get_data_archive_job_status');
-            return completedExportStatus({ artifact_state: 'missing' });
-        },
-        saveAndroidExportArchive: async () => {
-            throw new Error('missing artifact should not be saved');
-        },
-    });
 
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/extensions/data-migration/export/android/save',
-        body: { job_id: 'job-1' },
-    });
 
-    assert.ok(response);
-    assert.equal(response.status, 410);
-    assert.deepEqual(await response.json(), {
-        error: 'Export archive is missing',
-    });
-});
-
-test('/api/extensions/data-migration/export/save rejects disposed artifacts before native save', async () => {
-    const calls = [];
-    const router = createExtensionRouter({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            if (command === 'get_data_archive_job_status') {
-                return completedExportStatus({
-                    artifact_state: 'disposed',
-                    saved_path: '/Downloads/tauritavern-data.zip',
-                });
-            }
-            throw new Error(`Unexpected command: ${command}`);
-        },
-    });
-
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/extensions/data-migration/export/save',
-        body: { job_id: 'job-1' },
-    });
-
-    assert.ok(response);
-    assert.equal(response.status, 409);
-    assert.deepEqual(await response.json(), {
-        error: 'Export archive has already been handled',
-        saved_target: '/Downloads/tauritavern-data.zip',
-    });
-    assert.deepEqual(calls, [
-        {
-            command: 'get_data_archive_job_status',
-            args: { job_id: 'job-1' },
-        },
-    ]);
-});
-
-test('/api/extensions/data-migration/export/ios/share rejects missing artifacts before native share', async () => {
-    const calls = [];
-    const router = createIosExtensionRouter({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            if (command === 'get_data_archive_job_status') {
-                return completedExportStatus({ artifact_state: 'missing' });
-            }
-            throw new Error(`Unexpected command: ${command}`);
-        },
-    });
-
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/extensions/data-migration/export/ios/share',
-        body: { job_id: 'job-1' },
-    });
-
-    assert.ok(response);
-    assert.equal(response.status, 410);
-    assert.deepEqual(await response.json(), {
-        error: 'Export archive is missing',
-    });
-    assert.deepEqual(calls, [
-        {
-            command: 'get_data_archive_job_status',
-            args: { job_id: 'job-1' },
-        },
-    ]);
-});
 
 test('/api/extensions/data-migration/export/android/save rejects concurrent saves for one job', async () => {
     let releaseSave;

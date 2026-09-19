@@ -15,10 +15,12 @@ use crate::jsonl_utils::{
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage, strip_jsonl_extension};
+use tt_ports::repositories::chat_payload_commit_repository::ChatPayloadTarget;
 use tt_ports::repositories::chat_repository::{
-    ChatExportFormat, ChatImportFormat, ChatMessageSearchHit, ChatMessageSearchQuery,
-    ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatRepository,
-    ChatSearchResult, FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat,
+    ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat, ChatMessageSearchHit,
+    ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor,
+    ChatPayloadTail, ChatRepository, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
+    PinnedCharacterChat,
 };
 
 use super::FileChatRepository;
@@ -185,7 +187,7 @@ impl ChatRepository for FileChatRepository {
             cache.remove(&cache_key);
         }
         self.remove_summary_cache_for_path(&path).await;
-        self.flush_summary_index_if_needed().await?;
+        self.flush_summary_index_best_effort().await;
 
         Ok(())
     }
@@ -252,7 +254,7 @@ impl ChatRepository for FileChatRepository {
         }
         self.remove_summary_cache_for_path(&old_path).await;
         self.remove_summary_cache_for_path(&new_path).await;
-        self.flush_summary_index_if_needed().await?;
+        self.flush_summary_index_best_effort().await;
 
         Ok(committed_file_name)
     }
@@ -297,40 +299,16 @@ impl ChatRepository for FileChatRepository {
         }
 
         let descriptors = self.list_character_chat_files(character_filter).await?;
-        let mut results = Vec::new();
-
-        for descriptor in descriptors {
-            let entry = self.get_chat_summary_entry(&descriptor, true).await?;
-            let mut summary = entry.summary.clone();
-            summary.chat_metadata = None;
-
-            let file_stem = strip_jsonl_extension(&descriptor.file_name);
-            if Self::file_stem_matches_all(file_stem, &fragments) {
-                results.push(summary);
-                continue;
-            }
-
-            if !entry
-                .fingerprint
-                .as_ref()
-                .expect("fingerprint is required for search")
-                .might_match_fragments(&fragments)
-            {
-                continue;
-            }
-
-            if self
-                .file_matches_query(&descriptor.path, file_stem, &fragments)
-                .await?
-            {
-                results.push(summary);
-            }
-        }
+        let (mut results, complete) = self
+            .collect_matching_chat_summaries(descriptors, &fragments)
+            .await;
 
         results.sort_by_key(|result| Reverse(result.date));
-        self.cache_search_results(search_cache_key, results.clone())
-            .await;
-        self.flush_summary_index_if_needed().await?;
+        if complete {
+            self.cache_search_results(search_cache_key, results.clone())
+                .await;
+        }
+        self.flush_summary_index_best_effort().await;
         Ok(results)
     }
 
@@ -340,12 +318,11 @@ impl ChatRepository for FileChatRepository {
         include_metadata: bool,
     ) -> Result<Vec<ChatSearchResult>, DomainError> {
         let descriptors = self.list_character_chat_files(character_filter).await?;
-        let mut results = Vec::with_capacity(descriptors.len());
-        for descriptor in descriptors {
-            results.push(self.get_chat_summary(&descriptor, include_metadata).await?);
-        }
+        let mut results = self
+            .collect_chat_summaries(descriptors, include_metadata)
+            .await;
         results.sort_by_key(|result| Reverse(result.date));
-        self.flush_summary_index_if_needed().await?;
+        self.flush_summary_index_best_effort().await;
         Ok(results)
     }
 
@@ -375,12 +352,11 @@ impl ChatRepository for FileChatRepository {
             })
             .await?;
 
-        let mut results = Vec::with_capacity(selected.len());
-        for descriptor in selected {
-            results.push(self.get_chat_summary(&descriptor, include_metadata).await?);
-        }
+        let mut results = self
+            .collect_chat_summaries(selected, include_metadata)
+            .await;
         results.sort_by_key(|result| Reverse(result.date));
-        self.flush_summary_index_if_needed().await?;
+        self.flush_summary_index_best_effort().await;
         Ok(results)
     }
 
@@ -508,16 +484,16 @@ impl ChatRepository for FileChatRepository {
     }
 
     async fn list_chat_backups(&self) -> Result<Vec<ChatSearchResult>, DomainError> {
-        let descriptors = self.list_chat_backup_files().await?;
-        let mut results = Vec::with_capacity(descriptors.len());
+        let entries = self.list_chat_backup_entries().await?;
+        let mut results = Vec::with_capacity(entries.len());
 
-        for descriptor in descriptors {
-            match self.get_chat_summary(&descriptor, false).await {
+        for entry in entries {
+            match self.get_chat_backup_summary(&entry).await {
                 Ok(summary) => results.push(summary),
                 Err(error) => {
                     tracing::warn!(
                         "Failed to read chat backup summary {:?}: {}",
-                        descriptor.path,
+                        self.backups_dir.join(entry.file_name),
                         error
                     );
                 }
@@ -525,19 +501,19 @@ impl ChatRepository for FileChatRepository {
         }
 
         results.sort_by_key(|result| Reverse(result.date));
-        self.flush_summary_index_if_needed().await?;
+        self.schedule_backup_summary_index_flush();
         Ok(results)
     }
 
-    async fn materialize_chat_backup(
-        &self,
-        backup_file_name: &str,
-    ) -> Result<std::path::PathBuf, DomainError> {
-        self.materialize_chat_backup_file(backup_file_name).await
+    async fn list_chat_backup_catalog(&self) -> Result<Vec<ChatBackupCatalogEntry>, DomainError> {
+        self.list_chat_backup_catalog_entries().await
     }
 
-    async fn discard_chat_backup_materialization(&self, path: &Path) -> Result<(), DomainError> {
-        self.discard_chat_backup_materialization_file(path).await
+    async fn open_chat_backup_download(
+        &self,
+        backup_file_name: &str,
+    ) -> Result<Box<dyn tt_ports::repositories::chat_repository::ChatByteReader>, DomainError> {
+        self.open_chat_backup_download_file(backup_file_name).await
     }
 
     async fn restore_character_chat_backup(
@@ -724,6 +700,24 @@ impl ChatRepository for FileChatRepository {
         self.read_chat_metadata_from_path(&path).await
     }
 
+    async fn has_character_chat_with_integrity(
+        &self,
+        character_name: &str,
+        integrity: &str,
+    ) -> Result<bool, DomainError> {
+        for chat in self.list_character_chat_files(Some(character_name)).await? {
+            let metadata = self.read_chat_metadata_from_path(&chat.path).await?;
+            if metadata
+                .get("integrity")
+                .and_then(Value::as_str)
+                .is_some_and(|value| value.trim() == integrity)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     async fn set_character_chat_metadata_extension(
         &self,
         character_name: &str,
@@ -731,10 +725,11 @@ impl ChatRepository for FileChatRepository {
         namespace: &str,
         value: Value,
     ) -> Result<(), DomainError> {
-        let path = self
-            .resolve_character_chat_path(character_name, file_name)
-            .await?;
-        self.set_chat_metadata_extension_in_path(&path, namespace, value)
+        let target = ChatPayloadTarget::Character {
+            character_id: character_name.to_owned(),
+            file_name: file_name.to_owned(),
+        };
+        self.set_chat_metadata_extension(target, namespace, value)
             .await
     }
 

@@ -7,6 +7,7 @@ import { IGNORE_SYMBOL } from '../constants.js';
  * throws immediately and must not be sent to a provider.
  *
  * @param {ChatMessage[]} chat
+ * @param {boolean} stripOldToolCalls
  * @returns {Array<
  *     | { type: 'message', sourceIndex: number, message: ChatMessage }
  *     | {
@@ -18,7 +19,7 @@ import { IGNORE_SYMBOL } from '../constants.js';
  *       }
  *   >}
  */
-export function projectToolTurns(chat) {
+export function projectToolTurns(chat, stripOldToolCalls = false) {
     if (!Array.isArray(chat)) {
         throw new TypeError('Chat history must be an array');
     }
@@ -173,7 +174,25 @@ export function projectToolTurns(chat) {
         });
     }
 
-    return entries;
+    if (!stripOldToolCalls) {
+        return entries;
+    }
+
+    const latestUserIndex = chat.findLastIndex(message => message?.is_user === true);
+    return entries.filter(entry => entry.type !== 'tool-turn'
+        || entry.sourceIndices.some(sourceIndex => sourceIndex >= latestUserIndex));
+}
+
+/**
+ * Returns the source messages retained after old tool turns are stripped,
+ * preserving their physical order without mutating the chat transcript.
+ * @param {ChatMessage[]} chat
+ * @returns {ChatMessage[]}
+ */
+export function stripOldToolTurns(chat) {
+    const retainedIndices = new Set(projectToolTurns(chat, true)
+        .flatMap(entry => entry.type === 'message' ? [entry.sourceIndex] : entry.sourceIndices));
+    return chat.filter((_, sourceIndex) => retainedIndices.has(sourceIndex));
 }
 
 /**
@@ -276,6 +295,7 @@ function readCanonicalToolCalls(calls, path) {
             parameters: call.parameters,
             ...(typeof call.displayName === 'string' && call.displayName.trim() ? { displayName: call.displayName } : {}),
             ...(typeof call.signature === 'string' || call.signature === null ? { signature: call.signature } : {}),
+            ...(Object.hasOwn(call, 'extra_content') ? { extra_content: call.extra_content } : {}),
             path: callPath,
         });
     }
@@ -306,6 +326,7 @@ function toInvocation(call, toolMessage) {
         parameters: call.parameters,
         result: toolMessage.mes,
         ...(call.signature !== undefined ? { signature: call.signature } : {}),
+        ...(Object.hasOwn(call, 'extra_content') ? { extra_content: call.extra_content } : {}),
         ...(typeof toolMessage.error === 'boolean' ? { error: toolMessage.error } : {}),
     };
 }

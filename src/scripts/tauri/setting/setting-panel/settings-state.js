@@ -4,7 +4,6 @@ import {
     normalizeEmbeddedRuntimeProfileName,
     resolveEffectiveEmbeddedRuntimeProfileName,
 } from '../../../../tauri/main/services/embedded-runtime/embedded-runtime-profile-state.js';
-import { readNativeRegexBackendEnabledFromSettings } from '../../regex/native-regex-settings.js';
 
 export const PROMPT_CACHE_TTL_VALUES = ['off', '5m', '1h'];
 
@@ -51,9 +50,8 @@ export function arraysEqual(left, right) {
 
 /**
  * @param {Record<string, any>} settings
- * @param {{ nativeRegexBackendEnabled?: boolean }} [options]
  */
-export function createTauriTavernSettingsState(settings, options = {}) {
+export function createTauriTavernSettingsState(settings) {
     const rawPanelRuntimeProfile = settings.panel_runtime_profile;
     const panelRuntimeProfile = typeof rawPanelRuntimeProfile === 'string' && rawPanelRuntimeProfile
         ? rawPanelRuntimeProfile
@@ -64,6 +62,11 @@ export function createTauriTavernSettingsState(settings, options = {}) {
     const chatVirtualizationEnabled = settings.chat_virtualization_enabled;
     if (typeof chatVirtualizationEnabled !== 'boolean') {
         throw new Error('TauriTavern settings: chat virtualization setting missing');
+    }
+
+    const codeMirrorEditorEnabled = settings.codemirror_editor_enabled;
+    if (typeof codeMirrorEditorEnabled !== 'boolean') {
+        throw new Error('TauriTavern settings: CodeMirror editor setting missing');
     }
 
     const avatarPersonaOriginalImagesEnabled = settings.avatar_persona_original_images_enabled;
@@ -104,6 +107,8 @@ export function createTauriTavernSettingsState(settings, options = {}) {
         configuredEmbeddedRuntimeProfile,
         embeddedRuntimeProfile,
         chatVirtualizationEnabled,
+        coldSwipesEnabled: settings.cold_swipes_enabled,
+        codeMirrorEditorEnabled,
         chatBackups: {
             automaticEnabled: chatBackups.automatic_enabled,
             zstdCompressionEnabled: chatBackups.zstd_compression_enabled,
@@ -119,9 +124,6 @@ export function createTauriTavernSettingsState(settings, options = {}) {
         },
         allowKeysExposure: Boolean(settings.allow_keys_exposure),
         avatarPersonaOriginalImagesEnabled,
-        nativeRegexBackendEnabled: typeof options.nativeRegexBackendEnabled === 'boolean'
-            ? options.nativeRegexBackendEnabled
-            : readNativeRegexBackendEnabledFromSettings(settings),
         dynamicTheme: {
             themeEnabled: Boolean(dynamicTheme.enabled),
             dayTheme: String(dynamicTheme.day_theme || '').trim(),

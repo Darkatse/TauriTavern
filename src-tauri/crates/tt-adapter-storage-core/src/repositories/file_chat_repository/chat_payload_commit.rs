@@ -2,21 +2,26 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::file_system::persist_file;
 use async_trait::async_trait;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_payload_commit_repository::{
-    ChatPayloadCommitBegin, ChatPayloadCommitRepository, ChatPayloadTarget, CommittedChatPayload,
+    ChatPayloadCommitBegin, ChatPayloadCommitRepository, ChatPayloadTarget, ChatSwipeSource,
+    ColdSwipeCommitSource, CommittedChatPayload,
 };
 use uuid::Uuid;
 
 use super::integrity::verify_integrity_match;
 use super::{ContentSignature, FileChatRepository};
 
-const MOBILE_MAX_FRAME_BYTES: u64 = 1024 * 1024;
+// Smaller frames shorten Android's synchronous string IPC calls.
+const ANDROID_MAX_FRAME_BYTES: u64 = 256 * 1024;
+const IOS_MAX_FRAME_BYTES: u64 = 1024 * 1024;
 const DESKTOP_MAX_FRAME_BYTES: u64 = 4 * 1024 * 1024;
 pub(super) const MAX_ACTIVE_CHAT_COMMIT_SESSIONS: usize = 8;
 
@@ -60,6 +65,7 @@ pub(super) struct CommitSession {
     content_hasher: Option<(u64, Sha256)>,
     accepted_offset: u64,
     force: bool,
+    cold_source: Option<ColdSwipeCommitSource>,
 }
 
 impl FileChatRepository {
@@ -76,8 +82,10 @@ impl FileChatRepository {
     }
 
     fn chat_commit_max_frame_bytes() -> u64 {
-        if cfg!(any(target_os = "android", target_os = "ios")) {
-            MOBILE_MAX_FRAME_BYTES
+        if cfg!(target_os = "android") {
+            ANDROID_MAX_FRAME_BYTES
+        } else if cfg!(target_os = "ios") {
+            IOS_MAX_FRAME_BYTES
         } else {
             DESKTOP_MAX_FRAME_BYTES
         }
@@ -88,7 +96,7 @@ impl FileChatRepository {
             .map_err(|_| DomainError::InvalidData("Invalid chat commit session id".to_string()))
     }
 
-    async fn resolve_chat_commit_target(
+    pub(super) async fn resolve_chat_commit_target(
         &self,
         target: &ChatPayloadTarget,
     ) -> Result<PathBuf, DomainError> {
@@ -104,6 +112,24 @@ impl FileChatRepository {
         }
     }
 
+    /// Drops cached reads of a chat whose file was just replaced.
+    pub(super) async fn invalidate_chat_caches(
+        &self,
+        target: &ChatPayloadTarget,
+        path: &Path,
+    ) -> Result<(), DomainError> {
+        if let ChatPayloadTarget::Character {
+            character_id,
+            file_name,
+        } = target
+        {
+            let cache_key = self.get_cache_key(character_id, file_name)?;
+            self.memory_cache.lock().await.remove(&cache_key);
+        }
+        self.remove_summary_cache_for_path(path).await;
+        Ok(())
+    }
+
     async fn remove_chat_commit_stage(&self, stage_path: &Path) {
         match fs::remove_file(stage_path).await {
             Ok(()) => {}
@@ -115,29 +141,31 @@ impl FileChatRepository {
             ),
         }
     }
-
-    async fn strict_publish_chat_payload(
-        stage_path: &Path,
-        target_path: &Path,
-    ) -> Result<(), DomainError> {
-        fs::rename(stage_path, target_path).await.map_err(|error| {
-            tracing::error!(
-                stage = %stage_path.display(),
-                target = %target_path.display(),
-                error = %error,
-                "Failed to publish chat payload",
-            );
-            DomainError::InternalError(format!("Failed to publish chat payload: {error}"))
-        })
-    }
 }
 
 #[async_trait]
 impl ChatPayloadCommitRepository for FileChatRepository {
+    async fn open_swipe_source(
+        &self,
+        target: ChatPayloadTarget,
+    ) -> Result<Arc<dyn ChatSwipeSource>, DomainError> {
+        let path = self.resolve_chat_commit_target(&target).await?;
+        super::cold_swipes::FileSwipeSource::open(&path).await
+    }
+
+    async fn commit_metadata(
+        &self,
+        target: ChatPayloadTarget,
+        chat_metadata: Value,
+    ) -> Result<(), DomainError> {
+        self.replace_chat_metadata(target, chat_metadata).await
+    }
+
     async fn begin(
         &self,
         target: ChatPayloadTarget,
         force: bool,
+        cold_source: Option<ColdSwipeCommitSource>,
     ) -> Result<ChatPayloadCommitBegin, DomainError> {
         let target_path = self.resolve_chat_commit_target(&target).await?;
         if let Some(parent) = target_path.parent() {
@@ -196,6 +224,7 @@ impl ChatPayloadCommitRepository for FileChatRepository {
             content_hasher,
             accepted_offset: 0,
             force,
+            cold_source,
         }));
 
         let mut sessions = self.chat_commit_sessions.lock().await;
@@ -263,7 +292,9 @@ impl ChatPayloadCommitRepository for FileChatRepository {
                 "Failed to append chat commit session {session_id}: {error}"
             ))
         })?;
-        if let Some((_, content_hasher)) = session.content_hasher.as_mut() {
+        if session.cold_source.is_none()
+            && let Some((_, content_hasher)) = session.content_hasher.as_mut()
+        {
             content_hasher.update(bytes);
         }
         session.accepted_offset += bytes.len() as u64;
@@ -290,6 +321,8 @@ impl ChatPayloadCommitRepository for FileChatRepository {
         let stage_path = session.stage_path.clone();
         let accepted_offset = session.accepted_offset;
         let content_hasher = session.content_hasher.take();
+        let cold_source = session.cold_source.take();
+        let expands_cold_swipes = cold_source.is_some();
         let force = session.force;
         let mut file = session
             .file
@@ -297,14 +330,14 @@ impl ChatPayloadCommitRepository for FileChatRepository {
             .expect("claimed chat commit session must own an open stage");
         drop(session);
 
+        let expanded_path = stage_path.with_extension("expanded");
+
         let result = async {
             file.flush().await.map_err(|error| {
                 DomainError::InternalError(format!(
                     "Failed to flush chat commit session {session_id}: {error}"
                 ))
             })?;
-            drop(file);
-
             let actual_size = fs::metadata(&stage_path)
                 .await
                 .map_err(|error| {
@@ -320,25 +353,31 @@ impl ChatPayloadCommitRepository for FileChatRepository {
                     "Chat commit size mismatch: expected {expected_size}, accepted {accepted_offset}, staged {actual_size}"
                 )));
             }
+            let (file, publish_path, published_size, digest) = if let Some(cold) = cold_source {
+                drop(file);
+                let restored = cold.source.restore_payload(cold.id, &stage_path, &expanded_path, content_hasher.is_some()).await?;
+                let file = fs::OpenOptions::new().write(true).open(&expanded_path).await
+                    .map_err(|error| DomainError::InternalError(format!("Failed to open expanded chat stage: {error}")))?;
+                (file, &expanded_path, restored.size, restored.sha256)
+            } else {
+                (file, &stage_path, accepted_offset, None)
+            };
             let content_signature = content_hasher.map(|(epoch, content_hasher)| {
                 (
                     epoch,
                     ContentSignature {
-                        byte_len: accepted_offset,
-                        sha256: content_hasher.finalize().into(),
+                        byte_len: published_size,
+                        sha256: if expands_cold_swipes {
+                            digest.expect("cold restoration computes the requested digest")
+                        } else {
+                            content_hasher.finalize().into()
+                        },
                     },
                 )
             });
 
             let incoming_integrity =
                 Self::read_incoming_integrity_from_file(&stage_path).await?;
-            let character_cache_key = match &target {
-                ChatPayloadTarget::Character {
-                    character_id,
-                    file_name,
-                } => Some(self.get_cache_key(character_id, file_name)?),
-                ChatPayloadTarget::Group { .. } => None,
-            };
 
             let _write_guard = self.acquire_payload_mutation_lock(&target_path).await;
             if !force {
@@ -351,27 +390,27 @@ impl ChatPayloadCommitRepository for FileChatRepository {
                 )?;
             }
 
-            Self::strict_publish_chat_payload(&stage_path, &target_path).await?;
+            persist_file(file, publish_path, &target_path).await?;
             if let Some((epoch, content_signature)) = content_signature {
                 self.record_current_content_signature(&target_path, epoch, content_signature)
                     .await;
             }
             drop(_write_guard);
-
-            if let Some(cache_key) = character_cache_key {
-                self.memory_cache.lock().await.remove(&cache_key);
-            }
-            self.remove_summary_cache_for_path(&target_path).await;
+            self.invalidate_chat_caches(&target, &target_path).await?;
 
             Ok(CommittedChatPayload {
                 target,
-                size: expected_size,
+                accepted_size: accepted_offset,
+                size: published_size,
             })
         }
         .await;
 
-        if result.is_err() {
+        if result.is_err() || expands_cold_swipes {
             self.remove_chat_commit_stage(&stage_path).await;
+        }
+        if result.is_err() && expands_cold_swipes {
+            self.remove_chat_commit_stage(&expanded_path).await;
         }
         result
     }
@@ -399,29 +438,5 @@ impl ChatPayloadCommitRepository for FileChatRepository {
                 "Failed to abort chat commit session {session_id}: {error}"
             ))),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn chat_commit_missing_stage_never_guesses_success_from_target_size() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-chat-strict-publish-{}",
-            Uuid::new_v4()
-        ));
-        fs::create_dir_all(&root).await.expect("create temp root");
-        let stage = root.join("missing-stage");
-        let target = root.join("target");
-        fs::write(&target, b"old").await.expect("write target");
-
-        FileChatRepository::strict_publish_chat_payload(&stage, &target)
-            .await
-            .expect_err("a missing stage must remain a failed publish");
-        assert_eq!(fs::read(&target).await.expect("read target"), b"old");
-
-        fs::remove_dir_all(root).await.expect("remove temp root");
     }
 }

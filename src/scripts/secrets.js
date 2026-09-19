@@ -22,6 +22,7 @@ export const SECRET_KEYS = {
     APHRODITE: 'api_key_aphrodite',
     TABBY: 'api_key_tabby',
     OPENAI: 'api_key_openai',
+    OPENCODE: 'api_key_opencode',
     NOVEL: 'api_key_novel',
     CLAUDE: 'api_key_claude',
     DEEPL: 'deepl',
@@ -86,6 +87,7 @@ const FRIENDLY_NAMES = {
     [SECRET_KEYS.HORDE]: 'AI Horde',
     [SECRET_KEYS.MANCER]: 'Mancer',
     [SECRET_KEYS.OPENAI]: 'OpenAI',
+    [SECRET_KEYS.OPENCODE]: 'OpenCode',
     [SECRET_KEYS.NOVEL]: 'NovelAI',
     [SECRET_KEYS.CLAUDE]: 'Claude',
     [SECRET_KEYS.OPENROUTER]: 'OpenRouter',
@@ -153,6 +155,7 @@ const INPUT_MAP = {
     [SECRET_KEYS.HORDE]: '#horde_api_key',
     [SECRET_KEYS.MANCER]: '#api_key_mancer',
     [SECRET_KEYS.OPENAI]: '#api_key_openai',
+    [SECRET_KEYS.OPENCODE]: '#api_key_opencode',
     [SECRET_KEYS.NOVEL]: '#api_key_novel',
     [SECRET_KEYS.CLAUDE]: '#api_key_claude',
     [SECRET_KEYS.OPENROUTER]: '.api_key_openrouter',
@@ -478,6 +481,7 @@ export async function findSecret(key, id) {
  * Changes the active value for a given secret key.
  * @param {string} key Secret key to rotate
  * @param {string} id ID of the secret to rotate
+ * @returns {Promise<boolean>} Whether the secret was activated successfully
  */
 export async function rotateSecret(key, id) {
     try {
@@ -487,14 +491,19 @@ export async function rotateSecret(key, id) {
             body: JSON.stringify({ key, id }),
         });
 
-        if (response.ok) {
-            await readSecretState();
-            // Force reconnection to the API with the new key
-            $('#main_api').trigger('change');
-            await eventSource.emit(event_types.SECRET_ROTATED, key);
+        if (!response.ok) {
+            throw new Error(`Could not rotate secret value: HTTP ${response.status}`);
         }
+
+        await readSecretState();
+        // Force reconnection to the API with the new key
+        $('#main_api').trigger('change');
+        await eventSource.emit(event_types.SECRET_ROTATED, key);
+        return true;
     } catch (error) {
         console.error(`Could not rotate secret value: ${key}`, error);
+        toastr.error(t`Failed to switch the API key. Please try again.`);
+        return false;
     }
 }
 
@@ -818,7 +827,9 @@ function registerSecretSlashCommands() {
             }
 
             // Set the secret as active
-            await rotateSecret(key, savedSecret.id);
+            if (!await rotateSecret(key, savedSecret.id)) {
+                return '';
+            }
             if (!quiet) {
                 toastr.success(t`Secret with ID: ${id} is now active for the key: ${key}`);
             }

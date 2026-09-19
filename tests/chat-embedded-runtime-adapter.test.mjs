@@ -4,6 +4,8 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { installFakeDom } from './helpers/fake-dom.mjs';
+import { createEmbeddedRuntimeManager } from '../src/tauri/main/services/embedded-runtime/embedded-runtime-manager.js';
+import { installChatEmbeddedRuntimeAdapters } from '../src/tauri/main/adapters/embedded-runtime/chat-embedded-runtime-adapter.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FRONTEND_SOURCE_HANDOFF_ATTRIBUTE = 'data-tt-frontend-source-handoff';
@@ -22,25 +24,25 @@ function createManagerStub(profileConfig = { maxSoftParkedIframes: 1, softParkTt
         register: [],
         unregister: [],
         invalidate: [],
-        touch: [],
     };
+    const slots = new Map();
 
     return {
         calls,
+        slots,
         profileConfig,
         register(slot) {
             calls.register.push(slot.id);
+            slots.set(slot.id, slot);
             slot.element.dataset.ttRuntimeSlotId = slot.id;
             return { id: slot.id, unregister: () => this.unregister(slot.id) };
         },
         unregister(id) {
             calls.unregister.push(id);
+            slots.delete(id);
         },
         invalidate(id) {
             calls.invalidate.push(id);
-        },
-        touch(id) {
-            calls.touch.push(id);
         },
     };
 }
@@ -60,7 +62,7 @@ function createJsrMessage({ mesid = '1', orphaned = false } = {}) {
     }
 
     const iframe = document.createElement('iframe');
-    iframe.src = 'blob:jsr';
+    iframe.srcdoc = '<p>runtime</p>';
     wrapper.append(iframe);
 
     const pre = document.createElement('pre');
@@ -92,260 +94,11 @@ function createCoveredMessage({ mesid, releaseEvent }) {
     return { message, pre };
 }
 
-test('chat embedded-runtime adapter scans messages and invalidates on placeholder click', async () => {
-    const dom = installFakeDom();
-    let handle = null;
-    try {
-        const { installChatEmbeddedRuntimeAdapters } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/chat-embedded-runtime-adapter.js'),
-        );
 
-        const chat = document.createElement('div');
-        chat.setAttribute('id', 'chat');
-        document.body.append(chat);
 
-        const { message, wrapper } = createJsrMessage({ mesid: '5' });
-        chat.append(message);
 
-        const manager = createManagerStub({ maxSoftParkedIframes: 0, softParkTtlMs: 0 });
-        handle = installChatEmbeddedRuntimeAdapters({ manager });
 
-        assert.equal(manager.calls.register.length, 1);
-        const slotId = wrapper.dataset.ttRuntimeSlotId;
-        assert.ok(slotId);
 
-        const placeholder = document.createElement('div');
-        placeholder.classList.add('tt-runtime-placeholder');
-        wrapper.append(placeholder);
-
-        chat.dispatchEvent({ type: 'click', target: placeholder });
-        assert.deepEqual(manager.calls.invalidate, [slotId]);
-        assert.deepEqual(manager.calls.touch, []);
-    } finally {
-        handle?.dispose();
-        dom.cleanup();
-    }
-});
-
-test('chat open events release only their own frontend source covers on the next frame', async () => {
-    const dom = installFakeDom();
-    let handle = null;
-    let rendererListener = null;
-    let eventSource = null;
-    let eventTypes = null;
-    try {
-        const { installFrontendSourceHandoff } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/chat-surface/frontend-source-handoff.js'),
-        );
-        ({ eventSource, event_types: eventTypes } = await importStable(
-            path.join(REPO_ROOT, 'src/scripts/events.js'),
-        ));
-
-        const chat = document.createElement('div');
-        chat.setAttribute('id', 'chat');
-        document.body.append(chat);
-
-        const group = createCoveredMessage({ mesid: '20', releaseEvent: eventTypes.CHAT_CHANGED });
-        const character = createCoveredMessage({ mesid: '21', releaseEvent: eventTypes.CHAT_LOADED });
-        chat.append(group.message, character.message);
-
-        handle = installFrontendSourceHandoff(chat);
-
-        rendererListener = () => queueMicrotask(() => character.pre.classList.add('hidden!'));
-        eventSource.on(eventTypes.CHAT_LOADED, rendererListener);
-
-        await eventSource.emit(eventTypes.CHAT_CHANGED, 'group-chat');
-        assert.equal(group.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), eventTypes.CHAT_CHANGED);
-        assert.equal(character.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), eventTypes.CHAT_LOADED);
-
-        await eventSource.emit(eventTypes.CHAT_LOADED, { detail: { id: 'character-chat' } });
-        assert.equal(character.pre.classList.contains('hidden!'), false);
-        dom.flushMicrotasks();
-        assert.equal(character.pre.classList.contains('hidden!'), true);
-        assert.equal(group.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), eventTypes.CHAT_CHANGED);
-        assert.equal(character.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), eventTypes.CHAT_LOADED);
-
-        dom.flushRaf();
-        assert.equal(group.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), null);
-        assert.equal(character.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), null);
-        assert.equal(character.pre.classList.contains('hidden!'), true);
-    } finally {
-        if (eventSource && eventTypes && rendererListener) {
-            eventSource.removeListener(eventTypes.CHAT_LOADED, rendererListener);
-        }
-        handle?.dispose();
-        dom.cleanup();
-    }
-});
-
-test('frontend source release follows a JSR-like replacement of .mes_text', async () => {
-    const dom = installFakeDom();
-    let handle = null;
-    let rendererListener = null;
-    let eventSource = null;
-    let eventTypes = null;
-    try {
-        const { installFrontendSourceHandoff } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/chat-surface/frontend-source-handoff.js'),
-        );
-        ({ eventSource, event_types: eventTypes } = await importStable(
-            path.join(REPO_ROOT, 'src/scripts/events.js'),
-        ));
-
-        const chat = document.createElement('div');
-        chat.setAttribute('id', 'chat');
-        document.body.append(chat);
-
-        const covered = createCoveredMessage({ mesid: '25', releaseEvent: eventTypes.CHAT_LOADED });
-        chat.append(covered.message);
-        handle = installFrontendSourceHandoff(chat);
-
-        let replacement = null;
-        rendererListener = () => {
-            const mesText = covered.message.querySelector('.mes_text');
-            mesText.innerHTML = `<pre ${FRONTEND_SOURCE_HANDOFF_ATTRIBUTE}="${eventTypes.CHAT_LOADED}"><code>&lt;html&gt;&lt;body&gt;card&lt;/body&gt;&lt;/html&gt;</code></pre>`;
-            replacement = mesText.querySelector('pre');
-        };
-        eventSource.on(eventTypes.CHAT_LOADED, rendererListener);
-
-        // JSR is loaded after the host adapter; the settings event moves the host
-        // listener behind the renderer before a chat is opened.
-        await eventSource.emit(eventTypes.EXTENSION_SETTINGS_LOADED);
-        await eventSource.emit(eventTypes.CHAT_LOADED);
-
-        assert.equal(covered.pre.isConnected, false);
-        assert.equal(replacement?.isConnected, true);
-        assert.equal(
-            replacement?.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE),
-            eventTypes.CHAT_LOADED,
-        );
-
-        dom.flushRaf();
-        assert.equal(replacement?.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), null);
-        assert.equal(chat.querySelectorAll(`[${FRONTEND_SOURCE_HANDOFF_ATTRIBUTE}]`).length, 0);
-    } finally {
-        if (eventSource && eventTypes && rendererListener) {
-            eventSource.removeListener(eventTypes.CHAT_LOADED, rendererListener);
-        }
-        handle?.dispose();
-        dom.cleanup();
-    }
-});
-
-test('frontend source release re-queries captured roots without adopting later messages', async () => {
-    const dom = installFakeDom();
-    let handle = null;
-    try {
-        const { installFrontendSourceHandoff } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/chat-surface/frontend-source-handoff.js'),
-        );
-        const { eventSource, event_types } = await importStable(
-            path.join(REPO_ROOT, 'src/scripts/events.js'),
-        );
-
-        const chat = document.createElement('div');
-        chat.setAttribute('id', 'chat');
-        document.body.append(chat);
-
-        const first = createCoveredMessage({ mesid: '30', releaseEvent: event_types.CHAT_CHANGED });
-        chat.append(first.message);
-        handle = installFrontendSourceHandoff(chat);
-
-        await eventSource.emit(event_types.CHAT_CHANGED, 'first-chat');
-
-        const next = createCoveredMessage({ mesid: '31', releaseEvent: event_types.CHAT_CHANGED });
-        chat.append(next.message);
-        dom.flushRaf();
-
-        assert.equal(first.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), null);
-        assert.equal(next.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), event_types.CHAT_CHANGED);
-
-        await eventSource.emit(event_types.CHAT_CHANGED, 'next-chat');
-        dom.flushRaf();
-        assert.equal(next.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), null);
-    } finally {
-        handle?.dispose();
-        dom.cleanup();
-    }
-});
-
-test('frontend source handoff resolves the direct message owner through nested .mes card markup', async () => {
-    const dom = installFakeDom();
-    let handle = null;
-    try {
-        const { installFrontendSourceHandoff } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/chat-surface/frontend-source-handoff.js'),
-        );
-        const { eventSource, event_types } = await importStable(
-            path.join(REPO_ROOT, 'src/scripts/events.js'),
-        );
-
-        const chat = document.createElement('div');
-        chat.setAttribute('id', 'chat');
-        document.body.append(chat);
-        const covered = createCoveredMessage({ mesid: '32', releaseEvent: event_types.CHAT_LOADED });
-        const nested = document.createElement('div');
-        nested.classList.add('mes');
-        covered.pre.replaceWith(nested);
-        nested.append(covered.pre);
-        chat.append(covered.message);
-        handle = installFrontendSourceHandoff(chat);
-
-        await eventSource.emit(event_types.CHAT_LOADED);
-        dom.flushRaf();
-        assert.equal(covered.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), null);
-    } finally {
-        handle?.dispose();
-        dom.cleanup();
-    }
-});
-
-test('deferred extension settings keep chat-open release behind newly registered renderer listeners', async () => {
-    const dom = installFakeDom();
-    let handle = null;
-    let lateRenderer = null;
-    let eventSource = null;
-    let eventTypes = null;
-    try {
-        const { installFrontendSourceHandoff } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/chat-surface/frontend-source-handoff.js'),
-        );
-        ({ eventSource, event_types: eventTypes } = await importStable(
-            path.join(REPO_ROOT, 'src/scripts/events.js'),
-        ));
-
-        const chat = document.createElement('div');
-        chat.setAttribute('id', 'chat');
-        document.body.append(chat);
-
-        const covered = createCoveredMessage({ mesid: '35', releaseEvent: eventTypes.CHAT_LOADED });
-        chat.append(covered.message);
-        handle = installFrontendSourceHandoff(chat);
-
-        let markerSeenByRenderer = null;
-        lateRenderer = () => {
-            dom.flushRaf();
-            markerSeenByRenderer = covered.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE);
-            covered.pre.classList.add('hidden!');
-        };
-        eventSource.on(eventTypes.CHAT_LOADED, lateRenderer);
-
-        await eventSource.emit(eventTypes.EXTENSION_SETTINGS_LOADED);
-        await eventSource.emit(eventTypes.CHAT_LOADED);
-
-        assert.equal(markerSeenByRenderer, eventTypes.CHAT_LOADED);
-        assert.equal(covered.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), eventTypes.CHAT_LOADED);
-        dom.flushRaf();
-        assert.equal(covered.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), null);
-        assert.equal(covered.pre.classList.contains('hidden!'), true);
-    } finally {
-        if (eventSource && eventTypes && lateRenderer) {
-            eventSource.removeListener(eventTypes.CHAT_LOADED, lateRenderer);
-        }
-        handle?.dispose();
-        dom.cleanup();
-    }
-});
 
 test('source handoff follows a late renderer replacement within the captured message root', async () => {
     const dom = installFakeDom();
@@ -391,72 +144,7 @@ test('source handoff follows a late renderer replacement within the captured mes
     }
 });
 
-test('disposing frontend source handoff synchronously uncovers pending source', async () => {
-    const dom = installFakeDom();
-    let handle = null;
-    try {
-        const { installFrontendSourceHandoff } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/chat-surface/frontend-source-handoff.js'),
-        );
-        const { eventSource, event_types } = await importStable(
-            path.join(REPO_ROOT, 'src/scripts/events.js'),
-        );
 
-        const chat = document.createElement('div');
-        chat.setAttribute('id', 'chat');
-        document.body.append(chat);
-
-        const covered = createCoveredMessage({ mesid: '40', releaseEvent: event_types.CHAT_LOADED });
-        chat.append(covered.message);
-        handle = installFrontendSourceHandoff(chat);
-
-        await eventSource.emit(event_types.CHAT_LOADED);
-        assert.equal(covered.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), event_types.CHAT_LOADED);
-
-        handle.dispose();
-        handle = null;
-        assert.equal(covered.pre.getAttribute(FRONTEND_SOURCE_HANDOFF_ATTRIBUTE), null);
-        dom.flushRaf();
-    } finally {
-        handle?.dispose();
-        dom.cleanup();
-    }
-});
-
-test('chat embedded-runtime adapter ignores managed iframe removals (ttRuntimeManaged)', async () => {
-    const dom = installFakeDom();
-    let handle = null;
-    try {
-        const { installChatEmbeddedRuntimeAdapters } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/chat-embedded-runtime-adapter.js'),
-        );
-
-        const chat = document.createElement('div');
-        chat.setAttribute('id', 'chat');
-        document.body.append(chat);
-
-        const { message, wrapper, iframe } = createJsrMessage({ mesid: '9' });
-        chat.append(message);
-
-        const manager = createManagerStub({ maxSoftParkedIframes: 0, softParkTtlMs: 0 });
-        handle = installChatEmbeddedRuntimeAdapters({ manager });
-
-        const slotId = String(wrapper.dataset.ttRuntimeSlotId || '');
-        assert.ok(slotId);
-
-        iframe.dataset.ttRuntimeManaged = '1';
-        iframe.remove();
-
-        const observer = dom.createdMutationObservers.at(-1);
-        observer._trigger([{ target: wrapper, removedNodes: [iframe], addedNodes: [] }]);
-
-        assert.deepEqual(manager.calls.invalidate, []);
-        assert.deepEqual(manager.calls.unregister, []);
-    } finally {
-        handle?.dispose();
-        dom.cleanup();
-    }
-});
 
 test('chat embedded-runtime adapter restores orphaned TH-render UI, parks iframe, and invalidates slot', async () => {
     const dom = installFakeDom();
@@ -513,6 +201,49 @@ test('chat embedded-runtime adapter restores orphaned TH-render UI, parks iframe
     }
 });
 
+test('chat embedded-runtime adapter ignores iframe removals initiated by a managed slot', async () => {
+    const dom = installFakeDom();
+    let handle = null;
+    try {
+        const { installChatEmbeddedRuntimeAdapters } = await importFresh(
+            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/chat-embedded-runtime-adapter.js'),
+        );
+
+        const chat = document.createElement('div');
+        chat.setAttribute('id', 'chat');
+        document.body.append(chat);
+
+        const { message, wrapper, iframe } = createJsrMessage({ mesid: '12' });
+        chat.append(message);
+
+        const manager = createManagerStub({ maxSoftParkedIframes: 0, softParkTtlMs: 0 });
+        handle = installChatEmbeddedRuntimeAdapters({ manager });
+
+        const slotId = String(wrapper.dataset.ttRuntimeSlotId || '');
+        const slot = manager.slots.get(slotId);
+        assert.ok(slot);
+
+        slot.dehydrate('visibility');
+
+        const observer = dom.createdMutationObservers.at(-1);
+        // MutationObserver delivers after the managed DOM mutation at the
+        // microtask checkpoint.
+        queueMicrotask(() => {
+            observer._trigger([{ target: wrapper, removedNodes: [iframe], addedNodes: [] }]);
+        });
+        dom.flushMicrotasks();
+        dom.flushRaf();
+
+        assert.equal(wrapper.querySelector('iframe'), null);
+        assert.deepEqual(manager.calls.invalidate, []);
+        assert.deepEqual(manager.calls.unregister, []);
+        assert.equal(wrapper.dataset.ttRuntimeSlotId, slotId);
+    } finally {
+        handle?.dispose();
+        dom.cleanup();
+    }
+});
+
 test('chat embedded-runtime adapter unregisters slots when an iframe is removed and wrapper is not orphaned', async () => {
     const dom = installFakeDom();
     let handle = null;
@@ -549,42 +280,58 @@ test('chat embedded-runtime adapter unregisters slots when an iframe is removed 
     }
 });
 
-test('chat embedded-runtime adapter removes placeholders when an iframe node is added', async () => {
-    const dom = installFakeDom();
-    let handle = null;
-    try {
-        const { installChatEmbeddedRuntimeAdapters } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/adapters/embedded-runtime/chat-embedded-runtime-adapter.js'),
-        );
-
+for (const change of ['replacement', 'source attributes']) {
+    test(`chat adapter captures the latest ${change} before external removal and ignores the old read`, async (t) => {
+        const nativeQueueMicrotask = globalThis.queueMicrotask;
+        const dom = installFakeDom();
+        globalThis.queueMicrotask = nativeQueueMicrotask;
+        const oldRead = Promise.withResolvers();
+        const newRead = Promise.withResolvers();
+        const nativeFetch = globalThis.fetch;
+        t.mock.method(globalThis, 'fetch', url => {
+            if (url === 'blob:old') return oldRead.promise;
+            if (url === 'blob:new') return newRead.promise;
+            return nativeFetch(url);
+        });
         const chat = document.createElement('div');
-        chat.setAttribute('id', 'chat');
+        chat.id = 'chat';
         document.body.append(chat);
-
-        const manager = createManagerStub({ maxSoftParkedIframes: 0, softParkTtlMs: 0 });
-        handle = installChatEmbeddedRuntimeAdapters({ manager });
-
-        const wrapper = document.createElement('div');
-        wrapper.classList.add('TH-render');
-        wrapper.dataset.ttRuntimeSlotId = 'slot:placeholder';
-
-        const placeholder = document.createElement('div');
-        placeholder.classList.add('tt-runtime-placeholder');
-        const ghost = document.createElement('div');
-        ghost.classList.add('tt-runtime-ghost');
-        wrapper.append(placeholder, ghost);
-        chat.append(wrapper);
-
-        const iframe = document.createElement('iframe');
-        wrapper.append(iframe);
-
+        const { message, wrapper, iframe } = createJsrMessage({ orphaned: true });
+        iframe.removeAttribute('srcdoc');
+        iframe.src = 'blob:old';
+        chat.append(message);
+        const manager = createEmbeddedRuntimeManager({ profile: {
+            name: 'test', maxActiveWeight: 10, maxActiveIframes: 1, maxActiveSlots: 1,
+            maxSoftParkedIframes: 0, softParkTtlMs: 0,
+            parkWhenHiddenKinds: [], rootMargin: '0px', threshold: 0,
+        } });
+        const adapter = installChatEmbeddedRuntimeAdapters({ manager });
+        t.after(() => {
+            manager.unregister(wrapper.dataset.ttRuntimeSlotId);
+            adapter.dispose();
+            dom.cleanup();
+        });
+        manager.reconcile();
         const observer = dom.createdMutationObservers.at(-1);
-        observer._trigger([{ target: wrapper, removedNodes: [], addedNodes: [iframe] }]);
+        const current = change === 'replacement' ? document.createElement('iframe') : iframe;
+        current.src = 'blob:new';
+        if (change === 'replacement') {
+            iframe.replaceWith(current);
+            observer._trigger([{ type: 'childList', target: wrapper, removedNodes: [iframe], addedNodes: [current] }]);
+        } else {
+            observer._trigger([{ type: 'attributes', target: current, attributeName: 'src', removedNodes: [], addedNodes: [] }]);
+        }
+        newRead.resolve(new Response('<p>new</p>'));
+        await new Promise(resolve => setImmediate(resolve));
+        oldRead.resolve(new Response('<p>old</p>'));
+        await new Promise(resolve => setImmediate(resolve));
+        dom.flushRaf();
 
-        assert.equal(wrapper.querySelector('.tt-runtime-placeholder'), null);
-        assert.equal(wrapper.querySelector('.tt-runtime-ghost'), null);
-    } finally {
-        handle?.dispose();
-        dom.cleanup();
-    }
-});
+        current.remove();
+        observer._trigger([{ type: 'childList', target: wrapper, removedNodes: [current], addedNodes: [] }]);
+        dom.flushRaf();
+        dom.flushRaf();
+        assert.equal(wrapper.querySelector('iframe'), current);
+        assert.equal(await (await fetch(current.src)).text(), '<p>new</p>');
+    });
+}

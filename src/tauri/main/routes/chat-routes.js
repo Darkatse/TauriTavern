@@ -14,21 +14,6 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
     registerChatImportRoutes(router, context, { jsonResponse });
     const allowMissingChat = (body) => Boolean(body?.allow_not_found ?? body?.allowNotFound);
 
-    const isIntegrityError = (error) => {
-        const serialized = (() => {
-            try {
-                return JSON.stringify(error);
-            } catch {
-                return '';
-            }
-        })();
-
-        return [error?.message, error, serialized]
-            .map((value) => String(value || '').toLowerCase())
-            .join(' ')
-            .includes('integrity');
-    };
-
     router.post('/api/chats/get', async ({ body }) => {
         const allowNotFound = allowMissingChat(body);
         const resolved = await resolveRouteCharacterId(context, {
@@ -90,7 +75,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             });
             return jsonResponse({ ok: true });
         } catch (error) {
-            if (isIntegrityError(error)) {
+            if (error?.code === 'integrity') {
                 return jsonResponse({ error: 'integrity' }, 400);
             }
 
@@ -376,7 +361,7 @@ export function registerChatRoutes(router, context, { jsonResponse }) {
             });
             return jsonResponse({ ok: true });
         } catch (error) {
-            if (isIntegrityError(error)) {
+            if (error?.code === 'integrity') {
                 return jsonResponse({ error: 'integrity' }, 400);
             }
 

@@ -2,11 +2,13 @@ use serde_json::{Map, Value, json};
 
 use crate::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::errors::ApplicationError;
+use crate::services::chat_completion_service::OPENCODE_STABLE_CHAT_ID_FIELD;
 use tt_domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile};
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentModelTool,
 };
 use tt_domain::models::tool::ToolChoice;
+use tt_ports::repositories::chat_completion_repository::OPENAI_RESPONSES_WEBSOCKET_TRANSPORT;
 
 use super::invocation::model_session_id;
 
@@ -15,12 +17,11 @@ const AGENT_PROMPT_MARKER_FIELD: &str = "_tauritavern_agent_prompt_marker";
 pub(super) fn request_from_prompt_snapshot(
     prompt_snapshot: &Value,
 ) -> Result<ChatCompletionGenerateRequestDto, ApplicationError> {
-    let payload = find_payload_object(prompt_snapshot).ok_or_else(|| {
+    let mut payload = find_payload_object(prompt_snapshot).ok_or_else(|| {
         ApplicationError::ValidationError(
             "agent.invalid_prompt_snapshot: expected a chat completion payload object".to_string(),
         )
     })?;
-    let mut payload = payload.clone();
 
     payload.insert("stream".to_string(), Value::Bool(false));
     if !payload.contains_key("chat_completion_source") {
@@ -43,10 +44,39 @@ pub(super) fn prepare_agent_tool_request(
     mut request: ChatCompletionGenerateRequestDto,
     tools: &[AgentModelTool],
     tool_choice: ToolChoice,
+    stable_chat_id: &str,
     run_id: &str,
     invocation_id: &str,
 ) -> Result<AgentModelRequest, ApplicationError> {
     reject_external_tool_request(&request.payload)?;
+
+    let responses_websocket = match request.payload.get("custom_openai_responses_websocket") {
+        Some(Value::Bool(enabled)) => *enabled,
+        Some(_) => {
+            return Err(ApplicationError::ValidationError(
+                "agent.responses_websocket_invalid: custom_openai_responses_websocket must be boolean"
+                    .to_string(),
+            ));
+        }
+        None => false,
+    };
+    if responses_websocket
+        && (request
+            .payload
+            .get("chat_completion_source")
+            .and_then(Value::as_str)
+            != Some("custom")
+            || request
+                .payload
+                .get("custom_api_format")
+                .and_then(Value::as_str)
+                != Some("openai_responses"))
+    {
+        return Err(ApplicationError::ValidationError(
+            "agent.responses_websocket_format_mismatch: Responses WebSocket mode requires chat_completion_source=custom and custom_api_format=openai_responses"
+                .to_string(),
+        ));
+    }
 
     let messages = messages_from_payload(&mut request.payload)?;
 
@@ -55,17 +85,34 @@ pub(super) fn prepare_agent_tool_request(
     request
         .payload
         .insert("stream".to_string(), Value::Bool(false));
+    if request
+        .payload
+        .get("chat_completion_source")
+        .and_then(Value::as_str)
+        == Some("opencode")
+    {
+        request.payload.insert(
+            OPENCODE_STABLE_CHAT_ID_FIELD.to_string(),
+            Value::String(stable_chat_id.to_string()),
+        );
+    }
+
+    let mut provider_state = json!({
+        "sessionId": model_session_id(run_id, invocation_id),
+        "runId": run_id,
+        "invocationId": invocation_id,
+    });
+    if responses_websocket {
+        provider_state["transport"] =
+            Value::String(OPENAI_RESPONSES_WEBSOCKET_TRANSPORT.to_string());
+    }
 
     Ok(AgentModelRequest {
         payload: request.payload,
         messages,
         tools: tools.to_vec(),
         tool_choice,
-        provider_state: json!({
-            "sessionId": model_session_id(run_id, invocation_id),
-            "runId": run_id,
-            "invocationId": invocation_id,
-        }),
+        provider_state,
     })
 }
 
@@ -209,7 +256,7 @@ fn messages_from_payload(
     payload.remove("prompt");
 
     messages
-        .iter()
+        .into_iter()
         .map(message_from_openai_value)
         .collect::<Result<Vec<_>, _>>()
 }
@@ -233,13 +280,16 @@ fn reject_agent_prompt_marker(value: &Value) -> Result<(), ApplicationError> {
     ))
 }
 
-fn message_from_openai_value(value: &Value) -> Result<AgentModelMessage, ApplicationError> {
-    reject_agent_prompt_marker(value)?;
-    let object = value.as_object().ok_or_else(|| {
-        ApplicationError::ValidationError(
-            "agent.invalid_prompt_snapshot: message must be an object".to_string(),
-        )
-    })?;
+fn message_from_openai_value(value: Value) -> Result<AgentModelMessage, ApplicationError> {
+    reject_agent_prompt_marker(&value)?;
+    let mut object = match value {
+        Value::Object(object) => object,
+        _ => {
+            return Err(ApplicationError::ValidationError(
+                "agent.invalid_prompt_snapshot: message must be an object".to_string(),
+            ));
+        }
+    };
     let role = match object
         .get("role")
         .and_then(Value::as_str)
@@ -263,32 +313,31 @@ fn message_from_openai_value(value: &Value) -> Result<AgentModelMessage, Applica
 
     Ok(AgentModelMessage {
         role,
-        parts: content_parts_from_openai_value(object.get("content")),
+        parts: content_parts_from_openai_value(object.remove("content")),
         provider_metadata,
     })
 }
 
-fn content_parts_from_openai_value(value: Option<&Value>) -> Vec<AgentModelContentPart> {
+fn content_parts_from_openai_value(value: Option<Value>) -> Vec<AgentModelContentPart> {
     match value {
-        Some(Value::String(text)) => vec![AgentModelContentPart::Text { text: text.clone() }],
+        Some(Value::String(text)) => vec![AgentModelContentPart::Text { text }],
         Some(Value::Array(parts)) => parts
-            .iter()
+            .into_iter()
             .map(|part| match part {
-                Value::String(text) => AgentModelContentPart::Text { text: text.clone() },
-                Value::Object(object)
+                Value::String(text) => AgentModelContentPart::Text { text },
+                Value::Object(mut object)
                     if object.get("type").and_then(Value::as_str) == Some("text") =>
                 {
                     AgentModelContentPart::Text {
-                        text: object
-                            .get("text")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
+                        text: match object.remove("text") {
+                            Some(Value::String(text)) => text,
+                            _ => String::new(),
+                        },
                     }
                 }
                 other => AgentModelContentPart::Native {
                     provider: "openai.content_part".to_string(),
-                    value: other.clone(),
+                    value: other,
                 },
             })
             .collect(),
@@ -299,16 +348,32 @@ fn content_parts_from_openai_value(value: Option<&Value>) -> Vec<AgentModelConte
     }
 }
 
+/// Compile captured values once per invocation; readers share the immutable table.
+pub(super) fn frozen_macros_from_snapshot(
+    snapshot: &Value,
+) -> Result<std::sync::Arc<tt_domain::frozen_macros::FrozenMacros>, ApplicationError> {
+    let macros = snapshot
+        .pointer("/frozenRunInputSnapshot/macroContext")
+        .map(|context| {
+            tt_domain::frozen_macros::FrozenMacros::from_context(
+                context,
+                snapshot.pointer("/frozenRunInputSnapshot/promptInputs/extensionPrompts"),
+            )
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(std::sync::Arc::new(macros))
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::{
-        prepare_agent_tool_request, reject_external_tool_request, request_from_prompt_snapshot,
-        validate_prompt_snapshot_context_policy,
+        OPENCODE_STABLE_CHAT_ID_FIELD, prepare_agent_tool_request, reject_external_tool_request,
+        request_from_prompt_snapshot, validate_prompt_snapshot_context_policy,
     };
     use tt_domain::models::agent::profile::ResolvedAgentProfile;
-    use tt_domain::models::agent::{AgentModelContentPart, AgentModelRequest, AgentModelRole};
     use tt_domain::models::tool::ToolChoice;
 
     #[test]
@@ -330,30 +395,85 @@ mod tests {
     }
 
     #[test]
-    fn materialized_agent_system_prompt_passes_through_at_prompt_manager_position() {
+    fn responses_websocket_mode_is_an_explicit_agent_transport() {
         let request = request_from_prompt_snapshot(&json!({
             "chatCompletionPayload": {
-                "messages": [
-                    { "role": "system", "content": "Before Agent prompt." },
-                    { "role": "user", "content": "Materialized Agent System Prompt." },
-                    { "role": "user", "content": "hello" }
-                ]
+                "chat_completion_source": "custom",
+                "custom_api_format": "openai_responses",
+                "custom_openai_responses_websocket": true,
+                "messages": [{ "role": "user", "content": "hello" }]
             }
         }))
         .expect("request");
 
-        let request =
-            prepare_agent_tool_request(request, &[], ToolChoice::Auto, "run_test", "inv_root")
-                .expect("agent request");
+        let request = prepare_agent_tool_request(
+            request,
+            &[],
+            ToolChoice::Auto,
+            "stable",
+            "run_test",
+            "inv_root",
+        )
+        .expect("agent request");
 
-        assert_eq!(message_text(&request, 0), "Before Agent prompt.");
-        assert_eq!(request.messages[1].role, AgentModelRole::User);
         assert_eq!(
-            message_text(&request, 1),
-            "Materialized Agent System Prompt."
+            request.provider_state["transport"],
+            json!("responses_websocket")
         );
-        assert_eq!(message_text(&request, 2), "hello");
-        assert_eq!(request.tool_choice, ToolChoice::Auto);
+    }
+
+    #[test]
+    fn opencode_agent_uses_the_run_chat_identity() {
+        let request = request_from_prompt_snapshot(&json!({
+            "chatCompletionPayload": {
+                "chat_completion_source": "opencode",
+                "messages": [{ "role": "user", "content": "hello" }]
+            }
+        }))
+        .expect("request");
+
+        let request = prepare_agent_tool_request(
+            request,
+            &[],
+            ToolChoice::Auto,
+            "stable-chat",
+            "run_test",
+            "inv_root",
+        )
+        .expect("agent request");
+
+        assert_eq!(
+            request.payload[OPENCODE_STABLE_CHAT_ID_FIELD],
+            json!("stable-chat")
+        );
+    }
+
+    #[test]
+    fn responses_websocket_mode_rejects_other_provider_formats() {
+        let request = request_from_prompt_snapshot(&json!({
+            "chatCompletionPayload": {
+                "chat_completion_source": "custom",
+                "custom_api_format": "openai_compat",
+                "custom_openai_responses_websocket": true,
+                "messages": [{ "role": "user", "content": "hello" }]
+            }
+        }))
+        .expect("request");
+
+        let error = prepare_agent_tool_request(
+            request,
+            &[],
+            ToolChoice::Auto,
+            "stable",
+            "run_test",
+            "inv_root",
+        )
+        .expect_err("format mismatch must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("responses_websocket_format_mismatch")
+        );
     }
 
     #[test]
@@ -368,9 +488,15 @@ mod tests {
         }))
         .expect("request");
 
-        let error =
-            prepare_agent_tool_request(request, &[], ToolChoice::Auto, "run_test", "inv_root")
-                .expect_err("marker leak fails");
+        let error = prepare_agent_tool_request(
+            request,
+            &[],
+            ToolChoice::Auto,
+            "stable",
+            "run_test",
+            "inv_root",
+        )
+        .expect_err("marker leak fails");
 
         assert!(
             error
@@ -431,31 +557,6 @@ mod tests {
             .expect("matching truncated context policy should pass");
     }
 
-    #[test]
-    fn empty_initial_history_context_policy_is_valid_snapshot_contract() {
-        let mut profile = test_profile(None);
-        profile.context.initial_chat_history_messages = 0;
-        let prompt_snapshot = json!({
-            "contextPolicy": {
-                "initialChatHistoryMessages": 0,
-                "includeActivatedWorldInfo": true
-            },
-            "chatCompletionPayload": {
-                "messages": [{ "role": "system", "content": "Materialized Agent System Prompt." }]
-            }
-        });
-
-        validate_prompt_snapshot_context_policy(&prompt_snapshot, &profile)
-            .expect("matching empty-history context policy should pass");
-    }
-
-    fn message_text(request: &AgentModelRequest, index: usize) -> &str {
-        match &request.messages[index].parts[0] {
-            AgentModelContentPart::Text { text } => text.as_str(),
-            _ => panic!("expected text message"),
-        }
-    }
-
     fn agent_system_marker() -> serde_json::Value {
         json!({
             "role": "system",
@@ -471,7 +572,7 @@ mod tests {
         };
 
         serde_json::from_value(json!({
-            "schemaVersion": 1,
+            "schemaVersion": 3,
             "kind": "tauritavern.agentProfile",
             "id": "test",
             "displayName": "Test",
@@ -487,7 +588,11 @@ mod tests {
             },
             "instructions": instructions,
             "tools": {
-                "allow": ["workspace.write_file", "workspace.commit", "workspace.finish"],
+                "allow": [
+                    "builtin:workspace.write_file",
+                    "builtin:workspace.commit",
+                    "builtin:workspace.finish"
+                ],
                 "deny": [],
                 "toolDescriptions": {},
                 "maxRounds": 1,

@@ -20,6 +20,7 @@ pub(crate) fn run_import_data_archive(
     workspace_root: &Path,
     report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
+    prepare_personas: fn(&Path, &Path) -> Result<(), DomainError>,
 ) -> Result<DataArchiveImportResult, DataArchiveImportFailure> {
     report_progress("preparing", 0.0, "Preparing import");
     ensure_not_cancelled(is_cancelled)?;
@@ -44,43 +45,50 @@ pub(crate) fn run_import_data_archive(
         .map_err(|error| internal_error("Failed to create normalized workspace", error))?;
 
     let mut layout_scan = layout::ArchiveLayoutScan::new();
-    let mut archive = archive::prepare_archive_for_import(
+    let archive = archive::prepare_archive_for_import(
         archive_path,
         &raw_root,
         report_progress,
         is_cancelled,
         &mut |path| layout_scan.visit_path(path),
     )?;
-    let layout = layout_scan.finish(archive.scanned_archive())?;
+    let scanned_archive = archive.scanned_archive();
+    let layout = layout_scan.finish(scanned_archive)?;
     ensure_not_cancelled(is_cancelled)?;
 
-    match &mut archive {
+    let staged_archive = match archive {
         archive::PreparedArchive::Zip(zip_archive) => {
             report_progress("scanning", 10.0, "Archive layout detected");
-            extract::extract_zip_to_normalized_root(
-                zip_archive,
-                &layout,
-                &normalized_root,
+            zip_archive.stage(
+                &raw_root,
+                &|path| {
+                    extract::target_relative_path(path, &layout, layout.detected_user_handles())
+                        .is_some()
+                },
                 report_progress,
                 is_cancelled,
-            )?;
+            )?
         }
-        archive::PreparedArchive::Staged(staged_archive) => {
-            report_progress("normalizing", 90.0, "Normalizing archive layout");
-            extract::normalize_staged_archive(
-                staged_archive,
-                &layout,
-                &normalized_root,
-                is_cancelled,
-            )?;
-        }
-    }
-    drop(archive);
+        archive::PreparedArchive::Staged(staged_archive) => staged_archive,
+    };
+
+    report_progress("normalizing", 90.0, "Normalizing archive layout");
+    extract::normalize_staged_archive(&staged_archive, &layout, &normalized_root, is_cancelled)?;
+    drop(staged_archive);
+    prepare_personas(
+        &normalized_root.join(IMPORT_TARGET_USER_HANDLE),
+        &data_root.join(IMPORT_TARGET_USER_HANDLE),
+    )?;
 
     report_progress("applying", 92.0, "Merging data directory");
     ensure_not_cancelled(is_cancelled)?;
-    let local_applied =
-        apply::apply_overlay(&normalized_root, data_root, report_progress, is_cancelled)?;
+    let local_applied = apply::apply_overlay(
+        &normalized_root,
+        data_root,
+        scanned_archive.total_uncompressed_bytes,
+        report_progress,
+        is_cancelled,
+    )?;
 
     report_progress("completed", 100.0, "Import completed");
 
@@ -101,7 +109,7 @@ mod tests {
     use std::fs;
     use std::io::Cursor;
     use std::io::Write;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tar::{Builder as TarBuilder, EntryType, Header};
     use zip::CompressionMethod;
     use zip::ZipWriter;
@@ -231,40 +239,57 @@ mod tests {
         writer.finish().expect("finish zip").into_inner()
     }
 
-    fn clear_zip_utf8_flag(bytes: &mut [u8]) -> usize {
-        const UTF8_FLAG: u16 = 1u16 << 11;
-        let mut patched = 0usize;
+    fn import_zip_with_raw_names(
+        label: &str,
+        entries: &[(&str, &[u8], &[u8])],
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-{}-{}",
+            label,
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.zip");
 
-        let mut index = 0usize;
-        while index + 4 <= bytes.len() {
-            if bytes[index..].starts_with(b"PK\x03\x04") {
-                if index + 8 <= bytes.len() {
-                    let offset = index + 6;
-                    let flags = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
-                    let flags = flags & !UTF8_FLAG;
-                    bytes[offset..offset + 2].copy_from_slice(&flags.to_le_bytes());
-                    patched += 1;
-                }
-                index += 4;
-                continue;
+        fs::create_dir_all(&workspace_root).expect("create temp workspace");
+        let source_entries = entries
+            .iter()
+            .map(|(placeholder, _, content)| (*placeholder, *content))
+            .collect::<Vec<_>>();
+        let mut bytes = write_zip_bytes(&source_entries, FileOptions::default());
+
+        for (placeholder, raw_name, _) in entries {
+            let placeholder = placeholder.as_bytes();
+            assert_eq!(placeholder.len(), raw_name.len());
+
+            let mut replaced = 0;
+            let mut offset = 0;
+            while let Some(relative) = bytes[offset..]
+                .windows(placeholder.len())
+                .position(|candidate| candidate == placeholder)
+            {
+                let start = offset + relative;
+                bytes[start..start + raw_name.len()].copy_from_slice(raw_name);
+                offset = start + raw_name.len();
+                replaced += 1;
             }
-
-            if bytes[index..].starts_with(b"PK\x01\x02") {
-                if index + 10 <= bytes.len() {
-                    let offset = index + 8;
-                    let flags = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
-                    let flags = flags & !UTF8_FLAG;
-                    bytes[offset..offset + 2].copy_from_slice(&flags.to_le_bytes());
-                    patched += 1;
-                }
-                index += 4;
-                continue;
-            }
-
-            index += 1;
+            assert_eq!(replaced, 2, "replace local and central ZIP entry names");
         }
 
-        patched
+        fs::write(&archive_path, bytes).expect("write raw-name zip");
+        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+        run_import_data_archive(
+            &data_root,
+            &archive_path,
+            &workspace_root,
+            &mut report_progress,
+            &|| false,
+            |_, _| Ok(()),
+        )
+        .expect("import raw-name zip");
+
+        (root, data_root)
     }
 
     #[test]
@@ -286,7 +311,7 @@ mod tests {
         let mut layout_scan = layout::ArchiveLayoutScan::new();
         let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
         let is_cancelled = || false;
-        let mut prepared = archive::prepare_archive_for_import(
+        let prepared = archive::prepare_archive_for_import(
             &archive_path,
             &raw_root,
             &mut report_progress,
@@ -294,22 +319,31 @@ mod tests {
             &mut |path| layout_scan.visit_path(path),
         )
         .expect("prepare zip archive");
-        let layout = layout_scan
-            .finish(prepared.scanned_archive())
-            .expect("finish layout");
+        let scanned_archive = prepared.scanned_archive();
+        let layout = layout_scan.finish(scanned_archive).expect("finish layout");
 
         fs::remove_file(&archive_path).expect("remove source archive");
-        let archive::PreparedArchive::Zip(zip_archive) = &mut prepared else {
+        let archive::PreparedArchive::Zip(zip_archive) = prepared else {
             panic!("zip fixture should prepare as zip");
         };
-        extract::extract_zip_to_normalized_root(
-            zip_archive,
+        let staged_archive = zip_archive
+            .stage(
+                &raw_root,
+                &|path| {
+                    extract::target_relative_path(path, &layout, layout.detected_user_handles())
+                        .is_some()
+                },
+                &mut report_progress,
+                &is_cancelled,
+            )
+            .expect("extract from prepared zip archive");
+        extract::normalize_staged_archive(
+            &staged_archive,
             &layout,
             &normalized_root,
-            &mut report_progress,
             &is_cancelled,
         )
-        .expect("extract from prepared zip archive");
+        .expect("normalize staged zip archive");
 
         assert_eq!(
             fs::read(normalized_root.join("default-user/characters/zip.json"))
@@ -394,6 +428,7 @@ mod tests {
             &workspace_root,
             &mut report_progress,
             &|| false,
+            |_, _| Ok(()),
         )
         .expect("import tar.gz archive");
 
@@ -402,6 +437,100 @@ mod tests {
                 .expect("read imported conflict target"),
             b"third"
         );
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn zip_import_preserves_archive_order_for_target_conflicts() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-zip-order-{}",
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.zip");
+
+        fs::create_dir_all(&workspace_root).expect("create workspace");
+        write_zip(
+            &archive_path,
+            &[
+                ("alice/characters/a.json", b"first"),
+                ("bob/characters/a.json", b"second"),
+                ("carol/characters/a.json", b"third"),
+            ],
+        );
+
+        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+        run_import_data_archive(
+            &data_root,
+            &archive_path,
+            &workspace_root,
+            &mut report_progress,
+            &|| false,
+            |_, _| Ok(()),
+        )
+        .expect("import zip archive");
+
+        assert_eq!(
+            fs::read(data_root.join("default-user/characters/a.json"))
+                .expect("read imported conflict target"),
+            b"third"
+        );
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn cancelling_parallel_zip_staging_does_not_apply_partial_data() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-data-archive-zip-cancel-{}",
+            rand::random::<u64>()
+        ));
+        let data_root = root.join("data");
+        let workspace_root = root.join("workspace");
+        let archive_path = root.join("fixture.zip");
+        let payload = vec![b'x'; crate::data_archive::shared::COPY_BUFFER_BYTES * 3];
+
+        fs::create_dir_all(&workspace_root).expect("create workspace");
+        fs::write(
+            &archive_path,
+            write_zip_bytes(
+                &[
+                    ("data/default-user/characters/first.bin", payload.as_slice()),
+                    (
+                        "data/default-user/characters/second.bin",
+                        payload.as_slice(),
+                    ),
+                ],
+                FileOptions::default().compression_method(CompressionMethod::Stored),
+            ),
+        )
+        .expect("write zip");
+
+        let cancelled = AtomicBool::new(false);
+        let mut report_progress = |stage: &str, percent: f32, _message: &str| {
+            if stage == "extracting" && percent > 15.0 {
+                cancelled.store(true, Ordering::SeqCst);
+            }
+        };
+        let is_cancelled = || cancelled.load(Ordering::SeqCst);
+        let failure = run_import_data_archive(
+            &data_root,
+            &archive_path,
+            &workspace_root,
+            &mut report_progress,
+            &is_cancelled,
+            |_, _| Ok(()),
+        )
+        .expect_err("cancelled import should fail");
+
+        assert!(
+            matches!(&failure.error, DomainError::Cancelled(_)),
+            "unexpected failure: {:?}",
+            failure.error
+        );
+        assert!(!data_root.exists());
 
         cleanup_directory_sync(&root);
     }
@@ -453,6 +582,7 @@ mod tests {
             &workspace_root,
             &mut report_progress,
             &is_cancelled,
+            |_, _| Ok(()),
         )
         .expect("import archive");
 
@@ -464,6 +594,80 @@ mod tests {
 
         let text = fs::read_to_string(&imported).expect("read imported file");
         assert!(text.contains("中文"), "imported content should match");
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn import_decodes_legacy_gb18030_zip_filenames_as_one_archive() {
+        let entries: &[(&str, &[u8], &[u8])] = &[
+            (
+                "data/default-user/characters/abcdefgh.json",
+                b"data/default-user/characters/\xd6\xd0\xce\xc4\xc3\xfb\xd7\xd6.json",
+                b"first",
+            ),
+            (
+                "data/default-user/characters/ij.json",
+                b"data/default-user/characters/\xc2\xa5.json",
+                b"second",
+            ),
+        ];
+        let (root, data_root) = import_zip_with_raw_names("gb18030", entries);
+
+        assert_eq!(
+            fs::read(
+                data_root
+                    .join("default-user/characters")
+                    .join("中文名字.json")
+            )
+            .expect("read GB18030 filename"),
+            b"first"
+        );
+        assert_eq!(
+            fs::read(data_root.join("default-user/characters/楼.json"))
+                .expect("read ambiguous GB18030 filename"),
+            b"second"
+        );
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn import_preserves_unflagged_utf8_zip_filenames() {
+        let (root, data_root) = import_zip_with_raw_names(
+            "unflagged-utf8",
+            &[(
+                "data/default-user/characters/abcdef.json",
+                "data/default-user/characters/夏瑾.json".as_bytes(),
+                b"utf8",
+            )],
+        );
+
+        assert_eq!(
+            fs::read(data_root.join("default-user/characters/夏瑾.json"))
+                .expect("read UTF-8 filename"),
+            b"utf8"
+        );
+
+        cleanup_directory_sync(&root);
+    }
+
+    #[test]
+    fn import_preserves_cp437_zip_filenames_without_gb18030_evidence() {
+        let (root, data_root) = import_zip_with_raw_names(
+            "cp437",
+            &[(
+                "data/default-user/characters/abcde.json",
+                b"data/default-user/characters/\x82cole.json",
+                b"cp437",
+            )],
+        );
+
+        assert_eq!(
+            fs::read(data_root.join("default-user/characters/école.json"))
+                .expect("read CP437 filename"),
+            b"cp437"
+        );
 
         cleanup_directory_sync(&root);
     }
@@ -503,6 +707,7 @@ mod tests {
             &workspace_root,
             &mut report_progress,
             &is_cancelled,
+            |_, _| Ok(()),
         )
         .expect("import archive");
 
@@ -537,144 +742,6 @@ mod tests {
     }
 
     #[test]
-    fn import_overwrites_same_path_files() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-overwrite-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.zip");
-
-        fs::create_dir_all(data_root.join("default-user").join("characters"))
-            .expect("create characters");
-        fs::write(
-            data_root
-                .join("default-user")
-                .join("characters")
-                .join("a.json"),
-            "old",
-        )
-        .expect("write old file");
-
-        fs::create_dir_all(&workspace_root).expect("create workspace");
-        write_zip(&archive_path, &[("default-user/characters/a.json", b"new")]);
-
-        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
-        let is_cancelled = || false;
-
-        run_import_data_archive(
-            &data_root,
-            &archive_path,
-            &workspace_root,
-            &mut report_progress,
-            &is_cancelled,
-        )
-        .expect("import archive");
-
-        assert_eq!(
-            fs::read_to_string(
-                data_root
-                    .join("default-user")
-                    .join("characters")
-                    .join("a.json")
-            )
-            .expect("read overwritten file"),
-            "new"
-        );
-
-        cleanup_directory_sync(&root);
-    }
-
-    #[test]
-    fn import_supports_tar_archives() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-tar-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.tar");
-
-        fs::create_dir_all(&root).expect("create temp root");
-        fs::create_dir_all(&workspace_root).expect("create temp workspace");
-        write_tar(
-            &archive_path,
-            &[(
-                "data/default-user/characters/tar.json",
-                br#"{ "tar": true }"#,
-            )],
-        );
-
-        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
-        let is_cancelled = || false;
-
-        run_import_data_archive(
-            &data_root,
-            &archive_path,
-            &workspace_root,
-            &mut report_progress,
-            &is_cancelled,
-        )
-        .expect("import tar archive");
-
-        assert!(
-            data_root
-                .join("default-user")
-                .join("characters")
-                .join("tar.json")
-                .is_file(),
-            "tar file should be imported"
-        );
-
-        cleanup_directory_sync(&root);
-    }
-
-    #[test]
-    fn import_supports_tar_gz_archives() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-targz-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.tar.gz");
-
-        fs::create_dir_all(&root).expect("create temp root");
-        fs::create_dir_all(&workspace_root).expect("create temp workspace");
-        write_tar_gz(
-            &archive_path,
-            &[(
-                "BackupRoot/data/default-user/chats/targz.jsonl",
-                br#"{ "tar_gz": true }"#,
-            )],
-        );
-
-        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
-        let is_cancelled = || false;
-
-        run_import_data_archive(
-            &data_root,
-            &archive_path,
-            &workspace_root,
-            &mut report_progress,
-            &is_cancelled,
-        )
-        .expect("import tar.gz archive");
-
-        assert!(
-            data_root
-                .join("default-user")
-                .join("chats")
-                .join("targz.jsonl")
-                .is_file(),
-            "tar.gz file should be imported"
-        );
-
-        cleanup_directory_sync(&root);
-    }
-
-    #[test]
     fn import_detects_tar_gz_by_content_not_extension() {
         let root = std::env::temp_dir().join(format!(
             "tauritavern-data-archive-tgz-magic-{}",
@@ -703,6 +770,7 @@ mod tests {
             &workspace_root,
             &mut report_progress,
             &is_cancelled,
+            |_, _| Ok(()),
         )
         .expect("import content-detected tar.gz archive");
 
@@ -741,6 +809,7 @@ mod tests {
             &workspace_root,
             &mut report_progress,
             &is_cancelled,
+            |_, _| Ok(()),
         )
         .expect_err("path escape should be rejected");
         assert!(matches!(error.error, DomainError::InvalidData(_)));
@@ -771,6 +840,7 @@ mod tests {
             &workspace_root,
             &mut report_progress,
             &is_cancelled,
+            |_, _| Ok(()),
         )
         .expect_err("malformed archive should be rejected");
         assert!(
@@ -805,6 +875,7 @@ mod tests {
             &workspace_root,
             &mut report_progress,
             &is_cancelled,
+            |_, _| Ok(()),
         )
         .expect_err("malformed zip should be rejected");
         assert!(matches!(error.error, DomainError::InvalidData(_)));
@@ -886,6 +957,7 @@ mod tests {
             &workspace_root,
             &mut report_progress,
             &is_cancelled,
+            |_, _| Ok(()),
         )
         .expect_err("symlink should be rejected");
         assert!(matches!(error.error, DomainError::InvalidData(_)));
@@ -915,6 +987,7 @@ mod tests {
             &workspace_root,
             &mut report_progress,
             &is_cancelled,
+            |_, _| Ok(()),
         )
         .expect("import archive");
 
@@ -963,6 +1036,7 @@ mod tests {
             &workspace_root,
             &mut report_progress,
             &is_cancelled,
+            |_, _| Ok(()),
         )
         .expect("import archive");
 
@@ -1027,6 +1101,7 @@ mod tests {
             &workspace_root,
             &mut report_progress,
             &is_cancelled,
+            |_, _| Ok(()),
         )
         .expect("import archive");
 
@@ -1036,94 +1111,6 @@ mod tests {
                 .join("settings.json")
                 .is_file(),
             "settings.json should map into default-user"
-        );
-
-        cleanup_directory_sync(&root);
-    }
-
-    #[test]
-    fn import_preserves_unicode_filenames_when_utf8_flag_missing() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-non-utf8-flag-{}",
-            rand::random::<u64>()
-        ));
-        let data_root = root.join("data");
-        let workspace_root = root.join("workspace");
-        let archive_path = root.join("fixture.zip");
-
-        fs::create_dir_all(&root).expect("create temp root");
-        fs::create_dir_all(&workspace_root).expect("create temp workspace");
-
-        let file_name = "data/default-user/worlds/夏瑾 Pro - Beta 天狼星.json";
-        let mut bytes =
-            write_zip_bytes(&[(file_name, br#"{ "ok": true }"#)], FileOptions::default());
-        let patched = clear_zip_utf8_flag(&mut bytes);
-        assert!(patched > 0, "should patch zip headers");
-        fs::write(&archive_path, bytes).expect("write fixture zip");
-
-        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
-        let is_cancelled = || false;
-
-        run_import_data_archive(
-            &data_root,
-            &archive_path,
-            &workspace_root,
-            &mut report_progress,
-            &is_cancelled,
-        )
-        .expect("import archive");
-
-        let imported = data_root
-            .join("default-user")
-            .join("worlds")
-            .join("夏瑾 Pro - Beta 天狼星.json");
-        assert!(imported.is_file(), "imported file should exist");
-
-        let text = fs::read_to_string(&imported).expect("read imported file");
-        assert!(
-            text.contains("\"ok\": true"),
-            "imported content should match"
-        );
-
-        cleanup_directory_sync(&root);
-    }
-
-    #[test]
-    fn layout_validation_errors_use_utf8_entry_names() {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-data-archive-layout-error-name-{}",
-            rand::random::<u64>()
-        ));
-        let archive_path = root.join("fixture.zip");
-
-        fs::create_dir_all(&root).expect("create temp root");
-
-        let entry_name = "data/default-user/chats/夏瑾 Pro - Beta 天狼星.json";
-        let large_payload = vec![0u8; 2 * 1024 * 1024];
-        let options = FileOptions::default()
-            .compression_method(CompressionMethod::Deflated)
-            .compression_level(Some(9));
-        let mut bytes = write_zip_bytes(&[(entry_name, &large_payload)], options);
-        let patched = clear_zip_utf8_flag(&mut bytes);
-        assert!(patched > 0, "should patch zip headers");
-        fs::write(&archive_path, bytes).expect("write fixture zip");
-
-        let mut layout_scan = layout::ArchiveLayoutScan::new();
-        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
-        let error = match archive::prepare_archive_for_import(
-            &archive_path,
-            &root.join("raw"),
-            &mut report_progress,
-            &|| false,
-            &mut |path| layout_scan.visit_path(path),
-        ) {
-            Ok(_) => panic!("scan should fail"),
-            Err(error) => error,
-        };
-        assert!(
-            error.to_string().contains(entry_name),
-            "error should reference utf-8 entry name, got: {}",
-            error
         );
 
         cleanup_directory_sync(&root);

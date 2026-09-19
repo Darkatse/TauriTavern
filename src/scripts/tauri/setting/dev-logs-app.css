@@ -178,9 +178,35 @@
     margin: 0;
 }
 
-.tt-dev-log-position,
 .tt-dev-log-note {
     opacity: 0.85;
+}
+
+.tt-dev-log-status {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.tt-dev-log-status > small {
+    margin-right: auto;
+    opacity: 0.75;
+}
+
+.tt-dev-log-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 120px;
+    height: 100%;
+    opacity: 0.6;
+}
+
+.tt-dev-log-entry-select {
+    flex: 1 1 200px;
+    min-width: 0;
+    margin: 0;
 }
 
 .tt-dev-log-meta {
@@ -190,6 +216,11 @@
     background: var(--black10a);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+}
+
+.tt-dev-log-meta-error {
+    color: var(--fullred);
+    border-color: color-mix(in srgb, var(--fullred) 45%, transparent);
 }
 
 .tt-dev-log-text-section {
@@ -243,6 +274,10 @@
     .tt-dev-log-toolbar .tt-dev-log-button,
     .tt-dev-log-settings-row .tt-dev-log-button {
         width: 100%;
+    }
+
+    .tt-dev-log-entry-select {
+        flex-basis: 100%;
     }
 
     .tt-dev-log-keep-input {

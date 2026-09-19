@@ -22,7 +22,9 @@ use tt_ports::repositories::agent_workspace_lifecycle_repository::{
     AgentPersistentStatePrune, AgentPersistentStatePruneRequest,
 };
 use tt_ports::repositories::character_repository::CharacterRepository;
-use tt_ports::repositories::chat_repository::{ChatExportFormat, ChatImportFormat, ChatRepository};
+use tt_ports::repositories::chat_repository::{
+    ChatBackupCatalogEntry, ChatByteReader, ChatExportFormat, ChatImportFormat, ChatRepository,
+};
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
     ChatPayloadTail, FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat,
@@ -213,6 +215,10 @@ impl ChatService {
         file_name: &str,
     ) -> Result<(), ApplicationError> {
         tracing::info!("Deleting chat: {}/{}", character_name, file_name);
+        let _run_guard = self
+            .agent_workspace_lifecycle_service
+            .lock_run_lifecycle()
+            .await;
 
         let summary = self
             .chat_repository
@@ -239,10 +245,15 @@ impl ChatService {
             .invalidate(&character_locator(character_name, file_name))
             .await;
 
-        if let Some(target) = target {
-            self.agent_workspace_lifecycle_service
-                .delete_chat_workspace(&target)
-                .await?;
+        if let Some(target) = target
+            && let Err(error) = self
+                .cleanup_deleted_chat_workspace(character_name, &target)
+                .await
+        {
+            tracing::error!(
+                target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                "Deleted chat '{character_name}/{file_name}' but could not clean its Agent workspace: {error}"
+            );
         }
 
         Ok(())
@@ -371,43 +382,30 @@ impl ChatService {
         Ok(results.into_iter().map(ChatSearchResultDto::from).collect())
     }
 
-    /// Decode a chat backup into a temporary JSONL file for streaming consumers.
-    pub async fn materialize_chat_backup(
+    /// List chat backup metadata without reading backup payloads.
+    pub async fn list_chat_backup_catalog(
+        &self,
+    ) -> Result<Vec<ChatBackupCatalogEntry>, ApplicationError> {
+        tracing::info!("Listing chat backup catalog");
+
+        Ok(self.chat_repository.list_chat_backup_catalog().await?)
+    }
+
+    /// Open the decoded JSONL payload of a logical chat backup.
+    pub async fn open_chat_backup_download(
         &self,
         backup_file_name: &str,
-    ) -> Result<String, ApplicationError> {
+    ) -> Result<Box<dyn ChatByteReader>, ApplicationError> {
         if backup_file_name.trim().is_empty() {
             return Err(ApplicationError::ValidationError(
                 "Backup file name cannot be empty".to_string(),
             ));
         }
 
-        let path = self
+        Ok(self
             .chat_repository
-            .materialize_chat_backup(backup_file_name)
-            .await?;
-        path.into_os_string().into_string().map_err(|_| {
-            ApplicationError::InternalError(
-                "Chat backup materialization path is not valid UTF-8".to_string(),
-            )
-        })
-    }
-
-    /// Remove a temporary JSONL backup materialization.
-    pub async fn discard_chat_backup_materialization(
-        &self,
-        path: &str,
-    ) -> Result<(), ApplicationError> {
-        if path.trim().is_empty() {
-            return Err(ApplicationError::ValidationError(
-                "Backup materialization path cannot be empty".to_string(),
-            ));
-        }
-
-        self.chat_repository
-            .discard_chat_backup_materialization(Path::new(path))
-            .await?;
-        Ok(())
+            .open_chat_backup_download(backup_file_name)
+            .await?)
     }
 
     /// Restore a character chat directly from a history backup.
@@ -632,6 +630,34 @@ impl ChatService {
         self.agent_workspace_lifecycle_service
             .prune_persistent_states(target, request)
             .await
+    }
+
+    pub async fn copy_agent_persistent_states(
+        &self,
+        source: &AgentChatWorkspaceTarget,
+        target: &AgentChatWorkspaceTarget,
+    ) -> Result<(), ApplicationError> {
+        self.agent_workspace_lifecycle_service
+            .copy_persistent_states(source, target)
+            .await
+    }
+
+    async fn cleanup_deleted_chat_workspace(
+        &self,
+        character_name: &str,
+        target: &AgentChatWorkspaceTarget,
+    ) -> Result<(), ApplicationError> {
+        if self
+            .chat_repository
+            .has_character_chat_with_integrity(character_name, &target.stable_chat_id)
+            .await?
+        {
+            return Ok(());
+        }
+        self.agent_workspace_lifecycle_service
+            .delete_chat_workspace_locked(target)
+            .await
+            .map(|_| ())
     }
 
     /// Get the tail window for a character chat JSONL payload.

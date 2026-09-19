@@ -11,5 +11,9 @@
   Flatpak。
 - `nix-cache/publish.sh`：校验 Nix cache key，签署 store closure 并发布缓存对象。
 
+WinGet 的 canonical manifest 位于外部 `microsoft/winget-pkgs` 仓库，因此本目录不
+保存它的副本；Stable Release 通过 `.github/workflows/winget-release.yml` 生成并
+提交版本更新。详细契约见 `docs/CurrentState/WindowsDistribution.md`。
+
 这些工具由 CI 调用，并在执行前校验所需环境变量和外部命令。用户安装入口仍为
 `scripts/install-linux.sh`。

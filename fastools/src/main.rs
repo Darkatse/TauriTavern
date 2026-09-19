@@ -744,9 +744,9 @@ fn run_dev() -> Result<()> {
     log_info("正在启动 Tauri 开发模式...");
 
     let status = run_sequential_attempts(&[
-        ("pnpm", vec!["run", "tauri:dev"]),
-        ("corepack", vec!["pnpm", "run", "tauri:dev"]),
-        ("npm", vec!["run", "tauri:dev"]),
+        ("pnpm", vec!["run", "tauri:dev:pilot"]),
+        ("corepack", vec!["pnpm", "run", "tauri:dev:pilot"]),
+        ("npm", vec!["run", "tauri:dev:pilot"]),
     ])?;
 
     if !status.success() {

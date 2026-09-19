@@ -73,11 +73,8 @@ function flushPendingWrites(deadline) {
     }
 
     flushScheduled = false;
-    void runPendingWritesFlush(deadline).catch((err) => {
-        queueMicrotask(() => {
-            throw err;
-        });
-    });
+    void runPendingWritesFlush(deadline)
+        .catch(error => console.warn('Failed to flush Prompt Inspector data:', error));
 }
 
 /**
@@ -289,6 +286,7 @@ export function captureItemizedPromptsSaveSnapshot(chatId) {
 
 /**
  * Gets the itemized prompts for a chat.
+ * Prompt Inspector data is derived, so storage failures disable it without blocking chat loading.
  * @param {string} chatId Chat ID to load
  */
 export async function loadItemizedPrompts(chatId) {
@@ -306,7 +304,8 @@ export async function loadItemizedPrompts(chatId) {
         }
     } catch (error) {
         clearActiveIndex();
-        throw error;
+        console.warn(`Failed to load Prompt Inspector data for chat '${chatId}':`, error);
+        return;
     }
 
     // Prompt Inspector is a low priority feature. We avoid per-chat legacy migration on chat open
@@ -317,6 +316,7 @@ export async function loadItemizedPrompts(chatId) {
 
 /**
  * Saves the itemized prompts for a chat.
+ * Prompt Inspector data is derived, so storage failures do not block chat persistence or navigation.
  * @param {string} chatId Chat ID to save itemized prompts for
  * @param {{ entriesSnapshot?: ItemizedPromptIndexEntry[] | null, cloneFromActive?: boolean }} [options]
  */
@@ -352,7 +352,7 @@ export async function saveItemizedPrompts(chatId, { entriesSnapshot = null, clon
         await clonePromptStore(activeChatId, chatId);
         await eventSource.emit(event_types.ITEMIZED_PROMPTS_SAVED, { chatId: chatId });
     } catch (error) {
-        throw error;
+        console.warn(`Failed to save Prompt Inspector data for chat '${chatId}':`, error);
     }
 }
 

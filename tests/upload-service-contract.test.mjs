@@ -209,32 +209,6 @@ test('iOS upload materialization uses host staging even when a scoped path is pr
     }
 });
 
-test('iOS data archive materialization rejects the generic Blob upload path', async () => {
-    const restore = installIosRuntimeGlobals();
-    const calls = [];
-    const service = createUploadService({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            throw new Error('host staging should not be called for iOS data archives');
-        },
-    });
-
-    try {
-        const fileInfo = await service.materializeUploadFile(
-            new Blob(['zip'], { type: 'application/zip' }),
-            { kind: 'data-archive', preferredName: 'backup.zip' },
-        );
-
-        assert.deepEqual(fileInfo, {
-            filePath: '',
-            error: 'iOS data archive imports must use the native archive picker',
-            isTemporary: false,
-        });
-        assert.deepEqual(calls, []);
-    } finally {
-        restore();
-    }
-});
 
 test('Desktop upload materialization keeps real file paths without staging copy', async () => {
     const restore = installDesktopRuntimeGlobals();
@@ -262,38 +236,6 @@ test('Desktop upload materialization keeps real file paths without staging copy'
     }
 });
 
-test('Desktop Blob upload fallback uses host staging instead of raw fs temp writes', async () => {
-    const restore = installDesktopRuntimeGlobals();
-    const calls = [];
-    const service = createHostStagingService({
-        calls,
-        filePath: '/tmp/tauritavern-upload-staging/chat-import/upload.jsonl',
-        expectedBeginDto: {
-            kind: 'chat-import',
-            preferred_extension: 'jsonl',
-            size: 8,
-        },
-    });
-
-    try {
-        const fileInfo = await service.materializeUploadFile(
-            new Blob(['abcdefgh'], { type: 'application/octet-stream' }),
-            { kind: 'chat-import', preferredName: 'chat.jsonl' },
-        );
-
-        assert.equal(fileInfo.filePath, '/tmp/tauritavern-upload-staging/chat-import/upload.jsonl');
-        assert.equal(fileInfo.isTemporary, true);
-        assert.equal(typeof fileInfo.cleanup, 'function');
-        assert.deepEqual(calls.map(call => `${call.channel}:${call.command}`), [
-            'safe:stage_upload_begin',
-            'raw:stage_upload_chunk',
-            'raw:stage_upload_chunk',
-            'safe:stage_upload_finish',
-        ]);
-    } finally {
-        restore();
-    }
-});
 
 test('Android data archive materialization rejects the generic Blob upload path', async () => {
     const restore = installAndroidRuntimeGlobals();

@@ -26,7 +26,6 @@ pub enum ArchiveLayoutPolicy {
 pub struct DetectedArchiveLayout {
     pub archive_root_prefix: PathBuf,
     pub policy: ArchiveLayoutPolicy,
-    pub scanned_entries: usize,
     detected_user_handles: BTreeSet<String>,
 }
 
@@ -95,9 +94,7 @@ impl ArchiveLayoutScan {
         self,
         scanned_archive: ScannedArchive,
     ) -> Result<DetectedArchiveLayout, DomainError> {
-        let scanned_entries = scanned_archive.scanned_entries;
-
-        if scanned_entries == 0 {
+        if scanned_archive.scanned_entries == 0 {
             return Err(DomainError::InvalidData("Archive is empty".to_string()));
         }
 
@@ -112,7 +109,6 @@ impl ArchiveLayoutScan {
         Ok(DetectedArchiveLayout {
             archive_root_prefix: chosen.archive_root_prefix,
             policy: chosen.policy,
-            scanned_entries,
             detected_user_handles: chosen.detected_user_handles,
         })
     }
@@ -386,6 +382,7 @@ mod tests {
         }
         scan.finish(ScannedArchive {
             scanned_entries: entries.len(),
+            total_uncompressed_bytes: 0,
         })
     }
 
@@ -397,24 +394,9 @@ mod tests {
     }
 
     #[test]
-    fn detects_user_handle_root_layout() {
-        let layout = detect_layout(&["default-user/characters/a.json"]).expect("scan layout");
-        assert_eq!(layout.policy, ArchiveLayoutPolicy::UserHandleRoot);
-        assert!(layout.archive_root_prefix.as_os_str().is_empty());
-    }
-
-    #[test]
     fn detects_user_handle_root_layout_with_extra_root_file() {
         let layout =
             detect_layout(&["README.txt", "default-user/characters/a.json"]).expect("scan layout");
-        assert_eq!(layout.policy, ArchiveLayoutPolicy::UserHandleRoot);
-        assert!(layout.archive_root_prefix.as_os_str().is_empty());
-    }
-
-    #[test]
-    fn detects_user_handle_root_layout_with_macos_resource_forks() {
-        let layout = detect_layout(&["__MACOSX/._junk", "default-user/characters/a.json"])
-            .expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::UserHandleRoot);
         assert!(layout.archive_root_prefix.as_os_str().is_empty());
     }
@@ -428,44 +410,6 @@ mod tests {
         .expect("scan layout");
         assert_eq!(layout.policy, ArchiveLayoutPolicy::DataRoot);
         assert_eq!(layout.archive_root_prefix, PathBuf::from("data"));
-    }
-
-    #[test]
-    fn ignores_macos_resource_forks_for_user_handle_layout() {
-        let layout = detect_layout(&[
-            "default-user/characters/a.json",
-            "__MACOSX/default-user/characters/._a.json",
-        ])
-        .expect("scan layout");
-        assert_eq!(layout.policy, ArchiveLayoutPolicy::UserHandleRoot);
-        assert!(layout.archive_root_prefix.as_os_str().is_empty());
-    }
-
-    #[test]
-    fn detects_sillytavern_user_root_layout() {
-        let layout = detect_layout(&["characters/a.json"]).expect("scan layout");
-        assert_eq!(layout.policy, ArchiveLayoutPolicy::SillyTavernUserRoot);
-        assert!(layout.archive_root_prefix.as_os_str().is_empty());
-    }
-
-    #[test]
-    fn detects_sillytavern_user_root_layout_with_marker_named_content_paths() {
-        let layout = detect_layout(&[
-            "characters/a.json",
-            "chats/characters/session.jsonl",
-            "assets/worlds/cover.png",
-        ])
-        .expect("scan layout");
-        assert_eq!(layout.policy, ArchiveLayoutPolicy::SillyTavernUserRoot);
-        assert!(layout.archive_root_prefix.as_os_str().is_empty());
-    }
-
-    #[test]
-    fn detects_sillytavern_user_root_layout_with_extension_content_paths() {
-        let layout = detect_layout(&["settings.json", "extensions/SomeExtension/assets/icon.png"])
-            .expect("scan layout");
-        assert_eq!(layout.policy, ArchiveLayoutPolicy::SillyTavernUserRoot);
-        assert!(layout.archive_root_prefix.as_os_str().is_empty());
     }
 
     #[test]

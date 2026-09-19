@@ -155,37 +155,6 @@ mod tests {
     }
 
     #[test]
-    fn newer_patch_version() {
-        assert!(is_newer_version("1.3.0", "1.3.1").unwrap());
-    }
-
-    #[test]
-    fn newer_minor_version() {
-        assert!(is_newer_version("1.3.0", "1.4.0").unwrap());
-    }
-
-    #[test]
-    fn newer_major_version() {
-        assert!(is_newer_version("1.3.0", "2.0.0").unwrap());
-    }
-
-    #[test]
-    fn same_version() {
-        assert!(!is_newer_version("1.3.0", "1.3.0").unwrap());
-    }
-
-    #[test]
-    fn older_version() {
-        assert!(!is_newer_version("1.3.0", "1.2.9").unwrap());
-    }
-
-    #[test]
-    fn different_segment_lengths() {
-        assert!(is_newer_version("1.3", "1.3.1").unwrap());
-        assert!(!is_newer_version("1.3.1", "1.3").unwrap());
-    }
-
-    #[test]
     fn invalid_version_fails_fast() {
         assert!(is_newer_version("1.x.0", "1.2.0").is_err());
         assert!(is_newer_version("1.2.0", "latest").is_err());

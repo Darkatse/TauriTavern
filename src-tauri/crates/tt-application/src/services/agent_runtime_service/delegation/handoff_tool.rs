@@ -8,7 +8,6 @@ use super::tool_error::tool_error_outcome;
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::AgentProfileResolveInput;
 use crate::services::agent_runtime_service::AgentRuntimeService;
-use crate::services::agent_runtime_service::loop_runner::tool_after_finish_error;
 use crate::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
 use tt_domain::models::agent::profile::{AgentProfileId, ResolvedAgentProfile};
 use tt_domain::models::agent::{AgentDelegationContinuation, AgentRunEventLevel, AgentToolResult};
@@ -37,11 +36,11 @@ impl AgentRuntimeService {
         run_id: &str,
         invocation_id: &str,
         call: &ToolInvocation,
+        args: &Map<String, Value>,
         profile: &ResolvedAgentProfile,
-        is_last_call: bool,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
-        let args = match serde_json::from_value::<AgentHandoffArgs>(call.arguments.clone()) {
+        let args = match serde_json::from_value::<AgentHandoffArgs>(Value::Object(args.clone())) {
             Ok(args) => args,
             Err(error) => {
                 return Ok(tool_error_outcome(
@@ -149,10 +148,6 @@ impl AgentRuntimeService {
                 started.elapsed().as_millis(),
             ));
         }
-        if !is_last_call {
-            return Err(tool_after_finish_error("agent_handoff"));
-        }
-
         let task = self
             .create_handoff_task(
                 run_id,

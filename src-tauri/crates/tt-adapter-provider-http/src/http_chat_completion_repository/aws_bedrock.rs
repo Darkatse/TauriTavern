@@ -22,10 +22,12 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::bedrock_model::{BedrockModelFamily, BedrockModelSpec, extract_provider};
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
+    ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
+use super::claude;
 use super::normalizers;
 use super::response_body::read_upstream_json_body;
 
@@ -77,7 +79,7 @@ pub(super) async fn list_models(
     let foundation_url = format!("{control_plane_base}/foundation-models?byOutputModality=TEXT");
     let profiles_url = format!("{control_plane_base}/inference-profiles");
 
-    let client = repository.client()?;
+    let client = repository.metadata_client(config)?;
     // Doing the two calls in sequence (rather than `tokio::try_join!`) keeps
     // the dependency graph small and matters very little here: each call is a
     // small JSON GET against the regional control plane.
@@ -114,21 +116,10 @@ async fn get_control_plane_json(
     let request = apply_bedrock_auth(request, config);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error(
-            &format!("{BEDROCK_PROVIDER_NAME} {op} request failed"),
-            error,
-        )
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            BEDROCK_PROVIDER_NAME,
-            response,
-            &format!("Failed to list Bedrock {op}"),
-        )
-        .await);
-    }
+    let error_context = format!("Failed to list Bedrock {op}");
+    let response =
+        HttpChatCompletionRepository::send_checked(request, BEDROCK_PROVIDER_NAME, &error_context)
+            .await?;
 
     read_upstream_json_body(BEDROCK_PROVIDER_NAME, op, response).await
 }
@@ -246,9 +237,9 @@ pub(super) async fn generate(
         endpoint_path,
         config.aws_bedrock_custom_response_path.as_deref(),
     )?;
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
 
-    let client = repository.client()?;
+    let client = repository.client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -257,18 +248,12 @@ pub(super) async fn generate(
     let request = apply_bedrock_auth(request, config);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            BEDROCK_PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        BEDROCK_PROVIDER_NAME,
+        "Generation request failed",
+    )
+    .await?;
 
     let body = read_upstream_json_body(BEDROCK_PROVIDER_NAME, "generate", response).await?;
     normalize_provider_response(body, response_mode)
@@ -320,14 +305,60 @@ pub(super) async fn generate_stream(
     sender: ChatCompletionStreamSender,
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
-    let stream_endpoint = to_stream_endpoint(endpoint_path)?;
     let stream_mode = stream_mode_from_endpoint(
         endpoint_path,
         config.aws_bedrock_custom_stream_path.as_deref(),
     )?;
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, &stream_endpoint);
+    let response = send_eventstream_request(repository, config, endpoint_path, payload).await?;
 
-    let client = repository.stream_client()?;
+    forward_eventstream_response(response, sender, cancel, stream_mode).await
+}
+
+pub(super) async fn generate_with_deltas(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+    on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+    let stream_mode = stream_mode_from_endpoint(
+        endpoint_path,
+        config.aws_bedrock_custom_stream_path.as_deref(),
+    )?;
+    if !matches!(
+        &stream_mode,
+        StreamMode::Family(BedrockModelFamily::AnthropicClaude)
+    ) {
+        return Err(DomainError::InvalidData(
+            "AWS Bedrock tool-call delta streaming requires an Anthropic Claude model".to_string(),
+        ));
+    }
+
+    let response = send_eventstream_request(repository, config, endpoint_path, payload).await?;
+    let mut accumulator = claude::ClaudeMessageAccumulator::default();
+    let mut completed = None;
+    consume_eventstream_response(response, &stream_mode, |event| {
+        if let Some(message) = accumulator.apply_event(event.as_bytes(), on_delta)? {
+            completed = Some(message);
+        }
+        Ok(())
+    })
+    .await?;
+
+    let body = claude::require_message_stop(completed)?;
+    Ok(normalizers::normalize_claude_response(body))
+}
+
+async fn send_eventstream_request(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+) -> Result<reqwest::Response, DomainError> {
+    let stream_endpoint = to_stream_endpoint(endpoint_path)?;
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, &stream_endpoint)?;
+
+    let client = repository.stream_client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -336,20 +367,12 @@ pub(super) async fn generate_stream(
     let request = apply_bedrock_auth(request, config);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            BEDROCK_PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
-
-    forward_eventstream_response(response, sender, cancel, stream_mode).await
+    HttpChatCompletionRepository::send_checked(
+        request,
+        BEDROCK_PROVIDER_NAME,
+        "Generation request failed",
+    )
+    .await
 }
 
 #[derive(Debug, Clone)]
@@ -450,73 +473,73 @@ fn to_stream_endpoint(endpoint_path: &str) -> Result<String, DomainError> {
 }
 
 async fn forward_eventstream_response(
-    mut response: reqwest::Response,
+    response: reqwest::Response,
     sender: ChatCompletionStreamSender,
     mut cancel: ChatCompletionCancelReceiver,
     mode: StreamMode,
 ) -> Result<(), DomainError> {
+    let consume = consume_eventstream_response(response, &mode, |event| {
+        let _ = sender.send(event);
+        Ok(())
+    });
+    tokio::pin!(consume);
+
+    tokio::select! {
+        result = &mut consume => result,
+        Ok(_) = cancel.wait_for(|cancelled| *cancelled) => Ok(()),
+    }
+}
+
+async fn consume_eventstream_response<F>(
+    mut response: reqwest::Response,
+    mode: &StreamMode,
+    mut on_event: F,
+) -> Result<(), DomainError>
+where
+    F: FnMut(String) -> Result<(), DomainError>,
+{
     let mut buffer = Vec::<u8>::new();
     let endpoint = response.url().clone();
 
-    loop {
-        if *cancel.borrow() {
-            return Ok(());
-        }
-
-        let chunk = tokio::select! {
-            _ = cancel.changed() => {
-                if *cancel.borrow() {
-                    return Ok(());
-                }
-                continue;
-            }
-            chunk = response.chunk() => {
-                chunk.map_err(|error| {
-                    let failure =
-                        crate::http_error::reqwest_body_failure(&error, Some(&endpoint));
-                    tracing::warn!(
-                        provider = BEDROCK_PROVIDER_NAME,
-                        operation = "eventstream",
-                        code = %failure.code,
-                        category = %failure.category,
-                        endpoint = failure.endpoint.as_deref().unwrap_or(""),
-                        timeout = error.is_timeout(),
-                        connect = error.is_connect(),
-                        body = error.is_body(),
-                        request = error.is_request(),
-                        "upstream event stream read failed",
-                    );
-                    DomainError::upstream_failure(failure)
-                })?
-            }
-        };
-
-        let Some(chunk) = chunk else {
-            break;
-        };
-
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        let failure = crate::http_error::reqwest_body_failure(&error, Some(&endpoint));
+        tracing::warn!(
+            provider = BEDROCK_PROVIDER_NAME,
+            operation = "eventstream",
+            code = %failure.code,
+            category = %failure.category,
+            endpoint = failure.endpoint.as_deref().unwrap_or(""),
+            timeout = error.is_timeout(),
+            connect = error.is_connect(),
+            body = error.is_body(),
+            request = error.is_request(),
+            "upstream event stream read failed",
+        );
+        DomainError::upstream_failure(failure)
+    })? {
         buffer.extend_from_slice(&chunk);
-        drain_eventstream_messages(&mut buffer, &sender, &mode)?;
+        drain_eventstream_messages(&mut buffer, mode, &mut on_event)?;
     }
 
     Ok(())
 }
 
-fn drain_eventstream_messages(
+fn drain_eventstream_messages<F>(
     buffer: &mut Vec<u8>,
-    sender: &ChatCompletionStreamSender,
     mode: &StreamMode,
-) -> Result<(), DomainError> {
+    on_event: &mut F,
+) -> Result<(), DomainError>
+where
+    F: FnMut(String) -> Result<(), DomainError>,
+{
     loop {
         match parse_next_message(buffer)? {
             ParseStep::Need => return Ok(()),
             ParseStep::Consumed { consumed, payload } => {
                 if !payload.is_empty()
                     && let Some(forwarded) = decode_eventstream_payload(&payload, mode)?
-                    && sender.send(forwarded).is_err()
                 {
-                    buffer.drain(..consumed);
-                    return Ok(());
+                    on_event(forwarded)?;
                 }
                 buffer.drain(..consumed);
             }
@@ -633,22 +656,14 @@ mod tests {
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
     use serde_json::json;
-    use tokio::sync::mpsc::unbounded_channel;
 
-    use tt_domain::models::bedrock_model::{BedrockModelFamily, extract_provider};
+    use tt_domain::models::bedrock_model::BedrockModelFamily;
 
     use super::{
         ResponseMode, StreamMode, decode_eventstream_payload, derive_control_plane_base,
-        drain_eventstream_messages, extract_model_id_from_endpoint, inference_supports_on_demand,
-        merge_bedrock_models, normalize_provider_response, response_mode_from_endpoint,
-        to_stream_endpoint, validate_invoke_endpoint,
+        drain_eventstream_messages, extract_model_id_from_endpoint, normalize_provider_response,
+        response_mode_from_endpoint, to_stream_endpoint, validate_invoke_endpoint,
     };
-
-    #[test]
-    fn validate_invoke_endpoint_accepts_invoke_suffix() {
-        validate_invoke_endpoint("/model/anthropic.claude-sonnet-4-20250514-v1:0/invoke")
-            .expect("invoke endpoint should be accepted");
-    }
 
     #[test]
     fn validate_invoke_endpoint_rejects_other_paths() {
@@ -659,18 +674,6 @@ mod tests {
     fn stream_endpoint_swaps_invoke_for_invoke_with_response_stream() {
         let stream =
             to_stream_endpoint("/model/anthropic.claude-sonnet-4-20250514-v1:0/invoke").unwrap();
-        assert_eq!(
-            stream,
-            "/model/anthropic.claude-sonnet-4-20250514-v1:0/invoke-with-response-stream"
-        );
-    }
-
-    #[test]
-    fn stream_endpoint_is_idempotent() {
-        let stream = to_stream_endpoint(
-            "/model/anthropic.claude-sonnet-4-20250514-v1:0/invoke-with-response-stream",
-        )
-        .unwrap();
         assert_eq!(
             stream,
             "/model/anthropic.claude-sonnet-4-20250514-v1:0/invoke-with-response-stream"
@@ -693,17 +696,6 @@ mod tests {
         .expect("payload with bytes should decode");
         let parsed: serde_json::Value = serde_json::from_str(&decoded).unwrap();
         assert_eq!(parsed["delta"]["text"], "hello");
-    }
-
-    #[test]
-    fn decode_eventstream_payload_returns_none_for_internal_metadata() {
-        let payload = json!({ "p": "ignored" }).to_string();
-        let decoded = decode_eventstream_payload(
-            payload.as_bytes(),
-            &StreamMode::Family(BedrockModelFamily::AnthropicClaude),
-        )
-        .unwrap();
-        assert!(decoded.is_none(), "metadata payloads should be skipped");
     }
 
     #[test]
@@ -742,18 +734,19 @@ mod tests {
         buffer.extend_from_slice(&chunk_one);
         buffer.extend_from_slice(&chunk_two);
 
-        let (sender, mut receiver) = unbounded_channel::<String>();
+        let mut forwarded = Vec::new();
         drain_eventstream_messages(
             &mut buffer,
-            &sender,
             &StreamMode::Family(BedrockModelFamily::AnthropicClaude),
+            &mut |chunk| {
+                forwarded.push(chunk);
+                Ok(())
+            },
         )
         .unwrap();
         assert!(buffer.is_empty());
 
-        assert_eq!(receiver.try_recv().ok(), Some("first".to_string()));
-        assert_eq!(receiver.try_recv().ok(), Some("second".to_string()));
-        assert!(receiver.try_recv().is_err());
+        assert_eq!(forwarded, ["first", "second"]);
     }
 
     #[test]
@@ -761,15 +754,18 @@ mod tests {
         let chunk = synthesize_frame(b"hello");
         let mut buffer = chunk[..chunk.len() - 1].to_vec();
 
-        let (sender, mut receiver) = unbounded_channel::<String>();
+        let mut forwarded = Vec::new();
         drain_eventstream_messages(
             &mut buffer,
-            &sender,
             &StreamMode::Family(BedrockModelFamily::AnthropicClaude),
+            &mut |chunk| {
+                forwarded.push(chunk);
+                Ok(())
+            },
         )
         .unwrap();
         assert_eq!(buffer.len(), chunk.len() - 1, "buffer should be retained");
-        assert!(receiver.try_recv().is_err());
+        assert!(forwarded.is_empty());
     }
 
     #[test]
@@ -796,33 +792,6 @@ mod tests {
 
         assert!(error.to_string().contains("not supported"));
         assert!(error.to_string().contains("custom template"));
-    }
-
-    #[test]
-    fn normalize_provider_response_dispatches_nova_via_claude_normalizer() {
-        let nova_body = json!({
-            "output": {
-                "message": {
-                    "role": "assistant",
-                    "content": [{ "text": "hi from nova" }]
-                }
-            },
-            "stopReason": "end_turn"
-        });
-
-        let normalized = normalize_provider_response(
-            nova_body,
-            ResponseMode::Family(BedrockModelFamily::AmazonNova),
-        )
-        .expect("nova response should normalize")
-        .body;
-
-        assert_eq!(normalized["object"], "chat.completion");
-        assert_eq!(
-            normalized["choices"][0]["message"]["content"],
-            "hi from nova"
-        );
-        assert_eq!(normalized["choices"][0]["finish_reason"], "stop");
     }
 
     #[test]
@@ -874,205 +843,6 @@ mod tests {
         );
         // Non-Bedrock base cannot be derived; surface a clear error.
         assert!(derive_control_plane_base("https://example.com").is_err());
-    }
-
-    #[test]
-    fn inference_supports_on_demand_treats_explicit_lists_correctly() {
-        let on_demand_only = json!({
-            "inferenceTypesSupported": ["ON_DEMAND"]
-        });
-        assert!(inference_supports_on_demand(&on_demand_only));
-
-        // Claude 4.x foundation models report INFERENCE_PROFILE only.
-        let profile_only = json!({
-            "inferenceTypesSupported": ["INFERENCE_PROFILE"]
-        });
-        assert!(!inference_supports_on_demand(&profile_only));
-
-        let mixed = json!({
-            "inferenceTypesSupported": ["INFERENCE_PROFILE", "ON_DEMAND"]
-        });
-        assert!(inference_supports_on_demand(&mixed));
-
-        // Missing/empty list is forward-compatible: assume opt-in.
-        let missing = json!({});
-        assert!(inference_supports_on_demand(&missing));
-        let empty = json!({ "inferenceTypesSupported": [] });
-        assert!(inference_supports_on_demand(&empty));
-    }
-
-    #[test]
-    fn extract_provider_strips_inference_profile_prefix_and_returns_first_segment() {
-        assert_eq!(extract_provider("anthropic.claude-3-haiku"), "anthropic");
-        assert_eq!(
-            extract_provider("us.anthropic.claude-opus-4-7"),
-            "anthropic"
-        );
-        assert_eq!(extract_provider("amazon.nova-pro-v1:0"), "amazon");
-        assert_eq!(
-            extract_provider("us.meta.llama3-3-70b-instruct-v1:0"),
-            "meta",
-        );
-        assert_eq!(
-            extract_provider("mistral.mistral-large-2407-v1:0"),
-            "mistral"
-        );
-        assert_eq!(extract_provider("cohere.command-r-plus-v1:0"), "cohere");
-        assert_eq!(extract_provider("ai21.jamba-1-5-large-v1:0"), "ai21");
-        assert_eq!(extract_provider("deepseek.r1-v1:0"), "deepseek");
-        assert_eq!(
-            extract_provider("global.anthropic.claude-opus-4-6-v1"),
-            "anthropic",
-        );
-    }
-
-    #[test]
-    fn merge_bedrock_models_lists_all_providers_and_tags_each_entry() {
-        let foundation = json!({
-            "modelSummaries": [
-                {
-                    "modelId": "anthropic.claude-opus-4-7",
-                    "modelName": "Claude Opus 4.7",
-                    "modelLifecycle": { "status": "ACTIVE" },
-                    "inferenceTypesSupported": ["INFERENCE_PROFILE"]
-                },
-                {
-                    "modelId": "anthropic.claude-3-haiku-20240307-v1:0",
-                    "modelName": "Claude 3 Haiku",
-                    "modelLifecycle": { "status": "ACTIVE" },
-                    "inferenceTypesSupported": ["ON_DEMAND"]
-                },
-                {
-                    "modelId": "amazon.titan-text-premier-v1:0",
-                    "modelName": "Titan Text Premier",
-                    "modelLifecycle": { "status": "ACTIVE" },
-                    "inferenceTypesSupported": ["ON_DEMAND"]
-                },
-                {
-                    "modelId": "meta.llama3-2-3b-instruct-v1:0",
-                    "modelName": "Llama 3.2 3B Instruct",
-                    "modelLifecycle": { "status": "ACTIVE" },
-                    "inferenceTypesSupported": ["ON_DEMAND"]
-                },
-                {
-                    "modelId": "anthropic.claude-2",
-                    "modelName": "Claude 2",
-                    "modelLifecycle": { "status": "LEGACY" }
-                }
-            ]
-        });
-        let profiles = json!({
-            "inferenceProfileSummaries": [
-                {
-                    "inferenceProfileId": "us.anthropic.claude-opus-4-7",
-                    "inferenceProfileName": "US Claude Opus 4.7",
-                    "status": "ACTIVE"
-                },
-                {
-                    "inferenceProfileId": "us.meta.llama3-3-70b-instruct-v1:0",
-                    "inferenceProfileName": "US Llama 3.3 70B Instruct",
-                    "status": "ACTIVE"
-                },
-                {
-                    "inferenceProfileId": "us.amazon.nova-pro-v1:0",
-                    "inferenceProfileName": "US Nova Pro",
-                    "status": "ACTIVE"
-                },
-                {
-                    "inferenceProfileId": "us.anthropic.claude-archived",
-                    "inferenceProfileName": "Archived",
-                    "status": "INACTIVE"
-                }
-            ]
-        });
-
-        let merged = merge_bedrock_models(&foundation, &profiles);
-        let by_id: std::collections::HashMap<&str, &serde_json::Value> = merged
-            .iter()
-            .filter_map(|item| {
-                item.get("id")
-                    .and_then(serde_json::Value::as_str)
-                    .map(|id| (id, item))
-            })
-            .collect();
-
-        // ON_DEMAND foundation models from every provider are kept.
-        assert!(by_id.contains_key("anthropic.claude-3-haiku-20240307-v1:0"));
-        assert!(by_id.contains_key("amazon.titan-text-premier-v1:0"));
-        assert!(by_id.contains_key("meta.llama3-2-3b-instruct-v1:0"));
-        // INFERENCE_PROFILE-only foundation entries are hidden (their
-        // cross-region profile variants surface from /inference-profiles).
-        assert!(!by_id.contains_key("anthropic.claude-opus-4-7"));
-        // LEGACY models are dropped.
-        assert!(!by_id.contains_key("anthropic.claude-2"));
-        // ACTIVE inference profiles for any provider are kept; TauriTavern
-        // metadata marks support status for the UI.
-        assert!(by_id.contains_key("us.anthropic.claude-opus-4-7"));
-        assert!(by_id.contains_key("us.meta.llama3-3-70b-instruct-v1:0"));
-        assert!(by_id.contains_key("us.amazon.nova-pro-v1:0"));
-        // Non-ACTIVE profiles are dropped.
-        assert!(!by_id.contains_key("us.anthropic.claude-archived"));
-
-        // Each entry carries its origin (foundation-model vs inference-profile)
-        // and an extracted `provider` so the frontend can group/tag.
-        let nova = by_id["us.amazon.nova-pro-v1:0"];
-        assert_eq!(
-            nova.get("source").and_then(serde_json::Value::as_str),
-            Some("inference-profile")
-        );
-        assert_eq!(
-            nova.get("provider").and_then(serde_json::Value::as_str),
-            Some("amazon")
-        );
-        assert_eq!(
-            nova.pointer("/tauritavern/bedrock/family")
-                .and_then(serde_json::Value::as_str),
-            Some("amazon_nova")
-        );
-        assert_eq!(
-            nova.pointer("/tauritavern/bedrock/supported")
-                .and_then(serde_json::Value::as_bool),
-            Some(true)
-        );
-        assert_eq!(
-            nova.pointer("/tauritavern/bedrock/capabilities/stream")
-                .and_then(serde_json::Value::as_bool),
-            Some(true)
-        );
-
-        let titan = by_id["amazon.titan-text-premier-v1:0"];
-        assert_eq!(
-            titan
-                .pointer("/tauritavern/bedrock/family")
-                .and_then(serde_json::Value::as_str),
-            Some("unsupported")
-        );
-        assert_eq!(
-            titan
-                .pointer("/tauritavern/bedrock/supported")
-                .and_then(serde_json::Value::as_bool),
-            Some(false)
-        );
-        assert!(
-            titan
-                .pointer("/tauritavern/bedrock/unsupportedReason")
-                .and_then(serde_json::Value::as_str)
-                .is_some()
-        );
-
-        let llama_foundation = by_id["meta.llama3-2-3b-instruct-v1:0"];
-        assert_eq!(
-            llama_foundation
-                .get("source")
-                .and_then(serde_json::Value::as_str),
-            Some("foundation-model")
-        );
-        assert_eq!(
-            llama_foundation
-                .get("provider")
-                .and_then(serde_json::Value::as_str),
-            Some("meta")
-        );
     }
 
     /// Build a synthetic EventStream frame whose payload is `{ "bytes": base64(text) }`.

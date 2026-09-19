@@ -116,9 +116,12 @@ fn run_commit_ledger_preserves_commit_payloads() {
         AgentChatCommitMode::Replace,
         Some("msg_1".to_string()),
         1,
+        false,
     );
 
     assert_eq!(ledger.len(), 1);
+    assert_eq!(ledger.explicit_count(), 0);
+    assert!(!ledger.has_explicit_commit());
     assert_eq!(ledger.latest_message_id(), Some("msg_1"));
     assert_eq!(
         ledger.preserved_commits(),
@@ -146,6 +149,7 @@ fn resolved_profile(preset: AgentPresetBinding) -> ResolvedAgentProfile {
         },
         run: AgentRunPolicy {
             presentation: AgentRunPresentation::Background,
+            stream: false,
             direct_runnable: true,
             model_retry: Default::default(),
         },
@@ -158,6 +162,7 @@ fn resolved_profile(preset: AgentPresetBinding) -> ResolvedAgentProfile {
             tool_descriptions: Default::default(),
             max_rounds: 1,
             max_calls_per_run: 1,
+            mcp_result_inline_char_limit: 50_000,
             max_calls_per_tool: Default::default(),
         },
         skills: AgentSkillPolicy {

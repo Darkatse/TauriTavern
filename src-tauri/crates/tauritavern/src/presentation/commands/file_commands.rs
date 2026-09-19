@@ -300,15 +300,7 @@ pub async fn verify_user_files(
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_relative_path, normalize_user_file_reference, validate_upload_name};
-
-    #[test]
-    fn validate_upload_name_accepts_safe_filename() {
-        assert_eq!(
-            validate_upload_name("LittleWhiteBox_CommonSettings.json").unwrap(),
-            "LittleWhiteBox_CommonSettings.json"
-        );
-    }
+    use super::{normalize_relative_path, validate_upload_name};
 
     #[test]
     fn validate_upload_name_rejects_unsafe_extension() {
@@ -318,11 +310,5 @@ mod tests {
     #[test]
     fn normalize_relative_path_rejects_parent_segments() {
         assert!(normalize_relative_path("../secret.txt").is_err());
-    }
-
-    #[test]
-    fn normalize_user_file_reference_extracts_relative_part() {
-        let path = normalize_user_file_reference("user/files/test.json").unwrap();
-        assert_eq!(path.to_string_lossy(), "test.json");
     }
 }

@@ -1,6 +1,5 @@
 const LAN_SYNC_DEVICE_ALIAS_STORAGE_PREFIX = 'tauritavern:lan_sync_device_alias:';
 const TT_SYNC_SERVER_ALIAS_STORAGE_PREFIX = 'tauritavern:tt_sync_server_alias:';
-const LAN_SYNC_ADVERTISE_ADDRESS_STORAGE_KEY = 'tauritavern:lan_sync_advertise_address';
 const SYNC_DATASET_SELECTION_STORAGE_KEY = 'tauritavern:sync_dataset_selection';
 const LEGACY_SYNC_DATASET_SELECTION_STORAGE_KEY = 'tauritavern:sync_v2_dataset_selection';
 
@@ -27,38 +26,6 @@ export function setSyncTargetAlias(type, id, alias) {
 
 export function clearSyncTargetAlias(type, id) {
     localStorage.removeItem(`${storagePrefixForTarget(type)}${id}`);
-}
-
-export function getSyncTargetDisplayName(type, id, fallbackName) {
-    return getSyncTargetAlias(type, id) || fallbackName;
-}
-
-export function getLanSyncAdvertiseAddress() {
-    return localStorage.getItem(LAN_SYNC_ADVERTISE_ADDRESS_STORAGE_KEY) || '';
-}
-
-export function setLanSyncAdvertiseAddress(value) {
-    const normalized = String(value || '').trim();
-    if (!normalized) {
-        localStorage.removeItem(LAN_SYNC_ADVERTISE_ADDRESS_STORAGE_KEY);
-        return;
-    }
-
-    localStorage.setItem(LAN_SYNC_ADVERTISE_ADDRESS_STORAGE_KEY, normalized);
-}
-
-export function selectLanSyncAdvertiseAddress(status, storedAddress = getLanSyncAdvertiseAddress()) {
-    const availableAddresses = Array.isArray(status?.availableAddresses)
-        ? status.availableAddresses
-        : [];
-    const currentAddress = String(status?.address || '').trim();
-    const stored = String(storedAddress || '').trim();
-
-    const defaultAddress = currentAddress && availableAddresses.includes(currentAddress)
-        ? currentAddress
-        : availableAddresses[0] || currentAddress || '';
-
-    return stored && availableAddresses.includes(stored) ? stored : defaultAddress;
 }
 
 export function createDefaultSyncDatasetSelection(catalog) {
@@ -148,23 +115,13 @@ export function parseLanSyncPairUri(pairUri, tr = (key) => key) {
         throw new Error(tr('Pair URI missing url'));
     }
 
-    const token = parsed.searchParams.get('token') || '';
-    if (!token) {
-        throw new Error(tr('Pair URI missing token'));
-    }
-
     const spki = parsed.searchParams.get('spki') || '';
     if (!spki) {
         throw new Error(tr('Pair URI missing spki'));
     }
 
-    const expiresAtMsRaw = parsed.searchParams.get('exp') || '';
-    const expiresAtMs = expiresAtMsRaw ? Number(expiresAtMsRaw) : null;
-    if (!expiresAtMsRaw || Number.isNaN(expiresAtMs)) {
-        throw new Error(tr('Pair URI has invalid exp'));
-    }
-
-    return { baseUrl, token, spki, expiresAtMs };
+    const deviceId = parsed.searchParams.get('device_id') || null;
+    return { baseUrl, spki, deviceId };
 }
 
 export function parseTtSyncPairUri(pairUri, tr = (key) => key) {

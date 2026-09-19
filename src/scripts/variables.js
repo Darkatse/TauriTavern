@@ -13,6 +13,7 @@ import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { slashCommandReturnHelper } from './slash-commands/SlashCommandReturnHelper.js';
 import { SlashCommandScope } from './slash-commands/SlashCommandScope.js';
 import { isFalseBoolean, convertValueType, isTrueBoolean } from './utils.js';
+import { normalizeVariableValue } from './variables/values.js';
 
 /** @typedef {import('./slash-commands/SlashCommandParser.js').NamedArguments} NamedArguments */
 /** @typedef {import('./slash-commands/SlashCommand.js').UnnamedArguments} UnnamedArguments */
@@ -42,7 +43,7 @@ export function getLocalVariable(name, args = {}) {
         }
     }
 
-    return (localVariable?.trim?.() === '' || isNaN(Number(localVariable))) ? (localVariable || '') : Number(localVariable);
+    return normalizeVariableValue(localVariable);
 }
 
 export function setLocalVariable(name, value, args = {}) {
@@ -99,7 +100,7 @@ export function getGlobalVariable(name, args = {}) {
         }
     }
 
-    return (globalVariable?.trim?.() === '' || isNaN(Number(globalVariable))) ? (globalVariable || '') : Number(globalVariable);
+    return normalizeVariableValue(globalVariable);
 }
 
 export function setGlobalVariable(name, value, args = {}) {

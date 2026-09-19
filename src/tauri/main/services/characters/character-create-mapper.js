@@ -103,7 +103,7 @@ function jsonDataFromPayload(payload) {
         return null;
     }
 
-    return JSON.stringify(objectFromValue(payload.json_data, {}, 'character json_data'));
+    return JSON.stringify(optionalObjectFromValue(payload.json_data, 'character json_data'));
 }
 
 /** @param {any} value @param {Record<string, any>} [fallback] @param {string} [label] */
@@ -121,6 +121,16 @@ function objectFromValue(value, fallback = {}, label = 'JSON payload') {
     }
 
     throw badRequest(`Invalid ${label}: Expected JSON object`);
+}
+
+/** @param {any} value @param {string} label */
+function optionalObjectFromValue(value, label) {
+    try {
+        return objectFromValue(value, {}, label);
+    } catch (error) {
+        console.warn(`Ignoring invalid ${label}:`, error);
+        return {};
+    }
 }
 
 /** @param {FormData} formData @param {string} key @param {string} [fallback] */
@@ -151,8 +161,8 @@ function arrayNotationValuesFromForm(formData, key) {
 
 /** @param {Record<string, any>} payload @param {Record<string, any>} data */
 function buildCharacterExtensions(payload, data) {
-    const dataExtensions = objectFromValue(data.extensions, {}, 'data.extensions');
-    const explicitExtensions = objectFromValue(payload.extensions, {}, 'extensions JSON');
+    const dataExtensions = optionalObjectFromValue(data.extensions, 'data.extensions');
+    const explicitExtensions = optionalObjectFromValue(payload.extensions, 'extensions JSON');
     const world = hasOwn(payload, 'world') ? String(payload.world ?? '') : '';
     const defaults = {
         world,

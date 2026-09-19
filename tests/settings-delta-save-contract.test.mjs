@@ -2,11 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    applyPersonaSnapshot,
     buildSettingsPatchSaveRequest,
     captureSettingsSaveBaseline,
     clearSettingsSaveBaseline,
     isSettingsPatchConflictError,
     prepareSettingsSavePayload,
+    requireSettingsRevision,
     SETTINGS_HASH_ALGORITHM,
     trySaveSettingsDelta,
 } from '../src/scripts/tauri/setting/settings-delta-save.js';
@@ -32,6 +34,12 @@ test.afterEach(() => {
     clearSettingsSaveBaseline();
     restoreGlobals();
 });
+
+test('requireSettingsRevision validates full-save revision responses', () => {
+    assert.deepEqual(requireSettingsRevision({ result: 'ok', mode: 'full', ...revision }), revision);
+    assert.throws(() => requireSettingsRevision({ result: 'ok' }), /missing revision/);
+});
+
 
 test('buildSettingsPatchSaveRequest emits backend-revision CAS object diffs and replaces arrays whole', () => {
     captureSettingsSaveBaseline({
@@ -60,19 +68,22 @@ test('buildSettingsPatchSaveRequest emits backend-revision CAS object diffs and 
     ]);
 });
 
-test('buildSettingsPatchSaveRequest uses a root set patch when object diffs are too many', () => {
-    const next = {};
+test('large settings patches replace the root without rewriting untouched Personas', () => {
+    const power_user = {
+        personas: { 'keep.png': 'Keep' },
+        persona_descriptions: { 'keep.png': { description: 'Keep this text' } },
+    };
+    const core = { power_user: {} };
     for (let index = 0; index < 300; index++) {
-        next[`setting_${index}`] = index;
+        core[`setting_${index}`] = index;
     }
 
-    captureSettingsSaveBaseline({}, revision);
+    captureSettingsSaveBaseline({ power_user }, revision);
 
-    const request = buildSettingsPatchSaveRequest(prepareSettingsSavePayload(next));
+    const { patch } = buildSettingsPatchSaveRequest(prepareSettingsSavePayload({ ...core, power_user }));
 
-    assert.ok(request);
-    assert.deepEqual(request.patch.ops, [{ op: 'set', path: [], value: next }]);
-    assert.equal(request.patch.base_hash, revision.settings_hash);
+    assert.deepEqual(patch.ops, [{ op: 'set', path: [], value: core }]);
+    assert.deepEqual(patch.persona_updates, {});
 });
 
 test('trySaveSettingsDelta sends an empty CAS patch for unchanged settings', async () => {
@@ -102,6 +113,7 @@ test('trySaveSettingsDelta sends an empty CAS patch for unchanged settings', asy
         hash_algorithm: SETTINGS_HASH_ALGORITHM,
         base_hash: revision.settings_hash,
         ops: [],
+        persona_updates: {},
     });
 });
 
@@ -119,4 +131,61 @@ test('trySaveSettingsDelta surfaces CAS conflicts without full-save fallback', a
             return true;
         },
     );
+});
+
+
+test('Persona refresh preserves pending edits and snapshots received during save', async () => {
+    const settings = { power_user: {
+        personas: { 'local.png': 'Before', 'remote.png': 'Remote' },
+        persona_descriptions: { 'local.png': { description: 'Local description' } },
+    } };
+    captureSettingsSaveBaseline(settings, revision);
+    settings.power_user.personas['local.png'] = 'Edited';
+    applyPersonaSnapshot(settings.power_user, {
+        'local.png': { name: 'Before', description: settings.power_user.persona_descriptions['local.png'] },
+        'remote.png': { name: 'Synced' },
+        'new.png': { name: 'New', description: { description: 'From another device' } },
+    });
+    assert.equal(settings.power_user.personas['local.png'], 'Edited');
+    assert.equal(settings.power_user.personas['remote.png'], 'Synced');
+    assert.equal(settings.power_user.personas['new.png'], 'New');
+    const { patch } = buildSettingsPatchSaveRequest(prepareSettingsSavePayload(settings));
+    assert.deepEqual(patch.persona_updates, {
+        'local.png': { name: 'Edited', description: settings.power_user.persona_descriptions['local.png'] },
+    });
+    assert.deepEqual(patch.ops, []);
+
+    globalThis.window = { __TAURI_RUNNING__: true };
+    globalThis.fetch = async () => {
+        applyPersonaSnapshot(settings.power_user, {
+            'local.png': patch.persona_updates['local.png'],
+            'arrived.png': { name: 'Arrived during save' },
+        });
+        return Response.json({ ...revision, mode: 'patch' });
+    };
+    await trySaveSettingsDelta(prepareSettingsSavePayload(settings), {});
+    assert.deepEqual(buildSettingsPatchSaveRequest(prepareSettingsSavePayload(settings)).patch.persona_updates, {});
+
+    // Entries removed from disk disappear without generating another save.
+    applyPersonaSnapshot(settings.power_user, {});
+    assert.deepEqual(settings.power_user.personas, {});
+    assert.deepEqual(buildSettingsPatchSaveRequest(prepareSettingsSavePayload(settings)).patch.persona_updates, {});
+});
+
+
+test('partial Persona saves retain only failed edits for the next save', async () => {
+    globalThis.window = { __TAURI_RUNNING__: true };
+    const settings = { setting: 'before', power_user: { personas: { 'gone.png': 'Before', 'kept.png': 'Before' } } };
+    captureSettingsSaveBaseline(settings, revision);
+    settings.setting = 'after';
+    settings.power_user.personas['gone.png'] = 'Unsaved';
+    settings.power_user.personas['kept.png'] = 'Saved';
+    globalThis.fetch = async () => Response.json({
+        ...revision, result: 'partial', mode: 'patch', persona_errors: { 'gone.png': 'Persona no longer exists' },
+    });
+    const result = await trySaveSettingsDelta(prepareSettingsSavePayload(settings), {});
+    assert.equal(result.personaErrors['gone.png'], 'Persona no longer exists');
+    const retry = buildSettingsPatchSaveRequest(prepareSettingsSavePayload(settings)).patch;
+    assert.deepEqual(retry.ops, []);
+    assert.deepEqual(retry.persona_updates, { 'gone.png': { name: 'Unsaved' } });
 });

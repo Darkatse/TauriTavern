@@ -237,7 +237,25 @@ export function createInterceptors({
                 }
 
                 jqXHR.responseJSON = isJson && typeof payload !== 'string' ? payload : undefined;
-                jqXHR.responseText = typeof payload === 'string' ? payload : JSON.stringify(payload);
+                if (typeof payload === 'string') {
+                    jqXHR.responseText = payload;
+                } else {
+                    // Preserve jqXHR compatibility without serializing JSON unless responseText is read.
+                    Object.defineProperty(jqXHR, 'responseText', {
+                        configurable: true,
+                        enumerable: true,
+                        get() {
+                            const responseText = JSON.stringify(payload);
+                            Object.defineProperty(jqXHR, 'responseText', {
+                                configurable: true,
+                                enumerable: true,
+                                writable: true,
+                                value: responseText,
+                            });
+                            return responseText;
+                        },
+                    });
+                }
 
                 if (response.ok) {
                     if (typeof options.success === 'function') {

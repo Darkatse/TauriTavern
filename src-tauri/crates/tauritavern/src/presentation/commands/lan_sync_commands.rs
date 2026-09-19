@@ -10,6 +10,7 @@ use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
 use crate::presentation::errors::CommandError;
+use tt_contracts::lan_discovery::LanDiscoveredDevice;
 use tt_contracts::sync::{SyncJobReport, SyncOperationOptions};
 use tt_domain::models::lan_sync::{LanSyncPairedDeviceSummary, LanSyncStatus};
 
@@ -69,38 +70,11 @@ pub struct LanSyncPairingInfoDto {
     pub address: String,
     pub pair_uri: String,
     pub qr_svg: String,
-    pub expires_at_ms: u64,
-}
-
-#[tauri::command]
-pub async fn lan_sync_enable_pairing(
-    app_state: State<'_, Arc<AppState>>,
-    address: Option<String>,
-) -> Result<LanSyncPairingInfoDto, CommandError> {
-    log_command("lan_sync_enable_pairing");
-    ensure_lan_sync_allowed(&app_state)?;
-
-    app_state
-        .services
-        .lan_sync_service
-        .enable_pairing(address)
-        .await
-        .and_then(|info| {
-            let qr_svg = generate_qr_svg(&info.pair_uri)?;
-            Ok(LanSyncPairingInfoDto {
-                address: info.address,
-                pair_uri: info.pair_uri,
-                qr_svg,
-                expires_at_ms: info.expires_at_ms,
-            })
-        })
-        .map_err(map_command_error("Failed to enable LAN sync pairing"))
 }
 
 #[tauri::command]
 pub async fn lan_sync_get_pairing_info(
     app_state: State<'_, Arc<AppState>>,
-    address: String,
 ) -> Result<LanSyncPairingInfoDto, CommandError> {
     log_command("lan_sync_get_pairing_info");
     ensure_lan_sync_allowed(&app_state)?;
@@ -108,7 +82,7 @@ pub async fn lan_sync_get_pairing_info(
     app_state
         .services
         .lan_sync_service
-        .get_pairing_info(&address)
+        .get_pairing_info()
         .await
         .and_then(|info| {
             let qr_svg = generate_qr_svg(&info.pair_uri)?;
@@ -116,7 +90,6 @@ pub async fn lan_sync_get_pairing_info(
                 address: info.address,
                 pair_uri: info.pair_uri,
                 qr_svg,
-                expires_at_ms: info.expires_at_ms,
             })
         })
         .map_err(map_command_error("Failed to get LAN sync pairing info"))
@@ -158,6 +131,66 @@ pub async fn lan_sync_request_pairing(
         .await
         .map(LanSyncPairedDeviceDto::from)
         .map_err(map_command_error("Failed to request LAN sync pairing"))
+}
+
+#[tauri::command]
+pub async fn lan_sync_discover_devices(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<LanDiscoveredDevice>, CommandError> {
+    log_command("lan_sync_discover_devices");
+    ensure_lan_sync_allowed(&app_state)?;
+    app_state
+        .services
+        .lan_sync_service
+        .discover_devices()
+        .await
+        .map_err(map_command_error("Failed to discover LAN sync devices"))
+}
+
+#[tauri::command]
+pub async fn lan_sync_connect_address(
+    app_state: State<'_, Arc<AppState>>,
+    address: String,
+) -> Result<(), CommandError> {
+    log_command("lan_sync_connect_address");
+    ensure_lan_sync_allowed(&app_state)?;
+    app_state
+        .services
+        .lan_sync_service
+        .connect_address(&address)
+        .await
+        .map_err(map_command_error("Failed to connect to LAN device"))
+}
+
+#[tauri::command]
+pub async fn lan_sync_set_device_name(
+    app_state: State<'_, Arc<AppState>>,
+    name: String,
+) -> Result<(), CommandError> {
+    log_command("lan_sync_set_device_name");
+    ensure_lan_sync_allowed(&app_state)?;
+    app_state
+        .services
+        .lan_sync_service
+        .set_device_name(&name)
+        .await
+        .map_err(map_command_error("Failed to rename this device"))
+}
+
+#[tauri::command]
+pub async fn lan_sync_pair_device(
+    app_state: State<'_, Arc<AppState>>,
+    device_id: String,
+) -> Result<LanSyncPairedDeviceDto, CommandError> {
+    log_command("lan_sync_pair_device");
+    ensure_lan_sync_allowed(&app_state)?;
+    app_state
+        .services
+        .lan_sync_service
+        .pair_device(&device_id)
+        .await
+        .map(LanSyncPairedDeviceDto::from)
+        .map_err(map_command_error("Failed to pair LAN sync device"))
 }
 
 #[tauri::command]

@@ -15,12 +15,13 @@ pub struct TauriTavernSettingsDto {
     pub panel_runtime_profile: String,
     pub embedded_runtime_profile: String,
     pub chat_virtualization_enabled: bool,
+    pub cold_swipes_enabled: bool,
+    pub codemirror_editor_enabled: bool,
     pub chat_backups: ChatBackupSettingsDto,
     pub close_to_tray_on_close: bool,
     pub request_proxy: RequestProxySettingsDto,
     pub allow_keys_exposure: bool,
     pub avatar_persona_original_images_enabled: bool,
-    pub native_regex_backend_enabled: bool,
     pub dev: DevLoggingSettingsDto,
     pub dynamic_theme: DynamicThemeSettingsDto,
     pub models: ModelSettingsDto,
@@ -46,12 +47,13 @@ pub struct UpdateTauriTavernSettingsDto {
     pub panel_runtime_profile: Option<String>,
     pub embedded_runtime_profile: Option<String>,
     pub chat_virtualization_enabled: Option<bool>,
+    pub cold_swipes_enabled: Option<bool>,
+    pub codemirror_editor_enabled: Option<bool>,
     pub chat_backups: Option<UpdateChatBackupSettingsDto>,
     pub close_to_tray_on_close: Option<bool>,
     pub request_proxy: Option<RequestProxySettingsDto>,
     pub allow_keys_exposure: Option<bool>,
     pub avatar_persona_original_images_enabled: Option<bool>,
-    pub native_regex_backend_enabled: Option<bool>,
     pub dev: Option<UpdateDevLoggingSettingsDto>,
     pub dynamic_theme: Option<UpdateDynamicThemeSettingsDto>,
     pub models: Option<UpdateModelSettingsDto>,
@@ -170,6 +172,8 @@ pub struct UserSettingsPatchDto {
     pub hash_algorithm: String,
     pub base_hash: String,
     pub ops: Vec<UserSettingsPatchOpDto>,
+    #[serde(default)]
+    pub persona_updates: tt_domain::models::persona::Personas,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,6 +189,8 @@ pub struct UserSettingsSaveResultDto {
     pub mode: String,
     pub hash_algorithm: String,
     pub settings_hash: String,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub persona_errors: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,12 +265,13 @@ impl From<TauriTavernSettings> for TauriTavernSettingsDto {
             panel_runtime_profile: settings.panel_runtime_profile,
             embedded_runtime_profile: settings.embedded_runtime_profile,
             chat_virtualization_enabled: settings.chat_virtualization_enabled,
+            cold_swipes_enabled: settings.cold_swipes_enabled,
+            codemirror_editor_enabled: settings.codemirror_editor_enabled,
             chat_backups: ChatBackupSettingsDto::from(settings.chat_backups),
             close_to_tray_on_close: settings.close_to_tray_on_close,
             request_proxy: RequestProxySettingsDto::from(settings.request_proxy),
             allow_keys_exposure: settings.allow_keys_exposure,
             avatar_persona_original_images_enabled: settings.avatar_persona_original_images_enabled,
-            native_regex_backend_enabled: settings.native_regex_backend_enabled,
             dev: DevLoggingSettingsDto::from(settings.dev),
             dynamic_theme: DynamicThemeSettingsDto::from(settings.dynamic_theme),
             models: ModelSettingsDto::from(settings.models),

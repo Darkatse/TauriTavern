@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::sync::Mutex;
 
-use crate::file_system::{replace_file_with_fallback, unique_temp_path};
+use crate::file_system::{replace_file, unique_temp_path};
 use tt_domain::errors::DomainError;
 use tt_domain::models::filename::sanitize_filename;
 
@@ -172,7 +172,7 @@ impl ChatAliasStore {
                 temp_path, error
             ))
         })?;
-        replace_file_with_fallback(&temp_path, &self.path).await
+        replace_file(&temp_path, &self.path).await
     }
 }
 

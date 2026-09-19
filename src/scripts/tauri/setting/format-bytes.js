@@ -1,3 +1,9 @@
+// @ts-check
+
+/**
+ * @param {number} value
+ * @returns {string}
+ */
 export function formatBytes(value) {
     const bytes = Number(value) || 0;
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];

@@ -68,20 +68,37 @@ jobs:
         include:
           - platform: windows-latest
             target_args: ""
+            artifact_prefix: ""
             portable: true
             portable_name: windows-x64
+          - platform: windows-latest
+            target_args: --debug --bundles nsis --features devtools-pilot
+            artifact_prefix: debug-
+            portable: false
           - platform: macos-latest
             target_args: --target x86_64-apple-darwin
+            artifact_prefix: ""
+            portable: false
+          - platform: macos-latest
+            target_args: --target x86_64-apple-darwin --debug --bundles dmg --features devtools-pilot
+            artifact_prefix: debug-
             portable: false
           - platform: macos-latest
             target_args: --target aarch64-apple-darwin
+            artifact_prefix: ""
+            portable: false
+          - platform: macos-latest
+            target_args: --target aarch64-apple-darwin --debug --bundles dmg --features devtools-pilot
+            artifact_prefix: debug-
             portable: false
           - platform: ubuntu-22.04
             target_args: --bundles appimage,deb,rpm
+            artifact_prefix: ""
             portable: true
             portable_name: linux-x64
           - platform: ubuntu-22.04-arm
             target_args: --bundles deb,rpm
+            artifact_prefix: ""
             portable: true
             portable_name: linux-arm64
 
@@ -94,7 +111,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            jq libwebkit2gtk-4.1-dev librsvg2-dev patchelf rpm \
+            jq libdbus-1-dev libwebkit2gtk-4.1-dev librsvg2-dev patchelf pkg-config rpm \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-alsa gstreamer1.0-pulseaudio
 
@@ -106,15 +123,11 @@ jobs:
         with:
           workspaces: "src-tauri -> target"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/setup@v2
         with:
-          version: 10
-          run_install: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
+          runtime: node@22
+          cache: true
+          install: false
 
       - run: pnpm install --frozen-lockfile
 
@@ -155,11 +168,13 @@ jobs:
         with:
           projectPath: src-tauri/crates/tauritavern
           tauriScript: node ../../../scripts/tauri-app.mjs
-          args: ${{ startsWith(matrix.platform, 'ubuntu-22.04') && format('{0} --config {1}', matrix.target_args, steps.linux-version.outputs.config_path) || matrix.target_args }}
+          args: >-
+            ${{ startsWith(matrix.platform, 'ubuntu-22.04') && format('{0} --config {1}', matrix.target_args, steps.linux-version.outputs.config_path) || matrix.target_args }}
+            ${{ matrix.artifact_prefix == 'debug-' && format('--config "{0}/src-tauri/crates/tauritavern/tauri.pilot.conf.json"', github.workspace) || '' }}
           uploadWorkflowArtifacts: true
           uploadUpdaterJson: false
           uploadUpdaterSignatures: false
-          workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.asset_time }}-canary-[platform]-[arch]-[bundle]'
+          workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.asset_time }}-canary-${{ matrix.artifact_prefix }}[platform]-[arch]-[bundle]'
 
       - name: Build portable binary
         if: matrix.portable
@@ -216,7 +231,9 @@ jobs:
 
       - name: Setup Android SDK
         if: matrix.mobile == 'android'
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
 
       - name: Setup Android NDK
         if: matrix.mobile == 'android'
@@ -226,19 +243,32 @@ jobs:
           ndk-version: r29
           link-to-sdk: true
 
+      - name: Configure Android compiler
+        if: matrix.mobile == 'android'
+        shell: bash
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          sysroot="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          {
+            echo "AR_aarch64_linux_android=$toolchain/llvm-ar"
+            echo "CC_aarch64_linux_android=$toolchain/aarch64-linux-android24-clang"
+            echo "AR_armv7_linux_androideabi=$toolchain/llvm-ar"
+            echo "CC_armv7_linux_androideabi=$toolchain/armv7a-linux-androideabi24-clang"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$sysroot"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi=--sysroot=$sysroot"
+          } >> "$GITHUB_ENV"
+
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: "src-tauri -> target"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/setup@v2
         with:
-          version: 10
-          run_install: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
+          runtime: node@22
+          cache: true
+          install: false
 
       - run: pnpm install --frozen-lockfile
 
@@ -438,7 +468,7 @@ jobs:
       - name: Let Codex inspect the release range
         id: codex
         continue-on-error: true
-        uses: openai/codex-action@v1
+        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11
         with:
           openai-api-key: ${{ secrets.CANARY_CODEX_API_KEY }}
           responses-api-endpoint: ${{ secrets.CANARY_CODEX_RESPONSES_ENDPOINT }}
@@ -449,7 +479,7 @@ jobs:
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
           allow-bots: true
-          codex-args: '["--ephemeral", "-c", "features.multi_agent=false"]'
+          codex-args: '["--ephemeral"]'
 
   notes:
     needs: [prepare, notes-context, notes-ai]
@@ -524,7 +554,7 @@ jobs:
           path: notes
 
       - name: Validate complete release set
-        run: node source/scripts/ci/collect-release-assets.mjs dist release-assets "$ASSET_PREFIX"
+        run: node source/scripts/ci/collect-release-assets.mjs dist release-assets "$ASSET_PREFIX" --require-debug
 
       - name: Install Linux package inspection tools
         run: sudo apt-get update && sudo apt-get install -y rpm

@@ -116,7 +116,7 @@ fn switch_embedded(
     }
 
     let selected = ManagedRef::branch(target)?;
-    let http = GitHttp::new(http_clients.git_blocking_client_builder()).map_err(|error| {
+    let http = GitHttp::new(http_clients.git_blocking_client_builder()?).map_err(|error| {
         DomainError::InternalError(format!("Failed to create Git HTTP client: {error}"))
     })?;
     let fetched = fetch_exact(

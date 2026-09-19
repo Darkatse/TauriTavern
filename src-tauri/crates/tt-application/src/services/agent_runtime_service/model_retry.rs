@@ -2,22 +2,26 @@ use std::time::Duration;
 
 use serde_json::json;
 
+use super::model_stream_projection::ModelStreamProjector;
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::errors::ApplicationError;
 use crate::services::agent_model_gateway::AgentModelExchange;
 use tt_domain::models::agent::profile::AgentModelRetryPolicy;
-use tt_domain::models::agent::{AgentModelRequest, AgentRunEventLevel};
+use tt_domain::models::agent::{AgentInvocation, AgentModelRequest, AgentRunEventLevel};
 
 impl AgentRuntimeService {
     pub(super) async fn generate_model_with_retry(
         &self,
-        run_id: &str,
-        invocation_id: &str,
+        invocation: &AgentInvocation,
         round: usize,
         request: &AgentModelRequest,
         retry: &AgentModelRetryPolicy,
+        stream: bool,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<AgentModelExchange, ApplicationError> {
+        let run_id = invocation.run_id.as_str();
+        let invocation_id = invocation.id.as_str();
+        let active_run = self.active_run_handle(run_id).await?;
         let mut attempt = 1_usize;
 
         loop {
@@ -34,14 +38,41 @@ impl AgentRuntimeService {
             )
             .await?;
 
-            match self
-                .model_gateway
-                .generate_with_cancel(request.clone(), cancel.clone())
-                .await
-            {
-                Ok(exchange) => return Ok(exchange),
+            let mut projector = stream.then(|| {
+                ModelStreamProjector::new(
+                    invocation_id,
+                    invocation.exit_policy,
+                    round,
+                    attempt,
+                    active_run.live_projection.clone(),
+                )
+            });
+            let result = match projector.as_mut() {
+                Some(projector) => {
+                    let mut observe = |delta| projector.observe(delta);
+                    self.model_gateway
+                        .generate_with_cancel(request, Some(&mut observe), cancel.clone())
+                        .await
+                }
+                None => {
+                    self.model_gateway
+                        .generate_with_cancel(request, None, cancel.clone())
+                        .await
+                }
+            };
+
+            match result {
+                Ok(exchange) => {
+                    if let Some(projector) = projector {
+                        projector.clear_reasoning();
+                    }
+                    return Ok(exchange);
+                }
                 Err(error) => {
-                    let retryable = is_retryable_model_error(&error);
+                    if let Some(projector) = projector {
+                        projector.clear();
+                    }
+                    let retryable = error.is_retryable();
                     let will_retry = retryable && attempt <= retry.max_retries;
                     self.event(
                         run_id,
@@ -113,11 +144,4 @@ impl AgentRuntimeService {
             }
         }
     }
-}
-
-fn is_retryable_model_error(error: &ApplicationError) -> bool {
-    matches!(
-        error,
-        ApplicationError::RateLimited(_) | ApplicationError::Transient(_)
-    )
 }

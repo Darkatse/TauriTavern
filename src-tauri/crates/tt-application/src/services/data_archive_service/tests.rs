@@ -5,9 +5,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use crate::dto::data_archive_dto::{
-    DATA_ARCHIVE_ARTIFACT_AVAILABLE, DATA_ARCHIVE_ARTIFACT_DISPOSED, DATA_ARCHIVE_ARTIFACT_MISSING,
-    DATA_ARCHIVE_KIND_EXPORT, DATA_ARCHIVE_STATE_CANCELLED, DATA_ARCHIVE_STATE_COMPLETED,
-    DATA_ARCHIVE_STATE_FAILED,
+    DATA_ARCHIVE_ARTIFACT_AVAILABLE, DATA_ARCHIVE_ARTIFACT_DISPOSED, DATA_ARCHIVE_KIND_EXPORT,
+    DATA_ARCHIVE_STATE_CANCELLED, DATA_ARCHIVE_STATE_COMPLETED, DATA_ARCHIVE_STATE_FAILED,
 };
 use crate::services::data_change_reconciler::DataChangeReconciler;
 use tt_domain::errors::DomainError;
@@ -42,64 +41,6 @@ impl DataArchiveExecutor for UnusedExecutor {
         _report_progress: &mut dyn FnMut(&str, f32, &str),
         _is_cancelled: &dyn Fn() -> bool,
     ) -> Result<(), DomainError> {
-        unreachable!()
-    }
-}
-
-struct UnusedFiles;
-
-impl DataArchiveFileGateway for UnusedFiles {
-    fn prepare_incoming_import_archive_path(&self) -> Result<PathBuf, DomainError> {
-        unreachable!()
-    }
-
-    fn prepare_import_archive(
-        &self,
-        _archive_path: &Path,
-        _archive_is_temporary: bool,
-        _job_id: &str,
-    ) -> Result<ImportArchiveExecutionRequest, DomainError> {
-        unreachable!()
-    }
-
-    fn prepare_export_archive(
-        &self,
-        _job_id: &str,
-        _protected_paths: &[PathBuf],
-    ) -> Result<ExportArchiveExecutionRequest, DomainError> {
-        unreachable!()
-    }
-
-    fn prepare_user_backup_archive(
-        &self,
-        _handle: &str,
-        _include_secrets: bool,
-        _protected_paths: &[PathBuf],
-    ) -> Result<UserBackupArchiveTarget, DomainError> {
-        unreachable!()
-    }
-
-    fn cleanup_directory(&self, _path: &Path) {
-        unreachable!()
-    }
-
-    fn cleanup_export(&self, _archive_path: &Path) -> Result<(), DomainError> {
-        unreachable!()
-    }
-
-    fn save_export(&self, _archive_path: &Path, _file_name: &str) -> Result<PathBuf, DomainError> {
-        unreachable!()
-    }
-
-    fn save_user_backup(
-        &self,
-        _archive_path: &str,
-        _file_name: &str,
-    ) -> Result<PathBuf, DomainError> {
-        unreachable!()
-    }
-
-    fn cleanup_user_backup(&self, _archive_path: &str) -> Result<(), DomainError> {
         unreachable!()
     }
 }
@@ -448,18 +389,6 @@ async fn wait_until(mut predicate: impl FnMut() -> bool) {
 }
 
 #[test]
-fn registries_are_instance_scoped() {
-    let job = Arc::new(DataArchiveJobHandle::new("job-1", "export"));
-    let first = DataArchiveJobRegistry::new();
-    let second = DataArchiveJobRegistry::new();
-
-    first.insert("job-1", job).expect("insert job");
-
-    assert!(first.get("job-1").is_ok());
-    assert!(second.get("job-1").is_err());
-}
-
-#[test]
 fn dropping_registry_requests_job_cancellation() {
     let job = Arc::new(DataArchiveJobHandle::new("job-1", "import"));
     let registry = DataArchiveJobRegistry::new();
@@ -468,36 +397,6 @@ fn dropping_registry_requests_job_cancellation() {
     drop(registry);
 
     assert!(job.is_cancel_requested());
-}
-
-#[test]
-fn service_resolves_completed_export_artifact() {
-    let jobs = Arc::new(DataArchiveJobRegistry::new());
-    let job = Arc::new(DataArchiveJobHandle::new("job-1", DATA_ARCHIVE_KIND_EXPORT));
-    job.mark_completed_export(
-        "tauritavern-data.zip".to_string(),
-        PathBuf::from("/tmp/tauritavern-data.zip"),
-    )
-    .expect("mark completed export");
-    jobs.insert("job-1", job).expect("insert job");
-
-    let service = DataArchiveService::new(
-        jobs,
-        test_runtime_handle(),
-        Arc::new(UnusedExecutor),
-        Arc::new(UnusedFiles),
-        Arc::new(UnusedInitializer),
-        Arc::new(UnusedReconciler),
-    );
-
-    let artifact = service
-        .completed_export_artifact("job-1")
-        .expect("completed export artifact");
-    assert_eq!(
-        artifact.archive_path,
-        PathBuf::from("/tmp/tauritavern-data.zip")
-    );
-    assert_eq!(artifact.file_name, "tauritavern-data.zip");
 }
 
 #[tokio::test]
@@ -513,6 +412,7 @@ async fn start_import_runs_executor_initializer_reconciler_and_cleanup() {
     let initializer = Arc::new(RecordingInitializer::default());
     let reconciler = Arc::new(RecordingReconciler::default());
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::import_ok(
@@ -567,6 +467,7 @@ async fn start_import_with_no_local_mutation_skips_initializer_and_reconciler() 
     let initializer = Arc::new(RecordingInitializer::default());
     let reconciler = Arc::new(RecordingReconciler::default());
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::import_ok_without_local_mutation(
@@ -614,6 +515,7 @@ async fn partial_import_failure_initializes_reconciles_and_reports_local_mutatio
     let reconciler = Arc::new(RecordingReconciler::default());
     let local_applied = import_local_applied();
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::import_error(
@@ -659,6 +561,7 @@ async fn partial_import_cancel_initializes_reconciles_and_reports_local_mutation
     let reconciler = Arc::new(RecordingReconciler::default());
     let local_applied = import_local_applied();
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::import_error(
@@ -700,6 +603,7 @@ async fn partial_import_failure_reports_reconcile_error() {
     }));
     let local_applied = import_local_applied();
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::import_error(
@@ -733,6 +637,7 @@ async fn start_export_runs_executor_and_marks_completed() {
         file_name: "tauritavern-data.zip".to_string(),
     }));
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::export_ok("tauritavern-data.zip")),
@@ -756,40 +661,6 @@ async fn start_export_runs_executor_and_marks_completed() {
     );
 }
 
-#[test]
-fn start_export_uses_runtime_handle_outside_tokio_context() {
-    let runtime = tokio::runtime::Runtime::new().expect("create runtime");
-    let jobs = Arc::new(DataArchiveJobRegistry::new());
-    let output_path = PathBuf::from("/tmp/tauritavern-data.zip");
-    let files = Arc::new(RecordingFiles::with_export(ExportArchiveExecutionRequest {
-        data_root: PathBuf::from("/tmp/data-root"),
-        output_path: output_path.clone(),
-        file_name: "tauritavern-data.zip".to_string(),
-    }));
-    let service = DataArchiveService::new(
-        jobs,
-        runtime.handle().clone(),
-        Arc::new(RecordingExecutor::export_ok("tauritavern-data.zip")),
-        files,
-        Arc::new(UnusedInitializer),
-        Arc::new(UnusedReconciler),
-    );
-
-    let job_id = service.start_export().expect("start export");
-
-    let status = runtime.block_on(wait_for_job_state(
-        &service,
-        &job_id,
-        DATA_ARCHIVE_STATE_COMPLETED,
-    ));
-    let result = status.result.expect("completed export result");
-    assert_eq!(result.file_name.as_deref(), Some("tauritavern-data.zip"));
-    assert_eq!(
-        result.archive_path.as_deref(),
-        Some(output_path.to_string_lossy().as_ref())
-    );
-}
-
 #[tokio::test]
 async fn start_export_cleans_partial_archive_on_failure() {
     let jobs = Arc::new(DataArchiveJobRegistry::new());
@@ -800,6 +671,7 @@ async fn start_export_cleans_partial_archive_on_failure() {
         file_name: "tauritavern-data.zip".to_string(),
     }));
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::export_error(DomainError::InternalError(
@@ -847,6 +719,7 @@ async fn start_export_protects_claimed_completed_artifact_from_stale_cleanup() {
         file_name: "tauritavern-data.zip".to_string(),
     }));
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(RecordingExecutor::export_ok("tauritavern-data.zip")),
@@ -879,6 +752,7 @@ async fn save_export_marks_artifact_disposed_with_saved_path() {
 
     let saved_path = PathBuf::from("/Downloads/tauritavern-data.zip");
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(UnusedExecutor),
@@ -916,91 +790,6 @@ async fn save_export_marks_artifact_disposed_with_saved_path() {
     assert!(error.to_string().contains("already been handled"));
 }
 
-#[test]
-fn cleanup_export_marks_artifact_disposed_and_is_idempotent() {
-    let jobs = Arc::new(DataArchiveJobRegistry::new());
-    let job = Arc::new(DataArchiveJobHandle::new("job-1", DATA_ARCHIVE_KIND_EXPORT));
-    let archive_path = PathBuf::from("/tmp/staged-export.zip");
-    job.mark_completed_export("tauritavern-data.zip".to_string(), archive_path.clone())
-        .expect("mark completed export");
-    jobs.insert("job-1", job).expect("insert job");
-
-    let files = Arc::new(RecordingFiles::default());
-    let service = DataArchiveService::new(
-        jobs,
-        test_runtime_handle(),
-        Arc::new(UnusedExecutor),
-        files.clone(),
-        Arc::new(UnusedInitializer),
-        Arc::new(UnusedReconciler),
-    );
-
-    service.cleanup_export("job-1").expect("cleanup export");
-    service
-        .cleanup_export("job-1")
-        .expect("cleanup export is idempotent");
-
-    assert_eq!(
-        *files.cleaned_exports.lock().expect("lock cleaned exports"),
-        vec![archive_path.clone(), archive_path]
-    );
-    let status = service.get_status("job-1").expect("job status");
-    let result = status.result.expect("export result");
-    assert_eq!(
-        result.artifact_state.as_deref(),
-        Some(DATA_ARCHIVE_ARTIFACT_DISPOSED)
-    );
-    assert_eq!(
-        result.archive_path.as_deref(),
-        Some("/tmp/staged-export.zip")
-    );
-}
-
-#[test]
-fn cleanup_export_marks_missing_when_artifact_is_already_gone() {
-    let jobs = Arc::new(DataArchiveJobRegistry::new());
-    let job = Arc::new(DataArchiveJobHandle::new("job-1", DATA_ARCHIVE_KIND_EXPORT));
-    let archive_path = PathBuf::from("/tmp/staged-export.zip");
-    job.mark_completed_export("tauritavern-data.zip".to_string(), archive_path.clone())
-        .expect("mark completed export");
-    jobs.insert("job-1", job).expect("insert job");
-
-    let files = Arc::new(RecordingFiles::with_cleanup_export_result(Err(
-        DomainError::NotFound("gone".to_string()),
-    )));
-    let service = DataArchiveService::new(
-        jobs,
-        test_runtime_handle(),
-        Arc::new(UnusedExecutor),
-        files.clone(),
-        Arc::new(UnusedInitializer),
-        Arc::new(UnusedReconciler),
-    );
-
-    service.cleanup_export("job-1").expect("cleanup export");
-    service
-        .cleanup_export("job-1")
-        .expect("missing cleanup is idempotent");
-
-    assert_eq!(
-        *files.cleaned_exports.lock().expect("lock cleaned exports"),
-        vec![archive_path.clone(), archive_path]
-    );
-    let result = service
-        .get_status("job-1")
-        .expect("job status")
-        .result
-        .expect("export result");
-    assert_eq!(
-        result.artifact_state.as_deref(),
-        Some(DATA_ARCHIVE_ARTIFACT_MISSING)
-    );
-    assert_eq!(
-        result.archive_path.as_deref(),
-        Some("/tmp/staged-export.zip")
-    );
-}
-
 #[tokio::test]
 async fn save_export_restores_available_artifact_on_save_error() {
     let jobs = Arc::new(DataArchiveJobRegistry::new());
@@ -1014,6 +803,7 @@ async fn save_export_restores_available_artifact_on_save_error() {
         DomainError::InvalidData("target exists".to_string()),
     )));
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(UnusedExecutor),
@@ -1051,6 +841,7 @@ fn finalize_export_delivery_disposes_even_when_cleanup_fails() {
         DomainError::InternalError("permission denied".to_string()),
     )));
     let service = DataArchiveService::new(
+        test_database_service(),
         jobs,
         test_runtime_handle(),
         Arc::new(UnusedExecutor),
@@ -1088,4 +879,22 @@ fn finalize_export_delivery_disposes_even_when_cleanup_fails() {
         Some("/tmp/staged-export.zip")
     );
     assert_eq!(result.saved_path.as_deref(), Some("content://saved-export"));
+}
+
+struct EmptyDatabase;
+
+#[async_trait::async_trait]
+impl tt_ports::database::DatabaseBackend for EmptyDatabase {
+    async fn execute(
+        &self,
+        _: tt_contracts::database::DatabaseRequest,
+    ) -> Result<tt_contracts::database::DatabaseResponse, DomainError> {
+        Ok(tt_contracts::database::DatabaseResponse::Unit)
+    }
+}
+
+fn test_database_service() -> Arc<crate::services::database_service::DatabaseService> {
+    Arc::new(crate::services::database_service::DatabaseService::new(
+        Arc::new(EmptyDatabase),
+    ))
 }

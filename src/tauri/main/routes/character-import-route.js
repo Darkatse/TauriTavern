@@ -1,5 +1,5 @@
 import { assertCharacterAvatarFileName } from '../services/characters/character-identity.js';
-import { badRequestBody, resolveExistingRouteCharacterId } from './character-route-utils.js';
+import { badRequestBody, isNotFoundError } from './character-route-utils.js';
 
 /**
  * @param {any} character
@@ -35,11 +35,7 @@ export function registerCharacterImportRoute(router, context, { jsonResponse }) 
                 return jsonResponse(badRequestBody(error), 400);
             }
 
-            const resolved = await resolveExistingRouteCharacterId(context, { avatar: preserveFileName });
-            if (resolved.responseBody) {
-                return jsonResponse(resolved.responseBody, 400);
-            }
-            replacementName = resolved.characterId;
+            replacementName = preserveFileName.slice(0, -'.png'.length);
         }
 
         const fileType = String(body.get('file_type') || '').trim().toLowerCase();
@@ -56,24 +52,36 @@ export function registerCharacterImportRoute(router, context, { jsonResponse }) 
         }
 
         let imported;
+        let replaced = false;
         try {
-            imported = replacementName
-                ? await context.safeInvoke('replace_character', {
-                    dto: { file_path: fileInfo.filePath, name: replacementName },
-                })
-                : await context.safeInvoke('import_character', {
+            if (replacementName) {
+                try {
+                    imported = await context.safeInvoke('replace_character', {
+                        dto: { file_path: fileInfo.filePath, name: replacementName },
+                    });
+                    replaced = true;
+                } catch (error) {
+                    if (!isNotFoundError(error)) {
+                        throw error;
+                    }
+                }
+            }
+            if (!imported) {
+                imported = await context.safeInvoke('import_character', {
                     dto: { file_path: fileInfo.filePath, preserve_file_name: preserveFileName },
                 });
+            }
         } finally {
             await fileInfo.cleanup?.();
         }
 
         const normalized = context.normalizeCharacter(imported);
+        context.invalidateCharacterCache();
         const fileName = String(normalized.avatar || '').replace(/\.png$/i, '');
 
         return jsonResponse({
             file_name: fileName,
-            replaced: Boolean(replacementName),
+            replaced,
             character: normalized,
             post_import: {
                 has_agent_profiles: hasCharacterEmbeddedAgentAsset(normalized, 'agentProfiles'),

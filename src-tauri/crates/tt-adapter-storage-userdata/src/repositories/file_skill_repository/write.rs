@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use super::fs_ops::{
     cleanup_dir, copy_dir_contents, prepare_skill_dir_replacement,
-    rollback_prepared_skill_dir_replacement,
+    rollback_prepared_skill_dir_replacement, warn_committed_cleanup_errors,
 };
 use super::index::sort_index;
 use super::package::{sha256_hex, validate_skill_root};
@@ -89,21 +89,19 @@ async fn write_skill_file_inner(
         return Err(rollback_prepared_skill_dir_replacement(&replacement, error));
     }
     if let Err(error) = replacement.discard_backup() {
-        return Err(DomainError::InternalError(format!(
-            "write_skill_file committed but failed to clean up Skill directories: {error}"
-        )));
+        warn_committed_cleanup_errors("write_skill_file", vec![error.to_string()]);
     }
 
     super::read::read_skill_file(
         repository,
         SkillReadRequest {
+            frozen_macros: None,
             scope: request.scope,
             name,
             path,
             start_line: None,
             line_count: None,
-            start_char: None,
-            max_chars: Some(DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS),
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
         },
     )
     .await

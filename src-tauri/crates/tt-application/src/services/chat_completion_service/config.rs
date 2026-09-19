@@ -9,6 +9,7 @@ use crate::dto::chat_completion_dto::{
 };
 use crate::errors::ApplicationError;
 use tt_domain::models::claude_model::is_vertex_ai_claude_model_id;
+use tt_domain::models::endpoint_url::{append_endpoint_segments, parse_user_http_endpoint};
 use tt_domain::models::secret::SecretKeys;
 use tt_ports::repositories::chat_completion_repository::{
     AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionSource,
@@ -17,6 +18,7 @@ use tt_ports::repositories::provider_metadata_repository::SiliconFlowEndpoint;
 use tt_ports::repositories::secret_repository::SecretRepository;
 
 use super::additional_parameters::AdditionalParameters;
+use super::opencode::{self, OpenCodeApiFormat};
 
 const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
 const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
@@ -40,6 +42,10 @@ const ZAI_API_BASE_CODING: &str = "https://api.z.ai/api/coding/paas/v4";
 const MINIMAX_API_BASE: &str = "https://api.minimax.io/v1";
 const MINIMAX_API_BASE_CN: &str = "https://api.minimaxi.com/v1";
 const AWS_BEDROCK_DEFAULT_REGION: &str = "us-east-1";
+const XAI_API_BASE: &str = "https://api.x.ai/v1";
+const POLLINATIONS_API_BASE: &str = "https://gen.pollinations.ai/v1";
+const POLLINATIONS_API_BASE_ANONYMOUS: &str = "https://text.pollinations.ai/v1";
+const POLLINATIONS_STATUS_API_BASE: &str = "https://gen.pollinations.ai/text";
 const OPENROUTER_REFERER: &str = "https://tauritavern.github.io";
 const OPENROUTER_TITLE: &str = "TauriTavern";
 const OPENROUTER_CATEGORIES: &str = "roleplay,general-chat";
@@ -47,6 +53,7 @@ const OPENROUTER_CATEGORIES: &str = "roleplay,general-chat";
 const ZAI_ENDPOINT_CODING: &str = "coding";
 const MINIMAX_ENDPOINT_CN: &str = "cn";
 const MOONSHOT_ENDPOINT_CN: &str = "cn";
+const POLLINATIONS_ENDPOINT_ANONYMOUS: &str = "anonymous";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ApiConfigPurpose {
@@ -60,9 +67,12 @@ struct ApiConfigHints<'a> {
     siliconflow_endpoint: &'a str,
     minimax_endpoint: &'a str,
     moonshot_endpoint: &'a str,
+    pollinations_endpoint: &'a str,
     workers_ai_account_id: &'a str,
     nanogpt_provider: &'a str,
     nanogpt_payg_override: bool,
+    opencode_endpoint: &'a str,
+    opencode_api_format: &'a str,
     aws_bedrock_region: &'a str,
     /// Dotted JSON path applied to non-stream Bedrock responses when the
     /// custom-invoke-template escape hatch is enabled (e.g.
@@ -95,8 +105,11 @@ pub(super) async fn resolve_status_api_config(
         additional_headers,
         ApiConfigHints {
             siliconflow_endpoint: dto.siliconflow_endpoint.trim(),
+            opencode_endpoint: dto.opencode_endpoint.trim(),
+            opencode_api_format: dto.opencode_api_format.trim(),
             minimax_endpoint: dto.minimax_endpoint.trim(),
             moonshot_endpoint: dto.moonshot_endpoint.trim(),
+            pollinations_endpoint: dto.pollinations_endpoint.trim(),
             workers_ai_account_id: dto.workers_ai_account_id.trim(),
             aws_bedrock_region: dto.aws_bedrock_region.trim(),
             secret_id: normalize_secret_id(dto.secret_id.as_deref()),
@@ -122,9 +135,12 @@ pub(super) async fn resolve_generate_api_config(
     let siliconflow_endpoint = get_payload_string(&dto.payload, "siliconflow_endpoint")?;
     let minimax_endpoint = get_payload_string(&dto.payload, "minimax_endpoint")?;
     let moonshot_endpoint = get_payload_string(&dto.payload, "moonshot_endpoint")?;
+    let pollinations_endpoint = get_payload_string(&dto.payload, "pollinations_endpoint")?;
     let workers_ai_account_id = get_payload_string(&dto.payload, "workers_ai_account_id")?;
     let nanogpt_provider = get_payload_string(&dto.payload, "nanogpt_provider")?;
     let nanogpt_payg_override = get_payload_bool(&dto.payload, "nanogpt_payg_override")?;
+    let opencode_endpoint = get_payload_string(&dto.payload, "opencode_endpoint")?;
+    let opencode_api_format = get_payload_string(&dto.payload, "opencode_api_format")?;
     let aws_bedrock_region = get_payload_string(&dto.payload, "aws_bedrock_region")?;
     let aws_bedrock_use_custom_template =
         get_payload_bool(&dto.payload, "aws_bedrock_use_custom_template")?;
@@ -164,9 +180,12 @@ pub(super) async fn resolve_generate_api_config(
             siliconflow_endpoint: &siliconflow_endpoint,
             minimax_endpoint: &minimax_endpoint,
             moonshot_endpoint: &moonshot_endpoint,
+            pollinations_endpoint: &pollinations_endpoint,
             workers_ai_account_id: &workers_ai_account_id,
             nanogpt_provider: &nanogpt_provider,
             nanogpt_payg_override,
+            opencode_endpoint: &opencode_endpoint,
+            opencode_api_format: &opencode_api_format,
             aws_bedrock_region: &aws_bedrock_region,
             aws_bedrock_custom_response_path: aws_bedrock_custom_path_hint(
                 &aws_bedrock_custom_response_path,
@@ -193,9 +212,11 @@ async fn resolve_api_config(
     purpose: ApiConfigPurpose,
     secret_repository: &Arc<dyn SecretRepository>,
 ) -> Result<ChatCompletionApiConfig, ApplicationError> {
+    let user_endpoint = resolve_user_configured_endpoint(source, reverse_proxy, custom_url)?;
+
     match source {
         ChatCompletionSource::Custom => {
-            let base_url = resolve_custom_base_url(custom_url, reverse_proxy)?;
+            let base_url = user_endpoint.expect("custom sources require a configured endpoint");
             let extra_headers = source_extra_headers(source);
             let uses_reverse_proxy = custom_url.is_empty() && !reverse_proxy.is_empty();
 
@@ -209,6 +230,7 @@ async fn resolve_api_config(
 
             Ok(ChatCompletionApiConfig {
                 base_url,
+                user_configured_endpoint: true,
                 api_key,
                 authorization_header: None,
                 vertexai_service_account_json: None,
@@ -220,21 +242,15 @@ async fn resolve_api_config(
             })
         }
         _ => {
-            let base_url = if supports_reverse_proxy(source) && !reverse_proxy.is_empty() {
-                reverse_proxy.to_string()
-            } else {
-                default_base_url(source, purpose, &hints)?
+            let user_configured_endpoint = user_endpoint.is_some();
+            let base_url = match user_endpoint {
+                Some(endpoint) => endpoint,
+                None => default_base_url(source, purpose, &hints)?,
             };
 
-            let api_key = if supports_reverse_proxy(source) && !reverse_proxy.is_empty() {
+            let mut api_key = if user_configured_endpoint {
                 proxy_password.to_string()
-            } else {
-                let secret_key = source_secret_key(source).ok_or_else(|| {
-                    ApplicationError::InternalError(
-                        "Secret key mapping is missing for chat completion source".to_string(),
-                    )
-                })?;
-
+            } else if let Some(secret_key) = source_secret_key(source, &hints) {
                 read_required_secret(
                     secret_repository,
                     secret_key,
@@ -242,16 +258,26 @@ async fn resolve_api_config(
                     source.display_name(),
                 )
                 .await?
+            } else {
+                String::new()
             };
 
             let mut extra_headers = source_extra_headers(source);
             apply_dynamic_headers(source, &hints, &mut extra_headers);
+            if source == ChatCompletionSource::OpenCode
+                && purpose == ApiConfigPurpose::Generate
+                && OpenCodeApiFormat::parse(hints.opencode_api_format)? == OpenCodeApiFormat::Gemini
+            {
+                // OpenCode expects the Gemini key as a header, not the adapter's `?key=` query.
+                extra_headers.insert("x-goog-api-key".to_string(), std::mem::take(&mut api_key));
+            }
 
             let (aws_bedrock_custom_response_path, aws_bedrock_custom_stream_path) =
                 aws_bedrock_custom_paths(source, &hints);
 
             Ok(ChatCompletionApiConfig {
                 base_url,
+                user_configured_endpoint,
                 api_key,
                 authorization_header: None,
                 vertexai_service_account_json: None,
@@ -306,24 +332,36 @@ fn source_anthropic_beta_header_mode(source: ChatCompletionSource) -> AnthropicB
     }
 }
 
-fn resolve_custom_base_url(
-    custom_url: &str,
+pub(super) fn resolve_user_configured_endpoint(
+    source: ChatCompletionSource,
     reverse_proxy: &str,
-) -> Result<String, ApplicationError> {
-    if !custom_url.is_empty() {
-        return Ok(custom_url.to_string());
+    custom_url: &str,
+) -> Result<Option<String>, ApplicationError> {
+    let reverse_proxy = reverse_proxy.trim();
+    let custom_url = custom_url.trim();
+    let endpoint = match source {
+        ChatCompletionSource::Custom if !custom_url.is_empty() => custom_url,
+        ChatCompletionSource::Custom if !reverse_proxy.is_empty() => reverse_proxy,
+        ChatCompletionSource::Custom => {
+            return Err(ApplicationError::ValidationError(
+                "Custom endpoint is missing. Please configure custom_url.".to_string(),
+            ));
+        }
+        _ if supports_reverse_proxy(source) && !reverse_proxy.is_empty() => reverse_proxy,
+        _ => return Ok(None),
+    };
+
+    let endpoint = parse_user_http_endpoint(endpoint)?;
+    if source == ChatCompletionSource::VertexAi {
+        return Ok(Some(
+            append_endpoint_segments(endpoint.as_str(), &["v1"])?.to_string(),
+        ));
     }
 
-    if !reverse_proxy.is_empty() {
-        return Ok(reverse_proxy.to_string());
-    }
-
-    Err(ApplicationError::ValidationError(
-        "Custom endpoint is missing. Please configure custom_url.".to_string(),
-    ))
+    Ok(Some(endpoint.to_string()))
 }
 
-fn get_payload_string(
+pub(super) fn get_payload_string(
     payload: &serde_json::Map<String, Value>,
     key: &str,
 ) -> Result<String, ApplicationError> {
@@ -425,6 +463,11 @@ fn default_base_url(
 ) -> Result<String, ApplicationError> {
     let base_url = match source {
         ChatCompletionSource::OpenAi => OPENAI_API_BASE.to_string(),
+        ChatCompletionSource::OpenCode => opencode::base_url(
+            hints.opencode_endpoint,
+            OpenCodeApiFormat::parse(hints.opencode_api_format)?,
+        )?
+        .to_string(),
         ChatCompletionSource::OpenRouter => OPENROUTER_API_BASE.to_string(),
         ChatCompletionSource::Claude => CLAUDE_API_BASE.to_string(),
         ChatCompletionSource::Makersuite => GEMINI_API_BASE.to_string(),
@@ -456,15 +499,29 @@ fn default_base_url(
         }
         ChatCompletionSource::MiniMax => minimax_base_url(hints.minimax_endpoint)?.to_string(),
         ChatCompletionSource::AwsBedrock => aws_bedrock_base_url(hints.aws_bedrock_region),
+        ChatCompletionSource::Xai => XAI_API_BASE.to_string(),
+        ChatCompletionSource::Pollinations => match purpose {
+            ApiConfigPurpose::Status => POLLINATIONS_STATUS_API_BASE.to_string(),
+            ApiConfigPurpose::Generate
+                if is_pollinations_anonymous(hints.pollinations_endpoint) =>
+            {
+                POLLINATIONS_API_BASE_ANONYMOUS.to_string()
+            }
+            ApiConfigPurpose::Generate => POLLINATIONS_API_BASE.to_string(),
+        },
         ChatCompletionSource::Custom => OPENAI_API_BASE.to_string(),
     };
 
     Ok(base_url)
 }
 
-fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
+fn source_secret_key(
+    source: ChatCompletionSource,
+    hints: &ApiConfigHints<'_>,
+) -> Option<&'static str> {
     match source {
         ChatCompletionSource::OpenAi => Some(SecretKeys::OPENAI),
+        ChatCompletionSource::OpenCode => Some(SecretKeys::OPENCODE),
         ChatCompletionSource::OpenRouter => Some(SecretKeys::OPENROUTER),
         ChatCompletionSource::Claude => Some(SecretKeys::CLAUDE),
         ChatCompletionSource::Makersuite => Some(SecretKeys::MAKERSUITE),
@@ -480,6 +537,11 @@ fn source_secret_key(source: ChatCompletionSource) -> Option<&'static str> {
         ChatCompletionSource::Zai => Some(SecretKeys::ZAI),
         ChatCompletionSource::MiniMax => Some(SecretKeys::MINIMAX),
         ChatCompletionSource::AwsBedrock => Some(SecretKeys::AWS_BEDROCK),
+        ChatCompletionSource::Xai => Some(SecretKeys::XAI),
+        ChatCompletionSource::Pollinations => {
+            (!is_pollinations_anonymous(hints.pollinations_endpoint))
+                .then_some(SecretKeys::POLLINATIONS)
+        }
         ChatCompletionSource::Custom => Some(SecretKeys::CUSTOM),
     }
 }
@@ -494,6 +556,7 @@ fn supports_reverse_proxy(source: ChatCompletionSource) -> bool {
             | ChatCompletionSource::DeepSeek
             | ChatCompletionSource::Moonshot
             | ChatCompletionSource::Zai
+            | ChatCompletionSource::Xai
     )
 }
 
@@ -566,8 +629,12 @@ async fn resolve_vertexai_generate_api_config(
     let extra_headers = HashMap::new();
 
     if !reverse_proxy.is_empty() {
+        let base_url =
+            resolve_user_configured_endpoint(ChatCompletionSource::VertexAi, reverse_proxy, "")?
+                .expect("non-empty Vertex AI reverse proxy must resolve");
         return Ok(ChatCompletionApiConfig {
-            base_url: format!("{}/v1", reverse_proxy.trim_end_matches('/')),
+            base_url,
+            user_configured_endpoint: true,
             api_key: String::new(),
             authorization_header: Some(format!("Bearer {}", proxy_password)),
             vertexai_service_account_json: None,
@@ -619,6 +686,7 @@ async fn resolve_vertexai_generate_api_config(
 
             Ok(ChatCompletionApiConfig {
                 base_url: format!("{VERTEXAI_GLOBAL_BASE}/v1"),
+                user_configured_endpoint: false,
                 api_key,
                 authorization_header: None,
                 vertexai_service_account_json: None,
@@ -646,6 +714,7 @@ async fn resolve_vertexai_generate_api_config(
 
             Ok(ChatCompletionApiConfig {
                 base_url,
+                user_configured_endpoint: false,
                 api_key: String::new(),
                 authorization_header: None,
                 vertexai_service_account_json: Some(service_account_json),
@@ -734,6 +803,12 @@ fn apply_dynamic_headers(
     }
 }
 
+fn is_pollinations_anonymous(endpoint: &str) -> bool {
+    endpoint
+        .trim()
+        .eq_ignore_ascii_case(POLLINATIONS_ENDPOINT_ANONYMOUS)
+}
+
 fn is_zai_coding_endpoint(value: &str) -> bool {
     value.trim().eq_ignore_ascii_case(ZAI_ENDPOINT_CODING)
 }
@@ -759,11 +834,7 @@ mod tests {
 
     use super::super::additional_parameters::AdditionalParameters;
     use super::{
-        ApiConfigHints, ApiConfigPurpose, DEEPSEEK_STATUS_API_BASE, MINIMAX_API_BASE,
-        MINIMAX_API_BASE_CN, MOONSHOT_API_BASE, MOONSHOT_API_BASE_CN, OPENROUTER_API_BASE,
-        OPENROUTER_CATEGORIES, OPENROUTER_REFERER, OPENROUTER_TITLE, ZAI_API_BASE_CODING,
-        default_base_url, resolve_generate_api_config, resolve_status_api_config,
-        source_extra_headers, supports_reverse_proxy, vertexai_host,
+        resolve_generate_api_config, resolve_status_api_config, resolve_user_configured_endpoint,
     };
 
     struct TestSecretRepository {
@@ -852,185 +923,49 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_status_uses_non_beta_base() {
-        let hints = ApiConfigHints::default();
-        let actual = default_base_url(
-            ChatCompletionSource::DeepSeek,
-            ApiConfigPurpose::Status,
-            &hints,
+    fn user_endpoint_resolution_trims_before_selecting_custom_fallback() {
+        let endpoint = resolve_user_configured_endpoint(
+            ChatCompletionSource::Custom,
+            " http://192.168.1.2:11434/v1 ",
+            "   ",
         )
         .unwrap();
 
-        assert_eq!(actual, DEEPSEEK_STATUS_API_BASE);
-    }
-
-    #[test]
-    fn zai_coding_endpoint_resolves_coding_base() {
-        let hints = ApiConfigHints {
-            zai_endpoint: "coding",
-            ..Default::default()
-        };
-        let actual = default_base_url(
-            ChatCompletionSource::Zai,
-            ApiConfigPurpose::Generate,
-            &hints,
-        )
-        .unwrap();
-
-        assert_eq!(actual, ZAI_API_BASE_CODING);
-    }
-
-    #[test]
-    fn aws_bedrock_uses_region_specific_bedrock_runtime_host() {
-        let default_region = default_base_url(
-            ChatCompletionSource::AwsBedrock,
-            ApiConfigPurpose::Generate,
-            &ApiConfigHints::default(),
-        )
-        .unwrap();
+        assert_eq!(endpoint.as_deref(), Some("http://192.168.1.2:11434/v1"));
         assert_eq!(
-            default_region,
-            "https://bedrock-runtime.us-east-1.amazonaws.com"
+            resolve_user_configured_endpoint(ChatCompletionSource::OpenAi, "   ", "").unwrap(),
+            None
         );
-
-        let custom_region = default_base_url(
-            ChatCompletionSource::AwsBedrock,
-            ApiConfigPurpose::Generate,
-            &ApiConfigHints {
-                aws_bedrock_region: "us-west-2",
-                ..Default::default()
-            },
-        )
-        .unwrap();
         assert_eq!(
-            custom_region,
-            "https://bedrock-runtime.us-west-2.amazonaws.com"
+            resolve_user_configured_endpoint(
+                ChatCompletionSource::VertexAi,
+                " https://proxy.example.com/base/ ",
+                "",
+            )
+            .unwrap()
+            .as_deref(),
+            Some("https://proxy.example.com/base/v1")
         );
-    }
-
-    #[test]
-    fn minimax_endpoint_resolves_region_base() {
-        let global = default_base_url(
-            ChatCompletionSource::MiniMax,
-            ApiConfigPurpose::Generate,
-            &ApiConfigHints::default(),
-        )
-        .unwrap();
-        assert_eq!(global, MINIMAX_API_BASE);
-
-        let cn = default_base_url(
-            ChatCompletionSource::MiniMax,
-            ApiConfigPurpose::Generate,
-            &ApiConfigHints {
-                minimax_endpoint: "cn",
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(cn, MINIMAX_API_BASE_CN);
     }
 
     #[tokio::test]
-    async fn moonshot_endpoint_resolves_global_and_cn_and_rejects_unknown() {
-        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
-            SecretKeys::MOONSHOT,
-            "moonshot-secret",
-        ));
+    async fn reverse_proxy_is_normalized_and_marked_as_user_configured() {
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::with_entries(&[]));
+        let dto = ChatCompletionStatusRequestDto {
+            chat_completion_source: "openai".to_string(),
+            reverse_proxy: " HTTPS://PROXY.EXAMPLE.COM:443/openai/// ".to_string(),
+            proxy_password: "proxy-secret".to_string(),
+            ..Default::default()
+        };
 
-        let status = resolve_status_api_config(
-            ChatCompletionSource::Moonshot,
-            &ChatCompletionStatusRequestDto::default(),
-            &secret_repository,
-        )
-        .await
-        .expect("empty status endpoint should use the global base");
-        assert_eq!(status.base_url, MOONSHOT_API_BASE);
+        let config =
+            resolve_status_api_config(ChatCompletionSource::OpenAi, &dto, &secret_repository)
+                .await
+                .unwrap();
 
-        let global_payload = json!({ "moonshot_endpoint": "global" })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-        let global = resolve_generate_for_test(
-            ChatCompletionSource::Moonshot,
-            &ChatCompletionGenerateRequestDto {
-                payload: global_payload,
-            },
-            &secret_repository,
-        )
-        .await
-        .expect("global generate endpoint should resolve");
-        assert_eq!(global.base_url, MOONSHOT_API_BASE);
-
-        let cn_payload = json!({ "moonshot_endpoint": "cn" })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-        let cn = resolve_generate_for_test(
-            ChatCompletionSource::Moonshot,
-            &ChatCompletionGenerateRequestDto {
-                payload: cn_payload,
-            },
-            &secret_repository,
-        )
-        .await
-        .expect("cn generate endpoint should resolve");
-        assert_eq!(cn.base_url, MOONSHOT_API_BASE_CN);
-
-        let invalid = resolve_status_api_config(
-            ChatCompletionSource::Moonshot,
-            &ChatCompletionStatusRequestDto {
-                moonshot_endpoint: "invalid".to_string(),
-                ..Default::default()
-            },
-            &secret_repository,
-        )
-        .await
-        .expect_err("unknown endpoint should fail fast");
-        assert!(
-            invalid
-                .to_string()
-                .contains("Unsupported Moonshot endpoint")
-        );
-    }
-
-    #[test]
-    fn openrouter_uses_default_base_url() {
-        let hints = ApiConfigHints::default();
-        let actual = default_base_url(
-            ChatCompletionSource::OpenRouter,
-            ApiConfigPurpose::Generate,
-            &hints,
-        )
-        .unwrap();
-        assert_eq!(actual, OPENROUTER_API_BASE);
-    }
-
-    #[test]
-    fn openrouter_uses_app_attribution_headers() {
-        let headers = source_extra_headers(ChatCompletionSource::OpenRouter);
-        assert_eq!(
-            headers.get("HTTP-Referer").map(String::as_str),
-            Some(OPENROUTER_REFERER)
-        );
-        assert_eq!(
-            headers.get("X-OpenRouter-Title").map(String::as_str),
-            Some(OPENROUTER_TITLE)
-        );
-        assert_eq!(
-            headers.get("X-Title").map(String::as_str),
-            Some(OPENROUTER_TITLE)
-        );
-        assert_eq!(
-            headers.get("X-OpenRouter-Categories").map(String::as_str),
-            Some(OPENROUTER_CATEGORIES)
-        );
-    }
-
-    #[test]
-    fn moonshot_and_zai_support_reverse_proxy() {
-        assert!(supports_reverse_proxy(ChatCompletionSource::Moonshot));
-        assert!(supports_reverse_proxy(ChatCompletionSource::Zai));
-        assert!(!supports_reverse_proxy(ChatCompletionSource::MiniMax));
+        assert_eq!(config.base_url, "https://proxy.example.com/openai");
+        assert!(config.user_configured_endpoint);
     }
 
     #[tokio::test]
@@ -1052,47 +987,12 @@ mod tests {
                 .expect("status config should resolve");
 
         assert_eq!(config.base_url, "https://example.com/v1");
+        assert!(config.user_configured_endpoint);
         assert_eq!(config.api_key, "saved-secret");
         assert_eq!(config.authorization_header, None);
         assert_eq!(
             config.additional_headers.get("X-Trace").map(String::as_str),
             Some("abc")
-        );
-        assert_eq!(
-            config.additional_headers.iter().find_map(|(key, value)| key
-                .eq_ignore_ascii_case("authorization")
-                .then_some(value.as_str())),
-            Some("Bearer override")
-        );
-    }
-
-    #[tokio::test]
-    async fn custom_status_accepts_object_form_additional_headers() {
-        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
-            SecretKeys::CUSTOM,
-            "saved-secret",
-        ));
-        let dto = ChatCompletionStatusRequestDto {
-            chat_completion_source: "custom".to_string(),
-            custom_url: "https://example.com/v1".to_string(),
-            custom_include_headers: json!({
-                "Content-Type": "application/json",
-                "Authorization": "Bearer override"
-            }),
-            ..Default::default()
-        };
-
-        let config =
-            resolve_status_api_config(ChatCompletionSource::Custom, &dto, &secret_repository)
-                .await
-                .expect("status config should resolve");
-
-        assert_eq!(
-            config
-                .additional_headers
-                .get("Content-Type")
-                .map(String::as_str),
-            Some("application/json")
         );
         assert_eq!(
             config.additional_headers.iter().find_map(|(key, value)| key
@@ -1189,6 +1089,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pollinations_anonymous_endpoint_needs_no_key() {
+        let secret_repository: Arc<dyn SecretRepository> =
+            Arc::new(TestSecretRepository::with_entries(&[]));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "pollinations",
+                "pollinations_endpoint": "anonymous",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let config =
+            resolve_generate_for_test(ChatCompletionSource::Pollinations, &dto, &secret_repository)
+                .await
+                .expect("generate config should resolve");
+
+        assert_eq!(config.base_url, "https://text.pollinations.ai/v1");
+        assert!(config.api_key.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pollinations_authenticated_endpoint_requires_the_saved_key() {
+        let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
+            SecretKeys::POLLINATIONS,
+            "key",
+        ));
+        let dto = ChatCompletionGenerateRequestDto {
+            payload: json!({
+                "chat_completion_source": "pollinations",
+                "pollinations_endpoint": "authenticated",
+            })
+            .as_object()
+            .cloned()
+            .expect("payload should be an object"),
+        };
+
+        let config =
+            resolve_generate_for_test(ChatCompletionSource::Pollinations, &dto, &secret_repository)
+                .await
+                .expect("generate config should resolve");
+
+        assert_eq!(config.base_url, "https://gen.pollinations.ai/v1");
+        assert_eq!(config.api_key, "key");
+    }
+
+    #[tokio::test]
     async fn generate_secret_id_does_not_fallback_to_active_secret() {
         let secret_repository: Arc<dyn SecretRepository> = Arc::new(
             TestSecretRepository::with_entries(&[(SecretKeys::OPENROUTER, None, "active-secret")]),
@@ -1267,32 +1215,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generate_rejects_non_string_provider_hints() {
-        let secret_repository: Arc<dyn SecretRepository> =
-            Arc::new(TestSecretRepository::active(SecretKeys::MINIMAX, "secret"));
-        let dto = ChatCompletionGenerateRequestDto {
-            payload: json!({
-                "chat_completion_source": "minimax",
-                "minimax_endpoint": 42,
-            })
-            .as_object()
-            .cloned()
-            .expect("payload should be an object"),
-        };
-
-        let error =
-            resolve_generate_for_test(ChatCompletionSource::MiniMax, &dto, &secret_repository)
-                .await
-                .expect_err("non-string provider hint should fail");
-
-        assert!(
-            error
-                .to_string()
-                .contains("Chat completion request field must be a string: minimax_endpoint")
-        );
-    }
-
-    #[tokio::test]
     async fn custom_generate_secret_id_selects_saved_secret() {
         let secret_repository: Arc<dyn SecretRepository> =
             Arc::new(TestSecretRepository::with_entries(&[
@@ -1351,61 +1273,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn status_uses_requested_secret_id_for_provider_key() {
-        let secret_repository: Arc<dyn SecretRepository> =
-            Arc::new(TestSecretRepository::with_entries(&[
-                (SecretKeys::OPENROUTER, None, "active-secret"),
-                (
-                    SecretKeys::OPENROUTER,
-                    Some("profile-secret"),
-                    "selected-secret",
-                ),
-            ]));
-        let dto = ChatCompletionStatusRequestDto {
-            chat_completion_source: "openrouter".to_string(),
-            secret_id: Some("profile-secret".to_string()),
-            ..Default::default()
-        };
-
-        let config =
-            resolve_status_api_config(ChatCompletionSource::OpenRouter, &dto, &secret_repository)
-                .await
-                .expect("status config should resolve");
-
-        assert_eq!(config.api_key, "selected-secret");
-    }
-
-    #[tokio::test]
-    async fn vertexai_generate_uses_secret_id_for_express_key() {
-        let secret_repository: Arc<dyn SecretRepository> =
-            Arc::new(TestSecretRepository::with_entries(&[
-                (SecretKeys::VERTEXAI, None, "active-secret"),
-                (
-                    SecretKeys::VERTEXAI,
-                    Some("vertex-profile"),
-                    "selected-secret",
-                ),
-            ]));
-        let dto = ChatCompletionGenerateRequestDto {
-            payload: json!({
-                "chat_completion_source": "vertexai",
-                "vertexai_auth_mode": "express",
-                "secret_id": "vertex-profile",
-            })
-            .as_object()
-            .cloned()
-            .expect("payload should be an object"),
-        };
-
-        let config =
-            resolve_generate_for_test(ChatCompletionSource::VertexAi, &dto, &secret_repository)
-                .await
-                .expect("vertex express config should resolve");
-
-        assert_eq!(config.api_key, "selected-secret");
-    }
-
-    #[tokio::test]
     async fn vertexai_claude_express_requires_full_mode() {
         let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
             SecretKeys::VERTEXAI,
@@ -1460,23 +1327,6 @@ mod tests {
                 .expect("Vertex Gemini Express config should resolve with project id");
 
         assert_eq!(config.base_url, "https://aiplatform.googleapis.com/v1");
-    }
-
-    #[test]
-    fn vertexai_host_supports_global_multi_region_and_regional_endpoints() {
-        assert_eq!(vertexai_host("global"), "https://aiplatform.googleapis.com");
-        assert_eq!(
-            vertexai_host("us"),
-            "https://aiplatform.us.rep.googleapis.com"
-        );
-        assert_eq!(
-            vertexai_host("eu"),
-            "https://aiplatform.eu.rep.googleapis.com"
-        );
-        assert_eq!(
-            vertexai_host("europe-west4"),
-            "https://europe-west4-aiplatform.googleapis.com"
-        );
     }
 
     #[tokio::test]
@@ -1576,6 +1426,7 @@ mod tests {
                 .expect("status config should resolve");
 
         assert_eq!(config.base_url, "https://proxy.example.com/v1");
+        assert!(config.user_configured_endpoint);
         assert_eq!(config.api_key, "proxy-secret");
         assert_eq!(config.authorization_header, None);
         assert_eq!(
@@ -1610,34 +1461,6 @@ mod tests {
         assert_eq!(
             config.additional_headers.get("X-Debug").map(String::as_str),
             Some("true")
-        );
-    }
-
-    #[tokio::test]
-    async fn native_generate_accepts_reserved_additional_headers_as_user_overrides() {
-        let secret_repository: Arc<dyn SecretRepository> =
-            Arc::new(TestSecretRepository::active(SecretKeys::CLAUDE, "secret"));
-        let dto = ChatCompletionGenerateRequestDto {
-            payload: json!({
-                "chat_completion_source": "claude",
-                "custom_include_headers": "Authorization: Bearer hacked"
-            })
-            .as_object()
-            .cloned()
-            .expect("payload should be object"),
-        };
-
-        let config =
-            resolve_generate_for_test(ChatCompletionSource::Claude, &dto, &secret_repository)
-                .await
-                .expect("generate config should resolve");
-
-        assert_eq!(
-            config
-                .additional_headers
-                .get("Authorization")
-                .map(String::as_str),
-            Some("Bearer hacked")
         );
     }
 }

@@ -8,10 +8,8 @@ const RUST_CRATES_ROOT = path.join(REPO_ROOT, 'src-tauri', 'crates');
 const HOST_CRATE_ROOT = path.join(RUST_CRATES_ROOT, 'tauritavern');
 const HOST_SRC_ROOT = path.join(HOST_CRATE_ROOT, 'src');
 const WORKSPACE_MANIFEST = path.join(REPO_ROOT, 'src-tauri', 'Cargo.toml');
-const DEPENDENCY_TREE_CHECKS = [
-    ['no-default-features', ['--no-default-features']],
-    ['all-features/all-targets', ['--all-features', '--target', 'all', '-e', 'normal,build,dev']],
-];
+const DEPENDENCY_TREE_LABEL = 'all-features/all-targets';
+const DEPENDENCY_TREE_ARGS = ['--all-features', '--target', 'all', '-e', 'normal,build,dev'];
 
 const DOMAIN_FORBIDDEN_PACKAGES = new Set([
     'async-trait',
@@ -19,6 +17,7 @@ const DOMAIN_FORBIDDEN_PACKAGES = new Set([
     'image',
     'miktik',
     'reqwest',
+    'rmcp',
     'tar',
     'tauri',
     'tauritavern',
@@ -35,6 +34,7 @@ const DOMAIN_FORBIDDEN_SOURCE_PATTERNS = [
     ['image', /\bimage::/],
     ['miktik', /\bmiktik::/],
     ['reqwest', /\breqwest::/],
+    ['rmcp', /\brmcp::/],
     ['tauri', /\btauri::/],
     ['tokio', /\btokio::/],
     ['filesystem IO', /\bstd::fs::/],
@@ -47,6 +47,7 @@ const CONTRACTS_FORBIDDEN_PACKAGES = new Set([
     'image',
     'miktik',
     'reqwest',
+    'rmcp',
     'tar',
     'tauri',
     'tauritavern',
@@ -62,6 +63,7 @@ const CONTRACTS_FORBIDDEN_SOURCE_PATTERNS = [
     ['image', /\bimage::/],
     ['miktik', /\bmiktik::/],
     ['reqwest', /\breqwest::/],
+    ['rmcp', /\brmcp::/],
     ['tauri', /\btauri::/],
     ['tokio', /\btokio::/],
     ['tt-ports', /\btt_ports::/],
@@ -75,6 +77,7 @@ const PORTS_FORBIDDEN_PACKAGES = new Set([
     'image',
     'miktik',
     'reqwest',
+    'rmcp',
     'tar',
     'tauri',
     'tauritavern',
@@ -87,6 +90,7 @@ const PORTS_FORBIDDEN_SOURCE_PATTERNS = [
     ['image', /\bimage::/],
     ['miktik', /\bmiktik::/],
     ['reqwest', /\breqwest::/],
+    ['rmcp', /\brmcp::/],
     ['tauri', /\btauri::/],
     ['ttsync-core', /\bttsync_core::/],
     ['filesystem IO', /\bstd::fs::/],
@@ -100,6 +104,7 @@ const APPLICATION_FORBIDDEN_PACKAGES = new Set([
     'miktik',
     'qrcode',
     'reqwest',
+    'rmcp',
     'tar',
     'tauri',
     'tauritavern',
@@ -108,11 +113,15 @@ const APPLICATION_FORBIDDEN_PACKAGES = new Set([
     'tt-adapter-extension',
     'tt-adapter-http',
     'tt-adapter-media',
+    'tt-adapter-mcp',
     'tt-adapter-provider-http',
+    'tt-adapter-quickjs',
     'tt-adapter-storage-core',
     'tt-adapter-storage-userdata',
     'tt-adapter-sync',
     'tt-adapter-tokenization',
+    'tt-adapter-vector',
+    'tt-adapter-triviumdb',
     'yup-oauth2',
     'zip',
 ]);
@@ -128,17 +137,22 @@ const APPLICATION_FORBIDDEN_SOURCE_PATTERNS = [
     ['miktik', /\bmiktik::/],
     ['qrcode', /\bqrcode::/],
     ['reqwest', /\breqwest::/],
+    ['rmcp', /\brmcp::/],
     ['tauri', /\btauri::/],
     ['tar', /\btar::/],
     ['tt-adapter-archive', /\btt_adapter_archive::/],
     ['tt-adapter-extension', /\btt_adapter_extension::/],
     ['tt-adapter-http', /\btt_adapter_http::/],
     ['tt-adapter-media', /\btt_adapter_media::/],
+    ['tt-adapter-mcp', /\btt_adapter_mcp::/],
     ['tt-adapter-provider-http', /\btt_adapter_provider_http::/],
+    ['tt-adapter-quickjs', /\btt_adapter_quickjs::/],
     ['tt-adapter-storage-core', /\btt_adapter_storage_core::/],
     ['tt-adapter-storage-userdata', /\btt_adapter_storage_userdata::/],
     ['tt-adapter-sync', /\btt_adapter_sync::/],
     ['tt-adapter-tokenization', /\btt_adapter_tokenization::/],
+    ['tt-adapter-vector', /\btt_adapter_vector::/],
+    ['tt-adapter-triviumdb', /\btt_adapter_triviumdb::/],
     ['main crate', /\btauritavern(_lib)?::/],
     ['provider oauth client', /\byup_oauth2::/],
     ['concrete hyper client', /\bhyper_util::/],
@@ -287,6 +301,87 @@ const ADAPTER_PROVIDER_HTTP_FORBIDDEN_SOURCE_PATTERNS = [
     ['zip', /\bzip::/],
 ];
 
+const ADAPTER_VECTOR_FORBIDDEN_PACKAGES = new Set([
+    'axum',
+    'miktik',
+    'qrcode',
+    'reqwest',
+    'rmcp',
+    'tar',
+    'tauri',
+    'tauritavern',
+    'tt-adapter-archive',
+    'tt-adapter-extension',
+    'tt-adapter-http',
+    'tt-adapter-media',
+    'tt-adapter-mcp',
+    'tt-adapter-provider-http',
+    'tt-adapter-storage-core',
+    'tt-adapter-storage-userdata',
+    'tt-adapter-sync',
+    'tt-adapter-tokenization',
+    'tt-application',
+    'ttsync-core',
+]);
+
+const ADAPTER_VECTOR_FORBIDDEN_SOURCE_PATTERNS = [
+    ...ADAPTER_FORBIDDEN_SOURCE_PATTERNS,
+    ['axum', /\baxum::/],
+    ['image', /\bimage::/],
+    ['miktik', /\bmiktik::/],
+    ['qrcode', /\bqrcode::/],
+    ['reqwest', /\breqwest::/],
+    ['rmcp', /\brmcp::/],
+    ['tar', /\btar::/],
+    ['tt-adapter-http', /\btt_adapter_http::/],
+    ['tt-adapter-media', /\btt_adapter_media::/],
+    ['tt-adapter-mcp', /\btt_adapter_mcp::/],
+    ['tt-adapter-provider-http', /\btt_adapter_provider_http::/],
+    ['tt-adapter-storage-core', /\btt_adapter_storage_core::/],
+    ['tt-adapter-storage-userdata', /\btt_adapter_storage_userdata::/],
+    ['tt-adapter-sync', /\btt_adapter_sync::/],
+    ['tt-adapter-tokenization', /\btt_adapter_tokenization::/],
+    ['ttsync-core', /\bttsync_core::/],
+    ['zip', /\bzip::/],
+];
+
+const ADAPTER_MCP_FORBIDDEN_PACKAGES = new Set([
+    'async-compression',
+    'axum',
+    'image',
+    'miktik',
+    'qrcode',
+    'tar',
+    'tauri',
+    'tauritavern',
+    'tt-adapter-archive',
+    'tt-adapter-extension',
+    'tt-adapter-media',
+    'tt-adapter-provider-http',
+    'tt-adapter-storage-core',
+    'tt-adapter-storage-userdata',
+    'tt-adapter-sync',
+    'tt-adapter-tokenization',
+    'tt-application',
+    'ttsync-core',
+    'zip',
+]);
+
+const ADAPTER_MCP_FORBIDDEN_SOURCE_PATTERNS = [
+    ...ADAPTER_FORBIDDEN_SOURCE_PATTERNS,
+    ['axum', /\baxum::/],
+    ['image', /\bimage::/],
+    ['miktik', /\bmiktik::/],
+    ['qrcode', /\bqrcode::/],
+    ['tar', /\btar::/],
+    ['tauri', /\btauri::/],
+    ['tt-adapter-storage-core', /\btt_adapter_storage_core::/],
+    ['tt-adapter-storage-userdata', /\btt_adapter_storage_userdata::/],
+    ['tt-adapter-sync', /\btt_adapter_sync::/],
+    ['ttsync-core', /\bttsync_core::/],
+    ['zip', /\bzip::/],
+];
+
 const ADAPTER_STORAGE_CORE_FORBIDDEN_PACKAGES = new Set([
     'axum',
     'image',
@@ -403,6 +498,55 @@ const ADAPTER_MEDIA_FORBIDDEN_SOURCE_PATTERNS = [
     ['network IO', /\bstd::net::/],
 ];
 
+const ADAPTER_QUICKJS_FORBIDDEN_PACKAGES = new Set([
+    'axum',
+    'miktik',
+    'qrcode',
+    'reqwest',
+    'rmcp',
+    'tar',
+    'tauri',
+    'tauritavern',
+    'tt-adapter-archive',
+    'tt-adapter-extension',
+    'tt-adapter-http',
+    'tt-adapter-media',
+    'tt-adapter-mcp',
+    'tt-adapter-provider-http',
+    'tt-adapter-storage-core',
+    'tt-adapter-storage-userdata',
+    'tt-adapter-sync',
+    'tt-adapter-tokenization',
+    'tt-adapter-vector',
+    'tt-adapter-triviumdb',
+    'tt-application',
+    'ttsync-core',
+]);
+
+const ADAPTER_QUICKJS_FORBIDDEN_SOURCE_PATTERNS = [
+    ...ADAPTER_FORBIDDEN_SOURCE_PATTERNS,
+    ['axum', /\baxum::/],
+    ['image', /\bimage::/],
+    ['miktik', /\bmiktik::/],
+    ['qrcode', /\bqrcode::/],
+    ['reqwest', /\breqwest::/],
+    ['rmcp', /\brmcp::/],
+    ['tar', /\btar::/],
+    ['tt-adapter-archive', /\btt_adapter_archive::/],
+    ['tt-adapter-http', /\btt_adapter_http::/],
+    ['tt-adapter-media', /\btt_adapter_media::/],
+    ['tt-adapter-mcp', /\btt_adapter_mcp::/],
+    ['tt-adapter-provider-http', /\btt_adapter_provider_http::/],
+    ['tt-adapter-storage-core', /\btt_adapter_storage_core::/],
+    ['tt-adapter-storage-userdata', /\btt_adapter_storage_userdata::/],
+    ['tt-adapter-sync', /\btt_adapter_sync::/],
+    ['tt-adapter-tokenization', /\btt_adapter_tokenization::/],
+    ['tt-adapter-vector', /\btt_adapter_vector::/],
+    ['tt-adapter-triviumdb', /\btt_adapter_triviumdb::/],
+    ['ttsync-core', /\bttsync_core::/],
+    ['zip', /\bzip::/],
+];
+
 const ADAPTER_EXTENSION_FORBIDDEN_PACKAGES = new Set([
     'axum',
     'image',
@@ -443,14 +587,18 @@ const CRATES = [
     crateConfig('tt-ports', PORTS_FORBIDDEN_PACKAGES, PORTS_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-application', APPLICATION_FORBIDDEN_PACKAGES, APPLICATION_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-http', ADAPTER_HTTP_FORBIDDEN_PACKAGES, ADAPTER_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-adapter-mcp', ADAPTER_MCP_FORBIDDEN_PACKAGES, ADAPTER_MCP_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-tokenization', ADAPTER_TOKENIZATION_FORBIDDEN_PACKAGES, ADAPTER_TOKENIZATION_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-sync', ADAPTER_SYNC_FORBIDDEN_PACKAGES, ADAPTER_SYNC_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-archive', ADAPTER_ARCHIVE_FORBIDDEN_PACKAGES, ADAPTER_ARCHIVE_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-provider-http', ADAPTER_PROVIDER_HTTP_FORBIDDEN_PACKAGES, ADAPTER_PROVIDER_HTTP_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-adapter-vector', ADAPTER_VECTOR_FORBIDDEN_PACKAGES, ADAPTER_VECTOR_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-adapter-triviumdb', new Set(['tauri', 'tauritavern', 'tt-application']), ADAPTER_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-extension', ADAPTER_EXTENSION_FORBIDDEN_PACKAGES, ADAPTER_EXTENSION_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-storage-core', ADAPTER_STORAGE_CORE_FORBIDDEN_PACKAGES, ADAPTER_STORAGE_CORE_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-storage-userdata', ADAPTER_STORAGE_USERDATA_FORBIDDEN_PACKAGES, ADAPTER_STORAGE_USERDATA_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-media', ADAPTER_MEDIA_FORBIDDEN_PACKAGES, ADAPTER_MEDIA_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-adapter-quickjs', ADAPTER_QUICKJS_FORBIDDEN_PACKAGES, ADAPTER_QUICKJS_FORBIDDEN_SOURCE_PATTERNS),
 ];
 
 const MAIN_CRATE_SOURCE_RULES = [
@@ -507,12 +655,13 @@ function loadWorkspaceMetadata() {
         'metadata',
         '--manifest-path',
         WORKSPACE_MANIFEST,
-        '--no-deps',
+        '--all-features',
         '--format-version',
         '1',
     ], {
         cwd: REPO_ROOT,
         encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
     });
 
     if (result.status !== 0) {
@@ -520,6 +669,13 @@ function loadWorkspaceMetadata() {
     }
 
     return JSON.parse(result.stdout);
+}
+
+function indexWorkspaceMetadata(metadata) {
+    const packages = new Map(metadata.packages.map((entry) => [entry.id, entry]));
+    const nodes = new Map(metadata.resolve.nodes.map((entry) => [entry.id, entry]));
+    const workspacePackages = new Map(metadata.workspace_members.map((id) => [packages.get(id)?.name, id]));
+    return { packages, nodes, workspacePackages };
 }
 
 async function listFiles(dir) {
@@ -606,45 +762,80 @@ async function checkMainCrateSourceRule(config) {
 function checkDependencyTree(config) {
     const violations = [];
 
-    for (const [label, featureArgs] of DEPENDENCY_TREE_CHECKS) {
-        const result = spawnSync('cargo', [
-            'tree',
-            '--manifest-path',
-            WORKSPACE_MANIFEST,
-            '-p',
-            config.name,
-            ...featureArgs,
-            '--prefix',
-            'none',
-        ], {
-            cwd: REPO_ROOT,
-            encoding: 'utf8',
-        });
+    const result = spawnSync('cargo', [
+        'tree',
+        '--manifest-path',
+        WORKSPACE_MANIFEST,
+        '-p',
+        config.name,
+        ...DEPENDENCY_TREE_ARGS,
+        '--prefix',
+        'none',
+    ], {
+        cwd: REPO_ROOT,
+        encoding: 'utf8',
+    });
 
-        if (result.status !== 0) {
-            violations.push(`${config.name} cargo tree (${label}) failed:\n${result.stderr || result.stdout}`);
-            continue;
-        }
+    if (result.status !== 0) {
+        return [`${config.name} cargo tree (${DEPENDENCY_TREE_LABEL}) failed:\n${result.stderr || result.stdout}`];
+    }
 
-        const packages = new Set(
-            result.stdout
-                .split(/\r?\n/)
-                .map((line) => line.trim().split(/\s+/)[0])
-                .filter(Boolean),
-        );
+    const packages = new Set(
+        result.stdout
+            .split(/\r?\n/)
+            .map((line) => line.trim().split(/\s+/)[0])
+            .filter(Boolean),
+    );
 
-        for (const name of config.forbiddenPackages) {
-            if (packages.has(name)) {
-                violations.push(`${config.name} ${label} dependency tree includes forbidden package: ${name}`);
-            }
+    for (const name of config.forbiddenPackages) {
+        if (packages.has(name)) {
+            violations.push(`${config.name} ${DEPENDENCY_TREE_LABEL} dependency tree includes forbidden package: ${name}`);
         }
     }
 
     return violations;
 }
 
+// The all-features workspace graph is an upper bound. Skip the exact per-crate tree only when
+// Cargo exposed the root completely and no forbidden package is reachable from it.
+function metadataMayContainForbiddenPackage(config, metadata) {
+    const rootId = metadata.workspacePackages.get(config.name);
+    const rootPackage = metadata.packages.get(rootId);
+    const rootNode = metadata.nodes.get(rootId);
+    if (!rootPackage || !rootNode) {
+        return true;
+    }
+
+    const activeFeatures = new Set(rootNode.features);
+    if (Object.keys(rootPackage.features).some((feature) => !activeFeatures.has(feature))) {
+        return true;
+    }
+
+    const directPackages = new Set(rootNode.deps.map((dependency) => metadata.packages.get(dependency.pkg)?.name));
+    if (rootPackage.dependencies.some((dependency) => !directPackages.has(dependency.name))) {
+        return true;
+    }
+
+    const seen = new Set();
+    const pending = [rootId];
+    while (pending.length > 0) {
+        const id = pending.pop();
+        if (seen.has(id)) {
+            continue;
+        }
+        seen.add(id);
+
+        if (config.forbiddenPackages.has(metadata.packages.get(id)?.name)) {
+            return true;
+        }
+        pending.push(...(metadata.nodes.get(id)?.dependencies ?? []));
+    }
+
+    return false;
+}
+
 function checkDirectDependencies(config, metadata) {
-    const rustPackage = metadata.packages.find((entry) => entry.name === config.name);
+    const rustPackage = metadata.packages.get(metadata.workspacePackages.get(config.name));
     if (!rustPackage) {
         return [`${config.name} package missing from cargo metadata`];
     }
@@ -663,13 +854,13 @@ function checkDirectDependencies(config, metadata) {
 }
 
 async function main() {
-    const metadata = loadWorkspaceMetadata();
+    const metadata = indexWorkspaceMetadata(loadWorkspaceMetadata());
     const violations = [];
     for (const config of CRATES) {
         violations.push(
             ...checkDirectDependencies(config, metadata),
             ...(await checkSourceBoundaries(config)),
-            ...checkDependencyTree(config),
+            ...(metadataMayContainForbiddenPackage(config, metadata) ? checkDependencyTree(config) : []),
         );
     }
     for (const config of MAIN_CRATE_SOURCE_RULES) {

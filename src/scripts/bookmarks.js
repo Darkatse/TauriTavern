@@ -3,6 +3,7 @@ import {
     saveChat,
     system_message_types,
     syncSwipeToMes,
+    hydrateChatMessageSwipes,
     this_chid,
     openCharacterChat,
     chat_metadata,
@@ -35,15 +36,49 @@ import { commonEnumProviders } from './slash-commands/SlashCommandCommonEnumsPro
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { createTagMapFromList } from './tags.js';
 import { renderTemplateAsync } from './templates.js';
-import { compressRequest } from './request-compression.js';
+import { saveGroupChatPayload } from './chat-payload-transport.js';
 import { t } from './i18n.js';
 
 import {
     getUniqueName,
     isTrueBoolean,
+    uuidv4,
 } from './utils.js';
 
 const bookmarkNameToken = 'Checkpoint #';
+
+function resolveAgentPersistentStateFork(targetChatName, targetIntegrity) {
+    const chatApi = window.__TAURITAVERN__.api.chat;
+    const sourceChatRef = chatApi.current.ref();
+    const sourceStableChatId = String(sourceChatRef.kind === 'group'
+        ? sourceChatRef.chatId
+        : (chat_metadata.integrity ?? '')).trim();
+    if (!sourceStableChatId) {
+        return null;
+    }
+    const targetChatRef = sourceChatRef.kind === 'group'
+        ? { kind: 'group', chatId: targetChatName }
+        : { ...sourceChatRef, fileName: targetChatName };
+
+    return {
+        sourceChatRef,
+        sourceStableChatId,
+        targetChatRef,
+        targetStableChatId: targetChatRef.kind === 'group' ? targetChatName : targetIntegrity,
+    };
+}
+
+async function copyAgentPersistentStatesForFork(fork) {
+    if (!fork) {
+        return;
+    }
+    try {
+        await window.__TAURITAVERN__.api.agent.copyChatPersistentStates(fork);
+    } catch (error) {
+        console.error('Agent persistent states could not be copied to the new chat', error);
+        toastr.warning('The chat was created without its Agent persistent state.', 'Agent state copy failed');
+    }
+}
 
 /**
  * Gets the names of existing chats for the current character or group.
@@ -196,7 +231,7 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
 
     const lastMes = chat[mesId];
     const mainChatName = (getCurrentChatDetails()).sessionName;
-    const newMetadata = { main_chat: mainChatName };
+    const newMetadata = { main_chat: mainChatName, integrity: uuidv4() };
     const selectedSwipeId = swipeId === null ? null : Number(swipeId);
 
     if (selectedSwipeId !== null && (!Number.isInteger(selectedSwipeId) || selectedSwipeId < 0 || selectedSwipeId >= (lastMes?.swipes?.length ?? 0))) {
@@ -219,17 +254,21 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
         return;
     }
 
+    if (selectedSwipeId !== null && !await hydrateChatMessageSwipes(mesId)) return;
+    if (chat[mesId] !== lastMes) return;
     const branchChatSnapshot = getBranchChatSnapshot(mesId, { swipeId: selectedSwipeId });
     if (!branchChatSnapshot) {
         toastr.warning('Could not prepare the selected swipe for branching.', 'Branch creation failed');
         return;
     }
+    const persistentStateFork = resolveAgentPersistentStateFork(name, newMetadata.integrity);
 
     if (selected_group) {
         await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId, branchChatSnapshot);
     } else {
         await saveChat({ chatName: name, withMetadata: newMetadata, mesId, chatData: branchChatSnapshot });
     }
+    await copyAgentPersistentStatesForFork(persistentStateFork);
     // append to branches list if it exists
     // otherwise create it
     if (typeof lastMes.extra !== 'object') {
@@ -278,7 +317,8 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
     }
 
     const mainChat = selected_group ? groups?.find(x => x.id == selected_group)?.chat_id : characters[this_chid].chat;
-    const newMetadata = { main_chat: mainChat };
+    const newMetadata = { main_chat: mainChat, integrity: uuidv4() };
+    const persistentStateFork = resolveAgentPersistentStateFork(name, newMetadata.integrity);
     await saveItemizedPrompts(name);
 
     if (selected_group) {
@@ -286,6 +326,7 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
     } else {
         await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
     }
+    await copyAgentPersistentStatesForFork(persistentStateFork);
 
     lastMes.extra.bookmark_link = name;
 
@@ -420,17 +461,12 @@ export async function convertSoloToGroupChat() {
     }
 
     // Save group chat
-    const createChatRequest = await compressRequest({
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ id: chatName, chat: [chatHeader, ...groupChat] }),
-    });
-    const createChatResponse = await fetch('/api/chats/group/save', createChatRequest);
-
-    if (!createChatResponse.ok) {
-        console.error('Group chat creation unsuccessful');
+    try {
+        await saveGroupChatPayload({ id: chatName, payload: [chatHeader, ...groupChat] });
+    } catch (error) {
+        console.error('Group chat creation unsuccessful', error);
         toastr.error('Group chat creation unsuccessful');
-        return;
+        throw error;
     }
 
     // Click on the freshly selected group to open it

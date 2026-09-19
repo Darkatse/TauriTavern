@@ -1,6 +1,6 @@
 // @ts-check
 
-export function createSharedRunEventSubscribe(runId, subscribe) {
+export function createSharedRunEventSubscribe(runId, subscribe, afterSeq = 0) {
     const normalizedRunId = requireRunId(runId);
     const subscribers = new Map();
     let nextSubscriberId = 1;
@@ -48,7 +48,7 @@ export function createSharedRunEventSubscribe(runId, subscribe) {
             onError: options?.onError,
         });
         if (!stop) {
-            stop = subscribe(normalizedRunId, dispatch, { onError: dispatchError });
+            stop = subscribe(normalizedRunId, dispatch, { afterSeq, onError: dispatchError });
         }
 
         return function unsubscribe() {

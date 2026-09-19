@@ -1,7 +1,5 @@
 #![cfg(target_os = "ios")]
 
-use std::ffi::CStr;
-
 use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject};
@@ -15,11 +13,9 @@ use objc2_ui_kit::{UIViewController, UIWindow};
 ///
 /// Must be called on the main thread.
 pub fn resolve_presenting_view_controller() -> Result<Retained<UIViewController>, DomainError> {
-    let ui_application =
-        AnyClass::get(unsafe { CStr::from_bytes_with_nul_unchecked(b"UIApplication\0") })
-            .ok_or_else(|| {
-                DomainError::InternalError("UIApplication class is unavailable".to_string())
-            })?;
+    let ui_application = AnyClass::get(c"UIApplication").ok_or_else(|| {
+        DomainError::InternalError("UIApplication class is unavailable".to_string())
+    })?;
 
     let app: Option<Retained<AnyObject>> = unsafe { msg_send![ui_application, sharedApplication] };
     let app = app.ok_or_else(|| {

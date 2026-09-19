@@ -3,6 +3,7 @@
   stdenv,
   rustPlatform,
   cargo-tauri,
+  dbus,
   fetchPnpmDeps,
   glib-networking,
   gst_all_1,
@@ -12,7 +13,7 @@
   nodejs_22,
   openssl,
   pkg-config,
-  pnpm_10,
+  pnpm_11,
   pnpmConfigHook,
   webkitgtk_4_1,
   wrapGAppsHook4,
@@ -23,7 +24,7 @@
 
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "tauritavern";
-  version = "2.2.0";
+  version = "2.3.0";
 
   inherit src;
 
@@ -39,21 +40,22 @@ rustPlatform.buildRustPackage (finalAttrs: {
       version
       src
       ;
-    pnpm = pnpm_10;
+    pnpm = pnpm_11;
     fetcherVersion = 3;
-    hash = "sha256-aDxsMBQcMWYJl4FPTo+cReYnkqbiMuSvKRzslwmkGVM=";
+    hash = "sha256-EUFwuJmJt9T+qEITMg/XDiT57CDVLDBR2Z2XJvTyCsc=";
   };
 
   nativeBuildInputs = [
     cargo-tauri.hook
     nodejs_22
     pkg-config
-    pnpm_10
+    pnpm_11
     pnpmConfigHook
     wrapGAppsHook4
   ];
 
   buildInputs = [
+    dbus
     glib-networking
     gst_all_1.gstreamer
     gst_all_1.gst-plugins-base

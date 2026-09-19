@@ -98,10 +98,17 @@ impl FileChatRepository {
         }
 
         while let Some(joined) = jobs.join_next().await {
-            let ranked = joined.map_err(|error| {
+            let result = joined.map_err(|error| {
                 DomainError::InternalError(format!("Recent chat stats scanner failed: {}", error))
-            })??;
-            ranked_non_pinned.push(ranked);
+            })?;
+            match result {
+                Ok(ranked) => ranked_non_pinned.push(ranked),
+                Err(error) => tracing::error!(
+                    target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                    "Failed to inspect recent chat: {}",
+                    error
+                ),
+            }
         }
 
         ranked_non_pinned.sort_by(compare_ranked_chat_descriptors);

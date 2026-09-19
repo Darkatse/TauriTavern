@@ -44,11 +44,77 @@ export function createCharacterService({ safeInvoke }) {
     }
 
     /** @param {any} character */
+    function rawCharacterFromJsonData(character) {
+        if (typeof character?.json_data !== 'string' || !character.json_data.trim()) {
+            return {};
+        }
+
+        const value = JSON.parse(character.json_data);
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            throw new Error('Backend returned non-object character json_data');
+        }
+
+        return value;
+    }
+
+    /** @param {any} character */
     function normalizeCharacter(character) {
         if (!character || typeof character !== 'object') {
             return character;
         }
 
+        const rawCharacter = rawCharacterFromJsonData(character);
+        if (hasBodyField(rawCharacter, 'spec')) {
+            const normalized = { ...rawCharacter };
+            const rawData = rawCharacter.data;
+
+            if (rawData !== undefined) {
+                const fieldMappings = {
+                    name: rawData?.name,
+                    description: rawData?.description,
+                    personality: rawData?.personality,
+                    scenario: rawData?.scenario,
+                    first_mes: rawData?.first_mes,
+                    mes_example: rawData?.mes_example,
+                    talkativeness: rawData?.extensions?.talkativeness,
+                    fav: rawData?.extensions?.fav,
+                    tags: rawData?.tags,
+                };
+
+                for (const [field, value] of Object.entries(fieldMappings)) {
+                    if (value !== undefined) {
+                        normalized[field] = value;
+                    } else if (field === 'talkativeness') {
+                        normalized[field] = 0.5;
+                    } else if (field === 'fav') {
+                        normalized[field] = false;
+                    }
+                }
+            }
+
+            normalized.chat ??= character.chat;
+            if (!normalized.create_date && hasBodyField(character, 'create_date')) {
+                normalized.create_date = character.create_date;
+            }
+            for (const field of [
+                'avatar',
+                'chat_size',
+                'data_size',
+                'date_added',
+                'date_last_chat',
+                'json_data',
+                'shallow',
+            ]) {
+                if (hasBodyField(character, field)) {
+                    normalized[field] = character[field];
+                }
+            }
+
+            return normalized;
+        }
+
+        const rawData = normalizeExtensions(rawCharacter.data);
+        const projectedData = normalizeExtensions(character.data);
         const extensions = normalizeExtensions(character.extensions);
 
         if (!Object.prototype.hasOwnProperty.call(extensions, 'talkativeness')) {
@@ -61,24 +127,27 @@ export function createCharacterService({ safeInvoke }) {
 
         const characterBook = Object.prototype.hasOwnProperty.call(character, 'character_book')
             ? character.character_book
-            : character?.data?.character_book;
+            : projectedData.character_book ?? rawData.character_book;
 
-        const name = pickCharacterTextValue(character.name, character?.data?.name);
-        const description = pickCharacterTextValue(character.description, character?.data?.description);
-        const personality = pickCharacterTextValue(character.personality, character?.data?.personality);
-        const scenario = pickCharacterTextValue(character.scenario, character?.data?.scenario);
-        const firstMes = pickCharacterTextValue(character.first_mes, character?.data?.first_mes);
-        const mesExample = pickCharacterTextValue(character.mes_example, character?.data?.mes_example);
-        const creator = pickCharacterTextValue(character.creator, character?.data?.creator);
-        const creatorNotes = pickCharacterTextValue(character.creator_notes, character?.data?.creator_notes);
-        const characterVersion = pickCharacterTextValue(character.character_version, character?.data?.character_version);
-        const systemPrompt = pickCharacterTextValue(character.system_prompt, character?.data?.system_prompt);
+        const name = pickCharacterTextValue(character.name, projectedData.name, rawData.name, rawCharacter.name);
+        const description = pickCharacterTextValue(character.description, projectedData.description, rawData.description, rawCharacter.description);
+        const personality = pickCharacterTextValue(character.personality, projectedData.personality, rawData.personality, rawCharacter.personality);
+        const scenario = pickCharacterTextValue(character.scenario, projectedData.scenario, rawData.scenario, rawCharacter.scenario);
+        const firstMes = pickCharacterTextValue(character.first_mes, projectedData.first_mes, rawData.first_mes, rawCharacter.first_mes);
+        const mesExample = pickCharacterTextValue(character.mes_example, projectedData.mes_example, rawData.mes_example, rawCharacter.mes_example);
+        const creator = pickCharacterTextValue(character.creator, projectedData.creator, rawData.creator, rawCharacter.creator);
+        const creatorNotes = pickCharacterTextValue(character.creator_notes, projectedData.creator_notes, rawData.creator_notes, rawCharacter.creator_notes);
+        const characterVersion = pickCharacterTextValue(character.character_version, projectedData.character_version, rawData.character_version, rawCharacter.character_version);
+        const systemPrompt = pickCharacterTextValue(character.system_prompt, projectedData.system_prompt, rawData.system_prompt);
         const postHistoryInstructions = pickCharacterTextValue(
             character.post_history_instructions,
-            character?.data?.post_history_instructions,
+            projectedData.post_history_instructions,
+            rawData.post_history_instructions,
         );
 
         const data = {
+            ...rawData,
+            ...projectedData,
             name,
             description,
             personality,
@@ -97,6 +166,7 @@ export function createCharacterService({ safeInvoke }) {
         };
 
         return {
+            ...rawCharacter,
             ...character,
             name,
             description,
@@ -193,6 +263,10 @@ export function createCharacterService({ safeInvoke }) {
                 characterById.set(characterId, character);
             }
         }
+    }
+
+    function invalidateCharacterCache() {
+        updateCharacterCache([]);
     }
 
     /** @param {boolean} requestShallow */
@@ -407,6 +481,7 @@ export function createCharacterService({ safeInvoke }) {
         normalizeCharacter,
         normalizeExtensions,
         getAllCharacters,
+        invalidateCharacterCache,
         resolveCharacterId,
         resolveExistingCharacterId,
         getSingleCharacter,

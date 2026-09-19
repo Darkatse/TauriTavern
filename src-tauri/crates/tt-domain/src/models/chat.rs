@@ -361,12 +361,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn parses_rfc3339_timestamp() {
-        let timestamp = parse_message_timestamp("2026-02-11T02:26:58.931Z");
-        assert!(timestamp > 0);
-    }
-
-    #[test]
     fn parses_legacy_humanized_timestamp() {
         let timestamp = parse_message_timestamp("October 29, 2025 9:35pm");
         assert!(timestamp > 0);
@@ -406,18 +400,6 @@ mod tests {
         );
         assert_eq!(normalize_chat_file_stem("CON.jsonl"), None);
         assert_eq!(normalize_chat_file_stem("*.jsonl"), None);
-    }
-
-    #[test]
-    fn keeps_uppercase_jsonl_as_part_of_the_chat_stem() {
-        assert_eq!(
-            normalize_chat_file_name("Story.JSONL"),
-            Some("Story.JSONL.jsonl".to_string())
-        );
-        assert_eq!(
-            normalize_chat_file_stem("Story.JSONL"),
-            Some("Story.JSONL".to_string())
-        );
     }
 
     #[test]

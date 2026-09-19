@@ -195,15 +195,11 @@ export async function getChatBackupStorageStats() {
 }
 
 export async function updateTauriTavernSettings(dto) {
-    const invokeFn = getInvokeFn();
-    if (!invokeFn) {
-        throw new Error('Tauri invoke is unavailable');
-    }
     if (!isPlainObject(dto)) {
         throw new Error('Invalid TauriTavern settings DTO');
     }
 
-    return invokeFn('update_tauritavern_settings', { dto });
+    return invokeWithHostNormalization('update_tauritavern_settings', { dto });
 }
 
 export async function getRuntimePaths() {
@@ -235,6 +231,10 @@ export async function openDialog(options = {}) {
     Object.freeze(options);
 
     return invokeWithHostNormalization('plugin:dialog|open', { options });
+}
+
+export function writeClipboardText(text) {
+    return invoke('plugin:clipboard-manager|write_text', { text });
 }
 
 function normalizeExternalUrl(url) {

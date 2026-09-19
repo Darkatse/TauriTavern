@@ -7,7 +7,7 @@ use crate::services::chat_completion_service::exchange::{
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelResponse, AgentModelRole, AgentModelTool,
 };
-use tt_domain::models::tool::ToolInvocation;
+use tt_domain::models::tool::{ToolArguments, ToolInvocation};
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn decode_chat_completion_response(
@@ -195,16 +195,13 @@ fn parse_tool_call(
                 "model.invalid_tool_call: tool_call_id is required".to_string(),
             )
         })?;
-    let tool = tools
-        .iter()
-        .find(|tool| tool.model_alias == raw_name)
-        .ok_or_else(|| {
-            ApplicationError::ValidationError(format!(
-                "model.unknown_tool_call: model returned unadvertised tool alias `{raw_name}`"
-            ))
-        })?;
+    let tool = model_tool_for_alias(tools, raw_name).ok_or_else(|| {
+        ApplicationError::ValidationError(format!(
+            "model.unknown_tool_call: model returned unadvertised tool alias `{raw_name}`"
+        ))
+    })?;
     let arguments =
-        parse_tool_call_arguments(function.get("arguments").or_else(|| function.get("args")));
+        ToolArguments::decode(function.get("arguments").or_else(|| function.get("args")));
 
     Ok(ToolInvocation {
         call_id: id.to_string(),
@@ -218,14 +215,11 @@ fn parse_tool_call(
     })
 }
 
-fn parse_tool_call_arguments(value: Option<&Value>) -> Value {
-    match value {
-        Some(Value::String(raw)) => {
-            serde_json::from_str::<Value>(raw).unwrap_or_else(|_| Value::String(raw.to_string()))
-        }
-        Some(Value::Null) | None => Value::Object(Map::new()),
-        Some(value) => value.clone(),
-    }
+pub(super) fn model_tool_for_alias<'a>(
+    tools: &'a [AgentModelTool],
+    alias: &str,
+) -> Option<&'a AgentModelTool> {
+    tools.iter().find(|tool| tool.model_alias == alias)
 }
 
 fn extract_text_from_message(message: &Map<String, Value>) -> String {

@@ -8,28 +8,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 async function importConversion() {
     return import(pathToFileURL(path.join(
         REPO_ROOT,
-        'src/scripts/extensions/agent-system/src/model-target-conversion.js',
-    )));
-}
-
-async function importConnection() {
-    return import(pathToFileURL(path.join(
-        REPO_ROOT,
-        'src/scripts/extensions/agent-system/src/model-target-connection.js',
-    )));
-}
-
-async function importSharedModelTargetConnection() {
-    return import(pathToFileURL(path.join(
-        REPO_ROOT,
         'src/scripts/tauritavern/agent/model-target-llm-connection.js',
-    )));
-}
-
-async function importEvents() {
-    return import(pathToFileURL(path.join(
-        REPO_ROOT,
-        'src/scripts/events.js',
     )));
 }
 
@@ -52,22 +31,18 @@ function sampleTarget(overrides = {}) {
     };
 }
 
-function installConnectionHarness(targets, options = {}) {
+function installConnectionHarness(targets) {
     const savedConnections = [];
-    const deletedConnections = [];
-    const errors = [];
-    globalThis.localStorage = {
-        getItem: () => null,
+    const context = {
+        extensionSettings: {
+            connectionManager: {
+                modelTargets: targets,
+            },
+        },
     };
     globalThis.window = {
         SillyTavern: {
-            getContext: () => ({
-                extensionSettings: {
-                    connectionManager: {
-                        modelTargets: targets,
-                    },
-                },
-            }),
+            getContext: () => context,
         },
         __TAURITAVERN__: {
             api: {
@@ -75,41 +50,12 @@ function installConnectionHarness(targets, options = {}) {
                     save: async ({ connection }) => {
                         savedConnections.push(structuredClone(connection));
                     },
-                    delete: async ({ connectionId }) => {
-                        deletedConnections.push(connectionId);
-                        const error = options.deleteErrors?.[connectionId];
-                        if (error) {
-                            throw error;
-                        }
-                    },
                 },
             },
         },
-        toastr: {
-            error: (message) => errors.push(message),
-        },
     };
 
-    return { savedConnections, deletedConnections, errors };
-}
-
-async function captureConsole(operation) {
-    const original = {
-        debug: console.debug,
-        warn: console.warn,
-        error: console.error,
-    };
-    const calls = [];
-    console.debug = (...args) => calls.push({ level: 'debug', args });
-    console.warn = (...args) => calls.push({ level: 'warn', args });
-    console.error = (...args) => calls.push({ level: 'error', args });
-    try {
-        return await operation(calls);
-    } finally {
-        console.debug = original.debug;
-        console.warn = original.warn;
-        console.error = original.error;
-    }
+    return { savedConnections };
 }
 
 test('Agent model target conversion materializes LLM connection and profile binding', async () => {
@@ -159,51 +105,55 @@ test('Agent model target conversion materializes LLM connection and profile bind
     }), target);
 });
 
-test('Agent model target conversion preserves Moonshot endpoint selection', async () => {
+
+test('Agent model target conversion preserves native adapter opt-ins', async () => {
     const { buildLlmConnectionFromModelTarget } = await importConversion();
     const connection = buildLlmConnectionFromModelTarget(sampleTarget({
-        api: 'moonshot',
-        model: 'kimi-k3',
-        'api-url': 'cn',
-        secretRef: {
-            key: 'api_key_moonshot',
-            id: 'secret-moonshot',
+        api: 'custom_openai_responses',
+        model: 'deepseek-chat',
+        'custom-api-format': 'openai_responses',
+        adapterHints: {
+            openaiResponsesMode: 'websocket',
         },
     }));
 
-    assert.equal(connection.provider.chatCompletionSource, 'moonshot');
-    assert.deepEqual(connection.endpoint, {
-        sourceSpecific: {
-            moonshot_endpoint: 'cn',
-        },
+    assert.deepEqual(connection.adapterHints, {
+        openaiResponsesMode: 'websocket',
+    });
+    assert.deepEqual(connection.capabilities, {});
+});
+
+test('Agent model target conversion keeps OpenCode service and wire format', async () => {
+    const { buildLlmConnectionFromModelTarget } = await importConversion();
+    const connection = buildLlmConnectionFromModelTarget(sampleTarget({
+        api: 'opencode',
+        model: 'qwen3-coder',
+        'api-url': 'go',
+        'custom-api-format': 'claude_messages',
+        secretRef: { key: 'api_key_opencode', id: 'secret-opencode' },
+    }));
+
+    assert.deepEqual(connection.provider, { chatCompletionSource: 'opencode' });
+    assert.deepEqual(connection.endpoint.sourceSpecific, {
+        opencode_endpoint: 'go',
+        opencode_api_format: 'claude_messages',
     });
 });
 
-test('Agent run model target ensure materializes the current saved target state', async () => {
-    const currentTarget = sampleTarget({
-        secretRef: {
-            key: 'api_key_custom',
-            id: 'secret-current',
-            labelSnapshot: 'Current custom key',
-        },
-    });
-    const { savedConnections } = installConnectionHarness([currentTarget]);
-    const {
-        ensureModelTargetLlmConnectionForProfile,
-    } = await importSharedModelTargetConnection();
-
-    const connection = await ensureModelTargetLlmConnectionForProfile({
-        model: {
-            mode: 'connectionRef',
-            connectionRef: 'model-target-writer-target',
-            modelId: 'claude-3-7-sonnet',
-        },
-    });
-
-    assert.equal(connection.auth.secretRef.id, 'secret-current');
-    assert.equal(savedConnections.length, 1);
-    assert.equal(savedConnections[0].auth.secretRef.id, 'secret-current');
+test('Vertex AI targets preserve credential type and region', async () => {
+    const { buildLlmConnectionFromModelTarget } = await importConversion();
+    for (const [key, mode] of [['vertexai_service_account_json', 'full'], ['api_key_vertexai', 'express']]) {
+        const connection = buildLlmConnectionFromModelTarget(sampleTarget({
+            api: 'vertexai', model: 'gemini-2.5-pro', 'api-url': 'europe-west4',
+            secretRef: { key, id: 'vertex-secret' },
+        }));
+        assert.equal(connection.endpoint.sourceSpecific.vertexai_auth_mode ?? 'express', mode);
+        assert.equal(connection.endpoint.sourceSpecific.vertexai_region, 'europe-west4');
+        assert.deepEqual(connection.auth.secretRef, { key, id: 'vertex-secret' });
+    }
 });
+
+
 
 test('Agent run model target ensure refreshes by connection ref without adopting target model changes', async () => {
     const currentTarget = sampleTarget({
@@ -216,7 +166,7 @@ test('Agent run model target ensure refreshes by connection ref without adopting
     const { savedConnections } = installConnectionHarness([currentTarget]);
     const {
         ensureModelTargetLlmConnectionForProfile,
-    } = await importSharedModelTargetConnection();
+    } = await importConversion();
     const profile = {
         model: {
             mode: 'connectionRef',
@@ -232,31 +182,12 @@ test('Agent run model target ensure refreshes by connection ref without adopting
     assert.equal(savedConnections[0].auth.secretRef.id, 'secret-current');
 });
 
-test('Agent run model target ensure is scoped to derived Model Target bindings', async () => {
-    globalThis.window = {};
-    const {
-        ensureModelTargetLlmConnectionForProfile,
-    } = await importSharedModelTargetConnection();
-
-    assert.equal(await ensureModelTargetLlmConnectionForProfile({
-        model: {
-            mode: 'connectionRef',
-            connectionRef: 'external-main',
-            modelId: 'claude-3-7-sonnet',
-        },
-    }), null);
-    assert.equal(await ensureModelTargetLlmConnectionForProfile({
-        model: {
-            mode: 'currentPromptSnapshot',
-        },
-    }), null);
-});
 
 test('Agent run model target ensure fails fast when the saved target binding is missing', async () => {
     installConnectionHarness([]);
     const {
         ensureModelTargetLlmConnectionForProfile,
-    } = await importSharedModelTargetConnection();
+    } = await importConversion();
 
     await assert.rejects(
         () => ensureModelTargetLlmConnectionForProfile({
@@ -270,111 +201,12 @@ test('Agent run model target ensure fails fast when the saved target binding is 
     );
 });
 
-test('Agent model target connection sync follows saved Model Target updates', async () => {
-    const target = sampleTarget();
-    const updatedTarget = sampleTarget({
-        secretRef: {
-            key: 'api_key_custom',
-            id: 'secret-rotated',
-            labelSnapshot: 'Rotated custom key',
-        },
-    });
-    const { savedConnections, deletedConnections, errors } = installConnectionHarness([target]);
-    const {
-        startModelTargetLlmConnectionSync,
-        syncSavedModelTargetLlmConnections,
-    } = await importConnection();
-    const { event_types, eventSource } = await importEvents();
-
-    const result = await syncSavedModelTargetLlmConnections();
-    assert.equal(result.synced, 1);
-    assert.deepEqual(result.failed, []);
-    assert.equal(savedConnections.at(-1).auth.secretRef.id, 'secret-custom');
-
-    const stopSync = startModelTargetLlmConnectionSync();
-    try {
-        await captureConsole(() => eventSource.emit(event_types.MODEL_TARGET_UPDATED, target, updatedTarget));
-        assert.equal(savedConnections.at(-1).auth.secretRef.id, 'secret-rotated');
-
-        const savedCountAfterUpdate = savedConnections.length;
-        await captureConsole(() => eventSource.emit(event_types.MODEL_TARGET_DELETED, updatedTarget));
-        assert.equal(savedConnections.length, savedCountAfterUpdate);
-        assert.deepEqual(deletedConnections, []);
-        assert.deepEqual(errors, []);
-    } finally {
-        stopSync();
-    }
-});
-
-test('Agent model target startup sync invalidates stale LLM connection when materialization fails', async () => {
-    const invalidTarget = sampleTarget({ proxy: 'corporate-proxy' });
-    const { savedConnections, deletedConnections } = installConnectionHarness([invalidTarget]);
-    const {
-        syncSavedModelTargetLlmConnections,
-    } = await importConnection();
-
-    const result = await captureConsole(() => syncSavedModelTargetLlmConnections());
-
-    assert.equal(result.synced, 0);
-    assert.equal(result.failed.length, 1);
-    assert.equal(result.failed[0].invalidation.connectionId, 'model-target-writer-target');
-    assert.equal(result.failed[0].invalidation.deleted, true);
-    assert.equal(savedConnections.length, 0);
-    assert.deepEqual(deletedConnections, ['model-target-writer-target']);
-});
-
-test('Agent model target startup sync reports stale LLM connection invalidation failures', async () => {
-    const invalidTarget = sampleTarget({ proxy: 'corporate-proxy' });
-    const { errors } = installConnectionHarness([invalidTarget], {
-        deleteErrors: {
-            'model-target-writer-target': new Error('permission denied'),
-        },
-    });
-    const {
-        syncSavedModelTargetLlmConnections,
-    } = await importConnection();
-
-    const result = await captureConsole(() => syncSavedModelTargetLlmConnections());
-
-    assert.equal(result.synced, 0);
-    assert.equal(result.failed.length, 1);
-    assert.match(errors.at(-1), /could not remove its stale Agent LLM connection/);
-});
-
-test('Agent model target update failure invalidates stale LLM connection', async () => {
-    const target = sampleTarget();
-    const invalidTarget = sampleTarget({ proxy: 'corporate-proxy' });
-    const { savedConnections, deletedConnections, errors } = installConnectionHarness([target]);
-    const {
-        startModelTargetLlmConnectionSync,
-        syncSavedModelTargetLlmConnections,
-    } = await importConnection();
-    const { event_types, eventSource } = await importEvents();
-
-    await syncSavedModelTargetLlmConnections();
-    assert.equal(savedConnections.at(-1).auth.secretRef.id, 'secret-custom');
-
-    const stopSync = startModelTargetLlmConnectionSync();
-    try {
-        await captureConsole(() => eventSource.emit(event_types.MODEL_TARGET_UPDATED, target, invalidTarget));
-
-        assert.deepEqual(deletedConnections, ['model-target-writer-target']);
-        assert.match(errors.at(-1), /could not be synced/);
-    } finally {
-        stopSync();
-    }
-});
-
 test('Agent model target conversion rejects lossy or invalid targets', async () => {
     const {
         buildLlmConnectionFromModelTarget,
         modelTargetConnectionRef,
     } = await importConversion();
 
-    assert.throws(
-        () => buildLlmConnectionFromModelTarget(sampleTarget({ proxy: 'corporate-proxy' })),
-        /cannot be converted to an Agent LLM connection/,
-    );
     assert.throws(
         () => buildLlmConnectionFromModelTarget(sampleTarget({ mode: 'tc' })),
         /is not a chat-completion target/,
@@ -387,4 +219,18 @@ test('Agent model target conversion rejects lossy or invalid targets', async () 
         () => modelTargetConnectionRef({ id: 'x'.repeat(129) }),
         /too long/,
     );
+});
+
+test('Agent model targets preserve a named reverse proxy and the provider-specific model name', async () => {
+    const { buildLlmConnectionFromModelTarget, modelBindingFromTarget } = await importConversion();
+    const target = sampleTarget({
+        api: 'google', model: '[v]gemini-custom', proxy: 'Team proxy',
+        secretRef: { key: 'api_key_makersuite', id: 'google-key' },
+    });
+    const connection = buildLlmConnectionFromModelTarget(target);
+    assert.deepEqual(connection.routing, { reverseProxy: { preset: 'Team proxy' } });
+    assert.equal(connection.provider.chatCompletionSource, 'makersuite');
+    assert.equal(modelBindingFromTarget(target).modelId, '[v]gemini-custom');
+    assert.deepEqual(buildLlmConnectionFromModelTarget({ ...target, secretRef: undefined }).auth, {});
+    assert.deepEqual(buildLlmConnectionFromModelTarget({ ...target, proxy: 'None' }).routing, {});
 });

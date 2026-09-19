@@ -3,7 +3,7 @@
 # TauriTavern Linux installer.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
+#   curl -fsSL https://get.tauritavern.com/linux.sh | sh
 #   sh scripts/install-linux.sh --dry-run
 #
 # Keep all side effects behind main(). A truncated download therefore cannot run
@@ -250,6 +250,7 @@ detect_system() {
 
     ID=""
     VERSION_ID=""
+    VERSION_CODENAME=""
     PRETTY_NAME=""
     # /etc/os-release is supplied by the operating system and is the canonical
     # distribution identity used by the supported package managers.
@@ -266,10 +267,13 @@ detect_system() {
 
     case "$ID" in
         debian)
-            [ -n "${VERSION_ID:-}" ] || die "Debian VERSION_ID is missing."
-            numeric_version_parts "$VERSION_ID"
-            [ "$VERSION_MAJOR" -ge 12 ] ||
-                die "Debian $VERSION_ID is unsupported; Debian 12 or later is required."
+            if [ -n "${VERSION_ID:-}" ]; then
+                numeric_version_parts "$VERSION_ID"
+                [ "$VERSION_MAJOR" -ge 12 ] ||
+                    die "Debian $VERSION_ID is unsupported; Debian 12 or later is required."
+            else
+                print_warning "Debian ${VERSION_CODENAME:-testing/unstable} does not report VERSION_ID; continuing as a rolling release."
+            fi
             PACKAGE_SYSTEM="apt"
             ;;
         ubuntu)

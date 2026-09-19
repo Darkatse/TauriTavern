@@ -30,8 +30,8 @@ export function registerSettingsRoutes(router, context, { jsonResponse }) {
     });
 
     router.post('/api/settings/save', async ({ body }) => {
-        await context.safeInvoke('save_user_settings', { settings: body || {} });
-        return jsonResponse({ result: 'ok' });
+        const result = await context.safeInvoke('save_user_settings', { settings: body || {} });
+        return jsonResponse(result);
     });
 
     router.post('/api/settings/patch', async ({ body }) => {

@@ -1,4 +1,5 @@
 import { invoke, isTauri as isTauriRuntime } from '../../tauri-bridge.js';
+import { eventSource, event_types } from '../../scripts/events.js';
 import { createTauriMainContext } from './context.js';
 import { createDownloadBridge } from './download-bridge.js';
 import { createInterceptors } from './interceptors.js';
@@ -20,14 +21,20 @@ import { extractErrorText, resolveHostErrorResponse } from './kernel/host-error-
 import { isAbortError } from './kernel/abort-error.js';
 import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
 import { installWorldInfoGlobalSelectorSelect2Enforcer } from './adapters/st/world-info-global-selector-select2-enforcer.js';
+import {
+    installDesktopFullscreenShortcut,
+    leaveDesktopFullscreenForShutdown,
+} from './adapters/window/desktop-fullscreen-shortcut.js';
 import { installChatApi } from './api/chat.js';
 import { installChatSurfaceApi } from './api/chat-surface.js';
 import { installCharacterCardsApi } from './api/character-cards.js';
 import { installAgentApi } from './api/agent.js';
 import { installDevApi } from './api/dev.js';
 import { installExtensionStoreApi } from './api/extension-store.js';
+import { installDbApi } from './api/db.js';
 import { installLayoutApi } from './api/layout.js';
 import { installLlmConnectionsApi } from './api/llm-connection.js';
+import { installMcpApi } from './api/mcp.js';
 import { installSkillApi } from './api/skill.js';
 import { installWorldInfoApi } from './api/world-info.js';
 import { initializeTauriIntegration } from './bootstrap/initialize-tauri-integration.js';
@@ -43,6 +50,7 @@ import {
 import { registerRoutes } from './routes/index.js';
 import { isEmbeddedRuntimeTakeoverDisabled } from './services/embedded-runtime/embedded-runtime-profile-state.js';
 import { installFrontendLogCapture, setFrontendLogBackendForwardingEnabled } from './services/dev-logging/frontend-log-capture.js';
+import { registerLifecycleFlushHandler } from './services/lifecycle/lifecycle-flush-service.js';
 import { preinstallPanelRuntime } from './services/panel-runtime/preinstall.js';
 let bootstrapped = false;
 const HOST_ABI_VERSION = 1;
@@ -268,12 +276,16 @@ export function bootstrapTauriMain() {
 
     installFrontendLogCapture();
     installDialogPolyfillCoverage();
+    if (!isMobile) {
+        installDesktopFullscreenShortcut();
+        registerLifecycleFlushHandler('desktop-fullscreen', leaveDesktopFullscreenForShutdown);
+    }
 
     installBackNavigationBridge();
     installNativeShareBridge();
 
     const context = createTauriMainContext({ invoke });
-    installHostAbi(context); installLayoutApi(context); installChatApi(context); installChatSurfaceApi(); installCharacterCardsApi(context); installAgentApi(context); installLlmConnectionsApi(context); installSkillApi(context); installDevApi(context); installExtensionStoreApi(context); installWorldInfoApi();
+    installHostAbi(context); installLayoutApi(context); installChatApi(context); installChatSurfaceApi(); installCharacterCardsApi(context); installAgentApi(context); installLlmConnectionsApi(context); installMcpApi(context); installSkillApi(context); installDevApi(context); installExtensionStoreApi(context); installDbApi(context); installWorldInfoApi();
     installMainApiOptionParking();
     installWorldInfoGlobalSelectorSelect2Enforcer();
     if (perfEnabled) {
@@ -365,6 +377,8 @@ export function bootstrapTauriMain() {
         installDialogPolyfillCoverage(targetWindow);
         if (isMobile) {
             installMobileRuntimeCompat(targetWindow);
+        } else {
+            installDesktopFullscreenShortcut(targetWindow);
         }
     };
     installSameOriginWindowPatches(interceptors, downloadBridge, {
@@ -396,8 +410,12 @@ export function bootstrapTauriMain() {
     runAfterTauriReady(() => import('../../scripts/tauri/setting/setting-panel.js')
         .then(({ installTauriTavernSettingsPanel }) => installTauriTavernSettingsPanel())
         .catch((error) => { console.warn('TauriTavern: Failed to load settings panels:', error); }));
-    runAfterTauriReady(() => import('../../scripts/tauri/regex/native-regex-settings.js')
-        .then(({ installNativeRegexBackendSetting }) => installNativeRegexBackendSetting()));
+    // This panel imports application state as well as rendering it.
+    eventSource.once(event_types.APP_READY, () => {
+        void import('../../scripts/tauri/generation-params/panel.js')
+            .then(({ installGenerationParamsPanel }) => installGenerationParamsPanel())
+            .catch((error) => { console.error('TauriTavern: Failed to install generation parameter panel:', error); });
+    });
     runAfterTauriReady(() => import('./services/dynamic-theme/install.js')
         .then(({ installDynamicTheme }) => installDynamicTheme()));
     if (!isEmbeddedRuntimeTakeoverDisabled()) {

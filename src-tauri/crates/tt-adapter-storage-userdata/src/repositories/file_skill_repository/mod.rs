@@ -16,8 +16,10 @@ mod write;
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -42,6 +44,7 @@ const MAX_ZIP_COMPRESSION_RATIO: u64 = 100;
 pub struct FileSkillRepository {
     pub(super) root: PathBuf,
     mutation_lock: Mutex<()>,
+    discovered_archives: Mutex<HashMap<String, Arc<materialize::DiscoveredArchive>>>,
 }
 
 impl FileSkillRepository {
@@ -49,6 +52,7 @@ impl FileSkillRepository {
         Self {
             root,
             mutation_lock: Mutex::new(()),
+            discovered_archives: Mutex::new(HashMap::new()),
         }
     }
 
@@ -130,6 +134,18 @@ impl SkillRepository for FileSkillRepository {
         package::collect_skill_files(&skill_root)
     }
 
+    async fn discover_imports(
+        &self,
+        input: SkillImportInput,
+    ) -> Result<Vec<SkillImportInput>, DomainError> {
+        self.discover_input(input).await
+    }
+
+    async fn discard_import_archive(&self, path: &str) -> Result<(), DomainError> {
+        self.discovered_archives.lock().await.remove(path);
+        Ok(())
+    }
+
     async fn preview_import(
         &self,
         input: SkillImportInput,
@@ -162,6 +178,15 @@ impl SkillRepository for FileSkillRepository {
         };
         self.install_validated(prepared, validated, request.conflict_strategy)
             .await
+    }
+
+    async fn read_skill_script(
+        &self,
+        scope: SkillScope,
+        name: &str,
+        relative_path: &str,
+    ) -> Result<String, DomainError> {
+        read::read_skill_script(self, &scope, name, relative_path).await
     }
 
     async fn read_skill_file(

@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.host.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "isolatedModules": true,
+    "module": "ESNext",
+    "tsBuildInfoFile": ".cache/tsconfig.ui.tsbuildinfo",
+    "verbatimModuleSyntax": true,
+    "types": ["react", "react-dom"]
+  },
+  "include": [
+    "src/types.d.ts",
+    "src/scripts/extensions/agent-system/src/**/*.ts",
+    "src/scripts/extensions/agent-system/src/**/*.tsx",
+    "src/scripts/extensions/mcp-manager/src/**/*.ts",
+    "src/scripts/extensions/mcp-manager/src/**/*.tsx",
+    "src/scripts/tauri/setting/**/*.ts",
+    "src/scripts/tauri/setting/**/*.tsx"
+  ]
+}

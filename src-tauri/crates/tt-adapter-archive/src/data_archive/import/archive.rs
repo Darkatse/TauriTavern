@@ -2,20 +2,24 @@ use std::fmt::Display;
 use std::fs::{self, File};
 use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::thread;
 
 use flate2::read::GzDecoder;
 use tar::{Archive as TarArchive, EntryType};
 use zip::ZipArchive;
 
 use crate::data_archive::shared::{
-    COPY_BUFFER_BYTES, FILE_IO_BUFFER_BYTES, MAX_ARCHIVE_ENTRIES, PROGRESS_REPORT_MIN_DELTA,
-    ensure_not_cancelled, internal_error, is_macos_resource_fork_path, progress_percent,
+    ByteProgress, COPY_BUFFER_BYTES, FILE_IO_BUFFER_BYTES, MAX_ARCHIVE_ENTRIES,
+    copy_stream_with_cancel, ensure_not_cancelled, internal_error, is_macos_resource_fork_path,
     validate_archive_compression_ratio, validate_archive_entry_limits,
 };
 use crate::zipkit;
 use tt_domain::errors::DomainError;
 
 const CANCELLED_READ_MESSAGE: &str = "Job cancelled";
+const MAX_ZIP_EXTRACTION_WORKERS: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchiveFormat {
@@ -35,6 +39,7 @@ impl ArchiveFormat {
 #[derive(Debug, Clone, Copy)]
 pub struct ScannedArchive {
     pub scanned_entries: usize,
+    pub total_uncompressed_bytes: u64,
 }
 
 pub enum PreparedArchive {
@@ -52,24 +57,88 @@ impl PreparedArchive {
 }
 
 pub struct ZipImportArchive {
-    archive: ZipArchive<BufReader<File>>,
-    scanned_entries: usize,
+    archives: Vec<ZipArchive<File>>,
+    scanned_archive: ScannedArchive,
+    entries: Vec<ZipEntryPlan>,
 }
 
 impl ZipImportArchive {
     fn scanned_archive(&self) -> ScannedArchive {
-        ScannedArchive {
-            scanned_entries: self.scanned_entries,
-        }
+        self.scanned_archive
     }
 
-    pub fn read_entries(
-        &mut self,
+    pub fn stage(
+        self,
+        raw_root: &Path,
+        include: &dyn Fn(&Path) -> bool,
+        report_progress: &mut dyn FnMut(&str, f32, &str),
         is_cancelled: &dyn Fn() -> bool,
-        visit: &mut dyn FnMut(ArchiveReadEntry<'_>) -> Result<(), DomainError>,
-    ) -> Result<(), DomainError> {
-        read_zip_entries(&mut self.archive, is_cancelled, visit)
+    ) -> Result<StagedArchive, DomainError> {
+        ensure_not_cancelled(is_cancelled)?;
+        report_progress("extracting", 15.0, "Extracting archive data");
+
+        let Self {
+            mut archives,
+            scanned_archive,
+            entries,
+        } = self;
+        let payload_root = raw_root.join("payloads");
+        let mut staged_entries = Vec::new();
+        let mut files = Vec::new();
+
+        for entry in entries {
+            ensure_not_cancelled(is_cancelled)?;
+            if !include(&entry.path) {
+                continue;
+            }
+
+            if entry.is_dir {
+                staged_entries.push(StagedEntry::Directory { path: entry.path });
+            } else {
+                let payload_path = payload_root.join(entry.index.to_string());
+                files.push(ZipFileStage {
+                    index: entry.index,
+                    payload_path: payload_path.clone(),
+                });
+                staged_entries.push(StagedEntry::File {
+                    path: entry.path,
+                    payload_path,
+                });
+            }
+        }
+
+        let mut progress = ByteProgress::new(scanned_archive.total_uncompressed_bytes, 15.0, 90.0);
+        if !files.is_empty() {
+            fs::create_dir_all(&payload_root).map_err(|error| {
+                internal_error("Failed to create raw archive payload directory", error)
+            })?;
+            archives.truncate(archives.len().min(files.len()));
+            stage_zip_files(
+                archives,
+                &files,
+                &mut progress,
+                report_progress,
+                is_cancelled,
+            )?;
+        }
+
+        progress.complete("extracting", "Archive extracted", report_progress);
+        Ok(StagedArchive {
+            scanned_archive,
+            entries: staged_entries,
+        })
     }
+}
+
+struct ZipEntryPlan {
+    index: usize,
+    path: PathBuf,
+    is_dir: bool,
+}
+
+struct ZipFileStage {
+    index: usize,
+    payload_path: PathBuf,
 }
 
 pub struct StagedArchive {
@@ -98,28 +167,6 @@ impl StagedEntry {
         match self {
             Self::Directory { path } | Self::File { path, .. } => path,
         }
-    }
-}
-
-pub enum ArchiveReadEntry<'a> {
-    Directory {
-        path: PathBuf,
-    },
-    File {
-        path: PathBuf,
-        reader: &'a mut dyn Read,
-    },
-}
-
-impl ArchiveReadEntry<'_> {
-    pub fn path(&self) -> &Path {
-        match self {
-            Self::Directory { path } | Self::File { path, .. } => path,
-        }
-    }
-
-    pub fn is_dir(&self) -> bool {
-        matches!(self, Self::Directory { .. })
     }
 }
 
@@ -152,13 +199,37 @@ pub fn prepare_archive_for_import(
     archive_file
         .seek(SeekFrom::Start(0))
         .map_err(|error| internal_error("Failed to seek archive file", error))?;
-    let archive_reader = BufReader::with_capacity(FILE_IO_BUFFER_BYTES, archive_file);
-    match ZipArchive::new(archive_reader) {
+    match ZipArchive::new(archive_file) {
         Ok(mut archive) => {
-            let scanned_archive = scan_zip_archive(&mut archive, is_cancelled, visit)?;
+            let name_encoding = detect_zip_entry_name_encoding(&mut archive, is_cancelled)?;
+            let (scanned_archive, entries) =
+                scan_zip_archive(&mut archive, name_encoding, is_cancelled, visit)?;
+            let worker_count =
+                zip_worker_count(entries.iter().filter(|entry| !entry.is_dir).count());
+            let metadata = archive.metadata();
+            let mut archives = Vec::with_capacity(worker_count);
+            archives.push(archive);
+            for _ in 1..worker_count {
+                let file = match File::open(archive_path) {
+                    Ok(file) => file,
+                    Err(error) => {
+                        tracing::warn!(
+                            "Failed to open an additional ZIP reader; continuing with {} worker(s): {}",
+                            archives.len(),
+                            error
+                        );
+                        break;
+                    }
+                };
+                // SAFETY: the import contract keeps archive_path bound to the same unchanged ZIP
+                // while readers are opened, and keeps its bytes unchanged while they are read.
+                archives
+                    .push(unsafe { ZipArchive::unsafe_new_with_metadata(file, metadata.clone()) });
+            }
             Ok(PreparedArchive::Zip(ZipImportArchive {
-                archive,
-                scanned_entries: scanned_archive.scanned_entries,
+                archives,
+                scanned_archive,
+                entries,
             }))
         }
         Err(error) if bytes_read >= 2 && magic[..2] == *b"PK" => {
@@ -176,13 +247,40 @@ pub fn prepare_archive_for_import(
     }
 }
 
-fn scan_zip_archive<R: Read + Seek>(
+fn detect_zip_entry_name_encoding<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     is_cancelled: &dyn Fn() -> bool,
+) -> Result<zipkit::ZipEntryNameEncoding, DomainError> {
+    // Keep the common path in-memory; only mojibake-shaped names need raw ZIP entry metadata.
+    let mojibake_candidates = archive
+        .file_names()
+        .enumerate()
+        .filter_map(|(index, name)| zipkit::has_cp437_box_or_block(name).then_some(index))
+        .collect::<Vec<_>>();
+
+    for index in mojibake_candidates {
+        ensure_not_cancelled(is_cancelled)?;
+        let entry = archive
+            .by_index_raw(index)
+            .map_err(|error| invalid_archive_error("Failed to read zip archive entry", error))?;
+        if zipkit::decodes_as_legacy_gb18030_cjk(&entry) {
+            tracing::info!("Detected legacy GB18030 ZIP entry names");
+            return Ok(zipkit::ZipEntryNameEncoding::Gb18030);
+        }
+    }
+
+    Ok(zipkit::ZipEntryNameEncoding::Utf8OrCp437)
+}
+
+fn scan_zip_archive<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    name_encoding: zipkit::ZipEntryNameEncoding,
+    is_cancelled: &dyn Fn() -> bool,
     visit: &mut dyn FnMut(&Path) -> Result<(), DomainError>,
-) -> Result<ScannedArchive, DomainError> {
+) -> Result<(ScannedArchive, Vec<ZipEntryPlan>), DomainError> {
     let mut scanned_entries = 0usize;
     let mut total_uncompressed_bytes = 0u64;
+    let mut entries = Vec::with_capacity(archive.len());
 
     for index in 0..archive.len() {
         ensure_not_cancelled(is_cancelled)?;
@@ -190,13 +288,14 @@ fn scan_zip_archive<R: Read + Seek>(
         let entry = archive
             .by_index(index)
             .map_err(|error| invalid_archive_error("Failed to read zip archive entry", error))?;
-        let (sanitized_path, entry_name) = zipkit::enclosed_zip_entry_path_with_name(&entry)?;
+        let (sanitized_path, entry_name) =
+            zipkit::enclosed_zip_entry_path_with_encoding(&entry, name_encoding)?;
         if sanitized_path.as_os_str().is_empty() {
             continue;
         }
 
         validate_archive_entry_limits(
-            entry_name,
+            &entry_name,
             entry.size(),
             Some(entry.compressed_size()),
             &mut total_uncompressed_bytes,
@@ -206,38 +305,173 @@ fn scan_zip_archive<R: Read + Seek>(
         ensure_entry_count_limit(scanned_entries)?;
 
         visit(&sanitized_path)?;
+        entries.push(ZipEntryPlan {
+            index,
+            path: sanitized_path,
+            is_dir: entry.is_dir(),
+        });
     }
 
-    Ok(ScannedArchive { scanned_entries })
+    Ok((
+        ScannedArchive {
+            scanned_entries,
+            total_uncompressed_bytes,
+        },
+        entries,
+    ))
 }
 
-fn read_zip_entries<R: Read + Seek>(
-    archive: &mut ZipArchive<R>,
+fn zip_worker_count(file_count: usize) -> usize {
+    thread::available_parallelism()
+        .map_or(1, |available| available.get())
+        .min(MAX_ZIP_EXTRACTION_WORKERS)
+        .min(file_count.max(1))
+}
+
+fn stage_zip_files(
+    archives: Vec<ZipArchive<File>>,
+    files: &[ZipFileStage],
+    progress: &mut ByteProgress,
+    report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
-    visit: &mut dyn FnMut(ArchiveReadEntry<'_>) -> Result<(), DomainError>,
 ) -> Result<(), DomainError> {
-    for index in 0..archive.len() {
-        ensure_not_cancelled(is_cancelled)?;
+    ensure_not_cancelled(is_cancelled)?;
 
-        let mut archive_entry = archive
-            .by_index(index)
-            .map_err(|error| invalid_archive_error("Failed to read zip archive entry", error))?;
-        let sanitized_path = zipkit::enclosed_zip_entry_path(&archive_entry)?;
-        if sanitized_path.as_os_str().is_empty() {
-            continue;
+    let next_file = AtomicUsize::new(0);
+    let stopped = AtomicBool::new(false);
+    let (progress_sender, progress_receiver) = mpsc::channel();
+
+    thread::scope(|scope| {
+        let mut workers = Vec::with_capacity(archives.len());
+        for archive in archives {
+            let progress_sender = progress_sender.clone();
+            workers.push(
+                scope.spawn(|| {
+                    stage_zip_worker(archive, files, &next_file, &stopped, progress_sender)
+                }),
+            );
+        }
+        drop(progress_sender);
+
+        let mut cancelled = false;
+        while let Ok(bytes) = progress_receiver.recv() {
+            if !cancelled && is_cancelled() {
+                stopped.store(true, Ordering::Relaxed);
+                cancelled = true;
+                continue;
+            }
+
+            if !cancelled {
+                progress.advance(
+                    bytes,
+                    "extracting",
+                    "Extracting archive data",
+                    report_progress,
+                );
+            }
         }
 
-        if archive_entry.is_dir() {
-            visit(ArchiveReadEntry::Directory {
-                path: sanitized_path,
-            })?;
-            continue;
+        if !cancelled && is_cancelled() {
+            stopped.store(true, Ordering::Relaxed);
+            cancelled = true;
         }
 
-        visit(ArchiveReadEntry::File {
-            path: sanitized_path,
-            reader: &mut archive_entry,
-        })?;
+        let mut worker_error = None;
+        for worker in workers {
+            match worker.join() {
+                Ok(Err(error)) if worker_error.is_none() => worker_error = Some(error),
+                Ok(_) => {}
+                Err(_) if worker_error.is_none() => {
+                    worker_error = Some(DomainError::InternalError(
+                        "Zip extraction worker panicked".to_string(),
+                    ));
+                }
+                Err(_) => {}
+            }
+        }
+
+        if let Some(error) = worker_error {
+            Err(error)
+        } else if cancelled {
+            Err(DomainError::cancelled(CANCELLED_READ_MESSAGE))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+fn stage_zip_worker(
+    mut archive: ZipArchive<File>,
+    files: &[ZipFileStage],
+    next_file: &AtomicUsize,
+    stopped: &AtomicBool,
+    progress_sender: mpsc::Sender<u64>,
+) -> Result<(), DomainError> {
+    let mut copy_buffer = vec![0u8; COPY_BUFFER_BYTES];
+
+    loop {
+        if stopped.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
+        let file_index = next_file.fetch_add(1, Ordering::Relaxed);
+        let Some(file) = files.get(file_index) else {
+            return Ok(());
+        };
+
+        if let Err(error) = stage_zip_file(
+            &mut archive,
+            file,
+            &mut copy_buffer,
+            stopped,
+            &progress_sender,
+        ) {
+            if stopped.swap(true, Ordering::Relaxed) {
+                return Ok(());
+            }
+            return Err(error);
+        }
+    }
+}
+
+fn stage_zip_file(
+    archive: &mut ZipArchive<File>,
+    file: &ZipFileStage,
+    copy_buffer: &mut [u8],
+    stopped: &AtomicBool,
+    progress_sender: &mpsc::Sender<u64>,
+) -> Result<(), DomainError> {
+    let mut entry = archive
+        .by_index(file.index)
+        .map_err(|error| invalid_archive_error("Failed to read zip archive entry", error))?;
+    let expected_size = entry.size();
+
+    let mut output = File::create(&file.payload_path)
+        .map_err(|error| internal_error("Failed to create raw archive output file", error))?;
+    let mut written = 0u64;
+    let is_stopped = || stopped.load(Ordering::Relaxed);
+    let mut on_bytes_copied = |bytes| {
+        written = written.saturating_add(bytes);
+        let _ = progress_sender.send(bytes);
+    };
+    copy_stream_with_cancel(
+        &mut entry,
+        &mut output,
+        copy_buffer,
+        &is_stopped,
+        &mut on_bytes_copied,
+        "Failed to read zip archive entry data",
+        "Failed to write raw archive output file",
+    )?;
+
+    if written != expected_size {
+        return Err(DomainError::InvalidData(format!(
+            "Zip archive entry size mismatch at index {}: {}/{}",
+            file.index, written, expected_size
+        )));
+    }
+    if written == 0 {
+        let _ = progress_sender.send(0);
     }
 
     Ok(())
@@ -260,23 +494,26 @@ fn stage_tar_archive(
     let archive_file = File::open(archive_path)
         .map_err(|error| internal_error("Failed to open archive file", error))?;
     let archive_reader = BufReader::with_capacity(FILE_IO_BUFFER_BYTES, archive_file);
+    report_progress("extracting", 15.0, "Extracting archive data");
 
     let staged_archive = match format {
         ArchiveFormat::Tar => stage_tar_reader(
-            archive_reader,
+            ProgressReader::new(archive_reader, compressed_size, report_progress),
             format,
             Some(compressed_size),
             raw_root,
-            report_progress,
             is_cancelled,
             visit,
         )?,
         ArchiveFormat::TarGz => stage_tar_reader(
-            GzDecoder::new(archive_reader),
+            GzDecoder::new(ProgressReader::new(
+                archive_reader,
+                compressed_size,
+                report_progress,
+            )),
             format,
             Some(compressed_size),
             raw_root,
-            report_progress,
             is_cancelled,
             visit,
         )?,
@@ -294,14 +531,12 @@ fn stage_tar_reader<R: Read>(
     format: ArchiveFormat,
     compressed_size: Option<u64>,
     raw_root: &Path,
-    report_progress: &mut dyn FnMut(&str, f32, &str),
     is_cancelled: &dyn Fn() -> bool,
     visit: &mut dyn FnMut(&Path) -> Result<(), DomainError>,
 ) -> Result<StagedArchive, DomainError> {
     let mut archive = TarArchive::new(CancellableReader::new(reader, is_cancelled));
     let mut scanned_entries = 0usize;
     let mut total_uncompressed_bytes = 0u64;
-    let mut last_reported_percent = 0.0f32;
     let mut copy_buffer = vec![0u8; COPY_BUFFER_BYTES];
     let payload_root = raw_root.join("payloads");
     let mut staged_entries = Vec::new();
@@ -350,11 +585,6 @@ fn stage_tar_reader<R: Read>(
             if entry_type.is_file() {
                 drain_entry_data_with_cancel(&mut entry, &mut copy_buffer, is_cancelled)?;
             }
-            maybe_report_staging_progress(
-                scanned_entries,
-                &mut last_reported_percent,
-                report_progress,
-            );
             continue;
         }
 
@@ -370,12 +600,13 @@ fn stage_tar_reader<R: Read>(
                 payload_path,
             });
         }
-
-        maybe_report_staging_progress(scanned_entries, &mut last_reported_percent, report_progress);
     }
 
     Ok(StagedArchive {
-        scanned_archive: ScannedArchive { scanned_entries },
+        scanned_archive: ScannedArchive {
+            scanned_entries,
+            total_uncompressed_bytes,
+        },
         entries: staged_entries,
     })
 }
@@ -412,30 +643,43 @@ fn stage_archive_file(
     Ok(())
 }
 
-fn maybe_report_staging_progress(
-    processed_entries: usize,
-    last_reported_percent: &mut f32,
-    report_progress: &mut dyn FnMut(&str, f32, &str),
-) {
-    let percent = progress_percent(
-        processed_entries as u64,
-        MAX_ARCHIVE_ENTRIES as u64,
-        15.0,
-        89.0,
-    );
-    let should_report =
-        processed_entries == 1 || percent - *last_reported_percent >= PROGRESS_REPORT_MIN_DELTA;
-    if !should_report {
-        return;
-    }
-
-    *last_reported_percent = percent;
-    report_progress("extracting", percent, "Extracting archive");
-}
-
 struct CancellableReader<'a, R> {
     inner: R,
     is_cancelled: &'a dyn Fn() -> bool,
+}
+
+struct ProgressReader<'a, R> {
+    inner: R,
+    progress: ByteProgress,
+    report_progress: &'a mut dyn FnMut(&str, f32, &str),
+}
+
+impl<'a, R> ProgressReader<'a, R> {
+    fn new(
+        inner: R,
+        total_bytes: u64,
+        report_progress: &'a mut dyn FnMut(&str, f32, &str),
+    ) -> Self {
+        Self {
+            inner,
+            // Input may reach EOF before tar staging finishes; reserve 90% for completed staging.
+            progress: ByteProgress::new(total_bytes, 15.0, 89.0),
+            report_progress,
+        }
+    }
+}
+
+impl<R: Read> Read for ProgressReader<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let bytes_read = self.inner.read(buffer)?;
+        self.progress.advance(
+            bytes_read as u64,
+            "extracting",
+            "Extracting archive data",
+            self.report_progress,
+        );
+        Ok(bytes_read)
+    }
 }
 
 impl<'a, R> CancellableReader<'a, R> {
@@ -526,4 +770,52 @@ fn ensure_entry_count_limit(scanned_entries: usize) -> Result<(), DomainError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use zip::ZipWriter;
+    use zip::write::SimpleFileOptions;
+
+    use super::*;
+
+    #[test]
+    fn zero_byte_zip_entry_wakes_cancellation_polling() {
+        let root = std::env::temp_dir().join(format!(
+            "tauritavern-empty-zip-cancel-{}",
+            rand::random::<u64>()
+        ));
+        fs::create_dir_all(&root).expect("create test root");
+        let archive_path = root.join("fixture.zip");
+        let mut writer = ZipWriter::new(File::create(&archive_path).expect("create zip"));
+        writer
+            .start_file("empty", SimpleFileOptions::default())
+            .expect("start empty file");
+        writer.finish().expect("finish zip");
+
+        let archive =
+            ZipArchive::new(File::open(&archive_path).expect("open zip")).expect("read zip");
+        let files = [ZipFileStage {
+            index: 0,
+            payload_path: root.join("payload"),
+        }];
+        let checks = AtomicUsize::new(0);
+        let is_cancelled = || checks.fetch_add(1, Ordering::SeqCst) > 0;
+        let mut progress = ByteProgress::new(0, 15.0, 90.0);
+        let mut report_progress = |_stage: &str, _percent: f32, _message: &str| {};
+
+        let error = stage_zip_files(
+            vec![archive],
+            &files,
+            &mut progress,
+            &mut report_progress,
+            &is_cancelled,
+        )
+        .expect_err("empty entry should wake cancellation polling");
+
+        assert!(matches!(error, DomainError::Cancelled(_)));
+        fs::remove_dir_all(root).expect("remove test root");
+    }
 }

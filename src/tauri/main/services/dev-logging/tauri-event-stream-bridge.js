@@ -1,31 +1,39 @@
 // @ts-check
 
-import { listen } from '../../../../tauri-bridge.js';
+import { listen as tauriListen } from '../../../../tauri-bridge.js';
 
 /**
+ * @template T
+ * @param {T} entry
+ * @param {Set<(entry: T) => void>} subscribers
+ */
+function dispatch(entry, subscribers) {
+    for (const handler of subscribers) {
+        handler(entry);
+    }
+}
+
+/**
+ * Reference-counted owner of one host log stream. The stream is enabled while
+ * at least one subscriber is attached and disabled once the last one leaves.
+ *
  * @template T
  * @param {{
  *   safeInvoke: (command: any, args?: any) => Promise<any>;
  *   enableCommand: any;
  *   eventName: string;
+ *   listen?: (eventName: string, handler: (event: { payload: T }) => void) => Promise<() => void>;
  * }} deps
  */
-export function createTauriEventStreamBridge({ safeInvoke, enableCommand, eventName }) {
+export function createTauriEventStreamBridge({ safeInvoke, enableCommand, eventName, listen = tauriListen }) {
     /** @type {Set<(entry: T) => void>} */
     const subscribers = new Set();
     /** @type {(() => void) | null} */
     let unlisten = null;
     /** @type {Promise<void> | null} */
     let starting = null;
-
-    /**
-     * @param {T} entry
-     */
-    function dispatch(entry) {
-        for (const handler of subscribers) {
-            handler(entry);
-        }
-    }
+    /** @type {Promise<void> | null} */
+    let stopping = null;
 
     async function ensureStarted() {
         if (unlisten) {
@@ -38,10 +46,21 @@ export function createTauriEventStreamBridge({ safeInvoke, enableCommand, eventN
         }
 
         starting = (async () => {
+            // A stop for the previous generation may still be in flight; the
+            // re-enable must never overtake its disable. A failed disable
+            // leaves the host stream running, which re-enabling heals, so it
+            // must not block the new start.
+            if (stopping) {
+                try {
+                    await stopping;
+                } catch {
+                    // See above: the stream is re-enabled right after.
+                }
+            }
             await safeInvoke(enableCommand, { enabled: true });
             try {
                 unlisten = await listen(eventName, /** @param {{ payload: T }} event */ (event) => {
-                    dispatch(/** @type {T} */ (event.payload));
+                    dispatch(/** @type {T} */ (event.payload), subscribers);
                 });
             } catch (error) {
                 await safeInvoke(enableCommand, { enabled: false });
@@ -62,7 +81,13 @@ export function createTauriEventStreamBridge({ safeInvoke, enableCommand, eventN
         }
 
         if (starting) {
-            await starting;
+            try {
+                await starting;
+            } catch {
+                // The start failure is reported to its subscriber; there is
+                // nothing left running for this stop to tear down.
+                return;
+            }
             if (subscribers.size > 0) {
                 return;
             }
@@ -74,12 +99,21 @@ export function createTauriEventStreamBridge({ safeInvoke, enableCommand, eventN
 
         const stopListening = unlisten;
         unlisten = null;
-        stopListening();
-        await safeInvoke(enableCommand, { enabled: false });
+        stopping = (async () => {
+            stopListening();
+            await safeInvoke(enableCommand, { enabled: false });
+        })();
+
+        try {
+            await stopping;
+        } finally {
+            stopping = null;
+        }
     }
 
     /**
      * @param {(entry: T) => void} handler
+     * @returns {Promise<() => Promise<void>>} idempotent disposer resolving once the stop it triggered has settled
      */
     async function subscribe(handler) {
         if (typeof handler !== 'function') {
@@ -87,11 +121,23 @@ export function createTauriEventStreamBridge({ safeInvoke, enableCommand, eventN
         }
 
         subscribers.add(handler);
-        await ensureStarted();
-
-        return () => {
+        try {
+            await ensureStarted();
+        } catch (error) {
+            // A rejected start must not leave a ghost subscriber that a later
+            // successful start would dispatch to.
             subscribers.delete(handler);
-            void stopIfIdle();
+            throw error;
+        }
+
+        let disposed = false;
+        return () => {
+            if (disposed) {
+                return stopping ?? Promise.resolve();
+            }
+            disposed = true;
+            subscribers.delete(handler);
+            return stopIfIdle();
         };
     }
 

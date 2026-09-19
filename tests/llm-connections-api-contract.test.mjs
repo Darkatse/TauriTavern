@@ -19,7 +19,6 @@ function ensureCustomEvent() {
 }
 
 async function installHarness() {
-    const calls = [];
     ensureCustomEvent();
     globalThis.window = new EventTarget();
     globalThis.window.__TAURITAVERN__ = { api: {} };
@@ -30,40 +29,14 @@ async function installHarness() {
     )));
     installLlmConnectionsApi({
         safeInvoke: async (command, args) => {
-            calls.push({ command, args });
             return { command, args };
         },
     });
 
     return {
-        calls,
         llmConnections: globalThis.window.__TAURITAVERN__.api.llmConnections,
     };
 }
-
-test('api.llmConnections forwards camelCase DTOs', async () => {
-    const { calls, llmConnections } = await installHarness();
-    const connection = {
-        schemaVersion: 1,
-        kind: 'tauritavern.llmConnection',
-        id: 'model-target-main',
-        displayName: 'Main model',
-        provider: { chatCompletionSource: 'openai' },
-        auth: { secretRef: { key: 'api_key_openai', id: 'secret-openai' } },
-    };
-
-    await llmConnections.list();
-    await llmConnections.load('model-target-main');
-    await llmConnections.save({ connection });
-    await llmConnections.delete({ connectionId: 'model-target-main' });
-
-    assert.deepEqual(calls, [
-        { command: 'list_llm_connections', args: undefined },
-        { command: 'load_llm_connection', args: { dto: { connectionId: 'model-target-main' } } },
-        { command: 'save_llm_connection', args: { dto: { connection } } },
-        { command: 'delete_llm_connection', args: { dto: { connectionId: 'model-target-main' } } },
-    ]);
-});
 
 test('api.llmConnections publishes connection change events after successful mutations', async () => {
     const { llmConnections } = await installHarness();

@@ -11,7 +11,7 @@ use tauri::{AppHandle, Manager, State, WebviewWindow};
 use crate::app::AppState;
 use crate::platform::ios_document_picker::{
     PickDocumentResult, copy_picked_url_to_path, pick_character_card, pick_data_archive,
-    pick_skill_import_archive,
+    pick_skill_import_archives,
 };
 use crate::platform::ios_share_sheet::share_file;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
@@ -34,10 +34,9 @@ pub struct IosImportArchiveResponse {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct IosPickSkillImportArchiveResponse {
+pub struct IosPickSkillImportArchivesResponse {
     pub cancelled: bool,
-    pub file_path: Option<String>,
-    pub file_name: Option<String>,
+    pub file_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -79,7 +78,10 @@ pub async fn ios_import_data_archive_from_picker(
                 file_name: None,
             });
         }
-        PickDocumentResult::Picked(picked) => picked,
+        PickDocumentResult::Picked(picked) => picked
+            .into_iter()
+            .next()
+            .expect("single-selection document picker returned an empty selection"),
     };
 
     let data_archive_service = app_state.services.data_archive_service.clone();
@@ -130,14 +132,14 @@ impl CleanupTempFile {
 
 impl Drop for CleanupTempFile {
     fn drop(&mut self) {
-        if let Err(error) = fs::remove_file(&self.path) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                tracing::warn!(
-                    "Failed to cleanup temporary file {}: {}",
-                    self.path.display(),
-                    error
-                );
-            }
+        if let Err(error) = fs::remove_file(&self.path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                "Failed to cleanup temporary file {}: {}",
+                self.path.display(),
+                error
+            );
         }
     }
 }
@@ -277,54 +279,64 @@ fn cleanup_stale_character_import_files(staging_root: &Path) {
             continue;
         }
 
-        if let Err(error) = fs::remove_file(&path) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                tracing::warn!(
-                    "Failed to cleanup stale iOS character import staging file {}: {}",
-                    path.display(),
-                    error
-                );
-            }
+        if let Err(error) = fs::remove_file(&path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                "Failed to cleanup stale iOS character import staging file {}: {}",
+                path.display(),
+                error
+            );
         }
     }
 }
 
 #[tauri::command]
-pub async fn ios_pick_skill_import_archive(
+pub async fn ios_pick_skill_import_archives(
     app: AppHandle,
     window: WebviewWindow,
-) -> Result<IosPickSkillImportArchiveResponse, CommandError> {
-    log_command("ios_pick_skill_import_archive");
+    multiple: bool,
+) -> Result<IosPickSkillImportArchivesResponse, CommandError> {
+    log_command("ios_pick_skill_import_archives");
 
-    let picked = match pick_skill_import_archive(&window)
+    let picked = match pick_skill_import_archives(&window, multiple)
         .await
         .map_err(map_command_error(
             "Failed to present iOS Skill import picker",
         ))? {
         PickDocumentResult::Cancelled => {
-            return Ok(IosPickSkillImportArchiveResponse {
+            return Ok(IosPickSkillImportArchivesResponse {
                 cancelled: true,
-                file_path: None,
-                file_name: None,
+                file_paths: Vec::new(),
             });
         }
         PickDocumentResult::Picked(picked) => picked,
     };
 
     let app_handle = app.clone();
-    let picked_url = picked.url.clone();
-    let picked_file_name = picked.file_name.clone();
-
-    let target_path =
-        tauri::async_runtime::spawn_blocking(move || -> Result<PathBuf, DomainError> {
-            let target_path = prepare_skill_import_archive_path(&app_handle)?;
-            match copy_picked_url_to_path(&picked_url, &target_path) {
-                Ok(()) => Ok(target_path),
-                Err(error) => {
-                    let _ = fs::remove_file(&target_path);
-                    Err(error)
+    let staged_files =
+        tauri::async_runtime::spawn_blocking(move || -> Result<Vec<PathBuf>, DomainError> {
+            let mut staged = Vec::with_capacity(picked.len());
+            let result = (|| -> Result<(), DomainError> {
+                for picked in picked {
+                    let target_path = prepare_skill_import_archive_path(&app_handle)?;
+                    if let Err(error) = copy_picked_url_to_path(&picked.url, &target_path) {
+                        let _ = fs::remove_file(&target_path);
+                        return Err(error);
+                    }
+                    staged.push(target_path);
                 }
+                Ok(())
+            })();
+
+            if let Err(error) = result {
+                for path in &staged {
+                    let _ = fs::remove_file(path);
+                }
+                return Err(error);
             }
+
+            Ok(staged)
         })
         .await
         .map_err(|error| {
@@ -337,10 +349,13 @@ pub async fn ios_pick_skill_import_archive(
             "Failed to stage iOS Skill import archive",
         ))?;
 
-    Ok(IosPickSkillImportArchiveResponse {
+    let file_paths = staged_files
+        .into_iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    Ok(IosPickSkillImportArchivesResponse {
         cancelled: false,
-        file_path: Some(target_path.to_string_lossy().to_string()),
-        file_name: Some(picked_file_name),
+        file_paths,
     })
 }
 
@@ -363,7 +378,10 @@ pub async fn ios_pick_character_card(
                 file_name: None,
             });
         }
-        PickDocumentResult::Picked(picked) => picked,
+        PickDocumentResult::Picked(picked) => picked
+            .into_iter()
+            .next()
+            .expect("single-selection document picker returned an empty selection"),
     };
 
     let app_handle = app.clone();
@@ -402,8 +420,9 @@ pub async fn ios_pick_character_card(
 async fn present_ios_share_sheet_for_path(
     window: &WebviewWindow,
     file_path: &std::path::Path,
+    suggested_name: Option<&str>,
 ) -> Result<IosShareFileResponse, CommandError> {
-    let share_result = share_file(window, file_path)
+    let share_result = share_file(window, file_path, suggested_name)
         .await
         .map_err(map_command_error("Failed to present iOS share sheet"))?;
 
@@ -501,7 +520,7 @@ pub async fn ios_share_file(
     }
 
     let file_path = resolve_ios_shareable_file_path(&window, file_path)?;
-    present_ios_share_sheet_for_path(&window, &file_path).await
+    present_ios_share_sheet_for_path(&window, &file_path, None).await
 }
 
 #[tauri::command]
@@ -517,13 +536,15 @@ pub async fn ios_share_export_data_archive(
         return Err(CommandError::BadRequest("Missing job_id".to_string()));
     }
 
-    let archive_path = app_state
+    let archive = app_state
         .services
         .data_archive_service
-        .completed_export_archive_path(&job_id)
-        .map_err(map_command_error("Failed to resolve export archive path"))?;
+        .completed_export_archive(&job_id)
+        .map_err(map_command_error("Failed to resolve export archive"))?;
 
-    let share_result = present_ios_share_sheet_for_path(&window, &archive_path).await?;
+    let share_result =
+        present_ios_share_sheet_for_path(&window, &archive.archive_path, Some(&archive.file_name))
+            .await?;
 
     let cleanup_error = match app_state
         .services

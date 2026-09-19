@@ -181,6 +181,11 @@ export function registerLifecycleFlushHandler(name, handler, options) {
     return getDefaultService().register(name, handler, options);
 }
 
+/** @param {string} reason */
+export function flushLifecycleState(reason) {
+    return getDefaultService().flush(reason);
+}
+
 export function installLifecycleFlushHandlers() {
     getDefaultService().install();
 }

@@ -1,7 +1,8 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -10,11 +11,13 @@ use image::{DynamicImage, ImageFormat, RgbaImage};
 use serde_json::{Value, json};
 use tokio::fs;
 use tokio::sync::{Mutex, watch};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use tt_adapter_storage_core::FileChatRepository;
-use tt_adapter_storage_core::FileLlmConnectionRepository;
+use tt_adapter_quickjs::QuickJsScriptEngine;
 use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
+use tt_adapter_storage_core::{FileChatRepository, FileSettingsRepository};
+use tt_adapter_storage_core::{FileLlmConnectionRepository, FileMcpServerRepository};
 use tt_adapter_storage_userdata::FileAgentProfileRepository;
 use tt_adapter_storage_userdata::FileAgentRepository;
 use tt_adapter_storage_userdata::FileCharacterRepository;
@@ -28,16 +31,15 @@ use tt_application::dto::agent_dto::{
     AgentSkillScopeRefsDto, AgentStartRunDto, AgentStartRunOptionsDto,
 };
 use tt_application::dto::character_dto::{
-    BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataFilterDto,
     CharacterLorebookConflictResolution, CheckCharacterLorebookConflictDto, CreateCharacterDto,
-    ExportCharacterContentDto, ExportCharacterDto, ImportCharacterDto, MergeCharacterCardDataDto,
-    ReplaceCharacterDto, ResolveCharacterLorebookConflictDto, UpdateAvatarDto,
-    UpdateCharacterCardDataDto, UpdateCharacterDto,
+    DeleteCharacterDto, ExportCharacterContentDto, ExportCharacterDto, ImportCharacterDto,
+    MergeCharacterCardDataDto, ReplaceCharacterDto, ResolveCharacterLorebookConflictDto,
+    UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
 };
 use tt_application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use tt_application::errors::ApplicationError;
 use tt_application::services::agent_model_gateway::{
-    AgentModelExchange, AgentModelGateway, decode_chat_completion_response,
+    AgentModelExchange, AgentModelGateway, AgentModelStreamDelta, decode_chat_completion_response,
 };
 use tt_application::services::agent_profile_service::{
     AgentProfileResolveInput, AgentProfileService,
@@ -50,23 +52,33 @@ use tt_application::services::agent_workspace_lifecycle_service::{
 use tt_application::services::character_service::CharacterService;
 use tt_application::services::chat_history_coordinator::ChatHistoryCoordinator;
 use tt_application::services::llm_connection_service::LlmConnectionService;
+use tt_application::services::mcp_service::McpService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
 use tt_domain::errors::DomainError;
-use tt_domain::models::agent::profile::{AgentDelegationPolicy, AgentProfileId};
+use tt_domain::models::agent::profile::{
+    AgentDelegationPolicy, AgentProfileId, DEFAULT_AGENT_PROFILE_ID,
+};
 use tt_domain::models::agent::{
     AgentChatRef, AgentModelContentPart, AgentModelRequest, AgentRun, AgentRunEventLevel,
     AgentRunPresentation, AgentRunStatus, WorkspacePath,
 };
 use tt_domain::models::chat::Chat;
+use tt_domain::models::mcp::{
+    McpEndpoint, McpProtocolVersionPreference, McpRequestHeaders, McpToolPermission,
+};
 use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
+use tt_domain::models::settings::UserSettings;
+use tt_ports::mcp::{
+    McpCallIssue, McpCallOutcome, McpDiscoveredTool, McpDiscoveryResult, McpGateway,
+    McpKnownResponse, McpTextContent, McpToolCallResult,
+};
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
 use tt_ports::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
 use tt_ports::repositories::agent_run_repository::{AgentRunEventReadQuery, AgentRunRepository};
 use tt_ports::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
-use tt_ports::repositories::checkpoint_repository::CheckpointRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::repositories::preset_repository::PresetRepository;
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
@@ -75,7 +87,6 @@ use tt_ports::repositories::world_info_repository::WorldInfoRepository;
 const AGENT_CONTRACT_ASYNC_TIMEOUT: Duration = Duration::from_secs(5);
 
 mod agent_runtime;
-mod architecture;
 mod character;
 mod chat_payload_commit;
 mod host_resources;
@@ -85,7 +96,10 @@ struct AgentRuntimeFixture {
     agent_repository: Arc<FileAgentRepository>,
     chat_repository: Arc<FileChatRepository>,
     profile_service: Arc<AgentProfileService>,
+    preset_repository: Arc<TestPresetRepository>,
     model_gateway: Arc<MockAgentModelGateway>,
+    mcp_service: Arc<McpService>,
+    mcp_gateway: Arc<ContractMcpGateway>,
 }
 
 fn temp_root(label: &str) -> PathBuf {
@@ -143,6 +157,7 @@ async fn character_service_with_world_repository(
     let lifecycle_service = Arc::new(AgentWorkspaceLifecycleService::new(
         lifecycle_repository,
         Arc::new(NoActiveAgentRuns),
+        Arc::new(Mutex::new(())),
     ));
 
     (
@@ -187,7 +202,7 @@ fn agent_runtime_fixture_with_results(
     let profile_repository: Arc<dyn AgentProfileRepository> = profile_file_repository.clone();
     let profile_health_repository: Arc<dyn AgentProfileStorageHealthRepository> =
         profile_file_repository;
-    let preset_repository = Arc::new(NullPresetRepository);
+    let preset_repository = Arc::new(TestPresetRepository::default());
     let profile_service = Arc::new(AgentProfileService::new(
         profile_repository,
         profile_health_repository,
@@ -196,20 +211,30 @@ fn agent_runtime_fixture_with_results(
     let skill_service = Arc::new(SkillService::new(Arc::new(FileSkillRepository::new(
         root.join("_tauritavern/skills"),
     ))));
-    let llm_connection_service = Arc::new(LlmConnectionService::new(Arc::new(
-        FileLlmConnectionRepository::new(root.join("_tauritavern/llm-connections")),
-    )));
+    let llm_connection_service = Arc::new(LlmConnectionService::new(
+        Arc::new(FileLlmConnectionRepository::new(
+            root.join("_tauritavern/llm-connections"),
+        )),
+        Arc::new(FileSettingsRepository::new(
+            default_user.clone(),
+            UserSettings::default(),
+        )),
+    ));
     let prompt_assembly_service = Arc::new(PromptAssemblyService::new(
         profile_service.clone(),
-        preset_repository,
+        preset_repository.clone(),
         llm_connection_service.clone(),
     ));
     let model_gateway = Arc::new(MockAgentModelGateway::with_results(responses));
+    let mcp_gateway = Arc::new(ContractMcpGateway::default());
+    let mcp_service = Arc::new(McpService::new(
+        Arc::new(FileMcpServerRepository::new(root.join("_tauritavern/mcp"))),
+        mcp_gateway.clone(),
+    ));
     let service = Arc::new(AgentRuntimeService::new(
         agent_repository.clone() as Arc<dyn AgentRunRepository>,
         agent_repository.clone() as Arc<dyn AgentInvocationRepository>,
         agent_repository.clone() as Arc<dyn WorkspaceRepository>,
-        agent_repository.clone() as Arc<dyn CheckpointRepository>,
         chat_file_repository.clone() as Arc<dyn ChatRepository>,
         chat_file_repository.clone() as Arc<dyn GroupChatRepository>,
         skill_service,
@@ -217,6 +242,8 @@ fn agent_runtime_fixture_with_results(
         profile_service.clone(),
         llm_connection_service,
         prompt_assembly_service,
+        mcp_service.clone(),
+        Arc::new(QuickJsScriptEngine::new()),
     ));
 
     AgentRuntimeFixture {
@@ -224,7 +251,10 @@ fn agent_runtime_fixture_with_results(
         agent_repository,
         chat_repository: chat_file_repository,
         profile_service,
+        preset_repository,
         model_gateway,
+        mcp_service,
+        mcp_gateway,
     }
 }
 
@@ -284,6 +314,28 @@ async fn start_contract_agent_run(
     profile: &tt_domain::models::agent::profile::ResolvedAgentProfile,
     presentation: AgentRunPresentation,
     label: &str,
+    stream: Option<bool>,
+) -> AgentRunHandleDto {
+    start_contract_agent_run_with_options(
+        fixture,
+        profile,
+        label,
+        AgentStartRunOptionsDto {
+            stream,
+            presentation: Some(presentation),
+            ..Default::default()
+        },
+        None,
+    )
+    .await
+}
+
+async fn start_contract_agent_run_with_options(
+    fixture: &AgentRuntimeFixture,
+    profile: &tt_domain::models::agent::profile::ResolvedAgentProfile,
+    label: &str,
+    options: AgentStartRunOptionsDto,
+    frozen_run_input_snapshot: Option<Value>,
 ) -> AgentRunHandleDto {
     let request = chat_request(label);
     let file_name = format!("{label}.jsonl");
@@ -309,13 +361,10 @@ async fn start_contract_agent_run(
                 "contextPolicy": &profile.context,
                 "chatCompletionPayload": request.payload,
             })),
-            frozen_run_input_snapshot: None,
+            frozen_run_input_snapshot,
             generation_intent: None,
             skill_scope_refs: AgentSkillScopeRefsDto::default(),
-            options: AgentStartRunOptionsDto {
-                stream: false,
-                presentation: Some(presentation),
-            },
+            options,
         })
         .await
         .expect("start contract Agent run")
@@ -522,60 +571,62 @@ where
     loop_result
 }
 
-async fn resolve_next_chat_commit_and_persistent_state_update(
+async fn resolve_chat_commits_and_persistent_state_update(
     service: Arc<AgentRuntimeService>,
     repository: Arc<FileAgentRepository>,
     run_id: String,
     message_id: &'static str,
+    rejected_call_ids: &[&str],
 ) -> Result<(), ApplicationError> {
-    let commit_id =
-        wait_for_event_field(&repository, &run_id, "chat_commit_requested", "commitId").await?;
-    service
-        .resolve_chat_commit(AgentResolveChatCommitDto {
-            run_id: run_id.clone(),
-            commit_id,
-            message_id: Some(message_id.to_string()),
-            error: None,
-        })
-        .await?;
-
-    let update_id = wait_for_event_field(
-        &repository,
-        &run_id,
-        "persistent_state_metadata_update_requested",
-        "updateId",
-    )
-    .await?;
-    service
-        .resolve_persistent_state_metadata_update(AgentResolvePersistentStateMetadataUpdateDto {
-            run_id,
-            update_id,
-            error: None,
-        })
-        .await
-}
-
-async fn wait_for_event_field(
-    repository: &FileAgentRepository,
-    run_id: &str,
-    event_type: &str,
-    field: &str,
-) -> Result<String, ApplicationError> {
     tokio::time::timeout(AGENT_CONTRACT_ASYNC_TIMEOUT, async {
+        let mut resolved_commits = 0;
         loop {
-            let events = read_agent_events(repository, run_id).await;
-            if let Some(value) = events
+            let events = read_agent_events(&repository, &run_id).await;
+            for event in events
                 .iter()
-                .find(|event| event.event_type == event_type)
-                .and_then(|event| event.payload[field].as_str())
+                .filter(|event| event.event_type == "chat_commit_requested")
+                .skip(resolved_commits)
             {
-                return Ok(value.to_string());
+                let call_id = event.payload["callId"].as_str().unwrap();
+                let rejected = rejected_call_ids.contains(&call_id);
+                service
+                    .resolve_chat_commit(AgentResolveChatCommitDto {
+                        run_id: run_id.clone(),
+                        commit_id: event.payload["commitId"].as_str().unwrap().to_string(),
+                        message_id: (!rejected).then(|| message_id.to_string()),
+                        error: rejected.then(|| {
+                            "agent.chat_commit_temporarily_unavailable: retry the commit"
+                                .to_string()
+                        }),
+                    })
+                    .await?;
+                resolved_commits += 1;
+            }
+            if let Some(update_id) = events.iter().find_map(|event| {
+                (event.event_type == "persistent_state_metadata_update_requested")
+                    .then(|| event.payload["updateId"].as_str())
+                    .flatten()
+            }) {
+                return service
+                    .resolve_persistent_state_metadata_update(
+                        AgentResolvePersistentStateMetadataUpdateDto {
+                            run_id,
+                            update_id: update_id.to_string(),
+                            error: None,
+                        },
+                    )
+                    .await;
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
     .await
-    .map_err(|_| ApplicationError::InternalError(format!("{event_type}.{field} timed out")))?
+    .map_err(|_| {
+        ApplicationError::InternalError(
+            "agent test timed out waiting for chat commits and persistent metadata update"
+                .to_string(),
+        )
+    })?
 }
 
 async fn wait_for_event_type(repository: &FileAgentRepository, run_id: &str, event_type: &str) {
@@ -695,11 +746,18 @@ impl AgentRunActivity for NoActiveAgentRuns {
     }
 }
 
-struct NullPresetRepository;
+#[derive(Default)]
+struct TestPresetRepository {
+    presets: Mutex<HashMap<(String, PresetType), Preset>>,
+}
 
 #[async_trait]
-impl PresetRepository for NullPresetRepository {
-    async fn save_preset(&self, _preset: &Preset) -> Result<(), DomainError> {
+impl PresetRepository for TestPresetRepository {
+    async fn save_preset(&self, preset: &Preset) -> Result<(), DomainError> {
+        self.presets.lock().await.insert(
+            (preset.name.clone(), preset.preset_type.clone()),
+            preset.clone(),
+        );
         Ok(())
     }
 
@@ -713,18 +771,27 @@ impl PresetRepository for NullPresetRepository {
 
     async fn preset_exists(
         &self,
-        _name: &str,
-        _preset_type: &PresetType,
+        name: &str,
+        preset_type: &PresetType,
     ) -> Result<bool, DomainError> {
-        Ok(false)
+        Ok(self
+            .presets
+            .lock()
+            .await
+            .contains_key(&(name.to_string(), preset_type.clone())))
     }
 
     async fn get_preset(
         &self,
-        _name: &str,
-        _preset_type: &PresetType,
+        name: &str,
+        preset_type: &PresetType,
     ) -> Result<Option<Preset>, DomainError> {
-        Ok(None)
+        Ok(self
+            .presets
+            .lock()
+            .await
+            .get(&(name.to_string(), preset_type.clone()))
+            .cloned())
     }
 
     async fn list_presets(&self, _preset_type: &PresetType) -> Result<Vec<String>, DomainError> {
@@ -740,9 +807,83 @@ impl PresetRepository for NullPresetRepository {
     }
 }
 
+#[derive(Default)]
+struct ContractMcpGateway {
+    calls: Mutex<Vec<(String, serde_json::Map<String, Value>)>>,
+    outcomes: Mutex<VecDeque<McpCallOutcome>>,
+    wait_for_cancel: AtomicBool,
+    call_started: tokio::sync::Notify,
+}
+
+#[async_trait]
+impl McpGateway for ContractMcpGateway {
+    async fn discover_tools(
+        &self,
+        _endpoint: &McpEndpoint,
+        _request_headers: &McpRequestHeaders,
+        _protocol_version: McpProtocolVersionPreference,
+    ) -> Result<McpDiscoveryResult, DomainError> {
+        Ok(McpDiscoveryResult {
+            protocol_version: "2026-07-28".to_string(),
+            server_name: Some("contract-mcp".to_string()),
+            server_version: Some("1.0".to_string()),
+            tools: vec![McpDiscoveredTool {
+                native_name: "issue.create".to_string(),
+                title: Some("Create issue".to_string()),
+                description: Some("Create an issue in the contract fixture.".to_string()),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "title": { "type": "string" } },
+                    "required": ["title"]
+                }),
+                output_schema: None,
+                annotations: json!({ "readOnlyHint": false }),
+            }],
+            diagnostics: Vec::new(),
+        })
+    }
+
+    async fn call_tool(
+        &self,
+        _endpoint: &McpEndpoint,
+        _request_headers: &McpRequestHeaders,
+        _protocol_version: McpProtocolVersionPreference,
+        native_name: &str,
+        arguments: serde_json::Map<String, Value>,
+        cancel: CancellationToken,
+    ) -> Result<McpCallOutcome, DomainError> {
+        self.calls
+            .lock()
+            .await
+            .push((native_name.to_string(), arguments));
+        self.call_started.notify_one();
+        if self.wait_for_cancel.load(Ordering::SeqCst) {
+            cancel.cancelled().await;
+        }
+        if let Some(outcome) = self.outcomes.lock().await.pop_front() {
+            return Ok(outcome);
+        }
+        Ok(McpCallOutcome::KnownResponse(McpKnownResponse::ToolResult(
+            McpToolCallResult {
+                is_error: false,
+                text: vec![McpTextContent {
+                    index: 0,
+                    text: "x".repeat(60_000),
+                }],
+                structured_content: Some(json!({ "issueId": 42 })),
+                diagnostics: Vec::new(),
+            },
+        )))
+    }
+}
+
 struct MockAgentModelGateway {
     responses: Mutex<VecDeque<Result<Value, ApplicationError>>>,
+    invocation_responses: Mutex<HashMap<String, VecDeque<Result<Value, ApplicationError>>>>,
     requests: Mutex<Vec<AgentModelRequest>>,
+    request_count: watch::Sender<usize>,
+    wait_for_cancel_on_request: AtomicUsize,
+    stream_requests: Mutex<Vec<bool>>,
     closed_sessions: Mutex<Vec<String>>,
 }
 
@@ -750,7 +891,11 @@ impl MockAgentModelGateway {
     fn with_results(responses: Vec<Result<Value, ApplicationError>>) -> Self {
         Self {
             responses: Mutex::new(responses.into()),
+            invocation_responses: Mutex::new(HashMap::new()),
             requests: Mutex::new(Vec::new()),
+            request_count: watch::channel(0).0,
+            wait_for_cancel_on_request: AtomicUsize::new(0),
+            stream_requests: Mutex::new(Vec::new()),
             closed_sessions: Mutex::new(Vec::new()),
         }
     }
@@ -762,17 +907,48 @@ impl MockAgentModelGateway {
     async fn closed_sessions(&self) -> Vec<String> {
         self.closed_sessions.lock().await.clone()
     }
+
+    async fn stream_requests(&self) -> Vec<bool> {
+        self.stream_requests.lock().await.clone()
+    }
 }
 
 #[async_trait]
 impl AgentModelGateway for MockAgentModelGateway {
     async fn generate_with_cancel(
         &self,
-        request: AgentModelRequest,
-        _cancel: watch::Receiver<bool>,
+        request: &AgentModelRequest,
+        on_delta: Option<&mut (dyn FnMut(AgentModelStreamDelta) + Send)>,
+        mut cancel: watch::Receiver<bool>,
     ) -> Result<AgentModelExchange, ApplicationError> {
-        self.requests.lock().await.push(request.clone());
-        let response = self.responses.lock().await.pop_front().ok_or_else(|| {
+        self.stream_requests.lock().await.push(on_delta.is_some());
+        let request_count = {
+            let mut requests = self.requests.lock().await;
+            requests.push(request.clone());
+            requests.len()
+        };
+        self.request_count.send_replace(request_count);
+        if self.wait_for_cancel_on_request.load(Ordering::SeqCst) == request_count {
+            cancel.wait_for(|cancelled| *cancelled).await.map_err(|_| {
+                ApplicationError::InternalError("mock cancellation channel closed".to_string())
+            })?;
+            return Err(ApplicationError::Cancelled(
+                "model request cancelled".to_string(),
+            ));
+        }
+        let invocation_id = request.provider_state["invocationId"]
+            .as_str()
+            .unwrap_or("");
+        let response = match self
+            .invocation_responses
+            .lock()
+            .await
+            .get_mut(invocation_id)
+        {
+            Some(responses) => responses.pop_front(),
+            None => self.responses.lock().await.pop_front(),
+        };
+        let response = response.ok_or_else(|| {
             ApplicationError::ValidationError(
                 "mock_model.empty_responses: no response left".to_string(),
             )
@@ -780,7 +956,7 @@ impl AgentModelGateway for MockAgentModelGateway {
         let response = decode_chat_completion_response(response, &request.tools)?;
         Ok(AgentModelExchange {
             response,
-            provider_state: request.provider_state,
+            provider_state: request.provider_state.clone(),
         })
     }
 

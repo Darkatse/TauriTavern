@@ -1,0 +1,107 @@
+import type { SubAgentTask, TimelineDelegationEdge, TimelineProjection } from './RunTimelineContract';
+
+const ROOT_INVOCATION_ID = 'inv_root';
+export const RETURN_TO_PARENT_CONTINUATION = 'return_to_parent';
+export const TRANSFER_CONTROL_CONTINUATION = 'transfer_control';
+
+const SUBAGENT_COLORS: readonly [string, ...string[]] = Object.freeze([
+    '#5fa6a0',
+    '#7c9bd6',
+    '#c59a50',
+    '#bf7493',
+    '#7daf63',
+    '#b084cc',
+]);
+
+export function projectSubAgentTasks(timelineProjection: TimelineProjection): SubAgentTask[] {
+    return timelineProjection.delegationEdges
+        .filter((task) => task.continuation === RETURN_TO_PARENT_CONTINUATION)
+        .filter((task) => task.targetInvocationId)
+        .sort(compareByCreatedAt)
+        .map((task, index) => ({
+            taskId: task.taskId,
+            targetInvocationId: task.targetInvocationId,
+            workspaceKey: task.workspaceKey,
+            status: task.status,
+            color: SUBAGENT_COLORS[index % SUBAGENT_COLORS.length] ?? SUBAGENT_COLORS[0],
+            displayName: task.targetProfileId || task.workspaceKey || task.targetInvocationId,
+        }));
+}
+
+export function eventBelongsToInvocation(event: TauriTavernAgentRunEvent, invocationId: string): boolean {
+    const normalized = normalizeInvocationId(invocationId);
+    const payload = plainObject(event.payload) ? event.payload : {};
+    const type = event.type;
+    const scoped = eventBelongsToCanonicalScope(payload, normalized);
+    if (scoped !== null) {
+        return scoped;
+    }
+
+    if (normalized === ROOT_INVOCATION_ID) {
+        if (type.startsWith('run_')) {
+            return true;
+        }
+        if (type === 'agent_delegate_started') {
+            return normalizeInvocationId(payload.parentInvocationId) === ROOT_INVOCATION_ID;
+        }
+        if (type.startsWith('agent_task_')) {
+            return false;
+        }
+        if (payload.childInvocationId && normalizeInvocationId(payload.childInvocationId) !== ROOT_INVOCATION_ID) {
+            return false;
+        }
+        if (payload.newInvocationId && normalizeInvocationId(payload.newInvocationId) !== ROOT_INVOCATION_ID) {
+            return false;
+        }
+        return normalizeInvocationId(payload.invocationId) === ROOT_INVOCATION_ID;
+    }
+
+    return normalizeInvocationId(payload.invocationId) === normalized
+        || normalizeInvocationId(payload.parentInvocationId) === normalized
+        || normalizeInvocationId(payload.sourceInvocationId) === normalized
+        || normalizeInvocationId(payload.childInvocationId) === normalized
+        || normalizeInvocationId(payload.newInvocationId) === normalized;
+}
+
+export function normalizeInvocationId(value: unknown): string {
+    return stringValue(value).trim() || ROOT_INVOCATION_ID;
+}
+
+export function isRootInvocation(value: unknown): boolean {
+    return normalizeInvocationId(value) === ROOT_INVOCATION_ID;
+}
+
+export function isActiveTaskStatus(status: string): boolean {
+    return status === 'queued' || status === 'running';
+}
+
+function compareByCreatedAt(left: TimelineDelegationEdge, right: TimelineDelegationEdge): number {
+    return String(left.createdAt || '').localeCompare(String(right.createdAt || ''))
+        || String(left.taskId || '').localeCompare(String(right.taskId || ''));
+}
+
+function eventBelongsToCanonicalScope(payload: Record<string, unknown>, invocationId: string): boolean | null {
+    const scope = plainObject(payload?.eventScope) ? payload.eventScope : null;
+    if (!scope) {
+        return null;
+    }
+    const scopeInvocationId = stringValue(scope.invocationId).trim();
+    const relatedInvocationIds = Array.isArray(scope.relatedInvocationIds)
+        ? scope.relatedInvocationIds.map((value) => stringValue(value).trim()).filter(Boolean)
+        : null;
+    if (!scopeInvocationId && relatedInvocationIds == null) {
+        return null;
+    }
+    return (scopeInvocationId ? normalizeInvocationId(scopeInvocationId) === invocationId : false)
+        || (relatedInvocationIds || []).some((value) => normalizeInvocationId(value) === invocationId);
+}
+
+function plainObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string {
+    return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+        ? String(value)
+        : '';
+}

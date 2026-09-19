@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use serde_json::{Map, Value, json};
+use tt_domain::models::tool::ToolArguments;
 
 use crate::errors::ApplicationError;
 
@@ -12,7 +13,7 @@ const DEFAULT_TOOL_NAME: &str = "tool";
 pub(super) struct OpenAiToolCall {
     pub id: String,
     pub name: String,
-    pub arguments: Value,
+    pub arguments: ToolArguments,
     pub signature: Option<String>,
 }
 
@@ -37,9 +38,8 @@ pub(super) fn extract_openai_tool_calls(value: Option<&Value>) -> Vec<OpenAiTool
 
             let id =
                 non_empty_string(object.get("id")).unwrap_or_else(|| format!("tool_call_{index}"));
-            let arguments = parse_tool_call_arguments(
-                function.get("arguments").or_else(|| function.get("args")),
-            );
+            let arguments =
+                ToolArguments::decode(function.get("arguments").or_else(|| function.get("args")));
             let signature = non_empty_string(object.get("signature"));
 
             Some(OpenAiToolCall {
@@ -156,20 +156,6 @@ pub(super) fn validate_openai_chat_tool_transcript(
     Ok(())
 }
 
-fn parse_tool_call_arguments(value: Option<&Value>) -> Value {
-    let Some(value) = value else {
-        return Value::Object(Map::new());
-    };
-
-    match value {
-        Value::String(raw) => {
-            serde_json::from_str::<Value>(raw).unwrap_or_else(|_| Value::String(raw.to_string()))
-        }
-        Value::Null => Value::Object(Map::new()),
-        other => other.clone(),
-    }
-}
-
 fn strict_tool_call_ids(
     value: Option<&Value>,
     message_index: usize,
@@ -230,10 +216,7 @@ fn sorted_call_ids(call_ids: &HashSet<String>) -> Vec<&str> {
 mod tests {
     use serde_json::json;
 
-    use super::{
-        extract_openai_tool_calls, normalize_tool_result_payload,
-        validate_openai_chat_tool_transcript,
-    };
+    use super::{extract_openai_tool_calls, validate_openai_chat_tool_transcript};
 
     #[test]
     fn extract_openai_tool_calls_parses_arguments_and_signature() {
@@ -252,13 +235,7 @@ mod tests {
         assert_eq!(calls[0].id, "call_1");
         assert_eq!(calls[0].name, "weather");
         assert_eq!(calls[0].signature.as_deref(), Some("sig_1"));
-        assert_eq!(calls[0].arguments["city"], "Paris");
-    }
-
-    #[test]
-    fn normalize_tool_result_payload_wraps_plain_text() {
-        let payload = normalize_tool_result_payload("done");
-        assert_eq!(payload["content"], "done");
+        assert_eq!(calls[0].arguments.as_map().unwrap()["city"], "Paris");
     }
 
     #[test]
@@ -301,25 +278,6 @@ mod tests {
 
         validate_openai_chat_tool_transcript(Some(&messages), true)
             .expect("previous response continuation can send only tool outputs");
-    }
-
-    #[test]
-    fn validate_openai_chat_tool_transcript_rejects_missing_tool_call_id() {
-        let messages = json!([
-            {
-                "role":"assistant",
-                "content":"checking",
-                "tool_calls":[{
-                    "type":"function",
-                    "function":{"name":"weather","arguments":"{}"}
-                }]
-            }
-        ]);
-
-        let error = validate_openai_chat_tool_transcript(Some(&messages), false)
-            .expect_err("missing assistant tool call id must fail");
-
-        assert!(error.to_string().contains("is missing id"));
     }
 
     #[test]

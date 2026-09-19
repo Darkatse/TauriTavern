@@ -22,6 +22,8 @@
 
 </div>
 
+<p align="center"><sub>Спасибо <a href="https://github.com/shiyue137">@shiyue137</a> за логотип TauriTavern 💛</sub></p>
+
 ## Скачать
 
 <div align="center">
@@ -42,6 +44,14 @@
 
 <details>
 <summary><b>📦 Установка через менеджер пакетов</b> (Windows · macOS · Linux)</summary>
+
+### Windows · WinGet
+
+Выполните в PowerShell:
+
+```powershell
+winget install --id TauriTavern.TauriTavern
+```
 
 ### Windows · Scoop
 
@@ -79,7 +89,7 @@ yay -S tauritavern-bin
 **Стабильная версия**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
+curl -fsSL https://get.tauritavern.com/linux.sh | sh
 ```
 
 **Nix / NixOS**
@@ -113,7 +123,7 @@ Canary обновляется ежедневно и включает новые 
 **Linux**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+curl -fsSL https://get.tauritavern.com/linux.sh \
   | sh -s -- --channel canary
 ```
 
@@ -126,7 +136,7 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 </details>
 
 > [!TIP]
-> **iOS**: установите приложение через [открытое тестирование в TestFlight](https://testflight.apple.com/join/gpqAdeTm). Требуется iOS 16 или новее. На тестовые сборки распространяются правила и ограничения TestFlight.
+> **iOS**: установите приложение через [открытое тестирование в TestFlight](https://testflight.apple.com/join/gpqAdeTm). Требуется iOS 15.0 или новее. Для iOS 15.0–16.3 предоставляется ограниченная поддержка; полная поддержка начинается с iOS 16.4. На тестовые сборки распространяются правила и ограничения TestFlight.
 >
 > **Портативная версия для Windows**: в системе должен быть установлен WebView2 Runtime.
 
@@ -168,7 +178,7 @@ TauriTavern переносит [SillyTavern](https://github.com/SillyTavern/Sill
 <details>
 <summary><b>🛠 Разработка</b> (требования · основные команды · Tauri Pilot · портативные сборки · FasTools)</summary>
 
-**Требования**: Rust stable (edition 2024) · Node.js 20.19.x или 22.12+ · pnpm · Tauri CLI
+**Требования**: Rust stable (edition 2024) · Node.js 22.13+ · pnpm 11 · Tauri CLI
 
 ```bash
 git clone https://github.com/Darkatse/TauriTavern.git

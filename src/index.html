@@ -11,6 +11,16 @@
     <meta name="darkreader-lock">
     <meta name="robots" content="noindex, nofollow" />
     <meta name="theme-color" content="#333">
+    <script>
+        // Restore the device-local appearance before the application modules load.
+        try {
+            if (localStorage.getItem('tauritavern:oled_background') !== null) {
+                document.documentElement.classList.add('tt-oled-background');
+            }
+        } catch (error) {
+            console.warn('Could not restore OLED background setting:', error);
+        }
+    </script>
     <style>
         /* Put critical CSS here. The rest should go in stylesheets. */
         body {
@@ -43,6 +53,7 @@
     <link rel="stylesheet" type="text/css" href="css/select2-overrides.css">
     <link rel="stylesheet" type="text/css" href="css/mobile-styles.css">
     <link rel="stylesheet" type="text/css" href="css/macros.css">
+    <link rel="stylesheet" type="text/css" href="css/tauritavern-oled-background.css">
     <link rel="stylesheet" type="text/css" href="css/user.css">
     <!-- Module scripts are loaded by init.js; avoid modulepreload on mobile WebView to prevent cached preload failures. -->
     <link rel="icon" type="image/x-icon" href="favicon.ico">
@@ -653,7 +664,7 @@
                                         <input type="number" id="openai_max_tokens" name="openai_max_tokens" class="text_pole" min="1" max="128000" step="1">
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,custom,xai,aimlapi,moonshot,azure_openai">
+                                <div class="range-block" data-source="openai,custom,xai,aimlapi,moonshot,azure_openai" data-custom-api-format="openai_compat,openai_responses,claude_messages,gemini_interactions">
                                     <div class="range-block-title" data-i18n="Multiple swipes per generation">
                                         Multiple swipes per generation
                                     </div>
@@ -698,7 +709,7 @@
                                         </span>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,claude,aws_bedrock,aimlapi,openrouter,ai21,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,siliconflow,minimax,electronhub,chutes,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,zai,workers_ai">
+                                <div class="range-block" data-source="openai,opencode,claude,aws_bedrock,aimlapi,openrouter,ai21,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,siliconflow,minimax,electronhub,chutes,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,zai,workers_ai">
                                     <div class="range-block-title" data-i18n="Temperature">
                                         Temperature
                                     </div>
@@ -711,7 +722,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,aimlapi,openrouter,custom,cohere,perplexity,groq,siliconflow,mistralai,electronhub,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,chutes,workers_ai">
+                                <div class="range-block" data-source="openai,opencode,aimlapi,openrouter,custom,cohere,perplexity,groq,siliconflow,mistralai,electronhub,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,chutes,workers_ai">
                                     <div class="range-block-title" data-i18n="Frequency Penalty">
                                         Frequency Penalty
                                     </div>
@@ -724,7 +735,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,aimlapi,openrouter,custom,cohere,perplexity,groq,siliconflow,mistralai,electronhub,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,chutes,workers_ai">
+                                <div class="range-block" data-source="openai,opencode,aimlapi,openrouter,custom,cohere,perplexity,groq,siliconflow,mistralai,electronhub,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,chutes,workers_ai">
                                     <div class="range-block-title" data-i18n="Presence Penalty">
                                         Presence Penalty
                                     </div>
@@ -737,7 +748,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="claude,aws_bedrock,aimlapi,openrouter,makersuite,vertexai,cohere,perplexity,electronhub,chutes,nanogpt,workers_ai">
+                                <div class="range-block" data-source="opencode,claude,aws_bedrock,aimlapi,openrouter,makersuite,vertexai,cohere,perplexity,electronhub,chutes,nanogpt,workers_ai,custom" data-custom-api-format="claude_messages,gemini_generate_content">
                                     <div class="range-block-title" data-i18n="Top K">
                                         Top K
                                     </div>
@@ -750,7 +761,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,claude,aws_bedrock,aimlapi,openrouter,ai21,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,siliconflow,minimax,electronhub,chutes,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,zai,workers_ai">
+                                <div class="range-block" data-source="openai,opencode,claude,aws_bedrock,aimlapi,openrouter,ai21,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,siliconflow,minimax,electronhub,chutes,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,zai,workers_ai">
                                     <div class="range-block-title" data-i18n="Top P">
                                         Top P
                                     </div>
@@ -1971,7 +1982,7 @@
                                             </span>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="claude,aws_bedrock,makersuite,vertexai">
+                                    <div class="range-block" data-source="opencode,claude,aws_bedrock,makersuite,vertexai,custom" data-custom-api-format="claude_messages,gemini_generate_content">
                                         <label for="use_sysprompt" class="checkbox_label widthFreeExpand">
                                             <input id="use_sysprompt" type="checkbox" />
                                             <span>
@@ -1984,7 +1995,20 @@
                                             </span>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="makersuite,vertexai,aimlapi,openrouter,claude,electronhub,chutes,nanogpt">
+                                    <div class="range-block" data-source="claude,custom" data-custom-api-format="claude_messages">
+                                        <label for="claude_fast_mode" class="checkbox_label widthFreeExpand">
+                                            <input id="claude_fast_mode" type="checkbox" />
+                                            <span>
+                                                <span data-i18n="Fast mode">Fast mode</span>
+                                            </span>
+                                        </label>
+                                        <div class="toggle-description justifyLeft marginBot5">
+                                            <span data-i18n="Request fast mode at premium pricing. Some models may use standard speed and pricing instead.">
+                                                Request fast mode at premium pricing. Some models may use standard speed and pricing instead.
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div class="range-block" data-source="makersuite,vertexai,aimlapi,openrouter,claude,electronhub,chutes,nanogpt,custom" data-custom-api-format="claude_messages,openai_responses,gemini_generate_content">
                                         <label for="openai_enable_web_search" class="checkbox_label flexWrap widthFreeExpand">
                                             <input id="openai_enable_web_search" type="checkbox" />
                                             <span data-i18n="Enable web search">Enable web search</span>
@@ -1998,7 +2022,7 @@
                                             </b>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="openai,cohere,mistralai,custom,claude,aws_bedrock,aimlapi,openrouter,groq,siliconflow,minimax,deepseek,makersuite,vertexai,ai21,xai,pollinations,moonshot,fireworks,cometapi,electronhub,chutes,azure_openai,zai,nanogpt,workers_ai">
+                                    <div class="range-block" data-source="openai,opencode,cohere,mistralai,custom,claude,aws_bedrock,aimlapi,openrouter,groq,siliconflow,minimax,deepseek,makersuite,vertexai,ai21,xai,pollinations,moonshot,fireworks,cometapi,electronhub,chutes,azure_openai,zai,nanogpt,workers_ai">
                                         <label for="openai_function_calling" class="checkbox_label flexWrap widthFreeExpand">
                                             <input id="openai_function_calling" type="checkbox" />
                                             <span data-i18n="Enable function calling">Enable function calling</span>
@@ -2025,6 +2049,11 @@
                                                     <input type="number" min="1" max="50" step="1" data-for="tool_call_recurse_limit" id="tool_call_recurse_limit_counter">
                                                 </div>
                                             </div>
+                                            <label for="strip_old_tool_calls" class="checkbox_label flexWrap widthFreeExpand marginTop10">
+                                                <input id="strip_old_tool_calls" type="checkbox" />
+                                                <span data-i18n="Strip old function call results">Strip old function call results</span>
+                                                <div class="fa-solid fa-circle-info opacity50p margin5" data-i18n="[title]When assembling future prompts, omit tool-calling Assistant messages and their results from before the latest user message. The current recursive chain is kept." title="When assembling future prompts, omit tool-calling Assistant messages and their results from before the latest user message. The current recursive chain is kept."></div>
+                                            </label>
                                         </div>
                                     </div>
                                     <div class="range-block" data-source="openrouter,custom">
@@ -2051,7 +2080,7 @@
                                             </em>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="openai,aimlapi,openrouter,mistralai,makersuite,vertexai,claude,aws_bedrock,custom,xai,pollinations,moonshot,cohere,cometapi,nanogpt,electronhub,azure_openai,zai,siliconflow,chutes,workers_ai">
+                                    <div class="range-block" data-source="openai,aimlapi,openrouter,mistralai,makersuite,vertexai,claude,aws_bedrock,custom,xai,pollinations,moonshot,cohere,cometapi,nanogpt,electronhub,azure_openai,zai,siliconflow,chutes,workers_ai,deepseek">
                                         <label for="openai_media_inlining" class="checkbox_label flexWrap widthFreeExpand">
                                             <input id="openai_media_inlining" type="checkbox" />
                                             <span data-i18n="Send inline media">Send inline media</span>
@@ -2075,7 +2104,7 @@
                                             <strong data-source="makersuite,vertexai" data-i18n="video_inlining_hint_4">Videos must be less than 20 MB and under 1 minute long.</strong>
                                             <strong data-source="makersuite,vertexai" data-i18n="audio_inlining_hint_2">Audio must be less than 20 MB.</strong>
                                         </div>
-                                        <div class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,xai,pollinations,cohere,cometapi,nanogpt,moonshot,aimlapi,openrouter,mistralai,electronhub,azure_openai,zai,siliconflow,chutes,makersuite,vertexai,workers_ai">
+                                        <div class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,xai,pollinations,cohere,cometapi,nanogpt,moonshot,aimlapi,openrouter,mistralai,electronhub,azure_openai,zai,siliconflow,chutes,makersuite,vertexai,workers_ai,deepseek">
                                             <div class="flex-container oneline-dropdown">
                                                 <label for="openai_inline_image_quality" data-i18n="Inline Image Quality">
                                                     Inline Image Quality
@@ -2088,12 +2117,12 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <div id="request_images_block" class="range-block" data-source="makersuite,vertexai">
+                                    <div id="request_images_block" class="range-block" data-source="makersuite,vertexai,custom" data-custom-api-format="gemini_generate_content">
                                         <label for="openai_request_images" class="checkbox_label widthFreeExpand">
                                             <input id="openai_request_images" type="checkbox" />
                                             <span>
                                                 <span data-i18n="Request inline images">Request inline images</span>
-                                                <i class="opacity50p fa-solid fa-circle-info" title="Gemini 2.5 Flash Image / Gemini 3 Pro Image"></i>
+                                                <i class="opacity50p fa-solid fa-circle-info" data-source="makersuite,vertexai" title="Gemini 2.5 Flash Image / Gemini 3 Pro Image"></i>
                                             </span>
                                         </label>
                                         <div class="toggle-description justifyLeft marginBot5">
@@ -2136,7 +2165,7 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="deepseek,aimlapi,openrouter,custom,claude,aws_bedrock,xai,makersuite,vertexai,pollinations,moonshot,mistralai,fireworks,cometapi,electronhub,chutes,azure_openai,nanogpt,zai,workers_ai">
+                                    <div class="range-block" data-source="opencode,deepseek,aimlapi,openrouter,custom,claude,aws_bedrock,xai,makersuite,vertexai,pollinations,moonshot,mistralai,fireworks,cometapi,electronhub,chutes,azure_openai,nanogpt,zai,workers_ai">
                                         <label for="openai_show_thoughts" class="checkbox_label widthFreeExpand">
                                             <input id="openai_show_thoughts" type="checkbox" />
                                             <span data-i18n="Request model reasoning">Request model reasoning</span>
@@ -2150,7 +2179,7 @@
                                             </strong>
                                         </div>
                                     </div>
-                                    <div id="openai_reasoning_effort_block" class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,claude,aws_bedrock,xai,makersuite,vertexai,aimlapi,openrouter,moonshot,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes,nanogpt,deepseek,zai">
+                                    <div id="openai_reasoning_effort_block" class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,opencode,custom,claude,aws_bedrock,xai,makersuite,vertexai,aimlapi,openrouter,moonshot,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes,nanogpt,deepseek,zai">
                                         <div class="flex-container oneline-dropdown" title="Constrains effort on reasoning for reasoning models.&#10;Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning in a response." data-i18n="[title]Constrains effort on reasoning for reasoning models.">
                                             <label for="openai_reasoning_effort">
                                                 <span data-i18n="Reasoning Effort">Reasoning Effort</span>
@@ -2168,19 +2197,19 @@
                                             <div class="toggle-description justifyLeft marginBot5" data-source="openai,custom,xai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes" data-i18n="Reasoning effort is ordered High, XHigh, Maximum. Provider adapters map these project levels to the nearest supported upstream value. Auto does not send an effort level.">
                                                 Reasoning effort is ordered High, XHigh, Maximum. Provider adapters map these project levels to the nearest supported upstream value. Auto does not send an effort level.
                                             </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="deepseek" data-i18n="DeepSeek options: Auto omits the effort field, Minimum through XHigh request high effort, and Maximum requests max effort.">
-                                                DeepSeek options: Auto omits the effort field, Minimum through XHigh request high effort, and Maximum requests max effort.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="deepseek" data-i18n="DeepSeek V4 options: Auto omits the effort field, Minimum and Low request low effort, Medium through XHigh request high effort, and Maximum requests max effort.">
+                                                DeepSeek V4 options: Auto omits the effort field, Minimum and Low request low effort, Medium through XHigh request high effort, and Maximum requests max effort.
                                             </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="zai" data-i18n="Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, XHigh requests max effort, and Maximum requests xhigh effort.">
-                                                Z.AI GLM-5.2 options: Auto omits the effort field, Minimum skips thinking, XHigh requests max effort, and Maximum requests xhigh effort.
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="zai" data-i18n="Z.AI GLM-5.3 models require thinking and accept low, high, or max. XHigh and Maximum both request max. GLM-5.2 accepts the full effort list.">
+                                                Z.AI GLM-5.3 models require thinking and accept low, high, or max. XHigh and Maximum both request max. GLM-5.2 accepts the full effort list.
                                             </div>
                                             <strong class="toggle-description justifyLeft marginBot5" data-source="openrouter">
                                                 Request model reasoning = Off with Reasoning Effort = Minimum disables reasoning entirely on models that support that, but can cause errors with some models.
                                             </strong>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock,vertexai" data-i18n="Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default. Claude 5 models think by default.">
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock,vertexai,custom" data-custom-api-format="claude_messages" data-i18n="Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default. Claude 5 models think by default.">
                                                 Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default. Claude 5 models think by default.
                                             </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="makersuite,vertexai">
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="makersuite,vertexai,custom" data-custom-api-format="gemini_generate_content">
                                                 <span data-i18n="Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.">
                                                     Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.
                                                 </span>
@@ -2191,7 +2220,7 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <div class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom,openrouter,claude">
+                                    <div class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,opencode,custom,openrouter,claude">
                                         <div class="flex-container oneline-dropdown">
                                             <label for="openai_verbosity">
                                                 <span data-i18n="Verbosity">Verbosity</span>
@@ -2205,12 +2234,12 @@
                                             <div class="toggle-description justifyLeft marginBot5" data-i18n="Constrains the verbosity of the model's response.">
                                                 Constrains the verbosity of the model's response.
                                             </div>
-                                            <strong class="toggle-description justifyLeft marginBot5" data-source="claude">
+                                            <strong class="toggle-description justifyLeft marginBot5" data-source="claude,custom" data-custom-api-format="claude_messages">
                                                 On Opus 4.6 / Sonnet 4.6, a non-automatic Reasoning Effort takes precedence over Verbosity.
                                             </strong>
                                         </div>
                                     </div>
-                                    <div class="range-block" data-source="claude">
+                                    <div class="range-block" data-source="claude,custom" data-custom-api-format="claude_messages">
                                         <div class="wide100p">
                                             <div class="flex-container alignItemsCenter">
                                                 <span id="claude_assistant_prefill_text" data-i18n="Assistant Prefill">Assistant Prefill</span>
@@ -2913,6 +2942,7 @@
                                 <option value="custom" data-i18n="Custom (OpenAI-compatible)">Custom (OpenAI-compatible)</option>
                                 <option value="custom_openai_responses" data-i18n="Custom (OpenAI Responses)">Custom (OpenAI Responses)</option>
                                 <option value="custom_claude_messages" data-i18n="Custom (Claude Messages)">Custom (Claude Messages)</option>
+                                <option value="custom_gemini_generate_content" data-i18n="Custom (Gemini generateContent)">Custom (Gemini generateContent)</option>
                                 <option value="custom_gemini_interactions" data-i18n="Custom (Gemini Interactions)">Custom (Gemini Interactions)</option>
                             </optgroup>
                             <optgroup>
@@ -2936,6 +2966,7 @@
                                 <option value="minimax">MiniMax</option>
                                 <option value="moonshot">Moonshot AI</option>
                                 <option value="nanogpt">NanoGPT</option>
+                                <option value="opencode">OpenCode</option>
                                 <option value="openrouter">OpenRouter</option>
                                 <option value="perplexity">Perplexity</option>
                                 <option value="pollinations">Pollinations</option>
@@ -3058,6 +3089,9 @@
                             <div>
                                 <h4 data-i18n="OpenAI Model">OpenAI Model</h4>
                                 <select id="model_openai_select">
+                                    <optgroup label="GPT-6">
+                                        <option value="gpt-6-astra">gpt-6-astra</option>
+                                    </optgroup>
                                     <optgroup label="GPT-5.6">
                                         <option value="gpt-5.6">gpt-5.6</option>
                                         <option value="gpt-5.6-sol">gpt-5.6-sol</option>
@@ -3188,6 +3222,7 @@
                                 <h4 data-i18n="Claude Model">Claude Model</h4>
                                 <select id="model_claude_select">
                                     <optgroup label="Versions">
+                                        <option value="claude-fable-5-1">claude-fable-5-1</option>
                                         <option value="claude-fable-5">claude-fable-5</option>
                                         <option value="claude-mythos-5">claude-mythos-5</option>
                                         <option value="claude-opus-5">claude-opus-5</option>
@@ -3324,6 +3359,12 @@
                             <div>
                                 <h4 data-i18n="Google Model">Google Model</h4>
                                 <select id="model_google_select">
+                                    <optgroup label="Gemini 3.8">
+                                        <option value="gemini-3.8-flash">gemini-3.8-flash</option>
+                                    </optgroup>
+                                    <optgroup label="Gemini 3.7">
+                                        <option value="gemini-3.7-flash">gemini-3.7-flash</option>
+                                    </optgroup>
                                     <optgroup label="Gemini 3.6">
                                         <option value="gemini-3.6-flash">gemini-3.6-flash</option>
                                     </optgroup>
@@ -3513,6 +3554,7 @@
                                 <select id="model_vertexai_select">
                                     <!-- data-mode="full" is for models that require a service account -->
                                     <optgroup label="Claude on Vertex AI">
+                                        <option value="claude-fable-5-1" data-mode="full">claude-fable-5-1</option>
                                         <option value="claude-fable-5" data-mode="full">claude-fable-5</option>
                                         <option value="claude-opus-5" data-mode="full">claude-opus-5</option>
                                         <option value="claude-sonnet-5" data-mode="full">claude-sonnet-5</option>
@@ -3523,6 +3565,12 @@
                                         <option value="claude-opus-4-5@20251101" data-mode="full">claude-opus-4-5@20251101</option>
                                         <option value="claude-sonnet-4-5@20250929" data-mode="full">claude-sonnet-4-5@20250929</option>
                                         <option value="claude-haiku-4-5@20251001" data-mode="full">claude-haiku-4-5@20251001</option>
+                                    </optgroup>
+                                    <optgroup label="Gemini 3.8">
+                                        <option value="gemini-3.8-flash">gemini-3.8-flash</option>
+                                    </optgroup>
+                                    <optgroup label="Gemini 3.7">
+                                        <option value="gemini-3.7-flash">gemini-3.7-flash</option>
                                     </optgroup>
                                     <optgroup label="Gemini 3.6">
                                         <option value="gemini-3.6-flash">gemini-3.6-flash</option>
@@ -3662,6 +3710,7 @@
                             </small>
                             <select id="model_aws_bedrock_select">
                                 <optgroup label="Cross-region inference profiles — US (recommended for Claude 4.x/5.x)">
+                                    <option value="us.anthropic.claude-fable-5-1">us.anthropic.claude-fable-5-1</option>
                                     <option value="us.anthropic.claude-sonnet-5">us.anthropic.claude-sonnet-5</option>
                                     <option value="us.anthropic.claude-fable-5">us.anthropic.claude-fable-5</option>
                                     <option value="us.anthropic.claude-opus-5">us.anthropic.claude-opus-5</option>
@@ -3677,6 +3726,7 @@
                                     <option value="us.anthropic.claude-haiku-4-5-20251001-v1:0">us.anthropic.claude-haiku-4-5-20251001-v1:0</option>
                                 </optgroup>
                                 <optgroup label="Cross-region inference profiles — Global">
+                                    <option value="global.anthropic.claude-fable-5-1">global.anthropic.claude-fable-5-1</option>
                                     <option value="global.anthropic.claude-sonnet-5">global.anthropic.claude-sonnet-5</option>
                                     <option value="global.anthropic.claude-fable-5">global.anthropic.claude-fable-5</option>
                                     <option value="global.anthropic.claude-opus-5">global.anthropic.claude-opus-5</option>
@@ -3689,6 +3739,7 @@
                                     <option value="global.anthropic.claude-haiku-4-5-20251001-v1:0">global.anthropic.claude-haiku-4-5-20251001-v1:0</option>
                                 </optgroup>
                                 <optgroup label="Foundation models — Claude 5.x">
+                                    <option value="anthropic.claude-fable-5-1">anthropic.claude-fable-5-1</option>
                                     <option value="anthropic.claude-sonnet-5">anthropic.claude-sonnet-5</option>
                                     <option value="anthropic.claude-fable-5">anthropic.claude-fable-5</option>
                                     <option value="anthropic.claude-opus-5">anthropic.claude-opus-5</option>
@@ -3832,12 +3883,40 @@
                                 <h4 data-i18n="DeepSeek Model">DeepSeek Model</h4>
                                 <select id="model_deepseek_select">
                                     <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+                                    <option value="deepseek-v4-flash-vision-exp">deepseek-v4-flash-vision-exp</option>
+                                    <option value="deepseek-flash">deepseek-flash</option>
                                     <option value="deepseek-v4-pro">deepseek-v4-pro</option>
                                     <option value="deepseek-chat">deepseek-chat</option>
                                     <option value="deepseek-reasoner">deepseek-reasoner</option>
                                     <option value="deepseek-coder">deepseek-coder</option>
                                 </select>
                             </div>
+                        </div>
+                        <div id="opencode_form" data-source="opencode">
+                            <h4><a href="https://opencode.ai/docs/zen/" target="_blank" rel="noopener noreferrer">OpenCode API Key</a></h4>
+                            <div class="flex-container">
+                                <input id="api_key_opencode" name="api_key_opencode" class="text_pole flex1" value="" type="text" autocomplete="off">
+                                <div title="Manage API keys" data-i18n="[title]Manage API keys" class="menu_button fa-solid fa-key fa-fw manage-api-keys" data-key="api_key_opencode"></div>
+                            </div>
+                            <div data-for="api_key_opencode" class="neutral_warning" data-i18n="For privacy reasons, your API key will be hidden after you click 'Connect'.">
+                                For privacy reasons, your API key will be hidden after you click 'Connect'.
+                            </div>
+                            <h4>OpenCode Service</h4>
+                            <select id="opencode_endpoint">
+                                <option value="zen">Zen</option>
+                                <option value="go">Go</option>
+                            </select>
+                            <h4>API Format</h4>
+                            <select id="opencode_api_format">
+                                <option value="openai_compat">OpenAI Chat Completions</option>
+                                <option value="openai_responses">OpenAI Responses</option>
+                                <option value="claude_messages">Claude Messages</option>
+                                <option value="gemini">Gemini generateContent (Zen only)</option>
+                            </select>
+                            <h4>OpenCode Model</h4>
+                            <select id="model_opencode_select">
+                                <option value="" data-i18n="-- Connect to the API --">-- Connect to the API --</option>
+                            </select>
                         </div>
                         <div id="fireworks_form" data-source="fireworks">
                             <h4 data-i18n="Fireworks AI API Key">Fireworks AI API Key</h4>
@@ -3950,17 +4029,29 @@
                                 <small>
                                     <span data-i18n="Custom endpoint preview">Custom endpoint preview</span><span>:</span> <code id="custom_endpoint_preview"></code>
                                     <br>
-                                    <span data-i18n="Doesn't work? Try adding">Doesn't work? Try adding</span> <code>/v1</code> <span data-i18n="at the end!">at the end!</span>
-                                    <span data-i18n="completions note prefix"></span><code id="custom_endpoint_preview_suffix"></code> <b data-i18n="suffix will be added automatically.">suffix will be added automatically.</b>
+                                    <span id="custom_endpoint_version_hint">
+                                        <span data-i18n="Doesn't work? Try adding">Doesn't work? Try adding</span> <code>/v1</code> <span data-i18n="at the end!">at the end!</span>
+                                        <span data-i18n="completions note prefix"></span><code id="custom_endpoint_preview_suffix"></code> <b data-i18n="suffix will be added automatically.">suffix will be added automatically.</b>
+                                    </span>
+                                    <span id="custom_gemini_endpoint_hint" style="display: none;" data-i18n="custom_gemini_endpoint_hint">Gemini Base URL accepts /v1 or /v1beta; otherwise /v1beta is added. Do not include /models or a generation method.</span>
                                 </small>
                             </div>
-                            <div id="custom_claude_prompt_caching_section" style="display: none;">
+                            <div id="custom_claude_prompt_caching_section" data-source="custom" data-custom-api-format="claude_messages" style="display: none;">
                                 <label class="checkbox_label marginTopBot5" for="custom_claude_prompt_caching">
                                     <input id="custom_claude_prompt_caching" type="checkbox" />
                                     <span data-i18n="Apply Claude Prompt Caching Strategy">Apply Claude Prompt Caching Strategy</span>
                                 </label>
                                 <div class="toggle-description justifyLeft wide100p">
                                     <span data-i18n="Apply Claude Prompt Caching Strategy Description">Opt in only if this endpoint supports Anthropic Claude prompt caching. TauriTavern will add Claude cache breakpoints and the required caching headers for Custom Claude Messages requests.</span>
+                                </div>
+                            </div>
+                            <div id="custom_openai_responses_websocket_section" data-source="custom" data-custom-api-format="openai_responses" style="display: none;">
+                                <label class="checkbox_label marginTopBot5" for="custom_openai_responses_websocket">
+                                    <input id="custom_openai_responses_websocket" type="checkbox" />
+                                    <span data-i18n="Enable Responses WebSocket Mode">Enable Responses WebSocket Mode</span>
+                                </label>
+                                <div class="toggle-description justifyLeft wide100p">
+                                    <span data-i18n="Enable Responses WebSocket Mode Description">Agent only. Opt in only if this endpoint supports the Responses WebSocket protocol and previous_response_id. TauriTavern will keep a run-scoped connection and send incremental inputs.</span>
                                 </div>
                             </div>
                             <h4>
@@ -4020,17 +4111,24 @@
                             </select>
                         </div>
                         <div id="pollinations_form" data-source="pollinations">
-                            <h4>
-                                <a href="https://enter.pollinations.ai/" target="_blank" rel="noopener noreferrer" data-i18n="Pollinations API Key">
-                                    Pollinations API Key
-                                </a>
-                            </h4>
-                            <div class="flex-container">
-                                <input id="api_key_pollinations" name="api_key_pollinations" class="text_pole flex1" value="" type="text" autocomplete="off">
-                                <div title="Manage API keys" data-i18n="[title]Manage API keys" class="menu_button fa-solid fa-key fa-fw manage-api-keys" data-key="api_key_pollinations"></div>
-                            </div>
-                            <div data-for="api_key_pollinations" class="neutral_warning" data-i18n="For privacy reasons, your API key will be hidden after you click 'Connect'.">
-                                For privacy reasons, your API key will be hidden after you click 'Connect'.
+                            <h4 data-i18n="Pollinations Endpoint">Pollinations Endpoint</h4>
+                            <select id="pollinations_endpoint">
+                                <option value="anonymous" data-i18n="Anonymous (No Key)">Anonymous (No Key)</option>
+                                <option value="authenticated" data-i18n="Authenticated (API Key)">Authenticated (API Key)</option>
+                            </select>
+                            <div id="pollinations_key_section">
+                                <h4>
+                                    <a href="https://enter.pollinations.ai/" target="_blank" rel="noopener noreferrer" data-i18n="Pollinations API Key">
+                                        Pollinations API Key
+                                    </a>
+                                </h4>
+                                <div class="flex-container">
+                                    <input id="api_key_pollinations" name="api_key_pollinations" class="text_pole flex1" value="" type="text" autocomplete="off">
+                                    <div title="Manage API keys" data-i18n="[title]Manage API keys" class="menu_button fa-solid fa-key fa-fw manage-api-keys" data-key="api_key_pollinations"></div>
+                                </div>
+                                <div data-for="api_key_pollinations" class="neutral_warning" data-i18n="For privacy reasons, your API key will be hidden after you click 'Connect'.">
+                                    For privacy reasons, your API key will be hidden after you click 'Connect'.
+                                </div>
                             </div>
                             <h4 data-i18n="Pollinations Model">Pollinations Model</h4>
                             <select id="model_pollinations_select">
@@ -4084,6 +4182,8 @@
                             </select>
                             <h4 data-i18n="Z.AI Model">Z.AI Model</h4>
                             <select id="model_zai_select">
+                                <option value="glm-5.3">glm-5.3</option>
+                                <option value="glm-5.3-flash">glm-5.3-flash</option>
                                 <option value="glm-5.2">glm-5.2</option>
                                 <option value="glm-5-turbo">glm-5-turbo</option>
                                 <option value="glm-5v-turbo">glm-5v-turbo</option>
@@ -5280,6 +5380,18 @@
                                     <input id="messageTokensEnabled" type="checkbox" />
                                     <small data-i18n="Show Message Token Count">Message Token Count</small>
                                 </label>
+                                <label for="messageFirstTokenEnabled" class="checkbox_label" title="Time to first streamed result" data-i18n="[title]Time to first streamed result">
+                                    <input id="messageFirstTokenEnabled" type="checkbox" data-setting="message_ttft_enabled" />
+                                    <small data-i18n="Time to First Token (TTFT)">Time to First Token (TTFT)</small>
+                                </label>
+                                <label for="messageTokenRateEnabled" class="checkbox_label" title="Average generation speed: locally counted tokens divided by total generation time" data-i18n="[title]Average generation speed: locally counted tokens divided by total generation time">
+                                    <input id="messageTokenRateEnabled" type="checkbox" data-setting="message_token_rate_enabled" />
+                                    <small data-i18n="Generation Speed">Generation Speed</small>
+                                </label>
+                                <label for="messageCacheEnabled" class="checkbox_label" title="Share of input tokens read from cache in the latest request, when reported by the provider" data-i18n="[title]Share of input tokens read from cache in the latest request, when reported by the provider">
+                                    <input id="messageCacheEnabled" type="checkbox" data-setting="message_cache_enabled" />
+                                    <small data-i18n="Prompt Cache Hit Rate">Prompt Cache Hit Rate</small>
+                                </label>
                                 <label for="compact_input_area" class="checkbox_label" title="Single-row message input area. Mobile only, no effect on PC." data-i18n="[title]Single-row message input area. Mobile only, no effect on PC">
                                     <input id="compact_input_area" type="checkbox" />
                                     <small data-i18n="Compact Input Area (Mobile)">Compact Input Area</small><i class="fa-solid fa-mobile-screen-button"></i>
@@ -5567,6 +5679,10 @@
                                 <label for="auto_scroll_chat_to_bottom" class="checkbox_label">
                                     <input id="auto_scroll_chat_to_bottom" type="checkbox" />
                                     <small data-i18n="Auto-scroll Chat">Auto-scroll Chat</small>
+                                </label>
+                                <label for="spellcheck_enabled" class="checkbox_label">
+                                    <input id="spellcheck_enabled" type="checkbox" />
+                                    <small data-i18n="Spellcheck">Spellcheck</small>
                                 </label>
                                 <label class="checkbox_label" for="auto_save_msg_edits" title="Save edits to messages without confirmation as you type." data-i18n="[title]Save edits to messages without confirmation as you type">
                                     <input id="auto_save_msg_edits" type="checkbox" />
@@ -7540,8 +7656,9 @@
                         <div class="completion_prompt_manager_popup_entry_form_control">
                             <div class="flex-container alignItemsCenter" data-i18n="[external_piece_text]The content of this prompt is pulled from elsewhere and cannot be edited here." external_piece_text="The content of this prompt is pulled from elsewhere and cannot be edited here.">
                                 <div class="flex1">
-                                    <label for="completion_prompt_manager_popup_entry_form_prompt">
+                                    <label class="flex-container alignItemsBaseline" for="completion_prompt_manager_popup_entry_form_prompt">
                                         <span data-i18n="Prompt">Prompt</span>
+                                        <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="completion_prompt_manager_popup_entry_form_prompt" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
                                     </label>
                                 </div>
                                 <div id="completion_prompt_manager_forbid_overrides_block">
@@ -7581,11 +7698,14 @@
                 <div class="swipe_left fa-solid fa-chevron-left"></div>
                 <div class="mes_block">
                     <div class="ch_name flex-container justifySpaceBetween">
-                        <div class="flex-container flex1 alignitemscenter">
+                        <div class="mes_header_info flex-container flex1 alignitemscenter">
                             <div class="flex-container alignItemsBaseline">
                                 <span class="name_text">${characterName}</span>
                                 <i class="mes_ghost fa-solid fa-ghost" title="This message is invisible for the AI" data-i18n="[title]This message is invisible for the AI"></i>
                                 <small class="timestamp"></small>
+                                <small class="mes_generation_info mes_generation_ttft" title="Time to first streamed result" data-i18n="[title]Time to first streamed result"></small>
+                                <small class="mes_generation_info mes_generation_rate" title="Average generation speed: locally counted tokens divided by total generation time" data-i18n="[title]Average generation speed: locally counted tokens divided by total generation time"></small>
+                                <small class="mes_generation_info mes_generation_cache"></small>
                             </div>
                         </div>
                         <div class="mes_buttons">

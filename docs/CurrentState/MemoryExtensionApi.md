@@ -45,7 +45,15 @@ const api = window.__TAURITAVERN__.api.chat;
 
 当前搜索是轻量文本召回，不引入向量库或全量常驻索引。CJK/无空格 query 会扩展 bigram tokens；扩展应使用 `scanLimit` 明确性能边界。
 
-## 5. 每聊天扩展状态
+## 5. 内置 Summarize
+
+TauriTavern 保留 SillyTavern 1.18.0 Summarize 扩展的三种来源：Main API、外部 Extras 与 WebLLM。新建设置默认使用已由 TauriTavern 支持的 Main API；已经显式保存的来源保持不变。Extras 仍是用户配置的外部服务，宿主不伪造同源 `/api/summarize` 模块。
+
+摘要仍按上游逻辑写入 `message.extra.memory` 并通过原有 extension prompt 注入；请求完成时只检查当前聊天身份，避免将结果写入另一个聊天。
+
+聊天混合召回的设计与边界见 `docs/CurrentState/VectorApi.md`。
+
+## 6. 每聊天扩展状态
 
 小状态写入 header 的 namespace：
 
@@ -63,7 +71,7 @@ const api = window.__TAURITAVERN__.api.chat;
 
 消息本身的修改仍应通过 `await getContext().saveChat()` 保存；不要 import `script.js` 内部实现，也不要直接写 JSONL。
 
-## 6. 持续开发约束
+## 7. 持续开发约束
 
 - 保持 `getContext().chat` 完整、有序，不为内存优化改变数据契约。
 - DOM 优化只能发生在渲染层。
@@ -71,7 +79,7 @@ const api = window.__TAURITAVERN__.api.chat;
 - API 错误直接传播，不做 silent fallback。
 - 不新增公开 alias，不把大扩展状态塞进消息体。
 
-## 7. 相关文档
+## 8. 相关文档
 
 - API 参考：`docs/API/Chat.md`
 - 适配指南：`docs/API/Migration.md`

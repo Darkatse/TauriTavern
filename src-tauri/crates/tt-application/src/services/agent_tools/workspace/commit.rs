@@ -1,8 +1,8 @@
 use serde::Serialize;
+use serde_json::{Map, Value};
 
 use super::args::{
-    ensure_visible_workspace_path, object_args, parse_workspace_path, required_trimmed_string_arg,
-    tool_error,
+    ensure_visible_workspace_path, parse_workspace_path, required_trimmed_string_arg, tool_error,
 };
 use super::policy::workspace_access_policy;
 use crate::errors::ApplicationError;
@@ -26,12 +26,11 @@ pub(in crate::services::agent_tools) async fn commit(
     workspace_repository: &dyn WorkspaceRepository,
     run_id: &str,
     call: &ToolInvocation,
+    args: &Map<String, Value>,
     profile: &ResolvedAgentProfile,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let policy = workspace_access_policy(workspace_repository, run_id).await?;
-    let args = object_args(call);
-    let path = args
-        .and_then(|args| required_trimmed_string_arg(args, "path"))
+    let path = required_trimmed_string_arg(args, "path")
         .unwrap_or(profile.output.message_body_path.as_str());
     let path = match parse_workspace_path(path) {
         Ok(path) => path,
@@ -41,7 +40,7 @@ pub(in crate::services::agent_tools) async fn commit(
         return Ok((error.into_tool_result(call), AgentToolEffect::None));
     }
 
-    let mode = match args.and_then(|args| required_trimmed_string_arg(args, "mode")) {
+    let mode = match required_trimmed_string_arg(args, "mode") {
         Some("append") => AgentChatCommitMode::Append,
         Some("replace") | None => AgentChatCommitMode::Replace,
         Some(other) => {
@@ -55,9 +54,7 @@ pub(in crate::services::agent_tools) async fn commit(
             ));
         }
     };
-    let reason = args
-        .and_then(|args| required_trimmed_string_arg(args, "reason"))
-        .map(str::to_string);
+    let reason = required_trimmed_string_arg(args, "reason").map(str::to_string);
 
     Ok((
         AgentToolResult {

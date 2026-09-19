@@ -36,7 +36,7 @@ pub(in crate::services::agent_tools) fn workspace_read_file_descriptor() -> Tool
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_READ_FILE).expect("builtin tool name must be valid"),
         title: Some("Workspace Read File".to_string()),
-        description: Some("Read a visible UTF-8 Agent workspace file with line numbers. Read the exact text you want to replace before using workspace_apply_patch; if a patch fails, fully read the file before retrying. `path` MUST refer to a regular file (e.g. `persist/MEMORY.md`), NOT a directory or workspace root (`persist`, `output`, ...). Call workspace_list_files first when you do not know which file to open.".to_string()),
+        description: Some("Read a visible UTF-8 Agent workspace file with line numbers. Omit start_line and line_count to read the full file; oversized files return a bounded preview with the next line to read. Read the exact text you want to replace before using workspace_apply_patch; if a patch fails, fully read the file before retrying. `path` MUST refer to a regular file (e.g. `persist/MEMORY.md`), NOT a directory or workspace root (`persist`, `output`, ...). Call workspace_list_files first when you do not know which file to open.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -47,19 +47,13 @@ pub(in crate::services::agent_tools) fn workspace_read_file_descriptor() -> Tool
                 },
                 "start_line": {
                     "type": "integer",
-                    "description": "1-based starting line. Omit for a full read."
+                    "minimum": 1,
+                    "description": "1-based starting line. Omit to start at line 1."
                 },
                 "line_count": {
                     "type": "integer",
-                    "description": "Number of lines to read. Omit for a full read."
-                },
-                "start_char": {
-                    "type": "integer",
-                    "description": "Optional 0-based character offset for character-range reads. Do not combine with start_line or line_count."
-                },
-                "max_chars": {
-                    "type": "integer",
-                    "description": "Optional maximum characters for character-range reads. Maximum is 80000."
+                    "minimum": 1,
+                    "description": "Number of lines to read. Omit to read through the end; oversized results return a shorter preview."
                 }
             },
             "required": ["path"]

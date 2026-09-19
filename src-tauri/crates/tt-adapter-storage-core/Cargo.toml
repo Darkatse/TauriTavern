@@ -7,12 +7,15 @@ publish = false
 [dependencies]
 async-trait = "0.1"
 async-compression = { version = "0.4", default-features = false, features = ["tokio", "zstd"] }
+crc32fast = "1"
+flate2 = "1.1.9"
 chrono = { workspace = true }
-icu_collator = "2.1.1"
-icu_locale_core = "2.1.1"
+icu_collator = "2.3"
+icu_locale_core = "2.3"
+indexmap = { version = "2", features = ["serde"] }
 percent-encoding = "2"
 serde = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
 sha2 = { workspace = true }
 sys-locale = "0.3.2"
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "rt", "sync"] }

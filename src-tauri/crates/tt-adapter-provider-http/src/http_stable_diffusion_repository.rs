@@ -7,16 +7,16 @@ use base64::Engine;
 use serde::Deserialize;
 use serde_json::{Map, Number, Value, json};
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::watch;
 use tokio::time::{Duration, sleep};
 use url::Url;
 
-use crate::endpoint_url::append_endpoint_path;
-use crate::file_replace::{replace_file_with_fallback, unique_temp_path};
 use crate::workers_ai_endpoint::workers_ai_run_url;
 use crate::workers_ai_models::{fetch_workers_ai_models, workers_ai_model_name};
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
+use tt_domain::models::endpoint_url::append_endpoint_path;
 use tt_domain::models::filename::sanitize_filename;
 use tt_ports::repositories::stable_diffusion_repository::{
     SdRouteCredentials, SdRouteRequest, SdRouteResponse, SdRouteResponseKind,
@@ -1133,11 +1133,38 @@ async fn comfy_save_workflow(dir: &Path, body: &Value) -> Result<SdRouteResponse
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))?;
     }
-    let temp_path = unique_temp_path(&dest);
-    fs::write(&temp_path, workflow.as_bytes())
+    let temp_path = dir.join(format!(
+        ".tauritavern-{}.tmp",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)
         .await
-        .map_err(|error| DomainError::InternalError(error.to_string()))?;
-    replace_file_with_fallback(&temp_path, &dest).await?;
+        .map_err(|error| {
+            DomainError::InternalError(format!(
+                "Failed to create workflow temp file {}: {error}",
+                temp_path.display()
+            ))
+        })?;
+    let result = async {
+        file.write_all(workflow.as_bytes()).await?;
+        file.flush().await?;
+        file.sync_all().await?;
+        drop(file);
+        fs::rename(&temp_path, &dest).await
+    }
+    .await;
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path).await;
+    }
+    result.map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to save workflow {}: {error}",
+            dest.display()
+        ))
+    })?;
 
     let names = read_workflow_names(dir).await?;
     Ok(json_response(200, json!(names)))
@@ -1697,6 +1724,33 @@ async fn drawthings_generate(
 mod tests {
     use super::optional_nonnegative_number_value;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn comfy_workflow_save_replaces_file_and_preserves_directory_on_failure() {
+        use std::io::Read;
+
+        let root =
+            std::env::temp_dir().join(format!("tauritavern-workflow-{}", uuid::Uuid::new_v4()));
+        let body = json!({ "file_name": "workflow.json", "workflow": "old" });
+        super::comfy_save_workflow(&root, &body).await.unwrap();
+        let target = root.join("workflow.json");
+        let mut old_file = std::fs::File::open(&target).unwrap();
+
+        let body = json!({ "file_name": "workflow.json", "workflow": "new" });
+        super::comfy_save_workflow(&root, &body).await.unwrap();
+        let mut old_contents = String::new();
+        old_file.read_to_string(&mut old_contents).unwrap();
+        assert_eq!(old_contents, "old");
+        assert_eq!(tokio::fs::read(&target).await.unwrap(), b"new");
+        drop(old_file);
+
+        tokio::fs::remove_file(&target).await.unwrap();
+        tokio::fs::create_dir(&target).await.unwrap();
+        super::comfy_save_workflow(&root, &body).await.unwrap_err();
+        assert!(target.is_dir());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
 
     #[test]
     fn workers_ai_seed_omits_negative_values() {

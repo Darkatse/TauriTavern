@@ -1,11 +1,17 @@
 pub mod bundled_template;
 pub mod data_archive;
+pub mod database;
 pub mod external_import;
+pub mod generation_background;
 pub mod host_resource;
+pub mod lan_discovery;
 pub mod lan_sync;
+pub mod mcp;
 pub mod repositories;
 pub mod runtime_paths;
 pub mod settings;
+pub mod skill_script;
 pub mod sync;
 pub mod sync_automation;
+pub mod user_endpoint_access;
 pub mod user_media;

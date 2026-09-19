@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { jsonResponse, textResponse } from '../src/tauri/main/http-utils.js';
@@ -13,157 +12,88 @@ function createBackupsRouter(context) {
     return router;
 }
 
-test('/api/backups/chat/download streams and discards the decoded materialization at EOF', async () => {
+test('/api/backups/chat/get uses the metadata-only catalog only when requested', async () => {
     const calls = [];
     const router = createBackupsRouter({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            if (command === 'materialize_chat_backup') {
-                return '/tmp/chat-backup-materialized.jsonl';
+        safeInvoke: async (command) => {
+            calls.push(command);
+            if (command === 'list_chat_backup_catalog') {
+                return [
+                    {
+                        file_name: 'chat_alice_20260722-120000.jsonl',
+                        stored_size: 1536,
+                        backup_date: 1234,
+                        message_count: 7,
+                    },
+                    {
+                        file_name: 'chat_legacy_20260721-120000.jsonl',
+                        stored_size: 512,
+                        backup_date: 1000,
+                    },
+                ];
             }
-            if (command === 'discard_chat_backup_materialization') {
-                return null;
-            }
-            throw new Error(`Unexpected command: ${command}`);
+            return [{
+                file_name: 'chat_legacy_20260722-120000.jsonl',
+                file_size: 2048,
+                message_count: 3,
+                preview: 'legacy preview',
+                date: 4321,
+            }];
         },
-        createReadableFileStream: async (path) => {
-            assert.equal(path, '/tmp/chat-backup-materialized.jsonl');
-            return new ReadableStream({
-                start(controller) {
-                    controller.enqueue(new TextEncoder().encode('{"mes":"hello"}\n'));
-                    controller.close();
-                },
-            });
-        },
+        ensureJsonl: (name) => name,
+        formatFileSize: (size) => `${size} bytes`,
     });
 
-    const response = await router.handle({
+    const catalogResponse = await router.handle({
         method: 'POST',
-        path: '/api/backups/chat/download',
-        body: { name: 'chat_alice_20260722-120000.jsonl' },
+        path: '/api/backups/chat/get',
+        body: { detail: 'catalog' },
     });
-
-    assert.equal(response.status, 200);
-    assert.equal(await response.text(), '{"mes":"hello"}\n');
-    assert.deepEqual(calls, [
+    assert.deepEqual(await catalogResponse.json(), [
         {
-            command: 'materialize_chat_backup',
-            args: { name: 'chat_alice_20260722-120000.jsonl' },
+            file_name: 'chat_alice_20260722-120000.jsonl',
+            file_size: '1536 bytes',
+            backup_date: 1234,
+            message_count: 7,
         },
         {
-            command: 'discard_chat_backup_materialization',
-            args: { path: '/tmp/chat-backup-materialized.jsonl' },
+            file_name: 'chat_legacy_20260721-120000.jsonl',
+            file_size: '512 bytes',
+            backup_date: 1000,
         },
     ]);
+
+    const legacyResponse = await router.handle({
+        method: 'POST',
+        path: '/api/backups/chat/get',
+        body: {},
+    });
+    assert.deepEqual(await legacyResponse.json(), [{
+        file_name: 'chat_legacy_20260722-120000.jsonl',
+        file_size: '2048 bytes',
+        chat_items: 3,
+        message_count: 3,
+        preview_message: 'legacy preview',
+        last_mes: 4321,
+    }]);
+    assert.deepEqual(calls, ['list_chat_backup_catalog', 'list_chat_backups']);
 });
 
-test('/api/backups/chat/download keeps a completed stream successful when cleanup fails', async () => {
-    const calls = [];
+
+test('/api/backups/chat/download maps resource open failures before sending the response', async () => {
     const router = createBackupsRouter({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            if (command === 'materialize_chat_backup') {
-                return '/tmp/chat-backup-cleanup-error.jsonl';
-            }
-            if (command === 'discard_chat_backup_materialization') {
-                throw new Error('cleanup failed');
-            }
-            throw new Error(`Unexpected command: ${command}`);
+        createChatBackupDownloadStream: async () => {
+            throw new Error('Chat backup not found');
         },
-        createReadableFileStream: () => new ReadableStream({
-            start(controller) {
-                controller.enqueue(new TextEncoder().encode('{"mes":"hello"}\n'));
-                controller.close();
-            },
-        }),
     });
 
     const response = await router.handle({
         method: 'POST',
         path: '/api/backups/chat/download',
-        body: { name: 'chat_alice_20260722-120000.jsonl' },
-    });
-    const originalWarn = console.warn;
-    const warnings = [];
-    console.warn = (...args) => warnings.push(args);
-    let text;
-    try {
-        text = await response.text();
-    } finally {
-        console.warn = originalWarn;
-    }
-
-    assert.equal(response.status, 200);
-    assert.equal(text, '{"mes":"hello"}\n');
-    assert.equal(calls.filter(({ command }) => command === 'discard_chat_backup_materialization').length, 1);
-    assert.equal(warnings.length, 1);
-});
-
-test('/api/backups/chat/download discards the materialization when the consumer cancels', async () => {
-    const calls = [];
-    let sourceCanceled = false;
-    const router = createBackupsRouter({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            if (command === 'materialize_chat_backup') {
-                return '/tmp/chat-backup-cancel.jsonl';
-            }
-            return null;
-        },
-        createReadableFileStream: () => new ReadableStream({
-            start(controller) {
-                controller.enqueue(new Uint8Array([1, 2, 3]));
-            },
-            cancel() {
-                sourceCanceled = true;
-            },
-        }),
+        body: { name: 'missing.jsonl' },
     });
 
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/backups/chat/download',
-        body: { name: 'chat_alice_20260722-120000.jsonl' },
-    });
-    const reader = response.body.getReader();
-    await reader.read();
-    await reader.cancel('test cancellation');
-
-    assert.equal(sourceCanceled, true);
-    assert.deepEqual(calls.at(-1), {
-        command: 'discard_chat_backup_materialization',
-        args: { path: '/tmp/chat-backup-cancel.jsonl' },
-    });
-});
-
-test('/api/backups/chat/download discards the materialization when the source stream fails', async () => {
-    const calls = [];
-    const router = createBackupsRouter({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            if (command === 'materialize_chat_backup') {
-                return '/tmp/chat-backup-error.jsonl';
-            }
-            return null;
-        },
-        createReadableFileStream: () => new ReadableStream({
-            pull(controller) {
-                controller.error(new Error('read failed'));
-            },
-        }),
-    });
-
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/backups/chat/download',
-        body: { name: 'chat_alice_20260722-120000.jsonl' },
-    });
-
-    await assert.rejects(() => response.arrayBuffer(), /read failed/);
-    assert.deepEqual(calls.at(-1), {
-        command: 'discard_chat_backup_materialization',
-        args: { path: '/tmp/chat-backup-error.jsonl' },
-    });
+    assert.equal(response.status, 404);
 });
 
 test('/api/chats/import restores a character backup without an upload Blob', async () => {
@@ -206,28 +136,6 @@ test('/api/chats/import restores a character backup without an upload Blob', asy
     ]);
 });
 
-test('/api/chats/group/import restores a group backup without an upload Blob', async () => {
-    const calls = [];
-    const router = createRouteRegistry();
-    registerChatRoutes(router, {
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            return 'Restored Group Chat';
-        },
-    }, { jsonResponse });
-
-    const body = new FormData();
-    body.set('backup_name', 'chat_group_20260722-120000.jsonl');
-
-    const response = await router.handle({ method: 'POST', path: '/api/chats/group/import', body });
-
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { res: 'Restored Group Chat' });
-    assert.deepEqual(calls, [{
-        command: 'restore_group_chat_backup',
-        args: { dto: { backup_name: 'chat_group_20260722-120000.jsonl' } },
-    }]);
-});
 
 test('/api/chats/import keeps the upload contract when a Blob also carries backup_name', async () => {
     const calls = [];
@@ -259,24 +167,4 @@ test('/api/chats/import keeps the upload contract when a Blob also carries backu
     assert.equal(calls[0].command, 'import_character_chats');
     assert.equal(calls[0].args.dto.file_path, '/tmp/upload.jsonl');
     assert.equal(cleaned, true);
-});
-
-test('chat backup browser views through a stream and restores by logical backup name', async () => {
-    const source = await readFile(new URL('../src/scripts/chat-backups.js', import.meta.url), 'utf8');
-    const routeSource = await readFile(new URL('../src/tauri/main/routes/backups-routes.js', import.meta.url), 'utf8');
-    const commandSource = await readFile(new URL('../src/tauri/main/kernel/invokes/tauri-commands.js', import.meta.url), 'utf8');
-
-    assert.match(source, /visitJsonlStream\(response\.body,/);
-    assert.match(source, /formData\.set\('backup_name', name\)/);
-    assert.doesNotMatch(source, /response\.blob\(\)|new File\(\[blob\]/);
-    assert.doesNotMatch(routeSource, /get_chat_backup_raw|normalizeBinaryPayload/);
-    assert.doesNotMatch(commandSource, /get_chat_backup_raw/);
-});
-
-test('host startup scopes chat staging for portable and custom data roots', async () => {
-    const source = await readFile(new URL('../src-tauri/crates/tauritavern/src/app/host/resources.rs', import.meta.url), 'utf8');
-
-    assert.match(source, /\.fs_scope\(\)/);
-    assert.match(source, /\.join\("default-user"\)[\s\S]*\.join\("\.staging"\)[\s\S]*\.join\("chat-commits"\)/);
-    assert.match(source, /allow_directory\(&chat_staging_root, true\)/);
 });

@@ -51,7 +51,7 @@ fn update_embedded(
 ) -> Result<ExtensionUpdateResult, DomainError> {
     let mut repo = open_embedded(extension_path)?;
     let state = read_managed_state(&repo)?;
-    let http = GitHttp::new(http_clients.git_blocking_client_builder()).map_err(|error| {
+    let http = GitHttp::new(http_clients.git_blocking_client_builder()?).map_err(|error| {
         DomainError::InternalError(format!("Failed to create Git HTTP client: {error}"))
     })?;
     let fetched = fetch_exact(

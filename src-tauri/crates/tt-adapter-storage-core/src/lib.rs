@@ -2,6 +2,7 @@ pub mod chat_directory_identity;
 mod chat_format_importers;
 pub mod file_system;
 mod jsonl_utils;
+pub mod png_metadata;
 pub mod preset_file_naming;
 pub mod repositories;
 pub mod sillytavern_sorting;
@@ -9,7 +10,8 @@ pub mod sillytavern_sorting;
 pub use file_system::DataDirectory;
 pub use repositories::{
     FileAssetRepository, FileChatRepository, FileExtensionStoreRepository, FileGroupRepository,
-    FileLlmConnectionRepository, FilePromptCacheRepository, FileQuickReplyRepository,
-    FileSecretRepository, FileSettingsRepository, FileThemeRepository, FileUserDirectoryRepository,
-    FileUserRepository,
+    FileLlmConnectionRepository, FileMcpServerRepository, FilePromptCacheRepository,
+    FileQuickReplyRepository, FileSecretRepository, FileSettingsRepository, FileThemeRepository,
+    FileUserDirectoryRepository, FileUserEndpointGrantRepository, FileUserRepository,
+    load_tauritavern_settings_blocking,
 };

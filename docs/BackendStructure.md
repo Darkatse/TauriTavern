@@ -54,12 +54,16 @@ src-tauri/
     ├── tt-ports
     ├── tt-application
     ├── tt-adapter-http
+    ├── tt-adapter-mcp
     ├── tt-adapter-provider-http
+    ├── tt-adapter-vector
     ├── tt-adapter-tokenization
     ├── tt-adapter-storage-core
     ├── tt-adapter-storage-userdata
     ├── tt-adapter-media
     ├── tt-adapter-extension
+    ├── tt-adapter-quickjs
+    ├── tt-adapter-triviumdb
     ├── tt-adapter-sync
     └── tt-adapter-archive
 ```
@@ -74,12 +78,16 @@ src-tauri/
 | `tt-ports` | repository / gateway / runtime trait、Host Resource opened-source port |
 | `tt-application` | 用例服务、业务编排、任务协调、policy 执行 |
 | `tt-adapter-http` | 共享 HTTP client pool/profile/helper |
-| `tt-adapter-provider-http` | LLM、SD、Translate、TTS、provider metadata 的 HTTP repository |
+| `tt-adapter-mcp` | RMCP client、Streamable HTTP lifecycle、bounded response、tools/list pagination 与 tool validation |
+| `tt-adapter-provider-http` | LLM、SearXNG、SD、Translate、TTS、embedding、provider metadata 的 HTTP repository |
+| `tt-adapter-triviumdb` | 按命名空间管理 TriviumDB、阻塞执行、原生查询与持久化 |
+| `tt-adapter-vector` | Vector 的 ACID 本地索引与本地 embedding runtime；不承载 provider HTTP |
 | `tt-adapter-tokenization` | tokenizer concrete repository |
-| `tt-adapter-storage-core` | `DataDirectory`、基础文件系统 helper、chat/settings/user/theme/secret/quick reply/prompt cache/asset/llm connection/extension-store |
+| `tt-adapter-storage-core` | `DataDirectory`、基础文件系统与格式 helper、chat/settings/user/theme/secret/quick reply/prompt cache/asset/llm connection/extension-store |
 | `tt-adapter-storage-userdata` | character、world info、agent workspace、agent profile、skill local package store、PNG card metadata |
-| `tt-adapter-media` | avatar/background/user media/image metadata、browser-visible host resource file store |
+| `tt-adapter-media` | persona/avatar/background/user media/image metadata、browser-visible host resource file store |
 | `tt-adapter-extension` | third-party extension 发现、安装、版本检查、更新、分支查询/切换、删除与移动；Gitoxide smart HTTP 与 embedded worktree |
+| `tt-adapter-quickjs` | QuickJS Runtime/Context、内存 ESM 与 JavaScript binding；只接触逻辑模块、JSON、内存 workspace snapshot/delta |
 | `tt-adapter-sync` | LAN Sync、TT-Sync v2 runtime、stores、client/server、sync jobs |
 | `tt-adapter-archive` | data archive import/export executor、archive path safety |
 
@@ -112,6 +120,7 @@ flowchart TB
 
 ```text
 tt-adapter-provider-http    -> tt-adapter-http
+tt-adapter-mcp              -> tt-adapter-http
 tt-adapter-tokenization     -> tt-adapter-http
 tt-adapter-extension        -> tt-adapter-http + tt-adapter-storage-core
 tt-adapter-storage-userdata -> tt-adapter-storage-core
@@ -225,7 +234,8 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 - `tt-adapter-storage-userdata` 承载长期用户数据仓储，例如角色卡、世界书、Agent workspace/profile、Skill package。它关心 data root / user data 语义，而不是泛泛的“文件”。
 - `tt-adapter-extension` 承载 third-party extension 发现、安装、版本检查、更新、分支查询/切换、删除与移动，以及 Git transport、repository 与 worktree 物化边界。扩展仓库不是普通 user data JSON。
 - `tt-adapter-media` 承载浏览器可见的 avatar/background/user media 资源契约。
-- `tt-adapter-provider-http` 和 `tt-adapter-tokenization` 可以复用 `tt-adapter-http`，但 provider 规则不能下沉到通用 HTTP helper。
+- `tt-adapter-quickjs` 只承载 JavaScript 执行语义与内存 binding；Skill、Workspace policy、持久化和 journal 仍由 application 拥有。
+- `tt-adapter-provider-http`、`tt-adapter-mcp` 和 `tt-adapter-tokenization` 可以复用 `tt-adapter-http`，但协议/provider 规则不能下沉到通用 HTTP helper。
 - `tt-adapter-sync` 与 `tt-adapter-archive` 是独立运行时/执行器边界，Tauri UI glue 仍留在 host。
 
 如果一个新 adapter 只是为了两个调用点提前抽象，先不要建 crate。等它有明确 bounded context、独立依赖成本或稳定变化原因时再拆。
@@ -257,10 +267,12 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 | 角色卡、世界书、Agent workspace/profile、Skill package | `tt-adapter-storage-userdata` | skill 是 local package store，不是普通 JSON repo |
 | 第三方扩展安装、更新、发现 | `tt-adapter-extension` | 不归入 storage-userdata |
 | avatar/background/user media/host resource 文件读取 | `tt-adapter-media` | 保持浏览器资源契约 |
-| LLM/SD/Translate/TTS/provider metadata HTTP | `tt-adapter-provider-http` | 复用 `tt-adapter-http` |
+| LLM/SearXNG/SD/Translate/TTS/provider metadata/embedding HTTP | `tt-adapter-provider-http` | 复用 `tt-adapter-http` |
+| Vector 索引与本地 embedding runtime | `tt-adapter-vector` | 独立持久化/推理依赖，不下沉到 storage-core |
 | 通用 HTTP pool/profile/helper | `tt-adapter-http` | 不放 provider 业务规则 |
 | LAN/TT Sync runtime | `tt-adapter-sync` | Tauri event/UI adapter 留 host composition |
 | Data Archive import/export executor | `tt-adapter-archive` | Tauri picker/share 留 host infrastructure |
+| Skill JavaScript 内存执行 | `tt-adapter-quickjs` | 不接触物理路径、Workspace repository 或平台领域模型 |
 
 ## 10. 添加后端能力的最小流程
 
@@ -293,13 +305,17 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 - `OpenAI Settings`
 - `TextGen Settings`
 
-TauriTavern 私有状态放在 `_tauritavern` 下，例如 agent workspace、agent profiles、skills、prompt cache、legacy extension source metadata、LLM connections。
+TauriTavern 用户数据中的私有状态放在 `_tauritavern` 下，例如 agent workspace、agent profiles、skills、prompt cache、legacy extension source metadata、LLM connections。能够授予宿主权限的安全状态不属于用户数据：自定义端点 grant 存在 `app_root/security`，不会随可切换的 `data_root`、备份或导入迁移。
 
 权威代码入口：
 
 - `src-tauri/crates/tt-adapter-storage-core/src/file_system.rs`
 - `src-tauri/crates/tt-domain/src/models/user_directory.rs`
 - 桌面数据目录选择现状见 `docs/CurrentState/DataDirectorySelection.md`
+
+设置分区与迁移归 `tt-adapter-storage-core` 的设置仓储，前端 API 保持完整设置对象。同步约定见 [Sync](CurrentState/Sync.md#独立设置范围)。
+
+文件写入以单文件原子发布为边界，持久化写入在发布前同步文件；失败不回退为覆盖复制。具体保证见[文件系统实现](../src-tauri/crates/tt-adapter-storage-core/src/file_system.rs)。跨 adapter 不为复用文件 helper 引入仓储依赖。
 
 ## 12. 专题文档导航
 
@@ -315,8 +331,10 @@ TauriTavern 私有状态放在 `_tauritavern` 下，例如 agent workspace、age
 | 媒体 Range / browser resource contract | `docs/CurrentState/MediaAssetContract.md` |
 | Logging / Dev observability | `docs/CurrentState/LoggingObservability.md` |
 | Native provider API formats | `docs/CurrentState/NativeApiFormats.md` |
+| Custom endpoint SSRF 与用户授权 | `docs/CurrentState/UserEndpointAccess.md` |
+| Vector 兼容层 | `docs/CurrentState/VectorApi.md` |
 | Sync | `docs/CurrentState/Sync.md` |
-| Agent 总览 | `docs/AgentArchitecture.md` |
+| Agent 总览 | [Agent](Agent/README.md) |
 | Agent 细节 | `docs/Agent/README.md` |
 | iOS policy | `docs/CurrentState/iOSPolicy.md` |
 

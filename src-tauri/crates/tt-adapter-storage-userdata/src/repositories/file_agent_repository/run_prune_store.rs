@@ -68,6 +68,7 @@ impl FileAgentRepository {
         remove_index_file_if_exists(&self.index_run_path(&run.id)?, "agent run index").await?;
         remove_index_file_if_exists(&self.index_run_summary_path(&run.id)?, "agent run summary")
             .await?;
+        self.event_sequences.lock().await.remove(&run.id);
 
         Ok(stats)
     }

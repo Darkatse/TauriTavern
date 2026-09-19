@@ -20,10 +20,10 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | Tauri v2 | 原生应用 shell、WebView、插件、跨平台打包、移动端入口 |
 | Rust stable / edition 2024 | Rust 后端、workspace crate、native integration |
 | Cargo workspace | 后端 crate 边界、依赖方向、focused tests |
-| Node.js `>=22.12.0` | 前端工具链与 guard scripts |
+| Node.js `>=22.13.0` | 前端工具链与 guard scripts |
 | pnpm | JavaScript 包管理与项目脚本 |
-| Rspack | 前端 core/optional vendor bundle 构建 |
-| TypeScript | Tauri Host Kernel 类型检查 |
+| Rspack | 前端 vendor、Agent、Settings 与 first-party React extension 构建 |
+| TypeScript | Tauri Host Kernel 与 first-party React UI 的严格类型检查 |
 
 ## 3. 后端架构
 
@@ -39,6 +39,7 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | `tt-ports` | repository / gateway / runtime trait |
 | `tt-application` | use case、service、job coordinator、policy 编排 |
 | `tt-adapter-http` | 共享 HTTP client pool/profile/helper |
+| `tt-adapter-mcp` | RMCP Streamable HTTP discovery、响应边界、分页与 schema validation |
 | `tt-adapter-provider-http` | LLM、SD、Translate、TTS、provider metadata 的 HTTP repository |
 | `tt-adapter-tokenization` | tokenizer concrete repository |
 | `tt-adapter-storage-core` | `DataDirectory`、基础文件系统 helper、chat/settings/user/theme/secret 等基础存储 |
@@ -57,7 +58,8 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | `tauri` / Tauri plugins | host shell、文件/通知/打开器/对话框/window state/barcode scanner 等平台能力 |
 | `serde` / `serde_json` / `serde_yaml` | DTO、配置、SillyTavern 兼容数据格式 |
 | `tokio` / `tokio-util` | 异步任务、文件 IO、取消与运行时能力 |
-| `reqwest` / `hyper-util` / `tokio-tungstenite` | provider HTTP、stream、移动端 HTTP client 适配 |
+| `reqwest` / `tokio-tungstenite` / `jsonwebtoken` | provider HTTP/stream/WebSocket、Service Account JWT 签名 |
+| `rmcp` / `jsonschema` | MCP lifecycle/protocol 与离线 JSON Schema 2020-12 校验 |
 | `gix` / `gix-transport` | third-party extension Git smart HTTP、embedded repository/worktree |
 | `tracing` / `tracing-subscriber` / `tracing-appender` | 后端日志、过滤、rolling file、Dev observability |
 | `thiserror` | 分层错误类型 |
@@ -85,7 +87,10 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 | DOMPurify | HTML 净化 |
 | Highlight.js | 代码高亮 |
 | localForage | 浏览器侧存储 |
-| Vue | 本项目前端扩展新增引入 |
+| React / React DOM | TauriTavern first-party 状态型 UI 的统一表示层 |
+| strict TypeScript / TSX | React presentation、typed actions 与组件测试 |
+
+first-party React UI 采用 client island，SillyTavern 继续拥有文档与扩展生命周期，Tauri/Rust 与 Host ABI 继续拥有平台能力和数据事实，React 只挂载到独立 extension container。
 
 TauriTavern 自己维护的前端集成层位于 `src/tauri/main/*`，按 `context/kernel/services/adapters/routes` 拆分：
 
@@ -150,8 +155,10 @@ pnpm run check:rust:dev
 
 - `scripts/check-rust-crate-boundaries.mjs` 守住 Rust crate 依赖方向。
 - `scripts/check-frontend-guardrails.mjs` 守住前端注入层边界。
+- `scripts/check-first-party-ui-guardrails.mjs` 守住 React + strict TS/TSX 边界。
 - `scripts/check-logging-boundaries.mjs` 守住 logging target 使用边界。
 - `tsconfig.host.json` 为 Host Kernel 提供 TypeScript 检查。
+- `tsconfig.ui.json` 为 Agent、MCP 与 Tauri Settings owned UI 提供 strict TS/TSX 检查。
 
 ## 9. 平台与分发
 
@@ -176,6 +183,7 @@ pnpm run check:rust:dev
 | 前端集成结构 | `docs/FrontendGuide.md` |
 | Host ABI / 请求拦截 / 资源契约 | `docs/FrontendHostContract.md` |
 | 当前实现状态 | `docs/CurrentState/README.md` |
+| First-party UI 工程基线 | `docs/CurrentState/FirstPartyUI.md` |
 | Linux 分发与 Nix | `docs/CurrentState/LinuxRepository.md` |
 | 扩展 API | `docs/API/README.md` |
-| Agent 架构 | `docs/AgentArchitecture.md` |
+| Agent 架构 | [Agent](Agent/README.md) |

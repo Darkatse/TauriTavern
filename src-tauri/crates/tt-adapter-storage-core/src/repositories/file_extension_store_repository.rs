@@ -4,7 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use crate::file_system::{replace_file_with_fallback, unique_temp_path};
+use crate::file_system::{replace_file, unique_temp_path};
 use tt_domain::errors::DomainError;
 use tt_domain::json_merge::merge_json_value;
 use tt_ports::repositories::extension_store_repository::ExtensionStoreRepository;
@@ -303,7 +303,7 @@ impl ExtensionStoreRepository for FileExtensionStoreRepository {
             ))
         })?;
 
-        replace_file_with_fallback(&temp, &path).await?;
+        replace_file(&temp, &path).await?;
         Ok(())
     }
 
@@ -345,7 +345,7 @@ impl ExtensionStoreRepository for FileExtensionStoreRepository {
             ))
         })?;
 
-        replace_file_with_fallback(&temp, &path).await?;
+        replace_file(&temp, &path).await?;
         Ok(())
     }
 
@@ -525,7 +525,7 @@ impl ExtensionStoreRepository for FileExtensionStoreRepository {
             ))
         })?;
 
-        replace_file_with_fallback(&temp, &path).await?;
+        replace_file(&temp, &path).await?;
         Ok(())
     }
 

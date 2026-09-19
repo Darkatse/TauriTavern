@@ -40,7 +40,7 @@ function createRecord(mountKey, messageId) {
     };
 }
 
-test('managed RuntimeAdmission serializes grants and reuses candidates with fresh leases', () => {
+test('managed RuntimeAdmission swaps at most one registered runtime per frame', () => {
     const scheduler = createScheduler();
     const activations = [];
     const cleanups = [];
@@ -87,11 +87,16 @@ test('managed RuntimeAdmission serializes grants and reuses candidates with fres
 
     const firstASignal = activations[0].signal;
     admission.setDemand(['c']);
-    assert.equal(firstASignal.aborted, true);
-    assert.deepEqual(cleanups, ['test/runtime:a', 'test/runtime:b']);
+    assert.equal(firstASignal.aborted, false);
+    assert.deepEqual(cleanups, []);
     scheduler.flushOne();
-    assert.equal(admission.snapshot().active, 1);
+    assert.equal(firstASignal.aborted, true);
+    assert.deepEqual(cleanups, ['test/runtime:a']);
+    assert.equal(admission.snapshot().active, 2);
     assert.equal(activations.at(-1).mountKey, 'c');
+    scheduler.flushOne();
+    assert.deepEqual(cleanups, ['test/runtime:a', 'test/runtime:b']);
+    assert.equal(admission.snapshot().active, 1);
 
     admission.setDemand(['a']);
     scheduler.flushOne();
@@ -118,11 +123,16 @@ test('managed RuntimeAdmission suspends new grants without parking active runtim
     const scheduler = createScheduler();
     const record = createRecord('only', 0);
     let activations = 0;
+    let orderCalls = 0;
     const admission = createRuntimeAdmission({
         assertCandidate() {},
         activate(_record, _candidate, lease) {
             activations += 1;
             lease.add(() => {});
+        },
+        orderCandidates(candidates) {
+            orderCalls += 1;
+            return candidates;
         },
         runScheduled: operation => operation(),
         onFault(error) {
@@ -131,17 +141,23 @@ test('managed RuntimeAdmission suspends new grants without parking active runtim
         schedule: scheduler.schedule,
         cancel: scheduler.cancel,
     });
-    admission.configure('managed');
-    assert.equal(admission.snapshot().maxActive, 8);
-    admission.register([{ record, candidate: { participantId: 'test/runtime' } }]);
+    admission.configure('managed', { maxActive: 1 });
+    admission.register(Array.from({ length: 2 }, () => ({
+        record,
+        candidate: { participantId: 'test/runtime' },
+    })));
     admission.setDemand(['only'], { suspended: true });
     assert.equal(scheduler.size(), 0);
     assert.equal(activations, 0);
+    assert.equal(orderCalls, 0);
     admission.setDemand(['only']);
+    assert.equal(orderCalls, 1);
     scheduler.flushOne();
     assert.equal(activations, 1);
+    const orderCallsBeforeSuspend = orderCalls;
     admission.setDemand(['only'], { suspended: true });
     assert.equal(admission.snapshot().active, 1);
+    assert.equal(orderCalls, orderCallsBeforeSuspend);
 
     record.contentLease.close('content-test');
     record.mountLease.close('mount-test');

@@ -23,6 +23,12 @@ pub struct AgentPersistentStatePruneRequest {
 
 #[async_trait]
 pub trait AgentWorkspaceLifecycleRepository: Send + Sync {
+    async fn copy_persistent_states(
+        &self,
+        source_workspace_id: &str,
+        target_workspace_id: &str,
+    ) -> Result<(), DomainError>;
+
     async fn delete_chat_workspace(
         &self,
         workspace_id: &str,

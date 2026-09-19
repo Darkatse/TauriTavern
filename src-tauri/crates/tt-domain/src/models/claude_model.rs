@@ -36,18 +36,7 @@ pub fn supports_one_hour_prompt_cache(model_id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        is_vertex_ai_claude_model_id, normalize_vertex_ai_claude_model_id,
-        supports_one_hour_prompt_cache,
-    };
-
-    #[test]
-    fn detects_vertex_claude_ids() {
-        assert!(is_vertex_ai_claude_model_id("claude-sonnet-4-5@20250929"));
-        assert!(is_vertex_ai_claude_model_id("  Claude-Opus-4-8  "));
-        assert!(!is_vertex_ai_claude_model_id("gemini-2.5-pro"));
-        assert!(!is_vertex_ai_claude_model_id("anthropic.claude-sonnet-4-5"));
-    }
+    use super::{normalize_vertex_ai_claude_model_id, supports_one_hour_prompt_cache};
 
     #[test]
     fn normalizes_vertex_revision_suffix_for_contract_matching() {

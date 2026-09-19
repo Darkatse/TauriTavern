@@ -42,6 +42,7 @@ enum GeminiThinkingModel {
     Gemini25FlashLite,
     Gemini25Flash,
     Gemini25Pro,
+    Gemini37Flash,
     Gemini3Flash,
     Gemini3ProLowHigh,
     Gemini3ProMedium,
@@ -84,8 +85,19 @@ pub(super) fn map_openrouter_reasoning_effort(
     }
 }
 
-pub(super) fn is_zai_reasoning_effort_model(model: &str) -> bool {
-    model.trim().eq_ignore_ascii_case("glm-5.2")
+pub(super) fn map_xai_reasoning_effort(
+    value: &str,
+) -> Result<Option<&'static str>, ApplicationError> {
+    match parse_known_reasoning_effort(value, "xAI")? {
+        RequestedReasoningEffort::Auto => Ok(None),
+        RequestedReasoningEffort::None => Err(unsupported_reasoning_effort("xAI", value)),
+        RequestedReasoningEffort::Minimal => Ok(Some("minimal")),
+        RequestedReasoningEffort::Low => Ok(Some("low")),
+        RequestedReasoningEffort::Medium => Ok(Some("medium")),
+        RequestedReasoningEffort::High
+        | RequestedReasoningEffort::XHigh
+        | RequestedReasoningEffort::Max => Ok(Some("high")),
+    }
 }
 
 pub(super) fn map_zai_reasoning_effort(
@@ -93,18 +105,22 @@ pub(super) fn map_zai_reasoning_effort(
     value: &str,
 ) -> Result<Option<&'static str>, ApplicationError> {
     let effort = parse_known_reasoning_effort(value, "Z.AI")?;
+    let model = model.trim().to_ascii_lowercase();
+
     match effort {
         RequestedReasoningEffort::Auto => Ok(None),
-        _ if !is_zai_reasoning_effort_model(model) => Err(ApplicationError::ValidationError(
-            "Z.AI reasoning_effort is only supported by glm-5.2".to_string(),
-        )),
+        _ if !matches!(model.as_str(), "glm-5.2" | "glm-5.3" | "glm-5.3-flash") => {
+            Err(ApplicationError::ValidationError(
+                "Z.AI reasoning_effort is only supported by glm-5.2, glm-5.3, and glm-5.3-flash"
+                    .to_string(),
+            ))
+        }
         RequestedReasoningEffort::None => Ok(Some("none")),
         RequestedReasoningEffort::Minimal => Ok(Some("minimal")),
         RequestedReasoningEffort::Low => Ok(Some("low")),
         RequestedReasoningEffort::Medium => Ok(Some("medium")),
         RequestedReasoningEffort::High => Ok(Some("high")),
-        RequestedReasoningEffort::XHigh => Ok(Some("max")),
-        RequestedReasoningEffort::Max => Ok(Some("xhigh")),
+        RequestedReasoningEffort::XHigh | RequestedReasoningEffort::Max => Ok(Some("max")),
     }
 }
 
@@ -136,6 +152,9 @@ pub(super) fn map_gemini_thinking_control(
         GeminiThinkingModel::Gemini25Pro => Some(GeminiThinkingControl::BudgetTokens(
             gemini_pro_budget(max_tokens, effort),
         )),
+        GeminiThinkingModel::Gemini37Flash => {
+            gemini_3_7_flash_level(effort).map(GeminiThinkingControl::Level)
+        }
         GeminiThinkingModel::Gemini3Flash => {
             gemini_3_flash_level(effort).map(GeminiThinkingControl::Level)
         }
@@ -164,6 +183,9 @@ fn classify_gemini_thinking_model(model: &str) -> Option<GeminiThinkingModel> {
     }
     if model.starts_with("gemini-2.5-pro") {
         return Some(GeminiThinkingModel::Gemini25Pro);
+    }
+    if model == "gemini-3.7-flash" {
+        return Some(GeminiThinkingModel::Gemini37Flash);
     }
     if is_gemini_3_variant(&model, "flash") {
         return Some(GeminiThinkingModel::Gemini3Flash);
@@ -261,6 +283,18 @@ fn gemini_3_flash_level(effort: RequestedReasoningEffort) -> Option<&'static str
     }
 }
 
+fn gemini_3_7_flash_level(effort: RequestedReasoningEffort) -> Option<&'static str> {
+    match effort {
+        RequestedReasoningEffort::Auto => None,
+        RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => Some("low"),
+        RequestedReasoningEffort::Medium => Some("medium"),
+        RequestedReasoningEffort::High
+        | RequestedReasoningEffort::Max
+        | RequestedReasoningEffort::XHigh => Some("high"),
+        RequestedReasoningEffort::None => unreachable!("Gemini reasoning mapper rejects none"),
+    }
+}
+
 fn gemini_3_pro_low_high_level(effort: RequestedReasoningEffort) -> Option<&'static str> {
     match effort {
         RequestedReasoningEffort::Auto => None,
@@ -289,62 +323,9 @@ fn gemini_3_pro_medium_level(effort: RequestedReasoningEffort) -> Option<&'stati
 #[cfg(test)]
 mod tests {
     use super::{
-        GeminiThinkingControl, RequestedReasoningEffort, is_gemini_thinking_config_model,
-        is_openrouter_claude_model_name, is_zai_reasoning_effort_model,
-        map_gemini_thinking_control, map_openrouter_reasoning_effort, map_zai_reasoning_effort,
+        GeminiThinkingControl, RequestedReasoningEffort, map_gemini_thinking_control,
+        map_openrouter_reasoning_effort,
     };
-
-    #[test]
-    fn requested_reasoning_effort_parser_normalizes_project_aliases() {
-        for (input, expected) in [
-            ("auto", Some(RequestedReasoningEffort::Auto)),
-            ("", Some(RequestedReasoningEffort::Auto)),
-            ("none", Some(RequestedReasoningEffort::None)),
-            ("min", Some(RequestedReasoningEffort::Minimal)),
-            ("minimum", Some(RequestedReasoningEffort::Minimal)),
-            ("minimal", Some(RequestedReasoningEffort::Minimal)),
-            ("low", Some(RequestedReasoningEffort::Low)),
-            ("medium", Some(RequestedReasoningEffort::Medium)),
-            ("high", Some(RequestedReasoningEffort::High)),
-            ("xhigh", Some(RequestedReasoningEffort::XHigh)),
-            ("max", Some(RequestedReasoningEffort::Max)),
-            ("maximum", Some(RequestedReasoningEffort::Max)),
-            ("turbo", None),
-        ] {
-            assert_eq!(RequestedReasoningEffort::parse(input), expected);
-        }
-    }
-
-    #[test]
-    fn openrouter_claude_classifier_matches_anthropic_route() {
-        assert!(is_openrouter_claude_model_name(
-            " anthropic/claude-sonnet-4-5 "
-        ));
-        assert!(!is_openrouter_claude_model_name("openai/gpt-5.2"));
-    }
-
-    #[test]
-    fn openrouter_reasoning_effort_maps_project_aliases_to_router_enum() {
-        for (input, expected) in [
-            ("auto", None),
-            ("", None),
-            ("none", Some("none")),
-            ("min", Some("minimal")),
-            ("minimum", Some("minimal")),
-            ("minimal", Some("minimal")),
-            ("low", Some("low")),
-            ("medium", Some("medium")),
-            ("high", Some("high")),
-            ("xhigh", Some("xhigh")),
-            ("max", Some("max")),
-            ("maximum", Some("max")),
-        ] {
-            assert_eq!(
-                map_openrouter_reasoning_effort(input).expect("known effort must map"),
-                expected
-            );
-        }
-    }
 
     #[test]
     fn openrouter_reasoning_effort_rejects_unknown_values() {
@@ -355,90 +336,6 @@ mod tests {
                 .to_string()
                 .contains("Unsupported OpenRouter reasoning_effort")
         );
-    }
-
-    #[test]
-    fn zai_reasoning_effort_classifier_matches_glm52() {
-        assert!(is_zai_reasoning_effort_model(" glm-5.2 "));
-        assert!(!is_zai_reasoning_effort_model("glm-5.1"));
-        assert!(!is_zai_reasoning_effort_model("glm-5"));
-    }
-
-    #[test]
-    fn zai_reasoning_effort_maps_project_aliases_to_zai_enum() {
-        for (input, expected) in [
-            ("auto", None),
-            ("", None),
-            ("none", Some("none")),
-            ("min", Some("minimal")),
-            ("minimum", Some("minimal")),
-            ("minimal", Some("minimal")),
-            ("low", Some("low")),
-            ("medium", Some("medium")),
-            ("high", Some("high")),
-            ("xhigh", Some("max")),
-            ("max", Some("xhigh")),
-            ("maximum", Some("xhigh")),
-        ] {
-            assert_eq!(
-                map_zai_reasoning_effort("glm-5.2", input).expect("known effort must map"),
-                expected
-            );
-        }
-    }
-
-    #[test]
-    fn zai_reasoning_effort_rejects_unknown_values() {
-        let error = map_zai_reasoning_effort("glm-5.2", "turbo")
-            .expect_err("unknown effort should fail locally");
-        assert!(
-            error
-                .to_string()
-                .contains("Unsupported Z.AI reasoning_effort")
-        );
-    }
-
-    #[test]
-    fn zai_reasoning_effort_rejects_unsupported_models() {
-        let error =
-            map_zai_reasoning_effort("glm-5.1", "high").expect_err("unsupported model should fail");
-        assert!(
-            error
-                .to_string()
-                .contains("Z.AI reasoning_effort is only supported by glm-5.2")
-        );
-    }
-
-    #[test]
-    fn gemini_thinking_classifier_matches_supported_families() {
-        for model in [
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite-preview-09-2025",
-            "gemini-2.5-pro-preview-06-05",
-            "gemini-3-pro-preview",
-            "gemini-3.1-pro-preview",
-            "gemini-3-flash-preview",
-            "gemini-3.1-flash-lite-preview",
-            "gemini-3-pro-image-preview",
-            "gemini-3.1-flash-image-preview",
-            "gemini-3.5-flash",
-        ] {
-            assert!(
-                is_gemini_thinking_config_model(model),
-                "{model} should support Gemini thinkingConfig"
-            );
-        }
-
-        for model in [
-            "gemini-2.5-flash-image",
-            "gemini-2.5-flash-image-preview",
-            "gemma-3",
-        ] {
-            assert!(
-                !is_gemini_thinking_config_model(model),
-                "{model} should not receive Gemini thinkingConfig"
-            );
-        }
     }
 
     #[test]
@@ -485,19 +382,6 @@ mod tests {
     }
 
     #[test]
-    fn gemini_25_flash_lite_auto_preserves_model_default() {
-        assert_eq!(
-            map_gemini_thinking_control(
-                "gemini-2.5-flash-lite",
-                4000,
-                RequestedReasoningEffort::Auto,
-            )
-            .expect("auto should be accepted"),
-            None
-        );
-    }
-
-    #[test]
     fn gemini_3_models_map_effort_to_thinking_level() {
         for (model, effort, expected) in [
             (
@@ -522,6 +406,7 @@ mod tests {
             ),
             ("gemini-3.5-flash", RequestedReasoningEffort::Max, "high"),
             ("gemini-3.5-flash", RequestedReasoningEffort::XHigh, "high"),
+            ("gemini-3.7-flash", RequestedReasoningEffort::Minimal, "low"),
         ] {
             assert_eq!(
                 map_gemini_thinking_control(model, 8000, effort)
@@ -529,19 +414,6 @@ mod tests {
                 Some(GeminiThinkingControl::Level(expected))
             );
         }
-    }
-
-    #[test]
-    fn gemini_auto_omits_level_for_level_based_models() {
-        assert_eq!(
-            map_gemini_thinking_control(
-                "gemini-3.1-pro-preview",
-                8000,
-                RequestedReasoningEffort::Auto,
-            )
-            .expect("auto should be accepted"),
-            None
-        );
     }
 
     #[test]

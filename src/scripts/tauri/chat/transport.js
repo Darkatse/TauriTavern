@@ -4,9 +4,12 @@ import {
     characterStemFromAvatarFileName,
     hasCharacterAvatarIdentity,
 } from '../../../tauri/main/services/characters/character-identity.js';
-import { fetchAssetStream } from './asset-io.js';
-import { commitChatPayload } from './commit.js';
+import { createReadableFileStreamService } from '../../../tauri/main/services/files/readable-file-stream-service.js';
+import { commitChatMetadata, commitChatPayload } from './commit.js';
 import { jsonlStreamToPayload } from './jsonl.js';
+import { loadColdChatPayload } from './cold-swipes.js';
+
+const { createReadableFileStream } = createReadableFileStreamService({ invoke });
 
 export const CHAT_COMMIT_REASON = Object.freeze({
     MUTATION: 'mutation',
@@ -31,16 +34,29 @@ export function resolveCharacterDirectoryId(characterName, avatarUrl) {
     return String(characterName || '').trim();
 }
 
-export async function loadCharacterChatPayload({ characterName, avatarUrl, fileName, allowNotFound = false }) {
-    const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
+function characterTarget({ characterName, avatarUrl, fileName }) {
+    const characterId = resolveCharacterDirectoryId(characterName, avatarUrl);
     const normalizedFile = normalizeChatFileName(fileName);
-    if (!normalizedCharacter || !normalizedFile.trim()) {
-        throw new Error('Invalid character chat payload request');
+    if (!characterId || !normalizedFile.trim()) {
+        throw new Error('Invalid character chat target');
     }
+    return { kind: 'character', characterId, fileName: normalizedFile };
+}
 
+function groupTarget(id) {
+    const chatId = normalizeChatFileName(id);
+    if (!chatId.trim()) {
+        throw new Error('Invalid group chat target');
+    }
+    return { kind: 'group', chatId };
+}
+
+export async function loadCharacterChatPayload({ characterName, avatarUrl, fileName, allowNotFound = false, coldSwipes = false }) {
+    const target = characterTarget({ characterName, avatarUrl, fileName });
+    if (coldSwipes) return loadColdChatPayload(target, allowNotFound);
     const path = await invoke('get_chat_payload_path', {
-        characterName: normalizedCharacter,
-        fileName: normalizedFile,
+        characterName: target.characterId,
+        fileName: target.fileName,
         allowNotFound,
     });
 
@@ -51,39 +67,22 @@ export async function loadCharacterChatPayload({ characterName, avatarUrl, fileN
         throw new Error('Chat payload path is empty');
     }
 
-    const stream = await fetchAssetStream(path);
+    const stream = createReadableFileStream(path);
     return jsonlStreamToPayload(stream);
 }
 
 export async function saveCharacterChatPayload({ characterName, avatarUrl, fileName, payload, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION }) {
-    const normalizedCharacter = resolveCharacterDirectoryId(characterName, avatarUrl);
-    const normalizedFile = normalizeChatFileName(fileName);
-    if (!Array.isArray(payload) || payload.length === 0 || !normalizedCharacter || !normalizedFile.trim()) {
-        throw new Error('Invalid chat payload');
-    }
-
-    await commitChatPayload({
-        target: {
-            kind: 'character',
-            characterId: normalizedCharacter,
-            fileName: normalizedFile,
-        },
-        payload,
-        force,
-        commitReason,
-    });
+    await commitChatPayload({ target: characterTarget({ characterName, avatarUrl, fileName }), payload, force, commitReason });
 }
 
-export async function loadGroupChatPayload({ id, allowNotFound = false }) {
-    const normalizedId = normalizeChatFileName(id);
-    if (!normalizedId.trim()) {
-        throw new Error('Invalid group chat payload request');
-    }
+export async function saveCharacterChatMetadata({ characterName, avatarUrl, fileName, chatMetadata }) {
+    await commitChatMetadata({ target: characterTarget({ characterName, avatarUrl, fileName }), chatMetadata });
+}
 
-    const path = await invoke('get_group_chat_path', {
-        id: normalizedId,
-        allowNotFound,
-    });
+export async function loadGroupChatPayload({ id, allowNotFound = false, coldSwipes = false }) {
+    const target = groupTarget(id);
+    if (coldSwipes) return loadColdChatPayload(target, allowNotFound);
+    const path = await invoke('get_group_chat_path', { id: target.chatId, allowNotFound });
 
     if (!path) {
         if (allowNotFound) {
@@ -92,23 +91,14 @@ export async function loadGroupChatPayload({ id, allowNotFound = false }) {
         throw new Error('Group chat payload path is empty');
     }
 
-    const stream = await fetchAssetStream(path);
+    const stream = createReadableFileStream(path);
     return jsonlStreamToPayload(stream);
 }
 
 export async function saveGroupChatPayload({ id, payload, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION }) {
-    const normalizedId = normalizeChatFileName(id);
-    if (!Array.isArray(payload) || payload.length === 0 || !normalizedId.trim()) {
-        throw new Error('Invalid group chat payload');
-    }
+    await commitChatPayload({ target: groupTarget(id), payload, force, commitReason });
+}
 
-    await commitChatPayload({
-        target: {
-            kind: 'group',
-            chatId: normalizedId,
-        },
-        payload,
-        force,
-        commitReason,
-    });
+export async function saveGroupChatMetadata({ id, chatMetadata }) {
+    await commitChatMetadata({ target: groupTarget(id), chatMetadata });
 }

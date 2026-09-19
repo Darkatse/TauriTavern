@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use tokio::fs;
 
-use crate::file_system::{replace_file_with_fallback, unique_temp_path};
+use crate::file_system::{replace_file, unique_temp_path};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::prompt_cache_repository::{
     PromptCacheKey, PromptCacheRepository, PromptDigestSnapshot,
@@ -98,7 +98,7 @@ impl PromptCacheRepository for FilePromptCacheRepository {
             ))
         })?;
 
-        replace_file_with_fallback(&temp_path, &path).await?;
+        replace_file(&temp_path, &path).await?;
         Ok(())
     }
 }

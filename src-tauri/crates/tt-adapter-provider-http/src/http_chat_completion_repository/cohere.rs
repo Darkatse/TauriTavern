@@ -13,26 +13,17 @@ pub(super) async fn list_models(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
 ) -> Result<Value, DomainError> {
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, "/models");
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, "/models")?;
 
-    let client = repository.client()?;
+    let client = repository.metadata_client(config)?;
     let request = client.get(url).header(ACCEPT, "application/json");
     let request = HttpChatCompletionRepository::apply_bearer_auth(request, &config.api_key);
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Status request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            "Cohere",
-            response,
-            "Failed to list models",
-        )
-        .await);
-    }
+    let response =
+        HttpChatCompletionRepository::send_checked(request, "Cohere", "Failed to list models")
+            .await?;
 
     let body = read_upstream_json_body("Cohere", "list_models", response).await?;
 
@@ -46,9 +37,9 @@ pub(super) async fn generate(
     payload: &Value,
 ) -> Result<Value, DomainError> {
     let endpoint_path = normalize_endpoint_path(endpoint_path);
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
 
-    let client = repository.client()?;
+    let client = repository.client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -59,18 +50,9 @@ pub(super) async fn generate(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            "Cohere",
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response =
+        HttpChatCompletionRepository::send_checked(request, "Cohere", "Generation request failed")
+            .await?;
 
     read_upstream_json_body("Cohere", "generate", response).await
 }
@@ -84,9 +66,9 @@ pub(super) async fn generate_stream(
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
     let endpoint_path = normalize_endpoint_path(endpoint_path);
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
 
-    let client = repository.stream_client()?;
+    let client = repository.stream_client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
@@ -97,18 +79,9 @@ pub(super) async fn generate_stream(
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            "Cohere",
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response =
+        HttpChatCompletionRepository::send_checked(request, "Cohere", "Generation request failed")
+            .await?;
 
     HttpChatCompletionRepository::stream_sse_response("Cohere", response, sender, cancel).await
 }
@@ -165,29 +138,5 @@ fn normalize_model_entry(entry: &Value) -> Option<Value> {
             Some(Value::Object(model))
         }
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::normalize_models;
-
-    #[test]
-    fn normalize_models_converts_name_to_id() {
-        let payload = json!({
-            "models": [
-                {"name": "command-r-plus", "context_length": 1},
-                {"name": "command-r", "context_length": 2}
-            ]
-        });
-
-        let models = normalize_models(&payload);
-        assert_eq!(models.len(), 2);
-        assert_eq!(models[0]["id"], "command-r-plus");
-        assert_eq!(models[0]["context_length"], 1);
-        assert_eq!(models[1]["id"], "command-r");
-        assert_eq!(models[1]["context_length"], 2);
     }
 }

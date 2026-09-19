@@ -22,6 +22,8 @@
 
 </div>
 
+<p align="center"><sub>TauriTavern のロゴをデザインしてくださった <a href="https://github.com/shiyue137">@shiyue137</a> さん、ありがとうございます 💛</sub></p>
+
 ## ダウンロード
 
 <div align="center">
@@ -42,6 +44,14 @@
 
 <details>
 <summary><b>📦 パッケージマネージャーでインストール</b>（Windows · macOS · Linux）</summary>
+
+### Windows · WinGet
+
+PowerShellで次を実行します。
+
+```powershell
+winget install --id TauriTavern.TauriTavern
+```
 
 ### Windows · Scoop
 
@@ -79,7 +89,7 @@ yay -S tauritavern-bin
 **安定版**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
+curl -fsSL https://get.tauritavern.com/linux.sh | sh
 ```
 
 **Nix / NixOS**
@@ -113,7 +123,7 @@ Windows、macOS、モバイル向けビルドは[Canary Release](https://github.
 **Linux**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+curl -fsSL https://get.tauritavern.com/linux.sh \
   | sh -s -- --channel canary
 ```
 
@@ -126,7 +136,7 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 </details>
 
 > [!TIP]
-> **iOS**： [公開TestFlightベータ](https://testflight.apple.com/join/gpqAdeTm)からインストールできます。iOS 16以降が必要です。TestFlight版にはAppleのTestFlight規約と利用上の制限が適用されます。
+> **iOS**： [公開TestFlightベータ](https://testflight.apple.com/join/gpqAdeTm)からインストールできます。iOS 15.0以降が必要です。iOS 15.0〜16.3は限定サポートで、完全サポートはiOS 16.4以降です。TestFlight版にはAppleのTestFlight規約と利用上の制限が適用されます。
 >
 > **Windowsポータブル版**：システムにWebView2ランタイムが必要です。
 
@@ -168,7 +178,7 @@ Rustバックエンドは、Clean Architectureに基づくCargoワークスペ�
 <details>
 <summary><b>🛠 開発</b>（前提環境 · 主なコマンド · Tauri Pilot · ポータブルビルド · FasTools）</summary>
 
-**前提環境**：Rust stable（edition 2024）· Node.js 20.19.xまたは22.12以降 · pnpm · Tauri CLI
+**前提環境**：Rust stable（edition 2024）· Node.js 22.13以降 · pnpm 11 · Tauri CLI
 
 ```bash
 git clone https://github.com/Darkatse/TauriTavern.git

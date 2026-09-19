@@ -3,10 +3,13 @@ use image::ImageFormat;
 use mime_guess::from_path;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tokio::fs as tokio_fs;
 
+use crate::persona_cards;
 use tt_domain::errors::DomainError;
 use tt_domain::models::avatar::{Avatar, AvatarUploadResult, CropInfo};
+use tt_domain::models::persona::{Persona, Personas};
 use tt_ports::repositories::avatar_repository::AvatarRepository;
 
 // Constants for avatar dimensions
@@ -16,6 +19,7 @@ const AVATAR_HEIGHT: u32 = 600;
 /// File-based implementation of AvatarRepository
 pub struct FileAvatarRepository {
     avatars_dir: PathBuf,
+    persona_cache: Arc<Mutex<persona_cards::PersonaCache>>,
 }
 
 impl FileAvatarRepository {
@@ -24,22 +28,16 @@ impl FileAvatarRepository {
         // Create directory if it doesn't exist
         fs::create_dir_all(&avatars_dir).expect("Failed to create avatars directory");
 
-        Self { avatars_dir }
+        Self {
+            avatars_dir,
+            persona_cache: Arc::default(),
+        }
     }
 
     /// Process an image file with optional cropping
-    async fn process_image(
-        &self,
-        file_path: &Path,
-        crop_info: Option<CropInfo>,
-    ) -> Result<Vec<u8>, DomainError> {
-        // Read the image file
-        let img_data = tokio_fs::read(file_path)
-            .await
-            .map_err(|e| DomainError::InternalError(format!("Failed to read image file: {}", e)))?;
-
+    fn process_image(img_data: &[u8], crop_info: Option<CropInfo>) -> Result<Vec<u8>, DomainError> {
         // Load the image
-        let mut img = image::load_from_memory(&img_data)
+        let mut img = image::load_from_memory(img_data)
             .map_err(|e| DomainError::InternalError(format!("Failed to load image: {}", e)))?;
 
         // Apply cropping if specified
@@ -99,6 +97,46 @@ impl FileAvatarRepository {
 
 #[async_trait]
 impl AvatarRepository for FileAvatarRepository {
+    async fn get_personas(&self) -> Result<Personas, DomainError> {
+        let root = self
+            .avatars_dir
+            .parent()
+            .expect("user directory")
+            .to_path_buf();
+        let cache = Arc::clone(&self.persona_cache);
+        tokio::task::spawn_blocking(move || {
+            // Library reads serialize here; split only if contention becomes measurable.
+            let mut cache = cache.lock().map_err(|error| {
+                DomainError::InternalError(format!("Persona cache lock poisoned: {error}"))
+            })?;
+            cache.read_personas(&root)
+        })
+        .await
+        .map_err(|error| DomainError::InternalError(error.to_string()))?
+    }
+
+    async fn save_persona(&self, avatar: &str, persona: &Persona) -> Result<(), DomainError> {
+        let directory = self.avatars_dir.clone();
+        let avatar = avatar.to_owned();
+        let persona = persona.clone();
+        tokio::task::spawn_blocking(move || persona_cards::save(&directory, &avatar, &persona))
+            .await
+            .map_err(|error| DomainError::InternalError(error.to_string()))?
+    }
+
+    async fn import_personas(&self, personas: &Personas) -> Result<(), DomainError> {
+        let directory = self.avatars_dir.clone();
+        let personas = personas.clone();
+        tokio::task::spawn_blocking(move || {
+            for (id, persona) in personas {
+                persona_cards::import_persona(&directory, &id, &persona)?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|error| DomainError::InternalError(error.to_string()))?
+    }
+
     async fn get_avatars(&self) -> Result<Vec<Avatar>, DomainError> {
         tracing::debug!("Getting all avatars");
 
@@ -169,23 +207,32 @@ impl AvatarRepository for FileAvatarRepository {
     ) -> Result<AvatarUploadResult, DomainError> {
         tracing::debug!("Uploading avatar: {:?}", file_path);
 
-        // Process the image
-        let image_data = self.process_image(file_path, crop_info).await?;
-
-        // Generate a filename
         let filename = match overwrite_name {
             Some(name) => Self::sanitize_filename(&name),
             None => format!("{}.png", chrono::Utc::now().timestamp_millis()),
         };
-
-        // Save the processed image
-        let avatar_path = self.avatars_dir.join(&filename);
-        tokio_fs::write(&avatar_path, &image_data)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to write avatar file: {}", e);
-                DomainError::InternalError(format!("Failed to write avatar file: {}", e))
-            })?;
+        let avatar_path = persona_cards::avatar_path(&self.avatars_dir, &filename)?;
+        let file_path = file_path.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            let input = fs::read(file_path)
+                .map_err(|error| DomainError::InternalError(error.to_string()))?;
+            // Changing an avatar changes its image, not its Persona identity.
+            let persona = match fs::read(&avatar_path) {
+                Ok(previous) => persona_cards::from_image(&previous)?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    persona_cards::from_image(&input)?
+                }
+                Err(error) => return Err(DomainError::InternalError(error.to_string())),
+            }
+            .unwrap_or_default();
+            let image = Self::process_image(&input, crop_info)?;
+            persona_cards::publish(
+                &avatar_path,
+                &persona_cards::with_persona(&image, &persona)?,
+            )
+        })
+        .await
+        .map_err(|error| DomainError::InternalError(error.to_string()))??;
 
         tracing::info!("Avatar uploaded: {}", filename);
         Ok(AvatarUploadResult { path: filename })
@@ -198,7 +245,6 @@ mod tests {
     use image::{ImageFormat, Rgba, RgbaImage};
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
     use tt_ports::repositories::avatar_repository::AvatarRepository;
 
     struct TestDir {
@@ -207,15 +253,8 @@ mod tests {
 
     impl TestDir {
         fn new() -> Self {
-            let suffix = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time should be after unix epoch")
-                .as_nanos();
-            let path = std::env::temp_dir().join(format!(
-                "tauritavern-avatar-test-{}-{}",
-                std::process::id(),
-                suffix
-            ));
+            let path = std::env::temp_dir()
+                .join(format!("tauritavern-avatar-test-{}", uuid::Uuid::new_v4()));
             fs::create_dir_all(&path).expect("failed to create temp dir");
 
             Self { path }
@@ -267,5 +306,115 @@ mod tests {
             FileAvatarRepository::sanitize_filename("control\u{0000}"),
             "control_"
         );
+    }
+
+    #[test]
+    fn persona_migration_preserves_data_and_images() {
+        use crate::persona_cards;
+        use serde_json::{Value, json};
+        use tt_adapter_storage_core::png_metadata::replace_text_chunks;
+        use tt_domain::models::persona::insert_personas;
+
+        let dir = TestDir::new();
+        let root = dir.path();
+        let avatars = root.join("User Avatars");
+        fs::create_dir_all(&avatars).unwrap();
+        let card_path = avatars.join("alice.png");
+        write_png(&card_path);
+        let original_image = fs::read(&card_path).unwrap();
+        fs::write(avatars.join("broken.png"), b"broken image").unwrap();
+        let legacy = json!({
+            "other_setting": "keep",
+            "power_user": {
+                "personas": {"alice.png": "爱丽丝", "broken.png": "Recovered", "missing.png": "Missing"},
+                "persona_descriptions": {
+                    "alice.png": {"description": "原文 🌸", "extension_field": {"keep": [true]}},
+                    "broken.png": {"description": "Keep this text"}
+                }
+            }
+        });
+        let settings_path = root.join("settings.json");
+        fs::write(&settings_path, legacy.to_string()).unwrap();
+        persona_cards::migrate_personas(root, root).unwrap();
+        let mut settings: Value =
+            serde_json::from_slice(&fs::read(settings_path).unwrap()).unwrap();
+        assert!(settings["power_user"].get("personas").is_none());
+        assert!(settings["power_user"].get("persona_descriptions").is_none());
+        insert_personas(&mut settings, &persona_cards::read_personas(root).unwrap());
+        assert_eq!(settings, legacy);
+        assert!(
+            fs::read_dir(&avatars)
+                .unwrap()
+                .any(|entry| fs::read(entry.unwrap().path()).unwrap() == b"broken image")
+        );
+        assert_eq!(
+            replace_text_chunks(&fs::read(card_path).unwrap(), &["persona"], &[]).unwrap(),
+            original_image
+        );
+    }
+
+    #[tokio::test]
+    async fn avatar_changes_preserve_personas_and_refresh_from_disk() {
+        use crate::persona_cards;
+        use tt_domain::models::persona::Persona;
+        let dir = TestDir::new();
+        let root = dir.path().join("default-user");
+        let repository = FileAvatarRepository::new(root.join("User Avatars"));
+        let source = dir.path().join("incoming.png");
+        write_png(&source);
+        let mut persona = Persona {
+            name: Some("中文 🌸".into()),
+            description: Some(serde_json::json!({"description":"Keep", "title":"Title"})),
+        };
+        let tagged = persona_cards::with_persona(&fs::read(&source).unwrap(), &persona).unwrap();
+        fs::write(&source, tagged).unwrap();
+        repository
+            .upload_avatar(&source, Some("one.png".into()), None)
+            .await
+            .unwrap();
+        assert_eq!(repository.get_personas().await.unwrap()["one.png"], persona);
+        write_png(&source);
+        repository
+            .upload_avatar(&source, Some("one.png".into()), None)
+            .await
+            .unwrap();
+        assert_eq!(repository.get_personas().await.unwrap()["one.png"], persona);
+        let card_path = root.join("User Avatars/one.png");
+        let modified = fs::metadata(&card_path).unwrap().modified().unwrap();
+        // First change only the size, then only mtime; neither needs a cache notification.
+        for (name, modified) in [
+            ("Alice", modified),
+            ("Robin", modified + std::time::Duration::from_secs(2)),
+        ] {
+            persona.name = Some(name.into());
+            let image = fs::read(&card_path).unwrap();
+            fs::write(
+                &card_path,
+                persona_cards::with_persona(&image, &persona).unwrap(),
+            )
+            .unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&card_path)
+                .unwrap()
+                .set_modified(modified)
+                .unwrap();
+            assert_eq!(repository.get_personas().await.unwrap()["one.png"], persona);
+        }
+        // One broken card must not hide or rewrite the other cards.
+        fs::copy(&card_path, root.join("User Avatars/broken.png")).unwrap();
+        assert_eq!(repository.get_personas().await.unwrap().len(), 2);
+        fs::write(
+            root.join("User Avatars/broken.png"),
+            b"\x89PNG\r\n\x1a\n\0\0\0\x10iTXt",
+        )
+        .unwrap();
+        let personas = repository.get_personas().await.unwrap();
+        assert_eq!(personas.len(), 1);
+        assert_eq!(personas["one.png"], persona);
+        repository.delete_avatar("one.png").await.unwrap();
+        assert!(repository.save_persona("one.png", &persona).await.is_err());
+        assert!(!card_path.exists());
+        assert!(repository.get_personas().await.unwrap().is_empty());
     }
 }

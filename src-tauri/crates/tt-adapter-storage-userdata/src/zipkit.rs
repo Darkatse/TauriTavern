@@ -40,6 +40,12 @@ pub(crate) fn enclosed_zip_entry_path_with_name<'a, 'b, R: Read + ?Sized>(
     Ok((path, name))
 }
 
+pub(crate) fn zip_entry_is_symlink<R: Read + ?Sized>(entry: &ZipFile<'_, R>) -> bool {
+    entry
+        .unix_mode()
+        .is_some_and(|mode| mode & 0o170000 == 0o120000)
+}
+
 fn enclosed_archive_entry_path(name: &str) -> Result<PathBuf, DomainError> {
     enclosed_name_from_str(name)
         .ok_or_else(|| DomainError::InvalidData(format!("Invalid archive entry path: {}", name)))

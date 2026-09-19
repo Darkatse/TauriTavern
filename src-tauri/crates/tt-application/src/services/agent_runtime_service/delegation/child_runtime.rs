@@ -9,8 +9,11 @@ use crate::services::agent_profile_service::{
     AgentProfileResolveInput, ensure_profile_model_configured, materialize_agent_system_prompt,
 };
 use crate::services::agent_runtime_service::commit_ledger::RunCommitLedger;
+use crate::services::agent_runtime_service::continuation::InvocationFrame;
+use crate::services::agent_runtime_service::model_stream_projection::clear_live_invocation;
 use crate::services::agent_runtime_service::prompt_snapshot::{
-    prepare_agent_tool_request, request_from_prompt_snapshot, request_summary,
+    frozen_macros_from_snapshot, prepare_agent_tool_request, request_from_prompt_snapshot,
+    request_summary,
 };
 use crate::services::agent_runtime_service::skill_scope::{
     skill_event_summary, skill_scope_order_for_profile,
@@ -52,13 +55,39 @@ impl AgentRuntimeService {
         run_id: &str,
         task_id: &str,
         invocation_id: &str,
+        mut frame: Option<InvocationFrame>,
         cancel: &mut AgentCancelReceiver,
-    ) -> Result<(), ApplicationError> {
-        let result =
-            Box::pin(self.execute_child_invocation_body(run_id, task_id, invocation_id, cancel))
-                .await;
+    ) -> Result<Option<InvocationFrame>, ApplicationError> {
+        let live_projection = self
+            .active_run_handle(run_id)
+            .await?
+            .live_projection
+            .clone();
+        let result = Box::pin(self.execute_child_invocation_body(
+            run_id,
+            task_id,
+            invocation_id,
+            &mut frame,
+            cancel,
+        ))
+        .await;
+        clear_live_invocation(&live_projection, invocation_id);
         if let Err(error) = result {
             let was_cancelled = matches!(error, ApplicationError::Cancelled(_));
+            let task = self
+                .invocation_repository
+                .load_task(run_id, task_id)
+                .await?;
+            // task.return can complete while the parent requests cancellation.
+            if task.result_ref.is_some() {
+                self.finish_child_invocation(
+                    run_id,
+                    invocation_id,
+                    AgentInvocationStatus::Completed,
+                )
+                .await?;
+                return Ok(None);
+            }
             let task_status = if was_cancelled {
                 AgentTaskStatus::Cancelled
             } else {
@@ -80,12 +109,15 @@ impl AgentRuntimeService {
                 )
                 .await?;
             if !transition.changed {
-                return Ok(());
+                return Ok(None);
             }
             self.finish_child_invocation(run_id, invocation_id, invocation_status)
                 .await?;
             if was_cancelled {
-                return Ok(());
+                if !*cancel.borrow() {
+                    return Ok(None);
+                }
+                return Ok(frame);
             }
             self.event(
                 run_id,
@@ -99,7 +131,7 @@ impl AgentRuntimeService {
             )
             .await?;
         }
-        Ok(())
+        Ok(None)
     }
 
     async fn execute_child_invocation_body(
@@ -107,6 +139,7 @@ impl AgentRuntimeService {
         run_id: &str,
         task_id: &str,
         invocation_id: &str,
+        frame: &mut Option<InvocationFrame>,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
         self.ensure_not_cancelled(cancel)?;
@@ -118,18 +151,22 @@ impl AgentRuntimeService {
                 "Delegated task `{task_id}` was cancelled before it started"
             )));
         }
-        let invocation = self.start_child_invocation(run_id, invocation_id).await?;
-        let mut prepared = self
-            .prepare_delegated_invocation(invocation, &task, cancel)
-            .await?;
+        if frame.is_none() {
+            let invocation = self.start_child_invocation(run_id, invocation_id).await?;
+            let prepared = self
+                .prepare_delegated_invocation(invocation, &task, cancel)
+                .await?;
+            *frame = Some(InvocationFrame::new(prepared));
+        }
+        let frame = frame.as_mut().expect("child invocation was prepared");
         let mut child_commit_ledger = RunCommitLedger::default();
         let exit = self
-            .run_tool_loop(&mut prepared, &mut child_commit_ledger, cancel)
+            .run_tool_loop(frame, &mut child_commit_ledger, cancel)
             .await?
             .ok_or_else(|| {
                 ApplicationError::ValidationError(format!(
                     "agent.max_tool_rounds_exceeded: task.return was not called within {} rounds",
-                    prepared.profile.tools.max_rounds
+                    frame.progress.max_rounds
                 ))
             })?;
         if let AgentLoopExit::Transferred { .. } = exit {
@@ -218,8 +255,13 @@ impl AgentRuntimeService {
                 "agent.invalid_prompt_snapshot: input/prompt_snapshot.json is invalid JSON: {error}"
             ))
         })?;
-        let (tool_snapshot, tool_turn, visible_tools) =
-            self.compile_invocation_tools(&profile, invocation.exit_policy, invocation_id)?;
+        let prepared_tools = self
+            .prepare_invocation_tools(&profile, invocation.exit_policy, invocation_id)
+            .await?;
+        let tool_snapshot = prepared_tools.snapshot;
+        let tool_turn = prepared_tools.turn;
+        let visible_tools = prepared_tools.model_tools;
+        let tool_diagnostics = prepared_tools.diagnostics;
         let tool_snapshot_path = self.persist_tool_snapshot(run_id, &tool_snapshot).await?;
         let run = self.run_repository.load_run(run_id).await?;
         let invocation_prompt_snapshot = if profile.preset.mode == AgentPresetBindingMode::Ref {
@@ -270,6 +312,7 @@ impl AgentRuntimeService {
             request,
             &visible_tools,
             tool_turn.choice().clone(),
+            &run.stable_chat_id,
             run_id,
             invocation_id,
         )?;
@@ -283,6 +326,7 @@ impl AgentRuntimeService {
                 "toolSnapshot": tool_snapshot_summary(&tool_snapshot),
                 "toolSnapshotPath": tool_snapshot_path.as_str(),
                 "toolTurn": &tool_turn,
+                "toolDiagnostics": &tool_diagnostics,
                 "maxRounds": profile.tools.max_rounds,
                 "contextPolicy": &profile.context,
             }),
@@ -322,6 +366,7 @@ impl AgentRuntimeService {
         .await?;
 
         Ok(PreparedInvocation {
+            frozen_macros: frozen_macros_from_snapshot(&prompt_snapshot)?,
             invocation,
             delegation_task_id: Some(task.id.clone()),
             profile,

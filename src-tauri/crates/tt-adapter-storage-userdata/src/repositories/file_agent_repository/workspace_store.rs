@@ -5,7 +5,7 @@ use tokio::fs;
 use super::FileAgentRepository;
 use super::fs_tree::{sha256_hex, workspace_file_from_text, workspace_path_from_run_dir};
 use super::paths::validate_workspace_root_path;
-use tt_adapter_storage_core::file_system::{replace_file_with_fallback, unique_temp_path};
+use tt_adapter_storage_core::file_system::{replace_file, unique_temp_path};
 use tt_domain::errors::{DomainError, WorkspaceWriteConflictKind};
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
@@ -18,6 +18,17 @@ use tt_ports::repositories::workspace_repository::{
 
 #[async_trait]
 impl WorkspaceRepository for FileAgentRepository {
+    async fn validate_persistent_state(
+        &self,
+        workspace_id: &str,
+        state_id: &str,
+    ) -> Result<(), DomainError> {
+        let state_dir = self.persistent_state_dir(workspace_id, state_id)?;
+        self.read_persistent_state_manifest(&state_dir, state_id)
+            .await?;
+        Ok(())
+    }
+
     async fn initialize_run(
         &self,
         run: &AgentRun,
@@ -106,9 +117,9 @@ impl WorkspaceRepository for FileAgentRepository {
                     error
                 ))
             })?;
-        replace_file_with_fallback(&temp_path, &target).await?;
+        replace_file(&temp_path, &target).await?;
 
-        workspace_file_from_text(path.clone(), text.to_string())
+        Ok(workspace_file_from_text(path.clone(), text.to_string()))
     }
 
     async fn append_text(
@@ -139,10 +150,10 @@ impl WorkspaceRepository for FileAgentRepository {
                     error
                 ))
             })?;
-        replace_file_with_fallback(&temp_path, &target).await?;
+        replace_file(&temp_path, &target).await?;
 
         Ok(WorkspaceAppendResult {
-            file: workspace_file_from_text(path.clone(), updated)?,
+            file: workspace_file_from_text(path.clone(), updated),
             previous_sha256,
         })
     }
@@ -157,6 +168,8 @@ impl WorkspaceRepository for FileAgentRepository {
         let text = fs::read_to_string(&target).await.map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 DomainError::NotFound(format!("Workspace file not found: {}", path.as_str()))
+            } else if error.kind() == std::io::ErrorKind::InvalidData {
+                DomainError::workspace_file_not_text(path.as_str())
             } else {
                 DomainError::InternalError(format!(
                     "Failed to read workspace file {}: {}",
@@ -166,7 +179,7 @@ impl WorkspaceRepository for FileAgentRepository {
             }
         })?;
 
-        workspace_file_from_text(path.clone(), text)
+        Ok(workspace_file_from_text(path.clone(), text))
     }
 
     async fn list_files(
@@ -334,10 +347,12 @@ impl WorkspaceRepository for FileAgentRepository {
     async fn commit_persistent_changes(
         &self,
         run_id: &str,
+        previous_state_id: Option<&str>,
     ) -> Result<WorkspacePersistentChangeSet, DomainError> {
         let _guard = self.persist_lock.lock().await;
         let changes = self.compute_persistent_changes(run_id).await?;
-        self.commit_persistent_state(run_id, changes).await
+        self.commit_persistent_state(run_id, changes, previous_state_id)
+            .await
     }
 }
 
@@ -373,7 +388,7 @@ async fn verify_workspace_write_guard(
         WorkspaceWriteGuard::Unchecked => Ok(()),
         WorkspaceWriteGuard::MustNotExist => match read_existing_workspace_text(target).await? {
             Some(text) => {
-                let current = workspace_file_from_text(workspace_path.clone(), text)?;
+                let current = workspace_file_from_text(workspace_path.clone(), text);
                 Err(DomainError::workspace_write_conflict(
                     workspace_path.as_str(),
                     WorkspaceWriteConflictKind::AlreadyExists {
@@ -386,7 +401,7 @@ async fn verify_workspace_write_guard(
         WorkspaceWriteGuard::MustMatchSha256(expected_sha256) => {
             match read_existing_workspace_text(target).await? {
                 Some(text) => {
-                    let current = workspace_file_from_text(workspace_path.clone(), text)?;
+                    let current = workspace_file_from_text(workspace_path.clone(), text);
                     if current.sha256 == expected_sha256 {
                         Ok(())
                     } else {

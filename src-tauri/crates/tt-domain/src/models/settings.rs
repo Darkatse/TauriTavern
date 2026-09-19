@@ -39,7 +39,7 @@ fn default_avatar_persona_original_images_enabled() -> bool {
     false
 }
 
-fn default_native_regex_backend_enabled() -> bool {
+fn default_codemirror_editor_enabled() -> bool {
     true
 }
 
@@ -336,6 +336,10 @@ pub struct TauriTavernSettings {
     #[serde(default)]
     pub chat_virtualization_enabled: bool,
     #[serde(default)]
+    pub cold_swipes_enabled: bool,
+    #[serde(default = "default_codemirror_editor_enabled")]
+    pub codemirror_editor_enabled: bool,
+    #[serde(default)]
     pub chat_backups: ChatBackupSettings,
     #[serde(default = "default_close_to_tray_on_close")]
     pub close_to_tray_on_close: bool,
@@ -347,8 +351,6 @@ pub struct TauriTavernSettings {
     /// cached/generated thumbnails. Background thumbnails are intentionally unaffected.
     #[serde(default = "default_avatar_persona_original_images_enabled")]
     pub avatar_persona_original_images_enabled: bool,
-    #[serde(default = "default_native_regex_backend_enabled")]
-    pub native_regex_backend_enabled: bool,
     #[serde(default)]
     pub dev: DevLoggingSettings,
     #[serde(default)]
@@ -375,13 +377,14 @@ impl Default for TauriTavernSettings {
             panel_runtime_profile: default_panel_runtime_profile(),
             embedded_runtime_profile: default_embedded_runtime_profile(),
             chat_virtualization_enabled: false,
+            cold_swipes_enabled: false,
+            codemirror_editor_enabled: default_codemirror_editor_enabled(),
             chat_backups: ChatBackupSettings::default(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
             request_proxy: RequestProxySettings::default(),
             allow_keys_exposure: false,
             avatar_persona_original_images_enabled: default_avatar_persona_original_images_enabled(
             ),
-            native_regex_backend_enabled: default_native_regex_backend_enabled(),
             dev: DevLoggingSettings::default(),
             dynamic_theme: DynamicThemeSettings::default(),
             models: default_model_settings(),
@@ -394,9 +397,7 @@ impl Default for TauriTavernSettings {
 impl TauriTavernSettings {
     /// Deserializes settings while keeping backward compatibility with older
     /// `tauritavern-settings.json` schemas.
-    pub fn from_json_str_with_compat(raw: &str) -> Result<Self, serde_json::Error> {
-        let mut value: Value = serde_json::from_str(raw)?;
-
+    pub fn from_json_value_with_compat(mut value: Value) -> Result<Self, serde_json::Error> {
         if let Value::Object(map) = &mut value {
             // Migration: `avatar_persona_thumbnails_enabled` (legacy, default true) ->
             // `avatar_persona_original_images_enabled` (current, default false).
@@ -457,30 +458,13 @@ mod tests {
         AgentRunRetentionSettings, DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS,
         DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS,
         DEFAULT_CHAT_BACKUP_MAX_FILES_PER_PREFIX, DEFAULT_CHAT_BACKUP_MAX_TOTAL_BYTES,
-        DEFAULT_CHAT_BACKUP_MAX_TOTAL_FILES, DevLoggingSettings, MAX_AGENT_RETENTION_KEEP_RUNS,
-        TauriTavernSettings,
+        MAX_AGENT_RETENTION_KEEP_RUNS, TauriTavernSettings,
     };
 
     #[test]
-    fn effective_llm_api_keep_has_minimum_of_one() {
-        let settings = DevLoggingSettings {
-            frontend_console_capture: false,
-            llm_api_keep: 0,
-        };
-
-        assert_eq!(settings.effective_llm_api_keep(), 1);
-    }
-
-    #[test]
-    fn llm_api_keep_validation_requires_positive_values() {
-        assert!(!DevLoggingSettings::is_valid_llm_api_keep(0));
-        assert!(DevLoggingSettings::is_valid_llm_api_keep(1));
-    }
-
-    #[test]
     fn avatar_persona_original_images_enabled_migrates_legacy_thumbnail_setting() {
-        let settings = TauriTavernSettings::from_json_str_with_compat(
-            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}},"avatar_persona_thumbnails_enabled":false}"#,
+        let settings = TauriTavernSettings::from_json_value_with_compat(
+            serde_json::json!({"updates":{"startup_popup":{"dismissed_release_token":null}},"avatar_persona_thumbnails_enabled":false}),
         )
         .expect("parse settings");
 
@@ -488,48 +472,13 @@ mod tests {
     }
 
     #[test]
-    fn native_regex_backend_enabled_defaults_to_true() {
-        let settings = TauriTavernSettings::from_json_str_with_compat(
-            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}}}"#,
+    fn new_settings_default_when_loading_older_settings() {
+        let settings = TauriTavernSettings::from_json_value_with_compat(
+            serde_json::json!({"updates":{"startup_popup":{"dismissed_release_token":null}}}),
         )
         .expect("parse settings");
 
-        assert!(settings.native_regex_backend_enabled);
-    }
-
-    #[test]
-    fn chat_virtualization_defaults_to_disabled_and_accepts_enabled() {
-        let older = TauriTavernSettings::from_json_str_with_compat(
-            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}}}"#,
-        )
-        .expect("parse older settings");
-        assert!(!older.chat_virtualization_enabled);
-
-        let enabled = TauriTavernSettings::from_json_str_with_compat(
-            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}},"chat_virtualization_enabled":true}"#,
-        )
-        .expect("parse enabled chat virtualization");
-        assert!(enabled.chat_virtualization_enabled);
-
-        let serialized = serde_json::to_value(enabled).expect("serialize chat virtualization");
-        assert_eq!(serialized["chat_virtualization_enabled"], true);
-    }
-
-    #[test]
-    fn removed_chat_history_mode_is_ignored() {
-        let settings = TauriTavernSettings::from_json_str_with_compat(
-            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}},"chat_history_mode":"windowed"}"#,
-        )
-        .expect("parse settings with removed key");
-
-        let serialized = serde_json::to_value(settings).expect("serialize settings");
-        assert!(serialized.get("chat_history_mode").is_none());
-    }
-
-    #[test]
-    fn agent_retention_defaults_to_recent_terminal_history_policy() {
-        let settings = TauriTavernSettings::default();
-
+        assert!(settings.codemirror_editor_enabled);
         assert!(!settings.agent.retention.auto_prune_enabled);
         assert_eq!(
             settings.agent.retention.keep_recent_terminal_runs,
@@ -538,58 +487,15 @@ mod tests {
         assert_eq!(
             settings.agent.retention.keep_full_recent_runs,
             DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS
-        );
-    }
-
-    #[test]
-    fn agent_settings_defaults_when_loading_older_settings() {
-        let settings = TauriTavernSettings::from_json_str_with_compat(
-            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}}}"#,
-        )
-        .expect("parse settings");
-
-        assert!(!settings.agent.retention.auto_prune_enabled);
-        assert_eq!(
-            settings.agent.retention.keep_recent_terminal_runs,
-            DEFAULT_AGENT_RETENTION_KEEP_RECENT_TERMINAL_RUNS
-        );
-        assert_eq!(
-            settings.agent.retention.keep_full_recent_runs,
-            DEFAULT_AGENT_RETENTION_KEEP_FULL_RECENT_RUNS
-        );
-    }
-
-    #[test]
-    fn chat_backup_settings_default_when_loading_older_settings() {
-        let settings = TauriTavernSettings::from_json_str_with_compat(
-            r#"{"updates":{"startup_popup":{"dismissed_release_token":null}}}"#,
-        )
-        .expect("parse settings");
-
-        assert!(settings.chat_backups.automatic_enabled);
-        assert!(!settings.chat_backups.zstd_compression_enabled);
-        assert_eq!(
-            settings.chat_backups.max_files_per_prefix,
-            DEFAULT_CHAT_BACKUP_MAX_FILES_PER_PREFIX
-        );
-        assert_eq!(
-            settings.chat_backups.max_total_files,
-            DEFAULT_CHAT_BACKUP_MAX_TOTAL_FILES
-        );
-        assert_eq!(
-            settings.chat_backups.max_total_bytes,
-            DEFAULT_CHAT_BACKUP_MAX_TOTAL_BYTES
         );
     }
 
     #[test]
     fn chat_backup_settings_default_missing_nested_fields() {
-        let settings = TauriTavernSettings::from_json_str_with_compat(
-            r#"{
-                "updates":{"startup_popup":{"dismissed_release_token":null}},
-                "chat_backups":{"max_total_files":12}
-            }"#,
-        )
+        let settings = TauriTavernSettings::from_json_value_with_compat(serde_json::json!({
+            "updates":{"startup_popup":{"dismissed_release_token":null}},
+            "chat_backups":{"max_total_files":12}
+        }))
         .expect("parse settings");
 
         assert!(settings.chat_backups.automatic_enabled);

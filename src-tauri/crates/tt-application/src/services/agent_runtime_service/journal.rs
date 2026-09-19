@@ -4,9 +4,7 @@ use serde_json::{Map, Value, json};
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::errors::ApplicationError;
 use tt_domain::errors::DomainError;
-use tt_domain::models::agent::{
-    AgentRun, AgentRunEvent, AgentRunEventLevel, AgentRunStatus, WorkspacePath,
-};
+use tt_domain::models::agent::{AgentRun, AgentRunEvent, AgentRunEventLevel, AgentRunStatus};
 
 impl AgentRuntimeService {
     pub(super) async fn transition_status(
@@ -49,36 +47,6 @@ impl AgentRuntimeService {
         if *cancel.borrow() {
             return Err(DomainError::generation_cancelled_by_user().into());
         }
-        Ok(())
-    }
-
-    pub(super) async fn checkpoint_workspace_file(
-        &self,
-        run_id: &str,
-        update_run_status: bool,
-        reason: &str,
-        event_type: &str,
-        payload: Value,
-        path: WorkspacePath,
-    ) -> Result<(), ApplicationError> {
-        if update_run_status {
-            self.transition_status(run_id, AgentRunStatus::CreatingCheckpoint)
-                .await?;
-        }
-        let event = self
-            .event(run_id, AgentRunEventLevel::Info, event_type, payload)
-            .await?;
-        let checkpoint = self
-            .checkpoint_repository
-            .create_checkpoint(run_id, reason, event.seq, &[path])
-            .await?;
-        self.event(
-            run_id,
-            AgentRunEventLevel::Info,
-            "checkpoint_created",
-            json!({ "checkpointId": checkpoint.id, "reason": reason }),
-        )
-        .await?;
         Ok(())
     }
 }

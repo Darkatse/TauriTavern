@@ -7,6 +7,7 @@ use tt_domain::models::agent::{
 };
 
 use super::constants::WORKSPACE_ROOT_UNIVERSE;
+use crate::services::agent_workspace_scope::AGENT_TOOL_RESULTS_ROOT;
 
 pub fn workspace_roots_from_profile(profile: &ResolvedAgentProfile) -> Vec<WorkspaceRootSpec> {
     let visible = profile
@@ -22,7 +23,7 @@ pub fn workspace_roots_from_profile(profile: &ResolvedAgentProfile) -> Vec<Works
         .map(|root| root.as_str())
         .collect::<BTreeSet<_>>();
 
-    WORKSPACE_ROOT_UNIVERSE
+    let mut roots = WORKSPACE_ROOT_UNIVERSE
         .iter()
         .map(|root| {
             if *root == "persist" {
@@ -47,7 +48,17 @@ pub fn workspace_roots_from_profile(profile: &ResolvedAgentProfile) -> Vec<Works
                 }
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    roots.push(WorkspaceRootSpec {
+        path: AGENT_TOOL_RESULTS_ROOT.to_string(),
+        lifecycle: WorkspaceRootLifecycle::Run,
+        scope: WorkspaceRootScope::Run,
+        mount: WorkspaceRootMount::Materialized,
+        visible: true,
+        writable: false,
+        commit: WorkspaceRootCommit::Never,
+    });
+    roots
 }
 
 pub fn commit_policy_from_profile(_profile: &ResolvedAgentProfile) -> CommitPolicy {

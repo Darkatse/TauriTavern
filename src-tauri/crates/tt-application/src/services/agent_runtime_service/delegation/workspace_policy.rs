@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 
+use crate::services::agent_workspace_scope::AGENT_TOOL_RESULTS_ROOT;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
@@ -26,6 +27,16 @@ impl<'a> InvocationWorkspaceRepository<'a> {
 
 #[async_trait]
 impl WorkspaceRepository for InvocationWorkspaceRepository<'_> {
+    async fn validate_persistent_state(
+        &self,
+        workspace_id: &str,
+        state_id: &str,
+    ) -> Result<(), DomainError> {
+        self.inner
+            .validate_persistent_state(workspace_id, state_id)
+            .await
+    }
+
     async fn initialize_run(
         &self,
         run: &AgentRun,
@@ -41,6 +52,11 @@ impl WorkspaceRepository for InvocationWorkspaceRepository<'_> {
     async fn read_manifest(&self, run_id: &str) -> Result<WorkspaceManifest, DomainError> {
         let mut manifest = self.inner.read_manifest(run_id).await?;
         for root in &mut manifest.roots {
+            if root.path == AGENT_TOOL_RESULTS_ROOT {
+                root.visible = true;
+                root.writable = false;
+                continue;
+            }
             root.visible = self
                 .profile
                 .workspace
@@ -110,7 +126,10 @@ impl WorkspaceRepository for InvocationWorkspaceRepository<'_> {
     async fn commit_persistent_changes(
         &self,
         run_id: &str,
+        previous_state_id: Option<&str>,
     ) -> Result<WorkspacePersistentChangeSet, DomainError> {
-        self.inner.commit_persistent_changes(run_id).await
+        self.inner
+            .commit_persistent_changes(run_id, previous_state_id)
+            .await
     }
 }

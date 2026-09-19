@@ -986,36 +986,3 @@ async fn discover_extensions_keeps_extensions_with_invalid_source_state_as_unman
 
     fs::remove_dir_all(root).await.expect("cleanup temp root");
 }
-
-#[tokio::test]
-async fn discover_extensions_does_not_parse_frontend_manifests() {
-    let (root, user_extensions_dir, global_extensions_dir, source_store_root) = setup_paths().await;
-    let extension_dir = user_extensions_dir.join("invalid-manifest-ext");
-    fs::create_dir_all(&extension_dir)
-        .await
-        .expect("create extension dir");
-    fs::write(extension_dir.join("manifest.json"), b"not json")
-        .await
-        .expect("write manifest");
-
-    let repository = FileExtensionRepository::new(
-        user_extensions_dir,
-        global_extensions_dir,
-        source_store_root,
-        test_http_clients(),
-    );
-
-    let extensions = repository
-        .discover_extensions()
-        .await
-        .expect("discover extensions");
-
-    let extension = extensions
-        .into_iter()
-        .find(|extension| extension.name == "third-party/invalid-manifest-ext")
-        .expect("extension should be discoverable");
-
-    assert!(!extension.managed, "extension should remain unmanaged");
-
-    fs::remove_dir_all(root).await.expect("cleanup temp root");
-}

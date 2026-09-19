@@ -1,9 +1,22 @@
-export const AGENT_SYSTEM_MODULE_NAME = 'agent-system';
-export const AGENT_SYSTEM_SETTINGS_KEY = 'settings';
-export const AGENT_SYSTEM_SETTINGS_CHANGED = 'tauritavern-agent-system-settings-changed';
+// @ts-check
+
+/**
+ * @typedef {Record<string, unknown> & {
+ *   agentModeEnabled: boolean;
+ *   chatInputToggleHidden: boolean;
+ *   activeProfileId: string;
+ *   editingProfileId: string;
+ *   activeTab: string;
+ *   runTimelineHeightPx: number | null;
+ * }} AgentSystemSettings
+ */
+
+const AGENT_SYSTEM_MODULE_NAME = 'agent-system';
+const AGENT_SYSTEM_SETTINGS_KEY = 'settings';
+const AGENT_SYSTEM_SETTINGS_CHANGED = 'tauritavern-agent-system-settings-changed';
 export const DEFAULT_AGENT_PROFILE_ID = 'default-writer';
 
-export const DEFAULT_AGENT_SYSTEM_SETTINGS = Object.freeze({
+const DEFAULT_AGENT_SYSTEM_SETTINGS = Object.freeze({
     agentModeEnabled: false,
     chatInputToggleHidden: false,
     activeProfileId: DEFAULT_AGENT_PROFILE_ID,
@@ -20,14 +33,20 @@ function requireExtensionStore() {
     return store;
 }
 
+/**
+ * @param {unknown} value
+ * @returns {AgentSystemSettings}
+ */
 function mergeSettings(value) {
-    const source = value || {};
+    const source = value && typeof value === 'object' && !Array.isArray(value)
+        ? /** @type {Record<string, unknown>} */ (value)
+        : {};
     const legacyProfileId = normalizeProfileIdSetting(source.selectedProfileId);
     const sourceActiveProfileId = normalizeProfileIdSetting(source.activeProfileId);
-    const merged = {
+    const merged = /** @type {AgentSystemSettings} */ ({
         ...DEFAULT_AGENT_SYSTEM_SETTINGS,
         ...source,
-    };
+    });
     merged.activeProfileId = sourceActiveProfileId
         || legacyProfileId
         || DEFAULT_AGENT_PROFILE_ID;
@@ -38,17 +57,20 @@ function mergeSettings(value) {
     return merged;
 }
 
+/** @param {unknown} value */
 function normalizeProfileIdSetting(value) {
     const profileId = String(value || '').trim();
     return profileId || '';
 }
 
+/** @param {AgentSystemSettings} settings */
 function emitSettingsChanged(settings) {
     window.dispatchEvent(new CustomEvent(AGENT_SYSTEM_SETTINGS_CHANGED, {
         detail: { settings },
     }));
 }
 
+/** @returns {Promise<AgentSystemSettings>} */
 export async function loadAgentSystemSettings() {
     const store = requireExtensionStore();
     if (typeof store.tryGetJson !== 'function') {
@@ -71,6 +93,10 @@ export async function loadAgentSystemSettings() {
     return mergeSettings(result.value);
 }
 
+/**
+ * @param {AgentSystemSettings} settings
+ * @returns {Promise<AgentSystemSettings>}
+ */
 export async function saveAgentSystemSettings(settings) {
     const next = mergeSettings(settings);
     await requireExtensionStore().setJson({
@@ -82,6 +108,11 @@ export async function saveAgentSystemSettings(settings) {
     return next;
 }
 
+/**
+ * @param {AgentSystemSettings} current
+ * @param {Partial<AgentSystemSettings>} patch
+ * @returns {Promise<AgentSystemSettings>}
+ */
 export async function patchAgentSystemSettings(current, patch) {
     return saveAgentSystemSettings({
         ...mergeSettings(current),
@@ -89,8 +120,12 @@ export async function patchAgentSystemSettings(current, patch) {
     });
 }
 
+/** @param {(settings: AgentSystemSettings) => void} listener */
 export function subscribeAgentSystemSettings(listener) {
-    const handler = (event) => listener(event.detail.settings);
+    /** @param {Event} event */
+    const handler = (event) => listener(
+        /** @type {CustomEvent<{ settings: AgentSystemSettings }>} */ (event).detail.settings,
+    );
     window.addEventListener(AGENT_SYSTEM_SETTINGS_CHANGED, handler);
     return () => window.removeEventListener(AGENT_SYSTEM_SETTINGS_CHANGED, handler);
 }

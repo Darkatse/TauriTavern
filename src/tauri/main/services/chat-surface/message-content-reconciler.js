@@ -57,8 +57,8 @@ export function createMessageContentReconciler({
         assertHealthy();
     }
 
-    /** @param {HTMLElement} messageElement @param {{ content: HTMLElement; commit: () => unknown }} transaction @param {{ notifyParticipants?: boolean }} [options] */
-    function update(messageElement, transaction, { notifyParticipants = true } = {}) {
+    /** @param {HTMLElement} messageElement @param {{ content: HTMLElement; commit: () => unknown }} transaction */
+    function resolve(messageElement, transaction) {
         assertHealthy();
         if (!(messageElement instanceof HTMLElement) || !transaction || typeof transaction.commit !== 'function') {
             throw new TypeError('ChatSurface updateContent requires a message element and content transaction');
@@ -91,7 +91,12 @@ export function createMessageContentReconciler({
             discard([transaction.content]);
             throw setFault(error);
         }
+        return record;
+    }
 
+    /** @param {any} record @param {{ content: HTMLElement; commit: () => unknown }} transaction @param {{ notifyParticipants?: boolean }} [options] */
+    function commit(record, transaction, { notifyParticipants = true } = {}) {
+        const { messageId, contentElement: liveContent } = record;
         const nextLease = createContentLease();
         /** @type {any[]} */
         const candidates = [];
@@ -142,7 +147,7 @@ export function createMessageContentReconciler({
             throw setFault(new Error('ChatSurface content transaction must synchronously return the exact live .mes_text'));
         }
         record.runtimeSources = Object.freeze(candidates.map(candidate => candidate.source));
-        record.message = messages[messageId];
+        record.message = getMessages()[messageId];
         record.contentLease = nextLease;
         assertLiveContent(record, liveContent);
 
@@ -158,5 +163,5 @@ export function createMessageContentReconciler({
         return record.element;
     }
 
-    return Object.freeze({ update });
+    return Object.freeze({ resolve, commit });
 }

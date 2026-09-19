@@ -77,6 +77,14 @@ pub trait AgentRunRepository: Send + Sync {
 
     async fn save_run(&self, run: &AgentRun) -> Result<(), DomainError>;
 
+    /// Atomically replace the latest execution checkpoint with already serialized bytes.
+    async fn save_run_checkpoint(&self, run_id: &str, data: &[u8]) -> Result<(), DomainError>;
+
+    async fn load_run_checkpoint(&self, run_id: &str) -> Result<Option<Vec<u8>>, DomainError>;
+
+    /// Rebuild the append cursor from the journal on the next write after external changes.
+    async fn reset_event_sequence(&self, run_id: &str) -> Result<(), DomainError>;
+
     async fn append_event(
         &self,
         run_id: &str,

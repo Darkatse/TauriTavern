@@ -68,26 +68,22 @@ var speechUtteranceChunker = function (utt, settings, callback) {
         var pattRegex = new RegExp('^[\\s\\S]{' + Math.floor(chunkLength / 2) + ',' + chunkLength + '}[.!?,]{1}|^[\\s\\S]{1,' + chunkLength + '}$|^[\\s\\S]{1,' + chunkLength + '} ');
         var chunkArr = txt.match(pattRegex);
 
-        if (chunkArr == null || chunkArr[0] === undefined || chunkArr[0].length <= 2) {
+        var chunk = chunkArr?.[0] || txt.slice(0, chunkLength);
+        if (!chunk) {
             //call once all text has been spoken...
             if (callback !== undefined) {
                 callback();
             }
             return;
         }
-        var chunk = chunkArr[0];
         const { Utterance } = getRequiredSpeechSynthesisApi();
         newUtt = new Utterance(chunk);
-        var x;
-        for (x in utt) {
-            if (Object.hasOwn(utt, x) && x !== 'text') {
-                newUtt[x] = utt[x];
-            }
-        }
         newUtt.lang = utt.lang;
         newUtt.voice = utt.voice;
         newUtt.rate = utt.rate;
         newUtt.pitch = utt.pitch;
+        newUtt.volume = utt.volume;
+        newUtt.onerror = utt.onerror;
         newUtt.addEventListener('end', function () {
             if (speechUtteranceChunker.cancel) {
                 speechUtteranceChunker.cancel = false;
@@ -185,7 +181,7 @@ class SystemTtsProvider {
         }
 
         $('#system_tts_rate').val(this.settings.rate || this.defaultSettings.rate);
-        $('#system_tts_pitch').val(this.settings.pitch || this.defaultSettings.pitch);
+        $('#system_tts_pitch').val(this.settings.pitch ?? this.defaultSettings.pitch);
 
         // Trigger updates
         $('#system_tts_rate').on('input', () => { this.onSettingsChange(); });
@@ -262,7 +258,7 @@ class SystemTtsProvider {
         }
 
         utterance.rate = this.settings.rate || 1;
-        utterance.pitch = this.settings.pitch || 1;
+        utterance.pitch = this.settings.pitch ?? 1;
 
         utterance.onerror = (event) => {
             console.error(`SystemTTS Preview Error: ${event.error}`, event);
@@ -311,9 +307,12 @@ class SystemTtsProvider {
             const utterance = new Utterance(text);
             utterance.voice = voice;
             utterance.rate = this.settings.rate || 1;
-            utterance.pitch = this.settings.pitch || 1;
+            utterance.pitch = this.settings.pitch ?? 1;
             utterance.onend = () => resolve(silence);
-            utterance.onerror = () => reject();
+            utterance.onerror = event => reject(Object.assign(
+                new Error(event.message || `System TTS: ${event.error}`),
+                { severity: 'warning' },
+            ));
             speechUtteranceChunker(utterance, {
                 chunkLength: 200,
             }, function () {

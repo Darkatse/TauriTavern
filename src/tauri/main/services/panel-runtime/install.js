@@ -1,6 +1,7 @@
 // @ts-check
 
 import { eventSource, event_types } from '../../../../scripts/events.js';
+import { t } from '../../../../scripts/i18n.js';
 import { getTauriTavernSettings } from '../../../../tauri-bridge.js';
 import { activateApiConnectionsSubtreeGates } from '../../adapters/panel-runtime/api-connections-subtree-gates.js';
 import { installExtensionsSubtreeGates } from '../../adapters/panel-runtime/extensions-subtree-gates.js';
@@ -25,10 +26,17 @@ export function installPanelRuntime() {
         const service = createPanelRuntimeService({ profileName });
 
         eventSource.on(event_types.APP_READY, () => {
-            activateApiConnectionsSubtreeGates({ manager: service.manager });
-            installTopSettingsPanelParking({ manager: service.manager });
-            installExtensionsSubtreeGates({ manager: service.manager });
-            validatePanelRuntimeInvariants({ profileName: service.manager.profile });
+            // eventSource.emit() swallows listener exceptions; without this the fault
+            // is invisible and the runtime stays half-installed.
+            try {
+                activateApiConnectionsSubtreeGates({ manager: service.manager });
+                const { pinnedSelectors } = installTopSettingsPanelParking({ manager: service.manager });
+                installExtensionsSubtreeGates({ manager: service.manager });
+                validatePanelRuntimeInvariants({ profileName: service.manager.profile, pinnedSelectors });
+            } catch (error) {
+                console.error('TauriTavern: Panel Runtime install failed:', error);
+                window.toastr?.error?.(t`Panel Runtime failed to install and is inactive. Check the console for details.`);
+            }
         });
 
         return service;

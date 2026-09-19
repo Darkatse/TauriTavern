@@ -1,7 +1,7 @@
 import { CONNECT_API_MAP, createModelIcon, getRequestHeaders } from '../../script.js';
 import { extension_settings, openThirdPartyExtensionMenu } from '../extensions.js';
 import { t } from '../i18n.js';
-import { getAdditionalParametersForSource, oai_settings, proxies, ZAI_ENDPOINT } from '../openai.js';
+import { getAdditionalParametersForSource, oai_settings, POLLINATIONS_ENDPOINT, proxies, ZAI_ENDPOINT } from '../openai.js';
 import { SECRET_KEYS, secret_state } from '../secrets.js';
 import { textgen_types, textgenerationwebui_settings } from '../textgen-settings.js';
 import { getTokenCountAsync } from '../tokenizers.js';
@@ -37,20 +37,19 @@ async function getCaptionErrorMessage(response) {
  * Generates a caption for an image using a multimodal model.
  * @param {string} base64Img Base64 encoded image
  * @param {string} prompt Prompt to use for captioning
+ * @param {AbortSignal} [signal] Signal used to cancel captioning
  * @returns {Promise<string>} Generated caption
  */
-export async function getMultimodalCaption(base64Img, prompt) {
-    if (globalThis.__TAURI_RUNNING__ === true) {
-        throw new Error(NATIVE_CAPTION_UNAVAILABLE_MESSAGE);
-    }
-
+export async function getMultimodalCaption(base64Img, prompt, signal) {
     const useReverseProxy =
         (['openai', 'anthropic', 'google', 'mistral', 'vertexai', 'xai', 'zai', 'moonshot'].includes(extension_settings.caption.multimodal_api))
         && extension_settings.caption.allow_reverse_proxy
         && oai_settings.reverse_proxy
         && isValidUrl(oai_settings.reverse_proxy);
 
-    throwIfInvalidModel(useReverseProxy);
+    if (globalThis.__TAURI_RUNNING__ !== true) {
+        throwIfInvalidModel(useReverseProxy);
+    }
 
     // OpenRouter has a payload limit of ~2MB. Google is 4MB, but we love democracy.
     // Ooba requires all images to be JPEGs. Koboldcpp just asked nicely.
@@ -161,8 +160,16 @@ export async function getMultimodalCaption(base64Img, prompt) {
         requestBody.zai_endpoint = oai_settings.zai_endpoint || ZAI_ENDPOINT.COMMON;
     }
 
+    if (extension_settings.caption.multimodal_api === 'pollinations') {
+        requestBody.pollinations_endpoint = oai_settings.pollinations_endpoint || POLLINATIONS_ENDPOINT.AUTHENTICATED;
+    }
+
     if (extension_settings.caption.multimodal_api === 'workers_ai') {
         requestBody.workers_ai_account_id = oai_settings.workers_ai_account_id;
+    }
+
+    if (extension_settings.caption.multimodal_api === 'moonshot') {
+        requestBody.moonshot_endpoint = oai_settings.moonshot_endpoint;
     }
 
     function getEndpointUrl() {
@@ -183,6 +190,7 @@ export async function getMultimodalCaption(base64Img, prompt) {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify(requestBody),
+        signal,
     });
 
     if (!apiResult.ok) {
@@ -190,7 +198,10 @@ export async function getMultimodalCaption(base64Img, prompt) {
     }
 
     const { caption } = await apiResult.json();
-    return String(caption).trim();
+    if (typeof caption !== 'string' || !caption.trim()) {
+        throw new Error('Image captioning response is missing caption text.');
+    }
+    return caption.trim();
 }
 
 function throwIfInvalidModel(useReverseProxy) {
@@ -319,7 +330,7 @@ function throwIfInvalidModel(useReverseProxy) {
         throw new Error('Z.AI API key is not set.');
     }
 
-    if (multimodalApi === 'pollinations' && !secret_state[SECRET_KEYS.POLLINATIONS]) {
+    if (multimodalApi === 'pollinations' && oai_settings.pollinations_endpoint !== POLLINATIONS_ENDPOINT.ANONYMOUS && !secret_state[SECRET_KEYS.POLLINATIONS]) {
         throw new Error('Pollinations API key is not set.');
     }
 
@@ -479,6 +490,8 @@ export class ConnectionManagerRequestService {
                         model: profile.model,
                         chat_completion_source: selectedApiMap.source,
                         custom_api_format: profile['custom-api-format'],
+                        opencode_api_format: profile['custom-api-format'],
+                        opencode_endpoint: profile['api-url'],
                         secret_id: profile['secret-id'],
                         custom_url: profile['api-url'],
                         vertexai_region: profile['api-url'],
@@ -486,6 +499,7 @@ export class ConnectionManagerRequestService {
                         siliconflow_endpoint: profile['api-url'],
                         minimax_endpoint: profile['api-url'],
                         moonshot_endpoint: profile['api-url'],
+                        pollinations_endpoint: profile['api-url'],
                         reverse_proxy: proxyPreset?.url,
                         proxy_password: proxyPreset?.password,
                         custom_prompt_post_processing: profile['prompt-post-processing'],

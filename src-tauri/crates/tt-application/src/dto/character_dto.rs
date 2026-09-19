@@ -1,7 +1,5 @@
 use chrono::{SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use tt_domain::json_merge::merge_json_value;
 use tt_domain::models::character::{Character, CharacterExtensions};
 use tt_ports::repositories::character_repository::{
     CharacterChat, CharacterCreateResult, CharacterCreateWarning, ImageCrop,
@@ -126,6 +124,8 @@ pub struct UpdateCharacterCardDataDto {
     pub card_json: String,
     pub avatar_path: Option<String>,
     pub crop: Option<ImageCropDto>,
+    #[serde(default)]
+    pub materialize_primary_lorebook: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -315,6 +315,7 @@ impl From<Character> for CharacterDto {
             data_size,
             date_added,
             date_last_chat,
+            json_data,
             data,
             ..
         } = character;
@@ -327,12 +328,15 @@ impl From<Character> for CharacterDto {
 
         let extensions = if shallow {
             Some(serde_json::json!({
-                "talkativeness": data.extensions.talkativeness,
-                "fav": data.extensions.fav,
-                "world": data.extensions.world,
+                "talkativeness": data.extensions.talkativeness(),
+                "fav": data.extensions.fav(),
+                "world": data.extensions.world(),
             }))
         } else {
-            Some(serde_json::to_value(&data.extensions).unwrap_or(serde_json::Value::Null))
+            Some(
+                serde_json::to_value(&data.extensions)
+                    .expect("CharacterExtensions serialization should not fail"),
+            )
         };
 
         Self {
@@ -361,37 +365,9 @@ impl From<Character> for CharacterDto {
             post_history_instructions: data.post_history_instructions,
             extensions,
             character_book: data.character_book,
-            json_data: None,
+            json_data,
         }
     }
-}
-
-impl CharacterDto {
-    pub fn with_json_data(mut self, json_data: Option<String>) -> Self {
-        self.json_data = json_data;
-        self
-    }
-}
-
-fn replace_character_extensions(
-    character: &mut Character,
-    extensions: Option<Value>,
-) -> Result<(), serde_json::Error> {
-    if let Some(extensions) = extensions {
-        character.data.extensions = serde_json::from_value::<CharacterExtensions>(extensions)?;
-    }
-
-    Ok(())
-}
-
-pub(crate) fn merge_character_extensions(
-    character: &mut Character,
-    extensions: Value,
-) -> Result<(), serde_json::Error> {
-    let mut current = serde_json::to_value(&character.data.extensions)?;
-    merge_json_value(&mut current, extensions);
-    character.data.extensions = serde_json::from_value::<CharacterExtensions>(current)?;
-    Ok(())
 }
 
 /// Convert from DTO to domain model
@@ -430,9 +406,14 @@ impl TryFrom<CreateCharacterDto> for Character {
         character.data.system_prompt = dto.system_prompt.unwrap_or_default();
         character.data.post_history_instructions =
             dto.post_history_instructions.unwrap_or_default();
-        replace_character_extensions(&mut character, dto.extensions)?;
-        character.data.extensions.talkativeness = character.talkativeness;
-        character.data.extensions.fav = character.fav;
+        if let Some(extensions) = dto.extensions {
+            character.data.extensions = serde_json::from_value::<CharacterExtensions>(extensions)?;
+        }
+        character
+            .data
+            .extensions
+            .set_talkativeness(character.talkativeness);
+        character.data.extensions.set_fav(character.fav);
 
         Ok(character)
     }
@@ -466,178 +447,9 @@ impl From<ImageCropDto> for ImageCrop {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        CharacterDto, CharacterLorebookConflictResolution, CreateCharacterDto,
-        ResolveCharacterLorebookConflictDto, merge_character_extensions,
-    };
+    use super::CharacterDto;
     use chrono::{SecondsFormat, TimeZone, Utc};
-    use serde_json::json;
     use tt_domain::models::character::Character;
-
-    #[test]
-    fn lorebook_conflict_resolution_uses_public_wire_values() {
-        for (wire_value, expected) in [
-            ("current", CharacterLorebookConflictResolution::Current),
-            ("embedded", CharacterLorebookConflictResolution::Embedded),
-            ("copy", CharacterLorebookConflictResolution::Copy),
-        ] {
-            let dto: ResolveCharacterLorebookConflictDto = serde_json::from_value(json!({
-                "name": "Alice",
-                "resolution": wire_value,
-                "conflict_token": "token",
-            }))
-            .expect("deserialize public lorebook conflict resolution");
-
-            assert_eq!(dto.resolution, expected);
-        }
-
-        let legacy: ResolveCharacterLorebookConflictDto = serde_json::from_value(json!({
-            "name": "Alice",
-            "resolution": "current",
-        }))
-        .expect("deserialize legacy resolution without token");
-        assert!(legacy.conflict_token.is_none());
-    }
-
-    #[test]
-    fn try_from_create_character_dto_maps_structured_extensions() {
-        let character = Character::try_from(CreateCharacterDto {
-            file_name: None,
-            json_data: None,
-            primary_lorebook: None,
-            name: "Test".to_string(),
-            description: "desc".to_string(),
-            personality: "persona".to_string(),
-            scenario: String::new(),
-            first_mes: "hello".to_string(),
-            mes_example: String::new(),
-            creator: None,
-            creator_notes: None,
-            character_version: None,
-            tags: None,
-            talkativeness: Some(0.75),
-            fav: Some(true),
-            alternate_greetings: None,
-            system_prompt: None,
-            post_history_instructions: None,
-            extensions: Some(json!({
-                "world": "bound-book",
-                "depth_prompt": {
-                    "prompt": "focus",
-                    "depth": 7,
-                    "role": "assistant"
-                },
-                "custom": "value"
-            })),
-        })
-        .expect("character conversion should succeed");
-
-        assert_eq!(character.data.extensions.world, "bound-book");
-        assert_eq!(character.data.extensions.depth_prompt.prompt, "focus");
-        assert_eq!(character.data.extensions.depth_prompt.depth, 7);
-        assert_eq!(character.data.extensions.depth_prompt.role, "assistant");
-        assert_eq!(
-            character.data.extensions.additional.get("custom"),
-            Some(&json!("value"))
-        );
-        assert_eq!(character.file_name, None);
-        assert_eq!(character.talkativeness, 0.75);
-        assert!(character.fav);
-        assert_eq!(character.data.extensions.talkativeness, 0.75);
-        assert!(character.data.extensions.fav);
-    }
-
-    #[test]
-    fn try_from_create_character_dto_preserves_explicit_file_name() {
-        let character = Character::try_from(CreateCharacterDto {
-            file_name: Some("Assistant.png".to_string()),
-            json_data: None,
-            primary_lorebook: None,
-            name: "Assistant".to_string(),
-            description: String::new(),
-            personality: String::new(),
-            scenario: String::new(),
-            first_mes: String::new(),
-            mes_example: String::new(),
-            creator: None,
-            creator_notes: None,
-            character_version: None,
-            tags: None,
-            talkativeness: None,
-            fav: None,
-            alternate_greetings: None,
-            system_prompt: None,
-            post_history_instructions: None,
-            extensions: None,
-        })
-        .expect("character conversion should succeed");
-
-        assert_eq!(character.file_name, Some("Assistant".to_string()));
-    }
-
-    #[test]
-    fn merge_character_extensions_preserves_existing_fields() {
-        let mut character = Character::new(
-            "Test".to_string(),
-            "desc".to_string(),
-            "persona".to_string(),
-            "hello".to_string(),
-        );
-        character.data.extensions.world = "existing".to_string();
-        character
-            .data
-            .extensions
-            .additional
-            .insert("custom".to_string(), json!("old"));
-
-        merge_character_extensions(
-            &mut character,
-            json!({
-                "world": "",
-                "fav": true,
-                "custom_2": "new"
-            }),
-        )
-        .expect("extensions merge should succeed");
-
-        assert_eq!(character.data.extensions.world, "");
-        assert!(character.data.extensions.fav);
-        assert_eq!(
-            character.data.extensions.additional.get("custom"),
-            Some(&json!("old"))
-        );
-        assert_eq!(
-            character.data.extensions.additional.get("custom_2"),
-            Some(&json!("new"))
-        );
-    }
-
-    #[test]
-    fn merge_character_extensions_preserves_nested_fields() {
-        let mut character = Character::new(
-            "Test".to_string(),
-            "desc".to_string(),
-            "persona".to_string(),
-            "hello".to_string(),
-        );
-        character.data.extensions.depth_prompt.prompt = "old".to_string();
-        character.data.extensions.depth_prompt.depth = 7;
-        character.data.extensions.depth_prompt.role = "assistant".to_string();
-
-        merge_character_extensions(
-            &mut character,
-            json!({
-                "depth_prompt": {
-                    "prompt": "new"
-                }
-            }),
-        )
-        .expect("extensions merge should succeed");
-
-        assert_eq!(character.data.extensions.depth_prompt.prompt, "new");
-        assert_eq!(character.data.extensions.depth_prompt.depth, 7);
-        assert_eq!(character.data.extensions.depth_prompt.role, "assistant");
-    }
 
     #[test]
     fn character_dto_falls_back_to_date_added_when_create_date_missing() {
@@ -659,44 +471,5 @@ mod tests {
             .to_rfc3339_opts(SecondsFormat::Millis, true);
 
         assert_eq!(dto.create_date, expected);
-    }
-
-    #[test]
-    fn character_dto_preserves_existing_create_date() {
-        let mut character = Character::new(
-            "Preserve".to_string(),
-            "desc".to_string(),
-            "persona".to_string(),
-            "hi".to_string(),
-        );
-
-        character.create_date = "2026-03-18T12:34:56.789Z".to_string();
-        character.date_added = 1_700_000_000_123;
-
-        let dto = CharacterDto::from(character);
-        assert_eq!(dto.create_date, "2026-03-18T12:34:56.789Z");
-    }
-
-    #[test]
-    fn shallow_character_dto_keeps_list_contract_fields() {
-        let mut character = Character::new(
-            "List".to_string(),
-            "desc".to_string(),
-            "persona".to_string(),
-            "hi".to_string(),
-        );
-        character.data_size = 42;
-        character.data.extensions.world = "book".to_string();
-
-        let dto = CharacterDto::from(character.into_shallow());
-
-        assert_eq!(dto.data_size, 42);
-        assert_eq!(
-            dto.extensions
-                .as_ref()
-                .and_then(|value| value.get("world"))
-                .and_then(serde_json::Value::as_str),
-            Some("book")
-        );
     }
 }

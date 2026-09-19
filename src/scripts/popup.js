@@ -244,6 +244,7 @@ export class Popup {
     /** @type {(result: any) => any} */ #resolver;
     /** @type {boolean} */ #allowEscapeClose;
     /** @type {boolean} */ #isClosingPrevented;
+    /** @type {boolean} */ #isCompleting = false;
     /** @type {number} */ #lastEscapePress = 0;
     /** @type {boolean} */ #isShowingForceCloseConfirm = false;
 
@@ -808,53 +809,60 @@ export class Popup {
      * @returns {Promise<string|number|boolean|undefined?>} A promise that resolves with the value of the popup when it is completed. <b>Returns `undefined` if the closing action was cancelled.</b>
      */
     async complete(result) {
-        // In all cases besides INPUT the popup value should be the result
-        /** @type {POPUP_RESULT|number|boolean|string?} */
-        let value = result;
-        // Input type have special results, so the input can be accessed directly without the need to save the popup and access both result and value
-        if (this.type === POPUP_TYPE.INPUT) {
-            if (result >= POPUP_RESULT.AFFIRMATIVE) value = this.mainInput.value;
-            else if (result === POPUP_RESULT.NEGATIVE) value = false;
-            else if (result === POPUP_RESULT.CANCELLED) value = null;
-            else value = false; // Might a custom negative value?
-        }
-
-        // Cropped image should be returned as a data URL
-        if (this.type === POPUP_TYPE.CROP) {
-            value = result >= POPUP_RESULT.AFFIRMATIVE
-                ? $(this.cropImage).data('cropper').getCroppedCanvas().toDataURL('image/jpeg')
-                : null;
-        }
-
-        if (this.customInputs?.length) {
-            this.inputResults = new Map(this.customInputs.map(input => {
-                /** @type {HTMLInputElement} */
-                const inputControl = this.dlg.querySelector(`#${input.id}`);
-                const value = ['text', 'textarea', 'number'].includes(input.type) ? inputControl.value : inputControl.checked;
-                return [inputControl.id, value];
-            }));
-        }
-
-        this.value = value;
-        this.result = result;
-
-        if (this.onClosing) {
-            const shouldClose = await this.onClosing(this);
-            if (!shouldClose) {
-                this.#isClosingPrevented = true;
-                // Set values back if we cancel out of closing the popup
-                this.value = undefined;
-                this.result = undefined;
-                this.inputResults = undefined;
-                return undefined;
+        // Keep the first result intact until asynchronous validation and closing finish.
+        if (this.#isCompleting) return undefined;
+        this.#isCompleting = true;
+        try {
+            // In all cases besides INPUT the popup value should be the result
+            /** @type {POPUP_RESULT|number|boolean|string?} */
+            let value = result;
+            // Input type have special results, so the input can be accessed directly without the need to save the popup and access both result and value
+            if (this.type === POPUP_TYPE.INPUT) {
+                if (result >= POPUP_RESULT.AFFIRMATIVE) value = this.mainInput.value;
+                else if (result === POPUP_RESULT.NEGATIVE) value = false;
+                else if (result === POPUP_RESULT.CANCELLED) value = null;
+                else value = false; // Might a custom negative value?
             }
+
+            // Cropped image should be returned as a data URL
+            if (this.type === POPUP_TYPE.CROP) {
+                value = result >= POPUP_RESULT.AFFIRMATIVE
+                    ? $(this.cropImage).data('cropper').getCroppedCanvas().toDataURL('image/jpeg')
+                    : null;
+            }
+
+            if (this.customInputs?.length) {
+                this.inputResults = new Map(this.customInputs.map(input => {
+                    /** @type {HTMLInputElement} */
+                    const inputControl = this.dlg.querySelector(`#${input.id}`);
+                    const value = ['text', 'textarea', 'number'].includes(input.type) ? inputControl.value : inputControl.checked;
+                    return [inputControl.id, value];
+                }));
+            }
+
+            this.value = value;
+            this.result = result;
+
+            if (this.onClosing) {
+                const shouldClose = await this.onClosing(this);
+                if (!shouldClose) {
+                    this.#isClosingPrevented = true;
+                    // Set values back if we cancel out of closing the popup
+                    this.value = undefined;
+                    this.result = undefined;
+                    this.inputResults = undefined;
+                    return undefined;
+                }
+            }
+            this.#isClosingPrevented = false;
+
+            Popup.util.lastResult = { value, result, inputResults: this.inputResults };
+            this.#hide();
+
+            return await this.#promise;
+        } finally {
+            this.#isCompleting = false;
         }
-        this.#isClosingPrevented = false;
-
-        Popup.util.lastResult = { value, result, inputResults: this.inputResults };
-        this.#hide();
-
-        return this.#promise;
     }
     async completeAffirmative() {
         return await this.complete(POPUP_RESULT.AFFIRMATIVE);

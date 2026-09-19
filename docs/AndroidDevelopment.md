@@ -2,6 +2,8 @@
 
 本文档记录当前移 Android 端开发中已经踩过的关键问题、根因分析、已落地方案，以及对应的架构改动。目标是避免重复踩坑，并为后续替换官方修复留出清晰迁移路径。
 
+当前支持 Android 8.0（API 26）及以上，并要求系统 WebView/Chrome 已更新到能执行 ES2020 的版本。
+
 ## 1. Android WebView 安全区注入时机竞态
 
 ### 1.1 现象
@@ -215,9 +217,19 @@ https://v2.tauri.app/develop/resources/#android
 
 ---
 
-## 6. AI 生成通知生命周期
+## 6. AI 生成后台执行与通知生命周期
 
-Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyTavern 语义上的“生成开始/进度/结束”事件。
+Android AI 生成使用任务级 `dataSync` Foreground Service。Rust `ChatCompletionService` 持有生成任务与后台执行租约；WebView 只负责消费流事件，并在 Android 16+ 可用时补充非关键的 token 进度。
+
+执行契约：
+
+- 第一个 Chat Completion 任务开始时，由 Rust 通过原生 Tauri plugin 启动 `AiGenerationForegroundService`；
+- 并发任务通过稳定 task id 计数，共享一个 FGS；
+- 最后一个任务成功、失败或取消后立即 `stopForeground()` + `stopSelfResult()`；
+- Service 使用 `START_NOT_STICKY`，不会在没有真实生成任务时被系统复活；
+- Android 15+ `dataSync` 超时时通过 `onTimeout()` 立即释放 FGS，但不把平台保护到期升级为生成失败；
+- 应用启动本身不再启动保活服务，避免无任务时消耗 Android 的后台 FGS 配额。
+- 原生插件不可用或 FGS 启停失败只记录警告；Chat Completion 仍按真实 provider 结果继续，不阻塞应用启动或生成。
 
 当前通知槽位：
 
@@ -228,7 +240,7 @@ Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyT
 
 - 应用前台可交互态定义为 `Activity resumed && window focused`；
 - 应用进入前台可交互态、冷启动、或收到新的 launch intent 时，只清除 `42001`；
-- 生成结束时，如果应用已经前台可交互，则不再发布完成通知；
+- Rust 任务结束时，如果应用已经前台可交互、请求为 quiet 或任务被取消，则不发布完成通知；
 - 发布新的完成通知前先清除旧的 `42001`，避免 fixed notification id 上的静默复用；
 - 完成通知不使用 `onlyAlertOnce`；保活/进度通知仍可使用，避免 token 进度频繁打扰。
 
@@ -236,6 +248,7 @@ Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyT
 
 - 不要用 `cancelAll()` 清通知，避免误伤系统或未来扩展通知；
 - 不要把 native completion 能力绑定到 Android 16+ `ProgressStyle`，旧版 Android 也需要完成通知生命周期；
+- 不要把 FGS 的结束重新绑定到 WebView 回调；WebView 被系统挂起时，Rust 任务仍必须能够独立释放原生租约；
 - 不要让前端承担 Android 通知栏清理职责，前端应继续保持上游 SillyTavern 的事件语义。
 
 ---
@@ -244,7 +257,9 @@ Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyT
 
 以下问题仅在 Android 旧 WebView 上高概率出现，桌面端通常不复现。
 
-### 7.1 `*.at is not a function`
+### 7.1 JavaScript 运行时兼容
+
+#### `*.at is not a function`
 
 现象：
 
@@ -260,7 +275,13 @@ Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyT
 - 在 Tauri mobile 启动期安装运行时兼容层：
   - 实现：`src/tauri/main/compat/mobile/mobile-runtime-compat.js`
   - 入口：`src/tauri/main/bootstrap.js`（仅 Android/iOS UA）
-  - 行为：仅补齐缺失 API，且只执行一次；桌面端/移动端 Web 不启用。
+  - 行为：基础 API 仅在缺失时补齐，且只执行一次；桌面端/移动端 Web 不启用。
+
+#### Web Clipboard 写入被拒绝
+
+Android WebView 可能暴露 `navigator.clipboard.writeText()`，却在调用时以 `NotAllowedError` 拒绝写入。TauriTavern 第一方复制在所有平台统一走 `writeClipboardText()`；Android 兼容层只把上游 Web Clipboard 的 `writeText` 映射到同一原生写入器，并保留 Clipboard 对象上的其他方法。
+
+原生侧只授予 `clipboard-manager:allow-write-text`。写入剪贴板不需要 Android manifest 或运行时权限，也不开放读取能力；失败直接返回调用方，不静默回退。
 
 ### 7.2 插件面板样式大面积失效（如 `TH-custom-tailwind` 布局错乱）
 
@@ -345,7 +366,7 @@ Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyT
 
 维护原则：
 
-- 不修改 auto-generated 的 `src-tauri/crates/tauritavern/gen/android/.../generated/*`，避免升级冲突。
+- `src-tauri/crates/tauritavern/gen/android/.../generated/*` 是由 Cargo.lock 锁定的 Tauri/Wry 构建脚本重建的派生物，不纳入版本控制，也不承载本地语义。
 - UI 分层判断与关闭动作只写在 JS；Kotlin 不写 DOM/UI 规则，只做拦截/转发/退出决策。
 - 若未来新增/变更 UI 层级，只在 `back-navigation.js` 增加一个分支即可；更详细设计见 `docs/AndroidBackNavigation.md`。
 
@@ -399,6 +420,17 @@ Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyT
 - 不做前端 fullscreen polyfill 或静默降级，失败直接暴露，便于定位真实链路问题；
 - 未来升级 Tauri / Wry 时，只需要对比 upstream 的 `RustWebChromeClient.kt` 与本地替代版本的差异。
 
+### 8.3 Wry Android 生成层所有权
+
+`generated/*` 只是一份可重建的构建输出。项目实际维护的 Wry 分叉只有 generated 目录外、同 package 同类名的两个文件，Gradle 排除对应 generated 类以避免重复编译：
+
+- `RustWebChromeClient.kt`：fullscreen 转发与结构化 WebView 日志；
+- `RustWebViewClient.kt`：主文档导航通知、拦截失败响应，以及 Host Resource 显式缓存策略优先级。
+
+两个文件头必须记录当前 Wry baseline。升级 Wry 时逐文件与锁文件解析到的 upstream 模板比较；缺少显式 `Cache-Control` 的自定义协议响应采用 Wry 的 `no-store` 默认值，Host Resource 已明确返回的 `private, no-cache` 或错误 `no-store` 不得被 transport 层覆盖。删除 generated 目录后，debug 与 minified release 构建都必须能够从零重建。
+
+`app/tauri.build.gradle.kts` 同样是 ignored 派生物：`tauri-build` 2.6.3会在其中声明 `androidx.lifecycle:lifecycle-process:2.10.0`。tracked `app/build.gradle.kts` 只应用该脚本，不重复维护依赖版本；从空生成目录完成 canonical debug/release构建用于证明生成顺序和依赖闭合。
+
 ---
 
 ## 9. Android WebView 视频背景 Range 语义差异（SillyTavern-VideoBackgrounds）
@@ -435,13 +467,15 @@ Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyT
 
 当前契约：
 
-- Kotlin 侧仍复用 `MainActivity` 中的数据归档选择器入口，返回 `content://` 给前端桥；
-- 前端 `android-archive-service.js` 只在 Skill 导入场景把该 URI 物化到 app cache/temp 下的 `tauritavern-skill-import-staging`；
-- `api.skill.pickImportArchive()` 对 UI 返回 `{ kind: 'archiveFile', path }`，保持 Skill 后端只消费普通文件路径；
-- 如果用户放弃本次导入，UI 必须调用 `api.skill.discardPickedImport(input)` 清理 staged 文件；`installImport()` 完成后会自动清理。
+- `api.skill.pickImportArchive()` 与 `pickImportArchives()` 统一使用 Tauri dialog 的 Android 文件选择能力，分别取得一个或多个 `content://` URI；
+- 该能力由 `capabilities/system-file-picker.json` 授予 android 平台的 `dialog:allow-open`；
+- 前端 `android-archive-service.js` 逐个把 URI 物化到 app cache/temp 下的 `tauritavern-skill-import-staging`；
+- Host API 对 UI 只返回一个或多个 `{ kind: 'archiveFile', path }`，保持 Skill 后端只消费普通文件路径；
+- 如果用户放弃某个输入，UI 调用 `api.skill.discardPickedImport(input)`；放弃整个批次时调用无参数的 `discardPickedImport()`。`installImport()` 完成后会自动清理对应输入。
 
 维护原则：
 
+- 新增平台分支调用 `plugin:*|*` 时，必须同步扩展对应 capability 的 `platforms`。`removeUnusedCommands` 会把未授权平台的命令直接裁掉，缺口只会在实机上以 ACL 错误暴露。
 - 不把 `content://` 透传到 Rust Skill repository；仓储层只处理真实路径与归档内容。
 - 导入不把完整文件整体 base64 物化，避免把内存占用集中到 JS heap 与单个 IPC payload。
 - 选择器取消不是错误；staging、预览、安装、清理失败都应直接暴露，避免静默遗留坏状态。
@@ -450,7 +484,7 @@ Android AI 生成通知由 native 侧拥有生命周期，前端只表达 SillyT
 
 ## 11. Android 大型 byte ingress
 
-Tauri 2.10.2 在 Android 上不支持 `InvokeBody::Raw`。业务 payload 进入完整 invoke envelope 后，nested `Uint8Array` 会被 JSON serializer 展开为 `number[]`；大型 payload 会因此产生不可接受的逐 byte 对象化内存开销。
+Tauri 2.11.5 在 Android 上仍不支持 `InvokeBody::Raw`。业务 payload 进入完整 invoke envelope 后，nested `Uint8Array` 会被 JSON serializer 展开为 `number[]`；大型 payload 会因此产生不可接受的逐 byte 对象化内存开销。
 
 聊天 full-save 的正式契约是：
 
@@ -474,3 +508,9 @@ begin_chat_commit(logical target, force)
 - bounded base64 达到实机目标后即停止；只有 profile 证明其仍是主要热点时，才评估 text frame 或 AndroidX binary bridge。
 
 Tauri 版本升级后也必须重新验证运行时 envelope，不能仅凭 API 表面接受 `Uint8Array` 就假定 Android Raw IPC 已可用。
+
+## 12. LAN Sync 多播发现
+
+Android 的 Rust mDNS 发现需要 `CHANGE_WIFI_MULTICAST_STATE` 权限。宿主只在前台持有 `MulticastLock`，进入后台或停止发现时释放，回到前台后为已启动的发现重新获取；网络逻辑由 Rust 负责。
+
+平台适配见 [LanDiscoveryPlugin](../src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/LanDiscoveryPlugin.kt)，功能边界见[同步总览](CurrentState/Sync.md)。

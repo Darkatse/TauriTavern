@@ -1,6 +1,6 @@
 // @ts-check
 
-import { isTauri } from '../../../tauri-bridge.js';
+import { invoke, isTauri } from '../../../tauri-bridge.js';
 
 export const SETTINGS_HASH_ALGORITHM = 'tt-user-settings-stable-sha256-v1';
 
@@ -56,6 +56,16 @@ function normalizeSettingsRevision(revision) {
         hash_algorithm: candidate.hash_algorithm,
         settings_hash: candidate.settings_hash,
     };
+}
+
+/** @param {unknown} revision */
+export function requireSettingsRevision(revision) {
+    const normalizedRevision = normalizeSettingsRevision(revision);
+    if (!normalizedRevision) {
+        throw new Error('Settings save response missing revision');
+    }
+
+    return normalizedRevision;
 }
 
 /**
@@ -154,6 +164,60 @@ function buildPatchOps(base, next, path, ops) {
     return true;
 }
 
+/** @param {any} settings */
+function personaRecords(settings) {
+    const { personas = {}, persona_descriptions = {} } = settings.power_user ?? {};
+    return Object.fromEntries([...new Set([...Object.keys(personas), ...Object.keys(persona_descriptions)])]
+        .map(id => [id, {
+            ...(Object.hasOwn(personas, id) ? { name: personas[id] } : {}),
+            ...(Object.hasOwn(persona_descriptions, id) ? { description: persona_descriptions[id] } : {}),
+        }]));
+}
+
+/** @param {any} settings */
+function withoutPersonas(settings) {
+    if (!settings.power_user) return settings;
+    const { personas, persona_descriptions, ...power_user } = settings.power_user;
+    return { ...settings, power_user };
+}
+
+/** @param {Record<string, any>} records */
+function personaProjection(records) {
+    return {
+        personas: Object.fromEntries(Object.entries(records).filter(([, data]) => data.name !== undefined).map(([id, data]) => [id, data.name])),
+        persona_descriptions: Object.fromEntries(Object.entries(records).filter(([, data]) => data.description !== undefined).map(([id, data]) => [id, data.description])),
+    };
+}
+
+/**
+ * Refresh the disk projection without discarding edits waiting for the settings debounce.
+ * @param {any} powerUser
+ * @param {Record<string, any>} snapshot
+ */
+export function applyPersonaSnapshot(powerUser, snapshot) {
+    if (!settingsBaseline) {
+        throw new Error('Cannot refresh personas before settings have loaded');
+    }
+    const base = personaRecords(settingsBaseline.value);
+    const current = personaRecords({ power_user: powerUser });
+    for (const id of new Set([...Object.keys(base), ...Object.keys(snapshot)])) {
+        if (sameJsonValue(current[id], base[id])) {
+            if (snapshot[id]) current[id] = structuredClone(snapshot[id]);
+            else delete current[id];
+        }
+    }
+    Object.assign(powerUser, personaProjection(current));
+    settingsBaseline.value.power_user ??= {};
+    Object.assign(settingsBaseline.value.power_user, personaProjection(structuredClone(snapshot)));
+}
+
+/** @param {any} powerUser */
+export async function loadPersonaSnapshot(powerUser) {
+    const snapshot = await invoke('get_personas');
+    applyPersonaSnapshot(powerUser, snapshot);
+    return Object.keys(snapshot);
+}
+
 /**
  * @param {SettingsRevision} revision
  * @param {SettingsPatchOp[]} ops
@@ -168,15 +232,7 @@ function createPatch(revision, ops) {
 
 /**
  * @param {PreparedSettingsPayload} prepared
- * @param {SettingsRevision} revision
- */
-function createRootSetPatch(prepared, revision) {
-    return createPatch(revision, [{ op: 'set', path: [], value: prepared.value }]);
-}
-
-/**
- * @param {PreparedSettingsPayload} prepared
- * @returns {{ body: string, patch: { hash_algorithm: string, base_hash: string, ops: SettingsPatchOp[] } } | null}
+ * @returns {{ body: string, patch: { hash_algorithm: string, base_hash: string, ops: SettingsPatchOp[], persona_updates: Record<string, any> } } | null}
  */
 export function buildSettingsPatchSaveRequest(prepared) {
     if (!settingsBaseline) {
@@ -185,8 +241,12 @@ export function buildSettingsPatchSaveRequest(prepared) {
 
     /** @type {SettingsPatchOp[]} */
     const ops = [];
-    const withinOpLimit = buildPatchOps(settingsBaseline.value, prepared.value, [], ops);
-    let patch = createPatch(settingsBaseline.revision, ops);
+    const basePersonas = personaRecords(settingsBaseline.value);
+    const personaUpdates = Object.fromEntries(Object.entries(personaRecords(prepared.value))
+        .filter(([id, value]) => !sameJsonValue(basePersonas[id], value)));
+    const core = withoutPersonas(prepared.value);
+    const withinOpLimit = buildPatchOps(withoutPersonas(settingsBaseline.value), core, [], ops);
+    let patch = { ...createPatch(settingsBaseline.revision, ops), persona_updates: personaUpdates };
     let body = JSON.stringify(patch);
 
     if (
@@ -195,7 +255,7 @@ export function buildSettingsPatchSaveRequest(prepared) {
             || body.length > MAX_PATCH_BYTES
             || body.length >= prepared.body.length * MAX_PATCH_TO_FULL_RATIO)
     ) {
-        patch = createRootSetPatch(prepared, settingsBaseline.revision);
+        patch = { ...createPatch(settingsBaseline.revision, [{ op: 'set', path: [], value: core }]), persona_updates: personaUpdates };
         body = JSON.stringify(patch);
     }
 
@@ -218,8 +278,8 @@ export async function trySaveSettingsDelta(prepared, headers) {
     }
 
     const request = buildSettingsPatchSaveRequest(prepared);
-    if (!request) {
-        return { saved: false, reason: 'fallback' };
+    if (!request || !settingsBaseline) {
+        throw new Error('Cannot save settings before settings have loaded');
     }
 
     const response = await fetch('/api/settings/patch', {
@@ -231,15 +291,22 @@ export async function trySaveSettingsDelta(prepared, headers) {
 
     if (response.ok) {
         const result = await response.json();
-        const revision = normalizeSettingsRevision(result);
-        if (!revision) {
-            throw new Error('Settings patch response missing revision');
-        }
+        const revision = requireSettingsRevision(result);
+        const personaErrors = result.persona_errors ?? {};
+        // A refresh may have arrived during the save. Failed edits keep their previous baseline.
+        const savedPersonas = Object.fromEntries(Object.entries(request.patch.persona_updates)
+            .filter(([id]) => !Object.hasOwn(personaErrors, id)));
+        const personas = { ...personaRecords(settingsBaseline.value), ...savedPersonas };
+        captureSettingsSaveBaseline({
+            ...prepared.value,
+            power_user: { ...prepared.value.power_user, ...personaProjection(personas) },
+        }, revision);
 
         return {
             saved: true,
             mode: result?.mode || 'patch',
             revision,
+            ...(Object.keys(personaErrors).length ? { personaErrors } : {}),
         };
     }
 

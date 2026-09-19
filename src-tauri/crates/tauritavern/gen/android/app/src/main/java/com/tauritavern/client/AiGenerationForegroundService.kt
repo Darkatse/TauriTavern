@@ -8,6 +8,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationCompat.ProgressStyle
 import androidx.core.graphics.drawable.IconCompat
@@ -19,7 +20,7 @@ class AiGenerationForegroundService : Service() {
 
   private var startedAtMs: Long = 0L
   private var outputTokens: Long = 0L
-  private var isGenerating: Boolean = false
+  private val activeTaskIds = mutableSetOf<String>()
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -27,38 +28,41 @@ class AiGenerationForegroundService : Service() {
     AndroidAiGenerationNotifier.ensureNotificationChannels(this)
 
     when (intent?.action) {
-      null, ACTION_ENSURE_KEEPALIVE -> ensureKeepAlive()
-      ACTION_GENERATION_START -> handleGenerationStart()
-      ACTION_GENERATION_PROGRESS -> handleGenerationProgress(requireNotNull(intent.extras))
-      ACTION_GENERATION_FINISH -> handleGenerationFinish(requireNotNull(intent.extras))
-      ACTION_GENERATION_STOP -> handleGenerationStop()
+      null -> stopSelf(startId)
+      ACTION_GENERATION_START -> handleGenerationStart(requireNotNull(intent.extras))
+      ACTION_GENERATION_PROGRESS ->
+        handleGenerationProgress(requireNotNull(intent.extras), startId)
+      ACTION_GENERATION_FINISH ->
+        handleGenerationFinish(requireNotNull(intent.extras), startId)
       else -> error("Unknown intent action: ${intent.action}")
     }
 
-    return START_STICKY
+    return START_NOT_STICKY
   }
 
   override fun onDestroy() {
+    activeTaskIds.clear()
     stopForeground(STOP_FOREGROUND_REMOVE)
     super.onDestroy()
+  }
+
+  override fun onTimeout(startId: Int, fgsType: Int) {
+    Log.w(LOG_TAG, "AI generation foreground service reached the Android time limit")
+    activeTaskIds.clear()
+    stopForegroundAndSelf(startId)
   }
 
   private fun supportsLiveUpdates(): Boolean {
     return Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA
   }
 
-  private fun ensureKeepAlive() {
-    isGenerating = false
-    startedAtMs = 0L
-    outputTokens = 0L
-
-    startForegroundCompat(buildKeepAliveNotification())
-  }
-
-  private fun handleGenerationStart() {
-    isGenerating = true
-    startedAtMs = System.currentTimeMillis()
-    outputTokens = 0L
+  private fun handleGenerationStart(extras: Bundle) {
+    val taskId = requireTaskId(extras)
+    if (activeTaskIds.isEmpty()) {
+      startedAtMs = System.currentTimeMillis()
+      outputTokens = 0L
+    }
+    activeTaskIds.add(taskId)
 
     if (!supportsLiveUpdates()) {
       startForegroundCompat(buildKeepAliveNotification())
@@ -68,45 +72,62 @@ class AiGenerationForegroundService : Service() {
     startForegroundCompat(buildLiveUpdateGeneratingNotification())
   }
 
-  private fun handleGenerationProgress(extras: Bundle) {
-    check(isGenerating) { "AI generation progress received before start" }
+  private fun handleGenerationProgress(extras: Bundle, startId: Int) {
+    if (activeTaskIds.isEmpty()) {
+      stopSelf(startId)
+      return
+    }
     check(extras.containsKey(EXTRA_OUTPUT_TOKENS)) { "Missing output token count extra" }
 
     outputTokens = extras.getLong(EXTRA_OUTPUT_TOKENS)
 
-    if (!supportsLiveUpdates() || !isGenerating) {
+    if (!supportsLiveUpdates()) {
       return
     }
 
     notificationManager.notify(NOTIFICATION_ID, buildLiveUpdateGeneratingNotification())
   }
 
-  private fun handleGenerationFinish(extras: Bundle) {
-    check(extras.containsKey(EXTRA_SUCCESS)) { "Missing success extra" }
+  private fun handleGenerationFinish(extras: Bundle, startId: Int) {
+    val taskId = requireTaskId(extras)
+    check(extras.containsKey(EXTRA_OUTCOME)) { "Missing generation outcome extra" }
     check(extras.containsKey(EXTRA_STATUS_CODE)) { "Missing status code extra" }
     check(extras.containsKey(EXTRA_SHOW_COMPLETION_NOTIFICATION)) {
       "Missing show completion notification extra"
     }
 
-    val success = extras.getBoolean(EXTRA_SUCCESS)
+    val outcome = requireNotNull(extras.getString(EXTRA_OUTCOME))
+    require(outcome == OUTCOME_SUCCEEDED || outcome == OUTCOME_FAILED || outcome == OUTCOME_CANCELLED) {
+      "Invalid generation outcome: $outcome"
+    }
     val statusCode = extras.getInt(EXTRA_STATUS_CODE)
     val showCompletionNotification = extras.getBoolean(EXTRA_SHOW_COMPLETION_NOTIFICATION)
 
-    isGenerating = false
-
-    if (showCompletionNotification) {
-      notifyCompletionNotification(success, statusCode)
+    if (!activeTaskIds.remove(taskId)) {
+      Log.w(LOG_TAG, "Ignoring completion for unknown AI generation task: $taskId")
+    }
+    if (activeTaskIds.isNotEmpty()) {
+      return
     }
 
-    startForegroundCompat(buildKeepAliveNotification())
-  }
+    if (showCompletionNotification && outcome != OUTCOME_CANCELLED) {
+      notifyCompletionNotification(outcome == OUTCOME_SUCCEEDED, statusCode)
+    }
 
-  private fun handleGenerationStop() {
-    isGenerating = false
     startedAtMs = 0L
     outputTokens = 0L
+    stopForegroundAndSelf(startId)
+  }
 
-    startForegroundCompat(buildKeepAliveNotification())
+  private fun requireTaskId(extras: Bundle): String {
+    val taskId = requireNotNull(extras.getString(EXTRA_TASK_ID)).trim()
+    require(taskId.isNotEmpty()) { "Missing generation task id extra" }
+    return taskId
+  }
+
+  private fun stopForegroundAndSelf(startId: Int) {
+    stopForeground(STOP_FOREGROUND_REMOVE)
+    stopSelfResult(startId)
   }
 
   private fun notifyCompletionNotification(success: Boolean, statusCode: Int) {
@@ -273,17 +294,21 @@ class AiGenerationForegroundService : Service() {
   }
 
   companion object {
-    const val ACTION_ENSURE_KEEPALIVE = "com.tauritavern.client.action.AI_KEEPALIVE_ENSURE"
+    private const val LOG_TAG = "TauriTavernAI"
     const val ACTION_GENERATION_START = "com.tauritavern.client.action.AI_GENERATION_START"
     const val ACTION_GENERATION_PROGRESS = "com.tauritavern.client.action.AI_GENERATION_PROGRESS"
     const val ACTION_GENERATION_FINISH = "com.tauritavern.client.action.AI_GENERATION_FINISH"
-    const val ACTION_GENERATION_STOP = "com.tauritavern.client.action.AI_GENERATION_STOP"
 
+    const val EXTRA_TASK_ID = "com.tauritavern.client.extra.TASK_ID"
     const val EXTRA_OUTPUT_TOKENS = "com.tauritavern.client.extra.OUTPUT_TOKENS"
-    const val EXTRA_SUCCESS = "com.tauritavern.client.extra.SUCCESS"
+    const val EXTRA_OUTCOME = "com.tauritavern.client.extra.OUTCOME"
     const val EXTRA_STATUS_CODE = "com.tauritavern.client.extra.STATUS_CODE"
     const val EXTRA_SHOW_COMPLETION_NOTIFICATION =
       "com.tauritavern.client.extra.SHOW_COMPLETION_NOTIFICATION"
+
+    const val OUTCOME_SUCCEEDED = "succeeded"
+    const val OUTCOME_FAILED = "failed"
+    const val OUTCOME_CANCELLED = "cancelled"
 
     const val NOTIFICATION_ID = 42000
     const val COMPLETION_NOTIFICATION_ID = 42001

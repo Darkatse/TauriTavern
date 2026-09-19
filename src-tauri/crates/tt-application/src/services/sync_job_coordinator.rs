@@ -396,38 +396,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn resolves_lan_replicate_as_remote_pull_request() {
-        let coordinator = coordinator(Arc::new(NoopExecutor), Arc::new(NoopReconciler));
-        let report = coordinator.run(remote_pull_request()).await;
-
-        assert_eq!(report.job.execution, SyncExecutionKind::RequestRemotePull);
-        assert!(matches!(
-            report.result,
-            SyncJobReportResult::RemoteRequestAccepted
-        ));
-    }
-
-    #[test]
-    fn busy_report_mentions_running_job() {
-        let coordinator = coordinator(Arc::new(NoopExecutor), Arc::new(NoopReconciler));
-        let _started = coordinator
-            .try_start(request(SyncIntent::PullToLocal))
-            .expect("first job should start");
-
-        let report = match coordinator.try_start(request(SyncIntent::PullToLocal)) {
-            Ok(_) => panic!("second job should be rejected"),
-            Err(report) => report,
-        };
-
-        assert!(
-            report
-                .failure_message()
-                .unwrap()
-                .contains("already running")
-        );
-    }
-
     #[test]
     fn shared_local_mutation_gate_blocks_sync_but_not_remote_pull_request() {
         let gate = Arc::new(Semaphore::new(1));

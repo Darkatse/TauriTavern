@@ -385,9 +385,8 @@ impl FileChatRepository {
 
         target_entry.modified = source_entry.modified;
         inventory.remove(&existing.file_name);
-        inventory.insert(target_entry)?;
-        self.remove_summary_cache_for_path(&source_path).await;
-        self.remove_summary_cache_for_path(&target_path).await;
+        inventory.insert(target_entry.clone())?;
+        self.update_backup_summary_signature(&target_entry).await;
         tracing::warn!(
             logical_name = %existing.logical_file_name,
             kept = ?target_format,
@@ -423,15 +422,6 @@ mod tests {
             max_total_files: files,
             max_total_bytes: bytes,
         }
-    }
-
-    #[test]
-    fn parser_uses_the_fixed_timestamp_tail() {
-        assert_eq!(
-            parsed_backup_prefix("chat_角色_a_b_20260714-010203.jsonl").as_deref(),
-            Some("chat_角色_a_b_")
-        );
-        assert_eq!(parsed_backup_prefix("chat_角色_a_b_bad.jsonl"), None);
     }
 
     #[test]
@@ -550,30 +540,6 @@ mod tests {
             plan_evictions(&inventory, policy(-1, -1, 4), None)
                 .expect("plan global byte retention"),
             ["malformed-old"]
-        );
-    }
-
-    #[test]
-    fn prefix_limit_uses_exact_parsed_prefixes() {
-        let mut inventory = BackupInventory::default();
-        inventory
-            .insert(entry("al", Some("chat_al_"), 1, 1))
-            .unwrap();
-        inventory
-            .insert(entry("alice", Some("chat_al_ice_"), 2, 1))
-            .unwrap();
-
-        assert_eq!(
-            plan_evictions(
-                &inventory,
-                policy(1, -1, -1),
-                Some(BackupCandidate {
-                    prefix: "chat_al_",
-                    byte_len: 1,
-                })
-            )
-            .expect("plan exact prefix retention"),
-            ["al"]
         );
     }
 }

@@ -1,10 +1,16 @@
 import { characters, saveSettingsDebounced, substituteParams, substituteParamsExtended, this_chid } from '../../../script.js';
 import { extension_settings, writeExtensionField } from '../../extensions.js';
+import { t } from '../../i18n.js';
+import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../popup.js';
 import { getPresetManager } from '../../preset-manager.js';
 import { regexFromString } from '../../utils.js';
 import { lodash } from '../../../lib.js';
-import { applyNativeRegexBatch, isNativeRegexBackendAvailable } from '../../tauri/regex/native-regex-transform.js';
-import { isNativeRegexBackendEnabled } from '../../tauri/regex/native-regex-settings.js';
+import { gatedReplace } from '../../tauri/regex/gated-replace.js';
+import {
+    applyV8RegexBatch,
+    REGEX_EXECUTION_TIMEOUT_MS,
+    V8RegexTimeoutError,
+} from '../../tauri/regex/v8-regex-worker-client.js';
 
 /**
  * @readonly
@@ -35,9 +41,10 @@ export const SCRIPT_TYPE_UNKNOWN = -1;
  * @type {Readonly<GetRegexScriptsOptions>}
  */
 const DEFAULT_GET_REGEX_SCRIPTS_OPTIONS = Object.freeze({ allowedOnly: false });
-const NATIVE_REGEX_SUPPORTED_FLAGS = new Set(['g', 'i', 'm', 's', 'u', 'v']);
 const SUBSTITUTE_PARAM_TOKEN_REGEX = /{{|<(?:USER|BOT|CHAR|CHARIFNOTGROUP|GROUP)>/i;
 const REPLACEMENT_CAPTURE_REF_REGEX = /\$(?:\d+|<[^>]+>)/;
+const pausedRegexScriptKeys = new Set();
+const allowedSlowRegexScriptKeys = new Set();
 
 /**
  * Manages the compiled regex cache with LRU eviction.
@@ -342,6 +349,10 @@ function resolveRegexString(regexScript) {
     }
 }
 
+function getRegexScriptKey(regexScript, findRegex) {
+    return JSON.stringify([String(regexScript.id ?? ''), findRegex.source, findRegex.flags]);
+}
+
 function canRunRegexScript(regexScript) {
     return !!regexScript && !regexScript.disabled && !!regexScript.findRegex;
 }
@@ -393,52 +404,53 @@ function hasSubstituteParamToken(value) {
     return SUBSTITUTE_PARAM_TOKEN_REGEX.test(String(value ?? ''));
 }
 
-function containsAstralCodePoint(value) {
-    return /[\uD800-\uDBFF][\uDC00-\uDFFF]/.test(value);
-}
-
-function canApplyNativeUnicodeSemantics(nativeScripts, rawString) {
-    if (!containsAstralCodePoint(rawString)) {
-        return true;
-    }
-
-    return nativeScripts.every(script => script.flags.includes('u') || script.flags.includes('v'));
-}
-
-function toNativeRegexScript(regexScript, rawString) {
-    const regexString = resolveRegexString(regexScript);
-    const findRegex = regexFromString(regexString);
-
+/**
+ * Describes a script for the worker, or returns null when it needs the main thread's macro substitution.
+ */
+function toPortableRegexScript(regexScript) {
+    const findRegex = regexFromString(resolveRegexString(regexScript));
     if (!findRegex) {
         return null;
     }
 
-    if ([...findRegex.flags].some(flag => !NATIVE_REGEX_SUPPORTED_FLAGS.has(flag))) {
-        return null;
-    }
-
     const replacement = regexScript.replaceString.replace(/{{match}}/gi, '$0');
-    if (hasSubstituteParamToken(replacement)) {
-        return null;
-    }
-
-    if (hasSubstituteParamToken(rawString) && REPLACEMENT_CAPTURE_REF_REGEX.test(replacement)) {
-        return null;
-    }
-
     const trimStrings = regexScript.trimStrings ?? [];
-    if (trimStrings.some(hasSubstituteParamToken)) {
+    if ([replacement, ...trimStrings].some(hasSubstituteParamToken)) {
         return null;
     }
 
+    const scriptKey = getRegexScriptKey(regexScript, findRegex);
     return {
+        scriptKey,
+        allowSlow: allowedSlowRegexScriptKeys.has(scriptKey),
         scriptName: String(regexScript.scriptName || ''),
         pattern: findRegex.source,
         flags: findRegex.flags,
-        global: findRegex.global,
+        // Captured text is macro-substituted on the main thread; the worker cannot do that.
+        insertsCaptures: REPLACEMENT_CAPTURE_REF_REGEX.test(replacement),
         replacement,
         trimStrings,
     };
+}
+
+async function confirmAllowSlowRegexScript(error) {
+    const content = document.createElement('div');
+    const heading = document.createElement('h4');
+    heading.textContent = t`Regex script is slow`;
+    const summary = document.createElement('p');
+    summary.textContent = error.message;
+    const cause = document.createElement('p');
+    cause.textContent = t`This usually indicates catastrophic backtracking. Common causes include leading .*, nested quantifiers, and unbounded lookahead. Review or replace the pattern before allowing it.`;
+    const warning = document.createElement('p');
+    warning.textContent = t`Allow anyway runs it in V8 without a timeout for this session. It may consume CPU indefinitely; reload the app to stop it.`;
+    content.append(heading, summary, cause, warning);
+
+    const result = await callGenericPopup(content, POPUP_TYPE.CONFIRM, '', {
+        okButton: t`Keep paused`,
+        cancelButton: t`Allow anyway`,
+    });
+
+    return result === POPUP_RESULT.NEGATIVE;
 }
 
 function runRegexScripts(scripts, rawString, { characterOverride } = {}) {
@@ -483,9 +495,10 @@ export function getRegexedString(rawString, placement, { characterOverride, isMa
  */
 export async function getRegexedStringBatchAsync(items) {
     const results = new Array(items.length);
-    const nativeTasks = [];
-    const nativeIndexes = [];
-    const nativeBackendAvailable = isNativeRegexBackendAvailable() && isNativeRegexBackendEnabled();
+    const workerTasks = [];
+    const workerIndexes = [];
+    // Shared across tasks so the structured clone carries each script once.
+    const portableScripts = new Map();
 
     for (const [index, item] of items.entries()) {
         const rawString = item?.rawString;
@@ -509,29 +522,45 @@ export async function getRegexedStringBatchAsync(items) {
             continue;
         }
 
-        if (!nativeBackendAvailable) {
-            results[index] = runRegexScripts(scripts, rawString, params);
-            continue;
-        }
-
-        const nativeScripts = scripts.map(script => toNativeRegexScript(script, rawString));
-        if (nativeScripts.every(Boolean) && canApplyNativeUnicodeSemantics(nativeScripts, rawString)) {
-            nativeIndexes.push(index);
-            nativeTasks.push({ text: rawString, scripts: nativeScripts });
+        const portable = scripts.map(script => {
+            if (!portableScripts.has(script)) {
+                portableScripts.set(script, toPortableRegexScript(script));
+            }
+            return portableScripts.get(script);
+        });
+        const inputHasMacros = hasSubstituteParamToken(rawString);
+        if (portable.every(script => script && !(inputHasMacros && script.insertsCaptures))) {
+            workerIndexes.push(index);
+            workerTasks.push({ text: rawString, scripts: portable.filter(script => !pausedRegexScriptKeys.has(script.scriptKey)) });
         } else {
             results[index] = runRegexScripts(scripts, rawString, params);
         }
     }
 
-    if (nativeTasks.length > 0) {
-        const response = await applyNativeRegexBatch({ tasks: nativeTasks });
-        if (!Array.isArray(response?.tasks) || response.tasks.length !== nativeTasks.length) {
-            throw new Error('Native regex backend returned an invalid batch response');
+    if (workerTasks.length === 0) {
+        return results;
+    }
+
+    try {
+        const response = await applyV8RegexBatch(workerTasks);
+        response.tasks.forEach((task, offset) => {
+            results[workerIndexes[offset]] = task.text;
+        });
+    } catch (error) {
+        if (!(error instanceof V8RegexTimeoutError)) {
+            throw error;
         }
 
-        response.tasks.forEach((task, offset) => {
-            results[nativeIndexes[offset]] = String(task?.text ?? '');
-        });
+        pausedRegexScriptKeys.add(error.scriptKey);
+        const scriptName = error.scriptName || t`Unnamed regex script`;
+        error.message = t`Script "${scriptName}" exceeded ${REGEX_EXECUTION_TIMEOUT_MS} milliseconds and was paused for this session.`;
+        if (await confirmAllowSlowRegexScript(error)) {
+            allowedSlowRegexScriptKeys.add(error.scriptKey);
+            pausedRegexScriptKeys.delete(error.scriptKey);
+        }
+
+        // Ordered replacements are not resumable; rebuild from the original inputs.
+        return getRegexedStringBatchAsync(items);
     }
 
     return results;
@@ -571,8 +600,12 @@ export function runRegexScript(regexScript, rawString, { characterOverride } = {
         return newString;
     }
 
+    if (pausedRegexScriptKeys.size > 0 && pausedRegexScriptKeys.has(getRegexScriptKey(regexScript, findRegex))) {
+        return newString;
+    }
+
     // Run replacement. Currently does not support the Overlay strategy
-    newString = rawString.replace(findRegex, function (match) {
+    newString = gatedReplace(rawString, findRegex, function (match) {
         const args = [...arguments];
         const replaceString = regexScript.replaceString.replace(/{{match}}/gi, '$0');
         const replaceWithGroups = replaceString.replaceAll(/\$(\d+)|\$<([^>]+)>/g, (_, num, groupName) => {

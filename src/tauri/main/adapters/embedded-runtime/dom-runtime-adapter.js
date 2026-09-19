@@ -102,7 +102,7 @@ export function installDomEmbeddedRuntimeAdapter({ manager, root, adapters }) {
         }
 
         const placeholder = target.closest(PLACEHOLDER_SELECTOR);
-        if (!placeholder) {
+        if (!placeholder || (placeholder instanceof HTMLElement && placeholder.dataset.ttRuntimeParkReason === 'source-unavailable')) {
             return;
         }
 
@@ -117,18 +117,23 @@ export function installDomEmbeddedRuntimeAdapter({ manager, root, adapters }) {
 
     const observer = new MutationObserver((records) => {
         for (const record of records) {
+            if (record.type === 'attributes' && record.target instanceof HTMLIFrameElement) {
+                scanForHosts(manager, record.target, adapters);
+                continue;
+            }
             for (const removedNode of record.removedNodes) {
                 unregisterSlotsInSubtree(manager, removedNode);
             }
         }
         for (const record of records) {
             for (const addedNode of record.addedNodes) {
+                if (addedNode instanceof HTMLIFrameElement && addedNode.dataset.ttRuntimeManaged === '1') continue;
                 scanForHosts(manager, addedNode, adapters);
             }
         }
     });
 
-    observer.observe(root, { childList: true, subtree: true });
+    observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcdoc'] });
     root.addEventListener('click', onClick, true);
 
     return {

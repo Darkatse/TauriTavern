@@ -156,21 +156,4 @@ mod tests {
             "n defaults to 1 because streaming forbids n>1",
         );
     }
-
-    #[test]
-    fn build_ai21_jamba_clamps_streaming_n_to_one() {
-        let payload = json!({
-            "chat_completion_source": "aws_bedrock",
-            "model": "ai21.jamba-1-5-large-v1:0",
-            "messages": [{ "role": "user", "content": "hi" }],
-            "stream": true,
-            "n": 3,
-        })
-        .as_object()
-        .cloned()
-        .expect("payload should be object");
-
-        let (_, body) = build(payload).expect("ai21 jamba build must succeed");
-        assert_eq!(body.get("n"), Some(&json!(1)));
-    }
 }

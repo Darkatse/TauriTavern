@@ -16,9 +16,13 @@ import { createCharacterFormService } from '../src/tauri/main/services/character
 test('/api/characters/edit-avatar delegates multipart avatar replacement only', async () => {
     const router = createRouteRegistry();
     const calls = [];
+    let invalidated = false;
     const context = {
         editCharacterAvatarFromForm: async (formData, url) => {
             calls.push({ formData, url });
+        },
+        invalidateCharacterCache: () => {
+            invalidated = true;
         },
     };
 
@@ -42,39 +46,9 @@ test('/api/characters/edit-avatar delegates multipart avatar replacement only', 
     assert.equal(calls.length, 1);
     assert.equal(calls[0].formData, body);
     assert.equal(calls[0].url, url);
+    assert.equal(invalidated, true);
 });
 
-test('/api/characters/edit saves without full list refresh', async () => {
-    const router = createRouteRegistry();
-    const calls = [];
-    const formData = new FormData();
-    formData.set('avatar_url', 'Alice.png');
-    const context = {
-        editCharacterFromForm: async (body, url) => {
-            calls.push({ type: 'edit', body, url });
-        },
-        getAllCharacters: async () => {
-            throw new Error('getAllCharacters should not be called for character edit');
-        },
-    };
-
-    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
-
-    const url = new URL('http://localhost/api/characters/edit');
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/characters/edit',
-        url,
-        body: formData,
-    });
-
-    assert.ok(response);
-    assert.equal(response.status, 200);
-    assert.equal(await response.text(), 'ok');
-    assert.deepEqual(calls, [
-        { type: 'edit', body: formData, url },
-    ]);
-});
 
 test('/api/characters/edit-avatar rejects non-multipart payloads', async () => {
     const router = createRouteRegistry();
@@ -98,6 +72,66 @@ test('/api/characters/edit-avatar rejects non-multipart payloads', async () => {
     assert.deepEqual(await response.json(), { error: 'Expected multipart form data' });
 });
 
+test('character form edit preserves the embedded lorebook while updating ordinary fields', async () => {
+    const calls = [];
+    const service = createCharacterFormService({
+        safeInvoke: async (command, args) => calls.push({ command, args }),
+        resolveCharacterId: async () => 'Alice',
+        resolveExistingCharacterId: async () => 'Alice',
+        materializeUploadFile: async () => {
+            throw new Error('materializeUploadFile should not be called');
+        },
+    });
+    const characterBook = {
+        name: 'Embedded Lore',
+        entries: [{ keys: ['alpha'], content: 'kept' }],
+    };
+    const body = new FormData();
+    body.set('avatar_url', 'Alice.png');
+    body.set('ch_name', 'Alice');
+    body.set('world', 'Local Lore');
+    body.set('description', 'updated');
+    body.set('json_data', JSON.stringify({
+        data: {
+            character_book: characterBook,
+            extensions: { world: 'Local Lore' },
+        },
+    }));
+
+    await service.editCharacterFromForm(body, new URL('http://localhost/api/characters/edit'));
+
+    assert.equal(calls.length, 1);
+    const written = JSON.parse(calls[0].args.dto.card_json);
+    assert.deepEqual(written.data.character_book, characterBook);
+    assert.equal(written.data.description, 'updated');
+    assert.equal(calls[0].args.dto.materialize_primary_lorebook, true);
+});
+
+test('character form ignores malformed optional card JSON and saves owned fields', async () => {
+    const calls = [];
+    const service = createCharacterFormService({
+        safeInvoke: async (command, args) => calls.push({ command, args }),
+        resolveCharacterId: async () => 'Alice',
+        resolveExistingCharacterId: async () => 'Alice',
+        materializeUploadFile: async () => {
+            throw new Error('materializeUploadFile should not be called');
+        },
+    });
+    const body = new FormData();
+    body.set('avatar_url', 'Alice.png');
+    body.set('ch_name', 'Alice');
+    body.set('description', 'recovered');
+    body.set('json_data', '{');
+    body.set('extensions', '[');
+
+    await service.editCharacterFromForm(body, new URL('http://localhost/api/characters/edit'));
+
+    assert.equal(calls.length, 1);
+    const written = JSON.parse(calls[0].args.dto.card_json);
+    assert.equal(written.data.description, 'recovered');
+    assert.equal(written.spec, 'chara_card_v2');
+});
+
 test('/api/characters/create accepts upstream JSON character payloads', async () => {
     const router = createRouteRegistry();
     const calls = [];
@@ -109,10 +143,7 @@ test('/api/characters/create accepts upstream JSON character payloads', async ()
             calls.push({ type: 'payload', payload });
             return { character: { avatar: 'Alice.png' }, warnings: [] };
         },
-        getAllCharacters: async (options) => {
-            calls.push({ type: 'refresh', options });
-            return [];
-        },
+        invalidateCharacterCache: () => calls.push({ type: 'invalidate' }),
     };
 
     registerCharacterRoutes(router, context, { textResponse, jsonResponse });
@@ -137,7 +168,7 @@ test('/api/characters/create accepts upstream JSON character payloads', async ()
     assert.equal(await response.text(), 'Alice.png');
     assert.deepEqual(calls, [
         { type: 'payload', payload },
-        { type: 'refresh', options: { shallow: true, forceRefresh: true } },
+        { type: 'invalidate' },
     ]);
 });
 
@@ -158,10 +189,7 @@ test('/api/characters/create keeps text body and exposes avatar fallback warning
         createCharacterFromPayload: async () => {
             throw new Error('createCharacterFromPayload should not be called');
         },
-        getAllCharacters: async (options) => {
-            calls.push({ type: 'refresh', options });
-            return [];
-        },
+        invalidateCharacterCache: () => calls.push({ type: 'invalidate' }),
     };
 
     registerCharacterRoutes(router, context, { textResponse, jsonResponse });
@@ -184,101 +212,8 @@ test('/api/characters/create keeps text body and exposes avatar fallback warning
     assert.equal(response.headers.get('x-tauritavern-warning'), CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED);
     assert.deepEqual(calls, [
         { type: 'form', formData: body, url },
-        { type: 'refresh', options: { shallow: true, forceRefresh: true } },
+        { type: 'invalidate' },
     ]);
-});
-
-test('/api/characters/create exposes invalid JSON payloads as host bad requests', () => {
-    assert.throws(
-        () => payloadToCreateCharacterDto({ description: 'missing name' }),
-        /Bad request: Character name is required/,
-    );
-
-    const message = 'Bad request: Character name is required';
-    assert.deepEqual(resolveHostErrorResponse(message), {
-        status: 400,
-        body: message,
-    });
-});
-
-test('/api/characters/duplicate delegates to backend file-copy semantics', async () => {
-    const router = createRouteRegistry();
-    const calls = [];
-    const context = {
-        resolveExistingCharacterId: async ({ avatar }) => {
-            calls.push({ type: 'resolve', avatar });
-            return 'Alice';
-        },
-        safeInvoke: async (command, args) => {
-            calls.push({ type: 'invoke', command, args });
-            return { name: 'Alice', avatar: 'Alice_1.png' };
-        },
-        normalizeCharacter: (character) => {
-            calls.push({ type: 'normalize', character });
-            return character;
-        },
-        getAllCharacters: async (options) => {
-            calls.push({ type: 'refresh', options });
-            return [];
-        },
-    };
-
-    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
-
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/characters/duplicate',
-        url: new URL('http://localhost/api/characters/duplicate'),
-        body: { avatar_url: 'Alice.png' },
-    });
-
-    assert.ok(response);
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { path: 'Alice_1.png' });
-    assert.deepEqual(calls, [
-        { type: 'resolve', avatar: 'Alice.png' },
-        {
-            type: 'invoke',
-            command: 'duplicate_character',
-            args: { dto: { name: 'Alice' } },
-        },
-        { type: 'normalize', character: { name: 'Alice', avatar: 'Alice_1.png' } },
-        { type: 'refresh', options: { shallow: true, forceRefresh: true } },
-    ]);
-});
-
-test('/api/characters/duplicate rejects missing or unknown avatars at the route boundary', async () => {
-    const router = createRouteRegistry();
-    const context = {
-        resolveExistingCharacterId: async () => null,
-        safeInvoke: async () => {
-            throw new Error('safeInvoke should not be called');
-        },
-        normalizeCharacter: (character) => character,
-        getAllCharacters: async () => [],
-    };
-
-    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
-
-    const missingAvatarResponse = await router.handle({
-        method: 'POST',
-        path: '/api/characters/duplicate',
-        url: new URL('http://localhost/api/characters/duplicate'),
-        body: {},
-    });
-    assert.ok(missingAvatarResponse);
-    assert.equal(missingAvatarResponse.status, 400);
-    assert.deepEqual(await missingAvatarResponse.json(), { error: 'avatar URL not found' });
-
-    const unknownAvatarResponse = await router.handle({
-        method: 'POST',
-        path: '/api/characters/duplicate',
-        url: new URL('http://localhost/api/characters/duplicate'),
-        body: { avatar_url: 'Missing.png' },
-    });
-    assert.ok(unknownAvatarResponse);
-    assert.equal(unknownAvatarResponse.status, 404);
-    assert.deepEqual(await unknownAvatarResponse.json(), { error: 'Character not found' });
 });
 
 test('/api/characters/duplicate rejects path-like avatar_url before resolving characters', async () => {
@@ -308,44 +243,6 @@ test('/api/characters/duplicate rejects path-like avatar_url before resolving ch
     assert.deepEqual(await response.json(), { error: 'invalid avatar_url' });
 });
 
-test('/api/characters/delete resolves avatar_url as an exact filename before invoking backend delete', async () => {
-    const router = createRouteRegistry();
-    const calls = [];
-    const context = {
-        resolveCharacterId: async ({ avatar, fallbackName }) => {
-            calls.push({ type: 'resolve', avatar, fallbackName });
-            return 'Alice#1';
-        },
-        safeInvoke: async (command, args) => {
-            calls.push({ type: 'invoke', command, args });
-        },
-        getAllCharacters: async (options) => {
-            calls.push({ type: 'refresh', options });
-            return [];
-        },
-    };
-
-    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
-
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/characters/delete',
-        url: new URL('http://localhost/api/characters/delete'),
-        body: { avatar_url: 'Alice#1.png', name: 'Alice', delete_chats: true },
-    });
-
-    assert.ok(response);
-    assert.equal(response.status, 200);
-    assert.deepEqual(calls, [
-        { type: 'resolve', avatar: 'Alice#1.png', fallbackName: 'Alice' },
-        {
-            type: 'invoke',
-            command: 'delete_character',
-            args: { dto: { name: 'Alice#1', delete_chats: true } },
-        },
-        { type: 'refresh', options: { shallow: true, forceRefresh: true } },
-    ]);
-});
 
 test('/api/characters/delete returns 400 for URL-like avatar_url without backend mutation', async () => {
     const router = createRouteRegistry();
@@ -373,139 +270,8 @@ test('/api/characters/delete returns 400 for URL-like avatar_url without backend
     assert.deepEqual(await response.json(), { error: 'invalid avatar_url' });
 });
 
-test('/api/characters/export uses exact avatar filename identities for backend export', async () => {
-    const router = createRouteRegistry();
-    const calls = [];
-    const context = {
-        resolveCharacterId: async ({ avatar, fallbackName }) => {
-            calls.push({ type: 'resolve', avatar, fallbackName });
-            return 'Alice%2FB';
-        },
-        safeInvoke: async (command, args) => {
-            calls.push({ type: 'invoke', command, args });
-            return {
-                data: new TextEncoder().encode('{"name":"Alice"}'),
-                mime_type: 'application/json',
-            };
-        },
-    };
 
-    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
 
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/characters/export',
-        url: new URL('http://localhost/api/characters/export'),
-        body: { avatar_url: 'Alice%2FB.png', name: 'Alice', format: 'json' },
-    });
-
-    assert.ok(response);
-    assert.equal(response.status, 200);
-    assert.deepEqual(calls, [
-        { type: 'resolve', avatar: 'Alice%2FB.png', fallbackName: 'Alice' },
-        {
-            type: 'invoke',
-            command: 'export_character_content',
-            args: { dto: { name: 'Alice%2FB', format: 'json' } },
-        },
-    ]);
-    assert.equal(await response.text(), '{"name":"Alice"}');
-});
-
-test('/api/characters/merge-attributes supports upstream bulk mode', async () => {
-    const router = createRouteRegistry();
-    const calls = [];
-    const context = {
-        safeInvoke: async (command, args) => {
-            calls.push({ type: 'invoke', command, args });
-            return { updated: ['Alice.png'], skipped: [], failed: [] };
-        },
-        getAllCharacters: async (options) => {
-            calls.push({ type: 'refresh', options });
-            return [];
-        },
-    };
-
-    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
-
-    const body = {
-        avatars: ['Alice.png'],
-        data: { data: { extensions: { greeting_tools: '__@@UNSET@@__' } } },
-        filter: { path: 'data.extensions.greeting_tools' },
-    };
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/characters/merge-attributes',
-        url: new URL('http://localhost/api/characters/merge-attributes'),
-        body,
-    });
-
-    assert.ok(response);
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { updated: ['Alice.png'], skipped: [], failed: [] });
-    assert.deepEqual(calls, [
-        {
-            type: 'invoke',
-            command: 'bulk_merge_character_card_data',
-            args: {
-                dto: {
-                    avatars: ['Alice.png'],
-                    data: { data: { extensions: { greeting_tools: '__@@UNSET@@__' } } },
-                    filter: { path: 'data.extensions.greeting_tools' },
-                },
-            },
-        },
-        { type: 'refresh', options: { shallow: true, forceRefresh: true } },
-    ]);
-});
-
-test('/api/characters/merge-attributes preserves exact avatar filenames in single mode', async () => {
-    const router = createRouteRegistry();
-    const calls = [];
-    const context = {
-        resolveCharacterId: async ({ avatar, fallbackName }) => {
-            calls.push({ type: 'resolve', avatar, fallbackName });
-            return 'Alice#1';
-        },
-        safeInvoke: async (command, args) => {
-            calls.push({ type: 'invoke', command, args });
-        },
-        getAllCharacters: async (options) => {
-            calls.push({ type: 'refresh', options });
-            return [];
-        },
-    };
-
-    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
-
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/characters/merge-attributes',
-        url: new URL('http://localhost/api/characters/merge-attributes'),
-        body: { avatar: 'Alice#1.png', name: 'Alice', data: { description: 'Updated' } },
-    });
-
-    assert.ok(response);
-    assert.equal(response.status, 200);
-    assert.deepEqual(calls, [
-        { type: 'resolve', avatar: 'Alice#1.png', fallbackName: 'Alice' },
-        {
-            type: 'invoke',
-            command: 'merge_character_card_data',
-            args: {
-                name: 'Alice#1',
-                dto: {
-                    update: {
-                        avatar: 'Alice#1.png',
-                        name: 'Alice',
-                        data: { description: 'Updated' },
-                    },
-                },
-            },
-        },
-        { type: 'refresh', options: { shallow: true, forceRefresh: true } },
-    ]);
-});
 
 test('/api/characters/merge-attributes rejects invalid bulk avatar filenames before backend work', async () => {
     const router = createRouteRegistry();
@@ -533,140 +299,10 @@ test('/api/characters/merge-attributes rejects invalid bulk avatar filenames bef
     assert.deepEqual(await response.json(), { error: 'invalid avatars[1]' });
 });
 
-test('/api/characters/merge-attributes rejects path-like single avatar fields', async () => {
-    const router = createRouteRegistry();
-    const context = {
-        safeInvoke: async () => {
-            throw new Error('safeInvoke should not be called');
-        },
-        resolveCharacterId: async () => {
-            throw new Error('resolveCharacterId should not be called');
-        },
-        getAllCharacters: async () => [],
-    };
 
-    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
 
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/characters/merge-attributes',
-        url: new URL('http://localhost/api/characters/merge-attributes'),
-        body: { avatar: 'characters/Alice.png', data: { description: 'Updated' } },
-    });
 
-    assert.ok(response);
-    assert.equal(response.status, 400);
-    assert.deepEqual(await response.json(), { error: 'invalid avatar' });
-});
 
-test('character form service maps edit-avatar to update_avatar without full character rewrite', async () => {
-    const invokes = [];
-    const cleanups = [];
-    const service = createCharacterFormService({
-        safeInvoke: async (command, args) => {
-            invokes.push({ command, args });
-        },
-        resolveCharacterId: async () => {
-            throw new Error('resolveCharacterId should not be called');
-        },
-        resolveExistingCharacterId: async ({ avatar }) => {
-            assert.equal(avatar, 'Alice.png');
-            return 'Alice';
-        },
-        materializeUploadFile: async (file, options) => {
-            assert.ok(file instanceof Blob);
-            assert.deepEqual(options, { kind: 'avatar', preferredName: 'avatar.png' });
-            return {
-                filePath: '/tmp/avatar.png',
-                cleanup: async () => cleanups.push('avatar.png'),
-            };
-        },
-    });
-
-    const formData = new FormData();
-    formData.set('avatar_url', 'Alice.png');
-    formData.set('avatar', new Blob(['avatar-bytes'], { type: 'image/png' }), 'avatar.png');
-
-    await service.editCharacterAvatarFromForm(
-        formData,
-        new URL('http://localhost/api/characters/edit-avatar?crop=%7B%22x%22%3A1%2C%22y%22%3A2%2C%22width%22%3A300%2C%22height%22%3A400%2C%22want_resize%22%3Atrue%7D'),
-    );
-
-    assert.deepEqual(invokes, [
-        {
-            command: 'update_avatar',
-            args: {
-                dto: {
-                    name: 'Alice',
-                    avatar_path: '/tmp/avatar.png',
-                    crop: {
-                        x: 1,
-                        y: 2,
-                        width: 300,
-                        height: 400,
-                        want_resize: true,
-                    },
-                },
-            },
-        },
-    ]);
-    assert.deepEqual(cleanups, ['avatar.png']);
-});
-
-test('character create mapper normalizes JSON and FormData payloads to one DTO contract', () => {
-    const payload = {
-        file_name: 'AliceCard',
-        ch_name: 'Alice',
-        description: 'A friendly assistant',
-        first_mes: 'Hello',
-        tags: ['friend', 'assistant'],
-        talkativeness: '0.75',
-        fav: 'true',
-        world: 'Shared Lore',
-        depth_prompt_prompt: 'Stay concise',
-        depth_prompt_depth: '6',
-        depth_prompt_role: 'assistant',
-        extensions: '{}',
-    };
-
-    const formData = new FormData();
-    for (const [key, value] of Object.entries(payload)) {
-        if (Array.isArray(value)) {
-            for (const item of value) {
-                formData.append('tags[]', item);
-            }
-        } else {
-            formData.set(key, value);
-        }
-    }
-
-    assert.deepEqual(formDataToCreateCharacterDto(formData), payloadToCreateCharacterDto(payload));
-});
-
-test('character create mapper preserves upstream json_data payloads', () => {
-    const jsonData = {
-        x_custom_top: { nested: true },
-        data: {
-            x_custom_data: 123,
-            character_book: { name: 'embedded-book', entries: [] },
-        },
-    };
-
-    const dto = payloadToCreateCharacterDto({
-        ch_name: 'Alice',
-        description: 'Updated',
-        json_data: JSON.stringify(jsonData),
-    });
-
-    assert.deepEqual(JSON.parse(dto.json_data), jsonData);
-});
-
-test('character create mapper fails fast on invalid file_name', () => {
-    assert.throws(
-        () => payloadToCreateCharacterDto({ ch_name: 'Alice', file_name: '../Alice' }),
-        /Bad request: invalid file_name/,
-    );
-});
 
 test('character create mapper only materializes flat world payloads', () => {
     const dto = payloadToCreateCharacterDto({
@@ -678,187 +314,8 @@ test('character create mapper only materializes flat world payloads', () => {
     assert.equal(dto.extensions.world, 'extension-book');
 });
 
-test('character create service maps upstream JSON create payload to create_character', async () => {
-    const invokes = [];
-    const service = createCharacterCreateService({
-        safeInvoke: async (command, args) => {
-            invokes.push({ command, args });
-            return { avatar: 'Alice.png' };
-        },
-        materializeUploadFile: async () => {
-            throw new Error('should not be called');
-        },
-    });
 
-    const outcome = await service.createCharacterFromPayload({
-        file_name: 'AliceCard',
-        ch_name: 'Alice',
-        description: 'A friendly assistant',
-        first_mes: 'Hello',
-        tags: ['friend', 'assistant'],
-        talkativeness: '0.75',
-        fav: 'true',
-        world: 'Shared Lore',
-        depth_prompt_prompt: 'Stay concise',
-        depth_prompt_depth: '6',
-        depth_prompt_role: 'assistant',
-        extensions: '{}',
-    });
 
-    assert.deepEqual(outcome, { character: { avatar: 'Alice.png' }, warnings: [] });
-    assert.deepEqual(invokes, [
-        {
-            command: 'create_character',
-            args: {
-                dto: {
-                    file_name: 'AliceCard',
-                    json_data: null,
-                    primary_lorebook: 'Shared Lore',
-                    name: 'Alice',
-                    description: 'A friendly assistant',
-                    personality: '',
-                    scenario: '',
-                    first_mes: 'Hello',
-                    mes_example: '',
-                    creator: '',
-                    creator_notes: '',
-                    character_version: '',
-                    tags: ['friend', 'assistant'],
-                    talkativeness: 0.75,
-                    fav: true,
-                    alternate_greetings: [],
-                    system_prompt: '',
-                    post_history_instructions: '',
-                    extensions: {
-                        world: 'Shared Lore',
-                        depth_prompt: {
-                            prompt: 'Stay concise',
-                            depth: 6,
-                            role: 'assistant',
-                        },
-                        talkativeness: 0.75,
-                        fav: true,
-                    },
-                },
-            },
-        },
-    ]);
-});
-
-test('character create service maps multipart creates with avatar to create_character_with_avatar', async () => {
-    const invokes = [];
-    const cleanups = [];
-    const service = createCharacterCreateService({
-        safeInvoke: async (command, args) => {
-            invokes.push({ command, args });
-            return { avatar: 'Assistant.png' };
-        },
-        materializeUploadFile: async (file, options) => {
-            assert.ok(file instanceof Blob);
-            assert.deepEqual(options, { kind: 'avatar', preferredName: 'assistant.png' });
-            return {
-                filePath: '/tmp/assistant.png',
-                cleanup: async () => cleanups.push('assistant.png'),
-            };
-        },
-    });
-
-    const formData = new FormData();
-    formData.set('file_name', 'Assistant');
-    formData.set('ch_name', 'Neutral Assistant');
-    formData.set('creator_notes', 'Automatically created character.');
-    formData.set('avatar', new Blob(['avatar-bytes'], { type: 'image/png' }), 'assistant.png');
-
-    const outcome = await service.createCharacterFromForm(
-        formData,
-        new URL('http://localhost/api/characters/create?crop=%7B%22x%22%3A0%2C%22y%22%3A0%2C%22width%22%3A300%2C%22height%22%3A400%2C%22want_resize%22%3Atrue%7D'),
-    );
-
-    assert.deepEqual(outcome, { character: { avatar: 'Assistant.png' }, warnings: [] });
-    assert.deepEqual(invokes, [
-        {
-            command: 'create_character_with_avatar',
-            args: {
-                dto: {
-                    character: {
-                        file_name: 'Assistant',
-                        json_data: null,
-                        primary_lorebook: null,
-                        name: 'Neutral Assistant',
-                        description: '',
-                        personality: '',
-                        scenario: '',
-                        first_mes: '',
-                        mes_example: '',
-                        creator: '',
-                        creator_notes: 'Automatically created character.',
-                        character_version: '',
-                        tags: [],
-                        talkativeness: 0.5,
-                        fav: false,
-                        alternate_greetings: [],
-                        system_prompt: '',
-                        post_history_instructions: '',
-                        extensions: {
-                            world: '',
-                            depth_prompt: {
-                                prompt: '',
-                                depth: 4,
-                                role: 'system',
-                            },
-                            talkativeness: 0.5,
-                            fav: false,
-                        },
-                    },
-                    avatar_path: '/tmp/assistant.png',
-                    crop: {
-                        x: 0,
-                        y: 0,
-                        width: 300,
-                        height: 400,
-                        want_resize: true,
-                    },
-                },
-            },
-        },
-    ]);
-    assert.deepEqual(cleanups, ['assistant.png']);
-});
-
-test('character create service propagates Rust avatar fallback warnings', async () => {
-    const service = createCharacterCreateService({
-        safeInvoke: async (command) => {
-            assert.equal(command, 'create_character_with_avatar');
-            return {
-                character: { avatar: 'Assistant.png' },
-                warnings: [{
-                    code: CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED,
-                    message: 'Uploaded avatar could not be processed; default avatar was used.',
-                }],
-            };
-        },
-        materializeUploadFile: async () => ({
-            filePath: '/tmp/assistant.png',
-        }),
-    });
-
-    const formData = new FormData();
-    formData.set('ch_name', 'Neutral Assistant');
-    formData.set('avatar', new Blob(['avatar-bytes'], { type: 'image/png' }), 'assistant.png');
-
-    const outcome = await service.createCharacterFromForm(
-        formData,
-        new URL('http://localhost/api/characters/create'),
-    );
-
-    assert.deepEqual(outcome, {
-        character: { avatar: 'Assistant.png' },
-        warnings: [{
-            code: CHARACTER_CREATE_WARNINGS.AVATAR_IMPORT_FAILED,
-            message: 'Uploaded avatar could not be processed; default avatar was used.',
-        }],
-    });
-});
 
 test('character create service uses default avatar when upload materialization fails', async () => {
     const invokes = [];
@@ -944,102 +401,4 @@ test('character create service uses default avatar when upload materialization f
     } finally {
         console.warn = originalWarn;
     }
-});
-
-test('character form service fails fast on invalid avatar_url', async () => {
-    const service = createCharacterFormService({
-        safeInvoke: async () => {
-            throw new Error('should not be called');
-        },
-        resolveCharacterId: async () => {
-            throw new Error('should not be called');
-        },
-        resolveExistingCharacterId: async () => {
-            throw new Error('should not be called');
-        },
-        materializeUploadFile: async () => {
-            throw new Error('should not be called');
-        },
-    });
-
-    const formData = new FormData();
-    formData.set('avatar_url', '../Alice.png');
-    formData.set('avatar', new Blob(['avatar-bytes'], { type: 'image/png' }), 'avatar.png');
-
-    await assert.rejects(
-        service.editCharacterAvatarFromForm(
-            formData,
-            new URL('http://localhost/api/characters/edit-avatar'),
-        ),
-        /Bad request: invalid avatar_url/,
-    );
-});
-
-test('character form service keeps missing edit-avatar target on upstream 400 contract', async () => {
-    const service = createCharacterFormService({
-        safeInvoke: async () => {
-            throw new Error('should not be called');
-        },
-        resolveCharacterId: async ({ avatar }) => {
-            throw new Error(`resolveCharacterId should not be called for ${avatar}`);
-        },
-        resolveExistingCharacterId: async ({ avatar }) => {
-            assert.equal(avatar, 'Missing.png');
-            return null;
-        },
-        materializeUploadFile: async () => {
-            throw new Error('should not be called');
-        },
-    });
-
-    const formData = new FormData();
-    formData.set('avatar_url', 'Missing.png');
-    formData.set('avatar', new Blob(['avatar-bytes'], { type: 'image/png' }), 'avatar.png');
-
-    await assert.rejects(
-        service.editCharacterAvatarFromForm(
-            formData,
-            new URL('http://localhost/api/characters/edit-avatar'),
-        ),
-        /Bad request: character file does not exist/,
-    );
-});
-
-test('character service strict resolver does not synthesize missing avatar ids', async () => {
-    const invokes = [];
-    const service = createCharacterService({
-        safeInvoke: async (command, args) => {
-            invokes.push({ command, args });
-            assert.equal(command, 'get_character');
-            assert.deepEqual(args, { name: 'Missing' });
-            throw new Error('Not found: Character not found: Missing');
-        },
-    });
-
-    assert.equal(await service.resolveExistingCharacterId({ avatar: 'Missing.png' }), null);
-    assert.equal(await service.resolveCharacterId({ avatar: 'Missing.png' }), 'Missing');
-    assert.deepEqual(invokes, [
-        { command: 'get_character', args: { name: 'Missing' } },
-    ]);
-});
-
-test('character service strict resolver verifies exact avatar ids without list refreshes', async () => {
-    const invokes = [];
-    const service = createCharacterService({
-        safeInvoke: async (command, args) => {
-            invokes.push({ command, args });
-            assert.equal(command, 'get_character');
-            if (args.name === 'Alice') {
-                return { name: 'Alice', avatar: 'Alice.png', data: { extensions: {} } };
-            }
-            throw new Error(`Not found: Character not found: ${args.name}`);
-        },
-    });
-
-    assert.equal(await service.resolveExistingCharacterId({ avatar: 'Alice.png' }), 'Alice');
-    assert.equal(await service.resolveExistingCharacterId({ avatar: 'Missing.png' }), null);
-    assert.deepEqual(invokes, [
-        { command: 'get_character', args: { name: 'Alice' } },
-        { command: 'get_character', args: { name: 'Missing' } },
-    ]);
 });

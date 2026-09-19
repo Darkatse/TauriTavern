@@ -57,3 +57,21 @@ export function getUserFacingErrorMessage(error, fallbackMessage = 'Chat complet
 
     return lines.join('\n');
 }
+
+export function buildLegacyErrorPayload(error) {
+    const details = getUpstreamFailureDetails(error);
+    const payload = {
+        message: getUserFacingErrorMessage(error),
+    };
+
+    if (details) {
+        payload.code = details.code;
+        payload.category = details.category;
+        payload.message_key = details.messageKey;
+        if (details.endpoint) {
+            payload.endpoint = details.endpoint;
+        }
+    }
+
+    return { error: payload };
+}

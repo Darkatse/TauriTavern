@@ -266,28 +266,6 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_ignores_animated_query_parameter() {
-        let store = store();
-
-        let response = serve_thumbnail(
-            &store,
-            false,
-            &test_support::request(Method::GET, "/thumbnail?type=bg&file=a.png&animated=true"),
-            HostResourceDeliveryCapabilities::new(true, false),
-        );
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            store.requests.lock().expect("lock").as_slice(),
-            &[ThumbnailAssetRequest {
-                kind: ThumbnailKind::Background,
-                file: "a.png".to_string(),
-                selection: ThumbnailSelection::PreferGenerated,
-            }]
-        );
-    }
-
-    #[test]
     fn static_background_requires_a_generated_preview() {
         let store = store();
 

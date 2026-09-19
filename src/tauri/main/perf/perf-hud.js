@@ -1,3 +1,5 @@
+import { writeClipboardText } from '../../../tauri-bridge.js';
+
 const GLOBAL_KEY = '__TAURITAVERN_PERF__';
 const EMBEDDED_RUNTIME_KEY = '__TAURITAVERN_EMBEDDED_RUNTIME__';
 const PANEL_RUNTIME_KEY = '__TAURITAVERN_PANEL_RUNTIME__';
@@ -1528,13 +1530,9 @@ function createPerfController(options = {}) {
 
     async function copyReport(options = {}) {
         const json = exportJson(options);
-        const clipboard = navigator?.clipboard;
-        if (!clipboard || typeof clipboard.writeText !== 'function') {
-            return false;
-        }
 
         try {
-            await clipboard.writeText(json);
+            await writeClipboardText(json);
             return true;
         } catch {
             return false;

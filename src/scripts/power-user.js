@@ -211,6 +211,7 @@ export const power_user = {
     auto_swipe_blacklist_threshold: 2,
     auto_scroll_chat_to_bottom: true,
     auto_fix_generated_markdown: true,
+    spellcheck_enabled: true,
     send_on_enter: send_on_enter_options.AUTO,
     console_log_prompts: false,
     request_token_probabilities: false,
@@ -225,6 +226,9 @@ export const power_user = {
     hideChatAvatars_enabled: false,
     max_context_unlocked: false,
     message_token_count_enabled: false,
+    message_ttft_enabled: false,
+    message_token_rate_enabled: false,
+    message_cache_enabled: false,
     expand_message_actions: false,
     enableZenSliders: false,
     enableLabMode: false,
@@ -520,6 +524,16 @@ function switchIcons() {
 function switchTokenCount() {
     $('body').toggleClass('no-tokenCount', !power_user.message_token_count_enabled);
     $('#messageTokensEnabled').prop('checked', power_user.message_token_count_enabled);
+    notifyChatLayoutChanged();
+}
+
+function switchGenerationInfo() {
+    $('body').toggleClass('no-message-ttft', !power_user.message_ttft_enabled);
+    $('body').toggleClass('no-message-token-rate', !power_user.message_token_rate_enabled);
+    $('body').toggleClass('no-message-cache', !power_user.message_cache_enabled);
+    $('#messageFirstTokenEnabled').prop('checked', power_user.message_ttft_enabled);
+    $('#messageTokenRateEnabled').prop('checked', power_user.message_token_rate_enabled);
+    $('#messageCacheEnabled').prop('checked', power_user.message_cache_enabled);
     notifyChatLayoutChanged();
 }
 
@@ -1420,6 +1434,9 @@ function applyTheme(name) {
                 switchTokenCount();
             },
         },
+        { key: 'message_ttft_enabled', action: switchGenerationInfo },
+        { key: 'message_token_rate_enabled', action: switchGenerationInfo },
+        { key: 'message_cache_enabled', action: switchGenerationInfo },
         {
             key: 'mesIDDisplay_enabled',
             action: () => {
@@ -1768,6 +1785,7 @@ export function applyPowerUserSettings() {
     applyNoShadows();
     switchHotswap();
     switchTimer();
+    switchGenerationInfo();
     switchTimestamps();
     switchIcons();
     switchMesIDDisplay();
@@ -1970,6 +1988,8 @@ export async function loadPowerUserSettings(settings, data) {
     $('#show_group_chat_queue').prop('checked', power_user.show_group_chat_queue);
     $('#auto_fix_generated_markdown').prop('checked', power_user.auto_fix_generated_markdown);
     $('#auto_scroll_chat_to_bottom').prop('checked', power_user.auto_scroll_chat_to_bottom);
+    $('#spellcheck_enabled').prop('checked', power_user.spellcheck_enabled);
+    document.body.spellcheck = power_user.spellcheck_enabled;
     $('#bogus_folders').prop('checked', power_user.bogus_folders);
     $('#zoomed_avatar_magnification').prop('checked', power_user.zoomed_avatar_magnification);
     $(`#tokenizer option[value="${power_user.tokenizer}"]`).prop('selected', true);
@@ -2948,6 +2968,9 @@ export function getThemeObject(name) {
         mesIDDisplay_enabled: power_user.mesIDDisplay_enabled,
         hideChatAvatars_enabled: power_user.hideChatAvatars_enabled,
         message_token_count_enabled: power_user.message_token_count_enabled,
+        message_ttft_enabled: power_user.message_ttft_enabled,
+        message_token_rate_enabled: power_user.message_token_rate_enabled,
+        message_cache_enabled: power_user.message_cache_enabled,
         expand_message_actions: power_user.expand_message_actions,
         enableZenSliders: power_user.enableZenSliders,
         enableLabMode: power_user.enableLabMode,
@@ -3980,6 +4003,12 @@ jQuery(() => {
         saveSettingsDebounced();
     });
 
+    $('#spellcheck_enabled').on('input', function () {
+        power_user.spellcheck_enabled = !!$(this).prop('checked');
+        document.body.spellcheck = power_user.spellcheck_enabled;
+        saveSettingsDebounced();
+    });
+
     $('#tokenizer').on('change', function () {
         const value = $(this).find(':selected').val();
         power_user.tokenizer = Number(value);
@@ -4052,6 +4081,12 @@ jQuery(() => {
         const value = !!$(this).prop('checked');
         power_user.message_token_count_enabled = value;
         switchTokenCount();
+        saveSettingsDebounced();
+    });
+
+    $('#messageFirstTokenEnabled, #messageTokenRateEnabled, #messageCacheEnabled').on('input', function () {
+        power_user[this.dataset.setting] = this.checked;
+        switchGenerationInfo();
         saveSettingsDebounced();
     });
 

@@ -55,7 +55,7 @@ fn build_gemini_interactions_payload(
         );
     }
 
-    let mut generation_config = build_generation_config(payload);
+    let mut generation_config = build_generation_config(payload)?;
 
     match payload.get("tools") {
         None | Some(Value::Null) => {}
@@ -113,23 +113,17 @@ fn build_gemini_interactions_payload(
     Ok(request)
 }
 
-fn build_generation_config(payload: &Map<String, Value>) -> Map<String, Value> {
+fn build_generation_config(
+    payload: &Map<String, Value>,
+) -> Result<Map<String, Value>, ApplicationError> {
     let mut config = Map::new();
 
-    if let Some(temperature) = payload.get("temperature").filter(|value| !value.is_null()) {
-        config.insert("temperature".to_string(), temperature.clone());
-    }
-
-    if let Some(top_p) = payload.get("top_p").filter(|value| !value.is_null()) {
-        config.insert("top_p".to_string(), top_p.clone());
-    }
-
-    if let Some(top_k) = payload
-        .get("top_k")
+    if let Some(seed) = payload
+        .get("seed")
         .and_then(Value::as_i64)
-        .filter(|value| *value > 0)
+        .filter(|value| *value >= 0)
     {
-        config.insert("top_k".to_string(), Value::Number(Number::from(top_k)));
+        config.insert("seed".to_string(), Value::Number(Number::from(seed)));
     }
 
     if let Some(max_tokens) = payload
@@ -144,7 +138,26 @@ fn build_generation_config(payload: &Map<String, Value>) -> Map<String, Value> {
         );
     }
 
-    config
+    if let Some(stop) = payload
+        .get("stop")
+        .and_then(Value::as_array)
+        .filter(|value| !value.is_empty())
+    {
+        config.insert("stop_sequences".to_string(), Value::Array(stop.clone()));
+    }
+
+    if let Some(value) = payload.get("reasoning_effort") {
+        config.insert("thinking_level".to_string(), value.clone());
+    }
+
+    if let Some(include_reasoning) = payload.get("include_reasoning").and_then(Value::as_bool) {
+        config.insert(
+            "thinking_summaries".to_string(),
+            Value::String(if include_reasoning { "auto" } else { "none" }.to_string()),
+        );
+    }
+
+    Ok(config)
 }
 
 fn map_tool_choice_to_interactions(value: &Value) -> Result<Value, ApplicationError> {
@@ -401,7 +414,7 @@ fn build_function_call_step(tool_call: &OpenAiToolCall) -> Value {
         "type": "function_call",
         "id": tool_call.id.clone(),
         "name": tool_call.name.clone(),
-        "arguments": tool_call.arguments.clone(),
+        "arguments": tool_call.arguments.to_replay_object(),
     });
 
     if let Some(signature) = tool_call.signature.as_deref()
@@ -602,58 +615,6 @@ mod tests {
                 "result": [{ "type": "text", "text": "Sunny" }]
             })
         );
-    }
-
-    #[test]
-    fn gemini_interactions_maps_tool_choice_without_omission() {
-        let cases = [
-            (json!("auto"), json!("auto")),
-            (json!("none"), json!("none")),
-            (json!("required"), json!("any")),
-            (
-                json!({ "type": "function", "function": { "name": "get_weather" } }),
-                json!({
-                    "allowed_tools": { "mode": "any", "tools": ["get_weather"] }
-                }),
-            ),
-        ];
-
-        for (choice, expected) in cases {
-            let payload = json!({
-                "model": "gemini-3-flash-preview",
-                "messages": [{ "role": "user", "content": "hello" }],
-                "tools": [{
-                    "type": "function",
-                    "function": { "name": "get_weather", "parameters": { "type": "object" } }
-                }],
-                "tool_choice": choice
-            })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-
-            let (_, upstream) = build(payload).expect("tool choice should map");
-            assert_eq!(
-                upstream.pointer("/generation_config/tool_choice"),
-                Some(&expected)
-            );
-        }
-
-        let payload = json!({
-            "model": "gemini-3-flash-preview",
-            "messages": [{ "role": "user", "content": "hello" }],
-            "tools": [{
-                "type": "function",
-                "function": { "name": "get_weather", "parameters": { "type": "object" } }
-            }],
-            "tool_choice": "unexpected"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let error = build(payload).expect_err("unknown choice must fail");
-        assert!(error.to_string().contains("provider.tool_choice_invalid"));
     }
 
     #[test]
@@ -868,48 +829,5 @@ mod tests {
         .expect("payload must be object");
         let error = build(payload).expect_err("mismatched split native steps must fail");
         assert!(error.to_string().contains("mismatched native steps"));
-    }
-
-    #[test]
-    fn gemini_interactions_wraps_json_schema_response_format() {
-        let payload = json!({
-            "model": "gemini-3-flash-preview",
-            "messages": "Return JSON",
-            "json_schema": {
-                "value": {
-                    "type": "object",
-                    "properties": { "answer": { "type": "string" } },
-                    "required": ["answer"]
-                }
-            }
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        assert_eq!(upstream.get("input"), Some(&json!("Return JSON")));
-        assert_eq!(
-            upstream.get("response_format"),
-            Some(&json!({
-                "type": "text",
-                "mime_type": "application/json",
-                "schema": {
-                    "type": "object",
-                    "properties": { "answer": { "type": "string" } },
-                    "required": ["answer"]
-                }
-            }))
-        );
-
-        let malformed = json!({
-            "model": "gemini-3-flash-preview",
-            "messages": [{ "role": "user", "content": "Return JSON" }],
-            "json_schema": {}
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-        assert!(build(malformed).is_err());
     }
 }

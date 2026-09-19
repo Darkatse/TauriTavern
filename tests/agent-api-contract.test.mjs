@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { attachHostCommitBridge, settleHostCommitBridge } from '../src/tauri/main/api/agent-chat-commit-bridge.js';
+import { restoreHostPresentation } from '../src/tauri/main/api/agent-chat-presentation-checkpoint.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -36,18 +38,19 @@ function createFakeCommitScript(cleanUpMessage, saveCalls = []) {
     const script = {
         chat: [],
         cleanUpMessage,
-        async saveReply({ type, getMessage }) {
-            saveCalls.push({ type, getMessage });
+        async saveReply({ type, getMessage, reasoning = '' }) {
+            saveCalls.push({ type, getMessage, reasoning });
             if (type === 'appendFinal') {
                 const message = script.chat[script.chat.length - 1];
                 message.mes = getMessage;
+                message.extra.reasoning += reasoning;
                 message.swipes[message.swipe_id] = getMessage;
                 return { type, getMessage };
             }
 
             script.chat.push({
                 mes: getMessage,
-                extra: {},
+                extra: { reasoning },
                 swipe_id: 0,
                 swipes: [getMessage],
                 swipe_info: [{ extra: {} }],
@@ -56,6 +59,72 @@ function createFakeCommitScript(cleanUpMessage, saveCalls = []) {
         },
     };
     return script;
+}
+
+function createFakeStreamingCommitScript() {
+    const saveCalls = [];
+    const renders = [];
+    const events = [];
+    const script = {
+        chat: [],
+        event_types: {
+            MESSAGE_RECEIVED: 'message_received',
+            CHARACTER_MESSAGE_RENDERED: 'character_message_rendered',
+        },
+        eventSource: {
+            async emit(...args) {
+                events.push(args);
+            },
+        },
+        cleanUpMessage({ getMessage }) {
+            return String(getMessage ?? '');
+        },
+        async saveReply({ type, getMessage, reasoning = '', fromStreaming = false }) {
+            saveCalls.push({ type, getMessage, reasoning, fromStreaming });
+            if (type === 'appendFinal') {
+                const message = script.chat.at(-1);
+                message.mes = getMessage;
+                message.extra.reasoning += reasoning;
+                message.swipes[message.swipe_id] = getMessage;
+            } else if (type === 'swipe' && script.chat.length > 0) {
+                const message = script.chat.at(-1);
+                message.mes = getMessage;
+                message.extra.reasoning = reasoning;
+                message.swipes[message.swipe_id] = getMessage;
+                message.swipe_info[message.swipe_id] = {
+                    extra: structuredClone(message.extra),
+                };
+            } else {
+                script.chat.push({
+                    mes: getMessage,
+                    extra: { reasoning },
+                    swipe_id: 0,
+                    swipes: [getMessage],
+                    swipe_info: [{ extra: { reasoning } }],
+                });
+            }
+            if (!fromStreaming) {
+                const messageId = script.chat.length - 1;
+                await script.eventSource.emit(script.event_types.MESSAGE_RECEIVED, messageId, type);
+                await script.eventSource.emit(script.event_types.CHARACTER_MESSAGE_RENDERED, messageId, type);
+            }
+            return { type, getMessage };
+        },
+        syncMesToSwipe(messageId) {
+            const message = script.chat[messageId];
+            message.swipes[message.swipe_id] = message.mes;
+            message.swipe_info[message.swipe_id].extra = structuredClone(message.extra);
+            return true;
+        },
+        updateMessageBlock(messageId, message, options) {
+            renders.push({ messageId, text: message.mes, options });
+        },
+        async finalizeMessageContent(messageId, event, ...args) {
+            script.updateMessageBlock(messageId, script.chat[messageId], { transient: false });
+            if (event) await script.eventSource.emit(event, messageId, ...args);
+        },
+    };
+    return { script, saveCalls, renders, events };
 }
 
 function workspaceFile(text, pathName = 'output/main.md') {
@@ -80,7 +149,21 @@ function agentCommitPayload(chatRef, overrides = {}) {
         persistBaseStateId: null,
         path: 'output/main.md',
         mode: 'replace',
-        checkpointId: 'checkpoint-1',
+        isExplicit: false,
+        sha256: 'sha-19',
+        ...overrides,
+    };
+}
+
+function liveWriteCall(content, overrides = {}) {
+    return {
+        toolId: 'builtin:workspace.write_file',
+        invocationId: 'inv_root',
+        invocationExitPolicy: 'run_finish_allowed',
+        toolCallIndex: 0,
+        path: 'output/main.md',
+        content,
+        contentWords: 0,
         ...overrides,
     };
 }
@@ -95,9 +178,10 @@ async function installHarness(options = {}) {
         return { command, args };
     });
 
-    const { installAgentApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent.js')));
-    installAgentApi({
+    const { createAgentApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent.js')));
+    globalThis.window.__TAURITAVERN__.api.agent = createAgentApi({
         safeInvoke,
+        loadScript: async () => options.script || createFakeStreamingCommitScript().script,
     });
 
     return {
@@ -106,46 +190,79 @@ async function installHarness(options = {}) {
     };
 }
 
-test('api.agent.profiles forwards profile commands with camelCase DTOs', async () => {
-    const { calls, agent } = await installHarness();
-    const profile = {
-        schemaVersion: 1,
-        kind: 'tauritavern.agentProfile',
-        id: 'writer',
-    };
+test('Agent run options preserve an explicit stream override and preserve omission', async () => {
+    const { normalizeAgentRunOptions } = await import(pathToFileURL(path.join(
+        REPO_ROOT,
+        'src/tauri/main/api/agent-run-options.js',
+    )));
 
-    assert.ok(agent.profiles);
-    await agent.profiles.list();
-    await agent.profiles.load({ profileId: 'writer' });
-    await agent.profiles.diagnose({ profileId: 'writer' });
-    await agent.profiles.resolveSystemPrompt({ profileId: 'writer' });
-    await agent.profiles.retargetPresetRefs({
-        from: { apiId: 'openai', name: 'Old Preset' },
-        to: { apiId: 'openai', name: 'New Preset' },
-    });
-    await agent.profiles.save({ profile });
-    await agent.profiles.delete('writer');
-    await agent.profiles.repairFile({ profileId: 'writer', action: 'normalizeIdentity' });
-
-    assert.deepEqual(calls, [
-        { command: 'list_agent_profiles', args: undefined },
-        { command: 'load_agent_profile', args: { dto: { profileId: 'writer' } } },
-        { command: 'diagnose_agent_profile', args: { dto: { profileId: 'writer' } } },
-        { command: 'resolve_agent_system_prompt', args: { dto: { profileId: 'writer' } } },
-        {
-            command: 'retarget_agent_profile_preset_refs',
-            args: {
-                dto: {
-                    from: { apiId: 'openai', name: 'Old Preset' },
-                    to: { apiId: 'openai', name: 'New Preset' },
-                },
-            },
-        },
-        { command: 'save_agent_profile', args: { dto: { profile } } },
-        { command: 'delete_agent_profile', args: { dto: { profileId: 'writer' } } },
-        { command: 'repair_agent_profile_file', args: { dto: { profileId: 'writer', action: 'normalizeIdentity' } } },
-    ]);
+    assert.deepEqual(normalizeAgentRunOptions(undefined), {});
+    assert.deepEqual(normalizeAgentRunOptions({ stream: true }), { stream: true });
+    assert.deepEqual(normalizeAgentRunOptions({ stream: false }), { stream: false });
+    assert.throws(
+        () => normalizeAgentRunOptions({ stream: 'true' }),
+        /agent\.stream_invalid/,
+    );
 });
+
+test('Agent live projection subscription owns Channel callbacks and detaches idempotently', async () => {
+    const { createAgentRunLiveSubscribe } = await import(pathToFileURL(path.join(
+        REPO_ROOT,
+        'src/tauri/main/api/agent-run-live-subscription.js',
+    )));
+    let onmessage;
+    let resolveInvoke;
+    const invokeCompletion = new Promise((resolve) => {
+        resolveInvoke = resolve;
+    });
+    const calls = [];
+    const updates = [];
+    const subscribe = createAgentRunLiveSubscribe({
+        safeInvoke(command, args) {
+            calls.push({ command, args });
+            return invokeCompletion;
+        },
+        channelFactory(handler) {
+            onmessage = handler;
+            return { kind: 'test-channel' };
+        },
+    });
+
+    const unsubscribe = subscribe(' run-live ', updates.push.bind(updates));
+    assert.equal(calls[0].command, 'subscribe_agent_run_live_projection');
+    assert.deepEqual(calls[0].args, {
+        dto: { runId: 'run-live' },
+        channel: { kind: 'test-channel' },
+    });
+    onmessage({ type: 'snapshot', calls: [], reasoning: [] });
+    unsubscribe();
+    unsubscribe();
+    onmessage({ type: 'remove', invocationId: 'inv_root', toolCallIndex: 0 });
+    resolveInvoke();
+    await Promise.resolve();
+    assert.deepEqual(updates, [{ type: 'snapshot', calls: [], reasoning: [] }]);
+});
+
+test('Agent live projection subscription reports command rejection', async () => {
+    const { createAgentRunLiveSubscribe } = await import(pathToFileURL(path.join(
+        REPO_ROOT,
+        'src/tauri/main/api/agent-run-live-subscription.js',
+    )));
+    const errors = [];
+    const channelFactory = () => ({});
+
+    createAgentRunLiveSubscribe({
+        safeInvoke: async () => {
+            throw new Error('channel failed');
+        },
+        channelFactory,
+    })('run-error', () => {}, { onError: error => errors.push(error.message) });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual(errors, ['channel failed']);
+});
+
 
 test('api.agent.profiles publishes profile change events after successful mutations', async () => {
     const { agent } = await installHarness();
@@ -170,149 +287,9 @@ test('api.agent.profiles publishes profile change events after successful mutati
     assert.deepEqual(events, ['changed', 'changed', 'changed', 'changed']);
 });
 
-test('api.agent.profiles fails fast on invalid profile inputs', async () => {
-    const { agent } = await installHarness();
 
-    await assert.rejects(
-        () => agent.profiles.load({ profileId: '' }),
-        /profileId is required/,
-    );
-    await assert.rejects(
-        () => agent.profiles.delete(''),
-        /profileId is required/,
-    );
-    await assert.rejects(
-        () => agent.profiles.save(null),
-        /profile must be an object/,
-    );
-    await assert.rejects(
-        () => agent.profiles.retargetPresetRefs({ from: { apiId: 'openai' }, to: { apiId: 'openai', name: 'New' } }),
-        /from requires apiId and name/,
-    );
-    await assert.rejects(
-        () => agent.profiles.repairFile({ profileId: 'writer', action: 'archive' }),
-        /repair action must be delete or normalizeIdentity/,
-    );
-});
 
-test('api.agent.tools lists canonical catalog items', async () => {
-    const { calls, agent } = await installHarness();
 
-    assert.ok(agent.tools);
-    await agent.tools.list();
-
-    assert.deepEqual(calls, [
-        { command: 'list_agent_tools', args: undefined },
-    ]);
-});
-
-test('api.agent.promptAssembly prepares backend broker requests', async () => {
-    const { calls, agent } = await installHarness();
-    const frozenRunInputSnapshot = {
-        schemaVersion: 1,
-        kind: 'tauritavern.agentFrozenRunInputSnapshot',
-        generationType: 'swipe',
-        promptInputs: { type: 'swipe', messages: [] },
-        worldInfoActivation: { entries: [] },
-        macroContext: { names: { user: 'User', char: 'Char' } },
-    };
-
-    assert.ok(agent.promptAssembly);
-    await agent.promptAssembly.prepare({
-        profileId: 'writer',
-        generationType: 'swipe',
-        frozenRunInputSnapshot,
-        jsonSchema: { type: 'object' },
-    });
-
-    assert.deepEqual(calls, [
-        {
-            command: 'prepare_agent_prompt_assembly',
-            args: {
-                dto: {
-                    profileId: 'writer',
-                    generationType: 'swipe',
-                    frozenRunInputSnapshot,
-                    jsonSchema: { type: 'object' },
-                },
-            },
-        },
-    ]);
-});
-
-test('api.agent.promptAssembly normalizes current model connection through backend commands', async () => {
-    const calls = [];
-    const settings = {
-        chat_completion_source: 'custom',
-        custom_model: 'opencode-model',
-        custom_url: 'https://opencode.example.test/v1',
-        additional_parameters_by_source: {
-            custom: { include_body: '', exclude_body: '', include_headers: 'X-Test: true' },
-        },
-    };
-    const currentModelConnection = {
-        schemaVersion: 1,
-        kind: 'tauritavern.currentModelConnectionSnapshot',
-        settings: {
-            chat_completion_source: 'custom',
-            model: 'opencode-model',
-            custom_model: 'opencode-model',
-            custom_url: 'https://opencode.example.test/v1',
-            secret_id: 'secret-current',
-        },
-    };
-    const appliedSettings = {
-        temp_openai: 0.7,
-        ...currentModelConnection.settings,
-    };
-    const { agent } = await installHarness({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            if (command === 'build_agent_current_model_connection_snapshot') {
-                return { currentModelConnection };
-            }
-            if (command === 'apply_agent_current_model_connection_snapshot') {
-                return { settings: appliedSettings };
-            }
-            return {};
-        },
-    });
-
-    assert.ok(agent.promptAssembly);
-    const built = await agent.promptAssembly.buildCurrentModelConnectionSnapshot({
-        settings,
-        model: 'opencode-model',
-        secretId: 'secret-current',
-    });
-    const applied = await agent.promptAssembly.applyCurrentModelConnectionSnapshot({
-        settings: { temp_openai: 0.7 },
-        currentModelConnection,
-    });
-
-    assert.deepEqual(built, currentModelConnection);
-    assert.deepEqual(applied, appliedSettings);
-    assert.deepEqual(calls, [
-        {
-            command: 'build_agent_current_model_connection_snapshot',
-            args: {
-                dto: {
-                    settings,
-                    model: 'opencode-model',
-                    secretId: 'secret-current',
-                },
-            },
-        },
-        {
-            command: 'apply_agent_current_model_connection_snapshot',
-            args: {
-                dto: {
-                    settings: { temp_openai: 0.7 },
-                    currentModelConnection,
-                },
-            },
-        },
-    ]);
-});
 
 test('api.agent.startRunWithPromptSnapshot refreshes Model Target LLM connection before starting run', async () => {
     const sequence = [];
@@ -346,6 +323,10 @@ test('api.agent.startRunWithPromptSnapshot refreshes Model Target LLM connection
                         preset: {
                             mode: 'ref',
                         },
+                        run: {
+                            presentation: 'foreground',
+                            stream: true,
+                        },
                     },
                 };
             }
@@ -366,6 +347,9 @@ test('api.agent.startRunWithPromptSnapshot refreshes Model Target LLM connection
             return {};
         },
     });
+    globalThis.window.__TAURI__ = {
+        core: { Channel: class { constructor(onmessage) { this.onmessage = onmessage; } } },
+    };
     globalThis.window.__TAURITAVERN__.api.llmConnections = {
         async save({ connection }) {
             sequence.push('llm_connections.save');
@@ -393,54 +377,81 @@ test('api.agent.startRunWithPromptSnapshot refreshes Model Target LLM connection
                 messages: [],
             },
         },
-        options: {
-            stream: false,
-        },
     });
 
     assert.deepEqual(handle, { runId: 'run-model-target' });
     assert.equal(savedConnections.length, 1);
     assert.equal(savedConnections[0].auth.secretRef.id, 'secret-current');
     assert.ok(sequence.indexOf('llm_connections.save') < sequence.indexOf('start_agent_run'));
+    await waitFor(() => sequence.includes('subscribe_agent_run_live_projection'));
     await waitFor(() => sequence.includes('read_agent_run_events'));
 });
 
-test('api.agent.readEvents requests timeline projection only when asked', async () => {
-    const { calls, agent } = await installHarness();
 
-    await agent.readEvents({ runId: 'run-1', afterSeq: 12, limit: 20 });
-    await agent.readEvents({
-        runId: 'run-1',
-        beforeSeq: 200,
-        limit: 50,
-        includeTimelineProjection: true,
-    });
-
-    assert.deepEqual(calls, [
-        {
-            command: 'read_agent_run_events',
-            args: {
-                dto: {
-                    runId: 'run-1',
-                    afterSeq: 12,
-                    beforeSeq: undefined,
-                    limit: 20,
+test('Agent startup asks once for missing persist, preserves the input, and propagates other failures', async (t) => {
+    for (const scenario of [
+        { name: 'missing message ID', error: 'Bad request: agent.persist_state_missing: message 4', accept: true },
+        { name: 'missing disk version', error: 'Not found: agent.persistent_state_not_found: state-1', accept: true },
+        { name: 'cancel', error: 'Not found: agent.persistent_state_not_found: state-1', accept: false },
+        { name: 'invalid state', error: 'Bad request: agent.persistent_state_invalid: state-1' },
+        { name: 'permission denied', error: 'Internal server error: Failed to inspect persistent state: Permission denied' },
+        { name: 'retry fails', error: 'Bad request: agent.persist_state_missing: message 4', accept: true, retryError: 'retry failed' },
+    ]) {
+        await t.test(scenario.name, async () => {
+            const starts = [];
+            const popups = [];
+            let subscriptions = 0;
+            const { agent } = await installHarness({
+                safeInvoke: async (command, args) => {
+                    if (command === 'load_agent_profile') return { profile: { preset: { mode: 'ref' } } };
+                    if (command === 'start_agent_run') {
+                        starts.push(structuredClone(args.dto));
+                        if (starts.length === 1) throw new Error(scenario.error);
+                        if (scenario.retryError) throw new Error(scenario.retryError);
+                        return { runId: 'run-empty-persist' };
+                    }
+                    if (command === 'read_agent_run_events') {
+                        subscriptions += 1;
+                        return { events: [{ seq: 1, type: 'run_completed', payload: {} }] };
+                    }
+                    if (command === 'finish_agent_run_presentation') return;
+                    throw new Error(`Unexpected command ${command}`);
                 },
-            },
-        },
-        {
-            command: 'read_agent_run_events',
-            args: {
-                dto: {
-                    runId: 'run-1',
-                    afterSeq: undefined,
-                    beforeSeq: 200,
-                    limit: 50,
-                    includeTimelineProjection: true,
-                },
-            },
-        },
-    ]);
+            });
+            globalThis.window.SillyTavern = {
+                getContext: () => ({
+                    Popup: { show: { confirm: async (...args) => { popups.push(args); return scenario.accept ? 1 : 0; } } },
+                    POPUP_RESULT: { AFFIRMATIVE: 1 },
+                }),
+            };
+            const input = {
+                chatRef: { kind: 'character', characterId: 'Alice', fileName: 'story' },
+                stableChatId: 'stable-story',
+                persistBaseStateId: 'state-1',
+                promptSnapshot: { chatCompletionPayload: { messages: [] } },
+                options: { presentation: 'background', stream: false },
+            };
+            const original = structuredClone(input);
+            const pending = agent.startRunWithPromptSnapshot(input);
+            if (scenario.accept && !scenario.retryError) {
+                assert.deepEqual(await pending, { runId: 'run-empty-persist' });
+                await waitFor(() => subscriptions > 0);
+            } else if (scenario.accept === false) {
+                await assert.rejects(pending, { name: 'AbortError' });
+            } else {
+                await assert.rejects(pending, { message: scenario.retryError ?? scenario.error });
+            }
+            assert.equal(popups.length, scenario.accept === undefined ? 0 : 1);
+            assert.equal(starts.length, scenario.accept ? 2 : 1);
+            assert.deepEqual(input, original);
+            if (starts[1]) {
+                assert.equal(starts[1].persistBaseStateId, undefined);
+                assert.deepEqual(starts[1].options, { ...input.options, hostPresentation: true, startWithEmptyPersist: true });
+                assert.deepEqual(starts[1].promptSnapshot, input.promptSnapshot);
+            }
+            if (!scenario.accept || scenario.retryError) assert.equal(subscriptions, 0);
+        });
+    }
 });
 
 test('api.agent.submitGuidance forwards camelCase DTO and fails fast on invalid input', async () => {
@@ -492,43 +503,18 @@ test('api.agent.submitGuidance forwards camelCase DTO and fails fast on invalid 
     );
 });
 
-test('api.agent.listRuns forwards run history filters with camelCase DTOs', async () => {
-    const { calls, agent } = await installHarness();
-    const chatRef = { kind: 'character', characterId: 'char-1', fileName: 'Char.json' };
 
-    await agent.listRuns();
-    await agent.listRuns({
-        chatRef,
-        stableChatId: ' stable_1 ',
-        statuses: ['completed', 'failed', 'completed'],
-        before: {
-            createdAt: '2026-01-02T11:04:05+08:00',
-            runId: ' run_b ',
-        },
-        limit: 25,
-    });
-
-    assert.deepEqual(calls, [
-        {
-            command: 'list_agent_runs',
-            args: { dto: {} },
-        },
-        {
-            command: 'list_agent_runs',
-            args: {
-                dto: {
-                    chatRef,
-                    stableChatId: 'stable_1',
-                    statuses: ['completed', 'failed'],
-                    before: {
-                        createdAt: '2026-01-02T03:04:05.000Z',
-                        runId: 'run_b',
-                    },
-                    limit: 25,
-                },
-            },
-        },
+test('api.agent.readTaskDetail requests result content explicitly and rejects invalid options before invoking', async () => {
+    const { agent, calls } = await installHarness();
+    await agent.readTaskDetail({ runId: ' run-1 ', taskId: ' task-1 ' });
+    await agent.readTaskDetail({ runId: 'run-1', taskId: 'task-1', includeResult: true });
+    assert.deepEqual(calls.map(call => call.args.dto), [
+        { runId: 'run-1', taskId: 'task-1', includeResult: false },
+        { runId: 'run-1', taskId: 'task-1', includeResult: true },
     ]);
+    await assert.rejects(() => agent.readTaskDetail({ runId: 'run-1', taskId: ' ' }), /taskId is required/);
+    await assert.rejects(() => agent.readTaskDetail({ runId: 'run-1', taskId: 'task-1', includeResult: 'true' }), /includeResult must be a boolean/);
+    assert.equal(calls.length, 2);
 });
 
 test('api.agent.listRuns fails fast on invalid history filters', async () => {
@@ -573,278 +559,332 @@ test('api.agent.listRuns fails fast on invalid history filters', async () => {
     assert.deepEqual(calls, []);
 });
 
-test('api.agent.retention forwards settings and prune contracts', async () => {
-    const calls = [];
-    const { agent } = await installHarness({
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            if (command === 'get_tauritavern_settings') {
-                return {
-                    agent: {
-                        retention: {
-                            auto_prune_enabled: true,
-                            keep_recent_terminal_runs: 100,
-                            keep_full_recent_runs: 20,
-                        },
-                    },
+test('agent live write keeps one real partial chat message and saves it on failure', async () => {
+    const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
+    installCurrentChatRef(chatRef);
+    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    let suspendFrames = false;
+    let cancelledFrames = 0;
+    globalThis.requestAnimationFrame = callback => {
+        if (!suspendFrames) queueMicrotask(() => callback(0));
+        return 1;
+    };
+    globalThis.cancelAnimationFrame = () => { cancelledFrames += 1; };
+
+    try {
+        const { script, events, renders } = createFakeStreamingCommitScript();
+        let durableListener = null;
+        let liveListener = null;
+        let durableStopped = false;
+        let liveStopped = false;
+        let persistCount = 0;
+        attachHostCommitBridge({
+            runId: 'run-live-partial',
+            chatRef,
+            stableChatId: 'stable-live-partial',
+            generationType: 'normal',
+            safeInvoke: async () => {},
+            readWorkspaceFile: async () => {},
+            subscribe(_runId, handler) {
+                durableListener = handler;
+                return () => { durableStopped = true; };
+            },
+            subscribeLiveProjection(_runId, handler) {
+                let active = true;
+                liveListener = update => { if (active) handler(update); };
+                return () => {
+                    active = false;
+                    liveStopped = true;
                 };
-            }
-            if (command === 'update_tauritavern_settings') {
-                return {
-                    agent: {
-                        retention: {
-                            auto_prune_enabled: args.dto.agent.retention.auto_prune_enabled,
-                            keep_recent_terminal_runs: args.dto.agent.retention.keep_recent_terminal_runs,
-                            keep_full_recent_runs: args.dto.agent.retention.keep_full_recent_runs,
-                        },
-                    },
-                };
-            }
-            return { ok: true };
-        },
-    });
+            },
+            loadScript: async () => script,
+            persistChat: async () => { persistCount += 1; },
+        });
 
-    assert.deepEqual(await agent.retention.readSettings(), {
-        autoPruneEnabled: true,
-        keepRecentTerminalRuns: 100,
-        keepFullRecentRuns: 20,
-    });
-    assert.deepEqual(await agent.retention.updateSettings({
-        autoPruneEnabled: false,
-        keepRecentTerminalRuns: '80',
-        keepFullRecentRuns: 12,
-    }), {
-        autoPruneEnabled: false,
-        keepRecentTerminalRuns: 80,
-        keepFullRecentRuns: 12,
-    });
-    await agent.retention.planPrune({
-        retention: {
-            keepRecentTerminalRuns: 80,
-            keepFullRecentRuns: 12,
-        },
-        detailLimit: 8,
-    });
-    await agent.retention.applyPrune({
-        retention: {
-            keepRecentTerminalRuns: 80,
-            keepFullRecentRuns: 12,
-        },
-        detailLimit: 8,
-    });
+        liveListener({
+            type: 'replace',
+            call: liveWriteCall('partial'),
+        });
+        await waitFor(() => script.chat[0]?.mes === 'partial');
+        const message = script.chat[0];
+        assert.equal(message.extra.tauritavern.agent.runId, 'run-live-partial');
+        liveListener({ type: 'reasoningReplace', reasoning: {
+            invocationId: 'inv_root', invocationExitPolicy: 'run_finish_allowed', text: 'Plan', toolIds: [],
+        } });
+        liveListener({ type: 'reasoningAppend', toolIds: [], invocationId: 'inv_root', text: ' the edit' });
+        liveListener({ type: 'reasoningRemove', invocationId: 'inv_root' });
+        assert.equal(message.mes, 'partial');
 
-    assert.deepEqual(calls, [
-        {
-            command: 'get_tauritavern_settings',
-            args: undefined,
-        },
-        {
-            command: 'update_tauritavern_settings',
-            args: {
-                dto: {
-                    agent: {
-                        retention: {
-                            auto_prune_enabled: false,
-                            keep_recent_terminal_runs: 80,
-                            keep_full_recent_runs: 12,
-                        },
-                    },
-                },
-            },
-        },
-        {
-            command: 'plan_agent_run_prune',
-            args: {
-                dto: {
-                    retention: {
-                        keepRecentTerminalRuns: 80,
-                        keepFullRecentRuns: 12,
-                    },
-                    detailLimit: 8,
-                },
-            },
-        },
-        {
-            command: 'apply_agent_run_prune',
-            args: {
-                dto: {
-                    retention: {
-                        keepRecentTerminalRuns: 80,
-                        keepFullRecentRuns: 12,
-                    },
-                    detailLimit: 8,
-                },
-            },
-        },
-    ]);
+        suspendFrames = true;
+        liveListener({
+            type: 'replace',
+            call: liveWriteCall('child content', {
+                invocationId: 'inv_background_child',
+                invocationExitPolicy: 'task_return_required',
+                path: 'output/child.md',
+            }),
+        });
+        liveListener({
+            type: 'append',
+            invocationId: 'inv_root',
+            toolCallIndex: 0,
+            field: 'content',
+            text: ' answer',
+            wordDelta: 1,
+        });
+        liveListener({ type: 'remove', invocationId: 'inv_root', toolCallIndex: 0 });
+        liveListener({
+            type: 'replace',
+            call: liveWriteCall('handoff', {
+                invocationId: 'inv_handoff_before_journal_poll',
+            }),
+        });
+        liveListener({
+            type: 'append',
+            invocationId: 'inv_handoff_before_journal_poll',
+            toolCallIndex: 0,
+            field: 'content',
+            text: ' answer',
+            wordDelta: 1,
+        });
+
+        durableListener({ type: 'run_failed', payload: {} });
+        await waitFor(() => persistCount === 1);
+        assert.equal(cancelledFrames, 1);
+        assert.equal(script.chat.length, 1);
+        assert.ok(renders.some(render => render.options.transient));
+        assert.deepEqual(renders.at(-1).options, { transient: false });
+        assert.equal(script.chat[0], message);
+        assert.equal(message.mes, 'handoff answer');
+        assert.equal(message.extra.tauritavern.agent.runId, 'run-live-partial');
+        assert.deepEqual(events.slice(-2), [
+            ['message_received', 0, 'normal'],
+            ['character_message_rendered', 0, 'normal'],
+        ]);
+        assert.equal(durableStopped, true);
+        assert.equal(liveStopped, true);
+    } finally {
+        globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+        globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+    }
 });
 
-test('api.agent.retention fails fast on invalid retention inputs', async () => {
-    const { calls, agent } = await installHarness();
-
-    await assert.rejects(
-        () => agent.retention.updateSettings(null),
-        /Agent retention settings update must be an object/,
-    );
-    await assert.rejects(
-        () => agent.retention.updateSettings({}),
-        /Agent retention update cannot be empty/,
-    );
-    await assert.rejects(
-        () => agent.retention.updateSettings({ keepRecentTerminalRuns: -1 }),
-        /keepRecentTerminalRuns must be an integer between 0 and 10000/,
-    );
-    await assert.rejects(
-        () => agent.retention.updateSettings({ autoPruneEnabled: 'true' }),
-        /autoPruneEnabled must be a boolean/,
-    );
-    await assert.rejects(
-        () => agent.retention.updateSettings({ keepRecentTerminalRuns: 10, keepFullRecentRuns: 11 }),
-        /keepFullRecentRuns must be less than or equal to keepRecentTerminalRuns/,
-    );
-    await assert.rejects(
-        () => agent.retention.planPrune(null),
-        /Agent planRunPrune input must be an object/,
-    );
-    await assert.rejects(
-        () => agent.retention.planPrune({ detailLimit: -1 }),
-        /detailLimit must be an integer between 0 and 1000/,
-    );
-    await assert.rejects(
-        () => agent.retention.planPrune({
-            retention: {
-                keepRecentTerminalRuns: 10,
-                keepFullRecentRuns: 11,
-            },
-        }),
-        /keepFullRecentRuns must be less than or equal to keepRecentTerminalRuns/,
-    );
-    await assert.rejects(
-        () => agent.retention.applyPrune(null),
-        /Agent applyRunPrune input must be an object/,
-    );
-    await assert.rejects(
-        () => agent.retention.applyPrune({ detailLimit: -1 }),
-        /detailLimit must be an integer between 0 and 1000/,
-    );
-    await assert.rejects(
-        () => agent.retention.applyPrune({
-            retention: {
-                keepRecentTerminalRuns: 10,
-                keepFullRecentRuns: 11,
-            },
-        }),
-        /keepFullRecentRuns must be less than or equal to keepRecentTerminalRuns/,
-    );
-    assert.deepEqual(calls, []);
-});
-
-test('api.agent.readModelTurn forwards camelCase DTO and fails fast on invalid input', async () => {
-    const { calls, agent } = await installHarness();
-
-    await agent.readModelTurn({ runId: 'run-1', invocationId: 'inv_child', round: 2, maxChars: 12000 });
-    await agent.readModelTurn({ runId: 'run-1', round: 3 });
-
-    assert.deepEqual(calls, [
-        {
-            command: 'read_agent_model_turn',
-            args: { dto: { runId: 'run-1', invocationId: 'inv_child', round: 2, maxChars: 12000 } },
-        },
-        {
-            command: 'read_agent_model_turn',
-            args: { dto: { runId: 'run-1', round: 3 } },
-        },
-    ]);
-
-    await assert.rejects(
-        () => agent.readModelTurn({ runId: '', round: 1 }),
-        /runId is required/,
-    );
-    await assert.rejects(
-        () => agent.readModelTurn({ runId: 'run-1', round: 0 }),
-        /round must be a positive integer/,
-    );
-    await assert.rejects(
-        () => agent.readModelTurn({ runId: 'run-1', round: 1, maxChars: 0 }),
-        /maxChars must be a positive integer/,
-    );
-});
-
-test('api.agent.pruneChatPersistentStates forwards explicit candidate state ids', async () => {
-    const { calls, agent } = await installHarness();
-    const chatRef = { kind: 'character', characterId: 'char-1', fileName: 'Char.json' };
-
-    await agent.pruneChatPersistentStates({
-        chatRef,
-        stableChatId: ' chat_1 ',
-        candidateStateIds: [' state_drop ', 'state_drop', 'state_keep'],
-    });
-
-    assert.deepEqual(calls, [
-        {
-            command: 'prune_agent_chat_persistent_states',
-            args: {
-                dto: {
-                    chatRef,
-                    stableChatId: 'chat_1',
-                    candidateStateIds: ['state_drop', 'state_keep'],
-                },
-            },
-        },
-    ]);
-});
-
-test('api.agent.pruneChatPersistentStates fails fast on invalid candidate state ids', async () => {
-    const { calls, agent } = await installHarness();
-    const input = {
-        chatRef: { kind: 'character', characterId: 'char-1', fileName: 'Char.json' },
-        stableChatId: 'chat_1',
+test('agent live swipe keeps prior commit metadata on the prior swipe only', async () => {
+    const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
+    installCurrentChatRef(chatRef);
+    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = callback => {
+        queueMicrotask(() => callback(0));
+        return 1;
     };
 
-    await assert.rejects(
-        () => agent.pruneChatPersistentStates(input),
-        /candidateStateIds must be an array/,
-    );
-    await assert.rejects(
-        () => agent.pruneChatPersistentStates({ ...input, candidateStateIds: 'state_drop' }),
-        /candidateStateIds must be an array/,
-    );
-    await assert.rejects(
-        () => agent.pruneChatPersistentStates({ ...input, candidateStateIds: ['state_drop', ''] }),
-        /candidateStateIds contains an empty state id/,
-    );
-    assert.deepEqual(calls, []);
+    try {
+        const { script } = createFakeStreamingCommitScript();
+        const oldExtra = {
+            reasoning: '',
+            tauritavern: { agent: { runId: 'run-old', commitId: 'commit-old' } },
+        };
+        script.chat.push({
+            mes: 'old answer',
+            extra: structuredClone(oldExtra),
+            swipe_id: 1,
+            swipes: ['old answer'],
+            swipe_info: [{ extra: structuredClone(oldExtra) }],
+        });
+        let liveListener = null;
+        attachHostCommitBridge({
+            runId: 'run-live-swipe',
+            chatRef,
+            stableChatId: 'stable-live-swipe',
+            generationType: 'swipe',
+            safeInvoke: async () => {},
+            readWorkspaceFile: async () => {},
+            subscribe() { return () => {}; },
+            subscribeLiveProjection(_runId, handler) {
+                liveListener = handler;
+                return () => {};
+            },
+            loadScript: async () => script,
+            persistChat: async () => {},
+        });
+
+        liveListener({
+            type: 'replace',
+            call: liveWriteCall('new swipe'),
+        });
+        await waitFor(() => script.chat[0].mes === 'new swipe');
+        assert.equal(script.chat.length, 1);
+        assert.equal(script.chat[0].extra.tauritavern.agent.runId, 'run-live-swipe');
+        assert.equal(script.chat[0].swipe_info[1].extra.tauritavern.agent.runId, 'run-live-swipe');
+        assert.equal(script.chat[0].swipe_info[0].extra.tauritavern.agent.runId, 'run-old');
+    } finally {
+        globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+    }
 });
 
-test('agent chat commit bridge detaches on partial success terminal event', async () => {
-    const moduleUrl = pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent-chat-commit-bridge.js'));
-    moduleUrl.search = `?case=partial-success-detach-${Date.now()}`;
-    const { attachHostCommitBridge } = await import(moduleUrl.href);
+test('agent live write reuses auto checkpoints and stops after the first explicit commit', async () => {
+    const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
+    installCurrentChatRef(chatRef);
+    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = callback => {
+        queueMicrotask(() => callback(0));
+        return 1;
+    };
 
-    let listener = null;
-    let stopped = false;
-    attachHostCommitBridge({
-        runId: 'run-partial',
-        safeInvoke: async () => {},
-        readWorkspaceFile: async () => {},
-        subscribe(runId, handler) {
-            assert.equal(runId, 'run-partial');
-            listener = handler;
-            return () => {
-                stopped = true;
-            };
-        },
-    });
+    try {
+        const { script } = createFakeStreamingCommitScript();
+        const files = [workspaceFile('patched'), workspaceFile('final')];
+        const resolutions = [];
+        let durableListener = null;
+        let liveListener = null;
+        let liveStopped = false;
+        let persistCount = 0;
+        attachHostCommitBridge({
+            runId: 'run-live-commit',
+            chatRef,
+            stableChatId: 'stable-live-commit',
+            generationType: 'normal',
+            safeInvoke: async (command, args) => {
+                if (command === 'resolve_agent_chat_commit') resolutions.push(args.dto);
+            },
+            readWorkspaceFile: async () => files.shift(),
+            subscribe(_runId, handler) {
+                durableListener = handler;
+                return () => {};
+            },
+            subscribeLiveProjection(_runId, handler) {
+                let active = true;
+                liveListener = update => { if (active) handler(update); };
+                return () => {
+                    active = false;
+                    liveStopped = true;
+                };
+            },
+            loadScript: async () => script,
+            persistChat: async () => { persistCount += 1; },
+        });
 
-    assert.equal(stopped, false);
-    listener({ type: 'run_partial_success', payload: { preservedCommitCount: 1 } });
-    assert.equal(stopped, true);
+        const replace = content => liveListener({
+            type: 'replace',
+            call: liveWriteCall(content),
+        });
+        replace('draft');
+        await waitFor(() => script.chat[0]?.mes === 'draft');
+        const message = script.chat[0];
+
+        durableListener({
+            type: 'chat_commit_requested',
+            payload: agentCommitPayload(chatRef, {
+                runId: 'run-live-commit',
+                commitId: 'commit-auto',
+                stableChatId: 'stable-live-commit',
+                sha256: 'sha-7',
+                isExplicit: false,
+            }),
+        });
+        await waitFor(() => resolutions.length === 1);
+        assert.equal(message.mes, 'patched');
+        assert.equal(liveStopped, false);
+
+        replace('after checkpoint');
+        await waitFor(() => message.mes === 'after checkpoint');
+        assert.equal(script.chat[0], message);
+        assert.equal(script.chat.length, 1);
+        assert.equal(message.extra.tauritavern.agent.commitId, 'commit-auto');
+        assert.equal(message.extra.tauritavern.agent.artifacts[0].sha256, 'sha-7');
+
+        durableListener({
+            type: 'chat_commit_requested',
+            payload: agentCommitPayload(chatRef, {
+                runId: 'run-live-commit',
+                commitId: 'commit-explicit',
+                stableChatId: 'stable-live-commit',
+                sha256: 'sha-5',
+                isExplicit: true,
+            }),
+        });
+        await waitFor(() => resolutions.length === 2);
+        assert.equal(message.mes, 'final');
+        assert.equal(liveStopped, true);
+        assert.equal(persistCount, 2);
+
+        replace('ignored');
+        await Promise.resolve();
+        await Promise.resolve();
+        assert.equal(message.mes, 'final');
+    } finally {
+        globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+    }
+});
+
+test('agent live write emits generated-message events once when commit persistence fails', async () => {
+    const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
+    installCurrentChatRef(chatRef);
+    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = callback => {
+        queueMicrotask(() => callback(0));
+        return 1;
+    };
+
+    try {
+        const { script, events } = createFakeStreamingCommitScript();
+        const resolutions = [];
+        let durableListener = null;
+        let liveListener = null;
+        let persistAttempts = 0;
+        attachHostCommitBridge({
+            runId: 'run-live-persist-failure',
+            chatRef,
+            stableChatId: 'stable-live-persist-failure',
+            generationType: 'normal',
+            safeInvoke: async (command, args) => {
+                if (command === 'resolve_agent_chat_commit') resolutions.push(args.dto);
+            },
+            readWorkspaceFile: async () => workspaceFile('draft'),
+            subscribe(_runId, handler) {
+                durableListener = handler;
+                return () => {};
+            },
+            subscribeLiveProjection(_runId, handler) {
+                liveListener = handler;
+                return () => {};
+            },
+            loadScript: async () => script,
+            persistChat: async () => {
+                persistAttempts += 1;
+                if (persistAttempts === 1) throw new Error('chat persistence failed');
+            },
+        });
+
+        liveListener({
+            type: 'replace',
+            call: liveWriteCall('draft'),
+        });
+        await waitFor(() => script.chat[0]?.mes === 'draft');
+        durableListener({
+            type: 'chat_commit_requested',
+            payload: agentCommitPayload(chatRef, {
+                runId: 'run-live-persist-failure',
+                commitId: 'commit-persist-failure',
+                stableChatId: 'stable-live-persist-failure',
+                sha256: 'sha-5',
+            }),
+        });
+        await waitFor(() => resolutions.length === 1);
+        assert.match(resolutions[0].error, /chat persistence failed/);
+        assert.equal(events.length, 2);
+
+        durableListener({ type: 'run_failed', payload: {} });
+        await waitFor(() => persistAttempts === 2);
+        assert.equal(events.length, 2);
+        assert.equal(script.chat[0].extra.tauritavern.agent.runId, 'run-live-persist-failure');
+    } finally {
+        globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+    }
 });
 
 test('agent chat commit bridge runs generated output cleanup before saving', async () => {
-    const moduleUrl = pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent-chat-commit-bridge.js'));
-    moduleUrl.search = `?case=commit-cleanup-${Date.now()}`;
-    const { attachHostCommitBridge } = await import(moduleUrl.href);
     const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
     installCurrentChatRef(chatRef);
 
@@ -856,6 +896,7 @@ test('agent chat commit bridge runs generated output cleanup before saving', asy
     }, saveCalls);
     let listener = null;
     const resolutions = [];
+    const workspaceReads = [];
     attachHostCommitBridge({
         runId: 'run-commit-cleanup',
         safeInvoke: async (command, args) => {
@@ -864,7 +905,10 @@ test('agent chat commit bridge runs generated output cleanup before saving', asy
             }
             return {};
         },
-        readWorkspaceFile: async () => workspaceFile('debug <content>real'),
+        readWorkspaceFile: async (input) => {
+            workspaceReads.push(input);
+            return workspaceFile('debug <content>real');
+        },
         subscribe(runId, handler) {
             assert.equal(runId, 'run-commit-cleanup');
             listener = handler;
@@ -891,14 +935,15 @@ test('agent chat commit bridge runs generated output cleanup before saving', asy
         isContinue: false,
         displayIncompleteSentences: false,
     }]);
-    assert.deepEqual(saveCalls, [{ type: 'normal', getMessage: '<content>real' }]);
+    assert.deepEqual(workspaceReads, [{
+        runId: 'run-commit-cleanup',
+        path: 'output/main.md',
+    }]);
+    assert.deepEqual(saveCalls, [{ type: 'normal', getMessage: '<content>real', reasoning: '' }]);
     assert.equal(script.chat[0].mes, '<content>real');
 });
 
-test('agent chat commit bridge cleans append commits as one raw target message', async () => {
-    const moduleUrl = pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent-chat-commit-bridge.js'));
-    moduleUrl.search = `?case=commit-append-cleanup-${Date.now()}`;
-    const { attachHostCommitBridge } = await import(moduleUrl.href);
+test('agent chat commit bridge preserves applied reasoning across a persistence retry', async () => {
     const chatRef = { kind: 'character', characterId: 'Char', fileName: 'Chat.json' };
     installCurrentChatRef(chatRef);
 
@@ -912,6 +957,8 @@ test('agent chat commit bridge cleans append commits as one raw target message',
     }, saveCalls);
     const files = [workspaceFile('debug '), workspaceFile('<content>real')];
     const resolutions = [];
+    const modelTurnReads = [];
+    let persistAttempts = 0;
     let listener = null;
     attachHostCommitBridge({
         runId: 'run-commit-append-cleanup',
@@ -922,15 +969,31 @@ test('agent chat commit bridge cleans append commits as one raw target message',
             return {};
         },
         readWorkspaceFile: async () => files.shift(),
+        readModelTurn: async (input) => {
+            modelTurnReads.push(input);
+            return {
+                reasoning: [{
+                    text: input.round === 1 ? 'first thought' : 'second thought',
+                    totalChars: input.round === 1 ? 13 : 14,
+                    truncated: false,
+                }],
+            };
+        },
         subscribe(runId, handler) {
             assert.equal(runId, 'run-commit-append-cleanup');
             listener = handler;
             return () => {};
         },
         loadScript: async () => script,
-        persistChat: async () => {},
+        persistChat: async () => {
+            persistAttempts += 1;
+            if (persistAttempts === 1) throw new Error('chat persistence failed');
+        },
     });
 
+    listener({ type: 'agent_invocation_created', payload: { invocationId: 'inv_child', exitPolicy: 'task_return_required' } });
+    listener({ type: 'model_completed', payload: { invocationId: 'inv_child', round: 1, hasReasoning: true, reasoningChars: 7 } });
+    listener({ type: 'model_completed', payload: { invocationId: 'inv_root', round: 1, hasReasoning: true, reasoningChars: 13 } });
     const firstResolved = new Promise(resolve => resolutions.push(resolve));
     listener({
         type: 'chat_commit_requested',
@@ -938,11 +1001,14 @@ test('agent chat commit bridge cleans append commits as one raw target message',
             commitId: 'commit-append-1',
             runId: 'run-commit-append-cleanup',
             mode: 'append',
+            sha256: 'sha-6',
         }),
     });
     const firstResult = await firstResolved;
-    assert.equal(firstResult.dto.error, undefined);
+    assert.match(firstResult.dto.error, /chat persistence failed/);
+    assert.equal(script.chat[0].extra.tauritavern.agent.runId, 'run-commit-append-cleanup');
 
+    listener({ type: 'model_completed', payload: { invocationId: 'inv_root', round: 2, hasReasoning: true, reasoningChars: 14 } });
     const secondResolved = new Promise(resolve => resolutions.push(resolve));
     listener({
         type: 'chat_commit_requested',
@@ -950,86 +1016,30 @@ test('agent chat commit bridge cleans append commits as one raw target message',
             commitId: 'commit-append-2',
             runId: 'run-commit-append-cleanup',
             mode: 'append',
+            sha256: 'sha-13',
         }),
     });
     const secondResult = await secondResolved;
     assert.equal(secondResult.dto.error, undefined);
+    assert.equal(persistAttempts, 2);
 
     assert.deepEqual(cleanups, ['debug ', 'debug <content>real']);
     assert.deepEqual(saveCalls, [
-        { type: 'normal', getMessage: 'debug ' },
-        { type: 'appendFinal', getMessage: '<content>real' },
+        { type: 'normal', getMessage: 'debug ', reasoning: 'first thought' },
+        { type: 'appendFinal', getMessage: '<content>real', reasoning: '\n\nsecond thought' },
     ]);
     assert.equal(script.chat[0].mes, '<content>real');
-});
-
-test('agent prompt assembly bridge reads pending request by assembly id', async () => {
-    const moduleUrl = pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent-prompt-assembly-bridge.js'));
-    moduleUrl.search = `?case=prompt-assembly-request-read-${Date.now()}`;
-    const { attachHostPromptAssemblyBridge } = await import(moduleUrl.href);
-    const calls = [];
-    let listener = null;
-    let seenRequest = null;
-
-    attachHostPromptAssemblyBridge({
-        runId: 'run-prompt-assembly',
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            if (command === 'read_agent_prompt_assembly_request') {
-                return {
-                    kind: 'tauritavern.agentPromptAssemblyRequest',
-                    schemaVersion: 1,
-                    frozenRunInputSnapshot: { promptInputs: {}, worldInfoActivation: {}, macroContext: {} },
-                    settings: { chat_completion_source: 'openai', openai_model: 'test-model' },
-                };
-            }
-            return {};
-        },
-        promptAssembly: {
-            async buildSnapshot(request) {
-                seenRequest = request;
-                return {
-                    promptSnapshot: {
-                        contextPolicy: {},
-                        chatCompletionPayload: { messages: [{ role: 'user', content: 'assembled' }] },
-                    },
-                    frozenRunInputSnapshot: request.frozenRunInputSnapshot,
-                    generationIntent: { source: 'test' },
-                    assembly: { engine: 'test' },
-                };
-            },
-        },
-        subscribe(runId, handler) {
-            assert.equal(runId, 'run-prompt-assembly');
-            listener = handler;
-            return () => {};
-        },
-    });
-
-    listener({
-        type: 'prompt_assembly_requested',
-        payload: {
-            assemblyId: 'prompt_assembly_1',
-            requestKind: 'tauritavern.agentPromptAssemblyRequest',
-        },
-    });
-
-    await waitFor(() => calls.some(call => call.command === 'resolve_agent_prompt_assembly'));
-
-    assert.equal(seenRequest.kind, 'tauritavern.agentPromptAssemblyRequest');
-    assert.deepEqual(calls.map(call => call.command), [
-        'read_agent_prompt_assembly_request',
-        'resolve_agent_prompt_assembly',
+    assert.deepEqual(modelTurnReads, [
+        { runId: 'run-commit-append-cleanup', invocationId: 'inv_root', round: 1, maxChars: 13 },
+        { runId: 'run-commit-append-cleanup', invocationId: 'inv_root', round: 2, maxChars: 14 },
     ]);
-    assert.deepEqual(calls[0].args, {
-        dto: {
-            runId: 'run-prompt-assembly',
-            assemblyId: 'prompt_assembly_1',
-        },
-    });
-    assert.equal(calls[1].args.dto.assemblyId, 'prompt_assembly_1');
-    assert.equal(calls[1].args.dto.promptSnapshot.chatCompletionPayload.messages[0].content, 'assembled');
+    assert.equal(script.chat[0].extra.reasoning, 'first thought\n\nsecond thought');
+    assert.deepEqual(
+        script.chat[0].extra.tauritavern.agent.commits.map(commit => commit.commitId),
+        ['commit-append-2'],
+    );
 });
+
 
 test('shared agent run event subscription fans out over one backend poller', async () => {
     const moduleUrl = pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent-run-event-subscription.js'));
@@ -1091,6 +1101,229 @@ test('shared agent run event subscription fans out over one backend poller', asy
     );
 });
 
+test('Agent presentation survives a stop and reload without duplicating text or reasoning', async () => {
+    const chatRef = { kind: 'character', characterId: 'Writer', fileName: 'story' };
+    installCurrentChatRef(chatRef);
+    const script = createFakeCommitScript(({ getMessage }) => getMessage.replace('[joined]', 'cleaned'));
+    const saved = [];
+    let persistCount = 0;
+    let listener;
+    let resolveCommit;
+    const attach = presentation => attachHostCommitBridge({
+        runId: 'run-resume', chatRef, stableChatId: 'stable-story', generationType: 'normal', presentation,
+        safeInvoke: async (_command, args) => { resolveCommit(args.dto); },
+        readWorkspaceFile: async ({ path: filePath }) => workspaceFile(filePath === 'first' ? '[join' : 'ed]', filePath),
+        readModelTurn: async ({ round }) => ({ reasoning: [{ text: `reason ${round}`, truncated: false }] }),
+        subscribe(_runId, callback) { listener = callback; return () => {}; },
+        loadScript: async () => script,
+        persistChat: async () => { persistCount += 1; },
+        finishPresentation: async dto => { saved.push(structuredClone(dto)); },
+    });
+    const commit = async (round, pathName, mode, invocationId = 'inv_root') => {
+        listener({ type: 'model_completed', payload: { round, invocationId, hasReasoning: true, reasoningChars: 8 } });
+        const resolved = new Promise(resolve => { resolveCommit = resolve; });
+        listener({ type: 'chat_commit_requested', payload: agentCommitPayload(chatRef, {
+            runId: 'run-resume', commitId: `commit-${round}`, path: pathName, mode,
+            sha256: pathName === 'first' ? 'sha-5' : 'sha-3',
+        }) });
+        assert.equal((await resolved).error, undefined);
+    };
+    const first = attach(null);
+    await commit(1, 'first', 'replace');
+    listener({ seq: 10, type: 'run_cancelled' });
+    await settleHostCommitBridge(first);
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].presentation.rawCommittedText, '[join');
+    assert.equal(persistCount, 1, 'settling confirmed output does not rewrite the chat');
+
+    script.chat = structuredClone(script.chat);
+    const restored = await restoreHostPresentation('run-resume', saved[0].presentation, script);
+    const second = attach(restored);
+    await commit(2, 'second', 'append');
+    listener({ seq: 20, type: 'run_completed' });
+    await settleHostCommitBridge(second);
+    assert.equal(script.chat.length, 1);
+    assert.equal(script.chat[0].mes, 'cleaned');
+    assert.equal(script.chat[0].extra.reasoning, 'reason 1\n\nreason 2');
+    assert.equal(script.chat[0].extra.tauritavern.agent.commitSeq, 2);
+    assert.equal(saved.length, 2);
+    assert.equal(saved[1].presentation.rawCommittedText, '[joined]');
+    assert.equal(saved[1].presentation.reasoning.cursor, 2);
+    assert.equal(persistCount, 2);
+
+    script.chat[0].mes = 'Edited by hand';
+    script.chat[0].swipes[0] = script.chat[0].mes;
+    const revision = await restoreHostPresentation('run-resume', saved[1].presentation, script, true);
+    const third = attach(revision);
+    listener({ type: 'agent_invocation_created', payload: { invocationId: 'inv-revision', exitPolicy: 'run_finish_allowed' } });
+    await commit(3, 'second', 'append', 'inv-revision');
+    listener({ seq: 30, type: 'run_completed' });
+    await settleHostCommitBridge(third);
+    assert.equal(script.chat.length, 1);
+    assert.equal(script.chat[0].mes, 'Edited by handed]');
+    assert.equal(script.chat[0].extra.reasoning, 'reason 1\n\nreason 2\n\nreason 3');
+
+    script.chat.unshift({ mes: 'Earlier message', is_user: true });
+    const moved = await restoreHostPresentation('run-resume', saved[2].presentation, script, true);
+    const fourth = attach(moved);
+    const metadataResolved = new Promise(resolve => { resolveCommit = resolve; });
+    listener({ type: 'persistent_state_metadata_update_requested', payload: {
+        chatRef, runId: 'run-resume', updateId: 'no-op-revision', messageId: '0', stateId: 'same-state',
+    } });
+    assert.equal((await metadataResolved).error, undefined);
+    listener({ seq: 40, type: 'run_completed' });
+    await settleHostCommitBridge(fourth);
+    const message = script.chat.at(-1);
+    assert.equal(message.mes, 'Edited by handed]');
+    assert.equal(message.extra.tauritavern.agent.persistStateId, 'same-state');
+    assert.equal(script.chat[0].extra, undefined);
+
+    message.swipe_id = 1;
+    await assert.rejects(() => restoreHostPresentation('run-resume', saved[3].presentation, script), /active chat message changed/);
+    message.swipe_id = 0;
+    message.extra.tauritavern.agent.runId = 'another-run';
+    await assert.rejects(() => restoreHostPresentation('run-resume', saved[3].presentation, script), /belongs to another run/);
+});
+
+test('Agent stop retains the last raw frame and retries a failed chat save', async t => {
+    const chatRef = { kind: 'character', characterId: 'Writer', fileName: 'story' };
+    installCurrentChatRef(chatRef);
+    const request = globalThis.requestAnimationFrame;
+    const cancel = globalThis.cancelAnimationFrame;
+    globalThis.requestAnimationFrame = () => 1;
+    globalThis.cancelAnimationFrame = () => {};
+    t.after(() => { globalThis.requestAnimationFrame = request; globalThis.cancelAnimationFrame = cancel; });
+    const reported = captureAsyncError(t, /disk full/);
+    const { script, events } = createFakeStreamingCommitScript();
+    let live;
+    let durable;
+    let saved;
+    let failSave = true;
+    const bridge = attachHostCommitBridge({
+        runId: 'run-frame', chatRef, stableChatId: 'stable-story',
+        safeInvoke: async () => {}, readWorkspaceFile: async () => {},
+        subscribe(_runId, handler) { durable = handler; return () => {}; },
+        subscribeLiveProjection(_runId, handler) { live = handler; return () => {}; },
+        loadScript: async () => script,
+        persistChat: async () => { if (failSave) throw new Error('disk full'); },
+        finishPresentation: async dto => { saved = dto; },
+    });
+    live({ type: 'replace', call: liveWriteCall('last') });
+    live({ type: 'append', invocationId: 'inv_root', toolCallIndex: 0, field: 'content', text: ' frame', wordDelta: 1 });
+    const failed = assert.rejects(settleHostCommitBridge(bridge), /disk full/);
+    durable({ seq: 12, type: 'run_cancelled' });
+    await failed;
+    await reported;
+    assert.equal(saved, undefined, 'failed chat save must not publish an incomplete checkpoint');
+    failSave = false;
+    await settleHostCommitBridge(bridge);
+    assert.equal(script.chat.length, 1);
+    assert.equal(script.chat[0].mes, 'last frame');
+    assert.equal(events.length, 2, 'message events are not repeated on retry');
+    assert.equal(saved.presentation.pendingWrite.content, 'last frame');
+    assert.equal(saved.presentation.rawCommittedText, '');
+});
+
+test('Agent resume attaches from its returned cursor and saves completed presentation once', async () => {
+    const chatRef = { kind: 'character', characterId: 'Writer', fileName: 'story' };
+    const script = createFakeCommitScript(({ getMessage }) => getMessage);
+    const presentation = {
+        chatRef: { ...chatRef, fileName: 'before-rename' }, stableChatId: 'stable-story', generationType: 'swipe', liveEnabled: false,
+        chatLength: 0, messageId: null, swipeId: null, createdMessage: null,
+        rawCommittedText: '', commitSeq: 0, pendingWrite: null, liveMessageEventsEmitted: false,
+        reasoning: { commitInvocationIds: ['inv_root'], turns: [], cursor: 0 },
+    };
+    const calls = [];
+    let finished;
+    const saved = new Promise(resolve => { finished = resolve; });
+    const { agent } = await installHarness({ script, safeInvoke: async (command, args) => {
+        calls.push({ command, args });
+        if (command === 'read_agent_run_checkpoint') return {
+            run: { runId: 'run-resume', generationType: 'swipe', status: 'cancelled' },
+            terminalSeq: 10, presentation, nextStep: 'model', round: 4, maxRounds: 5, blockedReason: null,
+        };
+        if (command === 'resume_agent_run') return { runId: 'run-resume', generationType: 'swipe', afterSeq: 10 };
+        if (command === 'read_agent_run_events') {
+            assert.equal(args.dto.afterSeq, 10);
+            return { events: [
+                { runId: 'run-resume', seq: 11, type: 'run_resumed' },
+                { runId: 'run-resume', seq: 12, type: 'model_completed', payload: { round: 4, hasReasoning: true, reasoningChars: 17 } },
+                { runId: 'run-resume', seq: 13, type: 'run_completed' },
+            ] };
+        }
+        if (command === 'finish_agent_run_presentation') { finished(args.dto); return; }
+        throw new Error(`Unexpected command ${command}`);
+    } });
+    window.__TAURITAVERN__.api.chat = {
+        current: { ref: () => chatRef },
+        open: () => ({ stableId: async () => 'stable-story' }),
+    };
+    const savedCheckpoint = await agent.readCheckpoint('run-resume');
+    const handle = await agent.resume({ runId: 'run-resume', additionalRounds: 5, checkpoint: savedCheckpoint });
+    const settling = agent.settleChatPresentation(handle);
+    const checkpoint = await saved;
+    await settling;
+    assert.equal(calls.filter(call => call.command === 'read_agent_run_checkpoint').length, 1);
+    assert.equal(checkpoint.terminalSeq, 13);
+    assert.equal(checkpoint.presentation.generationType, 'swipe');
+    assert.deepEqual(checkpoint.presentation.chatRef, chatRef);
+    assert.deepEqual(checkpoint.presentation.reasoning.turns, [{ invocationId: 'inv_root', round: 4, maxChars: 17 }]);
+    assert.equal(calls.filter(call => call.command === 'finish_agent_run_presentation').length, 1);
+    assert.deepEqual(calls.find(call => call.command === 'resume_agent_run').args.dto, {
+        runId: 'run-resume', expectedTerminalSeq: 10, chatRef, stableChatId: 'stable-story', additionalRounds: 5, hostPresentation: true,
+    });
+});
+
+test('Agent output revision reads the selected reply and passes its current text to the runtime', async () => {
+    const { reviseOutput } = await import('../src/scripts/tauritavern/output-revision.js');
+    const chatRef = { kind: 'character', characterId: 'Writer', fileName: 'story' };
+    const script = createFakeCommitScript(({ getMessage }) => getMessage);
+    const message = {
+        mes: 'A hand-edited ending.',
+        swipe_id: 1,
+        swipes: ['Another ending.', 'A hand-edited ending.'],
+        extra: { reasoning: '', tauritavern: { agent: { runId: 'selected-run' } } },
+    };
+    script.chat = [message];
+    const presentation = {
+        chatRef, stableChatId: 'stable-story', generationType: 'swipe', liveEnabled: false,
+        chatLength: 2, messageId: 1, swipeId: 2, createdMessage: false,
+        rawCommittedText: 'Original ending.', commitSeq: 1, pendingWrite: null,
+        reasoning: { commitInvocationIds: ['inv_root'], turns: [], cursor: 0 },
+    };
+    let admitted;
+    const { agent } = await installHarness({ script, safeInvoke: async (command, args) => {
+        if (command === 'read_agent_run_checkpoint') {
+            assert.equal(args.dto.runId, 'selected-run');
+            return { run: { runId: 'selected-run', generationType: 'swipe', status: 'completed' }, terminalSeq: 10, nextStep: 'finished', presentation };
+        }
+        if (command === 'resume_agent_run') {
+            admitted = args.dto;
+            return { runId: 'selected-run', generationType: 'swipe', afterSeq: 10 };
+        }
+        if (command === 'read_agent_run_events') return { events: [{ seq: 11, type: 'run_completed' }] };
+        if (command === 'finish_agent_run_presentation') return;
+        throw new Error(`Unexpected command ${command}`);
+    } });
+    window.__TAURITAVERN__.api.chat = {
+        current: { ref: () => chatRef },
+        open: () => ({ stableId: async () => 'stable-story' }),
+    };
+    script.resumeAgentRunInChat = async input => {
+        const handle = await agent.resume(input);
+        await agent.settleChatPresentation(handle);
+    };
+    await reviseOutput('  Make the ending quieter.  ', null, script);
+    assert.deepEqual(admitted.revision, { guidance: 'Make the ending quieter.', previousOutput: 'A hand-edited ending.' });
+    assert.equal(admitted.stableChatId, 'stable-story');
+    assert.equal(script.chat[0], message);
+    assert.equal(message.swipe_id, 1);
+    assert.deepEqual(message.swipes, ['Another ending.', 'A hand-edited ending.']);
+    delete message.extra.tauritavern.agent;
+    message.is_user = true;
+    await assert.rejects(reviseOutput('Change this.', null, script), /select an assistant reply/);
+});
+
 async function waitFor(predicate) {
     for (let i = 0; i < 20; i += 1) {
         if (predicate()) {
@@ -1099,4 +1332,60 @@ async function waitFor(predicate) {
         await new Promise(resolve => setTimeout(resolve, 0));
     }
     assert.fail('condition was not met');
+}
+
+
+test('Checkpoint publication can be retried through the Agent API after failure', async t => {
+    const reported = captureAsyncError(t, /temporary checkpoint storage failure/);
+    const chatRef = { kind: 'character', characterId: 'Writer', fileName: 'story' };
+    const { script, saveCalls } = createFakeStreamingCommitScript();
+    await script.saveReply({ type: 'normal', getMessage: 'preserved output' });
+    script.chat[0].extra.tauritavern = { agent: { runId: 'run-save-retry' } };
+    const originalChat = structuredClone(script.chat);
+    const presentation = {
+        chatRef, stableChatId: 'stable-story', generationType: 'normal', liveEnabled: false,
+        chatLength: 1, messageId: 0, swipeId: 0, createdMessage: true,
+        rawCommittedText: 'preserved output', commitSeq: 1, pendingWrite: null, liveMessageEventsEmitted: true,
+        reasoning: { commitInvocationIds: [], turns: [], cursor: 0 },
+    };
+    const attempted = [];
+    const { agent } = await installHarness({ script, safeInvoke: async (command, args) => {
+        if (command === 'read_agent_run_checkpoint') return {
+            run: { runId: 'run-save-retry', status: 'cancelled' },
+            terminalSeq: 10, presentation, nextStep: 'model', round: 2, maxRounds: 5,
+        };
+        if (command === 'resume_agent_run') return { runId: 'run-save-retry', afterSeq: 10 };
+        if (command === 'read_agent_run_events') return { events: [
+            { runId: 'run-save-retry', seq: 11, type: 'run_completed' },
+        ] };
+        if (command === 'finish_agent_run_presentation') {
+            attempted.push(structuredClone(args.dto));
+            if (attempted.length === 1) throw new Error('temporary checkpoint storage failure');
+            return;
+        }
+        throw new Error(`Unexpected command ${command}`);
+    } });
+    window.__TAURITAVERN__.api.chat = {
+        current: { ref: () => chatRef }, open: () => ({ stableId: async () => 'stable-story' }),
+    };
+    const handle = await agent.resume({ runId: 'run-save-retry' });
+    await assert.rejects(agent.settleChatPresentation(handle), /temporary checkpoint storage failure/);
+    await reported;
+    await agent.settleChatPresentation({ runId: handle.runId });
+    assert.equal(attempted.length, 2);
+    assert.deepEqual(attempted[1], attempted[0]);
+    assert.deepEqual(script.chat, originalChat);
+    assert.equal(saveCalls.length, 1);
+});
+
+function captureAsyncError(t, expected) {
+    const reported = Promise.withResolvers();
+    const enqueue = globalThis.queueMicrotask;
+    t.mock.method(globalThis, 'queueMicrotask', callback => enqueue(() => {
+        try { callback(); } catch (error) {
+            assert.match(error.message, expected);
+            reported.resolve();
+        }
+    }));
+    return reported.promise;
 }

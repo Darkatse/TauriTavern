@@ -1,4 +1,4 @@
-use crate::file_system::{replace_file_with_fallback, unique_temp_path};
+use crate::file_system::{persist_file, unique_temp_path};
 use serde_json::Value;
 use std::path::Path;
 use tokio::fs::{self, File};
@@ -100,8 +100,7 @@ pub async fn write_jsonl_file(path: &Path, objects: &[Value]) -> Result<(), Doma
 
 /// Write raw JSONL bytes to a file.
 ///
-/// Uses a temporary file and then replaces the target. On some storage backends (notably Android
-/// external app storage), file replacement may fall back to copy/remove if rename is unreliable.
+/// Flushes and syncs a temporary file, then atomically replaces the target.
 pub async fn write_jsonl_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), DomainError> {
     let temp_path = unique_temp_path(path);
 
@@ -114,10 +113,15 @@ pub async fn write_jsonl_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), Dom
         })?;
     }
 
-    let file = File::create(&temp_path).await.map_err(|e| {
-        tracing::error!("Failed to create temporary file: {}", e);
-        DomainError::InternalError(format!("Failed to create temporary file: {}", e))
-    })?;
+    let file = File::options()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to create temporary file: {}", e);
+            DomainError::InternalError(format!("Failed to create temporary file: {}", e))
+        })?;
 
     let mut writer = BufWriter::new(file);
     writer.write_all(bytes).await.map_err(|e| {
@@ -130,7 +134,7 @@ pub async fn write_jsonl_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), Dom
         DomainError::InternalError(format!("Failed to flush temporary file: {}", e))
     })?;
 
-    replace_file_with_fallback(&temp_path, path).await?;
+    persist_file(writer.into_inner(), &temp_path, path).await?;
 
     Ok(())
 }

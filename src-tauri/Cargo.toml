@@ -6,33 +6,40 @@ members = [
     "crates/tt-ports",
     "crates/tt-application",
     "crates/tt-adapter-http",
+    "crates/tt-adapter-mcp",
     "crates/tt-adapter-tokenization",
     "crates/tt-adapter-sync",
     "crates/tt-adapter-archive",
     "crates/tt-adapter-provider-http",
+    "crates/tt-adapter-vector",
     "crates/tt-adapter-extension",
     "crates/tt-adapter-storage-core",
     "crates/tt-adapter-storage-userdata",
     "crates/tt-adapter-media",
+    "crates/tt-adapter-quickjs",
+    "crates/tt-adapter-triviumdb",
 ]
 default-members = ["crates/tauritavern"]
 resolver = "3"
 
 [workspace.dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
-rand = "0.9"
+rand = "0.10"
 reqwest = { version = "0.13", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = { version = "0.11", default-features = false }
 thiserror = "2"
+ttsync-fs = "2"
 ttsync-contract = "2"
 ttsync-core = { version = "2", default-features = false }
 ttsync-http = "2"
 ttsync-client = "2"
 uuid = { version = "1.4", default-features = false, features = ["serde", "std", "v4"] }
+url = "2.5.8"
 # Keep bundled libzstd target SIMD/assembly auto-detection; `no_asm` and `thin` disable fast paths.
 zstd = { version = "0.13.3", default-features = false }
+triviumdb = "0.8.8"
 
 [profile.dev]
 debug = "line-tables-only"
@@ -40,6 +47,13 @@ incremental = true
 
 [profile.dev.package."*"]
 debug = false
+
+# Optimize gemm-f16 until https://github.com/sarah-quinones/gemm/issues/31 is fixed.
+[profile.dev.package.gemm-f16]
+opt-level = 1
+
+[profile.test.package.kitoken]
+opt-level = 2
 
 [profile.release]
 codegen-units = 1

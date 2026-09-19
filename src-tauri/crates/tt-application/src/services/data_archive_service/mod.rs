@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::dto::data_archive_dto::{DATA_ARCHIVE_KIND_IMPORT, DataArchiveJobStatus};
 use crate::services::data_change_reconciler::DataChangeReconciler;
+use crate::services::database_service::DatabaseService;
 use tt_domain::errors::DomainError;
 
 pub(crate) use job::DataArchiveJobHandle;
@@ -24,7 +25,13 @@ pub(crate) use ports::{
 };
 pub use ports::{DataArchiveExecutor, DataArchiveFileGateway, DataRootInitializer};
 
+pub struct CompletedExportArchive {
+    pub archive_path: PathBuf,
+    pub file_name: String,
+}
+
 pub struct DataArchiveService {
+    database: Arc<DatabaseService>,
     jobs: Arc<DataArchiveJobRegistry>,
     runtime: TokioRuntimeHandle,
     executor: Arc<dyn DataArchiveExecutor>,
@@ -35,6 +42,7 @@ pub struct DataArchiveService {
 
 impl DataArchiveService {
     pub fn new(
+        database: Arc<DatabaseService>,
         jobs: Arc<DataArchiveJobRegistry>,
         runtime: TokioRuntimeHandle,
         executor: Arc<dyn DataArchiveExecutor>,
@@ -43,6 +51,7 @@ impl DataArchiveService {
         reconciler: Arc<dyn DataChangeReconciler>,
     ) -> Self {
         Self {
+            database,
             jobs,
             runtime,
             executor,
@@ -70,6 +79,7 @@ impl DataArchiveService {
         }
 
         let executor = self.executor.clone();
+        let database = self.database.clone();
         let files = self.files.clone();
         let data_root_initializer = self.data_root_initializer.clone();
         let reconciler = self.reconciler.clone();
@@ -77,10 +87,19 @@ impl DataArchiveService {
 
         runtime.clone().spawn(async move {
             let _ = job.mark_running("starting", "Import job started");
+            let guard = match database.prepare_archive(true).await {
+                Ok(guard) => guard,
+                Err(error) => {
+                    let _ = job.mark_failed(&error.to_string());
+                    files.cleanup_directory(&workspace_root);
+                    return;
+                }
+            };
 
             let blocking_job = job.clone();
             let blocking_result = runtime
                 .spawn_blocking(move || {
+                    let _guard = guard;
                     let progress_job = blocking_job.clone();
                     let mut report_progress =
                         move |stage: &str, progress_percent: f32, message: &str| {
@@ -167,15 +186,26 @@ impl DataArchiveService {
         self.jobs.insert(&job_id, job.clone())?;
 
         let executor = self.executor.clone();
+        let database = self.database.clone();
         let files = self.files.clone();
         let runtime = self.runtime.clone();
 
         runtime.clone().spawn(async move {
             let _ = job.mark_running("starting", "Export job started");
+            let guard = match database.prepare_archive(false).await {
+                Ok(guard) => guard,
+                Err(error) => {
+                    let _ = job.mark_failed(&error.to_string());
+                    let _ = files.cleanup_export(&output_path);
+                    let _ = job.clear_export_artifact_path();
+                    return;
+                }
+            };
 
             let blocking_job = job.clone();
             let blocking_result = runtime
                 .spawn_blocking(move || {
+                    let _guard = guard;
                     let progress_job = blocking_job.clone();
                     let mut report_progress =
                         move |stage: &str, progress_percent: f32, message: &str| {

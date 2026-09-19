@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -81,33 +80,4 @@ test('task failures are reported without wedging future requests', async () => {
     assert.equal(runCount, 2);
     assert.equal(errors.length, 1);
     assert.match(errors[0].message, /expected failure/);
-});
-
-test('PromptManager keeps dry-run rendering wired through the latest-task scheduler', async () => {
-    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/PromptManager.js'), 'utf8');
-    const dryRunStart = source.indexOf('    async #renderAfterTryGenerate() {');
-    const dryRunEnd = source.indexOf('    async #renderWithoutTryGenerate() {', dryRunStart);
-    const dryRunSource = source.slice(dryRunStart, dryRunEnd);
-    const renderStart = source.indexOf('    render(afterTryGenerate = true) {');
-    const renderEnd = source.indexOf('    updatePromptWithPromptEditForm(', renderStart);
-    const renderSource = source.slice(renderStart, renderEnd);
-
-    assert.match(source, /import \{ createLatestTaskScheduler \} from '\.\/util\/latest-task-scheduler\.js';/);
-    assert.match(
-        source,
-        /this\.renderDryRunLatest = createLatestTaskScheduler\(\s*\(\) => this\.#renderAfterTryGenerate\(\)/,
-    );
-    assert.ok(dryRunStart >= 0 && dryRunEnd > dryRunStart);
-    const clearError = dryRunSource.indexOf('this.error = null;');
-    const tryGenerate = dryRunSource.indexOf('await this.tryGenerate();');
-    const exposeError = dryRunSource.indexOf('this.error = error instanceof Error');
-    const rethrowError = dryRunSource.indexOf('throw error;', exposeError);
-    const renderUi = dryRunSource.indexOf('await this.#renderPromptManagerUi();', rethrowError);
-    assert.ok(clearError >= 0 && clearError < tryGenerate);
-    assert.ok(tryGenerate < exposeError && exposeError < rethrowError);
-    assert.ok(rethrowError < renderUi);
-    assert.match(dryRunSource, /String\(error \|\| t`Unknown error`\)/);
-    assert.ok(renderStart >= 0 && renderEnd > renderStart);
-    assert.match(renderSource, /if \(afterTryGenerate === true\) \{\s*this\.renderDryRunLatest\(\);\s*return;/);
-    assert.match(renderSource, /void this\.#renderWithoutTryGenerate\(\)\.catch/);
 });

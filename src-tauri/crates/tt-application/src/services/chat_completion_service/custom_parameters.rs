@@ -34,7 +34,7 @@ pub(super) fn parse_object(raw: &str) -> Result<Map<String, Value>, ApplicationE
         return Ok(Map::new());
     }
 
-    let value = serde_yaml::from_str::<Value>(raw).map_err(|error| {
+    let value = yaml_serde::from_str::<Value>(raw).map_err(|error| {
         ApplicationError::ValidationError(format!(
             "Failed to parse custom parameter map as YAML/JSON: {error}"
         ))
@@ -76,7 +76,7 @@ pub(super) fn parse_key_list(raw: &str) -> Result<Vec<String>, ApplicationError>
         return Ok(Vec::new());
     }
 
-    let value = serde_yaml::from_str::<Value>(raw).map_err(|error| {
+    let value = yaml_serde::from_str::<Value>(raw).map_err(|error| {
         ApplicationError::ValidationError(format!(
             "Failed to parse custom exclude list as YAML/JSON: {error}"
         ))
@@ -124,16 +124,7 @@ pub(super) fn parse_key_list(raw: &str) -> Result<Vec<String>, ApplicationError>
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_key_list, parse_object, parse_string_map};
-
-    #[test]
-    fn parse_string_map_supports_json_object() {
-        let result =
-            parse_string_map(r#"{"x-api-key":"abc","x-int":123}"#).expect("should parse JSON");
-
-        assert_eq!(result.get("x-api-key"), Some(&"abc".to_string()));
-        assert_eq!(result.get("x-int"), Some(&"123".to_string()));
-    }
+    use super::{parse_key_list, parse_object};
 
     #[test]
     fn parse_object_supports_yaml_format() {

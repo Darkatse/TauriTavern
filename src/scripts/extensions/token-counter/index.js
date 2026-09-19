@@ -2,7 +2,7 @@ import { main_api } from '../../../script.js';
 import { getContext } from '../../extensions.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
-import { getFriendlyTokenizerName, getTextTokens, getTokenCountAsync, tokenizers } from '../../tokenizers.js';
+import { getFriendlyTokenizerName, getTextTokensAsync, getTokenCountAsync, tokenizers } from '../../tokenizers.js';
 import { resetScrollHeight, debounce } from '../../utils.js';
 import { debounce_timeout } from '../../constants.js';
 import { POPUP_TYPE, callGenericPopup } from '../../popup.js';
@@ -14,9 +14,27 @@ async function doTokenCounter() {
     const html = await renderExtensionTemplateAsync('token-counter', 'window', { tokenizerName });
 
     const dialog = $(html);
+    let inputRevision = 0;
     const countDebounced = debounce(async () => {
+        const revision = inputRevision;
         const text = String($('#token_counter_textarea').val());
-        const ids = main_api == 'openai' ? getTextTokens(tokenizers.OPENAI, text) : getTextTokens(tokenizerId, text);
+        const tokenizerType = main_api == 'openai' ? tokenizers.OPENAI : tokenizerId;
+        let ids = [];
+
+        try {
+            ids = await getTextTokensAsync(tokenizerType, text);
+        } catch (error) {
+            console.warn('Token ID encoding failed, using token count fallback:', error);
+        }
+
+        let fallbackCount = null;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            fallbackCount = await getTokenCountAsync(text);
+        }
+
+        if (revision !== inputRevision) {
+            return;
+        }
 
         if (Array.isArray(ids) && ids.length > 0) {
             $('#token_counter_ids').text(`[${ids.join(', ')}]`);
@@ -24,11 +42,12 @@ async function doTokenCounter() {
 
             if (Object.hasOwnProperty.call(ids, 'chunks')) {
                 drawChunks(Object.getOwnPropertyDescriptor(ids, 'chunks').value, ids);
+            } else {
+                $('#tokenized_chunks_display').text('—');
             }
         } else {
-            const count = await getTokenCountAsync(text);
             $('#token_counter_ids').text('—');
-            $('#token_counter_result').text(count);
+            $('#token_counter_result').text(fallbackCount);
             $('#tokenized_chunks_display').text('—');
         }
 
@@ -37,7 +56,10 @@ async function doTokenCounter() {
             await resetScrollHeight($('#token_counter_ids'));
         }
     }, debounce_timeout.relaxed);
-    dialog.find('#token_counter_textarea').on('input', () => countDebounced());
+    dialog.find('#token_counter_textarea').on('input', () => {
+        inputRevision += 1;
+        countDebounced();
+    });
 
     callGenericPopup(dialog, POPUP_TYPE.TEXT, '', { wide: true, large: true, allowVerticalScrolling: true });
 }

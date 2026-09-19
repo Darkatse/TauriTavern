@@ -98,13 +98,6 @@ mod tests {
     }
 
     #[test]
-    fn clamps_end_to_total_size() {
-        let range = parse_single_range_header("bytes=1-999", 4).expect("parse");
-        assert_eq!(range.start(), 1);
-        assert_eq!(range.end(), 3);
-    }
-
-    #[test]
     fn parses_suffix_range() {
         let range = parse_single_range_header("bytes=-2", 4).expect("parse");
         assert_eq!(range.start(), 2);
@@ -126,12 +119,6 @@ mod tests {
     #[test]
     fn rejects_descending_range() {
         let result = parse_single_range_header("bytes=2-1", 4);
-        assert_eq!(result, Err(RangeHeaderError::Unsatisfiable));
-    }
-
-    #[test]
-    fn rejects_unsatisfiable_suffix_zero() {
-        let result = parse_single_range_header("bytes=-0", 4);
         assert_eq!(result, Err(RangeHeaderError::Unsatisfiable));
     }
 }

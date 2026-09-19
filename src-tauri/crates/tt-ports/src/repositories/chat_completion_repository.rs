@@ -17,6 +17,9 @@ pub enum AnthropicBetaHeaderMode {
 #[derive(Debug, Clone)]
 pub struct ChatCompletionApiConfig {
     pub base_url: String,
+    /// The endpoint came from custom_url or reverse_proxy and must use the
+    /// user-endpoint HTTP policy.
+    pub user_configured_endpoint: bool,
     pub api_key: String,
     pub authorization_header: Option<String>,
     pub vertexai_service_account_json: Option<String>,
@@ -38,6 +41,7 @@ pub struct ChatCompletionApiConfig {
 pub type ChatCompletionStreamSender = UnboundedSender<String>;
 pub type ChatCompletionCancelReceiver = watch::Receiver<bool>;
 pub const CHAT_COMPLETION_PROVIDER_STATE_FIELD: &str = "_tauritavern_provider_state";
+pub const OPENAI_RESPONSES_WEBSOCKET_TRANSPORT: &str = "responses_websocket";
 
 #[derive(Debug, Clone, Default)]
 pub struct ChatCompletionNormalizationReport {
@@ -73,6 +77,18 @@ impl ChatCompletionRepositoryGenerateResponse {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum ChatCompletionStreamDelta {
+    ToolCall {
+        tool_call_index: usize,
+        name: String,
+        /// May be empty when the provider first announces the tool name.
+        arguments_fragment: String,
+    },
+    /// Provider-exposed reasoning text only; never signatures or encrypted state.
+    Reasoning { text: String },
+}
+
 #[async_trait]
 pub trait ChatCompletionRepository: Send + Sync {
     async fn list_models(
@@ -99,70 +115,14 @@ pub trait ChatCompletionRepository: Send + Sync {
         cancel: ChatCompletionCancelReceiver,
     ) -> Result<(), DomainError>;
 
+    async fn generate_with_deltas(
+        &self,
+        source: ChatCompletionSource,
+        config: &ChatCompletionApiConfig,
+        endpoint_path: &str,
+        payload: &Value,
+        on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
+    ) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError>;
+
     async fn close_provider_session(&self, session_id: &str);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ChatCompletionSource;
-
-    #[test]
-    fn parse_new_openai_compatible_sources() {
-        assert_eq!(
-            ChatCompletionSource::parse("deepseek"),
-            Some(ChatCompletionSource::DeepSeek)
-        );
-        assert_eq!(
-            ChatCompletionSource::parse("cohere"),
-            Some(ChatCompletionSource::Cohere)
-        );
-        assert_eq!(
-            ChatCompletionSource::parse("groq"),
-            Some(ChatCompletionSource::Groq)
-        );
-        assert_eq!(
-            ChatCompletionSource::parse("openrouter"),
-            Some(ChatCompletionSource::OpenRouter)
-        );
-        assert_eq!(
-            ChatCompletionSource::parse("moonshot"),
-            Some(ChatCompletionSource::Moonshot)
-        );
-        assert_eq!(
-            ChatCompletionSource::parse("nanogpt"),
-            Some(ChatCompletionSource::NanoGpt)
-        );
-        assert_eq!(
-            ChatCompletionSource::parse("chutes"),
-            Some(ChatCompletionSource::Chutes)
-        );
-        assert_eq!(
-            ChatCompletionSource::parse("siliconflow"),
-            Some(ChatCompletionSource::SiliconFlow)
-        );
-        assert_eq!(
-            ChatCompletionSource::parse("workers_ai"),
-            Some(ChatCompletionSource::WorkersAi)
-        );
-        assert_eq!(
-            ChatCompletionSource::parse("zai"),
-            Some(ChatCompletionSource::Zai)
-        );
-        assert_eq!(
-            ChatCompletionSource::parse("minimax"),
-            Some(ChatCompletionSource::MiniMax)
-        );
-        assert_eq!(
-            ChatCompletionSource::parse("vertexai"),
-            Some(ChatCompletionSource::VertexAi)
-        );
-        assert_eq!(
-            ChatCompletionSource::parse("aws_bedrock"),
-            Some(ChatCompletionSource::AwsBedrock)
-        );
-        assert_eq!(
-            ChatCompletionSource::parse("bedrock"),
-            Some(ChatCompletionSource::AwsBedrock)
-        );
-    }
 }

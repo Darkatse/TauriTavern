@@ -150,12 +150,8 @@ async function* parseStreamData(json) {
     } else if (Array.isArray(json.candidates)) {
         // Google VertexAI / AI Studio
         for (let i = 0; i < json.candidates.length; i++) {
-            const isNotPrimary = json.candidates?.[0]?.index > 0;
             const hasToolCalls = json?.candidates?.[0]?.content?.parts?.some(p => p?.functionCall);
             const hasInlineData = json?.candidates?.[0]?.content?.parts?.some(p => p?.inlineData);
-            if (isNotPrimary || json.candidates.length === 0) {
-                return null;
-            }
             if (hasToolCalls || hasInlineData) {
                 yield { data: json, chunk: '' };
                 return;
@@ -366,10 +362,19 @@ export class SmoothEventSourceStream extends EventSourceStream {
                         return controller.enqueue(event);
                     }
 
+                    // Gemini's secondary candidates are excluded from the displayed stream.
+                    if (json.candidates?.[0]?.index > 0) return;
+
+                    let emitted = false;
                     for await (const parsed of parseStreamData(json)) {
                         !(power_user.smooth_streaming_no_think && parsed.reasoning) && hasFocus && await delay(getDelay(lastStr));
                         controller.enqueue(new MessageEvent(event.type, { data: JSON.stringify(parsed.data) }));
                         lastStr = parsed.chunk;
+                        emitted = true;
+                    }
+                    // Keep metadata-only events, such as Gemini's terminal usage snapshot.
+                    if (!emitted) {
+                        controller.enqueue(event);
                     }
                 } catch (error) {
                     if (error instanceof Error && error.cause !== NOT_PRIMARY) {

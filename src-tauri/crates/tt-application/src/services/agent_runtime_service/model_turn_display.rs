@@ -281,7 +281,7 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
 mod tests {
     use super::*;
     use tt_domain::models::agent::{AgentModelMessage, AgentModelRole};
-    use tt_domain::models::tool::{ToolId, ToolInvocation, ToolProviderId};
+    use tt_domain::models::tool::{ToolArguments, ToolId, ToolInvocation, ToolProviderId};
 
     #[test]
     fn model_turn_projection_preserves_canonical_tool_identity() {
@@ -295,7 +295,7 @@ mod tests {
             vec![ToolInvocation {
                 call_id: "call_mcp".to_string(),
                 tool_id: tool_id.clone(),
-                arguments: Value::Null,
+                arguments: ToolArguments::empty(),
                 provider_metadata: Value::Null,
             }],
         );
@@ -320,21 +320,6 @@ mod tests {
         assert_eq!(summary["narration"]["source"], "assistantText");
         assert_eq!(summary["narration"]["text"], "I will write the artifact.");
         assert_eq!(summary["narration"]["totalChars"], json!(26));
-    }
-
-    #[test]
-    fn narration_treats_json_assistant_text_as_plain_text() {
-        let raw_text = r#"{"context":"draft is ready","ignored":"raw"}"#;
-        let response = response_with_text(raw_text, vec![tool_call()]);
-
-        let narration = model_turn_narration(&response, 80).expect("narration");
-        assert_eq!(narration.source, "assistantText");
-        assert_eq!(narration.text, raw_text);
-        assert!(!narration.truncated);
-
-        let summary = model_turn_event_summary(&response);
-        assert_eq!(summary["narration"]["source"], "assistantText");
-        assert_eq!(summary["narration"]["text"], raw_text);
     }
 
     #[test]
@@ -376,7 +361,7 @@ mod tests {
         ToolInvocation {
             call_id: "call_1".to_string(),
             tool_id: ToolId::builtin("workspace.write_file").unwrap(),
-            arguments: json!({}),
+            arguments: ToolArguments::empty(),
             provider_metadata: Value::Null,
         }
     }

@@ -51,6 +51,7 @@ export {};
  *   normalizeCharacter: (character: any) => any;
  *   normalizeExtensions: (extensions: any) => any;
  *   getAllCharacters: (options?: { shallow?: boolean; forceRefresh?: boolean }) => Promise<any[]>;
+ *   invalidateCharacterCache: () => void;
  *   resolveCharacterId: (options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>;
  *   resolveExistingCharacterId: (options?: { avatar?: any; fallbackName?: string }) => Promise<string | null>;
  *   getSingleCharacter: (body: any) => Promise<any | null>;
@@ -72,6 +73,7 @@ export {};
  *   materializeAndroidSkillImportArchive: (contentUri: string) => Promise<MaterializedFileInfo>;
  *   pickAndroidImportArchive: () => Promise<string>;
  *   removeTemporaryFile: (filePath: string) => Promise<void>;
+ *   createChatBackupDownloadStream: (name: string) => Promise<ReadableStream<Uint8Array>>;
  *   createReadableFileStream: (filePath: string) => ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;
  *   saveAndroidExportArchive: (sourcePath: string, preferredName?: string) => Promise<AndroidExportResult>;
  * }} TauriMainContext

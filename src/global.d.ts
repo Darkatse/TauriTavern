@@ -75,8 +75,9 @@ declare global {
         is_system?: boolean;
         force_avatar?: string;
         original_avatar?: string;
-        swipes?: string[];
-        swipe_info?: SwipeInfo[];
+        swipes?: (string | null)[];
+        swipe_info?: (SwipeInfo | null)[];
+        tt_swipe_cold?: { sourceId: number; record: number };
         swipe_id?: number;
         /** Present only on first-class tool result messages. */
         role?: 'tool';
@@ -95,6 +96,7 @@ declare global {
         parameters: string;
         displayName?: string;
         signature?: string | null;
+        extra_content?: unknown;
     }
 
     interface SwipeInfo {
@@ -119,6 +121,8 @@ declare global {
         title?: string;
         isSmallSys?: boolean;
         token_count?: number;
+        time_to_first_token?: number | null;
+        prompt_cache?: { input_tokens: number; cached_tokens: number };
         /** When false, the message cannot be swiped. */
         swipeable?: boolean;
         overswipe_behavior?: OVERSWIPE_BEHAVIOR;

@@ -211,7 +211,12 @@
         "apiKey": "",
         "autoConnect": false,
         "disabledExtensions": [
+            "caption",
+            "expressions",
+            "gallery",
+            "memory",
             "stable-diffusion",
+            "token-counter",
             "vectors",
             "translate",
             "tts"

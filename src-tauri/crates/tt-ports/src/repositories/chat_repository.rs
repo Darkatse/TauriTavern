@@ -5,11 +5,16 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage};
 
 pub use super::chat_types::{
-    ChatExportFormat, ChatImportFormat, ChatMessageReadItem, ChatMessageRole,
-    ChatMessageSearchFilters, ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult,
-    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery,
-    LocatedChatMessage, PinnedCharacterChat, PinnedGroupChat,
+    ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat, ChatMessageReadItem,
+    ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchHit, ChatMessageSearchQuery,
+    ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatSearchResult,
+    FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat, PinnedGroupChat,
 };
+
+#[async_trait]
+pub trait ChatByteReader: Send {
+    async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, DomainError>;
+}
 
 /// Repository interface for chat management
 #[async_trait]
@@ -106,12 +111,14 @@ pub trait ChatRepository: Send + Sync {
     /// List all chat backup files.
     async fn list_chat_backups(&self) -> Result<Vec<ChatSearchResult>, DomainError>;
 
-    /// Decode a chat backup into a temporary JSONL file for streaming consumers.
-    async fn materialize_chat_backup(&self, backup_file_name: &str)
-    -> Result<PathBuf, DomainError>;
+    /// List chat backup metadata without opening backup payloads.
+    async fn list_chat_backup_catalog(&self) -> Result<Vec<ChatBackupCatalogEntry>, DomainError>;
 
-    /// Remove a temporary JSONL file returned by [`Self::materialize_chat_backup`].
-    async fn discard_chat_backup_materialization(&self, path: &Path) -> Result<(), DomainError>;
+    /// Open the decoded JSONL payload of a logical chat backup.
+    async fn open_chat_backup_download(
+        &self,
+        backup_file_name: &str,
+    ) -> Result<Box<dyn ChatByteReader>, DomainError>;
 
     /// Restore a character chat directly from a logical backup name.
     async fn restore_character_chat_backup(
@@ -186,6 +193,12 @@ pub trait ChatRepository: Send + Sync {
         character_name: &str,
         file_name: &str,
     ) -> Result<Value, DomainError>;
+
+    async fn has_character_chat_with_integrity(
+        &self,
+        character_name: &str,
+        integrity: &str,
+    ) -> Result<bool, DomainError>;
 
     /// Set `chat_metadata.extensions[namespace]` for a character chat (header-only rewrite).
     async fn set_character_chat_metadata_extension(

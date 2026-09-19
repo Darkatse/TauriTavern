@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -89,12 +88,4 @@ test('portable embedded Agent profile package fails fast on malformed items', as
         () => sanitizePortableAgentProfilePackage({ version: 1, items: [{}] }),
         /item\.profile must be an object/,
     );
-});
-
-test('Preset export sanitizes embedded Agent profiles before serialization', async () => {
-    const source = await readFile(path.join(REPO_ROOT, 'src/scripts/preset-manager.js'), 'utf8');
-
-    assert.match(source, /sanitizePortableAgentProfilePackage/);
-    assert.match(source, /const exportPreset = structuredClone\(preset\);/);
-    assert.match(source, /const exportPreset = buildPortablePresetForExport\(preset\);\s*const data = JSON\.stringify\(exportPreset, null, 4\);/);
 });

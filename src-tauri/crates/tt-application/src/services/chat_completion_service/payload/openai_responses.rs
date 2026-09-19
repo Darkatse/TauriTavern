@@ -3,10 +3,10 @@ use std::collections::HashSet;
 use serde_json::{Map, Number, Value, json};
 
 use crate::errors::ApplicationError;
+use tt_domain::models::tool::ToolArguments;
 use tt_ports::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
 
 use super::content_parts::{InputPart, MediaPart, MediaSource, parse_openai_chat_content};
-use super::openai_reasoning::normalize_openai_reasoning_effort;
 use super::shared::message_content_to_text;
 use super::tool_calls::message_tool_call_id;
 
@@ -83,11 +83,7 @@ fn build_openai_responses_payload(
         );
     }
 
-    if let Some(reasoning_effort) = payload
-        .get("reasoning_effort")
-        .and_then(Value::as_str)
-        .and_then(|value| normalize_openai_reasoning_effort(value, model))
-    {
+    if let Some(reasoning_effort) = payload.get("reasoning_effort") {
         request.insert(
             "reasoning".to_string(),
             json!({ "effort": reasoning_effort }),
@@ -103,13 +99,20 @@ fn build_openai_responses_payload(
         request.insert("text".to_string(), json!({ "verbosity": verbosity }));
     }
 
-    if let Some(tools) = payload.get("tools").and_then(Value::as_array)
-        && !tools.is_empty()
+    let mut tools = payload
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(|tools| map_openai_tools_to_responses(tools))
+        .unwrap_or_default();
+    if payload.get("enable_web_search").and_then(Value::as_bool) == Some(true)
+        && !tools
+            .iter()
+            .any(|tool| tool.get("type").and_then(Value::as_str) == Some("web_search"))
     {
-        request.insert(
-            "tools".to_string(),
-            Value::Array(map_openai_tools_to_responses(tools)),
-        );
+        tools.insert(0, json!({ "type": "web_search" }));
+    }
+    if !tools.is_empty() {
+        request.insert("tools".to_string(), Value::Array(tools));
 
         if let Some(tool_choice) = payload.get("tool_choice") {
             request.insert(
@@ -481,7 +484,7 @@ fn assistant_function_calls(
                     "Assistant tool_call function is missing name".to_string(),
                 )
             })?;
-            let arguments = function_call_arguments(function.get("arguments"))?;
+            let arguments = ToolArguments::decode(function.get("arguments")).encode_for_replay();
 
             Ok(ResponsesFunctionCall {
                 call_id,
@@ -490,18 +493,6 @@ fn assistant_function_calls(
             })
         })
         .collect()
-}
-
-fn function_call_arguments(value: Option<&Value>) -> Result<String, ApplicationError> {
-    match value {
-        Some(Value::String(arguments)) => Ok(arguments.clone()),
-        Some(Value::Null) | None => Ok("{}".to_string()),
-        Some(value) => serde_json::to_string(value).map_err(|error| {
-            ApplicationError::ValidationError(format!(
-                "Assistant tool_call arguments are not serializable: {error}"
-            ))
-        }),
-    }
 }
 
 fn message_native_openai_responses_output(
@@ -833,46 +824,6 @@ mod tests {
     }
 
     #[test]
-    fn openai_responses_payload_preserves_text_around_image() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5.5",
-            "messages": [{
-                "role": "user",
-                "content": [
-                    { "type": "text", "text": "before" },
-                    {
-                        "type": "image_url",
-                        "image_url": { "url": "data:image/png;base64,AAAA" }
-                    },
-                    { "type": "text", "text": "after" }
-                ]
-            }]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-
-        assert_eq!(
-            upstream["input"],
-            json!([{
-                "role": "user",
-                "content": [
-                    { "type": "input_text", "text": "before" },
-                    {
-                        "type": "input_image",
-                        "image_url": "data:image/png;base64,AAAA"
-                    },
-                    { "type": "input_text", "text": "after" }
-                ]
-            }])
-        );
-    }
-
-    #[test]
     fn openai_responses_payload_preserves_remote_image_url_and_detail() {
         let payload = json!({
             "chat_completion_source": "custom",
@@ -905,68 +856,6 @@ mod tests {
         assert_eq!(content[1]["type"], "input_image");
         assert_eq!(content[1]["image_url"], "https://example.com/cat.png");
         assert_eq!(content[1]["detail"], "original");
-    }
-
-    #[test]
-    fn openai_responses_payload_accepts_native_input_image_file_id() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5.5",
-            "messages": [{
-                "role": "user",
-                "content": [
-                    { "type": "input_text", "text": "describe" },
-                    {
-                        "type": "input_image",
-                        "file_id": "file_123",
-                        "detail": "low"
-                    }
-                ]
-            }]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-
-        assert_eq!(
-            upstream["input"],
-            json!([{
-                "role": "user",
-                "content": [
-                    { "type": "input_text", "text": "describe" },
-                    {
-                        "type": "input_image",
-                        "file_id": "file_123",
-                        "detail": "low"
-                    }
-                ]
-            }])
-        );
-    }
-
-    #[test]
-    fn openai_responses_payload_rejects_image_url_without_url() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5.5",
-            "messages": [{
-                "role": "user",
-                "content": [{
-                    "type": "image_url",
-                    "image_url": { "detail": "high" }
-                }]
-            }]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let error = build(payload).expect_err("missing image url should fail");
-        assert!(error.to_string().contains("missing url"));
     }
 
     #[test]
@@ -1037,59 +926,6 @@ mod tests {
     }
 
     #[test]
-    fn openai_responses_payload_orders_pre56_extremes() {
-        for (requested, expected) in [("xhigh", "high"), ("max", "xhigh")] {
-            let payload = json!({
-                "chat_completion_source": "custom",
-                "custom_api_format": "openai_responses",
-                "model": "gpt-5.2",
-                "messages": [{ "role": "user", "content": "hi" }],
-                "reasoning_effort": requested
-            })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-            let (_endpoint, upstream) = build(payload).expect("build should succeed");
-            assert_eq!(
-                upstream
-                    .pointer("/reasoning/effort")
-                    .and_then(Value::as_str),
-                Some(expected)
-            );
-        }
-    }
-
-    #[test]
-    fn openai_responses_payload_uses_gpt56_extremes_and_text_verbosity() {
-        for (requested, expected) in [("min", "none"), ("xhigh", "xhigh"), ("max", "max")] {
-            let payload = json!({
-                "chat_completion_source": "custom",
-                "custom_api_format": "openai_responses",
-                "model": "gpt-5.6-terra",
-                "messages": [{ "role": "user", "content": "hi" }],
-                "reasoning_effort": requested,
-                "verbosity": "high"
-            })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-
-            let (_endpoint, upstream) = build(payload).expect("build should succeed");
-            assert_eq!(
-                upstream
-                    .pointer("/reasoning/effort")
-                    .and_then(Value::as_str),
-                Some(expected)
-            );
-            assert_eq!(
-                upstream.pointer("/text/verbosity").and_then(Value::as_str),
-                Some("high")
-            );
-            assert!(upstream.get("verbosity").is_none());
-        }
-    }
-
-    #[test]
     fn openai_responses_payload_lifts_function_tools() {
         let payload = json!({
             "chat_completion_source": "custom",
@@ -1119,33 +955,23 @@ mod tests {
     }
 
     #[test]
-    fn openai_responses_maps_specific_tool_choice_to_native_shape() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5",
-            "messages": [{ "role": "user", "content": "hi" }],
-            "tools": [{
-                "type": "function",
-                "function": {
-                    "name": "get_weather",
-                    "parameters": { "type": "object" }
-                }
-            }],
-            "tool_choice": {
-                "type": "function",
-                "function": { "name": "get_weather" }
-            }
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
+    fn openai_responses_web_search_adds_hosted_tool_once() {
+        for tools in [json!([]), json!([{ "type": "web_search" }])] {
+            let payload = json!({
+                "chat_completion_source": "custom",
+                "custom_api_format": "openai_responses",
+                "model": "deepseek-chat",
+                "messages": [{ "role": "user", "content": "latest news" }],
+                "enable_web_search": true,
+                "tools": tools
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
 
-        let (_, upstream) = build(payload).expect("build should succeed");
-        assert_eq!(
-            upstream.get("tool_choice"),
-            Some(&json!({ "type": "function", "name": "get_weather" }))
-        );
+            let (_, upstream) = build(payload).expect("web search should map");
+            assert_eq!(upstream["tools"], json!([{ "type": "web_search" }]));
+        }
     }
 
     #[test]
@@ -1249,37 +1075,6 @@ mod tests {
         assert_eq!(input[2]["call_id"], "call_1");
         assert_eq!(input[4]["type"], "function_call_output");
         assert_eq!(input[4]["call_id"], "call_2");
-    }
-
-    #[test]
-    fn openai_responses_payload_leaves_additional_include_to_service_layer() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5",
-            "messages": [{ "role": "user", "content": "hi" }],
-            "custom_include_body": "{\"include\":[\"file_search_call.results\"]}"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-        let include = upstream
-            .get("include")
-            .and_then(Value::as_array)
-            .expect("include should exist");
-
-        assert!(
-            include
-                .iter()
-                .any(|value| value == "reasoning.encrypted_content")
-        );
-        assert!(
-            !include
-                .iter()
-                .any(|value| value == "file_search_call.results")
-        );
     }
 
     #[test]

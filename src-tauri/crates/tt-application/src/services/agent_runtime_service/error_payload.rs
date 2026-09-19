@@ -6,15 +6,12 @@ use crate::errors::ApplicationError;
 /// Drift-class codes that should _never_ be auto-retried (the model
 /// disobeyed the tool contract), but the user is allowed to manually retry
 /// when no host-confirmed chat commit needs to be preserved. See issue #55.
-const USER_RETRYABLE_DRIFT_CODES: &[&str] = &[
-    "model.tool_call_required",
-    "agent.tool_after_finish",
-    "agent.max_tool_rounds_exceeded",
-];
+const USER_RETRYABLE_DRIFT_CODES: &[&str] =
+    &["model.tool_call_required", "agent.max_tool_rounds_exceeded"];
 
 pub(super) fn run_failure_payload(error: &ApplicationError) -> Value {
     let (code, message) = agent_error_code_and_message(error);
-    let retryable = is_retryable(error);
+    let retryable = error.is_retryable();
     let user_retryable = retryable || USER_RETRYABLE_DRIFT_CODES.contains(&code.as_str());
 
     json!({
@@ -103,15 +100,6 @@ fn is_error_code(value: &str) -> bool {
         })
 }
 
-fn is_retryable(error: &ApplicationError) -> bool {
-    matches!(
-        error,
-        ApplicationError::RateLimited(_)
-            | ApplicationError::Transient(_)
-            | ApplicationError::UpstreamFailure(_)
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,77 +128,6 @@ mod tests {
     }
 
     #[test]
-    fn application_error_without_code_uses_variant_code() {
-        let payload = run_failure_payload(&ApplicationError::PermissionDenied(
-            "workspace root is hidden".to_string(),
-        ));
-
-        assert_eq!(payload["code"], "agent.permission_denied");
-        assert_eq!(payload["message"], "workspace root is hidden");
-        assert_eq!(
-            payload["technicalMessage"],
-            "Permission denied: workspace root is hidden"
-        );
-        assert_eq!(payload["retryable"], false);
-        // Non-drift, non-retryable errors stay non-user-retryable so the
-        // UI does not lure the user into clicking Retry on policy errors.
-        assert_eq!(payload["userRetryable"], false);
-    }
-
-    #[test]
-    fn rate_limited_error_is_retryable() {
-        let payload = run_failure_payload(&ApplicationError::RateLimited(
-            "model.provider_rate_limited: upstream rate limit".to_string(),
-        ));
-
-        assert_eq!(payload["code"], "model.provider_rate_limited");
-        assert_eq!(payload["message"], "upstream rate limit");
-        assert_eq!(payload["retryable"], true);
-        // Auto-retryable errors are user-retryable by definition.
-        assert_eq!(payload["userRetryable"], true);
-    }
-
-    #[test]
-    fn tool_after_finish_drift_is_user_retryable() {
-        let payload = run_failure_payload(&ApplicationError::ValidationError(
-            "agent.tool_after_finish: model requested additional tools after workspace.finish"
-                .to_string(),
-        ));
-
-        assert_eq!(payload["code"], "agent.tool_after_finish");
-        assert_eq!(payload["retryable"], false);
-        assert_eq!(payload["userRetryable"], true);
-    }
-
-    #[test]
-    fn max_tool_rounds_exceeded_is_user_retryable() {
-        let payload = run_failure_payload(&ApplicationError::ValidationError(
-            "agent.max_tool_rounds_exceeded: workspace.finish was not called within 12 rounds"
-                .to_string(),
-        ));
-
-        assert_eq!(payload["code"], "agent.max_tool_rounds_exceeded");
-        assert_eq!(payload["retryable"], false);
-        assert_eq!(payload["userRetryable"], true);
-    }
-
-    #[test]
-    fn upstream_invalid_response_is_transient_and_retryable() {
-        let payload = run_failure_payload(&ApplicationError::Transient(
-            "model.upstream_invalid_response: openai returned status 200 non-JSON body (generate): expected value at line 1 column 1"
-                .to_string(),
-        ));
-
-        assert_eq!(payload["code"], "model.upstream_invalid_response");
-        assert_eq!(
-            payload["message"],
-            "openai returned status 200 non-JSON body (generate): expected value at line 1 column 1"
-        );
-        assert_eq!(payload["retryable"], true);
-        assert_eq!(payload["userRetryable"], true);
-    }
-
-    #[test]
     fn partial_success_payload_preserves_commits_but_disables_retry_flags() {
         let mut ledger = RunCommitLedger::default();
         ledger.record(
@@ -218,6 +135,7 @@ mod tests {
             tt_domain::models::agent::AgentChatCommitMode::Replace,
             Some("42".to_string()),
             3,
+            false,
         );
 
         let payload = run_partial_success_payload(

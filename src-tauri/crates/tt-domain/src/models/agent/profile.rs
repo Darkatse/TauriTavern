@@ -3,12 +3,14 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{AgentRunPresentation, ArtifactSpec};
+use crate::models::tool::{ToolDescriptionOverride, ToolId};
 
-pub const AGENT_PROFILE_SCHEMA_VERSION: u32 = 2;
+pub const AGENT_PROFILE_SCHEMA_VERSION: u32 = 3;
 pub const AGENT_PROFILE_KIND: &str = "tauritavern.agentProfile";
 pub const DEFAULT_AGENT_PROFILE_ID: &str = "default-writer";
 pub const DEFAULT_AGENT_TOOL_MAX_ROUNDS: usize = 80;
 pub const DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN: usize = 80;
+pub const DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT: usize = 50_000;
 pub const DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL: usize = 20_000;
 pub const DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN: usize = 80_000;
 pub const DEFAULT_AGENT_MODEL_MAX_RETRIES: usize = 3;
@@ -123,7 +125,7 @@ pub struct ResolvedAgentProfile {
     #[serde(default)]
     pub delegation: AgentDelegationPolicy,
     pub instructions: AgentProfileInstructions,
-    pub tools: AgentToolPolicy,
+    pub tools: ResolvedAgentToolPolicy,
     pub skills: AgentSkillPolicy,
     pub workspace: AgentWorkspacePolicy,
     pub plan: super::plan::AgentPlanPolicy,
@@ -185,6 +187,8 @@ pub enum AgentModelBindingMode {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentRunPolicy {
     pub presentation: AgentRunPresentation,
+    #[serde(default)]
+    pub stream: bool,
     #[serde(default = "default_agent_run_direct_runnable")]
     pub direct_runnable: bool,
     #[serde(default)]
@@ -246,28 +250,30 @@ pub struct AgentProfileInstructions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AgentToolPolicy {
-    pub allow: Vec<String>,
+#[serde(
+    rename_all = "camelCase",
+    deny_unknown_fields,
+    bound(
+        serialize = "T: Serialize + Ord",
+        deserialize = "T: Deserialize<'de> + Ord"
+    )
+)]
+pub struct AgentToolPolicy<T = String> {
+    pub allow: Vec<T>,
     #[serde(default)]
-    pub deny: Vec<String>,
+    pub deny: Vec<T>,
     #[serde(default)]
-    pub tool_descriptions: BTreeMap<String, AgentToolDescriptionOverride>,
+    pub tool_descriptions: BTreeMap<T, ToolDescriptionOverride>,
     pub max_rounds: usize,
     #[serde(default = "default_agent_tool_max_calls_per_run")]
     pub max_calls_per_run: usize,
+    #[serde(default = "default_agent_mcp_result_inline_char_limit")]
+    pub mcp_result_inline_char_limit: usize,
     #[serde(default)]
-    pub max_calls_per_tool: BTreeMap<String, usize>,
+    pub max_calls_per_tool: BTreeMap<T, usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AgentToolDescriptionOverride {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub properties: BTreeMap<String, String>,
-}
+pub type ResolvedAgentToolPolicy = AgentToolPolicy<ToolId>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -334,6 +340,10 @@ impl AgentProfileDefinition {
 
 fn default_agent_tool_max_calls_per_run() -> usize {
     DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN
+}
+
+fn default_agent_mcp_result_inline_char_limit() -> usize {
+    DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT
 }
 
 fn default_agent_skill_max_read_chars_per_call() -> usize {
@@ -425,9 +435,10 @@ mod tests {
         AgentProfileDefinition, DEFAULT_AGENT_DELEGATION_MAX_CONCURRENT_INVOCATIONS,
         DEFAULT_AGENT_DELEGATION_MAX_INVOCATIONS_PER_RUN,
         DEFAULT_AGENT_DELEGATION_RESULT_BUDGET_TOKENS, DEFAULT_AGENT_HANDOFF_MAX_DEPTH,
-        DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES, DEFAULT_AGENT_MODEL_MAX_RETRIES,
-        DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL,
-        DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
+        DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES, DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT,
+        DEFAULT_AGENT_MODEL_MAX_RETRIES, DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS,
+        DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN,
+        DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
     };
     use crate::models::agent::plan::DEFAULT_AGENT_PLAN_BETA;
 
@@ -476,6 +487,7 @@ mod tests {
         .expect("profile with optional fields omitted");
 
         assert!(!profile.preset.required);
+        assert!(!profile.run.stream);
         assert!(profile.run.direct_runnable);
         assert_eq!(
             profile.run.model_retry.max_retries,
@@ -520,6 +532,10 @@ mod tests {
         assert_eq!(
             profile.tools.max_calls_per_run,
             DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN
+        );
+        assert_eq!(
+            profile.tools.mcp_result_inline_char_limit,
+            DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT
         );
         assert!(profile.tools.max_calls_per_tool.is_empty());
         assert!(profile.skills.deny.is_empty());

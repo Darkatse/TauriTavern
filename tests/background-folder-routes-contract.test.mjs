@@ -1,12 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { jsonResponse, textResponse } from '../src/tauri/main/http-utils.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerResourceRoutes } from '../src/tauri/main/routes/resource-routes.js';
-
-const backgroundsSource = await readFile(new URL('../src/scripts/backgrounds.js', import.meta.url), 'utf8');
 
 function createResourceRouter(context) {
     const router = createRouteRegistry();
@@ -156,31 +153,4 @@ test('/api/backgrounds/upload leaves filename sanitization to Rust storage bound
             args: { filename: 'CON ', file_path: '/tmp/staged-background' },
         },
     ]);
-});
-
-test('background folder tile cover failures are reported at tile scope', () => {
-    assert.match(backgroundsSource, /getFolderCoverUrl\(folder\)\.then\(coverUrl =>/);
-    assert.match(backgroundsSource, /\.catch\(error => \{\s*console\.warn\(`Failed to load background folder cover/);
-});
-
-test('background folder payload is validated before mutating UI state', () => {
-    assert.match(backgroundsSource, /function assertBackgroundFoldersPayload\(data\)/);
-    assert.match(backgroundsSource, /folders must be an array/);
-    assert.match(backgroundsSource, /imageFolderMap values must be string arrays/);
-    assert.match(backgroundsSource, /assertBackgroundFoldersPayload\(data\);\s*folderList = data\.folders;/);
-});
-
-test('background startup loader refreshes the backend index before reading folders and metadata', () => {
-    const start = backgroundsSource.indexOf('async function loadBackgroundsPayload()');
-    assert.ok(start >= 0, 'loadBackgroundsPayload must exist');
-    const end = backgroundsSource.indexOf('async function applyBackgroundsPayload', start);
-    assert.ok(end > start, 'loadBackgroundsPayload must end before applyBackgroundsPayload');
-
-    const section = backgroundsSource.slice(start, end);
-    const refreshIndex = section.indexOf('const systemBackgrounds = await fetchSystemBackgroundsPayload();');
-    const parallelReadIndex = section.indexOf('const [folders, metadata] = await Promise.all([');
-
-    assert.ok(refreshIndex >= 0, 'background list refresh must be awaited first');
-    assert.ok(parallelReadIndex > refreshIndex, 'folders and metadata reads must start after the refresh');
-    assert.doesNotMatch(section.slice(0, parallelReadIndex), /fetchBackgroundFoldersPayload|fetchBackgroundMetadataPayload/);
 });

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use tokio::fs;
 
 use super::FileAgentRepository;
-use super::fs_tree::should_skip_platform_metadata_file;
+use super::fs_tree::{copy_directory_contents, should_skip_platform_metadata_file};
 use super::paths::validate_segment;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::agent_workspace_lifecycle_repository::{
@@ -15,6 +15,23 @@ use tt_ports::repositories::agent_workspace_lifecycle_repository::{
 
 #[async_trait]
 impl AgentWorkspaceLifecycleRepository for FileAgentRepository {
+    async fn copy_persistent_states(
+        &self,
+        source_workspace_id: &str,
+        target_workspace_id: &str,
+    ) -> Result<(), DomainError> {
+        let _guard = self.persist_lock.lock().await;
+        copy_directory_contents(
+            &self
+                .chat_dir(source_workspace_id)?
+                .join("persistent-states"),
+            &self
+                .chat_dir(target_workspace_id)?
+                .join("persistent-states"),
+        )
+        .await
+    }
+
     async fn delete_chat_workspace(
         &self,
         workspace_id: &str,
@@ -80,6 +97,10 @@ impl AgentWorkspaceLifecycleRepository for FileAgentRepository {
                     )));
                 }
             }
+        }
+        let mut sequences = self.event_sequences.lock().await;
+        for run_id in &run_ids {
+            sequences.remove(run_id);
         }
 
         Ok(AgentChatWorkspaceDeletion {

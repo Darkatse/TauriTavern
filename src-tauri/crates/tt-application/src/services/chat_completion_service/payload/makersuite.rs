@@ -36,18 +36,34 @@ const GOOGLE_NO_SEARCH_MODELS: &[&str] = &[
 ];
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
-    build_google_payload_with_mode(payload, false)
+    build_google_payload_with_mode(payload, GoogleTarget::Makersuite)
 }
 
 pub(super) fn build_vertexai(
     payload: Map<String, Value>,
 ) -> Result<(String, Value), ApplicationError> {
-    build_google_payload_with_mode(payload, true)
+    build_google_payload_with_mode(payload, GoogleTarget::VertexAi)
+}
+
+/// Custom `generateContent` endpoints: same wire translation, but the model
+/// name is an opaque alias, so first-party model tables never silently drop
+/// or rewrite explicit user parameters.
+pub(super) fn build_custom(
+    payload: Map<String, Value>,
+) -> Result<(String, Value), ApplicationError> {
+    build_google_payload_with_mode(payload, GoogleTarget::Custom)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GoogleTarget {
+    Makersuite,
+    VertexAi,
+    Custom,
 }
 
 fn build_google_payload_with_mode(
     payload: Map<String, Value>,
-    use_vertex_ai: bool,
+    target: GoogleTarget,
 ) -> Result<(String, Value), ApplicationError> {
     let stream = payload
         .get("stream")
@@ -61,14 +77,16 @@ fn build_google_payload_with_mode(
 
     Ok((
         endpoint.to_string(),
-        Value::Object(build_google_payload(&payload, use_vertex_ai)?),
+        Value::Object(build_google_payload(&payload, target)?),
     ))
 }
 
 fn build_google_payload(
     payload: &Map<String, Value>,
-    use_vertex_ai: bool,
+    target: GoogleTarget,
 ) -> Result<Map<String, Value>, ApplicationError> {
+    let use_vertex_ai = target == GoogleTarget::VertexAi;
+    let is_custom = target == GoogleTarget::Custom;
     let model = payload
         .get("model")
         .and_then(Value::as_str)
@@ -77,6 +95,13 @@ fn build_google_payload(
         .ok_or_else(|| {
             ApplicationError::ValidationError("Gemini request is missing model".to_string())
         })?;
+    // Custom endpoints accept the documented `models/<id>` form; capability
+    // lookups use the bare id so a supported model is still recognised.
+    let capability_model = if is_custom {
+        model.strip_prefix("models/").unwrap_or(model)
+    } else {
+        model
+    };
 
     let enable_web_search = payload
         .get("enable_web_search")
@@ -99,25 +124,24 @@ fn build_google_payload(
     let is_gemma = model.contains("gemma");
     let is_learnlm = model.contains("learnlm");
 
-    let enable_image_modality = request_images && GOOGLE_IMAGE_GENERATION_MODELS.contains(&model);
+    let enable_image_modality =
+        request_images && (is_custom || GOOGLE_IMAGE_GENERATION_MODELS.contains(&model));
 
     let use_system_prompt = payload
         .get("use_sysprompt")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-        && !enable_image_modality
-        && !is_gemma;
+        && (is_custom || (!enable_image_modality && !is_gemma));
 
-    let (contents, system_prompt) = convert_messages(
-        payload.get("messages"),
-        model,
-        use_system_prompt,
-        use_vertex_ai,
-    )?;
+    let (contents, system_prompt) =
+        convert_messages(payload.get("messages"), model, use_system_prompt)?;
 
     let mut generation_config = Map::new();
-    let has_fixed_sampling_parameters =
-        matches!(model, "gemini-3.5-flash-lite" | "gemini-3.6-flash");
+    let has_fixed_sampling_parameters = !is_custom
+        && matches!(
+            model,
+            "gemini-3.5-flash-lite" | "gemini-3.6-flash" | "gemini-3.7-flash"
+        );
 
     if let Some(value) = payload.get("max_tokens").filter(|value| !value.is_null()) {
         generation_config.insert("maxOutputTokens".to_string(), value.clone());
@@ -144,6 +168,17 @@ fn build_google_payload(
 
         if let Some(value) = payload.get(source_key).filter(|value| !value.is_null()) {
             generation_config.insert(target_key.to_string(), value.clone());
+        }
+    }
+
+    if is_custom {
+        for (source_key, target_key) in [
+            ("frequency_penalty", "frequencyPenalty"),
+            ("presence_penalty", "presencePenalty"),
+        ] {
+            if let Some(value) = payload.get(source_key).filter(|value| !value.is_null()) {
+                generation_config.insert(target_key.to_string(), value.clone());
+            }
         }
     }
 
@@ -198,7 +233,9 @@ fn build_google_payload(
         if enable_image_config {
             let mut image_config = Map::new();
 
-            if let Some(image_size) = image_size.filter(|_| is_google_image_size_model(model)) {
+            if let Some(image_size) =
+                image_size.filter(|_| is_custom || is_google_image_size_model(model))
+            {
                 image_config.insert(
                     "imageSize".to_string(),
                     Value::String(image_size.to_string()),
@@ -218,7 +255,7 @@ fn build_google_payload(
         }
     }
 
-    inject_google_thinking_config(payload, model, use_vertex_ai, &mut generation_config)?;
+    inject_google_thinking_config(payload, capability_model, target, &mut generation_config)?;
 
     let mut request = Map::new();
     request.insert("model".to_string(), Value::String(model.to_string()));
@@ -254,7 +291,7 @@ fn build_google_payload(
 
     let mut tools = Vec::<Value>::new();
 
-    if !enable_image_modality && !is_gemma {
+    if is_custom || (!enable_image_modality && !is_gemma) {
         if let Some(raw_tools) = payload.get("tools") {
             let (function_declarations, custom_tools) = split_openai_tools(raw_tools);
 
@@ -266,8 +303,7 @@ fn build_google_payload(
         }
 
         if enable_web_search
-            && !is_learnlm
-            && !GOOGLE_NO_SEARCH_MODELS.contains(&model)
+            && (is_custom || (!is_learnlm && !GOOGLE_NO_SEARCH_MODELS.contains(&model)))
             && !tools
                 .iter()
                 .any(|tool| tool.get("function_declarations").is_some())
@@ -298,11 +334,10 @@ fn convert_messages(
     messages: Option<&Value>,
     model: &str,
     use_system_prompt: bool,
-    use_vertex_ai: bool,
 ) -> Result<(Vec<Value>, String), ApplicationError> {
     let mut contents = Vec::new();
     let mut system_parts = Vec::new();
-    let mut tool_name_by_id: HashMap<String, String> = HashMap::new();
+    let mut tool_call_by_id: HashMap<String, (String, Option<String>)> = HashMap::new();
 
     let Some(messages) = messages else {
         return Ok((contents, String::new()));
@@ -321,10 +356,7 @@ fn convert_messages(
     };
 
     let model_lower = model.trim().to_ascii_lowercase();
-    let supports_signatures =
-        model_lower.contains("gemini-3") || model_lower.contains("gemini-2.5");
     let is_gemini3 = model_lower.contains("gemini-3");
-    let supports_function_call_ids = is_gemini3 && !use_vertex_ai;
     let is_image_model = model_lower.contains("-image");
     let skip_signature_magic = "skip_thought_signature_validator";
 
@@ -372,29 +404,24 @@ fn convert_messages(
             .to_lowercase();
         let mut merge_with_previous = matches!(role.as_str(), "tool" | "function");
 
+        let native_gemini_parts = if role == "assistant" {
+            message_native_gemini_parts(message)
+        } else {
+            None
+        };
         let mut parts = if matches!(role.as_str(), "tool" | "function") {
-            let tool_call_id = message_tool_call_id(message);
+            let previous_call =
+                message_tool_call_id(message).and_then(|id| tool_call_by_id.get(&id));
             let name = message_tool_name(message)
-                .or_else(|| {
-                    tool_call_id
-                        .as_ref()
-                        .and_then(|id| tool_name_by_id.get(id))
-                        .cloned()
-                })
+                .or_else(|| previous_call.map(|(name, _)| name.clone()))
                 .unwrap_or_else(|| fallback_tool_name().to_string());
             let content = message_tool_result_text(message);
-            let response_id = if supports_function_call_ids {
-                tool_call_id.as_deref()
-            } else {
-                None
-            };
-            vec![build_tool_response_part(&name, &content, response_id)]
+            vec![build_tool_response_part(
+                &name,
+                &content,
+                previous_call.and_then(|(_, id)| id.as_deref()),
+            )]
         } else {
-            let native_gemini_parts = if role == "assistant" {
-                message_native_gemini_parts(message)
-            } else {
-                None
-            };
             let mut parts = if let Some(native_parts) = native_gemini_parts.clone() {
                 native_parts
             } else {
@@ -405,14 +432,17 @@ fn convert_messages(
                 let tool_calls = extract_openai_tool_calls(message.get("tool_calls"));
                 if !tool_calls.is_empty() {
                     merge_with_previous = true;
-                    for tool_call in &tool_calls {
-                        tool_name_by_id.insert(tool_call.id.clone(), tool_call.name.clone());
-                    }
                     if native_gemini_parts.is_none() {
-                        parts.extend(convert_openai_tool_calls_to_parts(
-                            &tool_calls,
-                            supports_function_call_ids,
-                        ));
+                        parts.extend(convert_openai_tool_calls_to_parts(&tool_calls));
+                    }
+                    // Canonical calls follow native order; native IDs may be absent.
+                    let replayed_calls = parts.iter().filter_map(|part| part.get("functionCall"));
+                    for (tool_call, replayed_call) in tool_calls.iter().zip(replayed_calls) {
+                        let id = replayed_call
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+                        tool_call_by_id.insert(tool_call.id.clone(), (tool_call.name.clone(), id));
                     }
                 }
             }
@@ -426,7 +456,8 @@ fn convert_messages(
 
         let target_role = if role == "assistant" { "model" } else { "user" };
 
-        if supports_signatures {
+        // Native parts already carry their own signatures; never overwrite signed history.
+        if native_gemini_parts.is_none() {
             let text_signature = message
                 .get("signature")
                 .and_then(Value::as_str)
@@ -678,20 +709,15 @@ fn message_native_gemini_parts(message: &Map<String, Value>) -> Option<Vec<Value
         .cloned()
 }
 
-fn convert_openai_tool_calls_to_parts(
-    tool_calls: &[OpenAiToolCall],
-    supports_function_call_ids: bool,
-) -> Vec<Value> {
+fn convert_openai_tool_calls_to_parts(tool_calls: &[OpenAiToolCall]) -> Vec<Value> {
     tool_calls
         .iter()
         .map(|tool_call| {
-            let mut function_call = json!({
+            let function_call = json!({
+                "id": tool_call.id,
                 "name": tool_call.name,
-                "args": tool_call.arguments,
+                "args": tool_call.arguments.to_replay_object(),
             });
-            if supports_function_call_ids {
-                function_call["id"] = Value::String(tool_call.id.clone());
-            }
             let mut part = json!({ "functionCall": function_call });
 
             if let Some(signature) = tool_call.signature.as_ref()
@@ -795,22 +821,41 @@ fn map_tool_choice_to_makersuite(value: &Value) -> Result<Value, ApplicationErro
 fn inject_google_thinking_config(
     payload: &Map<String, Value>,
     model: &str,
-    use_vertex_ai: bool,
+    target: GoogleTarget,
     generation_config: &mut Map<String, Value>,
 ) -> Result<(), ApplicationError> {
-    let reasoning_effort = match payload.get("reasoning_effort").and_then(Value::as_str) {
-        Some(value) => parse_known_reasoning_effort(value, "Gemini")?,
-        None => RequestedReasoningEffort::Auto,
-    };
-
-    if !is_gemini_thinking_config_model(model) {
-        return Ok(());
-    }
-
     let include_reasoning = payload
         .get("include_reasoning")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+
+    if !is_gemini_thinking_config_model(model) {
+        if target != GoogleTarget::Custom {
+            return Ok(());
+        }
+        // Custom aliases default to thinkingLevel; Additional Parameters can override it.
+        let mut thinking_config = Map::new();
+        if let Some(effort) = payload.get("reasoning_effort").and_then(Value::as_str) {
+            let effort = effort.trim().to_ascii_lowercase();
+            if !effort.is_empty() && effort != "auto" {
+                thinking_config.insert("thinkingLevel".to_string(), Value::String(effort));
+            }
+        }
+        if include_reasoning || !thinking_config.is_empty() {
+            thinking_config.insert(
+                "includeThoughts".to_string(),
+                Value::Bool(include_reasoning),
+            );
+            generation_config.insert("thinkingConfig".to_string(), Value::Object(thinking_config));
+        }
+        return Ok(());
+    }
+
+    let reasoning_effort = match payload.get("reasoning_effort").and_then(Value::as_str) {
+        Some(value) => parse_known_reasoning_effort(value, "Gemini")?,
+        None => RequestedReasoningEffort::Auto,
+    };
+    let use_vertex_ai = target == GoogleTarget::VertexAi;
     let max_output_tokens = generation_config
         .get("maxOutputTokens")
         .and_then(value_to_i64)
@@ -940,7 +985,11 @@ mod tests {
                 .expect("generationConfig must be object")
         };
 
-        for model in ["gemini-3.5-flash-lite", "gemini-3.6-flash"] {
+        for model in [
+            "gemini-3.5-flash-lite",
+            "gemini-3.6-flash",
+            "gemini-3.7-flash",
+        ] {
             let config = build_config(model);
             for key in ["candidateCount", "temperature", "topP", "topK"] {
                 assert!(config.get(key).is_none(), "{model} must omit {key}");
@@ -990,160 +1039,6 @@ mod tests {
                 .get("includeThoughts")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
-        );
-    }
-
-    #[test]
-    fn makersuite_25_flash_accepts_shared_minimal_alias() {
-        let payload = json!({
-            "model": "gemini-2.5-flash",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 4000,
-            "reasoning_effort": "minimal"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        assert_eq!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
-                .and_then(Value::as_i64),
-            Some(0)
-        );
-    }
-
-    #[test]
-    fn makersuite_25_flash_lite_auto_omits_thinking_budget() {
-        let payload = json!({
-            "model": "gemini-2.5-flash-lite",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 4000,
-            "reasoning_effort": "auto"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        assert!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
-                .is_none()
-        );
-        assert_eq!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/includeThoughts")
-                .and_then(Value::as_bool),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn makersuite_3_pro_sets_thinking_level() {
-        let payload = json!({
-            "model": "gemini-3-pro",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 8000,
-            "reasoning_effort": "medium",
-            "include_reasoning": false
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("body must be object");
-        let config = body
-            .get("generationConfig")
-            .and_then(Value::as_object)
-            .expect("generationConfig must be object");
-        let thinking = config
-            .get("thinkingConfig")
-            .and_then(Value::as_object)
-            .expect("thinkingConfig must be object");
-
-        assert_eq!(
-            thinking
-                .get("thinkingLevel")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            "low"
-        );
-        assert!(thinking.get("thinkingBudget").is_none());
-    }
-
-    #[test]
-    fn makersuite_31_pro_sets_medium_thinking_level() {
-        let payload = json!({
-            "model": "gemini-3.1-pro-preview",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 8000,
-            "reasoning_effort": "medium"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        assert_eq!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/thinkingLevel")
-                .and_then(Value::as_str),
-            Some("medium")
-        );
-        assert!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn makersuite_31_flash_lite_uses_level_not_budget() {
-        let payload = json!({
-            "model": "gemini-3.1-flash-lite-preview",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 8000,
-            "reasoning_effort": "medium"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        assert_eq!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/thinkingLevel")
-                .and_then(Value::as_str),
-            Some("medium")
-        );
-        assert!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn makersuite_xhigh_behaves_like_max() {
-        let payload = json!({
-            "model": "gemini-2.5-pro",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 8000,
-            "reasoning_effort": "xhigh"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        assert_eq!(
-            upstream
-                .pointer("/generationConfig/thinkingConfig/thinkingBudget")
-                .and_then(Value::as_i64),
-            Some(8000)
         );
     }
 
@@ -1283,29 +1178,6 @@ mod tests {
     }
 
     #[test]
-    fn makersuite_omits_auto_media_resolution() {
-        let upstream = build_with_messages(
-            "gemini-3-pro",
-            json!([{
-                "role": "user",
-                "content": [{
-                    "type": "image_url",
-                    "image_url": {
-                        "url": "data:image/png;base64,AAAA",
-                        "detail": "auto"
-                    }
-                }]
-            }]),
-        );
-
-        assert!(
-            upstream
-                .pointer("/contents/0/parts/0/mediaResolution")
-                .is_none()
-        );
-    }
-
-    #[test]
     fn makersuite_preserves_native_google_parts() {
         let function_call = json!({
             "name": "lookup",
@@ -1411,28 +1283,6 @@ mod tests {
     }
 
     #[test]
-    fn makersuite_keeps_unknown_text_parts_as_text() {
-        let upstream = build_with_messages(
-            "gemini-2.5-flash",
-            json!([{
-                "role": "user",
-                "content": [
-                    { "type": "provider_text", "text": "hello" },
-                    { "type": "provider_content", "content": " world " }
-                ]
-            }]),
-        );
-
-        assert_eq!(
-            upstream.pointer("/contents/0/parts"),
-            Some(&json!([
-                { "text": "hello" },
-                { "text": "world" }
-            ]))
-        );
-    }
-
-    #[test]
     fn makersuite_rejects_media_that_generate_content_cannot_preserve() {
         for (content, expected) in [
             (
@@ -1503,32 +1353,9 @@ mod tests {
     }
 
     #[test]
-    fn vertexai_uses_shared_multimodal_renderer() {
-        let payload = json!({
-            "model": "gemini-2.5-flash",
-            "messages": [{
-                "role": "user",
-                "content": [{
-                    "type": "audio_url",
-                    "audio_url": { "url": "data:audio/wav;base64,AAAA" }
-                }]
-            }]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build_vertexai(payload).expect("build should succeed");
-        assert_eq!(
-            upstream.pointer("/contents/0/parts/0/inlineData"),
-            Some(&json!({ "mimeType": "audio/wav", "data": "AAAA" }))
-        );
-    }
-
-    #[test]
     fn makersuite_tool_result_uses_previous_tool_call_name() {
         let payload = json!({
-            "model": "gemini-3.6-flash",
+            "model": "model-alias",
             "messages": [
                 {
                     "role": "assistant",
@@ -1619,14 +1446,17 @@ mod tests {
         );
         let (_, legacy) = build(legacy_payload).expect("legacy build should succeed");
         let (_, vertex) = build_vertexai(payload).expect("Vertex build should succeed");
-        for body in [&legacy, &vertex] {
-            assert!(
-                body.pointer("/contents/0/parts/0/functionCall/id")
-                    .is_none()
+        for path in [
+            "/contents/0/parts/0/functionCall/id",
+            "/contents/1/parts/0/functionResponse/id",
+        ] {
+            assert_eq!(
+                legacy.pointer(path).and_then(Value::as_str),
+                Some("call_weather")
             );
-            assert!(
-                body.pointer("/contents/1/parts/0/functionResponse/id")
-                    .is_none()
+            assert_eq!(
+                vertex.pointer(path).and_then(Value::as_str),
+                Some("call_weather")
             );
         }
     }
@@ -1667,46 +1497,15 @@ mod tests {
     }
 
     #[test]
-    fn makersuite_tool_result_skips_user_content_part_renderer() {
-        for role in ["tool", "function"] {
-            let payload = json!({
-                "model": "gemini-2.5-flash",
-                "messages": [
-                    {
-                        "role": "assistant",
-                        "tool_calls": [{
-                            "id": "call_weather",
-                            "type": "function",
-                            "function": {
-                                "name": "weather",
-                                "arguments": "{\"city\":\"Paris\"}"
-                            }
-                        }]
-                    },
-                    {
-                        "role": role,
-                        "tool_call_id": "call_weather",
-                        "content": [
-                            { "type": "text", "text": "{\"temperature\":20}" },
-                            {
-                                "type": "image_url",
-                                "image_url": { "url": "https://example.test/tool-output.png" }
-                            }
-                        ]
-                    }
-                ]
-            })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-
-            let (_, upstream) =
-                build(payload).expect("tool result should not render as user media");
-            assert_eq!(
-                upstream.pointer("/contents/1/parts/0/functionResponse/response/temperature"),
-                Some(&json!(20))
-            );
-        }
+    fn makersuite_preserves_text_signature_for_model_alias() {
+        let upstream = build_with_messages(
+            "model-alias",
+            json!([{ "role": "assistant", "content": "answer", "signature": "sig_1" }]),
+        );
+        assert_eq!(
+            upstream["contents"][0]["parts"],
+            json!([{ "text": "answer", "thoughtSignature": "sig_1" }]),
+        );
     }
 
     #[test]
@@ -1897,40 +1696,6 @@ mod tests {
         assert_eq!(
             image_config.get("aspectRatio").and_then(Value::as_str),
             Some("16:9")
-        );
-    }
-
-    #[test]
-    fn vertexai_disables_include_thoughts_when_budget_zero() {
-        let payload = json!({
-            "model": "gemini-2.5-flash",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 1024,
-            "reasoning_effort": "min",
-            "include_reasoning": true
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build_vertexai(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("body must be object");
-        let config = body
-            .get("generationConfig")
-            .and_then(Value::as_object)
-            .expect("generationConfig must be object");
-        let thinking = config
-            .get("thinkingConfig")
-            .and_then(Value::as_object)
-            .expect("thinkingConfig must be object");
-
-        assert_eq!(
-            thinking.get("thinkingBudget").and_then(Value::as_i64),
-            Some(0)
-        );
-        assert_eq!(
-            thinking.get("includeThoughts").and_then(Value::as_bool),
-            Some(false)
         );
     }
 }

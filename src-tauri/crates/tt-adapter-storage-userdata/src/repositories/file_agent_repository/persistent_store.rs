@@ -35,12 +35,10 @@ pub(super) struct PersistentSnapshotFile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PersistentStateManifest {
+pub(super) struct PersistentStateManifest {
     version: u32,
     state_id: String,
     run_id: String,
-    workspace_id: String,
-    stable_chat_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     base_state_id: Option<String>,
     created_at: DateTime<Utc>,
@@ -67,19 +65,9 @@ impl FileAgentRepository {
         let base_state = match run.persist_base_state_id.as_deref() {
             Some(state_id) => {
                 let state_dir = self.persistent_state_dir(&run.workspace_id, state_id)?;
-                let state_manifest = self.read_persistent_state_manifest(&state_dir).await?;
-                if state_manifest.state_id != state_id {
-                    return Err(DomainError::InvalidData(format!(
-                        "agent.persistent_state_manifest_mismatch: manifest state `{}` does not match requested state `{state_id}`",
-                        state_manifest.state_id
-                    )));
-                }
-                if state_manifest.workspace_id != run.workspace_id {
-                    return Err(DomainError::InvalidData(format!(
-                        "agent.persistent_state_workspace_mismatch: state `{state_id}` belongs to workspace `{}`",
-                        state_manifest.workspace_id
-                    )));
-                }
+                let state_manifest = self
+                    .read_persistent_state_manifest(&state_dir, state_id)
+                    .await?;
                 Some((state_dir, state_manifest))
             }
             None => None,
@@ -187,7 +175,7 @@ impl FileAgentRepository {
 
         changes.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(WorkspacePersistentChangeSet {
-            state_id: run.id,
+            state_id: Uuid::new_v4().to_string(),
             base_state_id: base_snapshot.base_state_id,
             changes,
         })
@@ -196,9 +184,22 @@ impl FileAgentRepository {
     pub(super) async fn commit_persistent_state(
         &self,
         run_id: &str,
-        changes: WorkspacePersistentChangeSet,
+        mut changes: WorkspacePersistentChangeSet,
+        previous_state_id: Option<&str>,
     ) -> Result<WorkspacePersistentChangeSet, DomainError> {
         let run = self.load_run(run_id).await?;
+        if let Some(state_id) = previous_state_id {
+            let state_dir = self.persistent_state_dir(&run.workspace_id, state_id)?;
+            let previous = self
+                .read_persistent_state_manifest(&state_dir, state_id)
+                .await?;
+            if changes.base_state_id == previous.base_state_id
+                && changes.changes == previous.changes
+            {
+                changes.state_id = state_id.to_string();
+                return Ok(changes);
+            }
+        }
         let manifest = self.read_manifest(run_id).await?;
         let roots = persistent_roots(&manifest)?;
         let run_dir = self.run_dir(&run)?;
@@ -268,8 +269,6 @@ impl FileAgentRepository {
                 version: 1,
                 state_id: changes.state_id.clone(),
                 run_id: run.id.clone(),
-                workspace_id: run.workspace_id.clone(),
-                stable_chat_id: run.stable_chat_id.clone(),
                 base_state_id: changes.base_state_id.clone(),
                 created_at: Utc::now(),
                 files,
@@ -296,9 +295,10 @@ impl FileAgentRepository {
         Ok(changes)
     }
 
-    async fn read_persistent_state_manifest(
+    pub(super) async fn read_persistent_state_manifest(
         &self,
         state_dir: &Path,
+        state_id: &str,
     ) -> Result<PersistentStateManifest, DomainError> {
         let metadata = fs::symlink_metadata(state_dir).await.map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -327,6 +327,12 @@ impl FileAgentRepository {
             return Err(DomainError::InvalidData(format!(
                 "agent.persistent_state_version_unsupported: {}",
                 manifest.version
+            )));
+        }
+        if manifest.state_id != state_id {
+            return Err(DomainError::InvalidData(format!(
+                "agent.persistent_state_manifest_mismatch: manifest state `{}` does not match requested state `{state_id}`",
+                manifest.state_id
             )));
         }
         Ok(manifest)

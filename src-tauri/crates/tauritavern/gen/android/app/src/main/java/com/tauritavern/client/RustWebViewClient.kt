@@ -1,5 +1,6 @@
 // Local override of Wry's generated RustWebViewClient.
-// Keep this file aligned with wry 0.54.2 and preserve only the intercept error guard + logging.
+// Baseline: wry 0.55.1. Local deltas: main-frame listener, intercept failure response,
+// and preserving an explicit host Cache-Control policy.
 
 @file:Suppress("RedundantOverride")
 
@@ -19,7 +20,10 @@ import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
 import java.io.ByteArrayInputStream
 
-class RustWebViewClient(context: Context) : WebViewClient() {
+class RustWebViewClient(
+  webView: RustWebView,
+  context: Context,
+) : WebViewClient() {
   private val interceptedState = mutableMapOf<String, Boolean>()
   var currentUrl: String = "about:blank"
   private var lastInterceptedUrl: Uri? = null
@@ -32,7 +36,7 @@ class RustWebViewClient(context: Context) : WebViewClient() {
   private val assetLoader =
     WebViewAssetLoader
       .Builder()
-      .setDomain(assetLoaderDomain())
+      .setDomain(Rust.assetLoaderDomain(webView.id))
       .addPathHandler("/", WebViewAssetLoader.AssetsPathHandler(context))
       .build()
 
@@ -47,20 +51,20 @@ class RustWebViewClient(context: Context) : WebViewClient() {
     }
 
     lastInterceptedUrl = request.url
-    return if (withAssetLoader()) {
+    return if (Rust.withAssetLoader((view as RustWebView).id)) {
       assetLoader.shouldInterceptRequest(request.url)
     } else {
-      val rustWebview = view as RustWebView
       val requestUrl = request.url.toString()
 
       val response =
         try {
-          handleRequest(rustWebview.id, request, rustWebview.isDocumentStartScriptEnabled)
+          Rust.handleRequest(view.id, request, view.isDocumentStartScriptEnabled)
         } catch (throwable: Throwable) {
           logInterceptFailure(requestUrl, throwable)
           buildErrorResponse(throwable)
         }
 
+      applyDefaultCachePolicy(response)
       interceptedState[requestUrl] = response != null
       response
     }
@@ -70,7 +74,7 @@ class RustWebViewClient(context: Context) : WebViewClient() {
     view: WebView,
     request: WebResourceRequest,
   ): Boolean {
-    return shouldOverride(request.url.toString())
+    return Rust.shouldOverride((view as RustWebView).id, request.url.toString())
   }
 
   override fun onPageStarted(
@@ -86,11 +90,11 @@ class RustWebViewClient(context: Context) : WebViewClient() {
         view.evaluateJavascript(script, null)
       }
     }
-    return onPageLoading(url)
+    return Rust.onPageLoading((view as RustWebView).id, url)
   }
 
   override fun onPageFinished(view: WebView, url: String) {
-    onPageLoaded(url)
+    Rust.onPageLoaded((view as RustWebView).id, url)
   }
 
   override fun onReceivedError(
@@ -118,10 +122,6 @@ class RustWebViewClient(context: Context) : WebViewClient() {
 
     @Volatile
     var mainFrameNavigationListener: MainFrameNavigationListener? = null
-
-    init {
-      System.loadLibrary("tauritavern_lib")
-    }
 
     private fun logInterceptFailure(url: String, throwable: Throwable) {
       try {
@@ -164,21 +164,18 @@ class RustWebViewClient(context: Context) : WebViewClient() {
         null
       }
     }
+
+    private fun applyDefaultCachePolicy(response: WebResourceResponse?) {
+      if (response == null) {
+        return
+      }
+
+      val headers = response.responseHeaders
+      if (headers == null) {
+        response.responseHeaders = mapOf("Cache-Control" to "no-store")
+      } else if (headers.keys.none { it.equals("Cache-Control", ignoreCase = true) }) {
+        headers["Cache-Control"] = "no-store"
+      }
+    }
   }
-
-  private external fun assetLoaderDomain(): String
-
-  private external fun withAssetLoader(): Boolean
-
-  private external fun handleRequest(
-    webviewId: String,
-    request: WebResourceRequest,
-    isDocumentStartScriptEnabled: Boolean,
-  ): WebResourceResponse?
-
-  private external fun shouldOverride(url: String): Boolean
-
-  private external fun onPageLoading(url: String)
-
-  private external fun onPageLoaded(url: String)
 }

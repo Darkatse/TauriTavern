@@ -4,10 +4,13 @@ use serde_json::{Map, Value, json};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamSender,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
+    ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
+use super::claude;
+use super::gemini;
 use super::normalizers;
 use super::response_body::read_upstream_json_body;
 use super::vertexai_auth;
@@ -47,32 +50,26 @@ async fn generate_gemini(
     let url = HttpChatCompletionRepository::build_url(
         &config.base_url,
         &format!("/publishers/google/models/{model}:{method}"),
-    );
+    )?;
 
-    let client = repository.client()?;
+    let client = repository.client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
         .json(&Value::Object(body));
 
-    let request = apply_vertexai_auth(request, config).await?;
+    let request = apply_vertexai_auth(repository, request, config).await?;
 
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        PROVIDER_NAME,
+        "Generation request failed",
+    )
+    .await?;
 
     let body = read_upstream_json_body(PROVIDER_NAME, "generate", response).await?;
 
@@ -92,31 +89,25 @@ async fn generate_claude(
     })?;
     let body = payload_object(payload)?;
     let endpoint_path = anthropic_endpoint_path(endpoint_path, false)?;
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, &endpoint_path);
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, &endpoint_path)?;
 
-    let client = repository.client()?;
+    let client = repository.client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
         .json(&Value::Object(body));
 
-    let request = apply_vertexai_auth(request, config).await?;
+    let request = apply_vertexai_auth(repository, request, config).await?;
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            CLAUDE_PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        CLAUDE_PROVIDER_NAME,
+        "Generation request failed",
+    )
+    .await?;
 
     let body = read_upstream_json_body(CLAUDE_PROVIDER_NAME, "generate", response).await?;
 
@@ -155,42 +146,41 @@ async fn generate_gemini_stream(
     sender: ChatCompletionStreamSender,
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
+    let response = send_gemini_stream_request(repository, config, endpoint_path, payload).await?;
+
+    HttpChatCompletionRepository::stream_sse_response(PROVIDER_NAME, response, sender, cancel).await
+}
+
+async fn send_gemini_stream_request(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+) -> Result<reqwest::Response, DomainError> {
     let (model, body) = extract_model_and_body(payload)?;
 
     let method = resolve_generation_method(endpoint_path, true);
     let url = HttpChatCompletionRepository::build_url(
         &config.base_url,
         &format!("/publishers/google/models/{model}:{method}"),
-    );
+    )?;
 
-    let client = repository.stream_client()?;
+    let client = repository.stream_client(config)?;
     let request = client
         .post(url)
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "text/event-stream")
         .json(&Value::Object(body));
 
-    let request = apply_vertexai_auth(request, config)
+    let request = apply_vertexai_auth(repository, request, config)
         .await?
         .query(&[("alt", "sse")]);
 
     let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
     let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
 
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
-
-    HttpChatCompletionRepository::stream_sse_response(PROVIDER_NAME, response, sender, cancel).await
+    HttpChatCompletionRepository::send_checked(request, PROVIDER_NAME, "Generation request failed")
+        .await
 }
 
 async fn generate_claude_stream(
@@ -201,72 +191,16 @@ async fn generate_claude_stream(
     sender: ChatCompletionStreamSender,
     cancel: ChatCompletionCancelReceiver,
 ) -> Result<(), DomainError> {
-    let model = extract_anthropic_model_id(endpoint_path).ok_or_else(|| {
-        DomainError::InvalidData(format!(
-            "Vertex AI Claude endpoint path is missing model id: {endpoint_path}"
-        ))
-    })?;
-    let body = payload_object(payload)?;
-    let endpoint_path = anthropic_endpoint_path(endpoint_path, true)?;
-    let url = HttpChatCompletionRepository::build_url(&config.base_url, &endpoint_path);
-
-    let client = repository.stream_client()?;
-    let request = client
-        .post(url)
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "text/event-stream")
-        .json(&Value::Object(body));
-
-    let request = apply_vertexai_auth(request, config).await?;
-    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
-
-    let response = request.send().await.map_err(|error| {
-        HttpChatCompletionRepository::map_transport_error("Generation request failed", error)
-    })?;
-
-    if !response.status().is_success() {
-        return Err(HttpChatCompletionRepository::map_error_response(
-            CLAUDE_PROVIDER_NAME,
-            response,
-            "Generation request failed",
-        )
-        .await);
-    }
+    let (model, response) =
+        send_claude_stream_request(repository, config, endpoint_path, payload).await?;
 
     if super::payload_contains_cache_control(payload) {
-        let mut logged = false;
-        HttpChatCompletionRepository::stream_sse_response_internal(
+        HttpChatCompletionRepository::stream_sse_response_with_cache_logging(
             CLAUDE_PROVIDER_NAME,
+            model,
             response,
             sender,
             cancel,
-            move |payload| {
-                if logged {
-                    return Ok(());
-                }
-
-                if !payload
-                    .windows(b"cache_read_input_tokens".len())
-                    .any(|window| window == b"cache_read_input_tokens")
-                    && !payload
-                        .windows(b"cache_creation_input_tokens".len())
-                        .any(|window| window == b"cache_creation_input_tokens")
-                {
-                    return Ok(());
-                }
-
-                let Ok(value) = serde_json::from_slice::<Value>(payload) else {
-                    return Ok(());
-                };
-
-                logged = super::log_prompt_cache_performance_if_present(
-                    CLAUDE_PROVIDER_NAME,
-                    Some(model),
-                    &value,
-                );
-                Ok(())
-            },
         )
         .await
     } else {
@@ -278,6 +212,74 @@ async fn generate_claude_stream(
         )
         .await
     }
+}
+
+pub(super) async fn generate_with_deltas(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+    on_delta: &mut (dyn FnMut(ChatCompletionStreamDelta) + Send),
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
+    if !is_anthropic_raw_predict_endpoint(endpoint_path) {
+        let response =
+            send_gemini_stream_request(repository, config, endpoint_path, payload).await?;
+        let body =
+            gemini::consume_generate_content_stream(PROVIDER_NAME, response, on_delta).await?;
+        return Ok(normalizers::normalize_gemini_response(body));
+    }
+
+    let (model, response) =
+        send_claude_stream_request(repository, config, endpoint_path, payload).await?;
+    let body = claude::consume_message_stream(CLAUDE_PROVIDER_NAME, response, on_delta).await?;
+
+    if super::payload_contains_cache_control(payload) {
+        let _ = super::log_prompt_cache_performance_if_present(
+            CLAUDE_PROVIDER_NAME,
+            Some(model.as_str()),
+            &body,
+        );
+    }
+
+    Ok(normalizers::normalize_claude_response(body))
+}
+
+async fn send_claude_stream_request(
+    repository: &HttpChatCompletionRepository,
+    config: &ChatCompletionApiConfig,
+    endpoint_path: &str,
+    payload: &Value,
+) -> Result<(String, reqwest::Response), DomainError> {
+    let model = extract_anthropic_model_id(endpoint_path)
+        .map(str::to_string)
+        .ok_or_else(|| {
+            DomainError::InvalidData(format!(
+                "Vertex AI Claude endpoint path is missing model id: {endpoint_path}"
+            ))
+        })?;
+    let body = payload_object(payload)?;
+    let endpoint_path = anthropic_endpoint_path(endpoint_path, true)?;
+    let url = HttpChatCompletionRepository::build_url(&config.base_url, &endpoint_path)?;
+
+    let client = repository.stream_client(config)?;
+    let request = client
+        .post(url)
+        .header(CONTENT_TYPE, "application/json")
+        .header(ACCEPT, "text/event-stream")
+        .json(&Value::Object(body));
+
+    let request = apply_vertexai_auth(repository, request, config).await?;
+    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
+
+    let response = HttpChatCompletionRepository::send_checked(
+        request,
+        CLAUDE_PROVIDER_NAME,
+        "Generation request failed",
+    )
+    .await?;
+
+    Ok((model, response))
 }
 
 fn extract_model_and_body(payload: &Value) -> Result<(String, Map<String, Value>), DomainError> {
@@ -357,6 +359,7 @@ fn resolve_generation_method(endpoint_path: &str, stream: bool) -> &'static str 
 }
 
 async fn apply_vertexai_auth(
+    repository: &HttpChatCompletionRepository,
     request: reqwest::RequestBuilder,
     config: &ChatCompletionApiConfig,
 ) -> Result<reqwest::RequestBuilder, DomainError> {
@@ -369,8 +372,11 @@ async fn apply_vertexai_auth(
     }
 
     if let Some(service_account_json) = config.vertexai_service_account_json.as_deref() {
-        let access_token =
-            vertexai_auth::get_service_account_access_token(service_account_json).await?;
+        let access_token = vertexai_auth::get_service_account_access_token(
+            &repository.http_clients,
+            service_account_json,
+        )
+        .await?;
         let auth_header = format!("Bearer {access_token}");
         return Ok(HttpChatCompletionRepository::apply_header_if_present(
             request,

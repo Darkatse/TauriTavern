@@ -1,0 +1,46 @@
+name: Nix package check
+
+on:
+  schedule:
+    # Validate dev two hours before the daily Canary scheduler. GitHub cron uses UTC.
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-package-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: evaluate-and-fetch-dependencies
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout dev
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Evaluate all supported systems
+        run: >-
+          nix
+          --accept-flake-config
+          flake check
+          --all-systems
+          --no-build
+
+      - name: Verify fixed dependency closures
+        run: >-
+          nix
+          --accept-flake-config
+          build
+          .#packages.x86_64-linux.canary.cargoDeps
+          .#packages.x86_64-linux.canary.pnpmDeps
+          --no-link
+          --print-build-logs

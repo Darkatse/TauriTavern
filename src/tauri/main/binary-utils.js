@@ -37,6 +37,10 @@ export function encodeBytesToBase64(value) {
         return '';
     }
 
+    if (typeof bytes.toBase64 === 'function') {
+        return bytes.toBase64();
+    }
+
     const chunkSize = 0x8000;
     /** @type {string[]} */
     const parts = [];

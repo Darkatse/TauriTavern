@@ -92,6 +92,7 @@ export function createTauriMainContext({ invoke }) {
         normalizeCharacter: characterService.normalizeCharacter,
         normalizeExtensions: characterService.normalizeExtensions,
         getAllCharacters: characterService.getAllCharacters,
+        invalidateCharacterCache: characterService.invalidateCharacterCache,
         resolveCharacterId: characterService.resolveCharacterId,
         resolveExistingCharacterId: characterService.resolveExistingCharacterId,
         getSingleCharacter: characterService.getSingleCharacter,
@@ -113,6 +114,7 @@ export function createTauriMainContext({ invoke }) {
         materializeAndroidSkillImportArchive: androidArchiveService.materializeAndroidSkillImportArchive,
         pickAndroidImportArchive: androidArchiveService.pickAndroidImportArchive,
         removeTemporaryFile,
+        createChatBackupDownloadStream: readableFileStreamService.createChatBackupDownloadStream,
         createReadableFileStream: readableFileStreamService.createReadableFileStream,
         saveAndroidExportArchive: androidArchiveService.saveAndroidExportArchive,
     };

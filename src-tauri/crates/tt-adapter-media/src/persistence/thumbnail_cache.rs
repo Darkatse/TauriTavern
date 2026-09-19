@@ -8,7 +8,7 @@ use std::time::SystemTime;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 
-use tt_adapter_storage_core::file_system::{replace_file_with_fallback_sync, unique_temp_path};
+use tt_adapter_storage_core::file_system::{replace_file_blocking, unique_temp_path};
 use tt_domain::errors::DomainError;
 
 const ANIMATED_EXTENSIONS: &[&str] = &[".apng", ".mp4", ".webm", ".avi", ".mkv", ".flv", ".gif"];
@@ -455,7 +455,7 @@ fn generate_thumbnail_sync(
         return Ok(());
     }
 
-    replace_file_with_fallback_sync(&thumbnail_temp_path, thumbnail_path)?;
+    replace_file_blocking(&thumbnail_temp_path, thumbnail_path)?;
     Ok(())
 }
 

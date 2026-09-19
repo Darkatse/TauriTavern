@@ -14,6 +14,7 @@ use tt_domain::models::tool::{ToolChoice, ToolId, ToolInvocation};
 
 pub(crate) fn encode_chat_completion_request(
     request: &AgentModelRequest,
+    stream: bool,
 ) -> Result<ChatCompletionGenerateRequestDto, ApplicationError> {
     let (_source, adapter) = resolve_request_adapter(request)?;
     let mut payload = request.payload.clone();
@@ -54,7 +55,8 @@ pub(crate) fn encode_chat_completion_request(
     }
 
     adapter.finalize_payload(&mut payload);
-    payload.insert("stream".to_string(), Value::Bool(false));
+    payload.insert("stream".to_string(), Value::Bool(stream));
+    payload.insert("n".to_string(), json!(1));
     Ok(ChatCompletionGenerateRequestDto { payload })
 }
 
@@ -120,6 +122,19 @@ fn encode_openai_compatible_message(
             if !tool_calls.is_empty() {
                 object.insert("tool_calls".to_string(), Value::Array(tool_calls));
             }
+
+            if adapter == AgentProviderAdapter::OpenAiCompatible
+                && let Some(raw_message) = message
+                    .provider_metadata
+                    .get("message")
+                    .and_then(Value::as_object)
+            {
+                for key in ["reasoning", "reasoning_details"] {
+                    if let Some(value) = raw_message.get(key).filter(|value| !value.is_null()) {
+                        object.insert(key.to_string(), value.clone());
+                    }
+                }
+            }
         }
         AgentModelRole::Tool => {
             let result = message
@@ -151,7 +166,7 @@ fn encode_openai_compatible_message(
             );
             object.insert(
                 "content".to_string(),
-                Value::String(tool_result_message_content(result)?),
+                Value::String(tool_result_message_content(result)),
             );
         }
         _ => {
@@ -257,8 +272,7 @@ fn copy_reasoning_content(object: &mut Map<String, Value>, parts: &[AgentModelCo
             _ => None,
         })
         .map(String::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.trim().is_empty())
         .collect::<Vec<_>>();
 
     if !reasoning.is_empty() {
@@ -276,10 +290,6 @@ fn encode_openai_tool_call(
     let model_alias = model_tool_for_id(&call.tool_id, tools)
         .map(|tool| tool.model_alias.as_str())
         .ok_or_else(|| tool_history_not_advertised(&call.tool_id))?;
-    let arguments = serde_json::to_string(&call.arguments).map_err(|error| {
-        ApplicationError::ValidationError(format!("agent.tool_call_serialize_failed: {error}"))
-    })?;
-
     let mut object = Map::new();
     object.insert("id".to_string(), Value::String(call.call_id.clone()));
     object.insert("type".to_string(), Value::String("function".to_string()));
@@ -287,7 +297,7 @@ fn encode_openai_tool_call(
         "function".to_string(),
         json!({
             "name": model_alias,
-            "arguments": arguments,
+            "arguments": call.arguments.encode_for_replay(),
         }),
     );
 
@@ -298,6 +308,10 @@ fn encode_openai_tool_call(
         .map(str::to_string)
     {
         object.insert("signature".to_string(), Value::String(signature));
+    }
+
+    if let Some(extra_content) = call.provider_metadata.pointer("/raw/extra_content") {
+        object.insert("extra_content".to_string(), extra_content.clone());
     }
 
     Ok(Value::Object(object))
@@ -316,15 +330,10 @@ fn tool_history_not_advertised(tool_id: &ToolId) -> ApplicationError {
     ))
 }
 
-fn tool_result_message_content(result: &AgentToolResult) -> Result<String, ApplicationError> {
-    serde_json::to_string(&json!({
-        "ok": !result.is_error,
-        "content": result.content.as_str(),
-        "structured": &result.structured,
-        "errorCode": result.error_code.as_deref(),
-        "resourceRefs": &result.resource_refs,
-    }))
-    .map_err(|error| {
-        ApplicationError::ValidationError(format!("agent.tool_result_serialize_failed: {error}"))
-    })
+fn tool_result_message_content(result: &AgentToolResult) -> String {
+    if result.is_error {
+        format!("## Tool error\n\n{}", result.content.trim())
+    } else {
+        result.content.clone()
+    }
 }

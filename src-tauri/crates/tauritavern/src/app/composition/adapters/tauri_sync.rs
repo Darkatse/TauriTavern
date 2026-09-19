@@ -15,7 +15,7 @@ use tt_contracts::sync_automation::{
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::lan_sync::LanSyncPairRequestEvent;
-use tt_ports::lan_sync::{LanPairingApprovalRequest, LanServerErrorReporter, PairingApproval};
+use tt_ports::lan_sync::{LanPairingApprovalRequest, LanServerEvents, PairingApproval};
 use tt_ports::sync::SyncJobEventPublisher;
 use tt_ports::sync_automation::{
     SyncAutomationEndpointCatalog, SyncAutomationEventPublisher, SyncAutomationLanServerControl,
@@ -43,8 +43,12 @@ pub(in crate::app::composition) fn pairing_approval(
     Arc::new(TauriPairingApproval::new(app_handle.clone()))
 }
 
-pub(in crate::app::composition) fn lan_server_errors() -> Arc<dyn LanServerErrorReporter> {
-    Arc::new(TauriLanServerErrorReporter)
+pub(in crate::app::composition) fn lan_server_events(
+    app_handle: &AppHandle,
+) -> Arc<dyn LanServerEvents> {
+    Arc::new(TauriLanServerEvents {
+        app_handle: app_handle.clone(),
+    })
 }
 
 pub(in crate::app::composition) fn sync_automation_lan_server(
@@ -99,14 +103,47 @@ impl SyncJobEventPublisher for TauriSyncJobEventPublisher {
     }
 }
 
-struct TauriLanServerErrorReporter;
+struct TauriLanServerEvents {
+    app_handle: AppHandle,
+}
 
-impl LanServerErrorReporter for TauriLanServerErrorReporter {
+impl LanServerEvents for TauriLanServerEvents {
     fn report_lan_server_error(&self, message: String) {
         tracing::error!(
             target: crate::observability_targets::USER_VISIBLE_ERROR,
             "{message}"
         );
+    }
+
+    fn pairing_completed(&self) {
+        if let Err(error) = self.app_handle.emit("lan_sync:pairing_completed", ()) {
+            tracing::warn!("Failed to publish completed LAN pairing: {error}");
+        }
+    }
+}
+
+pub(in crate::app::composition) fn lan_discovery_host(
+    app_handle: &AppHandle,
+) -> Arc<dyn tt_ports::lan_discovery::LanDiscoveryHost> {
+    Arc::new(TauriLanDiscoveryHost {
+        app_handle: app_handle.clone(),
+    })
+}
+
+struct TauriLanDiscoveryHost {
+    app_handle: AppHandle,
+}
+
+#[async_trait]
+impl tt_ports::lan_discovery::LanDiscoveryHost for TauriLanDiscoveryHost {
+    async fn set_enabled(&self, enabled: bool) -> Result<(), DomainError> {
+        crate::platform::lan_discovery::set_lan_discovery_enabled(&self.app_handle, enabled).await
+    }
+
+    fn publish_changed(&self, devices: Vec<tt_contracts::lan_discovery::LanDiscoveredDevice>) {
+        if let Err(error) = self.app_handle.emit("lan_sync:devices_changed", devices) {
+            tracing::warn!("Failed to publish nearby LAN devices: {error}");
+        }
     }
 }
 
@@ -234,18 +271,12 @@ impl SyncAutomationEndpointCatalog for ServiceSyncAutomationEndpointCatalog {
                 }
 
                 let devices = self.lan_sync_service.list_paired_devices().await?;
-                let device = devices
+                devices
                     .iter()
                     .find(|device| device.device_id == *device_id)
                     .ok_or_else(|| {
                         DomainError::NotFound(format!("LAN Sync device not found: {device_id}"))
                     })?;
-                if device.last_known_address.is_none() {
-                    return Err(DomainError::InvalidData(
-                        "LAN auto upload requires a paired LAN Sync device with an address"
-                            .to_string(),
-                    ));
-                }
             }
             SyncAutomationTarget::Tt { server_device_id } => {
                 let servers = self.tt_sync_service.list_servers().await?;

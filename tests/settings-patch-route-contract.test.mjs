@@ -12,6 +12,37 @@ function createSettingsRouter(context) {
     return router;
 }
 
+test('/api/settings/save returns the native revision used for the next patch baseline', async () => {
+    const calls = [];
+    const settings = { username: 'Alice' };
+    const result = {
+        result: 'ok',
+        mode: 'full',
+        hash_algorithm: 'tt-user-settings-stable-sha256-v1',
+        settings_hash: 'a'.repeat(64),
+    };
+    const router = createSettingsRouter({
+        safeInvoke: async (command, args) => {
+            calls.push({ command, args });
+            return result;
+        },
+    });
+
+    const response = await router.handle({
+        method: 'POST',
+        path: '/api/settings/save',
+        body: settings,
+    });
+
+    assert.ok(response);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), result);
+    assert.deepEqual(calls, [{
+        command: 'save_user_settings',
+        args: { settings },
+    }]);
+});
+
 test('/api/settings/patch forwards the patch DTO to the native command', async () => {
     const calls = [];
     const patch = {

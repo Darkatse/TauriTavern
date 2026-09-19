@@ -28,6 +28,7 @@ import { normalizeWorldInfoActivationBatch } from './tauritavern/agent/world-inf
 import { registerLifecycleFlushHandler } from '../tauri/main/services/lifecycle/lifecycle-flush-service.js';
 import { canPrefetchWorldInfoTokenCount, getWorldInfoTokenPrefetchBatch } from './world-info-token-prefetch.js';
 import { prepareWorldInfoEntries } from './world-info-entry-prepare.js';
+import { getMountedCodeMirrorEditor, mountCodeMirrorEditor } from './tauri/codemirror-editor.js';
 
 export const world_info_insertion_strategy = {
     evenly: 0,
@@ -981,10 +982,14 @@ const worldInfoInFlight = new Map();
  * @param {string[]} chat - The chat messages to scan, in reverse order.
  * @param {number} maxContext - The maximum context size of the generation.
  * @param {boolean} isDryRun - If true, the function will not emit any events.
- * @param {WIGlobalScanData} globalScanData Chat independent context to be scanned
+ * @param {WIGlobalScanData} [globalScanData=defaultGlobalScanData] Chat independent context to be scanned
  * @returns {Promise<WIPromptResult>} The world info string and depth.
  */
 export async function getWorldInfoPrompt(chat, maxContext, isDryRun, globalScanData) {
+    if (globalScanData === undefined) {
+        globalScanData = defaultGlobalScanData;
+    }
+
     let worldInfoString = '', worldInfoBefore = '', worldInfoAfter = '';
 
     const activatedWorldInfo = await checkWorldInfo(chat, maxContext, isDryRun, globalScanData);
@@ -2469,6 +2474,12 @@ function clearEntryList($list) {
         return;
     }
 
+    $list.find('textarea').each((_, source) => {
+        const editor = getMountedCodeMirrorEditor(source);
+        editor?.flush({ input: true });
+        editor?.destroy();
+    });
+
     // Unsubscribe from toggle events, so that mass open won't create new drawers
     $list.find('.inline-drawer').off('inline-drawer-toggle');
 
@@ -3663,30 +3674,41 @@ export async function getWorldEntry(name, data, entry) {
         await moveWorldInfoEntry(sourceWorld, selectedValue, sourceUid, { deleteOriginal });
     });
 
+    const editOutlet = headerTemplate.find('.inline-drawer-outlet');
     let drawerInitialized = false;
     let drawerDestroyTimeout = null;
-    headerTemplate.find('.inline-drawer').on('inline-drawer-toggle', function () {
+    let contentEditor = null;
+    let contentCommitTimeout = null;
+    const commitContent = () => {
+        clearTimeout(contentCommitTimeout);
+        contentEditor?.flush({ input: true });
+    };
+
+    headerTemplate.find('.inline-drawer').on('inline-drawer-toggle', function (event) {
         if (drawerDestroyTimeout) {
             clearTimeout(drawerDestroyTimeout);
             drawerDestroyTimeout = null;
         }
-        if (drawerInitialized) {
+        const open = event.originalEvent?.detail?.open ?? editOutlet.is(':visible');
+        if (!open) {
+            commitContent();
             drawerDestroyTimeout = setTimeout(() => {
                 // Drawer was reopened, so we don't destroy it
                 if (editOutlet.is(':visible')) {
                     return;
                 }
+                commitContent();
+                contentEditor?.destroy();
+                contentEditor = null;
                 drawerInitialized = false;
                 clearEntryList(editOutlet);
                 drawerDestroyTimeout = null;
             }, debounce_timeout.relaxed);
-        } else {
+        } else if (!drawerInitialized) {
             drawerInitialized = true;
             addEditorDrawerContent();
         }
     });
-
-    const editOutlet = headerTemplate.find('.inline-drawer-outlet');
 
     function addEditorDrawerContent() {
         const editTemplate = WI_ENTRY_EDIT_TEMPLATE.clone();
@@ -4001,6 +4023,18 @@ export async function getWorldEntry(name, data, entry) {
 
         editTemplate.find('.inline-drawer-content').css('display', 'none');
         editOutlet.append(editTemplate);
+        void mountCodeMirrorEditor(contentInput[0], {
+            onChange: () => {
+                clearTimeout(contentCommitTimeout);
+                contentCommitTimeout = setTimeout(commitContent, debounce_timeout.relaxed);
+            },
+        }).then(editor => {
+            contentEditor = editor;
+            editor?.wrapper.addEventListener('focusout', event => {
+                if (event.relatedTarget instanceof Node && editor.wrapper.contains(event.relatedTarget)) return;
+                commitContent();
+            });
+        });
     }
 
     headerTemplate.find('.inline-drawer-content').css('display', 'none');
@@ -5268,7 +5302,7 @@ async function checkWorldInfoInternal(chat, maxContext, isDryRun, globalScanData
             if (canPrefetchWorldInfoTokenCount(entry) && !prefetchedTokenCounts.has(entry)) {
                 const { entries: batchEntries, suffixes: batchSuffixes } = getWorldInfoTokenPrefetchBatch(newEntries, entryIndex);
 
-                const remainingBudget = budget - textToScanTokens;
+                const remainingBudget = Math.max(0, budget - textToScanTokens);
                 const batchCounts = await getTokenPrefixCountsAsync(batchBaseContent, batchSuffixes, undefined, remainingBudget);
                 batchEntries.forEach((batchEntry, index) => prefetchedTokenCounts.set(batchEntry, batchCounts[index]));
             }
@@ -6377,7 +6411,6 @@ export async function charUpdatePrimaryWorld(name) {
             toastr.info(t`Embedded lorebook will be removed from this character.`);
         } catch (error) {
             console.error('Failed to parse character JSON data.', error);
-            throw error;
         }
     }
 

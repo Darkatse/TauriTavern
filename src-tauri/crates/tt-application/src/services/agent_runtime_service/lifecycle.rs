@@ -5,7 +5,6 @@ use serde_json::{Value, json};
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use super::AgentRuntimeService;
 use super::prompt_snapshot::{
     reject_external_tool_request, request_from_prompt_snapshot,
     validate_prompt_snapshot_context_policy,
@@ -14,6 +13,7 @@ use super::skill_scope::{
     resolve_run_skill_scope_refs, skill_event_summary, skill_scope_order_for_profile,
 };
 use super::timeline_projection::build_run_timeline_projection;
+use super::{AgentRunLiveProjection, AgentRuntimeService};
 use crate::dto::agent_dto::{
     AgentCancelRunDto, AgentReadEventsDto, AgentReadEventsResultDto, AgentReadWorkspaceFileDto,
     AgentRunHandleDto, AgentStartRunDto, AgentWorkspaceFileDto,
@@ -32,21 +32,17 @@ use tt_ports::repositories::agent_run_repository::AgentRunEventReadQuery;
 impl AgentRuntimeService {
     pub async fn start_run(
         self: &Arc<Self>,
-        dto: AgentStartRunDto,
+        mut dto: AgentStartRunDto,
     ) -> Result<AgentRunHandleDto, ApplicationError> {
-        if dto.options.stream {
-            return Err(ApplicationError::ValidationError(
-                "agent.stream_unsupported: Agent runtime only supports non-streaming model calls"
-                    .to_string(),
-            ));
-        }
-        let Some(prompt_snapshot) = dto.prompt_snapshot.as_ref() else {
+        let _admission = self.run_lifecycle_lock.lock().await;
+        let stream_override = dto.options.stream;
+        let Some(prompt_snapshot) = dto.prompt_snapshot.take() else {
             return Err(ApplicationError::ValidationError(
                 "agent.prompt_snapshot_required: Agent tool loop requires a concrete prompt snapshot"
                     .to_string(),
             ));
         };
-        let request = request_from_prompt_snapshot(prompt_snapshot)?;
+        let request = request_from_prompt_snapshot(&prompt_snapshot)?;
         reject_external_tool_request(&request.payload)?;
 
         let generation_type = dto.generation_type.trim().to_string();
@@ -70,10 +66,10 @@ impl AgentRuntimeService {
             )));
         }
         ensure_profile_model_configured(&resolved_profile)?;
-        validate_prompt_snapshot_context_policy(prompt_snapshot, &resolved_profile)?;
+        validate_prompt_snapshot_context_policy(&prompt_snapshot, &resolved_profile)?;
         let prompt_snapshot = attach_frozen_run_input_snapshot(
-            prompt_snapshot.clone(),
-            dto.frozen_run_input_snapshot.clone(),
+            prompt_snapshot,
+            dto.frozen_run_input_snapshot.take(),
         )?;
         let presentation = dto
             .options
@@ -84,12 +80,12 @@ impl AgentRuntimeService {
                 .tools
                 .allow
                 .iter()
-                .any(|name| name == "workspace.commit")
+                .any(|id| id.is_builtin() && id.native_name() == "workspace.commit")
                 || resolved_profile
                     .tools
                     .deny
                     .iter()
-                    .any(|name| name == "workspace.commit"))
+                    .any(|id| id.is_builtin() && id.native_name() == "workspace.commit"))
         {
             return Err(ApplicationError::ValidationError(
                 "agent.foreground_commit_unavailable: foreground runs require workspace.commit"
@@ -108,7 +104,11 @@ impl AgentRuntimeService {
         let run_id = format!("run_{}", Uuid::new_v4().simple());
         let workspace_id = workspace_id_for_stable_chat_id(&dto.chat_ref, &stable_chat_id)?;
         let input_context = self
-            .resolve_agent_run_input_context(&dto.chat_ref, &generation_type)
+            .resolve_agent_run_input_context(
+                &dto.chat_ref,
+                &generation_type,
+                dto.options.start_with_empty_persist,
+            )
             .await?;
         if let Some(requested_state_id) = dto.persist_base_state_id.as_deref() {
             let requested_state_id = requested_state_id.trim();
@@ -124,6 +124,11 @@ impl AgentRuntimeService {
                         .to_string(),
                 ));
             }
+        }
+        if let Some(state_id) = input_context.persist_base_state_id.as_deref() {
+            self.workspace_repository
+                .validate_persistent_state(&workspace_id, state_id)
+                .await?;
         }
         let now = Utc::now();
         let run = AgentRun {
@@ -191,6 +196,8 @@ impl AgentRuntimeService {
             self,
             run_id.clone(),
             cancel_sender,
+            stream_override,
+            dto.options.host_presentation,
         ));
         self.active_runs
             .write()
@@ -218,13 +225,46 @@ impl AgentRuntimeService {
             stable_chat_id,
             generation_type,
             status: AgentRunStatus::Created,
+            after_seq: None,
         })
+    }
+
+    pub async fn subscribe_live_projection(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<watch::Receiver<AgentRunLiveProjection>>, ApplicationError> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "agent.run_id_required: runId is required".to_string(),
+            ));
+        }
+
+        if let Some(receiver) = self
+            .active_runs
+            .read()
+            .await
+            .get(run_id)
+            .map(|handle| handle.live_projection.subscribe())
+        {
+            return Ok(Some(receiver));
+        }
+
+        let run = self.run_repository.load_run(run_id).await?;
+        if run.status.is_terminal() {
+            return Ok(None);
+        }
+
+        Err(ApplicationError::InternalError(format!(
+            "agent.active_run_missing: nonterminal run `{run_id}` has no active run handle"
+        )))
     }
 
     pub async fn cancel_run(
         &self,
         dto: AgentCancelRunDto,
     ) -> Result<AgentRunHandleDto, ApplicationError> {
+        let _admission = self.run_lifecycle_lock.lock().await;
         let run = self.run_repository.load_run(&dto.run_id).await?;
         match run.status {
             AgentRunStatus::Completed
@@ -237,9 +277,17 @@ impl AgentRuntimeService {
                     stable_chat_id: run.stable_chat_id,
                     generation_type: run.generation_type,
                     status: run.status,
+                    after_seq: None,
                 });
             }
             _ => {}
+        }
+
+        let active_handle = self.active_runs.read().await.get(&dto.run_id).cloned();
+        if let Some(handle) = &active_handle
+            && let Some(checkpoint) = handle.pending_checkpoint.lock().await.as_ref()
+        {
+            return Ok(checkpoint.handle());
         }
 
         self.event(
@@ -250,19 +298,13 @@ impl AgentRuntimeService {
         )
         .await?;
 
-        let active_handle = self.active_runs.read().await.get(&dto.run_id).cloned();
-
         let next = if let Some(handle) = active_handle {
-            self.close_guidance_mailbox_for_run(
-                &dto.run_id,
-                "run_cancel_requested",
-                AgentRunEventLevel::Info,
-            )
-            .await?;
+            let next = self
+                .transition_status(&dto.run_id, AgentRunStatus::Cancelling)
+                .await?;
             let _ = handle.cancel_sender.send(true);
             handle.scheduler.cancel_all_unfinished().await?;
-            self.transition_status(&dto.run_id, AgentRunStatus::Cancelling)
-                .await?
+            next
         } else {
             let cancelled = self
                 .transition_status(&dto.run_id, AgentRunStatus::Cancelled)
@@ -283,6 +325,7 @@ impl AgentRuntimeService {
             stable_chat_id: next.stable_chat_id,
             generation_type: next.generation_type,
             status: next.status,
+            after_seq: None,
         })
     }
 

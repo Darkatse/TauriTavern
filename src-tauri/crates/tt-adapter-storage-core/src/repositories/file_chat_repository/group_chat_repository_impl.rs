@@ -9,6 +9,7 @@ use tokio::fs;
 use crate::file_system::move_file_no_replace_with_fallback;
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::strip_jsonl_extension;
+use tt_ports::repositories::chat_payload_commit_repository::ChatPayloadTarget;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
@@ -27,12 +28,11 @@ impl GroupChatRepository for FileChatRepository {
         include_metadata: bool,
     ) -> Result<Vec<ChatSearchResult>, DomainError> {
         let descriptors = self.list_group_chat_files(chat_ids).await?;
-        let mut results = Vec::with_capacity(descriptors.len());
-        for descriptor in descriptors {
-            results.push(self.get_chat_summary(&descriptor, include_metadata).await?);
-        }
+        let mut results = self
+            .collect_chat_summaries(descriptors, include_metadata)
+            .await;
         results.sort_by_key(|result| Reverse(result.date));
-        self.flush_summary_index_if_needed().await?;
+        self.flush_summary_index_best_effort().await;
         Ok(results)
     }
 
@@ -57,12 +57,11 @@ impl GroupChatRepository for FileChatRepository {
             })
             .await?;
 
-        let mut results = Vec::with_capacity(selected.len());
-        for descriptor in selected {
-            results.push(self.get_chat_summary(&descriptor, include_metadata).await?);
-        }
+        let mut results = self
+            .collect_chat_summaries(selected, include_metadata)
+            .await;
         results.sort_by_key(|result| Reverse(result.date));
-        self.flush_summary_index_if_needed().await?;
+        self.flush_summary_index_best_effort().await;
         Ok(results)
     }
 
@@ -85,40 +84,16 @@ impl GroupChatRepository for FileChatRepository {
         }
 
         let descriptors = self.list_group_chat_files(chat_ids).await?;
-        let mut results = Vec::new();
-
-        for descriptor in descriptors {
-            let entry = self.get_chat_summary_entry(&descriptor, true).await?;
-            let mut summary = entry.summary.clone();
-            summary.chat_metadata = None;
-
-            let file_stem = strip_jsonl_extension(&descriptor.file_name);
-            if Self::file_stem_matches_all(file_stem, &fragments) {
-                results.push(summary);
-                continue;
-            }
-
-            if !entry
-                .fingerprint
-                .as_ref()
-                .expect("fingerprint is required for search")
-                .might_match_fragments(&fragments)
-            {
-                continue;
-            }
-
-            if self
-                .file_matches_query(&descriptor.path, file_stem, &fragments)
-                .await?
-            {
-                results.push(summary);
-            }
-        }
+        let (mut results, complete) = self
+            .collect_matching_chat_summaries(descriptors, &fragments)
+            .await;
 
         results.sort_by_key(|result| Reverse(result.date));
-        self.cache_search_results(search_cache_key, results.clone())
-            .await;
-        self.flush_summary_index_if_needed().await?;
+        if complete {
+            self.cache_search_results(search_cache_key, results.clone())
+                .await;
+        }
+        self.flush_summary_index_best_effort().await;
         Ok(results)
     }
 
@@ -187,7 +162,7 @@ impl GroupChatRepository for FileChatRepository {
             DomainError::InternalError(format!("Failed to delete group chat file: {}", e))
         })?;
         self.remove_summary_cache_for_path(&path).await;
-        self.flush_summary_index_if_needed().await?;
+        self.flush_summary_index_best_effort().await;
         Ok(())
     }
 
@@ -220,7 +195,7 @@ impl GroupChatRepository for FileChatRepository {
         move_file_no_replace_with_fallback(&old_path, &new_path).await?;
         self.remove_summary_cache_for_path(&old_path).await;
         self.remove_summary_cache_for_path(&new_path).await;
-        self.flush_summary_index_if_needed().await?;
+        self.flush_summary_index_best_effort().await;
 
         Ok(committed_file_name)
     }
@@ -266,8 +241,10 @@ impl GroupChatRepository for FileChatRepository {
         namespace: &str,
         value: Value,
     ) -> Result<(), DomainError> {
-        let path = self.get_group_chat_path(chat_id)?;
-        self.set_chat_metadata_extension_in_path(&path, namespace, value)
+        let target = ChatPayloadTarget::Group {
+            chat_id: chat_id.to_owned(),
+        };
+        self.set_chat_metadata_extension(target, namespace, value)
             .await
     }
 

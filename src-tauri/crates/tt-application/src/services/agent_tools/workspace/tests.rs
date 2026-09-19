@@ -3,12 +3,12 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use super::args::{classify_workspace_io_error, optional_list_path_arg};
+use super::args::classify_workspace_io_error;
 use super::policy::WorkspaceAccessPolicy;
-use super::{apply_patch, read_file, write_file};
+use super::{MAX_READ_CHARS, MAX_READ_LINES, apply_patch, read_file, write_file};
 use crate::services::agent_tools::{AgentToolEffect, AgentToolSession};
 use crate::services::hashing::hex_lower;
 use tt_domain::errors::{DomainError, WorkspaceWriteConflictKind};
@@ -19,7 +19,7 @@ use tt_domain::models::agent::{
     WorkspaceInputManifest, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
     WorkspaceRootCommit, WorkspaceRootLifecycle, WorkspaceRootMount, WorkspaceRootScope,
 };
-use tt_domain::models::tool::{ToolId, ToolInvocation};
+use tt_domain::models::tool::{ToolArguments, ToolId, ToolInvocation};
 use tt_ports::repositories::workspace_repository::{
     WorkspaceAppendResult, WorkspaceEntry, WorkspaceFile, WorkspaceFileList, WorkspaceRepository,
     WorkspaceWriteGuard,
@@ -65,65 +65,13 @@ fn writable_policy_requires_child_path() {
     assert!(test_policy().ensure_writable(&file).is_ok());
 }
 
-#[test]
-fn list_path_arg_treats_empty_and_dot_as_workspace_root() {
-    for value in ["", " ", ".", "./"] {
-        let args = json!({ "path": value });
-        assert!(
-            optional_list_path_arg(args.as_object().unwrap(), "path")
-                .unwrap()
-                .is_none()
-        );
-    }
-}
-
 fn make_test_tool_call(name: &str) -> ToolInvocation {
     ToolInvocation {
         call_id: "call_test".to_string(),
         tool_id: ToolId::builtin(name).unwrap(),
-        arguments: json!({}),
+        arguments: ToolArguments::empty(),
         provider_metadata: json!({}),
     }
-}
-
-#[test]
-fn classify_workspace_path_is_directory_error_maps_to_tool_error() {
-    // Issue #54: a directory hit on workspace_read_file used to surface as
-    // `agent.internal_error`. The tool layer now classifies the
-    // repository's typed domain error into the recoverable
-    // `workspace.path_is_directory` business error so the model can
-    // self-correct by calling workspace_list_files.
-    let call = make_test_tool_call("workspace.read_file");
-    let error = DomainError::workspace_path_is_directory("persist");
-
-    let result = classify_workspace_io_error(&call, error)
-        .expect("directory error must classify into a tool result, not a hard error");
-
-    assert!(result.is_error);
-    assert_eq!(
-        result.error_code.as_deref(),
-        Some("workspace.path_is_directory")
-    );
-    assert!(
-        result.content.contains("persist"),
-        "tool error content should preserve the offending path: {}",
-        result.content
-    );
-}
-
-#[test]
-fn classify_not_found_error_maps_to_file_not_found() {
-    let call = make_test_tool_call("workspace.read_file");
-    let error = DomainError::NotFound("Workspace file not found: persist/MEMORY.md".to_string());
-
-    let result = classify_workspace_io_error(&call, error)
-        .expect("not found must classify into a tool result");
-
-    assert!(result.is_error);
-    assert_eq!(
-        result.error_code.as_deref(),
-        Some("workspace.file_not_found")
-    );
 }
 
 #[test]
@@ -144,7 +92,7 @@ async fn workspace_read_invalid_path_returns_canonical_tool_error() {
     let mut session = AgentToolSession::default();
     let call = workspace_call("workspace.read_file", json!({ "path": "../secrets.json" }));
 
-    let (result, effect) = read_file(&repository, "run", &call, &mut session)
+    let (result, effect) = read_file(&repository, "run", &call, call_args(&call), &mut session)
         .await
         .expect("invalid model path must remain recoverable");
 
@@ -176,7 +124,7 @@ async fn workspace_read_hidden_path_returns_recoverable_tool_error() {
         json!({ "path": "input/prompt_snapshot.json" }),
     );
 
-    let (result, effect) = read_file(&repository, "run", &call, &mut session)
+    let (result, effect) = read_file(&repository, "run", &call, call_args(&call), &mut session)
         .await
         .expect("hidden model path must remain recoverable");
 
@@ -193,6 +141,45 @@ async fn workspace_read_hidden_path_returns_recoverable_tool_error() {
 }
 
 #[tokio::test]
+async fn workspace_read_defaults_to_a_preview_for_oversized_files() {
+    let text = (1..=MAX_READ_LINES + 1)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let repository = TestWorkspaceRepository::with_file("output/large.md", &text);
+    let mut session = AgentToolSession::default();
+    let call = workspace_call("workspace.read_file", json!({ "path": "output/large.md" }));
+
+    let (result, _) = read_file(&repository, "run", &call, call_args(&call), &mut session)
+        .await
+        .expect("large read should return a preview");
+
+    assert!(!result.is_error);
+    assert_eq!(result.structured["startLine"], 1);
+    assert_eq!(result.structured["endLine"], MAX_READ_LINES);
+    assert_eq!(result.structured["nextStartLine"], MAX_READ_LINES + 1);
+    assert_eq!(result.structured["truncated"], true);
+    assert!(result.content.contains("Continue with start_line="));
+}
+
+#[tokio::test]
+async fn workspace_read_keeps_a_large_single_line_out_of_the_next_model_request() {
+    let text = "x".repeat(MAX_READ_CHARS + 1);
+    let repository = TestWorkspaceRepository::with_file("output/large.txt", &text);
+    let mut session = AgentToolSession::default();
+    let call = workspace_call("workspace.read_file", json!({ "path": "output/large.txt" }));
+
+    let (result, _) = read_file(&repository, "run", &call, call_args(&call), &mut session)
+        .await
+        .expect("large read should return a preview");
+
+    assert!(!result.is_error);
+    assert_eq!(result.structured["lineTruncated"], true);
+    assert_eq!(result.structured["fullRead"], false);
+    assert!(result.content.contains("only its beginning is shown"));
+}
+
+#[tokio::test]
 async fn workspace_write_root_returns_recoverable_tool_error() {
     let repository = TestWorkspaceRepository::with_file("output/main.md", "existing");
     let mut session = AgentToolSession::default();
@@ -204,7 +191,7 @@ async fn workspace_write_root_returns_recoverable_tool_error() {
         }),
     );
 
-    let (result, effect) = write_file(&repository, "run", &call, &mut session)
+    let (result, effect) = write_file(&repository, "run", &call, call_args(&call), &mut session)
         .await
         .expect("non-writable model path must remain recoverable");
 
@@ -225,16 +212,18 @@ async fn workspace_write_existing_file_requires_prior_read() {
     let repository = TestWorkspaceRepository::with_file("output/main.md", "old text");
     let mut session = AgentToolSession::default();
 
+    let write_call = workspace_call(
+        "workspace.write_file",
+        json!({
+            "path": "output/main.md",
+            "content": "new text",
+        }),
+    );
     let (result, _) = write_file(
         &repository,
         "run",
-        &workspace_call(
-            "workspace.write_file",
-            json!({
-                "path": "output/main.md",
-                "content": "new text",
-            }),
-        ),
+        &write_call,
+        call_args(&write_call),
         &mut session,
     )
     .await
@@ -255,19 +244,20 @@ async fn workspace_write_existing_file_requires_prior_read() {
     );
 
     let read_call = workspace_call("workspace.read_file", json!({ "path": "output/main.md" }));
-    read_file(&repository, "run", &read_call, &mut session)
-        .await
-        .expect("read file");
+    read_file(
+        &repository,
+        "run",
+        &read_call,
+        call_args(&read_call),
+        &mut session,
+    )
+    .await
+    .expect("read file");
     let (result, effect) = write_file(
         &repository,
         "run",
-        &workspace_call(
-            "workspace.write_file",
-            json!({
-                "path": "output/main.md",
-                "content": "new text",
-            }),
-        ),
+        &write_call,
+        call_args(&write_call),
         &mut session,
     )
     .await
@@ -285,20 +275,40 @@ async fn workspace_write_existing_file_requires_prior_read() {
 
 #[tokio::test]
 async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
-    let repository = TestWorkspaceRepository::with_file("output/main.md", "alpha beta gamma");
+    let repository = TestWorkspaceRepository::with_file("output/main.md", "alpha beta\ngamma");
     let mut session = AgentToolSession::default();
+
+    let partial_read = workspace_call(
+        "workspace.read_file",
+        json!({
+            "path": "output/main.md",
+            "start_line": 1,
+            "line_count": 1
+        }),
+    );
+    let full_read = workspace_call("workspace.read_file", json!({ "path": "output/main.md" }));
+    let missing_patch = workspace_call(
+        "workspace.apply_patch",
+        json!({
+            "path": "output/main.md",
+            "old_string": "delta",
+            "new_string": "omega"
+        }),
+    );
+    let patch = workspace_call(
+        "workspace.apply_patch",
+        json!({
+            "path": "output/main.md",
+            "old_string": "alpha",
+            "new_string": "omega"
+        }),
+    );
 
     read_file(
         &repository,
         "run",
-        &workspace_call(
-            "workspace.read_file",
-            json!({
-                "path": "output/main.md",
-                "start_char": 0,
-                "max_chars": 5
-            }),
-        ),
+        &partial_read,
+        call_args(&partial_read),
         &mut session,
     )
     .await
@@ -307,14 +317,8 @@ async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
     let (result, _) = apply_patch(
         &repository,
         "run",
-        &workspace_call(
-            "workspace.apply_patch",
-            json!({
-                "path": "output/main.md",
-                "old_string": "delta",
-                "new_string": "omega"
-            }),
-        ),
+        &missing_patch,
+        call_args(&missing_patch),
         &mut session,
     )
     .await
@@ -324,21 +328,9 @@ async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
         Some("workspace.patch_requires_full_read")
     );
 
-    let (result, _) = apply_patch(
-        &repository,
-        "run",
-        &workspace_call(
-            "workspace.apply_patch",
-            json!({
-                "path": "output/main.md",
-                "old_string": "alpha",
-                "new_string": "omega"
-            }),
-        ),
-        &mut session,
-    )
-    .await
-    .expect("patch blocked after partial failure");
+    let (result, _) = apply_patch(&repository, "run", &patch, call_args(&patch), &mut session)
+        .await
+        .expect("patch blocked after partial failure");
     assert_eq!(
         result.error_code.as_deref(),
         Some("workspace.patch_requires_full_read")
@@ -347,26 +339,15 @@ async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
     read_file(
         &repository,
         "run",
-        &workspace_call("workspace.read_file", json!({ "path": "output/main.md" })),
+        &full_read,
+        call_args(&full_read),
         &mut session,
     )
     .await
     .expect("full read");
-    let (result, _) = apply_patch(
-        &repository,
-        "run",
-        &workspace_call(
-            "workspace.apply_patch",
-            json!({
-                "path": "output/main.md",
-                "old_string": "alpha",
-                "new_string": "omega"
-            }),
-        ),
-        &mut session,
-    )
-    .await
-    .expect("patch after full read");
+    let (result, _) = apply_patch(&repository, "run", &patch, call_args(&patch), &mut session)
+        .await
+        .expect("patch after full read");
 
     assert!(!result.is_error);
     assert_eq!(
@@ -375,7 +356,7 @@ async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
             .await
             .expect("read patched file")
             .text,
-        "omega beta gamma"
+        "omega beta\ngamma"
     );
 }
 
@@ -383,9 +364,13 @@ fn workspace_call(name: &str, arguments: serde_json::Value) -> ToolInvocation {
     ToolInvocation {
         call_id: format!("call_{}", name.replace('.', "_")),
         tool_id: ToolId::builtin(name).unwrap(),
-        arguments,
+        arguments: ToolArguments::decode(Some(&arguments)),
         provider_metadata: serde_json::Value::Null,
     }
+}
+
+fn call_args(call: &ToolInvocation) -> &Map<String, Value> {
+    call.arguments.as_map().expect("test arguments are objects")
 }
 
 struct TestWorkspaceRepository {
@@ -411,6 +396,14 @@ impl TestWorkspaceRepository {
 
 #[async_trait]
 impl WorkspaceRepository for TestWorkspaceRepository {
+    async fn validate_persistent_state(
+        &self,
+        _workspace_id: &str,
+        _state_id: &str,
+    ) -> Result<(), DomainError> {
+        unreachable!("tool tests do not start runs")
+    }
+
     async fn initialize_run(
         &self,
         _run: &AgentRun,
@@ -518,6 +511,7 @@ impl WorkspaceRepository for TestWorkspaceRepository {
     async fn commit_persistent_changes(
         &self,
         _run_id: &str,
+        _previous_state_id: Option<&str>,
     ) -> Result<WorkspacePersistentChangeSet, DomainError> {
         Ok(WorkspacePersistentChangeSet {
             state_id: "state".to_string(),

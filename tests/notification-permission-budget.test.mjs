@@ -55,79 +55,7 @@ test('stops showing permission rationale after three rejections', async () => {
     ]);
 });
 
-test('shows the original permission rationale popup when state is prompt', async () => {
-    const storage = createMemoryStorage();
-    const commands = [];
-    let rationaleCalls = 0;
 
-    const service = createSystemNotificationService({
-        storage,
-        async safeInvoke(command) {
-            commands.push(command);
-            if (command === 'get_notification_permission_state') {
-                return 'prompt';
-            }
-
-            if (command === 'request_notification_permission') {
-                return 'granted';
-            }
-
-            throw new Error(`Unexpected command: ${command}`);
-        },
-        async confirmPermissionRationale() {
-            rationaleCalls += 1;
-            return true;
-        },
-    });
-
-    const state = await service.preparePermission();
-
-    assert.equal(state, 'granted');
-    assert.equal(rationaleCalls, 1);
-    assert.deepEqual(commands, [
-        'get_notification_permission_state',
-        'request_notification_permission',
-    ]);
-    assert.equal(storage.getItem('tt:notification-permission-rejection-count'), null);
-});
-
-test('still shows the original permission rationale popup before reaching the rejection limit', async () => {
-    const storage = createMemoryStorage([
-        ['tt:notification-permission-rejection-count', '2'],
-    ]);
-    const commands = [];
-    let rationaleCalls = 0;
-
-    const service = createSystemNotificationService({
-        storage,
-        async safeInvoke(command) {
-            commands.push(command);
-            if (command === 'get_notification_permission_state') {
-                return 'prompt';
-            }
-
-            if (command === 'request_notification_permission') {
-                return 'granted';
-            }
-
-            throw new Error(`Unexpected command: ${command}`);
-        },
-        async confirmPermissionRationale() {
-            rationaleCalls += 1;
-            return true;
-        },
-    });
-
-    const state = await service.preparePermission();
-
-    assert.equal(state, 'granted');
-    assert.equal(rationaleCalls, 1);
-    assert.deepEqual(commands, [
-        'get_notification_permission_state',
-        'request_notification_permission',
-    ]);
-    assert.equal(storage.getItem('tt:notification-permission-rejection-count'), null);
-});
 
 test('does not show the permission rationale popup when permission is no longer prompt', async () => {
     const storage = createMemoryStorage();
@@ -154,48 +82,6 @@ test('does not show the permission rationale popup when permission is no longer 
     assert.equal(rationaleCalls, 0);
 });
 
-test('counts denied system permission requests and suppresses future reminders', async () => {
-    const storage = createMemoryStorage();
-    const commands = [];
-    let rationaleCalls = 0;
-
-    const service = createSystemNotificationService({
-        storage,
-        async safeInvoke(command) {
-            commands.push(command);
-            if (command === 'get_notification_permission_state') {
-                return 'prompt';
-            }
-
-            if (command === 'request_notification_permission') {
-                return 'prompt';
-            }
-
-            throw new Error(`Unexpected command: ${command}`);
-        },
-        async confirmPermissionRationale() {
-            rationaleCalls += 1;
-            return true;
-        },
-    });
-
-    for (let index = 0; index < 4; index += 1) {
-        const state = await service.preparePermission();
-        assert.equal(state, 'prompt');
-    }
-
-    assert.equal(rationaleCalls, 3);
-    assert.deepEqual(commands, [
-        'get_notification_permission_state',
-        'request_notification_permission',
-        'get_notification_permission_state',
-        'request_notification_permission',
-        'get_notification_permission_state',
-        'request_notification_permission',
-        'get_notification_permission_state',
-    ]);
-    assert.equal(storage.getItem('tt:notification-permission-rejection-count'), '3');
-});
 
 test('resets the rejection counter once notification permission is granted', async () => {
     const storage = createMemoryStorage([

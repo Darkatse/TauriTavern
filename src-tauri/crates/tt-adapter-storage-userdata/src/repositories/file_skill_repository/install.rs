@@ -2,6 +2,7 @@ use super::FileSkillRepository;
 use super::fs_ops::{
     cleanup_dir, copy_skill_dir_to_empty_target, prepare_skill_dir_replacement,
     rollback_prepared_skill_dir, rollback_prepared_skill_dir_replacement,
+    warn_committed_cleanup_errors,
 };
 use super::index::{SkillIndexFile, sort_index};
 use super::materialize::PreparedImport;
@@ -23,7 +24,7 @@ impl FileSkillRepository {
         validated.entry.scope = target_scope;
         validated.preview.skill = validated.entry.clone();
         let index = self
-            .load_index_import_view(&validated.entry.scope, &validated.entry.name)
+            .load_index_target_view(&validated.entry.scope, &validated.entry.name)
             .await?;
         validated.preview.conflict = import_conflict(&validated.entry, &index);
         Ok(validated)
@@ -36,7 +37,7 @@ impl FileSkillRepository {
         strategy: Option<SkillInstallConflictStrategy>,
     ) -> Result<SkillInstallResult, DomainError> {
         let mut index = match self
-            .repair_index_for_import_target(&validated.entry.scope, &validated.entry.name)
+            .repair_index_for_target(&validated.entry.scope, &validated.entry.name)
             .await
         {
             Ok(index) => index,
@@ -141,8 +142,7 @@ impl FileSkillRepository {
                 return Err(error);
             }
             if let Err(error) = replacement.discard_backup() {
-                cleanup_dir(&prepared.cleanup_root);
-                return Err(committed_cleanup_error("install_skill_import", error));
+                warn_committed_cleanup_errors("install_skill_import", vec![error.to_string()]);
             }
         } else {
             if let Err(error) = copy_skill_dir_to_empty_target(
@@ -198,10 +198,4 @@ fn import_conflict(
             installed_hash: Some(installed.installed_hash.clone()),
         },
     }
-}
-
-fn committed_cleanup_error(operation: &str, error: DomainError) -> DomainError {
-    DomainError::InternalError(format!(
-        "{operation} committed but failed to clean up Skill directories: {error}"
-    ))
 }

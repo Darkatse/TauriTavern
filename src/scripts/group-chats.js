@@ -25,12 +25,14 @@ import { debounce_timeout } from './constants.js';
 
 import {
     chat,
+    replaceChatContents,
     sendSystemMessage,
     printMessages,
     substituteParams,
     characters,
     default_avatar,
     addOneMessage,
+    finalizeMessageContent,
     clearChat,
     Generate,
     select_rm_info,
@@ -61,6 +63,8 @@ import {
     getBiasStrings,
     saveChatConditional,
     enqueueChatSave,
+    runChatSave,
+    persistedChatMetadata,
     deactivateSendButtons,
     activateSendButtons,
     eventSource,
@@ -89,8 +93,7 @@ import { isExternalMediaAllowed } from './chats.js';
 import { POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
-import { CHAT_COMMIT_REASON } from './chat-payload-transport.js';
-import { compressRequest } from './request-compression.js';
+import { CHAT_COMMIT_REASON, coldSwipesEnabled, discardColdChatPayload, loadGroupChatPayload, saveGroupChatMetadata, saveGroupChatPayload } from './chat-payload-transport.js';
 
 export {
     selected_group,
@@ -198,7 +201,7 @@ async function regenerateGroup() {
  * @param {string} chatId Chat ID
  * @returns {Promise<ChatFile>} Array of chat messages
  */
-async function loadGroupChat(chatId, { allowNotFound = false } = {}) {
+async function loadGroupChat(chatId, { allowNotFound = false, coldSwipes = false } = {}) {
     const normalizedChatId = String(chatId || '').trim();
     if (!normalizedChatId) {
         if (allowNotFound) {
@@ -207,22 +210,7 @@ async function loadGroupChat(chatId, { allowNotFound = false } = {}) {
         throw new Error('Invalid group chat payload request');
     }
 
-    const response = await fetch('/api/chats/group/get', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ id: normalizedChatId, allow_not_found: allowNotFound }),
-    });
-
-    if (!response.ok) {
-        throw new Error('Group chat could not be loaded');
-    }
-
-    const data = await response.json();
-    if (!Array.isArray(data)) {
-        throw new Error('Group chat payload response is invalid');
-    }
-
-    return data;
+    return loadGroupChatPayload({ id: normalizedChatId, allowNotFound, coldSwipes });
 }
 
 async function hasPersistedGroupChats(groupId) {
@@ -247,11 +235,9 @@ async function hasPersistedGroupChats(groupId) {
 /**
  * Validates a group by checking if all members exist and removing duplicates.
  * @param {Group} group Group to validate
- * @returns {Promise<void>}
+ * @returns {boolean} Whether the group was changed
  */
-async function validateGroup(group) {
-    if (!group) return;
-
+function validateGroup(group) {
     // Validate that all members exist as characters
     let dirty = false;
     group.members = group.members.filter(member => {
@@ -275,9 +261,7 @@ async function validateGroup(group) {
         }
     }
 
-    if (dirty) {
-        await editGroup(group.id, true, false);
-    }
+    return dirty;
 }
 
 /**
@@ -297,95 +281,104 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
     const startedChatId = group.chat_id;
     const isStillActive = () => selected_group === startedGroupId && getCurrentChatId() === startedChatId;
 
-    // Run validation before any loading
-    await validateGroup(group);
-    if (!isStillActive()) {
-        return;
-    }
+    const groupChanged = validateGroup(group);
     await unshallowGroupMembers(groupId);
     if (!isStillActive()) {
         return;
     }
 
     const chat_id = group.chat_id;
-    const data = await loadGroupChat(chat_id, { allowNotFound: allowNewChat });
-    if (!isStillActive()) {
-        return;
-    }
-    const metadata = data?.[0]?.chat_metadata ?? {};
-    const freshChat = allowNewChat && !metadata.tainted && (!Array.isArray(data) || !data.length);
-
-    // Remove chat file header if present
-    if (Array.isArray(data) && data.length && Object.hasOwn(data[0], 'chat_metadata')) {
-        data.shift();
-    }
-
-    // Add integrity slug if missing
-    if (!metadata.integrity) {
-        metadata.integrity = uuidv4();
-    }
-
-    await loadItemizedPrompts(getCurrentChatId());
-    if (!isStillActive()) {
-        return;
-    }
-
-    if (group && Array.isArray(group.members) && freshChat) {
-        chat.splice(0, chat.length);
-        resetChatSurfaceView();
-        for (let member of group.members) {
-            if (!isStillActive()) {
-                return;
-            }
-            const character = characters.find(x => x.avatar === member || x.name === member);
-            if (!character) {
-                continue;
-            }
-
-            const mes = await getFirstCharacterMessage(character);
-            if (!isStillActive()) {
-                return;
-            }
-
-            // No first message
-            if (!(mes?.mes)) {
-                continue;
-            }
-
-            const messageId = chat.length;
-            await withChatSurfaceStructureMutation(async () => {
-                chat.push(mes);
-                await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'first_message');
-                addOneMessage(mes);
-            });
-            await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'first_message');
-        }
-        await saveGroupChat(groupId, false, false, CHAT_COMMIT_REASON.MAINTENANCE);
-    } else if (Array.isArray(data) && data.length) {
+    const data = await loadGroupChat(chat_id, { allowNotFound: allowNewChat, coldSwipes: coldSwipesEnabled() });
+    try {
         if (!isStillActive()) {
             return;
         }
-        chat.splice(0, chat.length, ...data);
-        chat.forEach(ensureMessageMediaIsArray);
-        resetChatSurfaceView();
-        await printMessages({ frontendSourceHandoffEvent: event_types.CHAT_CHANGED });
+        const metadata = data?.[0]?.chat_metadata ?? {};
+        const freshChat = allowNewChat && !metadata.tainted && (!Array.isArray(data) || !data.length);
+
+        // Remove chat file header if present
+        if (Array.isArray(data) && data.length && Object.hasOwn(data[0], 'chat_metadata')) {
+            data.shift();
+        }
+
+        // Add integrity slug if missing
+        if (!metadata.integrity) {
+            metadata.integrity = uuidv4();
+        }
+
+        await loadItemizedPrompts(getCurrentChatId());
         if (!isStillActive()) {
             return;
         }
 
-    }
+        updateChatMetadata(metadata, true);
+        if (group && Array.isArray(group.members) && freshChat) {
+            replaceChatContents(data);
+            resetChatSurfaceView();
+            // Greeting hooks may save metadata; establish the chat and its identity first.
+            await saveGroupChat(groupId, false, false, CHAT_COMMIT_REASON.MAINTENANCE);
+            for (let member of group.members) {
+                if (!isStillActive()) {
+                    return;
+                }
+                const character = characters.find(x => x.avatar === member || x.name === member);
+                if (!character) {
+                    continue;
+                }
 
-    updateChatMetadata(metadata, true);
-    if (!isStillActive()) {
-        return;
-    }
+                const mes = await getFirstCharacterMessage(character);
+                if (!isStillActive()) {
+                    return;
+                }
 
-    if (reload) {
-        select_group_chats(groupId, true);
-    }
+                // No first message
+                if (!(mes?.mes)) {
+                    continue;
+                }
 
-    await eventSource.emit(event_types.CHAT_CHANGED, getCurrentChatId());
-    if (freshChat) await eventSource.emit(event_types.GROUP_CHAT_CREATED);
+                const messageId = chat.length;
+                await withChatSurfaceStructureMutation(async () => {
+                    chat.push(mes);
+                    await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'first_message');
+                    addOneMessage(mes);
+                });
+                await finalizeMessageContent(messageId, event_types.CHARACTER_MESSAGE_RENDERED, 'first_message');
+            }
+            await saveGroupChat(groupId, false, false, CHAT_COMMIT_REASON.MAINTENANCE);
+        } else if (Array.isArray(data) && data.length) {
+            if (!isStillActive()) {
+                return;
+            }
+            replaceChatContents(data);
+            chat.forEach(ensureMessageMediaIsArray);
+            resetChatSurfaceView();
+            await printMessages({ frontendSourceHandoffEvent: event_types.CHAT_CHANGED });
+            if (!isStillActive()) {
+                return;
+            }
+
+        }
+
+        if (!isStillActive()) {
+            return;
+        }
+
+        if (groupChanged) {
+            await editGroup(groupId, true, false);
+            if (!isStillActive()) {
+                return;
+            }
+        }
+
+        if (reload) {
+            select_group_chats(groupId, true);
+        }
+
+        await eventSource.emit(event_types.CHAT_CHANGED, getCurrentChatId());
+        if (freshChat) await eventSource.emit(event_types.GROUP_CHAT_CREATED);
+    } finally {
+        discardColdChatPayload(data);
+    }
 }
 
 /**
@@ -695,6 +688,17 @@ async function saveGroupChat(groupId, shouldSaveGroup, force = false, commitReas
     return enqueueChatSave(() => saveGroupChatUnsafe(groupId, shouldSaveGroup, force, commitReason));
 }
 
+export function saveGroupMetadata(groupId) {
+    return enqueueChatSave(() => runChatSave({
+        title: t`Group Chat could not be saved`,
+        save: () => saveGroupChatMetadata({
+            id: groups.find(x => x.id == groupId).chat_id,
+            chatMetadata: persistedChatMetadata(),
+        }),
+        recover: () => saveGroupChatUnsafe(groupId, true, true),
+    }));
+}
+
 async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false, commitReason = CHAT_COMMIT_REASON.MUTATION) {
     const group = groups.find(x => x.id == groupId);
     if (!group) {
@@ -703,72 +707,23 @@ async function saveGroupChatUnsafe(groupId, shouldSaveGroup, force = false, comm
     }
     const chatId = group.chat_id;
     group.date_last_chat = Date.now();
-    const metadata = { ...chat_metadata };
-    delete metadata.lastInContextMessageId;
     /** @type {ChatHeader} */
     const chatHeader = {
-        chat_metadata: metadata,
+        chat_metadata: persistedChatMetadata(),
         user_name: 'unused',
         character_name: 'unused',
     };
-    const payload = [chatHeader, ...chat];
-    const isIntegrityTransportError = (error) =>
-        String(error?.code || '').toLowerCase() === 'integrity'
-        || /integrity/i.test(String(error?.message || ''));
-
-    try {
-        const saveChatRequest = await compressRequest({
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ id: chatId, chat: payload, force, commit_reason: commitReason }),
-        });
-        const response = await fetch('/api/chats/group/save', saveChatRequest);
-
-        if (response.ok) {
+    await runChatSave({
+        title: t`Group Chat could not be saved`,
+        save: async () => {
+            await saveGroupChatPayload({ id: chatId, payload: [chatHeader, ...chat], force, commitReason });
             if (shouldSaveGroup) {
                 await editGroup(groupId, false, false);
             }
-            return;
-        }
-
-        const errorData = await response.json();
-        if (errorData?.error === 'integrity' && !force) {
-            const integrityError = new Error('integrity');
-            integrityError.code = 'integrity';
-            throw integrityError;
-        }
-
-        throw new Error(response.statusText || 'Group chat save failed');
-    } catch (error) {
-        const isIntegrityError = isIntegrityTransportError(error) && !force;
-        if (!isIntegrityError) {
-            toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group Chat could not be saved`);
-            console.error('Group chat could not be saved', error);
-            throw error;
-        }
-
-        const popupResult = await Popup.show.input(
-            t`ERROR: Chat integrity check failed while saving the file.`,
-            t`<p>After you click OK, the page will be reloaded to prevent data corruption.</p>
-              <p>To confirm an overwrite (and potentially <b>LOSE YOUR DATA</b>), enter <code>OVERWRITE</code> (in all caps) in the box below before clicking OK.</p>`,
-            '',
-            { okButton: 'OK', cancelButton: false },
-        );
-
-        const forceSaveConfirmed = popupResult === 'OVERWRITE';
-
-        if (!forceSaveConfirmed) {
-            console.warn('Chat integrity check failed, and user did not confirm the overwrite. Reloading the page.');
-            window.location.reload();
-            return;
-        }
-
-        await saveGroupChatUnsafe(groupId, shouldSaveGroup, true, commitReason);
-    }
-
-    if (shouldSaveGroup) {
-        await editGroup(groupId, false, false);
-    }
+        },
+        // A forced save skips the integrity check, so nothing is left to recover.
+        recover: force ? undefined : () => saveGroupChatUnsafe(groupId, shouldSaveGroup, true, commitReason),
+    });
 }
 
 /**
@@ -826,16 +781,7 @@ export async function renameGroupMember(oldAvatar, newAvatar, newName) {
 
                     if (hadChanges) {
                         await eventSource.emit(event_types.CHARACTER_RENAMED_IN_PAST_CHAT, messages, oldAvatar, newAvatar);
-                        const saveChatRequest = await compressRequest({
-                            method: 'POST',
-                            headers: getRequestHeaders(),
-                            body: JSON.stringify({ id: chatId, chat: [...messages] }),
-                        });
-                        const saveChatResponse = await fetch('/api/chats/group/save', saveChatRequest);
-
-                        if (!saveChatResponse.ok) {
-                            throw new Error('Group member could not be renamed');
-                        }
+                        await saveGroupChatPayload({ id: chatId, payload: messages });
 
                         console.log(`Renamed character ${newName} in group chat: ${chatId}`);
                     }
@@ -1071,6 +1017,9 @@ async function generateGroupWrapper(byAutoMode, type = null, params = {}) {
     const group = groups.find((x) => x.id === selected_group);
 
     if (!group || !Array.isArray(group.members) || !group.members.length) {
+        if (params.quietToolRequest) {
+            throw new Error('output_revision.character_missing: the group has no available members');
+        }
         sendSystemMessage(system_message_types.EMPTY, '', { isSmallSys: true });
         return Promise.resolve();
     }
@@ -1110,6 +1059,9 @@ async function generateGroupWrapper(byAutoMode, type = null, params = {}) {
             activatedMembers = activateSwipe(group.members, { allowSystem: true }).slice(0, 1);
 
             if (activatedMembers.length === 0) {
+                if (params?.quietToolRequest) {
+                    throw new Error('output_revision.character_missing: the author of the reply is no longer available');
+                }
                 activatedMembers = activateListOrder(group.members.slice(0, 1));
             }
         }
@@ -2123,25 +2075,28 @@ function updateFavButtonState(state) {
 /**
  * Opens a group chat by its ID and updates the UI accordingly.
  * @param {string} groupId ID of the group to open
+ * @param {object} [options] Options for opening the group
+ * @param {string} [options.chatId] Existing chat to open instead of the group's current chat.
  * @returns {Promise<boolean>} Whether the group was opened
  */
-export async function openGroupById(groupId) {
+export async function openGroupById(groupId, { chatId } = {}) {
     if (isChatSaving) {
         toastr.info(t`Please wait until the chat is saved before switching characters.`, t`Your chat is still saving...`);
         return false;
     }
 
-    if (!groups.find(x => x.id === groupId)) {
+    const group = groups.find(x => x.id === groupId);
+    if (!group) {
         console.log('Group not found', groupId);
         return false;
     }
 
     if (!is_send_press && !is_group_generating) {
         const switchingGroup = selected_group !== groupId;
-        const allowNewChat = switchingGroup ? !(await hasPersistedGroupChats(groupId)) : false;
+        const allowNewChat = switchingGroup && chatId === undefined && !(await hasPersistedGroupChats(groupId));
         select_group_chats(groupId, false);
 
-        if (switchingGroup) {
+        if (switchingGroup || chatId !== undefined) {
             groupChatQueueOrder = new Map();
             setCharacterId(undefined);
             setCharacterName('');
@@ -2151,7 +2106,17 @@ export async function openGroupById(groupId) {
             selected_group = groupId;
             setEditedMessageId(undefined);
             updateChatMetadata({}, true);
+            const targetChat = chatId ?? group.chat_id;
+            group.chat_id = targetChat;
             await getGroupChat(groupId, false, { allowNewChat });
+
+            if (selected_group !== groupId || getCurrentChatId() !== targetChat) {
+                return false;
+            }
+            if (chatId !== undefined) {
+                group.date_last_chat = Date.now();
+                await editGroup(groupId, true, false);
+            }
             return true;
         }
     }
@@ -2306,19 +2271,7 @@ export async function getGroupPastChats(groupId) {
  */
 export async function openGroupChat(groupId, chatId) {
     await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
-    const group = groups.find(x => x.id === groupId);
-
-    if (!group || !group.chats.includes(chatId)) {
-        return;
-    }
-
-    await clearChat({ clearData: true });
-    group.chat_id = chatId;
-    group.date_last_chat = Date.now();
-    updateChatMetadata({}, true);
-
-    await editGroup(groupId, true, false);
-    await getGroupChat(groupId);
+    await openGroupById(groupId, { chatId });
 }
 
 /**
@@ -2475,8 +2428,6 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, chat
         return;
     }
 
-    group.chats.push(name);
-
     /** @type {ChatHeader} */
     const chatHeader = {
         chat_metadata: { ...chat_metadata, ...(metadata || {}) },
@@ -2491,23 +2442,16 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, chat
             ? chat.slice(0, Number(mesId) + 1)
             : chat;
 
-    await editGroup(groupId, true, false);
-
     try {
-        const saveChatRequest = await compressRequest({
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ id: name, chat: [chatHeader, ...trimmedChat] }),
-        });
-        const response = await fetch('/api/chats/group/save', saveChatRequest);
-
-        if (!response.ok) {
-            throw new Error(response.statusText || 'Group chat save failed');
-        }
+        await saveGroupChatPayload({ id: name, payload: [chatHeader, ...trimmedChat] });
     } catch (error) {
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group chat could not be saved`);
         console.error('Group chat could not be saved', error);
+        throw error;
     }
+
+    group.chats.push(name);
+    await editGroup(groupId, true, false);
 }
 
 function onSendTextareaInput() {

@@ -8,7 +8,7 @@ use crate::dto::data_archive_dto::{
 };
 use tt_domain::errors::DomainError;
 
-use super::{DataArchiveJobHandle, DataArchiveService, run_blocking};
+use super::{CompletedExportArchive, DataArchiveJobHandle, DataArchiveService, run_blocking};
 
 struct CompletedExportJob {
     pub(super) job: Arc<DataArchiveJobHandle>,
@@ -22,9 +22,15 @@ pub(super) struct CompletedExportArtifact {
 }
 
 impl DataArchiveService {
-    #[cfg(target_os = "ios")]
-    pub fn completed_export_archive_path(&self, job_id: &str) -> Result<PathBuf, DomainError> {
-        Ok(self.completed_export_artifact(job_id)?.archive_path)
+    pub fn completed_export_archive(
+        &self,
+        job_id: &str,
+    ) -> Result<CompletedExportArchive, DomainError> {
+        let artifact = self.completed_export_artifact(job_id)?;
+        Ok(CompletedExportArchive {
+            archive_path: artifact.archive_path,
+            file_name: artifact.file_name,
+        })
     }
 
     pub(super) fn completed_export_artifact(

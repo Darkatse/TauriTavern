@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use tt_domain::errors::DomainError;
@@ -7,7 +8,8 @@ use tt_domain::models::agent::{
     AgentRun, WorkspaceManifest, WorkspacePath, WorkspacePersistentChangeSet,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkspaceFile {
     pub path: WorkspacePath,
     pub text: String,
@@ -48,6 +50,13 @@ pub enum WorkspaceWriteGuard {
 
 #[async_trait]
 pub trait WorkspaceRepository: Send + Sync {
+    /// Check the inherited version before creating a run or its workspace.
+    async fn validate_persistent_state(
+        &self,
+        workspace_id: &str,
+        state_id: &str,
+    ) -> Result<(), DomainError>;
+
     async fn initialize_run(
         &self,
         run: &AgentRun,
@@ -97,5 +106,6 @@ pub trait WorkspaceRepository: Send + Sync {
     async fn commit_persistent_changes(
         &self,
         run_id: &str,
+        previous_state_id: Option<&str>,
     ) -> Result<WorkspacePersistentChangeSet, DomainError>;
 }

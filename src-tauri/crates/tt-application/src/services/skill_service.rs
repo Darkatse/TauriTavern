@@ -59,6 +59,17 @@ impl SkillService {
         Ok(self.repository.list_skill_files(scope, name).await?)
     }
 
+    pub async fn discover_imports(
+        &self,
+        input: SkillImportInput,
+    ) -> Result<Vec<SkillImportInput>, ApplicationError> {
+        Ok(self.repository.discover_imports(input).await?)
+    }
+
+    pub async fn discard_import_archive(&self, path: &str) -> Result<(), ApplicationError> {
+        Ok(self.repository.discard_import_archive(path).await?)
+    }
+
     pub async fn preview_import(
         &self,
         input: SkillImportInput,
@@ -79,6 +90,19 @@ impl SkillService {
         request: SkillReadRequest,
     ) -> Result<SkillReadResult, ApplicationError> {
         Ok(self.repository.read_skill_file(request).await?)
+    }
+
+    /// 读取已安装 skill 包内脚本文件的源码文本（供 skill.run_script 引擎执行）。
+    pub async fn read_skill_script(
+        &self,
+        scope: SkillScope,
+        name: &str,
+        relative_path: &str,
+    ) -> Result<String, ApplicationError> {
+        Ok(self
+            .repository
+            .read_skill_script(scope, name, relative_path)
+            .await?)
     }
 
     pub async fn write_skill_file(
@@ -362,6 +386,17 @@ mod tests {
             unreachable!("not needed for resolver tests")
         }
 
+        async fn discover_imports(
+            &self,
+            _input: SkillImportInput,
+        ) -> Result<Vec<SkillImportInput>, DomainError> {
+            unreachable!("not needed for resolver tests")
+        }
+
+        async fn discard_import_archive(&self, _path: &str) -> Result<(), DomainError> {
+            unreachable!("not needed for resolver tests")
+        }
+
         async fn preview_import(
             &self,
             _input: SkillImportInput,
@@ -374,6 +409,15 @@ mod tests {
             &self,
             _request: SkillInstallRequest,
         ) -> Result<tt_domain::models::skill::SkillInstallResult, DomainError> {
+            unreachable!("not needed for resolver tests")
+        }
+
+        async fn read_skill_script(
+            &self,
+            _scope: SkillScope,
+            _name: &str,
+            _relative_path: &str,
+        ) -> Result<String, DomainError> {
             unreachable!("not needed for resolver tests")
         }
 

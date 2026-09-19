@@ -1,4 +1,3 @@
-use chrono::{DateTime, NaiveDateTime, SecondsFormat, TimeZone, Utc};
 use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use serde_json::Value;
 use std::io::Cursor;
@@ -7,14 +6,11 @@ use std::time::UNIX_EPOCH;
 
 use tokio::fs;
 
-use crate::png_card_metadata::{read_character_data_from_png, write_character_data_to_png};
+use crate::png_card_metadata::read_character_data_from_png_file;
 use tt_adapter_storage_core::chat_directory_identity::{self, SharedChatAliasStore};
-use tt_adapter_storage_core::file_system::{
-    list_files_with_extension, replace_file_with_fallback, unique_temp_path,
-};
+use tt_adapter_storage_core::file_system::list_files_with_extension;
 use tt_domain::errors::DomainError;
-use tt_domain::models::character::{Character, CharacterData};
-use tt_domain::models::chat::parse_message_timestamp;
+use tt_domain::models::character::Character;
 use tt_domain::models::filename::sanitize_filename;
 
 use super::FileCharacterRepository;
@@ -56,7 +52,7 @@ pub(crate) fn file_modified_millis(metadata: &std::fs::Metadata) -> i64 {
 }
 
 impl FileCharacterRepository {
-    pub(crate) fn calculate_data_size(data: &CharacterData) -> u64 {
+    pub(crate) fn calculate_data_size(data: &Value) -> u64 {
         fn js_string_len(value: &Value) -> u64 {
             match value {
                 Value::Null => 4,
@@ -80,79 +76,21 @@ impl FileCharacterRepository {
             }
         }
 
-        let value =
-            serde_json::to_value(data).expect("CharacterData serialization should not fail");
-        value
-            .as_object()
-            .expect("CharacterData should serialize to a JSON object")
-            .values()
+        data.as_object()
+            .into_iter()
+            .flat_map(|data| data.values())
             .map(js_string_len)
             .sum()
     }
 
-    fn is_valid_character_create_date(value: &str) -> bool {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            return true;
+    pub(crate) fn calculate_character_data_size(card_value: &Value, character: &Character) -> u64 {
+        if let Some(data) = card_value.get("data") {
+            return Self::calculate_data_size(data);
         }
 
-        if trimmed.chars().all(|ch| ch.is_ascii_digit()) {
-            return trimmed.parse::<i64>().is_ok();
-        }
-
-        if DateTime::parse_from_rfc3339(trimmed).is_ok() {
-            return true;
-        }
-
-        parse_message_timestamp(trimmed) > 0
-    }
-
-    fn migrate_legacy_character_create_date_value(value: &str) -> Option<String> {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-
-        let Ok(parsed) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S UTC") else {
-            return None;
-        };
-
-        Some(
-            chrono::DateTime::<Utc>::from_naive_utc_and_offset(parsed, Utc)
-                .to_rfc3339_opts(SecondsFormat::Millis, true),
-        )
-    }
-
-    fn format_timestamp_millis(timestamp_millis: i64) -> Option<String> {
-        Utc.timestamp_millis_opt(timestamp_millis)
-            .single()
-            .map(|dt| dt.to_rfc3339_opts(SecondsFormat::Millis, true))
-    }
-
-    pub(crate) fn repaired_character_create_date(
-        value: &str,
-        fallback_timestamp_millis: Option<i64>,
-    ) -> Option<String> {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-
-        if Self::is_valid_character_create_date(trimmed) {
-            return None;
-        }
-
-        if let Some(migrated) = Self::migrate_legacy_character_create_date_value(trimmed) {
-            return Some(migrated);
-        }
-
-        if let Some(timestamp_millis) = fallback_timestamp_millis
-            && let Some(formatted) = Self::format_timestamp_millis(timestamp_millis)
-        {
-            return Some(formatted);
-        }
-
-        Some(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true))
+        let data = serde_json::to_value(&character.to_v2().data)
+            .expect("CharacterData serialization should not fail");
+        Self::calculate_data_size(&data)
     }
 
     pub(crate) fn normalize_character_file_stem(name: &str) -> Result<String, DomainError> {
@@ -251,10 +189,28 @@ impl FileCharacterRepository {
         .await
     }
 
-    pub(crate) async fn calculate_chat_stats(&self, name: &str) -> Result<(u64, i64), DomainError> {
-        self.chat_repository
-            .calculate_character_chat_stats(name)
-            .await
+    pub(crate) async fn calculate_chat_stats(&self, name: &str) -> (u64, i64) {
+        Self::chat_stats_or_default(
+            name,
+            self.chat_repository
+                .calculate_character_chat_stats(name)
+                .await,
+        )
+    }
+
+    pub(super) fn chat_stats_or_default(
+        name: &str,
+        result: Result<(u64, i64), DomainError>,
+    ) -> (u64, i64) {
+        result.unwrap_or_else(|error| {
+            tracing::error!(
+                target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                "Failed to calculate chat statistics for character '{}'; using zero statistics: {}",
+                name,
+                error
+            );
+            (0, 0)
+        })
     }
 
     pub(crate) async fn read_character_from_file(
@@ -262,11 +218,6 @@ impl FileCharacterRepository {
         path: &Path,
     ) -> Result<Character, DomainError> {
         tracing::debug!("Reading character from file: {:?}", path);
-
-        let file_data = fs::read(path).await.map_err(|e| {
-            tracing::error!("Failed to read character file: {}", e);
-            DomainError::InternalError(format!("Failed to read character file: {}", e))
-        })?;
 
         let metadata = fs::metadata(path).await.map_err(|e| {
             tracing::error!("Failed to read file metadata: {}", e);
@@ -276,19 +227,18 @@ impl FileCharacterRepository {
         let timestamp_millis = file_ctime_millis(&metadata)
             .or_else(|| (modified_millis > 0).then_some(modified_millis));
 
-        let mut json_data = read_character_data_from_png(&file_data)?;
+        let json_data = read_character_data_from_png_file(path).await?;
 
         let raw_value: Value = serde_json::from_str(&json_data).map_err(|e| {
             tracing::error!("Failed to parse character data: {}", e);
             DomainError::InvalidData(format!("Failed to parse character data: {}", e))
         })?;
-        let mut character: Character = serde_json::from_value(raw_value.clone()).map_err(|e| {
-            tracing::error!("Failed to decode character data: {}", e);
-            DomainError::InvalidData(format!("Failed to decode character data: {}", e))
+        let mut character = Character::from_card_value(&raw_value).ok_or_else(|| {
+            DomainError::InvalidData("Character payload must be a JSON object".to_string())
         })?;
         Self::sync_canonical_data_fields(&mut character, &raw_value);
         Self::normalize_imported_character(&mut character)?;
-        let data_size = Self::calculate_data_size(&character.data);
+        let data_size = Self::calculate_character_data_size(&raw_value, &character);
         character.shallow = false;
 
         let file_name = path
@@ -308,63 +258,9 @@ impl FileCharacterRepository {
             character.date_added = timestamp_millis;
         }
 
-        if let Some(repaired_create_date) =
-            Self::repaired_character_create_date(&character.create_date, timestamp_millis)
-        {
-            tracing::warn!(
-                character = %file_name,
-                old_create_date = %character.create_date,
-                new_create_date = %repaired_create_date,
-                "Repairing invalid character create_date"
-            );
-
-            let mut card_value: Value = serde_json::from_str(&json_data).map_err(|error| {
-                DomainError::InvalidData(format!(
-                    "Failed to parse character payload JSON in '{}': {}",
-                    path.display(),
-                    error
-                ))
-            })?;
-
-            let Some(object) = card_value.as_object_mut() else {
-                return Err(DomainError::InvalidData(format!(
-                    "Character payload must be a JSON object in '{}'",
-                    path.display()
-                )));
-            };
-
-            object.insert(
-                "create_date".to_string(),
-                Value::String(repaired_create_date.clone()),
-            );
-
-            let updated_json = serde_json::to_string(&card_value).map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to serialize repaired character payload for '{}': {}",
-                    path.display(),
-                    error
-                ))
-            })?;
-            let updated_png = write_character_data_to_png(&file_data, &updated_json)?;
-
-            let temp_path = unique_temp_path(path);
-            fs::write(&temp_path, updated_png).await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to write repaired character temp file '{}': {}",
-                    temp_path.display(),
-                    error
-                ))
-            })?;
-            replace_file_with_fallback(&temp_path, path).await?;
-            self.clear_shallow_index_cache().await;
-
-            character.create_date = repaired_create_date;
-            json_data = updated_json;
-        }
-
         character.json_data = Some(json_data);
 
-        let (chat_size, date_last_chat) = self.calculate_chat_stats(&file_name).await?;
+        let (chat_size, date_last_chat) = self.calculate_chat_stats(&file_name).await;
         character.chat_size = chat_size;
         character.data_size = data_size;
         character.date_last_chat = date_last_chat;
@@ -392,7 +288,7 @@ impl FileCharacterRepository {
 
             if !character.shallow {
                 let mut character = character;
-                let (chat_size, date_last_chat) = self.calculate_chat_stats(file_name).await?;
+                let (chat_size, date_last_chat) = self.calculate_chat_stats(file_name).await;
                 character.chat_size = chat_size;
                 character.date_last_chat = date_last_chat;
                 return Ok(character);
@@ -460,13 +356,15 @@ impl FileCharacterRepository {
         let mut avatars = Vec::with_capacity(character_files.len());
 
         for path in character_files {
-            let file_name = path.file_name().and_then(|s| s.to_str()).ok_or_else(|| {
-                DomainError::InvalidData(format!(
-                    "Character avatar path is not valid UTF-8: {:?}",
+            if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                avatars.push(file_name.to_string());
+            } else {
+                tracing::error!(
+                    target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                    "Skipping character avatar with a non-UTF-8 path: {:?}",
                     path
-                ))
-            })?;
-            avatars.push(file_name.to_string());
+                );
+            }
         }
 
         Ok(avatars)

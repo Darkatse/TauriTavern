@@ -7,16 +7,22 @@ use crate::infrastructure::persistence::data_archive_adapters::{
 };
 use tt_adapter_archive::FileDataArchiveExecutor;
 use tt_application::services::data_archive_service::{DataArchiveJobRegistry, DataArchiveService};
+use tt_application::services::database_service::DatabaseService;
 use tt_ports::sync::DataChangeReconciler;
 
 pub(super) fn build(
     app_handle: &AppHandle,
     data_change_reconciler: Arc<dyn DataChangeReconciler>,
+    database_service: Arc<DatabaseService>,
 ) -> Arc<DataArchiveService> {
     Arc::new(DataArchiveService::new(
+        database_service,
         Arc::new(DataArchiveJobRegistry::new()),
         tauri::async_runtime::handle().inner().clone(),
-        Arc::new(FileDataArchiveExecutor),
+        Arc::new(FileDataArchiveExecutor {
+            prepare_personas: tt_adapter_media::persona_cards::migrate_personas,
+            read_personas: tt_adapter_media::persona_cards::read_personas,
+        }),
         Arc::new(TauriDataArchiveFileGateway::new(app_handle.clone())),
         Arc::new(DataDirectoryDataRootInitializer),
         data_change_reconciler,

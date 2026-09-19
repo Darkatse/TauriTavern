@@ -669,7 +669,7 @@ fn utf8_ref(name: &BStr) -> Result<String, DomainError> {
 
 fn update_config(
     repo: &gix::Repository,
-    update: impl FnOnce(&mut gix::config::File<'static>) -> Result<(), DomainError>,
+    update: impl FnOnce(&mut gix::config::File) -> Result<(), DomainError>,
 ) -> Result<(), DomainError> {
     let path = repo.git_dir().join("config");
     let mut config =
@@ -692,7 +692,7 @@ fn update_config(
 }
 
 fn set_config(
-    config: &mut gix::config::File<'static>,
+    config: &mut gix::config::File,
     section: &str,
     subsection: Option<&str>,
     key: &str,
@@ -702,7 +702,7 @@ fn set_config(
         .set_raw_value_by(
             section,
             subsection.map(|value| value.as_bytes().as_bstr()),
-            key.to_owned(),
+            key,
             value.as_bytes().as_bstr(),
         )
         .map_err(|error| git_error("Failed to update embedded Git config", error))?;

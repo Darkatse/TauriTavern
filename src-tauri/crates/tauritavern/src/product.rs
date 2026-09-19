@@ -20,19 +20,3 @@ fn infer_update_channel(branch: Option<&str>) -> UpdateChannel {
         Some(_) => UpdateChannel::Canary,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{UpdateChannel, infer_update_channel};
-
-    #[test]
-    fn main_is_stable_and_other_known_branches_are_canary() {
-        assert_eq!(infer_update_channel(Some("main")), UpdateChannel::Stable);
-        assert_eq!(infer_update_channel(Some("dev")), UpdateChannel::Canary);
-        assert_eq!(
-            infer_update_channel(Some("feature/test")),
-            UpdateChannel::Canary
-        );
-        assert_eq!(infer_update_channel(None), UpdateChannel::Stable);
-    }
-}

@@ -3,6 +3,7 @@ use serde_json::{Map, Value};
 use crate::errors::ApplicationError;
 use crate::services::agent_model_gateway::format::{string_value, usize_value};
 use tt_domain::models::agent::{AgentModelMessage, AgentModelRequest, AgentModelRole};
+use tt_ports::repositories::chat_completion_repository::OPENAI_RESPONSES_WEBSOCKET_TRANSPORT;
 
 pub(super) const NATIVE_PROVIDER: Option<&str> = Some("openai_responses");
 const REASONING_ENCRYPTED_CONTENT: &str = "reasoning.encrypted_content";
@@ -10,7 +11,9 @@ const REASONING_ENCRYPTED_CONTENT: &str = "reasoning.encrypted_content";
 pub(super) fn messages_for_request(
     request: &AgentModelRequest,
 ) -> Result<Vec<&AgentModelMessage>, ApplicationError> {
-    if string_value(&request.provider_state, "previousResponseId").is_none() {
+    if !uses_responses_websocket(request)
+        || string_value(&request.provider_state, "previousResponseId").is_none()
+    {
         return Ok(request.messages.iter().collect());
     }
 
@@ -39,7 +42,9 @@ pub(super) fn apply_payload_overrides(
     payload: &mut Map<String, Value>,
     request: &AgentModelRequest,
 ) -> Result<(), ApplicationError> {
-    if let Some(previous_response_id) = string_value(&request.provider_state, "previousResponseId")
+    if uses_responses_websocket(request)
+        && let Some(previous_response_id) =
+            string_value(&request.provider_state, "previousResponseId")
     {
         payload.insert(
             "previous_response_id".to_string(),
@@ -48,6 +53,10 @@ pub(super) fn apply_payload_overrides(
     }
 
     Ok(())
+}
+
+fn uses_responses_websocket(request: &AgentModelRequest) -> bool {
+    string_value(&request.provider_state, "transport") == Some(OPENAI_RESPONSES_WEBSOCKET_TRANSPORT)
 }
 
 pub(super) fn ensure_reasoning_include(payload: &mut Map<String, Value>) {

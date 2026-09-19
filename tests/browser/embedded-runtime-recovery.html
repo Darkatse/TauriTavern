@@ -1,0 +1,176 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Embedded runtime cold recovery smoke test</title>
+<h1>Embedded runtime cold recovery</h1>
+<pre id="result">Running…</pre>
+<script type="module">
+import { createEmbeddedRuntimeManager } from '../../src/tauri/main/services/embedded-runtime/embedded-runtime-manager.js';
+import { createManagedIframeSlot } from '../../src/tauri/main/adapters/embedded-runtime/managed-iframe-slot.js';
+import { installDomEmbeddedRuntimeAdapter } from '../../src/tauri/main/adapters/embedded-runtime/dom-runtime-adapter.js';
+import { createJsSlashRunnerRuntimeAdapter } from '../../src/tauri/main/adapters/embedded-runtime/js-slash-runner-runtime-adapter.js';
+import { createLittleWhiteBoxRuntimeAdapter } from '../../src/tauri/main/adapters/embedded-runtime/littlewhitebox-runtime-adapter.js';
+
+const result = document.querySelector('#result');
+const assert = (condition, message) => { if (!condition) throw new Error(message); };
+const nextLoad = iframe => new Promise(resolve => iframe.addEventListener('load', resolve, { once: true }));
+
+async function checkRecovery(adapter) {
+    const manager = createEmbeddedRuntimeManager({ profile: {
+        name: 'smoke', maxActiveWeight: 20, maxActiveIframes: 2, maxActiveSlots: 2,
+        maxSoftParkedIframes: 0, softParkTtlMs: 0,
+        parkWhenHiddenKinds: ['jsr_html_render', 'lwb_html_render'], rootMargin: '0px', threshold: 0,
+    } });
+    const message = document.createElement('div');
+    message.className = 'mes';
+    message.setAttribute('mesid', '1');
+    document.body.append(message);
+    const frames = [0, 1].map(() => {
+        const host = document.createElement('div');
+        host.className = adapter.hostSelector.slice(1);
+        const iframe = document.createElement('iframe');
+        const url = URL.createObjectURL(new Blob(['<input value="initial">'], { type: 'text/html' }));
+        const frame = { host, iframe, url, loads: 0, loaded: nextLoad(iframe) };
+        iframe.addEventListener('load', () => frame.loads++);
+        iframe.src = url;
+        host.append(iframe);
+        message.append(host);
+        return frame;
+    });
+    let adapterHandle;
+    try {
+        await Promise.all(frames.map(frame => frame.loaded));
+        adapterHandle = installDomEmbeddedRuntimeAdapter({
+            manager: {
+                profileConfig: manager.profileConfig,
+                invalidate: manager.invalidate,
+                touch: manager.touch,
+                unregister: manager.unregister,
+                register: slot => manager.register({ ...slot, visibilityMode: 'manual', initialVisible: true }),
+            },
+            root: message,
+            adapters: [adapter],
+        });
+        manager.reconcile();
+        const [sibling, target] = frames;
+        const siblingWindow = sibling.iframe.contentWindow;
+        const siblingDocument = sibling.iframe.contentDocument;
+        const siblingOrigin = siblingWindow.performance.timeOrigin;
+        siblingDocument.querySelector('input').value = 'keep me';
+
+        for (let cycle = 1; cycle <= 2; cycle++) {
+            const removed = new Promise(resolve => {
+                const observer = new MutationObserver(() => {
+                    if (!target.iframe.isConnected) {
+                        observer.disconnect();
+                        resolve();
+                    }
+                });
+                observer.observe(target.host, { childList: true });
+            });
+            manager.setVisible(target.host.dataset.ttRuntimeSlotId, false);
+            manager.reconcile();
+            await removed;
+            URL.revokeObjectURL(target.url);
+            const loaded = nextLoad(target.iframe);
+            manager.setVisible(target.host.dataset.ttRuntimeSlotId, true);
+            manager.reconcile();
+            await loaded;
+
+            assert(target.host.querySelector('iframe') === target.iframe, 'renderer element replaced');
+            assert(target.loads === cycle + 1, 'renderer load listener lost or page loaded twice');
+            assert(target.iframe.contentDocument.querySelector('input')?.value === 'initial', 'source not restored');
+            assert(sibling.iframe.contentWindow === siblingWindow, 'sibling Window replaced');
+            assert(sibling.iframe.contentDocument === siblingDocument, 'sibling Document replaced');
+            assert(siblingWindow.performance.timeOrigin === siblingOrigin, 'sibling navigation detected');
+            assert(sibling.loads === 1, 'sibling reloaded');
+            assert(siblingDocument.querySelector('input').value === 'keep me', 'sibling form state lost');
+        }
+        return `${adapter.hostSelector}: PASS (two cold recoveries; sibling Document, form and load count preserved)`;
+    } finally {
+        adapterHandle?.dispose();
+        for (const { host, url } of frames) {
+            if (host.dataset.ttRuntimeSlotId) manager.unregister(host.dataset.ttRuntimeSlotId);
+            URL.revokeObjectURL(url);
+        }
+        message.remove();
+    }
+}
+
+async function checkUnavailableCandidate() {
+    const manager = createEmbeddedRuntimeManager({ profile: {
+        name: 'smoke', maxActiveWeight: 10, maxActiveIframes: 1, maxActiveSlots: 1,
+        maxSoftParkedIframes: 0, softParkTtlMs: 0, parkWhenHiddenKinds: ['k'], rootMargin: '0px', threshold: 0,
+    } });
+    const healthyHost = document.createElement('div');
+    healthyHost.innerHTML = '<iframe srcdoc="<input value=initial>"></iframe>';
+    const healthy = healthyHost.firstElementChild;
+    let loads = 0;
+    healthy.addEventListener('load', () => loads++);
+    const loaded = nextLoad(healthy);
+    document.body.append(healthyHost);
+    const missingHost = document.createElement('div');
+    const missing = document.createElement('iframe');
+    const unavailableUrl = URL.createObjectURL(new Blob(['unavailable']));
+    URL.revokeObjectURL(unavailableUrl);
+    const settled = Promise.withResolvers();
+    try {
+        await loaded;
+        manager.register({ ...createManagedIframeSlot({
+            id: 'b', kind: 'k', host: healthyHost, maxSoftParkedIframes: 0, softParkTtlMs: 0,
+            onSourceSettled: () => manager.invalidate('b'),
+        }), visibilityMode: 'manual', initialVisible: true });
+        manager.reconcile();
+        const savedDocument = healthy.contentDocument;
+        savedDocument.querySelector('input').value = 'keep me';
+        const assertHealthy = () => {
+            assert(healthy.contentDocument === savedDocument, 'unavailable candidate displaced healthy Document');
+            assert(loads === 1, 'healthy page reloaded');
+            assert(savedDocument.querySelector('input').value === 'keep me', 'healthy form state lost');
+        };
+
+        missing.src = unavailableUrl;
+        missingHost.append(missing);
+        document.body.append(missingHost);
+        manager.register({ ...createManagedIframeSlot({
+            id: 'a', kind: 'k', host: missingHost, maxSoftParkedIframes: 0, softParkTtlMs: 0,
+            onSourceSettled: () => { manager.invalidate('a'); settled.resolve(); },
+        }), visibilityMode: 'manual', initialVisible: false });
+        missing.remove();
+        manager.invalidate('a');
+        manager.setVisible('a', true);
+        manager.touch('a');
+        manager.reconcile();
+        assertHealthy();
+        await settled.promise;
+        manager.reconcile();
+        manager.reconcile();
+        assertHealthy();
+        assert(missingHost.textContent.includes('Cannot restore this page locally'), 'missing local error');
+        return 'Admission: PASS (pending/failed candidate preserves healthy Document, form and load count)';
+    } finally {
+        manager.unregister('a');
+        manager.unregister('b');
+        healthyHost.remove();
+        missingHost.remove();
+    }
+}
+
+// A deadline reports a stalled load; test coordination uses load/DOM events, never delays.
+const deadline = setTimeout(() => { result.textContent = 'FAIL: timed out waiting for recovery'; }, 15000);
+globalThis.smokeResult = (async () => {
+    const passed = [];
+    try {
+        for (const adapter of [createJsSlashRunnerRuntimeAdapter(), createLittleWhiteBoxRuntimeAdapter()]) {
+            passed.push(await checkRecovery(adapter));
+        }
+        passed.push(await checkUnavailableCandidate());
+        result.textContent = passed.join('\n');
+        return { passed };
+    } catch (error) {
+        result.textContent = `FAIL: ${error.stack}`;
+        return { error: String(error) };
+    } finally {
+        clearTimeout(deadline);
+    }
+})();
+</script>

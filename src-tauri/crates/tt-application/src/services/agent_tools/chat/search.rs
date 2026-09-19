@@ -1,16 +1,19 @@
+use std::sync::Arc;
+
 use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::{
-    DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, MAX_SEARCH_SCAN_LIMIT, parse_role, raw_total_messages,
-    role_as_str, visible_total_messages,
+    DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, MAX_SEARCH_SCAN_LIMIT, chat_unavailable_message,
+    parse_role, raw_total_messages, role_as_str, visible_total_messages,
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::common::{
-    object_args, optional_usize_arg, required_trimmed_string_arg, tool_error,
+    optional_usize_arg, required_trimmed_string_arg, tool_error,
 };
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
 use tt_domain::errors::DomainError;
+use tt_domain::frozen_macros::FrozenMacros;
 use tt_domain::models::agent::{AgentChatRef, AgentToolResult};
 use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
@@ -48,17 +51,9 @@ pub(in crate::services::agent_tools) async fn search(
     group_chat_repository: &dyn GroupChatRepository,
     run_id: &str,
     call: &ToolInvocation,
+    args: &Map<String, Value>,
+    macros: &Arc<FrozenMacros>,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let Some(args) = object_args(call) else {
-        return Ok((
-            tool_error(
-                call,
-                "tool.invalid_arguments",
-                "arguments must be an object",
-            ),
-            AgentToolEffect::None,
-        ));
-    };
     let query = match required_trimmed_string_arg(args, "query") {
         Some(query) => query.to_string(),
         None => {
@@ -78,10 +73,20 @@ pub(in crate::services::agent_tools) async fn search(
         }
     };
 
+    search_query.frozen_macros = Some(macros.clone());
     let run = run_repository.load_run(run_id).await?;
     if run.input_message_count.is_some() {
         let raw_total =
-            raw_total_messages(chat_repository, group_chat_repository, &run.chat_ref).await?;
+            match raw_total_messages(chat_repository, group_chat_repository, &run.chat_ref).await {
+                Ok(total) => total,
+                Err(DomainError::NotFound(message)) => {
+                    return Ok((
+                        tool_error(call, "chat.not_found", &chat_unavailable_message(&message)),
+                        AgentToolEffect::None,
+                    ));
+                }
+                Err(error) => return Err(error.into()),
+            };
         let visible_total = visible_total_messages(&run, raw_total)?;
         let Some(bounded_query) = constrain_search_query(search_query, raw_total, visible_total)
         else {
@@ -108,7 +113,7 @@ pub(in crate::services::agent_tools) async fn search(
         Ok(hits) => hits,
         Err(DomainError::NotFound(message)) => {
             return Ok((
-                tool_error(call, "chat.not_found", &message),
+                tool_error(call, "chat.not_found", &chat_unavailable_message(&message)),
                 AgentToolEffect::None,
             ));
         }
@@ -241,6 +246,7 @@ fn parse_search_query(
         };
 
     Ok(ChatMessageSearchQuery {
+        frozen_macros: None,
         query,
         limit,
         filters,

@@ -92,6 +92,22 @@
     opacity: 1;
 }
 
+/* Sortable measures its body clone before adding .ui-sortable-helper. */
+body>.completion_prompt_manager_prompt[data-pm-identifier] {
+    z-index: calc(var(--top-settings-holder-max-z-index) + 1) !important;
+    display: block;
+    padding: 0.5em;
+    border: 1px solid var(--SmartThemeBorderColor);
+    background: var(--SmartThemeBlurTintColor);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+body>.completion_prompt_manager_prompt[data-pm-identifier]>:not(.completion_prompt_manager_prompt_name) {
+    display: none;
+}
+
 #completion_prompt_manager_popup #completion_prompt_manager_popup_edit,
 #completion_prompt_manager_popup #completion_prompt_manager_popup_chathistory_edit,
 #completion_prompt_manager_popup #completion_prompt_manager_popup_dialogueexamples_edit,

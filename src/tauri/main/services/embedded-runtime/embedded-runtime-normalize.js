@@ -117,6 +117,11 @@ export function normalizeEmbeddedRuntimeSlot(slot) {
     if (typeof slot.hydrate !== 'function' || typeof slot.dehydrate !== 'function') {
         throw new Error(`EmbeddedRuntimeManager.register(${id}): slot.hydrate/slot.dehydrate must be functions`);
     }
+    for (const name of /** @type {const} */ (['isResident', 'canHydrate', 'refresh'])) {
+        if (slot[name] !== undefined && typeof slot[name] !== 'function') {
+            throw new TypeError(`EmbeddedRuntimeManager.register(${id}): slot.${name} must be a function`);
+        }
+    }
 
     const visibilityMode = slot.visibilityMode === 'manual' ? 'manual' : 'intersection';
     const visibilityTarget = slot.visibilityTarget instanceof HTMLElement ? slot.visibilityTarget : slot.element;
@@ -131,6 +136,9 @@ export function normalizeEmbeddedRuntimeSlot(slot) {
         priority: clampNumber(normalizeSlotNumber(slot.priority, 0), -1000, 1000, 0),
         weight: clampNumber(normalizeSlotNumber(slot.weight, 1), 0, 10_000, 1),
         iframeCount: clampNumber(normalizeSlotNumber(slot.iframeCount, 0), 0, 1000, 0),
+        isResident: slot.isResident,
+        canHydrate: slot.canHydrate,
+        refresh: slot.refresh,
         hydrate: slot.hydrate,
         dehydrate: slot.dehydrate,
         dispose: typeof slot.dispose === 'function' ? slot.dispose : null,

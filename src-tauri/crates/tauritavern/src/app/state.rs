@@ -19,6 +19,7 @@ use tt_application::services::chat_payload_commit_service::ChatPayloadCommitServ
 use tt_application::services::chat_service::ChatService;
 use tt_application::services::content_service::ContentService;
 use tt_application::services::data_archive_service::DataArchiveService;
+use tt_application::services::database_service::DatabaseService;
 use tt_application::services::extension_service::ExtensionService;
 use tt_application::services::extension_store_service::ExtensionStoreService;
 use tt_application::services::group_chat_service::GroupChatService;
@@ -26,14 +27,16 @@ use tt_application::services::group_service::GroupService;
 use tt_application::services::image_metadata_service::ImageMetadataService;
 use tt_application::services::lan_sync_service::LanSyncService;
 use tt_application::services::llm_connection_service::LlmConnectionService;
-use tt_application::services::native_regex_service::NativeRegexService;
+use tt_application::services::mcp_service::McpService;
 use tt_application::services::preset_service::PresetService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::provider_metadata_service::ProviderMetadataService;
 use tt_application::services::quick_reply_service::QuickReplyService;
+use tt_application::services::searxng_search_service::SearxngSearchService;
 use tt_application::services::secret_service::SecretService;
 use tt_application::services::settings_service::SettingsService;
 use tt_application::services::skill_service::SkillService;
+use tt_application::services::sprite_service::SpriteService;
 use tt_application::services::stable_diffusion_service::StableDiffusionService;
 use tt_application::services::sync_automation_service::SyncAutomationService;
 use tt_application::services::theme_service::ThemeService;
@@ -43,7 +46,9 @@ use tt_application::services::tt_sync_service::TtSyncService;
 use tt_application::services::tts_service::TtsService;
 use tt_application::services::update_service::UpdateService;
 use tt_application::services::user_directory_service::UserDirectoryService;
+use tt_application::services::user_endpoint_access_service::UserEndpointAccessService;
 use tt_application::services::user_service::UserService;
+use tt_application::services::vector_service::VectorService;
 use tt_application::services::world_info_service::WorldInfoService;
 use tt_domain::errors::DomainError;
 use tt_domain::ios_policy::IosPolicyActivationReport;
@@ -83,6 +88,7 @@ pub(crate) struct AppServices {
     pub(crate) user_directory_service: Arc<UserDirectoryService>,
     pub(crate) secret_service: Arc<SecretService>,
     pub(crate) skill_service: Arc<SkillService>,
+    pub(crate) sprite_service: Arc<SpriteService>,
     pub(crate) content_service: Arc<ContentService>,
     pub(crate) asset_service: Arc<AssetService>,
     pub(crate) extension_service: Arc<ExtensionService>,
@@ -102,7 +108,11 @@ pub(crate) struct AppServices {
     pub(crate) agent_runtime_service: Arc<AgentRuntimeService>,
     pub(crate) chat_completion_service: Arc<ChatCompletionService>,
     pub(crate) llm_connection_service: Arc<LlmConnectionService>,
+    pub(crate) user_endpoint_access_service: Arc<UserEndpointAccessService>,
+    pub(crate) mcp_service: Arc<McpService>,
     pub(crate) provider_metadata_service: Arc<ProviderMetadataService>,
+    pub(crate) searxng_search_service: Arc<SearxngSearchService>,
+    pub(crate) vector_service: Arc<VectorService>,
     pub(crate) tokenization_service: Arc<TokenizationService>,
     pub(crate) stable_diffusion_service: Arc<StableDiffusionService>,
     pub(crate) translate_service: Arc<TranslateService>,
@@ -112,8 +122,8 @@ pub(crate) struct AppServices {
     pub(crate) tt_sync_service: Arc<TtSyncService>,
     pub(crate) sync_automation_service: Arc<SyncAutomationService>,
     pub(crate) data_archive_service: Arc<DataArchiveService>,
+    pub(crate) database_service: Arc<DatabaseService>,
     pub(crate) update_service: Arc<UpdateService>,
-    pub(crate) native_regex_service: Arc<NativeRegexService>,
 }
 
 impl AppState {

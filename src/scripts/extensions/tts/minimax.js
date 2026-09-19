@@ -20,7 +20,7 @@ class MiniMaxTtsProvider {
         model: 'speech-02-hd',
         voiceMap: {},
         speed: { default: 1.0, min: 0.5, max: 2.0, step: 0.1 },
-        volume: { default: 1.0, min: 0.0, max: 10.0, step: 0.1 },
+        volume: { default: 1.0, min: 0.1, max: 10.0, step: 0.1 },
         pitch: { default: 0, min: -12, max: 12, step: 1 },
         audioSampleRate: 32000,
         bitrate: 128000,
@@ -38,10 +38,14 @@ class MiniMaxTtsProvider {
 
     // default models (by MiniMax doc)
     static defaultModels = [
+        { id: 'speech-2.8-hd', name: 'Speech 2.8 HD' },
+        { id: 'speech-2.8-turbo', name: 'Speech 2.8 Turbo' },
+        { id: 'speech-2.6-hd', name: 'Speech 2.6 HD' },
+        { id: 'speech-2.6-turbo', name: 'Speech 2.6 Turbo' },
         { id: 'speech-02-hd', name: 'Speech-02-HD (High Quality)' },
         { id: 'speech-02-turbo', name: 'Speech-02-Turbo (Fast)' },
-        { id: 'speech-01', name: 'Speech-01 (Legacy)' },
-        { id: 'speech-01-240228', name: 'Speech-01-240228 (Legacy)' },
+        { id: 'speech-01-hd', name: 'Speech-01-HD' },
+        { id: 'speech-01-turbo', name: 'Speech-01-Turbo' },
     ];
 
     availableModels = [];
@@ -55,26 +59,25 @@ class MiniMaxTtsProvider {
                     <i class="fa-solid fa-key"></i>
                     <span>Click to set API Key</span>
                 </div>
-                <div id="minimax_group_id" class="menu_button menu_button_icon manage-api-keys" data-key="minimax_group_id">
-                    <i class="fa-solid fa-key"></i>
-                    <span>Click to set Group ID</span>
-                </div>
             </div>
             <div class="tts_block">
                 <label for="minimax_tts_api_host">API Host</label>
                 <select id="minimax_tts_api_host" class="text_pole">
                     <option value="https://api.minimax.io">Official (api.minimax.io)</option>
-                    <option value="https://api.minimaxi.chat">Global (api.minimaxi.chat)</option>
-                    <option value="https://api.minimax.chat">Mainland China (api.minimax.chat)</option>
+                    <option value="https://api.minimaxi.com">Mainland China (api.minimaxi.com)</option>
                 </select>
             </div>
             <div class="tts_block">
                 <label for="minimax_tts_model">Model</label>
                 <select id="minimax_tts_model" class="text_pole">
+                    <option value="speech-2.8-hd">Speech 2.8 HD</option>
+                    <option value="speech-2.8-turbo">Speech 2.8 Turbo</option>
+                    <option value="speech-2.6-hd">Speech 2.6 HD</option>
+                    <option value="speech-2.6-turbo">Speech 2.6 Turbo</option>
                     <option value="speech-02-hd">Speech-02-HD (High Quality)</option>
                     <option value="speech-02-turbo">Speech-02-Turbo (Fast)</option>
-                    <option value="speech-01">Speech-01 (Legacy)</option>
-                    <option value="speech-01-240228">Speech-01-240228 (Legacy)</option>
+                    <option value="speech-01-hd">Speech-01-HD</option>
+                    <option value="speech-01-turbo">Speech-01-Turbo</option>
                 </select>
             </div>
             <div class="tts_block">
@@ -173,9 +176,8 @@ class MiniMaxTtsProvider {
 
     constructor() {
         this.handler = async function (/** @type {string} */ key) {
-            if (![SECRET_KEYS.MINIMAX, SECRET_KEYS.MINIMAX_GROUP_ID].includes(key)) return;
+            if (key !== SECRET_KEYS.MINIMAX) return;
             $('#api_key_minimax').toggleClass('success', !!secret_state[SECRET_KEYS.MINIMAX]);
-            $('#minimax_group_id').toggleClass('success', !!secret_state[SECRET_KEYS.MINIMAX_GROUP_ID]);
             await this.onRefreshClick();
         }.bind(this);
     }
@@ -480,6 +482,17 @@ class MiniMaxTtsProvider {
         if (!this.settings.customModels) this.settings.customModels = [];
         if (!this.settings.customVoices) this.settings.customVoices = [];
 
+        if (this.settings.apiHost === 'https://api.minimaxi.chat') {
+            this.settings.apiHost = 'https://api.minimax.io';
+        } else if (this.settings.apiHost === 'https://api.minimax.chat') {
+            this.settings.apiHost = 'https://api.minimaxi.com';
+        }
+
+        if (['speech-01', 'speech-01-240228'].includes(this.settings.model)) {
+            console.info(`MiniMax TTS: Migrated unsupported model ${this.settings.model} to ${this.defaultSettings.model}`);
+            this.settings.model = this.defaultSettings.model;
+        }
+
         // # Migrate settings
         // Pitch value changed from float to int. If it's a float, let's try to extrapolate it to the new range
         if (!Number.isInteger(this.settings.pitch)) {
@@ -588,13 +601,12 @@ class MiniMaxTtsProvider {
         }
 
         $('#api_key_minimax').toggleClass('success', !!secret_state[SECRET_KEYS.MINIMAX]);
-        $('#minimax_group_id').toggleClass('success', !!secret_state[SECRET_KEYS.MINIMAX_GROUP_ID]);
         [event_types.SECRET_WRITTEN, event_types.SECRET_DELETED, event_types.SECRET_ROTATED].forEach(event => {
             eventSource.on(event, this.handler);
         });
 
         // Only check ready status when API credentials are available
-        if (secret_state[SECRET_KEYS.MINIMAX] && secret_state[SECRET_KEYS.MINIMAX_GROUP_ID]) {
+        if (secret_state[SECRET_KEYS.MINIMAX]) {
             try {
                 await this.checkReady();
                 console.debug('MiniMax TTS: Settings loaded and ready');
@@ -608,8 +620,8 @@ class MiniMaxTtsProvider {
 
     // Perform a simple readiness check
     async checkReady() {
-        if (!secret_state[SECRET_KEYS.MINIMAX] || !secret_state[SECRET_KEYS.MINIMAX_GROUP_ID]) {
-            const error = new Error('API Key and Group ID are required');
+        if (!secret_state[SECRET_KEYS.MINIMAX]) {
+            const error = new Error('API Key is required');
             console.error('MiniMax TTS checkReady error:', error.message);
             throw error;
         }
@@ -708,22 +720,9 @@ class MiniMaxTtsProvider {
     }
 
     async fetchTtsVoiceObjects() {
-        try {
-            if (!secret_state[SECRET_KEYS.MINIMAX] || !secret_state[SECRET_KEYS.MINIMAX_GROUP_ID]) {
-                console.warn('MiniMax TTS: API Key and Group ID required for fetching voices');
-                console.warn('Using all available voices (default + custom). Please check your API credentials');
-                return this.getAllVoices();
-            }
-
-            // MiniMax API doesn't provide a voices listing endpoint
-            // Using all available voices (default + custom)
-            console.info('MiniMax TTS: Using all available voices (default + custom)');
-            return this.getAllVoices();
-        } catch (error) {
-            console.error('Error fetching MiniMax voices:', error);
-            console.warn('Using all available voices (default + custom). Please check your API credentials');
-            return this.getAllVoices();
-        }
+        // MiniMax API doesn't provide a voices listing endpoint.
+        console.info('MiniMax TTS: Using all available voices (default + custom)');
+        return this.getAllVoices();
     }
 
     async fetchTtsModels() {
@@ -775,8 +774,8 @@ class MiniMaxTtsProvider {
     async fetchTtsGeneration(inputText, voiceId, language = null) {
         console.info(`Generating new MiniMax TTS for voice_id ${voiceId}`);
 
-        if (!secret_state[SECRET_KEYS.MINIMAX] || !secret_state[SECRET_KEYS.MINIMAX_GROUP_ID]) {
-            const error = new Error('API Key and Group ID are required');
+        if (!secret_state[SECRET_KEYS.MINIMAX]) {
+            const error = new Error('API Key is required');
             console.error('MiniMax TTS fetchTtsGeneration error:', error.message);
             throw error;
         }
@@ -854,33 +853,33 @@ class MiniMaxTtsProvider {
 
         // Then map language codes to MiniMax API format
         const languageMap = {
-            'zh-CN': 'zh_CN',
-            'zh-TW': 'zh_TW',
-            'en-US': 'en_US',
-            'en-GB': 'en_GB',
-            'en-AU': 'en_AU',
-            'en-IN': 'en_IN',
-            'ja-JP': 'ja_JP',
-            'ko-KR': 'ko_KR',
-            'fr-FR': 'fr_FR',
-            'de-DE': 'de_DE',
-            'es-ES': 'es_ES',
-            'pt-BR': 'pt_BR',
-            'it-IT': 'it_IT',
-            'ar-SA': 'ar_SA',
-            'ru-RU': 'ru_RU',
-            'tr-TR': 'tr_TR',
-            'nl-NL': 'nl_NL',
-            'uk-UA': 'uk_UA',
-            'vi-VN': 'vi_VN',
-            'id-ID': 'id_ID',
-            'th-TH': 'th_TH',
-            'pl-PL': 'pl_PL',
-            'ro-RO': 'ro_RO',
-            'el-GR': 'el_GR',
-            'cs-CZ': 'cs_CZ',
-            'fi-FI': 'fi_FI',
-            'hi-IN': 'hi_IN',
+            'zh-CN': 'Chinese',
+            'zh-TW': 'Chinese,Yue',
+            'en-US': 'English',
+            'en-GB': 'English',
+            'en-AU': 'English',
+            'en-IN': 'English',
+            'ja-JP': 'Japanese',
+            'ko-KR': 'Korean',
+            'fr-FR': 'French',
+            'de-DE': 'German',
+            'es-ES': 'Spanish',
+            'pt-BR': 'Portuguese',
+            'it-IT': 'Italian',
+            'ar-SA': 'Arabic',
+            'ru-RU': 'Russian',
+            'tr-TR': 'Turkish',
+            'nl-NL': 'Dutch',
+            'uk-UA': 'Ukrainian',
+            'vi-VN': 'Vietnamese',
+            'id-ID': 'Indonesian',
+            'th-TH': 'Thai',
+            'pl-PL': 'Polish',
+            'ro-RO': 'Romanian',
+            'el-GR': 'Greek',
+            'cs-CZ': 'Czech',
+            'fi-FI': 'Finnish',
+            'hi-IN': 'Hindi',
         };
 
         // Return mapped language or default to auto

@@ -7,20 +7,20 @@
 `install-linux.sh` 为 Debian 12+、Ubuntu 22.04 LTS+、Fedora 与 openSUSE Leap 16.0 配置签名软件源，并安装或更新 TauriTavern：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh | sh
+curl -fsSL https://get.tauritavern.com/linux.sh | sh
 ```
 
 使用 Canary 渠道：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+curl -fsSL https://get.tauritavern.com/linux.sh \
   | sh -s -- --channel canary
 ```
 
 NixOS 会自动使用项目 flake；其他已经安装 Nix 的 Linux 可显式选择 Nix：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+curl -fsSL https://get.tauritavern.com/linux.sh \
   | sh -s -- --method nix
 ```
 
@@ -28,7 +28,7 @@ Nix 安装进入当前用户 profile，不使用 sudo，也不修改 `/etc/nix/n
 
 ```sh
 curl -fsSL \
-  https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/install-linux.sh \
+  https://get.tauritavern.com/linux.sh \
   -o install-tauritavern.sh
 sh install-tauritavern.sh --dry-run
 ```
@@ -51,13 +51,13 @@ sh install-tauritavern.sh --dry-run
 Unix / macOS / Linux / Termux:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/export-sillytavern-migration.sh | sh
+curl -fsSL https://get.tauritavern.com/export.sh | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-iex (iwr 'https://raw.githubusercontent.com/Darkatse/TauriTavern/main/scripts/export-sillytavern-migration.ps1').Content
+iex (iwr 'https://get.tauritavern.com/export.ps1').Content
 ```
 
 ### 本地执行
@@ -90,7 +90,7 @@ Flatpak 构建配方位于 `packaging/flatpak/`，软件源发布工具位于
 - `tauri-before-build.mjs`
   统一生成 Tauri 打包所需的前端 bundle；pnpm 启动入口也复用它以覆盖移动端 IDE 构建。
 - `tauri-dev-server.mjs`
-  为 `tauri dev` 提供轻量静态前端服务器、页面刷新通道与开发态 Service Worker 会话 bootstrap，避免普通前端文件变化污染 Rust 编译指纹。
+  为 `tauri dev` 提供轻量静态前端服务器、页面刷新通道与开发态 Service Worker 会话 bootstrap。静态文件通过 `@parcel/watcher` 的原生事件监听，Rspack 依赖在成功重编译后刷新。
 - `check-frontend-guardrails.mjs`
   校验前端宿主层文件规模和依赖边界，避免 Host Kernel 持续膨胀。对应 `pnpm run check:frontend`。
 - `tauri-ios-xcode-script.sh`

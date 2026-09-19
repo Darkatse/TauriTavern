@@ -301,6 +301,10 @@ impl GroupChatService {
     /// Delete a group chat payload file.
     pub async fn delete_group_chat(&self, dto: DeleteGroupChatDto) -> Result<(), ApplicationError> {
         validate_chat_file_name(&dto.id, "Group chat id")?;
+        let _run_guard = self
+            .agent_workspace_lifecycle_service
+            .lock_run_lifecycle()
+            .await;
 
         let target = AgentWorkspaceLifecycleService::group_target(&dto.id)?;
         self.agent_workspace_lifecycle_service
@@ -314,7 +318,7 @@ impl GroupChatService {
             .invalidate(&group_locator(&dto.id))
             .await;
         self.agent_workspace_lifecycle_service
-            .delete_chat_workspace(&target)
+            .delete_chat_workspace_locked(&target)
             .await?;
         Ok(())
     }

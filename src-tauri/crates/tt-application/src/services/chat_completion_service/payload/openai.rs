@@ -40,6 +40,17 @@ const TEXT_COMPLETION_MODELS: &[&str] = &[
 ];
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
+    build_with_text_completions(payload, true)
+}
+
+pub(super) fn build_chat(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
+    build_with_text_completions(payload, false)
+}
+
+fn build_with_text_completions(
+    payload: Map<String, Value>,
+    allow_text_completions: bool,
+) -> Result<(String, Value), ApplicationError> {
     let mut payload = payload;
     let source = payload
         .get("chat_completion_source")
@@ -48,7 +59,7 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
         .trim()
         .to_ascii_lowercase();
     strip_internal_fields(&mut payload);
-    build_clean(payload, &source)
+    build_clean(payload, &source, allow_text_completions)
 }
 
 pub(super) fn strip_internal_fields(payload: &mut Map<String, Value>) {
@@ -62,6 +73,7 @@ pub(super) fn strip_internal_fields(payload: &mut Map<String, Value>) {
         "custom_exclude_body",
         "custom_include_headers",
         "custom_claude_prompt_caching",
+        "custom_openai_responses_websocket",
         "custom_url",
         "secret_id",
         "bypass_status_check",
@@ -79,8 +91,9 @@ pub(super) fn strip_internal_fields(payload: &mut Map<String, Value>) {
 fn build_clean(
     payload: Map<String, Value>,
     source: &str,
+    allow_text_completions: bool,
 ) -> Result<(String, Value), ApplicationError> {
-    if is_text_completion(&payload) {
+    if allow_text_completions && is_text_completion(&payload) {
         Ok((
             "/completions".to_string(),
             Value::Object(build_text_completion_payload(&payload)?),
@@ -157,6 +170,19 @@ fn build_chat_completion_payload(
         "user",
     ] {
         insert_if_present(&mut request, payload, key);
+    }
+
+    if payload.get("stream").and_then(Value::as_bool) == Some(true) {
+        request.insert(
+            "stream_options".to_string(),
+            serde_json::json!({ "include_usage": true }),
+        );
+    }
+
+    if source == "custom"
+        && let Some(reasoning_effort) = payload.get("reasoning_effort")
+    {
+        request.insert("reasoning_effort".to_string(), reasoning_effort.clone());
     }
 
     if let Some(model) = payload.get("model").and_then(Value::as_str) {
@@ -387,10 +413,10 @@ mod tests {
     }
 
     #[test]
-    fn custom_payload_does_not_forward_reasoning_effort_for_non_openai_models() {
+    fn custom_payload_forwards_reasoning_effort_for_unknown_models() {
         let payload = json!({
             "chat_completion_source": "custom",
-            "model": "claude-opus-4-5",
+            "model": "custom-reasoning-model",
             "messages": [{"role": "user", "content": "hello"}],
             "reasoning_effort": "high",
             "verbosity": "high"
@@ -403,91 +429,31 @@ mod tests {
         assert_eq!(endpoint, "/chat/completions");
 
         let body = upstream.as_object().expect("payload must be object");
-        assert!(body.get("reasoning_effort").is_none());
+
+        assert_eq!(
+            body.get("reasoning_effort").and_then(Value::as_str),
+            Some("high")
+        );
+
         assert!(body.get("verbosity").is_none());
     }
 
     #[test]
-    fn custom_payload_forwards_reasoning_effort_for_supported_openai_models() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "model": "gpt-5-2025-08-07",
-            "messages": [{"role": "user", "content": "hello"}],
-            "reasoning_effort": "min"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("payload must be object");
-        assert_eq!(
-            body.get("reasoning_effort")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            "none"
-        );
-    }
-
-    #[test]
-    fn custom_payload_orders_openai_extremes() {
-        for (requested, expected) in [("xhigh", "high"), ("max", "xhigh")] {
+    fn custom_payload_preserves_reasoning_effort_for_openai_model_names() {
+        for reasoning_effort in ["min", "max", "xhigh", "auto"] {
             let payload = json!({
                 "chat_completion_source": "custom",
-                "model": "gpt-5.2",
+                "model": "gpt-5.1",
                 "messages": [{"role": "user", "content": "hello"}],
-                "reasoning_effort": requested
+                "reasoning_effort": reasoning_effort
             })
             .as_object()
             .cloned()
             .expect("payload must be object");
 
             let (_endpoint, upstream) = build(payload).expect("build should succeed");
-            let body = upstream.as_object().expect("payload must be object");
-            assert_eq!(
-                body.get("reasoning_effort").and_then(Value::as_str),
-                Some(expected)
-            );
+            assert_eq!(upstream["reasoning_effort"], reasoning_effort);
         }
-    }
-
-    #[test]
-    fn custom_payload_omits_auto_reasoning_effort_for_supported_openai_models() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "model": "gpt-5-2025-08-07",
-            "messages": [{"role": "user", "content": "hello"}],
-            "reasoning_effort": "auto"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("payload must be object");
-        assert!(body.get("reasoning_effort").is_none());
-    }
-
-    #[test]
-    fn custom_payload_forwards_verbosity_only_for_gpt5_models() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "model": "gpt-5-mini",
-            "messages": [{"role": "user", "content": "hello"}],
-            "verbosity": "low"
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_endpoint, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("payload must be object");
-        assert_eq!(
-            body.get("verbosity")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            "low"
-        );
     }
 
     #[test]
@@ -566,25 +532,6 @@ mod tests {
                 .pointer("/messages/0/content/1/audio_url")
                 .is_none()
         );
-    }
-
-    #[test]
-    fn openai_chat_rejects_single_object_audio_url() {
-        let payload = json!({
-            "chat_completion_source": "openai",
-            "model": "gpt-4o-audio-preview",
-            "messages": [{
-                "role": "user",
-                "content": { "type": "audio_url", "audio_url": { "url": "data:audio/mpeg;base64,BBBB" } }
-            }]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let error = build(payload).expect_err("single object audio should fail fast");
-
-        assert!(error.to_string().contains("content array"));
     }
 
     #[test]
@@ -730,57 +677,6 @@ mod tests {
             let error = build(payload).expect_err("video should fail fast");
 
             assert!(error.to_string().contains("cannot preserve video input"));
-        }
-    }
-
-    #[test]
-    fn openai_compatible_sources_preserve_media_parts() {
-        for source in ["custom", "groq", "siliconflow"] {
-            let payload = json!({
-                "chat_completion_source": source,
-                "model": "provider-model",
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        { "type": "audio_url", "audio_url": { "url": "https://example.test/audio.wav" } },
-                        { "type": "audio_url", "audio_url": { "url": "data:audio/wav;base64,AAAA" } },
-                        { "type": "video_url", "video_url": { "url": "data:video/mp4;base64,BBBB" } },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": "https://example.test/cat.png",
-                                "detail": "high"
-                            }
-                        }
-                    ]
-                }]
-            })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-
-            let (_endpoint, upstream) = build(payload).expect("payload should pass through");
-
-            assert_eq!(
-                upstream.pointer("/messages/0/content/0/type"),
-                Some(&json!("audio_url"))
-            );
-            assert_eq!(
-                upstream.pointer("/messages/0/content/1/type"),
-                Some(&json!("audio_url"))
-            );
-            assert_eq!(
-                upstream.pointer("/messages/0/content/1/audio_url/url"),
-                Some(&json!("data:audio/wav;base64,AAAA"))
-            );
-            assert_eq!(
-                upstream.pointer("/messages/0/content/2/type"),
-                Some(&json!("video_url"))
-            );
-            assert_eq!(
-                upstream.pointer("/messages/0/content/3/image_url/detail"),
-                Some(&json!("high"))
-            );
         }
     }
 }

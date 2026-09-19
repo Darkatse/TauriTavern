@@ -13,11 +13,8 @@ import { allowPresetScripts, allowScopedScripts, disallowPresetScripts, disallow
 import { t } from '../../i18n.js';
 import { accountStorage } from '../../util/AccountStorage.js';
 import { getPresetManager } from '../../preset-manager.js';
-import {
-    isNativeRegexBackendEnabled,
-    NATIVE_REGEX_BACKEND_SETTING_CHANGED_EVENT,
-    persistNativeRegexBackendEnabled,
-} from '../../tauri/regex/native-regex-settings.js';
+import { debounce_timeout } from '../../constants.js';
+import { mountCodeMirrorEditor } from '../../tauri/codemirror-editor.js';
 
 // Re-exports for legacy extensions
 export { getRegexScripts };
@@ -901,7 +898,27 @@ async function onRegexEditorOpenClick(existingId, scriptType) {
     editorHtml.find('input, textarea, select').on('input', updateTestResult);
     updateInfoBlock(editorHtml);
 
-    const popupResult = await callGenericPopup(editorHtml, POPUP_TYPE.CONFIRM, '', { okButton: t`Save`, cancelButton: t`Cancel`, allowVerticalScrolling: true });
+    let previewTimeout = null;
+    let editors = [];
+    const schedulePreview = () => {
+        clearTimeout(previewTimeout);
+        previewTimeout = setTimeout(() => {
+            editors.forEach(editor => editor.flush());
+            updateTestResult();
+        }, debounce_timeout.standard);
+    };
+    const popupResultPromise = callGenericPopup(editorHtml, POPUP_TYPE.CONFIRM, '', { okButton: t`Save`, cancelButton: t`Cancel`, allowVerticalScrolling: true });
+    editors = (await Promise.all(
+        editorHtml.find('.regex_replace_string, .regex_trim_strings').get()
+            .map(source => mountCodeMirrorEditor(source, { onChange: schedulePreview })),
+    )).filter(Boolean);
+    const popupResult = await popupResultPromise;
+    clearTimeout(previewTimeout);
+    if (popupResult) {
+        editors.forEach(editor => editor.flush());
+    }
+    editors.forEach(editor => editor.destroy());
+
     if (popupResult) {
         const newRegexScript = {
             id: existingId ? String(existingId) : uuidv4(),
@@ -1796,18 +1813,6 @@ export async function init() {
         onRegexEditorOpenClick(false, SCRIPT_TYPES.GLOBAL);
     });
     $('#open_regex_debugger').on('click', onRegexDebuggerOpenClick);
-    const nativeRegexBackendToggle = $('#regex_native_backend_toggle');
-    nativeRegexBackendToggle.prop('checked', isNativeRegexBackendEnabled());
-    nativeRegexBackendToggle.on('input', function () {
-        const enabled = Boolean($(this).prop('checked'));
-        void persistNativeRegexBackendEnabled(enabled).then(() => {
-            nativeRegexBackendToggle.prop('checked', isNativeRegexBackendEnabled());
-        });
-    });
-    window.addEventListener(NATIVE_REGEX_BACKEND_SETTING_CHANGED_EVENT, () => {
-        nativeRegexBackendToggle.prop('checked', isNativeRegexBackendEnabled());
-        requestRegexChatRefresh();
-    });
     $('#open_scoped_editor').on('click', function () {
         if (this_chid === undefined) {
             toastr.error(t`No character selected.`);

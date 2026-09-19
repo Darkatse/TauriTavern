@@ -10,11 +10,11 @@ import { isChatVirtualizationEnabled } from '../../../tauri/main/services/chat-s
 import { morphdom } from '../../../lib.js';
 import { segmentExistingTextInElement } from '../../util/stream-fadein.js';
 
-/** @param {HTMLElement} messageElement @param {{ content: HTMLElement; commit: () => unknown }} transaction @param {boolean} notifyParticipants */
-function commitTransaction(messageElement, transaction, notifyParticipants) {
+/** @param {HTMLElement} messageElement @param {{ content: HTMLElement; commit: () => unknown }} transaction @param {boolean} transient */
+function commitTransaction(messageElement, transaction, transient) {
     const controller = getInstalledChatSurfaceController();
     if (messageElement.isConnected && controller?.ownsMessageElement(messageElement)) {
-        return controller.updateContent(messageElement, transaction, { notifyParticipants });
+        return controller.updateContent(messageElement, transaction, { transient });
     }
     return transaction.commit();
 }
@@ -35,7 +35,7 @@ export function replaceMesTextHtmlWithRuntimePolicy(messageElement, html, { fron
         html,
         { frontendSourceHandoffEvent },
     );
-    return commitTransaction(messageElement, transaction, true);
+    return commitTransaction(messageElement, transaction, false);
 }
 
 /**
@@ -49,7 +49,7 @@ export function replaceMesTextHtmlWithRuntimePolicy(messageElement, html, { fron
 export function replaceTransientMesTextHtmlWithRuntimePolicy(messageElement, html, { fadeIn = false } = {}) {
     const transaction = prepareMesTextHtmlWithRuntimePolicy(messageElement, html);
     if (!fadeIn) {
-        return commitTransaction(messageElement, transaction, false);
+        return commitTransaction(messageElement, transaction, true);
     }
 
     const mesText = messageElement.querySelector('.mes_text');
@@ -68,7 +68,7 @@ export function replaceTransientMesTextHtmlWithRuntimePolicy(messageElement, htm
             morphdom(mesText, transaction.content);
             return mesText;
         },
-    }, false);
+    }, true);
 }
 
 /**

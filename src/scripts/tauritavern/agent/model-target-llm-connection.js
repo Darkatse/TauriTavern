@@ -1,3 +1,28 @@
+// @ts-check
+
+/**
+ * @typedef {Record<string, unknown> & {
+ *   id: string;
+ *   kind?: string;
+ *   mode?: string;
+ *   name?: string;
+ *   api?: string;
+ *   model?: string;
+ *   'custom-api-format'?: string;
+ *   'api-url'?: string;
+ *   secretRef?: { key?: string; id?: string; labelSnapshot?: string };
+ *   adapterHints?: Record<string, unknown>;
+ *   proxy?: string;
+ * }} AgentModelTarget
+ * @typedef {AgentModelTarget & {
+ *   kind: 'tauritavern.modelTarget';
+ *   mode: 'cc';
+ *   api: string;
+ *   model: string;
+ *   secretRef?: { key: string; id: string; labelSnapshot?: string };
+ * }} ConvertibleAgentModelTarget
+ */
+
 export const MODEL_TARGET_KIND = 'tauritavern.modelTarget';
 
 const LLM_CONNECTION_KIND = 'tauritavern.llmConnection';
@@ -5,12 +30,15 @@ const LLM_CONNECTION_SCHEMA_VERSION = 1;
 const MODEL_TARGET_CONNECTION_PREFIX = 'model-target-';
 const NO_PROXY_PRESET = 'None';
 
+/** @type {Readonly<Record<string, string>>} */
 const CUSTOM_API_FORMAT_BY_API = Object.freeze({
     custom_openai_responses: 'openai_responses',
     custom_claude_messages: 'claude_messages',
     custom_gemini_interactions: 'gemini_interactions',
+    custom_gemini_generate_content: 'gemini_generate_content',
 });
 
+/** @type {Readonly<Record<string, string>>} */
 const SOURCE_ALIASES = Object.freeze({
     'open-router': 'openrouter',
     google: 'makersuite',
@@ -29,7 +57,9 @@ const SOURCE_ALIASES = Object.freeze({
     'mini max': 'minimax',
 });
 
+/** @type {Readonly<Record<string, string>>} */
 const SOURCE_SPECIFIC_API_URL_KEYS = Object.freeze({
+    opencode: 'opencode_endpoint',
     zai: 'zai_endpoint',
     siliconflow: 'siliconflow_endpoint',
     minimax: 'minimax_endpoint',
@@ -37,8 +67,13 @@ const SOURCE_SPECIFIC_API_URL_KEYS = Object.freeze({
     vertexai: 'vertexai_region',
 });
 
+/**
+ * @param {unknown} [context]
+ * @returns {AgentModelTarget[]}
+ */
 export function listSavedModelTargets(context = requireSillyTavernContext()) {
-    const targets = context.extensionSettings?.connectionManager?.modelTargets;
+    const host = /** @type {{ extensionSettings?: { connectionManager?: { modelTargets?: unknown } } }} */ (context);
+    const targets = host.extensionSettings?.connectionManager?.modelTargets;
     if (!Array.isArray(targets)) {
         return [];
     }
@@ -49,6 +84,10 @@ export function listSavedModelTargets(context = requireSillyTavernContext()) {
         .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
 }
 
+/**
+ * @param {AgentModelTarget} target
+ * @returns {string}
+ */
 export function modelTargetConnectionRef(target) {
     const rawId = String(target?.id || '').trim();
     if (!rawId) {
@@ -71,6 +110,7 @@ export function modelTargetConnectionRef(target) {
     return connectionRef;
 }
 
+/** @param {unknown} connectionRef */
 export function modelTargetIdFromConnectionRef(connectionRef) {
     const value = String(connectionRef || '').trim();
     if (!value.startsWith(MODEL_TARGET_CONNECTION_PREFIX)) {
@@ -79,6 +119,10 @@ export function modelTargetIdFromConnectionRef(connectionRef) {
     return value.slice(MODEL_TARGET_CONNECTION_PREFIX.length);
 }
 
+/**
+ * @param {AgentModelTarget} target
+ * @returns {{ mode: 'connectionRef'; connectionRef: string; modelId: string }}
+ */
 export function modelBindingFromTarget(target) {
     assertModelTargetConvertible(target);
     return {
@@ -88,10 +132,15 @@ export function modelBindingFromTarget(target) {
     };
 }
 
+/**
+ * @param {AgentModelTarget} target
+ * @returns {TauriTavernLlmConnectionDefinition}
+ */
 export function buildLlmConnectionFromModelTarget(target) {
     assertModelTargetConvertible(target);
 
     const source = normalizeChatCompletionSource(target.api);
+    /** @type {{ baseUrl?: string; sourceSpecific: Record<string, string> }} */
     const endpoint = {
         sourceSpecific: {},
     };
@@ -102,11 +151,15 @@ export function buildLlmConnectionFromModelTarget(target) {
         endpoint.sourceSpecific[SOURCE_SPECIFIC_API_URL_KEYS[source]] = apiUrl;
     }
 
-    if (source === 'vertexai' && target.secretRef.key === 'api_key_vertexai_service_account') {
+    if (source === 'vertexai' && target.secretRef?.key === 'vertexai_service_account_json') {
         endpoint.sourceSpecific.vertexai_auth_mode = 'full';
     }
 
     const customApiFormat = normalizeCustomApiFormat(target);
+    const proxy = String(target.proxy || '').trim();
+    if (source === 'opencode') {
+        endpoint.sourceSpecific.opencode_api_format = customApiFormat || 'openai_compat';
+    }
 
     return {
         schemaVersion: LLM_CONNECTION_SCHEMA_VERSION,
@@ -116,10 +169,10 @@ export function buildLlmConnectionFromModelTarget(target) {
         description: `Connection Manager model target: ${String(target.name || target.id).trim()}`,
         provider: {
             chatCompletionSource: source,
-            ...(customApiFormat ? { customApiFormat } : {}),
+            ...(source === 'custom' && customApiFormat ? { customApiFormat } : {}),
         },
         endpoint,
-        auth: {
+        auth: target.secretRef ? {
             secretRef: {
                 key: String(target.secretRef.key).trim(),
                 id: String(target.secretRef.id).trim(),
@@ -127,13 +180,20 @@ export function buildLlmConnectionFromModelTarget(target) {
                     ? { labelSnapshot: String(target.secretRef.labelSnapshot).trim() }
                     : {}),
             },
-        },
-        routing: {},
-        adapterHints: {},
+        } : {},
+        routing: proxy && proxy !== NO_PROXY_PRESET
+            ? { reverseProxy: { preset: proxy } }
+            : {},
+        adapterHints: structuredClone(target.adapterHints || {}),
         capabilities: {},
     };
 }
 
+/**
+ * @param {readonly AgentModelTarget[]} modelTargets
+ * @param {TauriTavernAgentProfileDefinition['model'] | null | undefined} model
+ * @returns {AgentModelTarget | null}
+ */
 export function findModelTargetForBinding(modelTargets, model) {
     if (!model || model.mode !== 'connectionRef') {
         return null;
@@ -151,7 +211,12 @@ export function findModelTargetForBinding(modelTargets, model) {
     return target;
 }
 
-export function findModelTargetForConnectionRef(modelTargets, connectionRef) {
+/**
+ * @param {readonly AgentModelTarget[]} modelTargets
+ * @param {unknown} connectionRef
+ * @returns {AgentModelTarget | null}
+ */
+function findModelTargetForConnectionRef(modelTargets, connectionRef) {
     const normalizedConnectionRef = String(connectionRef || '').trim();
     if (!modelTargetIdFromConnectionRef(normalizedConnectionRef)) {
         return null;
@@ -160,19 +225,25 @@ export function findModelTargetForConnectionRef(modelTargets, connectionRef) {
     return modelTargets.find((target) => modelTargetConnectionRef(target) === normalizedConnectionRef) || null;
 }
 
+/**
+ * @param {AgentModelTarget} target
+ * @param {TauriTavernLlmConnectionsApi} [llmConnectionsApi]
+ * @returns {Promise<TauriTavernLlmConnectionDefinition>}
+ */
 export async function saveModelTargetAsLlmConnection(target, llmConnectionsApi = requireLlmConnectionsApi()) {
     const connection = buildLlmConnectionFromModelTarget(target);
     await llmConnectionsApi.save({ connection });
     return connection;
 }
 
-export async function syncModelTargetLlmConnection(target, deps = {}) {
-    return saveModelTargetAsLlmConnection(
-        target,
-        deps.llmConnectionsApi || requireLlmConnectionsApi(),
-    );
-}
-
+/**
+ * @param {{ model?: TauriTavernAgentProfileDefinition['model'] }} profile
+ * @param {{
+ *   modelTargets?: AgentModelTarget[];
+ *   context?: unknown;
+ *   llmConnectionsApi?: TauriTavernLlmConnectionsApi;
+ * }} [deps]
+ */
 export async function ensureModelTargetLlmConnectionForProfile(profile, deps = {}) {
     const model = profile?.model;
     if (!isModelTargetBinding(model)) {
@@ -193,6 +264,10 @@ export async function ensureModelTargetLlmConnectionForProfile(profile, deps = {
     );
 }
 
+/**
+ * @param {TauriTavernAgentProfileDefinition['model'] | null | undefined} model
+ * @returns {model is TauriTavernAgentProfileDefinition['model'] & { mode: 'connectionRef'; connectionRef: string; modelId: string }}
+ */
 function isModelTargetBinding(model) {
     return Boolean(
         model?.mode === 'connectionRef'
@@ -200,6 +275,10 @@ function isModelTargetBinding(model) {
     );
 }
 
+/**
+ * @param {AgentModelTarget} target
+ * @returns {asserts target is ConvertibleAgentModelTarget}
+ */
 function assertModelTargetConvertible(target) {
     if (!target || typeof target !== 'object' || Array.isArray(target)) {
         throw new Error('model target must be an object');
@@ -216,15 +295,16 @@ function assertModelTargetConvertible(target) {
     if (!String(target.model || '').trim()) {
         throw new Error(`model target "${target.name || target.id}" is missing model`);
     }
+    const proxy = String(target.proxy || '').trim();
+    if (!target.secretRef && proxy && proxy !== NO_PROXY_PRESET) {
+        return;
+    }
     if (!target.secretRef?.key || !target.secretRef?.id) {
         throw new Error(`model target "${target.name || target.id}" is missing secret reference`);
     }
-    const proxy = String(target.proxy || '').trim();
-    if (proxy && proxy !== NO_PROXY_PRESET) {
-        throw new Error(`model target "${target.name || target.id}" uses proxy preset "${proxy}", which cannot be converted to an Agent LLM connection yet`);
-    }
 }
 
+/** @param {unknown} value */
 function normalizeChatCompletionSource(value) {
     const source = String(value || '').trim().toLowerCase();
     if (!source) {
@@ -236,6 +316,7 @@ function normalizeChatCompletionSource(value) {
     return SOURCE_ALIASES[source] || source;
 }
 
+/** @param {AgentModelTarget} target */
 function normalizeCustomApiFormat(target) {
     const api = String(target.api || '').trim().toLowerCase();
     const explicit = String(target['custom-api-format'] || '').trim();
@@ -248,14 +329,17 @@ function normalizeCustomApiFormat(target) {
     return normalizeChatCompletionSource(target.api) === 'custom' ? 'openai_compat' : '';
 }
 
+/** @returns {unknown} */
 function requireSillyTavernContext() {
-    const context = globalThis.window?.SillyTavern?.getContext?.();
+    const hostWindow = /** @type {Window & { SillyTavern?: { getContext?: () => unknown } }} */ (globalThis.window);
+    const context = hostWindow?.SillyTavern?.getContext?.();
     if (!context || typeof context !== 'object') {
         throw new Error('agent.model_target_context_unavailable: SillyTavern context is required to resolve Model Target LLM connection');
     }
     return context;
 }
 
+/** @returns {TauriTavernLlmConnectionsApi} */
 function requireLlmConnectionsApi() {
     const llmConnectionsApi = globalThis.window?.__TAURITAVERN__?.api?.llmConnections;
     if (typeof llmConnectionsApi?.save !== 'function') {

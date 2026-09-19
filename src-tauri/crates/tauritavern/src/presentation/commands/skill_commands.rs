@@ -80,6 +80,36 @@ pub async fn list_skill_files(
 }
 
 #[tauri::command]
+pub async fn discover_skill_imports(
+    input: SkillImportInput,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<SkillImportInput>, CommandError> {
+    log_command("discover_skill_imports");
+
+    app_state
+        .services
+        .skill_service
+        .discover_imports(input)
+        .await
+        .map_err(map_command_error("Failed to discover Agent Skill imports"))
+}
+
+#[tauri::command]
+pub async fn discard_skill_import_archive(
+    path: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("discard_skill_import_archive");
+
+    app_state
+        .services
+        .skill_service
+        .discard_import_archive(&path)
+        .await
+        .map_err(map_command_error("Failed to discard Agent Skill archive"))
+}
+
+#[tauri::command]
 pub async fn preview_skill_import(
     input: SkillImportInput,
     target_scope: Option<SkillScope>,
@@ -111,48 +141,27 @@ pub async fn install_skill_import(
 }
 
 #[tauri::command]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Tauri command parameters intentionally preserve the flat invoke ABI"
-)]
 pub async fn read_skill_file(
     name: String,
     path: String,
     scope: Option<SkillScope>,
-    max_chars: Option<usize>,
     start_line: Option<usize>,
     line_count: Option<usize>,
-    start_char: Option<usize>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<SkillReadResult, CommandError> {
     log_command(format!("read_skill_file {}/{}", name, path));
-
-    let max_chars = match max_chars {
-        Some(0) => {
-            return Err(CommandError::BadRequest(
-                "maxChars must be greater than 0".to_string(),
-            ));
-        }
-        Some(value) if value > DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS => {
-            return Err(CommandError::BadRequest(format!(
-                "maxChars must be <= {DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS} for api.skill.readFile; Agent skill.read uses Agent Profile budgets"
-            )));
-        }
-        Some(value) => Some(value),
-        None => Some(DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS),
-    };
 
     app_state
         .services
         .skill_service
         .read_skill_file(SkillReadRequest {
+            frozen_macros: None,
             scope: scope.unwrap_or_default(),
             name,
             path,
             start_line,
             line_count,
-            start_char,
-            max_chars,
+            max_output_chars: DEFAULT_SKILL_READ_FALLBACK_MAX_CHARS,
         })
         .await
         .map_err(map_command_error("Failed to read Agent Skill file"))

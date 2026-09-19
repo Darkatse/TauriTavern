@@ -1,0 +1,271 @@
+//! `workspace`：操作内存覆盖层的工作区文件 API。
+//!
+//! 所有读写均针对内存中的 `OverlayFs`，不接触物理文件系统。
+//! 写入操作被收集到 `writes` 通道，由应用层在执行完成后落盘。
+
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
+
+use rquickjs::{Ctx, Function, Object};
+
+use tt_ports::skill_script::{SkillScriptLog, SkillScriptLogLevel};
+
+/// 每个输出项（写入路径 / 日志条目）的固定记账成本，
+/// 防止海量空条目绕过字节预算。
+const OUTPUT_ITEM_FIXED_COST: usize = 64;
+
+/// 内存覆盖文件系统：快照 + 写入收集器 + 日志收集器。
+pub(crate) struct OverlayFs {
+    /// 初始快照 + 脚本写入的叠加状态。
+    files: HashMap<String, String>,
+    /// 可见根前缀。
+    visible_roots: Vec<String>,
+    /// 可写根前缀。
+    writable_roots: Vec<String>,
+    /// 最终状态写入 map：同路径 insert 覆盖，天然去重为最终 delta。
+    pub(crate) writes: BTreeMap<String, String>,
+    /// 最后一次 writeText 的路径；最终 delta 的路径排序不能表达调用顺序。
+    pub(crate) last_write_path: Option<String>,
+    /// 收集的日志。
+    pub(crate) logs: Vec<SkillScriptLog>,
+    /// 输出记账：Σ(路径 + 内容) + 每项固定成本 + 日志字节数。
+    output_bytes: usize,
+    max_output_bytes: usize,
+}
+
+impl OverlayFs {
+    pub(crate) fn new(
+        snapshot: HashMap<String, String>,
+        visible_roots: Vec<String>,
+        writable_roots: Vec<String>,
+        max_output_bytes: usize,
+    ) -> Self {
+        Self {
+            files: snapshot,
+            visible_roots,
+            writable_roots,
+            writes: BTreeMap::new(),
+            last_write_path: None,
+            logs: Vec::new(),
+            output_bytes: 0,
+            max_output_bytes,
+        }
+    }
+
+    /// 当前输出记账字节数（引擎在结果序列化后叠加 result 计入总预算）。
+    pub(crate) fn output_bytes(&self) -> usize {
+        self.output_bytes
+    }
+
+    /// 读侧：root 本身或其子项（与 canonical `workspace_path_is_under_any_root`
+    /// 一致；clean_path 已把 `\` 归一为 `/`，只需 `/` 前缀匹配）。
+    fn is_under_roots(cleaned: &str, roots: &[String]) -> bool {
+        roots.iter().any(|root| {
+            let root = root.trim().trim_end_matches(['/', '\\']);
+            !root.is_empty() && (cleaned == root || cleaned.starts_with(&format!("{root}/")))
+        })
+    }
+
+    /// 写侧：仅 root 的子项（与 canonical `is_writable_workspace_path` 一致，
+    /// root 本身不可写）。
+    fn is_writable_child(cleaned: &str, roots: &[String]) -> bool {
+        roots.iter().any(|root| {
+            let root = root.trim().trim_end_matches(['/', '\\']);
+            !root.is_empty() && cleaned.starts_with(&format!("{root}/"))
+        })
+    }
+
+    /// 清洗相对路径：拒绝绝对路径与 `..` 逃逸。
+    fn clean_path(raw: &str) -> Result<String, String> {
+        if raw.contains('\0') {
+            return Err(format!("path must not contain NUL: {raw:?}"));
+        }
+        let normalized = raw.replace('\\', "/");
+        if Path::new(&normalized).is_absolute() {
+            return Err(format!("absolute paths are not allowed: {raw}"));
+        }
+        let cleaned = path_clean::clean(normalized)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if cleaned.starts_with("..") {
+            return Err(format!("path escapes the workspace: {raw}"));
+        }
+        Ok(cleaned)
+    }
+
+    pub(crate) fn read_text(&self, raw: &str) -> Result<String, String> {
+        let cleaned = Self::clean_path(raw)?;
+        if !Self::is_under_roots(&cleaned, &self.visible_roots) {
+            return Err(format!(
+                "path is outside the visible workspace roots: {raw}"
+            ));
+        }
+        self.files
+            .get(&cleaned)
+            .cloned()
+            .ok_or_else(|| format!("file not found: {raw}"))
+    }
+
+    pub(crate) fn write_text(&mut self, raw: &str, content: String) -> Result<(), String> {
+        let cleaned = Self::clean_path(raw)?;
+        if !Self::is_writable_child(&cleaned, &self.writable_roots) {
+            return Err(format!(
+                "path is outside the writable workspace roots: {raw}"
+            ));
+        }
+        // 同路径覆盖写：扣除上次的全部记账（路径 + 固定成本 + 旧内容），再按新值计入。
+        let previous_cost = self
+            .writes
+            .get(&cleaned)
+            .map(|text| cleaned.len() + OUTPUT_ITEM_FIXED_COST + text.len())
+            .unwrap_or(0);
+        let next = self.output_bytes + cleaned.len() + OUTPUT_ITEM_FIXED_COST + content.len()
+            - previous_cost;
+        if next > self.max_output_bytes {
+            return Err(format!(
+                "total script output exceeds the {}-byte limit (workspace writes + logs + result)",
+                self.max_output_bytes
+            ));
+        }
+        self.output_bytes = next;
+        self.files.insert(cleaned.clone(), content.clone());
+        // 最终状态 map：同一路径覆盖，天然去重为最终 delta
+        self.writes.insert(cleaned.clone(), content);
+        self.last_write_path = Some(cleaned);
+        Ok(())
+    }
+
+    pub(crate) fn list_files(&self, raw: Option<&str>) -> Result<Vec<String>, String> {
+        let prefix = match raw {
+            None => String::new(),
+            Some(p) => {
+                let cleaned = Self::clean_path(p)?;
+                if !Self::is_under_roots(&cleaned, &self.visible_roots) {
+                    return Err(format!("path is outside the visible workspace roots: {p}"));
+                }
+                cleaned.trim_end_matches(['/', '\\']).to_string()
+            }
+        };
+
+        let directory_prefix = format!("{prefix}/");
+        let mut entries: Vec<String> = self
+            .files
+            .keys()
+            .filter_map(|path| {
+                if prefix.is_empty() {
+                    // 列顶层：返回路径的第一段
+                    let first_segment = path.split(['/', '\\']).next().unwrap_or(path);
+                    Some(first_segment.to_string())
+                } else if path.starts_with(&directory_prefix) || path == prefix.as_str() {
+                    // 列指定目录下：返回 prefix 之后的相对路径
+                    let rest = &path[prefix.len()..];
+                    let rest = rest.trim_start_matches(['/', '\\']);
+                    if rest.is_empty() {
+                        None
+                    } else {
+                        Some(rest.to_string())
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+        entries.sort();
+        entries.dedup();
+        Ok(entries)
+    }
+
+    pub(crate) fn exists(&self, raw: &str) -> bool {
+        let cleaned = match Self::clean_path(raw) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        if !Self::is_under_roots(&cleaned, &self.visible_roots) {
+            return false;
+        }
+        let directory_prefix = format!("{cleaned}/");
+        self.files.contains_key(&cleaned)
+            || self
+                .files
+                .keys()
+                .any(|path| path.starts_with(&directory_prefix))
+    }
+
+    pub(crate) fn log(
+        &mut self,
+        level: SkillScriptLogLevel,
+        message: String,
+    ) -> Result<(), String> {
+        let next = self.output_bytes + message.len() + OUTPUT_ITEM_FIXED_COST;
+        if next > self.max_output_bytes {
+            return Err(format!(
+                "total script output exceeds the {}-byte limit (workspace writes + logs + result)",
+                self.max_output_bytes
+            ));
+        }
+        self.output_bytes = next;
+        self.logs.push(SkillScriptLog { level, message });
+        Ok(())
+    }
+}
+
+fn js_error<'js>(ctx: &Ctx<'js>, message: String) -> rquickjs::Error {
+    rquickjs::Exception::throw_message(ctx, &message)
+}
+
+/// 构建 `workspace` 对象：readText / writeText / listFiles / exists。
+/// 由 `@tauritavern/runtime` 原生模块导出，不再注入全局。
+pub(crate) fn build_workspace_object<'js>(
+    ctx: &Ctx<'js>,
+    overlay: std::rc::Rc<RefCell<OverlayFs>>,
+) -> rquickjs::Result<Object<'js>> {
+    let fs_object = Object::new(ctx.clone())?;
+
+    // readText(path) → string
+    let read_overlay = overlay.clone();
+    let read_text = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'_>, path: String| -> Result<String, rquickjs::Error> {
+            let fs = read_overlay.borrow();
+            fs.read_text(&path).map_err(|m| js_error(&ctx, m))
+        },
+    )?;
+    fs_object.set("readText", read_text)?;
+
+    // writeText(path, content) → void
+    let write_overlay = overlay.clone();
+    let write_text = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'_>, path: String, content: String| -> Result<(), rquickjs::Error> {
+            let mut fs = write_overlay.borrow_mut();
+            fs.write_text(&path, content).map_err(|m| js_error(&ctx, m))
+        },
+    )?;
+    fs_object.set("writeText", write_text)?;
+
+    // listFiles(path?) → string[]
+    let list_overlay = overlay.clone();
+    let list_files = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'_>, path: Option<String>| -> Result<Vec<String>, rquickjs::Error> {
+            let fs = list_overlay.borrow();
+            fs.list_files(path.as_deref())
+                .map_err(|m| js_error(&ctx, m))
+        },
+    )?;
+    fs_object.set("listFiles", list_files)?;
+
+    // exists(path) → boolean
+    let exists_overlay = overlay.clone();
+    let exists = Function::new(
+        ctx.clone(),
+        move |_ctx: Ctx<'_>, path: String| -> Result<bool, rquickjs::Error> {
+            let fs = exists_overlay.borrow();
+            Ok(fs.exists(&path))
+        },
+    )?;
+    fs_object.set("exists", exists)?;
+
+    Ok(fs_object)
+}

@@ -107,7 +107,14 @@ pub fn export_dev_log_bundle(
     let mut copy_buffer = vec![0u8; COPY_BUFFER_BYTES];
 
     let settings_dir = runtime_paths.data_root.join("default-user");
-    for file_name in ["tauritavern-settings.json", "settings.json"] {
+    for file_name in [
+        "tauritavern-settings.json",
+        "settings.json",
+        "settings/appearance.json",
+        "settings/dynamic-theme.json",
+        "settings/presets.json",
+        "settings/layout.json",
+    ] {
         let source_path = settings_dir.join(file_name);
         if !source_path.is_file() {
             continue;

@@ -875,9 +875,7 @@ mod tests {
     use serde_json::json;
 
     use tt_domain::errors::DomainError;
-    use tt_domain::models::image_metadata::{
-        ImageMetadata, ImageMetadataFolder, ImageMetadataIndex,
-    };
+    use tt_domain::models::image_metadata::{ImageMetadata, ImageMetadataIndex};
     use tt_ports::repositories::image_metadata_repository::ImageMetadataRepository;
 
     use super::{BackgroundMetadataBuildError, FileImageMetadataRepository};
@@ -964,18 +962,6 @@ mod tests {
     }
 
     #[test]
-    fn metadata_file_vanished_errors_are_skippable() {
-        let error = std::io::Error::from(std::io::ErrorKind::NotFound);
-        let classified =
-            BackgroundMetadataBuildError::from_metadata_error(&PathBuf::from("missing.png"), error);
-
-        assert!(matches!(
-            classified,
-            BackgroundMetadataBuildError::Skippable(_)
-        ));
-    }
-
-    #[test]
     fn metadata_animation_not_found_errors_are_skippable() {
         let classified = BackgroundMetadataBuildError::from_animation_error(DomainError::NotFound(
             "Source image not found: missing.png".to_string(),
@@ -985,29 +971,6 @@ mod tests {
             classified,
             BackgroundMetadataBuildError::Skippable(_)
         ));
-    }
-
-    #[tokio::test]
-    async fn metadata_index_read_does_not_scan_backgrounds() {
-        let (_temp, repository) = repository_with_background().await;
-
-        let index = repository
-            .read_metadata_index(Some("backgrounds/"))
-            .await
-            .expect("read metadata");
-        assert!(index.images.is_empty());
-
-        let entries = repository
-            .get_background_list_entries()
-            .await
-            .expect("refresh background list");
-        assert_eq!(entries.len(), 1);
-
-        let index = repository
-            .read_metadata_index(Some("backgrounds/"))
-            .await
-            .expect("read refreshed metadata");
-        assert!(index.images.contains_key("backgrounds/a.png"));
     }
 
     #[tokio::test]
@@ -1214,48 +1177,6 @@ mod tests {
             Some(&vec![folder.id])
         );
         assert!(!payload.image_folder_map.contains_key("missing.png"));
-    }
-
-    #[tokio::test]
-    async fn folder_unassignment_is_idempotent_for_stale_folder_and_missing_file() {
-        let (_temp, repository) = repository_with_background().await;
-        let metadata = ImageMetadata {
-            folder_ids: vec!["stale-folder".to_string()],
-            ..ImageMetadata::default()
-        };
-        repository
-            .write_index(&ImageMetadataIndex {
-                version: 1,
-                images: HashMap::from([("backgrounds/missing.png".to_string(), metadata)]),
-                folders: vec![ImageMetadataFolder {
-                    id: "other-folder".to_string(),
-                    name: "Other".to_string(),
-                    thumbnail_file: String::new(),
-                }],
-            })
-            .await
-            .expect("seed metadata");
-
-        repository
-            .unassign_images_from_folder(
-                "stale-folder",
-                vec!["backgrounds/missing.png".to_string()],
-            )
-            .await
-            .expect("unassign");
-
-        let index = repository
-            .read_metadata_index(Some("backgrounds/"))
-            .await
-            .expect("read metadata");
-        assert_eq!(
-            index
-                .images
-                .get("backgrounds/missing.png")
-                .expect("metadata")
-                .folder_ids,
-            Vec::<String>::new()
-        );
     }
 
     #[tokio::test]

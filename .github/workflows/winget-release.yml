@@ -1,0 +1,222 @@
+name: WinGet Release
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Existing stable release tag, for example v2.2.0
+        required: true
+        type: string
+    secrets:
+      WINGET_CREATE_GITHUB_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing stable release tag, for example v2.2.0
+        required: true
+        type: string
+
+concurrency:
+  group: winget-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PACKAGE_ID: TauriTavern.TauriTavern
+  WINGETCREATE_URL: https://github.com/microsoft/winget-create/releases/download/v1.12.13.0/wingetcreate.exe
+  WINGETCREATE_SHA256: 24042bd37915805615e6cf969ac57c6439124c3fe85823327f5f3fb24bd9ffea
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Resolve the completed stable release
+        id: release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $version = (& node scripts/ci/verify-release-version.mjs $env:RELEASE_TAG).Trim()
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release version validation failed for $env:RELEASE_TAG"
+          }
+
+          $releaseJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to read release $env:RELEASE_TAG"
+          }
+          $release = $releaseJson | ConvertFrom-Json
+
+          if ($release.tag_name -cne $env:RELEASE_TAG -or $release.draft -or $release.prerelease) {
+            throw "$env:RELEASE_TAG is not a published stable release"
+          }
+
+          $assetName = "TauriTavern-$version-windows-x64-setup.exe"
+          $assets = @($release.assets | Where-Object { $_.name -ceq $assetName })
+          if ($assets.Count -ne 1 -or $assets[0].state -ne "uploaded") {
+            throw "Expected exactly one completed release asset named $assetName"
+          }
+
+          $releaseDate = [DateTimeOffset]::Parse($release.published_at).ToString("yyyy-MM-dd")
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "installer_url=$($assets[0].browser_download_url)" >> $env:GITHUB_OUTPUT
+          "release_date=$releaseDate" >> $env:GITHUB_OUTPUT
+          "release_url=$($release.html_url)" >> $env:GITHUB_OUTPUT
+
+      - name: Check whether publication is already in progress or complete
+        id: preflight
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          function Test-GitHubPath([string] $Path) {
+            $response = gh api $Path 2>&1
+            if ($LASTEXITCODE -eq 0) {
+              return $true
+            }
+
+            $message = $response -join "`n"
+            if ($message -match "HTTP 404") {
+              return $false
+            }
+            throw "GitHub API request failed for ${Path}: $message"
+          }
+
+          $packagePath = "manifests/t/TauriTavern/TauriTavern"
+          $versionPath = "repos/microsoft/winget-pkgs/contents/$packagePath/$env:VERSION"
+          if (Test-GitHubPath $versionPath) {
+            "skip=true" >> $env:GITHUB_OUTPUT
+            "reason=$env:PACKAGE_ID $env:VERSION is already published" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          $query = "repo:microsoft/winget-pkgs is:pr is:open `"$env:PACKAGE_ID`" `"$env:VERSION`""
+          $searchJson = gh api --method GET search/issues --raw-field "q=$query"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to search for an existing WinGet pull request"
+          }
+          $search = $searchJson | ConvertFrom-Json
+          if ($search.total_count -gt 0) {
+            "skip=true" >> $env:GITHUB_OUTPUT
+            "reason=An open WinGet pull request already exists: $($search.items[0].html_url)" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          $packageRoot = "repos/microsoft/winget-pkgs/contents/$packagePath"
+          if (-not (Test-GitHubPath $packageRoot)) {
+            throw "$env:PACKAGE_ID has no merged seed manifest. Complete the one-time bootstrap documented in docs/CurrentState/WindowsDistribution.md"
+          }
+
+          "skip=false" >> $env:GITHUB_OUTPUT
+
+      - name: Download verified WingetCreate
+        if: steps.preflight.outputs.skip != 'true'
+        id: wingetcreate
+        shell: pwsh
+        run: |
+          $toolPath = Join-Path $env:RUNNER_TEMP "wingetcreate.exe"
+          Invoke-WebRequest -Uri $env:WINGETCREATE_URL -OutFile $toolPath
+
+          $actualHash = (Get-FileHash -LiteralPath $toolPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -cne $env:WINGETCREATE_SHA256) {
+            throw "WingetCreate SHA256 mismatch: expected $env:WINGETCREATE_SHA256, received $actualHash"
+          }
+          "path=$toolPath" >> $env:GITHUB_OUTPUT
+
+      - name: Generate manifest update
+        if: steps.preflight.outputs.skip != 'true'
+        id: manifest
+        shell: pwsh
+        env:
+          INSTALLER_URL: ${{ steps.release.outputs.installer_url }}
+          RELEASE_DATE: ${{ steps.release.outputs.release_date }}
+          RELEASE_URL: ${{ steps.release.outputs.release_url }}
+          VERSION: ${{ steps.release.outputs.version }}
+          WINGETCREATE_PATH: ${{ steps.wingetcreate.outputs.path }}
+        run: |
+          $arguments = @(
+            "update",
+            $env:PACKAGE_ID,
+            "--version", $env:VERSION,
+            "--urls", "$env:INSTALLER_URL|x64|user",
+            "--release-date", $env:RELEASE_DATE,
+            "--release-notes-url", $env:RELEASE_URL,
+            "--out", "manifests"
+          )
+          & $env:WINGETCREATE_PATH @arguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "WingetCreate failed to generate the manifest update"
+          }
+
+          $installerManifests = @(
+            Get-ChildItem -LiteralPath "manifests" -Recurse -File -Filter "$env:PACKAGE_ID.installer.yaml"
+          )
+          if ($installerManifests.Count -ne 1) {
+            throw "Expected exactly one generated installer manifest"
+          }
+          "directory=$($installerManifests[0].Directory.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Archive generated manifests
+        if: steps.preflight.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: winget-manifest-${{ steps.release.outputs.version }}
+          path: ${{ steps.manifest.outputs.directory }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Submit manifest update
+        if: steps.preflight.outputs.skip != 'true'
+        shell: pwsh
+        env:
+          MANIFEST_DIRECTORY: ${{ steps.manifest.outputs.directory }}
+          WINGETCREATE_PATH: ${{ steps.wingetcreate.outputs.path }}
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINGET_CREATE_GITHUB_TOKEN)) {
+            throw "WINGET_CREATE_GITHUB_TOKEN is not configured"
+          }
+
+          & $env:WINGETCREATE_PATH submit $env:MANIFEST_DIRECTORY --no-open
+          if ($LASTEXITCODE -ne 0) {
+            throw "WingetCreate failed to submit the manifest update"
+          }
+
+      - name: Summarize WinGet publication
+        if: always()
+        shell: pwsh
+        env:
+          REASON: ${{ steps.preflight.outputs.reason }}
+          SKIPPED: ${{ steps.preflight.outputs.skip }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          if ($env:SKIPPED -eq "true") {
+            $status = $env:REASON
+          } elseif ("${{ job.status }}" -eq "success") {
+            $status = "Manifest generated, archived, and submitted"
+          } else {
+            $status = "Publication failed before completion"
+          }
+
+          @"
+          ## WinGet release
+
+          - Package: ``$env:PACKAGE_ID``
+          - Version: ``$env:VERSION``
+          - Result: $status
+          "@ >> $env:GITHUB_STEP_SUMMARY

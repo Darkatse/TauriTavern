@@ -6,5 +6,5 @@ mod zipkit;
 
 pub use repositories::{
     FileAgentProfileRepository, FileAgentRepository, FileCharacterRepository, FileSkillRepository,
-    FileWorldInfoRepository,
+    FileSpriteRepository, FileWorldInfoRepository,
 };

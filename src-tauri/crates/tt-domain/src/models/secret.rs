@@ -170,6 +170,7 @@ impl SecretKeys {
     pub const APHRODITE: &'static str = "api_key_aphrodite";
     pub const TABBY: &'static str = "api_key_tabby";
     pub const OPENAI: &'static str = "api_key_openai";
+    pub const OPENCODE: &'static str = "api_key_opencode";
     pub const NOVEL: &'static str = "api_key_novel";
     pub const CLAUDE: &'static str = "api_key_claude";
     pub const DEEPL: &'static str = "deepl";
@@ -237,6 +238,7 @@ impl SecretKeys {
             Self::APHRODITE,
             Self::TABBY,
             Self::OPENAI,
+            Self::OPENCODE,
             Self::NOVEL,
             Self::CLAUDE,
             Self::DEEPL,

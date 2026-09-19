@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use tt_adapter_storage_core::file_system::write_json_file_sync;
+use tt_adapter_storage_core::file_system::persist_json_file_blocking;
 use tt_domain::errors::DomainError;
 
 fn cache_path(data_root: &Path) -> PathBuf {
@@ -42,7 +42,7 @@ fn load_cache_sync(data_root: &Path) -> Result<Option<Value>, DomainError> {
 }
 
 fn persist_cache_sync(data_root: &Path, raw_policy: &Value) -> Result<(), DomainError> {
-    write_json_file_sync(&cache_path(data_root), raw_policy)
+    persist_json_file_blocking(&cache_path(data_root), raw_policy)
 }
 
 pub(crate) fn resolve_effective_raw_policy_sync(

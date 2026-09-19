@@ -133,6 +133,8 @@ Android `WebResourceResponse` 和当前 Wry Android adapter 不支持 300-399。
 
 Android background video 的现有二次 Range workaround 保持：非零 Range 返回 206 和对应 range headers，但提供完整文件 stream，让 WebView 自己应用 Range。
 
+Wry 0.55.1 为没有缓存声明的 Android custom-protocol 响应提供 `Cache-Control: no-store` 默认值。本地 `RustWebViewClient` 只在响应没有任何大小写形式的 `Cache-Control` 时应用该默认值，因此 transport 不会覆盖 Host Resource 的 `private, no-cache`，错误响应仍保持 `no-store`。
+
 ## 7. Origin 与开发态
 
 Production `on_web_resource_request` 只接收 canonical Rust-side URI：
@@ -156,7 +158,7 @@ presentation 在路由前精确校验 scheme 和完整 authority；relative URI�
 - data-root-backed mutable Host Resource 长期保持稳定 URL + `private, no-cache`；Host Resource Service 是 WebView 可见表示的新鲜度权威，这不是采用 immutable 前的临时 fallback；
 - 不为 mutable Host Resource 建 mutation revision registry 或 `immutable` URL。data root 允许外部/symlink writer；fresh immutable hit 会绕过 Host Resource，令外部变化无法被发现；
 - 第一方普通 browser resource 不得通过 Tauri asset protocol、base64 read command 或 server-thumbnail Blob cache 绕过本服务；
-- mutation 只建立文件事实，既不维护/删除 Rust derived cache，也不预热 WebView cache；随后只负责触发稳定 URL 的真实 consumer demand，刷新不是 commit 的组成部分，也不得用随机 query 伪造 revision；
+- mutation 只建立文件事实，既不维护/删除 Rust derived cache，也不预热 WebView cache；随后通过稳定 URL 的真实 consumer demand 刷新表示，需要绕过 WebView 已存响应时使用 `Request.cache = "reload"`，不得用随机 query 伪造 revision；刷新不是 commit 的组成部分；
 - frontend 仅保留有独立派生职责的 background preview cache；Host background 记录必须绑定当前 raw ETag 与 preview recipe；
 - WebView synthetic response cache 只是优化，不能成为业务正确性的前提；
 - Wry 升级必须重新审计 Android 3xx、header 和 cache-control 行为。

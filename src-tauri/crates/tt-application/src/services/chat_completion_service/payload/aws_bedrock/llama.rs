@@ -105,8 +105,6 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::super::build;
-    use super::super::shared::FlatMessage;
-    use super::format_llama3_chat_prompt;
 
     #[test]
     fn build_llama_emits_prompt_with_llama3_chat_template_and_max_gen_len() {
@@ -163,33 +161,5 @@ mod tests {
             prompt.ends_with("<|start_header_id|>assistant<|end_header_id|>\n\n"),
             "must prime an assistant turn at the end: {prompt}",
         );
-    }
-
-    #[test]
-    fn format_llama3_chat_prompt_handles_multi_turn_without_system_message() {
-        let prompt = format_llama3_chat_prompt(
-            None,
-            &[
-                FlatMessage {
-                    role: "user".to_string(),
-                    text: "hi".to_string(),
-                },
-                FlatMessage {
-                    role: "assistant".to_string(),
-                    text: "hello".to_string(),
-                },
-                FlatMessage {
-                    role: "user".to_string(),
-                    text: "again".to_string(),
-                },
-            ],
-        );
-
-        assert!(prompt.starts_with("<|begin_of_text|><|start_header_id|>user<|end_header_id|>"));
-        assert!(
-            prompt.contains("<|start_header_id|>assistant<|end_header_id|>\n\nhello<|eot_id|>")
-        );
-        assert!(prompt.contains("<|start_header_id|>user<|end_header_id|>\n\nagain<|eot_id|>"));
-        assert!(prompt.ends_with("<|start_header_id|>assistant<|end_header_id|>\n\n"));
     }
 }

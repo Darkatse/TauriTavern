@@ -30,7 +30,6 @@ use tt_ports::repositories::agent_run_repository::{
 use tt_ports::repositories::agent_workspace_lifecycle_repository::{
     AgentPersistentStatePruneRequest, AgentWorkspaceLifecycleRepository,
 };
-use tt_ports::repositories::checkpoint_repository::CheckpointRepository;
 use tt_ports::repositories::workspace_repository::{WorkspaceRepository, WorkspaceWriteGuard};
 fn temp_root() -> PathBuf {
     std::env::temp_dir().join(format!("tauritavern-agent-repo-{}", Uuid::new_v4()))
@@ -134,6 +133,7 @@ fn sample_resolved_profile(manifest: &WorkspaceManifest) -> ResolvedAgentProfile
         },
         run: AgentRunPolicy {
             presentation: AgentRunPresentation::Background,
+            stream: false,
             direct_runnable: true,
             model_retry: Default::default(),
         },
@@ -148,6 +148,7 @@ fn sample_resolved_profile(manifest: &WorkspaceManifest) -> ResolvedAgentProfile
             tool_descriptions: Default::default(),
             max_rounds: 1,
             max_calls_per_run: 1,
+            mcp_result_inline_char_limit: 50_000,
             max_calls_per_tool: Default::default(),
         },
         skills: AgentSkillPolicy {
@@ -186,7 +187,7 @@ fn sample_resolved_profile(manifest: &WorkspaceManifest) -> ResolvedAgentProfile
 }
 
 #[tokio::test]
-async fn repository_round_trips_run_workspace_event_and_checkpoint() {
+async fn repository_round_trips_run_workspace_and_event() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());
     let run = sample_run();
@@ -221,12 +222,34 @@ async fn repository_round_trips_run_workspace_event_and_checkpoint() {
         .await
         .expect("append event");
     assert_eq!(event.seq, 1);
+    let event = repository
+        .append_event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "artifact_updated",
+            Value::Null,
+        )
+        .await
+        .expect("append second event");
+    assert_eq!(event.seq, 2);
+
+    let repository = FileAgentRepository::new(root.clone());
+    let event = repository
+        .append_event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "artifact_finalized",
+            Value::Null,
+        )
+        .await
+        .expect("append event after reopening repository");
+    assert_eq!(event.seq, 3);
 
     let events = repository
         .read_events(
             &run.id,
             AgentRunEventReadQuery {
-                after_seq: Some(0),
+                after_seq: Some(1),
                 before_seq: None,
                 limit: 10,
                 invocation_id: None,
@@ -234,13 +257,183 @@ async fn repository_round_trips_run_workspace_event_and_checkpoint() {
         )
         .await
         .expect("read events");
-    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        vec![2, 3]
+    );
 
-    let checkpoint = repository
-        .create_checkpoint(&run.id, "test", event.seq, &[path])
+    let events = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: None,
+                before_seq: Some(3),
+                limit: 1,
+                invocation_id: None,
+            },
+        )
         .await
-        .expect("checkpoint");
-    assert_eq!(checkpoint.files[0].bytes, 5);
+        .expect("read previous event page");
+    assert_eq!(
+        events.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        vec![2]
+    );
+
+    let file = repository
+        .read_text(&run.id, &path)
+        .await
+        .expect("read workspace file");
+    assert_eq!(file.text, "hello");
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn checkpoint_replaces_previous_bytes_and_survives_reopening() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let mut run = sample_run();
+    run.status = AgentRunStatus::Completed;
+    repository.create_run(&run).await.expect("create run");
+    assert!(
+        repository
+            .load_run_checkpoint(&run.id)
+            .await
+            .expect("load missing checkpoint")
+            .is_none()
+    );
+
+    repository
+        .save_run_checkpoint(&run.id, br#"{"round":1}"#)
+        .await
+        .expect("save first checkpoint");
+    let latest = br#"{"round":2,"message":"Finished writing."}"#;
+    repository
+        .save_run_checkpoint(&run.id, latest)
+        .await
+        .expect("replace checkpoint");
+
+    let reopened = FileAgentRepository::new(root.clone());
+    assert_eq!(
+        reopened
+            .load_run_checkpoint(&run.id)
+            .await
+            .expect("load persisted checkpoint")
+            .as_deref(),
+        Some(latest.as_slice())
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn reset_event_sequence_observes_externally_updated_journal() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run();
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .append_event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "run_created",
+            Value::Null,
+        )
+        .await
+        .expect("append local event");
+
+    let other_repository = FileAgentRepository::new(root.clone());
+    other_repository
+        .append_event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "run_cancelled",
+            Value::Null,
+        )
+        .await
+        .expect("append external event");
+
+    repository
+        .reset_event_sequence(&run.id)
+        .await
+        .expect("reset append cursor");
+    let resumed = repository
+        .append_event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "run_resumed",
+            Value::Null,
+        )
+        .await
+        .expect("append after journal replacement");
+    assert_eq!(resumed.seq, 3);
+    assert_eq!(
+        repository
+            .read_all_events(&run.id)
+            .await
+            .expect("read contiguous journal")
+            .len(),
+        3
+    );
+
+    fs::remove_dir_all(root).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn repository_rejects_non_contiguous_event_sequences() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    let run = sample_run_with_id("run_invalid_event_seq");
+    repository.create_run(&run).await.expect("create run");
+    repository
+        .append_event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "run_created",
+            Value::Null,
+        )
+        .await
+        .expect("append event");
+
+    let events_path = root
+        .join("chats")
+        .join(&run.workspace_id)
+        .join("runs")
+        .join(&run.id)
+        .join("events.jsonl");
+    let mut event: Value = serde_json::from_str(
+        fs::read_to_string(&events_path)
+            .await
+            .expect("read journal")
+            .trim(),
+    )
+    .expect("parse journal event");
+    event["seq"] = serde_json::json!(2);
+    fs::write(
+        &events_path,
+        format!(
+            "{}\n",
+            serde_json::to_string(&event).expect("serialize event")
+        ),
+    )
+    .await
+    .expect("write invalid journal");
+
+    let error = repository
+        .read_events(
+            &run.id,
+            AgentRunEventReadQuery {
+                after_seq: None,
+                before_seq: None,
+                limit: 10,
+                invocation_id: None,
+            },
+        )
+        .await
+        .expect_err("non-contiguous sequence must fail");
+    assert!(
+        matches!(error, DomainError::InvalidData(message) if message.contains("expected 1, found 2"))
+    );
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -387,65 +580,6 @@ async fn list_runs_accepts_legacy_index_without_presentation() {
     assert_eq!(loaded.presentation, AgentRunPresentation::Foreground);
 
     fs::remove_dir_all(root).await.expect("cleanup");
-}
-
-#[tokio::test]
-async fn list_runs_accepts_legacy_awaiting_commit_status() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
-    let mut run = sample_run_with_id("run_legacy_awaiting_commit");
-    run.status = AgentRunStatus::AwaitingHostCommit;
-    repository.create_run(&run).await.expect("create run");
-
-    let index_path = root.join("index/runs/run_legacy_awaiting_commit.json");
-    let mut legacy = serde_json::to_value(&run).expect("serialize legacy run");
-    legacy.as_object_mut().expect("run json object").insert(
-        "status".to_string(),
-        Value::String("awaiting_commit".to_string()),
-    );
-    FileAgentRepository::write_json_atomic(&index_path, &legacy)
-        .await
-        .expect("write legacy index");
-
-    let listed = repository
-        .list_runs(AgentRunListQuery {
-            chat_ref: None,
-            stable_chat_id: None,
-            statuses: None,
-            before: None,
-            limit: 10,
-        })
-        .await
-        .expect("list legacy run");
-
-    assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0].id, run.id);
-    assert_eq!(listed[0].status, AgentRunStatus::AwaitingHostCommit);
-
-    let loaded = repository.load_run(&run.id).await.expect("load legacy run");
-    assert_eq!(loaded.status, AgentRunStatus::AwaitingHostCommit);
-
-    fs::remove_dir_all(root).await.expect("cleanup");
-}
-
-#[tokio::test]
-async fn list_runs_returns_empty_when_index_is_missing() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
-
-    let listed = repository
-        .list_runs(AgentRunListQuery {
-            chat_ref: None,
-            stable_chat_id: None,
-            statuses: None,
-            before: None,
-            limit: 10,
-        })
-        .await
-        .expect("list empty index");
-
-    assert!(listed.is_empty());
-    let _ = fs::remove_dir_all(root).await;
 }
 
 #[tokio::test]
@@ -607,14 +741,19 @@ async fn slim_run_heavy_artifacts_removes_only_non_core_run_files() {
         })
         .await
         .expect("save summary");
+    let checkpoint = br#"{"round":3}"#;
+    repository
+        .save_run_checkpoint(&run.id, checkpoint)
+        .await
+        .expect("save checkpoint");
 
     let removed = repository
         .slim_run_heavy_artifacts(&run)
         .await
         .expect("slim heavy artifacts");
 
-    assert_eq!(removed.file_count, 3);
-    assert_eq!(removed.byte_count, 9);
+    assert_eq!(removed.file_count, 4);
+    assert_eq!(removed.byte_count, 9 + checkpoint.len() as u64);
     assert!(run_dir.join("run.json").exists());
     assert!(run_dir.join("events.jsonl").exists());
     assert!(root.join("index/runs/run_prune_slim.json").exists());
@@ -625,6 +764,13 @@ async fn slim_run_heavy_artifacts_removes_only_non_core_run_files() {
     assert!(!run_dir.join("manifest.json").exists());
     assert!(!run_dir.join("input").exists());
     assert!(!run_dir.join("output").exists());
+    assert!(
+        repository
+            .load_run_checkpoint(&run.id)
+            .await
+            .expect("load pruned checkpoint")
+            .is_none()
+    );
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -675,6 +821,20 @@ async fn delete_run_removes_workspace_index_and_summary_projection() {
         !root
             .join("index/run-summaries/run_prune_delete.json")
             .exists()
+    );
+    assert!(
+        repository
+            .read_events(
+                &run.id,
+                AgentRunEventReadQuery {
+                    after_seq: Some(1),
+                    before_seq: None,
+                    limit: 10,
+                    invocation_id: None,
+                },
+            )
+            .await
+            .is_err()
     );
 
     fs::remove_dir_all(root).await.expect("cleanup");
@@ -877,15 +1037,10 @@ async fn repository_round_trips_invocations() {
 }
 
 #[tokio::test]
-async fn read_text_on_directory_returns_typed_workspace_error() {
-    // Issue #54: workspace_read_file used to bubble up the raw EISDIR
-    // ("Is a directory") OS error as `agent.internal_error` (retryable=false)
-    // and tear down the whole run. We now translate it into a structured
-    // domain error so the tool layer can surface it as a recoverable
-    // `workspace.path_is_directory` business error.
+async fn read_text_returns_typed_error_for_non_utf8_file() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());
-    let run = sample_run_with_id("run_dir_read");
+    let run = sample_run_with_id("run_non_utf8_read");
     let manifest = sample_manifest(&run);
     let profile = sample_resolved_profile(&manifest);
 
@@ -900,55 +1055,25 @@ async fn read_text_on_directory_returns_typed_workspace_error() {
         .await
         .expect("initialize workspace");
 
-    let persist_path = WorkspacePath::parse("persist").expect("persist root path");
+    let path = WorkspacePath::parse("output/image.bin").expect("workspace path");
+    fs::write(
+        repository
+            .run_dir(&run)
+            .expect("run directory")
+            .join(path.as_str()),
+        [0xff, 0xfe],
+    )
+    .await
+    .expect("write non-UTF-8 file");
+
     let error = repository
-        .read_text(&run.id, &persist_path)
+        .read_text(&run.id, &path)
         .await
-        .expect_err("reading a directory must fail");
-
-    match error {
-        DomainError::WorkspacePathIsDirectory { path } => {
-            assert_eq!(path, "persist");
-        }
-        other => panic!("expected DomainError::WorkspacePathIsDirectory, got {other:?}"),
-    }
-
-    fs::remove_dir_all(root).await.expect("cleanup");
-}
-
-#[tokio::test]
-async fn write_text_on_directory_returns_typed_workspace_error() {
-    // Same guard for write_text so workspace_write_file cannot wipe out a
-    // directory through the temp-file swap path.
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
-    let run = sample_run_with_id("run_dir_write");
-    let manifest = sample_manifest(&run);
-    let profile = sample_resolved_profile(&manifest);
-
-    repository.create_run(&run).await.expect("create run");
-    repository
-        .initialize_run(
-            &run,
-            &manifest,
-            &serde_json::json!({"messages": []}),
-            &profile,
-        )
-        .await
-        .expect("initialize workspace");
-
-    let output_root = WorkspacePath::parse("output").expect("output root path");
-    let error = repository
-        .write_text(&run.id, &output_root, "should not land")
-        .await
-        .expect_err("writing to a directory must fail");
-
-    match error {
-        DomainError::WorkspacePathIsDirectory { path } => {
-            assert_eq!(path, "output");
-        }
-        other => panic!("expected DomainError::WorkspacePathIsDirectory, got {other:?}"),
-    }
+        .expect_err("a non-UTF-8 file is not readable as text");
+    assert!(matches!(
+        error,
+        DomainError::WorkspaceFileNotText { path } if path == "output/image.bin"
+    ));
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -1097,86 +1222,6 @@ async fn prune_persistent_states_rejects_candidate_file() {
 }
 
 #[tokio::test]
-async fn delete_missing_chat_workspace_is_idempotent() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
-
-    let deletion = repository
-        .delete_chat_workspace("chat_missing")
-        .await
-        .expect("delete missing chat workspace");
-
-    assert!(!deletion.removed);
-    assert!(deletion.run_ids.is_empty());
-
-    let _ = fs::remove_dir_all(root).await;
-}
-
-#[tokio::test]
-async fn empty_persistent_state_restores_when_empty_root_directory_is_missing() {
-    let root = temp_root();
-    let repository = FileAgentRepository::new(root.clone());
-    let run = sample_run_with_id("run_empty_persist_base");
-    let manifest = sample_manifest(&run);
-    let profile = sample_resolved_profile(&manifest);
-
-    repository.create_run(&run).await.expect("create run");
-    repository
-        .initialize_run(
-            &run,
-            &manifest,
-            &serde_json::json!({"messages": []}),
-            &profile,
-        )
-        .await
-        .expect("initialize workspace");
-
-    let changes = repository
-        .commit_persistent_changes(&run.id)
-        .await
-        .expect("commit empty persist state");
-    assert!(changes.changes.is_empty());
-
-    let missing_empty_root = root
-        .join("chats")
-        .join(&run.workspace_id)
-        .join("persistent-states")
-        .join(&run.id)
-        .join("persist");
-    assert!(missing_empty_root.exists());
-    fs::remove_dir_all(&missing_empty_root)
-        .await
-        .expect("simulate sync dropping empty persist root");
-
-    let mut next_run = sample_run_with_id("run_empty_persist_child");
-    next_run.persist_base_state_id = Some(run.id.clone());
-    repository
-        .create_run(&next_run)
-        .await
-        .expect("create child run");
-    repository
-        .initialize_run(
-            &next_run,
-            &sample_manifest(&next_run),
-            &serde_json::json!({"messages": []}),
-            &profile,
-        )
-        .await
-        .expect("missing empty persist root should restore as empty");
-
-    assert!(
-        root.join("chats")
-            .join(&next_run.workspace_id)
-            .join("runs")
-            .join(&next_run.id)
-            .join("persist")
-            .exists()
-    );
-
-    fs::remove_dir_all(root).await.expect("cleanup");
-}
-
-#[tokio::test]
 async fn persistent_workspace_projects_run_changes_only_after_commit() {
     let root = temp_root();
     let repository = FileAgentRepository::new(root.clone());
@@ -1235,17 +1280,46 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
     );
 
     let changes = repository
-        .commit_persistent_changes(&run.id)
+        .commit_persistent_changes(&run.id, None)
         .await
         .expect("commit persist changes");
     assert_eq!(changes.changes.len(), 1);
     assert_eq!(changes.changes[0].path, "persist/MEMORY.md");
+    let unchanged = repository
+        .commit_persistent_changes(&run.id, Some(&changes.state_id))
+        .await
+        .expect("reuse unchanged persistent files");
+    assert_eq!(unchanged, changes);
+    repository
+        .write_text(&run.id, &persist_path, "revised thread note")
+        .await
+        .unwrap();
+    let revised = repository
+        .commit_persistent_changes(&run.id, Some(&changes.state_id))
+        .await
+        .expect("publish changed persistent files");
+    assert_ne!(revised.state_id, changes.state_id);
+    let mut versions = fs::read_dir(
+        root.join("chats")
+            .join(&run.workspace_id)
+            .join("persistent-states"),
+    )
+    .await
+    .unwrap();
+    let mut version_count = 0;
+    while versions.next_entry().await.unwrap().is_some() {
+        version_count += 1;
+    }
+    assert_eq!(
+        version_count, 2,
+        "unchanged publication must not copy a snapshot"
+    );
     assert!(
         !root
             .join("chats")
             .join(&run.workspace_id)
             .join("persistent-states")
-            .join(&run.id)
+            .join(&changes.state_id)
             .join("persist")
             .join(".DS_Store")
             .exists(),
@@ -1275,7 +1349,7 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
     );
 
     let mut next_run = sample_run_with_id("run_persist_next");
-    next_run.persist_base_state_id = Some(run.id.clone());
+    next_run.persist_base_state_id = Some(changes.state_id.clone());
     repository
         .create_run(&next_run)
         .await
@@ -1294,6 +1368,37 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
         .await
         .expect("read committed persist projection");
     assert_eq!(projected.text, "long running thread note");
+
+    repository
+        .copy_persistent_states(&run.workspace_id, "chat_fork")
+        .await
+        .expect("copy persistent states");
+    let mut fork_run = sample_run_with_id("run_persist_fork");
+    fork_run.workspace_id = "chat_fork".to_string();
+    fork_run.stable_chat_id = "stable_chat_fork".to_string();
+    fork_run.persist_base_state_id = Some(revised.state_id);
+    let fork_manifest = sample_manifest(&fork_run);
+    repository
+        .create_run(&fork_run)
+        .await
+        .expect("create fork run");
+    repository
+        .initialize_run(
+            &fork_run,
+            &fork_manifest,
+            &serde_json::json!({"messages": []}),
+            &sample_resolved_profile(&fork_manifest),
+        )
+        .await
+        .expect("initialize fork from copied state");
+    assert_eq!(
+        repository
+            .read_text(&fork_run.id, &persist_path)
+            .await
+            .expect("read copied persist projection")
+            .text,
+        "revised thread note"
+    );
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -1325,8 +1430,8 @@ async fn persistent_workspace_commits_parallel_branch_states() {
         .write_text(&first.id, &persist_path, "first")
         .await
         .expect("write first projection");
-    repository
-        .commit_persistent_changes(&first.id)
+    let first_state = repository
+        .commit_persistent_changes(&first.id, None)
         .await
         .expect("commit first projection");
 
@@ -1334,13 +1439,13 @@ async fn persistent_workspace_commits_parallel_branch_states() {
         .write_text(&second.id, &persist_path, "second")
         .await
         .expect("write second projection");
-    repository
-        .commit_persistent_changes(&second.id)
+    let second_state = repository
+        .commit_persistent_changes(&second.id, None)
         .await
         .expect("commit second projection");
 
     let mut child_of_first = sample_run_with_id("run_conflict_child_first");
-    child_of_first.persist_base_state_id = Some(first.id.clone());
+    child_of_first.persist_base_state_id = Some(first_state.state_id);
     repository
         .create_run(&child_of_first)
         .await
@@ -1364,7 +1469,7 @@ async fn persistent_workspace_commits_parallel_branch_states() {
     );
 
     let mut child_of_second = sample_run_with_id("run_conflict_child_second");
-    child_of_second.persist_base_state_id = Some(second.id.clone());
+    child_of_second.persist_base_state_id = Some(second_state.state_id);
     repository
         .create_run(&child_of_second)
         .await

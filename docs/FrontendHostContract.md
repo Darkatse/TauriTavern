@@ -121,6 +121,7 @@
     - 取消选择返回 `null`；picker/staging/read 失败必须抛错，不得静默回退到 WebView file input。
   - `api.extension.store`：扩展级**全局持久化**（不绑定 chat），提供 KV JSON + Blob，支持多 table。
     - 详细签名与示例见：`docs/API/Extension.md`。
+  - `api.db`：本地向量、JSON、文本索引、图和 TQL 数据库。`open` 异步等待可用；NodeId 为整数；签名、索引恢复边界与共享关闭语义见 [Database API](API/Database.md)。
   - `api.dev`：TauriTavern 规范化的开发调试 API。内置 Settings 开发面板与第三方扩展都应消费这一层，而不是直接依赖 Tauri 事件名或 Rust 命令名。
     - `api.dev.frontendLogs`
       - `list(options?: { limit?: number }) -> Promise<FrontendLogEntry[]>`
@@ -140,6 +141,7 @@
       - `getKeep() -> Promise<number>`
       - `setKeep(value: number) -> Promise<void>`
       - 语义：宿主统一负责历史索引、实时索引流与 keep 设置持久化；调用方不应直接操作 `devlog_*` 命令。
+    - `api.dev.exportBundle() -> Promise<string>`：导出 debug bundle（zip）并返回保存路径，详见 `docs/API/Dev.md`。
 
 `api.dev.*` 的长期契约要求：
 
@@ -166,42 +168,25 @@
 - 不把扫描循环控制、预算内部状态、可变中间态对象直接升格为 Public Contract。
 - `openEntry()` 必须复用上游 World Info 模块自身的导航能力；宿主 ABI 层不得直接依赖 `#WorldInfo`、`#world_editor_select`、`[uid=\"...\"]` 等 DOM 细节。
 
-- `api.agent`：TauriTavern Agent Run API。用于启动 Agent Run、订阅 run event、取消、审批工具、读取 workspace 文件/diff、rollback。
-  - 详细参考见：`docs/API/Agent.md`。
-  - 当前已落地 Host ABI：`startRunFromLegacyGenerate()`、`startRunWithPromptSnapshot()`、`cancel()`、`readEvents()`、`readWorkspaceFile()`、`subscribe()`。
-  - Chat commit 由模型调用 `workspace.commit` 触发；前端内部 host bridge 响应 `chat_commit_requested`，先按完整 raw 目标文本应用上游生成输出保存前后处理，再通过上游 `saveReply()` 写同一消息楼层，最后调用 `resolve_agent_chat_commit`。
-  - `persistStateId` 只在 persistent state 已经落盘后写入 chat metadata；host bridge 响应 `persistent_state_metadata_update_requested` 后调用 `resolve_agent_persistent_state_metadata_update`。
-  - `startRunFromLegacyGenerate()` 是当前兼容入口：使用 Legacy dryRun 生成 `promptSnapshot`，再进入 Rust-owned Agent loop。
-  - `startRunWithPromptSnapshot()` 必须在调用 backend 前解析 `stableChatId`；`workspaceId` 由 `kind + stableChatId` 派生，`runId` 仍表示单次执行。
-  - 不存在公共 `startRun()` alias；启动入口必须通过名称表达来源和职责。
-  - Legacy `Generate(..., dryRun = true)` 不返回 payload；Agent adapter 必须通过 `GENERATE_AFTER_DATA` 事件捕获 `generate_data`。
-  - 当前 Rust registry 包含 `agent_list`、`agent_delegate`、`agent_handoff`、`agent_await`、`task_return`、`chat_search`、`chat_read_messages`、`worldinfo_read_activated`、`dice_roll`、`skill_list`、`skill_search`、`skill_read`、`workspace_list_files`、`workspace_search_files`、`workspace_read_file`、`workspace_write_file`、`workspace_apply_patch`、`workspace_commit`、`workspace_finish`；实际模型可见集合由 Profile 与 invocation exit policy 收窄，`task_return` 只注入 return-mode child。工具注册由 Rust runtime 独占，前端 Legacy ToolManager tools 必须禁用。
-  - 当前显式拒绝 `stream: true`、external tools、external tool choice 和已有 tool turns。
-  - 可恢复工具错误会写入 Agent journal 并回填下一轮模型；宿主级错误仍让 run failed。
-  - Agent event 属于 Agent Run journal/timeline 投影，不得伪装成上游 SillyTavern `GENERATION_*` / `TOOL_CALLS_*` 事件。
-  - `subscribe()` 当前是 polling wrapper，必须返回幂等 `unsubscribe`；底层 Tauri 事件名与 Rust command 名属于 Internal，不是第三方 Public Contract。
-  - `tools.list()` 与 `readModelTurn()` 是 Agent System UI/诊断使用的 Project Contract；其 DTO 可以随实验性 Agent control plane 演进，但必须在 `docs/API/Agent.md` 明确记录。不得为了兼容返回全局 model alias 或从 native name 猜测 canonical identity。
-  - Agent Mode off 时，Legacy `Generate()`、`ToolManager`、`api.chat` 行为必须不变。
+- `api.agent`：运行控制、历史、工作区详情与 Profile 管理，见 [Agent API](API/Agent.md)。
+  - 前端准备聊天输入，Rust 执行模型与工具循环；Agent Mode 关闭时沿用 Legacy Generate。
+  - Host API 解析稳定聊天身份，宿主提交桥复用聊天保存流程，持久版本发布后再关联到消息 metadata。分叉使用新身份并复制持久版本。
+  - 运行结束包含执行与宿主呈现的收尾；前端等待保存成功或明确失败后释放生成状态。续接保留原 Run 身份。
+  - Run 事件供历史与 Timeline 使用，实时参数预览供当前显示使用；它们与 SillyTavern 生成事件分别订阅。
+  - 运行控制属于 Public Contract；模型回合、任务详情、工具目录和 Timeline 关系是 Project Contract，由对应 API 提供展示 DTO。
 
-- `api.llmConnections`：TauriTavern LLM Connection 管理 API。用于保存和读取 Agent Profile 可引用的 LLM 连接定义。
-  - 详细参考见：`docs/API/LlmConnections.md` 与 `docs/Agent/PromptAssembly.md`。
-  - 当前已落地 Host ABI：`list()`、`load()`、`save()`、`delete()`。
-  - Profile 只保存 `model.mode = "connectionRef"`、`connectionRef` 与 `modelId`，或保存分享/导入用的 `model.mode = "requiresConfiguration"`；不直接保存 Connection Manager 的 Model Target id。
-  - Connection Manager Model Target 可以作为 UI 输入来源，但转换成 LLM Connection 时必须保真；无法表达的字段必须显式报错，不得静默丢弃。
-  - Agent System 负责在启动、Model Target 创建/更新、Profile 保存和 Agent run 启动前同步 `model-target-*` LLM Connection；启动 reconcile 或更新无法保真物化时会删除对应派生 connection；删除 Model Target 不隐式删除已物化 LLM Connection。
-  - Rust command 名与 repository/file layout 属于 Internal 实现细节，不是第三方 Public Contract。
+- `api.llmConnections`：管理 Profile 引用的模型连接，见 [LLM Connection API](API/LlmConnections.md)。Profile 通过连接 ID 和模型 ID 绑定；Model Target 是界面的配置来源。
 
-- `api.skill`：TauriTavern Agent Skill 管理 API。用于列出、预览导入、安装、读取和导出本地 Skill。
-  - 详细参考见：`docs/API/Skill.md` 与 `docs/Agent/Skill.md`。
-  - 当前已落地 Host ABI：`list()`、`listFiles()`、`pickImportArchive()`、`discardPickedImport()`、`downloadImport()`、`previewImport()`、`installImport()`、`readFile()`、`writeFile()`、`move()`、`export()`、`delete()`。
-  - Skill scope 分为 `global` / `preset` / `profile` / `character`；未显式传 scope 的历史无归属 Skill 按 `global` 处理。
-  - `api.skill` 是 UI / 扩展侧管理入口，不是 Agent run 内的工具入口；模型只能通过 Rust runtime 注册的 `skill.list` / `skill.search` / `skill.read` 消费已安装 Skill。
-  - Preset / Character embedded skill 导入必须经过用户确认；同名不同 hash 必须显式 skip 或 replace，不自动改名。
-  - Skill import/export 不触发上游 SillyTavern `GENERATION_*`、`TOOL_CALLS_*` 或 regex 事件。
+- `api.skill`：管理本地知识包的导入、编辑、作用域与导出，见 [Skill API](API/Skill.md)。模型在 Run 中通过 Skill 工具读取材料或执行脚本；安装与替换由管理界面处理。
 
-- `api.mcp`（规划中）：MCP Server/Tool/Resource/Prompt 的独立平台 API。Agent Mode 可以消费 MCP，但 MCP 不依附 Agent Mode。
-  - 详细草案见：`docs/API/MCP.md`。
-  - MCP stdio command/config 不得由 Agent/Preset/角色卡/世界书直接写入；危险工具调用必须经过 capability policy 与审批。
+- `api.mcp`：MCP registration、只读 tool discovery、model-facing description override 与第一方 Manager user test call 的独立平台 API。Agent 与 Legacy generation 已通过内部 application seam 消费 MCP，但 MCP 不依附 Agent Mode，公开 API 仍不提供 raw model-call executor。
+  - 当前为实验性的 Project Contract；详细签名见 `docs/API/MCP.md`。
+  - 当前暴露 `servers.list/create/update/setState/remove/discover/refresh`、`tools.setPermission`、`tools.setDescriptionOverride` 与 `tools.testCall({ registrationId, nativeName, argumentsJson }, { signal? })`；description override 只改变模型 descriptor 副本，不修改 discovery catalog、权限或执行身份；`update` 可修改名称、endpoint、custom headers 与协议版本；`discover` 读取 application persistent catalog，`refresh` 是唯一强制联网入口；不暴露 raw RPC 或 RMCP session。
+  - `testCall` 是第一方 Manager 的 Project Contract：Active registration 上的显式用户调用不受 Off/Ask/Allow 阻止且不修改 permission；typed outcome 区分 `known_response`、`not_sent` 与 `outcome_unknown`，AbortSignal 只停止本地等待，不承诺远端回滚。
+  - 同一 WebView 内的 vendor/extension scripts 仍按当前平台 trust model 视为用户授权代码；本 ABI 不声称验证物理点击或隔离 hostile extension。
+  - server 新建后总是 Paused；工具缺省 Off。discovery annotations 不构成 authority。
+  - Agent/Legacy model exposure 都只读取 application persistent snapshot，并在共享 resolver 应用 registration description override；Agent Profile `tools.toolDescriptions` 随后覆盖同一字段。发送前由 Rust 重查 permission；Legacy MCP 不进入全局 SillyTavern ToolManager、slash commands 或 extension enumeration。
+  - 第一方 MCP 管理 UI 是独立内置扩展；它只消费本 API，不把 React 状态升格为平台事实，也不在 TauriTavern Settings 中维护第二入口。
 
 > 注意：`window.__TAURITAVERN__` 是“平台 ABI”，应保持**小而稳定**；不要把内部实现对象整个暴露出去。
 
@@ -209,7 +194,8 @@
 
 - `window.__TAURITAVERN__.api.chatSurface`
   - 当前是实验性的 Project Contract，尚未作为 Public Contract 稳定发布。
-  - 只暴露 `protocolVersion: 1`、`isManagedOwnershipRequired()` 与 `registerParticipant()`；ownership query 返回本页已冻结的布尔决策，投影控制器、DOM adapter、内部 revision、admission 预算和虚拟滚动引擎均不外露。
+  - 暴露 `protocolVersion: 1`、`isManagedOwnershipRequired()`、`registerParticipant()` 与独立的 `registerContentProcessor()`；ownership query 返回本页已冻结的布尔决策，投影控制器、DOM adapter、内部 revision、admission 预算和虚拟滚动引擎均不外露。
+  - 内容处理器在首次投影前注册，异步返回显示 HTML；宿主保存结果供重挂载复用，`registration.refresh()` 显式刷新。participant v1 的同步契约保持不变。
   - participant 必须显式声明协议版本；hook 返回同步 disposer，宿主用 `AbortSignal` 表达 mount/content/runtime 三种真实寿命。
   - mount/remount/content lifecycle 不得伪装为 SillyTavern 消息业务事件。
   - 完整协议与 raw API 接入示例见 `docs/API/ChatSurface.md`。
@@ -243,6 +229,12 @@
 
 路由定义集中在 `src/tauri/main/routes/*`，其路径本身属于 Public Contract（上游/插件会直接请求）。
 
+第一方聊天完整加载与保存直接调用内部 payload transport；兼容 `/api/chats/get`、`/api/chats/group/get`、`/api/chats/save`、`/api/chats/group/save` 仍可由扩展主动调用。第一方操作不再产生这些 Fetch 请求，不能依赖 monkeypatch Fetch 观察它们；公开保存入口及既有业务事件不变。兼容保存成功仍为 `200 { ok: true }`，明确的 integrity 冲突仍为 `400 { error: 'integrity' }`，其他提交或清理失败不得仅因文案包含 integrity 而返回该冲突响应。
+
+`saveMetadata()` / `getContext().saveMetadata()` 的持久化范围为 header 内的整个 `chat_metadata`，正文保持原字节，不再顺带保存消息。这是相对 SillyTavern 1.18.0 的明确语义变化；消息修改必须调用完整保存，不能依赖下一次 metadata 写入。metadata 的 debounce 保持 1000 ms，不取消待执行的完整保存；integrity 确认后仍强制完整保存，拒绝则 reload，普通失败不回退。该能力通过内部 transport 调用一个 metadata command，不新增兼容 HTTP route 或 Host ABI 别名。新群聊在首次问候事件前已有带 identity 的 header，事件写入不会被初始化覆盖。完整语义与成本见 `docs/CurrentState/ChatPayload.md` §3.1。
+
+启用[历史滑动按需加载](CurrentState/ChatPayload.md#21-历史滑动按需加载)时，`getContext().chat` 的历史候选槽位允许为 null；兼容 get、导出与保存文件保持完整。
+
 最关键的启动依赖：
 
 - `/csrf-token`：返回固定 token（用于兼容上游初始化对 CSRF 的假设）
@@ -251,6 +243,8 @@
 高频与高风险路径（示例，不是完整列表）：
 
 - `/api/*`：应用核心 API（settings/chats/characters/ai/worldinfo…）
+  - 用户设定沿用上游 settings 数据形状；列表刷新不写入资料，单项保存失败不影响其他修改。
+- `/api/backends/chat-completions/generate` 的流式响应由 Rust 进程内会话持有生成任务、移动端 best-effort 后台执行租约与未确认事件；前端通过单调递增的 `after_seq` 消费并确认，WebView 暂停后可在同一 Rust 进程内重放缺失事件。单次读取失败会使用相同 cursor 重试一次，第二次失败才关闭会话。后台租约失败或到期不拥有生成终止权；该保证不跨进程重启，也不伪装成上游 provider 的 HTTP 断点续传。
 - `/css/user.css`：用户自定义 CSS 覆盖文件（数据目录 `_css/user.css`）
 - `/scripts/extensions/third-party/*`：third-party 扩展静态资源端点（ESM/CSS/url()/字体/图片）
 - `/thumbnail`：缩略图端点（与 `__TAURITAVERN_THUMBNAIL__` 强耦合）
@@ -301,6 +295,8 @@
 用途：将 DevTools Network 中的单次请求，与 console 日志 / perf-hud 数据关联起来，定位第三方脚本导致的异常与性能热点。
 header 名也可从 `window.__TAURITAVERN__?.traceHeader` 获取（用于避免硬编码）。
 
+第一方聊天 transport 直连不产生兼容路由 Response，因此没有该响应 header；扩展主动请求兼容路由时仍按上述规则追踪。
+
 ---
 
 ## 5. 兼容补丁与观测（Public/Project）
@@ -319,9 +315,12 @@ header 名也可从 `window.__TAURITAVERN__?.traceHeader` 获取（用于避免�
 
 - `window.__TAURITAVERN_MOBILE_RUNTIME_COMPAT__`
   - 覆盖移动端旧 WebView 的基础 polyfills（例如 `requestIdleCallback` / `cancelIdleCallback`）。
+  - Android 的 `navigator.clipboard.writeText()` 映射到宿主原生写入器，same-origin iframe 同样适用；Clipboard 对象上的其他方法保持不变。
 - `window.__TAURITAVERN_MOBILE_OVERLAY_COMPAT__`
 - `window.__TAURITAVERN_MOBILE_IFRAME_VIEWPORT_CONTRACT_BRIDGE__`：same-origin iframe 的 viewport/inset contract bridge（用于 `viewport-host` boundary；主要用于 debug/幂等安装）
 - `window.__TAURITAVERN_MOBILE_WINDOW_OPEN_COMPAT__`：移动端外链 `window.open()` 通过系统浏览器打开（不创建应用内新窗口）
+
+TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板写入器。该契约只授予 `clipboard-manager:allow-write-text`，不包含读取/清空/图片等权限；写入失败必须向调用方传播。
 
 ---
 
@@ -348,6 +347,20 @@ header 名也可从 `window.__TAURITAVERN__?.traceHeader` 获取（用于避免�
 工程约定（Project）：
 
 - 显式外链打开统一使用 `src/tauri-bridge.js` 的 `openExternalUrl()`；例如 `tauritavern-version` 扩展与自动更新弹窗。
+
+### 5.5 桌面全屏快捷键（Project）
+
+- Windows/macOS/Linux 主窗口使用无修饰键 `F11` 切换原生窗口全屏；按键长按只响应首次 `keydown`。
+- 宿主在主文档及其同源 iframe 中捕获该快捷键；独立 popup、移动端和带修饰键的 `F11` 不属于此契约。
+- 原生窗口状态是唯一真值；全屏不写入 SillyTavern 设置，也不纳入窗口几何持久化。切换失败会记录错误，后续按键仍可重试。
+
+### 5.6 桌面文件拖放（Public in practice）
+
+- Windows/macOS/Linux 主窗口在创建时关闭 Tauri 原生拖放处理，将文件拖放交给 WebView 的 HTML5 `DataTransfer` / `drop`。
+- 由实际落点的前端处理器执行角色卡导入、聊天导入或附件/图库上传；不新增原生文件读取或第二条导入链路。
+- 此入口不再产生 Tauri 原生 `tauri://drag-*` 事件；扩展应使用 DOM 拖放事件。
+- 文件格式校验、导入提示和持久化继续由原有前端/后端导入流程负责；普通文件选择器入口不变。
+- 移动端与独立 popup WebView 的拖放策略不变；主页面内的 HTML 弹窗仍由各自的 DOM 拖放处理器负责。
 
 ## 6. Smoke Tests（Public 回归用例）
 

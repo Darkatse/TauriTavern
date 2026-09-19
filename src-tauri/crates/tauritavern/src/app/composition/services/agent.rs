@@ -11,8 +11,10 @@ use tt_application::services::agent_workspace_lifecycle_service::{
 };
 use tt_application::services::chat_completion_service::ChatCompletionService;
 use tt_application::services::llm_connection_service::LlmConnectionService;
+use tt_application::services::mcp_service::McpService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
+use tt_ports::skill_script::SkillScriptEngine;
 
 use super::super::repositories::AppRepositories;
 
@@ -31,6 +33,8 @@ pub(super) fn build(
     skill_service: Arc<SkillService>,
     chat_completion_service: Arc<ChatCompletionService>,
     llm_connection_service: Arc<LlmConnectionService>,
+    mcp_service: Arc<McpService>,
+    skill_script_engine: Arc<dyn SkillScriptEngine>,
 ) -> AgentServices {
     let agent_profile_service = Arc::new(AgentProfileService::new(
         repositories.agent_profile_repository.clone(),
@@ -51,7 +55,6 @@ pub(super) fn build(
         repositories.agent_run_repository.clone(),
         repositories.agent_invocation_repository.clone(),
         repositories.workspace_repository.clone(),
-        repositories.checkpoint_repository.clone(),
         repositories.chat_repository.clone(),
         repositories.group_chat_repository.clone(),
         skill_service,
@@ -61,11 +64,14 @@ pub(super) fn build(
         agent_profile_service.clone(),
         llm_connection_service,
         prompt_assembly_service.clone(),
+        mcp_service,
+        skill_script_engine,
     ));
     let agent_run_history_service = Arc::new(AgentRunHistoryService::new(
         repositories.agent_run_repository.clone(),
         repositories.settings_repository.clone(),
         agent_runtime_service.clone() as Arc<dyn AgentRunActivity>,
+        agent_runtime_service.run_lifecycle_lock(),
     ));
     let agent_run_retention_automation_service = Arc::new(AgentRunRetentionAutomationService::new(
         repositories.settings_repository.clone(),
@@ -74,6 +80,7 @@ pub(super) fn build(
     let agent_workspace_lifecycle_service = Arc::new(AgentWorkspaceLifecycleService::new(
         repositories.agent_workspace_lifecycle_repository.clone(),
         agent_runtime_service.clone() as Arc<dyn AgentRunActivity>,
+        agent_runtime_service.run_lifecycle_lock(),
     ));
 
     AgentServices {

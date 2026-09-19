@@ -1,12 +1,14 @@
 use crate::errors::ApplicationError;
-use crate::services::agent_workspace_scope::workspace_path_is_under_any_root;
+use crate::services::agent_workspace_scope::{
+    is_writable_workspace_path, workspace_path_is_under_any_root,
+};
 use tt_domain::models::agent::{WorkspaceManifest, WorkspacePath};
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
 
-#[derive(Debug, Clone)]
-pub(super) struct WorkspaceAccessPolicy {
-    pub(super) visible_roots: Vec<String>,
-    pub(super) writable_roots: Vec<String>,
+#[derive(Debug)]
+pub(in crate::services::agent_tools) struct WorkspaceAccessPolicy {
+    pub(in crate::services::agent_tools) visible_roots: Vec<String>,
+    pub(in crate::services::agent_tools) writable_roots: Vec<String>,
 }
 
 impl WorkspaceAccessPolicy {
@@ -62,23 +64,15 @@ impl WorkspaceAccessPolicy {
         workspace_path_is_under_any_root(path, &self.visible_roots)
     }
 
-    pub(super) fn is_writable(&self, path: &WorkspacePath) -> bool {
-        self.writable_roots
-            .iter()
-            .any(|root| path_matches_child(path.as_str(), root.as_str()))
+    pub(in crate::services::agent_tools) fn is_writable(&self, path: &WorkspacePath) -> bool {
+        is_writable_workspace_path(path, &self.writable_roots)
     }
 }
 
-pub(super) async fn workspace_access_policy(
+pub(in crate::services::agent_tools) async fn workspace_access_policy(
     workspace_repository: &dyn WorkspaceRepository,
     run_id: &str,
 ) -> Result<WorkspaceAccessPolicy, ApplicationError> {
     let manifest = workspace_repository.read_manifest(run_id).await?;
     WorkspaceAccessPolicy::from_manifest(&manifest)
-}
-
-fn path_matches_child(path: &str, root: &str) -> bool {
-    path.len() > root.len()
-        && path.starts_with(root)
-        && path.as_bytes().get(root.len()) == Some(&b'/')
 }

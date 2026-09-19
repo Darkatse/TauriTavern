@@ -91,7 +91,7 @@ jobs:
             portable: true
             portable_name: windows-x64
           - platform: windows-latest
-            target_args: --debug --bundles nsis
+            target_args: --debug --bundles nsis --features devtools-pilot
             artifact_prefix: debug-
             portable: false
           - platform: macos-latest
@@ -99,7 +99,7 @@ jobs:
             artifact_prefix: ""
             portable: false
           - platform: macos-latest
-            target_args: --target x86_64-apple-darwin --debug --bundles dmg
+            target_args: --target x86_64-apple-darwin --debug --bundles dmg --features devtools-pilot
             artifact_prefix: debug-
             portable: false
           - platform: macos-latest
@@ -107,7 +107,7 @@ jobs:
             artifact_prefix: ""
             portable: false
           - platform: macos-latest
-            target_args: --target aarch64-apple-darwin --debug --bundles dmg
+            target_args: --target aarch64-apple-darwin --debug --bundles dmg --features devtools-pilot
             artifact_prefix: debug-
             portable: false
           - platform: ubuntu-22.04
@@ -135,7 +135,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev librsvg2-dev patchelf rpm \
+            libdbus-1-dev libwebkit2gtk-4.1-dev librsvg2-dev patchelf pkg-config rpm \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-alsa gstreamer1.0-pulseaudio
 
@@ -147,15 +147,11 @@ jobs:
         with:
           workspaces: "src-tauri -> target"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/setup@v2
         with:
-          version: 10
-          run_install: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
+          runtime: node@22
+          cache: true
+          install: false
 
       - run: pnpm install --frozen-lockfile
 
@@ -179,7 +175,9 @@ jobs:
         with:
           projectPath: src-tauri/crates/tauritavern
           tauriScript: node ../../../scripts/tauri-app.mjs
-          args: ${{ matrix.target_args }}
+          args: >-
+            ${{ matrix.target_args }}
+            ${{ matrix.artifact_prefix == 'debug-' && format('--config "{0}/src-tauri/crates/tauritavern/tauri.pilot.conf.json"', github.workspace) || '' }}
           uploadWorkflowArtifacts: true
           uploadUpdaterJson: false
           uploadUpdaterSignatures: false
@@ -294,7 +292,9 @@ jobs:
 
       - name: Setup Android SDK
         if: matrix.mobile == 'android'
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
 
       - name: Setup Android NDK
         if: matrix.mobile == 'android'
@@ -304,19 +304,32 @@ jobs:
           ndk-version: r29
           link-to-sdk: true
 
+      - name: Configure Android compiler
+        if: matrix.mobile == 'android'
+        shell: bash
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          toolchain="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          sysroot="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          {
+            echo "AR_aarch64_linux_android=$toolchain/llvm-ar"
+            echo "CC_aarch64_linux_android=$toolchain/aarch64-linux-android24-clang"
+            echo "AR_armv7_linux_androideabi=$toolchain/llvm-ar"
+            echo "CC_armv7_linux_androideabi=$toolchain/armv7a-linux-androideabi24-clang"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$sysroot"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi=--sysroot=$sysroot"
+          } >> "$GITHUB_ENV"
+
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: "src-tauri -> target"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/setup@v2
         with:
-          version: 10
-          run_install: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
+          runtime: node@22
+          cache: true
+          install: false
 
       - run: pnpm install --frozen-lockfile
 
@@ -468,6 +481,16 @@ jobs:
             | xargs -0 gh release upload "$RELEASE_TAG" \
                 --repo "$GITHUB_REPOSITORY" \
                 --clobber
+
+  publish-winget:
+    needs: [prepare, publish-release]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/winget-release.yml
+    with:
+      release_tag: ${{ needs.prepare.outputs.tag }}
+    secrets:
+      WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
 
   publish-package-repositories:
     needs: [prepare, publish-release]

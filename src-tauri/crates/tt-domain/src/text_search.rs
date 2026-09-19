@@ -1,3 +1,5 @@
+use crate::text_lines::format_line_slice_with_numbers;
+
 #[derive(Debug, Clone)]
 pub struct PreparedTextSearch {
     tokens: Vec<String>,
@@ -54,9 +56,10 @@ impl PreparedTextSearch {
                     start_line,
                     end_line,
                     matched_line: line_number,
-                    snippet: format_lines_with_numbers(
+                    snippet: format_line_slice_with_numbers(
                         &lines[start_line - 1..end_line],
                         start_line,
+                        end_line,
                     ),
                 })
             })
@@ -98,10 +101,10 @@ fn split_lines(text: &str) -> Vec<&str> {
     }
 }
 
-fn normalize_query(value: &str) -> String {
-    value
-        .trim()
-        .to_lowercase()
+/// Normalizes a scored text-search query without discarding non-empty literal input.
+pub fn normalize_search_query(value: &str) -> String {
+    let literal = value.trim().to_lowercase();
+    let normalized = literal
         .chars()
         .map(|ch| {
             if ch.is_alphanumeric() || ch == '_' {
@@ -113,11 +116,17 @@ fn normalize_query(value: &str) -> String {
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+
+    if normalized.is_empty() {
+        literal
+    } else {
+        normalized
+    }
 }
 
 fn build_query_tokens(query: &str) -> Vec<String> {
-    let normalized = normalize_query(query);
+    let normalized = normalize_search_query(query);
     if normalized.is_empty() {
         return Vec::new();
     }
@@ -160,20 +169,6 @@ fn score_text(text: &str, tokens: &[String], needs_lowercase: bool) -> (f32, boo
     (matched_weight as f32 / total_weight as f32, true)
 }
 
-fn format_lines_with_numbers(lines: &[&str], start_line: usize) -> String {
-    if lines.is_empty() {
-        return String::new();
-    }
-    let last_line = start_line + lines.len() - 1;
-    let width = last_line.to_string().len();
-    lines
-        .iter()
-        .enumerate()
-        .map(|(index, line)| format!("{:>width$} | {}", start_line + index, line, width = width))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 fn ranges_overlap(
     left_start: usize,
     left_end: usize,
@@ -204,5 +199,15 @@ mod tests {
         let hits = search.search("the blue lantern");
 
         assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn searches_punctuation_and_symbol_only_queries_literally() {
+        for (query, text) in [("——", "pause——continue"), ("❤️", "status: ❤️")] {
+            let hits = PreparedTextSearch::new(query, 5, 0).search(text);
+
+            assert_eq!(hits.len(), 1, "query {query:?}");
+            assert_eq!(hits[0].score, 1.0, "query {query:?}");
+        }
     }
 }

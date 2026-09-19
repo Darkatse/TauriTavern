@@ -11,7 +11,7 @@ use tokio::task::JoinSet;
 
 use crate::png_card_metadata::read_character_data_from_png_file;
 use tt_adapter_storage_core::file_system::{
-    list_files_with_extension, replace_file_with_fallback, unique_temp_path,
+    list_files_with_extension, replace_file, unique_temp_path,
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::character::Character;
@@ -24,7 +24,7 @@ use super::cache::{
 use super::helpers::{file_ctime_millis, file_modified_millis};
 
 const MAX_CONCURRENT_SHALLOW_READS: usize = 8;
-const PERSISTENT_SHALLOW_INDEX_SCHEMA_VERSION: u32 = 1;
+const PERSISTENT_SHALLOW_INDEX_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
 struct PersistentShallowIndexSnapshot {
@@ -83,25 +83,28 @@ impl FileCharacterRepository {
             return Ok(Self::shallow_index_characters(cache));
         }
 
-        if scan_complete && let Some(cache) = self.load_persistent_shallow_index(&signature).await {
-            let characters = Self::shallow_index_characters(&cache);
+        let persistent_candidate = if scan_complete {
+            self.load_persistent_shallow_index_candidate().await
+        } else {
+            None
+        };
+        if let Some(cache) = &persistent_candidate
+            && cache.signature == signature
+        {
+            let characters = Self::shallow_index_characters(cache);
             let mut memory_cache = self.shallow_index_cache.lock().await;
-            *memory_cache = Some(cache);
+            *memory_cache = persistent_candidate;
             return Ok(characters);
         }
 
         let previous_by_avatar = cached
             .as_ref()
+            .or(persistent_candidate.as_ref())
             .map(Self::shallow_index_by_avatar)
             .unwrap_or_default();
         let (mut indexed_characters, build_complete) = self
             .build_shallow_index_characters(scan_entries, &previous_by_avatar)
             .await?;
-        if (!scan_complete || !build_complete)
-            && let Some(cache) = &cached
-        {
-            return Ok(Self::shallow_index_characters(cache));
-        }
 
         let characters = indexed_characters
             .iter()
@@ -142,10 +145,25 @@ impl FileCharacterRepository {
             .collect()
     }
 
-    async fn load_persistent_shallow_index(
-        &self,
-        expected_signature: &CharacterShallowIndexSignature,
-    ) -> Option<CharacterShallowIndexCache> {
+    fn reuse_cached_shallow_character(
+        cached: &CharacterShallowIndexCachedCharacter,
+        signature: &CharacterShallowIndexEntrySignature,
+    ) -> Option<CharacterShallowIndexCachedCharacter> {
+        if cached.signature.file_size != signature.file_size
+            || cached.signature.modified_millis != signature.modified_millis
+            || cached.signature.created_millis != signature.created_millis
+        {
+            return None;
+        }
+
+        let mut reused = cached.clone();
+        reused.signature = signature.clone();
+        reused.character.chat_size = signature.chat_size;
+        reused.character.date_last_chat = signature.date_last_chat;
+        Some(reused)
+    }
+
+    async fn load_persistent_shallow_index_candidate(&self) -> Option<CharacterShallowIndexCache> {
         let bytes = match fs::read(&self.shallow_index_path).await {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
@@ -180,16 +198,13 @@ impl FileCharacterRepository {
             return None;
         }
 
-        let snapshot_signature = CharacterShallowIndexSignature {
+        let signature = CharacterShallowIndexSignature {
             entries: snapshot
                 .entries
                 .iter()
                 .map(|entry| entry.signature.clone())
                 .collect(),
         };
-        if &snapshot_signature != expected_signature {
-            return None;
-        }
 
         let characters = snapshot
             .entries
@@ -211,7 +226,7 @@ impl FileCharacterRepository {
             .collect();
 
         Some(CharacterShallowIndexCache {
-            signature: expected_signature.clone(),
+            signature,
             characters,
         })
     }
@@ -267,7 +282,7 @@ impl FileCharacterRepository {
                 error
             ))
         })?;
-        replace_file_with_fallback(&temp_path, &self.shallow_index_path).await
+        replace_file(&temp_path, &self.shallow_index_path).await
     }
 
     async fn scan_shallow_index_entries(
@@ -276,7 +291,7 @@ impl FileCharacterRepository {
         let character_files = list_files_with_extension(&self.characters_dir, "png").await?;
         let mut chat_stats_by_name = self
             .calculate_shallow_index_chat_stats(&character_files)
-            .await?;
+            .await;
         let mut results: Vec<Option<CharacterShallowIndexScanEntry>> =
             (0..character_files.len()).map(|_| None).collect();
         let mut complete = true;
@@ -333,18 +348,30 @@ impl FileCharacterRepository {
     async fn calculate_shallow_index_chat_stats(
         &self,
         character_files: &[PathBuf],
-    ) -> Result<HashMap<String, Result<(u64, i64), DomainError>>, DomainError> {
-        let character_names = character_files
+    ) -> HashMap<String, Result<(u64, i64), DomainError>> {
+        let character_names: Vec<String> = character_files
             .iter()
             .map(|path| Self::file_stem_from_path(path))
             .collect();
 
-        Ok(self
+        match self
             .chat_repository
-            .calculate_character_chat_stats_batch(character_names)
-            .await?
-            .into_iter()
-            .collect())
+            .calculate_character_chat_stats_batch(character_names.clone())
+            .await
+        {
+            Ok(stats) => stats.into_iter().collect(),
+            Err(error) => {
+                tracing::error!(
+                    target: tt_contracts::observability::USER_VISIBLE_ERROR,
+                    "Failed to calculate character chat statistics; using zero statistics: {}",
+                    error
+                );
+                character_names
+                    .into_iter()
+                    .map(|name| (name, Ok((0, 0))))
+                    .collect()
+            }
+        }
     }
 
     async fn scan_shallow_index_entry(
@@ -364,7 +391,7 @@ impl FileCharacterRepository {
             .and_then(|value| value.to_str())
             .unwrap_or("")
             .to_string();
-        let (chat_size, date_last_chat) = chat_stats?;
+        let (chat_size, date_last_chat) = Self::chat_stats_or_default(&file_stem, chat_stats);
         let modified_millis = file_modified_millis(&metadata);
 
         Ok(CharacterShallowIndexScanEntry {
@@ -400,9 +427,9 @@ impl FileCharacterRepository {
 
         for (index, entry) in scan_entries.into_iter().enumerate() {
             if let Some(cached) = previous_by_avatar.get(&entry.signature.avatar)
-                && cached.signature == entry.signature
+                && let Some(reused) = Self::reuse_cached_shallow_character(cached, &entry.signature)
             {
-                results[index] = Some(cached.clone());
+                results[index] = Some(reused);
                 continue;
             }
 
@@ -463,30 +490,66 @@ impl FileCharacterRepository {
         let raw_value: Value = serde_json::from_str(&json_data).map_err(|error| {
             DomainError::InvalidData(format!("Failed to parse character data: {}", error))
         })?;
-        let mut character: Character =
-            serde_json::from_value(raw_value.clone()).map_err(|error| {
-                DomainError::InvalidData(format!("Failed to decode character data: {}", error))
-            })?;
+        let mut character = Character::from_card_value(&raw_value).ok_or_else(|| {
+            DomainError::InvalidData("Character payload must be a JSON object".to_string())
+        })?;
 
         Self::sync_canonical_data_fields(&mut character, &raw_value);
         Self::normalize_imported_character(&mut character)?;
-        let data_size = Self::calculate_data_size(&character.data);
+        let data_size = Self::calculate_character_data_size(&raw_value, &character);
         character.shallow = false;
         let signature = entry.signature;
         character.file_name = Some(entry.file_stem);
         character.avatar = signature.avatar;
         character.date_added = signature.created_millis;
-        let create_date_fallback =
-            (signature.created_millis > 0).then_some(signature.created_millis);
-        if let Some(repaired_create_date) =
-            Self::repaired_character_create_date(&character.create_date, create_date_fallback)
-        {
-            character.create_date = repaired_create_date;
-        }
         character.chat_size = signature.chat_size;
         character.data_size = data_size;
         character.date_last_chat = signature.date_last_chat;
 
         Ok(character.into_shallow())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cached_card_is_reused_when_only_chat_stats_change() {
+        let cached = CharacterShallowIndexCachedCharacter {
+            signature: CharacterShallowIndexEntrySignature {
+                avatar: "Alice.png".to_string(),
+                file_size: 100,
+                modified_millis: 2,
+                created_millis: 1,
+                chat_size: 0,
+                date_last_chat: 0,
+            },
+            character: Character::new(
+                "Alice".to_string(),
+                String::new(),
+                String::new(),
+                String::new(),
+            )
+            .into_shallow(),
+        };
+
+        let mut updated_signature = cached.signature.clone();
+        updated_signature.chat_size = 42;
+        updated_signature.date_last_chat = 3;
+        let reused =
+            FileCharacterRepository::reuse_cached_shallow_character(&cached, &updated_signature)
+                .expect("unchanged card should be reusable");
+
+        assert_eq!(reused.signature, updated_signature);
+        assert_eq!(reused.character.chat_size, 42);
+        assert_eq!(reused.character.date_last_chat, 3);
+
+        let mut changed_card = updated_signature;
+        changed_card.modified_millis = 4;
+        assert!(
+            FileCharacterRepository::reuse_cached_shallow_character(&cached, &changed_card)
+                .is_none()
+        );
     }
 }

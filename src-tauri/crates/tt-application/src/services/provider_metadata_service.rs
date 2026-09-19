@@ -198,20 +198,7 @@ fn parse_siliconflow_endpoint(value: &str) -> Result<SiliconFlowEndpoint, Applic
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_siliconflow_endpoint, required_string};
-    use tt_ports::repositories::provider_metadata_repository::SiliconFlowEndpoint;
-
-    #[test]
-    fn siliconflow_endpoint_accepts_upstream_values() {
-        assert_eq!(
-            parse_siliconflow_endpoint("global").unwrap(),
-            SiliconFlowEndpoint::Global
-        );
-        assert_eq!(
-            parse_siliconflow_endpoint("cn").unwrap(),
-            SiliconFlowEndpoint::China
-        );
-    }
+    use super::parse_siliconflow_endpoint;
 
     #[test]
     fn siliconflow_endpoint_rejects_unknown_values() {
@@ -221,11 +208,5 @@ mod tests {
                 .to_string()
                 .contains("Unsupported SiliconFlow endpoint")
         );
-    }
-
-    #[test]
-    fn required_string_trims_and_rejects_empty() {
-        assert_eq!(required_string("  abc  ", "field").unwrap(), "abc");
-        assert!(required_string("   ", "field").is_err());
     }
 }

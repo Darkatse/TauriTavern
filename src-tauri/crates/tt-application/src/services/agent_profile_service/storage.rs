@@ -42,12 +42,13 @@ impl AgentProfileService {
         if profile.is_none() && id.as_str() == DEFAULT_AGENT_PROFILE_ID {
             return Ok(Some(default_writer_profile()?));
         }
-        profile
-            .map(|mut profile| {
-                migrate_profile_schema(&mut profile)?;
-                Ok(profile)
-            })
-            .transpose()
+        let Some(mut profile) = profile else {
+            return Ok(None);
+        };
+        if migrate_profile_schema(&mut profile)? {
+            self.profile_repository.save_profile(&profile).await?;
+        }
+        Ok(Some(profile))
     }
 
     pub async fn save_profile(
@@ -55,7 +56,7 @@ impl AgentProfileService {
         mut profile: AgentProfileDefinition,
         tool_catalog: &tt_domain::models::tool::ToolCatalog,
     ) -> Result<(), ApplicationError> {
-        migrate_profile_schema(&mut profile)?;
+        let _ = migrate_profile_schema(&mut profile)?;
         normalize_context_policy(&mut profile.context)?;
         self.resolve_definition(
             profile.clone(),

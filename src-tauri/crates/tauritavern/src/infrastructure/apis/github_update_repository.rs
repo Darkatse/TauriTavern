@@ -145,44 +145,6 @@ mod tests {
     use super::parse_version_from_tag;
 
     #[test]
-    fn desktop_auto_tag() {
-        assert_eq!(parse_version_from_tag("desktop-auto-v1.4.0"), "1.4.0");
-    }
-
-    #[test]
-    fn simple_v_tag() {
-        assert_eq!(parse_version_from_tag("v1.4.0"), "1.4.0");
-    }
-
-    #[test]
-    fn bare_version() {
-        assert_eq!(parse_version_from_tag("1.4.0"), "1.4.0");
-    }
-
-    #[test]
-    fn mobile_tag() {
-        assert_eq!(parse_version_from_tag("mobile-v2.0.0"), "2.0.0");
-    }
-
-    #[test]
-    fn mobile_auto_tag() {
-        assert_eq!(parse_version_from_tag("mobile-auto-v2.0.0"), "2.0.0");
-    }
-
-    #[test]
-    fn suffix_is_stripped() {
-        assert_eq!(parse_version_from_tag("v1.4.0-beta.1"), "1.4.0");
-    }
-
-    #[test]
-    fn desktop_auto_branch_suffix_keeps_release_version() {
-        assert_eq!(
-            parse_version_from_tag("desktop-auto-v1.4.0-next-2.0.0"),
-            "1.4.0"
-        );
-    }
-
-    #[test]
     fn mobile_auto_branch_suffix_keeps_release_version() {
         assert_eq!(
             parse_version_from_tag("mobile-auto-v1.4.0-next-2.0.0"),

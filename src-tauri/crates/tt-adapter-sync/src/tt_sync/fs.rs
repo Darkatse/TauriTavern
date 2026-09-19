@@ -108,12 +108,6 @@ fn scan_dir_recursive(
         }
 
         if file_type.is_dir() {
-            if ttsync_core::dataset::is_agent_run_root_dir(&relative)
-                && !agent_run_file_is_terminal(&entry_path.join("run.json"))?
-            {
-                continue;
-            }
-
             if !policy.should_descend_dir(&relative) {
                 continue;
             }
@@ -123,33 +117,11 @@ fn scan_dir_recursive(
         }
 
         if file_type.is_file() && policy.contains_path(&relative) {
-            if ttsync_core::dataset::is_agent_run_index_file(&relative)
-                && !agent_run_file_is_terminal(&entry_path)?
-            {
-                continue;
-            }
-
             entries.push(make_entry(sync_root, &entry_path)?);
         }
     }
 
     Ok(())
-}
-
-fn agent_run_file_is_terminal(path: &Path) -> Result<bool, DomainError> {
-    if !path.exists() {
-        return Ok(false);
-    }
-
-    let text = std::fs::read_to_string(path).map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to read agent run {}: {}",
-            path.display(),
-            error
-        ))
-    })?;
-    ttsync_core::dataset::agent_run_json_is_terminal(&text)
-        .map_err(|error| DomainError::InvalidData(format!("{}: {}", path.display(), error)))
 }
 
 fn is_tauritavern_runtime_cache(relative: &str) -> bool {
@@ -281,8 +253,8 @@ mod tests {
             b"[]",
         )
         .expect("write excluded paired servers");
-        std::fs::write(user_cache_dir.join("settings_revision_v1.json"), b"{}")
-            .expect("write excluded settings revision cache");
+        std::fs::write(user_cache_dir.join("runtime-state.json"), b"{}")
+            .expect("write excluded runtime cache state");
 
         std::fs::create_dir_all(
             root.join("_tauritavern")
@@ -307,15 +279,6 @@ mod tests {
                 .join("chats")
                 .join("workspace")
                 .join("runs")
-                .join("run-done"),
-        )
-        .expect("create terminal run directory");
-        std::fs::create_dir_all(
-            root.join("_tauritavern")
-                .join("agent-workspaces")
-                .join("chats")
-                .join("workspace")
-                .join("runs")
                 .join("run-done")
                 .join("input"),
         )
@@ -330,15 +293,6 @@ mod tests {
                 .join("model-responses"),
         )
         .expect("create terminal run model responses directory");
-        std::fs::create_dir_all(
-            root.join("_tauritavern")
-                .join("agent-workspaces")
-                .join("chats")
-                .join("workspace")
-                .join("runs")
-                .join("run-active"),
-        )
-        .expect("create active run directory");
         std::fs::create_dir_all(
             root.join("_tauritavern")
                 .join("agent-workspaces")
@@ -380,17 +334,6 @@ mod tests {
                 .join("workspace")
                 .join("runs")
                 .join("run-done")
-                .join("run.json"),
-            br#"{"status":"completed"}"#,
-        )
-        .expect("write terminal run");
-        std::fs::write(
-            root.join("_tauritavern")
-                .join("agent-workspaces")
-                .join("chats")
-                .join("workspace")
-                .join("runs")
-                .join("run-done")
                 .join("events.jsonl"),
             b"{}\n",
         )
@@ -422,43 +365,12 @@ mod tests {
         std::fs::write(
             root.join("_tauritavern")
                 .join("agent-workspaces")
-                .join("chats")
-                .join("workspace")
-                .join("runs")
-                .join("run-active")
-                .join("run.json"),
-            br#"{"status":"calling_model"}"#,
-        )
-        .expect("write active run");
-        std::fs::write(
-            root.join("_tauritavern")
-                .join("agent-workspaces")
-                .join("chats")
-                .join("workspace")
-                .join("runs")
-                .join("run-active")
-                .join("events.jsonl"),
-            b"{}\n",
-        )
-        .expect("write active event");
-        std::fs::write(
-            root.join("_tauritavern")
-                .join("agent-workspaces")
                 .join("index")
                 .join("runs")
                 .join("run-done.json"),
             br#"{"status":"completed"}"#,
         )
         .expect("write terminal run index");
-        std::fs::write(
-            root.join("_tauritavern")
-                .join("agent-workspaces")
-                .join("index")
-                .join("runs")
-                .join("run-active.json"),
-            br#"{"status":"calling_model"}"#,
-        )
-        .expect("write active run index");
 
         let policy = ResolvedDatasetPolicy::tauri_tavern_default();
         let manifest = scan_manifest_sync(&root, &policy).expect("scan manifest");
@@ -479,7 +391,7 @@ mod tests {
             "default-user/user/lan-sync/v2/peers.json",
             "default-user/user/lan-sync/tt-sync-v2/identity.json",
             "default-user/user/lan-sync/tt-sync-v2/paired-servers.json",
-            "default-user/user/cache/settings_revision_v1.json",
+            "default-user/user/cache/runtime-state.json",
             "default-user/.staging/chat-commits/session.partial",
         ] {
             assert!(
@@ -521,18 +433,6 @@ mod tests {
         );
         assert!(
             paths.contains(&"_tauritavern/agent-workspaces/index/runs/run-done.json".to_string())
-        );
-        assert!(
-            !paths.contains(
-                &"_tauritavern/agent-workspaces/chats/workspace/runs/run-active/events.jsonl"
-                    .to_string()
-            ),
-            "active agent runs must not be included"
-        );
-        assert!(
-            !paths
-                .contains(&"_tauritavern/agent-workspaces/index/runs/run-active.json".to_string()),
-            "active agent run index entries must not be included"
         );
 
         std::fs::remove_dir_all(&root).expect("remove temp root");

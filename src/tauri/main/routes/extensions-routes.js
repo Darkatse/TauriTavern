@@ -174,7 +174,15 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
 
     router.post('/api/extensions/data-migration/import', async ({ body }) => {
         if (!(body instanceof FormData)) {
-            return jsonResponse({ error: 'Expected multipart form data' }, 400);
+            const archivePath = body?.archive_path;
+            if (typeof archivePath !== 'string' || archivePath.trim() === '') {
+                return jsonResponse({ error: 'Missing archive path' }, 400);
+            }
+
+            return startImportJobFromFileInfo({
+                filePath: archivePath,
+                isTemporary: false,
+            });
         }
 
         const archive = body.get('archive');

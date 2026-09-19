@@ -8,11 +8,13 @@
   "permissions": [
     "core:default",
     "core:window:allow-destroy",
+    "clipboard-manager:allow-write-text",
     "opener:default",
     "notification:allow-notify",
     "notification:allow-is-permission-granted",
     "fs:allow-open",
     "fs:allow-read",
+    "fs:allow-fstat",
     "fs:allow-read-text-file",
     "fs:allow-resource-read-recursive",
     "fs:default",

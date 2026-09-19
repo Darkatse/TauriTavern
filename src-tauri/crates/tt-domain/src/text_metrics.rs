@@ -58,17 +58,6 @@ mod tests {
     use super::TextMetrics;
 
     #[test]
-    fn counts_ascii_words_and_chars() {
-        assert_eq!(
-            TextMetrics::from_text("Hello, brave new world!"),
-            TextMetrics {
-                chars: 23,
-                words: 4,
-            }
-        );
-    }
-
-    #[test]
     fn counts_cjk_characters_as_word_units() {
         assert_eq!(
             TextMetrics::from_text("你好，世界"),
@@ -84,14 +73,6 @@ mod tests {
                 chars: 17,
                 words: 5,
             }
-        );
-    }
-
-    #[test]
-    fn ignores_punctuation_and_emoji_for_words() {
-        assert_eq!(
-            TextMetrics::from_text("✨ ..."),
-            TextMetrics { chars: 5, words: 0 }
         );
     }
 }

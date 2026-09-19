@@ -23,7 +23,7 @@ use tt_contracts::sync::{
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::lan_sync::{
-    LanPairCompleteRequest, LanPairCompleteResponse, LanSyncPairedDevice,
+    LanPairCompleteRequest, LanPairCompleteResponse, LanSyncPairedDevice, validate_device_name,
 };
 
 pub struct LanInboundService {
@@ -72,11 +72,8 @@ impl LanInboundService {
 impl LanInboundRequestHandler for LanInboundService {
     async fn complete_pairing(
         &self,
-        token: String,
         request: LanPairCompleteRequest,
     ) -> Result<LanPairCompleteResponse, DomainError> {
-        let session = self.state.active_pairing_session(&token, now_ms()).await?;
-
         let identity = self.peer_repository.load_or_create_identity().await?;
         if request.device_id == identity.device_id {
             return Err(DomainError::InvalidData(
@@ -85,6 +82,7 @@ impl LanInboundRequestHandler for LanInboundService {
         }
 
         super::pairing_link::validate_https_base_url(&request.client_base_url)?;
+        validate_device_name(&request.device_name)?;
         if request.client_spki_sha256.trim().is_empty() {
             return Err(DomainError::InvalidData(
                 "Missing LAN Sync client SPKI".to_string(),
@@ -99,7 +97,7 @@ impl LanInboundRequestHandler for LanInboundService {
                 peer_device_id: request.device_id.to_string(),
                 peer_device_name: request.device_name.clone(),
                 peer_ip: host_for_pairing_prompt(&request.client_base_url)?,
-                expires_at_ms: session.expires_at_ms,
+                expires_at_ms: now_ms() + 5 * 60 * 1000,
             })
             .await?;
 
@@ -109,11 +107,10 @@ impl LanInboundRequestHandler for LanInboundService {
             ));
         }
 
-        self.state.consume_pairing_session(&token, now_ms()).await?;
-
         let permissions = default_lan_permissions();
         self.peer_repository
             .upsert_paired_device(LanSyncPairedDevice {
+                platform: request.device_platform,
                 grant: PeerGrant {
                     device_id: request.device_id,
                     device_name: request.device_name,
@@ -130,6 +127,7 @@ impl LanInboundRequestHandler for LanInboundService {
         Ok(LanPairCompleteResponse {
             server_device_id: identity.device_id,
             server_device_name: identity.device_name,
+            server_device_platform: Some(identity.platform),
             server_device_pubkey: device_pubkey_b64url(&identity.ed25519_seed)?,
             granted_permissions: permissions,
         })

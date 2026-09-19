@@ -66,7 +66,7 @@ async function getSourceContextSize() {
         return overrideLength > 0 ? (maxContext - overrideLength) : Math.round(maxContext * 0.75);
     }
 
-    if (extension_settings.source === summary_sources.extras) {
+    if (extension_settings.memory.source === summary_sources.extras) {
         return 1024 - 64;
     }
 
@@ -107,7 +107,7 @@ const defaultTemplate = '[Summary: {{summary}}]';
 const defaultSettings = {
     memoryFrozen: false,
     SkipWIAN: false,
-    source: summary_sources.extras,
+    source: summary_sources.main,
     prompt: defaultPrompt,
     template: defaultTemplate,
     position: extension_prompt_types.IN_PROMPT,

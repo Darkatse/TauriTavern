@@ -6,7 +6,7 @@ use tt_domain::models::agent::{AgentToolResult, WorkspacePath};
 use tt_domain::models::tool::ToolInvocation;
 
 pub(super) use crate::services::agent_tools::common::{
-    WORKSPACE_PATH_IS_DIRECTORY_CODE, object_args, optional_bool_arg, optional_usize_arg,
+    WORKSPACE_PATH_IS_DIRECTORY_CODE, ensure_only_args, optional_bool_arg, optional_usize_arg,
     required_raw_string_arg, required_trimmed_string_arg, tool_error,
     workspace_path_is_directory_message,
 };
@@ -26,7 +26,7 @@ impl WorkspaceToolError {
 /// surface filesystem errors raised by the workspace repository as
 /// recoverable model-facing tool errors instead of bubbling up as
 /// `agent.internal_error`.
-pub(super) fn classify_workspace_io_error(
+pub(crate) fn classify_workspace_io_error(
     call: &ToolInvocation,
     error: DomainError,
 ) -> Result<AgentToolResult, DomainError> {
@@ -38,6 +38,13 @@ pub(super) fn classify_workspace_io_error(
             call,
             WORKSPACE_PATH_IS_DIRECTORY_CODE,
             &workspace_path_is_directory_message(&path),
+        )),
+        DomainError::WorkspaceFileNotText { path } => Ok(tool_error(
+            call,
+            "workspace.file_not_text",
+            &format!(
+                "The file `{path}` is not UTF-8 text, so this text reader cannot open it. Choose another text file or continue with the workspace context already available."
+            ),
         )),
         other => Err(other),
     }

@@ -15,9 +15,7 @@ use tt_ports::repositories::agent_run_repository::{
     AgentRunEventReadQuery, AgentRunListCursor, AgentRunListQuery, AgentRunRepository,
     AgentRunStorageEntryStats, AgentRunStorageStats, event_belongs_to_invocation,
 };
-use tt_ports::repositories::settings_repository::{
-    SettingsAggregateSignature, SettingsRepository, UserSettingsRevision,
-};
+use tt_ports::repositories::settings_repository::{SettingsAggregateSignature, SettingsRepository};
 
 pub(crate) struct TestSettingsRepository {
     tauritavern_settings: Mutex<TauriTavernSettings>,
@@ -57,20 +55,7 @@ impl SettingsRepository for TestSettingsRepository {
         Err(unused_settings_method("load_user_settings"))
     }
 
-    async fn load_user_settings_revision(
-        &self,
-    ) -> Result<Option<UserSettingsRevision>, DomainError> {
-        Err(unused_settings_method("load_user_settings_revision"))
-    }
-
-    async fn save_user_settings_revision(
-        &self,
-        _revision: &UserSettingsRevision,
-    ) -> Result<(), DomainError> {
-        Err(unused_settings_method("save_user_settings_revision"))
-    }
-
-    async fn create_snapshot(&self) -> Result<(), DomainError> {
+    async fn create_snapshot(&self, _settings: &UserSettings) -> Result<(), DomainError> {
         Err(unused_settings_method("create_snapshot"))
     }
 
@@ -80,10 +65,6 @@ impl SettingsRepository for TestSettingsRepository {
 
     async fn load_snapshot(&self, _name: &str) -> Result<UserSettings, DomainError> {
         Err(unused_settings_method("load_snapshot"))
-    }
-
-    async fn restore_snapshot(&self, _name: &str) -> Result<(), DomainError> {
-        Err(unused_settings_method("restore_snapshot"))
     }
 
     async fn get_sillytavern_settings_signature(
@@ -332,6 +313,24 @@ impl AgentRunRepository for TestAgentRunRepository {
             .runs
             .insert(run.id.clone(), run.clone());
         Ok(())
+    }
+
+    async fn save_run_checkpoint(&self, _run_id: &str, _data: &[u8]) -> Result<(), DomainError> {
+        Err(DomainError::InternalError(
+            "Unexpected save_run_checkpoint call in retention test".to_string(),
+        ))
+    }
+
+    async fn load_run_checkpoint(&self, _run_id: &str) -> Result<Option<Vec<u8>>, DomainError> {
+        Err(DomainError::InternalError(
+            "Unexpected load_run_checkpoint call in retention test".to_string(),
+        ))
+    }
+
+    async fn reset_event_sequence(&self, _run_id: &str) -> Result<(), DomainError> {
+        Err(DomainError::InternalError(
+            "Unexpected reset_event_sequence call in retention test".to_string(),
+        ))
     }
 
     async fn append_event(

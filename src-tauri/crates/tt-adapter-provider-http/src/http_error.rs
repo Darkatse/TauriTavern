@@ -4,8 +4,9 @@ use reqwest::Url;
 
 use tt_domain::models::upstream_failure::{
     UPSTREAM_NETWORK_BODY_INTERRUPTED, UPSTREAM_NETWORK_CONNECT_FAILED,
-    UPSTREAM_NETWORK_DNS_FAILED, UPSTREAM_NETWORK_PROXY_FAILED, UPSTREAM_NETWORK_REQUEST_FAILED,
-    UPSTREAM_NETWORK_TIMEOUT, UPSTREAM_NETWORK_TLS_FAILED, UpstreamFailure,
+    UPSTREAM_NETWORK_DNS_FAILED, UPSTREAM_NETWORK_PROXY_FAILED, UPSTREAM_NETWORK_REDIRECT_REJECTED,
+    UPSTREAM_NETWORK_REQUEST_FAILED, UPSTREAM_NETWORK_TIMEOUT, UPSTREAM_NETWORK_TLS_FAILED,
+    UpstreamFailure,
 };
 
 pub(crate) fn reqwest_transport_failure(error: &reqwest::Error) -> UpstreamFailure {
@@ -49,6 +50,8 @@ fn classify_reqwest_error(
         UPSTREAM_NETWORK_TLS_FAILED
     } else if error.is_connect() {
         UPSTREAM_NETWORK_CONNECT_FAILED
+    } else if error.is_redirect() {
+        UPSTREAM_NETWORK_REDIRECT_REJECTED
     } else if let Some(code) = preferred_code {
         code
     } else if error.is_body() {
@@ -68,6 +71,7 @@ fn message_key_for_code(code: &str) -> &'static str {
         UPSTREAM_NETWORK_DNS_FAILED => "tauritavern.error.network.dns_failed",
         UPSTREAM_NETWORK_TLS_FAILED => "tauritavern.error.network.tls_failed",
         UPSTREAM_NETWORK_BODY_INTERRUPTED => "tauritavern.error.network.body_interrupted",
+        UPSTREAM_NETWORK_REDIRECT_REJECTED => "tauritavern.error.network.redirect_rejected",
         _ => "tauritavern.error.network.request_failed",
     }
 }
