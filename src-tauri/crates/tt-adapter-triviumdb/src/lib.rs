@@ -78,7 +78,7 @@ impl TriviumDatabaseBackend {
         + Send
         + 'static,
     ) -> Result<DatabaseResponse, DomainError> {
-        // ponytail: serialize each namespace; use native concurrent reads if measured
+        // Serialize each namespace; use native concurrent reads if measured
         // contention warrants it. Wait asynchronously, before occupying a blocking thread.
         let mut store = slot.lock_owned().await;
         tokio::task::spawn_blocking(move || operation(&mut store))
@@ -155,7 +155,7 @@ impl TriviumDatabaseBackend {
                 if store.is_none() {
                     return Ok(DatabaseResponse::Unit);
                 }
-                // ponytail: use file time; track memory-only writes only if users need finer ordering.
+                // Use file time; track memory-only writes only if users need finer ordering.
                 let modified = database_modified(&directory).map_err(|error| {
                     DomainError::InternalError(format!(
                         "Read database {namespace} modification time: {error}"

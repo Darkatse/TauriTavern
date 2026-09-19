@@ -105,7 +105,7 @@ impl AvatarRepository for FileAvatarRepository {
             .to_path_buf();
         let cache = Arc::clone(&self.persona_cache);
         tokio::task::spawn_blocking(move || {
-            // ponytail: library reads serialize here; split only if contention becomes measurable.
+            // Library reads serialize here; split only if contention becomes measurable.
             let mut cache = cache.lock().map_err(|error| {
                 DomainError::InternalError(format!("Persona cache lock poisoned: {error}"))
             })?;

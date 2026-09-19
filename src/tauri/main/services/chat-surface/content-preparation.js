@@ -27,7 +27,7 @@ export function createContentPreparation({ getMessages, formatMessage, commit, r
     let transientMessages = new WeakSet();
     const pending = new Set();
     let started = false;
-    // ponytail: one queue supports stateful templates; parallelize only with isolated evaluation contexts.
+    // One queue supports stateful templates; parallelize only with isolated evaluation contexts.
     let queue = Promise.resolve();
 
     /** @param {any} message */

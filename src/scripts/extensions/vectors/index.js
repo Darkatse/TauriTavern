@@ -863,7 +863,7 @@ async function rearrangeChat(chat, _contextSize, _abort, type) {
             return;
         }
 
-        // ponytail: a bounded 4x pool is enough for rank fusion; tune only if recall benchmarks require it.
+        // A bounded 4x pool is enough for rank fusion; tune only if recall benchmarks require it.
         const candidateCount = Math.min(MAX_RETRIEVAL_CANDIDATES, settings.insert * 4);
         const lexicalSearch = globalThis.__TAURITAVERN__.api.chat.current.handle().searchMessages({
             query: queryText,

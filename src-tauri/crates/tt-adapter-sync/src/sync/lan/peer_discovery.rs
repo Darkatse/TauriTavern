@@ -367,7 +367,7 @@ impl PeerDirectory {
     }
 
     fn remove_source(&mut self, source: &str) {
-        // ponytail: scan at most 128 peers instead of maintaining a second source-to-device index.
+        // Scan at most 128 peers instead of maintaining a second source-to-device index.
         self.devices.retain(|_, peer| {
             peer.sources.remove(source);
             !peer.sources.is_empty()

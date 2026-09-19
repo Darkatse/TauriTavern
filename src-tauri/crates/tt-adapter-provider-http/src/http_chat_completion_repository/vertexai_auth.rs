@@ -72,7 +72,7 @@ async fn get_service_account_access_token_at(
         return Ok(cached.value);
     }
 
-    // ponytail: concurrent misses may refresh twice; add per-credential singleflight only if
+    // Concurrent misses may refresh twice; add per-credential singleflight only if
     // OAuth traffic becomes measurable.
     let service_account_key = serde_json::from_str::<ServiceAccountKey>(service_account_json)
         .map_err(|error| {

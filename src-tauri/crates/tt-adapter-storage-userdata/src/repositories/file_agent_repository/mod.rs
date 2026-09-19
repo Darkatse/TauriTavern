@@ -26,7 +26,7 @@ use tt_domain::errors::DomainError;
 
 pub struct FileAgentRepository {
     pub(super) root: PathBuf,
-    // ponytail: one append lock stays simpler than per-run lock lifecycle; split only if
+    // One append lock stays simpler than per-run lock lifecycle; split only if
     // concurrent runs become measurable after removing journal scans from the hot path.
     pub(super) event_sequences: Mutex<HashMap<String, u64>>,
     pub(super) persist_lock: Mutex<()>,

@@ -285,7 +285,7 @@ impl VectorRepository for RedbVectorRepository {
                 scored.push((key.value().to_string(), score));
             }
 
-            // ponytail: exact scan/sort is the deliberate baseline; add ANN only after
+            // Exact scan/sort is the deliberate baseline; add ANN only after
             // measured collection-scale latency warrants its index lifecycle complexity.
             scored.sort_by(|left, right| right.1.total_cmp(&left.1));
             scored.truncate(limit);

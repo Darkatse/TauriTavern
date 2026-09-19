@@ -392,7 +392,7 @@ impl InvocationToolSnapshot {
     }
 
     pub fn binding(&self, tool_id: &ToolId) -> Option<&ToolBinding> {
-        // ponytail: invocation tool surfaces are small; add a derived index only if profiling
+        // Invocation tool surfaces are small; add a derived index only if profiling
         // shows linear lookup matters.
         self.bindings
             .iter()

@@ -432,7 +432,7 @@ pub fn replace_file_blocking(temp_path: &Path, target_path: &Path) -> Result<(),
 /// Sync a completed temporary file before atomically publishing it.
 /// Pass the original writing handle, after flushing any buffered writer. Reopening
 /// the path can miss earlier writeback errors on Linux. Sync failures leave the target intact.
-/// ponytail: file data is synced; add platform-specific directory sync if callers
+/// File data is synced; add platform-specific directory sync if callers
 /// require crash durability of the subsequent rename as well.
 pub async fn persist_file(
     file: tokio_fs::File,
