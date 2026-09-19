@@ -1,4 +1,4 @@
-name: Nix package check
+name: Nix check and Flatpak refresh
 
 on:
   schedule:
@@ -45,3 +45,40 @@ jobs:
           nix --accept-flake-config build \
             .#packages.x86_64-linux.canary.pnpmDeps \
             --rebuild --no-link --print-build-logs
+
+  refresh-flatpak:
+    name: refresh-flatpak-sources
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout dev
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v10.0.0
+        with:
+          version: latest-known
+
+      - name: Generate Flatpak dependency sources
+        run: bash packaging/flatpak/generate-sources.sh
+
+      - name: Commit updated dependency sources
+        run: |
+          git add packaging/flatpak/cargo-sources.json packaging/flatpak/pnpm-sources.json
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "chore(flatpak): refresh dependency sources"
+          git push origin HEAD:dev

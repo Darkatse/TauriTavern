@@ -59,16 +59,16 @@ jobs:
 
       - name: Setup uv
         if: runner.os == 'Linux'
-        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        uses: astral-sh/setup-uv@v10.0.0
         with:
           version: latest-known
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify generated Flatpak dependency sources
+      - name: Verify Flatpak dependency source generation
         if: runner.os == 'Linux'
-        run: pnpm run flatpak:sources:check
+        run: pnpm run flatpak:sources
 
       - name: Run checks and tests
         run: pnpm run check
