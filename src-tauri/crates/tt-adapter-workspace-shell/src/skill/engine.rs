@@ -13,7 +13,6 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use rquickjs::loader::{BuiltinLoader, BuiltinResolver};
 use rquickjs::{Context, Ctx, Function, Module, Runtime, Value as JsValue};
-use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
 
 use tt_ports::skill_script::{
@@ -21,9 +20,9 @@ use tt_ports::skill_script::{
     SkillScriptWrite,
 };
 
-use crate::api::OverlayFs;
 use crate::kit::MODULES as KIT_MODULES;
-use crate::runtime_module::{RUNTIME_MODULE_NAME, RuntimeModule, RuntimeState};
+use crate::skill::api::OverlayFs;
+use crate::skill::runtime_module::{RUNTIME_MODULE_NAME, RuntimeModule, RuntimeState};
 
 const DEFAULT_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_RESULT_BYTES: usize = 256 * 1024;
@@ -31,9 +30,6 @@ const DEFAULT_MAX_TOTAL_INPUT_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_MAX_TOTAL_OUTPUT_BYTES: usize = 1024 * 1024;
 const MEMORY_LIMIT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_STACK_BYTES: usize = 256 * 1024;
-
-/// 全局并发执行上限（固定值；每次 QuickJS 执行独立 Runtime，2 个并发 ≈ 64MB 峰值内存）。
-const MAX_CONCURRENT_EXECUTIONS: usize = 2;
 
 /// 一次执行的引擎限制集合。
 #[derive(Clone, Copy)]
@@ -46,8 +42,6 @@ struct ExecutionLimits {
 
 pub struct QuickJsScriptEngine {
     limits: ExecutionLimits,
-    /// 并发 permit 池，spawn_blocking 前取得。
-    jobs: Arc<Semaphore>,
 }
 
 impl QuickJsScriptEngine {
@@ -59,7 +53,6 @@ impl QuickJsScriptEngine {
                 max_total_input_bytes: DEFAULT_MAX_TOTAL_INPUT_BYTES,
                 max_total_output_bytes: DEFAULT_MAX_TOTAL_OUTPUT_BYTES,
             },
-            jobs: Arc::new(Semaphore::new(MAX_CONCURRENT_EXECUTIONS)),
         }
     }
 
@@ -92,7 +85,7 @@ impl SkillScriptEngine for QuickJsScriptEngine {
         &self,
         request: SkillScriptRequest,
     ) -> Result<SkillScriptResult, SkillScriptEngineError> {
-        let permit = self.jobs.clone().acquire_owned().await.map_err(|error| {
+        let permit = crate::JAVASCRIPT_JOBS.acquire().await.map_err(|error| {
             SkillScriptEngineError::Internal(format!("Skill script engine queue closed: {error}"))
         })?;
         let limits = self.limits;

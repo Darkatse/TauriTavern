@@ -14,7 +14,7 @@ use rquickjs::{Ctx, Function, JsLifetime, Object, Result};
 use serde_json::Value;
 use tt_domain::frozen_macros::FrozenMacros;
 
-use crate::api::{OverlayFs, build_log_object, build_workspace_object};
+use crate::skill::api::{OverlayFs, build_log_object, build_workspace_object};
 
 pub(crate) const RUNTIME_MODULE_NAME: &str = "@tauritavern/runtime";
 

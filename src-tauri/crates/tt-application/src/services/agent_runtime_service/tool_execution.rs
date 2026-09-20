@@ -95,10 +95,10 @@ impl AgentRuntimeService {
             ) {
                 let budget_message = match &rejection {
                     ToolRequestGateError::InvocationBudgetExhausted { max_calls } => Some(format!(
-                        "Agent tool call budget is exhausted for this invocation (max {max_calls})."
+                        "The tool call limit for this task has been reached ({max_calls} calls)."
                     )),
                     ToolRequestGateError::ToolBudgetExhausted { max_calls, .. } => Some(format!(
-                        "Agent profile tool call budget for `{tool_name}` is exhausted (max {max_calls})."
+                        "`{tool_name}` has reached its call limit for this task ({max_calls} calls)."
                     )),
                     _ => None,
                 };

@@ -1119,6 +1119,11 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
                     "skill_run_script",
                     json!({ "skill": "macro-demo", "script": "helper" }),
                 ),
+                model_tool_call(
+                    "shell_script",
+                    "workspace_shell",
+                    json!({"command": r#"js -e 'import {workspace, macros, context} from "@tauritavern/runtime"; console.log(`${context.macro.names.char}: ${macros.render(workspace.readText("output/main.md"))}`);'"#}),
+                ),
             ]),
             model_tool_response(vec![model_tool_call(
                 "finish",
@@ -1219,6 +1224,12 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
     assert_eq!(results["file_read"].structured["totalLines"], 4);
     assert!(results["script"].content.contains("blue lantern"));
     assert!(results["script"].content.contains("Frozen name"));
+    assert!(
+        results["shell_script"]
+            .content
+            .contains("Frozen name: heading")
+    );
+    assert!(results["shell_script"].content.contains("blue lantern"));
     assert!(
         results["script"]
             .content

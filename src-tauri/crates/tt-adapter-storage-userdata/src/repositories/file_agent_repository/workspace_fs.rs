@@ -6,7 +6,7 @@ use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::RwLock;
 
-use tt_adapter_storage_core::file_system::{replace_file, unique_temp_path};
+use tt_adapter_storage_core::file_system::unique_temp_path;
 use tt_domain::errors::{DomainError, WorkspaceWriteConflictKind};
 use tt_domain::models::agent::WorkspacePath;
 use tt_ports::workspace_fs::{
@@ -84,6 +84,11 @@ impl FileWorkspaceFs {
         let current = match hash_file(target).await {
             Ok((sha256, _)) => Some(sha256),
             Err(DomainError::NotFound(_)) => None,
+            Err(DomainError::FileIo {
+                operation, source, ..
+            }) => {
+                return Err(DomainError::file_io(operation, path.as_str(), source));
+            }
             Err(error) => return Err(error),
         };
         let conflict = match guard {
@@ -157,7 +162,9 @@ impl WorkspaceFs for FileWorkspaceFs {
                 .await
                 .map_err(|e| DomainError::file_io("write", path.as_str(), e))?;
             drop(file);
-            replace_file(&temp, &target).await
+            fs::rename(&temp, &target)
+                .await
+                .map_err(|e| DomainError::file_io("replace", path.as_str(), e))
         }
         .await;
         if result.is_err() {
@@ -330,7 +337,9 @@ impl WorkspaceFs for FileWorkspaceFs {
                 .await
                 .map_err(|e| DomainError::file_io("copy", target.as_str(), e))?;
             drop(writer);
-            replace_file(&temp, &to).await
+            fs::rename(&temp, &to)
+                .await
+                .map_err(|e| DomainError::file_io("replace", target.as_str(), e))
         }
         .await;
         if result.is_err() {

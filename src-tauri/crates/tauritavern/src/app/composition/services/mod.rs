@@ -9,12 +9,11 @@ use tokio::sync::Semaphore;
 
 use crate::app::{AppServices, StartupProfile};
 use crate::infrastructure::apis::http_external_import_downloader::HttpExternalImportDownloader;
-use tt_adapter_bashkit::BashkitWorkspaceShell;
 use tt_adapter_http::HttpClientPool;
 use tt_adapter_mcp::RmcpMcpGateway;
-use tt_adapter_quickjs::QuickJsScriptEngine;
 use tt_adapter_storage_core::file_system::DataDirectory;
 use tt_adapter_triviumdb::TriviumDatabaseBackend;
+use tt_adapter_workspace_shell::{QuickJsScriptEngine, WorkspaceShellEngine};
 use tt_application::services::asset_service::AssetService;
 use tt_application::services::avatar_service::AvatarService;
 use tt_application::services::background_service::BackgroundService;
@@ -160,7 +159,7 @@ pub(super) async fn build(
         llm_connection_service.clone(),
         mcp_service.clone(),
         skill_script_engine,
-        Arc::new(BashkitWorkspaceShell),
+        Arc::new(WorkspaceShellEngine),
     );
     let tokenization_service = Arc::new(TokenizationService::new(
         repositories.tokenizer_repository.clone(),

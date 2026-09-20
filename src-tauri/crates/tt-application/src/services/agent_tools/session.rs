@@ -40,7 +40,7 @@ impl WorkspaceReadState {
 #[serde(rename_all = "camelCase")]
 pub struct AgentToolSession {
     #[serde(skip)]
-    pub(crate) frozen_macros: std::sync::Arc<tt_domain::frozen_macros::FrozenMacros>,
+    pub(crate) runtime_context: std::sync::Arc<tt_ports::workspace_shell::WorkspaceShellContext>,
     read_state: HashMap<String, WorkspaceReadState>,
     skill_read_chars: usize,
     #[serde(skip)]

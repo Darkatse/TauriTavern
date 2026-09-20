@@ -115,54 +115,20 @@ pub fn materialize_agent_system_prompt(
             model_alias(tools, "skill.read")
         ));
     }
-    if has_tool(tools, "workspace.list_files") {
-        lines.push(format!(
-            "- Use {} to inspect visible workspace files.",
-            model_alias(tools, "workspace.list_files")
-        ));
-    }
-    if has_tool(tools, "workspace.search_files") {
-        lines.push(format!(
-            "- Before reading exact ranges, use {} to find relevant text within visible workspace files (e.g., persist/ memory).",
-            model_alias(tools, "workspace.search_files")
-        ));
-    }
-    if has_tool(tools, "workspace.read_file") {
-        lines.push(format!(
-            "- Use {} to inspect text files. Omit start_line and line_count to read the full file; if a preview is returned, continue from its next line.",
-            model_alias(tools, "workspace.read_file")
-        ));
-    }
-    if has_tool(tools, "workspace.apply_patch") {
-        lines.push(format!(
-            "- Use {} to perform precise edits on existing files. old_string must come from text you read or created/replaced with the text tools, match exactly, and be unique unless replace_all is true. Never include line number prefixes in old_string or new_string.",
-            model_alias(tools, "workspace.apply_patch")
-        ));
-        if has_tool(tools, "workspace.read_file") {
-            lines.push(format!(
-                "- Use {} to read the exact text before patching an existing file you did not create or replace with the text tools. If a patch fails, fully read the file before retrying.",
-                model_alias(tools, "workspace.read_file")
-            ));
-        }
-    }
-    if has_tool(tools, "workspace.write_file") {
-        lines.push(format!(
-            "- Use {} to create files, append to files, or perform complete rewrites.",
-            model_alias(tools, "workspace.write_file")
-        ));
-        if has_tool(tools, "workspace.read_file") {
-            lines.push(format!(
-                "- Before replacing an existing file with {}, read its current contents with {} unless those contents came from your previous write with the same text tool. If the file changes, read it again before replacing it.",
-                model_alias(tools, "workspace.write_file"),
-                model_alias(tools, "workspace.read_file")
-            ));
-        }
-    }
     if has_tool(tools, "workspace.shell") {
         lines.push(
-            "- The shell provides built-in commands, jq, and a Python subset via python/python3. Each execution starts fresh; workspace files persist."
+            "- Workspace tools share the same files. Each shell call starts a new session; files persist between calls."
                 .to_string(),
         );
+        if has_tool(tools, "workspace.read_file")
+            && (has_tool(tools, "workspace.apply_patch") || has_tool(tools, "workspace.write_file"))
+        {
+            lines.push(format!(
+                "- After editing a file with {}, read it with {} before patching or replacing it with the text tools.",
+                model_alias(tools, "workspace.shell"),
+                model_alias(tools, "workspace.read_file")
+            ));
+        }
     }
     if has_tool(tools, "workspace.commit") {
         lines.push(format!(
@@ -200,11 +166,11 @@ pub fn materialize_agent_system_prompt(
                 .to_string(),
         );
         lines.push(format!(
-            "- Visible workspace roots for this task: {}.",
+            "- Readable workspace directories: {}.",
             format_model_visible_workspace_roots(&profile.workspace.visible_roots)
         ));
         lines.push(format!(
-            "- Writable workspace roots for this task: {}.",
+            "- Writable workspace directories: {}.",
             format_model_workspace_roots(&profile.workspace.writable_roots)
         ));
         lines.push(format!(
@@ -217,11 +183,11 @@ pub fn materialize_agent_system_prompt(
         );
     } else {
         lines.push(format!(
-            "- Visible workspace roots: {}.",
+            "- Readable workspace directories: {}.",
             format_model_visible_workspace_roots(&profile.workspace.visible_roots)
         ));
         lines.push(format!(
-            "- Writable workspace roots: {}.",
+            "- Writable workspace directories: {}.",
             format_model_workspace_roots(&profile.workspace.writable_roots)
         ));
         lines.push(

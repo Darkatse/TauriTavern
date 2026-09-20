@@ -109,7 +109,7 @@ pub(super) struct PendingPersistentStateMetadataUpdate {
 #[serde(rename_all = "camelCase")]
 struct PreparedInvocation {
     #[serde(skip)]
-    frozen_macros: Arc<tt_domain::frozen_macros::FrozenMacros>,
+    runtime_context: Arc<tt_ports::workspace_shell::WorkspaceShellContext>,
     invocation: AgentInvocation,
     delegation_task_id: Option<String>,
     profile: ResolvedAgentProfile,

@@ -1,5 +1,5 @@
 [package]
-name = "tt-adapter-bashkit"
+name = "tt-adapter-workspace-shell"
 version = "0.1.0"
 edition = "2024"
 publish = false
@@ -7,6 +7,13 @@ publish = false
 [dependencies]
 async-trait = "0.1"
 bashkit = { version = "0.18.1", default-features = false, features = ["jq", "python"] }
+path-clean = "1.0"
+rquickjs = { version = "0.12.2", features = ["loader"] }
+serde_json = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["rt", "sync", "macros", "time"] }
 tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
+
+# Mobile targets need generated QuickJS bindings.
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+rquickjs = { version = "0.12.2", features = ["bindgen"] }

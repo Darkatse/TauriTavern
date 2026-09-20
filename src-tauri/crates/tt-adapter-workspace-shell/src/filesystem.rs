@@ -15,7 +15,7 @@ use tt_ports::workspace_fs::{
 };
 
 const MAX_READ_BYTES: usize = 8 * 1024 * 1024;
-const MAX_DIRECTORY_ENTRIES: usize = 4096;
+pub(crate) const MAX_DIRECTORY_ENTRIES: usize = 4096;
 
 type Mutation = JoinHandle<Result<(), DomainError>>;
 
@@ -97,6 +97,7 @@ fn file_error(error: DomainError) -> bashkit::Error {
         DomainError::NotFound(_) => ErrorKind::NotFound,
         DomainError::InvalidData(_) => ErrorKind::InvalidInput,
         DomainError::WorkspacePathIsDirectory { .. } => ErrorKind::IsADirectory,
+        DomainError::WorkspaceAccessDenied { .. } => ErrorKind::PermissionDenied,
         DomainError::FileIo { source, .. } => source.kind(),
         DomainError::Cancelled(_) => ErrorKind::Interrupted,
         _ => ErrorKind::Other,
@@ -202,7 +203,7 @@ impl FileSystem for WorkspaceFileSystem {
     async fn exists(&self, path: &Path) -> bashkit::Result<bool> {
         match self.files.metadata(workspace_path(path)?.as_ref()).await {
             Ok(_) => Ok(true),
-            Err(DomainError::NotFound(_)) => Ok(false),
+            Err(DomainError::NotFound(_) | DomainError::WorkspaceAccessDenied { .. }) => Ok(false),
             Err(error) => Err(file_error(error)),
         }
     }

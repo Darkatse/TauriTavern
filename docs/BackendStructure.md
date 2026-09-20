@@ -62,8 +62,7 @@ src-tauri/
     ├── tt-adapter-storage-userdata
     ├── tt-adapter-media
     ├── tt-adapter-extension
-    ├── tt-adapter-quickjs
-    ├── tt-adapter-bashkit
+    ├── tt-adapter-workspace-shell
     ├── tt-adapter-triviumdb
     ├── tt-adapter-sync
     └── tt-adapter-archive
@@ -88,8 +87,7 @@ src-tauri/
 | `tt-adapter-storage-userdata` | character、world info、agent workspace、agent profile、skill local package store、PNG card metadata |
 | `tt-adapter-media` | persona/avatar/background/user media/image metadata、browser-visible host resource file store |
 | `tt-adapter-extension` | third-party extension 发现、安装、版本检查、更新、分支查询/切换、删除与移动；Gitoxide smart HTTP 与 embedded worktree |
-| `tt-adapter-quickjs` | QuickJS Runtime/Context、内存 ESM 与 JavaScript binding；只接触逻辑模块、JSON、内存 workspace snapshot/delta |
-| `tt-adapter-bashkit` | Bashkit Shell、jq 与 Python/Monty 执行、受限 `WorkspaceFs` 适配 |
+| `tt-adapter-workspace-shell` | Bashkit（含 jq/Python）与 QuickJS 执行；受限 `WorkspaceFs` 适配 |
 | `tt-adapter-sync` | LAN Sync、TT-Sync v2 runtime、stores、client/server、sync jobs |
 | `tt-adapter-archive` | data archive import/export executor、archive path safety |
 
@@ -236,8 +234,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 - `tt-adapter-storage-userdata` 承载长期用户数据仓储，例如角色卡、世界书、Agent workspace/profile、Skill package。它关心 data root / user data 语义，而不是泛泛的“文件”。
 - `tt-adapter-extension` 承载 third-party extension 发现、安装、版本检查、更新、分支查询/切换、删除与移动，以及 Git transport、repository 与 worktree 物化边界。扩展仓库不是普通 user data JSON。
 - `tt-adapter-media` 承载浏览器可见的 avatar/background/user media 资源契约。
-- `tt-adapter-quickjs` 只承载 JavaScript 执行语义与内存 binding；Skill、Workspace policy、持久化和 journal 仍由 application 拥有。
-- `tt-adapter-bashkit` 经 `WorkspaceShell` port 执行 Shell，文件仅经受限 `WorkspaceFs` 访问；文件权限与发布策略由 application 拥有。
+- `tt-adapter-workspace-shell` 通过 `WorkspaceShell` 提供执行，经 `WorkspaceFs` 访问文件；权限、冻结上下文投影与发布策略由 application 拥有。旧 Skill 执行暂存于 `skill/`，见 [Skill](Agent/Skill.md)。
 - `tt-adapter-provider-http`、`tt-adapter-mcp` 和 `tt-adapter-tokenization` 可以复用 `tt-adapter-http`，但协议/provider 规则不能下沉到通用 HTTP helper。
 - `tt-adapter-sync` 与 `tt-adapter-archive` 是独立运行时/执行器边界，Tauri UI glue 仍留在 host。
 
@@ -275,8 +272,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 | 通用 HTTP pool/profile/helper | `tt-adapter-http` | 不放 provider 业务规则 |
 | LAN/TT Sync runtime | `tt-adapter-sync` | Tauri event/UI adapter 留 host composition |
 | Data Archive import/export executor | `tt-adapter-archive` | Tauri picker/share 留 host infrastructure |
-| Skill JavaScript 内存执行 | `tt-adapter-quickjs` | 不接触物理路径、Workspace repository 或平台领域模型 |
-| 工作区 Shell 与 jq 执行 | `tt-adapter-bashkit` | 依赖 `WorkspaceShell` / `WorkspaceFs` port，复用调用方的文件范围 |
+| 工作区 Shell、jq、Python 与 JavaScript 执行 | `tt-adapter-workspace-shell` | 依赖 `WorkspaceShell` / `WorkspaceFs` port，复用调用方的文件范围；不接触物理路径 |
 
 ## 10. 添加后端能力的最小流程
 

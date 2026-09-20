@@ -10,7 +10,7 @@ use super::AgentRuntimeService;
 use super::continuation::{InvocationFrame, InvocationStep, RunExecutionState};
 use super::guidance::AgentGuidanceItem;
 use super::loop_runner::AgentLoopExit;
-use super::prompt_snapshot::frozen_macros_from_snapshot;
+use super::prompt_snapshot::runtime_context_from_snapshot;
 use super::revision::PREVIOUS_OUTPUT_PATH;
 use super::scheduler::ActiveRunHandle;
 use crate::dto::agent_dto::{
@@ -232,14 +232,14 @@ impl AgentRuntimeService {
         let snapshot: Value = serde_json::from_str(&snapshot.text).map_err(|error| {
             invalid(format!("frozen prompt snapshot cannot be decoded: {error}"))
         })?;
-        let macros = frozen_macros_from_snapshot(&snapshot)?;
+        let context = runtime_context_from_snapshot(&snapshot)?;
         for frame in checkpoint
             .state
             .foreground
             .iter_mut()
             .chain(&mut checkpoint.state.children)
         {
-            hydrate_frame(frame, &dto.run_id, dto.additional_rounds, &macros)?;
+            hydrate_frame(frame, &dto.run_id, dto.additional_rounds, &context)?;
         }
         let foreground = checkpoint
             .state
@@ -388,7 +388,7 @@ fn hydrate_frame(
     frame: &mut InvocationFrame,
     run_id: &str,
     additional_rounds: usize,
-    macros: &Arc<tt_domain::frozen_macros::FrozenMacros>,
+    context: &Arc<tt_ports::workspace_shell::WorkspaceShellContext>,
 ) -> Result<(), ApplicationError> {
     let prepared = &mut frame.prepared;
     if prepared.invocation.run_id != run_id
@@ -409,8 +409,8 @@ fn hydrate_frame(
         .max_rounds
         .checked_add(additional_rounds)
         .ok_or_else(|| invalid("additional round budget is too large"))?;
-    prepared.frozen_macros = Arc::clone(macros);
-    frame.progress.session.frozen_macros = Arc::clone(macros);
+    prepared.runtime_context = Arc::clone(context);
+    frame.progress.session.runtime_context = Arc::clone(context);
     frame.progress.session.effective_skills = prepared.effective_skills.clone();
     reset_transport_for_resume(&mut prepared.request);
     Ok(())

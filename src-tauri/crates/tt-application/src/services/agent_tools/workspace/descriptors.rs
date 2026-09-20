@@ -1,9 +1,8 @@
 use serde_json::json;
 
 use super::{
-    MODEL_WORKSPACE_ROOTS_FOR_MODEL, WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH,
-    WORKSPACE_LIST_FILES, WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_SHELL,
-    WORKSPACE_WRITE_FILE,
+    WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
+    WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE,
 };
 use tt_domain::models::tool::{ToolDescriptor, ToolId};
 
@@ -11,16 +10,17 @@ pub(in crate::services::agent_tools) fn workspace_list_files_descriptor() -> Too
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_LIST_FILES).expect("builtin tool name must be valid"),
         title: Some("Workspace List Files".to_string()),
-        description: Some(format!(
-            "List visible Agent workspace files under {MODEL_WORKSPACE_ROOTS_FOR_MODEL}. Use this before reading when you need to inspect available artifacts."
-        )),
+        description: Some(
+            "List workspace files and directories. Use this to find paths before reading files."
+                .to_string(),
+        ),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Optional relative workspace directory or file path. Omit to list the visible workspace roots."
+                    "description": "Optional workspace directory or file path. Omit to list from the workspace root."
                 },
                 "depth": {
                     "type": "integer",
@@ -37,14 +37,14 @@ pub(in crate::services::agent_tools) fn workspace_read_file_descriptor() -> Tool
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_READ_FILE).expect("builtin tool name must be valid"),
         title: Some("Workspace Read File".to_string()),
-        description: Some("Read a visible UTF-8 Agent workspace file with line numbers. Omit start_line and line_count to read the full file; oversized files return a bounded preview with the next line to read. Read the exact text you want to replace before using workspace_apply_patch; if a patch fails, fully read the file before retrying. `path` MUST refer to a regular file (e.g. `persist/MEMORY.md`), NOT a directory or workspace root (`persist`, `output`, ...). Call workspace_list_files first when you do not know which file to open.".to_string()),
+        description: Some("Read a UTF-8 workspace file with line numbers. Use this to inspect text before editing. Large results include a preview and the next line to read.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": format!("Relative workspace file path under {MODEL_WORKSPACE_ROOTS_FOR_MODEL}.")
+                    "description": "Workspace file path, such as output/main.md."
                 },
                 "start_line": {
                     "type": "integer",
@@ -68,9 +68,7 @@ pub(in crate::services::agent_tools) fn workspace_search_files_descriptor() -> T
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_SEARCH_FILES).expect("builtin tool name must be valid"),
         title: Some("Workspace Search Files".to_string()),
-        description: Some(format!(
-            "Search visible UTF-8 Agent workspace files under {MODEL_WORKSPACE_ROOTS_FOR_MODEL}. Results return snippets and refs; use workspace_read_file to read exact ranges."
-        )),
+        description: Some("Find text in workspace files. Results include snippets; use workspace_read_file for the full text or exact lines.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -81,7 +79,7 @@ pub(in crate::services::agent_tools) fn workspace_search_files_descriptor() -> T
                 },
                 "path": {
                     "type": "string",
-                    "description": format!("Optional visible workspace file or directory path under {MODEL_WORKSPACE_ROOTS_FOR_MODEL}. Omit to search all visible roots.")
+                    "description": "Optional workspace file or directory path. Omit to search all readable directories."
                 },
                 "limit": {
                     "type": "integer",
@@ -103,18 +101,18 @@ pub(in crate::services::agent_tools) fn workspace_write_file_descriptor() -> Too
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_WRITE_FILE).expect("builtin tool name must be valid"),
         title: Some("Workspace Write File".to_string()),
-        description: Some("Write UTF-8 text to a writable Agent workspace file. mode replace writes the complete file. mode append adds content exactly to the end and creates the file when missing; include a leading newline in content when you want a new line.".to_string()),
+        description: Some("Create a UTF-8 text file, append text, or replace its full contents. Use workspace_apply_patch for local edits. Before replacing an existing file, read it with workspace_read_file unless you created or replaced its current contents with the text tools.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": format!("Relative workspace path. Writable prefixes are {MODEL_WORKSPACE_ROOTS_FOR_MODEL}.")
+                    "description": "Workspace file path in a writable directory."
                 },
                 "content": {
                     "type": "string",
-                    "description": "Complete UTF-8 file content for replace, or the exact suffix to add for append."
+                    "description": "Complete file content for replace, or the exact text to add for append. Include any needed newlines."
                 },
                 "mode": {
                     "type": "string",
@@ -133,14 +131,14 @@ pub(in crate::services::agent_tools) fn workspace_apply_patch_descriptor() -> To
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_APPLY_PATCH).expect("builtin tool name must be valid"),
         title: Some("Workspace Apply Patch".to_string()),
-        description: Some("Apply a precise single-file string replacement. old_string must come from text you already read with workspace_read_file or from a file you created/replaced in this run. old_string must match exactly and uniquely unless replace_all is true. If a patch fails, fully read the file before retrying.".to_string()),
+        description: Some("Replace exact text in one file. Read the text with workspace_read_file first, unless you created or replaced the file with the text tools. old_string must match exactly and be unique unless replace_all is true. After a failed patch, read the full file before retrying.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": format!("Relative writable workspace file path under {MODEL_WORKSPACE_ROOTS_FOR_MODEL}.")
+                    "description": "Workspace file path in a writable directory."
                 },
                 "old_string": {
                     "type": "string",
@@ -148,11 +146,11 @@ pub(in crate::services::agent_tools) fn workspace_apply_patch_descriptor() -> To
                 },
                 "new_string": {
                     "type": "string",
-                    "description": "Replacement text."
+                    "description": "Replacement text without line number prefixes."
                 },
                 "replace_all": {
                     "type": "boolean",
-                    "description": "Replace every occurrence of old_string. Defaults to false."
+                    "description": "Replace every occurrence of old_string. Requires a full read or a file created/replaced with the text tools. Defaults to false."
                 }
             },
             "required": ["path", "old_string", "new_string"]
@@ -166,14 +164,14 @@ pub(in crate::services::agent_tools) fn workspace_shell_descriptor() -> ToolDesc
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_SHELL).expect("builtin tool name must be valid"),
         title: Some("Workspace Shell".to_string()),
-        description: Some("Run shell commands in the workspace for file operations, pipelines, and data processing.".to_string()),
+        description: Some("Run workspace commands for scripts, pipelines, data processing, batch changes, and copying, moving or deleting files. Prefer workspace_read_file, workspace_write_file and workspace_apply_patch for straightforward text work. Includes jq, a Python subset (python/python3), and JavaScript (js). Use js --help for JavaScript syntax and workspace APIs. Completed file changes persist after failure or cancellation.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "Shell command or script to execute."
+                    "description": "Commands to execute in a new shell session."
                 },
                 "workdir": {
                     "type": "string",

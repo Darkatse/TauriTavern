@@ -126,7 +126,6 @@ async fn success_builds_result_and_passes_workspace_context() {
             })),
             engine: engine.as_ref(),
             workspace: &workspace,
-            prompt_snapshot: empty_prompt_snapshot(),
         },
         &tool_call,
         call_args(&tool_call),
@@ -190,7 +189,6 @@ async fn module_snapshot_contains_only_script_modules() {
                 fail_write_on: None,
                 snapshot_content: None,
             })),
-            prompt_snapshot: empty_prompt_snapshot(),
         },
         &tool_call,
         call_args(&tool_call),
@@ -216,7 +214,7 @@ async fn frozen_host_context_is_passed_to_engine() {
         outcome: FakeOutcome::Ok(json!({})),
         requests: Mutex::new(Vec::new()),
     });
-    let session = session_with_skill("demo");
+    let mut session = session_with_skill("demo");
     let profile = profile(true);
 
     let macro_context = json!({
@@ -241,6 +239,10 @@ async fn frozen_host_context_is_passed_to_engine() {
         }
     });
 
+    session.runtime_context = Arc::new(WorkspaceShellContext {
+        host: build_script_context_json(&prompt_snapshot).map_err(|error| error.to_string()),
+        ..Default::default()
+    });
     let tool_call = call(json!({ "skill": "demo", "script": "helper" }));
     let (result, _) = script(
         ScriptContext {
@@ -255,7 +257,6 @@ async fn frozen_host_context_is_passed_to_engine() {
                 fail_write_on: None,
                 snapshot_content: None,
             })),
-            prompt_snapshot,
         },
         &tool_call,
         call_args(&tool_call),
@@ -305,7 +306,7 @@ fn malformed_script_context_fails_fast() {
         assert!(
             error
                 .to_string()
-                .contains(&format!("agent.invalid_skill_script_context: {message}")),
+                .contains(&format!("agent.invalid_script_context: {message}")),
             "{error}"
         );
     }

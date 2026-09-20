@@ -110,7 +110,7 @@ pub(in crate::services::agent_tools) async fn read(
 
     let read = match skill_service
         .read_skill_file(SkillReadRequest {
-            frozen_macros: Some(session.frozen_macros.clone()),
+            frozen_macros: Some(session.runtime_context.frozen_macros.clone()),
             scope,
             name: name.to_string(),
             path: path.to_string(),

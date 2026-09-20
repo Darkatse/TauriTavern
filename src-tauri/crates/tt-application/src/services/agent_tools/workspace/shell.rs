@@ -5,7 +5,8 @@ use tokio::sync::watch;
 use tt_domain::models::agent::AgentToolResult;
 use tt_domain::models::tool::ToolInvocation;
 use tt_ports::workspace_shell::{
-    WorkspaceShell, WorkspaceShellExit, WorkspaceShellRequest, WorkspaceShellResult,
+    WorkspaceShell, WorkspaceShellContext, WorkspaceShellExit, WorkspaceShellRequest,
+    WorkspaceShellResult,
 };
 
 use super::args::{ensure_only_args, required_raw_string_arg, tool_error};
@@ -16,6 +17,7 @@ use crate::services::agent_workspace_scope::ScopedWorkspaceFs;
 pub(in crate::services::agent_tools) async fn shell(
     engine: &dyn WorkspaceShell,
     workspace: Arc<ScopedWorkspaceFs>,
+    context: Arc<WorkspaceShellContext>,
     call: &ToolInvocation,
     args: &Map<String, Value>,
     cancel: watch::Receiver<bool>,
@@ -42,6 +44,7 @@ pub(in crate::services::agent_tools) async fn shell(
             command: command.to_string(),
             workdir: workdir.to_string(),
             files: workspace.clone(),
+            context,
             cancel,
         })
         .await?;

@@ -47,4 +47,3 @@ const MAX_SEARCH_CONTEXT_LINES: usize = 5;
 const MAX_SEARCH_DEPTH: usize = 8;
 const MAX_SEARCH_FILES: usize = 1000;
 const MAX_SEARCH_LIMIT: usize = 50;
-const MODEL_WORKSPACE_ROOTS_FOR_MODEL: &str = "output/, scratch/, plan/, summaries/, and persist/";

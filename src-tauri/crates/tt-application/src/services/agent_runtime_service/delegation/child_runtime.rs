@@ -13,8 +13,8 @@ use crate::services::agent_runtime_service::commit_ledger::RunCommitLedger;
 use crate::services::agent_runtime_service::continuation::InvocationFrame;
 use crate::services::agent_runtime_service::model_stream_projection::clear_live_invocation;
 use crate::services::agent_runtime_service::prompt_snapshot::{
-    frozen_macros_from_snapshot, prepare_agent_tool_request, request_from_prompt_snapshot,
-    request_summary,
+    prepare_agent_tool_request, request_from_prompt_snapshot, request_summary,
+    runtime_context_from_snapshot,
 };
 use crate::services::agent_runtime_service::skill_scope::{
     skill_event_summary, skill_scope_order_for_profile,
@@ -369,7 +369,7 @@ impl AgentRuntimeService {
         .await?;
 
         Ok(PreparedInvocation {
-            frozen_macros: frozen_macros_from_snapshot(&prompt_snapshot)?,
+            runtime_context: runtime_context_from_snapshot(&prompt_snapshot)?,
             invocation,
             delegation_task_id: Some(task.id.clone()),
             profile,

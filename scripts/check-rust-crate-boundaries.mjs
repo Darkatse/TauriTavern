@@ -117,13 +117,12 @@ const APPLICATION_FORBIDDEN_PACKAGES = new Set([
     'tauritavern',
     'tokio-tungstenite',
     'tt-adapter-archive',
-    'tt-adapter-bashkit',
     'tt-adapter-extension',
     'tt-adapter-http',
     'tt-adapter-media',
     'tt-adapter-mcp',
     'tt-adapter-provider-http',
-    'tt-adapter-quickjs',
+    'tt-adapter-workspace-shell',
     'tt-adapter-storage-core',
     'tt-adapter-storage-userdata',
     'tt-adapter-sync',
@@ -150,13 +149,12 @@ const APPLICATION_FORBIDDEN_SOURCE_PATTERNS = [
     ['tauri', /\btauri::/],
     ['tar', /\btar::/],
     ['tt-adapter-archive', /\btt_adapter_archive::/],
-    ['tt-adapter-bashkit', /\btt_adapter_bashkit::/],
     ['tt-adapter-extension', /\btt_adapter_extension::/],
     ['tt-adapter-http', /\btt_adapter_http::/],
     ['tt-adapter-media', /\btt_adapter_media::/],
     ['tt-adapter-mcp', /\btt_adapter_mcp::/],
     ['tt-adapter-provider-http', /\btt_adapter_provider_http::/],
-    ['tt-adapter-quickjs', /\btt_adapter_quickjs::/],
+    ['tt-adapter-workspace-shell', /\btt_adapter_workspace_shell::/],
     ['tt-adapter-storage-core', /\btt_adapter_storage_core::/],
     ['tt-adapter-storage-userdata', /\btt_adapter_storage_userdata::/],
     ['tt-adapter-sync', /\btt_adapter_sync::/],
@@ -508,7 +506,7 @@ const ADAPTER_MEDIA_FORBIDDEN_SOURCE_PATTERNS = [
     ['network IO', /\bstd::net::/],
 ];
 
-const ADAPTER_QUICKJS_FORBIDDEN_PACKAGES = new Set([
+const ADAPTER_WORKSPACE_SHELL_FORBIDDEN_PACKAGES = new Set([
     'axum',
     'miktik',
     'qrcode',
@@ -533,7 +531,7 @@ const ADAPTER_QUICKJS_FORBIDDEN_PACKAGES = new Set([
     'ttsync-core',
 ]);
 
-const ADAPTER_QUICKJS_FORBIDDEN_SOURCE_PATTERNS = [
+const ADAPTER_WORKSPACE_SHELL_FORBIDDEN_SOURCE_PATTERNS = [
     ...ADAPTER_FORBIDDEN_SOURCE_PATTERNS,
     ['axum', /\baxum::/],
     ['image', /\bimage::/],
@@ -555,18 +553,6 @@ const ADAPTER_QUICKJS_FORBIDDEN_SOURCE_PATTERNS = [
     ['tt-adapter-triviumdb', /\btt_adapter_triviumdb::/],
     ['ttsync-core', /\bttsync_core::/],
     ['zip', /\bzip::/],
-];
-
-const ADAPTER_BASHKIT_FORBIDDEN_PACKAGES = new Set([
-    ...ADAPTER_QUICKJS_FORBIDDEN_PACKAGES,
-    'rquickjs',
-    'tt-adapter-quickjs',
-]);
-
-const ADAPTER_BASHKIT_FORBIDDEN_SOURCE_PATTERNS = [
-    ...ADAPTER_QUICKJS_FORBIDDEN_SOURCE_PATTERNS,
-    ['rquickjs', /\brquickjs::/],
-    ['tt-adapter-quickjs', /\btt_adapter_quickjs::/],
 ];
 
 const ADAPTER_EXTENSION_FORBIDDEN_PACKAGES = new Set([
@@ -620,8 +606,7 @@ const CRATES = [
     crateConfig('tt-adapter-storage-core', ADAPTER_STORAGE_CORE_FORBIDDEN_PACKAGES, ADAPTER_STORAGE_CORE_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-storage-userdata', ADAPTER_STORAGE_USERDATA_FORBIDDEN_PACKAGES, ADAPTER_STORAGE_USERDATA_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-media', ADAPTER_MEDIA_FORBIDDEN_PACKAGES, ADAPTER_MEDIA_FORBIDDEN_SOURCE_PATTERNS),
-    crateConfig('tt-adapter-quickjs', ADAPTER_QUICKJS_FORBIDDEN_PACKAGES, ADAPTER_QUICKJS_FORBIDDEN_SOURCE_PATTERNS),
-    crateConfig('tt-adapter-bashkit', ADAPTER_BASHKIT_FORBIDDEN_PACKAGES, ADAPTER_BASHKIT_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-adapter-workspace-shell', ADAPTER_WORKSPACE_SHELL_FORBIDDEN_PACKAGES, ADAPTER_WORKSPACE_SHELL_FORBIDDEN_SOURCE_PATTERNS),
 ];
 
 const MAIN_CRATE_SOURCE_RULES = [

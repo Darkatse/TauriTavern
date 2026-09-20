@@ -130,7 +130,7 @@ impl WorkspaceAccessPolicy {
 
         let value = path.as_str();
         Err(ApplicationError::PermissionDenied(format!(
-            "agent.workspace_read_denied: path `{value}` is not visible in the current workspace policy"
+            "`{value}` is not readable for this task."
         )))
     }
 
@@ -141,7 +141,7 @@ impl WorkspaceAccessPolicy {
 
         let value = path.as_str();
         Err(ApplicationError::PermissionDenied(format!(
-            "agent.workspace_write_denied: path `{value}` is not writable in the current workspace policy"
+            "`{value}` is not writable for this task."
         )))
     }
 
@@ -225,14 +225,10 @@ impl ScopedWorkspaceFs {
         } {
             Ok(())
         } else {
-            Err(DomainError::file_io(
-                if write { "write" } else { "read" },
-                path.as_str(),
-                std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "path is outside the accessible workspace",
-                ),
-            ))
+            Err(DomainError::WorkspaceAccessDenied {
+                path: path.as_str().to_owned(),
+                operation: if write { "write" } else { "read" },
+            })
         }
     }
 }

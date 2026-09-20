@@ -14,8 +14,6 @@ use tokio::sync::{Mutex, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use tt_adapter_bashkit::BashkitWorkspaceShell;
-use tt_adapter_quickjs::QuickJsScriptEngine;
 use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use tt_adapter_storage_core::{FileChatRepository, FileSettingsRepository};
 use tt_adapter_storage_core::{FileLlmConnectionRepository, FileMcpServerRepository};
@@ -27,6 +25,7 @@ use tt_adapter_storage_userdata::FileWorldInfoRepository;
 use tt_adapter_storage_userdata::png_card_metadata::{
     read_character_data_from_png, write_character_data_to_png,
 };
+use tt_adapter_workspace_shell::{QuickJsScriptEngine, WorkspaceShellEngine};
 use tt_application::dto::agent_dto::{
     AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto, AgentRunHandleDto,
     AgentSkillScopeRefsDto, AgentStartRunDto, AgentStartRunOptionsDto,
@@ -185,7 +184,7 @@ fn agent_runtime_fixture_with_results(
     root: &Path,
     responses: Vec<Result<Value, ApplicationError>>,
 ) -> AgentRuntimeFixture {
-    agent_runtime_fixture_with_shell(root, responses, Arc::new(BashkitWorkspaceShell))
+    agent_runtime_fixture_with_shell(root, responses, Arc::new(WorkspaceShellEngine))
 }
 
 fn agent_runtime_fixture_with_shell(

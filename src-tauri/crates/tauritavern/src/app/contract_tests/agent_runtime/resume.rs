@@ -575,7 +575,7 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
             ])],
         );
         let profile = super::delegation::configure_return_mode_profiles(&fixture).await;
-        let frozen_input = if during_preparation {
+        if during_preparation {
             use tt_domain::models::agent::profile::{AgentPresetBindingMode, AgentPresetRef};
             fixture
                 .preset_repository
@@ -602,21 +602,21 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
                 .save_profile(child, fixture.service.tool_catalog())
                 .await
                 .unwrap();
-            Some(json!({
-                "schemaVersion": 1, "kind": "tauritavern.agentFrozenRunInputSnapshot", "generationType": "normal",
-                "promptInputs": {}, "worldInfoActivation": { "entries": [] }, "macroContext": {},
-                "currentModelConnection": {
-                    "schemaVersion": 1, "kind": "tauritavern.currentModelConnectionSnapshot",
-                    "settings": { "chat_completion_source": "custom", "model": "contract-model", "custom_model": "contract-model" }
-                }
-            }))
         } else {
             fixture
                 .model_gateway
                 .wait_for_cancel_on_request
                 .store(2, Ordering::SeqCst);
-            None
-        };
+        }
+        let frozen_input = Some(json!({
+            "schemaVersion": 1, "kind": "tauritavern.agentFrozenRunInputSnapshot", "generationType": "normal",
+            "promptInputs": {}, "worldInfoActivation": { "entries": [] },
+            "macroContext": { "names": { "char": "Frozen child" } },
+            "currentModelConnection": {
+                "schemaVersion": 1, "kind": "tauritavern.currentModelConnectionSnapshot",
+                "settings": { "chat_completion_source": "custom", "model": "contract-model", "custom_model": "contract-model" }
+            }
+        }));
         let handle = start_contract_agent_run_with_options(
             &fixture,
             &profile,
@@ -694,9 +694,9 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
                     VecDeque::from([Ok(model_tool_response(vec![
                         model_tool_call(
                             "call_child_write",
-                            "workspace_write_file",
+                            "workspace_shell",
                             json!({
-                                "path": "summaries/note.md", "content": "Add rain."
+                                "command": "js -e 'import {workspace, macros} from \"@tauritavern/runtime\"; workspace.writeText(\"summaries/note.md\", macros.render(\"Add rain. {{char}}\"))'"
                             }),
                         ),
                         model_tool_call(
@@ -744,7 +744,7 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
                 .read_text(&WorkspacePath::parse("summaries/note.md").unwrap())
                 .await
                 .unwrap();
-            assert_eq!(note.text, "Add rain.");
+            assert_eq!(note.text, "Add rain. Frozen child");
         }
 
         fs::remove_dir_all(root).await.unwrap();

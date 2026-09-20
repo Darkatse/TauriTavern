@@ -36,7 +36,7 @@ pub(super) struct InvocationFrame {
 impl InvocationFrame {
     pub fn new(prepared: PreparedInvocation) -> Self {
         let mut session = AgentToolSession::new(prepared.effective_skills.clone());
-        session.frozen_macros = prepared.frozen_macros.clone();
+        session.runtime_context = prepared.runtime_context.clone();
         let max_rounds = prepared.profile.tools.max_rounds;
         Self {
             prepared,

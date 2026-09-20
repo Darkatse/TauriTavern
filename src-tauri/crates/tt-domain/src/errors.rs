@@ -49,6 +49,12 @@ pub enum DomainError {
     #[error("Workspace file is not UTF-8 text: {path}")]
     WorkspaceFileNotText { path: String },
 
+    #[error("Cannot {operation} `{path}`: access is not allowed for this task")]
+    WorkspaceAccessDenied {
+        path: String,
+        operation: &'static str,
+    },
+
     #[error("Workspace write conflict at {path}: {kind}")]
     WorkspaceWriteConflict {
         path: String,

@@ -7,7 +7,7 @@ use rquickjs::{Ctx, Function, Object};
 
 use tt_ports::skill_script::SkillScriptLogLevel;
 
-use crate::api::fs::OverlayFs;
+use crate::skill::api::fs::OverlayFs;
 
 /// 构建 `log` 对象：info / warn / error / debug。
 /// 由 `@tauritavern/runtime` 原生模块导出，不再注入全局。

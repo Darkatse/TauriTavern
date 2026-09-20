@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 use super::super::common::{ensure_only_args, required_trimmed_string_arg, tool_error};
 use super::super::dispatcher::AgentToolEffect;
@@ -33,7 +33,6 @@ pub(in crate::services::agent_tools) struct ScriptContext<'a> {
     pub(in crate::services::agent_tools) skill_service: &'a SkillService,
     pub(in crate::services::agent_tools) engine: &'a dyn SkillScriptEngine,
     pub(in crate::services::agent_tools) workspace: &'a ScopedWorkspaceFs,
-    pub(in crate::services::agent_tools) prompt_snapshot: Value,
 }
 
 pub(in crate::services::agent_tools) async fn script(
@@ -47,7 +46,6 @@ pub(in crate::services::agent_tools) async fn script(
         skill_service,
         engine,
         workspace,
-        prompt_snapshot,
     } = context;
     let workspace_files: &dyn WorkspaceFs = workspace;
     if let Err(message) = ensure_only_args(args, &["skill", "script", "args"]) {
@@ -148,7 +146,9 @@ pub(in crate::services::agent_tools) async fn script(
         .map(|(path, file)| (path.clone(), file.text.clone()))
         .collect::<HashMap<_, _>>();
 
-    let script_context = build_script_context_json(&prompt_snapshot)?;
+    let script_context = session.runtime_context.host.as_ref().map_err(|_| {
+        ApplicationError::ValidationError("Chat context is unavailable for this task.".to_string())
+    })?;
 
     tracing::info!(
         "skill.run_script invoked: skill=`{skill}` script=`{script}` args_bytes={}",
@@ -157,14 +157,14 @@ pub(in crate::services::agent_tools) async fn script(
 
     let outcome = engine
         .execute(SkillScriptRequest {
-            frozen_macros: session.frozen_macros.clone(),
+            frozen_macros: session.runtime_context.frozen_macros.clone(),
             entry_module: entry_module.clone(),
             modules,
             args: script_args,
             workspace_files: script_files,
             visible_roots: workspace_policy.visible_roots.clone(),
             writable_roots: workspace_policy.writable_roots.clone(),
-            context: script_context,
+            context: script_context.clone(),
         })
         .await;
 
@@ -450,68 +450,6 @@ fn reject_preparation(
         )),
         error => Err(error),
     }
-}
-
-/// 把本次 run 的宿主事实投影为引擎无关的 JSON context。
-fn build_script_context_json(prompt_snapshot: &Value) -> Result<Value, ApplicationError> {
-    let entries = prompt_snapshot
-        .get("worldInfoActivation")
-        .and_then(|batch| batch.get("entries"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_script_context("worldInfoActivation.entries must be an array"))?;
-    let world_info_entries = entries
-        .iter()
-        .enumerate()
-        .map(|(index, entry)| super::super::world_info::normalize_entry_json(index, entry))
-        .collect::<Result<Vec<_>, ApplicationError>>()?;
-
-    let frozen = prompt_snapshot
-        .get("frozenRunInputSnapshot")
-        .map(|value| {
-            value
-                .as_object()
-                .ok_or_else(|| invalid_script_context("frozenRunInputSnapshot must be an object"))
-        })
-        .transpose()?;
-    let variables = frozen
-        .and_then(|frozen| frozen.get("variables"))
-        .map(|variables| {
-            let variables = variables
-                .as_object()
-                .ok_or_else(|| invalid_script_context("variables must be an object"))?;
-            let local = variables
-                .get("local")
-                .and_then(Value::as_object)
-                .ok_or_else(|| invalid_script_context("variables.local must be an object"))?;
-            let global = variables
-                .get("global")
-                .and_then(Value::as_object)
-                .ok_or_else(|| invalid_script_context("variables.global must be an object"))?;
-            Ok::<Value, ApplicationError>(json!({ "local": local, "global": global }))
-        })
-        .transpose()?
-        .unwrap_or_else(|| json!({ "local": {}, "global": {} }));
-
-    let empty_macro_context = Map::new();
-    let macro_context = frozen
-        .and_then(|frozen| frozen.get("macroContext"))
-        .map(|value| {
-            value
-                .as_object()
-                .ok_or_else(|| invalid_script_context("macroContext must be an object"))
-        })
-        .transpose()?
-        .unwrap_or(&empty_macro_context);
-
-    Ok(json!({
-        "worldInfo": { "entries": world_info_entries },
-        "variables": variables,
-        "macro": macro_context,
-    }))
-}
-
-fn invalid_script_context(message: &str) -> ApplicationError {
-    ApplicationError::ValidationError(format!("agent.invalid_skill_script_context: {message}"))
 }
 
 fn is_valid_script_name(name: &str) -> bool {

@@ -55,6 +55,9 @@ impl From<DomainError> for CommandError {
             DomainError::InvalidData(msg) => CommandError::BadRequest(msg),
             DomainError::Conflict(msg) => CommandError::Conflict(msg),
             DomainError::AuthenticationError(msg) => CommandError::Unauthorized(msg),
+            error @ DomainError::WorkspaceAccessDenied { .. } => {
+                CommandError::Unauthorized(error.to_string())
+            }
             DomainError::Cancelled(msg) => CommandError::Cancelled(msg),
             error @ DomainError::FileIo { .. } => {
                 CommandError::InternalServerError(error.to_string())

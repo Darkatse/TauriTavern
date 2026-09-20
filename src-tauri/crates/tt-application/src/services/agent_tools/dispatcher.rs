@@ -130,7 +130,7 @@ impl AgentToolDispatcher {
                     run_id,
                     call,
                     args,
-                    &session.frozen_macros,
+                    &session.runtime_context.frozen_macros,
                 )
                 .await?
             }
@@ -142,7 +142,7 @@ impl AgentToolDispatcher {
                     run_id,
                     call,
                     args,
-                    &session.frozen_macros,
+                    &session.runtime_context.frozen_macros,
                 )
                 .await?
             }
@@ -161,13 +161,11 @@ impl AgentToolDispatcher {
                 skill::read(self.skill_service.as_ref(), call, args, session, profile).await?
             }
             skill::SKILL_SCRIPT => {
-                let prompt_snapshot = Self::read_run_prompt_snapshot(raw_files.as_ref()).await?;
                 skill::script(
                     skill::ScriptContext {
                         skill_service: self.skill_service.as_ref(),
                         engine: self.skill_script_engine.as_ref(),
                         workspace: &workspace,
-                        prompt_snapshot,
                     },
                     call,
                     args,
@@ -195,6 +193,7 @@ impl AgentToolDispatcher {
                 workspace::shell(
                     self.workspace_shell.as_ref(),
                     Arc::new(workspace.track_text_mutations(auto_commit_candidate)),
+                    session.runtime_context.clone(),
                     call,
                     args,
                     cancel,

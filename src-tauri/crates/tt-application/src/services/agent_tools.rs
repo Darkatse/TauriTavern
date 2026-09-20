@@ -5,6 +5,7 @@ mod dice;
 mod dispatcher;
 mod policy;
 mod registry;
+mod runtime_context;
 mod session;
 mod skill;
 mod structured;
@@ -14,6 +15,7 @@ mod world_info;
 pub use registry::BuiltinAgentToolRegistry;
 
 pub(crate) use dispatcher::{AgentToolDispatchOutcome, AgentToolDispatcher, AgentToolEffect};
+pub(crate) use runtime_context::build_script_context_json;
 pub(crate) use session::AgentToolSession;
 
 pub(crate) use agent::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, TASK_RETURN};

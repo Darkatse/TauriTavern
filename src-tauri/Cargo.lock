@@ -8697,19 +8697,18 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "tt-adapter-archive",
- "tt-adapter-bashkit",
  "tt-adapter-extension",
  "tt-adapter-http",
  "tt-adapter-mcp",
  "tt-adapter-media",
  "tt-adapter-provider-http",
- "tt-adapter-quickjs",
  "tt-adapter-storage-core",
  "tt-adapter-storage-userdata",
  "tt-adapter-sync",
  "tt-adapter-tokenization",
  "tt-adapter-triviumdb",
  "tt-adapter-vector",
+ "tt-adapter-workspace-shell",
  "tt-application",
  "tt-contracts",
  "tt-domain",
@@ -9316,17 +9315,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tt-adapter-bashkit"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bashkit",
- "tokio",
- "tt-domain",
- "tt-ports",
-]
-
-[[package]]
 name = "tt-adapter-extension"
 version = "0.1.0"
 dependencies = [
@@ -9423,19 +9411,6 @@ dependencies = [
  "tt-ports",
  "url",
  "uuid",
-]
-
-[[package]]
-name = "tt-adapter-quickjs"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "path-clean",
- "rquickjs",
- "serde_json",
- "tokio",
- "tt-domain",
- "tt-ports",
 ]
 
 [[package]]
@@ -9570,6 +9545,20 @@ dependencies = [
  "tt-domain",
  "tt-ports",
  "uuid",
+]
+
+[[package]]
+name = "tt-adapter-workspace-shell"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bashkit",
+ "path-clean",
+ "rquickjs",
+ "serde_json",
+ "tokio",
+ "tt-domain",
+ "tt-ports",
 ]
 
 [[package]]

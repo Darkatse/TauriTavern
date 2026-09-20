@@ -349,9 +349,9 @@ fn content_parts_from_openai_value(value: Option<Value>) -> Vec<AgentModelConten
 }
 
 /// Compile captured values once per invocation; readers share the immutable table.
-pub(super) fn frozen_macros_from_snapshot(
+pub(super) fn runtime_context_from_snapshot(
     snapshot: &Value,
-) -> Result<std::sync::Arc<tt_domain::frozen_macros::FrozenMacros>, ApplicationError> {
+) -> Result<std::sync::Arc<tt_ports::workspace_shell::WorkspaceShellContext>, ApplicationError> {
     let macros = snapshot
         .pointer("/frozenRunInputSnapshot/macroContext")
         .map(|context| {
@@ -362,7 +362,16 @@ pub(super) fn frozen_macros_from_snapshot(
         })
         .transpose()?
         .unwrap_or_default();
-    Ok(std::sync::Arc::new(macros))
+    Ok(std::sync::Arc::new(
+        tt_ports::workspace_shell::WorkspaceShellContext {
+            frozen_macros: std::sync::Arc::new(macros),
+            host: crate::services::agent_tools::build_script_context_json(snapshot)
+                .inspect_err(|error| {
+                    tracing::debug!(%error, "JavaScript chat context is unavailable");
+                })
+                .map_err(|error| error.to_string()),
+        },
+    ))
 }
 
 #[cfg(test)]

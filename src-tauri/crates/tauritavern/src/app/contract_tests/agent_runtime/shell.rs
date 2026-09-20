@@ -5,7 +5,7 @@ use tt_ports::workspace_shell::{
     WorkspaceShell, WorkspaceShellExit, WorkspaceShellRequest, WorkspaceShellResult,
 };
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shell_edits_share_cas_and_publish_the_last_text_file_each_round() {
     let root = temp_root("agent-shell-writing");
     let fixture = agent_runtime_fixture_with_responses(
@@ -15,12 +15,17 @@ async fn shell_edits_share_cas_and_publish_the_last_text_file_each_round() {
                 model_tool_call(
                     "hidden_read",
                     "workspace_shell",
-                    json!({"command": "cp /input/prompt_snapshot.json /scratch/leaked.json"}),
+                    json!({"command": r#"js -e 'import {workspace} from "@tauritavern/runtime"; if (workspace.exists("input/prompt_snapshot.json")) throw new Error("unexpected visibility"); workspace.readText("input/prompt_snapshot.json")'"#}),
                 ),
                 model_tool_call(
                     "readonly_write",
                     "workspace_shell",
-                    json!({"command": r#"python3 -c 'from pathlib import Path; Path("/tool-results/forbidden.txt").write_text("forbidden")'"#}),
+                    json!({"command": r#"js -e 'import {workspace} from "@tauritavern/runtime"; workspace.writeText("tool-results/forbidden.txt", "forbidden")'"#}),
+                ),
+                model_tool_call(
+                    "missing_context",
+                    "workspace_shell",
+                    json!({"command": r#"js -e 'import {context} from "@tauritavern/runtime"; console.log(context.worldInfo)'"#}),
                 ),
                 model_tool_call(
                     "prepare",
@@ -28,6 +33,21 @@ async fn shell_edits_share_cas_and_publish_the_last_text_file_each_round() {
                     json!({
                         "command": concat!(
                             "mkdir -p scratch/review\n",
+                            "printf '\\377' > scratch/binary.bin\n",
+                            "printf 'this is not JavaScript !!!' > scratch/unimported.js\n",
+                            r#"cat > scratch/suffix.mjs <<'JS'
+export const suffix = 'updated by javascript\n';
+JS
+cat > scratch/revise.js <<'JS'
+import { workspace } from '@tauritavern/runtime';
+import { suffix } from './suffix.mjs';
+export default ({ path }) => {
+    if (!workspace.listFiles().includes('output')) throw new Error('output is not visible');
+    workspace.writeText(path, workspace.readText(path) + suffix);
+    return { path };
+};
+JS
+"#,
                             "printf '{\"text\":\"shell draft\"}' > scratch/review/input.json\n",
                             "jq -r .text scratch/review/input.json > scratch/review/draft.txt\n",
                             "cp scratch/review/draft.txt output/main.md\n",
@@ -54,7 +74,7 @@ async fn shell_edits_share_cas_and_publish_the_last_text_file_each_round() {
                     "append",
                     "workspace_shell",
                     json!({
-                        "command": r#"python3 -c 'with open("main.md", "a") as file: file.write("updated by python\n")'"#,
+                        "command": r#"js --call default --args-json '{"path":"output/main.md"}' ../scratch/revise.js"#,
                         "workdir": "/output",
                     }),
                 ),
@@ -136,7 +156,7 @@ async fn shell_edits_share_cas_and_publish_the_last_text_file_each_round() {
         .open_filesystem(&run.id)
         .await
         .unwrap();
-    let final_text = "final draft\nupdated by python\n";
+    let final_text = "final draft\nupdated by javascript\n";
     assert_eq!(
         files
             .read_text(&WorkspacePath::parse("scratch/finalized/final.md").unwrap())
@@ -159,11 +179,26 @@ async fn shell_edits_share_cas_and_publish_the_last_text_file_each_round() {
         ));
     }
     let events = read_agent_events(&fixture.agent_repository, &run.id).await;
-    for denied in ["hidden_read", "readonly_write"] {
+    for denied in ["hidden_read", "readonly_write", "missing_context"] {
         assert!(events.iter().any(|event| {
             event.event_type == "tool_call_failed" && event.payload["callId"] == denied
         }));
     }
+    let requests = fixture.model_gateway.requests().await;
+    let errors = requests[1]
+        .messages
+        .iter()
+        .flat_map(|message| &message.parts)
+        .filter_map(|part| match part {
+            AgentModelContentPart::ToolResult { result } if result.is_error => {
+                Some((result.call_id.as_str(), result.content.as_str()))
+            }
+            _ => None,
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    assert!(errors["hidden_read"].contains("input/prompt_snapshot.json"));
+    assert!(errors["readonly_write"].contains("tool-results/forbidden.txt"));
+    assert!(errors["missing_context"].contains("context.worldInfo"));
     assert!(events.iter().any(|event| {
         event.event_type == "tool_call_failed"
             && event.payload["callId"] == "stale_patch"
@@ -220,7 +255,7 @@ async fn failed_shell_keeps_its_writes_without_publishing_an_earlier_candidate()
                 model_tool_call(
                     "failed_shell",
                     "workspace_shell",
-                    json!({"command": r#"python3 -c 'from pathlib import Path; Path("output/main.md").write_text("saved despite failure"); raise ValueError("draft incomplete")'"#}),
+                    json!({"command": r#"js -e 'import {workspace} from "@tauritavern/runtime"; workspace.writeText("output/main.md", "saved despite failure"); throw new Error("draft incomplete")'"#}),
                 ),
             ]),
             model_tool_response(vec![
@@ -284,6 +319,12 @@ async fn failed_shell_keeps_its_writes_without_publishing_an_earlier_candidate()
     .await;
     assert_eq!(result["structured"]["exitCode"], 1);
     assert_eq!(result["isError"], true);
+    assert!(
+        result["content"]
+            .as_str()
+            .unwrap()
+            .contains("draft incomplete")
+    );
     assert_eq!(
         fixture
             .agent_repository

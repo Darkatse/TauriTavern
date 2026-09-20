@@ -16,8 +16,7 @@ members = [
     "crates/tt-adapter-storage-core",
     "crates/tt-adapter-storage-userdata",
     "crates/tt-adapter-media",
-    "crates/tt-adapter-quickjs",
-    "crates/tt-adapter-bashkit",
+    "crates/tt-adapter-workspace-shell",
     "crates/tt-adapter-triviumdb",
 ]
 default-members = ["crates/tauritavern"]

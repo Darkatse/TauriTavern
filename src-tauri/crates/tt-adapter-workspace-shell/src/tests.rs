@@ -11,7 +11,7 @@ use tt_ports::workspace_fs::{
 };
 use tt_ports::workspace_shell::{WorkspaceShell, WorkspaceShellExit, WorkspaceShellRequest};
 
-use crate::BashkitWorkspaceShell;
+use crate::WorkspaceShellEngine;
 
 /// A controlled write future: the test decides when the pending side effect completes.
 #[derive(Default)]
@@ -98,25 +98,31 @@ impl WorkspaceFs for BlockedWorkspace {
 
 #[tokio::test]
 async fn cancellation_finishes_current_write_and_stops_further_writes() {
-    let files = Arc::new(BlockedWorkspace::default());
-    let (cancel, receiver) = watch::channel(false);
-    let request = WorkspaceShellRequest {
-        command: r#"python3 -c 'from pathlib import Path; Path("/draft.md").write_text("draft"); Path("/later.md").write_text("later")'"#.to_string(),
-        workdir: "/".to_string(),
-        files: files.clone(),
-        cancel: receiver,
-    };
-    let mut task = tokio::spawn(async move { BashkitWorkspaceShell.execute(request).await });
-    tokio::select! {
-        _ = files.started.notified() => {}
-        result = &mut task => panic!("shell returned before the controlled write: {result:?}"),
-    }
-    cancel.send(true).unwrap();
-    files.release.notify_one();
+    for command in [
+        r#"python3 -c 'from pathlib import Path; Path("/draft.md").write_text("draft"); Path("/later.md").write_text("later")'"#,
+        r#"js -e 'import {workspace} from "@tauritavern/runtime"; workspace.writeText("draft.md", "draft")'; printf later > /later.md"#,
+    ] {
+        let files = Arc::new(BlockedWorkspace::default());
+        let (cancel, receiver) = watch::channel(false);
+        let request = WorkspaceShellRequest {
+            command: command.to_owned(),
+            workdir: "/".to_string(),
+            files: files.clone(),
+            context: Arc::default(),
+            cancel: receiver,
+        };
+        let mut task = tokio::spawn(async move { WorkspaceShellEngine.execute(request).await });
+        tokio::select! {
+            _ = files.started.notified() => {}
+            result = &mut task => panic!("shell returned before the controlled write: {result:?}"),
+        }
+        cancel.send(true).unwrap();
+        files.release.notify_one();
 
-    let result = task.await.unwrap().unwrap();
-    assert_eq!(result.exit, WorkspaceShellExit::Cancelled, "{result:?}");
-    let written = files.files.lock().await;
-    assert_eq!(written.get("draft.md").unwrap(), b"draft");
-    assert!(!written.contains_key("later.md"));
+        let result = task.await.unwrap().unwrap();
+        assert_eq!(result.exit, WorkspaceShellExit::Cancelled, "{result:?}");
+        let written = files.files.lock().await;
+        assert_eq!(written.get("draft.md").unwrap(), b"draft");
+        assert!(!written.contains_key("later.md"));
+    }
 }

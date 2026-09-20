@@ -6,6 +6,7 @@ use serde_json::{Map, Value, json};
 use tokio::sync::Mutex;
 
 use super::*;
+use crate::services::agent_tools::build_script_context_json;
 use crate::services::agent_workspace_scope::WorkspaceAccessPolicy;
 use tt_domain::errors::{DomainError, WorkspaceWriteConflictKind};
 use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
@@ -28,6 +29,7 @@ use tt_ports::workspace_fs::{
     WorkspaceAppendResult, WorkspaceDirectoryEntry, WorkspaceEntryKind, WorkspaceMetadata,
     WorkspaceWriteGuard,
 };
+use tt_ports::workspace_shell::WorkspaceShellContext;
 
 // ---- fakes ----------------------------------------------------------
 
@@ -386,7 +388,7 @@ fn scoped_files(files: Arc<FakeWorkspaceFs>) -> ScopedWorkspaceFs {
 // ---- helpers --------------------------------------------------------
 
 fn session_with_skill(name: &str) -> AgentToolSession {
-    AgentToolSession::new(vec![SkillIndexEntry {
+    let mut session = AgentToolSession::new(vec![SkillIndexEntry {
         scope: SkillScope::Global,
         name: name.to_string(),
         description: "test".to_string(),
@@ -403,7 +405,16 @@ fn session_with_skill(name: &str) -> AgentToolSession {
         has_binary: false,
         installed_at: chrono::Utc::now(),
         source_refs: Vec::new(),
-    }])
+    }]);
+    session.runtime_context = Arc::new(WorkspaceShellContext {
+        host: Ok(json!({
+            "worldInfo": { "entries": [] },
+            "variables": { "local": {}, "global": {} },
+            "macro": {},
+        })),
+        ..Default::default()
+    });
+    session
 }
 
 fn base_profile() -> ResolvedAgentProfile {
@@ -495,13 +506,6 @@ fn call_args(call: &ToolInvocation) -> &Map<String, Value> {
     call.arguments.as_map().expect("test arguments are objects")
 }
 
-fn empty_prompt_snapshot() -> Value {
-    json!({
-        "worldInfoActivation": { "entries": [] },
-        "frozenRunInputSnapshot": {},
-    })
-}
-
 async fn run_with_repo_and_outcome(
     arguments: Value,
     repo: FakeSkillRepo,
@@ -525,7 +529,6 @@ async fn run_with_repo_and_outcome(
                 fail_write_on: None,
                 snapshot_content: None,
             })),
-            prompt_snapshot: empty_prompt_snapshot(),
         },
         &tool_call,
         call_args(&tool_call),

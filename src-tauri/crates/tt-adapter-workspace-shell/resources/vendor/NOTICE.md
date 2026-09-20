@@ -1,6 +1,6 @@
 # Embedded script kit
 
-These minified ESM bundles are compiled into `tt-adapter-quickjs` and exposed as
+These minified ESM bundles are compiled into `tt-adapter-workspace-shell` and exposed as
 `@tauritavern/kit/*`. Do not edit generated files by hand.
 
 | Package | Version | Entry | SHA-256 |

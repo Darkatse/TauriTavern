@@ -43,6 +43,8 @@ Skill 可以属于全局、预设、Profile 或角色。运行时按 `global →
 
 ## 运行脚本
 
+本节描述现有 `skill.run_script`，暂保留快照写回协议。普通工作区 JavaScript 见 [Workspace](Workspace.md#javascript)。
+
 `scripts/` 中的 JavaScript 可以处理文件、计算或生成材料。例如 `scripts/list-scenes.js`：
 
 ```js
@@ -114,4 +116,4 @@ Skill 保存在 `_tauritavern/skills/`，按作用域组织安装目录，索引
 - [skill_scope.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/skill_scope.rs)：Invocation 的作用域。
 - [Skill 工具](../../src-tauri/crates/tt-application/src/services/agent_tools/skill)：模型读取和脚本调用。
 - [script.rs](../../src-tauri/crates/tt-application/src/services/agent_tools/skill/script.rs)：脚本输入快照与工作区写回。
-- [QuickJS engine](../../src-tauri/crates/tt-adapter-quickjs/src/engine.rs)：脚本执行与资源预算。
+- [Skill QuickJS engine](../../src-tauri/crates/tt-adapter-workspace-shell/src/skill/engine.rs)：Skill 执行与资源预算。

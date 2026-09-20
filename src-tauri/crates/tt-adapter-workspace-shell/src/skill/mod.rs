@@ -2,7 +2,6 @@
 
 mod api;
 mod engine;
-mod kit;
 mod runtime_module;
 
 pub use engine::QuickJsScriptEngine;
