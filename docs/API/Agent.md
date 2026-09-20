@@ -27,6 +27,8 @@ const unsubscribe = agent.subscribe(run.runId, event => {
 
 两种方法返回 `{ runId, status, workspaceId, stableChatId, generationType }`。准备好的 snapshot 需要包含 `contextPolicy` 与 `chatCompletionPayload`；独立预设和后续 Invocation 组装还会使用 `frozenRunInputSnapshot`。工具由 runtime 配置，输入消息应是尚未进入工具循环的初始提示词。组装过程见 [Prompt assembly](../Agent/PromptAssembly.md)。
 
+自行组装 snapshot 时，`agentSystemPrompt` 消息须以字符串 `content` 保存正文，并携带 `_tauritavern_prompt_component: "agentSystemPrompt"`，供 runtime 追加目录。PromptManager 自动提供该标记，标记不会发送给模型。
+
 ## 控制与订阅
 
 | 方法 | 行为 |
@@ -45,6 +47,8 @@ const unsubscribe = agent.subscribe(run.runId, event => {
 `resume` 保留原始输入与累计预算，要求当前聊天及消息仍属于原 Run；普通重新生成仍创建新 Run。轮数不足时可经用户明确选择追加 `additionalRounds`。续接订阅使用返回的 `afterSeq`，恢复条件见 [运行循环](../Agent/Runtime.md#checkpoint-与恢复)。
 
 传入 `revisionGuidance` 时，从已完成的 checkpoint 开始新的前台 Invocation，继承上下文并使用原 Profile 的预算。聊天命令 `/fix 修改要求` 使用这一入口，原地修改最后一条 Agent 回复的当前 swipe，以当前已保存的正文为基准。
+
+v1 checkpoint 仅支持查看状态和修订已完成的 Run；首次修订时转换，范围见 [运行循环](../Agent/Runtime.md#checkpoint-与恢复)。
 
 ## 历史与详情
 
@@ -96,6 +100,8 @@ const { events, timelineProjection } = await agent.readEvents({
 | `tools.list()` | 返回 `{ tools, diagnostics }`，包含内置工具和已发现的可用 MCP 工具 |
 
 Profile 的用法见 [配置指南](../Agent/ProfilesAndPreset.md)。`tools.list()` 返回稳定工具 ID、描述和参数 schema；模型调用名称属于 Invocation 快照。
+
+`profiles.resolveSystemPrompt` 返回 Profile 指令正文；运行时目录的追加规则见 [Prompt assembly](../Agent/PromptAssembly.md#skill-与-agent-目录)。
 
 ## 保留策略
 

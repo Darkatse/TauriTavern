@@ -234,7 +234,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 - `tt-adapter-storage-userdata` 承载长期用户数据仓储，例如角色卡、世界书、Agent workspace/profile、Skill package。它关心 data root / user data 语义，而不是泛泛的“文件”。
 - `tt-adapter-extension` 承载 third-party extension 发现、安装、版本检查、更新、分支查询/切换、删除与移动，以及 Git transport、repository 与 worktree 物化边界。扩展仓库不是普通 user data JSON。
 - `tt-adapter-media` 承载浏览器可见的 avatar/background/user media 资源契约。
-- `tt-adapter-workspace-shell` 通过 `WorkspaceShell` 提供执行，经 `WorkspaceFs` 访问文件；权限、冻结上下文投影与发布策略由 application 拥有。旧 Skill 执行暂存于 `skill/`，见 [Skill](Agent/Skill.md)。
+- `tt-adapter-workspace-shell` 通过 `WorkspaceShell` 提供执行，经 `WorkspaceFs` 访问文件；权限、Skill 绑定、冻结宏投影与发布策略由 application 拥有。
 - `tt-adapter-provider-http`、`tt-adapter-mcp` 和 `tt-adapter-tokenization` 可以复用 `tt-adapter-http`，但协议/provider 规则不能下沉到通用 HTTP helper。
 - `tt-adapter-sync` 与 `tt-adapter-archive` 是独立运行时/执行器边界，Tauri UI glue 仍留在 host。
 

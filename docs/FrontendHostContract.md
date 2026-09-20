@@ -177,7 +177,7 @@
 
 - `api.llmConnections`：管理 Profile 引用的模型连接，见 [LLM Connection API](API/LlmConnections.md)。Profile 通过连接 ID 和模型 ID 绑定；Model Target 是界面的配置来源。
 
-- `api.skill`：管理本地知识包的导入、编辑、作用域与导出，见 [Skill API](API/Skill.md)。模型在 Run 中通过 Skill 工具读取材料或执行脚本；安装与替换由管理界面处理。
+- `api.skill`：管理本地知识包的导入、编辑、作用域与导出，见 [Skill API](API/Skill.md)。模型通过只读 `skills/` 工作区视图读取材料，经 `workspace.shell` 执行脚本；安装与替换由管理界面处理。
 
 - `api.mcp`：MCP registration、只读 tool discovery、model-facing description override 与第一方 Manager user test call 的独立平台 API。Agent 与 Legacy generation 已通过内部 application seam 消费 MCP，但 MCP 不依附 Agent Mode，公开 API 仍不提供 raw model-call executor。
   - 当前为实验性的 Project Contract；详细签名见 `docs/API/MCP.md`。

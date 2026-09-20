@@ -24,7 +24,7 @@ const installed = await skill.list();
 
 作用域有 `global`、`preset`、`profile`、`character`，省略时按全局处理。完整结构见 [src/types.d.ts](../../src/types.d.ts) 的 `TauriTavernSkillScope`。
 
-文件路径相对于 Skill 包。`readFile` 省略范围时读取全文，较长内容返回行预览和 `nextStartLine`，供调用方续读。`writeFile` 的 SHA 不匹配时返回错误。
+文件路径相对于 Skill 包。`readFile` 返回原文与原始 SHA，不展开宏；省略范围时读取全文，较长内容返回行预览和 `nextStartLine`。`writeFile` 的 SHA 不匹配时返回错误。
 
 ## 选择导入来源
 
@@ -73,4 +73,4 @@ type SkillImportInput =
 
 同一宿主一次处理一批导入。单项安装不会释放来源；整批结束或取消后，调用方须等待进行中的请求完成，再调用 `discardPickedImport()`，成功或失败均需清理。
 
-模型在 Run 中通过 `skill.list`、`skill.read`、`skill.search` 和 `skill.run_script` 使用已安装内容，运行过程见 [Agent 工具](../Agent/ToolSystem.md)。
+Agent 通过只读 `skills/<name>/` 视图和 `workspace.shell` 使用安装包，见 [Skill](../Agent/Skill.md)。

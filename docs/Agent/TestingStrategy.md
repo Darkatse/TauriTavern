@@ -6,12 +6,13 @@
 
 | 改动 | 现有入口 |
 | --- | --- |
-| Run、委派、交接、提交 | [host Agent contract tests](../../src-tauri/crates/tauritavern/src/app/contract_tests/agent_runtime) |
+| Run、目录、协作、提交 | [host Agent contract tests](../../src-tauri/crates/tauritavern/src/app/contract_tests/agent_runtime) |
 | 文件与持久版本 | [FileAgentRepository tests](../../src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_repository/tests.rs)、[文件语义闭环](../../src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_repository/tests/workspace_fs.rs) |
 | 模型协议与续接 | [gateway tests](../../src-tauri/crates/tt-application/src/services/agent_model_gateway/tests.rs) |
 | Host API | [agent-api-contract.test.mjs](../../tests/agent-api-contract.test.mjs) |
 | Profile、历史与 Timeline 界面 | [agent-system tests](../../src/scripts/extensions/agent-system/src) |
-| Skill 脚本 | [脚本工具 tests](../../src-tauri/crates/tt-application/src/services/agent_tools/skill/script/tests)、[旧 Skill 执行 tests](../../src-tauri/crates/tt-adapter-workspace-shell/src/skill/engine/tests.rs) |
+| Skill 文件、宏与脚本 | [host 执行闭环](../../src-tauri/crates/tauritavern/src/app/contract_tests/agent_runtime/execution.rs)、[Skill 仓储](../../src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_skill_repository/tests.rs) |
+| 旧数据迁移 | [Profile 导入](../../src-tauri/crates/tauritavern/src/app/contract_tests/profile_migration.rs)、[Run 修订](../../src-tauri/crates/tauritavern/src/app/contract_tests/agent_runtime/legacy_revision.rs) |
 | Shell / JS 文件与提交 | [host 集成](../../src-tauri/crates/tauritavern/src/app/contract_tests/agent_runtime/shell.rs) |
 | 执行与取消边界 | [JS tests](../../src-tauri/crates/tt-adapter-workspace-shell/src/javascript/tests.rs)、[收尾 tests](../../src-tauri/crates/tt-adapter-workspace-shell/src/tests.rs) |
 

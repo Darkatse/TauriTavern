@@ -30,6 +30,12 @@ Agent 继续使用 SillyTavern 的 PromptManager 组装提示词。Rust 解析 P
 
 `agentSystemPrompt` 是 Profile 指令在 PromptManager 中的位置，`agentTask` 是委派或交接任务的位置。Preset 控制组件的位置和 role，runtime 消费最终组装好的消息。
 
+## Skill 与 Agent 目录
+
+Runtime 准备 Invocation 时，将 Skill 与可调用 Agent 目录追加到 `agentSystemPrompt` 正文末尾。默认和自定义指令使用同一流程，保留预设的位置与 role；后续轮次和恢复沿用已准备请求。
+
+Skill 目录与文件视图使用同一份有效绑定；Agent 目录由实际工具与目标调用资格决定。规则分别见 [Skill](Skill.md) 和 [多 Agent 协作](SubAgent.md)，手工 snapshot 的组件标记见 [API](../API/Agent.md)。
+
 ## 预设与连接各管什么
 
 Preset 提供提示词布局和生成设置。Profile 的 model binding 提供最终 source、model、endpoint、secret 和路由；这些连接字段会覆盖预设中的旧值。

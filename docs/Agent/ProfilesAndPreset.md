@@ -80,11 +80,13 @@ Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点�
 
 调用方开启 `delegation.canDelegate` 或 `canHandoff`，并允许相应工具。接收方开启 `callable`，再按用途选择 `allowAsSubagent` 或 `allowAsHandoffTarget`；`allowedCallers` 指定可调用它的 Profile，`["*"]` 表示所有调用方。
 
-`descriptionForAgents` 用于向其他 Agent 介绍它适合处理什么工作。并发、任务数量和交接深度也在 `delegation` 中设置。完整流程见 [多 Agent 协作](SubAgent.md)。
+`descriptionForAgents` 说明适合处理的工作，未填写时使用 `description`。并发、任务数量和交接深度也在 `delegation` 中设置。完整流程见 [多 Agent 协作](SubAgent.md)。
 
 ## 源码
 
-Profile 以 JSON 保存到 `_tauritavern/agent-profiles/profiles/`，当前 schema 版本为 3。
+Profile 以 JSON 保存到 `_tauritavern/agent-profiles/profiles/`，当前 schema 版本为 4。
+
+schema 1–3 在加载或导入时自动迁移，移除旧 `skill.*`、`agent.list` 工具配置及 Skill 读取预算；保留其余配置，不自动授予新权限或重写指令。
 
 - [profile.rs](../../src-tauri/crates/tt-domain/src/models/agent/profile.rs)：字段与默认值。
 - [agent_profile_service](../../src-tauri/crates/tt-application/src/services/agent_profile_service)：默认配置、解析和验证。

@@ -6,7 +6,7 @@
 
 前端生成入口读取当前聊天、世界书激活结果、宏和连接设置，形成 `FrozenRunInputSnapshot`。PromptManager 根据 Profile 与预设生成初始消息，Host API 把结果交给 `AgentRuntimeService`。
 
-Runtime 创建 Run，初始化工作区，保存输入和解析后的 Profile，再准备根 Invocation。此时会确定该 Invocation 的模型请求、工具集合、可用 Skill 与工作区范围。后续修改 UI 设置不会改写已经准备好的 Invocation。
+Runtime 创建 Run，初始化工作区，保存输入和解析后的 Profile，再准备根 Invocation。此时会确定该 Invocation 的模型请求、工具集合、可用 Skill、可调用 Agent 目录与工作区范围。后续修改 UI 设置不会改写已经准备好的 Invocation。
 
 `startRunFromLegacyGenerate()` 负责从当前聊天取得输入；`startRunWithPromptSnapshot()` 接受已经组装好的输入。两者进入相同的 Rust runtime。具体参数见 [API](../API/Agent.md)，提示词的生成过程见 [Prompt assembly](PromptAssembly.md)。
 
@@ -37,7 +37,9 @@ Shell 取消须先等待已启动的文件修改收尾，再记录结果并进�
 
 每次执行结束时保存 checkpoint，由 runtime 的执行状态与宿主的消息呈现共同构成。中断后的续接沿用原 Run、冻结输入和工作区，保留已确认结果与累计预算。
 
-`/fix 修改要求` 用于修改最后一条已完成 Agent 回复的当前 swipe。当前正文保存到 `output/previous_output.md`，作为包含手工编辑的修改基准。新的前台 Invocation 继承上一前台的完整上下文，在原 Run 中获得正常预算；原提交记录与工作材料继续保留。
+当前 checkpoint schema 为 2。v1 可只读查看状态，仅已完成的 Run 在首次 `/fix` 时转换；未完成的 v1 Run 需要重新开始。转换保留原权限、Skill 绑定与执行结果，将含退役工具调用的轮次转为历史文本，并通过修订说明补入新用法与目录。原始记录不改写，旧调用不重放。
+
+`/fix 修改要求` 用于修改最后一条已完成 Agent 回复的当前 swipe。当前正文保存到 `output/previous_output.md`，作为包含手工编辑的修改基准。新的前台 Invocation 继承上一前台的上下文，在原 Run 中获得正常预算；原提交记录与工作材料继续保留。
 
 恢复时仅按需校验所选 Run 的本地保存材料，不依赖同步状态或其他 Run。该 Run 在本进程中仍活跃、材料缺失或不匹配、外部副作用无法确认时拒绝本次恢复；可恢复的保存错误允许重试。恢复与清理须互斥，已确认的工具和提交效果不得重放。
 
