@@ -64,6 +64,7 @@ tt-adapter-storage-userdata = { path = "../tt-adapter-storage-userdata" }
 tt-adapter-media = { path = "../tt-adapter-media" }
 tt-adapter-triviumdb = { path = "../tt-adapter-triviumdb" }
 tt-adapter-quickjs = { path = "../tt-adapter-quickjs" }
+tt-adapter-bashkit = { path = "../tt-adapter-bashkit" }
 
 # TT-Sync v2 shared protocol crates. (crates.io)
 ttsync-contract = { workspace = true }

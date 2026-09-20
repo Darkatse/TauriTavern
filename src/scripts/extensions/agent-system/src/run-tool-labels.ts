@@ -18,6 +18,7 @@ const TOOL_LABEL_KEYS: Readonly<Record<string, AgentSystemMessageKey>> = Object.
     'workspace.read_file': 'timelineToolWorkspaceReadFile',
     'workspace.write_file': 'timelineToolWorkspaceWriteFile',
     'workspace.apply_patch': 'timelineToolWorkspaceApplyPatch',
+    'workspace.shell': 'timelineToolWorkspaceShell',
     'workspace.commit': 'timelineToolWorkspaceCommit',
     'workspace.finish': 'timelineToolWorkspaceFinish',
 });

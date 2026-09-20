@@ -1,5 +1,4 @@
 use serde_json::json;
-use std::path::Path;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -15,6 +14,8 @@ use crate::errors::ApplicationError;
 use crate::services::agent_tools::{
     AgentToolDispatchOutcome, AgentToolEffect, classify_workspace_io_error,
 };
+use crate::services::agent_workspace_scope::is_auto_commit_text_path;
+use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{
     AgentChatCommitMode, AgentRun, AgentRunEventLevel, AgentRunStatus, AgentToolResult,
     ArtifactTarget, WorkspacePath, WorkspacePersistentChangeSet,
@@ -22,8 +23,6 @@ use tt_domain::models::agent::{
 use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
 use tt_ports::workspace_fs::WorkspaceFile;
-
-const AUTO_COMMIT_TEXT_EXTENSIONS: &[&str] = &["md", "markdown", "txt", "text"];
 
 enum HostChatCommitOutcome {
     Committed {
@@ -230,22 +229,33 @@ impl AgentRuntimeService {
 
     #[expect(
         clippy::too_many_arguments,
-        reason = "automatic commit forwards the round's final immutable mutation to the shared host boundary"
+        reason = "automatic commit reads the round's current file before the shared host boundary"
     )]
     pub(super) async fn auto_commit_text_file_if_eligible(
         &self,
         run_id: &str,
         call_id: &str,
-        file: &WorkspaceFile,
+        path: &WorkspacePath,
         round: usize,
         invocation_id: &str,
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
-        if commit_ledger.has_explicit_commit() || !is_auto_commit_text_path(&file.path) {
+        if commit_ledger.has_explicit_commit() || !is_auto_commit_text_path(path) {
             return Ok(());
         }
-        if self.required_artifact_is_empty(run_id, file).await? {
+        let files = &self.active_run_handle(run_id).await?.files;
+        let file = match files.read_text(path).await {
+            Ok(file) => file,
+            // A later operation may have removed the candidate or replaced its kind.
+            Err(
+                DomainError::NotFound(_)
+                | DomainError::WorkspacePathIsDirectory { .. }
+                | DomainError::WorkspaceFileNotText { .. },
+            ) => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        if self.required_artifact_is_empty(run_id, &file).await? {
             return Ok(());
         }
 
@@ -253,7 +263,7 @@ impl AgentRuntimeService {
             run_id,
             HostChatCommit {
                 call_id,
-                file,
+                file: &file,
                 is_explicit: false,
                 mode: AgentChatCommitMode::Replace,
                 reason: None,
@@ -627,17 +637,6 @@ impl AgentRuntimeService {
     }
 }
 
-fn is_auto_commit_text_path(path: &WorkspacePath) -> bool {
-    Path::new(path.as_str())
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            AUTO_COMMIT_TEXT_EXTENSIONS
-                .iter()
-                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-        })
-}
-
 fn message_index_from_message_id(message_id: Option<&str>) -> Option<usize> {
     message_id?.trim().parse::<usize>().ok()
 }
@@ -665,25 +664,5 @@ fn recoverable_tool_error(
         },
         effect: AgentToolEffect::None,
         elapsed_ms,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::is_auto_commit_text_path;
-    use tt_domain::models::agent::WorkspacePath;
-
-    #[test]
-    fn automatic_commit_uses_case_insensitive_text_extensions_only() {
-        for path in ["a.md", "a.MARKDOWN", "a.txt", "a.TEXT"] {
-            assert!(is_auto_commit_text_path(
-                &WorkspacePath::parse(path).unwrap()
-            ));
-        }
-        for path in ["a.json", "a.md.bak", "README"] {
-            assert!(!is_auto_commit_text_path(
-                &WorkspacePath::parse(path).unwrap()
-            ));
-        }
     }
 }

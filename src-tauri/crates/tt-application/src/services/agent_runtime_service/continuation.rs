@@ -8,9 +8,8 @@ use super::guidance::AgentGuidanceItem;
 use super::loop_runner::AgentLoopExit;
 use crate::services::agent_tools::AgentToolSession;
 use crate::services::tool_request_gate::ToolRequestGate;
-use tt_domain::models::agent::WorkspacePersistentChangeSet;
+use tt_domain::models::agent::{WorkspacePath, WorkspacePersistentChangeSet};
 use tt_domain::models::tool::ToolInvocation;
-use tt_ports::workspace_fs::WorkspaceFile;
 
 /// The live execution state is also the checkpoint payload. No journal replay is needed.
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -83,5 +82,11 @@ pub(super) struct PendingToolTurn {
     pub calls: Vec<ToolInvocation>,
     pub next_call: usize,
     pub exit: Option<AgentLoopExit>,
-    pub auto_commit: Option<(String, WorkspaceFile)>,
+    pub auto_commit: Option<(String, AutoCommitFile)>,
+}
+
+/// Persist the reference; file contents are read when the round publishes its progress.
+#[derive(Debug, Serialize, Deserialize)]
+pub(super) struct AutoCommitFile {
+    pub path: WorkspacePath,
 }

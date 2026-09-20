@@ -10,6 +10,8 @@
 
 Invocation 使用的工具快照包含描述、参数、名称映射及预算上限，按工具目录、Profile 和结束方式创建；输出修订沿用原快照。每个 Invocation 的调用计数独立，由 `ToolRequestGate` 检查后进入内置工具或 MCP 的执行路径。
 
+新 Profile 默认启用 Shell；已有 Profile 和工具快照保持原工具集合。
+
 ## 内置工具
 
 下表使用源码中的工具名。参数以 [descriptor 定义](../../src-tauri/crates/tt-application/src/services/agent_tools) 和 `api.agent.tools.list()` 返回的 schema 为准。
@@ -21,6 +23,7 @@ Invocation 使用的工具快照包含描述、参数、名称映射及预算上
 | 查找和使用 Skill | `skill.list`、`skill.search`、`skill.read`、`skill.run_script` |
 | 读取文件 | `workspace.list_files`、`workspace.search_files`、`workspace.read_file` |
 | 修改文件 | `workspace.write_file`、`workspace.apply_patch` |
+| Shell 与 JSON 处理 | `workspace.shell`，内含 jq |
 | 发布与结束 | `workspace.commit`、`workspace.finish` |
 | 委派与交接 | `agent.list`、`agent.delegate`、`agent.await`、`agent.handoff`、`task.return` |
 | 掷骰 | `dice.roll` |
@@ -34,6 +37,10 @@ Invocation 使用的工具快照包含描述、参数、名称映射及预算上
 既不是 object、也不属于上述空集合写法的内容（截断的 JSON、数组、标量）原样保留。runtime 在预算计入之后、分派之前拒绝这类调用，返回可恢复的 `tool.invalid_arguments` 并回显开头一段原文；工具本身只接收已经确定为 object 的参数。
 
 各渠道回放统一使用对象参数：合法对象保持原值，非法参数回放为 `{}`，拒绝原因由配对的 tool error 承载。持久化仍保留非法参数原文。
+
+## Shell
+
+`workspace.shell` 通过 Bashkit 内置命令（含 jq）处理批量文件操作和管道。参数为 `command` 与可选 `workdir`（默认 `/`）。每次调用启动新 Shell，文件保留，环境不保留；不执行宿主外部程序。退出状态与输出沿普通工具结果返回，文件和提交语义见 [Workspace](Workspace.md)。
 
 ## 结果如何进入下一轮
 
@@ -58,3 +65,4 @@ Skill 提供按需读取的工作方法、材料和脚本。它沿用相同的�
 - [tool.rs](../../src-tauri/crates/tt-domain/src/models/tool.rs)：`ToolArguments` 的线上编码换算规则。
 - [tool_request_gate.rs](../../src-tauri/crates/tt-application/src/services/tool_request_gate.rs)：调用检查与预算。
 - [tool_execution.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/tool_execution.rs)：分派和记录。
+- [workspace/shell.rs](../../src-tauri/crates/tt-application/src/services/agent_tools/workspace/shell.rs)：Shell 参数与结果映射。

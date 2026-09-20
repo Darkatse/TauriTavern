@@ -1,6 +1,7 @@
 use crate::errors::ApplicationError;
 use async_trait::async_trait;
-use std::sync::Arc;
+use std::path::Path;
+use std::sync::{Arc, Mutex, MutexGuard};
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::WorkspacePath;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
@@ -10,6 +11,17 @@ use tt_ports::workspace_fs::{
 };
 
 pub(crate) const AGENT_TOOL_RESULTS_ROOT: &str = "tool-results";
+
+pub(crate) fn is_auto_commit_text_path(path: &WorkspacePath) -> bool {
+    Path::new(path.as_str())
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["md", "markdown", "txt", "text"]
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
+}
 
 pub(crate) fn task_result_summary_path(workspace_key: &str) -> Result<WorkspacePath, DomainError> {
     WorkspacePath::parse(format!("summaries/{workspace_key}-result.md"))
@@ -146,11 +158,63 @@ impl WorkspaceAccessPolicy {
 pub(crate) struct ScopedWorkspaceFs {
     inner: Arc<dyn WorkspaceFs>,
     pub(crate) policy: WorkspaceAccessPolicy,
+    text_mutation: Option<Mutex<WorkspaceTextMutation>>,
+}
+
+/// A Shell call starts from the round's candidate and reports whether it changed.
+#[derive(Clone)]
+pub(crate) struct WorkspaceTextMutation {
+    pub(crate) candidate: Option<WorkspacePath>,
+    pub(crate) changed: bool,
 }
 
 impl ScopedWorkspaceFs {
     pub(crate) fn new(inner: Arc<dyn WorkspaceFs>, policy: WorkspaceAccessPolicy) -> Self {
-        Self { inner, policy }
+        Self {
+            inner,
+            policy,
+            text_mutation: None,
+        }
+    }
+
+    pub(crate) fn track_text_mutations(mut self, candidate: Option<WorkspacePath>) -> Self {
+        self.text_mutation = Some(Mutex::new(WorkspaceTextMutation {
+            candidate,
+            changed: false,
+        }));
+        self
+    }
+
+    fn mutation(&self) -> Option<MutexGuard<'_, WorkspaceTextMutation>> {
+        self.text_mutation.as_ref().map(|mutation| {
+            mutation
+                .lock()
+                .expect("workspace text mutation lock poisoned")
+        })
+    }
+
+    pub(crate) fn text_mutation(&self) -> Option<WorkspaceTextMutation> {
+        self.mutation().map(|mutation| mutation.clone())
+    }
+
+    fn remember_write(&self, path: &WorkspacePath) {
+        if is_auto_commit_text_path(path)
+            && let Some(mut mutation) = self.mutation()
+        {
+            mutation.candidate = Some(path.clone());
+            mutation.changed = true;
+        }
+    }
+
+    fn forget_removed(&self, path: &WorkspacePath) {
+        if let Some(mut mutation) = self.mutation()
+            && mutation.candidate.as_ref().is_some_and(|candidate| {
+                path_matches_root_or_child(candidate.as_str(), path.as_str())
+            })
+        {
+            mutation.candidate = None;
+            mutation.changed = true;
+        }
     }
 
     fn check(&self, path: &WorkspacePath, write: bool) -> Result<(), DomainError> {
@@ -166,7 +230,7 @@ impl ScopedWorkspaceFs {
                 path.as_str(),
                 std::io::Error::new(
                     std::io::ErrorKind::PermissionDenied,
-                    "path is outside the invocation workspace scope",
+                    "path is outside the accessible workspace",
                 ),
             ))
         }
@@ -190,11 +254,15 @@ impl WorkspaceFs for ScopedWorkspaceFs {
         guard: WorkspaceWriteGuard,
     ) -> Result<(), DomainError> {
         self.check(path, true)?;
-        self.inner.write_file(path, bytes, guard).await
+        self.inner.write_file(path, bytes, guard).await?;
+        self.remember_write(path);
+        Ok(())
     }
     async fn append_file(&self, path: &WorkspacePath, bytes: &[u8]) -> Result<(), DomainError> {
         self.check(path, true)?;
-        self.inner.append_file(path, bytes).await
+        self.inner.append_file(path, bytes).await?;
+        self.remember_write(path);
+        Ok(())
     }
     async fn append_text(
         &self,
@@ -202,7 +270,9 @@ impl WorkspaceFs for ScopedWorkspaceFs {
         text: &str,
     ) -> Result<WorkspaceAppendResult, DomainError> {
         self.check(path, true)?;
-        self.inner.append_text(path, text).await
+        let result = self.inner.append_text(path, text).await?;
+        self.remember_write(path);
+        Ok(result)
     }
     async fn metadata(
         &self,
@@ -250,7 +320,9 @@ impl WorkspaceFs for ScopedWorkspaceFs {
     }
     async fn remove(&self, path: &WorkspacePath, recursive: bool) -> Result<(), DomainError> {
         self.check(path, true)?;
-        self.inner.remove(path, recursive).await
+        self.inner.remove(path, recursive).await?;
+        self.forget_removed(path);
+        Ok(())
     }
     async fn rename(
         &self,
@@ -259,7 +331,27 @@ impl WorkspaceFs for ScopedWorkspaceFs {
     ) -> Result<(), DomainError> {
         self.check(source, true)?;
         self.check(target, true)?;
-        self.inner.rename(source, target).await
+        self.inner.rename(source, target).await?;
+        if self.text_mutation.is_some() {
+            let target_is_text_file = is_auto_commit_text_path(target)
+                && self.inner.metadata(Some(target)).await?.kind == WorkspaceEntryKind::File;
+            let mut mutation = self.mutation().expect("text mutation tracking is enabled");
+            if target_is_text_file {
+                mutation.candidate = Some(target.clone());
+                mutation.changed = true;
+            } else if let Some(path) = mutation
+                .candidate
+                .as_ref()
+                .filter(|path| path_matches_root_or_child(path.as_str(), source.as_str()))
+            {
+                // Move the known candidate with its directory, without scanning the subtree.
+                let suffix = &path.as_str()[source.as_str().len()..];
+                let moved = WorkspacePath::parse(format!("{}{suffix}", target.as_str()))?;
+                mutation.candidate = is_auto_commit_text_path(&moved).then_some(moved);
+                mutation.changed = true;
+            }
+        }
+        Ok(())
     }
     async fn copy_file(
         &self,
@@ -268,6 +360,8 @@ impl WorkspaceFs for ScopedWorkspaceFs {
     ) -> Result<(), DomainError> {
         self.check(source, false)?;
         self.check(target, true)?;
-        self.inner.copy_file(source, target).await
+        self.inner.copy_file(source, target).await?;
+        self.remember_write(target);
+        Ok(())
     }
 }

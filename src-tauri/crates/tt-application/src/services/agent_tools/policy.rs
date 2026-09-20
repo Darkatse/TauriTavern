@@ -83,9 +83,13 @@ fn materialize_builtin_binding(
     if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
         registry.apply_return_mode_context(&mut descriptor, profile)?;
     }
-    let alias = tool_id.native_name().replace('.', "_");
+    let alias = builtin_model_alias(tool_id.native_name());
     let max_calls = profile.tools.max_calls_per_tool.get(tool_id).copied();
     ToolBinding::new(descriptor, alias, max_calls).map_err(Into::into)
+}
+
+pub(super) fn builtin_model_alias(name: &str) -> String {
+    name.replace('.', "_")
 }
 
 const MAX_MODEL_ALIAS_BYTES: usize = 64;

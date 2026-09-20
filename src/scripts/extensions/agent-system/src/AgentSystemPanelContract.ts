@@ -114,7 +114,7 @@ export const TOOL_GROUPS: readonly AgentToolGroup[] = Object.freeze([
         id: 'workspace-write',
         labelKey: 'workspaceWriteTools',
         icon: 'fa-pen-to-square',
-        tools: ['builtin:workspace.write_file', 'builtin:workspace.apply_patch'],
+        tools: ['builtin:workspace.write_file', 'builtin:workspace.apply_patch', 'builtin:workspace.shell'],
     },
     {
         id: 'control',

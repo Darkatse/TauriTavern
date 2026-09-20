@@ -15,17 +15,19 @@
 | `persist/` | 本次运行的持久内容工作副本 |
 | `tool-results/` | 工具结果及较长结果的可读版本，只读 |
 
-模型用 `workspace.list_files`、`search_files`、`read_file` 寻找和读取材料，用 `write_file`、`apply_patch` 修改文件。路径相对于工作区，例如 `output/main.md`。替换已有文件和应用补丁时，工具使用读取记录和内容 SHA 检查冲突；发生冲突后重新读取，再决定如何修改。
+模型用 `workspace.list_files`、`search_files`、`read_file` 寻找和读取材料，用 `write_file`、`apply_patch` 修改文本，或用 `workspace.shell` 批量处理文件。路径相对于工作区，例如 `output/main.md`；Shell 中的 `/output/main.md` 指向同一文件。
+
+文本工具替换已有文件和应用补丁时，使用读取记录和内容 SHA 检查冲突。Shell 不建立此读取记录；Shell 修改文件后，替换文件或应用补丁前需重新读取。
 
 工作区读取返回文件原文。脚本需要展开模板时，可以显式调用 `macros.render()`。聊天、世界书和 Skill 的读取由各自工具完成，保留原有数据来源。
 
 ## 统一文件链路
 
-文本工具、Skill 写回与 runtime 材料统一通过 `WorkspaceFs` 访问 Run 的真实目录。`WorkspaceRepository` 负责初始化、manifest 与持久版本发布。
+文本工具、Shell、Skill 写回与 runtime 材料统一通过 `WorkspaceFs` 访问 Run 的真实目录。`WorkspaceRepository` 负责初始化、manifest 与持久版本发布。
 
 模型侧使用当前 Invocation 的 `ScopedWorkspaceFs`，按自己的 Profile 访问；业务根本身不可修改，`tool-results` 只读。宿主记录使用内部视图，两者共享同一文件实现。
 
-同一 Run 允许并行读取，按单次操作串行修改；CAS 的条件检查与写入在同一锁内完成。多步操作不构成事务，已成功的操作立即生效。追加使用原生 append，失败可能部分生效，不自动重放。
+同一 Run 允许并行读取，按单次操作串行修改；CAS 的条件检查与写入在同一锁内完成。多步操作不构成事务，已成功的操作立即生效；Shell 失败或取消不回滚已完成的修改。追加使用原生 append，失败可能部分生效，不自动重放。
 
 ## Run 与聊天的关系
 
@@ -63,9 +65,11 @@ agent-workspaces/
 
 ## 提交到聊天
 
-模型调用 `workspace.commit` 时，runtime 读取指定文件并请求前端宿主保存。默认操作是替换本次输出楼层的正文；`append` 则将文件内容追加到本次输出。Host bridge 沿用 SillyTavern 的输出处理与保存流程，成功后把结果交回 runtime。
+模型调用 `workspace.commit` 时，runtime 读取指定的可访问文件并请求前端宿主保存。默认操作是替换本次输出楼层的正文；`append` 则将文件内容追加到本次输出。Host bridge 沿用 SillyTavern 的输出处理与保存流程，成功后把结果交回 runtime。
 
 首次显式提交前，前台运行还会展示写作进度：流式写入形成实时正文，符合条件的文本修改会自动提交为进度记录。首次显式提交成功后，后续聊天发布由显式 `workspace.commit` 控制。`workspace.finish` 仍要求前台至少完成一次显式提交。
+
+Shell 与文本工具共用自动提交规则：每轮最多发布最后修改的合格文本文件，提交时读取当前内容。Shell 非零退出、取消或超时会清除本轮待提交候选。
 
 已确认的提交会保留，即使后续运行失败。模型、工具与文件处理的详细过程放在 Timeline；聊天消息保存正文、可见 reasoning 和关联 Run 的 metadata。
 

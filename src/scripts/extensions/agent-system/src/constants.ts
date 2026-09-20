@@ -37,6 +37,7 @@ export const KNOWN_TOOLS = Object.freeze([
     'builtin:workspace.read_file',
     'builtin:workspace.write_file',
     'builtin:workspace.apply_patch',
+    'builtin:workspace.shell',
     'builtin:workspace.commit',
     'builtin:workspace.finish',
 ]);

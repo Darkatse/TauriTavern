@@ -21,6 +21,7 @@ type WorkspaceFile = Awaited<ReturnType<TauriTavernAgentApi['readWorkspaceFile']
 type RunEventPayload = Record<string, unknown>;
 
 const ARGUMENT_BLOCK_KEYS: ReadonlySet<string> = new Set([
+    'command',
     'content',
     'old_string',
     'new_string',

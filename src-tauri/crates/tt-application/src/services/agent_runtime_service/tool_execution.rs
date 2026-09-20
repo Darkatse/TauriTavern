@@ -49,6 +49,7 @@ impl AgentRuntimeService {
         is_last_call: bool,
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut super::AgentCancelReceiver,
+        auto_commit_candidate: Option<WorkspacePath>,
     ) -> Result<AgentToolDispatchOutcome, ToolCallFailure> {
         let mut started_tool = false;
         let result = async {
@@ -247,7 +248,7 @@ impl AgentRuntimeService {
                 }
             } else {
                 self.tool_dispatcher
-                    .dispatch(run_id, call, args, session, profile, active_run.files.clone())
+                    .dispatch(run_id, call, args, session, profile, active_run.files.clone(), cancel.clone(), auto_commit_candidate)
                     .await
             };
 

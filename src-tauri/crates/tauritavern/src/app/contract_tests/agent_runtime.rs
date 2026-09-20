@@ -10,6 +10,7 @@ mod mcp;
 mod model_binding;
 mod persist;
 mod resume;
+mod shell;
 mod task_details;
 
 fn allow_profile_tool(allow: &mut Vec<String>, name: &str) {

@@ -31,6 +31,8 @@ return-mode 子 Agent 使用 `task.return` 结束，把结果交给调用方。`
 
 Run 正常完成后进入 `completed`。取消进入 `cancelled`；错误发生在已确认聊天提交之后时进入 `partial_success`，此前则进入 `failed`。工作区与日志保留下来，便于查看已有结果和失败位置。
 
+Shell 取消须先等待已启动的文件修改收尾，再记录结果并进入取消终态。
+
 ## Checkpoint 与恢复
 
 每次执行结束时保存 checkpoint，由 runtime 的执行状态与宿主的消息呈现共同构成。中断后的续接沿用原 Run、冻结输入和工作区，保留已确认结果与累计预算。

@@ -14,6 +14,7 @@ use tokio::sync::{Mutex, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use tt_adapter_bashkit::BashkitWorkspaceShell;
 use tt_adapter_quickjs::QuickJsScriptEngine;
 use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use tt_adapter_storage_core::{FileChatRepository, FileSettingsRepository};
@@ -184,6 +185,14 @@ fn agent_runtime_fixture_with_results(
     root: &Path,
     responses: Vec<Result<Value, ApplicationError>>,
 ) -> AgentRuntimeFixture {
+    agent_runtime_fixture_with_shell(root, responses, Arc::new(BashkitWorkspaceShell))
+}
+
+fn agent_runtime_fixture_with_shell(
+    root: &Path,
+    responses: Vec<Result<Value, ApplicationError>>,
+    shell: Arc<dyn tt_ports::workspace_shell::WorkspaceShell>,
+) -> AgentRuntimeFixture {
     let default_user = root.join("default-user");
     let aliases = new_shared_chat_alias_store_for_user_dir(&default_user);
     let agent_repository = Arc::new(FileAgentRepository::new(
@@ -244,6 +253,7 @@ fn agent_runtime_fixture_with_results(
         prompt_assembly_service,
         mcp_service.clone(),
         Arc::new(QuickJsScriptEngine::new()),
+        shell,
     ));
 
     AgentRuntimeFixture {

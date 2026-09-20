@@ -398,6 +398,7 @@
     "agent_system.timelineToolWorkspaceListFiles": "查看檔案列表",
     "agent_system.timelineToolWorkspaceReadFile": "讀取檔案",
     "agent_system.timelineToolWorkspaceSearchFiles": "搜尋檔案",
+    "agent_system.timelineToolWorkspaceShell": "執行 Shell 命令",
     "agent_system.timelineToolWorkspaceWriteFile": "寫入檔案",
     "agent_system.timelineToolWorldInfoReadActivated": "讀取世界書",
     "agent_system.timelineToolTaskReturn": "返回 SubAgent 結果",

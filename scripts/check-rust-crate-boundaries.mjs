@@ -14,6 +14,7 @@ const DEPENDENCY_TREE_ARGS = ['--all-features', '--target', 'all', '-e', 'normal
 const DOMAIN_FORBIDDEN_PACKAGES = new Set([
     'async-trait',
     'axum',
+    'bashkit',
     'image',
     'miktik',
     'reqwest',
@@ -31,6 +32,7 @@ const DOMAIN_FORBIDDEN_SOURCE_PATTERNS = [
     ['repository path', /\bcrate::repositories::/],
     ['async-trait', /\basync_trait\b/],
     ['axum', /\baxum::/],
+    ['bashkit', /\bbashkit::/],
     ['image', /\bimage::/],
     ['miktik', /\bmiktik::/],
     ['reqwest', /\breqwest::/],
@@ -44,6 +46,7 @@ const DOMAIN_FORBIDDEN_SOURCE_PATTERNS = [
 const CONTRACTS_FORBIDDEN_PACKAGES = new Set([
     'async-trait',
     'axum',
+    'bashkit',
     'image',
     'miktik',
     'reqwest',
@@ -60,6 +63,7 @@ const CONTRACTS_FORBIDDEN_PACKAGES = new Set([
 const CONTRACTS_FORBIDDEN_SOURCE_PATTERNS = [
     ['async-trait', /\basync_trait\b/],
     ['axum', /\baxum::/],
+    ['bashkit', /\bbashkit::/],
     ['image', /\bimage::/],
     ['miktik', /\bmiktik::/],
     ['reqwest', /\breqwest::/],
@@ -74,6 +78,7 @@ const CONTRACTS_FORBIDDEN_SOURCE_PATTERNS = [
 
 const PORTS_FORBIDDEN_PACKAGES = new Set([
     'axum',
+    'bashkit',
     'image',
     'miktik',
     'reqwest',
@@ -87,6 +92,7 @@ const PORTS_FORBIDDEN_PACKAGES = new Set([
 
 const PORTS_FORBIDDEN_SOURCE_PATTERNS = [
     ['axum', /\baxum::/],
+    ['bashkit', /\bbashkit::/],
     ['image', /\bimage::/],
     ['miktik', /\bmiktik::/],
     ['reqwest', /\breqwest::/],
@@ -100,6 +106,7 @@ const PORTS_FORBIDDEN_SOURCE_PATTERNS = [
 const APPLICATION_FORBIDDEN_PACKAGES = new Set([
     'async-compression',
     'axum',
+    'bashkit',
     'image',
     'miktik',
     'qrcode',
@@ -110,6 +117,7 @@ const APPLICATION_FORBIDDEN_PACKAGES = new Set([
     'tauritavern',
     'tokio-tungstenite',
     'tt-adapter-archive',
+    'tt-adapter-bashkit',
     'tt-adapter-extension',
     'tt-adapter-http',
     'tt-adapter-media',
@@ -133,6 +141,7 @@ const APPLICATION_FORBIDDEN_SOURCE_PATTERNS = [
     ['presentation path', /\bcrate::presentation::/],
     ['platform path', /\bcrate::platform::/],
     ['axum', /\baxum::/],
+    ['bashkit', /\bbashkit::/],
     ['image', /\bimage::/],
     ['miktik', /\bmiktik::/],
     ['qrcode', /\bqrcode::/],
@@ -141,6 +150,7 @@ const APPLICATION_FORBIDDEN_SOURCE_PATTERNS = [
     ['tauri', /\btauri::/],
     ['tar', /\btar::/],
     ['tt-adapter-archive', /\btt_adapter_archive::/],
+    ['tt-adapter-bashkit', /\btt_adapter_bashkit::/],
     ['tt-adapter-extension', /\btt_adapter_extension::/],
     ['tt-adapter-http', /\btt_adapter_http::/],
     ['tt-adapter-media', /\btt_adapter_media::/],
@@ -547,6 +557,18 @@ const ADAPTER_QUICKJS_FORBIDDEN_SOURCE_PATTERNS = [
     ['zip', /\bzip::/],
 ];
 
+const ADAPTER_BASHKIT_FORBIDDEN_PACKAGES = new Set([
+    ...ADAPTER_QUICKJS_FORBIDDEN_PACKAGES,
+    'rquickjs',
+    'tt-adapter-quickjs',
+]);
+
+const ADAPTER_BASHKIT_FORBIDDEN_SOURCE_PATTERNS = [
+    ...ADAPTER_QUICKJS_FORBIDDEN_SOURCE_PATTERNS,
+    ['rquickjs', /\brquickjs::/],
+    ['tt-adapter-quickjs', /\btt_adapter_quickjs::/],
+];
+
 const ADAPTER_EXTENSION_FORBIDDEN_PACKAGES = new Set([
     'axum',
     'image',
@@ -599,6 +621,7 @@ const CRATES = [
     crateConfig('tt-adapter-storage-userdata', ADAPTER_STORAGE_USERDATA_FORBIDDEN_PACKAGES, ADAPTER_STORAGE_USERDATA_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-media', ADAPTER_MEDIA_FORBIDDEN_PACKAGES, ADAPTER_MEDIA_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-quickjs', ADAPTER_QUICKJS_FORBIDDEN_PACKAGES, ADAPTER_QUICKJS_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-adapter-bashkit', ADAPTER_BASHKIT_FORBIDDEN_PACKAGES, ADAPTER_BASHKIT_FORBIDDEN_SOURCE_PATTERNS),
 ];
 
 const MAIN_CRATE_SOURCE_RULES = [

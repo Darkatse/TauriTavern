@@ -2,7 +2,8 @@ use serde_json::json;
 
 use super::{
     MODEL_WORKSPACE_ROOTS_FOR_MODEL, WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH,
-    WORKSPACE_LIST_FILES, WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_WRITE_FILE,
+    WORKSPACE_LIST_FILES, WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_SHELL,
+    WORKSPACE_WRITE_FILE,
 };
 use tt_domain::models::tool::{ToolDescriptor, ToolId};
 
@@ -155,6 +156,31 @@ pub(in crate::services::agent_tools) fn workspace_apply_patch_descriptor() -> To
                 }
             },
             "required": ["path", "old_string", "new_string"]
+        }),
+        output_schema: None,
+        annotations: json!({ "mutating": true }),
+    }
+}
+
+pub(in crate::services::agent_tools) fn workspace_shell_descriptor() -> ToolDescriptor {
+    ToolDescriptor {
+        id: ToolId::builtin(WORKSPACE_SHELL).expect("builtin tool name must be valid"),
+        title: Some("Workspace Shell".to_string()),
+        description: Some("Run shell commands in the workspace and return their output. Use shell for copying, moving, deleting or combining files, batch operations, pipelines, and JSON processing with jq.".to_string()),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Shell command or script to execute."
+                },
+                "workdir": {
+                    "type": "string",
+                    "description": "Working directory in the workspace. Defaults to /."
+                }
+            },
+            "required": ["command"]
         }),
         output_schema: None,
         annotations: json!({ "mutating": true }),

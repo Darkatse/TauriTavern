@@ -67,6 +67,7 @@ pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, Applica
                 "workspace.read_file",
                 "workspace.write_file",
                 "workspace.apply_patch",
+                "workspace.shell",
                 "workspace.commit",
                 "workspace.finish",
             ]

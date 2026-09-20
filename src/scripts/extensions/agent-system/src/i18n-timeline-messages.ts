@@ -176,6 +176,7 @@ export const TIMELINE_MESSAGES = {
     "timelineToolWorkspaceListFiles": "listing files",
     "timelineToolWorkspaceReadFile": "reading a file",
     "timelineToolWorkspaceSearchFiles": "searching files",
+    "timelineToolWorkspaceShell": "running shell commands",
     "timelineToolWorkspaceWriteFile": "writing a file",
     "timelineToolWorldInfoReadActivated": "reading world info",
     "timelineToolTaskReturn": "returning a SubAgent result",

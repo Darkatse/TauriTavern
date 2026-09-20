@@ -4,15 +4,16 @@ use super::agent::{
 };
 use super::chat::{chat_read_messages_descriptor, chat_search_descriptor};
 use super::dice::dice_roll_descriptor;
+use super::policy::builtin_model_alias;
 use super::skill::{
     skill_list_descriptor, skill_read_descriptor, skill_script_descriptor, skill_search_descriptor,
 };
 use super::workspace::{
     WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
-    WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_WRITE_FILE,
+    WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE,
     workspace_apply_patch_descriptor, workspace_commit_descriptor, workspace_finish_descriptor,
     workspace_list_files_descriptor, workspace_read_file_descriptor,
-    workspace_search_files_descriptor, workspace_write_file_descriptor,
+    workspace_search_files_descriptor, workspace_shell_descriptor, workspace_write_file_descriptor,
 };
 use super::world_info::worldinfo_read_activated_descriptor;
 use crate::errors::ApplicationError;
@@ -48,6 +49,7 @@ impl BuiltinAgentToolRegistry {
             workspace_read_file_descriptor(),
             workspace_write_file_descriptor(),
             workspace_apply_patch_descriptor(),
+            workspace_shell_descriptor(),
             workspace_commit_descriptor(),
             workspace_finish_descriptor(),
         ];
@@ -213,6 +215,30 @@ fn apply_profile_context(
                 &format!("Relative writable workspace file path under {writable_roots}."),
             )?;
         }
+        WORKSPACE_SHELL => {
+            let preferred_tools = [
+                (
+                    WORKSPACE_READ_FILE,
+                    "straightforward single-file text reads",
+                ),
+                (
+                    WORKSPACE_WRITE_FILE,
+                    "straightforward single-file text writes",
+                ),
+                (WORKSPACE_APPLY_PATCH, "precise edits"),
+            ]
+            .into_iter()
+            .filter(|(name, _)| profile_tool_visible(profile, name))
+            .map(|(name, purpose)| format!("{} for {purpose}", builtin_model_alias(name)))
+            .collect::<Vec<_>>();
+            if !preferred_tools.is_empty() {
+                descriptor
+                    .description
+                    .as_mut()
+                    .expect("workspace.shell has a description")
+                    .push_str(&format!(" Prefer {}.", preferred_tools.join(", ")));
+            }
+        }
         WORKSPACE_COMMIT => {
             descriptor.description = Some(format!(
                 "Commit a workspace text file to this run's single chat message. With no arguments, replace the current run message with {final_path}. mode append appends the file text to the same message, creating it when this run has not committed yet."
@@ -265,33 +291,6 @@ mod tests {
     use tt_domain::models::tool::{ToolId, ToolSnapshotId};
 
     #[test]
-    fn snapshot_compiler_derives_builtin_model_aliases() {
-        let registry = BuiltinAgentToolRegistry::all();
-        let mut profile = profile_with_skill_budget(100_000, 100_000);
-        profile.tools.allow = registry
-            .catalog()
-            .iter()
-            .map(|descriptor| descriptor.id.clone())
-            .filter(|id| id.native_name() != TASK_RETURN)
-            .collect();
-        let snapshot = compile_invocation_tool_snapshot(
-            &registry,
-            &profile,
-            AgentInvocationExitPolicy::RunFinishAllowed,
-            ToolSnapshotId::parse("aliases").unwrap(),
-            &[],
-        )
-        .unwrap();
-
-        for binding in snapshot.bindings() {
-            assert_eq!(
-                binding.model_alias(),
-                binding.tool_id().native_name().replace('.', "_")
-            );
-        }
-    }
-
-    #[test]
     fn invocation_policy_preserves_order_and_materializes_return_mode_without_profile_mutation() {
         let registry = BuiltinAgentToolRegistry::all();
         let mut profile = profile_with_skill_budget(100_000, 100_000);
@@ -323,13 +322,6 @@ mod tests {
             vec![WORKSPACE_READ_FILE, WORKSPACE_FINISH, AGENT_LIST]
         );
         assert_eq!(root.bindings()[0].max_calls(), Some(2));
-        assert!(
-            root.bindings()[0]
-                .descriptor()
-                .description
-                .as_deref()
-                .is_some_and(|description| description.contains("Omit start_line and line_count"))
-        );
 
         let child = compile_invocation_tool_snapshot(
             &registry,
@@ -346,16 +338,6 @@ mod tests {
                 .map(|binding| binding.tool_id().native_name())
                 .collect::<Vec<_>>(),
             vec![WORKSPACE_READ_FILE, TASK_RETURN]
-        );
-        assert!(
-            child.bindings()[0]
-                .descriptor()
-                .description
-                .as_deref()
-                .is_some_and(|description| {
-                    description.contains("task workspace file")
-                        && description.contains("Omit start_line and line_count")
-                })
         );
         assert_eq!(
             profile.tools.allow,

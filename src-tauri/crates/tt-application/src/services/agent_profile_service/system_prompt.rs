@@ -129,21 +129,40 @@ pub fn materialize_agent_system_prompt(
     }
     if has_tool(tools, "workspace.read_file") {
         lines.push(format!(
-            "- Use {} before modifying an existing file. Omit start_line and line_count to read the full file; if a preview is returned, continue from its next line. Read the exact text you want to replace; if a patch fails, fully read the file before retrying. Read content includes line numbers; never include line number prefixes in old_string or new_string.",
+            "- Use {} to inspect text files. Omit start_line and line_count to read the full file; if a preview is returned, continue from its next line.",
             model_alias(tools, "workspace.read_file")
         ));
     }
     if has_tool(tools, "workspace.apply_patch") {
         lines.push(format!(
-            "- Use {} to perform precise edits on existing files. old_string must match exactly and be unique unless replace_all is true.",
+            "- Use {} to perform precise edits on existing files. old_string must come from text you read or created/replaced with the text tools, match exactly, and be unique unless replace_all is true. Never include line number prefixes in old_string or new_string.",
             model_alias(tools, "workspace.apply_patch")
         ));
+        if has_tool(tools, "workspace.read_file") {
+            lines.push(format!(
+                "- Use {} to read the exact text before patching an existing file you did not create or replace with the text tools. If a patch fails, fully read the file before retrying.",
+                model_alias(tools, "workspace.read_file")
+            ));
+        }
     }
     if has_tool(tools, "workspace.write_file") {
         lines.push(format!(
             "- Use {} to create files, append to files, or perform complete rewrites.",
             model_alias(tools, "workspace.write_file")
         ));
+        if has_tool(tools, "workspace.read_file") {
+            lines.push(format!(
+                "- Before replacing an existing file with {}, read its current contents with {} unless those contents came from your previous write with the same text tool. If the file changes, read it again before replacing it.",
+                model_alias(tools, "workspace.write_file"),
+                model_alias(tools, "workspace.read_file")
+            ));
+        }
+    }
+    if has_tool(tools, "workspace.shell") {
+        lines.push(
+            "- The shell provides built-in file and text commands, including jq. External programs are unavailable. Each call starts a new shell; files persist between calls."
+                .to_string(),
+        );
     }
     if has_tool(tools, "workspace.commit") {
         lines.push(format!(
@@ -204,10 +223,6 @@ pub fn materialize_agent_system_prompt(
         lines.push(format!(
             "- Writable workspace roots: {}.",
             format_model_workspace_roots(&profile.workspace.writable_roots)
-        ));
-        lines.push(format!(
-            "- **Never** read {} before commit",
-            profile.output.message_body_path
         ));
         lines.push(
             "> You may encounter: \"No visible workspace files found.\" This happens because there are no persisted files; please continue."

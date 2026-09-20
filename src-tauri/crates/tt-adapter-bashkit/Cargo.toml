@@ -1,0 +1,12 @@
+[package]
+name = "tt-adapter-bashkit"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+bashkit = { version = "0.18.1", default-features = false, features = ["jq"] }
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "macros", "time"] }
+tt-domain = { path = "../tt-domain" }
+tt-ports = { path = "../tt-ports" }

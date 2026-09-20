@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::{Map, Value};
+use tokio::sync::watch;
 
 use super::chat;
 use super::dice;
@@ -22,6 +23,7 @@ use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::skill_script::SkillScriptEngine;
 use tt_ports::workspace_fs::{WorkspaceFile, WorkspaceFs};
+use tt_ports::workspace_shell::WorkspaceShell;
 
 const RUN_PROMPT_SNAPSHOT_PATH: &str = "input/prompt_snapshot.json";
 
@@ -50,6 +52,10 @@ pub(crate) enum AgentToolEffect {
         files: Vec<WorkspaceFile>,
         last_text_mutation: Option<WorkspacePath>,
     },
+    /// Direct filesystem operations need only a publication candidate, not a text delta.
+    AutoCommitCandidateUpdated {
+        path: Option<WorkspacePath>,
+    },
     ChatCommitRequested {
         path: WorkspacePath,
         mode: AgentChatCommitMode,
@@ -73,6 +79,7 @@ pub(crate) struct AgentToolDispatcher {
     group_chat_repository: Arc<dyn GroupChatRepository>,
     skill_service: Arc<SkillService>,
     skill_script_engine: Arc<dyn SkillScriptEngine>,
+    workspace_shell: Arc<dyn WorkspaceShell>,
 }
 
 impl AgentToolDispatcher {
@@ -82,6 +89,7 @@ impl AgentToolDispatcher {
         group_chat_repository: Arc<dyn GroupChatRepository>,
         skill_service: Arc<SkillService>,
         skill_script_engine: Arc<dyn SkillScriptEngine>,
+        workspace_shell: Arc<dyn WorkspaceShell>,
     ) -> Self {
         Self {
             run_repository,
@@ -89,9 +97,14 @@ impl AgentToolDispatcher {
             group_chat_repository,
             skill_service,
             skill_script_engine,
+            workspace_shell,
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "tool dispatch carries the current invocation context"
+    )]
     pub(crate) async fn dispatch(
         &self,
         run_id: &str,
@@ -100,6 +113,8 @@ impl AgentToolDispatcher {
         session: &mut AgentToolSession,
         profile: &ResolvedAgentProfile,
         raw_files: Arc<dyn WorkspaceFs>,
+        cancel: watch::Receiver<bool>,
+        auto_commit_candidate: Option<WorkspacePath>,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
         let workspace = ScopedWorkspaceFs::new(
@@ -175,6 +190,16 @@ impl AgentToolDispatcher {
             }
             workspace::WORKSPACE_APPLY_PATCH => {
                 workspace::apply_patch(&workspace, call, args, session).await?
+            }
+            workspace::WORKSPACE_SHELL => {
+                workspace::shell(
+                    self.workspace_shell.as_ref(),
+                    Arc::new(workspace.track_text_mutations(auto_commit_candidate)),
+                    call,
+                    args,
+                    cancel,
+                )
+                .await?
             }
             workspace::WORKSPACE_COMMIT => {
                 workspace::commit(&workspace, call, args, profile).await?

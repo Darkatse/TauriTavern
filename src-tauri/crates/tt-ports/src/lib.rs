@@ -16,3 +16,4 @@ pub mod sync_automation;
 pub mod user_endpoint_access;
 pub mod user_media;
 pub mod workspace_fs;
+pub mod workspace_shell;

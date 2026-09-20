@@ -5,13 +5,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::commit_ledger::RunCommitLedger;
-use super::continuation::{InvocationFrame, InvocationStep, PendingToolTurn};
+use super::continuation::{AutoCommitFile, InvocationFrame, InvocationStep, PendingToolTurn};
 use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
 use super::tool_execution::recoverable_tool_error;
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::{AGENT_AWAIT, AGENT_HANDOFF, AgentToolEffect};
+use crate::services::agent_workspace_scope::is_auto_commit_text_path;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart, AgentModelMessage,
@@ -209,6 +210,7 @@ impl AgentRuntimeService {
                                 turn.next_call + 1 == turn.calls.len(),
                                 commit_ledger,
                                 cancel,
+                                turn.auto_commit.as_ref().map(|(_, file)| file.path.clone()),
                             )
                             .await
                         {
@@ -250,6 +252,39 @@ impl AgentRuntimeService {
                             matches!(&outcome.effect, AgentToolEffect::HandoffAccepted { .. });
                         let mut events = Vec::new();
                         let result = outcome.result;
+                        // All file tools use one publication policy. Failed direct writes may
+                        // have changed an earlier candidate, so they cancel this round's publish.
+                        let candidate = match &outcome.effect {
+                            AgentToolEffect::WorkspaceFileWritten { file, .. } => {
+                                if stream && is_auto_commit_text_path(&file.path) {
+                                    turn.auto_commit = None;
+                                    None
+                                } else {
+                                    Some(&file.path)
+                                }
+                            }
+                            AgentToolEffect::WorkspaceFilePatched { file, .. } => Some(&file.path),
+                            AgentToolEffect::WorkspaceFilesWritten {
+                                last_text_mutation, ..
+                            } => {
+                                if result.is_error {
+                                    turn.auto_commit = None;
+                                }
+                                last_text_mutation.as_ref()
+                            }
+                            AgentToolEffect::AutoCommitCandidateUpdated { path } => {
+                                turn.auto_commit = None;
+                                path.as_ref()
+                            }
+                            _ => None,
+                        };
+                        if !result.is_error
+                            && let Some(path) =
+                                candidate.filter(|path| is_auto_commit_text_path(path))
+                        {
+                            turn.auto_commit =
+                                Some((call.call_id.clone(), AutoCommitFile { path: path.clone() }));
+                        }
                         match outcome.effect {
                             AgentToolEffect::WorkspaceFileWritten { file, mode } => {
                                 let metrics = TextMetrics::from_text(&file.text);
@@ -264,16 +299,8 @@ impl AgentRuntimeService {
                                         "sha256": file.sha256.as_str(),
                                     }),
                                 ));
-                                turn.auto_commit = if stream {
-                                    None
-                                } else {
-                                    Some((call.call_id.clone(), file))
-                                };
                             }
-                            AgentToolEffect::WorkspaceFilesWritten {
-                                files,
-                                last_text_mutation,
-                            } => {
+                            AgentToolEffect::WorkspaceFilesWritten { files, .. } => {
                                 for file in &files {
                                     let metrics = TextMetrics::from_text(&file.text);
                                     events.push((
@@ -287,20 +314,6 @@ impl AgentRuntimeService {
                                             "sha256": file.sha256.as_str(),
                                         }),
                                     ));
-                                }
-                                if let Some(path) = last_text_mutation {
-                                    let file = files
-                                        .into_iter()
-                                        .find(|file| file.path == path)
-                                        .ok_or_else(|| {
-                                            let message = format!(
-                                                "Workspace batch effect is missing its last mutation `{}`",
-                                                path.as_str()
-                                            );
-                                            progress.blocked_reason = Some(message.clone());
-                                            ApplicationError::InternalError(message)
-                                        })?;
-                                    turn.auto_commit = Some((call.call_id.clone(), file));
                                 }
                             }
                             AgentToolEffect::WorkspaceFilePatched {
@@ -321,7 +334,6 @@ impl AgentRuntimeService {
                                         "replacements": replacements,
                                     }),
                                 ));
-                                turn.auto_commit = Some((call.call_id.clone(), file));
                             }
                             AgentToolEffect::ChatCommitRequested { .. } => {}
                             AgentToolEffect::Finish => {
@@ -355,7 +367,8 @@ impl AgentRuntimeService {
                                     new_invocation_id,
                                 });
                             }
-                            AgentToolEffect::None => {}
+                            AgentToolEffect::None
+                            | AgentToolEffect::AutoCommitCandidateUpdated { .. } => {}
                         }
 
                         remember_seen_child_results_from_await(
@@ -394,7 +407,7 @@ impl AgentRuntimeService {
                         self.auto_commit_text_file_if_eligible(
                             run_id,
                             call_id,
-                            file,
+                            &file.path,
                             round,
                             invocation_id,
                             commit_ledger,
