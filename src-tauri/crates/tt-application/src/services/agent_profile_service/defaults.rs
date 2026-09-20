@@ -9,14 +9,11 @@ use tt_domain::models::agent::profile::{
     AgentOutputPolicy, AgentPresetBinding, AgentPresetBindingMode, AgentProfileDefinition,
     AgentProfileId, AgentProfileInstructions, AgentRunPolicy, AgentSkillPolicy, AgentToolPolicy,
     AgentWorkspacePolicy, DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT, DEFAULT_AGENT_PROFILE_ID,
-    DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN,
     DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_ROUNDS,
 };
 use tt_domain::models::tool::ToolId;
 
-use super::constants::{
-    AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_LIST_TOOL, WORKSPACE_ROOT_UNIVERSE,
-};
+use super::constants::{AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, WORKSPACE_ROOT_UNIVERSE};
 
 pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, ApplicationError> {
     Ok(AgentProfileDefinition {
@@ -25,7 +22,7 @@ pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, Applica
         id: AgentProfileId::parse(DEFAULT_AGENT_PROFILE_ID)
             .map_err(ApplicationError::ValidationError)?,
         display_name: "Default Writer".to_string(),
-        description: Some("General creative writing Agent profile.".to_string()),
+        description: Some("General creative writing.".to_string()),
         preset: AgentPresetBinding {
             mode: AgentPresetBindingMode::CurrentPromptSnapshot,
             ref_: None,
@@ -52,16 +49,11 @@ pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, Applica
         },
         tools: AgentToolPolicy {
             allow: [
-                AGENT_LIST_TOOL,
                 AGENT_DELEGATE_TOOL,
                 AGENT_AWAIT_TOOL,
                 "chat.search",
                 "chat.read_messages",
                 "worldinfo.read_activated",
-                "skill.list",
-                "skill.search",
-                "skill.read",
-                "skill.run_script",
                 "workspace.list_files",
                 "workspace.search_files",
                 "workspace.read_file",
@@ -88,8 +80,6 @@ pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, Applica
         skills: AgentSkillPolicy {
             visible: vec!["*".to_string()],
             deny: Vec::new(),
-            max_read_chars_per_call: DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL,
-            max_read_chars_per_run: DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN,
         },
         workspace: AgentWorkspacePolicy {
             visible_roots: WORKSPACE_ROOT_UNIVERSE

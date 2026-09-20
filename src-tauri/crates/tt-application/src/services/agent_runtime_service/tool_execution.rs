@@ -13,8 +13,8 @@ use crate::services::hashing::hex_lower;
 use crate::services::tool_request_gate::{ToolRequestGate, ToolRequestGateError};
 
 use crate::services::agent_tools::{
-    AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, AgentToolDispatchOutcome,
-    AgentToolEffect, AgentToolSession, TASK_RETURN, WORKSPACE_FINISH, WORKSPACE_SHELL,
+    AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AgentToolDispatchOutcome, AgentToolEffect,
+    AgentToolSession, TASK_RETURN, WORKSPACE_FINISH, WORKSPACE_SHELL,
 };
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
@@ -183,8 +183,6 @@ impl AgentRuntimeService {
                     ),
                     started.elapsed().as_millis(),
                 ))
-            } else if builtin_name == Some(AGENT_LIST) {
-                self.dispatch_agent_list_tool(call, args, profile).await
             } else if builtin_name == Some(AGENT_DELEGATE) {
                 Box::pin(self.dispatch_agent_delegate_tool(
                     run_id,

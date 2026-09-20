@@ -183,6 +183,11 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
                 .iter()
                 .any(|tool| tool.tool_id.native_name() == "workspace.write_file"))
     );
+    let requests = fixture.model_gateway.requests().await;
+    assert!(
+        message_text_for_role(&requests[0], AgentModelRole::System)
+            .contains("Available agents:\nNone.")
+    );
     wait_for_closed_sessions(
         &fixture.model_gateway,
         vec!["run_contract:inv_root".to_string()],
@@ -516,125 +521,218 @@ async fn agent_runtime_duplicate_tool_call_id_preserves_first_audit_facts() {
 }
 
 #[tokio::test]
-async fn agent_runtime_agent_list_discovers_callable_profiles_with_real_repositories() {
-    let root = temp_root("agent-list");
+async fn agent_runtime_discovers_callable_agents_and_refreshes_candidates_after_selection_errors() {
+    let root = temp_root("agent-catalog");
     let fixture = agent_runtime_fixture_with_responses(
         &root,
         vec![
-            json!({
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": null,
-                        "tool_calls": [{
-                            "id": "call_agent_list",
-                            "type": "function",
-                            "function": {
-                                "name": "agent_list",
-                                "arguments": "{\"purpose\":\"delegate\"}"
-                            }
-                        }]
-                    }
-                }]
-            }),
-            json!({
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": null,
-                        "tool_calls": [
-                            {
-                                "id": "call_write_after_list",
-                                "type": "function",
-                                "function": {
-                                    "name": "workspace_write_file",
-                                    "arguments": "{\"path\":\"output/main.md\",\"content\":\"listed agents\"}"
-                                }
-                            },
-                            {
-                                "id": "call_finish_after_list",
-                                "type": "function",
-                                "function": {
-                                    "name": "workspace_finish",
-                                    "arguments": "{}"
-                                }
-                            }
-                        ]
-                    }
-                }]
-            }),
+            model_tool_response(vec![
+                model_tool_call(
+                    "invalid_delegate",
+                    "agent_delegate",
+                    json!({ "agentId": "Scene Editor", "task": { "objective": "Review." } }),
+                ),
+                model_tool_call(
+                    "missing_delegate",
+                    "agent_delegate",
+                    json!({ "agentId": "missing-editor", "task": { "objective": "Review." } }),
+                ),
+                model_tool_call(
+                    "private_delegate",
+                    "agent_delegate",
+                    json!({ "agentId": "private-editor", "task": { "objective": "Review." } }),
+                ),
+                model_tool_call(
+                    "disallowed_handoff",
+                    "agent_handoff",
+                    json!({ "agentId": "delegate-only", "handoff": { "objective": "Finish." } }),
+                ),
+            ]),
+            model_tool_response(vec![model_tool_call(
+                "finish_after_selection_errors",
+                "workspace_finish",
+                json!({}),
+            )]),
         ],
     );
-    let mut callable = fixture
+    let mut caller = fixture
         .profile_service
-        .load_profile("default-writer")
+        .load_profile(DEFAULT_AGENT_PROFILE_ID)
         .await
-        .expect("load default profile")
-        .expect("default profile exists");
-    callable.id = AgentProfileId::parse("scene-editor").expect("profile id");
-    callable.display_name = "Scene Editor".to_string();
-    callable.description = Some("Edits a draft scene for continuity.".to_string());
-    callable.tools.allow.retain(|name| {
-        !matches!(
-            name.as_str(),
-            "builtin:agent.list" | "builtin:agent.delegate" | "builtin:agent.await"
-        )
-    });
-    callable.delegation = AgentDelegationPolicy {
-        callable: true,
-        allow_as_subagent: true,
-        allowed_callers: vec!["default-writer".to_string()],
-        description_for_agents: Some("Continuity editor for scene drafts.".to_string()),
-        ..Default::default()
-    };
+        .unwrap()
+        .unwrap();
+    caller.tools.max_rounds = 2;
+    caller.delegation.can_handoff = true;
+    allow_profile_tool(&mut caller.tools.allow, "agent.handoff");
+    for (id, delegate, handoff, allowed, configured, description) in [
+        (
+            "scene-editor",
+            true,
+            true,
+            true,
+            true,
+            "Continuity editor for scene drafts.",
+        ),
+        (
+            "delegate-only",
+            true,
+            false,
+            true,
+            true,
+            "Returns review notes.",
+        ),
+        (
+            "handoff-only",
+            false,
+            true,
+            true,
+            true,
+            "Completes the final draft.",
+        ),
+        ("private-editor", true, true, false, true, "Private agent."),
+        (
+            "unconfigured-editor",
+            true,
+            true,
+            true,
+            false,
+            "Missing model.",
+        ),
+    ] {
+        let mut target = caller.clone();
+        target.id = AgentProfileId::parse(id).unwrap();
+        target.display_name = id.into();
+        target.description = Some("UI description is not the invocation guidance.".into());
+        target.tools.allow.retain(|name| {
+            !matches!(
+                name.as_str(),
+                "builtin:agent.delegate" | "builtin:agent.handoff" | "builtin:agent.await"
+            )
+        });
+        target.delegation = AgentDelegationPolicy {
+            callable: true,
+            allow_as_subagent: delegate,
+            allow_as_handoff_target: handoff,
+            allowed_callers: vec![
+                if allowed {
+                    DEFAULT_AGENT_PROFILE_ID
+                } else {
+                    "another-agent"
+                }
+                .into(),
+            ],
+            description_for_agents: Some(description.into()),
+            ..Default::default()
+        };
+        if id == "handoff-only" {
+            target.delegation.description_for_agents = None;
+            target.description = Some(description.into());
+        }
+        if !configured {
+            target.model.mode =
+                tt_domain::models::agent::profile::AgentModelBindingMode::RequiresConfiguration;
+        }
+        fixture
+            .profile_service
+            .save_profile(target, fixture.service.tool_catalog())
+            .await
+            .unwrap();
+    }
     fixture
         .profile_service
-        .save_profile(callable, fixture.service.tool_catalog())
+        .save_profile(caller, fixture.service.tool_catalog())
         .await
-        .expect("save callable profile");
-    let mut profile = resolve_contract_profile(&fixture).await;
-    profile.run.presentation = AgentRunPresentation::Background;
-    profile.tools.max_rounds = 2;
-    let run = contract_run(
-        "run_agent_list_contract",
-        AgentRunPresentation::Background,
-        &profile,
-    );
-    fixture
-        .agent_repository
-        .create_run(&run)
-        .await
-        .expect("create run");
-    let request = chat_request("list callable agents");
-    let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
-    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+        .unwrap();
+    let profile = resolve_contract_profile(&fixture).await;
 
-    fixture
-        .service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
+    // Freeze the model response after initial discovery, then change target availability.
+    let response = fixture.model_gateway.responses.lock().await;
+    let handle = start_contract_agent_run(
+        &fixture,
+        &profile,
+        AgentRunPresentation::Background,
+        "discover-agents",
+        Some(false),
+    )
+    .await;
+    let mut requests = fixture.model_gateway.request_count.subscribe();
+    tokio::time::timeout(
+        AGENT_CONTRACT_ASYNC_TIMEOUT,
+        requests.wait_for(|count| *count == 1),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let mut target = fixture
+        .profile_service
+        .load_profile("scene-editor")
         .await
-        .expect("agent loop");
+        .unwrap()
+        .unwrap();
+    target.delegation.allow_as_subagent = false;
+    target.delegation.description_for_agents = Some("Updated handoff guidance.".into());
+    fixture
+        .profile_service
+        .save_profile(target, fixture.service.tool_catalog())
+        .await
+        .unwrap();
+    drop(response);
+    let completed = super::resume::wait_for_checkpoint(&fixture, &handle.run_id).await;
+    assert_eq!(completed.run.status, AgentRunStatus::Completed);
 
     let requests = fixture.model_gateway.requests().await;
-    let list_results = tool_result_structured_values(&requests[1], "agent.list");
-    assert_eq!(list_results.len(), 1);
-    assert_eq!(list_results[0]["agents"][0]["profileId"], "scene-editor");
+    assert_eq!(requests.len(), 2);
+    let initial = message_text_for_role(&requests[0], AgentModelRole::System);
+    assert!(initial.contains("Available agents:"));
+    for entry in [
+        "- scene-editor [delegate, handoff]: Continuity editor for scene drafts.",
+        "- delegate-only [delegate]: Returns review notes.",
+        "- handoff-only [handoff]: Completes the final draft.",
+    ] {
+        assert!(
+            initial.contains(entry),
+            "missing candidate {entry}: {initial}"
+        );
+    }
+    assert!(!initial.contains("private-editor"));
+    assert!(!initial.contains("unconfigured-editor"));
     assert_eq!(
-        list_results[0]["agents"][0]["operations"],
-        json!(["delegate"])
+        message_text_for_role(&requests[1], AgentModelRole::System),
+        initial
     );
-    assert_eq!(
-        list_results[0]["agents"][0]["description"],
-        "Continuity editor for scene drafts."
-    );
-
-    let _ = fs::remove_dir_all(root).await;
+    let results = requests[1]
+        .messages
+        .iter()
+        .flat_map(|message| &message.parts)
+        .filter_map(|part| match part {
+            AgentModelContentPart::ToolResult { result } => Some(result),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 4);
+    for result in results {
+        assert!(
+            result.is_error,
+            "expected a rejected target: {}",
+            result.content
+        );
+        let (_, catalog) = result
+            .content
+            .split_once("Available agents:")
+            .expect("selection error includes current operation candidates");
+        if result.call_id == "disallowed_handoff" {
+            assert!(catalog.contains("scene-editor [handoff]: Updated handoff guidance."));
+            assert!(catalog.contains("handoff-only [handoff]"));
+            assert!(!catalog.contains("delegate-only"));
+        } else {
+            assert!(catalog.contains("delegate-only [delegate]"));
+            assert!(!catalog.contains("scene-editor"));
+            assert!(!catalog.contains("handoff-only"));
+        }
+        assert!(!catalog.contains("private-editor"));
+        assert!(!catalog.contains("unconfigured-editor"));
+    }
+    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
@@ -1090,13 +1188,13 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
                 ),
                 model_tool_call(
                     "skill_read",
-                    "skill_read",
-                    json!({ "name": "macro-demo", "path": "references/template.md", "start_line": 3, "line_count": 1 }),
+                    "workspace_read_file",
+                    json!({ "path": "skills/macro-demo/references/template.md", "start_line": 3, "line_count": 1 }),
                 ),
                 model_tool_call(
                     "skill_search",
-                    "skill_search",
-                    json!({ "name": "macro-demo", "query": "lantern" }),
+                    "workspace_search_files",
+                    json!({ "path": "skills/macro-demo/references", "query": "lantern" }),
                 ),
                 model_tool_call(
                     "chat_read",
@@ -1116,13 +1214,23 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
                 ),
                 model_tool_call(
                     "script",
-                    "skill_run_script",
-                    json!({ "skill": "macro-demo", "script": "helper" }),
+                    "workspace_shell",
+                    json!({ "command": "js --call default /skills/macro-demo/scripts/helper.js" }),
                 ),
                 model_tool_call(
                     "shell_script",
                     "workspace_shell",
                     json!({"command": r#"js -e 'import {workspace, macros, context} from "@tauritavern/runtime"; console.log(`${context.macro.names.char}: ${macros.render(workspace.readText("output/main.md"))}`);'"#}),
+                ),
+                model_tool_call(
+                    "copy_skill",
+                    "workspace_shell",
+                    json!({"command": r#"cp /skills/macro-demo/references/template.md /scratch/copied.md && printf '\nedited' >> /scratch/copied.md && cp /skills/macro-demo/references/binary.bin /scratch/copied.bin && sha256sum /skills/macro-demo/references/template.md && stat -c %s /skills/macro-demo/references/template.md && python3 -c 'from pathlib import Path; print(Path("/skills/macro-demo/references/template.md").read_text())'"#}),
+                ),
+                model_tool_call(
+                    "readonly_skill",
+                    "workspace_shell",
+                    json!({"command": "printf overwritten > /skills/macro-demo/references/template.md"}),
                 ),
             ]),
             model_tool_response(vec![model_tool_call(
@@ -1141,11 +1249,15 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
                 files: [
                     ("SKILL.md", "---\nname: macro-demo\ndescription: Macro test\n---\n{{char}}"),
                     ("references/template.md", source),
-                    ("scripts/helper.js", "import { macros, workspace } from '@tauritavern/runtime'; export default () => macros.render(workspace.readText('output/main.md'));"),
+                    ("scripts/helper.js", "import { workspace } from '@tauritavern/runtime'; import { literal } from './literal.js'; export default () => { if (literal !== '{{char}}') throw new Error('script source was expanded'); return workspace.readText('skills/macro-demo/references/template.md'); };"),
+                    ("scripts/literal.js", "export const literal = '{{char}}';"),
                 ].into_iter().map(|(path, content)| SkillInlineFile {
                     path: path.into(), content: content.into(), encoding: "utf8".into(),
                     media_type: None, size_bytes: None, sha256: None,
-                }).collect(),
+                }).chain([SkillInlineFile {
+                    path: "references/binary.bin".into(), content: "/w==".into(), encoding: "base64".into(),
+                    media_type: None, size_bytes: None, sha256: None,
+                }]).collect(),
             },
         }).await.unwrap();
     let mut profile = resolve_contract_profile(&fixture).await;
@@ -1162,7 +1274,17 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
     chat.add_message(ChatMessage::user("User", source));
     fixture.chat_repository.save(&chat).await.unwrap();
     fixture.agent_repository.create_run(&run).await.unwrap();
-    let request = chat_request("read the frozen text");
+    let mut request = chat_request("read the frozen text");
+    request.payload["messages"][0] = json!({
+        "role": "developer",
+        "content": "My custom writing instructions.",
+        "_tauritavern_prompt_component": "agentSystemPrompt",
+    });
+    let later_instruction = "Keep the response in the requested language.";
+    request.payload["messages"]
+        .as_array_mut()
+        .unwrap()
+        .insert(1, json!({ "role": "system", "content": later_instruction }));
     let prompt = json!({
         "chatCompletionPayload": request.payload,
         "worldInfoActivation": { "entries": [] },
@@ -1199,8 +1321,26 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
         })
         .collect::<std::collections::HashMap<_, _>>();
     for result in results.values() {
-        assert!(!result.is_error, "{}: {}", result.call_id, result.content);
+        assert_eq!(
+            result.is_error,
+            result.call_id == "readonly_skill",
+            "{}: {}",
+            result.call_id,
+            result.content
+        );
     }
+    let instructions = &requests[0].messages[0];
+    assert_eq!(instructions.role, AgentModelRole::Developer);
+    let AgentModelContentPart::Text { text } = &instructions.parts[0] else {
+        panic!("text instructions")
+    };
+    assert!(text.starts_with("My custom writing instructions."));
+    assert_eq!(
+        message_text_for_role(&requests[0], AgentModelRole::System),
+        later_instruction
+    );
+    assert_eq!(text.matches("skills/macro-demo/SKILL.md").count(), 1);
+    assert_eq!(requests[0].messages[0], requests[1].messages[0]);
     assert!(results["skill_read"].content.contains("3 | blue lantern"));
     assert_eq!(results["skill_read"].structured["totalLines"], 6);
     assert_eq!(
@@ -1214,6 +1354,8 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
             "{id}"
         );
     }
+    assert_eq!(results["skill_search"].structured["skippedFiles"], 1);
+    assert_eq!(results["skill_search"].structured["searchedFiles"], 1);
     assert!(
         results["file_search"].structured["hits"]
             .as_array()
@@ -1235,17 +1377,65 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
             .content
             .contains("Alternate / Local / Global / Outlet / 2026-09-05 / USER:")
     );
+    let rendered = "heading\nfirst line\nblue lantern\nlast line\nFrozen name\nAlternate / Local / Global / Outlet / 2026-09-05 / USER:";
+    let rendered_file = tt_ports::workspace_fs::WorkspaceFile::from_text(
+        WorkspacePath::parse("skills/macro-demo/references/template.md").unwrap(),
+        rendered.to_string(),
+    );
     assert_eq!(
-        fixture
-            .agent_repository
-            .open_filesystem(&run.id)
-            .await
-            .expect("open workspace")
+        results["skill_read"].structured["sha256"],
+        rendered_file.sha256
+    );
+    assert!(
+        results["copy_skill"]
+            .content
+            .contains(&rendered_file.sha256)
+    );
+    assert!(
+        results["copy_skill"]
+            .content
+            .contains(&format!("\n{}\n", rendered.len()))
+    );
+    assert!(results["copy_skill"].content.contains(rendered));
+    let files = fixture
+        .agent_repository
+        .open_filesystem(&run.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        files
             .read_text(&WorkspacePath::parse("output/main.md").unwrap())
             .await
             .unwrap()
             .text,
         source
+    );
+    assert_eq!(
+        files
+            .read_text(&WorkspacePath::parse("scratch/copied.md").unwrap())
+            .await
+            .unwrap()
+            .text,
+        format!("{rendered}\nedited")
+    );
+    assert_eq!(
+        files
+            .read_file(&WorkspacePath::parse("scratch/copied.bin").unwrap(), 10)
+            .await
+            .unwrap(),
+        [255]
+    );
+    assert_eq!(
+        FileSkillRepository::new(root.join("_tauritavern/skills"))
+            .read_skill_bytes(
+                &SkillScope::Global,
+                "macro-demo",
+                &WorkspacePath::parse("references/template.md").unwrap(),
+                usize::MAX
+            )
+            .await
+            .unwrap(),
+        source.as_bytes()
     );
     let _ = fs::remove_dir_all(root).await;
 }

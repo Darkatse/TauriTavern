@@ -53,13 +53,13 @@ pub(super) fn validate_skill_root(
     let mut warnings = Vec::new();
     if has_scripts {
         warnings.push(
-            "Skill contains scripts/ files; TauriTavern stores them but does not execute them."
+            "Skill contains scripts/ files; Agent can run supported scripts with workspace.shell."
                 .to_string(),
         );
     }
     if has_binary {
         warnings.push(
-            "Skill contains binary files; Agent skill.read can only read UTF-8 text files."
+            "Skill contains binary files; workspace.read_file only reads UTF-8 text files."
                 .to_string(),
         );
     }

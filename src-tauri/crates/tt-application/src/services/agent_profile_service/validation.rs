@@ -13,7 +13,7 @@ use tt_domain::models::mcp::{McpRegistrationId, validate_native_tool_name};
 use tt_domain::models::tool::{ToolCatalog, ToolDescriptionOverride, ToolDescriptor, ToolId};
 
 use super::constants::{
-    AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, AGENT_LIST_TOOL, TASK_RETURN_TOOL,
+    AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, TASK_RETURN_TOOL,
     WORKSPACE_ROOT_UNIVERSE,
 };
 
@@ -43,8 +43,15 @@ pub(super) fn migrate_profile_schema(
     profile: &mut AgentProfileDefinition,
 ) -> Result<bool, ApplicationError> {
     match profile.schema_version {
-        1 | 2 => {
-            migrate_tool_policy_to_canonical_ids(&mut profile.tools)?;
+        1..=3 => {
+            if profile.schema_version < 3 {
+                migrate_tool_policy_to_canonical_ids(&mut profile.tools)?;
+            }
+            let keep = |id: &str| !is_retired_agent_tool(id);
+            profile.tools.allow.retain(|id| keep(id));
+            profile.tools.deny.retain(|id| keep(id));
+            profile.tools.tool_descriptions.retain(|id, _| keep(id));
+            profile.tools.max_calls_per_tool.retain(|id, _| keep(id));
             profile.schema_version = AGENT_PROFILE_SCHEMA_VERSION;
             Ok(true)
         }
@@ -53,6 +60,17 @@ pub(super) fn migrate_profile_schema(
             "agent.profile_schema_unsupported: schemaVersion {version} is unsupported"
         ))),
     }
+}
+
+pub(crate) fn is_retired_agent_tool(id: &str) -> bool {
+    matches!(
+        id,
+        "builtin:skill.list"
+            | "builtin:skill.read"
+            | "builtin:skill.search"
+            | "builtin:skill.run_script"
+            | "builtin:agent.list"
+    )
 }
 
 fn migrate_tool_policy_to_canonical_ids(
@@ -365,16 +383,9 @@ pub(super) fn validate_delegation_policy(
         ));
     }
 
-    let agent_list_visible = tool_is_visible(tools, AGENT_LIST_TOOL);
     let agent_delegate_visible = tool_is_visible(tools, AGENT_DELEGATE_TOOL);
     let agent_await_visible = tool_is_visible(tools, AGENT_AWAIT_TOOL);
     let agent_handoff_visible = tool_is_visible(tools, AGENT_HANDOFF_TOOL);
-    if agent_list_visible && !policy.can_delegate && !policy.can_handoff {
-        return Err(ApplicationError::ValidationError(
-            "agent.profile_agent_list_requires_delegation: agent.list requires delegation.canDelegate or delegation.canHandoff"
-                .to_string(),
-        ));
-    }
     if (agent_delegate_visible || agent_await_visible) && !policy.can_delegate {
         return Err(ApplicationError::ValidationError(
             "agent.profile_agent_delegate_requires_delegation: agent.delegate/agent.await require delegation.canDelegate"
@@ -451,17 +462,6 @@ pub(super) fn validate_skill_policy(policy: &AgentSkillPolicy) -> Result<(), App
     if policy.visible.is_empty() {
         return Err(ApplicationError::ValidationError(
             "agent.profile_skill_visible_empty: skills.visible cannot be empty".to_string(),
-        ));
-    }
-    if policy.max_read_chars_per_call == 0 || policy.max_read_chars_per_run == 0 {
-        return Err(ApplicationError::ValidationError(
-            "agent.profile_skill_budget_invalid: skill read budgets must be > 0".to_string(),
-        ));
-    }
-    if policy.max_read_chars_per_call > policy.max_read_chars_per_run {
-        return Err(ApplicationError::ValidationError(
-            "agent.profile_skill_budget_invalid: maxReadCharsPerCall cannot exceed maxReadCharsPerRun"
-                .to_string(),
         ));
     }
     for name in &policy.visible {

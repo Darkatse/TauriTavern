@@ -84,7 +84,6 @@ export type AgentSystemDraftEditor = {
     setContextHistoryMessages: (value: AgentProfileDraftNumber) => void;
     setContextIncludeWorldInfo: (checked: boolean) => void;
     setSkillsCsvField: (field: 'visibleCsv' | 'denyCsv', value: string) => void;
-    setSkillsLimitField: (field: 'maxReadCharsPerCall' | 'maxReadCharsPerRun', value: AgentProfileDraftNumber) => void;
     setWorkspaceRootVisible: (root: string, visible: boolean) => void;
     setWorkspaceRootWritable: (root: string, writable: boolean) => void;
     setOutputArtifactField: (field: 'path' | 'kind', value: string) => void;
@@ -282,11 +281,6 @@ export function createAgentSystemDraftEditor(context: AgentSystemDraftEditorCont
             });
         },
         setSkillsCsvField(field, value) {
-            editDraft((draft) => {
-                draft.skills[field] = value;
-            });
-        },
-        setSkillsLimitField(field, value) {
             editDraft((draft) => {
                 draft.skills[field] = value;
             });

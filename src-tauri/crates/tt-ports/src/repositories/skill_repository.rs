@@ -1,15 +1,43 @@
 use async_trait::async_trait;
 
+use crate::workspace_fs::{WorkspaceDirectoryEntry, WorkspaceMetadata};
 use tt_domain::errors::DomainError;
+use tt_domain::models::agent::WorkspacePath;
 use tt_domain::models::skill::{
     SkillExportResult, SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry,
     SkillInstallRequest, SkillInstallResult, SkillMoveRequest, SkillReadRequest, SkillReadResult,
     SkillScope, SkillScopeFilter, SkillScopeRetargetRequest, SkillScopeRetargetResult,
-    SkillSearchRequest, SkillSearchResult, SkillWriteRequest,
+    SkillWriteRequest,
 };
 
 #[async_trait]
 pub trait SkillRepository: Send + Sync {
+    /// Read current installed bytes. Paths are relative to the selected package.
+    async fn read_skill_bytes(
+        &self,
+        scope: &SkillScope,
+        name: &str,
+        path: &WorkspacePath,
+        maximum_bytes: usize,
+    ) -> Result<Vec<u8>, DomainError>;
+
+    /// None denotes the installed package root.
+    async fn skill_metadata(
+        &self,
+        scope: &SkillScope,
+        name: &str,
+        path: Option<&WorkspacePath>,
+    ) -> Result<WorkspaceMetadata, DomainError>;
+
+    /// List one level, sorted by package-relative path; exceeding the limit is an error.
+    async fn read_skill_dir(
+        &self,
+        scope: &SkillScope,
+        name: &str,
+        path: Option<&WorkspacePath>,
+        maximum_entries: usize,
+    ) -> Result<Vec<WorkspaceDirectoryEntry>, DomainError>;
+
     async fn list_skills(
         &self,
         scope_filter: SkillScopeFilter,
@@ -39,16 +67,6 @@ pub trait SkillRepository: Send + Sync {
         request: SkillInstallRequest,
     ) -> Result<SkillInstallResult, DomainError>;
 
-    /// 读取已安装 skill 包内脚本文件的**源码文本**。
-    /// 实现必须校验：skill 已安装、相对路径规范化后未逃逸 skill 目录、
-    /// 目标存在且为普通文件（非符号链接），然后返回文件文本内容。
-    async fn read_skill_script(
-        &self,
-        scope: SkillScope,
-        name: &str,
-        relative_path: &str,
-    ) -> Result<String, DomainError>;
-
     async fn read_skill_file(
         &self,
         request: SkillReadRequest,
@@ -58,11 +76,6 @@ pub trait SkillRepository: Send + Sync {
         &self,
         request: SkillWriteRequest,
     ) -> Result<SkillReadResult, DomainError>;
-
-    async fn search_skill_files(
-        &self,
-        request: SkillSearchRequest,
-    ) -> Result<SkillSearchResult, DomainError>;
 
     async fn export_skill(
         &self,

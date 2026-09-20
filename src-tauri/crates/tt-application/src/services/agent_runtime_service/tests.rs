@@ -168,8 +168,6 @@ fn resolved_profile(preset: AgentPresetBinding) -> ResolvedAgentProfile {
         skills: AgentSkillPolicy {
             visible: vec!["*".to_string()],
             deny: Vec::new(),
-            max_read_chars_per_call: 1000,
-            max_read_chars_per_run: 1000,
         },
         workspace: AgentWorkspacePolicy {
             visible_roots: vec!["output".to_string()],

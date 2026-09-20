@@ -14,7 +14,7 @@ use tt_domain::models::agent::{AgentToolResult, WorkspacePath};
 use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
 use tt_domain::text_search::PreparedTextSearch;
-use tt_ports::workspace_fs::{WorkspaceEntryKind, WorkspaceFile, WorkspaceFs};
+use tt_ports::workspace_fs::{WorkspaceEntryKind, WorkspaceFs};
 
 use super::super::dispatcher::AgentToolEffect;
 use super::super::structured::{TextMetricsPayload, structured_value};
@@ -134,7 +134,7 @@ pub(in crate::services::agent_tools) async fn search_files(
     }
 
     let (files, traversal_truncated) =
-        match collect_search_files(workspace_files, policy, path.as_ref()).await {
+        match collect_search_paths(workspace_files, policy, path.as_ref()).await {
             Ok(result) => result,
             Err(DomainError::NotFound(message)) => {
                 return Ok((
@@ -147,10 +147,29 @@ pub(in crate::services::agent_tools) async fn search_files(
                 Err(error) => return Err(error.into()),
             },
         };
-    let searched_files = files.len();
+    let mut searched_files = 0;
+    let mut skipped_files = 0;
     let search = PreparedTextSearch::new(query, limit, context_lines);
     let mut hits = Vec::new();
-    for file in files {
+    for path in files {
+        let file = match workspace_files.read_text(&path).await {
+            Ok(file) => file,
+            Err(DomainError::WorkspaceFileNotText { .. }) => {
+                skipped_files += 1;
+                continue;
+            }
+            Err(DomainError::NotFound(message)) => {
+                return Ok((
+                    tool_error(call, "workspace.path_not_found", &message),
+                    AgentToolEffect::None,
+                ));
+            }
+            Err(error) => match super::args::classify_workspace_io_error(call, error) {
+                Ok(result) => return Ok((result, AgentToolEffect::None)),
+                Err(error) => return Err(error.into()),
+            },
+        };
+        searched_files += 1;
         hits.extend(search.search(&file.text).into_iter().map(|hit| {
             let path = file.path.as_str().to_string();
             let metrics = TextMetrics::from_text(&hit.snippet);
@@ -178,7 +197,13 @@ pub(in crate::services::agent_tools) async fn search_files(
     let hit_truncated = hits.len() > limit;
     hits.truncate(limit);
 
-    let content = render_content(query, &hits, traversal_truncated || hit_truncated);
+    let mut content = render_content(query, &hits, traversal_truncated || hit_truncated);
+    if skipped_files > 0 {
+        content.push_str(&format!(
+            "\n\nSkipped {skipped_files} file{} that could not be read as text.",
+            if skipped_files == 1 { "" } else { "s" }
+        ));
+    }
     let resource_refs = hits
         .iter()
         .map(|hit| hit.ref_id.clone())
@@ -192,7 +217,7 @@ pub(in crate::services::agent_tools) async fn search_files(
                 query,
                 hits: hits.iter().map(structured_hit).collect(),
                 searched_files,
-                skipped_files: 0,
+                skipped_files,
                 truncated: traversal_truncated || hit_truncated,
             }),
             is_error: false,
@@ -203,11 +228,11 @@ pub(in crate::services::agent_tools) async fn search_files(
     ))
 }
 
-async fn collect_search_files(
+async fn collect_search_paths(
     workspace_files: &dyn WorkspaceFs,
     policy: &WorkspaceAccessPolicy,
     path: Option<&WorkspacePath>,
-) -> Result<(Vec<WorkspaceFile>, bool), DomainError> {
+) -> Result<(Vec<WorkspacePath>, bool), DomainError> {
     let roots = match path {
         Some(path) => vec![path.clone()],
         None => policy
@@ -237,8 +262,7 @@ async fn collect_search_files(
                 truncated = true;
                 break;
             }
-            let file = workspace_files.read_text(&entry.path).await?;
-            files.push(file);
+            files.push(entry.path);
         }
     }
     Ok((files, truncated))

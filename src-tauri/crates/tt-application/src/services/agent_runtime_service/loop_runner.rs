@@ -17,7 +17,7 @@ use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart, AgentModelMessage,
     AgentModelResponse, AgentModelRole, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
-    AgentToolResult, WorkspaceFileWriteMode, WorkspacePath,
+    AgentToolResult, WorkspacePath,
 };
 use tt_domain::models::tool::ToolTurnContract;
 use tt_domain::text_metrics::TextMetrics;
@@ -264,14 +264,6 @@ impl AgentRuntimeService {
                                 }
                             }
                             AgentToolEffect::WorkspaceFilePatched { file, .. } => Some(&file.path),
-                            AgentToolEffect::WorkspaceFilesWritten {
-                                last_text_mutation, ..
-                            } => {
-                                if result.is_error {
-                                    turn.auto_commit = None;
-                                }
-                                last_text_mutation.as_ref()
-                            }
                             AgentToolEffect::AutoCommitCandidateUpdated { path } => {
                                 turn.auto_commit = None;
                                 path.as_ref()
@@ -299,22 +291,6 @@ impl AgentRuntimeService {
                                         "sha256": file.sha256.as_str(),
                                     }),
                                 ));
-                            }
-                            AgentToolEffect::WorkspaceFilesWritten { files, .. } => {
-                                for file in &files {
-                                    let metrics = TextMetrics::from_text(&file.text);
-                                    events.push((
-                                        "workspace_file_written",
-                                        json!({
-                                            "invocationId": invocation_id,
-                                            "path": file.path.as_str(),
-                                            "mode": WorkspaceFileWriteMode::Replace,
-                                            "chars": metrics.chars,
-                                            "words": metrics.words,
-                                            "sha256": file.sha256.as_str(),
-                                        }),
-                                    ));
-                                }
                             }
                             AgentToolEffect::WorkspaceFilePatched {
                                 file,

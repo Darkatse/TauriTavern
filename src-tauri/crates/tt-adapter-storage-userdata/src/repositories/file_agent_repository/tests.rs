@@ -155,8 +155,6 @@ fn sample_resolved_profile(manifest: &WorkspaceManifest) -> ResolvedAgentProfile
         skills: AgentSkillPolicy {
             visible: vec!["*".to_string()],
             deny: Vec::new(),
-            max_read_chars_per_call: 1,
-            max_read_chars_per_run: 1,
         },
         workspace: AgentWorkspacePolicy {
             visible_roots: manifest

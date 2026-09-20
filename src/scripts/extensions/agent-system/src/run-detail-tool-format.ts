@@ -145,7 +145,7 @@ function rangeSummary(structured: RunEventPayload): string {
 
 function toolContentForDisplay(content: string, name: string): string {
     const normalized = content.trim();
-    if ((name === 'workspace.read_file' || name === 'skill.read') && normalized.includes('\n')) {
+    if (name === 'workspace.read_file' && normalized.includes('\n')) {
         return normalized.slice(normalized.indexOf('\n') + 1).trim();
     }
     return normalized;

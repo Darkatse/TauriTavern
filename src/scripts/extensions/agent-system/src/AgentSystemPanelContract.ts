@@ -99,12 +99,6 @@ export const TOOL_GROUPS: readonly AgentToolGroup[] = Object.freeze([
         tools: ['builtin:chat.search', 'builtin:chat.read_messages', 'builtin:worldinfo.read_activated'],
     },
     {
-        id: 'skills',
-        labelKey: 'skillTools',
-        icon: 'fa-book-open',
-        tools: ['builtin:skill.list', 'builtin:skill.search', 'builtin:skill.read', 'builtin:skill.run_script'],
-    },
-    {
         id: 'workspace-read',
         labelKey: 'workspaceReadTools',
         icon: 'fa-folder-tree',

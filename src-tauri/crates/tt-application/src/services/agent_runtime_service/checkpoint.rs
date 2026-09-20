@@ -50,7 +50,7 @@ impl RunCheckpoint {
                 Some("Run initialization did not produce an invocation to resume.".to_string());
         }
         Self {
-            schema_version: 1,
+            schema_version: 2,
             run,
             terminal_seq,
             state,
@@ -122,7 +122,7 @@ impl AgentRuntimeService {
             })?;
         let checkpoint: RunCheckpoint = serde_json::from_slice(&bytes)
             .map_err(|error| invalid(format!("checkpoint cannot be decoded: {error}")))?;
-        if checkpoint.schema_version != 1 || checkpoint.run.id != run_id {
+        if checkpoint.schema_version != 2 || checkpoint.run.id != run_id {
             return Err(invalid("checkpoint version or run identity does not match"));
         }
         let run = self.run_repository.load_run(run_id).await?;
@@ -411,7 +411,7 @@ fn hydrate_frame(
         .ok_or_else(|| invalid("additional round budget is too large"))?;
     prepared.runtime_context = Arc::clone(context);
     frame.progress.session.runtime_context = Arc::clone(context);
-    frame.progress.session.effective_skills = prepared.effective_skills.clone();
+    frame.progress.session.effective_skills = prepared.effective_skills.clone().into();
     reset_transport_for_resume(&mut prepared.request);
     Ok(())
 }

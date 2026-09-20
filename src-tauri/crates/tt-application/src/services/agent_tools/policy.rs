@@ -1,9 +1,7 @@
 use std::collections::HashSet;
 
 use super::workspace::{WORKSPACE_COMMIT, WORKSPACE_FINISH};
-use super::{
-    AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_LIST, BuiltinAgentToolRegistry, TASK_RETURN,
-};
+use super::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, BuiltinAgentToolRegistry, TASK_RETURN};
 use crate::errors::ApplicationError;
 use crate::services::mcp_service::McpModelTool;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
@@ -12,10 +10,9 @@ use tt_domain::models::tool::{
     InvocationToolSnapshot, ToolBinding, ToolId, ToolSnapshotId, ToolTurnContract,
 };
 
-const RETURN_MODE_DENIED_TOOLS: [&str; 6] = [
+const RETURN_MODE_DENIED_TOOLS: [&str; 5] = [
     WORKSPACE_COMMIT,
     WORKSPACE_FINISH,
-    AGENT_LIST,
     AGENT_DELEGATE,
     AGENT_HANDOFF,
     AGENT_AWAIT,

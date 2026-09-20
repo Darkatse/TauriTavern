@@ -10,7 +10,6 @@ chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-thiserror = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["sync"] }
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 tt-contracts = { path = "../tt-contracts" }

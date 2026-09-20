@@ -338,6 +338,10 @@ impl AgentRuntimeService {
         self.resolve_model_binding(run_id, &resolved_profile, &mut request)
             .await?;
         self.ensure_not_cancelled(cancel)?;
+        let agents = self
+            .agent_catalog(&resolved_profile, &visible_tools)
+            .await?;
+        super::prompt_snapshot::append_runtime_catalogs(&mut request, &effective_skills, &agents)?;
         let request = prepare_agent_tool_request(
             request,
             &visible_tools,

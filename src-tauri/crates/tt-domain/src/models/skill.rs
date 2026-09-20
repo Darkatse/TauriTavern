@@ -264,9 +264,6 @@ pub struct SkillInlineFile {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillReadRequest {
-    /// Internal text view; never accepted from serialized requests.
-    #[serde(skip)]
-    pub frozen_macros: Option<std::sync::Arc<crate::frozen_macros::FrozenMacros>>,
     #[serde(default)]
     pub scope: SkillScope,
     pub name: String,
@@ -313,47 +310,6 @@ pub struct SkillReadResult {
     pub sha256: String,
     pub truncated: bool,
     pub resource_ref: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct SkillSearchRequest {
-    #[serde(skip)]
-    pub frozen_macros: Option<std::sync::Arc<crate::frozen_macros::FrozenMacros>>,
-    #[serde(default)]
-    pub scope: SkillScope,
-    pub name: String,
-    pub query: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    pub limit: usize,
-    pub context_lines: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct SkillSearchHit {
-    pub path: String,
-    pub score: f32,
-    pub start_line: usize,
-    pub end_line: usize,
-    pub snippet: String,
-    pub bytes: u64,
-    pub sha256: String,
-    pub resource_ref: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct SkillSearchResult {
-    pub scope: SkillScope,
-    pub name: String,
-    pub query: String,
-    pub hits: Vec<SkillSearchHit>,
-    pub searched_files: usize,
-    pub skipped_files: usize,
-    pub truncated: bool,
-    pub returned_chars: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

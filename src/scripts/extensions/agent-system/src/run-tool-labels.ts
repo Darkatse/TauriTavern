@@ -1,7 +1,6 @@
 import { translateAgentSystem as tr, type AgentSystemMessageKey } from './i18n';
 
 const TOOL_LABEL_KEYS: Readonly<Record<string, AgentSystemMessageKey>> = Object.freeze({
-    'agent.list': 'timelineToolAgentList',
     'agent.delegate': 'timelineToolAgentDelegate',
     'agent.handoff': 'timelineToolAgentHandoff',
     'agent.await': 'timelineToolAgentAwait',
@@ -10,9 +9,6 @@ const TOOL_LABEL_KEYS: Readonly<Record<string, AgentSystemMessageKey>> = Object.
     'chat.read_messages': 'timelineToolChatReadMessages',
     'dice.roll': 'timelineToolDiceRoll',
     'worldinfo.read_activated': 'timelineToolWorldInfoReadActivated',
-    'skill.list': 'timelineToolSkillList',
-    'skill.search': 'timelineToolSkillSearch',
-    'skill.read': 'timelineToolSkillRead',
     'workspace.list_files': 'timelineToolWorkspaceListFiles',
     'workspace.search_files': 'timelineToolWorkspaceSearchFiles',
     'workspace.read_file': 'timelineToolWorkspaceReadFile',

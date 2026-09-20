@@ -1,13 +1,10 @@
 use super::agent::{
     agent_await_descriptor, agent_delegate_descriptor, agent_handoff_descriptor,
-    agent_list_descriptor, task_return_descriptor,
+    task_return_descriptor,
 };
 use super::chat::{chat_read_messages_descriptor, chat_search_descriptor};
 use super::dice::dice_roll_descriptor;
 use super::policy::builtin_model_alias;
-use super::skill::{
-    skill_list_descriptor, skill_read_descriptor, skill_script_descriptor, skill_search_descriptor,
-};
 use super::workspace::{
     WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
     WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE,
@@ -31,7 +28,6 @@ pub struct BuiltinAgentToolRegistry {
 impl BuiltinAgentToolRegistry {
     pub fn all() -> Self {
         let descriptors = vec![
-            agent_list_descriptor(),
             agent_delegate_descriptor(),
             agent_handoff_descriptor(),
             agent_await_descriptor(),
@@ -40,10 +36,6 @@ impl BuiltinAgentToolRegistry {
             chat_read_messages_descriptor(),
             worldinfo_read_activated_descriptor(),
             dice_roll_descriptor(),
-            skill_list_descriptor(),
-            skill_search_descriptor(),
-            skill_read_descriptor(),
-            skill_script_descriptor(),
             workspace_list_files_descriptor(),
             workspace_search_files_descriptor(),
             workspace_read_file_descriptor(),
@@ -272,10 +264,9 @@ fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::super::agent::{AGENT_LIST, TASK_RETURN};
+    use super::super::agent::{AGENT_DELEGATE, TASK_RETURN};
     use super::super::policy::compile_invocation_tool_snapshot;
-    use super::super::skill::SKILL_READ;
-    use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE};
+    use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES};
     use super::*;
     use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
     use tt_domain::models::agent::profile::{
@@ -293,14 +284,14 @@ mod tests {
     #[test]
     fn invocation_policy_preserves_order_and_materializes_return_mode_without_profile_mutation() {
         let registry = BuiltinAgentToolRegistry::all();
-        let mut profile = profile_with_skill_budget(100_000, 100_000);
+        let mut profile = test_profile();
         profile.tools.allow = vec![
             ToolId::builtin(WORKSPACE_READ_FILE).unwrap(),
-            ToolId::builtin(SKILL_READ).unwrap(),
+            ToolId::builtin(WORKSPACE_SEARCH_FILES).unwrap(),
             ToolId::builtin(WORKSPACE_FINISH).unwrap(),
-            ToolId::builtin(AGENT_LIST).unwrap(),
+            ToolId::builtin(AGENT_DELEGATE).unwrap(),
         ];
-        profile.tools.deny = vec![ToolId::builtin(SKILL_READ).unwrap()];
+        profile.tools.deny = vec![ToolId::builtin(WORKSPACE_SEARCH_FILES).unwrap()];
         profile
             .tools
             .max_calls_per_tool
@@ -319,7 +310,7 @@ mod tests {
                 .iter()
                 .map(|binding| binding.tool_id().native_name())
                 .collect::<Vec<_>>(),
-            vec![WORKSPACE_READ_FILE, WORKSPACE_FINISH, AGENT_LIST]
+            vec![WORKSPACE_READ_FILE, WORKSPACE_FINISH, AGENT_DELEGATE]
         );
         assert_eq!(root.bindings()[0].max_calls(), Some(2));
 
@@ -343,14 +334,14 @@ mod tests {
             profile.tools.allow,
             vec![
                 ToolId::builtin(WORKSPACE_READ_FILE).unwrap(),
-                ToolId::builtin(SKILL_READ).unwrap(),
+                ToolId::builtin(WORKSPACE_SEARCH_FILES).unwrap(),
                 ToolId::builtin(WORKSPACE_FINISH).unwrap(),
-                ToolId::builtin(AGENT_LIST).unwrap(),
+                ToolId::builtin(AGENT_DELEGATE).unwrap(),
             ]
         );
     }
 
-    fn profile_with_skill_budget(per_call: usize, per_run: usize) -> ResolvedAgentProfile {
+    fn test_profile() -> ResolvedAgentProfile {
         ResolvedAgentProfile {
             schema_version: AGENT_PROFILE_SCHEMA_VERSION,
             kind: AGENT_PROFILE_KIND.to_string(),
@@ -377,7 +368,7 @@ mod tests {
             delegation: AgentDelegationPolicy::default(),
             instructions: AgentProfileInstructions::default(),
             tools: AgentToolPolicy {
-                allow: vec![ToolId::builtin(SKILL_READ).unwrap()],
+                allow: vec![ToolId::builtin(WORKSPACE_READ_FILE).unwrap()],
                 deny: Vec::new(),
                 tool_descriptions: BTreeMap::new(),
                 max_rounds: 1,
@@ -388,8 +379,6 @@ mod tests {
             skills: AgentSkillPolicy {
                 visible: vec!["*".to_string()],
                 deny: Vec::new(),
-                max_read_chars_per_call: per_call,
-                max_read_chars_per_run: per_run,
             },
             workspace: AgentWorkspacePolicy {
                 visible_roots: vec!["output".to_string()],

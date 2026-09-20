@@ -5,7 +5,7 @@ use tt_domain::models::agent::AgentModelTool;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 
 use super::constants::{
-    AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, AGENT_LIST_TOOL, TASK_RETURN_TOOL,
+    AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, TASK_RETURN_TOOL,
 };
 
 pub fn materialize_agent_system_prompt(
@@ -63,18 +63,6 @@ pub fn materialize_agent_system_prompt(
             model_alias(tools, "dice.roll")
         ));
     }
-    if has_tool(tools, "skill.list") {
-        lines.push(format!(
-            "- Use {} to discover visible agent skills when reusable writing, editing, planning, style, or character guidance may be helpful.",
-            model_alias(tools, "skill.list")
-        ));
-    }
-    if has_tool(tools, AGENT_LIST_TOOL) {
-        lines.push(format!(
-            "- Use {} to find other Agents that can help with a focused writing, critique, planning, or style task. This tool only lists Agents; it does not start any work.",
-            model_alias(tools, AGENT_LIST_TOOL)
-        ));
-    }
     if has_tool(tools, AGENT_DELEGATE_TOOL) {
         if has_tool(tools, AGENT_AWAIT_TOOL) {
             lines.push(format!(
@@ -103,18 +91,6 @@ pub fn materialize_agent_system_prompt(
             model_alias(tools, AGENT_HANDOFF_TOOL)
         ));
     }
-    if has_tool(tools, "skill.search") {
-        lines.push(format!(
-            "- Before reading exact ranges, use {} to locate relevant text within larger visible skill files.",
-            model_alias(tools, "skill.search")
-        ));
-    }
-    if has_tool(tools, "skill.read") {
-        lines.push(format!(
-            "- Use {} to read SKILL.md first. Files are read in full by default; when a preview is returned, continue with start_line and line_count.",
-            model_alias(tools, "skill.read")
-        ));
-    }
     if has_tool(tools, "workspace.shell") {
         lines.push(
             "- Workspace tools share the same files. Each shell call starts a new session; files persist between calls."
@@ -132,7 +108,7 @@ pub fn materialize_agent_system_prompt(
     }
     if has_tool(tools, "workspace.commit") {
         lines.push(format!(
-            "- Use {} to publish visible workspace files into the current chat message. Without arguments, it will replace the current run's chat message with {}; mode append will append to the same message, creating it if this run has not committed yet.",
+            "- Use {} to publish Run workspace files into the current chat message. Without arguments, it will replace the current run's chat message with {}; mode append will append to the same message, creating it if this run has not committed yet.",
             model_alias(tools, "workspace.commit"),
             profile.output.message_body_path
         ));
@@ -282,9 +258,6 @@ pub fn materialize_agent_system_prompt(
                 "    ({})",
                 model_alias(tools, "worldinfo.read_activated")
             ));
-        }
-        if has_tool(tools, "skill.list") {
-            lines.push(format!("    ({})", model_alias(tools, "skill.list")));
         }
         lines.extend([
             format!(

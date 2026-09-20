@@ -80,8 +80,8 @@ pub enum WorkspaceWriteGuard {
     MustMatchSha256(String),
 }
 
-/// Files in one Run. Each operation is coordinated with every other handle to
-/// that Run. A sequence of operations is not a transaction.
+/// A logical workspace view, including read-only mounted files. Mutations of
+/// Run files are coordinated across handles; sequences are not transactions.
 #[async_trait]
 pub trait WorkspaceFs: Send + Sync {
     /// Read at most the requested size; excess data is an error, not a partial result.

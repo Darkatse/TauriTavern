@@ -3,14 +3,20 @@ use async_trait::async_trait;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tt_domain::errors::DomainError;
+use tt_domain::frozen_macros::FrozenMacros;
 use tt_domain::models::agent::WorkspacePath;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
+use tt_domain::models::skill::SkillIndexEntry;
+use tt_ports::repositories::skill_repository::SkillRepository;
 use tt_ports::workspace_fs::{
     WorkspaceAppendResult, WorkspaceDirectoryEntry, WorkspaceEntryKind, WorkspaceFs,
     WorkspaceMetadata, WorkspaceWriteGuard,
 };
 
+mod skills;
+
 pub(crate) const AGENT_TOOL_RESULTS_ROOT: &str = "tool-results";
+const SKILLS_ROOT: &str = "skills";
 
 pub(crate) fn is_auto_commit_text_path(path: &WorkspacePath) -> bool {
     Path::new(path.as_str())
@@ -33,15 +39,6 @@ pub(crate) fn workspace_path_is_under_any_root(path: &WorkspacePath, roots: &[St
         .any(|root| path_matches_root_or_child(path.as_str(), root))
 }
 
-/// 判断路径是否为某个 writable_root 的子项（不含根本身）。
-/// 语义与 `WorkspaceAccessPolicy::is_writable` 完全一致，供 workspace
-/// 工具和 skill 脚本写入校验共用。
-pub(crate) fn is_writable_workspace_path(path: &WorkspacePath, writable_roots: &[String]) -> bool {
-    writable_roots
-        .iter()
-        .any(|root| path_matches_child(path.as_str(), root))
-}
-
 pub(crate) fn format_model_workspace_roots(roots: &[String]) -> String {
     roots
         .iter()
@@ -52,8 +49,10 @@ pub(crate) fn format_model_workspace_roots(roots: &[String]) -> String {
 
 pub(crate) fn format_model_visible_workspace_roots(roots: &[String]) -> String {
     let mut roots = roots.to_vec();
-    if !roots.iter().any(|root| root == AGENT_TOOL_RESULTS_ROOT) {
-        roots.push(AGENT_TOOL_RESULTS_ROOT.to_string());
+    for root in [AGENT_TOOL_RESULTS_ROOT, SKILLS_ROOT] {
+        if !roots.iter().any(|existing| existing == root) {
+            roots.push(root.to_string());
+        }
     }
     format_model_workspace_roots(&roots)
 }
@@ -100,11 +99,10 @@ pub(crate) struct WorkspaceAccessPolicy {
 impl WorkspaceAccessPolicy {
     pub(crate) fn from_profile(profile: &ResolvedAgentProfile) -> Self {
         let mut visible_roots = profile.workspace.visible_roots.clone();
-        if !visible_roots
-            .iter()
-            .any(|root| root == AGENT_TOOL_RESULTS_ROOT)
-        {
-            visible_roots.push(AGENT_TOOL_RESULTS_ROOT.to_string());
+        for root in [AGENT_TOOL_RESULTS_ROOT, SKILLS_ROOT] {
+            if !visible_roots.iter().any(|existing| existing == root) {
+                visible_roots.push(root.to_string());
+            }
         }
         visible_roots.sort();
         visible_roots.dedup();
@@ -112,7 +110,7 @@ impl WorkspaceAccessPolicy {
             .workspace
             .writable_roots
             .iter()
-            .filter(|root| root.as_str() != AGENT_TOOL_RESULTS_ROOT)
+            .filter(|root| ![AGENT_TOOL_RESULTS_ROOT, SKILLS_ROOT].contains(&root.as_str()))
             .cloned()
             .collect();
         writable_roots.sort();
@@ -150,7 +148,11 @@ impl WorkspaceAccessPolicy {
     }
 
     pub(crate) fn is_writable(&self, path: &WorkspacePath) -> bool {
-        is_writable_workspace_path(path, &self.writable_roots)
+        !is_skill_path(path)
+            && self
+                .writable_roots
+                .iter()
+                .any(|root| path_matches_child(path.as_str(), root))
     }
 }
 
@@ -158,6 +160,9 @@ impl WorkspaceAccessPolicy {
 pub(crate) struct ScopedWorkspaceFs {
     inner: Arc<dyn WorkspaceFs>,
     pub(crate) policy: WorkspaceAccessPolicy,
+    skill_repository: Option<Arc<dyn SkillRepository>>,
+    skill_bindings: Arc<[SkillIndexEntry]>,
+    frozen_macros: Arc<FrozenMacros>,
     text_mutation: Option<Mutex<WorkspaceTextMutation>>,
 }
 
@@ -173,8 +178,23 @@ impl ScopedWorkspaceFs {
         Self {
             inner,
             policy,
+            skill_repository: None,
+            skill_bindings: Arc::default(),
+            frozen_macros: Arc::default(),
             text_mutation: None,
         }
+    }
+
+    pub(crate) fn with_skills(
+        mut self,
+        repository: Arc<dyn SkillRepository>,
+        bindings: Arc<[SkillIndexEntry]>,
+        frozen_macros: Arc<FrozenMacros>,
+    ) -> Self {
+        self.skill_repository = Some(repository);
+        self.skill_bindings = bindings;
+        self.frozen_macros = frozen_macros;
+        self
     }
 
     pub(crate) fn track_text_mutations(mut self, candidate: Option<WorkspacePath>) -> Self {
@@ -241,6 +261,9 @@ impl WorkspaceFs for ScopedWorkspaceFs {
         maximum_bytes: usize,
     ) -> Result<Vec<u8>, DomainError> {
         self.check(path, false)?;
+        if is_skill_path(path) {
+            return self.read_skill_file(path, maximum_bytes).await;
+        }
         self.inner.read_file(path, maximum_bytes).await
     }
     async fn write_file(
@@ -277,6 +300,9 @@ impl WorkspaceFs for ScopedWorkspaceFs {
         match path {
             Some(path) => {
                 self.check(path, false)?;
+                if is_skill_path(path) {
+                    return self.skill_metadata(path).await;
+                }
                 self.inner.metadata(Some(path)).await
             }
             None => Ok(WorkspaceMetadata {
@@ -294,6 +320,9 @@ impl WorkspaceFs for ScopedWorkspaceFs {
     ) -> Result<Vec<WorkspaceDirectoryEntry>, DomainError> {
         if let Some(path) = path {
             self.check(path, false)?;
+            if is_skill_path(path) {
+                return self.read_skill_dir(path, maximum_entries).await;
+            }
             return self.inner.read_dir(Some(path), maximum_entries).await;
         }
         if self.policy.visible_roots.len() > maximum_entries {
@@ -304,7 +333,7 @@ impl WorkspaceFs for ScopedWorkspaceFs {
         let mut entries = Vec::new();
         for root in &self.policy.visible_roots {
             let path = WorkspacePath::parse(root)?;
-            let metadata = self.inner.metadata(Some(&path)).await?;
+            let metadata = self.metadata(Some(&path)).await?;
             entries.push(WorkspaceDirectoryEntry { path, metadata });
         }
         entries.sort_by(|a, b| a.path.as_str().cmp(b.path.as_str()));
@@ -356,8 +385,19 @@ impl WorkspaceFs for ScopedWorkspaceFs {
     ) -> Result<(), DomainError> {
         self.check(source, false)?;
         self.check(target, true)?;
-        self.inner.copy_file(source, target).await?;
+        if is_skill_path(source) {
+            let bytes = self.read_skill_file(source, usize::MAX).await?;
+            self.inner
+                .write_file(target, &bytes, WorkspaceWriteGuard::Unchecked)
+                .await?;
+        } else {
+            self.inner.copy_file(source, target).await?;
+        }
         self.remember_write(target);
         Ok(())
     }
+}
+
+fn is_skill_path(path: &WorkspacePath) -> bool {
+    path_matches_root_or_child(path.as_str(), SKILLS_ROOT)
 }

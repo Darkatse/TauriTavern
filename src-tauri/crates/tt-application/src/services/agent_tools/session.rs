@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, hash_map::Entry};
 
-use tt_domain::models::skill::{SkillIndexEntry, SkillScope};
+use tt_domain::models::skill::SkillIndexEntry;
 use tt_ports::workspace_fs::WorkspaceFile;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,15 +42,14 @@ pub struct AgentToolSession {
     #[serde(skip)]
     pub(crate) runtime_context: std::sync::Arc<tt_ports::workspace_shell::WorkspaceShellContext>,
     read_state: HashMap<String, WorkspaceReadState>,
-    skill_read_chars: usize,
     #[serde(skip)]
-    pub(crate) effective_skills: Vec<SkillIndexEntry>,
+    pub(crate) effective_skills: std::sync::Arc<[SkillIndexEntry]>,
 }
 
 impl AgentToolSession {
     pub fn new(effective_skills: Vec<SkillIndexEntry>) -> Self {
         Self {
-            effective_skills,
+            effective_skills: effective_skills.into(),
             ..Self::default()
         }
     }
@@ -149,24 +148,5 @@ impl AgentToolSession {
 
     pub fn read_state(&self, path: &str) -> Option<&WorkspaceReadState> {
         self.read_state.get(path)
-    }
-
-    pub fn skill_read_chars(&self) -> usize {
-        self.skill_read_chars
-    }
-
-    pub fn remember_skill_read_chars(&mut self, chars: usize) {
-        self.skill_read_chars += chars;
-    }
-
-    pub fn effective_skills(&self) -> &[SkillIndexEntry] {
-        &self.effective_skills
-    }
-
-    pub fn effective_skill_scope(&self, name: &str) -> Option<SkillScope> {
-        self.effective_skills
-            .iter()
-            .find(|skill| skill.name == name)
-            .map(|skill| skill.scope.clone())
     }
 }

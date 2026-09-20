@@ -199,6 +199,9 @@ pub struct AgentReadPromptAssemblyRequestDto {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSaveProfileDto {
+    #[serde(
+        deserialize_with = "tt_domain::models::agent::profile::deserialize_profile_definition"
+    )]
     pub profile: AgentProfileDefinition,
 }
 

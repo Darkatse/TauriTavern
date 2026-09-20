@@ -1,5 +1,6 @@
 mod archive;
 mod delete;
+mod files;
 mod fs_ops;
 mod index;
 mod install;
@@ -17,21 +18,23 @@ mod write;
 mod tests;
 
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tokio::fs;
 use tokio::sync::Mutex;
 
 use tt_domain::errors::DomainError;
+use tt_domain::models::agent::WorkspacePath;
 use tt_domain::models::skill::{
     SkillExportResult, SkillFileRef, SkillImportInput, SkillImportPreview, SkillIndexEntry,
     SkillInstallRequest, SkillInstallResult, SkillMoveRequest, SkillReadRequest, SkillReadResult,
     SkillScope, SkillScopeFilter, SkillScopeRetargetRequest, SkillScopeRetargetResult,
-    SkillSearchRequest, SkillSearchResult, SkillWriteRequest,
+    SkillWriteRequest,
 };
 use tt_ports::repositories::skill_repository::SkillRepository;
+use tt_ports::workspace_fs::{WorkspaceDirectoryEntry, WorkspaceMetadata};
 
 const INDEX_VERSION: u32 = 2;
 const SIDECAR_VERSION: u32 = 1;
@@ -77,21 +80,9 @@ impl FileSkillRepository {
         }
 
         let skill_root = self.installed_scope_root(scope)?.join(&name);
-        let root_metadata = fs::symlink_metadata(&skill_root).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                DomainError::NotFound(format!(
-                    "Skill directory not found: {}/{}",
-                    scope.label(),
-                    name
-                ))
-            } else {
-                DomainError::InternalError(format!(
-                    "Failed to read Skill directory metadata '{}': {}",
-                    skill_root.display(),
-                    error
-                ))
-            }
-        })?;
+        let root_metadata = fs::symlink_metadata(&skill_root)
+            .await
+            .map_err(|error| DomainError::file_io("stat", format!("skills/{name}"), error))?;
         if root_metadata.file_type().is_symlink() {
             return Err(DomainError::InvalidData(format!(
                 "Skill directory cannot be a symlink: {}/{}",
@@ -112,6 +103,35 @@ impl FileSkillRepository {
 
 #[async_trait]
 impl SkillRepository for FileSkillRepository {
+    async fn read_skill_bytes(
+        &self,
+        scope: &SkillScope,
+        name: &str,
+        path: &WorkspacePath,
+        maximum_bytes: usize,
+    ) -> Result<Vec<u8>, DomainError> {
+        files::read_bytes(self, scope, name, path, maximum_bytes).await
+    }
+
+    async fn skill_metadata(
+        &self,
+        scope: &SkillScope,
+        name: &str,
+        path: Option<&WorkspacePath>,
+    ) -> Result<WorkspaceMetadata, DomainError> {
+        files::metadata(self, scope, name, path).await
+    }
+
+    async fn read_skill_dir(
+        &self,
+        scope: &SkillScope,
+        name: &str,
+        path: Option<&WorkspacePath>,
+        maximum_entries: usize,
+    ) -> Result<Vec<WorkspaceDirectoryEntry>, DomainError> {
+        files::read_dir(self, scope, name, path, maximum_entries).await
+    }
+
     async fn list_skills(
         &self,
         scope_filter: SkillScopeFilter,
@@ -180,15 +200,6 @@ impl SkillRepository for FileSkillRepository {
             .await
     }
 
-    async fn read_skill_script(
-        &self,
-        scope: SkillScope,
-        name: &str,
-        relative_path: &str,
-    ) -> Result<String, DomainError> {
-        read::read_skill_script(self, &scope, name, relative_path).await
-    }
-
     async fn read_skill_file(
         &self,
         request: SkillReadRequest,
@@ -202,13 +213,6 @@ impl SkillRepository for FileSkillRepository {
     ) -> Result<SkillReadResult, DomainError> {
         let _guard = self.mutation_lock.lock().await;
         write::write_skill_file(self, request).await
-    }
-
-    async fn search_skill_files(
-        &self,
-        request: SkillSearchRequest,
-    ) -> Result<SkillSearchResult, DomainError> {
-        read::search_skill_files(self, request).await
     }
 
     async fn export_skill(

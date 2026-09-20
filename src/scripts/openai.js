@@ -5494,6 +5494,7 @@ class MessageCollection {
                 acc.push({
                     role: message.role,
                     content: message.content,
+                    ...(message.identifier === AGENT_SYSTEM_PROMPT_IDENTIFIER && { _tauritavern_prompt_component: AGENT_SYSTEM_PROMPT_IDENTIFIER }),
                     ...(message.name && { name: message.name }),
                     ...(message.tool_calls && { tool_calls: message.tool_calls }),
                     ...(message.role === 'tool' && { tool_call_id: message.identifier }),
@@ -5789,6 +5790,7 @@ export class ChatCompletion {
                 const message = {
                     role: item.role,
                     content: item.content,
+                    ...(item.identifier === AGENT_SYSTEM_PROMPT_IDENTIFIER && { _tauritavern_prompt_component: AGENT_SYSTEM_PROMPT_IDENTIFIER }),
                     ...(item.name ? { name: item.name } : {}),
                     ...(item.tool_calls ? { tool_calls: item.tool_calls } : {}),
                     ...(item.role === 'tool' ? { tool_call_id: item.identifier } : {}),

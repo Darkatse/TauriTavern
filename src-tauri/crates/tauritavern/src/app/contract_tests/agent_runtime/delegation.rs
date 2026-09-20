@@ -93,6 +93,13 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
 
     let requests = fixture.model_gateway.requests().await;
     assert_eq!(requests.len(), 3);
+    assert!(
+        message_text_for_role(&requests[0], AgentModelRole::System)
+            .contains("scene-critic [delegate]")
+    );
+    assert!(
+        !message_text_for_role(&requests[1], AgentModelRole::System).contains("Available agents:")
+    );
     assert_eq!(
         requests[0].provider_state["invocationId"],
         ROOT_AGENT_INVOCATION_ID
@@ -116,7 +123,6 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
             tool.tool_id.native_name(),
             "workspace.commit"
                 | "workspace.finish"
-                | "agent.list"
                 | "agent.delegate"
                 | "agent.handoff"
                 | "agent.await"
@@ -143,7 +149,6 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
             *tool_id,
             "builtin:workspace.commit"
                 | "builtin:workspace.finish"
-                | "builtin:agent.list"
                 | "builtin:agent.delegate"
                 | "builtin:agent.handoff"
                 | "builtin:agent.await"
@@ -320,6 +325,13 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
     assert!(task_completed < invocation_completed && invocation_completed < run_completed);
     let requests = fixture.model_gateway.requests().await;
     assert_eq!(requests.len(), 2);
+    assert!(
+        message_text_for_role(&requests[0], AgentModelRole::System)
+            .contains("final-editor [handoff]")
+    );
+    assert!(
+        !message_text_for_role(&requests[1], AgentModelRole::System).contains("Available agents:")
+    );
     assert_eq!(
         requests[1].provider_state["invocationId"],
         task.child_invocation_id
@@ -537,16 +549,9 @@ pub(super) async fn configure_return_mode_profiles(
     child.id = AgentProfileId::parse("scene-critic").expect("child profile id");
     child.display_name = "Scene Critic".to_string();
     child.tools.max_rounds = 1;
-    child.tools.allow.retain(|name| {
-        !matches!(
-            name.as_str(),
-            "builtin:agent.list"
-                | "builtin:agent.delegate"
-                | "builtin:agent.handoff"
-                | "builtin:agent.await"
-        )
-    });
+    // The return-mode invocation must prune these capabilities from the profile.
     child.delegation = AgentDelegationPolicy {
+        can_delegate: true,
         callable: true,
         allow_as_subagent: true,
         allowed_callers: vec![root.id.as_str().to_string()],

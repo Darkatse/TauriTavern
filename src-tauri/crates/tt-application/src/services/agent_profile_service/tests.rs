@@ -257,7 +257,7 @@ async fn profile_preset_retarget_rejects_same_or_cross_api_refs() {
 }
 
 #[tokio::test]
-async fn loading_v2_profile_persists_canonical_v3_tool_ids_once() {
+async fn loading_v2_profile_persists_current_canonical_tool_ids() {
     let repository = Arc::new(TestAgentProfileRepository::default());
     let service = AgentProfileService::new(
         repository.clone(),
@@ -290,7 +290,7 @@ async fn loading_v2_profile_persists_canonical_v3_tool_ids_once() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(loaded.schema_version, 3);
+    assert_eq!(loaded.schema_version, 4);
     assert!(
         loaded
             .tools
@@ -303,7 +303,7 @@ async fn loading_v2_profile_persists_canonical_v3_tool_ids_once() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(stored.schema_version, 3);
+    assert_eq!(stored.schema_version, 4);
     assert_eq!(stored.tools.allow, loaded.tools.allow);
 }
 
@@ -535,7 +535,7 @@ fn test_profile(agent_system_prompt: Option<&str>, presentation: &str) -> Resolv
     };
 
     serde_json::from_value(json!({
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "kind": "tauritavern.agentProfile",
         "id": "test",
         "displayName": "Test",
@@ -568,9 +568,7 @@ fn test_profile(agent_system_prompt: Option<&str>, presentation: &str) -> Resolv
         },
         "skills": {
             "visible": ["*"],
-            "deny": [],
-            "maxReadCharsPerCall": 1,
-            "maxReadCharsPerRun": 1
+            "deny": []
         },
         "workspace": {
             "visibleRoots": ["output", "persist"],

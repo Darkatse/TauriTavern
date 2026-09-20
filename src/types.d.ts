@@ -488,8 +488,6 @@ type TauriTavernAgentProfileDefinition = {
     skills: {
         visible: string[];
         deny?: string[];
-        maxReadCharsPerCall: number;
-        maxReadCharsPerRun: number;
     };
     workspace: {
         visibleRoots: string[];

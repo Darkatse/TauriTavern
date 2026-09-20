@@ -12,7 +12,7 @@ use tt_adapter_storage_core::file_system::{
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::profile::{
     AGENT_PROFILE_KIND, AGENT_PROFILE_SCHEMA_VERSION, AgentProfileDefinition, AgentProfileId,
-    AgentProfileSummary,
+    AgentProfileSummary, deserialize_profile_definition,
 };
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
 use tt_ports::repositories::agent_profile_storage_health_repository::{
@@ -67,9 +67,7 @@ impl FileAgentProfileRepository {
 
     async fn load_profile_file(&self, path: &Path) -> Result<AgentProfileDefinition, DomainError> {
         let (file_id, _) = self.profile_file_identity(path)?;
-        let profile: AgentProfileDefinition = read_json_file(path).await?;
-        validate_profile_file_identity(&profile, &file_id, path)?;
-        Ok(profile)
+        profile_from_value(read_json_file(path).await?, &file_id, path)
     }
 
     async fn scan_profile_file(
@@ -365,8 +363,12 @@ fn profile_from_value(
     file_id: &AgentProfileId,
     path: &Path,
 ) -> Result<AgentProfileDefinition, DomainError> {
-    let profile: AgentProfileDefinition = serde_json::from_value(value)
-        .map_err(|error| DomainError::InvalidData(error.to_string()))?;
+    let profile = deserialize_profile_definition(value).map_err(|error| {
+        DomainError::InvalidData(format!(
+            "Invalid Agent profile in {}: {error}",
+            path.display()
+        ))
+    })?;
     validate_profile_file_identity(&profile, file_id, path)?;
     Ok(profile)
 }
@@ -401,7 +403,7 @@ fn validate_profile_file_identity(
 }
 
 fn is_supported_profile_schema_version(version: u32) -> bool {
-    matches!(version, 1 | 2 | AGENT_PROFILE_SCHEMA_VERSION)
+    matches!(version, 1..=AGENT_PROFILE_SCHEMA_VERSION)
 }
 
 #[cfg(test)]
@@ -650,8 +652,6 @@ mod tests {
             skills: AgentSkillPolicy {
                 visible: vec!["*".to_string()],
                 deny: Vec::new(),
-                max_read_chars_per_call: 1,
-                max_read_chars_per_run: 1,
             },
             workspace: AgentWorkspacePolicy {
                 visible_roots: vec!["output".to_string()],
