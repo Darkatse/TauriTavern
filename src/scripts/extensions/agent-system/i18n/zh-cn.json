@@ -222,6 +222,7 @@
     "agent_system.showTimelineDetails": "详情",
     "agent_system.showTimelineEvents": "事件",
     "agent_system.timelineArguments": "参数",
+    "agent_system.timelineShellCommand": "Shell命令",
     "agent_system.timelineCharCount": "{count} 字符",
     "agent_system.timelineCancelled": "Agent 已取消",
     "agent_system.timelineCompleted": "Agent 已完成",

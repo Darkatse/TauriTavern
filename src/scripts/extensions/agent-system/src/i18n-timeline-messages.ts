@@ -1,5 +1,6 @@
 export const TIMELINE_MESSAGES = {
     "timelineArguments": "Arguments",
+    "timelineShellCommand": "Shell command",
     "timelineCharCount": "{count} chars",
     "timelineCancelled": "Agent cancelled",
     "timelineCompleted": "Agent completed",

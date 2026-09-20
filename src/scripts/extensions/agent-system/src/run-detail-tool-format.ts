@@ -41,7 +41,7 @@ export function formatArgumentsSection(
     for (const [key, value] of Object.entries(args)) {
         if (value == null) continue;
         if (ARGUMENT_BLOCK_KEYS.has(key)) {
-            addBlock(blocks, { literal: labelForKey(key) }, value);
+            addBlock(blocks, key === 'command' ? 'timelineShellCommand' : { literal: labelForKey(key) }, value);
         } else if (isPrimitive(value)) {
             fields.push(field(labelForKey(key), primitiveText(value)));
         } else {

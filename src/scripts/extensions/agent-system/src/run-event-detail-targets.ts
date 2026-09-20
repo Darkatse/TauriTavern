@@ -3,7 +3,7 @@ import {
     isRootInvocation,
     normalizeInvocationId,
 } from './run-invocation-projector';
-import { modelTurnNarration } from './run-event-presentation';
+import { findToolRequest, modelTurnNarration } from './run-event-presentation';
 import { textMetricFields } from './run-text-metrics';
 import type { TimelineDetailTarget, TimelineItem } from './RunTimelineContract';
 
@@ -86,6 +86,8 @@ export function buildEventDetailTargets(
     }
 
     if (event.type === 'tool_call_completed' || event.type === 'tool_call_failed') {
+        const requestPayload = findToolRequest(allEvents, event)?.payload;
+        if (plainObject(requestPayload)) addFile('timelineArguments', requestPayload.argumentsRef);
         addFile('timelineToolResult', findToolResultPath(allEvents, event));
     }
 
@@ -206,22 +208,6 @@ function findSideEffectToolCompletion(
             && normalizeInvocationId(payload.invocationId) !== normalizeInvocationId(sourcePayload.invocationId)) return false;
         return !path || (Array.isArray(payload.resourceRefs) && payload.resourceRefs.includes(path));
     });
-}
-
-function findToolRequest(
-    events: readonly TauriTavernAgentRunEvent[],
-    source: TauriTavernAgentRunEvent,
-): TauriTavernAgentRunEvent | null {
-    const sourcePayload = plainObject(source.payload) ? source.payload : {};
-    const callId = stringValue(sourcePayload.callId).trim();
-    if (!callId) return null;
-    return [...events].reverse().find((event) => {
-        const payload = plainObject(event.payload) ? event.payload : {};
-        return event.type === 'tool_call_requested' && event.seq < source.seq
-            && stringValue(payload.callId) === callId
-            && normalizeInvocationId(payload.invocationId) === normalizeInvocationId(sourcePayload.invocationId)
-            && (sourcePayload.round === undefined || payload.round === sourcePayload.round);
-    }) ?? null;
 }
 
 function modelTurnHasReasoning(
