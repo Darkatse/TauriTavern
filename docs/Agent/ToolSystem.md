@@ -23,7 +23,7 @@ Invocation 使用的工具快照包含描述、参数、名称映射及预算上
 | 查找和使用 Skill | `skill.list`、`skill.search`、`skill.read`、`skill.run_script` |
 | 读取文件 | `workspace.list_files`、`workspace.search_files`、`workspace.read_file` |
 | 修改文件 | `workspace.write_file`、`workspace.apply_patch` |
-| Shell 与 JSON 处理 | `workspace.shell`，内含 jq |
+| Shell 与数据处理 | `workspace.shell`，内含 jq 与 Python |
 | 发布与结束 | `workspace.commit`、`workspace.finish` |
 | 委派与交接 | `agent.list`、`agent.delegate`、`agent.await`、`agent.handoff`、`task.return` |
 | 掷骰 | `dice.roll` |
@@ -40,7 +40,7 @@ Invocation 使用的工具快照包含描述、参数、名称映射及预算上
 
 ## Shell
 
-`workspace.shell` 通过 Bashkit 内置命令（含 jq）处理批量文件操作和管道。参数为 `command` 与可选 `workdir`（默认 `/`）。每次调用启动新 Shell，文件保留，环境不保留；不执行宿主外部程序。退出状态与输出沿普通工具结果返回，文件和提交语义见 [Workspace](Workspace.md)。
+`workspace.shell` 通过 Bashkit 内置命令处理批量文件操作、管道和数据转换，包含 jq 与 Monty 提供的 Python 子集（`python` / `python3`）。参数为 `command` 与可选 `workdir`（默认 `/`）。Shell 与 Python 每次执行创建新环境，共享的工作区文件保留；不执行宿主外部程序。退出状态与输出沿普通工具结果返回，文件和提交语义见 [Workspace](Workspace.md)。
 
 ## 结果如何进入下一轮
 

@@ -160,7 +160,7 @@ pub fn materialize_agent_system_prompt(
     }
     if has_tool(tools, "workspace.shell") {
         lines.push(
-            "- The shell provides built-in file and text commands, including jq. External programs are unavailable. Each call starts a new shell; files persist between calls."
+            "- The shell provides built-in commands, jq, and a Python subset via python/python3. Each execution starts fresh; workspace files persist."
                 .to_string(),
         );
     }

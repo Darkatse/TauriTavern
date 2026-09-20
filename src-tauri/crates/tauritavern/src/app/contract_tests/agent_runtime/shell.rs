@@ -20,7 +20,7 @@ async fn shell_edits_share_cas_and_publish_the_last_text_file_each_round() {
                 model_tool_call(
                     "readonly_write",
                     "workspace_shell",
-                    json!({"command": "printf forbidden > /tool-results/forbidden.txt"}),
+                    json!({"command": r#"python3 -c 'from pathlib import Path; Path("/tool-results/forbidden.txt").write_text("forbidden")'"#}),
                 ),
                 model_tool_call(
                     "prepare",
@@ -54,7 +54,7 @@ async fn shell_edits_share_cas_and_publish_the_last_text_file_each_round() {
                     "append",
                     "workspace_shell",
                     json!({
-                        "command": "printf 'updated by shell\\n' >> main.md",
+                        "command": r#"python3 -c 'with open("main.md", "a") as file: file.write("updated by python\n")'"#,
                         "workdir": "/output",
                     }),
                 ),
@@ -84,7 +84,7 @@ async fn shell_edits_share_cas_and_publish_the_last_text_file_each_round() {
                 model_tool_call(
                     "copy_final",
                     "workspace_shell",
-                    json!({"command": "cp output/main.md scratch/review/final.md"}),
+                    json!({"command": r#"python3 -c 'from pathlib import Path; Path("scratch/review/final.md").write_text(Path("output/main.md").read_text())'"#}),
                 ),
                 model_tool_call(
                     "move_final",
@@ -136,7 +136,7 @@ async fn shell_edits_share_cas_and_publish_the_last_text_file_each_round() {
         .open_filesystem(&run.id)
         .await
         .unwrap();
-    let final_text = "final draft\nupdated by shell\n";
+    let final_text = "final draft\nupdated by python\n";
     assert_eq!(
         files
             .read_text(&WorkspacePath::parse("scratch/finalized/final.md").unwrap())
@@ -220,7 +220,7 @@ async fn failed_shell_keeps_its_writes_without_publishing_an_earlier_candidate()
                 model_tool_call(
                     "failed_shell",
                     "workspace_shell",
-                    json!({"command": "printf 'saved despite failure' > output/main.md; exit 7"}),
+                    json!({"command": r#"python3 -c 'from pathlib import Path; Path("output/main.md").write_text("saved despite failure"); raise ValueError("draft incomplete")'"#}),
                 ),
             ]),
             model_tool_response(vec![
@@ -282,7 +282,7 @@ async fn failed_shell_keeps_its_writes_without_publishing_an_earlier_candidate()
         result_event.payload["path"].as_str().unwrap(),
     )
     .await;
-    assert_eq!(result["structured"]["exitCode"], 7);
+    assert_eq!(result["structured"]["exitCode"], 1);
     assert_eq!(result["isError"], true);
     assert_eq!(
         fixture

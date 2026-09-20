@@ -166,7 +166,7 @@ pub(in crate::services::agent_tools) fn workspace_shell_descriptor() -> ToolDesc
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_SHELL).expect("builtin tool name must be valid"),
         title: Some("Workspace Shell".to_string()),
-        description: Some("Run shell commands in the workspace and return their output. Use shell for copying, moving, deleting or combining files, batch operations, pipelines, and JSON processing with jq.".to_string()),
+        description: Some("Run shell commands in the workspace for file operations, pipelines, and data processing.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,

@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use bashkit::{Bash, ExecutionLimits, FileSystem};
+use bashkit::{Bash, ExecutionLimits, FileSystem, PythonLimits};
 use tokio::runtime::Handle;
 use tokio::sync::watch;
 use tt_domain::errors::DomainError;
@@ -42,6 +42,8 @@ impl WorkspaceShell for BashkitWorkspaceShell {
             .fs(files.clone())
             .cwd(workdir.clone())
             .env("HOME", "/")
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+            .python_with_limits(PythonLimits::default().max_duration(EXECUTION_TIMEOUT))
             .limits(
                 ExecutionLimits::new()
                     .timeout(EXECUTION_TIMEOUT)
@@ -115,6 +117,8 @@ fn stopped(exit: WorkspaceShellExit) -> WorkspaceShellResult {
 }
 
 fn map_result(result: bashkit::Result<bashkit::ExecResult>) -> WorkspaceShellResult {
+    use bashkit::{Error, ExecutionBudgetExceeded, LimitExceeded};
+
     match result {
         Ok(result) => WorkspaceShellResult {
             stdout: result.stdout.text_lossy().into_owned(),
@@ -122,9 +126,16 @@ fn map_result(result: bashkit::Result<bashkit::ExecResult>) -> WorkspaceShellRes
             exit: WorkspaceShellExit::Exited(result.exit_code),
             output_truncated: result.stdout_truncated || result.stderr_truncated,
         },
-        Err(bashkit::Error::Cancelled) => stopped(WorkspaceShellExit::Cancelled),
-        Err(bashkit::Error::ResourceLimit(
-            bashkit::LimitExceeded::Timeout(_) | bashkit::LimitExceeded::ParserTimeout(_),
+        Err(
+            Error::Cancelled
+            | Error::ResourceLimit(LimitExceeded::ExecutionBudget(
+                ExecutionBudgetExceeded::Cancelled,
+            )),
+        ) => stopped(WorkspaceShellExit::Cancelled),
+        Err(Error::ResourceLimit(
+            LimitExceeded::Timeout(_)
+            | LimitExceeded::ParserTimeout(_)
+            | LimitExceeded::ExecutionBudget(ExecutionBudgetExceeded::Deadline { .. }),
         )) => stopped(WorkspaceShellExit::TimedOut),
         Err(error) => WorkspaceShellResult {
             stderr: error.to_string(),

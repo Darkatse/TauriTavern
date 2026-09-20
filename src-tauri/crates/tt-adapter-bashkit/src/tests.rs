@@ -51,7 +51,7 @@ impl WorkspaceFs for BlockedWorkspace {
         bytes: &[u8],
         _: WorkspaceWriteGuard,
     ) -> Result<(), DomainError> {
-        if path.as_str() == "draft.md" && !bytes.is_empty() {
+        if path.as_str() == "draft.md" {
             self.started.notify_one();
             self.release.notified().await;
         }
@@ -97,17 +97,20 @@ impl WorkspaceFs for BlockedWorkspace {
 }
 
 #[tokio::test]
-async fn cancellation_finishes_current_write_and_stops_following_commands() {
+async fn cancellation_finishes_current_write_and_stops_further_writes() {
     let files = Arc::new(BlockedWorkspace::default());
     let (cancel, receiver) = watch::channel(false);
     let request = WorkspaceShellRequest {
-        command: "printf draft > /draft.md; printf later > /later.md".to_string(),
+        command: r#"python3 -c 'from pathlib import Path; Path("/draft.md").write_text("draft"); Path("/later.md").write_text("later")'"#.to_string(),
         workdir: "/".to_string(),
         files: files.clone(),
         cancel: receiver,
     };
-    let task = tokio::spawn(async move { BashkitWorkspaceShell.execute(request).await });
-    files.started.notified().await;
+    let mut task = tokio::spawn(async move { BashkitWorkspaceShell.execute(request).await });
+    tokio::select! {
+        _ = files.started.notified() => {}
+        result = &mut task => panic!("shell returned before the controlled write: {result:?}"),
+    }
     cancel.send(true).unwrap();
     files.release.notify_one();
 

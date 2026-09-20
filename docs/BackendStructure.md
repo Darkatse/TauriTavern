@@ -89,7 +89,7 @@ src-tauri/
 | `tt-adapter-media` | persona/avatar/background/user media/image metadata、browser-visible host resource file store |
 | `tt-adapter-extension` | third-party extension 发现、安装、版本检查、更新、分支查询/切换、删除与移动；Gitoxide smart HTTP 与 embedded worktree |
 | `tt-adapter-quickjs` | QuickJS Runtime/Context、内存 ESM 与 JavaScript binding；只接触逻辑模块、JSON、内存 workspace snapshot/delta |
-| `tt-adapter-bashkit` | Bashkit Shell 与 jq 执行、受限 `WorkspaceFs` 适配 |
+| `tt-adapter-bashkit` | Bashkit Shell、jq 与 Python/Monty 执行、受限 `WorkspaceFs` 适配 |
 | `tt-adapter-sync` | LAN Sync、TT-Sync v2 runtime、stores、client/server、sync jobs |
 | `tt-adapter-archive` | data archive import/export executor、archive path safety |
 

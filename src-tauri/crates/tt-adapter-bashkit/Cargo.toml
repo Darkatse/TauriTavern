@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 async-trait = "0.1"
-bashkit = { version = "0.18.1", default-features = false, features = ["jq"] }
+bashkit = { version = "0.18.1", default-features = false, features = ["jq", "python"] }
 tokio = { version = "1", default-features = false, features = ["rt", "sync", "macros", "time"] }
 tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
