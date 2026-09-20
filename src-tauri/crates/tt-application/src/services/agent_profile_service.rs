@@ -28,6 +28,7 @@ pub use model_config::{
 };
 pub(crate) use preset_refs::preset_exists_for_type;
 pub use system_prompt::materialize_agent_system_prompt;
+pub(crate) use validation::is_retired_agent_tool;
 pub use workspace_policy::{commit_policy_from_profile, workspace_roots_from_profile};
 
 pub struct AgentProfileService {

@@ -26,6 +26,8 @@ use tt_domain::models::agent::{
 };
 use tt_domain::models::tool::ToolTurnContract;
 
+mod legacy;
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct RunCheckpoint {
@@ -64,6 +66,9 @@ impl RunCheckpoint {
     }
 
     fn blocked_reason(&self) -> Option<&str> {
+        if self.schema_version == 1 && self.run.status != AgentRunStatus::Completed {
+            return Some(legacy::REVISION_ONLY);
+        }
         self.state.blocked_reason.as_deref().or_else(|| {
             self.state
                 .foreground
@@ -120,10 +125,17 @@ impl AgentRuntimeService {
                     "this run has no checkpoint (it may predate checkpoints or have been cleaned)",
                 )
             })?;
-        let checkpoint: RunCheckpoint = serde_json::from_slice(&bytes)
+        let mut value: Value = serde_json::from_slice(&bytes)
             .map_err(|error| invalid(format!("checkpoint cannot be decoded: {error}")))?;
-        if checkpoint.schema_version != 2 || checkpoint.run.id != run_id {
-            return Err(invalid("checkpoint version or run identity does not match"));
+        match value.get("schemaVersion").and_then(Value::as_u64) {
+            Some(1) => legacy::prepare_for_read(&mut value),
+            Some(2) => {}
+            _ => return Err(invalid("unsupported checkpoint version; start a new run")),
+        }
+        let checkpoint: RunCheckpoint = serde_json::from_value(value)
+            .map_err(|error| invalid(format!("checkpoint cannot be decoded: {error}")))?;
+        if checkpoint.run.id != run_id {
+            return Err(invalid("checkpoint run identity does not match"));
         }
         let run = self.run_repository.load_run(run_id).await?;
         if !run.status.is_terminal()
@@ -187,6 +199,11 @@ impl AgentRuntimeService {
                 "a newer checkpoint exists; read it before resuming",
             ));
         }
+        if checkpoint.schema_version == 1
+            && (dto.revision.is_none() || checkpoint.run.status != AgentRunStatus::Completed)
+        {
+            return Err(invalid(legacy::REVISION_ONLY));
+        }
         if dto.revision.is_some() && checkpoint.run.status != AgentRunStatus::Completed {
             return Err(invalid(
                 "continue the unfinished run before revising its output",
@@ -210,7 +227,21 @@ impl AgentRuntimeService {
             .as_ref()
             .map(|revision| AgentGuidanceItem::new(&revision.guidance, None))
             .transpose()?;
+        let migrating_legacy_revision = checkpoint.schema_version == 1;
         if let Some(revision) = &dto.revision {
+            checkpoint.state.begin_output_revision()?;
+            if migrating_legacy_revision {
+                let frame = checkpoint
+                    .state
+                    .foreground
+                    .as_mut()
+                    .expect("revision foreground");
+                let agents = self
+                    .agent_catalog(&frame.prepared.profile, &frame.prepared.request.tools)
+                    .await?;
+                legacy::migrate_revision(&mut frame.prepared, &agents)?;
+                checkpoint.schema_version = 2;
+            }
             self.workspace_files(&dto.run_id)
                 .await?
                 .write_text(
@@ -219,10 +250,9 @@ impl AgentRuntimeService {
                     WorkspaceWriteGuard::Unchecked,
                 )
                 .await?;
-            checkpoint.state.begin_output_revision()?;
         }
-        // Rehydrate shared frozen context once. The workspace and invocation snapshots
-        // remain the originals; no profile resolution or prompt assembly occurs here.
+        // Rehydrate the original frozen context once. Revision migration uses saved
+        // bindings too; the caller's Profile and prompt are not resolved again.
         self.workspace_repository.read_manifest(&dto.run_id).await?;
         let snapshot = self
             .workspace_files(&dto.run_id)
@@ -293,14 +323,16 @@ impl AgentRuntimeService {
                 )
                 .await?;
             if dto.revision.is_some() {
-                self.save_revision_invocation(
-                    checkpoint
-                        .state
-                        .foreground
-                        .as_ref()
-                        .expect("revision foreground"),
-                )
-                .await?;
+                let frame = checkpoint
+                    .state
+                    .foreground
+                    .as_ref()
+                    .expect("revision foreground");
+                if migrating_legacy_revision {
+                    self.persist_tool_snapshot(&dto.run_id, &frame.prepared.tool_snapshot)
+                        .await?;
+                }
+                self.save_revision_invocation(frame).await?;
             }
             if let Some(item) = &revision_guidance {
                 self.record_guidance_submission(

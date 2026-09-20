@@ -314,7 +314,7 @@ async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_public
         .await
         .unwrap()
         .unwrap();
-    let checkpoint: Value = serde_json::from_slice(&bytes).unwrap();
+    let mut checkpoint: Value = serde_json::from_slice(&bytes).unwrap();
     let request: AgentModelRequest =
         serde_json::from_value(checkpoint["state"]["foreground"]["prepared"]["request"].clone())
             .unwrap();
@@ -351,10 +351,10 @@ async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_public
     let error = fixture
         .service
         .resume_run(AgentResumeRunDto {
-            run_id: run.id,
+            run_id: run.id.clone(),
             expected_terminal_seq: completed.terminal_seq,
-            chat_ref: run.chat_ref,
-            stable_chat_id: run.stable_chat_id,
+            chat_ref: run.chat_ref.clone(),
+            stable_chat_id: run.stable_chat_id.clone(),
             additional_rounds: 0,
             host_presentation: false,
             revision: None,
@@ -365,6 +365,52 @@ async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_public
         error
             .to_string()
             .contains("completed runs cannot be resumed")
+    );
+
+    // Status inspection does not migrate the old execution protocol. Only an
+    // explicit revision of a completed run may perform that conversion.
+    checkpoint["schemaVersion"] = json!(1);
+    checkpoint["state"]["foreground"]["prepared"]["profile"]["skills"]["maxReadCharsPerCall"] =
+        json!(100_000);
+    let legacy_bytes = serde_json::to_vec(&checkpoint).unwrap();
+    fixture
+        .agent_repository
+        .save_run_checkpoint(&run.id, &legacy_bytes)
+        .await
+        .unwrap();
+    let legacy = fixture
+        .service
+        .read_run_checkpoint(AgentReadRunCheckpointDto {
+            run_id: run.id.clone(),
+        })
+        .await
+        .expect("legacy checkpoint status remains readable");
+    assert_eq!(legacy.run.status, AgentRunStatus::Completed);
+    assert_eq!(legacy.terminal_seq, completed.terminal_seq);
+    let resume_error = fixture
+        .service
+        .resume_run(AgentResumeRunDto {
+            run_id: run.id.clone(),
+            expected_terminal_seq: completed.terminal_seq,
+            chat_ref: run.chat_ref,
+            stable_chat_id: run.stable_chat_id,
+            additional_rounds: 0,
+            host_presentation: false,
+            revision: None,
+        })
+        .await
+        .expect_err("legacy checkpoint cannot resume");
+    let message = resume_error.to_string();
+    assert!(message.contains("agent.resume_unavailable"), "{message}");
+    assert_eq!(
+        fixture
+            .agent_repository
+            .load_run_checkpoint(&run.id)
+            .await
+            .unwrap()
+            .unwrap(),
+        legacy_bytes,
+        "status inspection and rejected resume do not migrate checkpoints"
     );
     assert_eq!(fixture.model_gateway.requests().await.len(), 2);
 
@@ -924,7 +970,7 @@ async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_wo
     fs::remove_dir_all(root).await.unwrap();
 }
 
-async fn revise_checkpoint(
+pub(super) async fn revise_checkpoint(
     fixture: &AgentRuntimeFixture,
     checkpoint: &AgentReadRunCheckpointResultDto,
     guidance: &str,
