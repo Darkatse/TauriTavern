@@ -48,7 +48,7 @@
     "@rspack/cli": "^2.1.10",
     "@rspack/core": "^2.1.10",
     "@rstest/core": "^0.11.9",
-    "@tauri-apps/cli": "2.11.4",
+    "@tauri-apps/cli": "2.11.5",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.5",
