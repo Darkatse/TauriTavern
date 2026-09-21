@@ -650,7 +650,7 @@ const default_settings = {
     nanogpt_payg_override: false,
     deepseek_model: 'deepseek-flash',
     aimlapi_model: 'chatgpt-4o-latest',
-    xai_model: 'grok-4.6',
+    xai_model: 'grok-4.7',
     pollinations_model: 'openai',
     pollinations_endpoint: POLLINATIONS_ENDPOINT.AUTHENTICATED,
     cometapi_model: 'gpt-4o',
@@ -4186,7 +4186,7 @@ function getReasoningEffort(settings = null, model = null) {
     }
 
     function resolveReasoningEffort() {
-        if ([chat_completion_sources.OPENAI, chat_completion_sources.OPENROUTER, chat_completion_sources.MOONSHOT].includes(settings.chat_completion_source)) {
+        if ([chat_completion_sources.OPENAI, chat_completion_sources.OPENROUTER, chat_completion_sources.MOONSHOT, chat_completion_sources.XAI].includes(settings.chat_completion_source)) {
             return settings.reasoning_effort === reasoning_effort_types.auto
                 ? undefined
                 : settings.reasoning_effort;
@@ -4549,7 +4549,7 @@ export async function createGenerationParameters(settings, model, type, messages
             delete generate_data.stop;
         }
 
-        if (!['grok-4.3', 'grok-4.5', 'grok-4.6'].some(x => model.includes(x))) {
+        if (!['grok-4.3', 'grok-4.5', 'grok-4.6', 'grok-4.7'].some(x => model.includes(x))) {
             delete generate_data.reasoning_effort;
         }
     }
@@ -7841,7 +7841,7 @@ async function onModelChange() {
     if (oai_settings.chat_completion_source === chat_completion_sources.XAI) {
         if (oai_settings.max_context_unlocked) {
             $('#openai_max_context').attr('max', unlocked_max);
-        } else if (['grok-4.5', 'grok-4.6'].some(x => oai_settings.xai_model.includes(x))) {
+        } else if (['grok-4.5', 'grok-4.6', 'grok-4.7'].some(x => oai_settings.xai_model.includes(x))) {
             $('#openai_max_context').attr('max', max_500k);
         } else if (['grok-build', 'grok-code'].some(x => oai_settings.xai_model.includes(x))) {
             $('#openai_max_context').attr('max', max_256k);

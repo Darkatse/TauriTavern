@@ -91,12 +91,10 @@ pub(super) fn map_xai_reasoning_effort(
     match parse_known_reasoning_effort(value, "xAI")? {
         RequestedReasoningEffort::Auto => Ok(None),
         RequestedReasoningEffort::None => Err(unsupported_reasoning_effort("xAI", value)),
-        RequestedReasoningEffort::Minimal => Ok(Some("minimal")),
-        RequestedReasoningEffort::Low => Ok(Some("low")),
+        RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => Ok(Some("low")),
         RequestedReasoningEffort::Medium => Ok(Some("medium")),
-        RequestedReasoningEffort::High
-        | RequestedReasoningEffort::XHigh
-        | RequestedReasoningEffort::Max => Ok(Some("high")),
+        RequestedReasoningEffort::High => Ok(Some("high")),
+        RequestedReasoningEffort::XHigh | RequestedReasoningEffort::Max => Ok(Some("xhigh")),
     }
 }
 
