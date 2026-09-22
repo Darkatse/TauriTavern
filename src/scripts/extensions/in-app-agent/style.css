@@ -1,7 +1,7 @@
 /* One island inside the original A drawer. The host owns position and insets. */
 #AdvancedFormatting[data-tt-assistant="assistant"] > :not(#tt-assistant) { display: none !important; }
 #AdvancedFormatting[data-tt-assistant="assistant"] { padding: 0; }
-/* The existing drawer max-height owns the toolbar, composer and mobile insets. */
+/* Keep the host's toolbar and mobile insets; desktop assistants cover the chat composer. */
 #AdvancedFormatting[data-tt-assistant="assistant"].openDrawer { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
 #tt-assistant { min-height: 0; min-width: 0; flex: 1 1 auto; }
 .ttia-root {
@@ -207,6 +207,7 @@
 @keyframes ttia-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 .ttia-welcome, .ttia-onboarding { animation: ttia-enter 280ms var(--ttia-ease) both; }
 @media (min-width: 1001px) {
+    #AdvancedFormatting[data-tt-assistant="assistant"].openDrawer:has(.ttia-root[data-mobile="false"]) { max-height: calc(100dvh - var(--topBarBlockSize)); }
     .ttia-root[data-mobile="false"] .ttia-assistant { width: var(--ttia-content-width); min-width: min(100%, 28rem); }
 }
 @media (max-width: 1000px) {
