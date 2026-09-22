@@ -11,6 +11,7 @@ import { showExportFailureToast, showExportSuccessToast } from '../../scripts/do
 import { installAndroidImeLayoutHost } from './compat/mobile/android-ime-layout-host.js';
 import { installMobileGeometryFirewall } from './compat/mobile/mobile-geometry-firewall.js';
 import { installMobileIframeViewportContractBridge } from './compat/mobile/mobile-iframe-viewport-contract-bridge.js';
+import { installMobileImageLongPressSave } from './compat/mobile/mobile-image-long-press-save.js';
 import { installMobileImeSurfaceController } from './compat/mobile/mobile-ime-surface-controller.js';
 import { installMobileOverlayCompatController } from './compat/mobile/mobile-overlay-compat-controller.js';
 import { installMobileRuntimeCompat } from './compat/mobile/mobile-runtime-compat.js';
@@ -124,6 +125,7 @@ function installTauriMobileCompat() {
         installAndroidImeLayoutHost,
         installMobileImeSurfaceController,
         installMobileOverlayCompatController,
+        installMobileImageLongPressSave,
     ]) {
         install();
     }
@@ -377,6 +379,7 @@ export function bootstrapTauriMain() {
         installDialogPolyfillCoverage(targetWindow);
         if (isMobile) {
             installMobileRuntimeCompat(targetWindow);
+            installMobileImageLongPressSave(targetWindow);
         } else {
             installDesktopFullscreenShortcut(targetWindow);
         }
