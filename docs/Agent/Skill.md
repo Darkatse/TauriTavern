@@ -64,6 +64,16 @@ js --call default --args-json '{"path":"output/main.md"}' /skills/scene-review/s
 
 导出 `main` 时使用 `--call main`。脚本遵循统一的工作区与 Shell 语义，见 [JavaScript](Workspace.md#javascript)；命令选项见 `js --help`。
 
+也可以用位置参数，脚本从 `process.argv` 读取：
+
+```sh
+js /skills/scene-review/scripts/list-scenes.js output/main.md
+```
+
+```js
+const path = process.argv[2];
+```
+
 ### 可用能力
 
 脚本在 QuickJS 中执行，支持 ES 模块和 `async` / `await`，不提供 Node/Deno 标准库、DOM、网络、子进程或定时器。宿主能力从统一模块导入：

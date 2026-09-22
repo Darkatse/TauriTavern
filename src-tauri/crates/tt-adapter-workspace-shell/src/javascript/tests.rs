@@ -41,6 +41,31 @@ JS
 }
 
 #[tokio::test]
+async fn positional_arguments_are_exposed_through_process_argv() {
+    let result = execute(
+        r#"
+js -e 'console.log(process.argv.join(" "))' /scratch/task.js alpha 'second arg'
+"#,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    assert_eq!(
+        result.stdout.text_lossy(),
+        "js /scratch/task.js alpha second arg\n"
+    );
+}
+
+#[tokio::test]
+async fn argv_defaults_to_command_and_entry_without_positional_arguments() {
+    let result = execute(r#"echo 'console.log(process.argv.join("|"))' | js -"#)
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    assert_eq!(result.stdout.text_lossy(), "js|-\n");
+}
+
+#[tokio::test]
 async fn execution_limits_report_failure_without_partial_json() {
     let timeout = execute("js -e 'while (true) {}'").await.unwrap_err();
     assert!(

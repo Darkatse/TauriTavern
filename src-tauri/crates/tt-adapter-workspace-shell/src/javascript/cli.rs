@@ -2,9 +2,13 @@ use serde_json::Value;
 
 pub(super) const HELP: &str = r#"JavaScript (ES modules):
   js -e 'console.log(1 + 2)'
-  js /scratch/task.js
+  js /scratch/task.js arg1 arg2
   js - < /scratch/task.js
   js --call EXPORT [--args-json OBJECT] FILE.js
+
+Arguments after the entry point are exposed as process.argv:
+  js /scratch/task.js a b    -> process.argv = ['js', '/scratch/task.js', 'a', 'b']
+  js -e '...' a b            -> process.argv = ['js', 'a', 'b']
 
 Workspace files:
   import { workspace } from '@tauritavern/runtime';
@@ -37,9 +41,16 @@ pub(super) enum Source {
 }
 
 pub(super) struct Script {
+    /// The invoked builtin name (`js`, `node`, or `deno`), used as `process.argv[0]`.
+    pub name: String,
     pub source: Source,
+    /// The entry point shown as `process.argv[1]`; `None` for `-e` (Node keeps
+    /// eval arguments directly after the command name).
+    pub entry: Option<String>,
     pub call: Option<String>,
     pub args: Value,
+    /// Positional arguments after the entry point, exposed as `process.argv`.
+    pub rest: Vec<String>,
 }
 
 pub(super) enum Command {
@@ -62,8 +73,10 @@ pub(super) fn parse(name: &str, args: &[String], stdin: Option<&[u8]>) -> Result
     }
 
     let mut source = None;
+    let mut entry = None;
     let mut call = None;
     let mut json = None;
+    let mut rest: Vec<String> = Vec::new();
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -89,10 +102,13 @@ pub(super) fn parse(name: &str, args: &[String], stdin: Option<&[u8]>) -> Result
                     String::from_utf8(bytes.to_vec())
                         .map_err(|_| "JavaScript source must be UTF-8.")?,
                 ));
+                entry = Some("-".into());
             }
             path if !path.starts_with('-') && source.is_none() => {
                 source = Some(Source::File(path.to_owned()));
+                entry = Some(path.to_owned());
             }
+            arg if !arg.starts_with('-') => rest.push(arg.to_owned()),
             _ => {
                 return Err(format!(
                     "Unsupported or repeated argument `{arg}`. See js --help."
@@ -106,9 +122,12 @@ pub(super) fn parse(name: &str, args: &[String], stdin: Option<&[u8]>) -> Result
         return Err("--args-json requires --call EXPORT.".into());
     }
     Ok(Command::Run(Script {
+        name: name.to_owned(),
         source,
+        entry,
         call,
         args: json.unwrap_or_else(|| serde_json::json!({})),
+        rest,
     }))
 }
 
