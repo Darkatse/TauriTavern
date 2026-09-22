@@ -319,6 +319,12 @@ header 名也可从 `window.__TAURITAVERN__?.traceHeader` 获取（用于避免�
 - `window.__TAURITAVERN_MOBILE_OVERLAY_COMPAT__`
 - `window.__TAURITAVERN_MOBILE_IFRAME_VIEWPORT_CONTRACT_BRIDGE__`：same-origin iframe 的 viewport/inset contract bridge（用于 `viewport-host` boundary；主要用于 debug/幂等安装）
 - `window.__TAURITAVERN_MOBILE_WINDOW_OPEN_COMPAT__`：移动端外链 `window.open()` 通过系统浏览器打开（不创建应用内新窗口）
+- `document.__TAURITAVERN_MOBILE_IMAGE_LONG_PRESS_SAVE__`（Internal，仅记录行为）
+  - Android 上长按 `<img>` 保存图片（Android WebView 不提供桌面那样的图片右键菜单）。长按 500ms 且手指未移动；拖动、抬手、多指一律取消。
+  - 保存复用既有导出管线，落点为公共 `Download/`；**仅 Android 安装**，桌面与 iOS 各自保留原生图片菜单。
+  - 页面读不到字节时（跨域且无 CORS）改由宿主原生 HTTP 取回，仅限跨域 `http(s)` 源；同源失败不得转发给宿主（宿主没有应用自身虚拟 URL 的路由）。
+  - 按 document 安装（主文档与每个同源 iframe 各一份），因此标记挂在 document 而非 `window`，不属于 `window.__TAURITAVERN_MOBILE_*` 家族。
+  - 该补丁全局改变图片长按语义：自行实现图片长按的扩展会与之冲突。
 
 TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板写入器。该契约只授予 `clipboard-manager:allow-write-text`，不包含读取/清空/图片等权限；写入失败必须向调用方传播。
 
