@@ -30,6 +30,7 @@ const installed = await skill.list();
 
 | 方法 | 返回内容 |
 | --- | --- |
+| `acquireImport()` | 同步取得本页导入准入，返回 `release(): Promise<void>`；占用时抛出 `skill.import_busy` |
 | `pickImportArchive()` | 单个归档输入，取消时为 `null` |
 | `pickImportArchives()` | 选择一个或多个归档来源，取消时为 `null` |
 | `pickImportDirectories()` | 桌面端选择一个或多个目录来源，取消时为 `null` |
@@ -71,6 +72,6 @@ type SkillImportInput =
 
 安装结果的 `action` 为 `installed`、`replaced`、`already_installed` 或 `skipped`。多个来源逐项预览和安装，每项单独提交并返回结果；已完成的安装会保留。
 
-同一宿主一次处理一批导入。单项安装不会释放来源；整批结束或取消后，调用方须等待进行中的请求完成，再调用 `discardPickedImport()`，成功或失败均需清理。
+助手与 Skill Manager 在选取或下载来源前取得导入准入，并持有至预览、安装结束。整批完成或取消后，须等待在途请求结束，再 await `release()`；它清理临时来源后释放准入，可重复调用。单项安装不会释放来源。
 
 Agent 通过只读 `skills/<name>/` 视图和 `workspace.shell` 使用安装包，见 [Skill](../Agent/Skill.md)。

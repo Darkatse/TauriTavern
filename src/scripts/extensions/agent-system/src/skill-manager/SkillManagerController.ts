@@ -43,13 +43,16 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
     let fileViewerEpoch = 0;
     let disposed = false;
     let initPromise: Promise<void> | null = null;
-
+    let importRelease: (() => Promise<void>) | null = null;
+    async function releaseImport(): Promise<void> {
+        const release = importRelease;
+        try { await release?.(); } finally { if (importRelease === release) importRelease = null; }
+    }
     function commit(patch: Partial<SkillManagerSnapshot>): void {
         if (disposed) return;
         snapshot = { ...snapshot, ...patch };
         listeners.forEach(listener => listener());
     }
-
     function report(error: unknown): void {
         if (disposed) return;
         commit({ error: deps.errorText(error) });
@@ -181,7 +184,7 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
         if (hasItems && !snapshot.importBusy) {
             commit({ importBusy: true });
             try {
-                await deps.getSkillApi().discardPickedImport();
+                await releaseImport();
             } finally {
                 commit({ importBusy: false });
             }
@@ -203,6 +206,9 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
         if (snapshot.importBusy) return;
         if (!target.scope) throw new Error(deps.tr('skillScopeNotFound', { id: target.id }));
         const api = deps.getSkillApi();
+        await clearDraft();
+        if (disposed) return;
+        importRelease = api.acquireImport();
         const draft: SkillImportDraft = {
             ...emptySkillImportDraft(++sequence), sectionId: target.id, scope: target.scope,
         };
@@ -233,7 +239,7 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
             throw error;
         } finally {
             if (!isActive() || !snapshot.importDraft.items.some(item => item.preview && !item.error)) {
-                await api.discardPickedImport();
+                await releaseImport();
             }
             commit({ importBusy: false });
         }
@@ -245,12 +251,11 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
         const target = availableSection(request.sectionId);
         commit({ sourceDialog: { ...request, loading: true } });
         try {
-            const input = request.mode === 'download'
-                ? await deps.getSkillApi().downloadImport({ url: request.url })
-                : manualSkillImportInput(request.content, deps.tr);
             if (snapshot.sourceDialog.mode && snapshot.sourceDialog.id === request.id) {
-                commit({ sourceDialog: { mode: '' } });
-                await prepareImports(target, () => Promise.resolve([input]));
+                await prepareImports(target, async () => [request.mode === 'download'
+                    ? await deps.getSkillApi().downloadImport({ url: request.url })
+                    : manualSkillImportInput(request.content, deps.tr)]);
+                if (snapshot.sourceDialog.mode && snapshot.sourceDialog.id === request.id) commit({ sourceDialog: { mode: '' } });
             }
         } catch (error) {
             if (snapshot.sourceDialog.mode && snapshot.sourceDialog.id === request.id) {
@@ -309,7 +314,7 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
             }
         } finally {
             await clearDraft(draft.id);
-            await deps.getSkillApi().discardPickedImport();
+            await releaseImport();
             commit({ importBusy: false });
             await refreshCommittedSections([draft.sectionId]);
         }
@@ -420,7 +425,7 @@ export function createSkillManagerController(deps: SkillManagerDeps): SkillManag
             disposed = true;
             unsubscribes.splice(0).reverse().forEach(unsubscribe => unsubscribe());
             listeners.clear();
-            if (discard) void deps.getSkillApi().discardPickedImport().catch(error => { deps.reportError(error); queueMicrotask(() => { throw error; }); });
+            if (discard) void releaseImport().catch(error => { deps.reportError(error); queueMicrotask(() => { throw error; }); });
         },
         setSearchQuery: value => commit({ searchQuery: value }),
         selectProfile(profileId) {

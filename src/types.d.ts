@@ -1127,6 +1127,8 @@ type TauriTavernSkillExportPayload = {
 };
 
 type TauriTavernSkillApi = {
+    /** First-party import coordination; release after preview/install or cancellation. */
+    acquireImport: () => () => Promise<void>;
     list: (options?: { scope?: TauriTavernSkillScopeFilter; filter?: TauriTavernSkillScopeFilter }) => Promise<TauriTavernSkillIndexEntry[]>;
     listFiles: (options: { scope?: TauriTavernSkillScope; name: string }) => Promise<TauriTavernSkillFileRef[]>;
     pickImportArchive: () => Promise<TauriTavernSkillImportInput | null>;

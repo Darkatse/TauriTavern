@@ -33,7 +33,7 @@ function createSkillApi(overrides: Partial<TauriTavernSkillApi> = {}): TauriTave
         lineTruncated: false, bytes: 4, sha256: 'sha', truncated: false, resourceRef: 'skill://file',
     };
     return {
-        list: () => Promise.resolve([]),
+        acquireImport: () => () => Promise.resolve(), list: () => Promise.resolve([]),
         listFiles: () => Promise.resolve([]),
         pickImportArchive: () => Promise.resolve(null),
         pickImportArchives: () => Promise.resolve(null),
@@ -104,7 +104,7 @@ function createWorld(api: TauriTavernSkillApi, profiles: TauriTavernAgentProfile
                 },
             };
         },
-        getSkillApi: () => ({ ...api, discardPickedImport: async (input) => { state.discards += 1; await api.discardPickedImport(input); } }),
+        getSkillApi: () => ({ ...api, acquireImport: () => async () => { state.discards += 1; await api.discardPickedImport(); } }),
         confirmAction: () => Promise.resolve(true),
         downloadExport: () => Promise.resolve({ mode: 'browser' }),
         syncInstallPortability: () => Promise.resolve(),

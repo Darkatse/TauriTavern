@@ -39,7 +39,19 @@ function createSkillApi({
     materializeAndroidSkillImportArchive,
     removeTemporaryFile,
 }) {
-    // One active picked-import batch; add batch ownership only if concurrent imports are supported.
+    // Pickers and cleanup share one batch. First-party views hold this lease
+    // through preview and installation, including in-flight cleanup.
+    let importAcquired = false;
+    function acquireImport() {
+        if (importAcquired) throw new Error('skill.import_busy: another Skill import is still open');
+        importAcquired = true;
+        /** @type {Promise<void> | undefined} */
+        let releasing;
+        return () => {
+            releasing ??= discardPickedImport().finally(() => { importAcquired = false; });
+            return releasing;
+        };
+    }
     /** @type {Map<string, (() => Promise<void>) | null>} */
     const pendingPickedImports = new Map();
 
@@ -313,6 +325,7 @@ function createSkillApi({
     }
 
     return {
+        acquireImport,
         list,
         listFiles,
         pickImportArchive,

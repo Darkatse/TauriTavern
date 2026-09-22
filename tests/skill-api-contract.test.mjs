@@ -5,6 +5,30 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+test('Skill import ownership lasts through preview and cleanup, and release is idempotent', async () => {
+    const cleanup = Promise.withResolvers();
+    const started = Promise.withResolvers();
+    let cleanupCount = 0;
+    const { skill } = await installHarness({ safeInvoke: async command => {
+        if (command === 'plugin:dialog|open') return '/tmp/owned-skill.zip';
+        if (command === 'discard_skill_import_archive') { cleanupCount++; started.resolve(); await cleanup.promise; }
+    } });
+    const release = skill.acquireImport();
+    await skill.pickImportArchive();
+    assert.throws(() => skill.acquireImport(), /skill.import_busy/);
+    const releasing = release();
+    await started.promise;
+    const repeatedRelease = release();
+    assert.throws(() => skill.acquireImport(), /skill.import_busy/);
+    cleanup.resolve();
+    await Promise.all([releasing, repeatedRelease]);
+    assert.equal(cleanupCount, 1);
+    const next = skill.acquireImport();
+    await release();
+    assert.throws(() => skill.acquireImport(), /skill.import_busy/);
+    await next();
+});
+
 async function installHarness(overrides = {}) {
     const calls = [];
     globalThis.window = {
