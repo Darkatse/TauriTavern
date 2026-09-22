@@ -64,6 +64,7 @@ export {};
  *   | 'duplicate_character'
  *   | 'download_asset'
  *   | 'download_external_import_url'
+ *   | 'download_remote_image'
  *   | 'download_skill_import_url'
  *   | 'encode_tokens'
  *   | 'export_character_content'

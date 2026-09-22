@@ -192,6 +192,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::content_commands::initialize_default_content,
         super::content_commands::is_default_content_initialized,
         super::content_commands::download_external_import_url,
+        super::content_commands::download_remote_image,
         // Asset library commands
         super::asset_commands::get_assets_library,
         super::asset_commands::download_asset,

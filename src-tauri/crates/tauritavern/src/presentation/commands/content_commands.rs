@@ -7,7 +7,9 @@ use crate::presentation::commands::helpers::{
     ensure_ios_policy_allows, log_command, map_command_error,
 };
 use crate::presentation::errors::CommandError;
-use tt_application::services::content_service::ExternalImportDownloadResult;
+use tt_application::services::content_service::{
+    ExternalImportDownloadResult, RemoteImageDownloadResult,
+};
 
 #[tauri::command]
 pub async fn initialize_default_content(
@@ -58,4 +60,29 @@ pub async fn download_external_import_url(
         .download_external_import_url(&url)
         .await
         .map_err(map_command_error("Failed to download external import URL"))
+}
+
+/// Fetches a remote image the page cannot read itself because of the browser's CORS policy.
+///
+/// The URL comes from the page, so the application service owns every check that makes the native
+/// client safe to point at it.
+#[tauri::command]
+pub async fn download_remote_image(
+    url: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<RemoteImageDownloadResult, CommandError> {
+    log_command("download_remote_image");
+
+    ensure_ios_policy_allows(
+        &app_state.ios_policy,
+        app_state.ios_policy.capabilities.content.external_import,
+        "content.external_import",
+    )?;
+
+    app_state
+        .services
+        .content_service
+        .download_remote_image(&url)
+        .await
+        .map_err(map_command_error("Failed to download remote image"))
 }

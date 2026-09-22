@@ -13,11 +13,26 @@ use tt_ports::external_import::{DownloadByteLimit, DownloadedBytes, ExternalImpo
 
 pub struct HttpExternalImportDownloader {
     http_clients: Arc<HttpClientPool>,
+    profile: HttpClientProfile,
 }
 
 impl HttpExternalImportDownloader {
+    /// Uses the `Download` profile: redirects may cross origins so upstream CDNs keep working.
     pub fn new(http_clients: Arc<HttpClientPool>) -> Self {
-        Self { http_clients }
+        Self::with_profile(http_clients, HttpClientProfile::Download)
+    }
+
+    /// Uses the `RemoteMedia` profile: redirects stay on the original origin and the request is
+    /// bounded in time. Required for URLs the host did not choose (media fetched for a user action).
+    pub fn with_remote_media_profile(http_clients: Arc<HttpClientPool>) -> Self {
+        Self::with_profile(http_clients, HttpClientProfile::RemoteMedia)
+    }
+
+    fn with_profile(http_clients: Arc<HttpClientPool>, profile: HttpClientProfile) -> Self {
+        Self {
+            http_clients,
+            profile,
+        }
     }
 }
 
@@ -28,7 +43,7 @@ impl ExternalImportDownloader for HttpExternalImportDownloader {
         url: Url,
         limit: Option<DownloadByteLimit>,
     ) -> Result<DownloadedBytes, DomainError> {
-        let client = self.http_clients.client(HttpClientProfile::Download)?;
+        let client = self.http_clients.client(self.profile)?;
         let response = client.get(url).send().await.map_err(internal_error)?;
 
         if !response.status().is_success() {
@@ -60,7 +75,7 @@ impl ExternalImportDownloader for HttpExternalImportDownloader {
     }
 
     async fn fetch_to_file(&self, url: Url, path: &Path) -> Result<(), DomainError> {
-        let client = self.http_clients.client(HttpClientProfile::Download)?;
+        let client = self.http_clients.client(self.profile)?;
         let response = client.get(url).send().await.map_err(internal_error)?;
 
         if !response.status().is_success() {

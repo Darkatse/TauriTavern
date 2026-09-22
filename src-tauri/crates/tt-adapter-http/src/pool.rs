@@ -31,6 +31,8 @@ pub const TTS_CONNECT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 pub const TTS_REQUEST_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 pub const GIT_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 pub const GIT_REQUEST_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+pub const REMOTE_MEDIA_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+pub const REMOTE_MEDIA_REQUEST_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 pub const MCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -38,6 +40,7 @@ pub const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 pub enum HttpClientProfile {
     Default,
     Download,
+    RemoteMedia,
     Tokenizer,
     ChatCompletion,
     ChatCompletionStream,
@@ -351,6 +354,14 @@ fn build_profile_client(
     builder = match profile {
         HttpClientProfile::Default => builder,
         HttpClientProfile::Download => builder.redirect(Policy::limited(5)),
+        // Fetched for an explicit user action (saving an image that is already rendered), from a
+        // URL the host did not choose. Redirects therefore stay on the origin the request started
+        // from, and both connect and total time are bounded so a stalled or hostile upstream
+        // cannot pin the command forever. The two timeouts are initial judgement calls.
+        HttpClientProfile::RemoteMedia => builder
+            .redirect(restricted_redirect_policy())
+            .connect_timeout(REMOTE_MEDIA_CONNECT_TIMEOUT)
+            .timeout(REMOTE_MEDIA_REQUEST_TIMEOUT),
         HttpClientProfile::Tokenizer => builder
             .connect_timeout(TOKENIZER_CONNECT_TIMEOUT)
             .timeout(TOKENIZER_REQUEST_TIMEOUT),

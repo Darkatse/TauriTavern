@@ -73,11 +73,16 @@ pub(super) async fn build(
     let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
     let external_import_downloader: Arc<dyn ExternalImportDownloader> =
         Arc::new(HttpExternalImportDownloader::new(http_client_pool.clone()));
+    let remote_media_downloader: Arc<dyn ExternalImportDownloader> =
+        Arc::new(HttpExternalImportDownloader::with_remote_media_profile(
+            http_client_pool.clone(),
+        ));
     let request_proxy_runtime: Arc<dyn RequestProxyRuntime> = http_client_pool.clone();
 
     let content_service = Arc::new(ContentService::new(
         repositories.content_repository.clone(),
         external_import_downloader.clone(),
+        remote_media_downloader,
     ));
     let asset_service = Arc::new(AssetService::new(
         repositories.asset_repository.clone(),
