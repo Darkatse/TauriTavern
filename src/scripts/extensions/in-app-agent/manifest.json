@@ -1,0 +1,13 @@
+{
+    "display_name": "In-App Assistant",
+    "loading_order": 26,
+    "requires": [],
+    "optional": [],
+    "js": "dist/index.bundle.js",
+    "css": "style.css",
+    "i18n": { "zh-cn": "i18n/zh-cn.json" },
+    "author": "TauriTavern",
+    "version": "0.1.0",
+    "description": "Session-based application assistant and WebView tools.",
+    "homePage": "https://github.com/Darkatse/TauriTavern"
+}

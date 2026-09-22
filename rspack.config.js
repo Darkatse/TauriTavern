@@ -178,6 +178,23 @@ export function createRspackConfigs(mode = 'production') {
     module: createReactModule(development),
   };
 
+  const inAppAgentConfig = {
+    ...createSharedConfig(mode, 'in-app-agent'),
+    entry: {
+      index: './src/scripts/extensions/in-app-agent/src/index.ts',
+    },
+    output: {
+      filename: '[name].bundle.js',
+      path: path.resolve(__dirname, 'src/scripts/extensions/in-app-agent/dist'),
+      module: true,
+      library: {
+        type: 'module'
+      },
+      clean: true,
+    },
+    module: createReactModule(development),
+  };
+
   const tauriTavernSettingsConfig = {
     ...createSharedConfig(mode, 'tauritavern-settings'),
     dependencies: ['vendor-libs'],
@@ -198,7 +215,7 @@ export function createRspackConfigs(mode = 'production') {
     module: createReactModule(development),
   };
 
-  return [coreConfig, agentSystemConfig, mcpManagerConfig, tauriTavernSettingsConfig];
+  return [coreConfig, agentSystemConfig, mcpManagerConfig, inAppAgentConfig, tauriTavernSettingsConfig];
 }
 
 export default (_env, argv = {}) => createRspackConfigs(argv.mode ?? 'production');

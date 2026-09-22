@@ -12,6 +12,7 @@
 | 模型协议与续接 | [gateway tests](../../src-tauri/crates/tt-application/src/services/agent_model_gateway/tests.rs) |
 | Host API | [agent-api-contract.test.mjs](../../tests/agent-api-contract.test.mjs) |
 | Profile、历史与 Timeline 界面 | [agent-system tests](../../src/scripts/extensions/agent-system/src) |
+| 应用助手历史追赶、受理边界与交互缺陷 | [in-app-agent tests](../../src/scripts/extensions/in-app-agent/src)；主题、几何与普通表单用原生 WebView 验收 |
 | Skill 文件、宏与脚本 | [host 执行闭环](../../src-tauri/crates/tauritavern/src/app/contract_tests/agent_runtime/execution.rs)、[Skill 仓储](../../src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_skill_repository/tests.rs) |
 | 旧数据迁移 | [Profile 导入](../../src-tauri/crates/tauritavern/src/app/contract_tests/profile_migration.rs)、[Run 修订](../../src-tauri/crates/tauritavern/src/app/contract_tests/agent_runtime/legacy_revision.rs) |
 | Shell / JS 文件与提交 | [host 集成](../../src-tauri/crates/tauritavern/src/app/contract_tests/agent_runtime/shell.rs) |

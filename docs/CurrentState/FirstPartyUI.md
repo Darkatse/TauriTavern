@@ -7,6 +7,7 @@
 First-party UI 包含：
 
 - Agent System；
+- In-App Assistant；
 - MCP Manager；
 - Tauri Settings、Dev Logs 与 Sync。
 
@@ -35,6 +36,7 @@ Rspack 直接拥有以下 TypeScript/TSX 源码：
 
 ```text
 src/scripts/extensions/agent-system/src
+src/scripts/extensions/in-app-agent/src
 src/scripts/extensions/mcp-manager/src
 src/scripts/tauri/setting/settings-app
 src/scripts/tauri/setting/dev-logs-app
@@ -46,6 +48,7 @@ src/scripts/tauri/setting/sync-app
 | 功能 | Rspack entry | 输出 | 加载方 |
 | --- | --- | --- | --- |
 | Agent System | `agent-system/src/index.tsx` | `agent-system/dist/index.bundle.js` | Agent manifest |
+| In-App Assistant | `in-app-agent/src/index.ts` | `in-app-agent/dist/index.bundle.js` | Assistant manifest |
 | MCP Manager | `mcp-manager/src/index.tsx` | `mcp-manager/dist/index.bundle.js` | MCP manifest |
 | Settings | `settings-app/SettingsApp.tsx` | `setting/dist/settings.bundle.js` | `setting-panel/settings-popup.js` |
 | Dev Logs | `dev-logs-app/DevLogsApp.tsx` | `setting/dist/dev-logs.bundle.js` | `setting/dev-logs.js` |
@@ -66,6 +69,13 @@ Production 与 development 共用 `rspack.config.js` 的 `createRspackConfigs(mo
 - Panel、Timeline 与 Skill Manager 各自拥有 feature-local contract、controller/model 和 React presentation。
 - `i18n.ts` 负责翻译与插值，消息 key 由静态 catalog 推导类型。
 - `chat-input-toggle.ts` 与 `embedded-assets-buttons.ts` 是接入上游 DOM 的原生适配器，不创建额外 React root。
+
+### In-App Assistant
+
+- 一个 React island 挂载于原 A 抽屉；SillyTavern 保留外围 DOM 与抽屉行为，隐藏不卸载。
+- Controller 管理 Session IO 与订阅，组件管理输入、设置草稿和视图状态，`host.ts` 组合公共 API。
+
+启动顺序、消息归属与工具边界见 [应用内助手](InAppAssistant.md)。
 
 ### MCP Manager
 
