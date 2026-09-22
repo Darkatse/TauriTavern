@@ -277,7 +277,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::super::agent::{AGENT_DELEGATE, TASK_RETURN};
-    use super::super::policy::compile_invocation_tool_snapshot;
+    use super::super::policy::{compile_invocation_tool_snapshot, prepare_tool_bindings};
     use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES};
     use super::*;
     use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
@@ -291,7 +291,7 @@ mod tests {
     use tt_domain::models::agent::{
         AgentInvocationExitPolicy, AgentRunPresentation, ArtifactSpec, ArtifactTarget,
     };
-    use tt_domain::models::tool::{ToolId, ToolSnapshotId};
+    use tt_domain::models::tool::{AgentToolScope, ToolId, ToolSnapshotId};
 
     #[test]
     fn invocation_policy_preserves_order_and_materializes_return_mode_without_profile_mutation() {
@@ -314,7 +314,7 @@ mod tests {
             &profile,
             AgentInvocationExitPolicy::RunFinishAllowed,
             ToolSnapshotId::parse("root").unwrap(),
-            &[],
+            prepare_tool_bindings(&registry, &profile, AgentToolScope::Chat, &[]).unwrap(),
         )
         .unwrap();
         assert_eq!(
@@ -331,7 +331,7 @@ mod tests {
             &profile,
             AgentInvocationExitPolicy::TaskReturnRequired,
             ToolSnapshotId::parse("child").unwrap(),
-            &[],
+            prepare_tool_bindings(&registry, &profile, AgentToolScope::Chat, &[]).unwrap(),
         )
         .unwrap();
         assert_eq!(
@@ -385,7 +385,7 @@ mod tests {
                 tool_descriptions: BTreeMap::new(),
                 max_rounds: 1,
                 max_calls_per_run: 1,
-                mcp_result_inline_char_limit: 50_000,
+                external_result_inline_char_limit: 50_000,
                 max_calls_per_tool: BTreeMap::new(),
             },
             skills: AgentSkillPolicy {

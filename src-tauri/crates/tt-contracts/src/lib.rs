@@ -4,6 +4,7 @@ pub mod character;
 pub mod chat;
 pub mod client_asset_paths;
 pub mod database;
+pub mod extension_tools;
 pub mod host;
 pub mod lan_discovery;
 pub mod observability;

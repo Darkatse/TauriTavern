@@ -485,7 +485,10 @@ type TauriTavernAgentToolCatalogItem = {
     inputSchema: TauriTavernAgentToolInputSchema;
     outputSchema?: unknown;
     annotations?: TauriTavernAgentToolAnnotations;
-    source: 'builtin' | 'mcp';
+    source: 'builtin' | 'mcp' | 'extension';
+    extensionId?: string;
+    contexts?: TauriTavernAgentToolScope[];
+    enabled?: boolean;
     registrationId?: string;
     serverDisplayName?: string;
     permission?: 'off' | 'ask' | 'allow';
@@ -548,7 +551,7 @@ type TauriTavernAgentProfileDefinition = {
         toolDescriptions?: Record<string, TauriTavernToolDescriptionOverride>;
         maxRounds: number;
         maxCallsPerRun: number;
-        mcpResultInlineCharLimit: number;
+        externalResultInlineCharLimit: number;
         maxCallsPerTool?: Record<string, number>;
     };
     skills: {
@@ -635,8 +638,42 @@ type TauriTavernAgentProfilesApi = {
     delete: (input: string | { profileId: string }) => Promise<void>;
 };
 
+type TauriTavernJsonValue = null | boolean | number | string
+    | TauriTavernJsonValue[] | { [key: string]: TauriTavernJsonValue };
+
+type TauriTavernAgentToolScope = 'chat' | 'session';
+
+type TauriTavernAgentToolTarget =
+    | { kind: 'chat'; stableChatId: string; chatRef: TauriTavernChatRef }
+    | { kind: 'session'; sessionId: string };
+
+type TauriTavernExtensionToolDefinition = {
+    extensionId: string;
+    name: string;
+    description: string;
+    inputSchema: Record<string, TauriTavernJsonValue>;
+    contexts: readonly TauriTavernAgentToolScope[];
+    enabled?: boolean;
+};
+
+type TauriTavernExtensionToolContext = Readonly<{
+    runId: string;
+    invocationId: string;
+    callId: string;
+    target: TauriTavernAgentToolTarget;
+    signal: AbortSignal;
+}>;
+
 type TauriTavernAgentToolsApi = {
-    list: () => Promise<{
+    register: (
+        definition: TauriTavernExtensionToolDefinition,
+        execute: (
+            args: Record<string, TauriTavernJsonValue>,
+            context: TauriTavernExtensionToolContext,
+        ) => TauriTavernJsonValue | void | Promise<TauriTavernJsonValue | void>,
+    ) => Promise<void>;
+    setEnabled: (toolId: string, enabled: boolean) => Promise<void>;
+    list: (options?: { context?: TauriTavernAgentToolScope }) => Promise<{
         tools: TauriTavernAgentToolCatalogItem[];
         diagnostics: Array<{ toolId?: string; code: string; message: string }>;
     }>;

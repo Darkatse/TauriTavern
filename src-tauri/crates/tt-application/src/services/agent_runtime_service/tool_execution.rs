@@ -1,15 +1,13 @@
 use std::time::Instant;
 
 use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 use super::commit_ledger::RunCommitLedger;
-use super::markdown::render_markdown_value;
 use super::model_stream_projection::remove_live_tool_call;
+use super::tool_results::{mcp_known_response_result, tool_call_audit_file_stem};
 use super::{AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
-use crate::services::hashing::hex_lower;
 use crate::services::tool_request_gate::{ToolRequestGate, ToolRequestGateError};
 
 use crate::services::agent_tools::{
@@ -20,13 +18,9 @@ use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
     AgentToolResult, WorkspacePath,
 };
-use tt_domain::models::tool::{InvocationToolSnapshot, ToolArguments, ToolId, ToolInvocation};
-use tt_domain::text_metrics::TextMetrics;
-use tt_ports::mcp::{McpCallOutcome, McpKnownResponse};
+use tt_domain::models::tool::{ToolArguments, ToolInvocation};
+use tt_ports::mcp::McpCallOutcome;
 use tt_ports::workspace_fs::WorkspaceWriteGuard;
-
-const TOOL_CALL_AUDIT_DIGEST_BYTES: usize = 8;
-const MCP_RESULT_CONTENT_CHUNK_CHARS: usize = 3_000;
 
 pub(super) struct ToolCallFailure {
     pub error: ApplicationError,
@@ -215,7 +209,24 @@ impl AgentRuntimeService {
                     profile,
                 )
                 .await
-            } else if !call.tool_id.is_builtin() {
+            } else if call.tool_id.extension_id().is_some() {
+                let reply = self.extension_tools.call(
+                    tt_contracts::extension_tools::ExtensionToolCall {
+                        tool_id: call.tool_id.clone(),
+                        run_id: run_id.to_string(),
+                        invocation_id: invocation_id.to_string(),
+                        call_id: call.call_id.clone(),
+                        target: (&active_run.target).into(),
+                        arguments: args.clone(),
+                    },
+                    cancel.clone(),
+                ).await.map_err(ApplicationError::from);
+                reply.map(|reply| AgentToolDispatchOutcome {
+                    result: super::tool_results::extension_reply_result(call, reply),
+                    effect: AgentToolEffect::None,
+                    elapsed_ms: started.elapsed().as_millis(),
+                })
+            } else if call.tool_id.provider_id().starts_with("mcp/") {
                 // The MCP service reports sent-but-unconfirmed calls explicitly.
                 started_tool = false;
                 let outcome = self.call_mcp_tool(call, args, cancel).await?;
@@ -338,57 +349,6 @@ impl AgentRuntimeService {
         })
     }
 
-    pub(super) async fn record_tool_outcome_for_model(
-        &self,
-        prepared: &PreparedInvocation,
-        round: usize,
-        outcome: &mut AgentToolDispatchOutcome,
-    ) -> Result<(), ApplicationError> {
-        let run_id = prepared.invocation.run_id.as_str();
-        let invocation_id = prepared.invocation.id.as_str();
-        let snapshot_id = prepared.tool_snapshot.id().as_str();
-        let profile = &prepared.profile;
-        let result_path = self
-            .record_tool_outcome(run_id, invocation_id, round, snapshot_id, outcome)
-            .await?;
-        if !outcome.result.tool_id.is_builtin() {
-            let result_root = self.tool_result_root(run_id).await?;
-            let readable_path = WorkspacePath::parse(format!(
-                "{result_root}/{invocation_id}/round-{round:03}-{}.txt",
-                tool_call_audit_file_stem(&outcome.result.call_id)
-            ))?;
-            let mut projected = outcome.result.clone();
-            if let Some(readable) = project_mcp_result_for_model(
-                &mut projected,
-                &result_path,
-                &readable_path,
-                &prepared.tool_snapshot,
-                profile.tools.mcp_result_inline_char_limit,
-            )? {
-                self.workspace_files(run_id)
-                    .await?
-                    .write_text(&readable_path, &readable, WorkspaceWriteGuard::MustNotExist)
-                    .await?;
-                self.event(
-                    run_id,
-                    AgentRunEventLevel::Debug,
-                    "tool_result_readable_view_stored",
-                    json!({
-                        "invocationId": invocation_id,
-                        "round": round,
-                        "callId": outcome.result.call_id.as_str(),
-                        "toolId": outcome.result.tool_id.as_str(),
-                        "path": readable_path.as_str(),
-                        "auditPath": result_path.as_str(),
-                    }),
-                )
-                .await?;
-            }
-            outcome.result = projected;
-        }
-        Ok(())
-    }
-
     async fn call_mcp_tool(
         &self,
         call: &ToolInvocation,
@@ -421,107 +381,6 @@ impl AgentRuntimeService {
         outcome
     }
 
-    async fn record_tool_outcome(
-        &self,
-        run_id: &str,
-        invocation_id: &str,
-        round: usize,
-        snapshot_id: &str,
-        outcome: &AgentToolDispatchOutcome,
-    ) -> Result<WorkspacePath, ApplicationError> {
-        let path = self
-            .store_tool_result(run_id, invocation_id, round, &outcome.result)
-            .await?;
-        let error_message = outcome.result.is_error.then(|| {
-            if outcome.result.tool_id.is_builtin() {
-                outcome.result.content.clone()
-            } else {
-                format!("MCP tool returned an error; full result: {}", path.as_str())
-            }
-        });
-        self.event(
-            run_id,
-            if outcome.result.is_error {
-                AgentRunEventLevel::Warn
-            } else {
-                AgentRunEventLevel::Info
-            },
-            if outcome.result.is_error {
-                "tool_call_failed"
-            } else {
-                "tool_call_completed"
-            },
-            json!({
-                "round": round,
-                "invocationId": invocation_id,
-                "callId": outcome.result.call_id.as_str(),
-                "toolId": outcome.result.tool_id.as_str(),
-                "snapshotId": snapshot_id,
-                "name": outcome.result.tool_id.native_name(),
-                "isError": outcome.result.is_error,
-                "errorCode": outcome.result.error_code.as_deref(),
-                "message": error_message,
-                "elapsedMs": outcome.elapsed_ms,
-                "resourceRefs": &outcome.result.resource_refs,
-            }),
-        )
-        .await?;
-        Ok(path)
-    }
-
-    async fn store_tool_result(
-        &self,
-        run_id: &str,
-        invocation_id: &str,
-        round: usize,
-        result: &AgentToolResult,
-    ) -> Result<WorkspacePath, ApplicationError> {
-        let result_root = self.tool_result_root(run_id).await?;
-        let path = WorkspacePath::parse(format!(
-            "{result_root}/{invocation_id}/round-{round:03}-{}.json",
-            tool_call_audit_file_stem(&result.call_id)
-        ))?;
-        let text = serde_json::to_string_pretty(result).map_err(|error| {
-            ApplicationError::ValidationError(format!(
-                "agent.tool_result_serialize_failed: {error}"
-            ))
-        })?;
-        self.workspace_files(run_id)
-            .await?
-            .write_text(&path, &text, WorkspaceWriteGuard::MustNotExist)
-            .await?;
-        self.event(
-            run_id,
-            AgentRunEventLevel::Debug,
-            "tool_result_stored",
-            json!({
-                "invocationId": invocation_id,
-                "round": round,
-                "callId": result.call_id.as_str(),
-                "toolId": result.tool_id.as_str(),
-                "path": path.as_str(),
-            }),
-        )
-        .await?;
-        Ok(path)
-    }
-
-    async fn tool_result_root(&self, run_id: &str) -> Result<String, ApplicationError> {
-        Ok(
-            if self
-                .active_run_handle(run_id)
-                .await?
-                .target
-                .session_id()
-                .is_some()
-            {
-                format!("tool-results/{run_id}")
-            } else {
-                "tool-results".to_string()
-            },
-        )
-    }
-
     async fn store_tool_arguments(
         &self,
         run_id: &str,
@@ -544,243 +403,6 @@ impl AgentRuntimeService {
             .await?;
         Ok(path)
     }
-}
-
-fn project_mcp_result_for_model(
-    result: &mut AgentToolResult,
-    audit_path: &WorkspacePath,
-    readable_path: &WorkspacePath,
-    snapshot: &InvocationToolSnapshot,
-    inline_char_limit: usize,
-) -> Result<Option<String>, ApplicationError> {
-    result.content = mcp_model_content(result);
-    let char_count = TextMetrics::from_text(&result.content).chars;
-    if char_count <= inline_char_limit {
-        return Ok(None);
-    }
-
-    let readable = line_addressable_content(&result.content);
-    externalize_mcp_result(
-        result,
-        audit_path,
-        readable_path,
-        snapshot,
-        char_count,
-        inline_char_limit,
-    )?;
-    Ok(Some(readable))
-}
-
-fn mcp_model_content(result: &AgentToolResult) -> String {
-    let structured_content = result
-        .structured
-        .get("structuredContent")
-        .filter(|value| !value.is_null());
-    let mut sections = Vec::new();
-    let text = result.content.trim();
-    if !text.is_empty()
-        && !structured_content.is_some_and(|value| text_is_serialized_value(text, value))
-    {
-        sections.push(text.to_string());
-    }
-
-    if let Some(value) = structured_content {
-        sections.push(markdown_value_section("Details", value));
-    }
-
-    let notes = result
-        .structured
-        .get("diagnostics")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|diagnostic| {
-            diagnostic.get("code").and_then(Value::as_str) != Some("mcp.call_metadata_unsupported")
-        })
-        .filter_map(|diagnostic| diagnostic.get("message").and_then(Value::as_str))
-        .map(|message| format!("- {}", message.trim()))
-        .collect::<Vec<_>>();
-    if !notes.is_empty() {
-        sections.push(format!("## Notes\n\n{}", notes.join("\n")));
-    }
-
-    if let Some(server_error) = result.structured.get("serverError")
-        && let Some(data) = server_error.get("data").filter(|value| !value.is_null())
-    {
-        sections.push(markdown_value_section("Error details", data));
-    }
-
-    if sections.is_empty() {
-        "The MCP tool completed without content.".to_string()
-    } else {
-        sections.join("\n\n")
-    }
-}
-
-fn markdown_value_section(title: &str, value: &Value) -> String {
-    format!("## {title}\n\n{}", render_markdown_value(value, 0))
-}
-
-fn text_is_serialized_value(text: &str, value: &Value) -> bool {
-    serde_json::from_str::<Value>(text).is_ok_and(|parsed| parsed == *value)
-}
-
-fn externalize_mcp_result(
-    result: &mut AgentToolResult,
-    audit_path: &WorkspacePath,
-    readable_path: &WorkspacePath,
-    snapshot: &InvocationToolSnapshot,
-    char_count: usize,
-    inline_char_limit: usize,
-) -> Result<(), ApplicationError> {
-    let preview = result
-        .content
-        .chars()
-        .take(MCP_RESULT_CONTENT_CHUNK_CHARS)
-        .collect::<String>();
-    let read_tool = ToolId::builtin("workspace.read_file")?;
-    let read_alias = snapshot
-        .binding(&read_tool)
-        .map(|binding| binding.model_alias());
-    let search_tool = ToolId::builtin("workspace.search_files")?;
-    let search_alias = snapshot
-        .binding(&search_tool)
-        .map(|binding| binding.model_alias());
-    let mut instructions = format!(
-        "This MCP result is too large to include here ({char_count} characters; inline limit {inline_char_limit}). The complete readable result is available at `{}`.",
-        readable_path.as_str(),
-    );
-    if let Some(alias) = read_alias {
-        instructions.push_str(&format!(
-            " Use {alias} with path `{}` to read it. If it returns a preview, continue from the reported nextStartLine using start_line. Long source lines are wrapped so the complete result remains reachable.",
-            readable_path.as_str()
-        ));
-    } else {
-        instructions.push_str(
-            " This Agent does not have a text-reading tool, so the available prefix is included below and the full path remains available for the user.",
-        );
-    }
-    if let Some(alias) = search_alias {
-        instructions.push_str(&format!(
-            " Use {alias} with path `{}` to locate specific text before reading exact ranges.",
-            readable_path.as_str()
-        ));
-    }
-    if !preview.is_empty() {
-        instructions.push_str(&format!(
-            "\n\n## Prefix preview\n\nThe following is at most {MCP_RESULT_CONTENT_CHUNK_CHARS} Unicode characters and is not the complete result.\n\n{preview}"
-        ));
-    }
-    result.content = instructions;
-    result.structured = json!({
-        "externalized": true,
-        "path": readable_path.as_str(),
-        "auditPath": audit_path.as_str(),
-        "charCount": char_count,
-        "charLimit": inline_char_limit,
-    });
-    for path in [readable_path, audit_path] {
-        if !result
-            .resource_refs
-            .iter()
-            .any(|reference| reference == path.as_str())
-        {
-            result.resource_refs.push(path.as_str().to_string());
-        }
-    }
-    Ok(())
-}
-
-fn line_addressable_content(text: &str) -> String {
-    let mut output = String::with_capacity(text.len());
-    let mut line_chars = 0;
-    for character in text.chars() {
-        if character == '\n' {
-            output.push(character);
-            line_chars = 0;
-            continue;
-        }
-        if line_chars == MCP_RESULT_CONTENT_CHUNK_CHARS {
-            output.push('\n');
-            line_chars = 0;
-        }
-        output.push(character);
-        line_chars += 1;
-    }
-    output
-}
-
-fn mcp_known_response_result(call: &ToolInvocation, response: McpKnownResponse) -> AgentToolResult {
-    match response {
-        McpKnownResponse::ToolResult(result) => {
-            let content = result
-                .text
-                .iter()
-                .map(|block| block.text.as_str())
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let diagnostics = result
-                .diagnostics
-                .iter()
-                .map(|diagnostic| {
-                    json!({
-                        "code": diagnostic.code,
-                        "message": diagnostic.message,
-                        "contentIndex": diagnostic.content_index,
-                    })
-                })
-                .collect::<Vec<_>>();
-            AgentToolResult {
-                call_id: call.call_id.clone(),
-                tool_id: call.tool_id.clone(),
-                content,
-                structured: json!({
-                    "structuredContent": result.structured_content,
-                    "diagnostics": diagnostics,
-                }),
-                is_error: result.is_error,
-                error_code: result.is_error.then(|| "mcp.tool_error".to_string()),
-                resource_refs: Vec::new(),
-            }
-        }
-        McpKnownResponse::ServerError(error) => AgentToolResult {
-            call_id: call.call_id.clone(),
-            tool_id: call.tool_id.clone(),
-            content: error.message.clone(),
-            structured: json!({
-                "serverError": {
-                    "code": error.code,
-                    "message": error.message,
-                    "data": error.data,
-                }
-            }),
-            is_error: true,
-            error_code: Some("mcp.server_error".to_string()),
-            resource_refs: Vec::new(),
-        },
-        McpKnownResponse::Unsupported(response) => AgentToolResult {
-            call_id: call.call_id.clone(),
-            tool_id: call.tool_id.clone(),
-            content: response.message.clone(),
-            structured: json!({
-                "unsupportedResponse": {
-                    "type": response.response_type,
-                    "message": response.message,
-                }
-            }),
-            is_error: true,
-            error_code: Some("mcp.unsupported_response".to_string()),
-            resource_refs: Vec::new(),
-        },
-    }
-}
-
-fn tool_call_audit_file_stem(call_id: &str) -> String {
-    let digest = Sha256::digest(call_id.as_bytes());
-    format!(
-        "call_{}",
-        hex_lower(&digest[..TOOL_CALL_AUDIT_DIGEST_BYTES])
-    )
 }
 
 fn is_completion_tool(tool_name: &str) -> bool {
@@ -828,18 +450,11 @@ fn ensure_tool_result_identity(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{Value, json};
+    use serde_json::Value;
     use tt_domain::models::agent::AgentToolResult;
-    use tt_domain::models::agent::WorkspacePath;
-    use tt_domain::models::tool::{
-        InvocationToolSnapshot, ToolArguments, ToolBinding, ToolDescriptor, ToolId, ToolInvocation,
-        ToolProviderId, ToolSnapshotId,
-    };
+    use tt_domain::models::tool::{ToolArguments, ToolId, ToolInvocation};
 
-    use super::{
-        MCP_RESULT_CONTENT_CHUNK_CHARS, ensure_tool_result_identity, mcp_model_content,
-        project_mcp_result_for_model,
-    };
+    use super::ensure_tool_result_identity;
 
     #[test]
     fn tool_result_identity_must_match_its_invocation() {
@@ -861,165 +476,5 @@ mod tests {
 
         let error = ensure_tool_result_identity(&invocation, &result).unwrap_err();
         assert!(error.to_string().contains("tool.result_identity_mismatch"));
-    }
-
-    #[test]
-    fn mcp_model_content_keeps_actionable_structured_data() {
-        let result = AgentToolResult {
-            call_id: "call_mcp".to_string(),
-            tool_id: ToolId::new(
-                &ToolProviderId::parse("mcp/550e8400-e29b-41d4-a716-446655440000").unwrap(),
-                "search",
-            )
-            .unwrap(),
-            content: "Created issue.".to_string(),
-            structured: json!({
-                "structuredContent": { "issueId": 42 },
-                "diagnostics": [{
-                    "code": "mcp.call_content_unsupported",
-                    "message": "Image content is not supported",
-                    "contentIndex": 1,
-                }, {
-                    "code": "mcp.call_metadata_unsupported",
-                    "message": "Result metadata is not supported",
-                    "contentIndex": null,
-                }],
-            }),
-            is_error: false,
-            error_code: None,
-            resource_refs: Vec::new(),
-        };
-
-        let content = mcp_model_content(&result);
-        assert!(content.contains("Created issue."));
-        assert!(content.contains("## Details"));
-        assert!(content.contains("- **issueId**: 42"));
-        assert!(content.contains("## Notes"));
-        assert!(content.contains("- Image content is not supported"));
-        assert!(!content.contains("\"issueId\""));
-        assert!(!content.contains("mcp.call_content_unsupported"));
-        assert!(!content.contains("Result metadata"));
-    }
-
-    #[test]
-    fn mcp_model_content_deduplicates_serialized_structured_data() {
-        let result = AgentToolResult {
-            call_id: "call_mcp".to_string(),
-            tool_id: ToolId::new(
-                &ToolProviderId::parse("mcp/550e8400-e29b-41d4-a716-446655440000").unwrap(),
-                "lookup",
-            )
-            .unwrap(),
-            content: r#"{"issueId":42}"#.to_string(),
-            structured: json!({
-                "structuredContent": { "issueId": 42 },
-                "diagnostics": [],
-            }),
-            is_error: false,
-            error_code: None,
-            resource_refs: Vec::new(),
-        };
-
-        assert_eq!(
-            mcp_model_content(&result),
-            "## Details\n\n- **issueId**: 42"
-        );
-    }
-
-    #[test]
-    fn externalized_mcp_result_points_to_readable_full_artifact() {
-        let read_id = ToolId::builtin("workspace.read_file").unwrap();
-        let snapshot = InvocationToolSnapshot::try_new(
-            ToolSnapshotId::parse("snapshot").unwrap(),
-            vec![
-                ToolBinding::new(
-                    ToolDescriptor {
-                        id: read_id,
-                        title: None,
-                        description: None,
-                        input_schema: json!({ "type": "object" }),
-                        output_schema: None,
-                        annotations: json!({}),
-                    },
-                    "workspace_read_file",
-                    None,
-                )
-                .unwrap(),
-            ],
-            2,
-        )
-        .unwrap();
-        let mut result = AgentToolResult {
-            call_id: "call_mcp".to_string(),
-            tool_id: ToolId::new(
-                &ToolProviderId::parse("mcp/550e8400-e29b-41d4-a716-446655440000").unwrap(),
-                "search",
-            )
-            .unwrap(),
-            content: "full content".to_string(),
-            structured: json!({ "full": true }),
-            is_error: false,
-            error_code: None,
-            resource_refs: Vec::new(),
-        };
-        let audit_path = WorkspacePath::parse("tool-results/call_deadbeef.json").unwrap();
-        let readable_path = WorkspacePath::parse("tool-results/call_deadbeef.txt").unwrap();
-        let inline_char_limit = 50_000;
-
-        assert!(
-            project_mcp_result_for_model(
-                &mut result,
-                &audit_path,
-                &readable_path,
-                &snapshot,
-                inline_char_limit,
-            )
-            .unwrap()
-            .is_none()
-        );
-        assert_eq!(result.content, "full content");
-
-        result.content = format!(
-            "{}outside-preview{}",
-            "界".repeat(MCP_RESULT_CONTENT_CHUNK_CHARS),
-            "x".repeat(inline_char_limit)
-        );
-        let readable = project_mcp_result_for_model(
-            &mut result,
-            &audit_path,
-            &readable_path,
-            &snapshot,
-            inline_char_limit,
-        )
-        .unwrap()
-        .expect("large MCP result should produce a readable view");
-
-        assert!(result.content.contains("workspace_read_file"));
-        assert!(result.content.contains(readable_path.as_str()));
-        assert!(!result.content.contains(audit_path.as_str()));
-        assert!(result.content.contains("## Prefix preview"));
-        assert_eq!(
-            result.content.matches('界').count(),
-            MCP_RESULT_CONTENT_CHUNK_CHARS
-        );
-        assert!(!result.content.contains("outside-preview"));
-        assert!(readable.contains("outside-preview"));
-        assert!(
-            readable
-                .lines()
-                .all(|line| { line.chars().count() <= MCP_RESULT_CONTENT_CHUNK_CHARS })
-        );
-        assert_eq!(result.structured["externalized"], true);
-        assert_eq!(result.structured["path"], readable_path.as_str());
-        assert_eq!(result.structured["auditPath"], audit_path.as_str());
-        assert!(result.structured["charCount"].as_u64().unwrap() > 50_000);
-        assert_eq!(result.structured["charLimit"], inline_char_limit);
-        assert_eq!(
-            result.resource_refs,
-            vec![
-                readable_path.as_str().to_string(),
-                audit_path.as_str().to_string()
-            ]
-        );
     }
 }

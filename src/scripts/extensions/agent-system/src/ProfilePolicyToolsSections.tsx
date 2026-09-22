@@ -272,19 +272,19 @@ export function ProfileRunSection({ snapshot, controller, tr }: ProfileSectionPr
                     />
                 </label>
                 <label className="ttas-field">
-                    <span>{tr('mcpResultInlineCharLimit')}</span>
+                    <span>{tr('externalResultInlineCharLimit')}</span>
                     <input
                         className="text_pole"
                         type="number"
                         min="1"
                         step="1000"
-                        value={draft.tools.mcpResultInlineCharLimit}
+                        value={draft.tools.externalResultInlineCharLimit}
                         disabled={builtin}
-                        onChange={(event) => controller.setToolsLimitField('mcpResultInlineCharLimit', parseNumberInput(event.target.value))}
+                        onChange={(event) => controller.setToolsLimitField('externalResultInlineCharLimit', parseNumberInput(event.target.value))}
                     />
                     <small className="ttas-field-hint">
                         <i className="fa-solid fa-circle-info" aria-hidden="true"></i>
-                        <span>{tr('mcpResultInlineCharLimitHint')}</span>
+                        <span>{tr('externalResultInlineCharLimitHint')}</span>
                     </small>
                 </label>
                 <label className="ttas-field">

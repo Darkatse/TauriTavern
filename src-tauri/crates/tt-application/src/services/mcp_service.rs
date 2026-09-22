@@ -28,7 +28,6 @@ mod tests;
 
 use call::CallRegistry;
 use catalog::CatalogSnapshot;
-pub(crate) use model_tools::{McpModelTool, McpModelToolDiagnostic};
 
 pub(super) const MAX_ARGUMENTS_JSON_BYTES: usize = 256 * 1024;
 

@@ -11,6 +11,13 @@ use crate::errors::DomainError;
 const TOOL_ID_SEPARATOR: char = ':';
 const BUILTIN_TOOL_PROVIDER_ID: &str = "builtin";
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentToolScope {
+    Chat,
+    Session,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ToolProviderId(String);
 
@@ -116,6 +123,24 @@ impl ToolId {
 
     pub fn is_builtin(&self) -> bool {
         self.provider_id() == BUILTIN_TOOL_PROVIDER_ID
+    }
+
+    pub fn extension(extension_id: &str, name: &str) -> Result<Self, DomainError> {
+        if extension_id.trim().is_empty() || name.trim().is_empty() {
+            return Err(DomainError::InvalidData(
+                "extension.tool_identity_required: extensionId and name are required".into(),
+            ));
+        }
+        Self::new(
+            &ToolProviderId::parse(format!("extension/{extension_id}"))?,
+            name,
+        )
+    }
+
+    pub fn extension_id(&self) -> Option<&str> {
+        self.provider_id()
+            .strip_prefix("extension/")
+            .filter(|id| !id.trim().is_empty())
     }
 
     pub fn as_str(&self) -> &str {

@@ -1,4 +1,4 @@
-import { clone, prettyJson } from './host-api';
+import { clone, errorText, prettyJson } from './host-api';
 import {
     defaultProfile,
     normalizeProfileForSave,
@@ -77,7 +77,7 @@ export type AgentSystemDraftEditor = {
     ) => void;
     setPlanMode: (mode: string) => void;
     setToolsLimitField: (
-        field: 'maxRounds' | 'maxCallsPerRun' | 'mcpResultInlineCharLimit',
+        field: 'maxRounds' | 'maxCallsPerRun' | 'externalResultInlineCharLimit',
         value: AgentProfileDraftNumber,
     ) => void;
     setModelRetryField: (field: 'maxRetries' | 'intervalMs', value: AgentProfileDraftNumber) => void;
@@ -308,6 +308,21 @@ export function createAgentSystemDraftEditor(context: AgentSystemDraftEditorCont
             context.commit({ selectedToolId: toolId });
         },
         async toggleToolAllowed(toolId, enabled) {
+            const snapshot = context.getSnapshot();
+            if (enabled && toolId.startsWith('extension/') && !snapshot.draft.tools.allow.includes(toolId)) {
+                try {
+                    const catalog = await deps.listTools();
+                    if (context.isDisposed() || context.getSnapshot().editingProfileId !== snapshot.editingProfileId) return;
+                    if (!catalog.tools.some(tool => tool.id === toolId)) {
+                        throw new Error(deps.tr('extensionToolUnavailable', { tool: toolId }));
+                    }
+                } catch (error) {
+                    if (context.isDisposed()) return;
+                    context.commit({ error: errorText(error) });
+                    deps.notifyError(error);
+                    return;
+                }
+            }
             if (!enabled && toolHasDescriptionOverride(context.getSnapshot().draft, toolId)) {
                 // The checkbox is controlled: declining the confirmation
                 // simply skips the commit, leaving it checked.
@@ -322,7 +337,7 @@ export function createAgentSystemDraftEditor(context: AgentSystemDraftEditorCont
                 if (!enabled) {
                     applyResetToolDescriptionOverride(draft, toolId);
                 }
-                applyToolAllowed(draft, toolId, enabled, new Set(context.catalogToolIds()), context.getSnapshot().toolIds);
+                applyToolAllowed(draft, toolId, enabled, context.getSnapshot().toolIds);
             });
         },
         setToolDescriptionOverride(toolId, value) {

@@ -327,6 +327,9 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::quick_reply_commands::save_quick_reply_set,
         super::quick_reply_commands::delete_quick_reply_set,
         // Agent runtime commands
+        super::agent_extension_tool_commands::register_agent_extension_tool,
+        super::agent_extension_tool_commands::set_agent_extension_tool_enabled,
+        super::agent_extension_tool_commands::resolve_agent_extension_tool_call,
         super::agent_commands::start_agent_run,
         super::agent_session_commands::load_agent_session_profile,
         super::agent_session_commands::save_agent_session_profile,

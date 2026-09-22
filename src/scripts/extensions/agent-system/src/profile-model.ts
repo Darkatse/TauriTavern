@@ -15,7 +15,7 @@ import {
     normalizeAgentContextPolicy,
 } from '../../../tauritavern/agent/agent-context-policy.js';
 
-const DEFAULT_MCP_RESULT_INLINE_CHAR_LIMIT = 50_000;
+const DEFAULT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT = 50_000;
 
 type AgentProfile = TauriTavernAgentProfileDefinition;
 
@@ -50,10 +50,10 @@ export type AgentProfileDraft = Omit<AgentProfile, 'run' | 'context' | 'delegati
         includeActivatedWorldInfo: boolean;
     };
     delegation: AgentProfileDraftDelegation;
-    tools: Omit<AgentProfile['tools'], 'maxRounds' | 'maxCallsPerRun' | 'mcpResultInlineCharLimit'> & {
+    tools: Omit<AgentProfile['tools'], 'maxRounds' | 'maxCallsPerRun' | 'externalResultInlineCharLimit'> & {
         maxRounds: AgentProfileDraftNumber;
         maxCallsPerRun: AgentProfileDraftNumber;
-        mcpResultInlineCharLimit: AgentProfileDraftNumber;
+        externalResultInlineCharLimit: AgentProfileDraftNumber;
     };
     skills: AgentProfile['skills'] & {
         visibleCsv?: string;
@@ -348,7 +348,7 @@ export function defaultProfile(id: string = DEFAULT_PROFILE_ID): AgentProfile {
             toolDescriptions: {},
             maxRounds: 80,
             maxCallsPerRun: 80,
-            mcpResultInlineCharLimit: DEFAULT_MCP_RESULT_INLINE_CHAR_LIMIT,
+            externalResultInlineCharLimit: DEFAULT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT,
             maxCallsPerTool: {},
         },
         skills: {
@@ -442,9 +442,12 @@ export function profileForEdit(profile: TauriTavernAgentProfileDefinition): Agen
 
 function migrateProfileSchema(profile: AgentProfileDraft): void {
     const version = Number(profile.schemaVersion || 1);
-    profile.tools.mcpResultInlineCharLimit = Number(
-        profile.tools.mcpResultInlineCharLimit ?? DEFAULT_MCP_RESULT_INLINE_CHAR_LIMIT,
+    profile.tools.externalResultInlineCharLimit = Number(
+        profile.tools.externalResultInlineCharLimit
+            ?? Reflect.get(profile.tools, 'mcpResultInlineCharLimit')
+            ?? DEFAULT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT,
     );
+    Reflect.deleteProperty(profile.tools, 'mcpResultInlineCharLimit');
     if (version === 4) {
         return;
     }

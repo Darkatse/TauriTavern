@@ -118,6 +118,13 @@ pub enum AgentRunTarget {
 }
 
 impl AgentRunTarget {
+    pub fn tool_scope(&self) -> crate::models::tool::AgentToolScope {
+        match self {
+            Self::Chat(_) => crate::models::tool::AgentToolScope::Chat,
+            Self::Session { .. } => crate::models::tool::AgentToolScope::Session,
+        }
+    }
+
     pub fn session_id(&self) -> Option<&str> {
         match self {
             Self::Session { session_id } => Some(session_id),

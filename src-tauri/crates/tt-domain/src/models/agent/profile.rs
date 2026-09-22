@@ -10,7 +10,7 @@ pub const AGENT_PROFILE_KIND: &str = "tauritavern.agentProfile";
 pub const DEFAULT_AGENT_PROFILE_ID: &str = "default-writer";
 pub const DEFAULT_AGENT_TOOL_MAX_ROUNDS: usize = 80;
 pub const DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN: usize = 80;
-pub const DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT: usize = 50_000;
+pub const DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT: usize = 50_000;
 pub const DEFAULT_AGENT_MODEL_MAX_RETRIES: usize = 3;
 pub const DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS: u64 = 3_000;
 pub const DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES: i64 = -1;
@@ -285,8 +285,11 @@ pub struct AgentToolPolicy<T = String> {
     pub max_rounds: usize,
     #[serde(default = "default_agent_tool_max_calls_per_run")]
     pub max_calls_per_run: usize,
-    #[serde(default = "default_agent_mcp_result_inline_char_limit")]
-    pub mcp_result_inline_char_limit: usize,
+    #[serde(
+        default = "default_agent_external_result_inline_char_limit",
+        alias = "mcpResultInlineCharLimit"
+    )]
+    pub external_result_inline_char_limit: usize,
     #[serde(default)]
     pub max_calls_per_tool: BTreeMap<T, usize>,
 }
@@ -356,8 +359,8 @@ fn default_agent_tool_max_calls_per_run() -> usize {
     DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN
 }
 
-fn default_agent_mcp_result_inline_char_limit() -> usize {
-    DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT
+fn default_agent_external_result_inline_char_limit() -> usize {
+    DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT
 }
 
 fn default_agent_model_max_retries() -> usize {
@@ -440,10 +443,10 @@ mod tests {
     use super::{
         AgentProfileDefinition, DEFAULT_AGENT_DELEGATION_MAX_CONCURRENT_INVOCATIONS,
         DEFAULT_AGENT_DELEGATION_MAX_INVOCATIONS_PER_RUN,
-        DEFAULT_AGENT_DELEGATION_RESULT_BUDGET_TOKENS, DEFAULT_AGENT_HANDOFF_MAX_DEPTH,
-        DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES, DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT,
-        DEFAULT_AGENT_MODEL_MAX_RETRIES, DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS,
-        DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
+        DEFAULT_AGENT_DELEGATION_RESULT_BUDGET_TOKENS,
+        DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT, DEFAULT_AGENT_HANDOFF_MAX_DEPTH,
+        DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES, DEFAULT_AGENT_MODEL_MAX_RETRIES,
+        DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS, DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
     };
     use crate::models::agent::plan::DEFAULT_AGENT_PLAN_BETA;
 
@@ -539,8 +542,8 @@ mod tests {
             DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN
         );
         assert_eq!(
-            profile.tools.mcp_result_inline_char_limit,
-            DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT
+            profile.tools.external_result_inline_char_limit,
+            DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT
         );
         assert!(profile.tools.max_calls_per_tool.is_empty());
         assert!(profile.skills.deny.is_empty());

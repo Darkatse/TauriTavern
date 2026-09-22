@@ -311,6 +311,12 @@ pub struct AgentRepairProfileFileDto {
     pub action: AgentProfileStorageRepairAction,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentListToolsDto {
+    pub context: Option<tt_domain::models::tool::AgentToolScope>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentListToolsResultDto {
@@ -337,6 +343,12 @@ pub struct AgentToolCatalogItemDto {
     pub server_display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission: Option<McpToolPermission>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extension_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contexts: Option<Vec<tt_domain::models::tool::AgentToolScope>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]

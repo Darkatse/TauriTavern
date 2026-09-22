@@ -6,6 +6,7 @@ use tt_domain::models::agent::{
 
 mod delegation;
 mod execution;
+mod extension_tools;
 mod legacy_revision;
 mod mcp;
 mod model_binding;

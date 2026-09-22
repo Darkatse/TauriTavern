@@ -129,17 +129,17 @@ fn tool_policy_rejects_duplicate_order_entries() {
 }
 
 #[test]
-fn tool_policy_rejects_zero_mcp_result_inline_limit() {
+fn tool_policy_rejects_zero_external_result_inline_limit() {
     let registry = BuiltinAgentToolRegistry::all();
     let mut profile = super::defaults::default_writer_profile().expect("default writer profile");
-    profile.tools.mcp_result_inline_char_limit = 0;
+    profile.tools.external_result_inline_char_limit = 0;
 
     let error = super::validation::validate_tool_policy(&profile.tools, registry.catalog())
-        .expect_err("MCP result inline limit must be positive");
+        .expect_err("external result inline limit must be positive");
     assert!(
         error
             .to_string()
-            .contains("agent.profile_mcp_result_inline_char_limit_invalid")
+            .contains("agent.profile_external_result_inline_char_limit_invalid")
     );
 }
 
@@ -558,7 +558,7 @@ fn test_tool_policy(allow: &[&str]) -> tt_domain::models::agent::profile::Resolv
         tool_descriptions: Default::default(),
         max_rounds: 1,
         max_calls_per_run: 1,
-        mcp_result_inline_char_limit: 50_000,
+        external_result_inline_char_limit: 50_000,
         max_calls_per_tool: Default::default(),
     }
 }

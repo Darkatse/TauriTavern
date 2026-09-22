@@ -187,7 +187,7 @@ Agent 没有新增公共 raw-call API。Profile v3 以 `mcp/<registration-uuid>:
 
 只有 Active 且 permission 为 Ask/Allow、input schema root 明确为 `type: "object"` 的工具可以进入 Agent binding。共享 resolver 先将 registration description override 应用到 catalog descriptor 的副本，Agent invocation 再应用 Profile `tools.toolDescriptions`，因此 Profile 优先。当前按用户要求不实现 Ask 审批 UI：Ask 与 Allow 都自动执行；Off 与 Paused 在广告前过滤，并在实际发送前重新读取 registration 复核。参数必须是 256 KiB 内 JSON object，Host 不按 schema 改写。alias 由 Agent snapshot 生成，不属于 Manager DTO 或 MCP identity。
 
-已知结果投影为现有 `AgentToolResult`。内部 `structured`、`error_code` 与 `resource_refs` 不作为字段发送给模型；text 保持原文，structured content 去重后转为 `## Details` Markdown，可操作的非文本 content diagnostic 转为 `## Notes`，metadata diagnostic 不进入模型。模型可见 `content` 超过 Agent Profile 的 `tools.mcpResultInlineCharLimit`（默认 50,000）时，完整 JSON 保存在内部 audit，同时生成同一完整 Markdown 的行可读 `.txt` 视图；模型得到最多前 3,000 个 Unicode 字符的前缀预览、可读视图路径与分段读取指引，不接收 audit JSON 路径。`.txt` 视图换行超长物理行，JSON audit 保留精确原始结果。该值只属于 Agent invocation 投影，不进入共享 `McpService` 调用契约。`outcome_unknown` 不自动 retry，也不伪造 tool result；当前没有审批/未知结果交互状态机，因此终止当前 Agent run。
+已知结果转为 `AgentToolResult`：text 保持原文，structured content 去重后呈现，保留可操作的内容诊断，metadata 留在内部记录。长结果沿用 Agent 的共同 [结果处理](../Agent/ToolSystem.md#结果如何进入下一轮)，不改变共享 `McpService` 调用契约。`outcome_unknown` 终止当前 Agent run，不自动重试，也不伪造工具结果。
 
 ## 8. Legacy 消费契约
 

@@ -4,11 +4,11 @@
 
 ## 身份与调用名称
 
-工具目录使用稳定的 `ToolId`。内置工具是 `builtin:<name>`，MCP 工具是 `mcp/<registration-id>:<name>`。Profile 的工具配置和运行记录使用这些 ID。
+工具目录使用稳定的 `ToolId`。内置工具是 `builtin:<name>`，MCP 工具是 `mcp/<registration-id>:<name>`，扩展工具是 `extension/<extensionId>:<name>`。Profile 的工具配置和运行记录使用这些 ID。
 
-模型看到的名称由 Invocation 创建时生成。例如 `builtin:workspace.read_file` 对应 `workspace_read_file`。MCP 名称根据服务器和工具名生成。稳定 ID 用于记录和配置，模型名称用于这次调用，两者的对应关系保存在工具快照中。
+模型调用名称在 Invocation 创建时生成，与稳定 ID 的映射保存在工具快照中。内置工具如 `workspace_read_file` 保留固定名称；扩展使用注册的 `name`，MCP 使用服务器与工具名，按模型协议规范字符和长度，重名时加 `__2` 等短后缀。
 
-Invocation 使用的工具快照包含描述、参数、名称映射及预算上限，按工具目录、Profile 和结束方式创建；输出修订沿用原快照。每个 Invocation 的调用计数独立，由 `ToolRequestGate` 检查后进入内置工具或 MCP 的执行路径。
+工具准备按目录、Chat/Session 场景和 Profile 选择生成 bindings，Invocation 再单独应用完成协议，形成包含描述、参数、名称映射及预算的快照。输出修订沿用原快照。每个 Invocation 的调用计数独立，由 `ToolRequestGate` 检查后明确分派到 Builtin、MCP 或 Extension。
 
 新 Profile 默认启用 Shell。
 
@@ -45,15 +45,25 @@ Invocation 使用的工具快照包含描述、参数、名称映射及预算上
 
 ## 结果如何进入下一轮
 
-`AgentToolResult` 包含调用 ID、工具 ID、文本、结构化结果、错误信息和资源引用。runtime 把它作为 tool message 追加到模型上下文，并保存调用记录。
+`AgentToolResult` 包含调用 ID、工具 ID、文本、结构化结果、错误信息和资源引用。模型读取其中的 `content`，错误结果带有明确的错误标记；结构化元数据保留在记录中，不自动展开为模型文字。
+
+面向模型的文字各司其职：提示词说明职责与完成方式，工具说明用途与参数，结果报告事实，错误说明问题与已知的纠正办法。以理解成本衡量简洁，保留必要的内容边界和后续指引；内部配置、身份与审计细节留在记录中。
+
+MCP 与扩展共用结果审计和长结果处理。超过 [Profile 内联阈值](ProfilesAndPreset.md#调整工作方式) 时，原始 JSON 留作审计，完整可读内容写入只读 `tool-results/` 文件；模型收到开头预览、字符上限、不完整说明及文件路径，并按可用工具给出读取、分页或搜索指引。中断历史保留调用与结果的配对；结果未知时，提醒重复操作前检查状态。
 
 模型能够修正的请求错误也返回 tool result，例如参数不合法、读取范围不正确或文件已变化。存储和运行状态错误则向 Run 收尾流程传播。聊天中显示的正文通过工作区提交产生。
 
 ## MCP 与 Skill
 
-MCP 提供外部工具。MCP Manager 管理服务器、发现目录和调用权限；Agent 使用已发现的工具目录，调用前由 MCP 服务确认权限。较长结果存为 `tool-results/` 下的可读文件，模型收到摘要和文件路径。配置与连接行为见 [MCP](../CurrentState/MCP.md)。
+MCP Manager 管理服务器、发现目录和调用权限；Agent 使用已发现的目录，调用前由 MCP 服务确认权限。配置与连接行为见 [MCP](../CurrentState/MCP.md)。
 
 Skill 提供工作方法、材料和脚本，通过只读 `skills/` 视图与 `workspace.shell` 使用，组织与作用域见 [Skill](Skill.md)。
+
+## 扩展工具
+
+扩展在启动时注册普通 JS 函数，适用于 Chat、Session 或两者，见 [注册扩展工具](../API/Agent.md#注册扩展工具)。Tauri host 负责 WebView 通信与回执等待，通过 `tt-ports::extension_tools::ExtensionTools` 向 runtime 提供目录和调用能力。
+
+执行时按稳定 ID 查找当前启用的函数，工具快照不保存函数实例。扩展返回普通 JSON，MCP 响应按自身协议整理，随后进入共同的结果处理链路。
 
 ## 添加一个工具
 
@@ -66,4 +76,6 @@ Skill 提供工作方法、材料和脚本，通过只读 `skills/` 视图与 `w
 - [tool.rs](../../src-tauri/crates/tt-domain/src/models/tool.rs)：`ToolArguments` 的线上编码换算规则。
 - [tool_request_gate.rs](../../src-tauri/crates/tt-application/src/services/tool_request_gate.rs)：调用检查与预算。
 - [tool_execution.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/tool_execution.rs)：分派和记录。
+- [tool_catalog.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/tool_catalog.rs)：目录、可用性和 Profile 新启用校验。
+- [tool_results.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/tool_results.rs)：结果映射、审计与共同长结果投影。
 - [workspace/shell.rs](../../src-tauri/crates/tt-application/src/services/agent_tools/workspace/shell.rs)：Shell 参数与结果映射。

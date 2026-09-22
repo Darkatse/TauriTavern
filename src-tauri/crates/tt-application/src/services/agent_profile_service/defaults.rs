@@ -8,8 +8,8 @@ use tt_domain::models::agent::profile::{
     AgentModelBinding, AgentModelBindingMode, AgentOutputArtifact, AgentOutputArtifactTarget,
     AgentOutputPolicy, AgentPresetBinding, AgentPresetBindingMode, AgentProfileDefinition,
     AgentProfileId, AgentProfileInstructions, AgentRunPolicy, AgentSkillPolicy, AgentToolPolicy,
-    AgentWorkspacePolicy, DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT, DEFAULT_AGENT_PROFILE_ID,
-    DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_ROUNDS,
+    AgentWorkspacePolicy, DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT,
+    DEFAULT_AGENT_PROFILE_ID, DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_ROUNDS,
 };
 use tt_domain::models::tool::ToolId;
 
@@ -74,7 +74,7 @@ pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, Applica
             tool_descriptions: BTreeMap::new(),
             max_rounds: DEFAULT_AGENT_TOOL_MAX_ROUNDS,
             max_calls_per_run: DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
-            mcp_result_inline_char_limit: DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT,
+            external_result_inline_char_limit: DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT,
             max_calls_per_tool: BTreeMap::new(),
         },
         skills: AgentSkillPolicy {

@@ -45,7 +45,7 @@ try {
             contextKind: 'session',
             worldInfoActivation: {},
             macroContext: { names: { user: 'Session user', char: 'Assistant', group: '' }, character: {} },
-            promptInputs: { messages: [], agentMessages: structuredClone(messages), messageExamples: [], extensionPrompts: {} },
+            promptInputs: { messages: [], agentMessages: messages, messageExamples: [], extensionPrompts: {} },
         },
     });
 
@@ -65,12 +65,40 @@ try {
     const longerInput = await assemble([message('user', 'Older history. '.repeat(1000)), ...history], 200);
     assert.equal(runInput(longerInput), runInput(limitedInput));
 
-    // Interrupted groups retain recorded results without sending dangling calls.
-    const interruptedAssistant = { ...assistant, parts: [...assistant.parts, { type: 'toolCall', call: { ...call, callId: 'call-2' } }] };
-    const interruptedHistory = [history[0], interruptedAssistant, result, history.at(-1)];
+    // Same-name calls must retain their own outcomes even when replies arrive out of order.
+    const unansweredCall = { ...call, callId: 'call-2', arguments: { path: 'work/pending.md' } };
+    const failedCall = { ...call, callId: 'call-3', arguments: { path: 'work/missing.md' } };
+    const interruptedAssistant = { ...assistant, parts: [
+        ...assistant.parts,
+        { type: 'toolCall', call: unansweredCall },
+        { type: 'toolCall', call: failedCall },
+    ] };
+    const failedResult = { role: 'tool', parts: [{ type: 'toolResult', result: {
+        ...result.parts[0].result, callId: failedCall.callId, content: 'File does not exist.', isError: true,
+    } }], providerMetadata: {} };
+    const interruptedHistory = [history[0], interruptedAssistant, failedResult, result, history.at(-1)];
+    const originalHistory = JSON.stringify(interruptedHistory);
     const interrupted = (await assemble(interruptedHistory)).promptSnapshot.messages;
-    assert.equal(interrupted.some(item => item.parts.some(part => part.type === 'toolCall')), false);
-    assert.equal(interrupted.some(item => item.parts.some(part => part.text?.includes(result.parts[0].result.content))), true);
+    assert.equal(interrupted.some(item => item.role === 'tool' || item.parts.some(part => part.type === 'toolCall')), false);
+    const explanation = interrupted.find(item => item.parts.some(part => part.text?.includes(call.providerMetadata.modelAlias)))
+        .parts.map(part => part.text).join('\n');
+    assert.ok(explanation.includes(assistant.parts[0].text));
+    const calls = [call, unansweredCall, failedCall];
+    const positions = calls.map(item => explanation.indexOf(item.arguments.path));
+    assert.ok(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])));
+    const outcomes = positions.map((position, index) => explanation.slice(position, positions[index + 1]));
+    assert.ok(explanation.includes(call.providerMetadata.modelAlias));
+    for (const item of calls) {
+        assert.equal(explanation.includes(item.callId), false);
+    }
+    assert.equal(explanation.includes(call.toolId), false);
+    assert.ok(outcomes[0].includes(result.parts[0].result.content));
+    assert.equal(outcomes[0].includes(failedResult.parts[0].result.content), false);
+    assert.match(outcomes[1], /unknown/i);
+    assert.equal(outcomes[1].includes(result.parts[0].result.content), false);
+    assert.ok(outcomes[2].includes(failedResult.parts[0].result.content));
+    assert.match(outcomes[2], /error/i);
+    assert.equal(JSON.stringify(interruptedHistory), originalHistory);
     console.log('PASS: Session PromptManager preserves canonical history, atomic tool groups and bounded Run input');
 } finally {
     await window.happyDOM.close();

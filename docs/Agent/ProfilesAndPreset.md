@@ -64,6 +64,7 @@ Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点�
 | `context.includeActivatedWorldInfo` | 是否在初始提示词中包含已激活世界书 |
 | `tools.allow` / `deny` | 可用工具，deny 优先 |
 | `tools.maxRounds` / `maxCallsPerRun` / `maxCallsPerTool` | 每个 Invocation 的轮数与调用预算 |
+| `tools.externalResultInlineCharLimit` | MCP 与 Extension 结果的模型内联字符阈值，默认 50,000；长结果保留完整可读文件 |
 | `tools.toolDescriptions` | 替换模型看到的工具或参数描述 |
 | `skills.visible` / `deny` | 按名称选择可用 Skill |
 | `workspace.visibleRoots` / `writableRoots` | 文件读写范围 |
@@ -72,7 +73,7 @@ Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点�
 | `run.directRunnable` | 是否出现在直接运行的 Agent 选择列表 |
 | `output.artifacts` | 输出文件；当前正文目标为 `messageBody` |
 
-工具字段使用稳定 ID，例如 `builtin:workspace.read_file` 或 `mcp/<registration-id>:<tool-name>`。模型看到的调用名称由 runtime 生成，见 [工具](ToolSystem.md)。
+工具字段使用 [稳定 ID](ToolSystem.md#身份与调用名称)。新启用未加载的扩展工具会拒绝本次修改；已有选择暂时缺席时保留配置，运行时排除该项并记录诊断，不阻塞其他编辑与运行。Chat 和共享 Session Profile 遵循同一规则。
 
 `plan/` 可以保存普通计划文件。当前运行器支持的 Profile plan 配置是 `mode: "none"`、空 `nodes`，尚无节点式工作流执行器。
 
@@ -93,6 +94,8 @@ Session 必须指定 `preset.mode = ref` 和 `model.mode = connectionRef`，Skil
 普通 Profile 以 JSON 保存到 `_tauritavern/agent-profiles/profiles/`，当前 schema 版本为 4。
 
 schema 1–3 在加载或导入时自动迁移，移除旧 `skill.*`、`agent.list` 工具配置及 Skill 读取预算；保留其余配置，不自动授予新权限或重写指令。
+
+旧 `tools.mcpResultInlineCharLimit` 的数值在读取时保留，再次保存使用 `tools.externalResultInlineCharLimit`。
 
 - [profile.rs](../../src-tauri/crates/tt-domain/src/models/agent/profile.rs)：字段与默认值。
 - [agent_profile_service](../../src-tauri/crates/tt-application/src/services/agent_profile_service)：默认配置、解析和验证。

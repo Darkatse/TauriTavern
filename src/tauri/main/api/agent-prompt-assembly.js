@@ -17,7 +17,7 @@ const PROMPT_ASSEMBLY_SOURCE = 'frontend-prompt-assembly-broker';
  * Builds an Agent PromptSnapshot through the real SillyTavern chat-completion
  * PromptManager pipeline, using frozen prompt inputs and preset settings.
  *
- * @param {Record<string, any>} input
+ * @param {Record<string, unknown>} input
  */
 export async function buildPromptAssemblySnapshot(input = {}) {
     const { payload, snapshotMetadata, ...assembled } = await buildPromptAssemblyPayload(input);
@@ -27,7 +27,10 @@ export async function buildPromptAssemblySnapshot(input = {}) {
     };
 }
 
-/** Raw assembly boundary for Chat's compatibility event, before canonical conversion. */
+/**
+ * Raw assembly boundary for Chat's compatibility event, before canonical conversion.
+ * @param {Record<string, unknown>} input
+ */
 export async function buildPromptAssemblyPayload(input = {}) {
     const request = await normalizePromptAssemblyRequest(input);
     const openai = await import('../../../scripts/openai.js');
@@ -81,6 +84,7 @@ export async function buildPromptAssemblyPayload(input = {}) {
     };
 }
 
+/** @param {Record<string, unknown>} input */
 async function normalizePromptAssemblyRequest(input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
         throw new Error('prompt_assembly.input_invalid: input must be an object');
@@ -151,6 +155,7 @@ async function normalizePromptAssemblyRequest(input) {
     };
 }
 
+/** @param {Record<string, unknown>} input */
 function normalizeRequiredFrozenRunInputSnapshot(input) {
     const snapshot = input.frozenRunInputSnapshot ?? input.frozen_run_input_snapshot;
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
@@ -159,6 +164,7 @@ function normalizeRequiredFrozenRunInputSnapshot(input) {
     return normalizeFrozenRunInputSnapshot(snapshot);
 }
 
+/** @param {Record<string, unknown>} input */
 function normalizeSettings(input) {
     const settings = input.settings ?? input.presetSettings ?? input.preset_settings;
     if (settings == null) {
@@ -168,20 +174,24 @@ function normalizeSettings(input) {
     return requirePlainObject(settings, 'prompt_assembly.settings_invalid: settings must be an object');
 }
 
+/** @param {unknown} value */
 function normalizeGenerationType(value) {
     return String(value || 'normal').trim() || 'normal';
 }
 
+/** @param {unknown} value */
 function normalizeOptionalString(value) {
     const text = String(value ?? '').trim();
     return text || undefined;
 }
 
+/** @param {unknown} value */
 function normalizeOptionalPrompt(value) {
     const text = String(value ?? '');
     return text.trim() ? text : null;
 }
 
+/** @param {unknown} value */
 function normalizeRequiredAgentPromptComponents(value) {
     if (value == null) {
         return [];
@@ -194,13 +204,19 @@ function normalizeRequiredAgentPromptComponents(value) {
         .filter(Boolean);
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} message
+ * @returns {Record<string, unknown>}
+ */
 function requirePlainObject(value, message) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         throw new Error(message);
     }
-    return value;
+    return /** @type {Record<string, unknown>} */ (value);
 }
 
+/** @param {Record<string, unknown>} settings */
 function hasChatCompletionSource(settings) {
     return typeof settings?.chat_completion_source === 'string'
         && settings.chat_completion_source.trim().length > 0;

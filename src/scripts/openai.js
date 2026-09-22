@@ -2607,6 +2607,21 @@ export async function prepareOpenAIMessages({
     return [chat, activePromptManager.tokenHandler.counts, toolData];
 }
 
+/**
+ * @param {{
+ *   settings?: Record<string, unknown>;
+ *   model?: string | null;
+ *   generationType?: string;
+ *   promptInputs?: Record<string, unknown>;
+ *   macroContext?: Record<string, unknown> | null;
+ *   jsonSchema?: unknown;
+ *   agentMode?: boolean;
+ *   agentContextPolicy?: TauriTavernAgentProfileDefinition['context'] | null;
+ *   agentSystemPrompt?: string | null;
+ *   agentTaskPrompt?: string | null;
+ *   contextKind?: 'chat' | 'session';
+ * }} [options]
+ */
 export async function assembleOpenAIChatCompletionPrompt({
     settings,
     model = null,
@@ -2785,7 +2800,7 @@ function checkModerationError(data, { quiet = false } = {}) {
 
 /**
  * Gets the API model for the selected chat completion source.
- * @param {ChatCompletionSettings} settings Chat completion settings
+ * @param {Partial<ChatCompletionSettings> | null} settings Chat completion settings
  * @returns {string} API model
  */
 export function getChatCompletionModel(settings = null) {

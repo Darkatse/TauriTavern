@@ -139,12 +139,12 @@ export function openAgentSystemPanel(): void {
         loadSettings,
         patchSettings,
         getProfilesApi: () => requireAgentApi().profiles,
-        listTools: async () => {
+        listTools: async (options) => {
             const api = requireAgentApi().tools;
             if (typeof api?.list !== 'function') {
                 throw new Error(tr('hostAgentToolApiUnavailable'));
             }
-            const result = await api.list();
+            const result = await api.list(options);
             return {
                 tools: result.tools,
                 diagnostics: Array.isArray(result.diagnostics) ? result.diagnostics : [],

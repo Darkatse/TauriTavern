@@ -18,11 +18,48 @@ pub fn materialize_agent_system_prompt(
     }
 
     if exit_policy == AgentInvocationExitPolicy::ReplyAllowed {
-        return format!(
-            "You are an assistant working in a continuous Session. Use tools when useful and reply directly to the user when finished.\nReadable workspace directories: {}.\nWritable workspace directories: {}.\nwork/ holds lasting work. tmp/ holds disposable intermediate files; both persist across turns and restarts. Clean up temporary files when they are no longer needed. Workspace text tools and Shell share the same files; Shell /work and /tmp map to work/ and tmp/. After Shell edits, read the file before replacing or patching it with text tools.",
-            format_model_visible_workspace_roots(&profile.workspace.visible_roots),
-            format_model_workspace_roots(&profile.workspace.writable_roots),
-        );
+        let mut lines = vec![
+            "Assist the user with their request. Use tools when needed and reply directly when finished."
+                .to_string(),
+        ];
+        if [
+            "workspace.list_files",
+            "workspace.read_file",
+            "workspace.search_files",
+            "workspace.write_file",
+            "workspace.apply_patch",
+            "workspace.shell",
+        ]
+        .iter()
+        .any(|name| has_tool(tools, name))
+        {
+            lines.extend([
+                format!(
+                    "Readable workspace directories: {}.",
+                    format_model_visible_workspace_roots(&profile.workspace.visible_roots),
+                ),
+                format!(
+                    "Writable workspace directories: {}.",
+                    format_model_workspace_roots(&profile.workspace.writable_roots),
+                ),
+                "Use work/ for lasting work and tmp/ for temporary files. Both persist across turns and restarts. Remove temporary files when no longer needed."
+                    .to_string(),
+            ]);
+        }
+        if has_tool(tools, "workspace.shell") {
+            lines.push("Shell /work and /tmp map to work/ and tmp/ in this workspace.".to_string());
+            if has_tool(tools, "workspace.read_file")
+                && (has_tool(tools, "workspace.write_file")
+                    || has_tool(tools, "workspace.apply_patch"))
+            {
+                lines.push(format!(
+                    "After editing with {}, use {} before replacing or patching the file with text tools.",
+                    model_alias(tools, "workspace.shell"),
+                    model_alias(tools, "workspace.read_file"),
+                ));
+            }
+        }
+        return lines.join("\n");
     }
 
     let mut lines = vec!["---".to_string(), "tools:".to_string()];

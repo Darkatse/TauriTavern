@@ -372,7 +372,7 @@ async fn preset_rename_updates_shared_session_profile_without_listing_it_as_chat
     fs::remove_dir_all(root).await.unwrap();
 }
 
-async fn configure_session_profile(
+pub(super) async fn configure_session_profile(
     fixture: &AgentRuntimeFixture,
     root: &Path,
 ) -> AgentProfileDefinition {
@@ -431,7 +431,7 @@ async fn configure_session_profile(
     profile
 }
 
-async fn prepare_input(
+pub(super) async fn prepare_input(
     fixture: &AgentRuntimeFixture,
     session_id: &str,
     profile: &AgentProfileDefinition,
@@ -477,7 +477,7 @@ async fn prepare_input(
     }
 }
 
-async fn wait_until_session_idle(fixture: &AgentRuntimeFixture, run_id: &str) {
+pub(super) async fn wait_until_session_idle(fixture: &AgentRuntimeFixture, run_id: &str) {
     if let Some(mut projection) = fixture
         .service
         .subscribe_live_projection(run_id)

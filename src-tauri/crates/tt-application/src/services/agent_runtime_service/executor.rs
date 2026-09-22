@@ -346,6 +346,7 @@ impl AgentRuntimeService {
         let prepared_tools = self
             .prepare_invocation_tools(
                 &resolved_profile,
+                run.target.tool_scope(),
                 root_invocation.exit_policy,
                 root_invocation.id.as_str(),
             )

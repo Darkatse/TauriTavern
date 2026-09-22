@@ -101,6 +101,7 @@ struct AgentRuntimeFixture {
     model_gateway: Arc<MockAgentModelGateway>,
     mcp_service: Arc<McpService>,
     mcp_gateway: Arc<ContractMcpGateway>,
+    extension_tools: Arc<crate::infrastructure::agent_extension_tools::AgentExtensionTools>,
 }
 
 fn temp_root(label: &str) -> PathBuf {
@@ -241,6 +242,8 @@ fn agent_runtime_fixture_with_shell(
         Arc::new(FileMcpServerRepository::new(root.join("_tauritavern/mcp"))),
         mcp_gateway.clone(),
     ));
+    let extension_tools =
+        Arc::new(crate::infrastructure::agent_extension_tools::AgentExtensionTools::default());
     let service = Arc::new(AgentRuntimeService::new(
         agent_repository.clone() as Arc<dyn AgentRunRepository>,
         agent_repository.clone()
@@ -256,6 +259,7 @@ fn agent_runtime_fixture_with_shell(
         prompt_assembly_service,
         mcp_service.clone(),
         shell,
+        extension_tools.clone(),
     ));
 
     AgentRuntimeFixture {
@@ -267,6 +271,7 @@ fn agent_runtime_fixture_with_shell(
         model_gateway,
         mcp_service,
         mcp_gateway,
+        extension_tools,
     }
 }
 
@@ -875,7 +880,7 @@ impl McpGateway for ContractMcpGateway {
                 is_error: false,
                 text: vec![McpTextContent {
                     index: 0,
-                    text: "x".repeat(60_000),
+                    text: format!("{}\nEnd of result.", "界".repeat(60_000)),
                 }],
                 structured_content: Some(json!({ "issueId": 42 })),
                 diagnostics: Vec::new(),

@@ -37,6 +37,8 @@ impl AgentRuntimeService {
         &self,
         dto: AgentSaveProfileDto,
     ) -> Result<(), ApplicationError> {
+        let previous = self.session_repository.load_session_profile().await?;
+        self.validate_new_extension_tools(&dto.profile, previous.as_ref())?;
         self.profile_service
             .resolve_session_profile(dto.profile.clone(), self.tool_registry.catalog())
             .await?;

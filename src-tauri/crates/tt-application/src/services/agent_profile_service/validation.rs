@@ -210,9 +210,9 @@ pub(super) fn validate_tool_policy(
             "agent.profile_max_calls_invalid: tools.maxCallsPerRun must be > 0".to_string(),
         ));
     }
-    if policy.mcp_result_inline_char_limit == 0 {
+    if policy.external_result_inline_char_limit == 0 {
         return Err(ApplicationError::ValidationError(
-            "agent.profile_mcp_result_inline_char_limit_invalid: tools.mcpResultInlineCharLimit must be > 0"
+            "agent.profile_external_result_inline_char_limit_invalid: tools.externalResultInlineCharLimit must be > 0"
                 .to_string(),
         ));
     }
@@ -278,7 +278,7 @@ pub(super) fn validate_tool_policy(
         tool_descriptions,
         max_rounds: policy.max_rounds,
         max_calls_per_run: policy.max_calls_per_run,
-        mcp_result_inline_char_limit: policy.mcp_result_inline_char_limit,
+        external_result_inline_char_limit: policy.external_result_inline_char_limit,
         max_calls_per_tool,
     })
 }
@@ -298,6 +298,9 @@ fn validate_profile_tool_id(
         if tool_catalog.get(id).is_some() {
             return Ok(());
         }
+    } else if let Some(extension_id) = id.extension_id() {
+        ToolId::extension(extension_id, id.native_name())?;
+        return Ok(());
     } else if McpRegistrationId::from_provider_id(id.provider_id()).is_ok() {
         validate_native_tool_name(id.native_name())?;
         return Ok(());

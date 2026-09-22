@@ -3,6 +3,7 @@ export const DEFAULT_AGENT_CONTEXT_POLICY = Object.freeze({
     includeActivatedWorldInfo: true,
 });
 
+/** @param {unknown} [value] */
 export function normalizeAgentContextPolicy(value = {}) {
     const source = value || {};
     const initialChatHistoryMessages = Number(source.initialChatHistoryMessages ?? DEFAULT_AGENT_CONTEXT_POLICY.initialChatHistoryMessages);

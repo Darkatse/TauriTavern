@@ -8,6 +8,7 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::Semaphore;
 
 use crate::app::{AppServices, StartupProfile};
+use crate::infrastructure::agent_extension_tools::AgentExtensionTools;
 use crate::infrastructure::apis::http_external_import_downloader::HttpExternalImportDownloader;
 use tt_adapter_http::HttpClientPool;
 use tt_adapter_mcp::RmcpMcpGateway;
@@ -157,6 +158,10 @@ pub(super) async fn build(
         llm_connection_service.clone(),
         mcp_service.clone(),
         Arc::new(WorkspaceShellEngine),
+        app_handle
+            .state::<Arc<AgentExtensionTools>>()
+            .inner()
+            .clone(),
     );
     let tokenization_service = Arc::new(TokenizationService::new(
         repositories.tokenizer_repository.clone(),

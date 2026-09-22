@@ -121,13 +121,42 @@ const { events, timelineProjection } = await agent.readEvents({
 | `promptAssembly.buildSnapshot(request)` | 在前端运行 PromptManager，生成 snapshot |
 | `promptAssembly.buildCurrentModelConnectionSnapshot(input)` | 根据当前设置生成连接快照 |
 | `promptAssembly.applyCurrentModelConnectionSnapshot(input)` | 把连接快照应用到组装设置 |
-| `tools.list()` | 返回 `{ tools, diagnostics }`，包含内置工具和已发现的可用 MCP 工具 |
+| `tools.list({ context? }?)` | 返回 `{ tools, diagnostics }`，包含内置、可用 MCP 及已注册扩展工具；context 可为 `chat` 或 `session` |
+| `tools.register(definition, execute)` | 注册普通 JS 工具函数，返回 `Promise<void>` |
+| `tools.setEnabled(toolId, enabled)` | 启用或关闭已注册的扩展工具，不删除函数或改写 Profile |
 
 Profile 的用法见 [配置指南](../Agent/ProfilesAndPreset.md)。`tools.list()` 返回稳定工具 ID、描述和参数 schema；模型调用名称属于 Invocation 快照。
 
 `profiles.retargetPresetRefs` 返回 `{ updated, profileIds, sessionProfileUpdated }`；总数 `updated` 包含共享配置，`profileIds` 只列普通 Profile。
 
 `profiles.resolveSystemPrompt` 返回 Profile 指令正文；运行时目录的追加规则见 [Prompt assembly](../Agent/PromptAssembly.md#skill-与-agent-目录)。
+
+## 注册扩展工具
+
+在扩展启动入口注册普通 JS 函数，可直接使用模块引用和闭包。稳定 ID 为 `extension/<extensionId>:<name>`，重复注册报错；注册持续到主页面 reload，与面板开关无关。
+
+```js
+await agent.tools.register({
+    extensionId: 'my-extension',
+    name: 'read_auto_reply_settings',
+    description: '读取自动回复的启用状态。',
+    inputSchema: { type: 'object', properties: {} },
+    contexts: ['chat', 'session'],
+    enabled: true,
+}, async () => {
+    return { enabled: true };
+});
+
+await agent.tools.setEnabled('extension/my-extension:read_auto_reply_settings', false);
+```
+
+模型以 `name` 为调用名称基础，命名与结果表达遵循 [工具契约](../Agent/ToolSystem.md)。`description` 说明用途与必要限制，返回值和错误说明实际结果或具体问题。
+
+`contexts` 必填且非空，`enabled` 默认 true；注册后仍需在 [Profile](../Agent/ProfilesAndPreset.md#调整工作方式) 中选择工具。关闭后不再接受新调用，已开始的调用继续执行，`list()` 仍包含关闭条目。开关持久化由扩展自己的设置或 `api.extension.store` 负责，页面 reload 后按保存的值重新注册。
+
+回调接收 JSON 对象参数与执行上下文，其中 `target` 指向本次 Run 所属的 Chat 或 Session，与当前 UI 无关；`signal: AbortSignal` 提供合作式取消，不回滚已发生的操作。完整字段见 [类型定义](../../src/types.d.ts)。
+
+函数可异步返回 JSON 值，顶层 `undefined` 按 `null` 返回；抛错或无法通过 JSON IPC 传输时报告工具错误。等待可取消，60 秒无回执则结束本次运行，不自动重发。
 
 ## 保留策略
 

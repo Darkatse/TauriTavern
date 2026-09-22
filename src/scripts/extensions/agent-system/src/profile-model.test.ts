@@ -17,7 +17,7 @@ test('profileForEdit migrates legacy tools without widening permissions', () => 
         profile.tools.maxCallsPerTool = { [id('workspace.read_file')]: 4, [id('agent.list')]: 1, [id('skill.list')]: 2 };
         Object.assign(profile.skills, { maxReadCharsPerCall: 20_000, maxReadCharsPerRun: 80_000 });
         // Older persisted profiles can predate this field.
-        Reflect.deleteProperty(profile.tools, 'mcpResultInlineCharLimit');
+        Reflect.deleteProperty(profile.tools, 'externalResultInlineCharLimit');
 
         const migrated = profileForEdit(profile);
         expect(migrated.schemaVersion).toBe(4);
@@ -25,7 +25,7 @@ test('profileForEdit migrates legacy tools without widening permissions', () => 
         expect(migrated.tools.deny).toEqual(['builtin:workspace.shell']);
         expect(Object.keys(migrated.tools.toolDescriptions ?? {})).toEqual(['builtin:workspace.read_file']);
         expect(Object.keys(migrated.tools.maxCallsPerTool ?? {})).toEqual(['builtin:workspace.read_file']);
-        expect(migrated.tools.mcpResultInlineCharLimit).toBe(50_000);
+        expect(migrated.tools.externalResultInlineCharLimit).toBe(50_000);
         expect('maxReadCharsPerCall' in migrated.skills).toBe(false);
         expect('maxReadCharsPerRun' in migrated.skills).toBe(false);
 
@@ -34,11 +34,13 @@ test('profileForEdit migrates legacy tools without widening permissions', () => 
     }
 });
 
-test('profileForEdit keeps CSV drafts separate and normalizeProfileForSave restores lists', () => {
+test('profile editing restores canonical lists and preserves legacy tool result limits on save', () => {
     const profile = defaultProfile('writer');
     profile.run.stream = false;
     profile.skills.visible = ['lore', 'tools'];
     profile.delegation.allowedCallers = ['main', 'reviewer'];
+    Reflect.deleteProperty(profile.tools, 'externalResultInlineCharLimit');
+    Reflect.set(profile.tools, 'mcpResultInlineCharLimit', 12345);
 
     const draft = profileForEdit(profile);
     expect(draft.skills.visibleCsv).toBe('lore, tools');
@@ -52,6 +54,8 @@ test('profileForEdit keeps CSV drafts separate and normalizeProfileForSave resto
     expect(saved.delegation.allowedCallers).toEqual(['editor']);
     expect('visibleCsv' in saved.skills).toBe(false);
     expect('allowedCallersCsv' in saved.delegation).toBe(false);
+    expect(saved.tools.externalResultInlineCharLimit).toBe(12345);
+    expect('mcpResultInlineCharLimit' in saved.tools).toBe(false);
 });
 
 test('run streaming defaults missing fields and rejects non-booleans', () => {

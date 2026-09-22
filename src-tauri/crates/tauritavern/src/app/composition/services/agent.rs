@@ -14,6 +14,7 @@ use tt_application::services::llm_connection_service::LlmConnectionService;
 use tt_application::services::mcp_service::McpService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
+use tt_ports::extension_tools::ExtensionTools;
 use tt_ports::workspace_shell::WorkspaceShell;
 
 use super::super::repositories::AppRepositories;
@@ -35,6 +36,7 @@ pub(super) fn build(
     llm_connection_service: Arc<LlmConnectionService>,
     mcp_service: Arc<McpService>,
     workspace_shell: Arc<dyn WorkspaceShell>,
+    extension_tools: Arc<dyn ExtensionTools>,
 ) -> AgentServices {
     let agent_profile_service = Arc::new(AgentProfileService::new(
         repositories.agent_profile_repository.clone(),
@@ -68,6 +70,7 @@ pub(super) fn build(
         prompt_assembly_service.clone(),
         mcp_service,
         workspace_shell,
+        extension_tools,
     ));
     let agent_run_history_service = Arc::new(AgentRunHistoryService::new(
         repositories.agent_run_repository.clone(),

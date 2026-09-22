@@ -1,5 +1,6 @@
 // Tauri commands
 pub mod agent_commands;
+pub mod agent_extension_tool_commands;
 mod agent_live_projection;
 pub mod agent_session_commands;
 pub mod asset_commands;

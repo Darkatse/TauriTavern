@@ -11,6 +11,7 @@ import { createAgentRunLiveSubscribe } from './agent-run-live-subscription.js';
 import { normalizeAgentRunOptions } from './agent-run-options.js';
 import { createAgentRunRuntimeApi } from './agent-run-runtime.js';
 import { createAgentSessionsApi } from './agent-sessions.js';
+import { createAgentToolsApi } from './agent-tools.js';
 import { confirmEmptyAgentPersist } from '../adapters/st/agent-empty-persist-popup.js';
 import { DEFAULT_AGENT_PROFILE_ID } from '../../../scripts/tauritavern/agent/agent-system-settings.js';
 import { ensureModelTargetLlmConnectionForProfile } from '../../../scripts/tauritavern/agent/model-target-llm-connection.js';
@@ -172,10 +173,6 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
         });
     }
 
-    async function listTools() {
-        return safeInvoke('list_agent_tools');
-    }
-
     async function copyChatPersistentStates(input) {
         return safeInvoke('copy_agent_chat_persistent_states', { dto: input });
     }
@@ -204,9 +201,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
         settleChatPresentation,
         profiles,
         sessions: createAgentSessionsApi({ safeInvoke, promptAssembly }),
-        tools: {
-            list: listTools,
-        },
+        tools: createAgentToolsApi({ safeInvoke }),
         promptAssembly,
         approveToolCall() {
             throw new Error('approveToolCall is not implemented');

@@ -33,6 +33,7 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
         .map(|name| format!("builtin:{name}"))
         .to_vec();
         profile.tools.deny = vec!["builtin:workspace.shell".into()];
+        profile.tools.external_result_inline_char_limit = 12_345;
         profile.tools.tool_descriptions.insert(
             "builtin:workspace.read_file".into(),
             serde_json::from_value(json!({
@@ -49,6 +50,11 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
             .insert("builtin:workspace.read_file".into(), 7);
         let expected = serde_json::to_value(&profile).unwrap();
         let mut legacy = expected.clone();
+        legacy["tools"]["mcpResultInlineCharLimit"] = legacy["tools"]
+            .as_object_mut()
+            .unwrap()
+            .remove("externalResultInlineCharLimit")
+            .unwrap();
         legacy["schemaVersion"] = json!(version);
         legacy["skills"]["maxReadCharsPerCall"] = json!(20_000);
         legacy["skills"]["maxReadCharsPerRun"] = json!(80_000);

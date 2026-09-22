@@ -234,7 +234,7 @@ export type AgentSystemPanelControllerDeps = {
     ) => Promise<AgentSystemSettings>;
     // Resolve lazily so a missing Host API fails at the action that needs it.
     getProfilesApi: () => TauriTavernAgentProfilesApi;
-    listTools: () => Promise<{
+    listTools: (options?: { context?: TauriTavernAgentToolScope }) => Promise<{
         tools: TauriTavernAgentToolCatalogItem[];
         diagnostics: AgentToolCatalogDiagnostic[];
     }>;

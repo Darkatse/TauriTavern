@@ -197,15 +197,13 @@ export function applyCallableAsHandoffTarget(
 }
 
 /**
- * Rebuilds tools.allow after a matrix toggle: hidden delegation tools keep
- * their delegation-driven entries, allow-listed tools missing from the catalog
- * survive, and visible tools follow catalog order.
+ * Rebuilds tools.allow in matrix order, including selected unavailable tools.
+ * Hidden delegation tools retain their delegation-driven entries.
  */
 export function applyToolAllowed(
     draft: AgentProfileDraft,
     toolId: string,
     enabled: boolean,
-    catalogToolIds: ReadonlySet<string>,
     toolIds: readonly string[],
 ): void {
     const allow = new Set(draft.tools.allow);
@@ -216,11 +214,8 @@ export function applyToolAllowed(
     }
     const hiddenAllowed = draft.tools.allow
         .filter((tool) => PROFILE_TOOL_MATRIX_HIDDEN.has(tool) && !RUNTIME_ONLY_TOOLS.includes(tool));
-    const unavailableAllowed = draft.tools.allow
-        .filter((tool) => allow.has(tool) && !catalogToolIds.has(tool) && !PROFILE_TOOL_MATRIX_HIDDEN.has(tool));
     draft.tools.allow = [
         ...hiddenAllowed,
-        ...unavailableAllowed,
         ...toolIds.filter((tool) => allow.has(tool)),
     ];
 }

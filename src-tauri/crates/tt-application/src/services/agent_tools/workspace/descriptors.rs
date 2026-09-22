@@ -164,7 +164,7 @@ pub(in crate::services::agent_tools) fn workspace_shell_descriptor() -> ToolDesc
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_SHELL).expect("builtin tool name must be valid"),
         title: Some("Workspace Shell".to_string()),
-        description: Some("Run workspace commands for scripts, pipelines, data processing, batch changes, and copying, moving or deleting files. Prefer workspace_read_file, workspace_write_file and workspace_apply_patch for straightforward text work. Includes jq, a Python subset (python/python3), and JavaScript (js). Use js --help for JavaScript syntax and workspace APIs. Completed file changes persist after failure or cancellation.".to_string()),
+        description: Some("Run workspace commands for scripts, pipelines, data processing, batch changes, and copying, moving or deleting files. Includes jq, a Python subset (python/python3), and JavaScript (js). Use js --help for JavaScript syntax and workspace APIs. Completed file changes persist after failure or cancellation.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,

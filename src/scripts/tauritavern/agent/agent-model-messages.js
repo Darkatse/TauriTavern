@@ -123,7 +123,7 @@ export function prepareAgentHistory(messages, policy) {
         }
         // A stopped run can have confirmed results and unanswered calls. Keep its
         // record intact; only the next prompt uses a protocol-safe explanation.
-        const agentMessages = pending.size ? [interruptedToolGroup(group, pending)] : group;
+        const agentMessages = pending.size ? [interruptedToolGroup(group)] : group;
         groups.push({ role: message.role, content: '', agentMessages, sourceCount: group.length });
     }
     const current = groups.pop();
@@ -133,13 +133,23 @@ export function prepareAgentHistory(messages, policy) {
     return [...history, current].reverse();
 }
 
-function interruptedToolGroup(messages, pending) {
-    const lines = ['This previous Agent execution was interrupted. Recorded tool results remain valid; unanswered calls have an unknown outcome. Observe current state before continuing.'];
+function interruptedToolGroup(messages) {
+    const results = new Map(messages.flatMap(message => message.parts
+        .filter(part => part.type === 'toolResult')
+        .map(part => [part.result.callId, part.result])));
+    const lines = ['The previous turn stopped. Actions without recorded results have an unknown outcome; check the current state before repeating them.'];
     for (const message of messages) {
         for (const part of message.parts) {
             if (part.type === 'text') lines.push(part.text);
-            if (part.type === 'toolCall') lines.push(`Tool ${part.call.toolId} (${part.call.callId}): ${JSON.stringify(part.call.arguments)}${pending.has(part.call.callId) ? ' — no recorded result' : ''}`);
-            if (part.type === 'toolResult') lines.push(`Recorded result (${part.result.callId}): ${part.result.content}`);
+            if (part.type === 'toolCall') {
+                const alias = part.call.providerMetadata?.modelAlias;
+                if (!alias) throw new Error('agent.tool_history_alias_missing: historical call has no modelAlias');
+                const result = results.get(part.call.callId);
+                const outcome = result
+                    ? `Recorded ${result.isError ? 'error' : 'result'}: ${result.content}`
+                    : 'Outcome unknown: no recorded result.';
+                lines.push(`${alias}(${JSON.stringify(part.call.arguments)})\n${outcome}`);
+            }
         }
     }
     return { role: 'assistant', parts: [{ type: 'text', text: lines.join('\n\n') }], providerMetadata: {} };

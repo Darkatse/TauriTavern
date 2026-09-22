@@ -62,6 +62,7 @@ impl AgentRuntimeService {
         let tools = self
             .prepare_invocation_tools(
                 &profile,
+                tt_domain::models::tool::AgentToolScope::Session,
                 AgentInvocationExitPolicy::ReplyAllowed,
                 "session_prepare",
             )

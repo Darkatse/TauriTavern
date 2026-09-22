@@ -245,6 +245,7 @@ pub async fn list_agent_profiles(
 
 #[tauri::command]
 pub async fn list_agent_tools(
+    dto: Option<tt_application::dto::agent_dto::AgentListToolsDto>,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<AgentListToolsResultDto, CommandError> {
     log_command("list_agent_tools");
@@ -252,7 +253,7 @@ pub async fn list_agent_tools(
     app_state
         .services
         .agent_runtime_service
-        .tool_catalog_items()
+        .tool_catalog_items(dto.unwrap_or_default().context)
         .await
         .map_err(map_command_error("Failed to list agent tools"))
 }
@@ -318,11 +319,8 @@ pub async fn save_agent_profile(
 
     app_state
         .services
-        .agent_profile_service
-        .save_profile(
-            dto.profile,
-            app_state.services.agent_runtime_service.tool_catalog(),
-        )
+        .agent_runtime_service
+        .save_profile(dto.profile)
         .await
         .map_err(map_command_error("Failed to save agent profile"))
 }
