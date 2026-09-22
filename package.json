@@ -15,7 +15,7 @@
     "check:startup": "rspack build --config rspack.config.js --mode production --config-name vendor-libs && node --experimental-vm-modules --test tests/browser/startup-order.mjs tests/browser/chat-navigation.mjs tests/browser/agent-session.mjs",
     "check:frontend:baseline": "node scripts/check-frontend-guardrails.mjs --update-baseline",
     "check:types": "tsc -b tsconfig.host.json tsconfig.ui.json",
-    "check:lint": "eslint --cache --cache-strategy content --cache-location .cache/eslint --no-error-on-unmatched-pattern \"src/scripts/extensions/agent-system/src/**/*.{ts,tsx}\" \"src/scripts/extensions/mcp-manager/src/**/*.{ts,tsx}\" \"src/scripts/tauri/setting/**/*.{ts,tsx}\"",
+    "check:lint": "eslint --cache --cache-strategy content --cache-location .cache/eslint --no-error-on-unmatched-pattern \"src/scripts/extensions/in-app-agent/src/**/*.{ts,tsx}\" \"src/scripts/extensions/agent-system/src/**/*.{ts,tsx}\" \"src/scripts/extensions/mcp-manager/src/**/*.{ts,tsx}\" \"src/scripts/tauri/setting/**/*.{ts,tsx}\"",
     "check:logging-boundaries": "node scripts/check-logging-boundaries.mjs",
     "check:rust-boundaries": "node scripts/check-rust-crate-boundaries.mjs",
     "check:rust:dev": "cargo check --manifest-path src-tauri/Cargo.toml --workspace --no-default-features",

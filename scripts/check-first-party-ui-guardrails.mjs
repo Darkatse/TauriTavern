@@ -3,12 +3,14 @@ import path from 'node:path';
 
 const OWNED_UI_ROOTS = [
     'src/scripts/extensions/agent-system/src',
+    'src/scripts/extensions/in-app-agent/src',
     'src/scripts/extensions/mcp-manager/src',
     'src/scripts/tauri/setting',
 ];
 
 const COMPILER_OWNED_ROOTS = [
     'src/scripts/extensions/agent-system/src',
+    'src/scripts/extensions/in-app-agent/src',
     'src/scripts/extensions/mcp-manager/src',
     'src/scripts/tauri/setting/settings-app',
     'src/scripts/tauri/setting/dev-logs-app',
