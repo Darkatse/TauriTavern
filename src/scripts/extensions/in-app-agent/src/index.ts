@@ -4,7 +4,7 @@ import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AssistantApp } from './AssistantApp';
 import { installAssistantDrawer } from './drawer';
-import { createAssistantActions, requireContext } from './host';
+import { assistantSelection, createAssistantActions, requireContext } from './host';
 
 const host = window.__TAURITAVERN__;
 if (host?.ready == null) throw new Error('in-app-agent: Host readiness is unavailable');
@@ -12,11 +12,11 @@ await host.ready;
 const api = host.api;
 if (!api?.agent || !api.dev || !api.extension) throw new Error('in-app-agent: required Host APIs are unavailable');
 const hostApi: TauriTavernHostApi = api;
-const { agent, dev, extension } = api;
+const { agent, dev } = api;
 await registerAssistantTools(api, agent.tools, dev.frontendLogs);
 
 export function createAssistantController() {
-    return createInAppAgentController({ agent, store: extension.store });
+    return createInAppAgentController({ agent, selection: assistantSelection });
 }
 
 const context = requireContext();

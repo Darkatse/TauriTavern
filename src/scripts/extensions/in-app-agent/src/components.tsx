@@ -5,6 +5,11 @@ import type { AssistantActions } from './host';
 export function Icon({ name }: { name: string }) {
     return <i className={`fa-solid fa-${name}`} aria-hidden="true" />;
 }
+export function NewConversationIcon() {
+    return <svg width="1.1em" height="1.1em" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="0.6" strokeLinejoin="round" aria-hidden="true" focusable="false">
+        <path d="M8 0.599609C3.91309 0.599609 0.599609 3.91309 0.599609 8C0.599609 9.13376 0.855461 10.2098 1.3125 11.1719L1.5918 11.7588L2.76562 11.2012L2.48633 10.6143C2.11034 9.82278 1.90039 8.93675 1.90039 8C1.90039 4.63106 4.63106 1.90039 8 1.90039C11.3689 1.90039 14.0996 4.63106 14.0996 8C14.0996 11.3689 11.3689 14.0996 8 14.0996C7.31041 14.0996 6.80528 14.0514 6.35742 13.9277C5.91623 13.8059 5.49768 13.6021 4.99707 13.2529C4.26492 12.7422 3.21611 12.5616 2.35156 13.1074L2.33789 13.1162L2.32422 13.126L1.58789 13.6436L2.01953 14.9297L3.0459 14.207C3.36351 14.0065 3.83838 14.0294 4.25293 14.3184C4.84547 14.7317 5.39743 15.011 6.01172 15.1807C6.61947 15.3485 7.25549 15.4004 8 15.4004C12.0869 15.4004 15.4004 12.0869 15.4004 8C15.4004 3.91309 12.0869 0.599609 8 0.599609ZM7.34473 4.93945V7.34961H4.93945V8.65039H7.34473V11.0605H8.64551V8.65039H11.0605V7.34961H8.64551V4.93945H7.34473Z" fill="currentColor" />
+    </svg>;
+}
 export function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
     return <div className="ttia-error" role="alert">
         <Icon name="circle-exclamation" /><div><p>{errorText(error)}</p>

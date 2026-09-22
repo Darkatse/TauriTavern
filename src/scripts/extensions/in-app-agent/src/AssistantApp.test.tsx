@@ -19,12 +19,19 @@ function harness() {
     let snapshot: AssistantSnapshot = {
         initialized: true, profile, profileSaved: true, busy: false, error: null,
         sessionId: 'session', messages: [], nextBeforeSeq: null, run: null, events: [], responses: [],
+        loading: false, draft: '', activeRun: null, sendingSessionId: undefined,
+        sessions: [{ id: 'session', title: 'Test conversation', createdAt: '2026-09-22T12:00:00Z', lastUsedAt: null }],
     };
     const listeners = new Set<() => void>();
-    const send = deferred<TauriTavernAgentSessionRunHandle>();
+    function publish(patch: Partial<AssistantSnapshot>) { snapshot = { ...snapshot, ...patch }; listeners.forEach(listener => listener()); }
+    const sendMessage = vi.fn(() => Promise.resolve<TauriTavernAgentSessionRunHandle>({ runId: 'run', sessionId: 'session', status: 'calling_model' }));
     const controller: AssistantController = {
         getSnapshot: () => snapshot, subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-        initialize: () => Promise.resolve(), saveProfile: () => Promise.resolve(), send: vi.fn(() => send.promise),
+        initialize: () => Promise.resolve(), saveProfile: () => Promise.resolve(), send: sendMessage,
+        selectSession: () => Promise.resolve(), newSession: () => Promise.resolve(),
+        setDraft: text => publish({ draft: text }),
+        refreshSessions: () => Promise.resolve(),
+        renameSession: () => Promise.resolve(), deleteSession: () => Promise.resolve(),
         cancel: () => Promise.resolve(), refresh: () => Promise.resolve(), loadOlder: () => Promise.resolve(), dispose: () => {},
     };
     const actions: AssistantActions = {
@@ -34,12 +41,11 @@ function harness() {
         isMobile: () => true, shouldSendOnEnter: () => true,
         loadOptions: () => Promise.resolve({ models: [], presets: ['Default'], tools: [], diagnostics: [], skills: [] }),
         readResult: () => Promise.reject(new Error('No external result')), openConnections: () => {},
+        confirmDeleteSession: () => Promise.resolve(true),
     };
-    return { controller, actions, send, get snapshot() { return snapshot; }, publish(patch: Partial<AssistantSnapshot>) {
-        snapshot = { ...snapshot, ...patch }; listeners.forEach(listener => listener());
-    } };
+    return { controller, actions, sendMessage, get snapshot() { return snapshot; }, publish };
 }
-test('IME and modified Enter never send to character chat; switching formatting retains a draft, and sending clears only after acceptance', async () => {
+test('IME and modified Enter never send to character chat; switching formatting retains a draft', async () => {
     document.body.innerHTML = '<div id="advanced-formatting-button"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="openDrawer"></div></div>';
     const drawer = installAssistantDrawer();
     const h = harness();
@@ -52,19 +58,14 @@ test('IME and modified Enter never send to character chat; switching formatting 
     fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 });
     fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
     fireEvent.keyDown(input, { key: 'Enter', altKey: true });
-    expect(h.controller.send).not.toHaveBeenCalled();
+    expect(h.sendMessage).not.toHaveBeenCalled();
     expect(globalKey).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Advanced formatting' }));
     fireEvent.click(screen.getByRole('button', { name: 'Back to assistant' }));
     input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message the app assistant' });
     expect(input.value).toBe('检查设置');
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(h.controller.send).toHaveBeenCalledTimes(1);
-    expect(input.value).toBe('检查设置');
-    fireEvent.keyDown(input, { key: 'Enter' });
-    expect(h.controller.send).toHaveBeenCalledTimes(1);
-    await act(async () => { h.send.resolve({ runId: 'run', sessionId: 'session', status: 'calling_model' }); await h.send.promise; });
-    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message the app assistant' }).value).toBe('');
+    await waitFor(() => expect(h.sendMessage).toHaveBeenCalledTimes(1));
     document.removeEventListener('keydown', globalKey); drawer.dispose();
 });
 
@@ -84,18 +85,18 @@ test('stop remains pending until a terminal update and preserves the next draft'
     document.body.innerHTML = '<div id="advanced-formatting-button"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="openDrawer"></div></div>';
     const drawer = installAssistantDrawer();
     const h = harness();
-    h.publish({ run: { runId: 'run', active: true, status: 'calling_model' } });
+    h.publish({ run: { runId: 'run', active: true, status: 'calling_model' }, activeRun: { sessionId: 'session', runId: 'run', active: true, status: 'calling_model' } });
     render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
     fireEvent.change(screen.getByRole('textbox', { name: 'Message the app assistant' }), { target: { value: 'Next message' } });
     fireEvent.click(screen.getByRole('button', { name: 'Stop this run' }));
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Stopping…'));
     expect(screen.getByRole('button', { name: 'Stop this run' }).hasAttribute('disabled')).toBe(true);
     expect(screen.queryByRole('button', { name: 'Send message' })).toBeNull();
-    act(() => h.publish({ run: { runId: 'run', active: false, status: 'cancelled' } }));
+    act(() => h.publish({ run: { runId: 'run', active: false, status: 'cancelled' }, activeRun: null }));
     expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message the app assistant' }).value).toBe('Next message');
     expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
-    act(() => h.publish({ run: { runId: 'next-run', active: true, status: 'calling_model' }, busy: true }));
+    act(() => h.publish({ run: { runId: 'next-run', active: true, status: 'calling_model' }, activeRun: { sessionId: 'session', runId: 'next-run', active: true, status: 'calling_model' }, busy: true }));
     expect(screen.getByRole('button', { name: 'Stop this run' }).hasAttribute('disabled')).toBe(false);
     drawer.dispose();
 });

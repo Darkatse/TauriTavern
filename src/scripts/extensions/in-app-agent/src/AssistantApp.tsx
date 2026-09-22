@@ -4,9 +4,10 @@ import type { AssistantActions, AssistantController, SettingsOptions } from './h
 import type { AssistantDrawer } from './drawer';
 import type { AssistantSnapshot } from './controller';
 import { tr, type MessageKey } from './i18n';
-import { ErrorNotice, Icon } from './components';
+import { ErrorNotice, Icon, NewConversationIcon } from './components';
 import { Settings, Setup } from './Settings';
 import { Transcript, toolName } from './Transcript';
+import { History, sessionTitle } from './History';
 
 function statusLabel(snapshot: AssistantSnapshot): string {
     const status = snapshot.run?.status;
@@ -36,18 +37,18 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
     const snapshot = useSyncExternalStore(listener => controller.subscribe(listener), controller.getSnapshot);
     const surface = useSyncExternalStore(listener => drawer.subscribe(listener), drawer.getSnapshot);
     const visible = surface.open && surface.assistant;
-    const [view, setView] = useState<'chat' | 'settings'>('chat');
-    const [text, setText] = useState('');
+    const [view, setView] = useState<'chat' | 'settings' | 'history'>('chat');
+    const text = snapshot.draft;
     const [options, setOptions] = useState<SettingsOptions | null>(null);
     const [optionsError, setOptionsError] = useState<unknown>(null);
     const [draft, setDraft] = useState(() => structuredClone(snapshot.profile));
     const [contentWidth, setContentWidth] = useState(actions.contentWidthPercent);
     const [savedContentWidth, setSavedContentWidth] = useState(actions.contentWidthPercent);
     const [settingsVersion, setSettingsVersion] = useState(0);
-    const [operation, setOperation] = useState<'send' | 'save' | null>(null);
+    const [operation, setOperation] = useState<'save' | null>(null);
     const [error, setError] = useState<unknown>(null);
     const [notice, setNotice] = useState('');
-    const [cancelling, setCancelling] = useState(false);
+    const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
     const input = useRef<HTMLTextAreaElement>(null);
     const initialized = useRef<Promise<void> | null>(null);
     const activity = useRef({ wasActive: false, unread: false });
@@ -76,20 +77,20 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
     }, [visible, controller, actions]);
     useEffect(() => {
         const current = activity.current;
-        if (current.wasActive && !snapshot.run?.active && !visible) current.unread = true;
+        if (current.wasActive && !snapshot.activeRun && !visible) current.unread = true;
         if (visible) current.unread = false;
-        current.wasActive = Boolean(snapshot.run?.active);
+        current.wasActive = Boolean(snapshot.activeRun);
         drawer.setActivity(current.wasActive ? 'working' : current.unread ? 'unread' : '');
-    }, [drawer, snapshot.run, visible]);
+    }, [drawer, snapshot.activeRun, visible]);
     useEffect(() => {
         if (visible && view === 'chat' && snapshot.initialized && !actions.isMobile()) input.current?.focus({ preventScroll: true });
-    }, [visible, view, snapshot.initialized, actions]);
+    }, [visible, view, snapshot.initialized, snapshot.sessionId, actions]);
     useEffect(() => {
         const element = input.current;
         if (!element || !visible) return;
         element.style.height = 'auto';
         element.style.height = `${element.scrollHeight}px`;
-    }, [text, visible]);
+    }, [text, visible, view]);
     useEffect(() => {
         if (!notice) return;
         const timer = setTimeout(() => setNotice(''), 3200);
@@ -103,21 +104,26 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
             if (contentWidth !== savedContentWidth) {
                 await actions.saveContentWidth(contentWidth); setSavedContentWidth(contentWidth);
             }
-            setDraft(structuredClone(profile)); setView('chat'); setNotice(tr('saved'));
+            setDraft(structuredClone(profile)); setView(current => current === 'settings' ? 'chat' : current); setNotice(tr('saved'));
         } catch (failure) { setError(failure); throw failure; }
         finally { setOperation(null); }
     }
     async function send() {
-        if (!text.trim() || snapshot.busy || snapshot.run?.active || !snapshot.profileSaved || operation) return;
-        setOperation('send'); setError(null); setNotice(''); setCancelling(false);
-        try { await controller.send(text); setText(''); }
-        catch (failure) { setError(failure); }
-        finally { setOperation(null); }
+        if (!canSend) return;
+        setError(null); setNotice('');
+        try { await controller.send(); }
+        catch { /* The controller keeps the failure and draft with the originating Session. */ }
     }
     async function stop() {
-        setCancelling(true); setError(null);
+        const runId = snapshot.activeRun?.runId;
+        if (!runId) return;
+        setCancellingRunId(runId); setError(null);
         try { await controller.cancel(); }
-        catch (failure) { setError(failure); setCancelling(false); }
+        catch (failure) { setError(failure); setCancellingRunId(null); }
+    }
+    function openSession(id: string | null) {
+        setView('chat'); setError(null);
+        void controller.selectSession(id).catch(() => { /* The selected view exposes read and storage errors. */ });
     }
     useEffect(() => {
         const keyDown = (event: KeyboardEvent) => {
@@ -125,42 +131,64 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
             event.stopPropagation();
             if (event.key !== 'Escape' || event.isComposing || event.keyCode === 229) return;
             event.preventDefault();
-            if (view === 'settings') setView('chat'); else drawer.close();
+            if (view !== 'chat') setView('chat'); else drawer.close();
         };
         drawer.mount.addEventListener('keydown', keyDown);
         return () => drawer.mount.removeEventListener('keydown', keyDown);
     }, [drawer, view]);
     const model = options && findModelTargetForBinding(options.models, snapshot.profile.model);
-    const canSend = snapshot.initialized && snapshot.profileSaved && Boolean(text.trim()) && !snapshot.run?.active && !snapshot.busy && !operation;
+    const preparing = snapshot.sendingSessionId !== undefined;
+    const preparingHere = preparing && snapshot.sendingSessionId === snapshot.sessionId;
+    const cancelling = snapshot.activeRun?.runId === cancellingRunId;
+    const taskSessionId = snapshot.activeRun?.sessionId ?? snapshot.sendingSessionId;
+    const showTaskBanner = taskSessionId !== undefined && (view !== 'chat' || taskSessionId !== snapshot.sessionId);
+    const canSend = snapshot.initialized && snapshot.profileSaved && Boolean(text.trim()) && !snapshot.activeRun && !preparing && !snapshot.busy && !snapshot.loading && !operation;
+    const session = snapshot.sessions.find(item => item.id === snapshot.sessionId);
+    const heading = view === 'chat' ? (session ? sessionTitle(session) : tr('title')) : tr(view === 'settings' ? 'settings' : 'history');
     const issue = error ?? snapshot.error;
     return <div className="ttia-root" data-visible={visible} data-mobile={actions.isMobile()} style={{ '--ttia-content-width': `${contentWidth}%` } as CSSProperties}>
         <button hidden={surface.assistant} type="button" className="ttia-return" onClick={() => drawer.setMode('assistant')}><Icon name="arrow-left" />{tr('back')}</button>
         <div className="ttia-assistant" hidden={!surface.assistant}>
             <header className="ttia-header"><div className="ttia-heading">
-                {view === 'settings' ? <button type="button" className="ttia-icon-button" aria-label={tr('conversation')} onClick={() => setView('chat')}><Icon name="arrow-left" /></button>
+                {view !== 'chat' ? <button type="button" className="ttia-icon-button" aria-label={tr('conversation')} onClick={() => setView('chat')}><Icon name="arrow-left" /></button>
                     : <span className="ttia-brand" aria-hidden="true">A<span /></span>}
-                <strong>{tr(view === 'settings' ? 'settings' : 'title')}</strong>
+                <strong title={heading}>{heading}</strong>
             </div><div className="ttia-header-actions">
                 <button type="button" className="ttia-advanced" onClick={() => drawer.setMode('advanced')}>{tr('advanced')}</button>
+                {view === 'chat' && <>
+                    <button type="button" className="ttia-icon-button" aria-label={tr('newConversation')} title={tr('newConversation')} disabled={!snapshot.initialized}
+                        onClick={() => openSession(null)}><NewConversationIcon /></button>
+                    <button type="button" className="ttia-icon-button" aria-label={tr('history')} title={tr('history')} disabled={!snapshot.initialized}
+                        onClick={() => { setError(null); setView('history'); void controller.refreshSessions().catch(() => { /* The history view displays the error. */ }); }}><Icon name="clock-rotate-left" /></button>
+                </>}
                 {view === 'chat' && <button type="button" className="ttia-icon-button" aria-label={tr('settings')} title={tr('settings')} disabled={!snapshot.initialized}
                     onClick={() => { setView('settings'); void refreshOptions(); }}><Icon name="sliders" /></button>}
                 <button type="button" className="ttia-icon-button" aria-label={tr('close')} onClick={() => drawer.close()}><Icon name="xmark" /></button>
             </div></header>
+            {showTaskBanner && <div className="ttia-task-banner">
+                <div role="status"><span className="ttia-pulse" /><span>{tr(cancelling ? 'stopping' : snapshot.activeRun
+                    ? taskSessionId === snapshot.sessionId ? 'working' : 'backgroundTask'
+                    : taskSessionId === snapshot.sessionId ? 'preparing' : 'backgroundPreparation')}</span></div>
+                <div className="ttia-actions"><button type="button" onClick={() => openSession(taskSessionId)}>{tr('returnToTask')}<Icon name="arrow-right" /></button>
+                    {snapshot.activeRun && <button type="button" className="ttia-icon-button" aria-label={tr('stop')} title={tr('stop')} disabled={cancelling} onClick={() => { void stop(); }}><Icon name="stop" /></button>}
+                </div>
+            </div>}
             <div className="ttia-chat-view" hidden={view !== 'chat'}>
                 {!snapshot.initialized ? <div className="ttia-loading"><span className="ttia-pulse" />{tr('loading')}
                     {issue != null && <ErrorNotice error={issue} retry={() => { setError(null); void initialize().catch(setError); }} />}</div>
                     : !snapshot.profileSaved ? <div className="ttia-setup-scroll">{options ? <Setup options={options} profile={snapshot.profile} actions={actions} busy={snapshot.busy} onSave={save} />
                         : optionsError != null ? <ErrorNotice error={optionsError} retry={() => { void refreshOptions(); }} /> : <div className="ttia-loading">{tr('loading')}</div>}</div>
+                        : snapshot.loading ? <div className="ttia-loading"><span className="ttia-pulse" />{tr('loadingConversation')}</div>
                         : <div className="ttia-conversation-area">
                             {snapshot.messages.length === 0 && !snapshot.run && <div className="ttia-welcome"><div className="ttia-emblem" aria-hidden="true">A<span /></div>
                             <h2>{tr('welcome')}</h2><p>{tr('welcomeNote')}</p>
                             {!text && <div className="ttia-suggestions">{([
                                 { key: 'suggestLogs', icon: 'magnifying-glass' }, { key: 'suggestExtension', icon: 'puzzle-piece' }, { key: 'suggestSettings', icon: 'sliders' },
                             ] as const).map(({ key, icon }) =>
-                                <button type="button" key={key} onClick={() => { setText(tr(key)); input.current?.focus(); }}><Icon name={icon} /><span>{tr(key)}</span><Icon name="arrow-up" /></button>)}</div>}
+                                <button type="button" key={key} onClick={() => { controller.setDraft(tr(key)); input.current?.focus(); }}><Icon name={icon} /><span>{tr(key)}</span><Icon name="arrow-up" /></button>)}</div>}
                             </div>}
                             <div className="ttia-history-area" hidden={snapshot.messages.length === 0 && !snapshot.run}>
-                                <Transcript snapshot={snapshot} controller={controller} actions={actions} visible={visible && view === 'chat' && (snapshot.messages.length > 0 || snapshot.run !== null)} />
+                                <Transcript key={snapshot.sessionId ?? 'new'} snapshot={snapshot} controller={controller} actions={actions} visible={visible && view === 'chat' && (snapshot.messages.length > 0 || snapshot.run !== null)} />
                             </div>
                         </div>}
                 <div className="ttia-bottom">
@@ -170,8 +198,8 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
                     }} />}
                     {notice && <p className="ttia-notice" role="status">{notice}</p>}
                     <form className={`ttia-composer ${snapshot.run?.active ? 'is-running' : ''}`} onSubmit={event => { event.preventDefault(); void send(); }}>
-                        <textarea ref={input} rows={2} aria-label={tr('composer')} placeholder={tr('placeholder')} value={text} readOnly={operation === 'send'}
-                            onChange={event => setText(event.target.value)} onKeyDown={event => {
+                        <textarea ref={input} rows={2} aria-label={tr('composer')} placeholder={tr('placeholder')} value={text} readOnly={preparingHere}
+                            onChange={event => controller.setDraft(event.target.value)} onKeyDown={event => {
                                 if (event.key === 'Enter' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
                                     && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && actions.shouldSendOnEnter()) {
                                     event.preventDefault(); if (canSend) void send();
@@ -180,15 +208,14 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
                         <div className="ttia-composer-footer"><button type="button" className="ttia-model" disabled={!snapshot.initialized} onClick={() => { setView('settings'); void refreshOptions(); }}>
                             <Icon name="circle-nodes" /><span>{model?.name || snapshot.profile.model.modelId || tr('model')}</span><Icon name="chevron-right" /></button>
                             {snapshot.run?.active ? <button type="button" className="ttia-send is-stop" aria-label={tr('stop')} title={tr('stop')} disabled={cancelling} onClick={() => { void stop(); }}><Icon name="stop" /></button>
-                                : <button type="submit" className="ttia-send" aria-label={tr('send')} title={tr('send')} disabled={!canSend}><Icon name={operation === 'send' ? 'ellipsis' : 'arrow-up'} /></button>}
+                                : <button type="submit" className="ttia-send" aria-label={tr('send')} title={tr('send')} disabled={!canSend}><Icon name={preparingHere ? 'ellipsis' : 'arrow-up'} /></button>}
                         </div>
                     </form>
-                    <div className="ttia-input-hint">{operation === 'send' ? tr('preparing') : snapshot.run?.active ? tr('draftHint') : tr(actions.shouldSendOnEnter() ? 'sendHint' : 'newlineHint')}</div>
+                    <div className="ttia-input-hint">{preparingHere ? tr('preparing') : snapshot.activeRun || preparing ? tr('waitingForTask') : tr(actions.shouldSendOnEnter() ? 'sendHint' : 'newlineHint')}</div>
                 </div>
             </div>
+            {view === 'history' && <History snapshot={snapshot} controller={controller} actions={actions} onOpen={openSession} onNew={() => openSession(null)} />}
             <div className="ttia-settings-view" hidden={view !== 'settings'}>
-                {snapshot.run?.active && <div className="ttia-settings-running"><RunStatus snapshot={snapshot} cancelling={cancelling} />
-                    <button type="button" disabled={cancelling} onClick={() => { void stop(); }}>{tr('stop')}</button></div>}
                 {optionsError != null && <ErrorNotice error={optionsError} retry={() => { void refreshOptions(); }} />}
                 {options && <Settings key={settingsVersion} draft={draft} setDraft={setDraft} options={options} actions={actions} busy={snapshot.busy || operation === 'save'}
                     contentWidth={contentWidth} onContentWidthChange={setContentWidth}

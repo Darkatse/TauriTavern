@@ -9,22 +9,27 @@ function message(seq: number, role: 'user' | 'assistant' = 'assistant'): TauriTa
         ...(role === 'assistant' ? { origin: { invocationId: 'inv_root', round: seq } } : {}) };
 }
 
-function harness(pointer: unknown = undefined) {
+function harness(selectionId?: string | null) {
     const profile = createAssistantProfile();
     profile.model = { mode: 'connectionRef', connectionRef: 'model', modelId: 'test' };
     const state = {
         messages: [] as TauriTavernAgentSessionMessage[],
         active: null as TauriTavernAgentSessionRunHandle | null,
         events: [] as TauriTavernAgentRunEvent[],
-        pointer, creates: 0, sends: 0, failStore: false, failSend: false,
+        selectionId, creates: 0, sends: 0, failSend: false,
+        sessions: [] as TauriTavernAgentSession[],
         event: null as ((event: TauriTavernAgentRunEvent) => void) | null,
         live: null as ((update: TauriTavernAgentRunLiveUpdate) => void) | null,
     };
-    const session = { id: 'session', createdAt: '' };
+    const session = { id: 'session', createdAt: '', title: null, lastUsedAt: null };
+    if (selectionId === 'session') state.sessions.push(session);
     const agent: Dependencies['agent'] = {
         sessions: {
             profile: { load: () => Promise.resolve({ profile }), save: () => Promise.resolve() },
-            create: () => { state.creates++; return Promise.resolve({ session }); },
+            create: () => { state.creates++; state.sessions.push(session); return Promise.resolve({ session }); },
+            list: () => Promise.resolve({ sessions: state.sessions, activeRuns: state.active ? [state.active] : [] }),
+            rename: ({ sessionId, title }) => Promise.resolve({ session: { ...session, id: sessionId, title } }),
+            delete: ({ sessionId }) => { state.sessions = state.sessions.filter(item => item.id !== sessionId); return Promise.resolve(); },
             read: ({ beforeSeq, limit = 50 }) => {
                 const candidates = state.messages.filter(entry => beforeSeq === undefined || entry.seq < beforeSeq);
                 const messages = candidates.slice(-limit);
@@ -39,20 +44,16 @@ function harness(pointer: unknown = undefined) {
                 return state.failSend ? Promise.reject(new Error('send receipt lost')) : Promise.resolve(handle);
             },
         },
-        readEvents: () => Promise.resolve({ events: state.events }),
+        readEvents: () => Promise.resolve({ events: [...state.events] }),
         subscribe: (_runId, handler) => { state.event = handler; return () => { state.event = null; }; },
         subscribeLiveProjection: (_runId, handler) => { state.live = handler; return () => { state.live = null; }; },
         cancel: () => Promise.resolve({ sessionId: 'session', runId: 'run', status: 'cancelling' }),
     };
-    const store: Dependencies['store'] = {
-        tryGetJson: () => Promise.resolve(state.pointer === undefined ? { found: false } : { found: true, value: state.pointer }),
-        setJson: ({ value }: { value: unknown }) => {
-            if (state.failStore) return Promise.reject(new Error('store unavailable'));
-            state.pointer = value;
-            return Promise.resolve();
-        },
+    const selection: Dependencies['selection'] = {
+        load: () => state.selectionId,
+        save: sessionId => { state.selectionId = sessionId; },
     };
-    return { controller: createInAppAgentController({ agent, store }), state, agent };
+    return { controller: createInAppAgentController({ agent, selection }), state, agent };
 }
 
 const response: TauriTavernAgentRunLiveResponse = {
@@ -64,22 +65,25 @@ function event(seq: number, type: string): TauriTavernAgentRunEvent {
     return { seq, id: `event${seq}`, runId: 'run', timestamp: '', level: 'info', type };
 }
 
-test('Session is lazy, a failed pointer save reuses its ID, and an uncertain send is never repeated', async () => {
+test('Session stays lazy and an uncertain send keeps its identity and draft without resending', async () => {
     const { controller, state } = harness();
     await controller.initialize();
+    controller.setDraft('first');
+    await controller.newSession();
     expect(state.creates).toBe(0);
-    state.failStore = true;
-    await expect(controller.send('first')).rejects.toThrow('store unavailable');
-    expect(state.sends).toBe(0);
-    state.failStore = false;
+    expect(controller.getSnapshot().draft).toBe('first');
     state.failSend = true;
-    await expect(controller.send('first')).rejects.toThrow('receipt lost');
+    await expect(controller.send()).rejects.toThrow('receipt lost');
     expect(state.creates).toBe(1);
     expect(state.sends).toBe(1);
-    expect(state.pointer).toBe('session');
+    expect(state.selectionId).toBe('session');
+    expect(controller.getSnapshot().draft).toBe('first');
     expect(controller.getSnapshot().messages).toHaveLength(1);
-    expect(controller.getSnapshot().run?.active).toBe(true);
-    await expect(controller.send('again')).rejects.toThrow('busy');
+    expect(controller.getSnapshot().activeRun?.runId).toBe('run');
+    await controller.newSession();
+    controller.setDraft('another question');
+    await expect(controller.send()).rejects.toThrow('busy');
+    expect(state.creates).toBe(1);
     controller.dispose();
 });
 
@@ -112,7 +116,7 @@ test('canonical origin replaces previews in either delivery order; terminal refr
     state.events.push(done);
     state.event?.(done);
     await controller.refresh();
-    expect(controller.getSnapshot().run).toEqual({ runId: 'run', status: 'cancelled', active: false });
+    expect(controller.getSnapshot().run).toMatchObject({ runId: 'run', status: 'cancelled', active: false });
     expect(controller.getSnapshot().responses).toEqual([]);
     expect(state.event).toBeNull();
     expect(state.live).toBeNull();
@@ -161,5 +165,133 @@ test('a reply saved between the history and event reads is caught up before init
     expect(controller.getSnapshot().messages.map(entry => entry.seq)).toEqual([1, 2]);
     expect(controller.getSnapshot().run).toEqual({ runId: 'run', status: 'completed', active: false });
     expect(state.live).toBeNull();
+    controller.dispose();
+});
+
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>(done => { resolve = done; });
+    return { promise, resolve };
+}
+
+function addOtherConversation(agent: Dependencies['agent'], state: ReturnType<typeof harness>['state']) {
+    const other = { id: 'other', createdAt: '', title: 'Other conversation', lastUsedAt: null };
+    state.sessions.push(other);
+    const read = agent.sessions.read;
+    agent.sessions.read = input => input.sessionId !== other.id ? read(input) : Promise.resolve({
+        session: other, messages: [{ ...message(1, 'user'), runId: 'other-run' }], lastSeq: 1, nextBeforeSeq: null, activeRun: null,
+    });
+}
+
+test('navigation during send preserves the destination draft and stopping still targets the source run', async () => {
+    const { controller, state, agent } = harness('session');
+    addOtherConversation(agent, state);
+    await controller.initialize();
+    controller.setDraft('source question');
+    const received = deferred<void>();
+    const release = deferred<void>();
+    const send = agent.sessions.send;
+    agent.sessions.send = async input => {
+        received.resolve();
+        await release.promise;
+        expect(input).toEqual({ sessionId: 'session', text: 'source question' });
+        return send(input);
+    };
+    const sending = controller.send();
+    await received.promise;
+    await controller.selectSession('other');
+    controller.setDraft('next question');
+    release.resolve();
+    await sending;
+    expect(controller.getSnapshot().sessionId).toBe('other');
+    expect(controller.getSnapshot().draft).toBe('next question');
+    expect(controller.getSnapshot().messages[0]?.runId).toBe('other-run');
+    expect(controller.getSnapshot().activeRun?.sessionId).toBe('session');
+    let cancelled: string | undefined;
+    agent.cancel = runId => { cancelled = runId; return Promise.resolve({ sessionId: 'session', runId, status: 'cancelling' }); };
+    await controller.cancel();
+    expect(cancelled).toBe('run');
+    state.active = null;
+    const done = event(2, 'run_cancelled');
+    state.events.push(done);
+    state.event?.(done);
+    expect(controller.getSnapshot().activeRun).toBeNull();
+    expect(controller.getSnapshot().draft).toBe('next question');
+    await controller.selectSession('session');
+    expect(controller.getSnapshot().draft).toBe('');
+    controller.dispose();
+});
+
+test('an earlier conversation read cannot publish after navigation', async () => {
+    const { controller, state, agent } = harness('session');
+    addOtherConversation(agent, state);
+    await controller.initialize();
+    const read = agent.sessions.read;
+    const received = deferred<void>();
+    const release = deferred<void>();
+    agent.sessions.read = async input => {
+        const page = await read(input);
+        if (input.sessionId === 'session') { received.resolve(); await release.promise; }
+        return page;
+    };
+    const refreshing = controller.refresh();
+    await received.promise;
+    await controller.selectSession('other');
+    release.resolve();
+    await refreshing;
+    expect(controller.getSnapshot().sessionId).toBe('other');
+    expect(controller.getSnapshot().messages[0]?.runId).toBe('other-run');
+    expect(controller.getSnapshot().loading).toBe(false);
+    controller.dispose();
+});
+
+test('a lazy creation receipt does not reverse later navigation back to the blank draft', async () => {
+    const { controller, state, agent } = harness();
+    addOtherConversation(agent, state);
+    await controller.initialize();
+    await controller.newSession();
+    controller.setDraft('create this conversation');
+    const received = deferred<void>();
+    const release = deferred<void>();
+    const create = agent.sessions.create;
+    agent.sessions.create = async () => { received.resolve(); await release.promise; return create(); };
+    const sending = controller.send();
+    await received.promise;
+    await controller.selectSession('other');
+    controller.setDraft('keep this draft');
+    await controller.newSession();
+    release.resolve();
+    await sending;
+    expect(controller.getSnapshot().sessionId).toBeNull();
+    expect(controller.getSnapshot().activeRun?.sessionId).toBe('session');
+    expect(state.creates).toBe(1);
+    await controller.selectSession('other');
+    expect(controller.getSnapshot().draft).toBe('keep this draft');
+    controller.dispose();
+});
+
+test('late event reads retain newer progress already delivered by the subscription', async () => {
+    const { controller, state, agent } = harness('session');
+    state.messages = [message(1, 'user')];
+    state.active = { sessionId: 'session', runId: 'run', status: 'calling_model' };
+    state.events = [{ ...event(1, 'status_changed'), payload: { status: 'calling_model' } }];
+    await controller.initialize();
+    const received = deferred<void>();
+    const release = deferred<void>();
+    agent.readEvents = async () => {
+        const events = [...state.events];
+        received.resolve(); await release.promise;
+        return { events };
+    };
+    const reading = controller.refresh();
+    await received.promise;
+    const progress = { ...event(2, 'status_changed'), payload: { status: 'dispatching_tool' } };
+    state.events.push(progress);
+    state.event?.(progress);
+    release.resolve();
+    await reading;
+    expect(controller.getSnapshot().run?.status).toBe('dispatching_tool');
+    expect(controller.getSnapshot().activeRun?.status).toBe('dispatching_tool');
+    expect(controller.getSnapshot().events.at(-1)).toEqual(progress);
     controller.dispose();
 });

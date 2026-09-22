@@ -1,7 +1,23 @@
 import { listSavedModelTargets } from '../../../tauritavern/agent/model-target-llm-connection.js';
 import type { createInAppAgentController } from './controller';
+import { tr } from './i18n';
 
 const CONTENT_WIDTH = { namespace: 'in-app-agent', key: 'contentWidthPercent' };
+const SELECTION_KEY = 'tauritavern:in_app_agent_current_session';
+
+// Session data is local to this device, so its navigation preference is too.
+export const assistantSelection = {
+    load(): string | null | undefined {
+        const raw = localStorage.getItem(SELECTION_KEY);
+        if (raw === null) return undefined;
+        const value: unknown = JSON.parse(raw);
+        if (value !== null && (typeof value !== 'string' || !value.trim())) {
+            throw new Error('in-app-agent: stored selection must be a Session ID or null');
+        }
+        return value;
+    },
+    save(id: string | null): void { localStorage.setItem(SELECTION_KEY, JSON.stringify(id)); },
+};
 
 export type AssistantController = ReturnType<typeof createInAppAgentController>;
 export type ModelTarget = ReturnType<typeof listSavedModelTargets>[number];
@@ -18,6 +34,8 @@ export type AssistantContext = {
     shouldSendOnEnter: () => boolean;
     isMobile: () => boolean;
     getPresetManager: (api: string) => { getAllPresets: () => string[]; findPreset: (name: string) => unknown };
+    Popup: { show: { confirm: (title: string, message: string) => Promise<unknown> } };
+    POPUP_RESULT: { AFFIRMATIVE: unknown };
 };
 export function requireContext(): AssistantContext {
     const context = (window as Window & { SillyTavern?: { getContext: () => AssistantContext } }).SillyTavern?.getContext();
@@ -59,6 +77,12 @@ export async function createAssistantActions(api: TauriTavernHostApi, context: A
         shouldSendOnEnter: context.shouldSendOnEnter,
         copy: bridge.writeClipboardText,
         openLink: bridge.openExternalUrl,
+        async confirmDeleteSession(title: string): Promise<boolean> {
+            if (!context.Popup?.show.confirm || !context.POPUP_RESULT) throw new Error('in-app-agent: confirmation dialog is unavailable');
+            const message = document.createElement('p');
+            message.textContent = tr('deleteConversationNote', { title });
+            return await context.Popup.show.confirm(tr('deleteConversation'), message.outerHTML) === context.POPUP_RESULT.AFFIRMATIVE;
+        },
         markdown: (text: string) => lib.DOMPurify.sanitize(converter.makeHtml(text), {
             USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'video', 'audio', 'iframe', 'style', 'form', 'input', 'button'],
         }),

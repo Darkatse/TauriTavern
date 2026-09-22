@@ -26,11 +26,11 @@
     background: transparent; box-shadow: none; cursor: pointer; line-height: 1.4;
     transition: background-color 140ms, border-color 140ms, color 140ms, opacity 140ms, transform 100ms var(--ttia-ease);
 }
-.ttia-root button:hover:not(:disabled) { background: var(--ttia-hover); }
+.ttia-root button:where(:hover:not(:disabled)) { background: var(--ttia-hover); }
 .ttia-root button:active:not(:disabled) { transform: scale(.97); }
 .ttia-root button:disabled { opacity: .42; cursor: default; }
 .ttia-root :focus-visible { outline: 2px solid var(--interactable-outline-color); outline-offset: 3px; }
-.ttia-root input:not([type="checkbox"]):not([type="range"]), .ttia-root select, .ttia-root textarea {
+.ttia-root input:where(:not([type="checkbox"]):not([type="range"])), .ttia-root select, .ttia-root textarea {
     width: 100%; min-width: 0; border: 1px solid var(--ttia-line); border-radius: 9px;
     background: var(--ttia-field); padding: 9px 11px; margin: 0; box-shadow: none;
 }
@@ -42,7 +42,9 @@
 .ttia-root .ttia-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ttia-ink) 88%, var(--ttia-surface)); }
 .ttia-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: 0 0 auto; padding: 12px 14px 10px 18px; border-bottom: 1px solid var(--ttia-line); }
 .ttia-heading, .ttia-header-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.ttia-heading strong { font-size: 1em; font-weight: 600; white-space: nowrap; letter-spacing: -.015em; }
+.ttia-heading { flex: 1; overflow: hidden; }
+.ttia-heading strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 1em; font-weight: 600; white-space: nowrap; letter-spacing: -.015em; }
+.ttia-header-actions { flex-shrink: 0; gap: 4px; }
 .ttia-root .ttia-icon-button { width: 32px; height: 32px; padding: 0; color: var(--ttia-muted); }
 .ttia-root .ttia-advanced { font-size: .82em; color: var(--ttia-muted); padding-inline: 6px; }
 .ttia-brand, .ttia-emblem { position: relative; display: inline-grid; place-items: center; font-weight: 600; letter-spacing: -.06em; }
@@ -153,8 +155,38 @@
 .ttia-settings-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--ttia-line); }
 .ttia-settings-footer > small { font-size: .75em; color: var(--ttia-muted); }
 .ttia-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.ttia-settings-running { display: flex; justify-content: space-between; align-items: center; padding-inline: 14px; border-bottom: 1px solid var(--ttia-line); }
-.ttia-settings-running > button { font-size: .8em; }
+.ttia-task-banner { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 9px 18px; border-bottom: 1px solid var(--ttia-line); background: var(--ttia-field); font-size: .8em; }
+.ttia-task-banner > div:first-child { display: flex; align-items: center; gap: 10px; color: var(--ttia-muted); }
+.ttia-task-banner .ttia-actions { margin-left: auto; }
+.ttia-task-banner .ttia-actions > button { font-size: inherit; }
+.ttia-session-history { flex: 1; min-height: 0; overflow-y: auto; padding: 22px 20px 32px; animation: ttia-enter 180ms var(--ttia-ease) both; }
+.ttia-history-toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; }
+.ttia-history-search { position: relative; flex: 1; min-width: 0; }
+.ttia-history-search > i { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); font-size: .85em; color: var(--ttia-muted); }
+.ttia-root .ttia-history-search input { padding-left: 35px; font-size: .9em; }
+.ttia-root .ttia-history-new { flex-shrink: 0; min-height: 40px; border-color: var(--ttia-line); font-size: .88em; padding-inline: 12px; }
+.ttia-session-list { list-style: none; margin: 0; padding: 0 0 78px; display: flex; flex-direction: column; gap: 2px; }
+.ttia-session-row { display: flex; align-items: center; min-width: 0; gap: 4px; border: 1px solid transparent; border-radius: 11px; transition: background-color 150ms, border-color 150ms; }
+.ttia-session-row:hover { background: var(--ttia-field); }
+.ttia-session-row[data-current="true"] { border-color: var(--ttia-line); background: var(--ttia-field); }
+.ttia-root .ttia-session-open { flex: 1; min-width: 0; justify-content: flex-start; text-align: left; gap: 10px; min-height: 40px; padding: 8px 12px; border-radius: 10px; }
+.ttia-root .ttia-session-open:hover { background: transparent; }
+.ttia-session-mark { flex-shrink: 0; color: var(--ttia-muted); font-size: .85em; }
+.ttia-session-title { flex: 1; min-width: 0; font-size: .94em; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ttia-session-time { flex-shrink: 0; color: var(--ttia-muted); font-size: .7em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ttia-session-tag { display: inline-flex; align-items: center; flex-shrink: 0; gap: 7px; color: var(--ttia-muted); font-size: .7em; white-space: nowrap; }
+.ttia-session-tag .ttia-pulse { width: 4px; height: 4px; box-shadow: none; }
+.ttia-session-tag.is-running { color: var(--ttia-ink); }
+.ttia-session-menu { position: relative; margin-right: 8px; }
+.ttia-session-menu-items { position: absolute; z-index: 2; top: calc(100% + 4px); right: 0; min-width: 150px; padding: 5px; display: flex; flex-direction: column; border: 1px solid var(--ttia-line); border-radius: 10px; background: var(--ttia-surface); backdrop-filter: blur(var(--SmartThemeBlurStrength)); box-shadow: 0 5px 18px color-mix(in srgb, var(--SmartThemeShadowColor) 35%, transparent); animation: ttia-enter 120ms var(--ttia-ease) both; }
+.ttia-session-menu-items > button { justify-content: flex-start; white-space: nowrap; font-size: .84em; }
+.ttia-session-rename { display: flex; align-items: center; gap: 4px; padding: 4px 10px; width: 100%; }
+.ttia-session-rename > input { min-width: 0; }
+.ttia-session-rename > button { flex-shrink: 0; }
+.ttia-history-empty { display: flex; flex-direction: column; align-items: center; text-align: center; color: var(--ttia-muted); gap: 12px; padding: 60px 20px; }
+.ttia-history-empty > i { font-size: 1.7em; opacity: .5; margin-bottom: 5px; }
+.ttia-history-empty > p { color: var(--ttia-ink); margin: 0; }
+.ttia-history-empty > span { font-size: .85em; }
 .ttia-note { padding: 12px; background: var(--ttia-field); border-radius: 10px; font-size: .85em; margin-block: 10px; }
 .ttia-skill-import { margin-block: 14px; }
 .ttia-skill-import > .ttia-actions button { border-color: var(--ttia-line); font-size: .82em; }
@@ -181,10 +213,14 @@
     .ttia-desktop-width { display: none; }
     .ttia-header { padding: 8px 10px 8px 14px; }
     .ttia-root .ttia-icon-button, .ttia-root .ttia-send { min-width: 42px; min-height: 42px; }
+    .ttia-root .ttia-advanced { max-width: 70px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: .72em; padding-inline: 3px; }
     .ttia-root .ttia-fold-toggle { min-height: 42px; }
     .ttia-messages { padding-inline: 16px; }
     .ttia-welcome, .ttia-onboarding { padding: 24px 20px; }
     .ttia-bottom { padding-inline: 10px; }
+    .ttia-session-history { padding: 16px 12px 24px; }
+    .ttia-history-toolbar { gap: 8px; }
+    .ttia-task-banner { padding-inline: 14px; }
     .ttia-input-hint { display: none; }
 }
 @media (max-height: 550px) {

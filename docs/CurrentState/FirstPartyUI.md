@@ -73,7 +73,7 @@ Production 与 development 共用 `rspack.config.js` 的 `createRspackConfigs(mo
 ### In-App Assistant
 
 - 一个 React island 挂载于原 A 抽屉；SillyTavern 保留外围 DOM 与抽屉行为，隐藏不卸载。
-- Controller 管理 Session IO 与订阅，组件管理输入、设置草稿和视图状态，`host.ts` 组合公共 API。
+- `host.ts` 组合公共 API；controller 管理会话、任务与输入草稿，组件管理设置草稿和视图。
 
 启动顺序、消息归属与工具边界见 [应用内助手](InAppAssistant.md)。
 
