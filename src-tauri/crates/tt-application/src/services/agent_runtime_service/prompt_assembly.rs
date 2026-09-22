@@ -16,6 +16,84 @@ use tt_domain::models::agent::profile::{AgentPresetBindingMode, ResolvedAgentPro
 use tt_domain::models::agent::{AgentModelTool, AgentRunEventLevel, WorkspacePath};
 
 impl AgentRuntimeService {
+    pub async fn prepare_session_run(
+        &self,
+        dto: crate::dto::agent_dto::AgentPrepareSessionRunDto,
+    ) -> Result<crate::dto::agent_dto::AgentPrepareSessionRunResultDto, ApplicationError> {
+        use tt_domain::models::agent::{
+            AgentInvocationExitPolicy, AgentModelContentPart, AgentModelMessage, AgentModelRole,
+        };
+        use tt_ports::repositories::agent_session_repository::AgentSessionMessageReadQuery;
+
+        self.session_repository
+            .load_session(&dto.session_id)
+            .await?;
+        if dto.text.trim().is_empty() {
+            return Err(ApplicationError::ValidationError(
+                "agent.session_text_required: text must not be empty".into(),
+            ));
+        }
+        let profile = self
+            .profile_service
+            .resolve_session_profile(dto.profile, self.tool_catalog())
+            .await?;
+        // Assembly needs the full transcript; read it once, then let PromptManager budget it.
+        let history = self
+            .session_repository
+            .read_session_messages(
+                &dto.session_id,
+                AgentSessionMessageReadQuery {
+                    after_seq: Some(0),
+                    before_seq: None,
+                    limit: usize::MAX,
+                },
+            )
+            .await?;
+        let last_seq = history.last().map_or(0, |entry| entry.seq);
+        let mut messages = history
+            .into_iter()
+            .map(|entry| entry.message)
+            .collect::<Vec<_>>();
+        messages.push(AgentModelMessage {
+            role: AgentModelRole::User,
+            parts: vec![AgentModelContentPart::Text { text: dto.text }],
+            provider_metadata: Value::Null,
+        });
+        let tools = self
+            .prepare_invocation_tools(
+                &profile,
+                AgentInvocationExitPolicy::ReplyAllowed,
+                "session_prepare",
+            )
+            .await?;
+        let assembly = self
+            .prompt_assembly_service
+            .prepare_frontend_prompt_assembly(
+                AgentPreparePromptAssemblyDto {
+                    profile_id: None,
+                    generation_type: "normal".into(),
+                    frozen_run_input_snapshot: json!({
+                        "schemaVersion": 1,
+                        "kind": "tauritavern.agentFrozenRunInputSnapshot",
+                        "contextKind": "session",
+                        "generationType": "normal",
+                        "promptInputs": { "messages": [], "agentMessages": messages },
+                        "worldInfoActivation": {},
+                        "macroContext": {},
+                    }),
+                    json_schema: None,
+                },
+                profile,
+                &tools.model_tools,
+                AgentInvocationExitPolicy::ReplyAllowed,
+            )
+            .await?;
+        Ok(crate::dto::agent_dto::AgentPrepareSessionRunResultDto {
+            expected_history_seq: last_seq,
+            assembly,
+        })
+    }
+
     pub async fn read_prompt_assembly_request(
         &self,
         dto: AgentReadPromptAssemblyRequestDto,

@@ -30,6 +30,7 @@ use tt_domain::text_metrics::TextMetrics;
 )]
 pub(super) enum AgentLoopExit {
     Finished,
+    Replied,
     Transferred {
         task_id: String,
         new_invocation_id: String,
@@ -48,10 +49,11 @@ impl AgentRuntimeService {
         let invocation_id = prepared.invocation.id.as_str();
         let exit_policy = prepared.invocation.exit_policy;
         let profile = &prepared.profile;
-        let updates_run_status = exit_policy == AgentInvocationExitPolicy::RunFinishAllowed;
+        let updates_run_status = prepared.invocation.kind.owns_run_status();
+        let active_run = self.active_run_handle(run_id).await?;
         let auto_commit_text_mutations = updates_run_status
-            && self.run_repository.load_run(run_id).await?.presentation
-                == AgentRunPresentation::Foreground;
+            && matches!(&active_run.target, tt_domain::models::agent::AgentRunTarget::Chat(chat)
+                if chat.presentation == AgentRunPresentation::Foreground);
         let stream = self
             .active_run_handle(run_id)
             .await?
@@ -103,6 +105,20 @@ impl AgentRuntimeService {
                     let model_response_path = self
                         .store_model_response(run_id, invocation_id, round, &response)
                         .await?;
+                    let replied = exit_policy == AgentInvocationExitPolicy::ReplyAllowed
+                        && response.tool_calls.is_empty();
+                    if replied {
+                        let _publication = self.run_lifecycle_lock.lock().await;
+                        self.ensure_not_cancelled(cancel)?;
+                        self.append_session_history(run_id, &response.message)
+                            .await?;
+                        self.transition_status(run_id, AgentRunStatus::Finishing)
+                            .await?;
+                        progress.step = InvocationStep::Exited(AgentLoopExit::Replied);
+                    } else {
+                        self.append_session_history(run_id, &response.message)
+                            .await?;
+                    }
                     self.event(
                         run_id,
                         AgentRunEventLevel::Debug,
@@ -136,7 +152,7 @@ impl AgentRuntimeService {
                     .await?;
 
                     let has_tools = !response.tool_calls.is_empty();
-                    let direct_output_path = if has_tools {
+                    let direct_output_path = if has_tools || replied {
                         None
                     } else {
                         self.capture_direct_output(
@@ -151,7 +167,9 @@ impl AgentRuntimeService {
                     // Keep the actual transcript current, including finish/return/handoff turns.
                     prepared.request.provider_state = exchange.provider_state;
                     prepared.request.messages.push(response.message);
-                    if !has_tools {
+                    if replied {
+                        return Ok(Some(AgentLoopExit::Replied));
+                    } else if !has_tools {
                         progress.drift_attempts += 1;
                         let nudge = build_drift_recovery_nudge(
                             commit_ledger.explicit_count(),
@@ -351,13 +369,15 @@ impl AgentRuntimeService {
                             std::slice::from_ref(&result),
                             &mut progress.seen_child_results,
                         );
-                        prepared.request.messages.push(AgentModelMessage {
+                        let message = AgentModelMessage {
                             role: AgentModelRole::Tool,
                             parts: vec![AgentModelContentPart::ToolResult { result }],
                             provider_metadata: Value::Null,
-                        });
+                        };
+                        prepared.request.messages.push(message.clone());
                         turn.next_call += 1;
                         recorded?;
+                        self.append_session_history(run_id, &message).await?;
                         if patched && updates_run_status {
                             self.transition_status(run_id, AgentRunStatus::ApplyingWorkspacePatch)
                                 .await?;
@@ -504,7 +524,7 @@ fn remember_seen_child_results_from_await(
     }
 }
 
-fn completion_tool_name(
+pub(super) fn completion_tool_name(
     exit_policy: AgentInvocationExitPolicy,
     turn: &ToolTurnContract,
 ) -> &'static str {
@@ -519,6 +539,7 @@ fn completion_tool_name(
             }
         }
         AgentInvocationExitPolicy::TaskReturnRequired => "task_return",
+        AgentInvocationExitPolicy::ReplyAllowed => "an assistant reply",
     }
 }
 
@@ -635,11 +656,16 @@ fn build_drift_recovery_nudge(
                  in plain text."
             )
         }
+        AgentInvocationExitPolicy::ReplyAllowed => {
+            unreachable!("Session replies do not enter drift recovery")
+        }
     }
 }
 
 fn direct_output_path(profile: &ResolvedAgentProfile) -> Result<WorkspacePath, ApplicationError> {
-    let message_body_path = WorkspacePath::parse(&profile.output.message_body_path)?;
+    let message_body_path = WorkspacePath::parse(
+        &crate::services::agent_profile_service::require_output(profile)?.message_body_path,
+    )?;
     let root = message_body_path
         .as_str()
         .split('/')

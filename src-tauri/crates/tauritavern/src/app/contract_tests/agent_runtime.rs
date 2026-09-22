@@ -11,6 +11,7 @@ mod mcp;
 mod model_binding;
 mod persist;
 mod resume;
+mod session;
 mod shell;
 mod skill_workspace;
 mod task_details;

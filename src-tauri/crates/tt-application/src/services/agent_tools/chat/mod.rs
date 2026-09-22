@@ -85,7 +85,7 @@ fn visible_total_messages(
     run: &AgentRun,
     raw_total_messages: usize,
 ) -> Result<usize, ApplicationError> {
-    match run.input_message_count {
+    match run.chat_target()?.input_message_count {
         Some(input_message_count) if raw_total_messages < input_message_count => {
             Err(ApplicationError::ValidationError(format!(
                 "agent.input_history_conflict: run input requires {input_message_count} messages, but chat payload has {raw_total_messages}"

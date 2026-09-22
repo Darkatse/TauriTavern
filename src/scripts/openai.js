@@ -33,6 +33,7 @@ import { getGroupNames, selected_group } from './group-chats.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { allowlistSettingAllows, getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
 import { materializeInitialChatHistoryMessages } from './tauritavern/agent/agent-context-policy.js';
+import { agentMessageProjection, prepareAgentHistory } from './tauritavern/agent/agent-model-messages.js';
 import { projectToolTurns } from './tauritavern/tool-turn-projection.js';
 import { canReplayProviderMetadata, getChatCompletionRequestContext } from './tauritavern/provider-replay.js';
 import { applyParamOmissions, getEffectiveGenerationSettings } from './tauri/generation-params/omission.js';
@@ -1190,6 +1191,7 @@ function createPromptAssemblyRuntime({
     updatePromptManager = true,
     renderPromptManager = true,
     showToasts = true,
+    contextKind = 'chat',
 } = {}) {
     if (!assemblyPromptManager) {
         throw new Error('prompt_assembly.prompt_manager_required: Prompt assembly requires a PromptManager instance');
@@ -1216,6 +1218,7 @@ function createPromptAssemblyRuntime({
         updatePromptManager: Boolean(updatePromptManager),
         renderPromptManager: Boolean(renderPromptManager),
         showToasts: Boolean(showToasts),
+        contextKind,
     };
 }
 
@@ -1585,8 +1588,12 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     const activePromptManager = assemblyRuntime.promptManager;
     const settings = assemblyRuntime.settings;
     const assemblyTokenHandler = assemblyRuntime.tokenHandler;
+    const isGroup = assemblyRuntime.contextKind === 'chat' && selected_group;
 
     if (!prompts.has('chatHistory')) {
+        if (assemblyRuntime.contextKind === 'session') {
+            throw new Error('agent.session_history_prompt_missing: the Session preset must include chatHistory');
+        }
         return 0;
     }
 
@@ -1595,7 +1602,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     chatCompletion.add(new MessageCollection('chatHistory'), prompts.index('chatHistory'));
 
     // Reserve budget for new chat message
-    const newChat = selected_group ? settings.new_group_chat_prompt : settings.new_chat_prompt;
+    const newChat = isGroup ? settings.new_group_chat_prompt : settings.new_chat_prompt;
     const newChatMessage = await Message.createAsync('system', substitutePromptParams(newChat, {}, assemblyRuntime), 'newMainChat', assemblyTokenHandler);
     chatCompletion.reserveBudget(newChatMessage);
 
@@ -1603,7 +1610,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     let groupNudgeMessage = null;
     const noGroupNudgeTypes = ['impersonate'];
     const groupNudgePrompt = getRelativePromptById(prompts, 'groupNudge');
-    if (selected_group && groupNudgePrompt && !noGroupNudgeTypes.includes(type)) {
+    if (isGroup && groupNudgePrompt && !noGroupNudgeTypes.includes(type)) {
         groupNudgeMessage = await Message.fromPromptAsync(groupNudgePrompt, assemblyTokenHandler);
         chatCompletion.reserveBudget(groupNudgeMessage);
     }
@@ -1664,6 +1671,19 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     const tokenPrefetchChunkSize = 12;
     for (let index = 0; index < chatPool.length;) {
         const chatPrompt = chatPool[index];
+
+        if (Array.isArray(chatPrompt.agentMessages)) {
+            const group = await Promise.all(chatPrompt.agentMessages.map((message, partIndex) =>
+                Message.fromAgentMessage(message, `agentHistory-${index}-${partIndex}`, assemblyTokenHandler)));
+            if (!chatCompletion.canAffordAll(group)) {
+                if (chatPrompt.required) throw new TokenBudgetExceededError('agentCurrentUserMessage');
+                break;
+            }
+            for (const message of group.reverse()) chatCompletion.insertAtStart(message, 'chatHistory');
+            sourceCount += chatPrompt.sourceCount;
+            index += 1;
+            continue;
+        }
 
         if (Array.isArray(chatPrompt.invocations)) {
             // We do not want to mutate the prompt
@@ -1786,7 +1806,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
         const batch = [];
         for (; index < chatPool.length && batch.length < tokenPrefetchChunkSize; index += 1) {
             const candidate = chatPool[index];
-            if (Array.isArray(candidate.invocations)) {
+            if (Array.isArray(candidate.invocations) || Array.isArray(candidate.agentMessages)) {
                 break;
             }
 
@@ -1877,7 +1897,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     chatCompletion.insertAtStart(newChatMessage, 'chatHistory');
 
     // Reserve budget for group nudge
-    if (selected_group && groupNudgeMessage) {
+    if (isGroup && groupNudgeMessage) {
         chatCompletion.freeBudget(groupNudgeMessage);
         chatCompletion.insertAtEnd(groupNudgeMessage, 'chatHistory');
     }
@@ -2070,7 +2090,7 @@ export function getPromptRole(role) {
  * @param {import('../script.js').QuietToolRequest|null} [options.quietToolRequest] One-shot tools and a literal control message.
  * @returns {Promise<[number, object|null]>} Raw chat record count and evaluated legacy tool data.
  */
-async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode = false, agentContextPolicy = null, agentSystemPrompt = null, agentTaskPrompt = null, allowToolCalls = true, legacyMcpToolRound = null, quietToolRequest = null }, runtime = null) {
+async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, agentMessages = null, messageExamples, extensionPrompts, attachWarning, agentMode = false, agentContextPolicy = null, agentSystemPrompt = null, agentTaskPrompt = null, allowToolCalls = true, legacyMcpToolRound = null, quietToolRequest = null }, runtime = null) {
     const assemblyRuntime = getPromptAssemblyRuntime(runtime);
     const activePromptManager = assemblyRuntime.promptManager;
     const settings = assemblyRuntime.settings;
@@ -2083,7 +2103,9 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
         // Agent frozen input keeps PromptManager's latest-first raw history.
         // Work on a materialized copy because downstream assembly splices,
         // attaches, and reverses messages into provider chronological order.
-        messages = materializeInitialChatHistoryMessages(messages, agentContextPolicy);
+        messages = agentMessages === null
+            ? materializeInitialChatHistoryMessages(messages, agentContextPolicy)
+            : prepareAgentHistory(agentMessages, agentContextPolicy);
     }
 
     // Helper function for preparing a prompt, that already exists within the prompt collection, for completion
@@ -2479,6 +2501,7 @@ export async function prepareOpenAIMessages({
     systemPromptOverride,
     jailbreakPromptOverride,
     messages,
+    agentMessages = null,
     messageExamples,
     agentMode = false,
     agentContextPolicy = null,
@@ -2536,7 +2559,7 @@ export async function prepareOpenAIMessages({
         };
 
         // Fill the chat completion with as much context as the budget allows
-        [chatSourceCount, toolData] = await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples, extensionPrompts, attachWarning, agentMode, agentContextPolicy, agentSystemPrompt, agentTaskPrompt, allowToolCalls, legacyMcpToolRound, quietToolRequest }, assemblyRuntime);
+        [chatSourceCount, toolData] = await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, agentMessages, messageExamples, extensionPrompts, attachWarning, agentMode, agentContextPolicy, agentSystemPrompt, agentTaskPrompt, allowToolCalls, legacyMcpToolRound, quietToolRequest }, assemblyRuntime);
     } catch (error) {
         if (error instanceof TokenBudgetExceededError) {
             assemblyRuntime.showToasts && toastr.error(t`Mandatory prompts exceed the context size.`);
@@ -2595,6 +2618,7 @@ export async function assembleOpenAIChatCompletionPrompt({
     agentContextPolicy = null,
     agentSystemPrompt = null,
     agentTaskPrompt = null,
+    contextKind = 'chat',
 } = {}) {
     if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
         throw new Error('prompt_assembly.settings_required: Prompt assembly requires chat-completion settings');
@@ -2625,6 +2649,7 @@ export async function assembleOpenAIChatCompletionPrompt({
         updatePromptManager: true,
         renderPromptManager: false,
         showToasts: false,
+        contextKind,
     });
 
     const [messages, tokenCounts, toolData] = await prepareOpenAIMessages({
@@ -5181,6 +5206,8 @@ class Message {
     native = null;
     /** @type {string?} */
     reasoningContent = null;
+    /** Canonical history is carried through layout without a provider-format round trip. */
+    agentMessage = null;
 
     /**
      * @constructor
@@ -5216,6 +5243,18 @@ class Message {
             message.tokens = await messageTokenHandler.countAsync({ role: message.role, content: message.content });
         }
 
+        return message;
+    }
+
+    static async fromAgentMessage(agentMessage, identifier, messageTokenHandler) {
+        const projection = agentMessageProjection(agentMessage);
+        const message = new Message(projection.role, projection.content, identifier);
+        message.agentMessage = agentMessage;
+        message.tokens = await messageTokenHandler.countAsync({
+            ...projection,
+            ...(projection.tool_calls ? { tool_calls: JSON.stringify(projection.tool_calls) } : {}),
+            ...(projection.native ? { native: JSON.stringify(projection.native) } : {}),
+        });
         return message;
     }
 
@@ -5490,7 +5529,9 @@ class MessageCollection {
      */
     getChat() {
         return this.collection.reduce((acc, message) => {
-            if (message.content || message.tool_calls || message.role === 'tool') {
+            if (message.agentMessage) {
+                acc.push(message.agentMessage);
+            } else if (message.content || message.tool_calls || message.role === 'tool') {
                 acc.push({
                     role: message.role,
                     content: message.content,
@@ -5590,12 +5631,12 @@ export class ChatCompletion {
 
         for (let message of this.messages.collection) {
             // Force exclude empty messages
-            if (message.role === 'system' && !message.content) {
+            if (!message.agentMessage && message.role === 'system' && !message.content) {
                 continue;
             }
 
             const shouldSquash = (message) => {
-                return !excludeList.includes(message.identifier) && message.role === 'system' && !message.name;
+                return !message.agentMessage && !excludeList.includes(message.identifier) && message.role === 'system' && !message.name;
             };
 
             if (shouldSquash(message)) {
@@ -5708,7 +5749,7 @@ export class ChatCompletion {
         this.checkTokenBudget(message, message.identifier);
 
         const index = this.findMessageIndex(identifier);
-        if (message.content || message.tool_calls || message.role === 'tool') {
+        if (message.agentMessage || message.content || message.tool_calls || message.role === 'tool') {
             if ('start' === position) this.messages.collection[index].collection.unshift(message);
             else if ('end' === position) this.messages.collection[index].collection.push(message);
             else if (typeof position === 'number') this.messages.collection[index].collection.splice(position, 0, message);
@@ -5786,6 +5827,8 @@ export class ChatCompletion {
         for (let item of this.messages.collection) {
             if (item instanceof MessageCollection) {
                 chat.push(...item.getChat());
+            } else if (item instanceof Message && item.agentMessage) {
+                chat.push(item.agentMessage);
             } else if (item instanceof Message && (item.content || item.tool_calls || item.role === 'tool')) {
                 const message = {
                     role: item.role,

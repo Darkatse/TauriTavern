@@ -1,8 +1,8 @@
 use crate::services::agent_workspace_scope::{
     format_model_visible_workspace_roots, format_model_workspace_roots,
 };
-use tt_domain::models::agent::AgentModelTool;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
+use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool};
 
 use super::constants::{
     AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, TASK_RETURN_TOOL,
@@ -11,9 +11,18 @@ use super::constants::{
 pub fn materialize_agent_system_prompt(
     tools: &[AgentModelTool],
     profile: &ResolvedAgentProfile,
+    exit_policy: AgentInvocationExitPolicy,
 ) -> String {
     if let Some(prompt) = profile.instructions.agent_system_prompt.as_ref() {
         return prompt.clone();
+    }
+
+    if exit_policy == AgentInvocationExitPolicy::ReplyAllowed {
+        return format!(
+            "You are an assistant working in a continuous Session. Use tools when useful and reply directly to the user when finished.\nReadable workspace directories: {}.\nWritable workspace directories: {}.\nwork/ holds lasting work. tmp/ holds disposable intermediate files; both persist across turns and restarts. Clean up temporary files when they are no longer needed. Workspace text tools and Shell share the same files; Shell /work and /tmp map to work/ and tmp/. After Shell edits, read the file before replacing or patching it with text tools.",
+            format_model_visible_workspace_roots(&profile.workspace.visible_roots),
+            format_model_workspace_roots(&profile.workspace.writable_roots),
+        );
     }
 
     let mut lines = vec!["---".to_string(), "tools:".to_string()];
@@ -106,11 +115,13 @@ pub fn materialize_agent_system_prompt(
             ));
         }
     }
-    if has_tool(tools, "workspace.commit") {
+    if let Some(output) = &profile.output
+        && has_tool(tools, "workspace.commit")
+    {
         lines.push(format!(
             "- Use {} to publish Run workspace files into the current chat message. Without arguments, it will replace the current run's chat message with {}; mode append will append to the same message, creating it if this run has not committed yet.",
             model_alias(tools, "workspace.commit"),
-            profile.output.message_body_path
+            output.message_body_path
         ));
     }
 

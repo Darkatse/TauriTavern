@@ -344,11 +344,16 @@ impl AgentRunPrunePlanDto {
 
 impl AgentRunPruneCandidateDto {
     fn from_candidate(candidate: AgentRunPruneCandidate) -> Self {
+        let chat = candidate
+            .run
+            .chat_target()
+            .expect("Chat history repository returned a Session")
+            .clone();
         Self {
             run_id: candidate.run.id,
             workspace_id: candidate.run.workspace_id,
-            stable_chat_id: candidate.run.stable_chat_id,
-            chat_ref: candidate.run.chat_ref,
+            stable_chat_id: chat.stable_chat_id,
+            chat_ref: chat.chat_ref,
             status: candidate.run.status,
             created_at: candidate.run.created_at,
             updated_at: candidate.run.updated_at,
@@ -362,11 +367,16 @@ impl AgentRunPruneCandidateDto {
 
 impl AgentRunPruneBlockedRunDto {
     fn from_blocked_run(blocked: AgentRunPruneBlockedRun) -> Self {
+        let chat = blocked
+            .run
+            .chat_target()
+            .expect("Chat history repository returned a Session")
+            .clone();
         Self {
             run_id: blocked.run.id,
             workspace_id: blocked.run.workspace_id,
-            stable_chat_id: blocked.run.stable_chat_id,
-            chat_ref: blocked.run.chat_ref,
+            stable_chat_id: chat.stable_chat_id,
+            chat_ref: chat.chat_ref,
             status: blocked.run.status,
             created_at: blocked.run.created_at,
             updated_at: blocked.run.updated_at,
@@ -380,11 +390,16 @@ impl AgentRunPruneBlockedRunDto {
 
 impl AgentRunPruneFailedRunDto {
     fn from_candidate(candidate: AgentRunPruneCandidate, message: String) -> Self {
+        let chat = candidate
+            .run
+            .chat_target()
+            .expect("Chat history repository returned a Session")
+            .clone();
         Self {
             run_id: candidate.run.id,
             workspace_id: candidate.run.workspace_id,
-            stable_chat_id: candidate.run.stable_chat_id,
-            chat_ref: candidate.run.chat_ref,
+            stable_chat_id: chat.stable_chat_id,
+            chat_ref: chat.chat_ref,
             status: candidate.run.status,
             created_at: candidate.run.created_at,
             updated_at: candidate.run.updated_at,
@@ -430,17 +445,21 @@ impl From<AgentRunPruneBlockReason> for AgentRunPruneBlockReasonDto {
 
 impl AgentRunSummaryDto {
     fn from_run_and_projection(run: AgentRun, projection: AgentRunSummaryProjection) -> Self {
+        let chat = run
+            .chat_target()
+            .expect("Chat history repository returned a Session")
+            .clone();
         Self {
             run_id: run.id,
             workspace_id: run.workspace_id,
-            stable_chat_id: run.stable_chat_id,
-            chat_ref: run.chat_ref,
-            generation_type: run.generation_type,
+            stable_chat_id: chat.stable_chat_id,
+            chat_ref: chat.chat_ref,
+            generation_type: chat.generation_type,
             profile_id: run.profile_id,
-            skill_scope_refs: run.skill_scope_refs,
-            persist_base_state_id: run.persist_base_state_id,
-            input_message_count: run.input_message_count,
-            presentation: run.presentation,
+            skill_scope_refs: chat.skill_scope_refs,
+            persist_base_state_id: chat.persist_base_state_id,
+            input_message_count: chat.input_message_count,
+            presentation: chat.presentation,
             status: run.status,
             created_at: run.created_at,
             updated_at: run.updated_at,
@@ -660,17 +679,21 @@ mod tests {
         AgentRun {
             id: "run_summary_test".to_string(),
             workspace_id: "chat_summary_test".to_string(),
-            stable_chat_id: "stable_summary_test".to_string(),
-            chat_ref: AgentChatRef::Character {
-                character_id: "Seraphina".to_string(),
-                file_name: "Seraphina.png".to_string(),
-            },
-            generation_type: "normal".to_string(),
+            target: tt_domain::models::agent::AgentRunTarget::Chat(
+                tt_domain::models::agent::AgentChatRunTarget {
+                    stable_chat_id: "stable_summary_test".to_string(),
+                    chat_ref: AgentChatRef::Character {
+                        character_id: "Seraphina".to_string(),
+                        file_name: "Seraphina.png".to_string(),
+                    },
+                    generation_type: "normal".to_string(),
+                    skill_scope_refs: AgentRunSkillScopeRefs::default(),
+                    persist_base_state_id: None,
+                    input_message_count: Some(12),
+                    presentation: AgentRunPresentation::Background,
+                },
+            ),
             profile_id: Some("writer".to_string()),
-            skill_scope_refs: AgentRunSkillScopeRefs::default(),
-            persist_base_state_id: None,
-            input_message_count: Some(12),
-            presentation: AgentRunPresentation::Background,
             status: AgentRunStatus::Completed,
             created_at: instant("2026-01-01T00:00:00Z"),
             updated_at: instant("2026-01-01T00:05:00Z"),

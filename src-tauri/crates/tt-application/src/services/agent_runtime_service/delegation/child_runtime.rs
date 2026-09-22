@@ -8,6 +8,7 @@ use crate::dto::agent_dto::AgentPromptAssemblyScopeDto;
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::{
     AgentProfileResolveInput, ensure_profile_model_configured, materialize_agent_system_prompt,
+    validate_chat_profile,
 };
 use crate::services::agent_runtime_service::commit_ledger::RunCommitLedger;
 use crate::services::agent_runtime_service::continuation::InvocationFrame;
@@ -247,6 +248,7 @@ impl AgentRuntimeService {
                 render_handoff_task_prompt(task),
             ),
         };
+        validate_chat_profile(&profile, invocation.exit_policy, profile.run.presentation)?;
         let prompt_snapshot = self
             .workspace_files(run_id)
             .await?
@@ -278,7 +280,7 @@ impl AgentRuntimeService {
             self.assemble_invocation_prompt_snapshot(
                 &profile,
                 &visible_tools,
-                run.generation_type.as_str(),
+                run.chat_target()?.generation_type.as_str(),
                 frozen_run_input_snapshot_from_prompt_snapshot(&prompt_snapshot)?,
                 &scope,
                 task_prompt.clone(),
@@ -292,27 +294,30 @@ impl AgentRuntimeService {
             request_from_prompt_snapshot(&invocation_prompt_snapshot)?
         } else {
             let mut request = request_from_prompt_snapshot(&prompt_snapshot)?;
-            let system_prompt = materialize_agent_system_prompt(&visible_tools, &profile);
-            request.payload.insert(
-                "messages".to_string(),
-                json!([
-                    {
-                        "role": "system",
-                        "_tauritavern_prompt_component": "agentSystemPrompt",
-                        "content": system_prompt
-                    },
-                    {
-                        "role": "user",
-                        "content": task_prompt
-                    }
-                ]),
-            );
+            let system_prompt =
+                materialize_agent_system_prompt(&visible_tools, &profile, invocation.exit_policy);
+            request.messages = vec![
+                tt_domain::models::agent::AgentModelMessage {
+                    role: tt_domain::models::agent::AgentModelRole::System,
+                    parts: vec![tt_domain::models::agent::AgentModelContentPart::Text {
+                        text: system_prompt,
+                    }],
+                    provider_metadata: json!({ "promptComponent": "agentSystemPrompt" }),
+                },
+                tt_domain::models::agent::AgentModelMessage {
+                    role: tt_domain::models::agent::AgentModelRole::User,
+                    parts: vec![tt_domain::models::agent::AgentModelContentPart::Text {
+                        text: task_prompt,
+                    }],
+                    provider_metadata: Value::Null,
+                },
+            ];
             request
         };
         self.resolve_model_binding(run_id, &profile, &mut request)
             .await?;
         let (skill_scope_order, effective_skills) = self
-            .resolve_child_effective_skills(&profile, &run.skill_scope_refs)
+            .resolve_child_effective_skills(&profile, &run.chat_target()?.skill_scope_refs)
             .await?;
         let agents = self.agent_catalog(&profile, &visible_tools).await?;
         super::super::prompt_snapshot::append_runtime_catalogs(
@@ -324,7 +329,7 @@ impl AgentRuntimeService {
             request,
             &visible_tools,
             tool_turn.choice().clone(),
-            &run.stable_chat_id,
+            &run.chat_target()?.stable_chat_id,
             run_id,
             invocation_id,
         )?;
@@ -369,7 +374,7 @@ impl AgentRuntimeService {
                 "invocationId": invocation_id,
                 "profileId": profile.id.as_str(),
                 "scopes": skill_scope_order,
-                "refs": &run.skill_scope_refs,
+                "refs": &run.chat_target()?.skill_scope_refs,
                 "effectiveSkills": skill_event_summary(&effective_skills),
             }),
         )

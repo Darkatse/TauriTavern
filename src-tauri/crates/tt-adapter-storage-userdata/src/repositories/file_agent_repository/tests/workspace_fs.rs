@@ -80,7 +80,7 @@ async fn persistent_tree_preserves_deletion_moves_empty_directories_and_type_cha
         .await
         .unwrap();
     let mut run = sample_run_with_id("tree_edit");
-    run.persist_base_state_id = Some(first.state_id.clone());
+    run.chat_target_mut().unwrap().persist_base_state_id = Some(first.state_id.clone());
     let files = initialize(&repository, &run).await;
     files.remove(&path("persist/delete"), false).await.unwrap();
     files
@@ -142,7 +142,7 @@ async fn persistent_tree_preserves_deletion_moves_empty_directories_and_type_cha
     ));
 
     let mut next_run = sample_run_with_id("tree_next");
-    next_run.persist_base_state_id = Some(second.state_id.clone());
+    next_run.chat_target_mut().unwrap().persist_base_state_id = Some(second.state_id.clone());
     let next = initialize(&repository, &next_run).await;
     for name in ["delete", "move", "old-empty", "to-file/old"] {
         assert!(
@@ -245,7 +245,7 @@ async fn legacy_baseline_uses_immutable_directories_and_reuses_legacy_summary() 
     );
 
     let mut run = sample_run_with_id("legacy_edit");
-    run.persist_base_state_id = Some(published.state_id);
+    run.chat_target_mut().unwrap().persist_base_state_id = Some(published.state_id);
     let files = initialize(&repository, &run).await;
     let snapshot_path = repository
         .run_dir(&run)

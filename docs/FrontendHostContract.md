@@ -169,10 +169,9 @@
 - `openEntry()` 必须复用上游 World Info 模块自身的导航能力；宿主 ABI 层不得直接依赖 `#WorldInfo`、`#world_editor_select`、`[uid=\"...\"]` 等 DOM 细节。
 
 - `api.agent`：运行控制、历史、工作区详情与 Profile 管理，见 [Agent API](API/Agent.md)。
-  - 前端准备聊天输入，Rust 执行模型与工具循环；Agent Mode 关闭时沿用 Legacy Generate。
-  - Host API 解析稳定聊天身份，宿主提交桥复用聊天保存流程，持久版本发布后再关联到消息 metadata。分叉使用新身份并复制持久版本。
-  - 运行结束包含执行与宿主呈现的收尾；前端等待保存成功或明确失败后释放生成状态。续接保留原 Run 身份。
-  - Run 事件供历史与 Timeline 使用，实时参数预览供当前显示使用；它们与 SillyTavern 生成事件分别订阅。
+  - Chat 与 Session 共用 PromptManager、统一的 Agent snapshot 和 Rust 模型/工具循环；Run 事件与实时投影独立于 SillyTavern 生成事件。
+  - Chat 使用稳定聊天身份，宿主提交桥复用聊天保存流程；保存成功或明确失败后释放生成状态。续接保留 Run 身份，分叉创建新聊天身份并复制持久版本。
+  - Session 独立于当前角色聊天和写作生成状态，不发出 SillyTavern 聊天/生成事件；共享配置与连续历史由后端持久化。Agent Mode 只控制 Chat 的 Agent/Legacy 路由。
   - 运行控制属于 Public Contract；模型回合、任务详情、工具目录和 Timeline 关系是 Project Contract，由对应 API 提供展示 DTO。
 
 - `api.llmConnections`：管理 Profile 引用的模型连接，见 [LLM Connection API](API/LlmConnections.md)。Profile 通过连接 ID 和模型 ID 绑定；Model Target 是界面的配置来源。

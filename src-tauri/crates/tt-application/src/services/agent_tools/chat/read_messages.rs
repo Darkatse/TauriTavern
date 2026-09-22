@@ -92,7 +92,7 @@ pub(in crate::services::agent_tools) async fn read_messages(
         .iter()
         .map(|request| request.index)
         .collect::<Vec<_>>();
-    let read = match &run.chat_ref {
+    let read = match &run.chat_target()?.chat_ref {
         AgentChatRef::Character {
             character_id,
             file_name,

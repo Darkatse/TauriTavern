@@ -10,6 +10,7 @@ import { createSharedRunEventSubscribe } from './agent-run-event-subscription.js
 import { createAgentRunLiveSubscribe } from './agent-run-live-subscription.js';
 import { normalizeAgentRunOptions } from './agent-run-options.js';
 import { createAgentRunRuntimeApi } from './agent-run-runtime.js';
+import { createAgentSessionsApi } from './agent-sessions.js';
 import { confirmEmptyAgentPersist } from '../adapters/st/agent-empty-persist-popup.js';
 import { DEFAULT_AGENT_PROFILE_ID } from '../../../scripts/tauritavern/agent/agent-system-settings.js';
 import { ensureModelTargetLlmConnectionForProfile } from '../../../scripts/tauritavern/agent/model-target-llm-connection.js';
@@ -107,6 +108,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
             throw new Error('agent.resume_rounds_invalid: additionalRounds must be a non-negative integer');
         }
         checkpoint ??= await readCheckpoint(runId);
+        if (checkpoint.run.sessionId) throw new Error('agent.session_resume_unsupported: Session runs cannot be resumed');
         if (checkpoint.run.runId !== runId) throw new Error('agent.resume_checkpoint_mismatch: checkpoint belongs to another run');
         const revision = revisionGuidance !== null;
         if (checkpoint.blockedReason || (!revision && checkpoint.nextStep === 'finished')) {
@@ -201,6 +203,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
         subscribeLiveProjection,
         settleChatPresentation,
         profiles,
+        sessions: createAgentSessionsApi({ safeInvoke, promptAssembly }),
         tools: {
             list: listTools,
         },

@@ -82,9 +82,15 @@ Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点�
 
 `descriptionForAgents` 说明适合处理的工作，未填写时使用 `description`。并发、任务数量和交接深度也在 `delegation` 中设置。完整流程见 [多 Agent 协作](SubAgent.md)。
 
+## Session 配置
+
+Session 使用相同的 `AgentProfileDefinition`，独立保存到 `_tauritavern/agent-workspaces/sessions/profile.json`，由所有 Session 共用，不进入普通 Profile 列表。修改从下一次发送准备时生效；预设重命名同时更新其引用。
+
+Session 必须指定 `preset.mode = ref` 和 `model.mode = connectionRef`，Skill 只取 Profile 自身作用域。正文产物与 commit/finish 要求属于 Chat 执行准入，Session 可使用空产物配置。目录与生命周期见 [Workspace](Workspace.md#session-的持续工作区)。
+
 ## 源码
 
-Profile 以 JSON 保存到 `_tauritavern/agent-profiles/profiles/`，当前 schema 版本为 4。
+普通 Profile 以 JSON 保存到 `_tauritavern/agent-profiles/profiles/`，当前 schema 版本为 4。
 
 schema 1–3 在加载或导入时自动迁移，移除旧 `skill.*`、`agent.list` 工具配置及 Skill 读取预算；保留其余配置，不自动授予新权限或重写指令。
 

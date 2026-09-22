@@ -1,6 +1,6 @@
 # 工作区
 
-工作区保存 Agent 可以反复处理的文件。同一 Run 中的 Agent 共享工作文件，各自按 Profile 获得读写范围；`skills/` 则按当前 Invocation 的有效 Skill 绑定提供只读文件视图。
+工作区保存 Agent 可以反复处理的文件。Chat 的工作文件属于 Run，Session 的工作文件由同一会话的历次 Run 共用，各自按 Profile 获得读写范围；`skills/` 则按当前 Invocation 的有效 Skill 绑定提供只读文件视图。
 
 ## 文件放在哪里
 
@@ -76,6 +76,8 @@ agent-workspaces/
 
 ## 提交到聊天
 
+以下提交和 persist 发布规则只适用于 Chat target。
+
 模型调用 `workspace.commit` 时，runtime 读取指定的可访问 Run 工作文件并请求前端宿主保存。默认操作是替换本次输出楼层的正文；`append` 则将文件内容追加到本次输出。Host bridge 沿用 SillyTavern 的输出处理与保存流程，成功后把结果交回 runtime。
 
 首次显式提交前，前台运行还会展示写作进度：流式写入形成实时正文，符合条件的文本修改会自动提交为进度记录。首次显式提交成功后，后续聊天发布由显式 `workspace.commit` 控制。`workspace.finish` 仍要求前台至少完成一次显式提交。
@@ -97,6 +99,22 @@ Shell 与文本工具共用自动提交规则：每轮最多发布最后修改�
 运行历史分为核心记录和完整材料。较近的 Run 保留全部文件，较早的 Run 可以只留 `run.json`、日志和摘要，超过历史窗口的 Run 再整次删除。材料清理后，Timeline 仍能显示保留的事件，对应文件详情可能已不可读。
 
 `api.agent.retention` 提供设置、预览和执行入口；自动清理默认关闭。操作参数见 [Agent API](../API/Agent.md)。
+
+## Session 的持续工作区
+
+```text
+agent-workspaces/sessions/
+  profile.json                      共享配置
+  <session-id>/
+    session.json                    会话元数据
+    history.jsonl                   连续消息
+    workspace/{work,tmp,tool-results}/
+    runs/<run-id>/                  每次执行的记录
+```
+
+`work/`、`tmp/` 和只读的 `tool-results/` 跨 Run、跨重启保留，临时材料由 Agent 自行清理。Shell 的 `/tmp` 指向工作区目录，不是宿主临时目录。历史与文件按 Session 隔离，只有 Profile 共用。
+
+Session 文件直接修改，不发布 Chat persist 版本。数据仅保存在本机，不参与现有同步或 Chat retention；完整数据归档仍包含它们。
 
 ## 源码
 

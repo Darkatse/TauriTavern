@@ -31,6 +31,23 @@ impl AgentProfileService {
         .await
     }
 
+    pub async fn resolve_session_profile(
+        &self,
+        definition: AgentProfileDefinition,
+        tool_catalog: &ToolCatalog,
+    ) -> Result<ResolvedAgentProfile, ApplicationError> {
+        let profile = self
+            .resolve_definition(
+                definition,
+                "session:shared".into(),
+                tool_catalog,
+                AgentProfileExternalReferencePolicy::Strict,
+            )
+            .await?;
+        super::readiness::validate_session_profile(&profile)?;
+        Ok(profile)
+    }
+
     pub async fn resolve_profile_for_preview(
         &self,
         input: AgentProfileResolveInput<'_>,
@@ -121,7 +138,7 @@ impl AgentProfileService {
         validate_plan_policy(&definition.plan)?;
         let tools = validate_tool_policy(&definition.tools, tool_catalog)?;
         validate_delegation_policy(&definition.delegation, &tools)?;
-        validate_run_policy(&definition.run, &definition.delegation, &tools)?;
+        validate_run_policy(&definition.run, &definition.delegation)?;
         validate_skill_policy(&definition.skills)?;
         validate_workspace_policy(&definition.workspace)?;
         let output = resolve_output_policy(&definition.output, &definition.workspace)?;

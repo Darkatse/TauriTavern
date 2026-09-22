@@ -194,6 +194,40 @@ mod tests {
     }
 
     #[test]
+    fn session_profile_index_history_and_workspace_remain_local_in_all_sync_presets() {
+        let root = unique_temp_root();
+        let chat_index = "_tauritavern/agent-workspaces/index/runs/chat-run.json";
+        for relative in [
+            chat_index,
+            "_tauritavern/agent-workspaces/index/session-runs/session-run.json",
+            "_tauritavern/agent-workspaces/sessions/profile.json",
+            "_tauritavern/agent-workspaces/sessions/session/session.json",
+            "_tauritavern/agent-workspaces/sessions/session/history.jsonl",
+            "_tauritavern/agent-workspaces/sessions/session/workspace/work/note.md",
+            "_tauritavern/agent-workspaces/sessions/session/workspace/tmp/check.js",
+            "_tauritavern/agent-workspaces/sessions/session/runs/session-run/run.json",
+        ] {
+            let path = root.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"{}").unwrap();
+        }
+        for selection in [
+            ttsync_core::dataset::tauri_tavern_default_selection(),
+            ttsync_core::dataset::tauri_tavern_full_selection(),
+        ] {
+            let policy = ResolvedDatasetPolicy::from_selection(&selection).unwrap();
+            let manifest = scan_manifest_sync(&root, &policy).unwrap();
+            let paths: Vec<_> = manifest
+                .entries
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect();
+            assert_eq!(paths, [chat_index]);
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn sync_policy_excludes_chat_backup_staging_files() {
         let policy = ResolvedDatasetPolicy::from_selection(&DatasetSelection::new(
             DATASET_POLICY_VERSION,

@@ -18,6 +18,22 @@ impl FileAgentRepository {
             .join(format!("{run_id}.json")))
     }
 
+    pub(super) fn index_session_run_path(&self, run_id: &str) -> Result<PathBuf, DomainError> {
+        validate_segment(run_id, "run_id")?;
+        Ok(self
+            .root
+            .join("index/session-runs")
+            .join(format!("{run_id}.json")))
+    }
+
+    pub(super) fn index_path_for_run(&self, run: &AgentRun) -> Result<PathBuf, DomainError> {
+        if run.target.session_id().is_some() {
+            self.index_session_run_path(&run.id)
+        } else {
+            self.index_run_path(&run.id)
+        }
+    }
+
     pub(super) fn index_run_summary_path(&self, run_id: &str) -> Result<PathBuf, DomainError> {
         validate_segment(run_id, "run_id")?;
         Ok(self
@@ -30,12 +46,16 @@ impl FileAgentRepository {
     pub(super) fn run_dir(&self, run: &AgentRun) -> Result<PathBuf, DomainError> {
         validate_segment(&run.workspace_id, "workspace_id")?;
         validate_segment(&run.id, "run_id")?;
-        Ok(self
-            .root
-            .join("chats")
-            .join(&run.workspace_id)
-            .join("runs")
-            .join(&run.id))
+        let owner = match run.target.session_id() {
+            Some(session_id) => self.session_dir(session_id)?,
+            None => self.chat_dir(&run.workspace_id)?,
+        };
+        Ok(owner.join("runs").join(&run.id))
+    }
+
+    pub(super) fn session_dir(&self, session_id: &str) -> Result<PathBuf, DomainError> {
+        validate_segment(session_id, "session_id")?;
+        Ok(self.root.join("sessions").join(session_id))
     }
 
     pub(super) fn chat_dir(&self, workspace_id: &str) -> Result<PathBuf, DomainError> {

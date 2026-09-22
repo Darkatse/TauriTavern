@@ -13,7 +13,7 @@ use tt_domain::models::agent::profile::{
 };
 use tt_domain::models::tool::ToolId;
 
-use super::constants::{AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, WORKSPACE_ROOT_UNIVERSE};
+use super::constants::{AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, CHAT_WORKSPACE_ROOTS};
 
 pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, ApplicationError> {
     Ok(AgentProfileDefinition {
@@ -82,11 +82,11 @@ pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, Applica
             deny: Vec::new(),
         },
         workspace: AgentWorkspacePolicy {
-            visible_roots: WORKSPACE_ROOT_UNIVERSE
+            visible_roots: CHAT_WORKSPACE_ROOTS
                 .iter()
                 .map(|root| root.to_string())
                 .collect(),
-            writable_roots: WORKSPACE_ROOT_UNIVERSE
+            writable_roots: CHAT_WORKSPACE_ROOTS
                 .iter()
                 .map(|root| root.to_string())
                 .collect(),

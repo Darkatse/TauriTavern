@@ -71,6 +71,8 @@ import {
 } from './scripts/tauritavern/agent/agent-run-controller.js';
 import { agentErrorMessage } from './scripts/tauritavern/agent/agent-error-presenter.js';
 import { normalizeAgentContextPolicy } from './scripts/tauritavern/agent/agent-context-policy.js';
+import { createAgentPromptSnapshot } from './scripts/tauritavern/agent/agent-model-messages.js';
+import { buildPromptAssemblyPayload } from './tauri/main/api/agent-prompt-assembly.js';
 import { normalizeAgentSystemPrompt } from './scripts/tauritavern/agent/agent-system-prompt.js';
 import { readLegacyToolInvocations, stripOldToolTurns } from './scripts/tauritavern/tool-turn-projection.js';
 import {
@@ -6850,7 +6852,8 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
         frozenRunInputSnapshot,
         jsonSchema,
     });
-    let promptSnapshot;
+    let payload;
+    let snapshotMetadata;
     let generationIntent;
     let runFrozenRunInputSnapshot = frozenRunInputSnapshot;
 
@@ -6873,9 +6876,9 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
         );
 
         assertAgentPromptSnapshotHasNoExternalTools(chatCompletionPayload);
-        promptSnapshot = {
+        payload = chatCompletionPayload;
+        snapshotMetadata = {
             contextPolicy: agentContextPolicy,
-            chatCompletionPayload,
             ...(frozenRunInputSnapshot.worldInfoActivation ? { worldInfoActivation: frozenRunInputSnapshot.worldInfoActivation } : {}),
         };
         generationIntent = {
@@ -6886,22 +6889,24 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
             contextPolicy: agentContextPolicy,
         };
     } else if (promptAssembly?.mode === 'frontendPromptAssembly') {
-        const agentApi = requireAgentPromptAssemblyApi();
-        const assembled = await agentApi.buildSnapshot(promptAssembly.request);
-        promptSnapshot = assembled.promptSnapshot;
+        const assembled = await buildPromptAssemblyPayload(promptAssembly.request);
+        payload = assembled.payload;
+        snapshotMetadata = assembled.snapshotMetadata;
         runFrozenRunInputSnapshot = assembled.frozenRunInputSnapshot ?? frozenRunInputSnapshot;
         generationIntent = {
             ...assembled.generationIntent,
             source: 'frontend-prompt-assembly-broker',
             parentSource: 'legacy-generate-live-handoff',
-            contextPolicy: assembled.promptSnapshot.contextPolicy,
+            contextPolicy: snapshotMetadata.contextPolicy,
             promptAssembly: promptAssembly.assembly,
         };
     } else {
         throw new Error('agent.prompt_assembly_mode_invalid: prepare_agent_prompt_assembly returned an unsupported mode');
     }
 
-    await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, promptSnapshot.chatCompletionPayload);
+    // Extensions finish editing the provider payload before it becomes canonical Agent input.
+    await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, payload);
+    const promptSnapshot = createAgentPromptSnapshot(payload, snapshotMetadata);
 
     return startAndWaitForAgentRun({
         generationType: type,
@@ -6989,7 +6994,7 @@ async function prepareAgentPromptAssemblyForRun(input) {
 
 function requireAgentPromptAssemblyApi() {
     const promptAssemblyApi = window.__TAURITAVERN__?.api?.agent?.promptAssembly;
-    if (!promptAssemblyApi || typeof promptAssemblyApi.prepare !== 'function' || typeof promptAssemblyApi.buildSnapshot !== 'function') {
+    if (!promptAssemblyApi || typeof promptAssemblyApi.prepare !== 'function') {
         throw new Error('agent.prompt_assembly_api_unavailable: TauriTavern Agent prompt assembly API is unavailable');
     }
     return promptAssemblyApi;

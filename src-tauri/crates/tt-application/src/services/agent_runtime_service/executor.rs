@@ -10,18 +10,17 @@ use super::continuation::{InvocationFrame, InvocationStep, RunExecutionState};
 use super::error_payload::{run_failure_payload, run_partial_success_payload};
 use super::invocation::model_session_id;
 use super::loop_runner::AgentLoopExit;
+use super::prompt_snapshot::AgentPromptRequest;
 use super::prompt_snapshot::{
     prepare_agent_tool_request, request_summary, runtime_context_from_snapshot,
 };
 use super::tool_snapshot::tool_snapshot_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
-use crate::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::ensure_profile_model_configured;
 use tt_domain::models::agent::profile::{AgentModelBindingMode, ResolvedAgentProfile};
 use tt_domain::models::agent::{
-    AgentInvocationExitPolicy, AgentInvocationStatus, AgentRunEventLevel, AgentRunStatus,
-    WorkspacePath,
+    AgentInvocationStatus, AgentRunEventLevel, AgentRunStatus, WorkspacePath,
 };
 use tt_domain::models::skill::SkillIndexEntry;
 
@@ -30,7 +29,7 @@ impl AgentRuntimeService {
         self: Arc<Self>,
         run_id: String,
         prompt_snapshot: Value,
-        request: ChatCompletionGenerateRequestDto,
+        request: AgentPromptRequest,
         resolved_profile: ResolvedAgentProfile,
         effective_skills: Vec<SkillIndexEntry>,
         mut cancel: AgentCancelReceiver,
@@ -170,6 +169,19 @@ impl AgentRuntimeService {
         let mut run = self.run_repository.load_run(run_id).await?;
         run.status = status;
         run.updated_at = chrono::Utc::now();
+        if run.target.session_id().is_some() {
+            self.run_repository.save_run(&run).await?;
+            self.event(
+                run_id,
+                AgentRunEventLevel::Info,
+                "status_changed",
+                json!({ "status": status }),
+            )
+            .await?;
+            self.event(run_id, level, event_type, payload).await?;
+            self.active_runs.write().await.remove(run_id);
+            return Ok(());
+        }
         self.event(
             run_id,
             AgentRunEventLevel::Info,
@@ -202,26 +214,35 @@ impl AgentRuntimeService {
         self: &Arc<Self>,
         run_id: &str,
         prompt_snapshot: Value,
-        request: ChatCompletionGenerateRequestDto,
+        request: crate::dto::chat_completion_dto::ChatCompletionGenerateRequestDto,
         resolved_profile: ResolvedAgentProfile,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
+        let request = super::prompt_snapshot::request_from_prompt_snapshot(&json!({
+            "chatCompletionPayload": request.payload,
+        }))?;
         let mut state = RunExecutionState::default();
         let run = self.run_repository.load_run(run_id).await?;
-        let scope_order = super::skill_scope::skill_scope_order_for_profile(
-            &resolved_profile,
-            &run.skill_scope_refs,
-        )?;
-        let effective_skills = self
-            .skill_service
-            .resolve_effective_skills(&scope_order, &resolved_profile.skills)
-            .await?;
+        let effective_skills = match &run.target {
+            tt_domain::models::agent::AgentRunTarget::Chat(chat) => {
+                let scope_order = super::skill_scope::skill_scope_order_for_profile(
+                    &resolved_profile,
+                    &chat.skill_scope_refs,
+                )?;
+                self.skill_service
+                    .resolve_effective_skills(&scope_order, &resolved_profile.skills)
+                    .await?
+            }
+            tt_domain::models::agent::AgentRunTarget::Session { .. } => {
+                self.resolve_session_skills(&resolved_profile).await?
+            }
+        };
         let (cancel_sender, _) = watch::channel(false);
         self.active_runs.write().await.insert(
             run_id.to_string(),
             Arc::new(super::scheduler::ActiveRunHandle::new(
                 self,
-                run_id.to_string(),
+                &run,
                 self.workspace_repository.open_filesystem(run_id).await?,
                 cancel_sender,
                 None,
@@ -262,7 +283,7 @@ impl AgentRuntimeService {
         &self,
         run_id: &str,
         prompt_snapshot: Value,
-        request: ChatCompletionGenerateRequestDto,
+        request: AgentPromptRequest,
         resolved_profile: ResolvedAgentProfile,
         effective_skills: Vec<SkillIndexEntry>,
         state: &mut RunExecutionState,
@@ -281,7 +302,7 @@ impl AgentRuntimeService {
             "workspace_initialized",
             json!({
                 "workspaceId": run.workspace_id,
-                "stableChatId": run.stable_chat_id,
+                "target": run.target,
             }),
         )
         .await?;
@@ -325,7 +346,7 @@ impl AgentRuntimeService {
         let prepared_tools = self
             .prepare_invocation_tools(
                 &resolved_profile,
-                AgentInvocationExitPolicy::RunFinishAllowed,
+                root_invocation.exit_policy,
                 root_invocation.id.as_str(),
             )
             .await?;
@@ -346,7 +367,10 @@ impl AgentRuntimeService {
             request,
             &visible_tools,
             tool_turn.choice().clone(),
-            &run.stable_chat_id,
+            match &run.target {
+                tt_domain::models::agent::AgentRunTarget::Chat(chat) => &chat.stable_chat_id,
+                tt_domain::models::agent::AgentRunTarget::Session { session_id } => session_id,
+            },
             run_id,
             root_invocation.id.as_str(),
         )?;
@@ -398,11 +422,21 @@ impl AgentRuntimeService {
                     "agent.continuation_missing: run has no foreground invocation".to_string(),
                 )
             })?;
-            let exit = self.run_tool_loop(frame, &mut state.commits, cancel).await?
-                .ok_or_else(|| ApplicationError::ValidationError(format!(
-                    "agent.max_tool_rounds_exceeded: workspace.finish or agent.handoff was not called within {} rounds",
-                    frame.progress.max_rounds)))?;
+            let exit = self
+                .run_tool_loop(frame, &mut state.commits, cancel)
+                .await?
+                .ok_or_else(|| {
+                    ApplicationError::ValidationError(format!(
+                        "agent.max_tool_rounds_exceeded: {} was not completed within {} rounds",
+                        super::loop_runner::completion_tool_name(
+                            frame.prepared.invocation.exit_policy,
+                            &frame.prepared.tool_turn
+                        ),
+                        frame.progress.max_rounds
+                    ))
+                })?;
             match exit {
+                AgentLoopExit::Replied => return Ok(()),
                 AgentLoopExit::Finished => {
                     self.ensure_not_cancelled(cancel)?;
                     let run_id = frame.prepared.invocation.run_id.as_str();
@@ -458,7 +492,7 @@ impl AgentRuntimeService {
         &self,
         run_id: &str,
         profile: &ResolvedAgentProfile,
-        request: &mut ChatCompletionGenerateRequestDto,
+        request: &mut AgentPromptRequest,
     ) -> Result<(), ApplicationError> {
         match profile.model.mode {
             AgentModelBindingMode::CurrentPromptSnapshot => {

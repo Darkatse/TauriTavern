@@ -34,50 +34,44 @@ impl AgentProfileService {
             };
             let migrated = migrate_profile_schema(&mut profile)?;
             validate_profile_header(&profile)?;
-            if profile.preset.mode != AgentPresetBindingMode::Ref {
-                if migrated {
-                    self.profile_repository.save_profile(&profile).await?;
-                }
-                continue;
+            let retargeted = retarget_preset_binding(&mut profile.preset, &from, &to);
+            if retargeted {
+                normalize_context_policy(&mut profile.context)?;
             }
-            let matches_from = profile
-                .preset
-                .ref_
-                .as_ref()
-                .is_some_and(|ref_| ref_.api_id == from.api_id && ref_.name == from.name);
-            if !matches_from {
-                if migrated {
-                    self.profile_repository.save_profile(&profile).await?;
-                }
-                continue;
+            if migrated || retargeted {
+                self.profile_repository.save_profile(&profile).await?;
             }
-
-            validate_preset_binding(
-                &profile.preset,
-                self.preset_repository.as_ref(),
-                AgentProfileExternalReferencePolicy::AllowDangling,
-            )
-            .await?;
-            normalize_context_policy(&mut profile.context)?;
-
-            let ref_ = profile
-                .preset
-                .ref_
-                .as_mut()
-                .expect("matching preset ref must exist");
-            ref_.api_id = to.api_id.clone();
-            ref_.name = to.name.clone();
-            self.profile_repository
-                .save_profile(&profile)
-                .await
-                .map_err(ApplicationError::from)?;
-            updated.push(profile.id);
+            if retargeted {
+                updated.push(profile.id);
+            }
         }
 
+        let mut session_profile_updated = false;
+        if let Some(mut profile) = self.session_repository.load_session_profile().await?
+            && retarget_preset_binding(&mut profile.preset, &from, &to)
+        {
+            self.session_repository
+                .save_session_profile(&profile)
+                .await?;
+            session_profile_updated = true;
+        }
         Ok(AgentProfilePresetRetargetResult {
             profile_ids: updated,
+            session_profile_updated,
         })
     }
+}
+
+fn retarget_preset_binding(
+    binding: &mut AgentPresetBinding,
+    from: &AgentPresetRef,
+    to: &AgentPresetRef,
+) -> bool {
+    if binding.mode != AgentPresetBindingMode::Ref || binding.ref_.as_ref() != Some(from) {
+        return false;
+    }
+    binding.ref_ = Some(to.clone());
+    true
 }
 
 pub(super) async fn validate_preset_binding(

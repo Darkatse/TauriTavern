@@ -16,12 +16,12 @@ use tt_domain::models::agent::profile::{
     ResolvedAgentProfile,
 };
 use tt_domain::models::agent::{
-    AGENT_RUN_SUMMARY_PROJECTION_SCHEMA_VERSION, AgentChatRef, AgentInvocation,
+    AGENT_RUN_SUMMARY_PROJECTION_SCHEMA_VERSION, AgentChatRef, AgentChatRunTarget, AgentInvocation,
     AgentInvocationExitPolicy, AgentInvocationKind, AgentInvocationStatus, AgentRun,
     AgentRunCommittedMessageProjection, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
-    AgentRunSummaryProjection, ArtifactSpec, ArtifactTarget, CommitPolicy, WorkspaceInputManifest,
-    WorkspaceManifest, WorkspacePath, WorkspaceRootCommit, WorkspaceRootLifecycle,
-    WorkspaceRootMount, WorkspaceRootScope, WorkspaceRootSpec,
+    AgentRunSummaryProjection, AgentRunTarget, ArtifactSpec, ArtifactTarget, CommitPolicy,
+    WorkspaceInputManifest, WorkspaceManifest, WorkspacePath, WorkspaceRootCommit,
+    WorkspaceRootLifecycle, WorkspaceRootMount, WorkspaceRootScope, WorkspaceRootSpec,
 };
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
 use tt_ports::repositories::agent_run_repository::{
@@ -44,17 +44,19 @@ fn sample_run_with_id(id: &str) -> AgentRun {
     AgentRun {
         id: id.to_string(),
         workspace_id: "chat_test".to_string(),
-        stable_chat_id: "stable_chat_test".to_string(),
-        chat_ref: AgentChatRef::Character {
-            character_id: "Seraphina".to_string(),
-            file_name: "Seraphina.png".to_string(),
-        },
-        generation_type: "normal".to_string(),
+        target: AgentRunTarget::Chat(AgentChatRunTarget {
+            stable_chat_id: "stable_chat_test".to_string(),
+            chat_ref: AgentChatRef::Character {
+                character_id: "Seraphina".to_string(),
+                file_name: "Seraphina.png".to_string(),
+            },
+            generation_type: "normal".to_string(),
+            skill_scope_refs: Default::default(),
+            persist_base_state_id: None,
+            input_message_count: None,
+            presentation: AgentRunPresentation::Background,
+        }),
         profile_id: None,
-        skill_scope_refs: Default::default(),
-        persist_base_state_id: None,
-        input_message_count: None,
-        presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -71,8 +73,6 @@ fn sample_manifest(run: &AgentRun) -> WorkspaceManifest {
     WorkspaceManifest {
         workspace_version: 1,
         run_id: run.id.clone(),
-        stable_chat_id: run.stable_chat_id.clone(),
-        chat_ref: run.chat_ref.clone(),
         created_at: Utc::now(),
         input: WorkspaceInputManifest {
             mode: "prompt_snapshot".to_string(),
@@ -174,11 +174,11 @@ fn sample_resolved_profile(manifest: &WorkspaceManifest) -> ResolvedAgentProfile
             beta: true,
             nodes: Vec::new(),
         },
-        output: ResolvedAgentOutputPolicy {
+        output: Some(ResolvedAgentOutputPolicy {
             artifacts: manifest.artifacts.clone(),
             message_body_artifact_id: "main".to_string(),
             message_body_path: "output/main.md".to_string(),
-        },
+        }),
         source_trace: AgentProfileSourceTrace {
             profile_source: "test".to_string(),
         },
@@ -517,17 +517,19 @@ async fn list_runs_filters_by_chat_stable_id_and_status() {
     let repository = FileAgentRepository::new(root.clone());
     let mut matching = sample_run_with_id("run_filter_match");
     matching.status = AgentRunStatus::Completed;
-    matching.stable_chat_id = "stable_filter".to_string();
+    matching.chat_target_mut().unwrap().stable_chat_id = "stable_filter".to_string();
     matching.profile_id = Some("writer".to_string());
 
     let mut wrong_status = sample_run_with_id("run_filter_wrong_status");
     wrong_status.status = AgentRunStatus::Failed;
-    wrong_status.stable_chat_id = matching.stable_chat_id.clone();
+    wrong_status.chat_target_mut().unwrap().stable_chat_id =
+        matching.chat_target().unwrap().stable_chat_id.clone();
 
     let mut wrong_chat = sample_run_with_id("run_filter_wrong_chat");
     wrong_chat.status = AgentRunStatus::Completed;
-    wrong_chat.stable_chat_id = matching.stable_chat_id.clone();
-    wrong_chat.chat_ref = AgentChatRef::Group {
+    wrong_chat.chat_target_mut().unwrap().stable_chat_id =
+        matching.chat_target().unwrap().stable_chat_id.clone();
+    wrong_chat.chat_target_mut().unwrap().chat_ref = AgentChatRef::Group {
         chat_id: "group_filter".to_string(),
     };
 
@@ -537,8 +539,8 @@ async fn list_runs_filters_by_chat_stable_id_and_status() {
 
     let listed = repository
         .list_runs(AgentRunListQuery {
-            chat_ref: Some(matching.chat_ref.clone()),
-            stable_chat_id: Some(matching.stable_chat_id.clone()),
+            chat_ref: Some(matching.chat_target().unwrap().chat_ref.clone()),
+            stable_chat_id: Some(matching.chat_target().unwrap().stable_chat_id.clone()),
             statuses: Some(vec![AgentRunStatus::Completed]),
             before: None,
             limit: 10,
@@ -562,6 +564,16 @@ async fn list_runs_accepts_legacy_index_without_presentation() {
 
     let index_path = root.join("index/runs/run_legacy_without_presentation.json");
     let mut legacy = serde_json::to_value(&run).expect("serialize legacy run");
+    let mut target = legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("target")
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone();
+    target.remove("kind");
+    legacy.as_object_mut().unwrap().extend(target);
     legacy
         .as_object_mut()
         .expect("run json object")
@@ -583,10 +595,16 @@ async fn list_runs_accepts_legacy_index_without_presentation() {
 
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, run.id);
-    assert_eq!(listed[0].presentation, AgentRunPresentation::Foreground);
+    assert_eq!(
+        listed[0].chat_target().unwrap().presentation,
+        AgentRunPresentation::Foreground
+    );
 
     let loaded = repository.load_run(&run.id).await.expect("load legacy run");
-    assert_eq!(loaded.presentation, AgentRunPresentation::Foreground);
+    assert_eq!(
+        loaded.chat_target().unwrap().presentation,
+        AgentRunPresentation::Foreground
+    );
 
     fs::remove_dir_all(root).await.expect("cleanup");
 }
@@ -1378,7 +1396,7 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
     );
 
     let mut next_run = sample_run_with_id("run_persist_next");
-    next_run.persist_base_state_id = Some(changes.state_id.clone());
+    next_run.chat_target_mut().unwrap().persist_base_state_id = Some(changes.state_id.clone());
     repository
         .create_run(&next_run)
         .await
@@ -1407,8 +1425,8 @@ async fn persistent_workspace_projects_run_changes_only_after_commit() {
         .expect("copy persistent states");
     let mut fork_run = sample_run_with_id("run_persist_fork");
     fork_run.workspace_id = "chat_fork".to_string();
-    fork_run.stable_chat_id = "stable_chat_fork".to_string();
-    fork_run.persist_base_state_id = Some(revised.state_id);
+    fork_run.chat_target_mut().unwrap().stable_chat_id = "stable_chat_fork".to_string();
+    fork_run.chat_target_mut().unwrap().persist_base_state_id = Some(revised.state_id);
     let fork_manifest = sample_manifest(&fork_run);
     repository
         .create_run(&fork_run)
@@ -1494,7 +1512,10 @@ async fn persistent_workspace_commits_parallel_branch_states() {
         .expect("commit second projection");
 
     let mut child_of_first = sample_run_with_id("run_conflict_child_first");
-    child_of_first.persist_base_state_id = Some(first_state.state_id);
+    child_of_first
+        .chat_target_mut()
+        .unwrap()
+        .persist_base_state_id = Some(first_state.state_id);
     repository
         .create_run(&child_of_first)
         .await
@@ -1521,7 +1542,10 @@ async fn persistent_workspace_commits_parallel_branch_states() {
     );
 
     let mut child_of_second = sample_run_with_id("run_conflict_child_second");
-    child_of_second.persist_base_state_id = Some(second_state.state_id);
+    child_of_second
+        .chat_target_mut()
+        .unwrap()
+        .persist_base_state_id = Some(second_state.state_id);
     repository
         .create_run(&child_of_second)
         .await
@@ -1551,3 +1575,5 @@ async fn persistent_workspace_commits_parallel_branch_states() {
 }
 
 mod workspace_fs;
+
+mod session;

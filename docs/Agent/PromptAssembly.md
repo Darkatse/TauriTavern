@@ -15,6 +15,8 @@ Agent 继续使用 SillyTavern 的 PromptManager 组装提示词。Rust 解析 P
 
 这份输入供根 Agent、子 Agent 和接手的 Agent 使用。每个 Invocation 可以根据自己的 Profile 决定初始历史范围、提示词和模型。组装在工作副本上进行，保存的输入留作后续组装和诊断。
 
+Session 从自身历史与本次用户消息准备输入，沿用指定预设组装。完整历史保存在 JSONL 中；Run 只保存预算内的最终消息和运行上下文。
+
 ## 两条组装路径
 
 默认 Profile 使用当前生成得到的 prompt snapshot。Profile 设置 `preset.mode = ref` 时，按指定预设重新组装：
@@ -29,6 +31,12 @@ Agent 继续使用 SillyTavern 的 PromptManager 组装提示词。Rust 解析 P
 子 Agent 或交接发生在运行中。它们需要独立预设时，runtime 写入 `prompt_assembly_requested` 事件，host bridge 按请求 ID 读取组装输入，调用同一个前端组装器，再把结果交回等待中的 Invocation。
 
 `agentSystemPrompt` 是 Profile 指令在 PromptManager 中的位置，`agentTask` 是委派或交接任务的位置。Preset 控制组件的位置和 role，runtime 消费最终组装好的消息。
+
+Snapshot 使用 `messages: AgentModelMessage[]` 与独立的 `generationParameters`，旧 Chat payload 在入口适配。
+
+普通 Chat 在 `CHAT_COMPLETION_SETTINGS_READY` 事件修改完成后统一转换 snapshot；SDK 的独立组装不触发该 Chat 事件。
+
+Session 历史按完整的工具调用与结果组参与预算裁剪，保留原始内容和 metadata，不重新展开历史宏。未闭合工具组在下次组装时呈现为中断说明，原历史不改写，工具不重放。实际输入范围由预设预算与 Profile 的历史窗口决定。
 
 ## Skill 与 Agent 目录
 

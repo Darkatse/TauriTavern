@@ -31,6 +31,7 @@ impl WorkspaceRepository for FileAgentRepository {
         resolved_profile: &ResolvedAgentProfile,
     ) -> Result<(), DomainError> {
         let run_dir = self.run_dir(run)?;
+        let files = self.open_run_files(&run.id).await?;
         fs::create_dir_all(run_dir.join("input"))
             .await
             .map_err(|error| {
@@ -43,21 +44,26 @@ impl WorkspaceRepository for FileAgentRepository {
 
         for root in &manifest.roots {
             let root_path = validate_workspace_root_path(&root.path)?;
-            fs::create_dir_all(run_dir.join(root_path.as_str()))
-                .await
-                .map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to create agent workspace root {}: {}",
-                        run_dir.join(root_path.as_str()).display(),
-                        error
-                    ))
-                })?;
+            let target = files
+                .resolve(&tt_domain::models::agent::WorkspacePath::parse(&root_path)?)
+                .await?;
+            fs::create_dir_all(&target).await.map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to create agent workspace root {}: {}",
+                    target.display(),
+                    error
+                ))
+            })?;
         }
 
-        let persistent_snapshot = self
-            .initialize_projected_roots(run, manifest, &run_dir)
-            .await?;
-
+        let persistent_snapshot = if run.target.session_id().is_none() {
+            Some(
+                self.initialize_projected_roots(run, manifest, &run_dir)
+                    .await?,
+            )
+        } else {
+            None
+        };
         Self::write_json_atomic(&run_dir.join("manifest.json"), manifest).await?;
         Self::write_json_atomic(
             &run_dir.join("input").join("prompt_snapshot.json"),
@@ -69,11 +75,14 @@ impl WorkspaceRepository for FileAgentRepository {
             resolved_profile,
         )
         .await?;
-        Self::write_json_atomic(
-            &run_dir.join("input").join("persist_snapshot.json"),
-            &persistent_snapshot,
-        )
-        .await
+        if let Some(persistent_snapshot) = persistent_snapshot {
+            Self::write_json_atomic(
+                &run_dir.join("input").join("persist_snapshot.json"),
+                &persistent_snapshot,
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     async fn read_manifest(&self, run_id: &str) -> Result<WorkspaceManifest, DomainError> {

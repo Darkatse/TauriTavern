@@ -28,8 +28,11 @@ pub(in crate::services::agent_tools) async fn commit(
     profile: &ResolvedAgentProfile,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let policy = &workspace.policy;
-    let path = required_trimmed_string_arg(args, "path")
-        .unwrap_or(profile.output.message_body_path.as_str());
+    let path = required_trimmed_string_arg(args, "path").unwrap_or(
+        crate::services::agent_profile_service::require_output(profile)?
+            .message_body_path
+            .as_str(),
+    );
     let path = match parse_workspace_path(path) {
         Ok(path) => path,
         Err(error) => return Ok((error.into_tool_result(call), AgentToolEffect::None)),

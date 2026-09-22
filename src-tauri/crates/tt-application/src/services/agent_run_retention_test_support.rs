@@ -418,17 +418,20 @@ fn next_event_seq(events: &[AgentRunEvent]) -> u64 {
 }
 
 fn run_matches_list_query(run: &AgentRun, query: &AgentRunListQuery) -> bool {
+    let Ok(chat) = run.chat_target() else {
+        return false;
+    };
     if query
         .chat_ref
         .as_ref()
-        .is_some_and(|chat_ref| &run.chat_ref != chat_ref)
+        .is_some_and(|chat_ref| &chat.chat_ref != chat_ref)
     {
         return false;
     }
     if query
         .stable_chat_id
         .as_ref()
-        .is_some_and(|stable_chat_id| &run.stable_chat_id != stable_chat_id)
+        .is_some_and(|stable_chat_id| &chat.stable_chat_id != stable_chat_id)
     {
         return false;
     }

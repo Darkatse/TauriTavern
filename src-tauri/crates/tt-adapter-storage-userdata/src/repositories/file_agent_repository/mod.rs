@@ -7,6 +7,7 @@ mod persistent_store;
 mod run_prune_store;
 mod run_record;
 mod run_store;
+mod session_store;
 mod workspace_fs;
 mod workspace_store;
 
@@ -30,6 +31,7 @@ pub struct FileAgentRepository {
     // One append lock stays simpler than per-run lock lifecycle; split only if
     // concurrent runs become measurable after removing journal scans from the hot path.
     pub(super) event_sequences: Mutex<HashMap<String, u64>>,
+    pub(super) session_sequences: Mutex<HashMap<String, u64>>,
     pub(super) persist_lock: Mutex<()>,
     pub(super) workspace_locks: Mutex<HashMap<String, Weak<RwLock<()>>>>,
 }
@@ -39,6 +41,7 @@ impl FileAgentRepository {
         Self {
             root,
             event_sequences: Mutex::new(HashMap::new()),
+            session_sequences: Mutex::new(HashMap::new()),
             persist_lock: Mutex::new(()),
             workspace_locks: Mutex::new(HashMap::new()),
         }

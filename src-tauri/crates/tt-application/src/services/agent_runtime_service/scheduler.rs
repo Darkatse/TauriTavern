@@ -12,9 +12,12 @@ use super::continuation::InvocationFrame;
 use super::guidance::AgentGuidanceMailbox;
 use super::model_stream_projection::AgentRunLiveProjection;
 use crate::errors::ApplicationError;
-use tt_domain::models::agent::{AgentDelegationContinuation, AgentTaskRecord, AgentTaskStatus};
+use tt_domain::models::agent::{
+    AgentDelegationContinuation, AgentRun, AgentRunTarget, AgentTaskRecord, AgentTaskStatus,
+};
 
 pub(super) struct ActiveRunHandle {
+    pub(super) target: AgentRunTarget,
     pub(super) files: Arc<dyn WorkspaceFs>,
     pub(super) cancel_sender: watch::Sender<bool>,
     pub(super) scheduler: Arc<AgentTaskScheduler>,
@@ -28,7 +31,7 @@ pub(super) struct ActiveRunHandle {
 impl ActiveRunHandle {
     pub(super) fn new(
         service: &Arc<AgentRuntimeService>,
-        run_id: String,
+        run: &AgentRun,
         files: Arc<dyn WorkspaceFs>,
         cancel_sender: watch::Sender<bool>,
         stream_override: Option<bool>,
@@ -36,9 +39,10 @@ impl ActiveRunHandle {
     ) -> Self {
         let (live_projection, _) = watch::channel(AgentRunLiveProjection::default());
         Self {
+            target: run.target.clone(),
             files,
             cancel_sender,
-            scheduler: Arc::new(AgentTaskScheduler::new(service, run_id)),
+            scheduler: Arc::new(AgentTaskScheduler::new(service, run.id.clone())),
             guidance_mailbox: Arc::new(AgentGuidanceMailbox::new()),
             stream_override,
             host_presentation,

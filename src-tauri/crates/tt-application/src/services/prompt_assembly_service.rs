@@ -17,10 +17,10 @@ use crate::services::hashing::hex_lower;
 use crate::services::llm_connection_service::{
     self, LlmConnectionService, ResolvedLlmModelBinding,
 };
-use tt_domain::models::agent::AgentModelTool;
 use tt_domain::models::agent::profile::{
     AgentModelBindingMode, AgentPresetBindingMode, AgentPresetRef, ResolvedAgentProfile,
 };
+use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool};
 use tt_domain::models::preset::{Preset, PresetType};
 use tt_domain::models::tool::ToolCatalog;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
@@ -76,12 +76,19 @@ impl PromptAssemblyService {
         profile_id: Option<&str>,
         tool_catalog: &ToolCatalog,
     ) -> Result<ResolvedAgentProfile, ApplicationError> {
-        self.profile_service
+        let profile = self
+            .profile_service
             .resolve_profile(AgentProfileResolveInput {
                 profile_id,
                 tool_catalog,
             })
-            .await
+            .await?;
+        super::agent_profile_service::validate_chat_profile(
+            &profile,
+            AgentInvocationExitPolicy::RunFinishAllowed,
+            profile.run.presentation,
+        )?;
+        Ok(profile)
     }
 
     pub async fn prepare_frontend_prompt_assembly(
@@ -89,9 +96,16 @@ impl PromptAssemblyService {
         dto: AgentPreparePromptAssemblyDto,
         profile: ResolvedAgentProfile,
         visible_tools: &[AgentModelTool],
+        exit_policy: AgentInvocationExitPolicy,
     ) -> Result<AgentPreparePromptAssemblyResultDto, ApplicationError> {
-        self.prepare_frontend_prompt_assembly_with_context(dto, profile, visible_tools, None)
-            .await
+        self.prepare_frontend_prompt_assembly_with_context(
+            dto,
+            profile,
+            visible_tools,
+            None,
+            exit_policy,
+        )
+        .await
     }
 
     pub async fn prepare_invocation_frontend_prompt_assembly(
@@ -106,6 +120,7 @@ impl PromptAssemblyService {
             profile,
             visible_tools,
             Some(context),
+            AgentInvocationExitPolicy::TaskReturnRequired,
         )
         .await
     }
@@ -138,6 +153,7 @@ impl PromptAssemblyService {
         profile: ResolvedAgentProfile,
         visible_tools: &[AgentModelTool],
         invocation_context: Option<AgentInvocationPromptAssemblyContext>,
+        exit_policy: AgentInvocationExitPolicy,
     ) -> Result<AgentPreparePromptAssemblyResultDto, ApplicationError> {
         let generation_type = normalize_generation_type(&dto.generation_type)?;
         let frozen_run_input_snapshot =
@@ -217,6 +233,7 @@ impl PromptAssemblyService {
                         agent_system_prompt: materialize_agent_system_prompt(
                             visible_tools,
                             &profile,
+                            exit_policy,
                         ),
                         agent_task_prompt,
                         required_agent_prompt_components,
@@ -425,6 +442,14 @@ fn normalize_frozen_run_input_snapshot(
         "kind".to_string(),
         Value::String(FROZEN_RUN_INPUT_SNAPSHOT_KIND.to_string()),
     );
+    if let Some(context_kind) = object.get("contextKind") {
+        if context_kind != "chat" && context_kind != "session" {
+            return Err(ApplicationError::ValidationError(
+                "agent.context_kind_invalid: expected chat or session".into(),
+            ));
+        }
+        normalized.insert("contextKind".into(), context_kind.clone());
+    }
     normalized.insert("generationType".to_string(), Value::String(generation_type));
     normalized.insert("promptInputs".to_string(), prompt_inputs.clone());
     let world_info_activation = object

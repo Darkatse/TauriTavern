@@ -12,7 +12,7 @@ use crate::presentation::errors::CommandError;
 use tt_application::dto::agent_dto::{
     AgentApplyCurrentModelConnectionSnapshotDto, AgentApplyCurrentModelConnectionSnapshotResultDto,
     AgentApplyRunPruneDto, AgentBuildCurrentModelConnectionSnapshotDto,
-    AgentBuildCurrentModelConnectionSnapshotResultDto, AgentCancelRunDto,
+    AgentBuildCurrentModelConnectionSnapshotResultDto, AgentCancelRunDto, AgentCancelRunResultDto,
     AgentCopyChatPersistentStatesDto, AgentFinishRunPresentationDto, AgentListProfilesResultDto,
     AgentListRunsDto, AgentListRunsResultDto, AgentListToolsResultDto, AgentLoadProfileResultDto,
     AgentModelTurnDisplayDto, AgentPlanRunPruneDto, AgentPreparePromptAssemblyDto,
@@ -173,7 +173,12 @@ pub async fn prepare_agent_prompt_assembly(
     app_state
         .services
         .prompt_assembly_service
-        .prepare_frontend_prompt_assembly(dto, profile, &visible_tools)
+        .prepare_frontend_prompt_assembly(
+            dto,
+            profile,
+            &visible_tools,
+            tt_domain::models::agent::AgentInvocationExitPolicy::RunFinishAllowed,
+        )
         .await
         .map_err(map_command_error("Failed to prepare agent prompt assembly"))
 }
@@ -368,12 +373,13 @@ pub async fn retarget_agent_profile_preset_refs(
         .retarget_preset_refs(dto.from, dto.to)
         .await
         .map(|result| AgentRetargetPresetRefsResultDto {
-            updated: result.profile_ids.len(),
+            updated: result.profile_ids.len() + usize::from(result.session_profile_updated),
             profile_ids: result
                 .profile_ids
                 .iter()
                 .map(|id| id.as_str().to_string())
                 .collect(),
+            session_profile_updated: result.session_profile_updated,
         })
         .map_err(map_command_error(
             "Failed to retarget agent profile preset refs",
@@ -384,7 +390,7 @@ pub async fn retarget_agent_profile_preset_refs(
 pub async fn cancel_agent_run(
     dto: AgentCancelRunDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<AgentRunHandleDto, CommandError> {
+) -> Result<AgentCancelRunResultDto, CommandError> {
     log_command("cancel_agent_run");
 
     app_state

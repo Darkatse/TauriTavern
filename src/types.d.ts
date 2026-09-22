@@ -116,7 +116,7 @@ type TauriTavernAgentInvocationStatus =
     | 'cancelled'
     | 'transferred';
 
-type TauriTavernAgentInvocationExitPolicy = 'run_finish_allowed' | 'task_return_required';
+type TauriTavernAgentInvocationExitPolicy = 'run_finish_allowed' | 'reply_allowed' | 'task_return_required';
 
 type TauriTavernAgentDelegationContinuation = 'return_to_parent' | 'transfer_control';
 
@@ -183,6 +183,72 @@ type TauriTavernAgentRunHandle = {
     generationType: string;
     status: TauriTavernAgentRunStatus;
     afterSeq?: number;
+};
+
+type TauriTavernAgentModelMessage = {
+    role: 'system' | 'developer' | 'user' | 'assistant' | 'tool';
+    parts: TauriTavernAgentModelContentPart[];
+    providerMetadata: Record<string, unknown>;
+};
+
+type TauriTavernAgentModelContentPart =
+    | { type: 'text'; text: string }
+    | { type: 'reasoning'; text?: string; provider_metadata: unknown }
+    | { type: 'media'; mime_type: string; value: unknown }
+    | { type: 'resourceRef'; uri: string }
+    | { type: 'native'; provider: string; value: unknown }
+    | { type: 'toolCall'; call: {
+        callId: string;
+        toolId: string;
+        arguments: Record<string, unknown> | string;
+        providerMetadata: Record<string, unknown>;
+    } }
+    | { type: 'toolResult'; result: {
+        callId: string;
+        toolId: string;
+        content: string;
+        structured: unknown;
+        isError: boolean;
+        errorCode?: string;
+        resourceRefs: string[];
+    } };
+
+type TauriTavernAgentPromptSnapshot = {
+    messages: TauriTavernAgentModelMessage[];
+    generationParameters: Record<string, unknown>;
+    contextPolicy: { initialChatHistoryMessages: number; includeActivatedWorldInfo: boolean };
+    worldInfoActivation?: Record<string, unknown>;
+};
+
+type TauriTavernAgentSession = { id: string; createdAt: string };
+
+type TauriTavernAgentSessionRunHandle = {
+    sessionId: string;
+    runId: string;
+    status: TauriTavernAgentRunStatus;
+};
+
+type TauriTavernAgentSessionMessage = {
+    seq: number;
+    runId: string;
+    createdAt: string;
+    message: TauriTavernAgentModelMessage;
+};
+
+type TauriTavernAgentSessionsApi = {
+    profile: {
+        load: () => Promise<{ profile: TauriTavernAgentProfileDefinition | null }>;
+        save: (profile: TauriTavernAgentProfileDefinition) => Promise<void>;
+    };
+    create: () => Promise<{ session: TauriTavernAgentSession }>;
+    read: (input: { sessionId: string; beforeSeq?: number; limit?: number }) => Promise<{
+        session: TauriTavernAgentSession;
+        messages: TauriTavernAgentSessionMessage[];
+        lastSeq: number;
+        nextBeforeSeq: number | null;
+        activeRun: TauriTavernAgentSessionRunHandle | null;
+    }>;
+    send: (input: { sessionId: string; text: string }) => Promise<TauriTavernAgentSessionRunHandle>;
 };
 
 type TauriTavernAgentRunCheckpoint = {
@@ -564,7 +630,7 @@ type TauriTavernAgentProfilesApi = {
     retargetPresetRefs: (input: {
         from: TauriTavernAgentPresetRef;
         to: TauriTavernAgentPresetRef;
-    }) => Promise<{ updated: number; profileIds: string[] }>;
+    }) => Promise<{ updated: number; profileIds: string[]; sessionProfileUpdated: boolean }>;
     save: (input: TauriTavernAgentProfileDefinition | { profile: TauriTavernAgentProfileDefinition }) => Promise<void>;
     delete: (input: string | { profileId: string }) => Promise<void>;
 };
@@ -601,7 +667,7 @@ type TauriTavernAgentPromptAssemblyApi = {
         requiredAgentPromptComponents?: string[];
         jsonSchema?: any;
     }) => Promise<{
-        promptSnapshot: any;
+        promptSnapshot: TauriTavernAgentPromptSnapshot;
         frozenRunInputSnapshot: any;
         generationIntent: any;
         assembly: any;
@@ -654,7 +720,7 @@ type TauriTavernAgentApi = {
         presentation?: TauriTavernAgentRunPresentation;
         options?: { presentation?: TauriTavernAgentRunPresentation; stream?: boolean; startWithEmptyPersist?: boolean };
     }) => Promise<TauriTavernAgentRunHandle>;
-    cancel: (runId: string) => Promise<TauriTavernAgentRunHandle>;
+    cancel: (runId: string) => Promise<TauriTavernAgentRunHandle | TauriTavernAgentSessionRunHandle>;
     submitGuidance: (input: {
         runId: string;
         text: string;
@@ -698,6 +764,7 @@ type TauriTavernAgentApi = {
     ) => TauriTavernHostUnsubscribe;
     settleChatPresentation: (handle: Pick<TauriTavernAgentRunHandle, 'runId'>) => Promise<void>;
     profiles: TauriTavernAgentProfilesApi;
+    sessions: TauriTavernAgentSessionsApi;
     tools: TauriTavernAgentToolsApi;
     promptAssembly: TauriTavernAgentPromptAssemblyApi;
     retention: TauriTavernAgentRetentionApi;

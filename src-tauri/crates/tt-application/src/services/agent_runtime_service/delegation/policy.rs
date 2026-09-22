@@ -1,6 +1,9 @@
-use crate::services::agent_profile_service::profile_model_requires_configuration;
+use crate::services::agent_profile_service::{
+    profile_model_requires_configuration, validate_chat_profile,
+};
 use crate::services::agent_tools::{AGENT_DELEGATE, AGENT_HANDOFF};
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
+use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentRunPresentation};
 
 #[derive(Clone, Copy)]
 pub(super) enum AgentOperation {
@@ -50,6 +53,18 @@ impl AgentOperation {
         if profile_model_requires_configuration(target) {
             return Err(format!("Agent `{id}` has no model configured."));
         }
+        let (exit_policy, presentation) = match self {
+            Self::Delegate => (
+                AgentInvocationExitPolicy::TaskReturnRequired,
+                AgentRunPresentation::Background,
+            ),
+            Self::Handoff => (
+                AgentInvocationExitPolicy::RunFinishAllowed,
+                target.run.presentation,
+            ),
+        };
+        validate_chat_profile(target, exit_policy, presentation)
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
 }

@@ -147,7 +147,7 @@ pub struct ResolvedAgentProfile {
     pub skills: AgentSkillPolicy,
     pub workspace: AgentWorkspacePolicy,
     pub plan: super::plan::AgentPlanPolicy,
-    pub output: ResolvedAgentOutputPolicy,
+    pub output: Option<ResolvedAgentOutputPolicy>,
     pub source_trace: AgentProfileSourceTrace,
 }
 

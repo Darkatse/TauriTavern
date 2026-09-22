@@ -152,7 +152,6 @@ fn apply_profile_context(
 ) -> Result<(), ApplicationError> {
     let visible_roots = format_model_visible_workspace_roots(&profile.workspace.visible_roots);
     let writable_roots = format_model_workspace_roots(&profile.workspace.writable_roots);
-    let final_path = profile.output.message_body_path.as_str();
 
     match descriptor.id.native_name() {
         WORKSPACE_LIST_FILES => {
@@ -192,8 +191,18 @@ fn apply_profile_context(
             )?;
         }
         WORKSPACE_WRITE_FILE => {
+            let output_hint = profile
+                .output
+                .as_ref()
+                .map(|output| {
+                    format!(
+                        " Use {} for the default chat message body.",
+                        output.message_body_path
+                    )
+                })
+                .unwrap_or_default();
             descriptor.description = Some(format!(
-                "Write UTF-8 text to a writable Agent workspace file. mode replace writes the complete file; mode append adds content exactly to the end and creates the file when missing. Use {final_path} for the default chat message body."
+                "Write UTF-8 text to a writable Agent workspace file. mode replace writes the complete file; mode append adds content exactly to the end and creates the file when missing.{output_hint}"
             ));
             descriptor.set_property_description(
                 "path",
@@ -232,6 +241,9 @@ fn apply_profile_context(
             }
         }
         WORKSPACE_COMMIT => {
+            let final_path = crate::services::agent_profile_service::require_output(profile)?
+                .message_body_path
+                .as_str();
             descriptor.description = Some(format!(
                 "Commit a workspace text file to this run's single chat message. With no arguments, replace the current run message with {final_path}. mode append appends the file text to the same message, creating it when this run has not committed yet."
             ));
@@ -389,7 +401,7 @@ mod tests {
                 beta: true,
                 nodes: Vec::new(),
             },
-            output: ResolvedAgentOutputPolicy {
+            output: Some(ResolvedAgentOutputPolicy {
                 artifacts: vec![ArtifactSpec {
                     id: "main".to_string(),
                     path: "output/main.md".to_string(),
@@ -400,7 +412,7 @@ mod tests {
                 }],
                 message_body_artifact_id: "main".to_string(),
                 message_body_path: "output/main.md".to_string(),
-            },
+            }),
             source_trace: AgentProfileSourceTrace {
                 profile_source: "test".to_string(),
             },

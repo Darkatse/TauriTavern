@@ -6,7 +6,8 @@
 
 | 改动 | 现有入口 |
 | --- | --- |
-| Run、目录、协作、提交 | [host Agent contract tests](../../src-tauri/crates/tauritavern/src/app/contract_tests/agent_runtime) |
+| Run、Session 连续性、目录、协作、提交 | [host Agent contract tests](../../src-tauri/crates/tauritavern/src/app/contract_tests/agent_runtime) |
+| Session 历史组装与预算 | [PromptManager](../../tests/browser/agent-session.mjs) |
 | 文件与持久版本 | [FileAgentRepository tests](../../src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_repository/tests.rs)、[文件语义闭环](../../src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_repository/tests/workspace_fs.rs) |
 | 模型协议与续接 | [gateway tests](../../src-tauri/crates/tt-application/src/services/agent_model_gateway/tests.rs) |
 | Host API | [agent-api-contract.test.mjs](../../tests/agent-api-contract.test.mjs) |

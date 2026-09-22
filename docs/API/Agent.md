@@ -1,6 +1,6 @@
 # Agent API
 
-`window.__TAURITAVERN__.api.agent` 提供运行控制、历史读取和 Profile 管理。框架说明从 [Agent](../Agent/README.md) 开始，完整 TypeScript 类型见 [src/types.d.ts](../../src/types.d.ts)。
+`window.__TAURITAVERN__.api.agent` 提供 Chat 与 Session 运行、历史读取和 Profile 管理。框架说明从 [Agent](../Agent/README.md) 开始，完整 TypeScript 类型见 [src/types.d.ts](../../src/types.d.ts)。
 
 ## 启动一次运行
 
@@ -25,22 +25,46 @@ const unsubscribe = agent.subscribe(run.runId, event => {
 
 共同选项有 `profileId`、`generationType`、`stableChatId`、`presentation` 和 `options.stream`。稳定聊天 ID 省略时由 Host API 解析。`options.stream` 省略时使用各 Invocation 的 Profile 设置，显式值覆盖整次 Run。
 
-两种方法返回 `{ runId, status, workspaceId, stableChatId, generationType }`。准备好的 snapshot 需要包含 `contextPolicy` 与 `chatCompletionPayload`；独立预设和后续 Invocation 组装还会使用 `frozenRunInputSnapshot`。工具由 runtime 配置，输入消息应是尚未进入工具循环的初始提示词。组装过程见 [Prompt assembly](../Agent/PromptAssembly.md)。
+两种 Chat 方法返回 `{ runId, status, workspaceId, stableChatId, generationType }`。Snapshot 使用 `{ contextPolicy, messages, generationParameters }`，消息为 `AgentModelMessage[]`；旧 `chatCompletionPayload` 在入口适配，Chat 输入不能注入外部工具回合。冻结输入与组装规则见 [Prompt assembly](../Agent/PromptAssembly.md)。
 
-自行组装 snapshot 时，`agentSystemPrompt` 消息须以字符串 `content` 保存正文，并携带 `_tauritavern_prompt_component: "agentSystemPrompt"`，供 runtime 追加目录。PromptManager 自动提供该标记，标记不会发送给模型。
+canonical snapshot 的指令消息以 Text part 保存正文，并携带 `providerMetadata.promptComponent: "agentSystemPrompt"`，供 runtime 追加目录。旧 Chat 输入仍接受字符串 `content` 与 `_tauritavern_prompt_component: "agentSystemPrompt"`。共同 PromptManager 自动提供标记，标记不会发送给模型。
+
+## 持续 Session
+
+Session 独立于角色聊天和写作 Agent Mode。使用前通过 `sessions.profile.save()` 保存[共享配置](../Agent/ProfilesAndPreset.md#session-配置)，此后每次发送读取最新配置。
+
+| 方法 | 返回内容 |
+| --- | --- |
+| `sessions.profile.load()` | `{ profile }`；尚未配置时为 `{ profile: null }` |
+| `sessions.profile.save(profile)` | 保存共享的 `AgentProfileDefinition` |
+| `sessions.create()` | `{ session: { id, createdAt } }` |
+| `sessions.read({ sessionId, beforeSeq?, limit? })` | `{ session, messages, lastSeq, nextBeforeSeq, activeRun }` |
+| `sessions.send({ sessionId, text })` | `{ sessionId, runId, status }`；执行在原生端继续 |
+
+```js
+// 已配置 Session Profile；agent 的取得方式同上。
+const { session } = await agent.sessions.create();
+const run = await agent.sessions.send({ sessionId: session.id, text: '查看 work/ 中的文件。' });
+```
+
+保存 `session.id` 供后续读取和发送。`send` 返回后执行仍在继续，通过 `subscribe(run.runId, ...)` 观察终态，再发送下一条。忙碌或准备输入过期时 reject，不自动重试。
+
+历史由后端保存；收到 `session_message_appended` 后可调用 `sessions.read()` 更新界面，实时进度沿用 `subscribeLiveProjection()`。历史页按 seq 升序返回，每项为 `{ seq, runId, createdAt, message }`；`nextBeforeSeq` 用于向前翻页，`activeRun` 为活动 handle 或 null。
+
+Session 的结束与恢复边界见 [运行循环](../Agent/Runtime.md)，文件保留规则见 [Workspace](../Agent/Workspace.md#session-的持续工作区)。
 
 ## 控制与订阅
 
 | 方法 | 行为 |
 | --- | --- |
-| `cancel(runId)` | 请求取消，返回 Run handle；终态通过事件观察 |
+| `cancel(runId)` | 请求取消，返回 Chat handle 或 `{ sessionId, runId, status }`；终态通过事件观察 |
 | `readCheckpoint(runId)` | 读取保存状态及可恢复性信息 |
 | `resume({ runId, additionalRounds?, revisionGuidance? })` | 续接同一 Run，或根据新要求修订已完成输出；返回含订阅游标 `afterSeq` 的 Run handle |
 | `submitGuidance({ runId, text, clientGuidanceId? })` | 向活跃 Run 补充指令，返回 `guidanceId` 与 `status: 'queued'` |
 | `subscribe(runId, handler, options?)` | 订阅持久事件，返回可重复调用的 unsubscribe |
 | `subscribeLiveProjection(runId, handler, options?)` | 订阅当前工具参数和推理文字预览，返回 unsubscribe |
 
-补充指令在下一次前台模型请求前加入上下文，已经发出的请求保持原样。尚未消费的指令随续接保留。该接口不创建聊天消息。
+Chat 补充指令在下一次前台模型请求前加入上下文，已经发出的请求保持原样。尚未消费的指令随续接保留。该接口不创建聊天消息。
 
 `subscribe` 的选项是 `afterSeq`、`limit`、`intervalMs`、`onError`，默认从起点读取。实时预览只接受 `onError` 选项；它用于当前显示，历史过程从持久事件读取。
 
@@ -74,7 +98,7 @@ const { events, timelineProjection } = await agent.readEvents({
 | `readModelTurn({ runId, invocationId?, round, maxChars? })` | assistant 文本、可见 reasoning、工具调用与 provider 摘要 |
 | `readTaskDetail({ runId, taskId, includeResult? })` | 任务说明、当前状态及按需读取的结果 |
 
-`beforeSeq` 读取该序号之前最近的一页，`afterSeq` 用于向前追新。`invocationId` 先筛选归属再分页，适合子 Agent 的局部 Timeline。`timelineProjection` 包含整个 Run 的 Invocation 和委派关系，独立于当前事件页。
+`listRuns` 保持 Chat 历史范围；Session 对话使用 `sessions.read`，按 runId 的事件、模型回合及工作区详情读取可用于两种 Run。`beforeSeq` 读取该序号之前最近的一页，`afterSeq` 用于向前追新。`invocationId` 先筛选归属再分页，适合子 Agent 的局部 Timeline。`timelineProjection` 包含整个 Run 的 Invocation 和委派关系，独立于当前事件页。
 
 `readModelTurn` 的 `round` 从 1 开始，省略 `invocationId` 时读取根 Agent。`maxChars` 限制展示文本，字词总数仍对应完整内容。
 
@@ -92,7 +116,7 @@ const { events, timelineProjection } = await agent.readEvents({
 | `profiles.diagnose(profileId)` | 检查预设、模型、工具等引用 |
 | `profiles.resolveSystemPrompt({ profileId? })` | 返回 `{ agentSystemPrompt }` |
 | `profiles.repairFile({ profileId, action })` | 删除损坏配置或规范化身份；action 为 `delete`、`normalizeIdentity` |
-| `profiles.retargetPresetRefs({ from, to })` | 预设重命名后更新引用；两端都是 `{ apiId, name }` |
+| `profiles.retargetPresetRefs({ from, to })` | 预设重命名后更新普通 Profile 和共享 Session Profile 的匹配引用；两端都是 `{ apiId, name }` |
 | `promptAssembly.prepare(input)` | 解析 Profile 与冻结输入，返回组装模式及请求 |
 | `promptAssembly.buildSnapshot(request)` | 在前端运行 PromptManager，生成 snapshot |
 | `promptAssembly.buildCurrentModelConnectionSnapshot(input)` | 根据当前设置生成连接快照 |
@@ -100,6 +124,8 @@ const { events, timelineProjection } = await agent.readEvents({
 | `tools.list()` | 返回 `{ tools, diagnostics }`，包含内置工具和已发现的可用 MCP 工具 |
 
 Profile 的用法见 [配置指南](../Agent/ProfilesAndPreset.md)。`tools.list()` 返回稳定工具 ID、描述和参数 schema；模型调用名称属于 Invocation 快照。
+
+`profiles.retargetPresetRefs` 返回 `{ updated, profileIds, sessionProfileUpdated }`；总数 `updated` 包含共享配置，`profileIds` 只列普通 Profile。
 
 `profiles.resolveSystemPrompt` 返回 Profile 指令正文；运行时目录的追加规则见 [Prompt assembly](../Agent/PromptAssembly.md#skill-与-agent-目录)。
 
@@ -117,7 +143,7 @@ const plan = await agent.retention.planPrune({ detailLimit: 20 });
 | `retention.planPrune({ retention?, detailLimit? })` | 预览清理范围和统计 |
 | `retention.applyPrune({ retention?, detailLimit? })` | 重新计算并执行清理，返回结果和 `afterPlan` |
 
-设置包括 `autoPruneEnabled`、`keepRecentTerminalRuns`、`keepFullRecentRuns`。完整保留数量不得大于核心历史数量；自动清理默认关闭。一次性 `retention` 参数只覆盖本次操作的保留数量。
+此清理范围为 Chat Run，不包含 Session。设置包括 `autoPruneEnabled`、`keepRecentTerminalRuns`、`keepFullRecentRuns`。完整保留数量不得大于核心历史数量；自动清理默认关闭。一次性 `retention` 参数只覆盖本次操作的保留数量。
 
 预览区分缩减材料和整次删除，并返回不能清理的 Run。执行结果中的 `failedRuns` 表示未完成的项目。`detailLimit` 只控制返回明细数量，不改变执行范围或总计。
 
@@ -136,4 +162,5 @@ const plan = await agent.retention.planPrune({ detailLimit: 20 });
 - [types.d.ts](../../src/types.d.ts)：接口参数与返回类型。
 - [agent.js](../../src/tauri/main/api/agent.js)：API 安装、启动与宿主桥接。
 - [agent-run-runtime.js](../../src/tauri/main/api/agent-run-runtime.js)：控制、订阅和读取。
+- [agent-sessions.js](../../src/tauri/main/api/agent-sessions.js)：Session SDK 与共享 Profile。
 - [agent_commands.rs](../../src-tauri/crates/tauritavern/src/presentation/commands/agent_commands.rs)：Rust command 边界。

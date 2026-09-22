@@ -32,13 +32,27 @@ impl AgentRunRepository for FileAgentRepository {
         })?;
 
         write_agent_run_record(&run_dir.join("run.json"), run).await?;
-        write_agent_run_record(&self.index_run_path(&run.id)?, run).await?;
+        write_agent_run_record(&self.index_path_for_run(run)?, run).await?;
         self.event_sequences.lock().await.insert(run.id.clone(), 0);
         Ok(())
     }
 
     async fn load_run(&self, run_id: &str) -> Result<AgentRun, DomainError> {
-        read_agent_run_record(&self.index_run_path(run_id)?).await
+        let (run, session_index) = match read_agent_run_record(&self.index_run_path(run_id)?).await
+        {
+            Ok(run) => (run, false),
+            Err(DomainError::NotFound(_)) => (
+                read_agent_run_record(&self.index_session_run_path(run_id)?).await?,
+                true,
+            ),
+            Err(error) => return Err(error),
+        };
+        if run.id != run_id || run.target.session_id().is_some() != session_index {
+            return Err(DomainError::InvalidData(format!(
+                "Agent run index identity or target mismatch: {run_id}"
+            )));
+        }
+        Ok(run)
     }
 
     async fn list_runs(&self, query: AgentRunListQuery) -> Result<Vec<AgentRun>, DomainError> {
@@ -104,7 +118,7 @@ impl AgentRunRepository for FileAgentRepository {
     async fn save_run(&self, run: &AgentRun) -> Result<(), DomainError> {
         let run_dir = self.run_dir(run)?;
         write_agent_run_record(&run_dir.join("run.json"), run).await?;
-        write_agent_run_record(&self.index_run_path(&run.id)?, run).await
+        write_agent_run_record(&self.index_path_for_run(run)?, run).await
     }
 
     async fn save_run_checkpoint(&self, run_id: &str, data: &[u8]) -> Result<(), DomainError> {
@@ -317,7 +331,7 @@ impl FileAgentRepository {
             super::paths::validate_segment(run_id, "run_id")?;
 
             let run = read_agent_run_record(&path).await?;
-            if run.id != run_id {
+            if run.id != run_id || run.target.session_id().is_some() {
                 return Err(DomainError::InvalidData(format!(
                     "Agent run index id mismatch in {}: expected {}, found {}",
                     path.display(),
@@ -333,17 +347,20 @@ impl FileAgentRepository {
 }
 
 fn run_matches_list_query(run: &AgentRun, query: &AgentRunListQuery) -> bool {
+    let Ok(chat) = run.chat_target() else {
+        return false;
+    };
     if query
         .chat_ref
         .as_ref()
-        .is_some_and(|chat_ref| &run.chat_ref != chat_ref)
+        .is_some_and(|chat_ref| &chat.chat_ref != chat_ref)
     {
         return false;
     }
     if query
         .stable_chat_id
         .as_ref()
-        .is_some_and(|stable_chat_id| &run.stable_chat_id != stable_chat_id)
+        .is_some_and(|stable_chat_id| &chat.stable_chat_id != stable_chat_id)
     {
         return false;
     }

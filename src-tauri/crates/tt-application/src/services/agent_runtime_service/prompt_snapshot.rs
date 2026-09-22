@@ -1,6 +1,5 @@
 use serde_json::{Map, Value, json};
 
-use crate::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::errors::ApplicationError;
 use crate::services::chat_completion_service::OPENCODE_STABLE_CHAT_ID_FIELD;
 use tt_domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile};
@@ -15,26 +14,28 @@ use super::invocation::model_session_id;
 
 const AGENT_PROMPT_MARKER_FIELD: &str = "_tauritavern_agent_prompt_marker";
 
+#[derive(Debug, Clone)]
+pub(super) struct AgentPromptRequest {
+    pub payload: Map<String, Value>,
+    pub messages: Vec<AgentModelMessage>,
+}
+
 /// PromptManager supplies the component identity; its position and role belong
 /// to the preset. Append the invocation's available skills and agents together.
 pub(super) fn append_runtime_catalogs(
-    request: &mut ChatCompletionGenerateRequestDto,
+    request: &mut AgentPromptRequest,
     skills: &[SkillIndexEntry],
     agents: &str,
 ) -> Result<(), ApplicationError> {
     if skills.is_empty() && agents.is_empty() {
         return Ok(());
     }
-    let component = request.payload.get_mut("messages")
-        .and_then(Value::as_array_mut)
-        .and_then(|messages| messages.iter_mut().find(|message| {
-            message.get("_tauritavern_prompt_component").and_then(Value::as_str)
-                == Some("agentSystemPrompt")
-        }))
-        .ok_or_else(|| ApplicationError::ValidationError(
-            "agent.system_prompt_component_missing: prompt snapshot must identify its agentSystemPrompt message".into()
-        ))?;
-    let Some(Value::String(content)) = component.get_mut("content") else {
+    let component = request.messages.iter_mut().find(|message| {
+        message.provider_metadata.get("promptComponent").and_then(Value::as_str) == Some("agentSystemPrompt")
+    }).ok_or_else(|| ApplicationError::ValidationError(
+        "agent.system_prompt_component_missing: prompt snapshot must identify its agentSystemPrompt message".into()
+    ))?;
+    let [AgentModelContentPart::Text { text: content }] = component.parts.as_mut_slice() else {
         return Err(ApplicationError::ValidationError(
             "agent.system_prompt_invalid: agentSystemPrompt content must be text".into(),
         ));
@@ -68,32 +69,48 @@ pub(super) fn append_runtime_catalogs_text(
 
 pub(super) fn request_from_prompt_snapshot(
     prompt_snapshot: &Value,
-) -> Result<ChatCompletionGenerateRequestDto, ApplicationError> {
-    let mut payload = find_payload_object(prompt_snapshot).ok_or_else(|| {
-        ApplicationError::ValidationError(
-            "agent.invalid_prompt_snapshot: expected a chat completion payload object".to_string(),
+) -> Result<AgentPromptRequest, ApplicationError> {
+    let (mut payload, messages) = if let Some(parameters) =
+        prompt_snapshot.get("generationParameters")
+    {
+        let payload = parameters.as_object().cloned().ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.invalid_prompt_snapshot: generationParameters must be an object".into(),
+            )
+        })?;
+        if payload.contains_key("messages") || payload.contains_key("prompt") {
+            return Err(ApplicationError::ValidationError("agent.duplicate_prompt_messages: generationParameters must not contain messages or prompt".into()));
+        }
+        let messages = serde_json::from_value::<Vec<AgentModelMessage>>(
+            prompt_snapshot.get("messages").cloned().ok_or_else(|| {
+                ApplicationError::ValidationError(
+                    "agent.prompt_messages_required: canonical messages are required".into(),
+                )
+            })?,
         )
-    })?;
-
-    payload.insert("stream".to_string(), Value::Bool(false));
-    if !payload.contains_key("chat_completion_source") {
-        payload.insert(
-            "chat_completion_source".to_string(),
-            Value::String("openai".to_string()),
-        );
-    }
-
-    if !payload.contains_key("messages") && !payload.contains_key("prompt") {
-        return Err(ApplicationError::ValidationError(
-            "agent.invalid_prompt_snapshot: payload must contain messages or prompt".to_string(),
-        ));
-    }
-
-    Ok(ChatCompletionGenerateRequestDto { payload })
+        .map_err(|error| {
+            ApplicationError::ValidationError(format!("agent.invalid_prompt_messages: {error}"))
+        })?;
+        (payload, messages)
+    } else {
+        // The existing Chat API is adapted once; the runtime only consumes canonical messages.
+        let mut payload = find_payload_object(prompt_snapshot).ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.invalid_prompt_snapshot: expected a prompt snapshot".into(),
+            )
+        })?;
+        let messages = messages_from_payload(&mut payload)?;
+        (payload, messages)
+    };
+    payload.insert("stream".into(), Value::Bool(false));
+    payload
+        .entry("chat_completion_source")
+        .or_insert_with(|| Value::String("openai".into()));
+    Ok(AgentPromptRequest { payload, messages })
 }
 
 pub(super) fn prepare_agent_tool_request(
-    mut request: ChatCompletionGenerateRequestDto,
+    mut request: AgentPromptRequest,
     tools: &[AgentModelTool],
     tool_choice: ToolChoice,
     stable_chat_id: &str,
@@ -130,7 +147,12 @@ pub(super) fn prepare_agent_tool_request(
         ));
     }
 
-    let messages = messages_from_payload(&mut request.payload)?;
+    let mut messages = request.messages;
+    for message in &mut messages {
+        if let Some(metadata) = message.provider_metadata.as_object_mut() {
+            metadata.remove("promptComponent");
+        }
+    }
 
     request.payload.remove("tools");
     request.payload.remove("tool_choice");
@@ -216,28 +238,6 @@ pub(super) fn reject_external_tool_request(
     if payload.contains_key("tool_choice") {
         return Err(ApplicationError::ValidationError(
             "agent.external_tool_choice_unsupported: Agent runtime owns tool choice".to_string(),
-        ));
-    }
-
-    if payload
-        .get("messages")
-        .and_then(Value::as_array)
-        .is_some_and(|messages| {
-            messages.iter().any(|message| {
-                message
-                    .get("role")
-                    .and_then(Value::as_str)
-                    .is_some_and(|role| role.eq_ignore_ascii_case("tool"))
-                    || message
-                        .pointer("/tool_calls")
-                        .and_then(Value::as_array)
-                        .is_some_and(|tool_calls| !tool_calls.is_empty())
-            })
-        })
-    {
-        return Err(ApplicationError::ValidationError(
-            "agent.external_tool_turns_unsupported: prompt snapshot already contains tool turns"
-                .to_string(),
         ));
     }
 
@@ -342,6 +342,20 @@ fn message_from_openai_value(value: Value) -> Result<AgentModelMessage, Applicat
             ));
         }
     };
+    if object
+        .get("role")
+        .and_then(Value::as_str)
+        .is_some_and(|role| matches!(role, "tool" | "function"))
+        || object
+            .get("tool_calls")
+            .and_then(Value::as_array)
+            .is_some_and(|calls| !calls.is_empty())
+    {
+        return Err(ApplicationError::ValidationError(
+            "agent.canonical_tool_history_required: tool history must use AgentModelMessage parts"
+                .into(),
+        ));
+    }
     let role = match object
         .get("role")
         .and_then(Value::as_str)
@@ -360,7 +374,8 @@ fn message_from_openai_value(value: Value) -> Result<AgentModelMessage, Applicat
     let provider_metadata = json!({
         "openai": {
             "name": object.get("name").and_then(Value::as_str),
-        }
+        },
+        "promptComponent": object.get("_tauritavern_prompt_component"),
     });
 
     Ok(AgentModelMessage {
@@ -539,7 +554,7 @@ mod tests {
 
     #[test]
     fn internal_agent_prompt_marker_is_rejected() {
-        let request = request_from_prompt_snapshot(&json!({
+        let error = request_from_prompt_snapshot(&json!({
             "chatCompletionPayload": {
                 "messages": [
                     agent_system_marker(),
@@ -547,17 +562,7 @@ mod tests {
                 ]
             }
         }))
-        .expect("request");
-
-        let error = prepare_agent_tool_request(
-            request,
-            &[],
-            ToolChoice::Auto,
-            "stable",
-            "run_test",
-            "inv_root",
-        )
-        .expect_err("marker leak fails");
+        .expect_err("marker leak fails at the input boundary");
 
         assert!(
             error

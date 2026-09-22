@@ -21,17 +21,21 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
     let run = AgentRun {
         id: "run_contract".to_string(),
         workspace_id: "stable_contract".to_string(),
-        stable_chat_id: "stable_contract".to_string(),
-        chat_ref: AgentChatRef::Character {
-            character_id: "Alice".to_string(),
-            file_name: "Alice.png".to_string(),
-        },
-        generation_type: "normal".to_string(),
+        target: tt_domain::models::agent::AgentRunTarget::Chat(
+            tt_domain::models::agent::AgentChatRunTarget {
+                stable_chat_id: "stable_contract".to_string(),
+                chat_ref: AgentChatRef::Character {
+                    character_id: "Alice".to_string(),
+                    file_name: "Alice.png".to_string(),
+                },
+                generation_type: "normal".to_string(),
+                skill_scope_refs: Default::default(),
+                persist_base_state_id: None,
+                input_message_count: None,
+                presentation: AgentRunPresentation::Background,
+            },
+        ),
         profile_id: Some(profile.id.as_str().to_string()),
-        skill_scope_refs: Default::default(),
-        persist_base_state_id: None,
-        input_message_count: None,
-        presentation: AgentRunPresentation::Background,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -308,7 +312,7 @@ async fn agent_runtime_returns_missing_chat_reads_to_the_agent() {
         AgentRunPresentation::Background,
         &profile,
     );
-    run.input_message_count = Some(1);
+    run.chat_target_mut().unwrap().input_message_count = Some(1);
     fixture
         .agent_repository
         .create_run(&run)
@@ -856,7 +860,7 @@ async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_com
     );
     assert_eq!(
         final_commit_request.payload["stableChatId"],
-        run.stable_chat_id
+        run.chat_target().unwrap().stable_chat_id
     );
     assert_eq!(final_commit_request.payload["path"], "output/main.md");
     let commit_failures = events
@@ -1264,11 +1268,11 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
     profile.tools.max_rounds = 2;
     profile.tools.max_calls_per_run = 20;
     let mut run = contract_run("run_macros", AgentRunPresentation::Background, &profile);
-    run.chat_ref = AgentChatRef::Character {
+    run.chat_target_mut().unwrap().chat_ref = AgentChatRef::Character {
         character_id: "Alice".into(),
         file_name: "macros.jsonl".into(),
     };
-    run.input_message_count = Some(1);
+    run.chat_target_mut().unwrap().input_message_count = Some(1);
     let mut chat = Chat::new("User", "Alice");
     chat.file_name = Some("macros.jsonl".into());
     chat.add_message(ChatMessage::user("User", source));

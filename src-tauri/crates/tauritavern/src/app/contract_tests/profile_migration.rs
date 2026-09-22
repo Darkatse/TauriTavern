@@ -9,6 +9,7 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
         repository.clone(),
         repository.clone(),
         Arc::new(TestPresetRepository::default()),
+        Arc::new(FileAgentRepository::new(root.join("session-workspace"))),
     );
     let registry = BuiltinAgentToolRegistry::all();
     fs::create_dir_all(root.join("profiles")).await.unwrap();

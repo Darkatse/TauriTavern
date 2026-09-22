@@ -103,7 +103,7 @@ function createPanelWorld(selectedProfile = defaultProfile()) {
             state.repairs.push(input);
             return Promise.resolve();
         },
-        retargetPresetRefs: () => Promise.resolve({ updated: 0, profileIds: [] }),
+        retargetPresetRefs: () => Promise.resolve({ updated: 0, profileIds: [], sessionProfileUpdated: false }),
         save: (input) => {
             const profile = 'profile' in input ? input.profile : input;
             state.saves.push(profile);

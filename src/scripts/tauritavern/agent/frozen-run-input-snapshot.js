@@ -5,6 +5,7 @@ export const CURRENT_MODEL_CONNECTION_SNAPSHOT_SCHEMA_VERSION = 1;
 
 export function buildFrozenRunInputSnapshot({
     generationType,
+    contextKind,
     promptInputs,
     worldInfoActivation,
     macroContext,
@@ -20,6 +21,7 @@ export function buildFrozenRunInputSnapshot({
         schemaVersion: FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
         kind: FROZEN_RUN_INPUT_SNAPSHOT_KIND,
         generationType: normalizedGenerationType,
+        ...(contextKind ? { contextKind: normalizeContextKind(contextKind) } : {}),
         promptInputs: frozenPromptInputs,
         worldInfoActivation: frozenWorldInfoActivation,
         macroContext: frozenMacroContext,
@@ -183,6 +185,7 @@ export function normalizeFrozenRunInputSnapshot(value) {
         schemaVersion: FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
         kind: FROZEN_RUN_INPUT_SNAPSHOT_KIND,
         generationType,
+        ...(value.contextKind ? { contextKind: normalizeContextKind(value.contextKind) } : {}),
         promptInputs,
         worldInfoActivation,
         macroContext,
@@ -199,6 +202,11 @@ function normalizeGenerationType(value) {
         throw new Error('agent.frozen_run_input_generation_type_empty: generationType cannot be empty');
     }
     return generationType;
+}
+
+function normalizeContextKind(value) {
+    if (value !== 'chat' && value !== 'session') throw new Error('agent.context_kind_invalid: expected chat or session');
+    return value;
 }
 
 function normalizeNonEmptyString(value, message) {

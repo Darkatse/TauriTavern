@@ -18,21 +18,35 @@ use super::fs_tree::hash_file;
 
 pub(super) struct FileWorkspaceFs {
     pub(super) root: PathBuf,
+    session_workspace: Option<PathBuf>,
     pub(super) lock: Arc<RwLock<()>>,
 }
 
 impl FileWorkspaceFs {
+    fn root_for(&self, path: &WorkspacePath) -> &Path {
+        let first = path
+            .as_str()
+            .split('/')
+            .next()
+            .expect("workspace path is nonempty");
+        match &self.session_workspace {
+            Some(root) if matches!(first, "work" | "tmp" | "tool-results") => root,
+            _ => &self.root,
+        }
+    }
+
     // Keep the existing containment boundary. Recursive mkdir resolves the
     // nearest existing parent before creating anything; it does not audit a tree.
     pub(super) async fn resolve(&self, path: &WorkspacePath) -> Result<PathBuf, DomainError> {
-        let target = self.root.join(path.as_str());
+        let root = self.root_for(path);
+        let target = root.join(path.as_str());
         let mut parent = target.parent().expect("workspace path has a parent");
         loop {
             match fs::canonicalize(parent).await {
                 Ok(canonical) => {
-                    if !canonical.starts_with(&self.root) {
+                    if !canonical.starts_with(root) {
                         return Err(DomainError::InvalidData(format!(
-                            "Workspace path escapes run directory: {}",
+                            "Workspace path escapes its storage directory: {}",
                             path.as_str()
                         )));
                     }
@@ -226,39 +240,46 @@ impl WorkspaceFs for FileWorkspaceFs {
         maximum_entries: usize,
     ) -> Result<Vec<WorkspaceDirectoryEntry>, DomainError> {
         let _guard = self.lock.read().await;
-        let target = match path {
-            Some(path) => self.resolve(path).await?,
-            None => self.root.clone(),
+        let directories = match path {
+            Some(path) => vec![self.resolve(path).await?],
+            None => std::iter::once(self.root.clone())
+                .chain(self.session_workspace.clone())
+                .collect(),
         };
         let label = path.map_or("/", WorkspacePath::as_str);
-        let mut reader = fs::read_dir(target)
-            .await
-            .map_err(|e| DomainError::file_io("list", label, e))?;
         let mut entries = Vec::new();
-        while let Some(entry) = reader
-            .next_entry()
-            .await
-            .map_err(|e| DomainError::file_io("list", label, e))?
-        {
-            if entries.len() == maximum_entries {
-                return Err(DomainError::InvalidData(format!(
-                    "Workspace directory exceeds {maximum_entries} entries: {label}"
-                )));
-            }
-            let name = entry.file_name().into_string().map_err(|_| {
-                DomainError::InvalidData(format!("Workspace filename is not UTF-8: {label}"))
-            })?;
-            let child = WorkspacePath::parse(match path {
-                Some(path) => format!("{}/{name}", path.as_str()),
-                None => name,
-            })?;
-            let metadata = fs::symlink_metadata(entry.path())
+        for directory in directories {
+            let mut reader = fs::read_dir(&directory)
                 .await
-                .map_err(|e| DomainError::file_io("stat", child.as_str(), e))?;
-            entries.push(WorkspaceDirectoryEntry {
-                metadata: node_metadata(metadata, child.as_str())?,
-                path: child,
-            });
+                .map_err(|e| DomainError::file_io("list", label, e))?;
+            while let Some(entry) = reader
+                .next_entry()
+                .await
+                .map_err(|e| DomainError::file_io("list", label, e))?
+            {
+                let name = entry.file_name().into_string().map_err(|_| {
+                    DomainError::InvalidData(format!("Workspace filename is not UTF-8: {label}"))
+                })?;
+                let child = WorkspacePath::parse(match path {
+                    Some(path) => format!("{}/{name}", path.as_str()),
+                    None => name,
+                })?;
+                if path.is_none() && self.root_for(&child) != directory {
+                    continue;
+                }
+                if entries.len() == maximum_entries {
+                    return Err(DomainError::InvalidData(format!(
+                        "Workspace directory exceeds {maximum_entries} entries: {label}"
+                    )));
+                }
+                let metadata = fs::symlink_metadata(entry.path())
+                    .await
+                    .map_err(|e| DomainError::file_io("stat", child.as_str(), e))?;
+                entries.push(WorkspaceDirectoryEntry {
+                    metadata: node_metadata(metadata, child.as_str())?,
+                    path: child,
+                });
+            }
         }
         entries.sort_by(|a, b| a.path.as_str().cmp(b.path.as_str()));
         Ok(entries)
@@ -401,12 +422,25 @@ impl super::FileAgentRepository {
         &self,
         run_id: &str,
     ) -> Result<FileWorkspaceFs, DomainError> {
-        let root = fs::canonicalize(self.load_run_dir(run_id).await?)
+        use tt_ports::repositories::agent_run_repository::AgentRunRepository;
+        let run = self.load_run(run_id).await?;
+        let root = fs::canonicalize(self.run_dir(&run)?)
             .await
             .map_err(|error| DomainError::file_io("open workspace", run_id, error))?;
+        let (session_workspace, lock_key) = match run.target.session_id() {
+            Some(session_id) => {
+                let directory = self.session_dir(session_id)?.join("workspace");
+                let directory = fs::canonicalize(directory).await.map_err(|error| {
+                    DomainError::file_io("open session workspace", session_id, error)
+                })?;
+                (Some(directory), format!("session-workspace:{session_id}"))
+            }
+            None => (None, run_id.to_owned()),
+        };
         Ok(FileWorkspaceFs {
             root,
-            lock: self.workspace_lock(run_id).await,
+            session_workspace,
+            lock: self.workspace_lock(&lock_key).await,
         })
     }
 }

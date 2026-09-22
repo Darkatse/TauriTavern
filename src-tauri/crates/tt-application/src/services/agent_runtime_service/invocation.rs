@@ -44,7 +44,18 @@ impl AgentRuntimeService {
             profile_id: profile.id.as_str().to_string(),
             kind: AgentInvocationKind::Root,
             status: AgentInvocationStatus::Created,
-            exit_policy: AgentInvocationExitPolicy::RunFinishAllowed,
+            exit_policy: if self
+                .run_repository
+                .load_run(run_id)
+                .await?
+                .target
+                .session_id()
+                .is_some()
+            {
+                AgentInvocationExitPolicy::ReplyAllowed
+            } else {
+                AgentInvocationExitPolicy::RunFinishAllowed
+            },
             created_at: now,
             updated_at: now,
         };

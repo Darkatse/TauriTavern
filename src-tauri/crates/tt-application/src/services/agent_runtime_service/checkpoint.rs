@@ -61,7 +61,7 @@ impl RunCheckpoint {
         }
     }
 
-    pub(super) fn handle(&self) -> AgentRunHandleDto {
+    pub(super) fn handle(&self) -> Result<AgentRunHandleDto, ApplicationError> {
         run_handle(&self.run, None)
     }
 
@@ -91,7 +91,9 @@ impl RunCheckpoint {
             Some(InvocationStep::Model) => "model",
             Some(InvocationStep::Tools(_)) => "tools",
             Some(InvocationStep::Exited(AgentLoopExit::Transferred { .. })) => "handoff",
-            Some(InvocationStep::Exited(AgentLoopExit::Finished)) => "finalize",
+            Some(InvocationStep::Exited(AgentLoopExit::Finished | AgentLoopExit::Replied)) => {
+                "finalize"
+            }
             None => "unavailable",
         }
     }
@@ -132,6 +134,11 @@ impl AgentRuntimeService {
             Some(2) => {}
             _ => return Err(invalid("unsupported checkpoint version; start a new run")),
         }
+        tt_contracts::agent_run_record::canonicalize_agent_run_record(
+            value
+                .get_mut("run")
+                .ok_or_else(|| invalid("checkpoint is missing its run"))?,
+        )?;
         let checkpoint: RunCheckpoint = serde_json::from_value(value)
             .map_err(|error| invalid(format!("checkpoint cannot be decoded: {error}")))?;
         if checkpoint.run.id != run_id {
@@ -153,6 +160,10 @@ impl AgentRuntimeService {
         &self,
         dto: AgentReadRunCheckpointDto,
     ) -> Result<AgentReadRunCheckpointResultDto, ApplicationError> {
+        self.run_repository
+            .load_run(&dto.run_id)
+            .await?
+            .chat_target()?;
         let checkpoint = self.load_checkpoint(&dto.run_id).await?;
         let frame = checkpoint.state.foreground.as_ref();
         Ok(AgentReadRunCheckpointResultDto {
@@ -160,7 +171,7 @@ impl AgentRuntimeService {
             blocked_reason: checkpoint.blocked_reason().map(str::to_string),
             round: frame.map_or(0, |frame| frame.progress.round),
             max_rounds: frame.map_or(0, |frame| frame.progress.max_rounds),
-            run: run_handle(&checkpoint.run, None),
+            run: run_handle(&checkpoint.run, None)?,
             terminal_seq: checkpoint.terminal_seq,
             presentation: checkpoint.presentation,
         })
@@ -171,6 +182,10 @@ impl AgentRuntimeService {
         dto: AgentFinishRunPresentationDto,
     ) -> Result<(), ApplicationError> {
         let _publication = self.run_lifecycle_lock.lock().await;
+        self.run_repository
+            .load_run(&dto.run_id)
+            .await?
+            .chat_target()?;
         let handle = self.active_run_handle(&dto.run_id).await?;
         let mut pending = handle.pending_checkpoint.lock().await;
         let checkpoint = pending
@@ -193,6 +208,10 @@ impl AgentRuntimeService {
         dto: AgentResumeRunDto,
     ) -> Result<AgentRunHandleDto, ApplicationError> {
         let _admission = self.run_lifecycle_lock.lock().await;
+        self.run_repository
+            .load_run(&dto.run_id)
+            .await?
+            .chat_target()?;
         let mut checkpoint = self.load_checkpoint(&dto.run_id).await?;
         if checkpoint.terminal_seq != dto.expected_terminal_seq {
             return Err(invalid(
@@ -216,7 +235,7 @@ impl AgentRuntimeService {
             return Err(invalid(reason));
         }
         let stable_chat_id = validate_stable_chat_id(&dto.stable_chat_id)?;
-        if stable_chat_id != checkpoint.run.stable_chat_id
+        if stable_chat_id != checkpoint.run.chat_target()?.stable_chat_id
             || workspace_id_for_stable_chat_id(&dto.chat_ref, &stable_chat_id)?
                 != checkpoint.run.workspace_id
         {
@@ -286,13 +305,13 @@ impl AgentRuntimeService {
         self.run_repository
             .reset_event_sequence(&dto.run_id)
             .await?;
-        checkpoint.run.chat_ref = dto.chat_ref;
+        checkpoint.run.chat_target_mut()?.chat_ref = dto.chat_ref;
         checkpoint.run.status = AgentRunStatus::AssemblingContext;
         checkpoint.run.updated_at = Utc::now();
         let (cancel_sender, cancel_receiver) = watch::channel(false);
         let mut handle = ActiveRunHandle::new(
             self,
-            dto.run_id.clone(),
+            &checkpoint.run,
             self.workspace_repository
                 .open_filesystem(&dto.run_id)
                 .await?,
@@ -370,7 +389,7 @@ impl AgentRuntimeService {
             .write()
             .await
             .insert(dto.run_id.clone(), Arc::new(handle));
-        let result = run_handle(&checkpoint.run, Some(resumed.seq - 1));
+        let result = run_handle(&checkpoint.run, Some(resumed.seq - 1))?;
         let service = Arc::clone(self);
         tokio::spawn(async move {
             service
@@ -455,15 +474,19 @@ fn foreground_id(state: &RunExecutionState) -> Option<&str> {
         .map(|frame| frame.prepared.invocation.id.as_str())
 }
 
-fn run_handle(run: &AgentRun, after_seq: Option<u64>) -> AgentRunHandleDto {
-    AgentRunHandleDto {
+fn run_handle(
+    run: &AgentRun,
+    after_seq: Option<u64>,
+) -> Result<AgentRunHandleDto, ApplicationError> {
+    let chat = run.chat_target()?;
+    Ok(AgentRunHandleDto {
         run_id: run.id.clone(),
         workspace_id: run.workspace_id.clone(),
-        stable_chat_id: run.stable_chat_id.clone(),
-        generation_type: run.generation_type.clone(),
+        stable_chat_id: chat.stable_chat_id.clone(),
+        generation_type: chat.generation_type.clone(),
         status: run.status,
         after_seq,
-    }
+    })
 }
 
 fn invalid(reason: impl std::fmt::Display) -> ApplicationError {

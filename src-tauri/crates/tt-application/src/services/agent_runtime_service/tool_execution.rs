@@ -152,7 +152,7 @@ impl AgentRuntimeService {
             };
 
             let call = tool_invocation;
-            if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed {
+            if prepared.invocation.kind.owns_run_status() {
                 self.transition_status(run_id, AgentRunStatus::DispatchingTool)
                     .await?;
             }
@@ -272,7 +272,7 @@ impl AgentRuntimeService {
                                     outcome.elapsed_ms,
                                 )
                             } else if !commit_ledger.has_explicit_commit()
-                                && self.run_repository.load_run(run_id).await?.presentation
+                                && self.run_repository.load_run(run_id).await?.chat_target()?.presentation
                                     == AgentRunPresentation::Foreground
                             {
                                 recoverable_tool_error(
@@ -352,8 +352,9 @@ impl AgentRuntimeService {
             .record_tool_outcome(run_id, invocation_id, round, snapshot_id, outcome)
             .await?;
         if !outcome.result.tool_id.is_builtin() {
+            let result_root = self.tool_result_root(run_id).await?;
             let readable_path = WorkspacePath::parse(format!(
-                "tool-results/{invocation_id}/round-{round:03}-{}.txt",
+                "{result_root}/{invocation_id}/round-{round:03}-{}.txt",
                 tool_call_audit_file_stem(&outcome.result.call_id)
             ))?;
             let mut projected = outcome.result.clone();
@@ -475,8 +476,9 @@ impl AgentRuntimeService {
         round: usize,
         result: &AgentToolResult,
     ) -> Result<WorkspacePath, ApplicationError> {
+        let result_root = self.tool_result_root(run_id).await?;
         let path = WorkspacePath::parse(format!(
-            "tool-results/{invocation_id}/round-{round:03}-{}.json",
+            "{result_root}/{invocation_id}/round-{round:03}-{}.json",
             tool_call_audit_file_stem(&result.call_id)
         ))?;
         let text = serde_json::to_string_pretty(result).map_err(|error| {
@@ -502,6 +504,22 @@ impl AgentRuntimeService {
         )
         .await?;
         Ok(path)
+    }
+
+    async fn tool_result_root(&self, run_id: &str) -> Result<String, ApplicationError> {
+        Ok(
+            if self
+                .active_run_handle(run_id)
+                .await?
+                .target
+                .session_id()
+                .is_some()
+            {
+                format!("tool-results/{run_id}")
+            } else {
+                "tool-results".to_string()
+            },
+        )
     }
 
     async fn store_tool_arguments(

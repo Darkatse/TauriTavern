@@ -66,7 +66,9 @@ async fn agent_runtime_checkpoint_publishes_terminal_state_after_host_presentati
         })
         .await
         .unwrap();
-    assert_eq!(stopped.status, AgentRunStatus::Completed);
+    assert!(
+        matches!(stopped, tt_application::dto::agent_dto::AgentCancelRunResultDto::Chat(handle) if handle.status == AgentRunStatus::Completed)
+    );
 
     let presentation = json!({
         "messageId": "0",
@@ -353,8 +355,8 @@ async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_public
         .resume_run(AgentResumeRunDto {
             run_id: run.id.clone(),
             expected_terminal_seq: completed.terminal_seq,
-            chat_ref: run.chat_ref.clone(),
-            stable_chat_id: run.stable_chat_id.clone(),
+            chat_ref: run.chat_target().unwrap().chat_ref.clone(),
+            stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
             additional_rounds: 0,
             host_presentation: false,
             revision: None,
@@ -392,8 +394,8 @@ async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_public
         .resume_run(AgentResumeRunDto {
             run_id: run.id.clone(),
             expected_terminal_seq: completed.terminal_seq,
-            chat_ref: run.chat_ref,
-            stable_chat_id: run.stable_chat_id,
+            chat_ref: run.chat_target().unwrap().chat_ref.clone(),
+            stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
             additional_rounds: 0,
             host_presentation: false,
             revision: None,
@@ -984,10 +986,10 @@ pub(super) async fn revise_checkpoint(
     let handle = fixture
         .service
         .resume_run(AgentResumeRunDto {
-            run_id: run.id,
+            run_id: run.id.clone(),
             expected_terminal_seq: checkpoint.terminal_seq,
-            chat_ref: run.chat_ref,
-            stable_chat_id: run.stable_chat_id,
+            chat_ref: run.chat_target().unwrap().chat_ref.clone(),
+            stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
             additional_rounds: 0,
             host_presentation: false,
             revision: Some(AgentOutputRevisionDto {
@@ -1118,8 +1120,8 @@ async fn resume_checkpoint(
         .resume_run(AgentResumeRunDto {
             run_id: run.id.clone(),
             expected_terminal_seq: checkpoint.terminal_seq,
-            chat_ref: run.chat_ref,
-            stable_chat_id: run.stable_chat_id,
+            chat_ref: run.chat_target().unwrap().chat_ref.clone(),
+            stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
             additional_rounds,
             host_presentation: false,
             revision: None,

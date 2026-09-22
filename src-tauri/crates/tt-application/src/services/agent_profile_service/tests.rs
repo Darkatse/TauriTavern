@@ -5,16 +5,20 @@ use serde_json::json;
 
 use crate::services::agent_tools::BuiltinAgentToolRegistry;
 use tt_domain::errors::DomainError;
-use tt_domain::models::agent::AgentModelTool;
 use tt_domain::models::agent::profile::{
     AgentContextPolicy, AgentModelBinding, AgentModelBindingMode, AgentPresetBindingMode,
     AgentPresetRef, AgentProfileDefinition, AgentProfileId, ResolvedAgentProfile,
 };
+use tt_domain::models::agent::session::{AgentSession, AgentSessionMessage};
+use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelMessage, AgentModelTool};
 use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
 use tt_domain::models::tool::ToolId;
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
 use tt_ports::repositories::agent_profile_storage_health_repository::{
     AgentProfileStorageHealthRepository, AgentProfileStorageScan,
+};
+use tt_ports::repositories::agent_session_repository::{
+    AgentSessionMessageReadQuery, AgentSessionRepository,
 };
 use tt_ports::repositories::preset_repository::PresetRepository;
 
@@ -27,8 +31,11 @@ fn materialized_agent_system_prompt_uses_profile_override_exactly() {
         "foreground",
     );
 
-    let prompt =
-        materialize_agent_system_prompt(&[tool("workspace.finish", "finish_alias")], &profile);
+    let prompt = materialize_agent_system_prompt(
+        &[tool("workspace.finish", "finish_alias")],
+        &profile,
+        AgentInvocationExitPolicy::RunFinishAllowed,
+    );
 
     assert_eq!(prompt, "Custom Agent System Prompt.\nKeep this exact.");
 }
@@ -86,39 +93,24 @@ fn context_policy_normalizes_negative_history_window_to_full_history() {
 }
 
 #[test]
-fn direct_runnable_profiles_require_finish_tool() {
-    let run = tt_domain::models::agent::profile::AgentRunPolicy {
-        presentation: tt_domain::models::agent::AgentRunPresentation::Background,
-        stream: false,
-        direct_runnable: true,
-        model_retry: Default::default(),
-    };
-    let delegation = tt_domain::models::agent::profile::AgentDelegationPolicy::default();
-    let tools = test_tool_policy(&["workspace.write_file"]);
-
-    let error = super::validation::validate_run_policy(&run, &delegation, &tools)
-        .expect_err("direct runnable profile without finish should fail");
+fn chat_finish_requirement_depends_on_invocation_exit_policy() {
+    let mut profile = test_profile(None, "background");
+    profile.run.direct_runnable = true;
+    profile.tools = test_tool_policy(&["workspace.write_file"]);
+    let error = super::validate_chat_profile(
+        &profile,
+        AgentInvocationExitPolicy::RunFinishAllowed,
+        profile.run.presentation,
+    )
+    .expect_err("direct Chat profile without finish should fail");
 
     assert!(error.to_string().contains("agent.profile_finish_required"));
-}
-
-#[test]
-fn subagent_only_profiles_do_not_require_finish_tool() {
-    let run = tt_domain::models::agent::profile::AgentRunPolicy {
-        presentation: tt_domain::models::agent::AgentRunPresentation::Background,
-        stream: false,
-        direct_runnable: false,
-        model_retry: Default::default(),
-    };
-    let delegation = tt_domain::models::agent::profile::AgentDelegationPolicy {
-        callable: true,
-        allow_as_subagent: true,
-        ..Default::default()
-    };
-    let tools = test_tool_policy(&["workspace.write_file"]);
-
-    super::validation::validate_run_policy(&run, &delegation, &tools)
-        .expect("subagent-only profile should not require workspace.finish");
+    super::validate_chat_profile(
+        &profile,
+        AgentInvocationExitPolicy::TaskReturnRequired,
+        profile.run.presentation,
+    )
+    .expect("a child invocation returns to its parent without workspace.finish");
 }
 
 #[test]
@@ -160,9 +152,7 @@ fn direct_runnable_false_requires_subagent_entrypoint() {
         model_retry: Default::default(),
     };
     let delegation = tt_domain::models::agent::profile::AgentDelegationPolicy::default();
-    let tools = test_tool_policy(&["workspace.write_file"]);
-
-    let error = super::validation::validate_run_policy(&run, &delegation, &tools)
+    let error = super::validation::validate_run_policy(&run, &delegation)
         .expect_err("non-direct profiles need a implemented non-direct entrypoint");
 
     assert!(
@@ -263,6 +253,7 @@ async fn loading_v2_profile_persists_current_canonical_tool_ids() {
         repository.clone(),
         repository.clone(),
         Arc::new(TestPresetRepository::default()),
+        repository.clone(),
     );
     let mut legacy = super::defaults::default_writer_profile().unwrap();
     legacy.id = AgentProfileId::parse("legacy-writer").unwrap();
@@ -313,13 +304,14 @@ fn test_profile_service_with_presets(
     let profile_repository = Arc::new(TestAgentProfileRepository::default());
     Arc::new(AgentProfileService::new(
         profile_repository.clone(),
-        profile_repository,
+        profile_repository.clone(),
         Arc::new(preset_repository),
+        profile_repository,
     ))
 }
 
 #[derive(Default)]
-struct TestAgentProfileRepository {
+pub(crate) struct TestAgentProfileRepository {
     profiles: Mutex<Vec<AgentProfileDefinition>>,
 }
 
@@ -380,6 +372,49 @@ impl AgentProfileStorageHealthRepository for TestAgentProfileRepository {
         _id: &AgentProfileId,
     ) -> Result<(), DomainError> {
         Ok(())
+    }
+}
+
+#[async_trait]
+impl AgentSessionRepository for TestAgentProfileRepository {
+    async fn load_session_profile(&self) -> Result<Option<AgentProfileDefinition>, DomainError> {
+        Ok(None)
+    }
+
+    async fn save_session_profile(
+        &self,
+        _profile: &AgentProfileDefinition,
+    ) -> Result<(), DomainError> {
+        unreachable!("Profile tests do not save a shared Session profile")
+    }
+
+    async fn create_session(&self, _session: &AgentSession) -> Result<(), DomainError> {
+        unreachable!("Profile tests do not create Sessions")
+    }
+
+    async fn load_session(&self, _session_id: &str) -> Result<AgentSession, DomainError> {
+        unreachable!("Profile tests do not load Sessions")
+    }
+
+    async fn append_session_message(
+        &self,
+        _session_id: &str,
+        _run_id: &str,
+        _message: &AgentModelMessage,
+    ) -> Result<AgentSessionMessage, DomainError> {
+        unreachable!("Profile tests do not append Session history")
+    }
+
+    async fn read_session_messages(
+        &self,
+        _session_id: &str,
+        _query: AgentSessionMessageReadQuery,
+    ) -> Result<Vec<AgentSessionMessage>, DomainError> {
+        unreachable!("Profile tests do not read Session history")
+    }
+
+    async fn session_last_seq(&self, _session_id: &str) -> Result<u64, DomainError> {
+        unreachable!("Profile tests do not read Session history")
     }
 }
 

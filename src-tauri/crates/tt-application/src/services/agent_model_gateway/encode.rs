@@ -1,4 +1,5 @@
 use serde_json::{Map, Value, json};
+use std::collections::HashMap;
 
 use crate::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::errors::ApplicationError;
@@ -22,16 +23,23 @@ pub(crate) fn encode_chat_completion_request(
     payload.remove("tools");
     payload.remove("tool_choice");
 
-    payload.insert(
-        "messages".to_string(),
-        Value::Array(
-            adapter
-                .messages_for_request(request)?
-                .into_iter()
-                .map(|message| encode_openai_compatible_message(message, &request.tools, adapter))
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-    );
+    // Responses continuations may omit the assistant call from the outgoing slice.
+    let mut call_aliases = HashMap::new();
+    for message in &request.messages {
+        record_call_aliases(message, &request.tools, &mut call_aliases)?;
+    }
+    let mut messages = Vec::new();
+    for message in adapter.messages_for_request(request)? {
+        // Call IDs may recur across Session runs; the preceding call owns its result.
+        record_call_aliases(message, &request.tools, &mut call_aliases)?;
+        messages.push(encode_openai_compatible_message(
+            message,
+            &request.tools,
+            &call_aliases,
+            adapter,
+        )?);
+    }
+    payload.insert("messages".into(), Value::Array(messages));
 
     if request.tools.is_empty() {
         if matches!(
@@ -86,6 +94,7 @@ fn encode_tool_choice(
 fn encode_openai_compatible_message(
     message: &AgentModelMessage,
     tools: &[AgentModelTool],
+    call_aliases: &HashMap<&str, &str>,
     adapter: AgentProviderAdapter,
 ) -> Result<Value, ApplicationError> {
     let mut object = Map::new();
@@ -158,10 +167,20 @@ fn encode_openai_compatible_message(
             object.insert(
                 "name".to_string(),
                 Value::String(
-                    model_tool_for_id(&result.tool_id, tools)
-                        .ok_or_else(|| tool_history_not_advertised(&result.tool_id))?
-                        .model_alias
-                        .clone(),
+                    call_aliases
+                        .get(result.call_id.as_str())
+                        .copied()
+                        .or_else(|| {
+                            model_tool_for_id(&result.tool_id, tools)
+                                .map(|tool| tool.model_alias.as_str())
+                        })
+                        .ok_or_else(|| {
+                            ApplicationError::ValidationError(format!(
+                                "agent.tool_result_call_missing: no call for tool result `{}`",
+                                result.call_id
+                            ))
+                        })?
+                        .to_string(),
                 ),
             );
             object.insert(
@@ -287,9 +306,7 @@ fn encode_openai_tool_call(
     call: &ToolInvocation,
     tools: &[AgentModelTool],
 ) -> Result<Value, ApplicationError> {
-    let model_alias = model_tool_for_id(&call.tool_id, tools)
-        .map(|tool| tool.model_alias.as_str())
-        .ok_or_else(|| tool_history_not_advertised(&call.tool_id))?;
+    let model_alias = call_model_alias(call, tools)?;
     let mut object = Map::new();
     object.insert("id".to_string(), Value::String(call.call_id.clone()));
     object.insert("type".to_string(), Value::String("function".to_string()));
@@ -324,10 +341,33 @@ fn model_tool_for_id<'a>(
     tools.iter().find(|tool| tool.tool_id == *tool_id)
 }
 
-fn tool_history_not_advertised(tool_id: &ToolId) -> ApplicationError {
-    ApplicationError::ValidationError(format!(
-        "agent.tool_history_not_advertised: tool `{tool_id}` is not advertised in this request"
-    ))
+fn call_model_alias<'a>(
+    call: &'a ToolInvocation,
+    tools: &'a [AgentModelTool],
+) -> Result<&'a str, ApplicationError> {
+    call.provider_metadata
+        .get("modelAlias")
+        .and_then(Value::as_str)
+        .or_else(|| model_tool_for_id(&call.tool_id, tools).map(|tool| tool.model_alias.as_str()))
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "agent.tool_history_alias_missing: call `{}` has no recorded model alias",
+                call.call_id
+            ))
+        })
+}
+
+fn record_call_aliases<'a>(
+    message: &'a AgentModelMessage,
+    tools: &'a [AgentModelTool],
+    aliases: &mut HashMap<&'a str, &'a str>,
+) -> Result<(), ApplicationError> {
+    for part in &message.parts {
+        if let AgentModelContentPart::ToolCall { call } = part {
+            aliases.insert(call.call_id.as_str(), call_model_alias(call, tools)?);
+        }
+    }
+    Ok(())
 }
 
 fn tool_result_message_content(result: &AgentToolResult) -> String {

@@ -220,10 +220,10 @@ async fn agent_runtime_stops_after_unknown_mcp_call_outcome() {
     let error = fixture
         .service
         .resume_run(tt_application::dto::agent_dto::AgentResumeRunDto {
-            run_id: run.id,
+            run_id: run.id.clone(),
             expected_terminal_seq: checkpoint.terminal_seq,
-            chat_ref: run.chat_ref,
-            stable_chat_id: run.stable_chat_id,
+            chat_ref: run.chat_target().unwrap().chat_ref.clone(),
+            stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
             additional_rounds: 0,
             host_presentation: false,
             revision: None,

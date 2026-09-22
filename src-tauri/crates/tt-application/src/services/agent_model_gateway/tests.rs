@@ -84,6 +84,41 @@ fn decodes_tool_call_to_canonical_identity() {
 }
 
 #[test]
+fn session_history_replays_tools_without_readvertising_them() {
+    let registry = BuiltinAgentToolRegistry::all();
+    let tools = model_tools(&registry);
+    let decoded = decode_chat_completion_response(
+        json!({
+            "choices": [{ "message": {
+                "role": "assistant",
+                "tool_calls": [{ "id": "history-call", "type": "function", "function": {
+                    "name": "workspace_read_file", "arguments": "{\"path\":\"work/note.md\"}"
+                } }]
+            }}]
+        }),
+        &tools,
+    )
+    .unwrap();
+    let messages = vec![
+        decoded.message,
+        tool_result_message("history-call", "workspace.read_file", "previous work"),
+    ];
+    let mut request = basic_request("openai", None, messages);
+    request.tools.clear();
+    request.tool_choice = ToolChoice::Auto;
+    let encoded = encode_chat_completion_request(&request, false).unwrap();
+    assert!(encoded.payload.get("tools").is_none());
+    assert_eq!(
+        encoded.payload["messages"][0]["tool_calls"][0]["function"]["name"],
+        "workspace_read_file"
+    );
+    assert_eq!(
+        encoded.payload["messages"][1]["name"],
+        "workspace_read_file"
+    );
+}
+
+#[test]
 fn openai_compatible_replays_opaque_continuation() {
     let registry = BuiltinAgentToolRegistry::all();
     let tools = model_tools(&registry);

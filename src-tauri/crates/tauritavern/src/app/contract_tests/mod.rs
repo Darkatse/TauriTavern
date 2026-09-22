@@ -216,6 +216,7 @@ fn agent_runtime_fixture_with_shell(
         profile_repository,
         profile_health_repository,
         preset_repository.clone(),
+        agent_repository.clone(),
     ));
     let skill_service = Arc::new(SkillService::new(Arc::new(FileSkillRepository::new(
         root.join("_tauritavern/skills"),
@@ -242,6 +243,8 @@ fn agent_runtime_fixture_with_shell(
     ));
     let service = Arc::new(AgentRuntimeService::new(
         agent_repository.clone() as Arc<dyn AgentRunRepository>,
+        agent_repository.clone()
+            as Arc<dyn tt_ports::repositories::agent_session_repository::AgentSessionRepository>,
         agent_repository.clone() as Arc<dyn AgentInvocationRepository>,
         agent_repository.clone() as Arc<dyn WorkspaceRepository>,
         chat_file_repository.clone() as Arc<dyn ChatRepository>,
@@ -407,17 +410,21 @@ fn contract_run(
     AgentRun {
         id: id.to_string(),
         workspace_id: format!("{id}_workspace"),
-        stable_chat_id: format!("{id}_stable_chat"),
-        chat_ref: AgentChatRef::Character {
-            character_id: "Alice".to_string(),
-            file_name: "Alice.png".to_string(),
-        },
-        generation_type: "normal".to_string(),
+        target: tt_domain::models::agent::AgentRunTarget::Chat(
+            tt_domain::models::agent::AgentChatRunTarget {
+                stable_chat_id: format!("{id}_stable_chat"),
+                chat_ref: AgentChatRef::Character {
+                    character_id: "Alice".to_string(),
+                    file_name: "Alice.png".to_string(),
+                },
+                generation_type: "normal".to_string(),
+                skill_scope_refs: Default::default(),
+                persist_base_state_id: None,
+                input_message_count: None,
+                presentation,
+            },
+        ),
         profile_id: Some(profile.id.as_str().to_string()),
-        skill_scope_refs: Default::default(),
-        persist_base_state_id: None,
-        input_message_count: None,
-        presentation,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -761,11 +768,11 @@ impl PresetRepository for TestPresetRepository {
         Ok(())
     }
 
-    async fn delete_preset(
-        &self,
-        _name: &str,
-        _preset_type: &PresetType,
-    ) -> Result<(), DomainError> {
+    async fn delete_preset(&self, name: &str, preset_type: &PresetType) -> Result<(), DomainError> {
+        self.presets
+            .lock()
+            .await
+            .remove(&(name.to_string(), preset_type.clone()));
         Ok(())
     }
 

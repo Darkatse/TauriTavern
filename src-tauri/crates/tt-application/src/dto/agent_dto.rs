@@ -18,6 +18,82 @@ use tt_ports::repositories::agent_profile_storage_health_repository::{
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentPrepareSessionRunDto {
+    pub session_id: String,
+    pub text: String,
+    pub profile: AgentProfileDefinition,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPrepareSessionRunResultDto {
+    pub expected_history_seq: u64,
+    #[serde(flatten)]
+    pub assembly: AgentPreparePromptAssemblyResultDto,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentStartSessionRunDto {
+    pub session_id: String,
+    pub text: String,
+    pub profile: AgentProfileDefinition,
+    pub expected_history_seq: u64,
+    pub prompt_snapshot: Value,
+    pub frozen_run_input_snapshot: Value,
+    #[serde(default)]
+    pub generation_intent: Option<Value>,
+    #[serde(default)]
+    pub stream: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionRunHandleDto {
+    pub session_id: String,
+    pub run_id: String,
+    pub status: AgentRunStatus,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum AgentCancelRunResultDto {
+    Chat(AgentRunHandleDto),
+    Session(AgentSessionRunHandleDto),
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionProfileResultDto {
+    pub profile: Option<AgentProfileDefinition>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCreateSessionResultDto {
+    pub session: tt_domain::models::agent::session::AgentSession,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentReadSessionDto {
+    pub session_id: String,
+    pub before_seq: Option<u64>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentReadSessionResultDto {
+    pub session: tt_domain::models::agent::session::AgentSession,
+    pub messages: Vec<tt_domain::models::agent::session::AgentSessionMessage>,
+    pub last_seq: u64,
+    pub next_before_seq: Option<u64>,
+    pub active_run: Option<AgentSessionRunHandleDto>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentStartRunDto {
     pub chat_ref: AgentChatRef,
     #[serde(default, alias = "stableId")]
@@ -217,6 +293,7 @@ pub struct AgentRetargetPresetRefsDto {
 pub struct AgentRetargetPresetRefsResultDto {
     pub updated: usize,
     pub profile_ids: Vec<String>,
+    pub session_profile_updated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

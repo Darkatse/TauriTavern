@@ -10,6 +10,7 @@ use crate::models::tool::{ToolChoice, ToolId, ToolInvocation};
 pub mod plan;
 pub mod profile;
 pub mod profile_diagnostic;
+pub mod session;
 pub mod storage;
 
 pub const ROOT_AGENT_INVOCATION_ID: &str = "inv_root";
@@ -99,10 +100,38 @@ impl AgentRunSkillScopeRefs {
 pub struct AgentRun {
     pub id: String,
     pub workspace_id: String,
+    pub target: AgentRunTarget,
+    pub profile_id: Option<String>,
+    pub status: AgentRunStatus,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AgentRunTarget {
+    Chat(AgentChatRunTarget),
+    Session {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+    },
+}
+
+impl AgentRunTarget {
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::Session { session_id } => Some(session_id),
+            Self::Chat(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentChatRunTarget {
     pub stable_chat_id: String,
     pub chat_ref: AgentChatRef,
     pub generation_type: String,
-    pub profile_id: Option<String>,
     #[serde(default, skip_serializing_if = "AgentRunSkillScopeRefs::is_empty")]
     pub skill_scope_refs: AgentRunSkillScopeRefs,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -110,9 +139,28 @@ pub struct AgentRun {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_message_count: Option<usize>,
     pub presentation: AgentRunPresentation,
-    pub status: AgentRunStatus,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+}
+
+impl AgentRun {
+    pub fn chat_target(&self) -> Result<&AgentChatRunTarget, DomainError> {
+        match &self.target {
+            AgentRunTarget::Chat(chat) => Ok(chat),
+            AgentRunTarget::Session { .. } => Err(DomainError::InvalidData(format!(
+                "agent.chat_run_required: run `{}` belongs to a Session",
+                self.id
+            ))),
+        }
+    }
+
+    pub fn chat_target_mut(&mut self) -> Result<&mut AgentChatRunTarget, DomainError> {
+        match &mut self.target {
+            AgentRunTarget::Chat(chat) => Ok(chat),
+            AgentRunTarget::Session { .. } => Err(DomainError::InvalidData(format!(
+                "agent.chat_run_required: run `{}` belongs to a Session",
+                self.id
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,6 +195,12 @@ pub enum AgentInvocationKind {
     Revision,
 }
 
+impl AgentInvocationKind {
+    pub fn owns_run_status(self) -> bool {
+        !matches!(self, Self::Subagent)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentInvocationStatus {
@@ -163,6 +217,7 @@ pub enum AgentInvocationStatus {
 pub enum AgentInvocationExitPolicy {
     RunFinishAllowed,
     TaskReturnRequired,
+    ReplyAllowed,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -415,8 +470,6 @@ impl WorkspacePath {
 pub struct WorkspaceManifest {
     pub workspace_version: u32,
     pub run_id: String,
-    pub stable_chat_id: String,
-    pub chat_ref: AgentChatRef,
     pub created_at: DateTime<Utc>,
     pub input: WorkspaceInputManifest,
     pub roots: Vec<WorkspaceRootSpec>,
@@ -456,6 +509,7 @@ pub enum WorkspaceRootLifecycle {
 pub enum WorkspaceRootScope {
     Run,
     Chat,
+    Session,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

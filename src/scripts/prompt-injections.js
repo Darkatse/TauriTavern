@@ -144,9 +144,17 @@ export function applyAttachedPromptsToMessages(attachedPrompts, messages, { warn
             warn?.(`[PromptManager] Attach prompt "${describePrompt(attachPrompt)}" has an invalid attach side: ${attachSide || '(empty)'}. Using end.`);
         }
 
-        targetMessage.content = side === 'start'
-            ? [attachContent, currentContent].filter(Boolean).join('\n\n')
-            : [currentContent, attachContent].filter(Boolean).join('\n\n');
+        if (Array.isArray(targetMessage.agentMessages)) {
+            // Signed Agent history is immutable. Keep the preset instruction at
+            // the requested edge of the same budget group as a new message.
+            const message = { role: attachRole, parts: [{ type: 'text', text: attachContent }], providerMetadata: {} };
+            if (side === 'start') targetMessage.agentMessages.unshift(message);
+            else targetMessage.agentMessages.push(message);
+        } else {
+            targetMessage.content = side === 'start'
+                ? [attachContent, currentContent].filter(Boolean).join('\n\n')
+                : [currentContent, attachContent].filter(Boolean).join('\n\n');
+        }
         applied += 1;
     }
 

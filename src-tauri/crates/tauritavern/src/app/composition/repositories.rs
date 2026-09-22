@@ -41,6 +41,7 @@ use tt_ports::repositories::agent_invocation_repository::AgentInvocationReposito
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
 use tt_ports::repositories::agent_profile_storage_health_repository::AgentProfileStorageHealthRepository;
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
+use tt_ports::repositories::agent_session_repository::AgentSessionRepository;
 use tt_ports::repositories::agent_workspace_lifecycle_repository::AgentWorkspaceLifecycleRepository;
 use tt_ports::repositories::asset_repository::AssetRepository;
 use tt_ports::repositories::avatar_repository::AvatarRepository;
@@ -111,6 +112,7 @@ pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) agent_profile_storage_health_repository:
         Arc<dyn AgentProfileStorageHealthRepository>,
     pub(in crate::app::composition) agent_run_repository: Arc<dyn AgentRunRepository>,
+    pub(in crate::app::composition) agent_session_repository: Arc<dyn AgentSessionRepository>,
     pub(in crate::app::composition) agent_invocation_repository: Arc<dyn AgentInvocationRepository>,
     pub(in crate::app::composition) agent_workspace_lifecycle_repository:
         Arc<dyn AgentWorkspaceLifecycleRepository>,
@@ -297,6 +299,7 @@ pub(super) async fn build(
         data_root.join("_tauritavern").join("agent-workspaces"),
     ));
     let agent_run_repository: Arc<dyn AgentRunRepository> = file_agent_repository.clone();
+    let agent_session_repository: Arc<dyn AgentSessionRepository> = file_agent_repository.clone();
     let agent_invocation_repository: Arc<dyn AgentInvocationRepository> =
         file_agent_repository.clone();
     let workspace_repository: Arc<dyn WorkspaceRepository> = file_agent_repository.clone();
@@ -375,6 +378,7 @@ pub(super) async fn build(
         agent_profile_repository,
         agent_profile_storage_health_repository,
         agent_run_repository,
+        agent_session_repository,
         agent_invocation_repository,
         agent_workspace_lifecycle_repository,
         llm_connection_repository,

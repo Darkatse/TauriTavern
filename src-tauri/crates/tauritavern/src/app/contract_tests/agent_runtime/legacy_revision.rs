@@ -618,8 +618,8 @@ async fn unfinished_legacy_checkpoint_cannot_resume_or_start_a_revision() {
             .resume_run(AgentResumeRunDto {
                 run_id: run.id.clone(),
                 expected_terminal_seq: stopped.terminal_seq,
-                chat_ref: run.chat_ref.clone(),
-                stable_chat_id: run.stable_chat_id.clone(),
+                chat_ref: run.chat_target().unwrap().chat_ref.clone(),
+                stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
                 additional_rounds: 0,
                 host_presentation: false,
                 revision,

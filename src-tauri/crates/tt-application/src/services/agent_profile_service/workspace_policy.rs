@@ -2,14 +2,17 @@ use std::collections::BTreeSet;
 
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
-    ArtifactTarget, CommitPolicy, WorkspaceRootCommit, WorkspaceRootLifecycle, WorkspaceRootMount,
-    WorkspaceRootScope, WorkspaceRootSpec,
+    AgentRunTarget, ArtifactTarget, CommitPolicy, WorkspaceRootCommit, WorkspaceRootLifecycle,
+    WorkspaceRootMount, WorkspaceRootScope, WorkspaceRootSpec,
 };
 
-use super::constants::WORKSPACE_ROOT_UNIVERSE;
+use super::constants::{CHAT_WORKSPACE_ROOTS, SESSION_WORKSPACE_ROOTS};
 use crate::services::agent_workspace_scope::AGENT_TOOL_RESULTS_ROOT;
 
-pub fn workspace_roots_from_profile(profile: &ResolvedAgentProfile) -> Vec<WorkspaceRootSpec> {
+pub fn workspace_roots_from_profile(
+    profile: &ResolvedAgentProfile,
+    target: &AgentRunTarget,
+) -> Vec<WorkspaceRootSpec> {
     let visible = profile
         .workspace
         .visible_roots
@@ -23,10 +26,26 @@ pub fn workspace_roots_from_profile(profile: &ResolvedAgentProfile) -> Vec<Works
         .map(|root| root.as_str())
         .collect::<BTreeSet<_>>();
 
-    let mut roots = WORKSPACE_ROOT_UNIVERSE
+    let session = target.session_id().is_some();
+    let root_names: &[&str] = if session {
+        SESSION_WORKSPACE_ROOTS
+    } else {
+        CHAT_WORKSPACE_ROOTS
+    };
+    let mut roots = root_names
         .iter()
         .map(|root| {
-            if *root == "persist" {
+            if session {
+                WorkspaceRootSpec {
+                    path: root.to_string(),
+                    lifecycle: WorkspaceRootLifecycle::Persistent,
+                    scope: WorkspaceRootScope::Session,
+                    mount: WorkspaceRootMount::Materialized,
+                    visible: visible.contains(*root),
+                    writable: writable.contains(*root),
+                    commit: WorkspaceRootCommit::Never,
+                }
+            } else if *root == "persist" {
                 WorkspaceRootSpec {
                     path: root.to_string(),
                     lifecycle: WorkspaceRootLifecycle::Persistent,
@@ -51,8 +70,16 @@ pub fn workspace_roots_from_profile(profile: &ResolvedAgentProfile) -> Vec<Works
         .collect::<Vec<_>>();
     roots.push(WorkspaceRootSpec {
         path: AGENT_TOOL_RESULTS_ROOT.to_string(),
-        lifecycle: WorkspaceRootLifecycle::Run,
-        scope: WorkspaceRootScope::Run,
+        lifecycle: if session {
+            WorkspaceRootLifecycle::Persistent
+        } else {
+            WorkspaceRootLifecycle::Run
+        },
+        scope: if session {
+            WorkspaceRootScope::Session
+        } else {
+            WorkspaceRootScope::Run
+        },
         mount: WorkspaceRootMount::Materialized,
         visible: true,
         writable: false,

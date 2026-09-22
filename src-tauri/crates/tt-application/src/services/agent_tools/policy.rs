@@ -18,6 +18,18 @@ const RETURN_MODE_DENIED_TOOLS: [&str; 5] = [
     AGENT_AWAIT,
 ];
 
+const SESSION_DENIED_TOOLS: [&str; 9] = [
+    "chat.search",
+    "chat.read_messages",
+    "worldinfo.read_activated",
+    WORKSPACE_COMMIT,
+    WORKSPACE_FINISH,
+    AGENT_DELEGATE,
+    AGENT_HANDOFF,
+    AGENT_AWAIT,
+    TASK_RETURN,
+];
+
 pub(crate) fn compile_invocation_tool_snapshot(
     registry: &BuiltinAgentToolRegistry,
     profile: &ResolvedAgentProfile,
@@ -34,6 +46,12 @@ pub(crate) fn compile_invocation_tool_snapshot(
         if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired
             && tool_id.is_builtin()
             && RETURN_MODE_DENIED_TOOLS.contains(&tool_id.native_name())
+        {
+            continue;
+        }
+        if exit_policy == AgentInvocationExitPolicy::ReplyAllowed
+            && tool_id.is_builtin()
+            && SESSION_DENIED_TOOLS.contains(&tool_id.native_name())
         {
             continue;
         }

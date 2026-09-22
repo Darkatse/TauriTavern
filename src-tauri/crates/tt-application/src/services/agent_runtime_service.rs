@@ -32,6 +32,7 @@ use tt_domain::models::tool::{
 };
 use tt_ports::repositories::agent_invocation_repository::AgentInvocationRepository;
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
+use tt_ports::repositories::agent_session_repository::AgentSessionRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::repositories::workspace_repository::WorkspaceRepository;
@@ -60,6 +61,7 @@ mod prompt_assembly;
 mod prompt_snapshot;
 mod revision;
 mod scheduler;
+mod session;
 mod skill_scope;
 mod task_details;
 mod timeline_projection;
@@ -127,6 +129,7 @@ struct PreparedInvocationTools {
 
 pub struct AgentRuntimeService {
     run_repository: Arc<dyn AgentRunRepository>,
+    session_repository: Arc<dyn AgentSessionRepository>,
     invocation_repository: Arc<dyn AgentInvocationRepository>,
     workspace_repository: Arc<dyn WorkspaceRepository>,
     chat_repository: Arc<dyn ChatRepository>,
@@ -154,6 +157,7 @@ impl AgentRuntimeService {
     )]
     pub fn new(
         run_repository: Arc<dyn AgentRunRepository>,
+        session_repository: Arc<dyn AgentSessionRepository>,
         invocation_repository: Arc<dyn AgentInvocationRepository>,
         workspace_repository: Arc<dyn WorkspaceRepository>,
         chat_repository: Arc<dyn ChatRepository>,
@@ -176,6 +180,7 @@ impl AgentRuntimeService {
         );
         Self {
             run_repository,
+            session_repository,
             invocation_repository,
             workspace_repository,
             chat_repository,
@@ -350,7 +355,11 @@ impl AgentRuntimeService {
             .await?;
         let visible_tools = self.visible_model_tools(&profile).await?;
 
-        Ok(materialize_agent_system_prompt(&visible_tools, &profile))
+        Ok(materialize_agent_system_prompt(
+            &visible_tools,
+            &profile,
+            AgentInvocationExitPolicy::RunFinishAllowed,
+        ))
     }
 
     async fn workspace_files(

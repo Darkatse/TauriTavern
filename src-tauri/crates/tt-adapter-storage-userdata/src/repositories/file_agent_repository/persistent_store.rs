@@ -66,7 +66,8 @@ impl FileAgentRepository {
         manifest: &WorkspaceManifest,
         run_dir: &Path,
     ) -> Result<PersistentSnapshot, DomainError> {
-        let base_state = match run.persist_base_state_id.as_deref() {
+        let chat = run.chat_target()?;
+        let base_state = match chat.persist_base_state_id.as_deref() {
             Some(state_id) => {
                 let dir = self.persistent_state_dir(&run.workspace_id, state_id)?;
                 let state = self.read_persistent_state_manifest(&dir, state_id).await?;
@@ -89,7 +90,7 @@ impl FileAgentRepository {
         }
         let tree = scan_tree(run_dir, &roots).await?;
         Ok(PersistentSnapshot {
-            base_state_id: run.persist_base_state_id.clone(),
+            base_state_id: chat.persist_base_state_id.clone(),
             files: tree.files,
             directories: Some(tree.directories),
         })
@@ -102,6 +103,7 @@ impl FileAgentRepository {
         previous_state_id: Option<&str>,
     ) -> Result<WorkspacePersistentChangeSet, DomainError> {
         let run = self.load_run(run_id).await?;
+        run.chat_target()?;
         let run_dir = self.run_dir(&run)?;
         let roots = persistent_roots(&self.read_manifest(run_id).await?)?;
         let snapshot: PersistentSnapshot =

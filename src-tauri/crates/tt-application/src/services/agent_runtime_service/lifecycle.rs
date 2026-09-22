@@ -15,17 +15,20 @@ use super::skill_scope::{
 use super::timeline_projection::build_run_timeline_projection;
 use super::{AgentRunLiveProjection, AgentRuntimeService};
 use crate::dto::agent_dto::{
-    AgentCancelRunDto, AgentReadEventsDto, AgentReadEventsResultDto, AgentReadWorkspaceFileDto,
-    AgentRunHandleDto, AgentStartRunDto, AgentWorkspaceFileDto,
+    AgentCancelRunDto, AgentCancelRunResultDto, AgentReadEventsDto, AgentReadEventsResultDto,
+    AgentReadWorkspaceFileDto, AgentRunHandleDto, AgentSessionRunHandleDto, AgentStartRunDto,
+    AgentWorkspaceFileDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_identity::{validate_stable_chat_id, workspace_id_for_stable_chat_id};
 use crate::services::agent_profile_service::{
-    AgentProfileResolveInput, ensure_profile_model_configured,
+    AgentProfileResolveInput, ensure_profile_model_configured, validate_chat_profile,
 };
 use crate::services::agent_workspace_lifecycle_service::AgentRunActivity;
 use crate::services::prompt_assembly_service::attach_frozen_run_input_snapshot;
-use tt_domain::models::agent::{AgentRun, AgentRunEventLevel, AgentRunStatus, WorkspacePath};
+use tt_domain::models::agent::{
+    AgentChatRunTarget, AgentRun, AgentRunEventLevel, AgentRunStatus, AgentRunTarget, WorkspacePath,
+};
 use tt_domain::text_metrics::TextMetrics;
 use tt_ports::repositories::agent_run_repository::AgentRunEventReadQuery;
 
@@ -75,23 +78,11 @@ impl AgentRuntimeService {
             .options
             .presentation
             .unwrap_or(resolved_profile.run.presentation);
-        if presentation == tt_domain::models::agent::AgentRunPresentation::Foreground
-            && (!resolved_profile
-                .tools
-                .allow
-                .iter()
-                .any(|id| id.is_builtin() && id.native_name() == "workspace.commit")
-                || resolved_profile
-                    .tools
-                    .deny
-                    .iter()
-                    .any(|id| id.is_builtin() && id.native_name() == "workspace.commit"))
-        {
-            return Err(ApplicationError::ValidationError(
-                "agent.foreground_commit_unavailable: foreground runs require workspace.commit"
-                    .to_string(),
-            ));
-        }
+        validate_chat_profile(
+            &resolved_profile,
+            tt_domain::models::agent::AgentInvocationExitPolicy::RunFinishAllowed,
+            presentation,
+        )?;
         resolved_profile.run.presentation = presentation;
         let skill_scope_refs = resolve_run_skill_scope_refs(&dto, &resolved_profile)?;
         let skill_scope_order =
@@ -134,14 +125,16 @@ impl AgentRuntimeService {
         let run = AgentRun {
             id: run_id.clone(),
             workspace_id: workspace_id.clone(),
-            stable_chat_id: stable_chat_id.clone(),
-            chat_ref: dto.chat_ref.clone(),
-            generation_type: generation_type.clone(),
+            target: AgentRunTarget::Chat(AgentChatRunTarget {
+                stable_chat_id: stable_chat_id.clone(),
+                chat_ref: dto.chat_ref.clone(),
+                generation_type: generation_type.clone(),
+                skill_scope_refs: skill_scope_refs.clone(),
+                persist_base_state_id: input_context.persist_base_state_id,
+                input_message_count: Some(input_context.input_message_count),
+                presentation,
+            }),
             profile_id: Some(resolved_profile.id.as_str().to_string()),
-            skill_scope_refs: skill_scope_refs.clone(),
-            persist_base_state_id: input_context.persist_base_state_id,
-            input_message_count: Some(input_context.input_message_count),
-            presentation,
             status: AgentRunStatus::Created,
             created_at: now,
             updated_at: now,
@@ -155,7 +148,7 @@ impl AgentRuntimeService {
             json!({
                 "workspaceId": workspace_id.clone(),
                 "stableChatId": stable_chat_id.clone(),
-                "persistBaseStateId": run.persist_base_state_id.as_deref(),
+                "persistBaseStateId": run.chat_target()?.persist_base_state_id.as_deref(),
                 "presentation": presentation,
             }),
         )
@@ -194,7 +187,7 @@ impl AgentRuntimeService {
         let (cancel_sender, cancel_receiver) = watch::channel(false);
         let active_handle = Arc::new(super::scheduler::ActiveRunHandle::new(
             self,
-            run_id.clone(),
+            &run,
             self.workspace_repository.open_filesystem(&run_id).await?,
             cancel_sender,
             stream_override,
@@ -264,31 +257,20 @@ impl AgentRuntimeService {
     pub async fn cancel_run(
         &self,
         dto: AgentCancelRunDto,
-    ) -> Result<AgentRunHandleDto, ApplicationError> {
+    ) -> Result<AgentCancelRunResultDto, ApplicationError> {
         let _admission = self.run_lifecycle_lock.lock().await;
         let run = self.run_repository.load_run(&dto.run_id).await?;
-        match run.status {
-            AgentRunStatus::Completed
-            | AgentRunStatus::PartialSuccess
-            | AgentRunStatus::Cancelled
-            | AgentRunStatus::Failed => {
-                return Ok(AgentRunHandleDto {
-                    run_id: run.id,
-                    workspace_id: run.workspace_id,
-                    stable_chat_id: run.stable_chat_id,
-                    generation_type: run.generation_type,
-                    status: run.status,
-                    after_seq: None,
-                });
-            }
-            _ => {}
+        if run.status.is_terminal()
+            || (run.target.session_id().is_some() && run.status == AgentRunStatus::Finishing)
+        {
+            return Ok(cancel_run_handle(run));
         }
 
         let active_handle = self.active_runs.read().await.get(&dto.run_id).cloned();
         if let Some(handle) = &active_handle
             && let Some(checkpoint) = handle.pending_checkpoint.lock().await.as_ref()
         {
-            return Ok(checkpoint.handle());
+            return Ok(AgentCancelRunResultDto::Chat(checkpoint.handle()?));
         }
 
         self.event(
@@ -320,14 +302,7 @@ impl AgentRuntimeService {
             cancelled
         };
 
-        Ok(AgentRunHandleDto {
-            run_id: next.id,
-            workspace_id: next.workspace_id,
-            stable_chat_id: next.stable_chat_id,
-            generation_type: next.generation_type,
-            status: next.status,
-            after_seq: None,
-        })
+        Ok(cancel_run_handle(next))
     }
 
     pub async fn read_events(
@@ -429,11 +404,31 @@ impl AgentRunActivity for AgentRuntimeService {
         let mut active = Vec::new();
         for run_id in run_ids {
             let run = self.run_repository.load_run(&run_id).await?;
-            if run.workspace_id == workspace_id {
+            if matches!(run.target, AgentRunTarget::Chat(_)) && run.workspace_id == workspace_id {
                 active.push(run_id);
             }
         }
         active.sort();
         Ok(active)
+    }
+}
+
+fn cancel_run_handle(run: AgentRun) -> AgentCancelRunResultDto {
+    match run.target {
+        AgentRunTarget::Chat(chat) => AgentCancelRunResultDto::Chat(AgentRunHandleDto {
+            run_id: run.id,
+            workspace_id: run.workspace_id,
+            stable_chat_id: chat.stable_chat_id,
+            generation_type: chat.generation_type,
+            status: run.status,
+            after_seq: None,
+        }),
+        AgentRunTarget::Session { session_id } => {
+            AgentCancelRunResultDto::Session(AgentSessionRunHandleDto {
+                session_id,
+                run_id: run.id,
+                status: run.status,
+            })
+        }
     }
 }

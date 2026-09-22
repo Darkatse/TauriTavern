@@ -178,7 +178,7 @@ fn resolved_profile(preset: AgentPresetBinding) -> ResolvedAgentProfile {
             beta: true,
             nodes: Vec::new(),
         },
-        output: ResolvedAgentOutputPolicy {
+        output: Some(ResolvedAgentOutputPolicy {
             artifacts: vec![ArtifactSpec {
                 id: "main".to_string(),
                 path: "output/main.md".to_string(),
@@ -189,7 +189,7 @@ fn resolved_profile(preset: AgentPresetBinding) -> ResolvedAgentProfile {
             }],
             message_body_artifact_id: "main".to_string(),
             message_body_path: "output/main.md".to_string(),
-        },
+        }),
         source_trace: AgentProfileSourceTrace {
             profile_source: "test".to_string(),
         },
