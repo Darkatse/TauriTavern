@@ -45,6 +45,13 @@ export function createAgentSessionsApi({ safeInvoke, promptAssembly }) {
     return {
         profile: { load, save },
         create: () => safeInvoke('create_agent_session'),
+        list: () => safeInvoke('list_agent_sessions'),
+        rename({ sessionId, title }) {
+            return safeInvoke('rename_agent_session', { dto: { sessionId: requireSessionId(sessionId), title } });
+        },
+        delete({ sessionId }) {
+            return safeInvoke('delete_agent_session', { dto: { sessionId: requireSessionId(sessionId) } });
+        },
         read(input) {
             const sessionId = requireSessionId(input?.sessionId);
             return safeInvoke('read_agent_session', { dto: {

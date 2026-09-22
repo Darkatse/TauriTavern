@@ -37,7 +37,10 @@ Session 独立于角色聊天和写作 Agent Mode。使用前通过 `sessions.pr
 | --- | --- |
 | `sessions.profile.load()` | `{ profile }`；尚未配置时为 `{ profile: null }` |
 | `sessions.profile.save(profile)` | 保存共享的 `AgentProfileDefinition` |
-| `sessions.create()` | `{ session: { id, createdAt } }` |
+| `sessions.create()` | `{ session }`；元数据为 `{ id, createdAt, title, lastUsedAt }` |
+| `sessions.list()` | `{ sessions, activeRuns }`；仅会话元数据目录与活动 Run handles |
+| `sessions.rename({ sessionId, title })` | `{ session }`；标题 trim 后为 1–120 字符 |
+| `sessions.delete({ sessionId })` | 删除会话数据；活动会话拒绝删除，目标已不存在时成功 |
 | `sessions.read({ sessionId, beforeSeq?, limit? })` | `{ session, messages, lastSeq, nextBeforeSeq, activeRun }` |
 | `sessions.send({ sessionId, text })` | `{ sessionId, runId, status }`；执行在原生端继续 |
 
@@ -48,6 +51,8 @@ const run = await agent.sessions.send({ sessionId: session.id, text: '查看 wor
 ```
 
 保存 `session.id` 供后续读取和发送。`send` 返回后执行仍在继续，通过 `subscribe(run.runId, ...)` 观察终态，再发送下一条。忙碌或准备输入过期时 reject，不自动重试。
+
+`title`、`lastUsedAt` 未设置或旧数据缺字段时为 null。用户消息落盘时更新 `lastUsedAt`，未命名时生成短标题。目录按 `lastUsedAt ?? createdAt` 降序排列；改名不改变排序。
 
 历史由后端保存；收到 `session_message_appended` 后可调用 `sessions.read()` 更新界面，实时进度沿用 `subscribeLiveProjection()`。历史页按 seq 升序返回，每项为 `{ seq, runId, createdAt, message, origin? }`；`nextBeforeSeq` 用于向前翻页，`activeRun` 为活动 handle 或 null。
 

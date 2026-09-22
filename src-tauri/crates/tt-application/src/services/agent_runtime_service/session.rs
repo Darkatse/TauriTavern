@@ -11,8 +11,9 @@ use super::prompt_snapshot::{
 };
 use super::{ActiveRunHandle, AgentRuntimeService};
 use crate::dto::agent_dto::{
-    AgentCreateSessionResultDto, AgentReadSessionDto, AgentReadSessionResultDto,
-    AgentSaveProfileDto, AgentSessionProfileResultDto, AgentSessionRunHandleDto,
+    AgentDeleteSessionDto, AgentListSessionsResultDto, AgentReadSessionDto,
+    AgentReadSessionResultDto, AgentRenameSessionDto, AgentSaveProfileDto,
+    AgentSessionProfileResultDto, AgentSessionResultDto, AgentSessionRunHandleDto,
     AgentStartSessionRunDto,
 };
 use crate::errors::ApplicationError;
@@ -48,13 +49,84 @@ impl AgentRuntimeService {
         Ok(())
     }
 
-    pub async fn create_session(&self) -> Result<AgentCreateSessionResultDto, ApplicationError> {
+    pub async fn create_session(&self) -> Result<AgentSessionResultDto, ApplicationError> {
+        let _admission = self.run_lifecycle_lock.lock().await;
         let session = AgentSession {
             id: format!("session_{}", Uuid::new_v4().simple()),
             created_at: Utc::now(),
+            title: None,
+            last_used_at: None,
         };
         self.session_repository.create_session(&session).await?;
-        Ok(AgentCreateSessionResultDto { session })
+        Ok(AgentSessionResultDto { session })
+    }
+
+    pub async fn list_sessions(&self) -> Result<AgentListSessionsResultDto, ApplicationError> {
+        // Creation and deletion hold this same lock, keeping partial directories out of lists.
+        let _admission = self.run_lifecycle_lock.lock().await;
+        let sessions = self.session_repository.list_sessions().await?;
+        let active = self
+            .active_runs
+            .read()
+            .await
+            .iter()
+            .filter_map(|(run_id, handle)| {
+                handle
+                    .target
+                    .session_id()
+                    .map(|session_id| (session_id.to_owned(), run_id.clone()))
+            })
+            .collect::<Vec<_>>();
+        let mut active_runs = Vec::with_capacity(active.len());
+        for (session_id, run_id) in active {
+            let run = self.run_repository.load_run(&run_id).await?;
+            active_runs.push(AgentSessionRunHandleDto {
+                session_id,
+                run_id,
+                status: run.status,
+            });
+        }
+        Ok(AgentListSessionsResultDto {
+            sessions,
+            active_runs,
+        })
+    }
+
+    pub async fn rename_session(
+        &self,
+        dto: AgentRenameSessionDto,
+    ) -> Result<AgentSessionResultDto, ApplicationError> {
+        let title = dto.title.trim();
+        if title.is_empty() || title.chars().count() > 120 {
+            return Err(ApplicationError::ValidationError(
+                "agent.session_title_invalid: title must contain between 1 and 120 characters"
+                    .into(),
+            ));
+        }
+        let session = self
+            .session_repository
+            .rename_session(&dto.session_id, title)
+            .await?;
+        Ok(AgentSessionResultDto { session })
+    }
+
+    pub async fn delete_session(&self, dto: AgentDeleteSessionDto) -> Result<(), ApplicationError> {
+        let _admission = self.run_lifecycle_lock.lock().await;
+        if self
+            .active_runs
+            .read()
+            .await
+            .values()
+            .any(|handle| handle.target.session_id() == Some(dto.session_id.as_str()))
+        {
+            return Err(ApplicationError::ValidationError(
+                "agent.session_busy: stop this Session's active run before deleting it".into(),
+            ));
+        }
+        self.session_repository
+            .delete_session(&dto.session_id)
+            .await?;
+        Ok(())
     }
 
     pub async fn read_session(

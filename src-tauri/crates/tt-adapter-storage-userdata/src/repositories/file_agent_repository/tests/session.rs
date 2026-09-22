@@ -19,6 +19,8 @@ async fn create_session(repository: &FileAgentRepository, id: &str) {
         .create_session(&AgentSession {
             id: id.into(),
             created_at: Utc::now(),
+            title: None,
+            last_used_at: None,
         })
         .await
         .unwrap();
@@ -253,6 +255,111 @@ async fn session_history_pages_and_appends_across_reopen() {
             .is_err()
     );
     assert_eq!(fs::read(&history).await.unwrap(), broken);
+    fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
+async fn session_metadata_and_deletion_preserve_other_sessions_and_shared_profile() {
+    let root = temp_root();
+    let repository = FileAgentRepository::new(root.clone());
+    create_session(&repository, "session_a").await;
+    create_session(&repository, "session_b").await;
+    let created_at = Utc::now() - chrono::Duration::days(2);
+    // Existing metadata has neither title nor lastUsedAt.
+    for (id, at) in [
+        ("session_a", created_at),
+        ("session_b", created_at + chrono::Duration::days(1)),
+    ] {
+        fs::write(
+            root.join("sessions").join(id).join("session.json"),
+            serde_json::to_vec(&json!({"id": id, "createdAt": at})).unwrap(),
+        )
+        .await
+        .unwrap();
+    }
+    let sessions = repository.list_sessions().await.unwrap();
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>(),
+        ["session_b", "session_a"]
+    );
+    assert!(
+        sessions
+            .iter()
+            .all(|session| session.title.is_none() && session.last_used_at.is_none())
+    );
+
+    session_run(&repository, "session_a", "run_a").await;
+    let (other_run, _) = session_run(&repository, "session_b", "run_b").await;
+    let user: AgentModelMessage = serde_json::from_value(json!({
+        "role": "user", "parts": [{"type": "text", "text": "  检查\n  扩展的问题  "}]
+    }))
+    .unwrap();
+    let first = repository
+        .append_session_message("session_a", "run_a", &user, None)
+        .await
+        .unwrap();
+    let sessions = repository.list_sessions().await.unwrap();
+    assert_eq!(sessions[0].id, "session_a");
+    assert_eq!(sessions[0].title.as_deref(), Some("检查 扩展的问题"));
+    assert_eq!(sessions[0].last_used_at, Some(first.created_at));
+    let renamed = repository
+        .rename_session("session_a", "Saved title")
+        .await
+        .unwrap();
+    assert_eq!(renamed.last_used_at, sessions[0].last_used_at);
+    repository
+        .append_session_message("session_a", "run_a", &user, None)
+        .await
+        .unwrap();
+    let used_at = repository
+        .load_session("session_a")
+        .await
+        .unwrap()
+        .last_used_at;
+    let assistant: AgentModelMessage = serde_json::from_value(json!({
+        "role": "assistant", "parts": [{"type": "text", "text": "Done"}]
+    }))
+    .unwrap();
+    repository
+        .append_session_message("session_a", "run_a", &assistant, None)
+        .await
+        .unwrap();
+    let reopened = FileAgentRepository::new(root.clone());
+    let saved = reopened.load_session("session_a").await.unwrap();
+    assert_eq!(saved.title.as_deref(), Some("Saved title"));
+    assert_eq!(saved.last_used_at, used_at);
+
+    // Listing and deletion need metadata, never transcripts or model/tool materials.
+    fs::write(
+        root.join("sessions/session_a/history.jsonl"),
+        b"invalid history",
+    )
+    .await
+    .unwrap();
+    let shared_profile = root.join("sessions/profile.json");
+    fs::write(&shared_profile, b"shared profile").await.unwrap();
+    let summary = reopened.index_run_summary_path("run_a").unwrap();
+    fs::create_dir_all(summary.parent().unwrap()).await.unwrap();
+    fs::write(&summary, b"summary").await.unwrap();
+    assert_eq!(reopened.list_sessions().await.unwrap().len(), 2);
+    reopened.delete_session("session_a").await.unwrap();
+    reopened.delete_session("session_a").await.unwrap();
+    assert!(!root.join("sessions/session_a").exists());
+    assert!(!reopened.index_session_run_path("run_a").unwrap().exists());
+    assert!(!summary.exists());
+    assert!(
+        reopened
+            .rename_session("session_a", "Cannot recreate")
+            .await
+            .is_err()
+    );
+    assert!(!root.join("sessions/session_a").exists());
+    assert_eq!(reopened.load_run("run_b").await.unwrap().id, other_run.id);
+    assert_eq!(reopened.list_sessions().await.unwrap()[0].id, "session_b");
+    assert_eq!(fs::read(&shared_profile).await.unwrap(), b"shared profile");
     fs::remove_dir_all(root).await.unwrap();
 }
 

@@ -1,7 +1,7 @@
 use super::*;
 use tt_application::dto::agent_dto::{
-    AgentCancelRunDto, AgentCancelRunResultDto, AgentPrepareSessionRunDto, AgentReadSessionDto,
-    AgentSaveProfileDto, AgentStartSessionRunDto,
+    AgentCancelRunDto, AgentCancelRunResultDto, AgentDeleteSessionDto, AgentPrepareSessionRunDto,
+    AgentReadSessionDto, AgentSaveProfileDto, AgentStartSessionRunDto,
 };
 use tt_domain::models::agent::AgentModelMessage;
 use tt_domain::models::agent::profile::{
@@ -239,6 +239,21 @@ async fn session_admission_is_exclusive_and_cancellation_keeps_the_user_message(
             .to_string()
             .contains("agent.session_busy")
     );
+    let listed = fixture.service.list_sessions().await.unwrap();
+    assert_eq!(listed.sessions.len(), 1);
+    assert_eq!(listed.active_runs.len(), 1);
+    assert_eq!(listed.active_runs[0].run_id, handle.run_id);
+    assert!(
+        fixture
+            .service
+            .delete_session(AgentDeleteSessionDto {
+                session_id: session.id.clone(),
+            })
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("agent.session_busy")
+    );
     let cancelled = fixture
         .service
         .cancel_run(AgentCancelRunDto {
@@ -263,7 +278,7 @@ async fn session_admission_is_exclusive_and_cancellation_keeps_the_user_message(
     let history = fixture
         .service
         .read_session(AgentReadSessionDto {
-            session_id: session.id,
+            session_id: session.id.clone(),
             before_seq: None,
             limit: None,
         })
@@ -272,6 +287,23 @@ async fn session_admission_is_exclusive_and_cancellation_keeps_the_user_message(
     assert_eq!(history.messages.len(), 1);
     assert_eq!(history.messages[0].message.role, AgentModelRole::User);
     assert!(history.active_run.is_none());
+    fixture
+        .service
+        .delete_session(AgentDeleteSessionDto {
+            session_id: session.id.clone(),
+        })
+        .await
+        .unwrap();
+    let listed = fixture.service.list_sessions().await.unwrap();
+    assert!(listed.sessions.is_empty());
+    assert!(listed.active_runs.is_empty());
+    assert!(
+        fixture
+            .agent_repository
+            .load_run(&handle.run_id)
+            .await
+            .is_err()
+    );
     let _ = fs::remove_dir_all(root).await;
 }
 

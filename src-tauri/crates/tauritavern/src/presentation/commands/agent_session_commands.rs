@@ -5,9 +5,10 @@ use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::agent_dto::{
-    AgentCreateSessionResultDto, AgentPrepareSessionRunDto, AgentPrepareSessionRunResultDto,
-    AgentReadSessionDto, AgentReadSessionResultDto, AgentSaveProfileDto,
-    AgentSessionProfileResultDto, AgentSessionRunHandleDto, AgentStartSessionRunDto,
+    AgentDeleteSessionDto, AgentListSessionsResultDto, AgentPrepareSessionRunDto,
+    AgentPrepareSessionRunResultDto, AgentReadSessionDto, AgentReadSessionResultDto,
+    AgentRenameSessionDto, AgentSaveProfileDto, AgentSessionProfileResultDto,
+    AgentSessionResultDto, AgentSessionRunHandleDto, AgentStartSessionRunDto,
 };
 
 #[tauri::command]
@@ -40,7 +41,7 @@ pub async fn save_agent_session_profile(
 #[tauri::command]
 pub async fn create_agent_session(
     app_state: State<'_, Arc<AppState>>,
-) -> Result<AgentCreateSessionResultDto, CommandError> {
+) -> Result<AgentSessionResultDto, CommandError> {
     log_command("create_agent_session");
     app_state
         .services
@@ -48,6 +49,47 @@ pub async fn create_agent_session(
         .create_session()
         .await
         .map_err(map_command_error("Failed to create Agent Session"))
+}
+
+#[tauri::command]
+pub async fn list_agent_sessions(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentListSessionsResultDto, CommandError> {
+    log_command("list_agent_sessions");
+    app_state
+        .services
+        .agent_runtime_service
+        .list_sessions()
+        .await
+        .map_err(map_command_error("Failed to list Agent Sessions"))
+}
+
+#[tauri::command]
+pub async fn rename_agent_session(
+    dto: AgentRenameSessionDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<AgentSessionResultDto, CommandError> {
+    log_command("rename_agent_session");
+    app_state
+        .services
+        .agent_runtime_service
+        .rename_session(dto)
+        .await
+        .map_err(map_command_error("Failed to rename Agent Session"))
+}
+
+#[tauri::command]
+pub async fn delete_agent_session(
+    dto: AgentDeleteSessionDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("delete_agent_session");
+    app_state
+        .services
+        .agent_runtime_service
+        .delete_session(dto)
+        .await
+        .map_err(map_command_error("Failed to delete Agent Session"))
 }
 
 #[tauri::command]

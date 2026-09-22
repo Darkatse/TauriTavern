@@ -70,8 +70,28 @@ pub struct AgentSessionProfileResultDto {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentCreateSessionResultDto {
+pub struct AgentSessionResultDto {
     pub session: tt_domain::models::agent::session::AgentSession,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentListSessionsResultDto {
+    pub sessions: Vec<tt_domain::models::agent::session::AgentSession>,
+    pub active_runs: Vec<AgentSessionRunHandleDto>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRenameSessionDto {
+    pub session_id: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentDeleteSessionDto {
+    pub session_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

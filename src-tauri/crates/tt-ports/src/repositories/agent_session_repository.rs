@@ -30,6 +30,16 @@ pub trait AgentSessionRepository: Send + Sync {
 
     async fn load_session(&self, session_id: &str) -> Result<AgentSession, DomainError>;
 
+    async fn list_sessions(&self) -> Result<Vec<AgentSession>, DomainError>;
+
+    async fn rename_session(
+        &self,
+        session_id: &str,
+        title: &str,
+    ) -> Result<AgentSession, DomainError>;
+
+    async fn delete_session(&self, session_id: &str) -> Result<(), DomainError>;
+
     async fn append_session_message(
         &self,
         session_id: &str,

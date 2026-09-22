@@ -396,6 +396,22 @@ impl AgentSessionRepository for TestAgentProfileRepository {
         unreachable!("Profile tests do not load Sessions")
     }
 
+    async fn list_sessions(&self) -> Result<Vec<AgentSession>, DomainError> {
+        unreachable!("Profile tests do not list Sessions")
+    }
+
+    async fn rename_session(
+        &self,
+        _session_id: &str,
+        _title: &str,
+    ) -> Result<AgentSession, DomainError> {
+        unreachable!("Profile tests do not rename Sessions")
+    }
+
+    async fn delete_session(&self, _session_id: &str) -> Result<(), DomainError> {
+        unreachable!("Profile tests do not delete Sessions")
+    }
+
     async fn append_session_message(
         &self,
         _session_id: &str,

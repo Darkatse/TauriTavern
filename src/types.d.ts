@@ -220,7 +220,12 @@ type TauriTavernAgentPromptSnapshot = {
     worldInfoActivation?: Record<string, unknown>;
 };
 
-type TauriTavernAgentSession = { id: string; createdAt: string };
+type TauriTavernAgentSession = {
+    id: string;
+    createdAt: string;
+    title: string | null;
+    lastUsedAt: string | null;
+};
 
 type TauriTavernAgentSessionRunHandle = {
     sessionId: string;
@@ -242,6 +247,9 @@ type TauriTavernAgentSessionsApi = {
         save: (profile: TauriTavernAgentProfileDefinition) => Promise<void>;
     };
     create: () => Promise<{ session: TauriTavernAgentSession }>;
+    list: () => Promise<{ sessions: TauriTavernAgentSession[]; activeRuns: TauriTavernAgentSessionRunHandle[] }>;
+    rename: (input: { sessionId: string; title: string }) => Promise<{ session: TauriTavernAgentSession }>;
+    delete: (input: { sessionId: string }) => Promise<void>;
     read: (input: { sessionId: string; beforeSeq?: number; limit?: number }) => Promise<{
         session: TauriTavernAgentSession;
         messages: TauriTavernAgentSessionMessage[];

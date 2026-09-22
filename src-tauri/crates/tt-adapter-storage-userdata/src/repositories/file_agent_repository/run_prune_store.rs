@@ -214,7 +214,10 @@ async fn remove_empty_run_dirs(run_dir: &Path, mut dirs: Vec<PathBuf>) -> Result
     Ok(())
 }
 
-async fn remove_index_file_if_exists(path: &Path, label: &str) -> Result<(), DomainError> {
+pub(super) async fn remove_index_file_if_exists(
+    path: &Path,
+    label: &str,
+) -> Result<(), DomainError> {
     match fs::remove_file(path).await {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),

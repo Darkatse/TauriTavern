@@ -116,6 +116,8 @@ agent-workspaces/sessions/
 
 Session 文件直接修改，不发布 Chat persist 版本。数据仅保存在本机，不参与现有同步或 Chat retention；完整数据归档仍包含它们。
 
+删除 Session 清理其目录与 Run 索引，保留共享 Profile 和 Skill，不回滚工具对应用其他数据的修改。调用约束见 [Session API](../API/Agent.md#持续-session)。
+
 ## 源码
 
 - [workspace_policy.rs](../../src-tauri/crates/tt-application/src/services/agent_profile_service/workspace_policy.rs)：目录与 Profile 的对应关系。

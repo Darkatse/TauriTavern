@@ -7,17 +7,18 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use tt_adapter_storage_core::file_system::persist_json_file;
 use tt_domain::errors::DomainError;
-use tt_domain::models::agent::AgentModelMessage;
 use tt_domain::models::agent::profile::AgentProfileDefinition;
 use tt_domain::models::agent::session::{
     AgentSession, AgentSessionMessage, AgentSessionMessageOrigin,
 };
+use tt_domain::models::agent::{AgentModelMessage, AgentModelRole};
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::agent_session_repository::{
     AgentSessionMessageReadQuery, AgentSessionRepository,
 };
 
 use super::FileAgentRepository;
+use super::run_prune_store::remove_index_file_if_exists;
 
 #[async_trait]
 impl AgentSessionRepository for FileAgentRepository {
@@ -63,6 +64,113 @@ impl AgentSessionRepository for FileAgentRepository {
         Ok(session)
     }
 
+    async fn list_sessions(&self) -> Result<Vec<AgentSession>, DomainError> {
+        let directory = self.root.join("sessions");
+        let mut entries = match fs::read_dir(&directory).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(DomainError::file_io(
+                    "list sessions",
+                    directory.display().to_string(),
+                    error,
+                ));
+            }
+        };
+        let mut sessions = Vec::new();
+        while let Some(entry) = entries.next_entry().await.map_err(|error| {
+            DomainError::file_io("list sessions", directory.display().to_string(), error)
+        })? {
+            let file_type = entry.file_type().await.map_err(|error| {
+                DomainError::file_io("inspect session", entry.path().display().to_string(), error)
+            })?;
+            if file_type.is_symlink() {
+                return Err(DomainError::InvalidData(format!(
+                    "Session entry is a symlink: {}",
+                    entry.path().display()
+                )));
+            }
+            if !file_type.is_dir() {
+                continue;
+            }
+            let session_id = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| DomainError::InvalidData("Session id is not UTF-8".into()))?;
+            sessions.push(self.load_session(&session_id).await?);
+        }
+        sessions.sort_by(|left, right| {
+            right
+                .last_used_at
+                .unwrap_or(right.created_at)
+                .cmp(&left.last_used_at.unwrap_or(left.created_at))
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        Ok(sessions)
+    }
+
+    async fn rename_session(
+        &self,
+        session_id: &str,
+        title: &str,
+    ) -> Result<AgentSession, DomainError> {
+        let lock = self
+            .workspace_lock(&format!("session-history:{session_id}"))
+            .await;
+        let _guard = lock.write().await;
+        let mut session = self.load_session(session_id).await?;
+        session.title = Some(title.to_owned());
+        persist_json_file(
+            &self.session_dir(session_id)?.join("session.json"),
+            &session,
+        )
+        .await?;
+        Ok(session)
+    }
+
+    async fn delete_session(&self, session_id: &str) -> Result<(), DomainError> {
+        let directory = self.session_dir(session_id)?;
+        let lock = self
+            .workspace_lock(&format!("session-history:{session_id}"))
+            .await;
+        let _guard = lock.write().await;
+        match fs::symlink_metadata(&directory).await {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(DomainError::InvalidData(format!(
+                    "Session path is not a directory: {}",
+                    directory.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(DomainError::file_io("inspect session", session_id, error)),
+        }
+        let run_ids = self.run_ids_in_workspace(&directory).await?;
+        // Keep the run directory names available until all external indexes are removed,
+        // so a failed deletion can be retried without scanning other Sessions.
+        for run_id in &run_ids {
+            remove_index_file_if_exists(&self.index_session_run_path(run_id)?, "Session run index")
+                .await?;
+            remove_index_file_if_exists(
+                &self.index_run_summary_path(run_id)?,
+                "Session run summary",
+            )
+            .await?;
+        }
+        {
+            let mut sequences = self.event_sequences.lock().await;
+            for run_id in &run_ids {
+                sequences.remove(run_id);
+            }
+        }
+        self.session_sequences.lock().await.remove(session_id);
+        match fs::remove_dir_all(&directory).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(DomainError::file_io("delete session", session_id, error)),
+        }
+    }
+
     async fn append_session_message(
         &self,
         session_id: &str,
@@ -70,7 +178,6 @@ impl AgentSessionRepository for FileAgentRepository {
         message: &AgentModelMessage,
         origin: Option<&AgentSessionMessageOrigin>,
     ) -> Result<AgentSessionMessage, DomainError> {
-        self.load_session(session_id).await?;
         let run = self.load_run(run_id).await?;
         if run.target.session_id() != Some(session_id) {
             return Err(DomainError::InvalidData(format!(
@@ -81,6 +188,7 @@ impl AgentSessionRepository for FileAgentRepository {
             .workspace_lock(&format!("session-history:{session_id}"))
             .await;
         let _guard = lock.write().await;
+        let mut session = self.load_session(session_id).await?;
         let seq = self
             .last_session_seq_locked(session_id)
             .await?
@@ -120,6 +228,14 @@ impl AgentSessionRepository for FileAgentRepository {
             .lock()
             .await
             .insert(session_id.to_owned(), seq);
+        if message.role == AgentModelRole::User {
+            session.record_user_message(message, entry.created_at);
+            persist_json_file(
+                &self.session_dir(session_id)?.join("session.json"),
+                &session,
+            )
+            .await?;
+        }
         Ok(entry)
     }
 
@@ -128,20 +244,20 @@ impl AgentSessionRepository for FileAgentRepository {
         session_id: &str,
         query: AgentSessionMessageReadQuery,
     ) -> Result<Vec<AgentSessionMessage>, DomainError> {
-        self.load_session(session_id).await?;
         let lock = self
             .workspace_lock(&format!("session-history:{session_id}"))
             .await;
         let _guard = lock.read().await;
+        self.load_session(session_id).await?;
         self.read_session_message_page(session_id, query).await
     }
 
     async fn session_last_seq(&self, session_id: &str) -> Result<u64, DomainError> {
-        self.load_session(session_id).await?;
         let lock = self
             .workspace_lock(&format!("session-history:{session_id}"))
             .await;
         let _guard = lock.write().await;
+        self.load_session(session_id).await?;
         self.last_session_seq_locked(session_id).await
     }
 }
