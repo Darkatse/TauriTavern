@@ -81,15 +81,17 @@ function AssistantMessage({ parts, results, runId, origin, scope, events, active
     events: TauriTavernAgentRunEvent[]; active: boolean; actions: AssistantActions;
 }) {
     const text = parts.filter(part => part.type === 'text').map(part => part.text).join('\n');
+    // Stored part order is provider data; reasoning has a fixed place in the UI.
+    const displayParts = [...parts.filter(part => part.type === 'reasoning'), ...parts.filter(part => part.type !== 'reasoning')];
     return <article className="ttia-reply">
-        {parts.map((part, index) => {
+        {displayParts.map((part, index) => {
             if (part.type === 'text') return <Markdown key={index} text={part.text} actions={actions} />;
             if (part.type === 'reasoning') return part.text ? <Disclosure key={index} className="ttia-reasoning" label={tr('reasoning')}>
                 <Markdown text={part.text} actions={actions} /></Disclosure> : null;
             if (part.type === 'toolCall') {
-                if (parts[index - 1]?.type === 'toolCall') return null;
+                if (displayParts[index - 1]?.type === 'toolCall') return null;
                 const calls: Call[] = [];
-                for (const item of parts.slice(index)) {
+                for (const item of displayParts.slice(index)) {
                     if (item.type !== 'toolCall') break;
                     calls.push(item.call);
                 }

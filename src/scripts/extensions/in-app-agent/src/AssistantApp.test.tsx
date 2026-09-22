@@ -69,16 +69,20 @@ test('IME and modified Enter never send to character chat; switching formatting 
     document.removeEventListener('keydown', globalKey); drawer.dispose();
 });
 
-test('reasoning stays expanded when a saved reply replaces its live preview', () => {
+test('reasoning precedes the answer and stays expanded when history replaces the live preview', () => {
     const h = harness();
     const response: TauriTavernAgentRunLiveResponse = { invocationId: 'root', invocationExitPolicy: 'reply_allowed', round: 1, attempt: 1, text: 'Answer', reasoning: 'Evidence', toolIds: [] };
     h.publish({ run: { runId: 'run', active: true, status: 'calling_model' }, responses: [response] });
     const view = render(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
     fireEvent.click(screen.getByRole('button', { name: 'Thought process' }));
     h.publish({ responses: [], messages: [{ seq: 2, runId: 'run', createdAt: '', origin: { invocationId: 'root', round: 1 },
-        message: { role: 'assistant', providerMetadata: null, parts: [{ type: 'reasoning', text: 'Evidence', provider_metadata: null }, { type: 'text', text: 'Answer' }] } }] });
+        message: { role: 'assistant', providerMetadata: null, parts: [{ type: 'text', text: 'Answer' }, { type: 'reasoning', text: 'Evidence', provider_metadata: null }] } }] });
     view.rerender(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
     expect(screen.getByRole('button', { name: 'Thought process' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Thought process' }).compareDocumentPosition(screen.getByText('Answer')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    view.unmount();
+    render(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
+    expect(screen.getByRole('button', { name: 'Thought process' }).compareDocumentPosition(screen.getByText('Answer')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 test('stop remains pending until a terminal update and preserves the next draft', async () => {
