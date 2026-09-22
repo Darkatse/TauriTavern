@@ -49,7 +49,9 @@ const run = await agent.sessions.send({ sessionId: session.id, text: '查看 wor
 
 保存 `session.id` 供后续读取和发送。`send` 返回后执行仍在继续，通过 `subscribe(run.runId, ...)` 观察终态，再发送下一条。忙碌或准备输入过期时 reject，不自动重试。
 
-历史由后端保存；收到 `session_message_appended` 后可调用 `sessions.read()` 更新界面，实时进度沿用 `subscribeLiveProjection()`。历史页按 seq 升序返回，每项为 `{ seq, runId, createdAt, message }`；`nextBeforeSeq` 用于向前翻页，`activeRun` 为活动 handle 或 null。
+历史由后端保存；收到 `session_message_appended` 后可调用 `sessions.read()` 更新界面，实时进度沿用 `subscribeLiveProjection()`。历史页按 seq 升序返回，每项为 `{ seq, runId, createdAt, message, origin? }`；`nextBeforeSeq` 用于向前翻页，`activeRun` 为活动 handle 或 null。
+
+`origin: { invocationId, round }` 关联 assistant/tool 记录所属的模型回合，不进入模型消息；user 消息与旧历史可不带 origin。Session seq 标识持久消息。
 
 Session 的结束与恢复边界见 [运行循环](../Agent/Runtime.md)，文件保留规则见 [Workspace](../Agent/Workspace.md#session-的持续工作区)。
 
@@ -62,11 +64,23 @@ Session 的结束与恢复边界见 [运行循环](../Agent/Runtime.md)，文件
 | `resume({ runId, additionalRounds?, revisionGuidance? })` | 续接同一 Run，或根据新要求修订已完成输出；返回含订阅游标 `afterSeq` 的 Run handle |
 | `submitGuidance({ runId, text, clientGuidanceId? })` | 向活跃 Run 补充指令，返回 `guidanceId` 与 `status: 'queued'` |
 | `subscribe(runId, handler, options?)` | 订阅持久事件，返回可重复调用的 unsubscribe |
-| `subscribeLiveProjection(runId, handler, options?)` | 订阅当前工具参数和推理文字预览，返回 unsubscribe |
+| `subscribeLiveProjection(runId, handler, options?)` | 订阅当前正文、推理文字及文件工具参数预览，返回 unsubscribe |
 
 Chat 补充指令在下一次前台模型请求前加入上下文，已经发出的请求保持原样。尚未消费的指令随续接保留。该接口不创建聊天消息。
 
-`subscribe` 的选项是 `afterSeq`、`limit`、`intervalMs`、`onError`，默认从起点读取。实时预览只接受 `onError` 选项；它用于当前显示，历史过程从持久事件读取。
+`subscribe` 的选项是 `afterSeq`、`limit`、`intervalMs`、`onError`，默认从起点读取。实时预览只接受 `onError`；历史过程从持久事件读取。退订后不再交付回调，包括在途请求的结果与错误。
+
+实时通道使用以下共同协议（不写入持久 journal）：
+
+| update.type | 内容 |
+| --- | --- |
+| `snapshot` | `{ calls, responses }`，替换当前投影 |
+| `responseReplace` | `{ response }`，新的模型回合或重试 |
+| `responseAppend` | `{ invocationId, text, reasoning, toolIds }`，三个字段分别追加 |
+| `responseRemove` | `{ invocationId }`，移除本次临时响应 |
+| `replace` / `append` / `remove` | 既有文件工具参数投影 |
+
+`response` 包含 `invocationId`、`invocationExitPolicy`、`round`、`attempt`、`text`、`reasoning`、`toolIds`。正文与思考共用回合/尝试身份，完成快照不重复发送增量。正式 assistant 按 `runId + invocationId + round` 接替对应 attempt 的预览，须处理事件与 Channel 的任意到达顺序。失败、取消及终态清除预览，不将其写入历史。写作 Timeline 只消费 reasoning，Chat 正文仍走文件提交。
 
 `resume` 保留原始输入与累计预算，要求当前聊天及消息仍属于原 Run；普通重新生成仍创建新 Run。轮数不足时可经用户明确选择追加 `additionalRounds`。续接订阅使用返回的 `afterSeq`，恢复条件见 [运行循环](../Agent/Runtime.md#checkpoint-与恢复)。
 

@@ -401,6 +401,7 @@ impl AgentSessionRepository for TestAgentProfileRepository {
         _session_id: &str,
         _run_id: &str,
         _message: &AgentModelMessage,
+        _origin: Option<&tt_domain::models::agent::session::AgentSessionMessageOrigin>,
     ) -> Result<AgentSessionMessage, DomainError> {
         unreachable!("Profile tests do not append Session history")
     }

@@ -189,12 +189,12 @@ async fn session_history_pages_and_appends_across_reopen() {
     let second_message = message("second");
     let third_message = message("third");
     repository
-        .append_session_message("session_a", "opaque_run", &first_message)
+        .append_session_message("session_a", "opaque_run", &first_message, None)
         .await
         .unwrap();
     let (left, right) = tokio::join!(
-        repository.append_session_message("session_a", "opaque_run", &second_message),
-        repository.append_session_message("session_a", "opaque_run", &third_message),
+        repository.append_session_message("session_a", "opaque_run", &second_message, None),
+        repository.append_session_message("session_a", "opaque_run", &third_message, None),
     );
     let left = left.unwrap();
     let right = right.unwrap();
@@ -233,7 +233,7 @@ async fn session_history_pages_and_appends_across_reopen() {
     assert_eq!(earlier[0].message, first_message);
     assert_eq!(
         reopened
-            .append_session_message("session_a", "opaque_run", &first_message)
+            .append_session_message("session_a", "opaque_run", &first_message, None)
             .await
             .unwrap()
             .seq,
@@ -248,7 +248,7 @@ async fn session_history_pages_and_appends_across_reopen() {
     assert!(reopened.session_last_seq("session_a").await.is_err());
     assert!(
         reopened
-            .append_session_message("session_a", "opaque_run", &first_message)
+            .append_session_message("session_a", "opaque_run", &first_message, None)
             .await
             .is_err()
     );
@@ -273,6 +273,7 @@ async fn full_session_history_for_prompt_assembly_is_not_capped_at_ui_page_size(
                 run_id: "opaque_run".into(),
                 created_at: Utc::now(),
                 message: message.clone(),
+                origin: None,
             })
             .unwrap(),
         );

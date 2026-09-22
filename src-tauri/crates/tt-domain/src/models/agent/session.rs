@@ -17,4 +17,14 @@ pub struct AgentSessionMessage {
     pub run_id: String,
     pub created_at: DateTime<Utc>,
     pub message: AgentModelMessage,
+    /// Invocation output identity; user messages have no model origin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<AgentSessionMessageOrigin>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionMessageOrigin {
+    pub invocation_id: String,
+    pub round: usize,
 }

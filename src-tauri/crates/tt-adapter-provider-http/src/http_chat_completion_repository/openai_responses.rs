@@ -106,6 +106,19 @@ impl ResponsesDeltaObserver {
         on_delta: &mut dyn FnMut(ChatCompletionStreamDelta),
     ) -> Result<(), DomainError> {
         match event.get("type").and_then(Value::as_str) {
+            Some(
+                "response.output_text.delta" | "response.text.delta" | "response.refusal.delta",
+            ) => {
+                let text = event
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid_responses_stream("text delta is missing"))?;
+                if !text.is_empty() {
+                    on_delta(ChatCompletionStreamDelta::Text {
+                        text: text.to_string(),
+                    });
+                }
+            }
             Some("response.output_item.added") => {
                 let item = event
                     .get("item")
@@ -1172,6 +1185,10 @@ mod tests {
             }),
             json!({ "type": "response.reasoning_summary_text.delta", "delta": "Plan " }),
             json!({ "type": "response.reasoning_summary_text.delta", "delta": "now" }),
+            json!({ "type": "response.output_text.delta", "delta": "Hello" }),
+            json!({ "type": "response.output_text.done", "text": "Hello" }),
+            json!({ "type": "response.refusal.delta", "delta": "Refusal" }),
+            json!({ "type": "response.refusal.done", "refusal": "Refusal" }),
             json!({ "type": "response.output_item.done", "item": { "type": "reasoning", "encrypted_content": "opaque" } }),
             json!({
                 "type": "response.output_item.added",
@@ -1197,6 +1214,12 @@ mod tests {
                 },
                 ChatCompletionStreamDelta::Reasoning {
                     text: "now".to_string()
+                },
+                ChatCompletionStreamDelta::Text {
+                    text: "Hello".into()
+                },
+                ChatCompletionStreamDelta::Text {
+                    text: "Refusal".into()
                 },
                 ChatCompletionStreamDelta::ToolCall {
                     tool_call_index: 0,

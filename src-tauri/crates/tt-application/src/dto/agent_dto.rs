@@ -474,10 +474,13 @@ pub enum AgentRunLiveToolCallDto {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentRunLiveReasoningDto {
+pub struct AgentRunLiveResponseDto {
+    pub round: usize,
+    pub attempt: usize,
     pub invocation_id: String,
     pub invocation_exit_policy: AgentInvocationExitPolicy,
     pub text: String,
+    pub reasoning: String,
     pub tool_ids: Vec<ToolId>,
 }
 
@@ -497,21 +500,22 @@ pub enum AgentRunLiveFieldDto {
     rename_all_fields = "camelCase"
 )]
 pub enum AgentRunLiveUpdateDto {
-    ReasoningReplace {
-        reasoning: AgentRunLiveReasoningDto,
+    ResponseReplace {
+        response: AgentRunLiveResponseDto,
     },
-    ReasoningAppend {
+    ResponseAppend {
         invocation_id: String,
         text: String,
+        reasoning: String,
         /// Newly observed tool IDs, appended independently of text.
         tool_ids: Vec<ToolId>,
     },
-    ReasoningRemove {
+    ResponseRemove {
         invocation_id: String,
     },
     Snapshot {
         calls: Vec<AgentRunLiveToolCallDto>,
-        reasoning: Vec<AgentRunLiveReasoningDto>,
+        responses: Vec<AgentRunLiveResponseDto>,
     },
     Append {
         invocation_id: String,

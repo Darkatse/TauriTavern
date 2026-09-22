@@ -113,7 +113,7 @@ pub async fn subscribe_agent_run_live_projection(
     else {
         let _ = channel.send(AgentRunLiveUpdateDto::Snapshot {
             calls: Vec::new(),
-            reasoning: Vec::new(),
+            responses: Vec::new(),
         });
         return Ok(());
     };

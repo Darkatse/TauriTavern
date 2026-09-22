@@ -166,10 +166,12 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
                 });
                 const events = Array.isArray(result?.events) ? result.events : [];
                 for (const event of events) {
+                    if (stopped) return;
                     afterSeq = Math.max(afterSeq, Number(event?.seq || 0));
                     handler(event);
                 }
             } catch (error) {
+                if (stopped) return;
                 if (typeof options?.onError === 'function') {
                     options.onError(error);
                 } else {

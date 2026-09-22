@@ -111,6 +111,7 @@ impl AgentRuntimeService {
             Ok(children) => state.children.extend(children),
             Err(error) => state.blocked_reason = Some(error.to_string()),
         }
+        handle.live_projection.send_replace(Default::default());
         state.guidance = handle.guidance_mailbox.close_and_drain().await;
         self.close_model_sessions_after_run(run_id).await?;
         self.clear_pending_host_requests_for_run(run_id).await;

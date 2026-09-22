@@ -188,7 +188,7 @@ type TauriTavernAgentRunHandle = {
 type TauriTavernAgentModelMessage = {
     role: 'system' | 'developer' | 'user' | 'assistant' | 'tool';
     parts: TauriTavernAgentModelContentPart[];
-    providerMetadata: Record<string, unknown>;
+    providerMetadata: unknown;
 };
 
 type TauriTavernAgentModelContentPart =
@@ -233,6 +233,7 @@ type TauriTavernAgentSessionMessage = {
     runId: string;
     createdAt: string;
     message: TauriTavernAgentModelMessage;
+    origin?: { invocationId: string; round: number };
 };
 
 type TauriTavernAgentSessionsApi = {
@@ -283,18 +284,21 @@ type TauriTavernAgentRunLiveToolCall =
         newStringWords: number;
     };
 
-type TauriTavernAgentRunLiveReasoning = {
+type TauriTavernAgentRunLiveResponse = {
+    round: number;
+    attempt: number;
     invocationId: string;
     invocationExitPolicy: TauriTavernAgentInvocationExitPolicy;
     text: string;
+    reasoning: string;
     toolIds: string[];
 };
 
 type TauriTavernAgentRunLiveUpdate =
-    | { type: 'reasoningReplace'; reasoning: TauriTavernAgentRunLiveReasoning }
-    | { type: 'reasoningAppend'; invocationId: string; text: string; toolIds: string[] }
-    | { type: 'reasoningRemove'; invocationId: string }
-    | { type: 'snapshot'; calls: TauriTavernAgentRunLiveToolCall[]; reasoning: TauriTavernAgentRunLiveReasoning[] }
+    | { type: 'responseReplace'; response: TauriTavernAgentRunLiveResponse }
+    | { type: 'responseAppend'; invocationId: string; text: string; reasoning: string; toolIds: string[] }
+    | { type: 'responseRemove'; invocationId: string }
+    | { type: 'snapshot'; calls: TauriTavernAgentRunLiveToolCall[]; responses: TauriTavernAgentRunLiveResponse[] }
     | {
         type: 'append';
         invocationId: string;

@@ -304,7 +304,7 @@ test('active mode removes transient writes immediately and detaches at terminal'
     const emit = (update: TauriTavernAgentRunLiveUpdate) => liveHandler?.(update);
 
     state.eventListener?.(event(1));
-    emit({ type: 'snapshot', calls: [], reasoning: [] });
+    emit({ type: 'snapshot', calls: [], responses: [] });
     emit({ type: 'replace', call: liveCall });
     emit({ type: 'append', invocationId: 'inv_root', toolCallIndex: 0, field: 'content', text: 'Hello', wordDelta: 1 });
 

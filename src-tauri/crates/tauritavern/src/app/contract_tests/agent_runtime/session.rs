@@ -119,6 +119,23 @@ async fn session_keeps_files_and_canonical_history_across_runs_and_restart() {
         ],
     );
     configure_session_profile(&fixture, &root).await;
+    let restored = fixture
+        .service
+        .read_session(AgentReadSessionDto {
+            session_id: session.id.clone(),
+            before_seq: None,
+            limit: Some(100),
+        })
+        .await
+        .unwrap();
+    assert_eq!(restored.messages.len(), 5);
+    assert!(restored.messages[0].origin.is_none());
+    let tool_round = restored.messages[1].origin.as_ref().unwrap();
+    assert_eq!(restored.messages[2].origin.as_ref(), Some(tool_round));
+    assert_eq!(restored.messages[3].origin.as_ref(), Some(tool_round));
+    let reply_round = restored.messages[4].origin.as_ref().unwrap();
+    assert_eq!(tool_round.invocation_id, reply_round.invocation_id);
+    assert_ne!(tool_round.round, reply_round.round);
     let latest = fixture
         .service
         .load_session_profile()

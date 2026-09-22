@@ -110,15 +110,29 @@ impl AgentRuntimeService {
                     if replied {
                         let _publication = self.run_lifecycle_lock.lock().await;
                         self.ensure_not_cancelled(cancel)?;
-                        self.append_session_history(run_id, &response.message)
-                            .await?;
+                        self.append_session_history(
+                            run_id,
+                            invocation_id,
+                            round,
+                            &response.message,
+                        )
+                        .await?;
                         self.transition_status(run_id, AgentRunStatus::Finishing)
                             .await?;
                         progress.step = InvocationStep::Exited(AgentLoopExit::Replied);
                     } else {
-                        self.append_session_history(run_id, &response.message)
-                            .await?;
+                        self.append_session_history(
+                            run_id,
+                            invocation_id,
+                            round,
+                            &response.message,
+                        )
+                        .await?;
                     }
+                    // Canonical history owns the response now; previews never publish messages.
+                    active_run.live_projection.send_if_modified(|projection| {
+                        projection.responses.remove(invocation_id).is_some()
+                    });
                     self.event(
                         run_id,
                         AgentRunEventLevel::Debug,
@@ -377,7 +391,8 @@ impl AgentRuntimeService {
                         prepared.request.messages.push(message.clone());
                         turn.next_call += 1;
                         recorded?;
-                        self.append_session_history(run_id, &message).await?;
+                        self.append_session_history(run_id, invocation_id, round, &message)
+                            .await?;
                         if patched && updates_run_status {
                             self.transition_status(run_id, AgentRunStatus::ApplyingWorkspacePatch)
                                 .await?;

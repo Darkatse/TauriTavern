@@ -205,6 +205,33 @@ test('Agent run options preserve an explicit stream override and preserve omissi
     );
 });
 
+test('Agent event unsubscribe suppresses in-flight results, errors and the remainder of a batch', async (t) => {
+    const { createAgentRunRuntimeApi } = await import('../src/tauri/main/api/agent-run-runtime.js');
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    for (const outcome of ['result', 'error', 'batch']) {
+        const requested = Promise.withResolvers();
+        const reply = Promise.withResolvers();
+        const events = [];
+        const errors = [];
+        const runtime = createAgentRunRuntimeApi({
+            safeInvoke() { requested.resolve(); return reply.promise; },
+        });
+        const stop = runtime.subscribe('run', event => {
+            events.push(event.seq);
+            stop();
+        }, { onError: error => errors.push(error) });
+        t.mock.timers.tick(0);
+        await requested.promise;
+        if (outcome !== 'batch') stop();
+        if (outcome === 'error') reply.reject(new Error('late read failure'));
+        else reply.resolve({ events: [{ seq: 1 }, { seq: 2 }] });
+        // Drain the promise chain through the next event-loop turn; no sleeps.
+        await new Promise(resolve => setImmediate(resolve));
+        assert.deepEqual(events, outcome === 'batch' ? [1] : []);
+        assert.deepEqual(errors, []);
+    }
+});
+
 test('Agent live projection subscription owns Channel callbacks and detaches idempotently', async () => {
     const { createAgentRunLiveSubscribe } = await import(pathToFileURL(path.join(
         REPO_ROOT,
@@ -234,13 +261,13 @@ test('Agent live projection subscription owns Channel callbacks and detaches ide
         dto: { runId: 'run-live' },
         channel: { kind: 'test-channel' },
     });
-    onmessage({ type: 'snapshot', calls: [], reasoning: [] });
+    onmessage({ type: 'snapshot', calls: [], responses: [] });
     unsubscribe();
     unsubscribe();
     onmessage({ type: 'remove', invocationId: 'inv_root', toolCallIndex: 0 });
     resolveInvoke();
     await Promise.resolve();
-    assert.deepEqual(updates, [{ type: 'snapshot', calls: [], reasoning: [] }]);
+    assert.deepEqual(updates, [{ type: 'snapshot', calls: [], responses: [] }]);
 });
 
 test('Agent live projection subscription reports command rejection', async () => {
@@ -609,11 +636,11 @@ test('agent live write keeps one real partial chat message and saves it on failu
         await waitFor(() => script.chat[0]?.mes === 'partial');
         const message = script.chat[0];
         assert.equal(message.extra.tauritavern.agent.runId, 'run-live-partial');
-        liveListener({ type: 'reasoningReplace', reasoning: {
-            invocationId: 'inv_root', invocationExitPolicy: 'run_finish_allowed', text: 'Plan', toolIds: [],
+        liveListener({ type: 'responseReplace', response: {
+            invocationId: 'inv_root', invocationExitPolicy: 'run_finish_allowed', round: 1, attempt: 1, text: 'Response body', reasoning: 'Plan', toolIds: [],
         } });
-        liveListener({ type: 'reasoningAppend', toolIds: [], invocationId: 'inv_root', text: ' the edit' });
-        liveListener({ type: 'reasoningRemove', invocationId: 'inv_root' });
+        liveListener({ type: 'responseAppend', toolIds: [], invocationId: 'inv_root', text: '', reasoning: ' the edit' });
+        liveListener({ type: 'responseRemove', invocationId: 'inv_root' });
         assert.equal(message.mes, 'partial');
 
         suspendFrames = true;

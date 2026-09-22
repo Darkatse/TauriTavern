@@ -66,7 +66,7 @@ mod tool_snapshot;
 mod tests;
 
 pub use model_stream_projection::{
-    AgentRunLiveCall, AgentRunLiveCallKey, AgentRunLiveProjection, AgentRunLiveReasoning,
+    AgentRunLiveCall, AgentRunLiveCallKey, AgentRunLiveProjection, AgentRunLiveResponse,
     ModelAttemptGeneration, ToolCallProjection,
 };
 use scheduler::ActiveRunHandle;

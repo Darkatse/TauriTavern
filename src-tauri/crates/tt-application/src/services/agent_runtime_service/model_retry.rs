@@ -62,12 +62,7 @@ impl AgentRuntimeService {
             };
 
             match result {
-                Ok(exchange) => {
-                    if let Some(projector) = projector {
-                        projector.clear_reasoning();
-                    }
-                    return Ok(exchange);
-                }
+                Ok(exchange) => return Ok(exchange),
                 Err(error) => {
                     if let Some(projector) = projector {
                         projector.clear();

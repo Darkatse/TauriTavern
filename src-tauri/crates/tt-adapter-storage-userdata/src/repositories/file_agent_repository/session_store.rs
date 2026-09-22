@@ -9,7 +9,9 @@ use tt_adapter_storage_core::file_system::persist_json_file;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::AgentModelMessage;
 use tt_domain::models::agent::profile::AgentProfileDefinition;
-use tt_domain::models::agent::session::{AgentSession, AgentSessionMessage};
+use tt_domain::models::agent::session::{
+    AgentSession, AgentSessionMessage, AgentSessionMessageOrigin,
+};
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::agent_session_repository::{
     AgentSessionMessageReadQuery, AgentSessionRepository,
@@ -66,6 +68,7 @@ impl AgentSessionRepository for FileAgentRepository {
         session_id: &str,
         run_id: &str,
         message: &AgentModelMessage,
+        origin: Option<&AgentSessionMessageOrigin>,
     ) -> Result<AgentSessionMessage, DomainError> {
         self.load_session(session_id).await?;
         let run = self.load_run(run_id).await?;
@@ -88,6 +91,7 @@ impl AgentSessionRepository for FileAgentRepository {
             run_id: run_id.to_owned(),
             created_at: Utc::now(),
             message: message.clone(),
+            origin: origin.cloned(),
         };
         let mut line = serde_json::to_vec(&entry).map_err(|error| {
             DomainError::InvalidData(format!("Invalid session message: {error}"))

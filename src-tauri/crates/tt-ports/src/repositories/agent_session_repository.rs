@@ -3,7 +3,9 @@ use async_trait::async_trait;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::AgentModelMessage;
 use tt_domain::models::agent::profile::AgentProfileDefinition;
-use tt_domain::models::agent::session::{AgentSession, AgentSessionMessage};
+use tt_domain::models::agent::session::{
+    AgentSession, AgentSessionMessage, AgentSessionMessageOrigin,
+};
 
 #[derive(Debug, Clone)]
 pub struct AgentSessionMessageReadQuery {
@@ -33,6 +35,7 @@ pub trait AgentSessionRepository: Send + Sync {
         session_id: &str,
         run_id: &str,
         message: &AgentModelMessage,
+        origin: Option<&AgentSessionMessageOrigin>,
     ) -> Result<AgentSessionMessage, DomainError>;
 
     async fn read_session_messages(

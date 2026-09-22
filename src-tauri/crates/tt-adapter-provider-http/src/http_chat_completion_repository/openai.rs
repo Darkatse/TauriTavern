@@ -258,6 +258,11 @@ impl OpenAiChatAccumulator {
             .and_then(Value::as_object_mut)
             .ok_or_else(|| invalid_openai_response("choice is missing delta"))?;
         if let Some(value) = take_optional_string(delta, "content")? {
+            if !value.is_empty() {
+                on_delta(ChatCompletionStreamDelta::Text {
+                    text: value.clone(),
+                });
+            }
             append_string_fragment(&mut self.content, value);
         }
         if let Some(value) = take_optional_string(delta, "refusal")? {
@@ -666,8 +671,14 @@ mod tests {
         assert_eq!(
             deltas,
             vec![
+                ChatCompletionStreamDelta::Text {
+                    text: "I will ".to_string()
+                },
                 ChatCompletionStreamDelta::Reasoning {
                     text: "Need ".to_string()
+                },
+                ChatCompletionStreamDelta::Text {
+                    text: "write.".to_string()
                 },
                 ChatCompletionStreamDelta::Reasoning {
                     text: "files.".to_string()

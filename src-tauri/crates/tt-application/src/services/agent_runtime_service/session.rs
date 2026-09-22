@@ -17,7 +17,7 @@ use crate::dto::agent_dto::{
 };
 use crate::errors::ApplicationError;
 use crate::services::prompt_assembly_service::attach_frozen_run_input_snapshot;
-use tt_domain::models::agent::session::AgentSession;
+use tt_domain::models::agent::session::{AgentSession, AgentSessionMessageOrigin};
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRole, AgentRun, AgentRunEventLevel,
     AgentRunStatus, AgentRunTarget,
@@ -185,6 +185,7 @@ impl AgentRuntimeService {
                     parts: vec![AgentModelContentPart::Text { text: dto.text }],
                     provider_metadata: Value::Null,
                 },
+                None,
             )
             .await?;
         self.event(
@@ -252,6 +253,8 @@ impl AgentRuntimeService {
     pub(super) async fn append_session_history(
         &self,
         run_id: &str,
+        invocation_id: &str,
+        round: usize,
         message: &AgentModelMessage,
     ) -> Result<(), ApplicationError> {
         let active = self.active_run_handle(run_id).await?;
@@ -260,7 +263,15 @@ impl AgentRuntimeService {
         };
         let entry = self
             .session_repository
-            .append_session_message(session_id, run_id, message)
+            .append_session_message(
+                session_id,
+                run_id,
+                message,
+                Some(&AgentSessionMessageOrigin {
+                    invocation_id: invocation_id.to_string(),
+                    round,
+                }),
+            )
             .await?;
         self.event(
             run_id,

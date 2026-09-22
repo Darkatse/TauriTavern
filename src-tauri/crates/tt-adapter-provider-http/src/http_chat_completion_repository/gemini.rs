@@ -156,8 +156,14 @@ impl GeminiStreamAccumulator {
             return;
         }
 
-        if part.get("thought").and_then(Value::as_bool) == Some(true) && !text.is_empty() {
-            on_delta(ChatCompletionStreamDelta::Reasoning { text: text.clone() });
+        if !text.is_empty() {
+            on_delta(
+                if part.get("thought").and_then(Value::as_bool) == Some(true) {
+                    ChatCompletionStreamDelta::Reasoning { text: text.clone() }
+                } else {
+                    ChatCompletionStreamDelta::Text { text: text.clone() }
+                },
+            );
         }
 
         if merge_with_previous
@@ -215,7 +221,7 @@ mod tests {
             json!({"candidates":[{"content":{"role":"model","parts":[{"text":"Plan ","thought":true}]}}],"modelVersion":"gemini-test"}),
             json!({"candidates":[{"content":{"role":"model","parts":[{"text":"then act","thought":true,"thoughtSignature":"sig"}]}}]}),
             json!({"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"id":"call_1","name":"write_file","args":{"path":"a.md","content":"hello"}},"thoughtSignature":"call-sig"}]}}]}),
-            json!({"candidates":[{"content":{"role":"model","parts":[{"text":""}]},"finishReason":"STOP"}],"usageMetadata":{"totalTokenCount":12}}),
+            json!({"candidates":[{"content":{"role":"model","parts":[{"text":"Done"}]},"finishReason":"STOP"}],"usageMetadata":{"totalTokenCount":12}}),
         ];
         let mut accumulator = GeminiStreamAccumulator::default();
         let mut deltas = Vec::new();
@@ -240,6 +246,9 @@ mod tests {
                     tool_call_index: 0,
                     name: "write_file".to_string(),
                     arguments_fragment: "{\"content\":\"hello\",\"path\":\"a.md\"}".to_string(),
+                },
+                ChatCompletionStreamDelta::Text {
+                    text: "Done".into()
                 }
             ]
         );
@@ -263,7 +272,8 @@ mod tests {
                         "args": { "path": "a.md", "content": "hello" }
                     },
                     "thoughtSignature": "call-sig"
-                }
+                },
+                { "text": "Done" }
             ])
         );
     }
