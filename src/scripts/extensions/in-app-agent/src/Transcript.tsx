@@ -76,9 +76,9 @@ function ToolCall({ call, result, runId, origin, events, active, actions }: {
         </div>
     </Disclosure>;
 }
-function AssistantMessage({ parts, results, runId, origin, scope, events, active, actions }: {
+function AssistantMessage({ parts, results, runId, origin, scope, events, active, finalReply, actions }: {
     parts: Part[]; results: Map<string, Result>; runId: string; origin: TauriTavernAgentSessionMessage['origin']; scope: string;
-    events: TauriTavernAgentRunEvent[]; active: boolean; actions: AssistantActions;
+    events: TauriTavernAgentRunEvent[]; active: boolean; finalReply?: boolean; actions: AssistantActions;
 }) {
     const text = parts.filter(part => part.type === 'text').map(part => part.text).join('\n');
     // Stored part order is provider data; reasoning has a fixed place in the UI.
@@ -105,7 +105,7 @@ function AssistantMessage({ parts, results, runId, origin, scope, events, active
             if (part.type === 'toolResult') return null;
             return <p className="ttia-muted" key={index}>{tr('unsupported')}</p>;
         })}
-        {text && <CopyButton text={text} copy={actions.copy} />}
+        {finalReply && !active && text && <CopyButton text={text} copy={actions.copy} />}
     </article>;
 }
 
@@ -121,6 +121,7 @@ export function Transcript({ snapshot, controller, actions, visible }: {
     const lastMessageSeq = useRef(snapshot.messages.at(-1)?.seq ?? 0);
     const anchor = useRef<{ seq: string; offset: number; firstSeq: number } | null>(null);
     const runId = snapshot.run?.runId;
+    const lastMessageByRun = new Map(snapshot.messages.map(entry => [entry.runId, entry]));
     const results = new Map<string, Result>();
     const calls = new Set<string>();
     const lastCall = new Map<string, string>();
@@ -197,6 +198,7 @@ export function Transcript({ snapshot, controller, actions, visible }: {
                     }
                     const key = messageKey(entry);
                     return <div key={key} data-message-seq={entry.seq} data-new={entry.seq > initialSeq}><AssistantMessage parts={message.parts} results={results}
+                        finalReply={lastMessageByRun.get(entry.runId) === entry && !message.parts.some(part => part.type === 'toolCall')}
                         runId={entry.runId} scope={key} origin={entry.origin} events={snapshot.events} active={Boolean(snapshot.run?.active && snapshot.run.runId === entry.runId)} actions={actions} /></div>;
                 }), ...(runId ? snapshot.responses.map(response => <div key={responseKey(runId, response.invocationId, response.round)} data-new>
                     <AssistantMessage parts={[...(response.reasoning ? [{ type: 'reasoning' as const, text: response.reasoning, provider_metadata: null }] : []),
