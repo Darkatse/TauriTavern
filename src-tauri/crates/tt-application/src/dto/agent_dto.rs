@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use tt_domain::models::agent::profile::{
     AgentContextPolicy, AgentPresetRef, AgentProfileDefinition, AgentProfileSummary,
+    AgentReasoningEffort,
 };
 use tt_domain::models::agent::{
     AgentChatRef, AgentDelegationContinuation, AgentInvocationExitPolicy, AgentInvocationKind,
@@ -237,6 +238,8 @@ pub struct AgentPromptAssemblyBrokerRequestDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
     pub preset_ref: AgentPresetRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<AgentReasoningEffort>,
     pub agent_context_policy: AgentContextPolicy,
     pub agent_system_prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

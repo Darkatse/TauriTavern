@@ -53,6 +53,8 @@ await agent.profiles.save(reviewer);
 
 这是 Profile 中的绑定片段。`writer-model` 需要是本机已经保存的连接。独立预设使用 OpenAI/chat-completion Preset，组装方式见 [Prompt assembly](PromptAssembly.md)。
 
+`preset.reasoningEffort` 仅允许用于 `mode = ref`：省略时跟随预设，`auto` 不发送强度，其余档位覆盖预设。该字段不负责开启模型的思考模式。
+
 Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点和凭据更新供后续解析使用，Profile 的 `modelId` 则保留用户选定的值。导出或嵌入到角色卡、预设时，本机的独立模型绑定会改为 `requiresConfiguration`，导入后重新选择即可。
 
 ## 调整工作方式

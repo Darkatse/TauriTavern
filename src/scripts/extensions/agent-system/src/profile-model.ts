@@ -171,6 +171,8 @@ function normalizePresetBinding(value: unknown): AgentProfile['preset'] {
             name: looseString(ref.name).trim(),
         },
         required: Boolean(binding.required),
+        // Kept as saved; the backend validates the value with the Profile.
+        ...(binding.reasoningEffort ? { reasoningEffort: binding.reasoningEffort as TauriTavernReasoningEffort } : {}),
     };
 }
 

@@ -45,6 +45,7 @@ fn skill_scope_order_uses_profile_preset_then_profile_then_character() {
         mode: AgentPresetBindingMode::Ref,
         ref_: Some(preset.clone()),
         required: false,
+        reasoning_effort: None,
     });
     let refs = AgentRunSkillScopeRefs {
         preset: None,
@@ -77,6 +78,7 @@ fn resolve_run_skill_scope_refs_rejects_mismatched_character() {
         mode: AgentPresetBindingMode::CurrentPromptSnapshot,
         ref_: None,
         required: false,
+        reasoning_effort: None,
     });
     let dto = AgentStartRunDto {
         chat_ref: AgentChatRef::Character {

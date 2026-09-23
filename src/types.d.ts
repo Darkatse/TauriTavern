@@ -95,6 +95,9 @@ type TauriTavernAgentRunStatus =
 
 type TauriTavernAgentRunPresentation = 'foreground' | 'background';
 
+/** SillyTavern chat-completion `reasoning_effort` values; `auto` sends no effort. */
+type TauriTavernReasoningEffort = 'auto' | 'min' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 type TauriTavernAgentRunEvent = {
     seq: number;
     id: string;
@@ -519,6 +522,8 @@ type TauriTavernAgentProfileDefinition = {
             name: string;
         };
         required?: boolean;
+        // Replaces the preset's own effort; only valid with mode 'ref'.
+        reasoningEffort?: TauriTavernReasoningEffort;
     };
     model: {
         mode: 'currentPromptSnapshot' | 'connectionRef' | 'requiresConfiguration';

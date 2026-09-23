@@ -229,6 +229,7 @@ impl PromptAssemblyService {
                         settings,
                         model_id,
                         preset_ref,
+                        reasoning_effort: profile.preset.reasoning_effort,
                         agent_context_policy: profile.context.clone(),
                         agent_system_prompt: materialize_agent_system_prompt(
                             visible_tools,

@@ -48,6 +48,8 @@ Skill 目录与文件视图使用同一份有效绑定；Agent 目录由实际�
 
 Preset 提供提示词布局和生成设置。Profile 的 model binding 提供最终 source、model、endpoint、secret 和路由；这些连接字段会覆盖预设中的旧值。
 
+显式的 `preset.reasoningEffort` 优先于预设的参数省略设置；实际值由 PromptManager 按 source 和模型归一化，再由 provider adapter 映射协议。组装不修改保存的预设。
+
 `currentPromptSnapshot` 使用输入中冻结的连接。`connectionRef` 则通过 LLM Connection 解析：组装时应用一次，让 PromptManager 使用正确的模型设置；Invocation 进入循环前再应用到最终请求。Model Target 与反向代理预设的管理见 [LLM Connection API](../API/LlmConnections.md)。
 
 独立组装使用 headless PromptManager，不切换 UI 的预设或模型。动态扩展提示词在输入冻结时收集；依赖普通 `CHAT_COMPLETION_PROMPT_READY` 事件改写提示词的扩展不会参与这条独立组装路径。

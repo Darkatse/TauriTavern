@@ -623,6 +623,7 @@ mod tests {
                 mode: AgentPresetBindingMode::CurrentPromptSnapshot,
                 ref_: None,
                 required: false,
+                reasoning_effort: None,
             },
             model: AgentModelBinding {
                 mode: AgentModelBindingMode::CurrentPromptSnapshot,

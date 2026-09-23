@@ -166,6 +166,22 @@ pub struct AgentPresetBinding {
     pub ref_: Option<AgentPresetRef>,
     #[serde(default)]
     pub required: bool,
+    /// Replaces the preset's own `reasoning_effort` when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<AgentReasoningEffort>,
+}
+
+/// SillyTavern's chat-completion vocabulary; prompt assembly maps it per source and model.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentReasoningEffort {
+    Auto,
+    Min,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

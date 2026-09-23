@@ -29,12 +29,14 @@ try {
         : ajax(options);
     const { normalizeChatCompletionSettingsForPromptAssembly } = getModule('scripts/openai.js').namespace;
     const { buildPromptAssemblySnapshot } = getModule('tauri/main/api/agent-prompt-assembly.js').namespace;
+    const { setParamOmitted } = getModule('scripts/tauri/generation-params/omission.js').namespace;
     const preset = normalizeChatCompletionSettingsForPromptAssembly({
         chat_completion_source: 'custom', custom_model: 'test-model', openai_max_tokens: 32, new_chat_prompt: '',
     });
     preset.prompt_order = [{ character_id: 100001, order: ['main', 'agentSystemPrompt', 'chatHistory'].map(identifier => ({ identifier, enabled: true })) }];
-    const assemble = (messages, contextBudget = 4096) => buildPromptAssemblySnapshot({
+    const assemble = (messages, contextBudget = 4096, reasoningEffort) => buildPromptAssemblySnapshot({
         modelId: 'test-model',
+        reasoningEffort,
         settings: { ...preset, openai_max_context: contextBudget },
         agentContextPolicy: { initialChatHistoryMessages: -1, includeActivatedWorldInfo: false },
         agentSystemPrompt: 'Inspect the workspace.',
@@ -99,6 +101,13 @@ try {
     assert.ok(outcomes[2].includes(failedResult.parts[0].result.content));
     assert.match(outcomes[2], /error/i);
     assert.equal(JSON.stringify(interruptedHistory), originalHistory);
+
+    // An explicit effort overrides preset omission for this assembly only.
+    preset.reasoning_effort = 'low';
+    assert.equal((await assemble(history)).promptSnapshot.generationParameters.reasoning_effort, 'low');
+    setParamOmitted(preset, 'reasoning_effort', true);
+    assert.equal((await assemble(history, 4096, 'high')).promptSnapshot.generationParameters.reasoning_effort, 'high');
+    assert.equal((await assemble(history)).promptSnapshot.generationParameters.reasoning_effort, undefined);
     console.log('PASS: Session PromptManager preserves canonical history, atomic tool groups and bounded Run input');
 } finally {
     await window.happyDOM.close();

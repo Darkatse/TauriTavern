@@ -79,6 +79,13 @@ pub(super) async fn validate_preset_binding(
     preset_repository: &dyn PresetRepository,
     external_reference_policy: AgentProfileExternalReferencePolicy,
 ) -> Result<(), ApplicationError> {
+    // Only independent assembly reads preset settings, so only it can replace one.
+    if binding.reasoning_effort.is_some() && binding.mode != AgentPresetBindingMode::Ref {
+        return Err(ApplicationError::ValidationError(
+            "agent.profile_reasoning_effort_requires_preset_ref: preset.reasoningEffort requires preset.mode ref"
+                .to_string(),
+        ));
+    }
     match binding.mode {
         AgentPresetBindingMode::CurrentPromptSnapshot | AgentPresetBindingMode::None => Ok(()),
         AgentPresetBindingMode::Ref => {

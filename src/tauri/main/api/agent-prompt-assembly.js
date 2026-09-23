@@ -10,6 +10,7 @@ import {
 } from '../../../scripts/tauritavern/agent/agent-system-prompt.js';
 import { normalizeFrozenRunInputSnapshot } from '../../../scripts/tauritavern/agent/frozen-run-input-snapshot.js';
 import { createAgentPromptSnapshot } from '../../../scripts/tauritavern/agent/agent-model-messages.js';
+import { setParamOmitted } from '../../../scripts/tauri/generation-params/omission.js';
 
 const PROMPT_ASSEMBLY_SOURCE = 'frontend-prompt-assembly-broker';
 
@@ -42,6 +43,10 @@ export async function buildPromptAssemblyPayload(input = {}) {
         throw new Error('prompt_assembly.model_required: chat-completion settings did not resolve a model');
     }
     const settings = openai.normalizeChatCompletionSettingsForPromptAssembly(request.settings);
+    if (request.reasoningEffort) {
+        settings.reasoning_effort = request.reasoningEffort;
+        setParamOmitted(settings, 'reasoning_effort', false);
+    }
 
     const result = await openai.assembleOpenAIChatCompletionPrompt({
         settings,
@@ -144,6 +149,7 @@ async function normalizePromptAssemblyRequest(input) {
         promptInputs,
         settings,
         modelId: normalizeOptionalString(input.modelId ?? input.model_id),
+        reasoningEffort: normalizeOptionalString(input.reasoningEffort),
         jsonSchema: input.jsonSchema ?? input.json_schema ?? null,
         agentContextPolicy,
         agentSystemPrompt,
