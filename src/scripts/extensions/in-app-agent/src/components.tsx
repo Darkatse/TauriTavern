@@ -41,7 +41,26 @@ export function CopyButton({ text, copy }: { text: string; copy: AssistantAction
         </button>{error != null && <span role="alert">{errorText(error)}</span>}
     </span>;
 }
-export const Markdown = memo(function Markdown({ text, actions }: { text: string; actions: AssistantActions }) {
+export function useNow(intervalMs: number, enabled: boolean): number {
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        if (!enabled) return;
+        const timer = setInterval(() => setNow(Date.now()), intervalMs);
+        return () => clearInterval(timer);
+    }, [enabled, intervalMs]);
+    return now;
+}
+export function formatTick(ms: number): string {
+    const seconds = Math.max(0, Math.floor(ms / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+export function formatDuration(ms: number): string {
+    const seconds = Math.max(0, Math.round(ms / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+export const Markdown = memo(function Markdown({ text, actions, streaming }: { text: string; actions: AssistantActions; streaming?: boolean }) {
     const html = useMemo(() => actions.markdown(text), [actions, text]);
     const root = useRef<HTMLDivElement>(null);
     const [error, setError] = useState<unknown>(null);
@@ -57,6 +76,6 @@ export const Markdown = memo(function Markdown({ text, actions }: { text: string
         element.addEventListener('click', click);
         return () => element.removeEventListener('click', click);
     }, [actions]);
-    return <><div className="ttia-markdown" ref={root} dangerouslySetInnerHTML={{ __html: html }} />
+    return <><div className={`ttia-markdown${streaming ? ' is-streaming' : ''}`} ref={root} dangerouslySetInnerHTML={{ __html: html }} />
         {error != null && <ErrorNotice error={error} />}</>;
 });

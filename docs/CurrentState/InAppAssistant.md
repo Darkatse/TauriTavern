@@ -6,7 +6,8 @@
 
 - 入口等待 Host ready、注册工具，再通过 APP_READY 回调挂载。不能在扩展顶层等待 APP_READY：上游在扩展加载完成后才发出该事件。
 - 一个 React root 对应一个 controller；首次打开读取配置和历史，隐藏保留视图与订阅，卸载释放订阅但不取消原生 Run。
-- 初次配置引用已有 `openai/Default`，由用户选择模型；默认只开启 `app.evaluate`、`app.read_logs`，工作区与 Shell 工具按需选入。保存 Profile 影响下次发送，不改变运行中的冻结输入。
+- 首次选择模型时保存 Profile，引用已有 `openai/Default`，默认只开启 `app.evaluate`、`app.read_logs`；其他工具按需选入。
+- 输入框中的模型与推理强度选择立即保存，并同步到未保存的设置草稿；修改影响下次发送，不改变运行中的冻结输入。
 - 会话选择保存在 `localStorage`：null 表示新对话，未保存或目标已删除时打开最近会话。`extension.store` 保存宽度偏好；Session 数据与共享 Profile 由 Session API 管理。
 - Skill 使用助手 Profile 的作用域，与 Skill Manager 共用[导入准入](../API/Skill.md#预览与安装)。取消设置释放待确认来源，但不撤销已完成的安装；选择 Skill 不自动启用 Shell。
 
@@ -28,7 +29,11 @@
 
 保留原高级格式节点和抽屉行为，包括主题透明度、模糊与移动端约束。桌面助手向下覆盖聊天输入区，内容宽度默认 100%；宽度设置只影响内部内容，移动端与窄窗口铺满。
 
-历史页只读目录，正文按所选会话分页；旧会话的读取结果不能覆盖新视图。键盘事件隔离于角色聊天；Markdown 使用独立 Showdown + DOMPurify，不进入聊天宏、regex 或脚本执行链。工具结果仅按明确的外部化路径读取。
+模型菜单随 Connection Manager 的 Model Target 变化更新；绑定不可用时必须重新选择。推理强度展示配置档位，参数语义见 [Profile](../Agent/ProfilesAndPreset.md#选择提示词和模型)。
+
+消息按 Run 分组，中间回合、工具与思考可折叠，最终答案始终可见；当前与最新 Run 默认展开。
+
+历史页只读目录，正文按所选会话分页；旧会话的读取结果不能覆盖新视图。键盘事件隔离于角色聊天，内层控件以 `preventDefault` 消费 Escape，抽屉不重复处理。Markdown 使用独立 Showdown + DOMPurify，不进入聊天宏、regex 或脚本执行链。工具结果仅按明确的外部化路径读取。
 
 | Session 工具 | 契约 |
 | --- | --- |
@@ -37,4 +42,4 @@
 
 ## 维护入口
 
-源码位于 [in-app-agent/src](../../src/scripts/extensions/in-app-agent/src)：`index.ts`、`drawer.ts` 负责接入；`controller.ts`、`session-state.ts` 负责会话状态；`host.ts` 组合公共 API 与视图 actions。界面分层见 [First-party UI](FirstPartyUI.md)，验证入口见 [Agent 测试](../Agent/TestingStrategy.md)。
+源码位于 [in-app-agent/src](../../src/scripts/extensions/in-app-agent/src)：`index.ts`、`drawer.ts` 负责接入；`controller.ts`、`session-state.ts` 负责会话状态；`host.ts` 适配公共 API 与页面能力；`ComposerMenu.tsx` 统一输入框菜单交互。界面分层见 [First-party UI](FirstPartyUI.md)，验证入口见 [Agent 测试](../Agent/TestingStrategy.md)。

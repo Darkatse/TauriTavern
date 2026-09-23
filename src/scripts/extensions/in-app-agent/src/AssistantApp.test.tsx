@@ -1,11 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test, rstest as vi } from '@rstest/core';
+import { modelBindingFromTarget } from '../../../tauritavern/agent/model-target-llm-connection.js';
 import { AssistantApp } from './AssistantApp';
 import { Transcript } from './Transcript';
 import { createAssistantProfile } from './profile';
 import { installAssistantDrawer } from './drawer';
 import type { AssistantSnapshot } from './controller';
-import type { AssistantActions, AssistantController } from './host';
+import type { AssistantActions, AssistantController, ModelTarget } from './host';
 
 afterEach(() => { cleanup(); document.body.replaceChildren(); });
 function deferred<T>() {
@@ -13,9 +14,14 @@ function deferred<T>() {
     const promise = new Promise<T>(done => { resolve = done; });
     return { promise, resolve };
 }
+const model: ModelTarget = {
+    kind: 'tauritavern.modelTarget', mode: 'cc', id: 'test', name: 'Test model', api: 'deepseek', model: 'test-model',
+    secretRef: { key: 'api_key_deepseek', id: 'secret' },
+};
+const models = [model];
 function harness() {
     const profile = createAssistantProfile();
-    profile.model = { mode: 'connectionRef', connectionRef: 'test', modelId: 'test' };
+    profile.model = modelBindingFromTarget(model);
     let snapshot: AssistantSnapshot = {
         initialized: true, profile, profileSaved: true, busy: false, error: null,
         sessionId: 'session', messages: [], nextBeforeSeq: null, run: null, events: [], responses: [],
@@ -36,10 +42,12 @@ function harness() {
     };
     const actions: AssistantActions = {
         skill: {} as TauriTavernSkillApi,
+        models: { getSnapshot: () => models, subscribe: () => () => {} },
+        supportsReasoningEffort: () => true, presetReasoningEffort: () => 'auto',
         contentWidthPercent: 100, saveContentWidth: () => Promise.resolve(),
         copy: () => Promise.resolve(), openLink: () => Promise.resolve(), markdown: text => text,
         isMobile: () => true, shouldSendOnEnter: () => true,
-        loadOptions: () => Promise.resolve({ models: [], presets: ['Default'], tools: [], diagnostics: [], skills: [] }),
+        loadOptions: () => Promise.resolve({ presets: ['Default'], tools: [], diagnostics: [], skills: [] }),
         readResult: () => Promise.reject(new Error('No external result')), openConnections: () => {},
         confirmDeleteSession: () => Promise.resolve(true),
     };
@@ -69,12 +77,30 @@ test('IME and modified Enter never send to character chat; switching formatting 
     document.removeEventListener('keydown', globalKey); drawer.dispose();
 });
 
+test('Escape closes the composer menu before the drawer', () => {
+    document.body.innerHTML = '<div id="advanced-formatting-button"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="openDrawer"></div></div>';
+    const drawer = installAssistantDrawer();
+    const close = vi.spyOn(drawer, 'close');
+    const h = harness();
+    render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
+    const trigger = screen.getByRole('button', { name: 'Model: Test model' });
+    fireEvent.click(trigger);
+    const menu = screen.getByRole('menu', { name: 'Model' });
+    fireEvent.keyDown(menu, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(close).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(trigger);
+    fireEvent.keyDown(trigger, { key: 'Escape' });
+    expect(close).toHaveBeenCalledTimes(1);
+    drawer.dispose();
+});
+
 test('reasoning precedes the answer and stays expanded when history replaces the live preview', () => {
     const h = harness();
     const response: TauriTavernAgentRunLiveResponse = { invocationId: 'root', invocationExitPolicy: 'reply_allowed', round: 1, attempt: 1, text: 'Answer', reasoning: 'Evidence', toolIds: [] };
     h.publish({ run: { runId: 'run', active: true, status: 'calling_model' }, responses: [response] });
     const view = render(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
-    fireEvent.click(screen.getByRole('button', { name: 'Thought process' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Thinking…' }));
     h.publish({ responses: [], messages: [{ seq: 2, runId: 'run', createdAt: '', origin: { invocationId: 'root', round: 1 },
         message: { role: 'assistant', providerMetadata: null, parts: [{ type: 'text', text: 'Answer' }, { type: 'reasoning', text: 'Evidence', provider_metadata: null }] } }] });
     view.rerender(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
@@ -105,6 +131,40 @@ test('stop remains pending until a terminal update and preserves the next draft'
     drawer.dispose();
 });
 
+test('run bars keep answers visible and let older replies reopen reasoning even without tools', () => {
+    const h = harness();
+    const call: TauriTavernAgentModelContentPart = { type: 'toolCall', call: { callId: 'tool_call_0', toolId: 'extension/in-app-agent:app.evaluate', arguments: { code: 'return 1' }, providerMetadata: {} } };
+    const entry = (seq: number, runId: string, role: 'user' | 'assistant', parts: TauriTavernAgentModelContentPart[], createdAt: string): TauriTavernAgentSessionMessage => ({
+        seq, runId, createdAt, message: { role, providerMetadata: null, parts },
+    });
+    h.publish({ messages: [
+        entry(1, 'run-old', 'user', [{ type: 'text', text: 'Old question' }], '2026-09-22T09:00:00Z'),
+        entry(3, 'run-old', 'assistant', [{ type: 'reasoning', text: 'Old evidence', provider_metadata: null }, { type: 'text', text: 'Old answer' }], '2026-09-22T09:01:00Z'),
+        entry(4, 'run', 'user', [{ type: 'text', text: 'New question' }], '2026-09-22T10:00:00Z'),
+        entry(5, 'run', 'assistant', [call], '2026-09-22T10:00:05Z'),
+        entry(6, 'run', 'assistant', [{ type: 'reasoning', text: 'Evidence', provider_metadata: null }, { type: 'text', text: 'Final answer' }], '2026-09-22T10:03:18Z'),
+    ] });
+    render(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
+    const bars = screen.getAllByRole('button', { name: /Worked for/ });
+    expect(bars.length).toBe(2);
+    expect(bars[0]?.getAttribute('aria-expanded')).toBe('false');
+    expect(bars[1]?.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getAllByRole('button', { name: /Run page script/ }).length).toBe(1);
+    expect(screen.getByText('Old answer')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Thought process' }).length).toBe(1);
+    const [oldBar, bar] = bars;
+    if (!oldBar || !bar) throw new Error('Expected both run bars');
+    fireEvent.click(bar);
+    expect(screen.queryByRole('button', { name: /Run page script/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Thought process' })).toBeNull();
+    expect(screen.getByText('Final answer')).toBeTruthy();
+    fireEvent.click(bar);
+    expect(screen.getAllByRole('button', { name: /Run page script/ }).length).toBe(1);
+    expect(screen.getAllByRole('button', { name: 'Thought process' }).length).toBe(1);
+    fireEvent.click(oldBar);
+    expect(screen.getAllByRole('button', { name: 'Thought process' }).length).toBe(2);
+});
+
 test('reused provider call IDs keep each round’s result with its own call', () => {
     const h = harness();
     const entry = (seq: number, round: number, part: TauriTavernAgentModelContentPart): TauriTavernAgentSessionMessage => ({
@@ -124,20 +184,23 @@ test('reused provider call IDs keep each round’s result with its own call', ()
     expect(within(second).getByText('second result')).toBeTruthy();
 });
 
-test('paging preserves the visible anchor through pending updates and never follows an older user message', async () => {
+test('paging skips collapsed rows, preserves the visible anchor, and never follows an older user message', async () => {
     const h = harness();
     const page = deferred<void>();
     h.controller.loadOlder = () => page.promise;
     const entry = (seq: number, role: 'user' | 'assistant'): TauriTavernAgentSessionMessage => ({
         seq, runId: 'run', createdAt: '', message: { role, providerMetadata: null, parts: [{ type: 'text', text: `Message ${seq}` }] },
     });
-    h.publish({ messages: [entry(10, 'assistant')], nextBeforeSeq: 10 });
+    h.publish({ messages: [entry(9, 'assistant'), entry(10, 'assistant'), { ...entry(11, 'user'), runId: 'next-run' }], nextBeforeSeq: 9 });
     const view = render(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
     const root = screen.getByRole('region', { name: 'Conversation' });
+    const clipped = view.container.querySelector<HTMLElement>('[data-message-seq="9"]');
     const row = view.container.querySelector<HTMLElement>('[data-message-seq="10"]');
-    if (!row) throw new Error('Expected the current page');
+    if (!clipped || !row) throw new Error('Expected the current page');
     let rowContentOffset = 160;
     root.getBoundingClientRect = () => DOMRect.fromRect({ y: 100, height: 300 });
+    // A clipped descendant retains its own layout box, despite being invisible.
+    clipped.getBoundingClientRect = () => DOMRect.fromRect({ y: 140, height: 80 });
     row.getBoundingClientRect = () => DOMRect.fromRect({ y: 100 + rowContentOffset - root.scrollTop, height: 80 });
     Object.defineProperty(root, 'scrollHeight', { value: 1000 });
     root.scrollTop = 120;
@@ -161,7 +224,6 @@ test('cancelling settings releases an unconfirmed Skill import and saving waits 
     document.body.innerHTML = '<div id="advanced-formatting-button"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="openDrawer"></div></div>';
     const drawer = installAssistantDrawer();
     const h = harness();
-    h.publish({ profileSaved: false });
     let importing = false;
     const input: TauriTavernSkillImportInput = { kind: 'inlineFiles', files: [] };
     const preview: TauriTavernSkillImportPreview = {
@@ -176,8 +238,13 @@ test('cancelling settings releases an unconfirmed Skill import and saving waits 
     }, pickImportArchives: () => Promise.resolve([input]),
         discoverImports: () => Promise.resolve([input]), previewImport: () => Promise.resolve(preview) } as unknown as TauriTavernSkillApi;
     const view = render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
+    const editStreaming = () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Advanced settings' }));
+        fireEvent.click(screen.getByRole('checkbox', { name: 'Stream replies' }));
+    };
     fireEvent.click(screen.getByRole('button', { name: 'Assistant settings' }));
     await screen.findByRole('button', { name: /Skill/ });
+    editStreaming();
     fireEvent.click(screen.getByRole('button', { name: /Skill/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Import ZIP' }));
     await screen.findByText('test-skill');
@@ -186,6 +253,7 @@ test('cancelling settings releases an unconfirmed Skill import and saving waits 
     if (!footer) throw new Error('Expected settings actions');
     fireEvent.click(within(footer).getByRole('button', { name: 'Cancel' }));
     fireEvent.click(screen.getByRole('button', { name: 'Assistant settings' }));
+    editStreaming();
     expect(screen.getByRole('button', { name: 'Save settings' }).hasAttribute('disabled')).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: /Skill/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Import ZIP' }));

@@ -1,4 +1,5 @@
-import { listSavedModelTargets } from '../../../tauritavern/agent/model-target-llm-connection.js';
+import { listSavedModelTargets, modelTargetSource } from '../../../tauritavern/agent/model-target-llm-connection.js';
+import { getOmittedParams } from '../../../tauri/generation-params/omission.js';
 import type { createInAppAgentController } from './controller';
 import { tr } from './i18n';
 
@@ -22,27 +23,59 @@ export const assistantSelection = {
 export type AssistantController = ReturnType<typeof createInAppAgentController>;
 export type ModelTarget = ReturnType<typeof listSavedModelTargets>[number];
 export type SettingsOptions = {
-    models: ModelTarget[];
     presets: string[];
     tools: TauriTavernAgentToolCatalogItem[];
     diagnostics: Awaited<ReturnType<TauriTavernAgentToolsApi['list']>>['diagnostics'];
     skills: TauriTavernSkillIndexEntry[];
 };
+const MODEL_TARGET_EVENTS = ['MODEL_TARGET_CREATED', 'MODEL_TARGET_UPDATED', 'MODEL_TARGET_DELETED'] as const;
 export type AssistantContext = {
-    eventSource: { once: (event: string, listener: () => void) => void };
-    eventTypes: { APP_READY: string };
+    eventSource: {
+        once: (event: string, listener: () => void) => void;
+        on: (event: string, listener: () => void) => void;
+        removeListener: (event: string, listener: () => void) => void;
+    };
+    eventTypes: Record<'APP_READY' | typeof MODEL_TARGET_EVENTS[number], string>;
     shouldSendOnEnter: () => boolean;
     isMobile: () => boolean;
-    getPresetManager: (api: string) => { getAllPresets: () => string[]; findPreset: (name: string) => unknown };
+    getPresetManager: (api: string) => {
+        getAllPresets: () => string[];
+        findPreset: (name: string) => unknown;
+        getCompletionPresetByName: (name: string) => { reasoning_effort?: string; extensions?: Record<string, unknown> } | undefined;
+    };
     Popup: { show: { confirm: (title: string, message: string) => Promise<unknown> } };
     POPUP_RESULT: { AFFIRMATIVE: unknown };
 };
 export function requireContext(): AssistantContext {
     const context = (window as Window & { SillyTavern?: { getContext: () => AssistantContext } }).SillyTavern?.getContext();
-    if (!context?.eventSource || !context.eventTypes.APP_READY || !context.shouldSendOnEnter || !context.getPresetManager) {
+    if (!context?.eventSource?.on || !context.eventSource.removeListener || !context.eventTypes.APP_READY
+        || MODEL_TARGET_EVENTS.some(name => !context.eventTypes[name]) || !context.shouldSendOnEnter || !context.getPresetManager) {
         throw new Error('in-app-agent: SillyTavern context is unavailable');
     }
     return context;
+}
+
+function createModelTargets(context: AssistantContext) {
+    const listeners = new Set<() => void>();
+    let targets = listSavedModelTargets(context);
+    const update = () => {
+        targets = listSavedModelTargets(context);
+        listeners.forEach(listener => listener());
+    };
+    return {
+        getSnapshot: () => targets,
+        subscribe: (listener: () => void) => {
+            if (listeners.size === 0) {
+                targets = listSavedModelTargets(context);
+                MODEL_TARGET_EVENTS.forEach(name => context.eventSource.on(context.eventTypes[name], update));
+            }
+            listeners.add(listener);
+            return () => {
+                listeners.delete(listener);
+                if (listeners.size === 0) MODEL_TARGET_EVENTS.forEach(name => context.eventSource.removeListener(context.eventTypes[name], update));
+            };
+        },
+    };
 }
 
 export async function createAssistantActions(api: TauriTavernHostApi, context: AssistantContext) {
@@ -69,8 +102,20 @@ export async function createAssistantActions(api: TauriTavernHostApi, context: A
         throw new Error('in-app-agent: stored contentWidthPercent must be an integer from 40 to 100');
     }
     const converter = new lib.showdown.Converter({ tables: true, strikethrough: true, simpleLineBreaks: false });
+    // SillyTavern's preset panel declares which sources accept a reasoning effort.
+    const effortSources = document.getElementById('openai_reasoning_effort_block')?.dataset.source?.split(',');
+    if (!effortSources) throw new Error('in-app-agent: reasoning effort sources are unavailable');
     return {
         skill,
+        models: createModelTargets(context),
+        supportsReasoningEffort: (target: ModelTarget) => effortSources.includes(modelTargetSource(target)),
+        presetReasoningEffort(name: string): string | null {
+            const manager = context.getPresetManager('openai');
+            // Checked first because SillyTavern logs an error for unknown names.
+            if (!manager.getAllPresets().includes(name)) return null;
+            const preset = manager.getCompletionPresetByName(name);
+            return !preset?.reasoning_effort || getOmittedParams(preset).includes('reasoning_effort') ? 'auto' : preset.reasoning_effort;
+        },
         contentWidthPercent,
         saveContentWidth: (value: number) => store.setJson({ ...CONTENT_WIDTH, value }),
         isMobile: context.isMobile,
@@ -93,7 +138,6 @@ export async function createAssistantActions(api: TauriTavernHostApi, context: A
                 agent.tools.list({ context: 'session' }), skill.list({ scope: { kind: 'profile', profileId } }),
             ]);
             return {
-                models: listSavedModelTargets(context),
                 presets: manager.getAllPresets().filter(name => name && manager.findPreset(name) !== 'gui').sort((a, b) => a.localeCompare(b)),
                 tools: catalog.tools, diagnostics: catalog.diagnostics, skills,
             };

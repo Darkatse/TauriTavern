@@ -133,13 +133,21 @@ export function modelBindingFromTarget(target) {
 }
 
 /**
+ * The chat-completion source a target runs on; `api` may hold an alias.
+ * @param {AgentModelTarget} target
+ */
+export function modelTargetSource(target) {
+    return normalizeChatCompletionSource(target.api);
+}
+
+/**
  * @param {AgentModelTarget} target
  * @returns {TauriTavernLlmConnectionDefinition}
  */
 export function buildLlmConnectionFromModelTarget(target) {
     assertModelTargetConvertible(target);
 
-    const source = normalizeChatCompletionSource(target.api);
+    const source = modelTargetSource(target);
     /** @type {{ baseUrl?: string; sourceSpecific: Record<string, string> }} */
     const endpoint = {
         sourceSpecific: {},

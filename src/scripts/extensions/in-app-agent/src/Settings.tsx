@@ -1,50 +1,11 @@
-import { useId, useState, type Dispatch, type SetStateAction } from 'react';
-import { findModelTargetForBinding, modelBindingFromTarget } from '../../../tauritavern/agent/model-target-llm-connection.js';
+import { useState, type Dispatch, type SetStateAction } from 'react';
 import type { AssistantActions, SettingsOptions } from './host';
-import { Disclosure, ErrorNotice, Icon } from './components';
+import { Disclosure, ErrorNotice } from './components';
 import { SkillImport } from './SkillImport';
 import { toolName, toolDescription } from './Transcript';
 import { tr } from './i18n';
 
 type Profile = TauriTavernAgentProfileDefinition;
-export function ModelField({ profile, options, onChange, actions }: {
-    profile: Profile; options: SettingsOptions; onChange: (profile: Profile) => void; actions: AssistantActions;
-}) {
-    const id = useId();
-    const match = findModelTargetForBinding(options.models, profile.model);
-    const missing = profile.model.mode === 'connectionRef' && !match;
-    return <div className="ttia-field">
-        <label htmlFor={id}>{tr('model')}</label>
-        <select id={id} value={match?.id ?? (missing ? '__saved__' : '')} onChange={event => {
-            const target = options.models.find(model => model.id === event.target.value);
-            if (target) onChange({ ...profile, model: modelBindingFromTarget(target) });
-        }}>
-            <option value="" disabled>{tr('selectModel')}</option>
-            {missing && <option value="__saved__">{profile.model.modelId} · {tr('bindingMissing')}</option>}
-            {options.models.map(model => <option key={model.id} value={model.id}>{model.name || model.model}</option>)}
-        </select>
-        {options.models.length === 0 && <span className="ttia-muted">{tr('noModels')}</span>}
-        <button className="ttia-link" type="button" onClick={() => actions.openConnections()}>{tr('connections')} <Icon name="arrow-up-right-from-square" /></button>
-    </div>;
-}
-export function Setup({ options, profile, actions, busy, onSave }: {
-    options: SettingsOptions; profile: Profile; actions: AssistantActions; busy: boolean; onSave: (profile: Profile) => Promise<void>;
-}) {
-    const onlyModel = options.models.length === 1 ? options.models[0] : undefined;
-    const [draft, setDraft] = useState(() => onlyModel && profile.model.mode === 'requiresConfiguration'
-        ? { ...structuredClone(profile), model: modelBindingFromTarget(onlyModel) } : structuredClone(profile));
-    const [error, setError] = useState<unknown>(null);
-    return <div className="ttia-onboarding"><div className="ttia-emblem" aria-hidden="true">A<span /></div>
-        <h2>{tr('setupTitle')}</h2><p>{tr('setupNote')}</p>
-        <form className="ttia-setup-card" onSubmit={event => {
-            event.preventDefault(); setError(null); void onSave(draft).catch(setError);
-        }}><fieldset disabled={busy}><ModelField profile={draft} options={options} onChange={setDraft} actions={actions} />
-            <p className="ttia-muted">{tr('setupDefaults')}</p>
-            {error != null && <ErrorNotice error={error} />}
-            <button type="submit" className="ttia-primary" disabled={busy || draft.model.mode !== 'connectionRef'}>{tr(busy ? 'saving' : 'start')}<Icon name="arrow-right" /></button>
-        </fieldset></form>
-    </div>;
-}
 export function Settings({ draft, setDraft, options, actions, busy, error, dirty, contentWidth, onContentWidthChange, onSave, onCancel, refreshOptions }: {
     draft: Profile; setDraft: Dispatch<SetStateAction<Profile>>; options: SettingsOptions; actions: AssistantActions;
     contentWidth: number; onContentWidthChange: (value: number) => void;
@@ -76,9 +37,8 @@ export function Settings({ draft, setDraft, options, actions, busy, error, dirty
     }
     return <form className="ttia-settings" onSubmit={event => { event.preventDefault(); onSave(); }}>
         <fieldset className="ttia-settings-scroll" disabled={busy}>
-            <ModelField profile={draft} options={options} onChange={setDraft} actions={actions} />
             <label className="ttia-field"><span>{tr('preset')}</span><select value={draft.preset.ref?.name ?? ''}
-                onChange={event => setDraft({ ...draft, preset: { mode: 'ref', ref: { apiId: 'openai', name: event.target.value }, required: true } })}>
+                onChange={event => setDraft({ ...draft, preset: { ...draft.preset, ref: { apiId: 'openai', name: event.target.value } } })}>
                 {draft.preset.ref?.name && !options.presets.includes(draft.preset.ref.name) && <option value={draft.preset.ref.name}>{draft.preset.ref.name} · {tr('unavailable')}</option>}
                 {options.presets.map(name => <option key={name}>{name}</option>)}
             </select></label>
@@ -126,7 +86,7 @@ export function Settings({ draft, setDraft, options, actions, busy, error, dirty
         </fieldset>
         <footer className="ttia-settings-footer"><small>{tr(dirty ? 'unsaved' : 'nextMessage')}</small><div className="ttia-actions">
             <button type="button" disabled={busy} onClick={onCancel}>{tr('cancel')}</button>
-            <button type="submit" className="ttia-primary" disabled={busy || importPending || !dirty || draft.model.mode !== 'connectionRef'}>{tr(busy ? 'saving' : 'save')}</button>
+            <button type="submit" className="ttia-primary" disabled={busy || importPending || !dirty}>{tr(busy ? 'saving' : 'save')}</button>
         </div></footer>
     </form>;
 }

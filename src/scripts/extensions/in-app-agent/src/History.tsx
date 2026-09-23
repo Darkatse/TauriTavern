@@ -2,10 +2,27 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import type { AssistantSnapshot } from './controller';
 import type { AssistantActions, AssistantController } from './host';
 import { ErrorNotice, Icon, NewConversationIcon } from './components';
-import { tr } from './i18n';
+import { tr, type MessageKey } from './i18n';
 
 export function sessionTitle(session: TauriTavernAgentSession): string {
     return session.title ?? tr('untitledConversation');
+}
+
+type SessionGroup = { label: MessageKey | null; sessions: TauriTavernAgentSession[] };
+function groupSessions(sessions: TauriTavernAgentSession[], now: number): SessionGroup[] {
+    const midnight = new Date(now);
+    midnight.setHours(0, 0, 0, 0);
+    const todayStart = midnight.getTime();
+    const yesterdayStart = todayStart - 86_400_000;
+    const weekStart = todayStart - 6 * 86_400_000;
+    const buckets: [MessageKey, number, TauriTavernAgentSession[]][] = [
+        ['groupToday', todayStart, []], ['groupYesterday', yesterdayStart, []], ['groupWeek', weekStart, []], ['groupOlder', -Infinity, []]];
+    for (const session of sessions) {
+        const time = new Date(session.lastUsedAt ?? session.createdAt).getTime();
+        const bucket = buckets.find(([, start]) => time >= start);
+        bucket?.[2].push(session);
+    }
+    return buckets.filter(([, , list]) => list.length > 0).map(([label, , list]) => ({ label, sessions: list }));
 }
 
 export function History({ snapshot, controller, actions, onOpen, onNew }: {
@@ -40,7 +57,7 @@ export function History({ snapshot, controller, actions, onOpen, onNew }: {
     }
     function closeMenu(event: KeyboardEvent) {
         if (event.key === 'Escape') {
-            event.stopPropagation();
+            event.preventDefault();
             event.currentTarget.closest('.ttia-session-menu')?.querySelector<HTMLButtonElement>(':scope > button')?.focus();
             setMenu(null);
         }
@@ -71,41 +88,45 @@ export function History({ snapshot, controller, actions, onOpen, onNew }: {
         {sessions.length === 0 ? <div className="ttia-history-empty"><Icon name="comments" />
             <p>{tr(search ? 'noMatchingConversations' : 'noConversations')}</p>
             {!search && <span>{tr('historyEmptyNote')}</span>}
-        </div> : <ul className="ttia-session-list">
-            {sessions.map(session => {
-                const running = snapshot.activeRun?.sessionId === session.id || snapshot.sendingSessionId === session.id;
-                const current = snapshot.sessionId === session.id;
-                const timestamp = session.lastUsedAt ?? session.createdAt;
-                const at = new Date(timestamp);
-                return <li key={session.id} className="ttia-session-row" data-current={current}>
-                    {editing?.id === session.id ? <form className="ttia-session-rename" onSubmit={event => { event.preventDefault(); void rename(); }}>
-                        <input ref={input} aria-label={tr('conversationTitle')} value={editing.title} disabled={working !== null}
-                            onChange={event => setEditing({ id: session.id, title: event.target.value })} onKeyDown={event => {
-                                if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.stopPropagation(); setEditing(null); }
-                            }} />
-                        <button type="submit" className="ttia-icon-button" aria-label={tr('saveTitle')} disabled={!editing.title.trim() || working !== null || snapshot.busy}><Icon name="check" /></button>
-                        <button type="button" className="ttia-icon-button" aria-label={tr('cancel')} disabled={working !== null} onClick={() => setEditing(null)}><Icon name="xmark" /></button>
-                    </form> : <>
-                        <button type="button" className="ttia-session-open" aria-current={current ? 'page' : undefined} onClick={() => onOpen(session.id)}>
-                            <span className="ttia-session-mark"><Icon name="comment" /></span>
-                            <strong className="ttia-session-title" title={sessionTitle(session)}>{sessionTitle(session)}</strong>
-                            {current && <span className="ttia-session-tag">{tr('currentConversation')}</span>}
-                            {running && <span className="ttia-session-tag is-running"><span className="ttia-pulse" />{tr('runningConversation')}</span>}
-                            <time className="ttia-session-time" dateTime={timestamp} title={date.format(at)}>{displayTime(at)}</time>
-                        </button>
-                        <div className="ttia-session-menu" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setMenu(null); }}>
-                            <button type="button" className="ttia-icon-button" aria-label={tr('conversationActions', { title: sessionTitle(session) })}
-                                aria-expanded={menu === session.id} disabled={working !== null || snapshot.busy}
-                                onKeyDown={closeMenu} onClick={() => setMenu(menu === session.id ? null : session.id)}><Icon name="ellipsis" /></button>
-                            {menu === session.id && <div className="ttia-session-menu-items">
-                                <button type="button" onKeyDown={closeMenu} onClick={() => { setMenu(null); setEditing({ id: session.id, title: sessionTitle(session) }); }}><Icon name="pen" />{tr('renameConversation')}</button>
-                                <button type="button" className="ttia-danger" disabled={running} title={running ? tr('stopBeforeDelete') : undefined}
-                                    onKeyDown={closeMenu} onClick={() => { void remove(session); }}><Icon name="trash-can" />{tr('deleteConversation')}</button>
-                            </div>}
-                        </div>
-                    </>}
-                </li>;
-            })}
-        </ul>}
+        </div> : <div className="ttia-session-groups">
+            {(search ? [{ label: null, sessions }] : groupSessions(sessions, now)).map(group => <section key={group.label ?? 'results'} className="ttia-session-group">
+                {group.label && <h3>{tr(group.label)}</h3>}
+                <ul className="ttia-session-list">
+                    {group.sessions.map(session => {
+                        const running = snapshot.activeRun?.sessionId === session.id || snapshot.sendingSessionId === session.id;
+                        const current = snapshot.sessionId === session.id;
+                        const timestamp = session.lastUsedAt ?? session.createdAt;
+                        const at = new Date(timestamp);
+                        return <li key={session.id} className="ttia-session-row" data-current={current}>
+                            {editing?.id === session.id ? <form className="ttia-session-rename" onSubmit={event => { event.preventDefault(); void rename(); }}>
+                                <input ref={input} aria-label={tr('conversationTitle')} value={editing.title} disabled={working !== null}
+                                    onChange={event => setEditing({ id: session.id, title: event.target.value })} onKeyDown={event => {
+                                        if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.preventDefault(); setEditing(null); }
+                                    }} />
+                                <button type="submit" className="ttia-icon-button" aria-label={tr('saveTitle')} disabled={!editing.title.trim() || working !== null || snapshot.busy}><Icon name="check" /></button>
+                                <button type="button" className="ttia-icon-button" aria-label={tr('cancel')} disabled={working !== null} onClick={() => setEditing(null)}><Icon name="xmark" /></button>
+                            </form> : <>
+                                <button type="button" className="ttia-session-open" aria-current={current ? 'page' : undefined} onClick={() => onOpen(session.id)}>
+                                    <strong className="ttia-session-title" title={sessionTitle(session)}>{sessionTitle(session)}</strong>
+                                    {current && <span className="ttia-session-tag">{tr('currentConversation')}</span>}
+                                    {running && <span className="ttia-session-tag is-running"><span className="ttia-pulse" />{tr('runningConversation')}</span>}
+                                    <time className="ttia-session-time" dateTime={timestamp} title={date.format(at)}>{displayTime(at)}</time>
+                                </button>
+                                <div className="ttia-session-menu" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setMenu(null); }}>
+                                    <button type="button" className="ttia-icon-button" aria-label={tr('conversationActions', { title: sessionTitle(session) })}
+                                        aria-expanded={menu === session.id} disabled={working !== null || snapshot.busy}
+                                        onKeyDown={closeMenu} onClick={() => setMenu(menu === session.id ? null : session.id)}><Icon name="ellipsis" /></button>
+                                    {menu === session.id && <div className="ttia-session-menu-items">
+                                        <button type="button" onKeyDown={closeMenu} onClick={() => { setMenu(null); setEditing({ id: session.id, title: sessionTitle(session) }); }}><Icon name="pen" />{tr('renameConversation')}</button>
+                                        <button type="button" className="ttia-danger" disabled={running} title={running ? tr('stopBeforeDelete') : undefined}
+                                            onKeyDown={closeMenu} onClick={() => { void remove(session); }}><Icon name="trash-can" />{tr('deleteConversation')}</button>
+                                    </div>}
+                                </div>
+                            </>}
+                        </li>;
+                    })}
+                </ul>
+            </section>)}
+        </div>}
     </section>;
 }
