@@ -78,6 +78,46 @@ test('short refs are not reused when the page module reloads', async () => {
     expect(afterReload.snapshot({ root: newRef }).tree).toContain('After reload');
 });
 
+test('selectors reach a replaced region beyond pagination without choosing hidden or ambiguous copies', async () => {
+    document.body.innerHTML = `${'<button>Background action</button>'.repeat(110)}
+        <div style="display:none"><section class="phone"><button>Hidden copy</button></section></div>
+        <div data-tt-sensitive><section class="phone"><button id="private-action">Private copy</button></section></div>
+        <section class="phone" aria-label="Phone"><button>Open</button></section>`;
+    const observation = createObservation();
+    observation.enterRun('run');
+    expect(observation.snapshot({ depth: 6 }).tree).not.toContain('"Phone"');
+    const page = observation.snapshot({ selector: '.phone' });
+    const openRef = ref(page.tree, '"Open"');
+    let clicks = 0;
+    screen.getByRole('button', { name: 'Open' }).onclick = () => { clicks++; };
+    await expect(interact({ action: 'click', ref: openRef, selector: '.phone button' }, observation, signal())).rejects.toThrow();
+    expect(clicks).toBe(0);
+    const phone = screen.getByRole('region', { name: 'Phone' });
+    phone.outerHTML = '<section class="phone" aria-label="Phone"><button>Save</button></section>';
+    await expect(interact({ action: 'click', ref: openRef }, observation, signal())).rejects.toThrow();
+
+    const save = screen.getByRole('button', { name: 'Save' });
+    save.onclick = () => { clicks++; save.textContent = 'Saved'; };
+    hit = save;
+    await interact({ action: 'click', selector: '.phone button' }, observation, signal());
+    expect(save.textContent).toBe('Saved');
+    expect(clicks).toBe(1);
+    const fresh = observation.snapshot({ selector: '.phone' });
+    expect(fresh.tree).toContain('"Saved"');
+    expect(() => observation.snapshot({ selector: '#private-action' })).toThrow();
+    await expect(interact({ action: 'click', selector: '#private-action' }, observation, signal())).rejects.toThrow();
+
+    document.body.insertAdjacentHTML('beforeend', '<section class="phone" aria-label="Other phone"><button>Other action</button></section>');
+    expect(() => observation.snapshot({ selector: '.phone' })).toThrow();
+    await expect(interact({ action: 'click', selector: '.phone button' }, observation, signal())).rejects.toThrow();
+    expect(clicks).toBe(1);
+    await interact({ action: 'click', root: ref(fresh.tree, '"Phone"'), selector: 'button' }, observation, signal());
+    expect(clicks).toBe(2);
+    const scoped = observation.snapshot({ root: ref(fresh.tree, '"Phone"'), selector: 'button' });
+    expect(scoped.tree).toContain('"Saved"');
+    expect(scoped.tree).not.toContain('Background action');
+});
+
 test('long formatted messages leave embedded controls and following swipes actionable without text pagination', async () => {
     const paragraph = '<p>故事正文' + '内容'.repeat(350) + '<strong>强调</strong></p>';
     document.body.innerHTML = `<section aria-label="Chat">
@@ -105,7 +145,7 @@ test('long formatted messages leave embedded controls and following swipes actio
     expect(snapshot.tree).toContain('11/11');
     expect(snapshot.tree).toContain('第二条消息 仍然可读');
     expect(snapshot.tree.length).toBeLessThan(3_000);
-    expect(observation.resolve(ref(snapshot.tree, 'Details'))).toBe(screen.getByRole('link'));
+    expect(observation.resolve({ ref: ref(snapshot.tree, 'Details') }).element).toBe(screen.getByRole('link'));
     for (const name of ['Embedded action', 'Previous swipe']) {
         const button = screen.getByRole('button', { name });
         button.onclick = () => { button.textContent = 'Done'; };
@@ -161,10 +201,9 @@ test('fill updates React controlled state, not just the DOM value', async () => 
     render(<Form />);
     const observation = createObservation();
     observation.enterRun('run');
-    const tree = observation.snapshot({}).tree;
     hit = screen.getByRole('textbox');
     await act(async () => {
-        await interact({ action: 'fill', ref: ref(tree, '"Text"'), value: 'after' }, observation, signal());
+        await interact({ action: 'fill', selector: 'input[aria-label="Text"]', value: 'after' }, observation, signal());
     });
     expect(screen.getByRole('status').textContent).toBe('after');
 });

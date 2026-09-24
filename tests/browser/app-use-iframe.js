@@ -18,7 +18,7 @@ function ref(page, name) {
 }
 
 async function rejected(action, message) {
-    try { await action(); } catch { return; }
+    try { await action(); } catch (error) { return error; }
     throw new Error(message);
 }
 
@@ -48,24 +48,35 @@ run.onclick = async () => {
     const act = (page, name, args) => interact({ ...args, ref: ref(page, name) }, observation, signal);
     try {
         const frame = await mountFrame(fixture, 'Embedded form', `<!doctype html>
+            <section aria-label="Child form">
             <label>Child text<input oninput="document.querySelector('output').value=this.value"></label>
-            <output>before</output>`);
+            <output>before</output></section>`);
         const overview = main();
         assert(!overview.tree.includes('Child text'), 'overview entered a frame implicitly');
+        const filled = await interact({ action: 'fill', root: ref(overview, 'Embedded form'), selector: 'input', value: 'changed' }, observation, signal);
+        assert(filled.observed.connected, 'selector readback used the main document for an iframe target');
         const page = enter(overview, 'Embedded form');
         const child = frame.contentDocument;
-        await act(page, 'Child text', { action: 'fill', value: 'changed' });
         assert(child.querySelector('output').value === 'changed', 'child did not receive the input event');
 
         const childRef = ref(page, 'Child text');
+        const childFormRef = ref(page, 'Child form');
         const overlay = document.createElement('div');
+        overlay.id = 'app-use-blocker';
         overlay.style.cssText = 'position:fixed;inset:0;background:#ffffff01;z-index:99999';
         document.body.append(overlay);
         try {
-            await rejected(() => interact({ action: 'fill', ref: childRef, value: 'blocked' }, observation, signal), 'outer overlay was bypassed');
+            const error = await rejected(() => interact({ action: 'fill', root: childFormRef, selector: 'input', value: 'blocked' }, observation, signal), 'outer overlay was bypassed');
+            assert(error.message.includes('app-use-blocker') && error.message.includes('main page'), 'diagnostic did not identify the outer obstruction');
             assert(child.querySelector('output').value === 'changed', 'blocked action changed the child');
         }
         finally { overlay.remove(); }
+        frame.style.transform = 'translateY(-1000px)';
+        try {
+            const error = await rejected(() => interact({ action: 'fill', ref: childRef, value: 'outside' }, observation, signal), 'offscreen frame was operated');
+            assert(error.message.includes('outside the visible area') && error.message.includes('main page'), 'offscreen diagnostic lost the containing page');
+            assert(child.querySelector('output').value === 'changed', 'offscreen action changed the child');
+        } finally { frame.style.transform = 'scale(.85)'; }
         await act(page, 'Child text', { action: 'fill', value: 'recovered' });
         assert(child.querySelector('output').value === 'recovered', 'action did not recover after removing the overlay');
         reports.push('PASS: explicit entry; outer obstruction prevents mutation and permits recovery');
@@ -73,13 +84,25 @@ run.onclick = async () => {
         const adopted = child.createElement('input');
         adopted.setAttribute('aria-label', 'Adopted input');
         fixture.prepend(adopted);
-        await act(main(), 'Adopted input', { action: 'fill', value: 'adopted' });
-        assert(adopted.value === 'adopted', 'adopted input failed');
+        const mainResult = await interact({ action: 'fill', selector: 'input[aria-label="Adopted input"]', value: 'adopted' }, observation, signal);
+        assert(adopted.value === 'adopted' && mainResult.observed.connected, 'unscoped selector did not use the main document');
+        await act(page, 'Child text', { action: 'fill', value: 'after main-page action' });
+        assert(child.querySelector('output').value === 'after main-page action', 'selector changed the existing snapshot scope');
+
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = 'width:0;height:0';
+        wrapper.innerHTML = `<iframe title="Zero frame" style="width:0;height:0;border:0"></iframe>
+            <button style="position:fixed;left:20px;top:70px">Floating child</button>`;
+        fixture.append(wrapper);
+        const layout = main();
+        assert(!layout.tree.includes('Zero frame') && layout.tree.includes('Floating child'), 'zero-size filtering removed a visible descendant or exposed an empty frame');
+        wrapper.remove();
 
         child.body.replaceChildren();
         const nested = await mountFrame(child.body, 'Nested page', `<!doctype html><style>body{margin:0}#chat{height:60px;overflow:auto}</style>
             <input aria-label="Nested text"><div id="chat" role="region" aria-label="Local scroller"><div style="height:400px">Content</div></div>`, { blob: true });
-        let inner = enter(enter(main(), 'Embedded form'), 'Nested page');
+        const outer = enter(main(), 'Embedded form');
+        let inner = observation.snapshot({ root: ref(outer, 'Nested page'), selector: 'body', depth: 6 });
         await act(inner, 'Nested text', { action: 'fill', value: 'nested' });
         const oldInput = nested.contentDocument.querySelector('input');
         assert(oldInput.value === 'nested', 'nested input failed');

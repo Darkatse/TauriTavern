@@ -86,11 +86,22 @@ export function createSemantics() {
     function isVisible(element: Element): boolean {
         return !excludesSubtree(element)
             && getStyle(element).visibility === 'visible'
-            && element.getClientRects().length > 0;
+            && Array.from(element.getClientRects()).some(rect => rect.width > 0 && rect.height > 0);
+    }
+
+    // Direct roots must respect the same ancestor boundaries as a walk from the document.
+    // A zero-size wrapper alone is not a boundary: its positioned children may still be visible.
+    function isWithinObservedContent(element: Element): boolean {
+        for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+            if (excludesSubtree(parent) || readOmissionReason(parent)) return false;
+            if (isHtmlTag(parent, 'details') && !parent.open
+                && !parent.querySelector(':scope > summary')?.contains(element)) return false;
+        }
+        return true;
     }
 
     function requireFrameVisible(frame: HTMLIFrameElement) {
-        if (!isVisible(frame) || frame.closest('[aria-hidden="true"],[data-tt-sensitive]')) {
+        if (!isVisible(frame) || !isWithinObservedContent(frame) || isSensitive(frame)) {
             throw new Error('The embedded page is hidden or no longer displayed. Call app.snapshot with {} and open or restore its visible panel before entering it again.');
         }
     }
@@ -112,7 +123,7 @@ export function createSemantics() {
         const range = node.ownerDocument.createRange();
         range.setStart(node, 0);
         range.setEnd(node, Math.min(node.length, MAX_PREVIEW));
-        return range.getClientRects().length > 0;
+        return Array.from(range.getClientRects()).some(rect => rect.width > 0 && rect.height > 0);
     }
 
     function isScrollable(element: Element): boolean {
@@ -227,7 +238,7 @@ export function createSemantics() {
         return result;
     }
 
-    return { excludesSubtree, isVisible, requireFrameVisible, isTextVisible, isScrollable, readRole, readOmissionReason, describeElement };
+    return { excludesSubtree, isVisible, isWithinObservedContent, requireFrameVisible, isTextVisible, isScrollable, readRole, readOmissionReason, describeElement };
 }
 
 export type Semantics = ReturnType<typeof createSemantics>;

@@ -11,6 +11,8 @@ export const MAX_DEPTH = 6;
 const SNAPSHOT_SEQUENCE_KEY = 'tauritavern:in_app_agent_snapshot_sequence';
 
 type ToolArguments = Record<string, TauriTavernJsonValue>;
+export type ElementTarget = { ref: string } | { selector: string; root?: string | undefined };
+type ResolvedTarget = { element: Element; scope: DocumentScope };
 type TextPreview = { value: string; truncated: boolean };
 type SemanticAncestor = { element: Element; depth: number; textPreview?: TextPreview };
 type SnapshotLine = { text: string; preview?: TextPreview | undefined };
@@ -51,7 +53,7 @@ export function createObservation() {
         continuation = null;
     }
 
-    function resolve(ref: string): Element {
+    function resolveRef(ref: string): ResolvedTarget {
         const element = references.get(ref);
         if (!element) {
             throw new Error('This ref is not in the current snapshot. Call app.snapshot and use a ref from its returned page.');
@@ -60,7 +62,21 @@ export function createObservation() {
         if (!element.isConnected || element.ownerDocument !== scope.document) {
             throw new Error('The target is no longer in this page. Call app.snapshot to inspect the current interface before acting.');
         }
-        return element;
+        if (!createSemantics().isWithinObservedContent(element)) {
+            throw new Error('The target is inside a hidden or omitted region. Call app.snapshot to find its visible panel or restore control before acting.');
+        }
+        return { element, scope };
+    }
+
+    /** Locating an element does not replace snapshot refs or change the observed document. */
+    function resolve(target: ElementTarget): ResolvedTarget {
+        if ('ref' in target) return resolveRef(target.ref);
+        const semantics = createSemantics();
+        const base = target.root === undefined
+            ? { element: document.documentElement, scope: mainDocumentScope() }
+            : resolveRef(target.root);
+        const region = enterFrame(base, semantics);
+        return { element: selectElement(region.element, target.selector, semantics), scope: region.scope };
     }
 
     function snapshot(args: ToolArguments) {
@@ -81,14 +97,14 @@ export function createObservation() {
     }
 
     function startOrResumeTraversal(args: ToolArguments): Traversal {
-        const hasUnexpectedField = Object.keys(args).some(key => !['root', 'depth', 'cursor'].includes(key));
+        const hasUnexpectedField = Object.keys(args).some(key => !['root', 'selector', 'depth', 'cursor'].includes(key));
         if (hasUnexpectedField) {
-            throw new Error('app.snapshot accepts root and depth, or cursor alone. Use {} for an overview.');
+            throw new Error('app.snapshot accepts root, selector and depth, or cursor alone. Use {} for an overview.');
         }
 
         if (args.cursor !== undefined) {
-            if (args.root !== undefined || args.depth !== undefined) {
-                throw new Error('Pass cursor alone to continue reading. To inspect a region with root or depth, omit cursor.');
+            if (args.root !== undefined || args.selector !== undefined || args.depth !== undefined) {
+                throw new Error('Pass cursor alone to continue reading. To inspect a region with root, selector or depth, omit cursor.');
             }
             if (typeof args.cursor !== 'string' || args.cursor !== continuation?.token) {
                 throw new Error('This cursor is invalid or expired. Call app.snapshot without cursor to observe the current interface.');
@@ -107,22 +123,21 @@ export function createObservation() {
         if (args.root !== undefined && typeof args.root !== 'string') {
             throw new Error('root must be a ref string from the latest app.snapshot page. Omit root for an overview.');
         }
+        if (args.selector !== undefined && (typeof args.selector !== 'string' || !args.selector.trim())) {
+            throw new Error('selector must be a non-empty CSS selector for a known target. Omit it to explore with an overview.');
+        }
         const depth = args.depth ?? 2;
         if (typeof depth !== 'number' || !Number.isInteger(depth) || depth < 1 || depth > MAX_DEPTH) {
             throw new Error(`depth must be an integer between 1 and ${MAX_DEPTH}.`);
         }
 
-        let nextScope = args.root === undefined ? mainDocumentScope() : scope;
-        let root = typeof args.root === 'string' ? resolve(args.root) : nextScope.document.documentElement;
-        if (isHtmlTag(root, 'iframe')) {
-            const semantics = createSemantics();
-            semantics.requireFrameVisible(root);
-            const childDocument = root.contentDocument;
-            if (!semantics.readOmissionReason(root) && childDocument?.body) {
-                nextScope = { document: childDocument, frames: [...nextScope.frames, root] };
-                root = childDocument.documentElement;
-            }
+        let target: ResolvedTarget = { element: document.documentElement, scope: mainDocumentScope() };
+        if (typeof args.selector === 'string') {
+            target = resolve({ selector: args.selector, root: args.root });
+        } else if (args.root !== undefined) {
+            target = resolveRef(args.root);
         }
+        const { element: root, scope: nextScope } = enterFrame(target, createSemantics());
         const isDocumentRoot = root === nextScope.document.documentElement || root === nextScope.document.body;
         const dialogs = isDocumentRoot
             ? Array.from(nextScope.document.querySelectorAll('dialog[open]')).slice(0, MAX_NODES)
@@ -137,7 +152,7 @@ export function createObservation() {
         };
     }
 
-    return { enterRun, resolve, snapshot, clearCursor, get scope() { return scope; } };
+    return { enterRun, resolve, snapshot, clearCursor };
 }
 
 function requireScope(scope: DocumentScope) {
@@ -147,6 +162,49 @@ function requireScope(scope: DocumentScope) {
 }
 
 export type Observation = ReturnType<typeof createObservation>;
+
+function enterFrame(target: ResolvedTarget, semantics: Semantics): ResolvedTarget {
+    const { element, scope } = target;
+    if (isHtmlTag(element, 'iframe')) {
+        semantics.requireFrameVisible(element);
+        const childDocument = element.contentDocument;
+        if (!semantics.readOmissionReason(element) && childDocument?.body) {
+            return {
+                element: childDocument.documentElement,
+                scope: { document: childDocument, frames: [...scope.frames, element] },
+            };
+        }
+    }
+    return target;
+}
+
+/** Snapshot and interaction share one rule for selecting an observable element. */
+function selectElement(root: Element, selector: string, semantics: Semantics): Element {
+    if (semantics.readOmissionReason(root)) {
+        throw new Error('This region\'s contents are omitted and cannot be searched. Inspect its snapshot for the reason.');
+    }
+    const container = root === root.ownerDocument.documentElement ? root.ownerDocument : root;
+    let matches: NodeListOf<Element>;
+    try {
+        matches = container.querySelectorAll(selector);
+    } catch {
+        throw new Error('Invalid CSS selector. Use a valid selector for a known target, or omit selector to explore the interface.');
+    }
+    let selected: Element | undefined;
+    for (const element of matches) {
+        if (!semantics.isVisible(element) || !semantics.isWithinObservedContent(element)) continue;
+        if (selected) {
+            throw new Error('More than one observable element matches selector. Use a more specific selector or a narrower root; no target was selected.');
+        }
+        selected = element;
+    }
+    if (!selected) {
+        throw new Error(matches.length
+            ? 'Matching elements are hidden, have no visible size, or belong to omitted content. Observe the main page to find their visible panel or restore control.'
+            : 'No element matches selector in this region. Check the selector and its containing page, or omit selector to explore. Selectors do not search inside other iframes.');
+    }
+    return selected;
+}
 
 function nextSnapshotPrefix(): string {
     // Persist the sequence so reloading the page cannot reuse refs still present in conversation history.

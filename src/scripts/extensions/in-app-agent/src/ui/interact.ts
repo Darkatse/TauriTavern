@@ -1,19 +1,20 @@
 import { createSemantics, isCheckableInput, isDisabled } from './semantics';
 import type { Semantics } from './semantics';
-import type { Observation } from './snapshot';
+import type { ElementTarget, Observation } from './snapshot';
 import { documentWindow, isHTMLElement, isHtmlTag, isInScope } from './document';
 import type { DocumentScope } from './document';
-import { inputPoint } from './geometry';
+import { inspectInputSurface } from './geometry';
 import type { InteractionPoint } from './geometry';
 export type { InteractionPoint } from './geometry';
 
 type ToolArguments = Record<string, TauriTavernJsonValue>;
-type Interaction =
-    | { action: 'click'; ref: string }
-    | { action: 'fill'; ref: string; value: string }
-    | { action: 'select'; ref: string; value: string }
-    | { action: 'set_checked'; ref: string; checked: boolean }
-    | { action: 'scroll'; ref: string; direction: 'up' | 'down' };
+type Interaction = { target: ElementTarget } & (
+    | { action: 'click' }
+    | { action: 'fill'; value: string }
+    | { action: 'select'; value: string }
+    | { action: 'set_checked'; checked: boolean }
+    | { action: 'scroll'; direction: 'up' | 'down' }
+);
 type ChatScroller = (options: ScrollToOptions) => void;
 type InteractionFeedback = (point: InteractionPoint) => void;
 
@@ -28,19 +29,23 @@ const FILLABLE_INPUT_TYPES = new Set(['text', 'search', 'email', 'url', 'tel', '
 
 export async function interact(args: ToolArguments, observation: Observation, signal: AbortSignal, feedback?: InteractionFeedback) {
     const request = parseInteraction(args);
+    let target = observation.resolve(request.target);
     let scrollChat: ChatScroller | undefined;
 
-    if (request.action === 'scroll' && observation.resolve(request.ref) === document.getElementById('chat')) {
+    if (request.action === 'scroll' && target.element === document.getElementById('chat')) {
         scrollChat = await loadChatScroller();
     }
 
-    // Loading the page module can yield. Resolve again before checking or changing the target.
     if (signal.aborted) {
         throw new Error('The operation was cancelled before acting.');
     }
-    const element = requireInteractiveElement(observation.resolve(request.ref), observation.scope);
-    const scope = observation.scope;
-    const apply = prepareAction(request, element, scope, scrollChat, feedback);
+    // Loading the page module can yield. Locate and validate again before acting.
+    if (scrollChat) target = observation.resolve(request.target);
+    const { scope } = target;
+    const element = requireInteractiveElement(target.element, scope);
+    // A selector may match a different element after the awaited import.
+    const chatScroller = element === document.getElementById('chat') ? scrollChat : undefined;
+    const apply = prepareAction(request, element, scope, chatScroller, feedback);
     observation.clearCursor();
 
     // Preparation only checks the target and signals visual feedback. apply changes application state.
@@ -60,13 +65,10 @@ function parseInteraction(args: ToolArguments): Interaction {
     if (typeof args.action !== 'string' || !Object.hasOwn(ACTION_FIELDS, args.action)) {
         throw new Error('Choose click, fill, select, set_checked or scroll.');
     }
-    if (typeof args.ref !== 'string') {
-        throw new Error('ref must be a string copied from the latest app.snapshot page.');
-    }
 
     const action = args.action as Interaction['action'];
-    const ref = args.ref;
-    const allowedFields = ['action', 'ref', ...ACTION_FIELDS[action]];
+    const target = parseTarget(args);
+    const allowedFields = ['action', 'ref', 'selector', 'root', ...ACTION_FIELDS[action]];
     const unexpectedFields = Object.keys(args).filter(key => !allowedFields.includes(key));
     if (unexpectedFields.length > 0) {
         throw new Error(`${action} does not accept ${unexpectedFields.join(', ')}. Pass only ${allowedFields.join(', ')}.`);
@@ -74,24 +76,48 @@ function parseInteraction(args: ToolArguments): Interaction {
 
     switch (action) {
         case 'click':
-            return { action, ref };
+            return { action, target };
         case 'fill':
         case 'select':
             if (typeof args.value !== 'string') {
                 throw new Error(`${action} requires a string value.`);
             }
-            return { action, ref, value: args.value };
+            return { action, target, value: args.value };
         case 'set_checked':
             if (typeof args.checked !== 'boolean') {
                 throw new Error('set_checked requires a boolean checked value.');
             }
-            return { action, ref, checked: args.checked };
+            return { action, target, checked: args.checked };
         case 'scroll':
             if (args.direction !== 'up' && args.direction !== 'down') {
                 throw new Error('scroll direction must be up or down.');
             }
-            return { action, ref, direction: args.direction };
+            return { action, target, direction: args.direction };
     }
+}
+
+function parseTarget(args: ToolArguments): ElementTarget {
+    const hasRef = args.ref !== undefined;
+    const hasSelector = args.selector !== undefined;
+    if (hasRef === hasSelector) {
+        throw new Error('Provide exactly one of ref or selector. Use a ref from the latest snapshot, or a known CSS selector.');
+    }
+    if (hasRef) {
+        if (typeof args.ref !== 'string' || !args.ref.trim()) {
+            throw new Error('ref must be a non-empty string copied from the latest app.snapshot page.');
+        }
+        if (args.root !== undefined) {
+            throw new Error('root is only used with selector. A ref already identifies its element and page; omit root.');
+        }
+        return { ref: args.ref };
+    }
+    if (typeof args.selector !== 'string' || !args.selector.trim()) {
+        throw new Error('selector must be a non-empty CSS selector for a known target. Use app.snapshot if the target is unclear.');
+    }
+    if (args.root !== undefined && typeof args.root !== 'string') {
+        throw new Error('root must be a ref from the latest snapshot. Omit root to search the main document.');
+    }
+    return { selector: args.selector, root: args.root };
 }
 
 async function loadChatScroller(): Promise<ChatScroller> {
@@ -238,12 +264,14 @@ function clickCandidates(element: HTMLElement): HTMLElement[] {
 }
 
 function requireInputSurface(candidates: HTMLElement[], scope: DocumentScope, semantics: Semantics, feedback?: InteractionFeedback): HTMLElement {
+    const reasons: string[] = [];
     for (const candidate of candidates) {
-        const point = inputPoint(candidate, scope, semantics);
-        if (point) {
-            feedback?.(point);
+        const surface = inspectInputSurface(candidate, scope, semantics);
+        if ('point' in surface) {
+            feedback?.(surface.point);
             return candidate;
         }
+        reasons.push(surface.reason);
     }
-    throw new Error('No action was performed: the target is hidden, outside the visible area, or covered. Scroll its region or close a covering panel, then observe again. For an obstruction outside this embedded page, call app.snapshot with {} to inspect the main page.');
+    throw new Error(`No action was performed. ${reasons.join(' ')} For a panel outside an embedded page, call app.snapshot with {} to inspect the main page.`);
 }
