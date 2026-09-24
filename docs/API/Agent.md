@@ -175,7 +175,7 @@ await agent.tools.setEnabled('extension/my-extension:read_auto_reply_settings', 
 
 回调接收 JSON 对象参数与执行上下文，其中 `target` 指向本次 Run 所属的 Chat 或 Session，与当前 UI 无关；`signal: AbortSignal` 提供合作式取消，不回滚已发生的操作。完整字段见 [类型定义](../../src/types.d.ts)。
 
-函数可异步返回 JSON 值，顶层 `undefined` 按 `null` 返回；抛错或无法通过 JSON IPC 传输时报告工具错误。等待可取消，60 秒无回执则结束本次运行，不自动重发。
+函数可异步返回 JSON 值，顶层 `undefined` 按 `null` 返回；抛错或无法通过 JSON IPC 传输时报告工具错误。60 秒无回执时请求取消该调用，将“执行结果未知”作为工具错误交给模型继续处理，不自动重发；脚本可能仍在运行，后续操作应先核查状态。用户主动取消仍结束 Run。
 
 ## 保留策略
 

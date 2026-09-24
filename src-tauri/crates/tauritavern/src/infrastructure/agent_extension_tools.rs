@@ -183,9 +183,9 @@ impl ExtensionTools for AgentExtensionTools {
             _ = cancel.wait_for(|cancelled| *cancelled) => (Err(DomainError::cancelled(
                 "Extension tool call cancelled; already performed operations are not rolled back",
             )), true),
-            _ = tokio::time::sleep(CALL_TIMEOUT) => (Err(DomainError::InternalError(
-                "extension.tool_timeout: no tool result was received within 60 seconds; the operation may have executed".into(),
-            )), true),
+            _ = tokio::time::sleep(CALL_TIMEOUT) => (Ok(ExtensionToolReply::Error {
+                message: "extension.tool_timeout: no tool result was received within 60 seconds. Cancellation was requested, but the operation may have partially completed or may still be running. Inspect the affected state before retrying, or choose another approach.".into(),
+            }), true),
         };
         self.state
             .lock()
