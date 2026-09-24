@@ -183,7 +183,7 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
     - 目的：避免 SPresets 等脚本在抽屉关闭时找不到 `#saved_regex_scripts` 触发 `MutationObserver.observe(target not Node)`。
 - `src/tauri/main/adapters/panel-runtime/top-settings-panel-parking.js`
   - 左栏 pinned 锚点分两类，判据不同：
-    - `LEFT_NAV_REQUIRED_ANCHORS`（所有档位，正确性）：**永远在线的代码会读写的 DOM 不允许被 park**。当前是 `#range_block_openai` —— `onModelChange` 位于从不 park 的 `#rm_api_block`，却把 `#openai_max_context` 的 `max` 当暂存读回，被 park 即得到 `NaN`。
+    - `LEFT_NAV_REQUIRED_ANCHORS`（所有档位，正确性）：面板外代码读取的节点保持在线，包括 `onModelChange` 读取边界值的 `#range_block_openai`，以及助手读取支持来源的 `#openai_reasoning_effort_block`。
     - `LEFT_NAV_COMPAT_ANCHORS`（仅 `compat`，兼容让步）：`#openai_api-presets`、`#completion_prompt_manager`，让第三方脚本在抽屉关闭时仍能选中。
 
 ---

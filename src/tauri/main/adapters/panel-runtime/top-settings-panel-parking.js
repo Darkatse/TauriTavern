@@ -47,10 +47,10 @@ const LEFT_NAV_MAIN_API_BLOCKS = Object.freeze({
     },
 });
 
-// Every profile: openai.js `onModelChange` runs from the never-parked #rm_api_block
-// and reads these controls' `max` back through the DOM, which yields NaN once parked.
+// Keep controls read from outside this drawer connected in every profile.
 const LEFT_NAV_REQUIRED_ANCHORS = Object.freeze([
-    '#range_block_openai',
+    '#range_block_openai', // onModelChange reads max through the DOM; parking yields NaN.
+    '#openai_reasoning_effort_block', // The assistant reads data-source after APP_READY.
 ]);
 
 // `compat` only: keep these selectable while parked, for third-party scripts.
