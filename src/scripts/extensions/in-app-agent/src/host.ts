@@ -43,7 +43,10 @@ export type AssistantContext = {
         findPreset: (name: string) => unknown;
         getCompletionPresetByName: (name: string) => { reasoning_effort?: string; extensions?: Record<string, unknown> } | undefined;
     };
-    Popup: { show: { confirm: (title: string, message: string) => Promise<unknown> } };
+    Popup: {
+        show: { confirm: (title: string, message: string) => Promise<unknown> };
+        util: { getTopmostModalLayer: () => HTMLElement };
+    };
     POPUP_RESULT: { AFFIRMATIVE: unknown };
 };
 export function requireContext(): AssistantContext {

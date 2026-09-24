@@ -1,13 +1,17 @@
-import { createSemantics, describeLine, isSensitive, preview, suppressesText } from './semantics';
+import { createSemantics, describeLine, isSensitive, isTextRegion, preview, suppressesText } from './semantics';
 import type { Semantics } from './semantics';
 
 const MAX_NODES = 80;
 const MAX_VISITS = 2_000;
+const MAX_CONTENT_PREVIEW = 1_000;
+const MAX_PAGE_CONTENT_PREVIEWS = 4_000;
 export const MAX_DEPTH = 6;
 const SNAPSHOT_SEQUENCE_KEY = 'tauritavern:in_app_agent_snapshot_sequence';
 
 type ToolArguments = Record<string, TauriTavernJsonValue>;
-type SemanticAncestor = { element: Element; depth: number };
+type TextPreview = { value: string; truncated: boolean };
+type SemanticAncestor = { element: Element; depth: number; textPreview?: TextPreview };
+type SnapshotLine = { text: string; preview?: TextPreview | undefined };
 type TraversalContext = {
     ancestors: SemanticAncestor[];
     depth: number;
@@ -131,12 +135,14 @@ function nextSnapshotPrefix(): string {
 /** Render one bounded page and leave traversal.next at the first unvisited node. */
 function readPage(traversal: Traversal, prefix: string, references: Map<string, Element>) {
     const semantics = createSemantics();
-    const lines: string[] = [];
+    // Descendants fill their region's preview during this same walk; format lines after the page is read.
+    const lines: SnapshotLine[] = [];
+    const textBudget = { remaining: MAX_PAGE_CONTENT_PREVIEWS };
     const emittedElements = new Set<Element>();
     let truncated = false;
     let visits = 0;
 
-    function appendElement(element: Element, depth: number, childrenOmitted = false) {
+    function appendElement({ element, depth, textPreview }: SemanticAncestor, childrenOmitted = false) {
         truncated ||= childrenOmitted;
         if (emittedElements.has(element)) {
             return;
@@ -145,6 +151,8 @@ function readPage(traversal: Traversal, prefix: string, references: Map<string, 
         const ref = `${prefix}:e${references.size + 1}`;
         references.set(ref, element);
         emittedElements.add(element);
+        // A continuation repeats its ancestor's bounded preview, which also consumes this page's budget.
+        if (textPreview) textBudget.remaining -= JSON.stringify(textPreview.value).length - 2;
 
         const description = semantics.describeElement(element);
         const hasTextPreview = Object.keys(description).some(key => key.endsWith('Truncated'));
@@ -152,28 +160,28 @@ function readPage(traversal: Traversal, prefix: string, references: Map<string, 
 
         const indent = '  '.repeat(depth);
         const suffix = childrenOmitted ? ' [children omitted; use root to inspect]' : '';
-        lines.push(`${indent}${describeLine(description)} [ref=${ref}]${suffix}`);
+        lines.push({ text: `${indent}${describeLine(description)} [ref=${ref}]${suffix}`, preview: textPreview });
     }
 
     // Dialogs are appended at the end of the DOM. Expose their roots before a large background.
     while (traversal.nextDialogIndex < traversal.dialogs.length && lines.length < MAX_NODES) {
         const dialog = traversal.dialogs[traversal.nextDialogIndex++];
         if (dialog && dialog.isConnected && semantics.isVisible(dialog)) {
-            appendElement(dialog, 0, true);
+            appendElement({ element: dialog, depth: 0 }, true);
         }
     }
 
     // A continuation has fresh refs. Repeat its root/path so descendants remain actionable.
     if (traversal.next && traversal.next.node !== traversal.root) {
-        appendElement(traversal.root, 0);
         for (const ancestor of traversal.next.ancestors) {
-            appendElement(ancestor.element, ancestor.depth);
+            appendElement(ancestor);
         }
     }
 
     while (traversal.next && lines.length < MAX_NODES && visits < MAX_VISITS) {
         const position = traversal.next;
         const { node, ancestors, depth, suppressText } = position;
+        const textPreview = ancestors.find(ancestor => ancestor.textPreview)?.textPreview;
         visits++;
 
         // Layout wrappers pass this context through; only emitted semantic elements add a level.
@@ -186,45 +194,70 @@ function readPage(traversal: Traversal, prefix: string, references: Map<string, 
                 // Native options have no ordinary layout boxes, but are observable through their select.
                 const selectOption = traversal.root instanceof HTMLSelectElement && node.matches('option,optgroup');
                 const shown = selectOption || semantics.isVisible(node);
-                const role = semantics.readRole(node);
+                const role = semantics.readRole(node, textPreview !== undefined);
                 if (shown && (role || node === traversal.root)) {
                     const omitted = semantics.readOmissionReason(node);
                     const nestedSelect = node instanceof HTMLSelectElement && node !== traversal.root;
                     const depthLimitReached = depth >= traversal.maxDepth;
                     const hasChildren = node.firstChild !== null && !node.matches('input,textarea');
                     const childrenOmitted = hasChildren && (nestedSelect || depthLimitReached) && !omitted;
-                    appendElement(node, depth, childrenOmitted);
+                    const ancestor: SemanticAncestor = { element: node, depth };
+                    if (!textPreview && isTextRegion(node) && !omitted) {
+                        ancestor.textPreview = { value: '', truncated: false };
+                    }
+                    appendElement(ancestor, childrenOmitted);
 
                     const stopHere = omitted || nestedSelect || depthLimitReached || node.matches('input,textarea,option');
                     if (stopHere) {
                         childContext = null;
                     } else {
                         childContext.depth = depth + 1;
-                        childContext.ancestors = [...ancestors, { element: node, depth }];
+                        childContext.ancestors = [...ancestors, ancestor];
                     }
                 }
                 if (childContext) {
                     childContext.suppressText ||= suppressesText(node, role) || isSensitive(node);
                 }
             }
-        } else if (node instanceof Text && !suppressText && semantics.isTextVisible(node)) {
+        } else if (node instanceof Text && !suppressText && !textPreview?.truncated && semantics.isTextVisible(node)) {
             // Read this text node, never a container's potentially huge textContent.
-            const bounded = preview(node.data);
-            if (bounded.value.trim()) {
-                const suffix = bounded.truncated ? ' [preview]' : '';
-                lines.push(`${'  '.repeat(depth)}text ${JSON.stringify(bounded.value)}${suffix}`);
+            if (textPreview) {
+                appendContentText(textPreview, node.data, textBudget);
+            } else {
+                const bounded = preview(node.data);
+                if (bounded.value.trim()) {
+                    const suffix = bounded.truncated ? ' [preview]' : '';
+                    lines.push({ text: `${'  '.repeat(depth)}text ${JSON.stringify(bounded.value)}${suffix}` });
+                }
+                truncated ||= bounded.truncated;
             }
-            truncated ||= bounded.truncated;
         }
 
         traversal.next = advance(position, traversal.root, childContext, semantics);
     }
 
     return {
-        tree: lines.join('\n'),
-        truncated,
+        tree: lines.map(formatLine).join('\n'),
+        truncated: truncated || lines.some(line => line.preview?.truncated),
         hasMore: traversal.next !== null || traversal.nextDialogIndex < traversal.dialogs.length,
     };
+}
+
+/** One budget per message body, retained across pagination regardless of its DOM formatting. */
+function appendContentText(target: TextPreview, text: string, budget: { remaining: number }) {
+    const separator = target.value ? ' ' : '';
+    const size = JSON.stringify(target.value).length - 2;
+    const remaining = Math.min(MAX_CONTENT_PREVIEW - size, budget.remaining) - separator.length;
+    const bounded = preview(text, remaining);
+    if (bounded.value.trim()) target.value += separator + bounded.value.trim();
+    budget.remaining -= JSON.stringify(target.value).length - 2 - size;
+    target.truncated = bounded.truncated;
+}
+
+function formatLine(line: SnapshotLine): string {
+    if (!line.preview || (!line.preview.value && !line.preview.truncated)) return line.text;
+    const shortened = line.preview.truncated ? ' textTruncated=true' : '';
+    return `${line.text} text=${JSON.stringify(line.preview.value)}${shortened}`;
 }
 
 /** Walk the live DOM; null childContext skips descendants without losing the next sibling. */

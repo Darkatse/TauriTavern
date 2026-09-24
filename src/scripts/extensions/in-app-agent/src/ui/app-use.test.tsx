@@ -37,7 +37,9 @@ test('a paginated region stays actionable while earlier page and run refs expire
     const buttons = Array.from({ length: 110 }, (_, index) =>
         `<button>Action ${index}</button>`,
     ).join('');
-    document.body.innerHTML = `<section aria-label="Actions">${buttons}</section>`;
+    document.body.innerHTML = `<section aria-label="Actions"><div class="mes_text">
+        <p>${'Opening text '.repeat(200)}</p>${buttons}<p>omitted-body-tail</p>
+    </div></section>`;
     const observation = createObservation();
     observation.enterRun('one');
     const overview = observation.snapshot({ depth: 1 });
@@ -48,6 +50,7 @@ test('a paginated region stays actionable while earlier page and run refs expire
         throw new Error('Expected a continuation');
     }
     const next = observation.snapshot({ cursor });
+    expect(next.tree).not.toContain('omitted-body-tail');
     expect(() => observation.snapshot({ root: oldRef })).toThrow();
     const button = screen.getByRole('button', { name: 'Action 109' });
     button.onclick = () => { button.textContent = 'Done'; };
@@ -75,6 +78,43 @@ test('short refs are not reused when the page module reloads', async () => {
     expect(afterReload.snapshot({ root: newRef }).tree).toContain('After reload');
 });
 
+test('long formatted messages leave embedded controls and following swipes actionable without text pagination', async () => {
+    const paragraph = '<p>故事正文' + '内容'.repeat(350) + '<strong>强调</strong></p>';
+    document.body.innerHTML = `<section aria-label="Chat">
+        <div class="mes_text">
+            <span style="display:none">hidden-body-text</span><span data-tt-sensitive>sensitive-body-text</span>
+            <h2>故事开头</h2>${paragraph.repeat(120)}
+            <ul>${'<li>正文列表项</li>'.repeat(100)}</ul>
+            <p>end-of-long-body</p>
+            <a href="#details">Details</a><button>Embedded action</button>
+        </div>
+        <button>Previous swipe</button><span>11/11</span>
+        <div class="mes_text"><p>第二条消息</p><p>仍然可读</p></div>
+    </section>`;
+    const observation = createObservation();
+    observation.enterRun('run');
+    const overview = observation.snapshot({});
+    const snapshot = observation.snapshot({ root: ref(overview.tree, 'Chat') });
+    expect(snapshot.nextCursor).toBeUndefined();
+    expect(snapshot.truncated).toBe(true);
+    expect(snapshot.tree).toContain('textTruncated=true');
+    expect(snapshot.tree).toContain('故事开头');
+    expect(snapshot.tree).not.toContain('end-of-long-body');
+    expect(snapshot.tree).not.toContain('hidden-body-text');
+    expect(snapshot.tree).not.toContain('sensitive-body-text');
+    expect(snapshot.tree).toContain('11/11');
+    expect(snapshot.tree).toContain('第二条消息 仍然可读');
+    expect(snapshot.tree.length).toBeLessThan(3_000);
+    expect(observation.resolve(ref(snapshot.tree, 'Details'))).toBe(screen.getByRole('link'));
+    for (const name of ['Embedded action', 'Previous swipe']) {
+        const button = screen.getByRole('button', { name });
+        button.onclick = () => { button.textContent = 'Done'; };
+        hit = button;
+        await interact({ action: 'click', ref: ref(snapshot.tree, name) }, observation, signal());
+        expect(button.textContent).toBe('Done');
+    }
+});
+
 test('snapshots preserve control state while bounding text and omitting sensitive content', () => {
     document.body.innerHTML = `
         <button role="menuitemradio">Model A</button>
@@ -89,6 +129,12 @@ test('snapshots preserve control state while bounding text and omitting sensitiv
     input.setAttribute('aria-label', 'Long value');
     input.value = '\u0001\n"'.repeat(100_000);
     document.body.append(input);
+    for (let index = 0; index < 8; index++) {
+        const body = document.createElement('div');
+        body.className = 'mes_text';
+        body.textContent = 'Long message '.repeat(1_000);
+        document.body.append(body);
+    }
     const observation = createObservation();
     observation.enterRun('run');
     const snapshot = observation.snapshot({});
@@ -99,7 +145,7 @@ test('snapshots preserve control state while bounding text and omitting sensitiv
     expect(snapshot.tree).not.toContain('secret-label-should-not-appear');
     expect(snapshot.tree.split('\n').find(line => line.includes('"Readonly"'))).toContain('readOnly=true');
     expect(snapshot.tree.split('\n').find(line => line.includes('"Checked"'))).toContain('checked=true');
-    expect(JSON.stringify(snapshot).length).toBeLessThan(50_000);
+    expect(JSON.stringify(snapshot).length).toBeLessThan(8_000);
 });
 
 test('fill updates React controlled state, not just the DOM value', async () => {

@@ -393,6 +393,37 @@
 #advanced-formatting-button .drawer-icon[data-tt-assistant-activity="working"]::after { animation: ttia-breathe 1.7s ease-in-out infinite; }
 #advanced-formatting-button .drawer-icon[data-tt-assistant-activity] { position: relative; }
 
+/* The assistant cursor lives outside the drawer and never receives user input. */
+.ttia-agent-cursor {
+    position: fixed; inset: 0 auto auto 0; z-index: 2147483647;
+    width: 24px; height: 24px; min-width: 0; min-height: 0;
+    margin: 0; padding: 0; border: 0; overflow: visible;
+    background: transparent; box-shadow: none; user-select: none;
+    --ttia-cursor-accent: var(--SmartThemeUnderlineColor);
+}
+.ttia-agent-cursor, .ttia-agent-cursor * { pointer-events: none !important; }
+.ttia-agent-cursor::backdrop { background: transparent; pointer-events: none; }
+.ttia-agent-cursor::before {
+    content: ''; position: absolute; left: -12px; top: -12px; width: 40px; height: 40px;
+    border-radius: 50%;
+    background: radial-gradient(circle, color-mix(in srgb, var(--ttia-cursor-accent) 32%, transparent), transparent 70%);
+}
+.ttia-agent-cursor svg {
+    position: absolute; left: -4px; top: -4px; width: 24px; height: 24px; overflow: visible;
+    fill: var(--SmartThemeBodyColor); stroke: var(--SmartThemeBlurTintColor);
+    stroke-width: 1.8; stroke-linejoin: round;
+    filter: drop-shadow(0 1px 2px color-mix(in srgb, var(--SmartThemeShadowColor) 50%, transparent));
+}
+.ttia-cursor-pulse {
+    position: absolute; left: -10px; top: -10px; width: 20px; height: 20px;
+    box-sizing: border-box; border-radius: 50%; opacity: 0;
+    border: 1.5px solid var(--ttia-cursor-accent);
+}
+@media (pointer: coarse), (max-width: 600px) {
+    .ttia-agent-cursor::before { left: -8px; top: -8px; width: 32px; height: 32px; }
+    .ttia-cursor-pulse { left: -8px; top: -8px; width: 16px; height: 16px; }
+}
+
 /* ---------- motion ---------- */
 @keyframes ttia-breathe { 0%, 100% { opacity: .45; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
 @keyframes ttia-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }

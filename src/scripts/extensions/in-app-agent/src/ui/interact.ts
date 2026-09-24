@@ -10,6 +10,8 @@ type Interaction =
     | { action: 'set_checked'; ref: string; checked: boolean }
     | { action: 'scroll'; ref: string; direction: 'up' | 'down' };
 type ChatScroller = (options: ScrollToOptions) => void;
+export type InteractionPoint = { x: number; y: number };
+type InteractionFeedback = (point: InteractionPoint) => void;
 
 const ACTION_FIELDS: Record<Interaction['action'], string[]> = {
     click: [],
@@ -20,7 +22,7 @@ const ACTION_FIELDS: Record<Interaction['action'], string[]> = {
 };
 const FILLABLE_INPUT_TYPES = new Set(['text', 'search', 'email', 'url', 'tel', 'number']);
 
-export async function interact(args: ToolArguments, observation: Observation, signal: AbortSignal) {
+export async function interact(args: ToolArguments, observation: Observation, signal: AbortSignal, feedback?: InteractionFeedback) {
     const request = parseInteraction(args);
     let scrollChat: ChatScroller | undefined;
 
@@ -33,10 +35,10 @@ export async function interact(args: ToolArguments, observation: Observation, si
         throw new Error('The operation was cancelled before acting.');
     }
     const element = requireInteractiveElement(observation.resolve(request.ref));
-    const apply = prepareAction(request, element, createSemantics(), scrollChat);
+    const apply = prepareAction(request, element, createSemantics(), scrollChat, feedback);
     observation.clearCursor();
 
-    // Preparation has no side effects. Once apply starts, errors must not imply nothing happened.
+    // Preparation only checks the target and signals visual feedback. apply changes application state.
     try {
         const dispatched = apply();
         const observed = element.isConnected
@@ -114,16 +116,17 @@ function requireInteractiveElement(element: Element): HTMLElement {
     return element;
 }
 
-/** Validate an action and capture its typed target. Only the returned function changes the UI. */
+/** Validate an action and capture its typed target. Only the returned function changes the control. */
 function prepareAction(
     request: Interaction,
     element: HTMLElement,
     semantics: Semantics,
     scrollChat: ChatScroller | undefined,
+    feedback?: InteractionFeedback,
 ): () => boolean {
     switch (request.action) {
         case 'click': {
-            const surface = requireClickSurface(element, semantics);
+            const surface = requireClickSurface(element, semantics, feedback);
             return () => {
                 surface.click();
                 return true;
@@ -137,7 +140,7 @@ function prepareAction(
             if (element.readOnly || element.getAttribute('aria-readonly') === 'true') {
                 throw new Error('The target is read-only. Find an editable control or inspect what makes this field read-only before trying again.');
             }
-            requireInputSurface([element], semantics);
+            requireInputSurface([element], semantics, feedback);
 
             return () => {
                 element.focus({ preventScroll: true });
@@ -154,7 +157,7 @@ function prepareAction(
             if (!option || option.disabled || option.parentElement?.matches('optgroup:disabled')) {
                 throw new Error('This option is missing or disabled. Call app.snapshot with this control as root, then use an enabled option\'s exact value and the control\'s new ref.');
             }
-            requireInputSurface([element], semantics);
+            requireInputSurface([element], semantics, feedback);
 
             return () => {
                 element.value = request.value;
@@ -169,7 +172,7 @@ function prepareAction(
             if (element.type === 'radio' && !request.checked) {
                 throw new Error('A radio cannot be unchecked directly. Select another radio in the group with checked=true.');
             }
-            const surface = requireClickSurface(element, semantics);
+            const surface = requireClickSurface(element, semantics, feedback);
 
             return () => {
                 if (element.checked === request.checked) {
@@ -183,7 +186,7 @@ function prepareAction(
             if (!semantics.isScrollable(element)) {
                 throw new Error('This target cannot scroll vertically. Use app.snapshot to find a region marked scrollable=true, then scroll that region.');
             }
-            requireInputSurface([element], semantics);
+            requireInputSurface([element], semantics, feedback);
 
             return () => {
                 const direction = request.direction === 'down' ? 1 : -1;
@@ -217,25 +220,28 @@ function notifyValueChange(element: HTMLElement) {
     element.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-function requireClickSurface(element: HTMLElement, semantics: Semantics): HTMLElement {
+function requireClickSurface(element: HTMLElement, semantics: Semantics, feedback?: InteractionFeedback): HTMLElement {
     const candidates = [element];
     if (isCheckableInput(element)) {
         candidates.push(...Array.from(element.labels ?? []));
     }
-    return requireInputSurface(candidates, semantics);
+    return requireInputSurface(candidates, semantics, feedback);
 }
 
-function requireInputSurface(candidates: HTMLElement[], semantics: Semantics): HTMLElement {
-    const surface = candidates.find(candidate => receivesInput(candidate, semantics));
-    if (!surface) {
-        throw new Error('No action was performed: the target is hidden, outside the visible area, or covered. Inspect the interface, then open its panel, scroll its region or close a covering panel as needed. Observe again before retrying.');
+function requireInputSurface(candidates: HTMLElement[], semantics: Semantics, feedback?: InteractionFeedback): HTMLElement {
+    for (const candidate of candidates) {
+        const point = inputPoint(candidate, semantics);
+        if (point) {
+            feedback?.(point);
+            return candidate;
+        }
     }
-    return surface;
+    throw new Error('No action was performed: the target is hidden, outside the visible area, or covered. Inspect the interface, then open its panel, scroll its region or close a covering panel as needed. Observe again before retrying.');
 }
 
-function receivesInput(element: HTMLElement, semantics: Semantics): boolean {
+function inputPoint(element: HTMLElement, semantics: Semantics): InteractionPoint | null {
     if (!semantics.isVisible(element)) {
-        return false;
+        return null;
     }
 
     // ponytail: one point per client rect; add richer geometry only for observed partial-overlay failures.
@@ -248,10 +254,11 @@ function receivesInput(element: HTMLElement, semantics: Semantics): boolean {
             continue;
         }
 
-        const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
+        const point = { x: (left + right) / 2, y: (top + bottom) / 2 };
+        const hit = document.elementFromPoint(point.x, point.y);
         if (hit && element.contains(hit)) {
-            return true;
+            return point;
         }
     }
-    return false;
+    return null;
 }

@@ -42,7 +42,9 @@
 | `app.evaluate` | 在当前 WebView 执行一次 async function body，注入 `api`、`context`，显式返回 JSON；异常沿共同工具链传播，不换包装重跑。同步 JS 无法强制终止，超时或取消不撤销效果。 |
 | `app.read_logs` | 读取保留日志，先按等级筛选再取尾部，并返回采集开关状态；不修改采集设置或清除日志。 |
 
-UI 工具位于内置扩展的 [ui/](../../src/scripts/extensions/in-app-agent/src/ui)，复用既有 Extension Provider；聊天滚动交由现有 ChatSurface owner。快照省略助手会话和已知敏感内容，不提供完整业务数据。
+UI 工具位于内置扩展的 [ui/](../../src/scripts/extensions/in-app-agent/src/ui)，复用既有 Extension Provider；聊天滚动交由现有 ChatSurface owner。正文与思考按区域合并为有界预览，保留其中的控件，省略的文本不进入分页；快照省略助手会话和已知敏感内容，不提供完整业务数据。
+
+交互光标展示实际通过命中检查的位置，沿用主题并尊重减少动态效果设置；动画不阻塞工具执行，生命周期跟随助手活动任务，结束或页面卸载时移除。
 
 引用只对当前 Run 最近一页有效；新快照、Run 切换或页面重载后旧引用失效。分页读取实时界面，interact/evaluate 会使旧续读位置失效；关闭助手抽屉不影响工具运行。具体参数、支持范围与恢复指引以 [tools.ts](../../src/scripts/extensions/in-app-agent/src/tools.ts) 中的工具说明为准。
 

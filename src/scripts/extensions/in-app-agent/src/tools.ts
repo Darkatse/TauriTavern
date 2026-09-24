@@ -1,5 +1,6 @@
 import { createObservation, MAX_DEPTH } from './ui/snapshot';
 import { interact } from './ui/interact';
+import type { InteractionPoint } from './ui/interact';
 
 const EXTENSION_ID = 'in-app-agent';
 
@@ -21,6 +22,7 @@ export async function registerAssistantTools(
     tools: TauriTavernAgentToolsApi,
     logs: TauriTavernFrontendLogsApi,
     isPageReady: () => boolean,
+    onInteract?: (point: InteractionPoint, context: ToolContext) => void,
 ): Promise<void> {
     const observation = createObservation();
 
@@ -42,7 +44,8 @@ export async function registerAssistantTools(
         description: `Observe the app interface to find controls, inspect their current state, or check the result of an action. Returns a tree of roles, names, text, values and states, with refs such as s42:e27 for app.interact.
 Start with {} for an overview. Open dialogs appear first as summaries. Pass a region's ref as root to inspect its contents; for a standard select, this reveals option labels and exact values. depth controls how many levels are included. A collapsed panel must first be opened with app.interact; increasing depth does not open it.
 If nextCursor is returned, pass it as cursor alone to continue reading. Every returned page, including a continuation or root inspection, replaces the previous refs. Copy refs from the latest returned page; do not construct them or reuse refs from earlier pages. After app.interact or app.evaluate, start a new snapshot instead of continuing an old cursor. Pages read the live interface, so content can change between calls.
-truncated means some content was shortened or omitted, not necessarily that another page exists. Follow nextCursor when present, use root for children omitted by depth, and treat text marked preview or nameTruncated/valueTruncated as incomplete. Use a known API through app.evaluate when complete application data is needed, such as chat history.
+Message bodies and reasoning have text previews of up to about 1,000 characters per region, shared across paragraphs and formatting and bounded by a page-wide text budget. Links, buttons and other controls remain observable within depth limits. textTruncated=true marks omitted text; cursor continues interface observation, not the omitted text. Use root to inspect a region's controls; use a known API through app.evaluate to read complete application data, such as chat history.
+truncated means some content was shortened or omitted, not necessarily that another page exists. Follow nextCursor when present, use root for children omitted by depth, and treat text marked preview or nameTruncated/valueTruncated as incomplete.
 Observation does not scroll or open panels. Listed elements may be off-screen or covered. If the assistant drawer covers a target, close it through its observed button; the task continues. Assistant conversation/tool logs and known sensitive contents are omitted. iframe, shadow DOM and complex-editor contents are not inspected; use app.evaluate with a known API for those tasks.`,
         inputSchema: {
             type: 'object',
@@ -86,7 +89,7 @@ dispatched=true means the action was requested, not that its intended result was
         },
     }, (args, context) => {
         enterUI(context);
-        return interact(args, observation, context.signal);
+        return interact(args, observation, context.signal, point => onInteract?.(point, context));
     });
 
     await tools.register({

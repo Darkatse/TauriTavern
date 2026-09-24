@@ -9,6 +9,14 @@ const NAME_FROM_CONTENT_ROLES = new Set([
     'button', 'link', 'heading', 'checkbox', 'radio', 'option', 'tab',
     'menuitem', 'menuitemradio', 'menuitemcheckbox',
 ]);
+const TEXT_STRUCTURE_ROLES = new Set([
+    'heading', 'paragraph', 'list', 'listitem', 'definition', 'term',
+    'table', 'rowgroup', 'row', 'cell', 'columnheader', 'rowheader', 'separator',
+]);
+
+export function isTextRegion(element: Element): boolean {
+    return element.matches('.mes_text,.mes_reasoning');
+}
 
 /** Bound escaped text, so quotes/control characters cannot expand a preview without limit. */
 export function preview(text: string, limit = MAX_PREVIEW) {
@@ -107,11 +115,11 @@ export function createSemantics() {
         return element === document.scrollingElement || /^(auto|scroll)$/.test(getStyle(element).overflowY);
     }
 
-    function readRole(element: Element): string | null {
+    function readRole(element: Element, compactText = false): string | null {
         if (element === document.body) {
             return 'document';
         }
-        if (element.matches('.ttia-history-area')) {
+        if (element.matches('.ttia-history-area') || isTextRegion(element)) {
             return 'region';
         }
         if (element.matches('[data-tt-sensitive]') && !element.matches(FORM_CONTROLS)) {
@@ -132,7 +140,10 @@ export function createSemantics() {
 
         const computedRole = getRole(element);
         const isSemanticRole = computedRole && !['generic', 'none', 'presentation'].includes(computedRole);
-        if (isSemanticRole && /^[a-z]{1,40}$/.test(computedRole)) {
+        // Message formatting shares one preview; widgets and scrollable regions remain discoverable.
+        const textStructure = compactText && computedRole && TEXT_STRUCTURE_ROLES.has(computedRole)
+            && !element.hasAttribute('tabindex') && !isScrollable(element);
+        if (isSemanticRole && !textStructure && /^[a-z]{1,40}$/.test(computedRole)) {
             return computedRole;
         }
         if (element.matches(FORM_CONTROLS)) {
