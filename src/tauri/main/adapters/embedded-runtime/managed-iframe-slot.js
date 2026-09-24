@@ -41,7 +41,7 @@ function findHostIframe(host) {
  */
 function findHostBudgetPlaceholder(host) {
     const el = host.querySelector(`.${BUDGET_PLACEHOLDER_CLASS}`);
-    return el instanceof HTMLElement ? el : null;
+    return el instanceof HTMLButtonElement ? el : null;
 }
 
 /**
@@ -170,20 +170,22 @@ export function createManagedIframeSlot({
         if (existing) {
             existing.style.minHeight = `${heightPx}px`;
             existing.dataset.ttRuntimeParkReason = reason;
+            existing.disabled = reason === 'source-unavailable';
             return existing;
         }
 
-        const el = document.createElement('div');
+        const el = document.createElement('button');
+        el.type = 'button';
         el.className = BUDGET_PLACEHOLDER_CLASS;
-        el.tabIndex = 0;
+        el.disabled = reason === 'source-unavailable';
         el.dataset.ttRuntimeParkReason = reason;
         el.style.minHeight = `${heightPx}px`;
 
-        const title = document.createElement('div');
+        const title = document.createElement('span');
         title.className = 'tt-runtime-placeholder-title';
         title.textContent = 'Embedded content paused';
 
-        const hint = document.createElement('div');
+        const hint = document.createElement('span');
         hint.className = 'tt-runtime-placeholder-hint';
         hint.textContent = 'Tap to load';
 

@@ -39,6 +39,8 @@ function requireLot() {
 
     const el = document.createElement('div');
     el.id = LOT_ID;
+    el.setAttribute('aria-hidden', 'true');
+    el.inert = true;
     el.style.position = 'fixed';
     el.style.left = '0';
     el.style.top = '0';

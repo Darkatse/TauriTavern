@@ -225,6 +225,7 @@ export function installFakeDom({
         Element: window.Element,
         HTMLElement: window.HTMLElement,
         HTMLDivElement: window.HTMLDivElement,
+        HTMLButtonElement: window.HTMLButtonElement,
         HTMLPreElement: window.HTMLPreElement,
         HTMLTemplateElement: window.HTMLTemplateElement,
         HTMLIFrameElement: window.HTMLIFrameElement,

@@ -1,5 +1,7 @@
 import { createSemantics, describeLine, isSensitive, isTextRegion, preview, suppressesText } from './semantics';
 import type { Semantics } from './semantics';
+import { isElement, isHtmlTag, isText, mainDocumentScope, requireCurrentScope } from './document';
+import type { DocumentScope } from './document';
 
 const MAX_NODES = 80;
 const MAX_VISITS = 2_000;
@@ -19,6 +21,7 @@ type TraversalContext = {
 };
 type TraversalPosition = TraversalContext & { node: Node };
 type Traversal = {
+    scope: DocumentScope;
     root: Element;
     maxDepth: number;
     next: TraversalPosition | null;
@@ -32,6 +35,7 @@ export function createObservation() {
     let ownerRunId = '';
     let references = new Map<string, Element>();
     let continuation: Continuation | null = null;
+    let scope = mainDocumentScope();
 
     function enterRun(runId: string) {
         if (ownerRunId === runId) {
@@ -39,6 +43,7 @@ export function createObservation() {
         }
         ownerRunId = runId;
         references.clear();
+        scope = mainDocumentScope();
         clearCursor();
     }
 
@@ -51,7 +56,8 @@ export function createObservation() {
         if (!element) {
             throw new Error('This ref is not in the current snapshot. Call app.snapshot and use a ref from its returned page.');
         }
-        if (!element.isConnected || element.ownerDocument !== document) {
+        requireScope(scope);
+        if (!element.isConnected || element.ownerDocument !== scope.document) {
             throw new Error('The target is no longer in this page. Call app.snapshot to inspect the current interface before acting.');
         }
         return element;
@@ -60,6 +66,7 @@ export function createObservation() {
     function snapshot(args: ToolArguments) {
         // Resolve root/cursor against the previous page before replacing its references.
         const traversal = startOrResumeTraversal(args);
+        scope = traversal.scope;
         const prefix = nextSnapshotPrefix();
         clearCursor();
         references = new Map();
@@ -88,6 +95,7 @@ export function createObservation() {
             }
 
             const traversal = continuation.traversal;
+            requireScope(traversal.scope);
             const nextNode = traversal.next?.node;
             const nextNodeLeftRoot = nextNode && (!nextNode.isConnected || !traversal.root.contains(nextNode));
             if (!traversal.root.isConnected || nextNodeLeftRoot) {
@@ -104,11 +112,23 @@ export function createObservation() {
             throw new Error(`depth must be an integer between 1 and ${MAX_DEPTH}.`);
         }
 
-        const root = typeof args.root === 'string' ? resolve(args.root) : document.body;
-        const dialogs = args.root === undefined
-            ? Array.from(document.querySelectorAll('dialog[open]')).slice(0, MAX_NODES)
+        let nextScope = args.root === undefined ? mainDocumentScope() : scope;
+        let root = typeof args.root === 'string' ? resolve(args.root) : nextScope.document.documentElement;
+        if (isHtmlTag(root, 'iframe')) {
+            const semantics = createSemantics();
+            semantics.requireFrameVisible(root);
+            const childDocument = root.contentDocument;
+            if (!semantics.readOmissionReason(root) && childDocument?.body) {
+                nextScope = { document: childDocument, frames: [...nextScope.frames, root] };
+                root = childDocument.documentElement;
+            }
+        }
+        const isDocumentRoot = root === nextScope.document.documentElement || root === nextScope.document.body;
+        const dialogs = isDocumentRoot
+            ? Array.from(nextScope.document.querySelectorAll('dialog[open]')).slice(0, MAX_NODES)
             : [];
         return {
+            scope: nextScope,
             root,
             maxDepth: depth,
             next: { node: root, ancestors: [], depth: 0, suppressText: false },
@@ -117,7 +137,13 @@ export function createObservation() {
         };
     }
 
-    return { enterRun, resolve, snapshot, clearCursor };
+    return { enterRun, resolve, snapshot, clearCursor, get scope() { return scope; } };
+}
+
+function requireScope(scope: DocumentScope) {
+    requireCurrentScope(scope);
+    const semantics = createSemantics();
+    for (const frame of scope.frames) semantics.requireFrameVisible(frame);
 }
 
 export type Observation = ReturnType<typeof createObservation>;
@@ -159,7 +185,8 @@ function readPage(traversal: Traversal, prefix: string, references: Map<string, 
         truncated ||= hasTextPreview || Boolean(description.omitted);
 
         const indent = '  '.repeat(depth);
-        const suffix = childrenOmitted ? ' [children omitted; use root to inspect]' : '';
+        const suffix = childrenOmitted
+            ? (isHtmlTag(element, 'iframe') ? ' [contents omitted; use root to enter]' : ' [children omitted; use root to inspect]') : '';
         lines.push({ text: `${indent}${describeLine(description)} [ref=${ref}]${suffix}`, preview: textPreview });
     }
 
@@ -186,28 +213,29 @@ function readPage(traversal: Traversal, prefix: string, references: Map<string, 
 
         // Layout wrappers pass this context through; only emitted semantic elements add a level.
         let childContext: TraversalContext | null = { ancestors, depth, suppressText };
-        if (node instanceof Element) {
+        if (isElement(node)) {
             const summarizedDialog = node !== traversal.root && traversal.dialogs.includes(node);
             if (semantics.excludesSubtree(node) || summarizedDialog) {
                 childContext = null;
             } else {
                 // Native options have no ordinary layout boxes, but are observable through their select.
-                const selectOption = traversal.root instanceof HTMLSelectElement && node.matches('option,optgroup');
+                const selectOption = isHtmlTag(traversal.root, 'select') && node.matches('option,optgroup');
                 const shown = selectOption || semantics.isVisible(node);
                 const role = semantics.readRole(node, textPreview !== undefined);
                 if (shown && (role || node === traversal.root)) {
                     const omitted = semantics.readOmissionReason(node);
-                    const nestedSelect = node instanceof HTMLSelectElement && node !== traversal.root;
+                    const nestedSelect = isHtmlTag(node, 'select') && node !== traversal.root;
+                    const frameBoundary = isHtmlTag(node, 'iframe');
                     const depthLimitReached = depth >= traversal.maxDepth;
                     const hasChildren = node.firstChild !== null && !node.matches('input,textarea');
-                    const childrenOmitted = hasChildren && (nestedSelect || depthLimitReached) && !omitted;
+                    const childrenOmitted = !omitted && (frameBoundary || (hasChildren && (nestedSelect || depthLimitReached)));
                     const ancestor: SemanticAncestor = { element: node, depth };
                     if (!textPreview && isTextRegion(node) && !omitted) {
                         ancestor.textPreview = { value: '', truncated: false };
                     }
                     appendElement(ancestor, childrenOmitted);
 
-                    const stopHere = omitted || nestedSelect || depthLimitReached || node.matches('input,textarea,option');
+                    const stopHere = omitted || frameBoundary || nestedSelect || depthLimitReached || node.matches('input,textarea,option');
                     if (stopHere) {
                         childContext = null;
                     } else {
@@ -219,7 +247,7 @@ function readPage(traversal: Traversal, prefix: string, references: Map<string, 
                     childContext.suppressText ||= suppressesText(node, role) || isSensitive(node);
                 }
             }
-        } else if (node instanceof Text && !suppressText && !textPreview?.truncated && semantics.isTextVisible(node)) {
+        } else if (isText(node) && !suppressText && !textPreview?.truncated && semantics.isTextVisible(node)) {
             // Read this text node, never a container's potentially huge textContent.
             if (textPreview) {
                 appendContentText(textPreview, node.data, textBudget);
@@ -270,7 +298,7 @@ function advance(
     let node = position.node;
     if (childContext) {
         let child = node.firstChild;
-        if (node instanceof HTMLDetailsElement && !node.open) {
+        if (isElement(node) && isHtmlTag(node, 'details') && !node.open) {
             child = node.querySelector(':scope > summary');
         }
         if (child) {
@@ -283,7 +311,7 @@ function advance(
         if (!parent) {
             return null;
         }
-        const parentIsClosedDetails = parent instanceof HTMLDetailsElement && !parent.open;
+        const parentIsClosedDetails = isHtmlTag(parent, 'details') && !parent.open;
         if (node.nextSibling && !parentIsClosedDetails) {
             // Climbing out of a semantic region removes it from the next sibling's context.
             const ancestors = position.ancestors.filter(ancestor => ancestor.element.contains(parent));

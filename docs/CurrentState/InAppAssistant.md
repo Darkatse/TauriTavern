@@ -37,7 +37,7 @@
 
 | Session 工具 | 契约 |
 | --- | --- |
-| `app.snapshot` | 按需读取主页面的有限 DOM 语义快照，支持区域下钻与分页；只观察，不展开或滚动界面。 |
+| `app.snapshot` | 按需读取主页面及同源 iframe 的有限 DOM 语义快照，支持区域下钻与分页；只观察，不展开、滚动或唤醒页面。 |
 | `app.interact` | 操作已观察的控件，返回动作派发情况与即时状态；可恢复错误不结束任务，读回不证明异步保存完成。 |
 | `app.evaluate` | 在当前 WebView 执行一次 async function body，注入 `api`、`context`，显式返回 JSON；异常沿共同工具链传播，不换包装重跑。同步 JS 无法强制终止，超时或取消不撤销效果。 |
 | `app.read_logs` | 读取保留日志，先按等级筛选再取尾部，并返回采集开关状态；不修改采集设置或清除日志。 |
@@ -46,7 +46,9 @@ UI 工具位于内置扩展的 [ui/](../../src/scripts/extensions/in-app-agent/s
 
 交互光标展示实际通过命中检查的位置，沿用主题并尊重减少动态效果设置；动画不阻塞工具执行，生命周期跟随助手活动任务，结束或页面卸载时移除。
 
-引用只对当前 Run 最近一页有效；新快照、Run 切换或页面重载后旧引用失效。分页读取实时界面，interact/evaluate 会使旧续读位置失效；关闭助手抽屉不影响工具运行。具体参数、支持范围与恢复指引以 [tools.ts](../../src/scripts/extensions/in-app-agent/src/tools.ts) 中的工具说明为准。
+iframe 默认只展示入口，使用其 ref 作为 root 进入；`snapshot({})` 返回主页面。每页属于一个文档，交互逐层检查宿主遮挡并将光标位置映射到主页面；暂停恢复入口由 Embedded Runtime 提供。
+
+引用只对当前 Run 最近一页有效；新快照、Run 切换、页面或祖先 iframe 重载后旧引用失效。分页读取实时界面，interact/evaluate 会使旧续读位置失效；关闭助手抽屉不影响工具运行。具体参数、支持范围与恢复指引以 [tools.ts](../../src/scripts/extensions/in-app-agent/src/tools.ts) 中的工具说明为准。
 
 ## 维护入口
 

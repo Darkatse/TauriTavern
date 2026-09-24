@@ -1,6 +1,11 @@
 import { createSemantics, isCheckableInput, isDisabled } from './semantics';
 import type { Semantics } from './semantics';
 import type { Observation } from './snapshot';
+import { documentWindow, isHTMLElement, isHtmlTag, isInScope } from './document';
+import type { DocumentScope } from './document';
+import { inputPoint } from './geometry';
+import type { InteractionPoint } from './geometry';
+export type { InteractionPoint } from './geometry';
 
 type ToolArguments = Record<string, TauriTavernJsonValue>;
 type Interaction =
@@ -10,7 +15,6 @@ type Interaction =
     | { action: 'set_checked'; ref: string; checked: boolean }
     | { action: 'scroll'; ref: string; direction: 'up' | 'down' };
 type ChatScroller = (options: ScrollToOptions) => void;
-export type InteractionPoint = { x: number; y: number };
 type InteractionFeedback = (point: InteractionPoint) => void;
 
 const ACTION_FIELDS: Record<Interaction['action'], string[]> = {
@@ -26,7 +30,7 @@ export async function interact(args: ToolArguments, observation: Observation, si
     const request = parseInteraction(args);
     let scrollChat: ChatScroller | undefined;
 
-    if (request.action === 'scroll' && observation.resolve(request.ref).id === 'chat') {
+    if (request.action === 'scroll' && observation.resolve(request.ref) === document.getElementById('chat')) {
         scrollChat = await loadChatScroller();
     }
 
@@ -34,14 +38,15 @@ export async function interact(args: ToolArguments, observation: Observation, si
     if (signal.aborted) {
         throw new Error('The operation was cancelled before acting.');
     }
-    const element = requireInteractiveElement(observation.resolve(request.ref));
-    const apply = prepareAction(request, element, createSemantics(), scrollChat, feedback);
+    const element = requireInteractiveElement(observation.resolve(request.ref), observation.scope);
+    const scope = observation.scope;
+    const apply = prepareAction(request, element, scope, scrollChat, feedback);
     observation.clearCursor();
 
     // Preparation only checks the target and signals visual feedback. apply changes application state.
     try {
         const dispatched = apply();
-        const observed = element.isConnected
+        const observed = isInScope(element, scope)
             ? { connected: true, ...createSemantics().describeElement(element) }
             : { connected: false };
         return { action: request.action, dispatched, observed };
@@ -98,20 +103,22 @@ async function loadChatScroller(): Promise<ChatScroller> {
     return page.scrollChatSurfaceTo;
 }
 
-function requireInteractiveElement(element: Element): HTMLElement {
-    if (!(element instanceof HTMLElement)) {
+function requireInteractiveElement(element: Element, scope: DocumentScope): HTMLElement {
+    if (!isHTMLElement(element)) {
         throw new Error('app.interact does not support this element. Choose its enclosing control from app.snapshot, or use app.evaluate with a known API.');
     }
-    if (isDisabled(element)) {
-        throw new Error('The target is disabled. Check which condition enables it before trying again.');
-    }
-    if (element.closest('[inert]')) {
-        throw new Error('This region is currently inactive and cannot receive input. Inspect the active panel or dialog instead.');
-    }
-
-    const hasModal = CSS.supports('selector(:modal)') && document.querySelector(':modal') !== null;
-    if (hasModal && !element.closest(':modal')) {
-        throw new Error('An open modal dialog blocks this target. Use app.snapshot to inspect the dialog, then operate or close it before returning to this control.');
+    for (const target of [...scope.frames, element]) {
+        if (isDisabled(target)) {
+            throw new Error('The target or its containing page is disabled. Check which condition enables it before trying again.');
+        }
+        if (target.closest('[inert]')) {
+            throw new Error('This region is currently inactive and cannot receive input. Call app.snapshot with {} to inspect the active panel or dialog.');
+        }
+        const doc = target.ownerDocument;
+        const hasModal = documentWindow(doc).CSS.supports('selector(:modal)') && doc.querySelector(':modal') !== null;
+        if (hasModal && !target.closest(':modal')) {
+            throw new Error('An open modal dialog blocks this target. Observe the dialog and operate or close it first. For a dialog outside this embedded page, call app.snapshot with {} to inspect the main page.');
+        }
     }
     return element;
 }
@@ -120,27 +127,29 @@ function requireInteractiveElement(element: Element): HTMLElement {
 function prepareAction(
     request: Interaction,
     element: HTMLElement,
-    semantics: Semantics,
+    scope: DocumentScope,
     scrollChat: ChatScroller | undefined,
     feedback?: InteractionFeedback,
 ): () => boolean {
+    const semantics = createSemantics();
+    const requireSurface = (candidates: HTMLElement[]) => requireInputSurface(candidates, scope, semantics, feedback);
     switch (request.action) {
         case 'click': {
-            const surface = requireClickSurface(element, semantics, feedback);
+            const surface = requireSurface(clickCandidates(element));
             return () => {
                 surface.click();
                 return true;
             };
         }
         case 'fill': {
-            const supportedInput = element instanceof HTMLInputElement && FILLABLE_INPUT_TYPES.has(element.type);
-            if (!(element instanceof HTMLTextAreaElement || supportedInput) || element.closest('.cm-editor')) {
+            const supportedInput = isHtmlTag(element, 'input') && FILLABLE_INPUT_TYPES.has(element.type);
+            if (!(isHtmlTag(element, 'textarea') || supportedInput) || element.closest('.cm-editor')) {
                 throw new Error('fill supports ordinary text/number inputs and textareas. For a complex editor, use app.evaluate with its editing API. Password and file inputs are not supported.');
             }
             if (element.readOnly || element.getAttribute('aria-readonly') === 'true') {
                 throw new Error('The target is read-only. Find an editable control or inspect what makes this field read-only before trying again.');
             }
-            requireInputSurface([element], semantics, feedback);
+            requireSurface([element]);
 
             return () => {
                 element.focus({ preventScroll: true });
@@ -150,14 +159,14 @@ function prepareAction(
             };
         }
         case 'select': {
-            if (!(element instanceof HTMLSelectElement) || element.multiple) {
+            if (!isHtmlTag(element, 'select') || element.multiple) {
                 throw new Error('select supports standard single-select controls. For a custom dropdown, click to open it and use app.snapshot to inspect its options; for multi-select, use a known API.');
             }
             const option = Array.from(element.options).find(candidate => candidate.value === request.value);
             if (!option || option.disabled || option.parentElement?.matches('optgroup:disabled')) {
                 throw new Error('This option is missing or disabled. Call app.snapshot with this control as root, then use an enabled option\'s exact value and the control\'s new ref.');
             }
-            requireInputSurface([element], semantics, feedback);
+            requireSurface([element]);
 
             return () => {
                 element.value = request.value;
@@ -172,7 +181,7 @@ function prepareAction(
             if (element.type === 'radio' && !request.checked) {
                 throw new Error('A radio cannot be unchecked directly. Select another radio in the group with checked=true.');
             }
-            const surface = requireClickSurface(element, semantics, feedback);
+            const surface = requireSurface(clickCandidates(element));
 
             return () => {
                 if (element.checked === request.checked) {
@@ -186,7 +195,7 @@ function prepareAction(
             if (!semantics.isScrollable(element)) {
                 throw new Error('This target cannot scroll vertically. Use app.snapshot to find a region marked scrollable=true, then scroll that region.');
             }
-            requireInputSurface([element], semantics, feedback);
+            requireSurface([element]);
 
             return () => {
                 const direction = request.direction === 'down' ? 1 : -1;
@@ -203,9 +212,8 @@ function prepareAction(
 }
 
 function setNativeInputValue(element: HTMLInputElement | HTMLTextAreaElement, value: string) {
-    const prototype = element instanceof HTMLTextAreaElement
-        ? HTMLTextAreaElement.prototype
-        : HTMLInputElement.prototype;
+    const view = documentWindow(element.ownerDocument);
+    const prototype = isHtmlTag(element, 'textarea') ? view.HTMLTextAreaElement.prototype : view.HTMLInputElement.prototype;
     const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
     if (!descriptor?.set) {
         throw new Error('The native input value setter is unavailable.');
@@ -216,49 +224,26 @@ function setNativeInputValue(element: HTMLInputElement | HTMLTextAreaElement, va
 }
 
 function notifyValueChange(element: HTMLElement) {
+    const { Event } = documentWindow(element.ownerDocument);
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-function requireClickSurface(element: HTMLElement, semantics: Semantics, feedback?: InteractionFeedback): HTMLElement {
+function clickCandidates(element: HTMLElement): HTMLElement[] {
     const candidates = [element];
     if (isCheckableInput(element)) {
         candidates.push(...Array.from(element.labels ?? []));
     }
-    return requireInputSurface(candidates, semantics, feedback);
+    return candidates;
 }
 
-function requireInputSurface(candidates: HTMLElement[], semantics: Semantics, feedback?: InteractionFeedback): HTMLElement {
+function requireInputSurface(candidates: HTMLElement[], scope: DocumentScope, semantics: Semantics, feedback?: InteractionFeedback): HTMLElement {
     for (const candidate of candidates) {
-        const point = inputPoint(candidate, semantics);
+        const point = inputPoint(candidate, scope, semantics);
         if (point) {
             feedback?.(point);
             return candidate;
         }
     }
-    throw new Error('No action was performed: the target is hidden, outside the visible area, or covered. Inspect the interface, then open its panel, scroll its region or close a covering panel as needed. Observe again before retrying.');
-}
-
-function inputPoint(element: HTMLElement, semantics: Semantics): InteractionPoint | null {
-    if (!semantics.isVisible(element)) {
-        return null;
-    }
-
-    // ponytail: one point per client rect; add richer geometry only for observed partial-overlay failures.
-    for (const rect of Array.from(element.getClientRects())) {
-        const left = Math.max(0, rect.left);
-        const right = Math.min(window.innerWidth, rect.right);
-        const top = Math.max(0, rect.top);
-        const bottom = Math.min(window.innerHeight, rect.bottom);
-        if (right <= left || bottom <= top) {
-            continue;
-        }
-
-        const point = { x: (left + right) / 2, y: (top + bottom) / 2 };
-        const hit = document.elementFromPoint(point.x, point.y);
-        if (hit && element.contains(hit)) {
-            return point;
-        }
-    }
-    return null;
+    throw new Error('No action was performed: the target is hidden, outside the visible area, or covered. Scroll its region or close a covering panel, then observe again. For an obstruction outside this embedded page, call app.snapshot with {} to inspect the main page.');
 }

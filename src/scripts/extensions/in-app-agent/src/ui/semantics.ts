@@ -1,4 +1,5 @@
 import { computeAccessibleName, getRole } from 'dom-accessibility-api';
+import { documentWindow, isHtmlTag } from './document';
 
 export const MAX_PREVIEW = 200;
 export type ElementDescription = Record<string, string | number | boolean>;
@@ -41,15 +42,15 @@ export function isSensitive(element: Element): boolean {
 }
 
 export function isCheckableInput(element: Element): element is HTMLInputElement & { type: 'checkbox' | 'radio' } {
-    return element instanceof HTMLInputElement && (element.type === 'checkbox' || element.type === 'radio');
+    return isHtmlTag(element, 'input') && (element.type === 'checkbox' || element.type === 'radio');
 }
 
 function hasSensitiveNameSource(element: Element): boolean {
     const sources = [element];
-    const hasNativeLabels = element instanceof HTMLInputElement
-        || element instanceof HTMLTextAreaElement
-        || element instanceof HTMLSelectElement
-        || element instanceof HTMLButtonElement;
+    const hasNativeLabels = isHtmlTag(element, 'input')
+        || isHtmlTag(element, 'textarea')
+        || isHtmlTag(element, 'select')
+        || isHtmlTag(element, 'button');
     if (hasNativeLabels) {
         sources.push(...Array.from(element.labels ?? []));
     }
@@ -71,7 +72,7 @@ export function createSemantics() {
     function getStyle(element: Element): CSSStyleDeclaration {
         let result = styles.get(element);
         if (!result) {
-            result = getComputedStyle(element);
+            result = documentWindow(element.ownerDocument).getComputedStyle(element);
             styles.set(element, result);
         }
         return result;
@@ -88,6 +89,12 @@ export function createSemantics() {
             && element.getClientRects().length > 0;
     }
 
+    function requireFrameVisible(frame: HTMLIFrameElement) {
+        if (!isVisible(frame) || frame.closest('[aria-hidden="true"],[data-tt-sensitive]')) {
+            throw new Error('The embedded page is hidden or no longer displayed. Call app.snapshot with {} and open or restore its visible panel before entering it again.');
+        }
+    }
+
     function isTextVisible(node: Text): boolean {
         const parent = node.parentElement;
         if (!parent) {
@@ -102,7 +109,7 @@ export function createSemantics() {
         }
 
         // display:contents has no element box. Inspect the text's own rendered range.
-        const range = document.createRange();
+        const range = node.ownerDocument.createRange();
         range.setStart(node, 0);
         range.setEnd(node, Math.min(node.length, MAX_PREVIEW));
         return range.getClientRects().length > 0;
@@ -112,11 +119,11 @@ export function createSemantics() {
         if (element.clientHeight <= 0 || element.scrollHeight <= element.clientHeight) {
             return false;
         }
-        return element === document.scrollingElement || /^(auto|scroll)$/.test(getStyle(element).overflowY);
+        return element === element.ownerDocument.scrollingElement || /^(auto|scroll)$/.test(getStyle(element).overflowY);
     }
 
     function readRole(element: Element, compactText = false): string | null {
-        if (element === document.body) {
+        if (element === element.ownerDocument.documentElement) {
             return 'document';
         }
         if (element.matches('.ttia-history-area') || isTextRegion(element)) {
@@ -159,8 +166,10 @@ export function createSemantics() {
         if (element.matches('.ttia-history-area')) {
             return 'assistant conversation and tool logs';
         }
-        if (element.localName === 'iframe') {
-            return 'iframe content; not inspected';
+        if (isHtmlTag(element, 'iframe')) {
+            const doc = element.contentDocument;
+            if (!doc) return 'content is not accessible from this page; it may be isolated or cross-origin';
+            if (!doc.body) return 'no readable HTML content yet; observe again after it loads';
         }
         if (element.shadowRoot) {
             return 'shadow DOM; not inspected';
@@ -176,7 +185,7 @@ export function createSemantics() {
         if (hasSensitiveNameSource(element)) {
             return element.getAttribute('aria-label') ?? element.getAttribute('title') ?? '';
         }
-        if (element instanceof HTMLOptionElement) {
+        if (isHtmlTag(element, 'option')) {
             return element.label;
         }
         return computeAccessibleName(element, {
@@ -190,7 +199,8 @@ export function createSemantics() {
         const omitted = readOmissionReason(element);
         if (omitted) {
             result.omitted = omitted;
-        } else {
+        }
+        if (!omitted || isHtmlTag(element, 'iframe')) {
             const name = readName(element);
             if (name) {
                 result.name = name;
@@ -217,19 +227,19 @@ export function createSemantics() {
         return result;
     }
 
-    return { excludesSubtree, isVisible, isTextVisible, isScrollable, readRole, readOmissionReason, describeElement };
+    return { excludesSubtree, isVisible, requireFrameVisible, isTextVisible, isScrollable, readRole, readOmissionReason, describeElement };
 }
 
 export type Semantics = ReturnType<typeof createSemantics>;
 
 function appendControlState(element: Element, result: ElementDescription) {
-    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    if (isHtmlTag(element, 'input') || isHtmlTag(element, 'textarea')) {
         if (element.readOnly) {
             result.readOnly = true;
         }
     }
 
-    if (element instanceof HTMLInputElement) {
+    if (isHtmlTag(element, 'input')) {
         result.inputType = element.type;
         if (isCheckableInput(element)) {
             result.checked = element.checked;
@@ -239,11 +249,11 @@ function appendControlState(element: Element, result: ElementDescription) {
         } else if (element.type !== 'file') {
             result.value = isSensitive(element) ? '[redacted]' : element.value;
         }
-    } else if (element instanceof HTMLTextAreaElement) {
+    } else if (isHtmlTag(element, 'textarea')) {
         result.value = isSensitive(element) ? '[redacted]' : element.value;
-    } else if (element instanceof HTMLSelectElement || element instanceof HTMLOptionElement) {
+    } else if (isHtmlTag(element, 'select') || isHtmlTag(element, 'option')) {
         result.value = isSensitive(element) ? '[redacted]' : element.value;
-        if (element instanceof HTMLOptionElement) {
+        if (isHtmlTag(element, 'option')) {
             result.selected = element.selected;
         } else if (element.multiple) {
             result.multiple = true;
@@ -263,13 +273,13 @@ function appendAriaState(element: Element, result: ElementDescription) {
 }
 
 function appendDisclosureState(element: Element, result: ElementDescription) {
-    if (element instanceof HTMLDetailsElement) {
+    if (isHtmlTag(element, 'details')) {
         result.expanded = element.open;
     }
-    if (element.localName === 'summary' && element.parentElement instanceof HTMLDetailsElement) {
+    if (element.localName === 'summary' && element.parentElement && isHtmlTag(element.parentElement, 'details')) {
         result.expanded = element.parentElement.open;
     }
-    if (element instanceof HTMLDialogElement && CSS.supports('selector(:modal)')) {
+    if (isHtmlTag(element, 'dialog') && documentWindow(element.ownerDocument).CSS.supports('selector(:modal)')) {
         result.modal = element.matches(':modal');
     }
 }
