@@ -214,7 +214,7 @@
 .ttia-composer { position: relative; z-index: 0; border: 1px solid color-mix(in srgb, var(--ttia-ink) 10%, transparent); background: var(--ttia-field); border-radius: 17px; padding: 12px 12px 9px; box-shadow: 0 1px 3px color-mix(in srgb, var(--SmartThemeShadowColor) 15%, transparent), inset 0 1px 0 color-mix(in srgb, var(--ttia-ink) 3%, transparent); transition: border-color var(--ttia-d-fast), box-shadow var(--ttia-d-fast); }
 .ttia-composer.has-status { padding-top: 0; }
 .ttia-composer:focus-within { border-color: color-mix(in srgb, var(--ttia-ink) 30%, transparent); box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--ttia-ink) 4.5%, transparent), var(--ttia-shadow-lift); }
-.ttia-root .ttia-composer textarea { background: transparent; border: 0; outline: 0; padding: 0 2px; resize: none; min-height: 2.4em; max-height: min(10em, 24vh); font-size: 1em; line-height: 1.55; border-radius: 0; display: block; transition: height 160ms var(--ttia-ease); }
+.ttia-root .ttia-composer textarea { background: transparent; border: 0; outline: 0; padding: 0 2px; resize: none; min-height: 2.4em; max-height: min(10em, 24vh); font-size: 1em; line-height: 1.55; border-radius: 0; display: block; }
 .ttia-root textarea::placeholder { color: var(--ttia-muted) !important; opacity: .8; }
 .ttia-composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; }
 .ttia-root .ttia-send { width: 32px; height: 32px; padding: 0; flex-shrink: 0; border-radius: 9px; background: var(--ttia-ink); color: var(--ttia-surface); font-size: 14.5px; transition: background-color var(--ttia-d-fast), color var(--ttia-d-fast), transform var(--ttia-d-fast) var(--ttia-ease), opacity var(--ttia-d-fast); }

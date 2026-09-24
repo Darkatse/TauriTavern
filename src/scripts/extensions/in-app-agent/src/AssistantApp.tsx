@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { modelBindingFromTarget } from '../../../tauritavern/agent/model-target-llm-connection.js';
 import type { AssistantActions, AssistantController, ModelTarget, SettingsOptions } from './host';
 import type { AssistantDrawer } from './drawer';
@@ -70,6 +70,7 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
     const [menu, setMenu] = useState<'model' | 'effort' | null>(null);
     const [sweep, setSweep] = useState(0);
     const input = useRef<HTMLTextAreaElement>(null);
+    const resizeAnimation = useRef<Animation | null>(null);
     const initialized = useRef<Promise<void> | null>(null);
     const activity = useRef({ wasActive: false, unread: false });
 
@@ -105,11 +106,18 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
     useEffect(() => {
         if (visible && view === 'chat' && snapshot.initialized && !actions.isMobile()) input.current?.focus({ preventScroll: true });
     }, [visible, view, snapshot.initialized, snapshot.sessionId, actions]);
-    useEffect(() => {
+    useLayoutEffect(() => {
         const element = input.current;
-        if (!element || !visible) return;
+        if (!element || !visible || view !== 'chat') return;
+        const previousHeight = element.getBoundingClientRect().height;
+        resizeAnimation.current?.cancel();
+        // Measure without animation: transitioning to auto can make scrollHeight retain the old height.
         element.style.height = 'auto';
         element.style.height = `${element.scrollHeight}px`;
+        const height = element.getBoundingClientRect().height;
+        if (height !== previousHeight) resizeAnimation.current = element.animate([
+            { height: `${previousHeight}px` }, { height: `${height}px` },
+        ], { duration: 160, easing: getComputedStyle(element).getPropertyValue('--ttia-ease') });
     }, [text, visible, view]);
     useEffect(() => {
         if (!notice) return;
