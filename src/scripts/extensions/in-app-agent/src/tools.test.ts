@@ -24,7 +24,7 @@ test('log levels are filtered before the limit without changing console capture'
         getConsoleCaptureEnabled: () => Promise.resolve(false),
         setConsoleCaptureEnabled: () => { captureChanges++; return Promise.resolve(); },
         subscribe: () => Promise.resolve(() => {}),
-    });
+    }, () => true);
     const context: TauriTavernExtensionToolContext = {
         runId: 'run', invocationId: 'inv_root', callId: 'call', target: { kind: 'session', sessionId: 'session' },
         signal: new AbortController().signal,

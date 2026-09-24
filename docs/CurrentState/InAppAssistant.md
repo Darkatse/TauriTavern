@@ -6,7 +6,7 @@
 
 - 入口等待 Host ready、注册工具，再通过 APP_READY 回调挂载。不能在扩展顶层等待 APP_READY：上游在扩展加载完成后才发出该事件。
 - 一个 React root 对应一个 controller；首次打开读取配置和历史，隐藏保留视图与订阅，卸载释放订阅但不取消原生 Run。
-- 首次选择模型时保存 Profile，引用已有 `openai/Default`，默认只开启 `app.evaluate`、`app.read_logs`；其他工具按需选入。
+- 首次选择模型时保存 Profile，引用已有 `openai/Default`，默认开启 `app.snapshot`、`app.interact`、`app.evaluate`、`app.read_logs`；其他工具按需选入。已有 Profile 保留用户选择与指令，新工具从助手设置显式启用。
 - 输入框中的模型与推理强度选择立即保存，并同步到未保存的设置草稿；修改影响下次发送，不改变运行中的冻结输入。
 - 会话选择保存在 `localStorage`：null 表示新对话，未保存或目标已删除时打开最近会话。`extension.store` 保存宽度偏好；Session 数据与共享 Profile 由 Session API 管理。
 - Skill 使用助手 Profile 的作用域，与 Skill Manager 共用[导入准入](../API/Skill.md#预览与安装)。取消设置释放待确认来源，但不撤销已完成的安装；选择 Skill 不自动启用 Shell。
@@ -37,8 +37,14 @@
 
 | Session 工具 | 契约 |
 | --- | --- |
+| `app.snapshot` | 按需读取主页面的有限 DOM 语义快照，支持区域下钻与分页；只观察，不展开或滚动界面。 |
+| `app.interact` | 操作已观察的控件，返回动作派发情况与即时状态；可恢复错误不结束任务，读回不证明异步保存完成。 |
 | `app.evaluate` | 在当前 WebView 执行一次 async function body，注入 `api`、`context`，显式返回 JSON；异常沿共同工具链传播，不换包装重跑。同步 JS 无法强制终止，超时或取消不撤销效果。 |
 | `app.read_logs` | 读取保留日志，先按等级筛选再取尾部，并返回采集开关状态；不修改采集设置或清除日志。 |
+
+UI 工具位于内置扩展的 [ui/](../../src/scripts/extensions/in-app-agent/src/ui)，复用既有 Extension Provider；聊天滚动交由现有 ChatSurface owner。快照省略助手会话和已知敏感内容，不提供完整业务数据。
+
+引用只对当前 Run 最近一页有效；新快照、Run 切换或页面重载后旧引用失效。分页读取实时界面，interact/evaluate 会使旧续读位置失效；关闭助手抽屉不影响工具运行。具体参数、支持范围与恢复指引以 [tools.ts](../../src/scripts/extensions/in-app-agent/src/tools.ts) 中的工具说明为准。
 
 ## 维护入口
 

@@ -10,6 +10,8 @@ type Result = Extract<Part, { type: 'toolResult' }>['result'];
 const toolLabels: Record<string, [MessageKey, MessageKey]> = {
     'extension/in-app-agent:app.evaluate': ['evaluate', 'evaluateHelp'],
     'extension/in-app-agent:app.read_logs': ['logs', 'logsHelp'],
+    'extension/in-app-agent:app.snapshot': ['snapshot', 'snapshotHelp'],
+    'extension/in-app-agent:app.interact': ['interact', 'interactHelp'],
     'builtin:workspace.read_file': ['readFile', 'readFileHelp'],
     'builtin:workspace.write_file': ['writeFile', 'writeFileHelp'],
     'builtin:workspace.list_files': ['listFiles', 'listFilesHelp'],

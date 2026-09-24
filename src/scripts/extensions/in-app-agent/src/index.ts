@@ -13,7 +13,8 @@ const api = host.api;
 if (!api?.agent || !api.dev || !api.extension) throw new Error('in-app-agent: required Host APIs are unavailable');
 const hostApi: TauriTavernHostApi = api;
 const { agent, dev } = api;
-await registerAssistantTools(api, agent.tools, dev.frontendLogs);
+let pageReady = false;
+await registerAssistantTools(api, agent.tools, dev.frontendLogs, () => pageReady);
 
 export function createAssistantController() {
     return createInAppAgentController({ agent, selection: assistantSelection });
@@ -21,6 +22,7 @@ export function createAssistantController() {
 
 const context = requireContext();
 context.eventSource.once(context.eventTypes.APP_READY, () => {
+    pageReady = true;
     void mount().catch(error => {
         console.error('[InAppAssistant] Failed to mount assistant', error);
         window.toastr?.error?.(error instanceof Error ? error.message : String(error));

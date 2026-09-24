@@ -333,6 +333,7 @@ async function viewSecrets() {
 
     const data = await response.json();
     const table = document.createElement('table');
+    table.setAttribute('data-tt-sensitive', '');
     table.classList.add('responsiveTable');
     $(table).append('<thead><th>Key</th><th>Value</th></thead>');
 
@@ -1131,6 +1132,7 @@ function registerSecretSlashCommands() {
 }
 
 export async function initSecrets() {
+    $(Object.values(INPUT_MAP).concat('input[type="password"]').join(',')).attr('data-tt-sensitive', '');
     $('#viewSecrets').on('click', viewSecrets);
     $(document).on('click', '.manage-api-keys', async function () {
         const key = $(this).data('key');
