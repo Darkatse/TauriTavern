@@ -23,7 +23,7 @@ description: 检查场景中的人物动机与叙事衔接。
 将具体修改建议写入 summaries/review.md，并引用对应段落。
 ```
 
-包名使用小写字母、数字、`-` 或 `_`。其他目录按内容需要添加；有脚本时，在 `SKILL.md` 中说明用途、参数和返回值。
+包名使用小写字母、数字、`-` 或 `_`。其他目录按内容需要添加；有脚本时，在 `SKILL.md` 中说明调用命令、参数、输出和失败条件。
 
 ## 安装与作用域
 
@@ -48,21 +48,23 @@ Skill 可以属于全局、预设、Profile 或角色。运行时按 `global →
 ```js
 import { workspace } from '@tauritavern/runtime';
 
-export default function ({ path }) {
-  const text = workspace.readText(path);
-  const scenes = text.split('\n').filter(line => line.startsWith('## '));
-  workspace.writeText('summaries/scenes.md', scenes.join('\n'));
-  return { count: scenes.length, path: 'summaries/scenes.md' };
+const args = process.argv.slice(2);
+if (args.length !== 1) {
+  throw new Error('Usage: js list-scenes.js WORKSPACE_PATH');
 }
+const text = workspace.readText(args[0]);
+const scenes = text.split('\n').filter(line => line.startsWith('## '));
+workspace.writeText('summaries/scenes.md', scenes.join('\n'));
+console.log(JSON.stringify({ count: scenes.length, path: 'summaries/scenes.md' }));
 ```
 
 Shell 命令：
 
 ```sh
-js --call default --args-json '{"path":"output/main.md"}' /skills/scene-review/scripts/list-scenes.js
+js /skills/scene-review/scripts/list-scenes.js output/main.md
 ```
 
-导出 `main` 时使用 `--call main`。脚本遵循统一的工作区与 Shell 语义，见 [JavaScript](Workspace.md#javascript)；命令选项见 `js --help`。
+Skill 脚本遵循统一的 [JavaScript 工作区契约](Workspace.md#javascript)。复杂输入可保存为 JSON 文件，再传入路径；命令和 API 细节见 `js --help`。
 
 ### 可用能力
 
@@ -86,8 +88,6 @@ import { workspace, context, macros, log } from '@tauritavern/runtime';
 
 文件 API 的路径相对于工作区根。`context` 是冻结输入的副本，修改它不会写回宿主；缺少所需上下文时，访问对应字段会报错。
 
-普通执行时，`console.log/info/debug` 输出到 stdout，`console.warn/error` 输出到 stderr。使用 `--call` 时，返回值以 JSON 写入 stdout，所有日志写入 stderr，便于后续命令处理结果。
-
 ### 模块与工具箱
 
 相对 import 从导入模块所在目录解析，路径须写明 `.js` 或 `.mjs` 扩展名。以下库随应用内置，通过完整模块名导入：
@@ -102,6 +102,31 @@ import { workspace, context, macros, log } from '@tauritavern/runtime';
 | `@tauritavern/kit/slugify` | 生成适合路径或标识符的文本 |
 
 这些库保留各自 API，仍受上述运行环境限制。其他依赖可预先打包成兼容的 ESM 放入 `scripts/vendor/`，通过相对路径导入；运行时不安装 npm 包。内置模块清单见 [kit.rs](../../src-tauri/crates/tt-adapter-workspace-shell/src/kit.rs)。
+
+## 迁移旧脚本
+
+原 `skill.run_script` 使用 `default(args)` / `main(args)` 导出函数。现在统一使用普通模块执行和命令行参数。
+
+迁移时一起更新脚本和 `SKILL.md` 中的命令：
+
+1. 将输入从函数参数对接到 `process.argv.slice(2)`；复杂对象可以改用 JSON 文件，并保留原有业务校验。
+2. 显式调用业务函数。可以保留原函数作为命名函数或导出函数，但解释器不会自动调用 `default` 或 `main`。
+3. 将需要交给调用者的返回值显式输出；日志使用 `console.error()` 或 runtime 的 `log`，避免混入 JSON stdout。
+4. 用异常或非零 `process.exitCode` 报告失败，更新帮助信息与使用示例。
+
+例如，保留原来的业务函数并命名为 `main`，在同一模块末尾增加入口：
+
+```js
+const args = process.argv.slice(2);
+if (args.length !== 1) {
+  throw new Error('Usage: js task.js WORKSPACE_PATH');
+}
+console.log(JSON.stringify(await main({ path: args[0] })));
+```
+
+调用改为 `js /skills/<name>/scripts/task.js output/main.md`。如果原函数只修改文件、不返回结果，直接 `await main(...)`，无需输出 `undefined`。
+
+仅移除旧命令选项并不能完成迁移：只导出函数的模块可能以 0 退出，但业务函数没有执行。使用代表性输入验证 stdout、stderr、退出码和最终文件结果；移植后的文件操作仍遵循工作区即时生效、失败不回滚的规则。Agent 运行中的 `skills/` 是只读视图，包内源码与说明应在原包或 Skill Manager 中更新。
 
 ## 源码
 

@@ -1219,7 +1219,7 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
                 model_tool_call(
                     "script",
                     "workspace_shell",
-                    json!({ "command": "js --call default /skills/macro-demo/scripts/helper.js" }),
+                    json!({ "command": "js /skills/macro-demo/scripts/helper.js skills/macro-demo/references/template.md" }),
                 ),
                 model_tool_call(
                     "shell_script",
@@ -1253,7 +1253,7 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
                 files: [
                     ("SKILL.md", "---\nname: macro-demo\ndescription: Macro test\n---\n{{char}}"),
                     ("references/template.md", source),
-                    ("scripts/helper.js", "import { workspace } from '@tauritavern/runtime'; import { literal } from './literal.js'; export default () => { if (literal !== '{{char}}') throw new Error('script source was expanded'); return workspace.readText('skills/macro-demo/references/template.md'); };"),
+                    ("scripts/helper.js", "import { workspace } from '@tauritavern/runtime'; import { literal } from './literal.js'; if (literal !== '{{char}}') throw new Error('script source was expanded'); console.log(workspace.readText(process.argv[2]));"),
                     ("scripts/literal.js", "export const literal = '{{char}}';"),
                 ].into_iter().map(|(path, content)| SkillInlineFile {
                     path: path.into(), content: content.into(), encoding: "utf8".into(),

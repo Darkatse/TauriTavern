@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -147,6 +147,37 @@ impl ModuleDef for RuntimeModule {
         exports.export("log", output_object(ctx, output, true)?)?;
         Ok(())
     }
+}
+
+pub(super) fn process_object<'js>(
+    ctx: &Ctx<'js>,
+    argv: Vec<String>,
+    exit_code: Rc<Cell<u8>>,
+) -> Result<Object<'js>> {
+    let process = Object::new(ctx.clone())?;
+    process.set("argv", argv)?;
+    let current = exit_code.clone();
+    process.prop(
+        "exitCode",
+        Accessor::new(
+            move || current.get(),
+            move |ctx: Ctx<'js>, value: Value<'js>| -> Result<()> {
+                let code = value
+                    .as_number()
+                    .filter(|code| code.fract() == 0.0 && (0.0..=255.0).contains(code))
+                    .ok_or_else(|| {
+                        Exception::throw_type(
+                            &ctx,
+                            "process.exitCode must be a numeric integer from 0 to 255.",
+                        )
+                    })?;
+                exit_code.set(code as u8);
+                Ok(())
+            },
+        )
+        .enumerable(),
+    )?;
+    Ok(process)
 }
 
 pub(super) fn output_object<'js>(

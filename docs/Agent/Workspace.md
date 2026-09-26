@@ -36,6 +36,10 @@ Run 工作文件允许并行读取，按单次操作串行修改；CAS 的条件
 
 脚本入口相对于 Shell 当前目录，import 相对于导入模块；`@tauritavern/runtime` 的文件 API 相对于工作区根。模块按需加载，文件直接读写，遵循上述权限与提交规则。
 
+模块执行顶层代码，业务函数由脚本显式调用，异步工作使用 `await`。参数从 `process.argv` 读取，文件脚本使用 `process.argv.slice(2)` 获取字符串参数；选项和子命令由脚本解析。文件、stdin 与 eval 的参数边界见 `js --help`。
+
+结构化结果显式写入 stdout，诊断写入 stderr；较大的输入输出使用工作区文件。`process.exitCode` 默认是 0，可设置为数字整数 `0–255`，非法赋值抛错。未捕获异常或非零退出码表示失败，遵循既有文件保留与自动提交规则。
+
 `context` 和 `macros` 使用 Run 冻结输入，子 Agent 与恢复后的调用继续沿用。缺少聊天上下文不影响普通 JS 和文件操作，访问不可用的 context 字段才报错。
 
 取消停止后续 Shell 调度，等待当前 JS 和已开始的文件操作收尾。收尾以整个 `workspace.shell` 返回为界，内部 `timeout` 不保证单条命令已结束。

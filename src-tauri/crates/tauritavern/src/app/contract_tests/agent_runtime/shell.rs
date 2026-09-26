@@ -41,11 +41,10 @@ JS
 cat > scratch/revise.js <<'JS'
 import { workspace } from '@tauritavern/runtime';
 import { suffix } from './suffix.mjs';
-export default ({ path }) => {
-    if (!workspace.listFiles().includes('output')) throw new Error('output is not visible');
-    workspace.writeText(path, workspace.readText(path) + suffix);
-    return { path };
-};
+const path = process.argv[2];
+if (!workspace.listFiles().includes('output')) throw new Error('output is not visible');
+workspace.writeText(path, workspace.readText(path) + suffix);
+console.log(JSON.stringify({ path }));
 JS
 "#,
                             "printf '{\"text\":\"shell draft\"}' > scratch/review/input.json\n",
@@ -74,7 +73,7 @@ JS
                     "append",
                     "workspace_shell",
                     json!({
-                        "command": r#"js --call default --args-json '{"path":"output/main.md"}' ../scratch/revise.js"#,
+                        "command": "js ../scratch/revise.js output/main.md",
                         "workdir": "/output",
                     }),
                 ),
@@ -255,7 +254,7 @@ async fn failed_shell_keeps_its_writes_without_publishing_an_earlier_candidate()
                 model_tool_call(
                     "failed_shell",
                     "workspace_shell",
-                    json!({"command": r#"js -e 'import {workspace} from "@tauritavern/runtime"; workspace.writeText("output/main.md", "saved despite failure"); throw new Error("draft incomplete")'"#}),
+                    json!({"command": r#"js -e 'import {workspace} from "@tauritavern/runtime"; workspace.writeText("output/main.md", "saved despite failure"); console.error("draft incomplete"); process.exitCode = 7'"#}),
                 ),
             ]),
             model_tool_response(vec![
@@ -317,7 +316,7 @@ async fn failed_shell_keeps_its_writes_without_publishing_an_earlier_candidate()
         result_event.payload["path"].as_str().unwrap(),
     )
     .await;
-    assert_eq!(result["structured"]["exitCode"], 1);
+    assert_eq!(result["structured"]["exitCode"], 7);
     assert_eq!(result["isError"], true);
     assert!(
         result["content"]
