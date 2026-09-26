@@ -623,14 +623,19 @@ export function findExtension(name) {
     return { name: internalExtensionName, enabled: isEnabled };
 }
 
+// An absent switch counts as enabled: both renderers default to rendering, and a
+// missing schema must not silently admit two runtime claimants for one source.
 export const CHAT_SURFACE_RENDERER_CAPABILITIES = Object.freeze([
     Object.freeze({
         extensionName: 'JS-Slash-Runner',
         participantId: 'js-slash-runner/message-runtime',
+        rendersCodeBlocks: () => extension_settings.tavern_helper?.render?.enabled !== false,
     }),
     Object.freeze({
         extensionName: 'LittleWhiteBox',
         participantId: 'littlewhitebox/message-runtime',
+        rendersCodeBlocks: () => extension_settings.LittleWhiteBox?.enabled !== false
+            && extension_settings.LittleWhiteBox?.renderEnabled !== false,
     }),
 ]);
 
@@ -658,9 +663,11 @@ export function isCodeRenderDelegatedToThirdPartyRenderer() {
  */
 export async function activateRequiredChatSurfaceExtensions() {
     const enabled = getEnabledChatSurfaceRendererCapabilities();
-    if (enabled.length > 1) {
+    const codeRenderers = enabled.filter(capability => capability.rendersCodeBlocks());
+    if (codeRenderers.length > 1) {
         throw new Error(
-            'Bounded ChatSurface cannot start while JS-Slash-Runner and LittleWhiteBox are both enabled',
+            'Bounded ChatSurface cannot start while multiple renderers have code block rendering enabled: '
+            + codeRenderers.map(({ extensionName }) => extensionName).join(', '),
         );
     }
     const requiredNames = new Set(enabled.map(capability => capability.internalName));
