@@ -1,11 +1,9 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use bashkit::ExecResult;
-use rquickjs::{
-    Array, Coerced, Context, Ctx, Exception, FromJs, Function, Module, Object, Runtime, Value,
-};
+use rquickjs::{Coerced, Context, Ctx, FromJs, Module, Runtime, Value};
 use tt_domain::errors::DomainError;
 use tt_ports::workspace_shell::WorkspaceShellContext;
 
@@ -14,6 +12,7 @@ use super::files::{Files, resolve_path};
 use super::loader::{ModuleLoader, ModuleResolver, ensure_module_path};
 use super::runtime::{
     MAX_OUTPUT_BYTES, Output, RUNTIME_MODULE, RuntimeModule, RuntimeState, output_object,
+    process_object,
 };
 
 pub(super) fn execute(
@@ -22,18 +21,13 @@ pub(super) fn execute(
     files: Files,
     host: Arc<WorkspaceShellContext>,
 ) -> Result<ExecResult, DomainError> {
-    let (name, source) = match source(script.source, &cwd, &files) {
+    let (name, source, entry) = match source(script.source, &cwd, &files) {
         Ok(source) => source,
         Err(message) => return Ok(ExecResult::err(format!("js: {message}\n"), 1)),
     };
-    let Script {
-        name: command,
-        entry,
-        call,
-        args,
-        rest,
-        ..
-    } = script;
+    let mut argv = vec![script.command];
+    argv.extend(entry);
+    argv.extend(script.args);
     let runtime = Runtime::new().map_err(internal_error)?;
     runtime.set_memory_limit(32 * 1024 * 1024);
     runtime.set_max_stack_size(256 * 1024);
@@ -42,6 +36,7 @@ pub(super) fn execute(
     runtime.set_loader(ModuleResolver, ModuleLoader(files.clone()));
     let context = Context::full(&runtime).map_err(internal_error)?;
     let output = Rc::new(RefCell::new(Output::default()));
+    let exit_code = Rc::new(Cell::new(0));
     let outcome = context.with(|ctx| {
         ctx.store_userdata(RuntimeState {
             files: files.clone(),
@@ -49,43 +44,13 @@ pub(super) fn execute(
             output: output.clone(),
         })
         .map_err(|_| rquickjs::Error::Unknown)?;
-        ctx.globals().set(
-            "console",
-            output_object(&ctx, output.clone(), call.is_some())?,
-        )?;
-        let process = process_object(&ctx, &command, &entry, &rest)?;
-        ctx.globals().set("process", process)?;
+        ctx.globals()
+            .set("console", output_object(&ctx, output.clone(), false)?)?;
+        ctx.globals()
+            .set("process", process_object(&ctx, argv, exit_code.clone())?)?;
         Module::declare_def::<RuntimeModule, _>(ctx.clone(), RUNTIME_MODULE)?;
-        let (module, evaluated) = Module::declare(ctx.clone(), name.clone(), source)?.eval()?;
+        let (_, evaluated) = Module::declare(ctx.clone(), name.clone(), source)?.eval()?;
         evaluated.finish::<Value>()?;
-        if let Some(export) = call {
-            let function = module.get::<_, Function>(&export).map_err(|_| {
-                Exception::throw_message(
-                    &ctx,
-                    &format!("`{name}` must export a callable `{export}`. Use --call with the exact export name."),
-                )
-            })?;
-            let args: Value = ctx.json_parse(args.to_string())?;
-            let returned: Value = function.call((args,))?;
-            let value = if let Some(promise) = returned.as_promise() {
-                promise.finish::<Value>()?
-            } else {
-                returned
-            };
-            let json = ctx
-                .json_stringify(value)?
-                .ok_or_else(|| {
-                    Exception::throw_message(
-                        &ctx,
-                        "The called function must return a JSON-serializable value; return null explicitly if there is no result.",
-                    )
-                })?
-                .to_string()?;
-            output
-                .borrow_mut()
-                .write(false, &format!("{json}\n"))
-                .map_err(|message| Exception::throw_message(&ctx, &message))?;
-        }
         Ok(())
     });
     let failure = outcome.err().map(|error| match files.check() {
@@ -103,7 +68,7 @@ pub(super) fn execute(
         output.stderr.push_str(message);
         1
     } else {
-        0
+        i32::from(exit_code.get())
     };
     Ok(ExecResult {
         stdout: std::mem::take(&mut output.stdout).into(),
@@ -113,42 +78,21 @@ pub(super) fn execute(
     })
 }
 
-fn source(source: Source, cwd: &str, files: &Files) -> Result<(String, String), String> {
+fn source(
+    source: Source,
+    cwd: &str,
+    files: &Files,
+) -> Result<(String, String, Option<String>), String> {
     match source {
-        Source::Code(code) => Ok((resolve_path(cwd, "<eval>")?, code)),
+        Source::Eval(code) => Ok((resolve_path(cwd, "<eval>")?, code, None)),
+        Source::Stdin(code) => Ok((resolve_path(cwd, "<stdin>")?, code, Some("-".into()))),
         Source::File(raw) => {
             let path = resolve_path(cwd, &raw)?;
             ensure_module_path(&path)?;
             let text = files.read(&path)?;
-            Ok((path, text))
+            Ok((path.clone(), text, Some(path)))
         }
     }
-}
-
-/// Builds the `process` global with Node-style `argv`:
-/// `[command, entry?, ...positional arguments]`. Eval code has no entry, so
-/// positional arguments follow the command name directly (like `node -e`).
-fn process_object<'js>(
-    ctx: &Ctx<'js>,
-    command: &str,
-    entry: &Option<String>,
-    rest: &[String],
-) -> rquickjs::Result<Object<'js>> {
-    let process = Object::new(ctx.clone())?;
-    let argv = Array::new(ctx.clone())?;
-    let push = |argv: &Array<'js>, value: &str| -> rquickjs::Result<()> {
-        let length = argv.len();
-        argv.set(length, value)
-    };
-    push(&argv, command)?;
-    if let Some(entry) = entry {
-        push(&argv, entry)?;
-    }
-    for argument in rest {
-        push(&argv, argument)?;
-    }
-    process.set("argv", argv)?;
-    Ok(process)
 }
 
 fn internal_error(error: rquickjs::Error) -> DomainError {
