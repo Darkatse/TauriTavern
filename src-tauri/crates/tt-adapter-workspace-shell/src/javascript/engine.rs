@@ -3,7 +3,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use bashkit::ExecResult;
-use rquickjs::{Coerced, Context, Ctx, Exception, FromJs, Function, Module, Runtime, Value};
+use rquickjs::{
+    Array, Coerced, Context, Ctx, Exception, FromJs, Function, Module, Object, Runtime, Value,
+};
 use tt_domain::errors::DomainError;
 use tt_ports::workspace_shell::WorkspaceShellContext;
 
@@ -24,6 +26,14 @@ pub(super) fn execute(
         Ok(source) => source,
         Err(message) => return Ok(ExecResult::err(format!("js: {message}\n"), 1)),
     };
+    let Script {
+        name: command,
+        entry,
+        call,
+        args,
+        rest,
+        ..
+    } = script;
     let runtime = Runtime::new().map_err(internal_error)?;
     runtime.set_memory_limit(32 * 1024 * 1024);
     runtime.set_max_stack_size(256 * 1024);
@@ -41,19 +51,21 @@ pub(super) fn execute(
         .map_err(|_| rquickjs::Error::Unknown)?;
         ctx.globals().set(
             "console",
-            output_object(&ctx, output.clone(), script.call.is_some())?,
+            output_object(&ctx, output.clone(), call.is_some())?,
         )?;
+        let process = process_object(&ctx, &command, &entry, &rest)?;
+        ctx.globals().set("process", process)?;
         Module::declare_def::<RuntimeModule, _>(ctx.clone(), RUNTIME_MODULE)?;
         let (module, evaluated) = Module::declare(ctx.clone(), name.clone(), source)?.eval()?;
         evaluated.finish::<Value>()?;
-        if let Some(export) = script.call {
+        if let Some(export) = call {
             let function = module.get::<_, Function>(&export).map_err(|_| {
                 Exception::throw_message(
                     &ctx,
                     &format!("`{name}` must export a callable `{export}`. Use --call with the exact export name."),
                 )
             })?;
-            let args: Value = ctx.json_parse(script.args.to_string())?;
+            let args: Value = ctx.json_parse(args.to_string())?;
             let returned: Value = function.call((args,))?;
             let value = if let Some(promise) = returned.as_promise() {
                 promise.finish::<Value>()?
@@ -111,6 +123,32 @@ fn source(source: Source, cwd: &str, files: &Files) -> Result<(String, String), 
             Ok((path, text))
         }
     }
+}
+
+/// Builds the `process` global with Node-style `argv`:
+/// `[command, entry?, ...positional arguments]`. Eval code has no entry, so
+/// positional arguments follow the command name directly (like `node -e`).
+fn process_object<'js>(
+    ctx: &Ctx<'js>,
+    command: &str,
+    entry: &Option<String>,
+    rest: &[String],
+) -> rquickjs::Result<Object<'js>> {
+    let process = Object::new(ctx.clone())?;
+    let argv = Array::new(ctx.clone())?;
+    let push = |argv: &Array<'js>, value: &str| -> rquickjs::Result<()> {
+        let length = argv.len();
+        argv.set(length, value)
+    };
+    push(&argv, command)?;
+    if let Some(entry) = entry {
+        push(&argv, entry)?;
+    }
+    for argument in rest {
+        push(&argv, argument)?;
+    }
+    process.set("argv", argv)?;
+    Ok(process)
 }
 
 fn internal_error(error: rquickjs::Error) -> DomainError {
