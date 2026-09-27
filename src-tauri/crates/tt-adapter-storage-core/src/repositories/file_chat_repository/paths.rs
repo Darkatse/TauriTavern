@@ -190,7 +190,7 @@ impl FileChatRepository {
         at.format("%Y%m%d-%H%M%S").to_string()
     }
 
-    /// Keeps SillyTavern's readable backup key while preserving Unicode letters and numbers.
+    /// Preserves Unicode while keeping the existing ASCII backup key format.
     pub(super) fn sanitize_backup_name_for_sillytavern(input: &str) -> String {
         let mut sanitized = String::with_capacity(input.len());
 
@@ -243,7 +243,11 @@ impl FileChatRepository {
 
         let mut result = String::with_capacity(lowered.len().min(MAX_SANITIZED_BYTES));
         for ch in lowered.chars() {
-            let output = if ch.is_alphanumeric() { ch } else { '_' };
+            let output = if ch.is_ascii() && !ch.is_ascii_alphanumeric() {
+                '_'
+            } else {
+                ch
+            };
             if result.len() + output.len_utf8() > MAX_SANITIZED_BYTES {
                 break;
             }

@@ -736,41 +736,6 @@ fn timestamp_millis(value: &str) -> i64 {
 }
 
 #[tokio::test]
-async fn explicit_backups_keep_readable_format_without_same_second_overwrite() {
-    let (repository, root) = setup_repository().await;
-    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
-    let source = root.join("source.jsonl");
-    fs::write(
-        &source,
-        payload_to_jsonl(&payload_with_integrity(
-            "0548d47e-3dc3-594d-b8b3-8e70fa7b0986",
-        )),
-    )
-    .await
-    .expect("write source");
-
-    let key = "角:色-A* Name".repeat(100);
-    repository
-        .backup_chat_file_explicit(&source, &key)
-        .await
-        .expect("first backup");
-    repository
-        .backup_chat_file_explicit(&source, &key)
-        .await
-        .expect("second backup");
-
-    let names = backup_file_names(&root).await;
-    assert_eq!(names.len(), 2);
-    assert_ne!(names[0], names[1]);
-    assert!(
-        names
-            .iter()
-            .all(|name| name.starts_with("chat_角色_a_name") && name.len() <= 255)
-    );
-    cleanup_repository(repository, root).await;
-}
-
-#[tokio::test]
 async fn zstd_setting_converts_all_backups_in_both_directions() {
     let (repository, root) = setup_repository().await;
     let source = root.join("source.jsonl");
@@ -878,10 +843,18 @@ async fn raw_and_zstd_backups_download_restore_and_delete_by_logical_name() {
         fs::write(&source, payload.as_bytes())
             .await
             .expect("write large source");
+        let backup_name = "角色👩🏽‍💻ก่าか\u{3099}हिन्दीe\u{301}☕\u{fe0f}";
         repository
-            .backup_chat_file_explicit(&source, "Alice")
+            .backup_chat_file_explicit(&source, backup_name)
             .await
             .expect("create backup");
+
+        FileChatRepository::flush_backup_summary_cache(&repository.backup_summary_cache)
+            .await
+            .expect("flush before reopening repository");
+        drop(repository);
+        let repository = repository_for_root(&root);
+        apply_and_reconcile_backups(&repository, policy).await;
 
         let descriptor = repository
             .list_chat_backup_entries()
@@ -889,6 +862,11 @@ async fn raw_and_zstd_backups_download_restore_and_delete_by_logical_name() {
             .expect("list backup")
             .pop()
             .expect("backup descriptor");
+        assert!(
+            descriptor
+                .logical_file_name
+                .starts_with(&format!("chat_{backup_name}_"))
+        );
         assert!(matches!(
             repository
                 .open_chat_backup_download(&format!("{}.partial", descriptor.logical_file_name))
@@ -1259,7 +1237,9 @@ async fn inventory_recovers_interrupted_conversion_using_the_selected_format() {
 #[tokio::test]
 async fn inventory_enforces_prefix_and_global_file_limits() {
     let (repository, root) = setup_repository().await;
-    apply_and_reconcile_backups(&repository, backup_policy(2, 3, -1)).await;
+    let mut policy = backup_policy(2, 3, -1);
+    policy.zstd_compression_enabled = true;
+    apply_and_reconcile_backups(&repository, policy).await;
     let source = root.join("source.jsonl");
     fs::write(
         &source,
@@ -1270,35 +1250,30 @@ async fn inventory_enforces_prefix_and_global_file_limits() {
     .await
     .expect("write source");
 
-    for _ in 0..3 {
-        repository
-            .backup_chat_file_explicit(&source, "Alice")
-            .await
-            .expect("backup Alice");
-    }
-    for _ in 0..2 {
-        repository
-            .backup_chat_file_explicit(&source, "Bob")
-            .await
-            .expect("backup Bob");
+    let keys = [
+        ("角:色-A* Nameก่า👩🏽‍💻", "chat_角色_a_nameก่า👩🏽‍💻", 3),
+        ("角:色-A* Nameก้า👩🏿‍💻", "chat_角色_a_nameก้า👩🏿‍💻", 2),
+    ];
+    for (name, _, count) in keys {
+        let long_name = name.repeat(100);
+        for _ in 0..count {
+            repository
+                .backup_chat_file_explicit(&source, &long_name)
+                .await
+                .expect("backup Unicode name without overwriting an existing file");
+        }
     }
 
     let names = backup_file_names(&root).await;
     assert_eq!(names.len(), 3);
-    assert!(
-        names
-            .iter()
-            .filter(|name| name.starts_with("chat_alice_"))
-            .count()
-            <= 2
-    );
-    assert!(
-        names
-            .iter()
-            .filter(|name| name.starts_with("chat_bob_"))
-            .count()
-            <= 2
-    );
+    assert!(names.iter().all(|name| name.len() <= 255));
+    for (_, prefix, _) in keys {
+        let retained = names.iter().filter(|name| name.starts_with(prefix)).count();
+        assert!(
+            (1..=2).contains(&retained),
+            "retained {retained} backups for {prefix}"
+        );
+    }
 
     cleanup_repository(repository, root).await;
 }
