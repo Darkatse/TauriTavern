@@ -2,7 +2,10 @@
 import { resolveStableChatId } from './agent-chat-identity.js';
 import { createAgentRunGuidanceApi } from './agent-run-guidance.js';
 import { createAgentRunRetentionApi } from './agent-run-retention.js';
-const DEFAULT_EVENT_POLL_MS = 500;
+import { createChannel } from '../../../tauri-bridge.js';
+// Fallback only: native hints trigger reads for active runs. The poll covers
+// catch-up, runs not active in this process and hint channel failures.
+const DEFAULT_EVENT_POLL_MS = 2000;
 const MAX_RUN_LIST_LIMIT = 200;
 const AGENT_RUN_STATUSES = new Set([
     'created',
@@ -21,9 +24,12 @@ const AGENT_RUN_STATUSES = new Set([
 ]);
 
 /**
- * @param {{ safeInvoke: (command: string, args?: any) => Promise<any> }} deps
+ * @param {{
+ *   safeInvoke: (command: string, args?: any) => Promise<any>;
+ *   channelFactory?: (onmessage: (hint: any) => void) => any;
+ * }} deps
  */
-export function createAgentRunRuntimeApi({ safeInvoke }) {
+export function createAgentRunRuntimeApi({ safeInvoke, channelFactory = createChannel }) {
     const guidance = createAgentRunGuidanceApi({ safeInvoke });
 
     async function cancel(runId) {
@@ -153,14 +159,36 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
 
         const intervalMs = normalizePollInterval(options?.intervalMs);
         let afterSeq = Number(options?.afterSeq || 0);
+        let hintedSeq = 0;
         let stopped = false;
         let timer = null;
+        let reading = false;
+        let dirty = false;
+
+        // Single-flight read loop: hints and the fallback timer only request reads,
+        // so events are dispatched once and in seq order.
+        const requestTick = () => {
+            if (stopped) return;
+            if (reading) {
+                dirty = true;
+                return;
+            }
+            if (timer !== null) {
+                clearTimeout(timer);
+                timer = null;
+            }
+            void tick();
+        };
 
         const tick = async () => {
+            timer = null;
             if (stopped) {
                 return;
             }
 
+            reading = true;
+            dirty = false;
+            const startSeq = afterSeq;
             try {
                 const result = await readEvents({
                     runId: normalizedRunId,
@@ -183,13 +211,55 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
                     });
                 }
             } finally {
+                reading = false;
                 if (!stopped) {
-                    timer = setTimeout(tick, intervalMs);
+                    // Re-read now for a request that arrived mid-read, or to finish a
+                    // hinted backlog larger than one page. Each re-read needs a new
+                    // request or progress, so a failing read cannot spin.
+                    if (dirty || (hintedSeq > afterSeq && afterSeq > startSeq)) {
+                        requestTick();
+                    } else {
+                        timer = setTimeout(tick, intervalMs);
+                    }
                 }
             }
         };
 
+        // Native push hints wake the read loop even when WebView timers are
+        // throttled (hidden or tray window). A hint failure only costs latency, so
+        // it is logged and the fallback poll keeps the subscription working.
+        const subscribeEventHints = () => {
+            let channel;
+            try {
+                channel = channelFactory((hint) => {
+                    if (stopped) return;
+                    const seq = Number(hint?.seq);
+                    if (!Number.isSafeInteger(seq) || seq < 0) {
+                        console.error('[AgentRun] Ignoring malformed event hint', hint);
+                        return;
+                    }
+                    hintedSeq = Math.max(hintedSeq, seq);
+                    if (seq > afterSeq) requestTick();
+                });
+            } catch (error) {
+                console.error('[AgentRun] Event hint channel unavailable; polling only', error);
+                return;
+            }
+            Promise.resolve(safeInvoke('subscribe_agent_run_events', {
+                dto: { runId: normalizedRunId },
+                channel,
+            })).then(
+                // The run released its active handle; read its final events now.
+                () => requestTick(),
+                (error) => {
+                    if (stopped) return;
+                    console.error('[AgentRun] Event hint subscription failed; polling only', error);
+                },
+            );
+        };
+
         timer = setTimeout(tick, 0);
+        subscribeEventHints();
 
         return function unsubscribe() {
             stopped = true;

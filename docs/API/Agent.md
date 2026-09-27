@@ -87,7 +87,7 @@ Session 的结束与恢复边界见 [运行循环](../Agent/Runtime.md)，文件
 
 Chat 补充指令在下一次前台模型请求前加入上下文，已经发出的请求保持原样。尚未消费的指令随续接保留。该接口不创建聊天消息。
 
-`subscribe` 的选项是 `afterSeq`、`limit`、`intervalMs`、`onError`，默认从起点读取。实时预览只接受 `onError`；历史过程从持久事件读取。退订后不再交付回调，包括在途请求的结果与错误。
+`subscribe` 的选项是 `afterSeq`、`limit`、`intervalMs`、`onError`，默认从起点读取。活动 Run 追加事件时由原生通道推送 `seq` 唤醒读取，不依赖可能被节流的页面计时器；`intervalMs` 是兜底轮询间隔，默认 2000ms，见 [运行日志](../Agent/RunEventJournal.md#读取与展示)。实时预览只接受 `onError`；历史过程从持久事件读取。退订后不再交付回调，包括在途请求的结果与错误。
 
 实时通道使用以下共同协议（不写入持久 journal）：
 

@@ -473,6 +473,18 @@ pub struct AgentSubscribeRunLiveProjectionDto {
     pub run_id: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSubscribeRunEventsDto {
+    pub run_id: String,
+}
+
+/// Wake-up hint: journal events up to `seq` are readable through `read_agent_run_events`.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct AgentRunEventHintDto {
+    pub seq: u64,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "toolId", rename_all_fields = "camelCase")]
 pub enum AgentRunLiveToolCallDto {

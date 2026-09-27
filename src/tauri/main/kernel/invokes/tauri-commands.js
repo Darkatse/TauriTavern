@@ -256,6 +256,7 @@ export {};
  *   | 'show_system_notification'
  *   | 'start_agent_run'
  *   | 'subscribe_agent_run_live_projection'
+ *   | 'subscribe_agent_run_events'
  *   | 'copy_agent_chat_persistent_states'
  *   | 'prune_agent_chat_persistent_states'
  *   | 'start_chat_completion_stream'
