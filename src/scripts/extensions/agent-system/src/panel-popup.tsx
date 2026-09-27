@@ -17,6 +17,7 @@ import {
 import { translateAgentSystem as tr } from './i18n';
 import {
     listSavedModelTargets,
+    listTextCompletionModelTargets,
     saveModelTargetAsLlmConnection,
     subscribeModelTargetChanges,
 } from './model-target-connection';
@@ -148,6 +149,7 @@ export function openAgentSystemPanel(): void {
         },
         listPresetOptions,
         listModelTargets: listSavedModelTargets,
+        listTextCompletionModelTargets,
         saveModelTargetConnection: saveModelTargetAsLlmConnection,
         subscribeProfilesChanged: subscribeAgentProfilesChanged,
         subscribeModelTargetsChanged: subscribeModelTargetChanges,

@@ -14,24 +14,76 @@ import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommandScope } from '../../slash-commands/SlashCommandScope.js';
 import { collapseSpaces, getUniqueName, isFalseBoolean, isTrueBoolean, uuidv4, waitUntilCondition } from '../../utils.js';
 import { t } from '../../i18n.js';
-import { getSecretLabelById, resolveSecretKey, SECRET_KEYS } from '../../secrets.js';
+import { getSecretLabelById, resolveSecretKey, SECRET_KEYS, secret_state } from '../../secrets.js';
+import { getAdditionalParametersForSource, oai_settings, proxies, settingsToUpdate } from '../../openai.js';
+import { performFuzzySearch } from '../../power-user.js';
 import { connectCurrentApi } from '../../slash-commands.js';
-import { performFuzzySearch } from '/scripts/power-user.js';
 import { StreamingDisplay } from '/scripts/streaming-display.js';
-import { ConnectionManagerRequestService } from '../shared.js';
+import { ConnectionManagerRequestService, getSelectedConnectionItemId, modelTargetAsProfile } from '../shared.js';
+import { MODEL_TARGET_KIND, MODEL_TARGET_SELECTION_KIND, modelTargetConnectionRef } from '../../tauritavern/agent/model-target-llm-connection.js';
+import { getLoadedPresetBody, installConnectionOwnership } from './connection-ownership.js';
+import { installDriftTracker } from './drift.js';
+import { installSidebarSelect } from './sidebar-select.js';
+import { createOverflowMenuButton } from '../../tauri/compact-rows/overflow-menu.js';
 import { formatReasoning } from '/scripts/reasoning.js';
 
 const MODULE_NAME = 'connection-manager';
 const NONE = '<None>';
 const EMPTY = '<Empty>';
 const NO_PROXY_PRESET = 'None';
-const MODEL_TARGET_KIND = 'tauritavern.modelTarget';
 const MODEL_TARGET_SCHEMA_VERSION = 1;
 const CONNECTION_ITEM_KIND = {
     PROFILE: 'profile',
-    MODEL_TARGET: 'modelTarget',
+    MODEL_TARGET: MODEL_TARGET_SELECTION_KIND,
 };
 const CREATE_MODEL_TARGET_RESULT = POPUP_RESULT.CUSTOM1;
+const CREATE_MODEL_AND_PRESET_RESULT = POPUP_RESULT.CUSTOM2;
+/** Fields a "model + preset" profile keeps: the model route (as a model saves it) plus the settings preset. */
+const MODEL_AND_PRESET_FIELDS = ['api', 'custom-api-format', 'api-url', 'model', 'proxy', 'secret-id', 'prompt-post-processing', 'preset'];
+/** `profile.extensions.tauritavern.kind` of a profile saved with "Save Model + Preset". */
+const MODEL_AND_PRESET_PROFILE_KIND = 'modelAndPreset';
+
+/**
+ * UI parts `init()` installs. Null until then, so a call that runs too early fails
+ * instead of silently doing nothing.
+ * @type {{
+ *   drift: ReturnType<typeof installDriftTracker>,
+ *   sidebar: ReturnType<typeof installSidebarSelect>,
+ *   syncBindToggle: () => void,
+ * }|null}
+ */
+let ui = null;
+/** Selection applications in flight; drift checks wait for them to settle. */
+let applyingCount = 0;
+/** Resolves when the latest selector change finished: `false` if it could not apply. */
+let pendingSelection = Promise.resolve(true);
+/**
+ * The item whose application last wrote the live request hints, so leaving it can undo
+ * exactly that. Items created from the live settings wrote nothing.
+ * @type {ConnectionProfile|LlmModelTarget|null}
+ */
+let hintsWriter = null;
+
+/** @returns {NonNullable<typeof ui>} */
+function requireUi() {
+    if (!ui) {
+        throw new Error('Connection Manager UI is not installed yet');
+    }
+    return ui;
+}
+
+/** Starts drift tracking from the current settings for the selected item, if any. */
+function trackSelectedItem() {
+    const { drift } = requireUi();
+    const selected = getSelectedItem();
+    if (!selected) {
+        drift.clear();
+        return;
+    }
+    drift.track(() => readItemFingerprint(selected)).catch((error) => {
+        console.error('Connection Manager: could not read the settings the selected item records', error);
+    });
+}
 
 const DEFAULT_SETTINGS = {
     profiles: [],
@@ -85,6 +137,15 @@ const TC_COMMANDS = [
     'regex-preset',
 ];
 
+/**
+ * Everything outside the model route and preset, from both API types, so a later
+ * "update" or an API-type switch can never pull formatting settings into the profile.
+ * @returns {string[]}
+ */
+function getModelAndPresetExclude() {
+    return [...new Set([...CC_COMMANDS, ...TC_COMMANDS])].filter(command => !MODEL_AND_PRESET_FIELDS.includes(command));
+}
+
 const FANCY_NAMES = {
     'api': 'API',
     'api-url': 'Server URL',
@@ -115,25 +176,24 @@ class ConnectionManagerSpinner {
      */
     static abortControllers = [];
 
-    /** @type {HTMLElement} */
-    spinnerElement;
+    /** @type {HTMLElement[]} The API panel spinner and its sidebar twin */
+    spinnerElements;
 
     /** @type {AbortController} */
     abortController = new AbortController();
 
     constructor() {
-        // @ts-ignore
-        this.spinnerElement = document.getElementById('connection_profile_spinner');
+        this.spinnerElements = [...document.querySelectorAll('#connection_profile_spinner, #tt_sidebar_connection_spinner')];
         this.abortController = new AbortController();
     }
 
     start() {
         ConnectionManagerSpinner.abortControllers.push(this.abortController);
-        this.spinnerElement.classList.remove('hidden');
+        this.spinnerElements.forEach(element => element.classList.remove('hidden'));
     }
 
     stop() {
-        this.spinnerElement.classList.add('hidden');
+        this.spinnerElements.forEach(element => element.classList.add('hidden'));
     }
 
     isAborted() {
@@ -171,6 +231,7 @@ function getNamedArguments(args = {}) {
 const profilesProvider = () => [
     new SlashCommandEnumValue(NONE),
     ...extension_settings.connectionManager.profiles.map(p => new SlashCommandEnumValue(p.name, null, enumTypes.name, enumIcons.server)),
+    ...extension_settings.connectionManager.modelTargets.map(target => new SlashCommandEnumValue(target.name, t`Model`, enumTypes.name, enumIcons.server)),
 ];
 
 /**
@@ -197,6 +258,8 @@ const profilesProvider = () => [
  * @property {string} [secret-id] Secret ID
  * @property {string} [regex-preset] Regex Preset ID
  * @property {string[]} [exclude] Commands to exclude
+ * @property {Record<string, string>} [adapterHints] Request hints ("model + preset" profiles; see REQUEST_HINTS)
+ * @property {{tauritavern?: {kind?: string}}} [extensions] Namespaced additions upstream code keeps as they are
  */
 
 /**
@@ -212,7 +275,7 @@ const profilesProvider = () => [
  * @property {string} [custom-api-format] Custom API Format
  * @property {string} [api-url] Server URL
  * @property {{key:string, id:string, labelSnapshot?:string}} [secretRef] Secret reference
- * @property {{claudePromptCaching?:string, openaiResponsesMode?:string}} [adapterHints] Native adapter opt-ins
+ * @property {Record<string, string>} [adapterHints] Request hints and native adapter opt-ins (see REQUEST_HINTS)
  */
 
 /**
@@ -285,11 +348,9 @@ function getSelectedItemRef() {
  */
 function setSelectedItemRef(ref) {
     extension_settings.connectionManager.selectedItem = ref ? { kind: ref.kind, id: ref.id } : null;
-    if (!ref) {
-        extension_settings.connectionManager.selectedProfile = null;
-    } else if (ref.kind === CONNECTION_ITEM_KIND.PROFILE) {
-        extension_settings.connectionManager.selectedProfile = ref.id;
-    }
+    // Upstream readers (/profile, /profile-update, /profile-genstream, shared.js) treat
+    // selectedProfile as "the selected profile", so a selected model leaves it empty.
+    extension_settings.connectionManager.selectedProfile = ref?.kind === CONNECTION_ITEM_KIND.PROFILE ? ref.id : null;
 }
 
 /**
@@ -333,16 +394,126 @@ function getSelectedOptionValue() {
 }
 
 /**
- * Migrates legacy selection state without changing profile data.
+ * Whether a profile was saved with "Save Model + Preset". Other profiles (upstream-style)
+ * keep their full field checklist when edited.
+ * @param {ConnectionProfile} profile Connection profile
+ * @returns {boolean}
+ */
+function isModelAndPresetProfile(profile) {
+    return profile.extensions?.tauritavern?.kind === MODEL_AND_PRESET_PROFILE_KIND;
+}
+
+/**
+ * Marks a profile as "model + preset"; the marker survives `/profile-update` and edits,
+ * which keep fields they do not know.
+ * @param {ConnectionProfile} profile Connection profile
+ */
+function markModelAndPresetProfile(profile) {
+    profile.extensions = {
+        ...profile.extensions,
+        tauritavern: { ...profile.extensions?.tauritavern, kind: MODEL_AND_PRESET_PROFILE_KIND },
+    };
+}
+
+/**
+ * Migrates legacy selection state, and once marks "model + preset" profiles saved before
+ * the marker existed (they were told apart by their exclude list).
  */
 function normalizeConnectionManagerSettings() {
     const settings = extension_settings.connectionManager;
     if (!settings.selectedItem && settings.selectedProfile) {
         settings.selectedItem = { kind: CONNECTION_ITEM_KIND.PROFILE, id: settings.selectedProfile };
     }
-    if (settings.selectedItem?.kind === CONNECTION_ITEM_KIND.PROFILE) {
-        settings.selectedProfile = settings.selectedItem.id;
+    if (settings.selectedItem?.kind) {
+        settings.selectedProfile = settings.selectedItem.kind === CONNECTION_ITEM_KIND.PROFILE ? settings.selectedItem.id : null;
     }
+    if (!settings.modelAndPresetMarked) {
+        const expected = getModelAndPresetExclude();
+        for (const profile of settings.profiles) {
+            const exclude = Array.isArray(profile.exclude) ? profile.exclude : [];
+            if (exclude.length === expected.length && expected.every(command => exclude.includes(command))) {
+                markModelAndPresetProfile(profile);
+            }
+        }
+        settings.modelAndPresetMarked = true;
+    }
+}
+
+/**
+ * Whether the selected item decides the connection: a saved model always does, a
+ * profile when it records the API. A profile without one (say, preset only) leaves the
+ * connection to the upstream "bind presets to connections" toggle.
+ * @param {{kind:string, item:ConnectionProfile|LlmModelTarget}|null} selected Selected item
+ * @returns {boolean}
+ */
+function itemOwnsConnection(selected) {
+    if (!selected) {
+        return false;
+    }
+    return selected.kind === CONNECTION_ITEM_KIND.MODEL_TARGET || Boolean(selected.item.api);
+}
+
+/**
+ * How an item reads as a profile: profiles as they are, saved models as the read-only
+ * profile view every profile-based caller uses.
+ * @param {{kind:string, item:ConnectionProfile|LlmModelTarget}} selected Item
+ * @returns {ConnectionProfile}
+ */
+function itemAsProfile(selected) {
+    return selected.kind === CONNECTION_ITEM_KIND.PROFILE
+        ? /** @type {ConnectionProfile} */ (selected.item)
+        : modelTargetAsProfile(/** @type {LlmModelTarget} */ (selected.item));
+}
+
+/**
+ * Names are unique across both kinds, so the shared dropdown never shows two equal entries.
+ * @param {string} name Candidate name
+ * @param {object|null} [except] Item being renamed
+ * @returns {boolean}
+ */
+function isItemNameTaken(name, except = null) {
+    const { profiles, modelTargets } = extension_settings.connectionManager;
+    return name === NONE || [...profiles, ...modelTargets].some(item => item !== except && item.name === name);
+}
+
+/**
+ * Finds a profile or a saved model by name. Exact names win over fuzzy ones and
+ * profiles win over models at the same level, so upstream `/profile` usage resolves
+ * exactly as before.
+ * @param {string} value Search value
+ * @returns {{kind:string, item:ConnectionProfile|LlmModelTarget}|null}
+ */
+function findItemByName(value) {
+    const { profiles, modelTargets } = extension_settings.connectionManager;
+    const exactProfile = profiles.find(p => p.name === value);
+    if (exactProfile) {
+        return { kind: CONNECTION_ITEM_KIND.PROFILE, item: exactProfile };
+    }
+    const exactTarget = modelTargets.find(target => target.name === value);
+    if (exactTarget) {
+        return { kind: CONNECTION_ITEM_KIND.MODEL_TARGET, item: exactTarget };
+    }
+    const fuzzyProfile = findProfileByName(value);
+    if (fuzzyProfile) {
+        return { kind: CONNECTION_ITEM_KIND.PROFILE, item: fuzzyProfile };
+    }
+    const fuzzyTarget = new Fuse(modelTargets, { keys: ['name'] }).search(value)[0]?.item;
+    return fuzzyTarget ? { kind: CONNECTION_ITEM_KIND.MODEL_TARGET, item: fuzzyTarget } : null;
+}
+
+/**
+ * Finds a profile or a saved model for `/profile-genstream profile=`, with upstream's
+ * fuzzy search for that argument (stricter than `/profile`); profiles come first on a tie.
+ * @param {string} value Search value
+ * @returns {{kind:string, item:ConnectionProfile|LlmModelTarget}|null}
+ */
+function findItemForGeneration(value) {
+    const { profiles, modelTargets } = extension_settings.connectionManager;
+    const items = [
+        ...profiles.map(item => ({ kind: CONNECTION_ITEM_KIND.PROFILE, item })),
+        ...modelTargets.map(item => ({ kind: CONNECTION_ITEM_KIND.MODEL_TARGET, item })),
+    ];
+    return performFuzzySearch('profile', items, [{ name: 'item.name', weight: 10 }], value)[0]?.item ?? null;
 }
 
 /**
@@ -447,6 +618,50 @@ async function requireManagedCommand(command, value = '', args = {}) {
 }
 
 /**
+ * The slash commands whose values an item decides, with their arguments: for a saved
+ * model the route it applies, for a profile the fields it recorded (legacy profiles may
+ * record only a few; excluded fields are not stored).
+ * @param {{kind:string, item:ConnectionProfile|LlmModelTarget}} selected Item
+ * @returns {Array<[string, object]>}
+ */
+function recordedCommands({ kind, item }) {
+    if (kind === CONNECTION_ITEM_KIND.MODEL_TARGET) {
+        const target = /** @type {LlmModelTarget} */ (item);
+        return [
+            ['api', {}],
+            ...(target.mode === 'cc' ? [['custom-api-format', {}], ['proxy', {}]] : []),
+            ['api-url', {}],
+            ['model', {}],
+            ...(target.secretRef?.id ? [['secret-id', { key: target.secretRef.key }]] : []),
+        ];
+    }
+    const commands = new Set(item.mode === 'cc' ? CC_COMMANDS : TC_COMMANDS);
+    return [...commands]
+        .filter(command => item[command] || (ALLOW_EMPTY.includes(command) && item[command] === ''))
+        .map(command => [command, {}]);
+}
+
+/**
+ * The live values of what an item records, read the way the item was captured: its
+ * slash commands and its request hints. Drift compares two of these.
+ * @param {{kind:string, item:ConnectionProfile|LlmModelTarget}} selected Item
+ * @returns {Promise<string>}
+ */
+async function readItemFingerprint(selected) {
+    const values = [];
+    for (const [command, args] of recordedCommands(selected)) {
+        // Its extension is off: applying the item cannot set it either.
+        if (!SlashCommandParser.commands[command]) continue;
+        values.push([command, await executeManagedCommand(command, '', args)]);
+    }
+    const route = hintRoute(selected.item);
+    for (const [hint] of decidedHints(selected.item)) {
+        values.push([hint.setting ?? hint.parameter, readHint(hint, oai_settings, route)]);
+    }
+    return JSON.stringify(values);
+}
+
+/**
  * Sets or removes an optional target field.
  * @param {object} target Target object
  * @param {string} key Field key
@@ -461,33 +676,155 @@ function setOptionalField(target, key, value) {
 }
 
 /**
- * Captures endpoint-specific native opt-ins without mixing them into prompt presets.
- * @param {LlmModelTarget} target Model target to populate
+ * @typedef {object} RequestHint
+ * @property {string} [setting] Chat Completion setting holding the value
+ * @property {string} [parameter] Field of the endpoint's Additional Parameters holding the value
+ * @property {string} [flag] Stored word when the (boolean) setting is on; nothing is stored when off
+ * @property {boolean} [customOnly] Only recorded for Custom endpoints
+ * @property {string} [format] Only recorded for this custom API format
  */
-function readModelTargetAdapterHints(target) {
-    const settings = getContext().chatCompletionSettings;
-    const format = String(target['custom-api-format'] || '');
-    const isCustom = String(target.api || '').startsWith('custom');
-    target.adapterHints = {
-        ...(isCustom && format === 'claude_messages' && settings.custom_claude_prompt_caching
-            ? { claudePromptCaching: 'enabled' }
-            : {}),
-        ...(isCustom && format === 'openai_responses' && settings.custom_openai_responses_websocket
-            ? { openaiResponsesMode: 'websocket' }
-            : {}),
+
+/**
+ * Endpoint request shaping a model (or a "model + preset" profile) records in
+ * `adapterHints`, so a selected item does not depend on whichever preset is loaded.
+ * The keys are the `adapterHints` contract shared with shared.js and the Agent LLM
+ * connections built from saved models.
+ * @type {Readonly<Record<string, RequestHint>>}
+ */
+const REQUEST_HINTS = Object.freeze({
+    promptPostProcessing: { setting: 'custom_prompt_post_processing' },
+    customIncludeHeaders: { parameter: 'include_headers', customOnly: true },
+    customIncludeBody: { parameter: 'include_body', customOnly: true },
+    customExcludeBody: { parameter: 'exclude_body', customOnly: true },
+    claudePromptCaching: { setting: 'custom_claude_prompt_caching', flag: 'enabled', customOnly: true, format: 'claude_messages' },
+    openaiResponsesMode: { setting: 'custom_openai_responses_websocket', flag: 'websocket', customOnly: true, format: 'openai_responses' },
+});
+
+/**
+ * The endpoint an item's hints belong to.
+ * @param {ConnectionProfile|LlmModelTarget} item Model or profile
+ * @returns {{ isCustom: boolean, format: string }}
+ */
+function hintRoute(item) {
+    return {
+        isCustom: String(item.api || '').startsWith('custom'),
+        format: String(item['custom-api-format'] || 'openai_compat'),
     };
 }
 
 /**
- * Restores endpoint-specific native opt-ins from a model target snapshot.
- * @param {LlmModelTarget} target Model target to apply
+ * Reads a hint from Chat Completion settings: the live ones, or a stored preset body.
+ * Additional Parameters are kept per endpoint, so the item's endpoint picks the entry.
+ * @param {RequestHint} hint Hint
+ * @param {Record<string, any>} settings Settings or preset body
+ * @param {{ format: string }} route Endpoint of the item
+ * @returns {unknown}
  */
-function applyModelTargetAdapterHints(target) {
-    const settings = getContext().chatCompletionSettings;
-    settings.custom_claude_prompt_caching = target.adapterHints?.claudePromptCaching === 'enabled';
-    settings.custom_openai_responses_websocket = target.adapterHints?.openaiResponsesMode === 'websocket';
-    $('#custom_claude_prompt_caching').prop('checked', settings.custom_claude_prompt_caching);
-    $('#custom_openai_responses_websocket').prop('checked', settings.custom_openai_responses_websocket);
+function readHint(hint, settings, route) {
+    if (!hint.parameter) {
+        return settings[hint.setting];
+    }
+    const entry = getAdditionalParametersForSource({
+        chat_completion_source: 'custom',
+        custom_api_format: route.format,
+        additional_parameters_by_source: settings.additional_parameters_by_source,
+    }, undefined, { create: false });
+    return entry[hint.parameter];
+}
+
+/**
+ * Writes a hint into the live settings and the control showing it, if any.
+ * @param {RequestHint} hint Hint
+ * @param {{ format: string }} route Endpoint of the item
+ * @param {unknown} value Setting-level value
+ */
+function writeHint(hint, route, value) {
+    if (hint.parameter) {
+        const entry = getAdditionalParametersForSource({
+            chat_completion_source: 'custom',
+            custom_api_format: route.format,
+            additional_parameters_by_source: oai_settings.additional_parameters_by_source,
+        });
+        entry[hint.parameter] = value;
+        return;
+    }
+    oai_settings[hint.setting] = value;
+    const [selector, , isCheckbox] = settingsToUpdate[hint.setting];
+    if (isCheckbox) {
+        $(selector).prop('checked', Boolean(value));
+    } else {
+        $(selector).val(String(value));
+    }
+}
+
+/**
+ * Records the request hints that apply to an item's endpoint from the live settings.
+ * @param {ConnectionProfile|LlmModelTarget} item Model or "model + preset" profile to populate
+ */
+function readRequestHints(item) {
+    const route = hintRoute(item);
+    /** @type {Record<string, string>} */
+    const hints = {};
+    for (const [key, hint] of Object.entries(item.mode === 'cc' ? REQUEST_HINTS : {})) {
+        if ((hint.customOnly && !route.isCustom) || (hint.format && hint.format !== route.format)) {
+            continue;
+        }
+        const value = readHint(hint, oai_settings, route);
+        if (hint.flag) {
+            if (value) hints[key] = hint.flag;
+        } else {
+            // Recorded even when empty: an empty value is a choice, unlike a hint older models never saved.
+            hints[key] = String(value ?? '');
+        }
+    }
+    item.adapterHints = hints;
+}
+
+/**
+ * The live values an item decides, as setting-level values. A flag is decided by every
+ * item that records hints (absent means off); any other hint only once recorded, so a
+ * model saved before that hint existed leaves it alone.
+ * @param {ConnectionProfile|LlmModelTarget} item Model or profile
+ * @returns {Array<[RequestHint, unknown]>}
+ */
+function decidedHints(item) {
+    const hints = item.adapterHints;
+    if (!hints || item.mode !== 'cc') {
+        return [];
+    }
+    return Object.entries(REQUEST_HINTS).flatMap(([key, hint]) => {
+        if (hint.flag) {
+            return [[hint, hints[key] === hint.flag]];
+        }
+        return Object.hasOwn(hints, key) ? [[hint, hints[key]]] : [];
+    });
+}
+
+/**
+ * Hands the live request hints over to the item being applied (or to none): what the
+ * previous item's application wrote goes back to what the loaded preset stores (empty or
+ * off when it stores nothing), then the entered item writes its own.
+ * @param {ConnectionProfile|LlmModelTarget|null} entering Item being applied, or null
+ */
+function switchRequestHints(entering) {
+    if (hintsWriter) {
+        const preset = getLoadedPresetBody() ?? {};
+        // Reading Additional Parameters normalizes the entry it finds; keep the stored preset as it is.
+        const stored = { ...preset, additional_parameters_by_source: structuredClone(preset.additional_parameters_by_source ?? {}) };
+        const route = hintRoute(hintsWriter);
+        for (const [hint] of decidedHints(hintsWriter)) {
+            writeHint(hint, route, readHint(hint, stored, route) ?? (hint.flag ? false : ''));
+        }
+        hintsWriter = null;
+    }
+    const decided = entering ? decidedHints(entering) : [];
+    if (entering && decided.length > 0) {
+        const route = hintRoute(entering);
+        for (const [hint, value] of decided) {
+            writeHint(hint, route, value);
+        }
+        hintsWriter = entering;
+    }
     saveSettingsDebounced();
 }
 
@@ -514,7 +851,7 @@ async function readModelTargetFromCommands(target) {
 
     setOptionalField(target, 'api-url', await executeManagedCommand('api-url', '', { quiet: 'true' }));
     target.model = await requireManagedCommand('model', '', { quiet: 'true' });
-    readModelTargetAdapterHints(target);
+    readRequestHints(target);
 
     const secretKey = resolveSecretKey();
     if (secretKey) {
@@ -613,14 +950,9 @@ async function createConnectionProfileSnapshot() {
 /**
  * Creates a model target snapshot from the current settings.
  * @param {string} name Model target name
- * @returns {Promise<LlmModelTarget|null>}
+ * @returns {Promise<LlmModelTarget>}
  */
 async function createModelTarget(name) {
-    if (extension_settings.connectionManager.modelTargets.some(t => t.name === name) || name === NONE) {
-        toastr.error(t`A model with the same name already exists.`);
-        return null;
-    }
-
     const target = {
         schemaVersion: MODEL_TARGET_SCHEMA_VERSION,
         kind: MODEL_TARGET_KIND,
@@ -644,15 +976,14 @@ async function createConnectionProfile(forceName = null) {
     const profileForDisplay = makeFancyProfile(profile);
     const template = $(await renderExtensionTemplateAsync(MODULE_NAME, 'profile', { profile: profileForDisplay }));
     bindProfileExcludeToggles(template, profile);
-    const isNameTaken = (n) => extension_settings.connectionManager.profiles.some(p => p.name === n);
-    const suggestedName = getUniqueName(collapseSpaces(`${profile.api ?? ''} ${profile.model ?? ''} - ${profile.preset ?? ''}`), isNameTaken);
+    const suggestedName = getUniqueName(collapseSpaces(`${profile.api ?? ''} ${profile.model ?? ''} - ${profile.preset ?? ''}`), isItemNameTaken);
     const name = normalizeItemName(forceName ?? await callGenericPopup(template, POPUP_TYPE.INPUT, suggestedName));
     if (!name) {
         return null;
     }
 
-    if (isNameTaken(name) || name === NONE) {
-        toastr.error(t`A profile with the same name already exists.`);
+    if (isItemNameTaken(name)) {
+        toastr.error(t`This name is already in use.`);
         return null;
     }
 
@@ -662,48 +993,59 @@ async function createConnectionProfile(forceName = null) {
 }
 
 /**
- * Creates a connection-manager item from the current settings.
+ * Creates a connection-manager item from the current settings: a model target
+ * (model route only) or an ordinary upstream connection profile holding the
+ * model route plus the settings preset. The other profile fields are global
+ * formatting settings (stop strings, reply prefix, reasoning template, regex
+ * state) that stay out of both; `/profile-create` still captures them.
  * @returns {Promise<{kind:string, item:ConnectionProfile|LlmModelTarget}|null>}
  */
 async function createConnectionItem() {
-    const profile = await createConnectionProfileSnapshot();
-    const profileForDisplay = makeFancyProfile(profile);
-    const template = $(await renderExtensionTemplateAsync(MODULE_NAME, 'profile', { profile: profileForDisplay }));
-    bindProfileExcludeToggles(template, profile);
-
+    const mode = main_api === 'openai' ? 'cc' : 'tc';
     const suggestedName = getUniqueName(
-        collapseSpaces(`${profile.api ?? ''} ${profile.model ?? ''} - ${profile.preset ?? ''}`),
-        (n) => extension_settings.connectionManager.profiles.some(p => p.name === n),
+        collapseSpaces(await executeManagedCommand('model', '', { quiet: 'true' })),
+        isItemNameTaken,
+        // Start at 0 so a free model name is suggested as is, not as "name (1)".
+        { startIndex: 0 },
     );
-    const popup = new Popup(template, POPUP_TYPE.INPUT, suggestedName, {
-        customButtons: [{
-            text: t`Save Model Only`,
-            result: CREATE_MODEL_TARGET_RESULT,
-            classes: ['popup-button-ok'],
-            tooltip: t`Save only API, server URL, model, proxy, and secret.`,
-        }],
+    const popup = new Popup(`<h3>${t`Enter a name:`}</h3>`, POPUP_TYPE.INPUT, suggestedName, {
+        okButton: false,
+        // Enter saves a model; a name comes back only for one of the two buttons.
+        defaultResult: CREATE_MODEL_TARGET_RESULT,
+        customButtons: [
+            {
+                text: t`Save Model`,
+                result: CREATE_MODEL_TARGET_RESULT,
+                classes: ['popup-button-ok'],
+                tooltip: t`Save the connection only: API, server URL, model, proxy, secret and request settings.`,
+            },
+            {
+                text: t`Save Model + Preset`,
+                result: CREATE_MODEL_AND_PRESET_RESULT,
+                classes: ['popup-button-ok'],
+                tooltip: t`Save the model together with the current settings preset.`,
+            },
+        ],
     });
     const name = normalizeItemName(await popup.show());
-
     if (!name) {
         return null;
     }
-
-    const createKind = popup.result === CREATE_MODEL_TARGET_RESULT
-        ? CONNECTION_ITEM_KIND.MODEL_TARGET
-        : CONNECTION_ITEM_KIND.PROFILE;
-    if (createKind === CONNECTION_ITEM_KIND.MODEL_TARGET) {
-        const item = await createModelTarget(name);
-        return item ? { kind: CONNECTION_ITEM_KIND.MODEL_TARGET, item } : null;
-    }
-
-    if (extension_settings.connectionManager.profiles.some(p => p.name === name) || name === NONE) {
-        toastr.error(t`A profile with the same name already exists.`);
+    if (isItemNameTaken(name)) {
+        toastr.error(t`This name is already in use.`);
         return null;
     }
 
-    removeExcludedProfileFields(profile);
-    profile.name = String(name);
+    if (popup.result === CREATE_MODEL_TARGET_RESULT) {
+        return { kind: CONNECTION_ITEM_KIND.MODEL_TARGET, item: await createModelTarget(name) };
+    }
+
+    /** @type {ConnectionProfile} */
+    const profile = { id: uuidv4(), mode, name: String(name), exclude: getModelAndPresetExclude() };
+    markModelAndPresetProfile(profile);
+    // Excluded commands are not read, so only the model route and the preset are recorded.
+    await readProfileFromCommands(mode, profile);
+    readRequestHints(profile);
     return { kind: CONNECTION_ITEM_KIND.PROFILE, item: profile };
 }
 
@@ -739,6 +1081,28 @@ async function deleteConnectionProfile() {
 }
 
 /**
+ * Names of the Agent profiles, including the shared Session profile, bound to a saved model.
+ * @param {LlmModelTarget} target Saved model
+ * @returns {Promise<string[]>}
+ */
+async function listAgentProfilesUsing(target) {
+    const agent = window.__TAURITAVERN__?.api?.agent;
+    if (!agent) {
+        throw new Error('The Agent API is not available');
+    }
+    const connectionRef = modelTargetConnectionRef(target);
+    const usesTarget = (profile) => profile?.model?.mode === 'connectionRef' && profile.model.connectionRef === connectionRef;
+    const { profiles } = await agent.profiles.list();
+    const loaded = await Promise.all(profiles.map(({ id }) => agent.profiles.load({ profileId: id })));
+    const names = loaded.map(({ profile }) => profile).filter(usesTarget).map(profile => profile.displayName);
+    const { profile: sessionProfile } = await agent.sessions.profile.load();
+    if (usesTarget(sessionProfile)) {
+        names.push(sessionProfile.displayName);
+    }
+    return names;
+}
+
+/**
  * Deletes the selected model target.
  * @returns {Promise<boolean>}
  */
@@ -754,7 +1118,16 @@ async function deleteModelTarget() {
     }
 
     const target = extension_settings.connectionManager.modelTargets[index];
-    const confirm = await Popup.show.confirm(t`Are you sure you want to delete the selected model?`, target.name);
+    let agentProfiles;
+    try {
+        agentProfiles = await listAgentProfilesUsing(target);
+    } catch (error) {
+        throw new Error(t`Could not check which Agent profiles use this model: ${error?.message ?? error}`);
+    }
+    const usage = agentProfiles.length > 0
+        ? `<p>${t`These Agent profiles use it and will report the model as missing:`}</p><p>${DOMPurify.sanitize(agentProfiles.join(', '))}</p>`
+        : '';
+    const confirm = await Popup.show.confirm(t`Are you sure you want to delete the selected model?`, `${DOMPurify.sanitize(target.name)}${usage}`);
 
     if (!confirm) {
         return false;
@@ -814,9 +1187,8 @@ function makeFancyModelTarget(target) {
     const result = {};
     const fields = ['api', 'custom-api-format', 'api-url', 'model', 'proxy'];
 
-    result['Saved Object'] = t`Model`;
     for (const field of fields) {
-        if (!target[field]) {
+        if (!target[field] || (field === 'proxy' && target[field] === NO_PROXY_PRESET)) {
             continue;
         }
         result[FANCY_NAMES[field]] = target[field];
@@ -824,6 +1196,9 @@ function makeFancyModelTarget(target) {
 
     if (target.secretRef?.id) {
         result[FANCY_NAMES['secret-id']] = target.secretRef.labelSnapshot || getSecretLabelById(target.secretRef.id) || target.secretRef.id;
+    }
+    if (target.adapterHints?.promptPostProcessing) {
+        result[FANCY_NAMES['prompt-post-processing']] = target.adapterHints.promptPostProcessing;
     }
     if (target.adapterHints?.claudePromptCaching === 'enabled') {
         result['Claude Prompt Caching'] = t`Enabled`;
@@ -836,7 +1211,19 @@ function makeFancyModelTarget(target) {
 }
 
 /**
- * Asserts that a model target can be applied.
+ * Marks a superseded application, which callers drop silently instead of reporting.
+ * @param {string} message Error message
+ * @returns {Error}
+ */
+function applicationAborted(message) {
+    const error = new Error(message);
+    error.name = 'AbortError';
+    return error;
+}
+
+/**
+ * Asserts that a model target can be applied. Runs before any setting changes, so a
+ * missing key or proxy preset fails without leaving a half-switched connection.
  * @param {LlmModelTarget} target Model target
  */
 function assertModelTargetCanApply(target) {
@@ -848,6 +1235,32 @@ function assertModelTargetCanApply(target) {
     }
     if (!target.model) {
         throw new Error(`Model target "${target.name}" is missing model`);
+    }
+    const { secretRef } = target;
+    if (secretRef?.id && !secret_state[secretRef.key]?.some(secret => secret.id === secretRef.id)) {
+        throw new Error(t`The key saved with model "${target.name}" no longer exists. Select a key and update the model.`);
+    }
+    if (target.proxy && target.proxy !== NO_PROXY_PRESET && !proxies.some(proxy => proxy.name === target.proxy)) {
+        throw new Error(t`The proxy preset "${target.proxy}" saved with model "${target.name}" no longer exists.`);
+    }
+}
+
+/**
+ * Runs a UI action and reports its failure, instead of leaving an unhandled rejection.
+ * @param {() => Promise<void>} action UI action
+ * @returns {Promise<boolean>} Whether the action succeeded (a superseded application counts as success)
+ */
+async function runUiAction(action) {
+    try {
+        await action();
+        return true;
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            return true;
+        }
+        console.error('Connection Manager action failed', error);
+        toastr.error(String(error?.message ?? error));
+        return false;
     }
 }
 
@@ -869,7 +1282,7 @@ async function applyModelTarget(target) {
         await previousApplication;
 
         if (applicationVersion !== profileApplicationVersion) {
-            throw new Error('Model target application aborted');
+            throw applicationAborted('Model target application aborted');
         }
 
         const spinner = new ConnectionManagerSpinner();
@@ -890,7 +1303,6 @@ async function applyModelTarget(target) {
                     // /api custom intentionally preserves the current custom format for full profiles; model targets must not inherit it.
                     await requireManagedCommand('custom-api-format', 'openai_compat');
                 }
-                applyModelTargetAdapterHints(target);
 
                 if (target['api-url']) {
                     await requireManagedCommand('api-url', target['api-url'], { connect: 'false', quiet: 'true' });
@@ -910,6 +1322,7 @@ async function applyModelTarget(target) {
                 }
 
                 await requireManagedCommand('model', target.model, { quiet: 'true' });
+                switchRequestHints(target);
             });
         } finally {
             spinner.stop();
@@ -942,7 +1355,7 @@ async function applyConnectionProfile(profile) {
         await previousApplication;
 
         if (applicationVersion !== profileApplicationVersion) {
-            throw new Error('Profile application aborted');
+            throw applicationAborted('Profile application aborted');
         }
 
         const mode = profile.mode;
@@ -954,7 +1367,7 @@ async function applyConnectionProfile(profile) {
             await withConnectionValidationSuspended('Connection profile application', async () => {
                 for (const command of commands) {
                     if (spinner.isAborted() || applicationVersion !== profileApplicationVersion) {
-                        throw new Error('Profile application aborted');
+                        throw applicationAborted('Profile application aborted');
                     }
 
                     const argument = profile[command];
@@ -975,6 +1388,7 @@ async function applyConnectionProfile(profile) {
                         console.error(`Failed to execute command: ${command} ${argument}`, error);
                     }
                 }
+                switchRequestHints(profile);
             });
         } finally {
             spinner.stop();
@@ -999,6 +1413,9 @@ async function applyConnectionProfile(profile) {
 async function updateConnectionProfile(profile) {
     profile.mode = main_api === 'openai' ? 'cc' : 'tc';
     await readProfileFromCommands(profile.mode, profile, true);
+    if (isModelAndPresetProfile(profile)) {
+        readRequestHints(profile);
+    }
 }
 
 /**
@@ -1007,92 +1424,167 @@ async function updateConnectionProfile(profile) {
  * @returns {Promise<void>}
  */
 async function updateModelTarget(target) {
+    const mode = main_api === 'openai' ? 'cc' : 'tc';
+    if (target.mode && target.mode !== mode) {
+        throw new Error(t`This model was saved for another API type. Switch the API type back before updating it.`);
+    }
     await readModelTargetFromCommands(target);
 }
 
 /**
- * Edits a model target name and optionally refreshes its captured model route.
- * @param {LlmModelTarget} target Model target
- * @returns {Promise<LlmModelTarget|null>}
+ * Overwrites an item with the current settings and announces the update.
+ * @param {{kind:string, item:ConnectionProfile|LlmModelTarget}} selected Item to overwrite
  */
-async function editModelTarget(target) {
-    const template = $(await renderExtensionTemplateAsync(MODULE_NAME, 'view', { profile: makeFancyModelTarget(target) }));
-    const nameHeading = $('<h3 data-i18n="Model name:"></h3>');
-    nameHeading.text(t`Model name:`);
-    template.append(nameHeading);
-    const popup = new Popup(template, POPUP_TYPE.INPUT, target.name, {
+async function overwriteItem(selected) {
+    const oldItem = structuredClone(selected.item);
+    if (selected.kind === CONNECTION_ITEM_KIND.PROFILE) {
+        await updateConnectionProfile(/** @type {ConnectionProfile} */ (selected.item));
+        await eventSource.emit(event_types.CONNECTION_PROFILE_UPDATED, oldItem, selected.item);
+    } else {
+        await updateModelTarget(/** @type {LlmModelTarget} */ (selected.item));
+        await eventSource.emit(event_types.MODEL_TARGET_UPDATED, oldItem, selected.item);
+    }
+    // The item now describes the live settings.
+    trackSelectedItem();
+}
+
+/**
+ * Renames a model or a "model + preset" item. Overwriting has its own action.
+ * @param {{kind:string, item:ConnectionProfile|LlmModelTarget}} selected Item to rename
+ * @returns {Promise<boolean>} Whether anything changed
+ */
+async function renameItem(selected) {
+    const { item } = selected;
+    const newName = normalizeItemName(await Popup.show.input(t`Name:`, null, item.name));
+    if (!newName || newName === item.name) {
+        return false;
+    }
+    if (isItemNameTaken(newName, item)) {
+        toastr.error(t`This name is already in use.`);
+        return false;
+    }
+
+    const oldItem = structuredClone(item);
+    item.name = newName;
+    const updated = selected.kind === CONNECTION_ITEM_KIND.PROFILE ? event_types.CONNECTION_PROFILE_UPDATED : event_types.MODEL_TARGET_UPDATED;
+    await eventSource.emit(updated, oldItem, item);
+    toastr.success(t`Renamed.`);
+    return true;
+}
+
+/**
+ * Upstream editor for full profiles: pick the recorded settings and rename.
+ * @param {ConnectionProfile} profile Connection profile
+ * @returns {Promise<boolean>} Whether anything changed
+ */
+async function editLegacyProfile(profile) {
+    if (!Array.isArray(profile.exclude)) {
+        profile.exclude = [];
+    }
+
+    const sortByViewOrder = (a, b) => Object.keys(FANCY_NAMES).indexOf(a) - Object.keys(FANCY_NAMES).indexOf(b);
+    const commands = profile.mode === 'cc' ? CC_COMMANDS : TC_COMMANDS;
+    const settings = commands.slice().sort(sortByViewOrder).reduce((acc, command) => {
+        acc[FANCY_NAMES[command]] = !profile.exclude.includes(command);
+        return acc;
+    }, {});
+    const template = $(await renderExtensionTemplateAsync(MODULE_NAME, 'edit', { name: profile.name, settings }));
+    const popup = new Popup(template, POPUP_TYPE.INPUT, profile.name, {
         customButtons: [{
             text: t`Save and Update`,
             classes: ['popup-button-ok'],
             result: POPUP_RESULT.CUSTOM1,
-            tooltip: t`Rename and refresh the saved model route from the current connection settings.`,
         }],
     });
 
-    let newName = await popup.show();
-    newName = normalizeItemName(newName);
+    const newName = normalizeItemName(await popup.show());
     if (!newName) {
-        return null;
+        return false;
+    }
+    if (isItemNameTaken(newName, profile)) {
+        toastr.error(t`This name is already in use.`);
+        return false;
     }
 
-    if (target.name !== newName && extension_settings.connectionManager.modelTargets.some(t => t.name === newName)) {
-        toastr.error(t`A model with the same name already exists.`);
-        return null;
+    const newExcludeList = template.find('input[name="exclude"]:not(:checked)').map(function () {
+        return Object.entries(FANCY_NAMES).find(x => x[1] === String($(this).val()))?.[0];
+    }).get();
+
+    const oldProfile = structuredClone(profile);
+    const excludeChanged = newExcludeList.length !== profile.exclude.length || !newExcludeList.every(e => profile.exclude.includes(e));
+    if (excludeChanged) {
+        profile.exclude = newExcludeList;
+        for (const command of newExcludeList) {
+            delete profile[command];
+        }
+    }
+    const update = popup.result === POPUP_RESULT.CUSTOM1;
+    if (update) {
+        await updateConnectionProfile(profile);
+    } else if (excludeChanged) {
+        toastr.info(t`Press "Update" to record them into the profile.`, t`Included settings list updated`);
+    }
+    if (update || excludeChanged) {
+        // The profile records other fields now.
+        trackSelectedItem();
+    }
+    if (profile.name !== newName) {
+        profile.name = newName;
+        toastr.success(t`Renamed.`);
     }
 
-    const oldTarget = structuredClone(target);
-    if (popup.result === POPUP_RESULT.CUSTOM1) {
-        await updateModelTarget(target);
-    }
-    if (target.name !== newName) {
-        target.name = newName;
-        toastr.success(t`Model renamed.`);
-    }
-
-    return oldTarget;
+    await eventSource.emit(event_types.CONNECTION_PROFILE_UPDATED, oldProfile, profile);
+    return true;
 }
 
 /**
- * Renders the connection profile details.
- * @param {HTMLSelectElement} profiles Select element containing connection profiles
+ * Appends an option group, if it has any entries.
+ * @param {HTMLSelectElement} select Selector
+ * @param {string} label Group label
+ * @param {Array<{kind:string, item:ConnectionProfile|LlmModelTarget}>} entries Items
+ * @param {string} selectedValue Selected option value
+ */
+function appendItemGroup(select, label, entries, selectedValue) {
+    if (entries.length === 0) {
+        return;
+    }
+    const group = document.createElement('optgroup');
+    group.label = label;
+    for (const { kind, item } of entries.sort((a, b) => a.item.name.localeCompare(b.item.name))) {
+        const option = document.createElement('option');
+        option.value = makeItemOptionValue(kind, item.id);
+        // Just the name: extensions read the option text as the profile name.
+        option.textContent = item.name;
+        option.selected = option.value === selectedValue;
+        group.appendChild(option);
+    }
+    select.appendChild(group);
+}
+
+/**
+ * Renders the selector: "Models" (saved models, and profiles that store no preset)
+ * first, then "Models + Presets", the profiles that also switch the preset.
+ * @param {HTMLSelectElement} profiles Selector
  */
 function renderConnectionProfiles(profiles) {
-    profiles.innerHTML = '';
-    const noneOption = document.createElement('option');
+    const { modelTargets, profiles: connectionProfiles } = extension_settings.connectionManager;
     const selectedValue = getSelectedOptionValue();
+    profiles.innerHTML = '';
 
+    const noneOption = document.createElement('option');
     noneOption.value = '';
-    noneOption.textContent = NONE;
+    noneOption.textContent = t`(Current API settings)`;
     noneOption.selected = !selectedValue;
     profiles.appendChild(noneOption);
 
-    const profileGroup = document.createElement('optgroup');
-    profileGroup.label = t`Connection Profiles`;
-    for (const profile of extension_settings.connectionManager.profiles.slice().sort((a, b) => a.name.localeCompare(b.name))) {
-        const value = makeItemOptionValue(CONNECTION_ITEM_KIND.PROFILE, profile.id);
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = profile.name;
-        option.selected = value === selectedValue;
-        profileGroup.appendChild(option);
-    }
-    if (profileGroup.children.length > 0) {
-        profiles.appendChild(profileGroup);
-    }
+    const asEntries = (kind, items) => items.map(item => ({ kind, item }));
+    appendItemGroup(profiles, t`Models`, [
+        ...asEntries(CONNECTION_ITEM_KIND.MODEL_TARGET, modelTargets),
+        ...asEntries(CONNECTION_ITEM_KIND.PROFILE, connectionProfiles.filter(profile => !profile.preset)),
+    ], selectedValue);
+    appendItemGroup(profiles, t`Models + Presets`, asEntries(CONNECTION_ITEM_KIND.PROFILE, connectionProfiles.filter(profile => profile.preset)), selectedValue);
 
-    const modelTargetGroup = document.createElement('optgroup');
-    modelTargetGroup.label = t`Models`;
-    for (const target of extension_settings.connectionManager.modelTargets.slice().sort((a, b) => a.name.localeCompare(b.name))) {
-        const value = makeItemOptionValue(CONNECTION_ITEM_KIND.MODEL_TARGET, target.id);
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = target.name;
-        option.selected = value === selectedValue;
-        modelTargetGroup.appendChild(option);
-    }
-    if (modelTargetGroup.children.length > 0) {
-        profiles.appendChild(modelTargetGroup);
-    }
+    requireUi().sidebar.sync();
 }
 
 /**
@@ -1108,7 +1600,8 @@ async function renderDetailsContent(detailsContent) {
     if (selected?.kind === CONNECTION_ITEM_KIND.PROFILE) {
         const profileForDisplay = makeFancyProfile(selected.item);
         const templateParams = { profile: profileForDisplay };
-        if (Array.isArray(selected.item.exclude) && selected.item.exclude.length > 0) {
+        // A model + preset profile excludes everything else by definition; listing it is noise.
+        if (!isModelAndPresetProfile(selected.item) && Array.isArray(selected.item.exclude) && selected.item.exclude.length > 0) {
             templateParams.omitted = selected.item.exclude.map(e => FANCY_NAMES[e]).join(', ');
         }
         const template = await renderExtensionTemplateAsync(MODULE_NAME, 'view', templateParams);
@@ -1117,7 +1610,7 @@ async function renderDetailsContent(detailsContent) {
         const template = await renderExtensionTemplateAsync(MODULE_NAME, 'view', { profile: makeFancyModelTarget(selected.item) });
         detailsContent.innerHTML = template;
     } else {
-        detailsContent.textContent = t`No profile selected`;
+        detailsContent.textContent = t`No model selected`;
     }
 }
 
@@ -1184,21 +1677,18 @@ async function generateStreamCallback(args, value) {
             deactivateSendButtons();
         }
 
-        let effectiveProfileId = context.extensionSettings.connectionManager.selectedProfile;
-        const profiles = context.extensionSettings.connectionManager.profiles;
+        let effectiveProfileId = getSelectedConnectionItemId();
 
         if (profileIdOrName) {
-            const profile = profiles.find(p => p.id === profileIdOrName);
-            if (profile) {
-                effectiveProfileId = profile.id;
+            const byId = ConnectionManagerRequestService.findProfile(profileIdOrName);
+            const byName = byId ? null : findItemForGeneration(profileIdOrName);
+            if (byId) {
+                effectiveProfileId = byId.id;
+            } else if (byName) {
+                effectiveProfileId = makeItemOptionValue(byName.kind, byName.item.id);
             } else {
-                const fuseResults = performFuzzySearch('profile', profiles, [{ name: 'name', weight: 10 }], profileIdOrName);
-                if (fuseResults.length > 0) {
-                    effectiveProfileId = fuseResults[0].item.id;
-                } else {
-                    toastr.warning(t`Connection profile not found: ${profileIdOrName}`);
-                    return '';
-                }
+                toastr.warning(t`Connection profile not found: ${profileIdOrName}`);
+                return '';
             }
         }
 
@@ -1336,227 +1826,206 @@ export async function init() {
     /** @type {HTMLSelectElement} */
     // @ts-ignore
     const profiles = document.getElementById('connection_profiles');
-    renderConnectionProfiles(profiles);
+    /** @type {HTMLElement} */
+    const viewDetails = document.getElementById('view_connection_profile');
+    const detailsContent = document.getElementById('connection_profile_details_content');
+    const reloadButton = document.getElementById('reload_connection_profile');
+    const updateButton = document.getElementById('update_connection_profile');
+    const editButton = document.getElementById('edit_connection_profile');
+    const deleteButton = document.getElementById('delete_connection_profile');
+
+    // Explicit order: everything below may render, track or sync through `ui`.
+    const sidebar = installSidebarSelect(profiles, { onReapply: () => reloadButton.click() });
+    ui = {
+        sidebar,
+        syncBindToggle: installConnectionOwnership(() => itemOwnsConnection(getSelectedItem())),
+        drift: installDriftTracker({
+            isBusy: () => applyingCount > 0,
+            onChange: (dirty) => {
+                // "Reapply" and "overwrite" sit in the row only while the settings differ from the
+                // selected item; otherwise they live in the menu.
+                for (const button of [reloadButton, updateButton]) {
+                    button.classList.toggle('tt-hidden', !dirty);
+                    button.classList.toggle('tt-cm-dirty', dirty);
+                }
+                sidebar.setDirty(dirty);
+            },
+        }),
+    };
+    // The selected item's application wrote the live hints, in this session or an earlier one.
+    const selectedAtStart = getSelectedItem();
+    hintsWriter = selectedAtStart && decidedHints(selectedAtStart.item).length > 0 ? selectedAtStart.item : null;
+    installCompactActions();
 
     function toggleProfileSpecificButtons() {
         const hasSelection = Boolean(getSelectedItem());
-        const profileSpecificButtons = ['update_connection_profile', 'edit_connection_profile', 'reload_connection_profile', 'delete_connection_profile'];
-        profileSpecificButtons.forEach(id => document.getElementById(id).classList.toggle('disabled', !hasSelection));
+        for (const button of [updateButton, editButton, reloadButton, deleteButton]) {
+            button.classList.toggle('disabled', !hasSelection);
+        }
     }
-    toggleProfileSpecificButtons();
 
-    profiles.addEventListener('change', async function () {
-        const selectedOption = profiles.selectedOptions[0];
-        if (!selectedOption) {
-            // Safety net for preventing the command getting stuck
-            await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, NONE);
-            return;
+    /** Keeps "save" in the row; the rest moves into the "⋯" menu. */
+    function installCompactActions() {
+        for (const button of [viewDetails, editButton, deleteButton, reloadButton, updateButton]) {
+            button.classList.add('tt-hidden');
         }
+        const needsSelection = () => (getSelectedItem() ? null : t`No model selected`);
+        deleteButton.after(createOverflowMenuButton({
+            title: t`More`,
+            items: () => [
+                { label: t`Show/hide details`, icon: 'circle-info', onSelect: () => viewDetails.click() },
+                { label: t`Rename`, icon: 'pencil', disabledReason: needsSelection, onSelect: () => editButton.click() },
+                { label: t`Overwrite with the current settings`, icon: 'save', disabledReason: needsSelection, onSelect: () => updateButton.click() },
+                { label: t`Reapply`, icon: 'recycle', disabledReason: needsSelection, onSelect: () => reloadButton.click() },
+                { label: t`Delete`, icon: 'trash-can', danger: true, separatorBefore: true, disabledReason: needsSelection, onSelect: () => deleteButton.click() },
+            ],
+        }));
+    }
 
-        const selectedRef = parseItemOptionValue(selectedOption.value);
-        setSelectedItemRef(selectedRef);
-        saveSettingsDebounced();
-        await renderDetailsContent(detailsContent);
-
+    /** Brings everything that depends on the selection or its item in line with them. */
+    async function refreshSelectionUi() {
+        renderConnectionProfiles(profiles);
         toggleProfileSpecificButtons();
+        requireUi().syncBindToggle();
+        await renderDetailsContent(detailsContent);
+    }
 
-        // None option selected
-        if (!selectedRef) {
+    await refreshSelectionUi();
+    // Settings loaded from disk are taken as matching the selected item, once every
+    // extension registered the slash commands an item may record.
+    eventSource.on(event_types.APP_READY, () => trackSelectedItem());
+
+    /**
+     * Applies an item and announces it. Model targets validate before changing
+     * anything, so a failure leaves the previous connection intact.
+     * @param {{kind:string, item:ConnectionProfile|LlmModelTarget}} selected
+     */
+    async function applySelectedItem(selected) {
+        applyingCount++;
+        try {
+            if (selected.kind === CONNECTION_ITEM_KIND.PROFILE) {
+                await applyConnectionProfile(selected.item);
+            } else {
+                await applyModelTarget(selected.item);
+            }
+        } finally {
+            applyingCount--;
+        }
+        trackSelectedItem();
+        const loaded = selected.kind === CONNECTION_ITEM_KIND.PROFILE ? event_types.CONNECTION_PROFILE_LOADED : event_types.MODEL_TARGET_LOADED;
+        await eventSource.emit(loaded, selected.item.name);
+    }
+
+    /**
+     * Selects an item and applies it; the selection snaps back when it cannot apply.
+     * @param {ConnectionManagerItemRef|null} ref Item to select, or null for none
+     * @returns {Promise<boolean>} Whether the selection took effect
+     */
+    async function changeSelection(ref) {
+        const previousRef = getSelectedItemRef();
+        setSelectedItemRef(ref);
+        saveSettingsDebounced();
+        await refreshSelectionUi();
+
+        if (!ref) {
+            // None keeps the connection, but not the request hints a model wrote.
+            switchRequestHints(null);
+            trackSelectedItem();
             await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, NONE);
-            return;
+            return true;
         }
 
-        const selected = resolveItemRef(selectedRef);
+        const selected = resolveItemRef(ref);
         if (!selected) {
-            console.log(`Connection Manager item not found: ${selectedRef.kind}:${selectedRef.id}`);
-            return;
+            console.warn(`Connection Manager item not found: ${ref.kind}:${ref.id}`);
+            return false;
         }
 
-        if (selected.kind === CONNECTION_ITEM_KIND.PROFILE) {
-            await applyConnectionProfile(selected.item);
-            await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, selected.item.name);
-        } else if (selected.kind === CONNECTION_ITEM_KIND.MODEL_TARGET) {
-            await applyModelTarget(selected.item);
-            await eventSource.emit(event_types.MODEL_TARGET_LOADED, selected.item.name);
+        if (await runUiAction(() => applySelectedItem(selected))) {
+            return true;
         }
+        setSelectedItemRef(previousRef);
+        saveSettingsDebounced();
+        await refreshSelectionUi();
+        return false;
+    }
+
+    profiles.addEventListener('change', () => {
+        pendingSelection = changeSelection(parseItemOptionValue(profiles.value));
     });
 
-    const reloadButton = document.getElementById('reload_connection_profile');
-    reloadButton.addEventListener('click', async () => {
+    reloadButton.addEventListener('click', () => runUiAction(async () => {
         const selected = getSelectedItem();
         if (!selected) {
-            console.log('No profile selected');
             return;
         }
-        if (selected.kind === CONNECTION_ITEM_KIND.PROFILE) {
-            await applyConnectionProfile(selected.item);
-            await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, selected.item.name);
-            toastr.success(t`Connection profile reloaded`, '', { timeOut: 1500 });
-        } else if (selected.kind === CONNECTION_ITEM_KIND.MODEL_TARGET) {
-            await applyModelTarget(selected.item);
-            await eventSource.emit(event_types.MODEL_TARGET_LOADED, selected.item.name);
-            toastr.success(t`Model reloaded`, '', { timeOut: 1500 });
-        }
+        await applySelectedItem(selected);
         await renderDetailsContent(detailsContent);
-    });
+        toastr.success(t`Reapplied`, '', { timeOut: 1500 });
+    }));
 
     const createButton = document.getElementById('create_connection_profile');
-    createButton.addEventListener('click', async () => {
+    createButton.addEventListener('click', () => runUiAction(async () => {
         const created = await createConnectionItem();
         if (!created) {
             return;
         }
 
-        if (created.kind === CONNECTION_ITEM_KIND.PROFILE) {
-            extension_settings.connectionManager.profiles.push(created.item);
-            setSelectedItemRef({ kind: CONNECTION_ITEM_KIND.PROFILE, id: created.item.id });
-            await eventSource.emit(event_types.CONNECTION_PROFILE_CREATED, created.item);
-            await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, created.item.name);
-        } else if (created.kind === CONNECTION_ITEM_KIND.MODEL_TARGET) {
-            extension_settings.connectionManager.modelTargets.push(created.item);
-            setSelectedItemRef({ kind: CONNECTION_ITEM_KIND.MODEL_TARGET, id: created.item.id });
-            await eventSource.emit(event_types.MODEL_TARGET_CREATED, created.item);
-            await eventSource.emit(event_types.MODEL_TARGET_LOADED, created.item.name);
-        }
-
+        const isProfile = created.kind === CONNECTION_ITEM_KIND.PROFILE;
+        (isProfile ? extension_settings.connectionManager.profiles : extension_settings.connectionManager.modelTargets).push(created.item);
+        setSelectedItemRef({ kind: created.kind, id: created.item.id });
         saveSettingsDebounced();
-        renderConnectionProfiles(profiles);
-        await renderDetailsContent(detailsContent);
-        toggleProfileSpecificButtons();
-    });
+        // The new item was captured from the live settings, so they match it now.
+        trackSelectedItem();
+        await eventSource.emit(isProfile ? event_types.CONNECTION_PROFILE_CREATED : event_types.MODEL_TARGET_CREATED, created.item);
+        await eventSource.emit(isProfile ? event_types.CONNECTION_PROFILE_LOADED : event_types.MODEL_TARGET_LOADED, created.item.name);
+        await refreshSelectionUi();
+    }));
 
-    const updateButton = document.getElementById('update_connection_profile');
-    updateButton.addEventListener('click', async () => {
+    updateButton.addEventListener('click', () => runUiAction(async () => {
         const selected = getSelectedItem();
         if (!selected) {
-            console.log('No profile selected');
             return;
         }
-        const oldItem = structuredClone(selected.item);
-        if (selected.kind === CONNECTION_ITEM_KIND.PROFILE) {
-            await updateConnectionProfile(selected.item);
-            await eventSource.emit(event_types.CONNECTION_PROFILE_UPDATED, oldItem, selected.item);
-            await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, selected.item.name);
-            toastr.success(t`Connection profile updated`, '', { timeOut: 1500 });
-        } else if (selected.kind === CONNECTION_ITEM_KIND.MODEL_TARGET) {
-            await updateModelTarget(selected.item);
-            await eventSource.emit(event_types.MODEL_TARGET_UPDATED, oldItem, selected.item);
-            await eventSource.emit(event_types.MODEL_TARGET_LOADED, selected.item.name);
-            toastr.success(t`Model updated`, '', { timeOut: 1500 });
+        const confirmed = await Popup.show.confirm(t`Overwrite with the current settings?`, selected.item.name);
+        if (!confirmed) {
+            return;
         }
-        await renderDetailsContent(detailsContent);
+        await overwriteItem(selected);
         saveSettingsDebounced();
-    });
+        await refreshSelectionUi();
+        toastr.success(t`Updated`, '', { timeOut: 1500 });
+    }));
 
-    const deleteButton = document.getElementById('delete_connection_profile');
-    deleteButton.addEventListener('click', async () => {
+    deleteButton.addEventListener('click', () => runUiAction(async () => {
         const selected = getSelectedItem();
-        let deleted = false;
-        if (selected?.kind === CONNECTION_ITEM_KIND.MODEL_TARGET) {
-            deleted = await deleteModelTarget();
-            if (deleted) {
-                await eventSource.emit(event_types.MODEL_TARGET_LOADED, NONE);
-            }
-        } else {
-            deleted = await deleteConnectionProfile();
-            if (deleted) {
-                await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, NONE);
-            }
-        }
+        const isTarget = selected?.kind === CONNECTION_ITEM_KIND.MODEL_TARGET;
+        const deleted = isTarget ? await deleteModelTarget() : await deleteConnectionProfile();
         if (!deleted) {
             return;
         }
-        renderConnectionProfiles(profiles);
-        await renderDetailsContent(detailsContent);
-        toggleProfileSpecificButtons();
-    });
+        // Nothing is selected now: as with choosing none, the deleted item's hints go.
+        switchRequestHints(null);
+        trackSelectedItem();
+        await eventSource.emit(isTarget ? event_types.MODEL_TARGET_LOADED : event_types.CONNECTION_PROFILE_LOADED, NONE);
+        await refreshSelectionUi();
+    }));
 
-    const editButton = document.getElementById('edit_connection_profile');
-    editButton.addEventListener('click', async () => {
+    editButton.addEventListener('click', () => runUiAction(async () => {
         const selected = getSelectedItem();
         if (!selected) {
-            console.log('No profile selected');
             return;
         }
-        if (selected.kind === CONNECTION_ITEM_KIND.MODEL_TARGET) {
-            const oldTarget = await editModelTarget(selected.item);
-            if (!oldTarget) {
-                return;
-            }
-            saveSettingsDebounced();
-            await eventSource.emit(event_types.MODEL_TARGET_UPDATED, oldTarget, selected.item);
-            renderConnectionProfiles(profiles);
-            await renderDetailsContent(detailsContent);
+        const edited = selected.kind === CONNECTION_ITEM_KIND.PROFILE && !isModelAndPresetProfile(selected.item)
+            ? await editLegacyProfile(selected.item)
+            : await renameItem(selected);
+        if (!edited) {
             return;
         }
-
-        const profile = selected.item;
-        if (!Array.isArray(profile.exclude)) {
-            profile.exclude = [];
-        }
-
-        const sortByViewOrder = (a, b) => Object.keys(FANCY_NAMES).indexOf(a) - Object.keys(FANCY_NAMES).indexOf(b);
-        const commands = profile.mode === 'cc' ? CC_COMMANDS : TC_COMMANDS;
-        const settings = commands.slice().sort(sortByViewOrder).reduce((acc, command) => {
-            const fancyName = FANCY_NAMES[command];
-            acc[fancyName] = !profile.exclude.includes(command);
-            return acc;
-        }, {});
-        const template = $(await renderExtensionTemplateAsync(MODULE_NAME, 'edit', { name: profile.name, settings }));
-        const popup = new Popup(template, POPUP_TYPE.INPUT, profile.name, {
-            customButtons: [{
-                text: t`Save and Update`,
-                classes: ['popup-button-ok'],
-                result: POPUP_RESULT.CUSTOM1,
-            }],
-        });
-
-        let newName = await popup.show();
-        if (!newName) {
-            return;
-        }
-        newName = DOMPurify.sanitize(String(newName));
-        if (!newName) {
-            toastr.error(t`Name cannot be empty.`);
-            return;
-        }
-
-        if (profile.name !== newName && extension_settings.connectionManager.profiles.some(p => p.name === newName)) {
-            toastr.error(t`A profile with the same name already exists.`);
-            return;
-        }
-
-        const newExcludeList = template.find('input[name="exclude"]:not(:checked)').map(function () {
-            return Object.entries(FANCY_NAMES).find(x => x[1] === String($(this).val()))?.[0];
-        }).get();
-
-        const oldProfile = structuredClone(profile);
-        if (newExcludeList.length !== profile.exclude.length || !newExcludeList.every(e => profile.exclude.includes(e))) {
-            profile.exclude = newExcludeList;
-            for (const command of newExcludeList) {
-                delete profile[command];
-            }
-            if (popup.result === POPUP_RESULT.CUSTOM1) {
-                await updateConnectionProfile(profile);
-            } else {
-                toastr.info(t`Press "Update" to record them into the profile.`, t`Included settings list updated`);
-            }
-        }
-
-        if (profile.name !== newName) {
-            toastr.success(t`Connection profile renamed.`);
-            profile.name = newName;
-        }
-
         saveSettingsDebounced();
-        await eventSource.emit(event_types.CONNECTION_PROFILE_UPDATED, oldProfile, profile);
-        renderConnectionProfiles(profiles);
-        await renderDetailsContent(detailsContent);
-    });
+        await refreshSelectionUi();
+    }));
 
-    /** @type {HTMLElement} */
-    const viewDetails = document.getElementById('view_connection_profile');
-    const detailsContent = document.getElementById('connection_profile_details_content');
     viewDetails.addEventListener('click', async () => {
         viewDetails.classList.toggle('active');
         detailsContent.classList.toggle('hidden');
@@ -1593,12 +2062,8 @@ export async function init() {
         ],
         callback: async (args, value) => {
             if (!value || typeof value !== 'string') {
-                const selectedProfile = extension_settings.connectionManager.selectedProfile;
-                const profile = extension_settings.connectionManager.profiles.find(p => p.id === selectedProfile);
-                if (!profile) {
-                    return NONE;
-                }
-                return profile.name;
+                // Names are unique across profiles and models, so `/profile <name>` restores either.
+                return getSelectedItem()?.item.name ?? NONE;
             }
 
             if (value === NONE) {
@@ -1607,20 +2072,21 @@ export async function init() {
                 return NONE;
             }
 
-            const profile = findProfileByName(value);
+            const match = findItemByName(value);
 
-            if (!profile) {
+            if (!match) {
                 return '';
             }
 
             const shouldAwait = !isFalseBoolean(String(args?.await));
-            const awaitPromise = new Promise((resolve) => eventSource.once(event_types.CONNECTION_PROFILE_LOADED, resolve));
 
-            profiles.selectedIndex = Array.from(profiles.options).findIndex(o => o.value === makeItemOptionValue(CONNECTION_ITEM_KIND.PROFILE, profile.id));
+            profiles.value = makeItemOptionValue(match.kind, match.item.id);
             profiles.dispatchEvent(new Event('change'));
 
             if (shouldAwait) {
-                await awaitPromise;
+                if (!await pendingSelection) {
+                    return '';
+                }
 
                 // We should also await the connection to be established
                 const parsedTimeout = parseInt(args?.timeout?.toString());
@@ -1630,7 +2096,7 @@ export async function init() {
                 }
             }
 
-            return profile.name;
+            return match.item.name;
         },
     }));
 
@@ -1664,8 +2130,9 @@ export async function init() {
             extension_settings.connectionManager.profiles.push(profile);
             setSelectedItemRef({ kind: CONNECTION_ITEM_KIND.PROFILE, id: profile.id });
             saveSettingsDebounced();
-            renderConnectionProfiles(profiles);
-            await renderDetailsContent(detailsContent);
+            // Captured from the live settings, so they match it now.
+            trackSelectedItem();
+            await refreshSelectionUi();
             await eventSource.emit(event_types.CONNECTION_PROFILE_CREATED, profile);
             return profile.name;
         },
@@ -1683,7 +2150,9 @@ export async function init() {
             }
             const oldProfile = structuredClone(profile);
             await updateConnectionProfile(profile);
-            await renderDetailsContent(detailsContent);
+            // The profile describes the live settings now, and may have gained or lost a preset or the API.
+            trackSelectedItem();
+            await refreshSelectionUi();
             saveSettingsDebounced();
             await eventSource.emit(event_types.CONNECTION_PROFILE_UPDATED, oldProfile, profile);
             return profile.name;
@@ -1702,20 +2171,8 @@ export async function init() {
             }),
         ],
         callback: async (_args, value) => {
-            if (!value || typeof value !== 'string') {
-                const selectedProfile = extension_settings.connectionManager.selectedProfile;
-                const profile = extension_settings.connectionManager.profiles.find(p => p.id === selectedProfile);
-                if (!profile) {
-                    return '';
-                }
-                return JSON.stringify(profile);
-            }
-
-            const profile = findProfileByName(value);
-            if (!profile) {
-                return '';
-            }
-            return JSON.stringify(profile);
+            const selected = value && typeof value === 'string' ? findItemByName(value) : getSelectedItem();
+            return selected ? JSON.stringify(itemAsProfile(selected)) : '';
         },
     }));
 

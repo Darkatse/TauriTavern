@@ -491,13 +491,18 @@ impl LlmConnectionService {
         })?;
         let source = self.validate_connection(&connection)?;
         let custom_api_format = normalized_custom_api_format(&connection);
+        // A connection that carries its model (saved from a Connection Manager model)
+        // decides it; the Profile's modelId is only the choice made at selection time.
+        let model_id = trimmed_option(connection.model_id.as_deref())
+            .unwrap_or(model_id)
+            .to_string();
 
         Ok(ResolvedConnectionBinding {
             connection_ref: id.as_str().to_string(),
             connection,
             source,
             custom_api_format,
-            model_id: model_id.to_string(),
+            model_id,
         })
     }
 }
@@ -889,6 +894,7 @@ mod tests {
             id: LlmConnectionId::parse("openrouter-main").unwrap(),
             display_name: "OpenRouter Main".to_string(),
             description: None,
+            model_id: None,
             provider: LlmConnectionProvider {
                 chat_completion_source: "openrouter".to_string(),
                 custom_api_format: None,
@@ -1077,6 +1083,23 @@ mod tests {
         let mut claude = custom_connection("claude_messages");
         claude.adapter_hints.claude_prompt_caching = Some("enabled".to_string());
         validate_connection(&claude).expect("Claude prompt caching hint should validate");
+    }
+
+    #[tokio::test]
+    async fn binding_follows_the_model_a_connection_carries() {
+        let mut connection = openrouter_connection();
+        connection.model_id = Some("anthropic/claude-opus".to_string());
+        let service = LlmConnectionService::new(
+            std::sync::Arc::new(TestRepo { connection }),
+            TestSettingsRepository::new(),
+        );
+
+        let binding = service
+            .resolve_model_binding("openrouter-main", "anthropic/claude-sonnet")
+            .await
+            .expect("binding");
+
+        assert_eq!(binding.model_id, "anthropic/claude-opus");
     }
 
     #[tokio::test]

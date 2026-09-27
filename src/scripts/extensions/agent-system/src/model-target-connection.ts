@@ -2,14 +2,14 @@ import { errorText, requireLlmConnectionsApi, requireSillyTavernContext } from '
 import { translateAgentSystem as tr } from './i18n';
 import {
     findModelTargetForBinding,
-    listSavedModelTargets as listSavedModelTargetsFromContext,
+    listModelTargets,
     modelBindingFromTarget,
     modelTargetConnectionRef,
     modelTargetIdFromConnectionRef,
     saveModelTargetAsLlmConnection as saveModelTargetAsLlmConnectionWithApi,
 } from '../../../tauritavern/agent/model-target-llm-connection.js';
 
-export type AgentModelTarget = ReturnType<typeof listSavedModelTargetsFromContext>[number];
+export type AgentModelTarget = ReturnType<typeof listModelTargets>[number];
 
 export type AgentModelTargetChange =
     | { type: 'created'; target: AgentModelTarget }
@@ -62,8 +62,14 @@ function requireModelTargetEvents(): { eventSource: ModelTargetEventSource; even
     };
 }
 
+/** Chat-completion models, the ones an Agent can run on. */
 export function listSavedModelTargets(): AgentModelTarget[] {
-    return listSavedModelTargetsFromContext(requireSillyTavernContext());
+    return listModelTargets(requireSillyTavernContext(), { mode: 'cc' });
+}
+
+/** Text-completion models, shown as unavailable in the model picker. */
+export function listTextCompletionModelTargets(): AgentModelTarget[] {
+    return listModelTargets(requireSillyTavernContext(), { mode: 'tc' });
 }
 
 export async function saveModelTargetAsLlmConnection(
@@ -74,16 +80,43 @@ export async function saveModelTargetAsLlmConnection(
 
 export async function syncSavedModelTargetLlmConnections(): Promise<void> {
     const targets = listSavedModelTargets();
+    // Connections this pass saved or already tried to remove; any other model connection is an orphan.
+    const handledConnectionIds = new Set<string>();
 
     for (const target of targets) {
         try {
-            await saveModelTargetAsLlmConnection(target);
+            const connection = await saveModelTargetAsLlmConnection(target);
+            handledConnectionIds.add(connection.id);
         } catch (error) {
             const invalidation = await invalidateModelTargetLlmConnection(target);
+            handledConnectionIds.add(invalidation.connectionId);
             console.warn('[AgentSystem] Skipped Model Target LLM Connection sync', target, error, invalidation);
             if (invalidation.error) {
                 reportModelTargetInvalidationFailure(target, invalidation);
             }
+        }
+    }
+
+    await deleteOrphanModelTargetLlmConnections(handledConnectionIds);
+}
+
+/**
+ * Deletion normally follows MODEL_TARGET_DELETED; a model deleted while this listener was
+ * not running (Agent System disabled, app closed mid-way) leaves its connection behind.
+ */
+async function deleteOrphanModelTargetLlmConnections(keptConnectionIds: ReadonlySet<string>): Promise<void> {
+    const llmConnectionsApi = requireLlmConnectionsApi();
+    const { connections } = await llmConnectionsApi.list();
+    for (const connection of connections) {
+        if (!modelTargetIdFromConnectionRef(connection.id) || keptConnectionIds.has(connection.id)) {
+            continue;
+        }
+        try {
+            await llmConnectionsApi.delete({ connectionId: connection.id });
+        } catch (error) {
+            const name = connection.displayName.trim() || connection.id;
+            console.error('[AgentSystem] Failed to delete orphaned Model Target LLM Connection', connection, error);
+            window.toastr?.error?.(tr('modelTargetInvalidationFailed', { name, error: errorText(error) }));
         }
     }
 }
@@ -98,13 +131,22 @@ export function startModelTargetLlmConnectionSync(): () => void {
     const handleUpdated = (_oldTarget: AgentModelTarget, target: AgentModelTarget) => (
         syncModelTargetLlmConnectionFromEvent(target, { invalidateOnFailure: true })
     );
+    // A deleted model takes its connection along, so diagnostics and runs agree it is gone.
+    const handleDeleted = async (target: AgentModelTarget) => {
+        const invalidation = await invalidateModelTargetLlmConnection(target);
+        if (invalidation.error) {
+            reportModelTargetInvalidationFailure(target, invalidation);
+        }
+    };
 
     eventSource.on(eventTypes.MODEL_TARGET_CREATED, handleCreated);
     eventSource.on(eventTypes.MODEL_TARGET_UPDATED, handleUpdated);
+    eventSource.on(eventTypes.MODEL_TARGET_DELETED, handleDeleted);
 
     stopModelTargetLlmConnectionSync = () => {
         eventSource.removeListener(eventTypes.MODEL_TARGET_CREATED, handleCreated);
         eventSource.removeListener(eventTypes.MODEL_TARGET_UPDATED, handleUpdated);
+        eventSource.removeListener(eventTypes.MODEL_TARGET_DELETED, handleDeleted);
         stopModelTargetLlmConnectionSync = null;
     };
 

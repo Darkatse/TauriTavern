@@ -18,8 +18,8 @@ function targetName(target: ModelTarget): string {
     return target.name || target.model || target.id;
 }
 
-export function ModelMenu({ models, choice, open, disabled, onOpenChange, onSelect, onManage }: {
-    models: readonly ModelTarget[]; choice: ModelChoice; open: boolean; disabled: boolean;
+export function ModelMenu({ models, unsupported, choice, open, disabled, onOpenChange, onSelect, onManage }: {
+    models: readonly ModelTarget[]; unsupported: readonly ModelTarget[]; choice: ModelChoice; open: boolean; disabled: boolean;
     onOpenChange: (open: boolean) => void; onSelect: (target: ModelTarget) => void; onManage: () => void;
 }) {
     return <ComposerMenu className="ttia-model" state={choice.state} label={tr('modelMenu', { name: choice.label })}
@@ -34,6 +34,10 @@ export function ModelMenu({ models, choice, open, disabled, onOpenChange, onSele
         </div>}
         {models.map(target => <MenuRadio key={target.id} checked={target.id === choice.target?.id} label={targetName(target)}
             title={targetName(target)} onSelect={() => onSelect(target)} />)}
+        {unsupported.map(target => <div key={target.id} className="ttia-menu-item is-missing" role="menuitemradio"
+            aria-checked="false" aria-disabled="true" title={tr('textCompletionModel')}>
+            <span className="ttia-menu-label">{targetName(target)}</span><span className="ttia-menu-detail">{tr('textCompletionModel')}</span>
+        </div>)}
         {models.length === 0 && <div className="ttia-model-empty" role="menuitem" aria-disabled="true">
             <p>{tr('noModels')}</p><span>{tr('noModelsNote')}</span>
         </div>}

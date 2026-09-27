@@ -272,6 +272,7 @@ export const DEFAULT_MESSAGES = {
     "save": "Save",
     "savedChatCompletionPreset": "Saved Chat Completion preset",
     "savedModel": "Saved Model",
+    "textCompletionModel": "Text completion, unsupported",
     "savedModelTarget": "Saved Model",
     "savedModelTargetNotFound": "Saved model not found: {id}",
     "savedPreset": "Saved Preset",

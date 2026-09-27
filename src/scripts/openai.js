@@ -6579,6 +6579,14 @@ export function getChatCompletionPreset(settings = oai_settings) {
  */
 async function saveOpenAIPreset(name, settings, triggerUi = true) {
     const presetBody = getChatCompletionPreset(settings);
+    // Subscribers may reshape the body; `previous` is the stored preset being overwritten, if any.
+    const previousIndex = openai_setting_names[name];
+    await eventSource.emit(event_types.OAI_PRESET_SAVE_BEFORE, {
+        name,
+        preset: presetBody,
+        previous: previousIndex === undefined ? null : openai_settings[previousIndex],
+        settingsToUpdate,
+    });
     const savePresetSettings = await fetch('/api/presets/save', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -7002,10 +7010,9 @@ function onSettingsPresetChange() {
     const presetNameBefore = oai_settings.preset_settings_openai;
 
     const presetName = $('#settings_preset_openai').find(':selected').text();
-    oai_settings.preset_settings_openai = presetName;
-
-    const presetIndex = openai_setting_names[oai_settings.preset_settings_openai];
+    const presetIndex = openai_setting_names[presetName];
     const preset = structuredClone(openai_settings[presetIndex]);
+    oai_settings.preset_settings_openai = presetName;
 
     if (migrateChatCompletionSettings(preset)) {
         openai_settings[presetIndex] = structuredClone(preset);
@@ -7014,23 +7021,39 @@ function onSettingsPresetChange() {
     const updateInput = (selector, value) => $(selector).val(value).trigger('input', { source: 'preset' });
     const updateCheckbox = (selector, value) => $(selector).prop('checked', value).trigger('input', { source: 'preset' });
 
-    // Allow subscribers to alter the preset before applying deltas
-    eventSource.emit(event_types.OAI_PRESET_CHANGED_BEFORE, {
+    // Allow subscribers to alter the preset before applying deltas. `bindConnection`
+    // starts from the user's binding toggle; a subscriber that owns the connection
+    // (Connection Manager with a selected model) clears it for this change only.
+    const presetEvent = {
         preset: preset,
         presetName: presetName,
         settingsToUpdate: settingsToUpdate,
         settings: oai_settings,
         savePreset: saveOpenAIPreset,
         presetNameBefore: presetNameBefore,
-    }).finally(async () => {
+        bindConnection: oai_settings.bind_preset_to_connection,
+    };
+    eventSource.emit(event_types.OAI_PRESET_CHANGED_BEFORE, presetEvent).finally(async () => {
         if (oai_settings.preset_settings_openai !== presetName) return;
+        const bindConnection = presetEvent.bindConnection;
 
-        if (oai_settings.bind_preset_to_connection) {
+        // Custom formats self-heal through the source selector; an OpenCode format has no such
+        // fallback, so a preset that would apply an unknown one is rejected before any field is.
+        if (bindConnection && preset.opencode_api_format !== undefined
+            && !Object.values(OPENCODE_API_FORMAT).includes(preset.opencode_api_format)) {
+            oai_settings.preset_settings_openai = presetNameBefore;
+            $('#settings_preset_openai').val(openai_setting_names[presetNameBefore]);
+            const message = t`Preset "${presetName}" uses an unknown OpenCode API format: ${preset.opencode_api_format}`;
+            toastr.error(message);
+            throw new Error(message);
+        }
+
+        if (bindConnection) {
             $('.model_custom_select').empty();
         }
 
         for (const [key, [selector, setting, isCheckbox, isConnection]] of Object.entries(settingsToUpdate)) {
-            if (isConnection && !oai_settings.bind_preset_to_connection) {
+            if (isConnection && !bindConnection) {
                 continue;
             }
 
@@ -7051,7 +7074,7 @@ function onSettingsPresetChange() {
         }
 
         // These cannot be changed via preset if unbound to connection
-        if (oai_settings.bind_preset_to_connection) {
+        if (bindConnection) {
             syncChatCompletionSourceSelector();
             applyCustomModelOptionsToAllSources();
             $('#chat_completion_source').trigger('change');
