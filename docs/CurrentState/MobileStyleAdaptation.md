@@ -33,6 +33,7 @@
 
 - `WindowCompat.setDecorFitsSystemWindows(window, false)`：启用 edge‑to‑edge。
 - 状态栏/导航栏透明；允许内容延伸到系统栏区域。
+- 状态栏图标由 `AndroidStatusBarAppearance` 按实际背景亮度调整：前台可见时随重绘取样，每秒最多一次，不依赖前端主题事件。
 - `layoutInDisplayCutoutMode = SHORT_EDGES`：允许在刘海区域布局；是否避让由 `--tt-inset-*` 的当前策略决定。
 - system bars behavior 使用 `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`。
 

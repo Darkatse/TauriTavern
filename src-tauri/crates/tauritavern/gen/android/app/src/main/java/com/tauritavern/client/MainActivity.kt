@@ -155,6 +155,7 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
   }
 
   override fun onPause() {
+    insetsBridge.onPause()
     AndroidAppPresence.setActivityResumed(false)
     super.onPause()
   }

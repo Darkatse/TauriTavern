@@ -34,6 +34,7 @@ class AndroidInsetsBridge(
   private var isInsetsSyncScheduled: Boolean = false
   private var hasPendingInsetsSync: Boolean = false
   private var isInsetsListenerAttached: Boolean = false
+  private val statusBarAppearance = AndroidStatusBarAppearance(window, mainHandler)
   private val webViewInsetsStyleApplier: WebViewInsetsStyleApplier by lazy {
     WebViewInsetsStyleApplier(resources)
   }
@@ -61,7 +62,12 @@ class AndroidInsetsBridge(
 
   fun onResume() {
     configureImmersiveSystemBars()
+    statusBarAppearance.start()
     refreshInjection()
+  }
+
+  fun onPause() {
+    statusBarAppearance.stop()
   }
 
   fun setImmersiveFullscreenEnabled(enabled: Boolean) {
@@ -108,7 +114,7 @@ class AndroidInsetsBridge(
         Configuration.UI_MODE_NIGHT_YES
 
     val insetsController = WindowInsetsControllerCompat(window, window.decorView)
-    insetsController.isAppearanceLightStatusBars = !isDarkMode
+    insetsController.isAppearanceLightStatusBars = statusBarAppearance.useDarkIcons ?: !isDarkMode
     insetsController.isAppearanceLightNavigationBars = !isDarkMode
     insetsController.systemBarsBehavior =
       WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
