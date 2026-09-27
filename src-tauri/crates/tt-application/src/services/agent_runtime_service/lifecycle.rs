@@ -227,6 +227,25 @@ impl AgentRuntimeService {
         &self,
         run_id: &str,
     ) -> Result<Option<watch::Receiver<AgentRunLiveProjection>>, ApplicationError> {
+        self.subscribe_active_run(run_id, |handle| handle.live_projection.subscribe())
+            .await
+    }
+
+    /// Wake-up hints carrying the latest appended journal seq. Events are still
+    /// read through `read_events`; `None` means the run is already terminal.
+    pub async fn subscribe_event_hints(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<watch::Receiver<u64>>, ApplicationError> {
+        self.subscribe_active_run(run_id, |handle| handle.event_seq.subscribe())
+            .await
+    }
+
+    async fn subscribe_active_run<T>(
+        &self,
+        run_id: &str,
+        subscribe: impl FnOnce(&super::scheduler::ActiveRunHandle) -> watch::Receiver<T>,
+    ) -> Result<Option<watch::Receiver<T>>, ApplicationError> {
         let run_id = run_id.trim();
         if run_id.is_empty() {
             return Err(ApplicationError::ValidationError(
@@ -239,7 +258,7 @@ impl AgentRuntimeService {
             .read()
             .await
             .get(run_id)
-            .map(|handle| handle.live_projection.subscribe())
+            .map(|handle| subscribe(handle))
         {
             return Ok(Some(receiver));
         }

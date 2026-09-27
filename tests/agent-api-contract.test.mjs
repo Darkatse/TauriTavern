@@ -214,7 +214,12 @@ test('Agent event unsubscribe suppresses in-flight results, errors and the remai
         const events = [];
         const errors = [];
         const runtime = createAgentRunRuntimeApi({
-            safeInvoke() { requested.resolve(); return reply.promise; },
+            safeInvoke(command) {
+                if (command === 'subscribe_agent_run_events') return new Promise(() => {});
+                requested.resolve();
+                return reply.promise;
+            },
+            channelFactory: () => ({}),
         });
         const stop = runtime.subscribe('run', event => {
             events.push(event.seq);
@@ -230,6 +235,91 @@ test('Agent event unsubscribe suppresses in-flight results, errors and the remai
         assert.deepEqual(events, outcome === 'batch' ? [1] : []);
         assert.deepEqual(errors, []);
     }
+});
+
+async function createEventHintHarness() {
+    const { createAgentRunRuntimeApi } = await import('../src/tauri/main/api/agent-run-runtime.js');
+    const reads = [];
+    const hintSubscription = Promise.withResolvers();
+    let pushHint = null;
+    const runtime = createAgentRunRuntimeApi({
+        safeInvoke(command, args) {
+            if (command === 'subscribe_agent_run_events') {
+                assert.deepEqual(args.dto, { runId: 'run' });
+                return hintSubscription.promise;
+            }
+            assert.equal(command, 'read_agent_run_events');
+            const reply = Promise.withResolvers();
+            reads.push({ afterSeq: args.dto.afterSeq, reply });
+            return reply.promise;
+        },
+        channelFactory(onmessage) {
+            pushHint = seq => onmessage({ seq });
+            return {};
+        },
+    });
+    return { runtime, reads, hintSubscription, hint: seq => pushHint(seq) };
+}
+
+// Drain the promise chain through the next event-loop turn; no sleeps.
+const drainEventLoop = () => new Promise(resolve => setImmediate(resolve));
+
+test('Agent event hints read immediately, coalesce during a read and stop after unsubscribe', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { runtime, reads, hint } = await createEventHintHarness();
+    const seen = [];
+    const stop = runtime.subscribe('run', event => seen.push(event.seq), { intervalMs: 60_000 });
+
+    // A hint wakes the read loop without waiting for any timer.
+    hint(1);
+    assert.deepEqual(reads.map(read => read.afterSeq), [0]);
+    // Hints during the in-flight read share one follow-up read.
+    hint(2);
+    hint(3);
+    assert.equal(reads.length, 1);
+    reads[0].reply.resolve({ events: [{ seq: 1 }] });
+    await drainEventLoop();
+    assert.deepEqual(reads.map(read => read.afterSeq), [0, 1]);
+    reads[1].reply.resolve({ events: [{ seq: 2 }, { seq: 3 }] });
+    await drainEventLoop();
+    // Already-read hints and the superseded initial timer do not read again.
+    hint(3);
+    t.mock.timers.tick(0);
+    await drainEventLoop();
+    assert.equal(reads.length, 2);
+    assert.deepEqual(seen, [1, 2, 3]);
+
+    stop();
+    hint(4);
+    t.mock.timers.tick(60_000);
+    await drainEventLoop();
+    assert.equal(reads.length, 2);
+});
+
+test('Agent event subscription polls without hints and catches up when hints close', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { runtime, reads, hintSubscription } = await createEventHintHarness();
+    const seen = [];
+    runtime.subscribe('run', event => seen.push(event.seq), { afterSeq: 4, intervalMs: 3000 });
+
+    t.mock.timers.tick(0);
+    assert.deepEqual(reads.map(read => read.afterSeq), [4]);
+    reads[0].reply.resolve({ events: [] });
+    await drainEventLoop();
+    t.mock.timers.tick(2999);
+    assert.equal(reads.length, 1);
+    t.mock.timers.tick(1);
+    assert.deepEqual(reads.map(read => read.afterSeq), [4, 4]);
+    reads[1].reply.resolve({ events: [{ seq: 5 }] });
+    await drainEventLoop();
+
+    // The native side returns when the run releases its handle; read the final events now.
+    hintSubscription.resolve();
+    await drainEventLoop();
+    assert.deepEqual(reads.map(read => read.afterSeq), [4, 4, 5]);
+    reads[2].reply.resolve({ events: [{ seq: 6 }] });
+    await drainEventLoop();
+    assert.deepEqual(seen, [5, 6]);
 });
 
 test('Agent live projection subscription owns Channel callbacks and detaches idempotently', async () => {
