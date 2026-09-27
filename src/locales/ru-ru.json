@@ -2445,7 +2445,6 @@
     "Use system prompt": "Включить системный промпт",
     "Send inline videos": "Отправлять inline-видео",
     "video_inlining_hint_4": "Видео должно весить не более 20 Мб и длиться не дольше 1 минуты.",
-    "Allocates a portion of the response length for thinking (Flash 2.5/Pro 2.5) (min: 0/128 tokens, low: 10%, medium: 25%, high: 50%, max: 24576/32768 tokens). Auto lets the model decide.": "Отводит часть ответа под рассуждения (Flash 2.5/Pro 2.5) (Минимальные: 0/128 токенов, Поверхностные: 10%, Обычные: 25%, Подробные: 50%, Максимальные: 24576/32768 токенов). При выборе значения Авто модель определяет объём самостоятельно.",
     "Google Vertex AI Configuration": "Настройки Google Vertex AI",
     "Authentication Mode": "Режим аутентификации:",
     "Express Mode (API Key)": "Express Mode (ключ от API)",

@@ -16,6 +16,7 @@ const api = window.__TAURITAVERN__.api;
 | [api.extension.store](Extension.md) | 扩展的全局 JSON / Blob 存储 |
 | [api.db](Database.md) | 本地向量、文本索引、图与 TQL 数据库 |
 | [api.agent](Agent.md) | 运行控制、历史、文件详情与 Profile 管理 |
+| [api.models](Models.md) | 用户保存的模型列表，供扩展与 Agent 选择 |
 | [api.llmConnections](LlmConnections.md) | Agent 使用的模型连接 |
 | [api.skill](Skill.md) | Skill 导入、编辑、作用域与导出 |
 | [api.mcp](MCP.md) | MCP 服务器、工具发现、权限与测试调用 |

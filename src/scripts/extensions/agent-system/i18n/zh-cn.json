@@ -535,5 +535,6 @@
     "agent_system.profileView": "配置视角",
     "agent_system.subAgent": "子 Agent",
     "agent_system.subAgentAccess": "子 Agent 访问",
-    "agent_system.viewSkill": "查看"
+    "agent_system.viewSkill": "查看",
+    "agent_system.textCompletionModel": "文本补全，不可用"
 }

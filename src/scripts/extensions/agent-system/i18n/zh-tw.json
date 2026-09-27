@@ -535,5 +535,6 @@
     "agent_system.profileView": "設定檔視角",
     "agent_system.subAgent": "子 Agent",
     "agent_system.subAgentAccess": "子 Agent 存取",
-    "agent_system.viewSkill": "檢視"
+    "agent_system.viewSkill": "檢視",
+    "agent_system.textCompletionModel": "文字補全，無法使用"
 }

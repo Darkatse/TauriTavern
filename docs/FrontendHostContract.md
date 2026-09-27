@@ -175,7 +175,10 @@
   - 扩展工具通过 `tools.register/setEnabled/list` 注册、开关与查询，按 Chat/Session 筛选，共用 Agent 工具执行链路；用法见 [注册扩展工具](API/Agent.md#注册扩展工具)。
   - 运行控制属于 Public Contract；模型回合、任务详情、工具目录和 Timeline 关系是 Project Contract，由对应 API 提供展示 DTO。
 
-- `api.llmConnections`：管理 Profile 引用的模型连接，见 [LLM Connection API](API/LlmConnections.md)。Profile 通过连接 ID 和模型 ID 绑定；Model Target 是界面的配置来源。
+- `api.llmConnections`：管理 Profile 引用的模型连接，见 [LLM Connection API](API/LlmConnections.md)。Profile 通过连接 ID 和模型 ID 绑定；由 Connection Manager 的模型（Model Target）物化的连接携带 `modelId`，绑定跟随连接的值。
+
+- `api.models`：列出 Connection Manager 中保存的模型（只读、不含密钥），供扩展和 Agent 选择，并可配合 `ConnectionManagerRequestService` 用选中的模型发请求，见 [Models API](API/Models.md)。
+  - 当前为实验性的 Project Contract，签名可能调整；`list()` / `get()` 返回 Promise，`subscribe()` 同步返回取消订阅函数。
 
 - `api.skill`：管理本地知识包的导入、编辑、作用域与导出，见 [Skill API](API/Skill.md)。模型通过只读 `skills/` 工作区视图读取材料，经 `workspace.shell` 执行脚本；安装与替换由管理界面处理。
 
