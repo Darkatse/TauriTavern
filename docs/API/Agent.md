@@ -42,13 +42,15 @@ Session 独立于角色聊天和写作 Agent Mode。使用前通过 `sessions.pr
 | `sessions.rename({ sessionId, title })` | `{ session }`；标题 trim 后为 1–120 字符 |
 | `sessions.delete({ sessionId })` | 删除会话数据；活动会话拒绝删除，目标已不存在时成功 |
 | `sessions.read({ sessionId, beforeSeq?, limit? })` | `{ session, messages, lastSeq, nextBeforeSeq, activeRun }` |
-| `sessions.send({ sessionId, text })` | `{ sessionId, runId, status }`；执行在原生端继续 |
+| `sessions.send({ sessionId, text, variables? })` | `{ sessionId, runId, status }`；执行在原生端继续 |
 
 ```js
 // 已配置 Session Profile；agent 的取得方式同上。
 const { session } = await agent.sessions.create();
 const run = await agent.sessions.send({ sessionId: session.id, text: '查看 work/ 中的文件。' });
 ```
+
+`variables.local` 是本次宏求值的局部变量，省略时为空；全局变量在 `send` 开始时复制。宏写入只影响本次工作副本，详见[宏求值 API](Macros.md)。
 
 保存 `session.id` 供后续读取和发送。`send` 返回后执行仍在继续，通过 `subscribe(run.runId, ...)` 观察终态，再发送下一条。忙碌或准备输入过期时 reject，不自动重试。
 

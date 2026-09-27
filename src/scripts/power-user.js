@@ -3361,7 +3361,7 @@ async function setmovingUIPreset(_, text) {
     return '';
 }
 
-const EPHEMERAL_STOPPING_STRINGS = [];
+export const EPHEMERAL_STOPPING_STRINGS = [];
 
 /**
  * Adds a stopping string to the list of stopping strings that are only used for the next generation.
@@ -3426,18 +3426,23 @@ export function generatedTextFiltered(text) {
 /**
  * Gets the custom stopping strings from the power user settings.
  * @param {number | undefined} limit Number of strings to return. If 0 or undefined, returns all strings.
+ * @param {{ settings?: object, substitute?: (text: string) => string, ephemeral?: string[] }} [options] Inputs for independent request preparation
  * @returns {string[]} An array of custom stopping strings
  */
-export function getCustomStoppingStrings(limit = undefined) {
+export function getCustomStoppingStrings(limit = undefined, {
+    settings = power_user,
+    substitute = substituteParams,
+    ephemeral = EPHEMERAL_STOPPING_STRINGS,
+} = {}) {
     function getPermanent() {
         try {
             // If there's no custom stopping strings, return an empty array
-            if (!power_user.custom_stopping_strings) {
+            if (!settings.custom_stopping_strings) {
                 return [];
             }
 
             // Parse the JSON string
-            let strings = JSON.parse(power_user.custom_stopping_strings);
+            let strings = JSON.parse(settings.custom_stopping_strings);
 
             // Make sure it's an array
             if (!Array.isArray(strings)) {
@@ -3448,8 +3453,8 @@ export function getCustomStoppingStrings(limit = undefined) {
             strings = strings.filter(s => typeof s === 'string' && s.length > 0);
 
             // Substitute params if necessary
-            if (power_user.custom_stopping_strings_macro) {
-                strings = strings.map(x => substituteParams(x));
+            if (settings.custom_stopping_strings_macro) {
+                strings = strings.map(x => substitute(x));
             }
 
             return strings;
@@ -3461,7 +3466,6 @@ export function getCustomStoppingStrings(limit = undefined) {
     }
 
     const permanent = getPermanent();
-    const ephemeral = EPHEMERAL_STOPPING_STRINGS;
     const strings = [...permanent, ...ephemeral];
 
     // Apply the limit. If limit is 0, return all strings.

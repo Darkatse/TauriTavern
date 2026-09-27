@@ -586,34 +586,42 @@ export function initAuthorsNote() {
 }
 
 function registerAuthorsNoteMacros() {
+    const data = Object.freeze({
+        get current() { return chat_metadata[metadata_keys.prompt] ?? ''; },
+        get character() { return this_chid !== undefined ? (extension_settings.note.chara.find(e => e.name === getCharaFilename())?.prompt ?? '') : ''; },
+        get default() { return extension_settings.note.default ?? ''; },
+    });
+    macros.envBuilder.registerProvider(env => {
+        env.extra.authorsNote = data;
+    });
     if (power_user.experimental_macro_engine) {
         macros.register('authorsNote', {
             category: MacroCategory.PROMPTS,
             description: t`The contents of the Author's Note`,
-            handler: () => chat_metadata[metadata_keys.prompt] ?? '',
+            handler: ({ env }) => env.extra.authorsNote?.current ?? '',
         });
         macros.register('charAuthorsNote', {
             category: MacroCategory.PROMPTS,
             description: t`The contents of the Character Author's Note`,
-            handler: () => this_chid !== undefined ? (extension_settings.note.chara.find((e) => e.name === getCharaFilename())?.prompt ?? '') : '',
+            handler: ({ env }) => env.extra.authorsNote?.character ?? '',
         });
         macros.register('defaultAuthorsNote', {
             category: MacroCategory.PROMPTS,
             description: t`The contents of the Default Author's Note`,
-            handler: () => extension_settings.note.default ?? '',
+            handler: ({ env }) => env.extra.authorsNote?.default ?? '',
         });
     } else {
         // TODO: Remove this when the experimental macro engine is replacing the old macro engine
         MacrosParser.registerMacro('authorsNote',
-            () => chat_metadata[metadata_keys.prompt] ?? '',
+            (_nonce, env) => env.extra.authorsNote?.current ?? '',
             t`The contents of the Author's Note`,
         );
         MacrosParser.registerMacro('charAuthorsNote',
-            () => this_chid !== undefined ? (extension_settings.note.chara.find((e) => e.name === getCharaFilename())?.prompt ?? '') : '',
+            (_nonce, env) => env.extra.authorsNote?.character ?? '',
             t`The contents of the Character Author's Note`,
         );
         MacrosParser.registerMacro('defaultAuthorsNote',
-            () => extension_settings.note.default ?? '',
+            (_nonce, env) => env.extra.authorsNote?.default ?? '',
             t`The contents of the Default Author's Note`,
         );
     }

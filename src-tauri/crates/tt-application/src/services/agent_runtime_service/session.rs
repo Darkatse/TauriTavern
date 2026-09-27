@@ -17,7 +17,7 @@ use crate::dto::agent_dto::{
     AgentStartSessionRunDto,
 };
 use crate::errors::ApplicationError;
-use crate::services::prompt_assembly_service::attach_frozen_run_input_snapshot;
+use crate::services::prompt_assembly_service::{attach_frozen_run_input_snapshot, sha256_value};
 use tt_domain::models::agent::session::{AgentSession, AgentSessionMessageOrigin};
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRole, AgentRun, AgentRunEventLevel,
@@ -279,7 +279,14 @@ impl AgentRuntimeService {
             }),
         )
         .await?;
-        if let Some(intent) = dto.generation_intent {
+        if let Some(mut intent) = dto.generation_intent {
+            // The host finishes Session macro input after reading its transcript.
+            // Record the input accepted here, rather than the earlier preparation seed.
+            if let Some(fingerprint) =
+                intent.pointer_mut("/promptAssembly/fingerprint/frozenRunInputSnapshotSha256")
+            {
+                *fingerprint = json!(sha256_value(&prompt_snapshot["frozenRunInputSnapshot"])?);
+            }
             self.event(
                 &run.id,
                 AgentRunEventLevel::Info,

@@ -45,24 +45,80 @@
 /**
  * @typedef {Object} MacroEnvSystem
  * @property {string} model
+ * @property {string} api
+ * @property {number} maxPrompt
+ * @property {number} maxContext
+ * @property {number} maxResponse
  */
+
+/**
+ * @typedef {Object} MacroChat
+ * @property {string} lastMessage
+ * @property {string} lastUserMessage
+ * @property {string} lastCharMessage
+ * @property {number|string|null} lastMessageId
+ * @property {number|string|null} lastSwipeId
+ * @property {number|string|null} currentSwipeId
+ * @property {number|string|null} firstIncludedMessageId
+ * @property {number|string|null} firstDisplayedMessageId
+ * @property {string} allChatRange
+ * @property {number} idHash
+ * @property {string|number|null} pickRerollSeed
+ * @property {string} idleDuration
+ */
+
+/**
+ * @typedef {Pick<typeof import('../../power-user.js').power_user,
+ * 'instruct' | 'sysprompt' | 'context' | 'reasoning' | 'prefer_character_prompt' |
+ * 'collapse_newlines' | 'pin_examples' | 'custom_stopping_strings' | 'custom_stopping_strings_macro'> &
+ * { isGroup: boolean, groupNames: string[], groupNamesNotMuted: string[] }} MacroSettings
+ */
+
+/**
+ * Plain captured inputs. Callers own this data; evaluation writes only its variable maps
+ * and bannedWords. Clone once when starting an independent assembly.
+ * @typedef {Object} MacroContext
+ * @property {'new'|'legacy'} engine
+ * @property {MacroEnvNames} names
+ * @property {MacroEnvCharacter & {
+ *   groupCards: ReturnType<typeof import('../../../script.js').getCharacterCardFieldsSource>['groupCards'],
+ *   personaPosition: number
+ * }} character Raw templates, without executing their macros.
+ * @property {MacroEnvSystem} system
+ * @property {MacroChat} chat
+ * @property {MacroSettings} settings
+ * @property {{input: string, isMobile: boolean, lastGenerationType: string,
+ *   extensions: {name: string, enabled: boolean}[], ephemeralStoppingStrings: string[]}} state
+ * @property {number} now Captured Unix time in milliseconds.
+ * @property {{local: Record<string, any>, global: Record<string, any>}} variables Raw stored values.
+ * @property {Record<string, {value: string}>} extensionPrompts
+ * @property {string[]} bannedWords
+ * @property {Record<string, any>} extra Module-owned, structured-cloneable data.
+ */
+
+/** @typedef {Omit<import('./MacroEnvBuilder.js').MacroEnvRawContext, 'content'>} MacroEvaluationOptions */
 
 /**
  * @typedef {Object} MacroEnvFunctions
  * @property {() => string} [original]
  * @property {(text: string) => string} postProcess
+ * @property {(text: string, options?: MacroEvaluationOptions) => string} substitute Start a fresh top-level text using the same inputs and variables.
  */
 
 /**
- * @typedef {Object} MacroEnv
- * @property {string} content - The full original input string that is being processed by the macro engine. This is the same value as substituteParams "content" and is provided so macros can build deterministic behavior based on the whole prompt when needed.
- * @property {number} contentHash - A hash of the content string, used for caching and comparison.
- * @property {MacroEnvNames} names
- * @property {MacroEnvCharacter} character
- * @property {MacroEnvSystem} system
- * @property {MacroEnvFunctions} functions
- * @property {Object<string, DynamicMacroValue>} dynamicMacros
- * @property {Record<string, unknown>} extra
+ * One evaluation frame. Character fields and original are fresh for each top-level text;
+ * recursive handler resolve() calls retain this frame. Providers run on live preparation, including capture.
+ * @typedef {Omit<MacroContext, 'character'|'variables'|'chat'|'state'> & {
+ *   context: MacroContext,
+ *   content: string,
+ *   contentHash: number,
+ *   character: MacroEnvCharacter,
+ *   chat: Readonly<MacroChat>,
+ *   state: Readonly<MacroContext['state']>,
+ *   variables: ReturnType<typeof import('../../variables/scopes.js').createMacroVariables>,
+ *   functions: MacroEnvFunctions,
+ *   dynamicMacros: Record<string, DynamicMacroValue>
+ * }} MacroEnv
  */
 
 export {};

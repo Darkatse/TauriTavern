@@ -1,4 +1,3 @@
-// pnpm run check:startup (also included in pnpm run check).
 import assert from 'node:assert/strict';
 import { createBrowserRuntime } from './runtime.mjs';
 

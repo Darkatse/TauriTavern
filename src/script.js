@@ -77,6 +77,8 @@ import { normalizeAgentSystemPrompt } from './scripts/tauritavern/agent/agent-sy
 import { readLegacyToolInvocations, stripOldToolTurns } from './scripts/tauritavern/tool-turn-projection.js';
 import {
     buildFrozenRunInputSnapshot,
+    updateFrozenMacroContext,
+    createMacroContextFromSnapshot,
     buildCurrentModelConnectionSnapshot,
     buildSettingsWithCurrentModelConnectionSnapshot,
     normalizeFrozenRunInputSnapshot,
@@ -167,6 +169,7 @@ import {
     importGroupChat,
     getGroupBlock,
     getGroupCharacterCardsLazy,
+    getGroupCharacterCardsSource,
     getGroupDepthPrompts,
 } from './scripts/group-chats.js';
 
@@ -205,6 +208,7 @@ import {
     getChatCompletionModel,
     isVertexAiClaudeModelId,
     createGenerationParameters,
+    createChatCompletionMacroContext,
     proxies,
     loadProxyPresets,
     selected_proxy,
@@ -355,18 +359,9 @@ import {
 } from './scripts/html-code-preview.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
 import {
-    evaluateMacros,
     getLastMessageId,
-    getLastMessage,
-    getLastUserMessage,
-    getLastCharMessage,
-    getFirstIncludedMessageId,
-    getFirstDisplayedMessageId as getMacroFirstDisplayedMessageId,
-    getTimeSinceLastMessage,
     initMacros,
 } from './scripts/macros.js';
-import { findLastMessageId, getLastSwipeId, getCurrentSwipeId } from './scripts/macros/chat-state.js';
-import { snapshotVariableMacroValues } from './scripts/variables/values.js';
 import { currentUser, setUserControls } from './scripts/user.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup, fixToastrForDialogs } from './scripts/popup.js';
 import { renderTemplate, renderTemplateAsync } from './scripts/templates.js';
@@ -404,8 +399,8 @@ import { SimpleMutex } from './scripts/util/SimpleMutex.js';
 import { createGenerationIdleGate } from './scripts/util/generation-idle-gate.js';
 import { shouldEmitCharacterMessageEvents, shouldUnblockGenerationAfterUnhandledError } from './scripts/util/generation-lifecycle.js';
 import { AudioPlayer } from './scripts/audio-player.js';
+import { evaluateMacroEnv, captureContext as captureMacroContext } from './scripts/macros/macro-system.js';
 import { MacroEnvBuilder } from './scripts/macros/engine/MacroEnvBuilder.js';
-import { MacroEngine } from './scripts/macros/engine/MacroEngine.js';
 import { addChatBackupsBrowser } from './scripts/chat-backups.js';
 import { onboardingExperimentalMacroEngine } from './scripts/macros/engine/MacroDiagnostics.js';
 import { createStartupStatusOverlay } from './scripts/tauri/startup/startup-status-overlay.js';
@@ -3637,23 +3632,13 @@ export function substituteParamsExtended(content, additionalMacro = {}, postProc
  * @returns {string} The string with substituted parameters.
  */
 export function substituteParamsLegacy(content, _name1, _name2, _original, _group, _replaceCharacterCard = true, additionalMacro = {}, postProcessFn = (x) => x) {
-    if (!content) {
-        return '';
-    }
+    return substituteParams(content, {
+        name1Override: _name1, name2Override: _name2, original: _original, groupOverride: _group,
+        replaceCharacterCard: _replaceCharacterCard, dynamicMacros: additionalMacro, postProcessFn,
+    });
+}
 
-    // If experimental macro engine is enabled, use it. This code will be cleaned up in the future.
-    if (power_user?.experimental_macro_engine) {
-        return substituteParams(content, {
-            name1Override: _name1,
-            name2Override: _name2,
-            original: _original,
-            groupOverride: _group,
-            replaceCharacterCard: _replaceCharacterCard ?? true,
-            dynamicMacros: additionalMacro ?? {},
-            postProcessFn: postProcessFn ?? ((x) => x),
-        });
-    }
-
+function suggestExperimentalMacroEngine(content) {
     // Try to roughly detect experimental macro features to show the onboarding if needed.
     // This does not have to be 100% accurate, only best effort what we can quickly check.
     // Only do this if the warning wasn't shown yet, to prevent needless regex checks.
@@ -3669,103 +3654,6 @@ export function substituteParamsLegacy(content, _name1, _name2, _original, _grou
         if (feature) void onboardingExperimentalMacroEngine(feature);
     }
 
-    const environment = {};
-
-    if (typeof _original === 'string') {
-        let originalSubstituted = false;
-        environment.original = () => {
-            if (originalSubstituted) {
-                return '';
-            }
-
-            originalSubstituted = true;
-            return _original;
-        };
-    }
-
-    const getGroupValue = (includeMuted) => {
-        if (typeof _group === 'string') {
-            return _group;
-        }
-
-        if (selected_group) {
-            const members = groups.find(x => x.id === selected_group)?.members;
-            /** @type {string[]} */
-            const disabledMembers = groups.find(x => x.id === selected_group)?.disabled_members ?? [];
-            const isMuted = x => includeMuted ? true : !disabledMembers.includes(x);
-            const names = Array.isArray(members)
-                ? members.filter(isMuted).map(m => characters.find(c => c.avatar === m)?.name).filter(Boolean).join(', ')
-                : '';
-            return names;
-        } else {
-            return _name2 ?? name2;
-        }
-    };
-
-    const getNotCharValue = () => {
-        const currentUser = _name1 ?? name1;
-        const currentSpeaker = _name2 ?? name2;
-
-        // Single character chat
-        if (!selected_group) {
-            return currentUser;
-        }
-
-        // Group chat
-        const members = groups.find(x => x.id === selected_group)?.members;
-
-        if (!Array.isArray(members)) {
-            return currentUser;
-        }
-
-        const memberNames = members
-            .map(m => characters.find(c => c.avatar === m)?.name)
-            .filter(Boolean); // Filter out any null/undefined names
-
-        // Filter out the current speaker and add the user
-        const otherMembers = memberNames.filter(name => name !== currentSpeaker);
-        otherMembers.push(currentUser);
-
-        return otherMembers.join(', ');
-    };
-
-    if (_replaceCharacterCard) {
-        const fields = getCharacterCardFields();
-        environment.charPrompt = fields.system || '';
-        environment.charInstruction = environment.charJailbreak = fields.jailbreak || '';
-        environment.description = fields.description || '';
-        environment.personality = fields.personality || '';
-        environment.scenario = fields.scenario || '';
-        environment.persona = fields.persona || '';
-        environment.mesExamples = () => {
-            const isInstruct = power_user.instruct.enabled && main_api !== 'openai';
-            const mesExamplesArray = parseMesExamples(fields.mesExamples, isInstruct);
-            if (isInstruct) {
-                const instructExamples = formatInstructModeExamples(mesExamplesArray, name1, name2);
-                return instructExamples.join('');
-            }
-            return mesExamplesArray.join('');
-        };
-        environment.mesExamplesRaw = fields.mesExamples || '';
-        environment.charVersion = fields.version || '';
-        environment.char_version = fields.version || '';
-        environment.charDepthPrompt = fields.charDepthPrompt || '';
-        environment.creatorNotes = fields.creatorNotes || '';
-    }
-
-    // Must be substituted last so that they're replaced inside {{description}}
-    environment.user = _name1 ?? name1;
-    environment.char = _name2 ?? name2;
-    environment.group = environment.charIfNotGroup = getGroupValue(true);
-    environment.groupNotMuted = getGroupValue(false);
-    environment.notChar = getNotCharValue();
-    environment.model = getGeneratingModel();
-
-    if (additionalMacro && typeof additionalMacro === 'object') {
-        Object.assign(environment, additionalMacro);
-    }
-
-    return evaluateMacros(content, environment, postProcessFn);
 }
 
 /** @typedef {import('./scripts/macros/engine/MacroRegistry.js').MacroHandler} MacroHandler */
@@ -3788,38 +3676,20 @@ export function substituteParamsLegacy(content, _name1, _name2, _original, _grou
  */
 export function substituteParams(content, options = {}) {
     if (!content) return '';
-
     if (typeof content !== 'string') {
         console.warn('substituteParams: content will be coerced to string', content);
         content = String(content);
     }
-
-    // Handle legacy signature calls to substituteParams
-    // We'll simply re-route them to a temporary legacy function. In the future, we'll remove this and cleanly build the options object ourselves.
     const isOptionsObject = options && typeof options === 'object' && !Array.isArray(options);
-    if (!isOptionsObject) {
+    // An omitted user override is still a positional call when later arguments exist.
+    if (!isOptionsObject || (arguments.length > 2 && arguments[1] === undefined)) {
         return substituteParamsLegacy.call(this, ...arguments);
     }
-
-    // Keep the new macro engine behind a feature switch for now
-    if (!power_user?.experimental_macro_engine) {
-        return substituteParamsLegacy(content, options.name1Override, options.name2Override, options.original, options.groupOverride, options.replaceCharacterCard, options.dynamicMacros, options.postProcessFn);
-    }
-
-    const ctx = /** @type {import('./scripts/macros/engine/MacroEnvBuilder.js').MacroEnvRawContext} */ ({
-        content,
-        name1Override: options.name1Override,
-        name2Override: options.name2Override,
-        original: options.original,
-        groupOverride: options.groupOverride,
-        replaceCharacterCard: options.replaceCharacterCard ?? true,
-        dynamicMacros: options.dynamicMacros ?? {},
-        postProcessFn: options.postProcessFn ?? ((x) => x),
-    });
-
-    const env = MacroEnvBuilder.buildFromRawEnv(ctx);
-    const result = MacroEngine.evaluate(content, env);
-    return result;
+    const env = MacroEnvBuilder.buildFromRawEnv({
+        ...options, content, replaceCharacterCard: options.replaceCharacterCard ?? true,
+    }, power_user.experimental_macro_engine ? 'new' : 'legacy');
+    if (env.engine === 'legacy') suggestExperimentalMacroEngine(content);
+    return evaluateMacroEnv(content, env);
 }
 
 
@@ -4201,78 +4071,50 @@ export function createLazyFields(resolvers) {
 }
 
 /**
- * Returns the character card fields for the current character as lazy getters.
- * Each field is only processed (baseChatReplace) when first accessed.
+ * Select raw character inputs without expanding their macros.
  * @param {Object} [options={}]
  * @param {number} [options.chid] Optional character index
- * @returns {CharacterCardFields} Character card fields with lazy evaluation
  */
-export function getCharacterCardFieldsLazy({ chid = undefined } = {}) {
+export function getCharacterCardFieldsSource({ chid = undefined } = {}) {
     const currentChid = chid ?? this_chid;
     const character = characters[currentChid];
-
-    // For group chats, we need to check if group cards should be used
-    const useGroupCards = selected_group && character;
-    const groupCardsLazy = useGroupCards ? getGroupCharacterCardsLazy(selected_group, Number(currentChid)) : null;
-
-    /** @type {Record<string, () => string|string[]>} */
-    const resolvers = {
-        persona: () => baseChatReplace(power_user.persona_description?.trim()),
-        system: () => {
-            if (!character) return '';
-            const systemPrompt = chat_metadata.system_prompt || character.data?.system_prompt || '';
-            return power_user.prefer_character_prompt ? baseChatReplace(systemPrompt.trim()) : '';
-        },
-        jailbreak: () => {
-            if (!character) return '';
-            return power_user.prefer_character_jailbreak ? baseChatReplace(character.data?.post_history_instructions?.trim()) : '';
-        },
-        version: () => character?.data?.character_version ?? '',
-        charDepthPrompt: () => {
-            if (!character) return '';
-            return baseChatReplace(character.data?.extensions?.depth_prompt?.prompt?.trim());
-        },
-        creatorNotes: () => {
-            if (!character) return '';
-            return baseChatReplace(character.data?.creator_notes?.trim());
-        },
-        // These four fields may be overridden by group cards
-        description: () => {
-            if (groupCardsLazy) return groupCardsLazy.description;
-            if (!character) return '';
-            return baseChatReplace(character.description?.trim());
-        },
-        personality: () => {
-            if (groupCardsLazy) return groupCardsLazy.personality;
-            if (!character) return '';
-            return baseChatReplace(character.personality?.trim());
-        },
-        scenario: () => {
-            if (groupCardsLazy) return groupCardsLazy.scenario;
-            if (!character) return '';
-            const scenarioText = chat_metadata.scenario || character.scenario || '';
-            return baseChatReplace(scenarioText.trim());
-        },
-        mesExamples: () => {
-            if (groupCardsLazy) return groupCardsLazy.mesExamples;
-            if (!character) return '';
-            const exampleDialog = chat_metadata.mes_example || character.mes_example || '';
-            return baseChatReplace(exampleDialog.trim());
-        },
-        firstMessage: () => {
-            if (!character) return '';
-            const firstMes = character.first_mes?.trim() || '';
-            return baseChatReplace(firstMes);
-        },
-        alternateGreetings: () => {
-            if (!character) return [];
-            const altGreetings = character.data?.alternate_greetings;
-            if (!Array.isArray(altGreetings)) return [];
-            return altGreetings.map(greeting => baseChatReplace(greeting?.trim()));
-        },
+    return {
+        persona: power_user.persona_description?.trim() ?? '',
+        system: character && power_user.prefer_character_prompt
+            ? (chat_metadata.system_prompt || character.data?.system_prompt || '').trim() : '',
+        jailbreak: character && power_user.prefer_character_jailbreak
+            ? character.data?.post_history_instructions?.trim() ?? '' : '',
+        version: character?.data?.character_version ?? '',
+        charDepthPrompt: character?.data?.extensions?.depth_prompt?.prompt?.trim() ?? '',
+        creatorNotes: character?.data?.creator_notes?.trim() ?? '',
+        description: character?.description?.trim() ?? '',
+        personality: character?.personality?.trim() ?? '',
+        scenario: character ? (chat_metadata.scenario || character.scenario || '').trim() : '',
+        mesExamples: character ? (chat_metadata.mes_example || character.mes_example || '').trim() : '',
+        firstMessage: character?.first_mes?.trim() ?? '',
+        alternateGreetings: Array.isArray(character?.data?.alternate_greetings)
+            ? character.data.alternate_greetings.map(value => value?.trim() ?? '') : [],
+        groupCards: selected_group && character ? getGroupCharacterCardsSource(selected_group, Number(currentChid)) : null,
     };
+}
 
+/** Interpret selected card inputs lazily, using the caller's text evaluator. */
+export function createCharacterCardFields(source, replace = baseChatReplace) {
+    const groupCards = getGroupCharacterCardsLazy(null, null, { source: source.groupCards, replace });
+    const resolvers = {};
+    for (const key of ['system', 'jailbreak', 'persona', 'charDepthPrompt', 'creatorNotes', 'firstMessage']) {
+        resolvers[key] = () => replace(source[key]);
+    }
+    for (const key of ['description', 'personality', 'scenario', 'mesExamples']) {
+        resolvers[key] = () => groupCards ? groupCards[key] : replace(source[key]);
+    }
+    resolvers.version = () => source.version;
+    resolvers.alternateGreetings = () => source.alternateGreetings.map(value => replace(value));
     return createLazyFields(resolvers);
+}
+
+export function getCharacterCardFieldsLazy({ chid = undefined } = {}) {
+    return createCharacterCardFields(getCharacterCardFieldsSource({ chid }));
 }
 
 /**
@@ -4301,117 +4143,45 @@ export function getCharacterCardFields({ chid = undefined } = {}) {
     };
 }
 
-function buildAgentPromptMacroContext(promptInputs = {}) {
-    const fields = getCharacterCardFields();
-    const charName = String(promptInputs.name2 ?? name2 ?? '');
-    const userName = String(name1 ?? '');
-    const mesExamplesRaw = String(fields.mesExamples ?? '');
-    const now = moment();
-
+/** Project already evaluated character fields and captured facts for native read-only substitution. */
+function buildAgentReadOnlyMacros(context, fields, examples) {
+    const now = moment(context.now);
     return {
-        schemaVersion: 1,
-        names: {
-            user: userName,
-            char: charName,
-            group: getAgentPromptMacroGroupValue({ currentChar: charName, includeMuted: true }),
-            groupNotMuted: getAgentPromptMacroGroupValue({ currentChar: charName, includeMuted: false }),
-            notChar: getAgentPromptMacroGroupValue({
-                currentChar: charName,
-                filterOutChar: true,
-                includeUser: userName,
-            }),
-        },
-        character: {
-            charPrompt: String(fields.system || promptInputs.systemPromptOverride || ''),
-            charInstruction: String(fields.jailbreak || promptInputs.jailbreakPromptOverride || ''),
-            charJailbreak: String(fields.jailbreak || promptInputs.jailbreakPromptOverride || ''),
-            description: String(promptInputs.charDescription ?? fields.description ?? ''),
-            personality: String(promptInputs.charPersonality ?? fields.personality ?? ''),
-            scenario: String(promptInputs.scenario ?? fields.scenario ?? ''),
-            persona: String(fields.persona ?? ''),
-            personaPosition: Number(power_user.persona_description_position),
-            mesExamplesRaw,
-            mesExamples: parseMesExamples(mesExamplesRaw, false).join(''),
-            charDepthPrompt: String(fields.charDepthPrompt ?? ''),
-            creatorNotes: String(fields.creatorNotes ?? ''),
-            version: String(fields.version ?? ''),
-            firstMessage: String(fields.firstMessage ?? ''),
-            alternateGreetings: Array.isArray(fields.alternateGreetings)
-                ? fields.alternateGreetings.map(value => String(value ?? ''))
-                : [],
-        },
-        system: {
-            model: String(getGeneratingModel() ?? ''),
-        },
-        chat: {
-            lastMessageId: String(findLastMessageId(chat) ?? ''),
-            lastSwipeId: String(getLastSwipeId(chat) ?? ''),
-            currentSwipeId: String(getCurrentSwipeId(chat) ?? ''),
+        characterValues: {
+            charPrompt: fields.system,
+            charInstruction: fields.jailbreak,
+            description: fields.description,
+            personality: fields.personality,
+            scenario: fields.scenario,
+            persona: fields.persona,
+            personaPosition: context.character.personaPosition,
+            mesExamplesRaw: fields.mesExamples,
+            mesExamples: examples,
+            charDepthPrompt: fields.charDepthPrompt,
+            creatorNotes: fields.creatorNotes,
+            version: fields.version,
+            firstMessage: fields.firstMessage,
+            alternateGreetings: fields.alternateGreetings,
         },
         builtins: {
-            ...getInstructMacroValues({ charPrompt: fields.system }),
+            ...getInstructMacroValues({ charPrompt: fields.system }, context.settings),
             time: now.format('LT'),
             date: now.format('LL'),
             weekday: now.format('dddd'),
             isotime: now.format('HH:mm'),
             isodate: now.format('YYYY-MM-DD'),
-            idleDuration: getTimeSinceLastMessage(now),
-            lastMessage: getLastMessage(),
-            lastUserMessage: getLastUserMessage(),
-            lastCharMessage: getLastCharMessage(),
-            firstIncludedMessageId: String(getFirstIncludedMessageId() ?? ''),
-            firstDisplayedMessageId: String(getMacroFirstDisplayedMessageId() ?? ''),
-            allChatRange: chat.length ? `0-${chat.length - 1}` : '',
-            input: String($('#send_textarea').val() ?? ''),
-            isMobile: String(isMobile()),
-            lastGenerationType: String(promptInputs.type || 'normal'),
-            maxPrompt: String(getMaxPromptTokens()),
-            maxContext: String(getMaxContextTokens()),
-            maxResponse: String(getMaxResponseTokens()),
-            reasoningPrefix: String(power_user.reasoning.prefix ?? ''),
-            reasoningSuffix: String(power_user.reasoning.suffix ?? ''),
-            reasoningSeparator: String(power_user.reasoning.separator ?? ''),
+            ...Object.fromEntries(['idleDuration', 'lastMessage', 'lastUserMessage', 'lastCharMessage',
+                'firstIncludedMessageId', 'firstDisplayedMessageId', 'allChatRange']
+                .map(key => [key, String(context.chat[key] ?? '')])),
+            ...Object.fromEntries(['input', 'isMobile', 'lastGenerationType']
+                .map(key => [key, String(context.state[key])])),
+            ...Object.fromEntries(['maxPrompt', 'maxContext', 'maxResponse']
+                .map(key => [key, String(context.system[key])])),
+            reasoningPrefix: context.settings.reasoning.prefix ?? '',
+            reasoningSuffix: context.settings.reasoning.suffix ?? '',
+            reasoningSeparator: context.settings.reasoning.separator ?? '',
         },
     };
-}
-
-/**
- * 采集 SillyTavern 变量快照（只读），供 skill 脚本沙箱 `context.variables` 使用。
- * local 对应 chat_metadata.variables（per-chat），global 对应
- * extension_settings.variables.global（跨 chat）。值保持原始存储格式。
- * @returns {{ local: Record<string, any>, global: Record<string, any> }}
- */
-function buildAgentVariablesSnapshot() {
-    return {
-        local: { ...(chat_metadata?.variables ?? {}) },
-        global: { ...(extension_settings?.variables?.global ?? {}) },
-    };
-}
-
-function getAgentPromptMacroGroupValue({
-    currentChar = '',
-    includeMuted = false,
-    filterOutChar = false,
-    includeUser = null,
-} = {}) {
-    if (!selected_group) {
-        return filterOutChar ? String(includeUser ?? '') : String(currentChar ?? '');
-    }
-
-    const group = groups.find(x => x && x.id === selected_group);
-    const members = Array.isArray(group?.members) ? group.members : [];
-    const disabledMembers = Array.isArray(group?.disabled_members) ? group.disabled_members : [];
-    const names = members
-        .filter(id => includeMuted || !disabledMembers.includes(id))
-        .map(id => characters.find(character => character && character.avatar === id)?.name)
-        .filter(name => typeof name === 'string' && name)
-        .filter(name => !filterOutChar || name !== currentChar);
-
-    if (includeUser) {
-        names.push(String(includeUser));
-    }
-
-    return names.join(', ');
 }
 
 /**
@@ -4419,7 +4189,7 @@ function getAgentPromptMacroGroupValue({
  * @param {string} examplesStr
  * @returns {string[]} Examples array with block heading
  */
-export function parseMesExamples(examplesStr, isInstruct) {
+export function parseMesExamples(examplesStr, isInstruct, { settings = power_user, api = main_api, substitute = substituteParams } = {}) {
     if (!examplesStr || examplesStr.length === 0 || examplesStr === '<START>') {
         return [];
     }
@@ -4428,8 +4198,8 @@ export function parseMesExamples(examplesStr, isInstruct) {
         examplesStr = '<START>\n' + examplesStr.trim();
     }
 
-    const exampleSeparator = power_user.context.example_separator ? `${substituteParams(power_user.context.example_separator)}\n` : '';
-    const blockHeading = (main_api === 'openai' || isInstruct) ? '<START>\n' : exampleSeparator;
+    const exampleSeparator = settings.context.example_separator ? `${substitute(settings.context.example_separator)}\n` : '';
+    const blockHeading = (api === 'openai' || isInstruct) ? '<START>\n' : exampleSeparator;
     const splitExamples = examplesStr.split(/<START>/gi).slice(1).map(block => `${blockHeading}${block.trim()}\n`);
 
     return splitExamples;
@@ -5555,6 +5325,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         await sendMessageAsUserAtProviderBarrier(oai_settings.send_if_empty.trim(), messageBias);
     }
 
+    const characterFields = getCharacterCardFields();
     let {
         description,
         personality,
@@ -5565,7 +5336,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         jailbreak,
         charDepthPrompt,
         creatorNotes,
-    } = getCharacterCardFields();
+    } = characterFields;
 
     // Depth prompt (character-specific A/N)
     removeDepthPrompts();
@@ -5736,6 +5507,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     }
 
     let mesExamplesArray = parseMesExamples(mesExamples, isInstruct);
+    const characterExamples = mesExamplesArray.join('');
 
     // Set non-WI AN
     setFloatingPrompt();
@@ -6380,6 +6152,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     let thisPromptBits = [];
 
     let generate_data;
+    let agentPromptInputs;
     let toolData;
     switch (main_api) {
         case 'koboldhorde':
@@ -6448,28 +6221,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             }, dryRun);
             toolData = evaluatedToolData;
             generate_data = { prompt: prompt };
-            if (agentMode) {
-                const currentModelConnection = await buildCurrentModelConnectionSnapshot({
-                    settings: oai_settings,
-                    model: getChatCompletionModel(oai_settings),
-                    secretKey: resolveSecretKey(),
-                    secretState: secret_state,
-                });
-                const macroContext = buildAgentPromptMacroContext(promptInputs);
-                const variables = buildAgentVariablesSnapshot();
-                generate_data.frozenRunInputSnapshot = buildFrozenRunInputSnapshot({
-                    generationType: type,
-                    promptInputs,
-                    worldInfoActivation,
-                    macroContext: {
-                        ...macroContext,
-                        variableValues: snapshotVariableMacroValues(variables,
-                            power_user.experimental_macro_engine ? value => MacroEngine.normalizeMacroResult(value) : String),
-                    },
-                    variables,
-                    currentModelConnection,
-                });
-            }
+            if (agentMode) agentPromptInputs = promptInputs;
 
             // TODO: move these side-effects somewhere else, so this switch-case solely sets generate_data
             // counts will return false if the user has not enabled the token breakdown feature
@@ -6485,6 +6237,25 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     }
 
     await eventSource.emit(event_types.GENERATE_AFTER_DATA, generate_data, dryRun);
+
+    // Extensions finish their prompt work before the Run takes ownership of its inputs.
+    // This also runs for SDK dry-runs, whose listener retains generate_data until Generate returns.
+    if (agentMode) {
+        const context = captureMacroContext();
+        context.state.lastGenerationType = type || 'normal';
+        const currentModelConnection = await buildCurrentModelConnectionSnapshot({
+            settings: oai_settings,
+            model: getChatCompletionModel(oai_settings),
+            secretKey: resolveSecretKey(),
+            secretState: secret_state,
+        });
+        generate_data.frozenRunInputSnapshot = buildFrozenRunInputSnapshot(updateFrozenMacroContext({
+            generationType: type,
+            promptInputs: agentPromptInputs,
+            worldInfoActivation,
+            currentModelConnection,
+        }, context, buildAgentReadOnlyMacros(context, characterFields, characterExamples)));
+    }
 
     if (dryRun) {
         return Promise.resolve();
@@ -6872,7 +6643,11 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
             model,
             type,
             structuredClone(messages),
-            { jsonSchema, agentMode: true },
+            {
+                jsonSchema, agentMode: true,
+                macroContext: createChatCompletionMacroContext(
+                    createMacroContextFromSnapshot(frozenRunInputSnapshot), settings, model),
+            },
         );
 
         assertAgentPromptSnapshotHasNoExternalTools(chatCompletionPayload);

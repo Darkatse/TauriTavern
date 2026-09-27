@@ -1,4 +1,5 @@
 import { ensureModelTargetLlmConnectionForProfile } from '../../../scripts/tauritavern/agent/model-target-llm-connection.js';
+import { updateFrozenMacroContext } from '../../../scripts/tauritavern/agent/frozen-run-input-snapshot.js';
 
 export function createAgentSessionsApi({ safeInvoke, promptAssembly }) {
     const preparing = new Set();
@@ -15,7 +16,7 @@ export function createAgentSessionsApi({ safeInvoke, promptAssembly }) {
         return safeInvoke('save_agent_session_profile', { dto: { profile } });
     }
 
-    async function send({ sessionId, text } = {}) {
+    async function send({ sessionId, text, variables } = {}) {
         sessionId = requireSessionId(sessionId);
         if (typeof text !== 'string' || !text.trim()) {
             throw new Error('agent.session_message_required: text cannot be empty');
@@ -23,10 +24,24 @@ export function createAgentSessionsApi({ safeInvoke, promptAssembly }) {
         if (preparing.has(sessionId)) throw new Error('agent.session_busy: this Session is already preparing a run');
         preparing.add(sessionId);
         try {
+            const [{ extension_settings }, { MacroEnvBuilder }] = await Promise.all([
+                import('../../../scripts/extensions.js'),
+                import('../../../scripts/macros/engine/MacroEnvBuilder.js'),
+            ]);
+            const sessionVariables = structuredClone({
+                local: variables?.local ?? {},
+                global: extension_settings.variables.global,
+            });
             const { profile } = await load();
             if (!profile) throw new Error('agent.session_profile_missing: configure the Session Profile before sending');
             await ensureModelTargetLlmConnectionForProfile(profile);
             const prepared = await safeInvoke('prepare_agent_session_run', { dto: { sessionId, text, profile } });
+            const frozenInput = prepared.request.frozenRunInputSnapshot;
+            const macroContext = MacroEnvBuilder.createSessionContext(frozenInput.promptInputs.agentMessages, {
+                sessionId,
+                variables: sessionVariables,
+            });
+            prepared.request.frozenRunInputSnapshot = updateFrozenMacroContext(frozenInput, macroContext);
             const assembled = await promptAssembly.buildSnapshot(prepared.request);
             return await safeInvoke('start_agent_session_run', { dto: {
                 sessionId,

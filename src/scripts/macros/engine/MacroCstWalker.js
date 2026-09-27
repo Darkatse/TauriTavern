@@ -18,6 +18,7 @@ import { isFalseBoolean } from '/scripts/utils.js';
  * @property {boolean} isScoped - Whether this macro was invoked using scoped syntax (opening + closing tags).
  * @property {boolean} [isVariableShorthand] - Whether this call originated from variable shorthand syntax.
  * @property {MacroEnv} env
+ * @property {import('./MacroRegistry.js').MacroDefinition|undefined} definition
  * @property {string} rawInner
  * @property {string} rawWithBraces
  * @property {string[]} rawArgs
@@ -111,7 +112,7 @@ class MacroCstWalker {
         let items = this.#collectDocumentItems(cst);
 
         // Process scoped macros: find opening/closing pairs and merge them
-        items = this.#processScopedMacros(items, text);
+        items = this.#processScopedMacros(items, text, env);
 
         if (items.length === 0) {
             return text;
@@ -408,7 +409,7 @@ class MacroCstWalker {
         const argumentNodes = /** @type {CstNode[]} */ (argumentsNode?.children?.argument || []);
 
         // Check if this macro has delayArgResolution flag - if so, skip nested macro evaluation
-        const macroDef = MacroRegistry.getMacro(name);
+        const macroDef = MacroRegistry.getEffectiveMacro(name, env);
         const delayArgResolution = macroDef?.delayArgResolution === true;
 
         /** @type {string[]} */
@@ -504,6 +505,7 @@ class MacroCstWalker {
             globalOffset: contextOffset + range.startOffset,
             cstNode: macroNode,
             env,
+            definition: macroDef,
         };
 
         const value = resolveMacro(call);
@@ -620,7 +622,7 @@ class MacroCstWalker {
         const lazyValue = hasValueExpr ? this.#createLazyValue(operatorChildren, context) : () => '';
 
         // Execute the operation using direct variable API calls
-        return this.#executeVariableOperation(varName, isGlobal, operation, lazyValue);
+        return this.#executeVariableOperation(varName, isGlobal, operation, lazyValue, context.env);
     }
 
     /**
@@ -645,17 +647,17 @@ class MacroCstWalker {
     }
 
     /**
-     * Executes a variable operation using the SillyTavern context API.
+     * Executes a variable operation in the current evaluation environment.
      *
      * @param {string} varName - The variable name.
      * @param {boolean} isGlobal - Whether this is a global ($) or local (.) variable.
      * @param {string} operation - The operation to perform.
      * @param {() => string} lazyValue - A lazy function that returns the value when called. Only evaluated when needed.
+     * @param {MacroEnv} env
      * @returns {string} The result of the operation.
      */
-    #executeVariableOperation(varName, isGlobal, operation, lazyValue) {
-        const ctx = SillyTavern.getContext();
-        const vars = isGlobal ? ctx.variables.global : ctx.variables.local;
+    #executeVariableOperation(varName, isGlobal, operation, lazyValue, env) {
+        const vars = isGlobal ? env.variables.global : env.variables.local;
 
         /**
         * Normalizes macro results into a string.
@@ -930,7 +932,7 @@ class MacroCstWalker {
 
         // Collect items and process scoped macros
         let items = this.#collectDocumentItems(cst);
-        items = this.#processScopedMacros(items, rawContent);
+        items = this.#processScopedMacros(items, rawContent, context.env);
 
         // If no items, return raw content
         if (items.length === 0) {
@@ -1177,9 +1179,10 @@ class MacroCstWalker {
      *
      * @param {Array<DocumentItem>} items - The collected document items.
      * @param {string} text - The original document text.
+     * @param {MacroEnv} env
      * @returns {Array<DocumentItem>} - The processed items with scoped macros merged.
      */
-    #processScopedMacros(items, text) {
+    #processScopedMacros(items, text, env) {
         // Build a list of scoped macro info for each macro item
         /** @type {Array<{ index: number, item: DocumentItemMacro, name: string, isClosing: boolean, matched: boolean }>} */
         const macroInfos = [];
@@ -1216,11 +1219,11 @@ class MacroCstWalker {
             if (openInfo.isClosing || openInfo.matched || insideScope.has(openInfo.index)) continue;
 
             // Find the matching closing macro for this opening macro
-            const closingIdx = this.#findMatchingClosingMacro(macroInfos, i);
+            const closingIdx = this.#findMatchingClosingMacro(macroInfos, i, env);
             if (closingIdx === -1) continue;
 
             // Check if the macro can accept scoped content (arity validation)
-            if (!this.#canAcceptScopedContent(openInfo.item.node, openInfo.name)) {
+            if (!this.#canAcceptScopedContent(openInfo.item.node, openInfo.name, env)) {
                 // Macro cannot accept scoped content - mark both as keepRaw
                 openInfo.item.keepRaw = true;
                 macroInfos[closingIdx].item.keepRaw = true;
@@ -1303,10 +1306,11 @@ class MacroCstWalker {
      *
      * @param {CstNode} macroNode - The macro CST node.
      * @param {string} macroName - The macro name.
+     * @param {MacroEnv} [env]
      * @returns {boolean} - True if scoped content is allowed.
      */
-    #canAcceptScopedContent(macroNode, macroName) {
-        const def = MacroRegistry.getPrimaryMacro(macroName);
+    #canAcceptScopedContent(macroNode, macroName, env) {
+        const def = MacroRegistry.getEffectiveMacro(macroName, env);
         if (!def) {
             // Unknown macro - allow scoped content (will be handled as unknown macro later)
             return true;
@@ -1339,9 +1343,10 @@ class MacroCstWalker {
      *
      * @param {Array<{ index: number, item: DocumentItemMacro, name: string, isClosing: boolean, matched: boolean }>} macroInfos
      * @param {number} openingIdx - Index in macroInfos array of the opening macro.
+     * @param {MacroEnv} env
      * @returns {number} - Index in macroInfos array of the matching closing macro, or -1 if not found.
      */
-    #findMatchingClosingMacro(macroInfos, openingIdx) {
+    #findMatchingClosingMacro(macroInfos, openingIdx, env) {
         const openInfo = macroInfos[openingIdx];
         const targetName = openInfo.name;
         let depth = 1;
@@ -1363,7 +1368,7 @@ class MacroCstWalker {
             } else {
                 // Only increment depth for opening macros that can accept scoped content
                 // Inline macros (e.g., {{if condition::content}}) don't need closing tags
-                if (this.#canAcceptScopedContent(info.item.node, info.name)) {
+                if (this.#canAcceptScopedContent(info.item.node, info.name, env)) {
                     depth++;
                 }
             }
