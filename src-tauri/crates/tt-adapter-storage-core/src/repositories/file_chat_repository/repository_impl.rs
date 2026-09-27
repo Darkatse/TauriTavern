@@ -709,7 +709,7 @@ impl ChatRepository for FileChatRepository {
             if metadata
                 .get("integrity")
                 .and_then(Value::as_str)
-                .is_some_and(|value| value.trim() == integrity)
+                .is_some_and(|value| value == integrity)
             {
                 return Ok(true);
             }

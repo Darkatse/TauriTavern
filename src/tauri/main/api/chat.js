@@ -245,9 +245,9 @@ function createChatHandle({ safeInvoke, ref }) {
         }
 
         const metadata = await getMetadata();
-        const value = String(metadata?.integrity || '').trim();
-        if (!value) {
-            throw new Error('Chat metadata integrity is missing');
+        const value = metadata?.integrity;
+        if (typeof value !== 'string' || value.length === 0) {
+            throw new Error('Chat metadata integrity must be a non-empty string');
         }
         return value;
     }

@@ -50,11 +50,14 @@ const bookmarkNameToken = 'Checkpoint #';
 function resolveAgentPersistentStateFork(targetChatName, targetIntegrity) {
     const chatApi = window.__TAURITAVERN__.api.chat;
     const sourceChatRef = chatApi.current.ref();
-    const sourceStableChatId = String(sourceChatRef.kind === 'group'
+    const sourceStableChatId = sourceChatRef.kind === 'group'
         ? sourceChatRef.chatId
-        : (chat_metadata.integrity ?? '')).trim();
-    if (!sourceStableChatId) {
+        : chat_metadata.integrity;
+    if (sourceStableChatId === undefined) {
         return null;
+    }
+    if (typeof sourceStableChatId !== 'string' || sourceStableChatId.length === 0) {
+        throw new Error('Source chat integrity must be a non-empty string');
     }
     const targetChatRef = sourceChatRef.kind === 'group'
         ? { kind: 'group', chatId: targetChatName }

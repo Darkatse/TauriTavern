@@ -11,6 +11,7 @@ use crate::dto::agent_dto::{
     AgentRunPruneReasonDto, AgentRunPruneRetentionDto, AgentRunSummaryDto,
 };
 use crate::errors::ApplicationError;
+use crate::services::agent_identity::validate_stable_chat_id;
 use crate::services::agent_run_retention_planner::{
     AgentRunPruneAction, AgentRunPruneBlockReason, AgentRunPruneBlockedRun, AgentRunPruneCandidate,
     AgentRunPruneReason, AgentRunRetentionPlan, AgentRunRetentionPlanDetailMode,
@@ -61,7 +62,11 @@ impl AgentRunHistoryService {
             .run_repository
             .list_runs(AgentRunListQuery {
                 chat_ref: dto.chat_ref,
-                stable_chat_id: normalize_optional_string(dto.stable_chat_id),
+                stable_chat_id: dto
+                    .stable_chat_id
+                    .as_deref()
+                    .map(validate_stable_chat_id)
+                    .transpose()?,
                 statuses: if dto.statuses.is_empty() {
                     None
                 } else {
@@ -607,17 +612,6 @@ fn normalize_cursor(
     Ok(AgentRunListCursor {
         created_at: cursor.created_at,
         run_id: run_id.to_string(),
-    })
-}
-
-fn normalize_optional_string(value: Option<String>) -> Option<String> {
-    value.and_then(|value| {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
     })
 }
 

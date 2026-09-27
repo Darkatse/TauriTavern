@@ -87,10 +87,10 @@ pub(crate) fn skip_preamble(reader: &mut impl BufRead) -> Result<u64, DomainErro
 fn validate_integrity(value: &Value) -> Result<&str, DomainError> {
     value
         .as_str()
-        .filter(|text| uuid::Uuid::try_parse(text).is_ok())
+        .filter(|text| !text.is_empty())
         .ok_or_else(|| {
             // Format errors must not trigger the identity-conflict force-save dialog.
-            DomainError::InvalidData("Chat metadata integrity must be a valid UUID".into())
+            DomainError::InvalidData("Chat metadata integrity must be a non-empty string".into())
         })
 }
 

@@ -41,7 +41,10 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
             throw new Error('chatRef must be an object');
         }
 
-        const stableChatId = normalizeOptionalString(input.stableChatId ?? input.stable_chat_id);
+        const stableChatId = input.stableChatId ?? input.stable_chat_id;
+        if (stableChatId != null && (typeof stableChatId !== 'string' || stableChatId.length === 0)) {
+            throw new Error('stableChatId must be a non-empty string');
+        }
         const statuses = normalizeRunStatuses(input.statuses);
         const before = normalizeRunListBefore(input.before);
         const limit = normalizeRunListLimit(input.limit);
@@ -49,7 +52,7 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
         return safeInvoke('list_agent_runs', {
             dto: {
                 ...(chatRef ? { chatRef } : {}),
-                ...(stableChatId ? { stableChatId } : {}),
+                ...(stableChatId == null ? {} : { stableChatId }),
                 ...(statuses ? { statuses } : {}),
                 ...(before ? { before } : {}),
                 ...(limit == null ? {} : { limit }),
@@ -124,9 +127,9 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
         if (!chatRef || typeof chatRef !== 'object') {
             throw new Error('chatRef is required');
         }
-        const stableChatId = String(input.stableChatId || '').trim() || await resolveStableChatId(chatRef);
-        if (!stableChatId) {
-            throw new Error('stableChatId is required');
+        const stableChatId = input.stableChatId ?? await resolveStableChatId(chatRef);
+        if (typeof stableChatId !== 'string' || stableChatId.length === 0) {
+            throw new Error('stableChatId must be a non-empty string');
         }
         const candidateStateIdsInput = Object.prototype.hasOwnProperty.call(input, 'candidateStateIds')
             ? input.candidateStateIds
@@ -217,14 +220,6 @@ function requireRunId(value) {
         throw new Error('runId is required');
     }
     return runId;
-}
-
-function normalizeOptionalString(value) {
-    if (value == null || value === '') {
-        return undefined;
-    }
-    const text = String(value).trim();
-    return text || undefined;
 }
 
 function normalizeRunStatuses(value) {

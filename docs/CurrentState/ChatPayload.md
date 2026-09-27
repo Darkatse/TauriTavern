@@ -17,7 +17,7 @@
 
 ### 1.1 统一格式底线
 
-- header 和消息均须为 JSON object。`chat_metadata.integrity` 可缺省，出现则须为合法 UUID，不限版本，按原字符串比较；其他字段由使用它们的用例解释。
+- header 和消息均须为 JSON object。`chat_metadata.integrity` 可缺省，出现则须为非空字符串，保留空白并按原值比较；第一方仍生成 UUID，其他字段由使用它们的用例解释。
 - 严格解码 UTF-8，结构空白仅限空格、Tab、CR、LF。首个记录前允许空白和最多一个 BOM，由格式层统一消费；正文记录外不允许 BOM。
 - 无记录可读为空聊天；新完整提交必须自带合法 header，force 也不例外。无消息聊天写为 header-only。
 - 读取严格验证实际解释的记录，不跳过坏记录；原生完整字节提交只验证 header，不额外扫描正文。

@@ -7,6 +7,7 @@ use crate::chat_jsonl::{parse_header_integrity, read_header_record_async};
 use crate::file_system::{move_file_no_replace_with_fallback, persist_json_file};
 use tt_domain::errors::DomainError;
 use tt_domain::json_merge::merge_json_value;
+use tt_domain::models::filename::sanitize_filename;
 
 use super::FileChatRepository;
 use super::windowed_payload_io::open_existing_payload_file;
@@ -113,6 +114,12 @@ impl FileChatRepository {
             .ok_or_else(|| DomainError::InvalidData("Chat store requires a chat header".into()))?;
         let integrity = parse_header_integrity(&header)?
             .ok_or_else(|| DomainError::InvalidData("Chat metadata integrity is missing".into()))?;
+        // The identity is used verbatim as a directory name; never sanitize it into another identity.
+        if sanitize_filename(&integrity) != integrity {
+            return Err(DomainError::InvalidData(
+                "Chat metadata integrity is not a valid store directory name".into(),
+            ));
+        }
         let character_dir = chat_path.parent().ok_or_else(|| {
             DomainError::InternalError(format!(
                 "Chat payload path has no parent directory: {}",

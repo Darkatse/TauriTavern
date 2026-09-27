@@ -41,6 +41,18 @@ async fn setup_repository() -> (FileChatRepository, PathBuf) {
     (repository, root)
 }
 
+async fn cleanup_repository(repository: FileChatRepository, root: PathBuf) {
+    // All mutations have finished. Flush waits for active index I/O; queued flushes
+    // then see a clean cache and cannot write after the directory is removed.
+    FileChatRepository::flush_backup_summary_cache(&repository.backup_summary_cache)
+        .await
+        .expect("finish backup index writes");
+    drop(repository);
+    fs::remove_dir_all(root)
+        .await
+        .expect("remove chat repository fixture");
+}
+
 fn repository_for_root(root: &Path) -> FileChatRepository {
     FileChatRepository::with_chat_aliases(
         root.join("characters"),
@@ -140,7 +152,7 @@ async fn chat_commit_protocol_rejects_invalid_frames_and_abort_is_idempotent() {
         Err(DomainError::NotFound(_))
     ));
 
-    let _ = fs::remove_dir_all(root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -180,7 +192,7 @@ async fn chat_commit_publishes_exact_bytes_only_after_all_frames_finish() {
             .unwrap(),
         payload
     );
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -234,7 +246,7 @@ async fn metadata_commit_preserves_header_fields_and_exact_body_bytes() {
             assert_eq!(&updated[split + 1..], expected_body);
         }
     }
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -317,7 +329,7 @@ async fn metadata_commit_rejects_invalid_updates_without_changing_the_file() {
             );
         }
     }
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -382,7 +394,7 @@ async fn metadata_writers_invalidate_cached_reads_and_preserve_extension_semanti
         );
     }
 
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -423,11 +435,7 @@ async fn metadata_commit_does_not_skip_backup_after_an_equal_length_change() {
         read_backup_payload(&repository, added, 1024).await.unwrap(),
         updated
     );
-    // Finish background index writes before removing the test directory.
-    FileChatRepository::flush_backup_summary_cache(&repository.backup_summary_cache)
-        .await
-        .unwrap();
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -458,7 +466,7 @@ async fn cache_clear_during_commit_keeps_automatic_backups_conservative() {
             .unwrap();
     }
     assert_eq!(backup_file_names(&root).await.len(), 2);
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -523,7 +531,7 @@ async fn chat_commit_size_mismatch_preserves_current_and_consumes_session() {
             .is_none()
     );
 
-    let _ = fs::remove_dir_all(root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -565,7 +573,7 @@ async fn same_target_sessions_are_complete_and_last_finish_wins() {
             .unwrap(),
         last
     );
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -605,7 +613,7 @@ async fn chat_commit_sessions_have_a_small_hard_limit() {
             .expect("abort test session");
     }
 
-    let _ = fs::remove_dir_all(root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -635,7 +643,7 @@ async fn startup_cleanup_removes_only_chat_commit_staging() {
 
     assert!(!repository.chat_commit_staging_dir.exists());
     assert!(unrelated.join("keep").exists());
-    let _ = fs::remove_dir_all(root).await;
+    cleanup_repository(repository, root).await;
 }
 
 fn backup_policy(
@@ -759,7 +767,7 @@ async fn explicit_backups_keep_readable_format_without_same_second_overwrite() {
             .iter()
             .all(|name| name.starts_with("chat_角色_a_name") && name.len() <= 255)
     );
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -850,6 +858,8 @@ async fn zstd_setting_converts_all_backups_in_both_directions() {
         .map(|entry| entry.logical_file_name)
         .collect();
     assert_eq!(logical_names, vec![logical_name]);
+
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -938,7 +948,7 @@ async fn raw_and_zstd_backups_download_restore_and_delete_by_logical_name() {
                 .expect("read chat staging entry")
                 .is_none()
         );
-        fs::remove_dir_all(root).await.unwrap();
+        cleanup_repository(repository, root).await;
     }
 }
 
@@ -974,6 +984,8 @@ async fn zstd_quota_uses_actual_compressed_bytes() {
             .len()
             <= 4096
     );
+
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1020,6 +1032,8 @@ async fn rejected_raw_candidate_does_not_stage_or_delete_history() {
                 .starts_with(".tmp-chat-backup-")
         );
     }
+
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1174,7 +1188,7 @@ async fn truncated_zstd_backup_does_not_poison_healthy_inventory_entries() {
         vec![healthy.logical_file_name]
     );
 
-    let _ = fs::remove_dir_all(root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1229,6 +1243,8 @@ async fn inventory_recovers_interrupted_conversion_using_the_selected_format() {
             .expect("read recovered zstd mtime"),
         raw_modified
     );
+
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1274,6 +1290,8 @@ async fn inventory_enforces_prefix_and_global_file_limits() {
             .count()
             <= 2
     );
+
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1296,6 +1314,8 @@ async fn reconcile_prunes_legacy_overage_and_zero_limit_clears_history() {
 
     apply_and_reconcile_backups(&repository, backup_policy(0, -1, -1)).await;
     assert!(backup_file_names(&root).await.is_empty());
+
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1334,6 +1354,8 @@ async fn automatic_quota_rejection_does_not_fail_current_save() {
             .expect("read committed current payload"),
         payload.as_bytes()
     );
+
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1426,7 +1448,7 @@ async fn automatic_deduplication_preserves_prefix_and_latest_state() {
         .expect("same source under a new prefix gets a snapshot");
     assert_eq!(backup_file_names(&root).await.len(), 4);
 
-    let _ = fs::remove_dir_all(root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1500,7 +1522,7 @@ async fn non_c2_mutation_fails_closed_and_group_uses_the_same_guard() {
         .unwrap();
     assert_eq!(backup_file_names(&root).await.len(), 4);
 
-    let _ = fs::remove_dir_all(root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1536,6 +1558,8 @@ async fn automatic_snapshot_defers_instead_of_waiting_for_a_busy_current() {
         .await
         .expect("automatic snapshot after current writer finishes");
     assert_eq!(backup_file_names(&root).await.len(), 1);
+
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1557,7 +1581,7 @@ async fn explicit_access_retries_a_failed_inventory_build() {
         repository.list_chat_backup_catalog().await.unwrap().len(),
         1
     );
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1595,7 +1619,7 @@ async fn chat_commit_sanitizes_paths_and_preserves_unicode_spacing() {
             b"{}"
         );
     }
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1680,7 +1704,9 @@ async fn shared_legacy_aliases_survive_concurrent_discovery_and_restart() {
         );
     }
 
-    let _ = fs::remove_dir_all(&root).await;
+    drop(repository_a);
+    drop(repository_b);
+    cleanup_repository(reopened, root).await;
 }
 
 #[tokio::test]
@@ -1695,13 +1721,13 @@ async fn chat_commit_rejects_empty_names_and_truncated_jsonl_suffixes() {
         ));
     }
     assert!(!root.join("chats/alice").exists());
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
 async fn chat_commit_requires_force_to_replace_or_remove_existing_integrity() {
     let (repository, root) = setup_repository().await;
-    let original = br#"{"chat_metadata":{"integrity":"e39c8f17-c0f9-5b07-9f3a-f12428ab9fd1"}}"#;
+    let original = br#"{"chat_metadata":{"integrity":" identity "}}"#;
     for (target, path) in [
         (
             character_target("alice", "session"),
@@ -1715,7 +1741,7 @@ async fn chat_commit_requires_force_to_replace_or_remove_existing_integrity() {
         ),
     ] {
         for incoming in [
-            br#"{"chat_metadata":{"integrity":"f559b7b7-2a9b-5621-8fd2-d9f39726e511"}}"#.as_slice(),
+            br#"{"chat_metadata":{"integrity":"identity"}}"#.as_slice(),
             b"{}",
         ] {
             commit_payload_bytes(&repository, target.clone(), original, true)
@@ -1732,7 +1758,7 @@ async fn chat_commit_requires_force_to_replace_or_remove_existing_integrity() {
             assert_eq!(fs::read(&path).await.unwrap(), incoming);
         }
     }
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1799,7 +1825,7 @@ async fn save_and_load_chat_preserves_additional_fields() {
         Some("kept")
     );
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1837,7 +1863,7 @@ async fn group_chat_payload_roundtrip_and_delete() {
         .await;
     assert!(matches!(deleted, Err(DomainError::NotFound(_))));
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1867,7 +1893,7 @@ async fn import_chat_payload_creates_unique_files() {
     assert!(root.join("chats").join("alice").join(&first[0]).exists());
     assert!(root.join("chats").join("alice").join(&second[0]).exists());
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1895,7 +1921,7 @@ async fn import_chat_payload_preserves_unchanged_jsonl_bytes() {
         .expect("read imported raw JSONL");
     assert_eq!(saved, import_content.as_bytes());
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1929,7 +1955,7 @@ async fn import_chat_payload_flattens_chub_jsonl_without_normalizing_messages() 
     assert!(saved[1].get("name").is_none());
     assert!(saved[1].get("extra").is_none());
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -1993,7 +2019,7 @@ async fn rename_chat_preserves_bytes_and_rejects_invalid_or_occupied_targets() {
         repository.get_chat_payload_bytes("alice", "session").await,
         Err(DomainError::NotFound(_))
     ));
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -2039,7 +2065,7 @@ async fn calculate_character_chat_stats_uses_last_message_send_date() {
     assert!(chat_size > 0);
     assert_eq!(date_last_chat, timestamp_millis("2026-01-03T00:00:00.000Z"));
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -2049,10 +2075,7 @@ async fn finds_remaining_character_chat_with_integrity() {
         commit_payload_bytes(
             &repository,
             character_target("alice", name),
-            payload_to_jsonl(&payload_with_integrity(
-                "3791c50c-1734-5403-bc29-72619e1013f2",
-            ))
-            .as_bytes(),
+            payload_to_jsonl(&payload_with_integrity(" shared identity ")).as_bytes(),
             false,
         )
         .await
@@ -2065,7 +2088,7 @@ async fn finds_remaining_character_chat_with_integrity() {
         .expect("delete first chat");
     assert!(
         repository
-            .has_character_chat_with_integrity("alice", "3791c50c-1734-5403-bc29-72619e1013f2")
+            .has_character_chat_with_integrity("alice", " shared identity ")
             .await
             .expect("find remaining chat")
     );
@@ -2075,12 +2098,12 @@ async fn finds_remaining_character_chat_with_integrity() {
         .expect("delete second chat");
     assert!(
         !repository
-            .has_character_chat_with_integrity("alice", "3791c50c-1734-5403-bc29-72619e1013f2")
+            .has_character_chat_with_integrity("alice", " shared identity ")
             .await
             .expect("find no remaining chat")
     );
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -2144,7 +2167,7 @@ async fn stats_and_summary_project_fields_without_materializing_large_swipes() {
     assert_eq!(summaries[0].date, date_last_chat);
     assert_eq!(summaries[0].chat_id.as_deref(), Some("42"));
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -2182,7 +2205,7 @@ async fn summary_index_write_failure_does_not_change_query_or_delete_outcome() {
         .expect("cache persistence must not reverse committed deletion");
     assert!(!root.join("chats/alice/session.jsonl").exists());
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -2230,7 +2253,7 @@ async fn aggregate_chat_queries_skip_an_invalid_sibling() {
     assert_eq!(search.len(), 1);
     assert_eq!(search[0].file_name, "valid.jsonl");
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -2331,7 +2354,7 @@ async fn search_character_chat_messages_returns_scored_hits_and_respects_role_fi
     assert_eq!(user_hits[0].index, 0);
     assert_eq!(user_hits[0].role, ChatMessageRole::User);
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -2402,7 +2425,7 @@ async fn read_character_chat_messages_returns_selected_messages_and_total_count(
     assert_eq!(result.messages[1].index, 2);
     assert_eq!(result.messages[1].role, ChatMessageRole::System);
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -2557,7 +2580,7 @@ async fn tool_role_roundtrips_and_is_distinct_from_system() {
         .expect("locate system message");
     assert!(system.is_none());
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -2642,7 +2665,7 @@ async fn search_group_chat_messages_respects_scan_limit() {
     assert_eq!(full.len(), 1);
     assert_eq!(full[0].index, 0);
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -2708,7 +2731,7 @@ async fn list_recent_chat_summaries_ranks_by_last_message_date_not_file_mtime() 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].file_name, "session-newer-date.jsonl");
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -2718,10 +2741,7 @@ async fn character_chat_store_merges_replaces_upserts_and_renames_entries() {
     commit_payload_bytes(
         &repository,
         character_target("alice", "session"),
-        payload_to_jsonl(&payload_with_integrity(
-            "4a237fe9-2508-5d9f-8cb7-66f10c159d2a",
-        ))
-        .as_bytes(),
+        payload_to_jsonl(&payload_with_integrity(" legacy-聊天")).as_bytes(),
         false,
     )
     .await
@@ -2740,6 +2760,10 @@ async fn character_chat_store_merges_replaces_upserts_and_renames_entries() {
         )
         .await
         .expect("seed store json");
+    assert!(
+        root.join("chats/alice/.tauritavern/ legacy-聊天/my-ext/index.json")
+            .exists()
+    );
 
     let path = repository
         .get_chat_payload_path("alice", "session")
@@ -2822,7 +2846,23 @@ async fn character_chat_store_merges_replaces_upserts_and_renames_entries() {
         .expect("read created store json");
     assert_eq!(created, json!({ "created": true }));
 
-    let _ = fs::remove_dir_all(&root).await;
+    commit_payload_bytes(
+        &repository,
+        character_target("alice", "unsafe"),
+        br#"{"chat_metadata":{"integrity":"../outside"}}"#,
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        repository
+            .set_character_chat_store_json("alice", "unsafe", "my-ext", "index", json!({}))
+            .await,
+        Err(DomainError::InvalidData(_))
+    ));
+    assert!(!root.join("chats/alice/outside").exists());
+
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -2850,7 +2890,7 @@ async fn group_chat_store_update_json_and_key_work() {
         .expect("read renamed group key");
     assert_eq!(value, json!({ "hello": "world" }));
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -2939,7 +2979,7 @@ async fn chat_payload_paging_returns_tail_and_before_for_character_and_group() {
         .await;
     assert!(stale.is_err(), "stale paging cursor must be rejected");
 
-    let _ = fs::remove_dir_all(&root).await;
+    cleanup_repository(repository, root).await;
 }
 
 fn payload_to_jsonl(payload: &[Value]) -> String {
@@ -3125,7 +3165,7 @@ async fn cold_swipes_round_trip_retains_source_across_metadata_publish_reorder_a
             assert_eq!(backup_file_names(&root).await, backups);
         }
 
-        fs::remove_dir_all(root).await.unwrap();
+        cleanup_repository(repository, root).await;
     }
 }
 
@@ -3196,7 +3236,7 @@ async fn cold_swipes_reject_invalid_merges_without_publishing_or_leaving_stages(
         );
     }
     drop(source);
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -3230,7 +3270,7 @@ async fn cold_swipes_lookahead_handles_empty_header_only_and_unterminated_tail()
             drop(source);
         }
     }
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }
 
 #[tokio::test]
@@ -3289,5 +3329,5 @@ async fn cold_swipes_preserve_record_key_order_and_project_all_message_roles() {
         fs::read_to_string(path).await.unwrap(),
         format!("{input}\n")
     );
-    fs::remove_dir_all(root).await.unwrap();
+    cleanup_repository(repository, root).await;
 }

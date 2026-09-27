@@ -1,6 +1,4 @@
 const textEncoder = new TextEncoder();
-const hyphenatedUuid = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
-const uuidPattern = new RegExp(`^(?:[0-9a-fA-F]{32}|${hyphenatedUuid}|\\{${hyphenatedUuid}\\}|urn:uuid:${hyphenatedUuid})$`);
 
 function isJsonWhitespace(code) {
     return code === 0x20 || code === 0x09 || code === 0x0A || code === 0x0D;
@@ -17,10 +15,9 @@ function assertHeader(header) {
     const metadata = header.chat_metadata;
     if (!metadata || !Object.hasOwn(metadata, 'integrity')) return;
 
-    // Match Rust Uuid::try_parse without restricting the UUID version or rewriting its text.
     const value = metadata.integrity;
-    if (typeof value !== 'string' || uuidPattern.exec(value)?.[0] !== value) {
-        throw new Error('Chat header integrity must be a UUID');
+    if (typeof value !== 'string' || value.length === 0) {
+        throw new Error('Chat header integrity must be a non-empty string');
     }
 }
 

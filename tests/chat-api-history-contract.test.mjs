@@ -1,13 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-async function importFresh(modulePath) {
-    return import(`${pathToFileURL(modulePath).href}?t=${Date.now()}-${Math.random()}`);
-}
+import { installChatApi } from '../src/tauri/main/api/chat.js';
 
 async function withChatApi(stContext, safeInvoke, run) {
     const previousWindow = globalThis.window;
@@ -17,9 +10,6 @@ async function withChatApi(stContext, safeInvoke, run) {
     };
 
     try {
-        const { installChatApi } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/api/chat.js'),
-        );
         installChatApi({ safeInvoke });
         await run(globalThis.window.__TAURITAVERN__.api.chat);
     } finally {

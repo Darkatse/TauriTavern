@@ -294,8 +294,7 @@ test('chat payload commit rejects invalid payloads before opening a session', as
     try {
         for (const payload of [
             [], [null], [{}, []],
-            [{ chat_metadata: { integrity: 'invalid' } }],
-            [{ chat_metadata: { integrity: '10000000-0000-4000-8000-000000000002\n' } }],
+            [{ chat_metadata: { integrity: '' } }],
         ]) {
             await assert.rejects(commitChatPayload({ target: TARGET, payload, force: true, commitReason: 'mutation' }));
         }

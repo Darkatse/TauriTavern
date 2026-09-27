@@ -224,9 +224,9 @@ async function normalizePromptSnapshotRunInput(input, { safeInvoke, ensureModelT
         throw new Error('chatRef is required');
     }
 
-    const stableChatId = String(input.stableChatId || '').trim() || await resolveStableChatId(chatRef);
-    if (!stableChatId) {
-        throw new Error('stableChatId is required');
+    const stableChatId = input.stableChatId ?? await resolveStableChatId(chatRef);
+    if (typeof stableChatId !== 'string' || stableChatId.length === 0) {
+        throw new Error('stableChatId must be a non-empty string');
     }
 
     const options = normalizeAgentRunOptions(input.options, input.presentation);

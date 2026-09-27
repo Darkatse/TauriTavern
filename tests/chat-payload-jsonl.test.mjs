@@ -18,7 +18,7 @@ function byteStream(bytes, chunkSize = 1) {
 
 test('jsonl: text and byte streams agree on the document preamble and record shape', async () => {
     const payload = [
-        { chat_metadata: { integrity: '019026C4-674A-78C9-8E43-710876662B80' }, unknown: [true] },
+        { chat_metadata: { integrity: ' \t\n' }, unknown: [true] },
         { mes: 'text\uFEFF�', chat_metadata: { integrity: 'ordinary message data' } },
     ];
     const canonical = payload.map(record => JSON.stringify(record)).join('\n');
@@ -36,6 +36,7 @@ test('jsonl: text and byte streams agree on the document preamble and record sha
         '\uFEFF\uFEFF{}', '\uFEFF\n\uFEFF\n{}', '{}\n\uFEFF{}',
         '\u0000{}', '{}\u00A0', '[]', '{}\nnull', '{bad}\n{}',
         '{"chat_metadata":{"integrity":null}}',
+        '{"chat_metadata":{"integrity":""}}',
     ]) {
         assert.throws(() => jsonlToPayload(text), text);
         await assert.rejects(jsonlStreamToPayload(byteStream(new TextEncoder().encode(text))), text);
@@ -53,10 +54,6 @@ test('jsonl: byte streams reject malformed UTF-8 and truncated final characters'
     }
 });
 
-test('jsonl: parse errors identify the physical line', () => {
-    assert.throws(() => jsonlToPayload('{"a":1}\n{bad}\n'), /line 2/);
-});
-
 test('jsonl: serialized records round-trip through bounded byte chunks', () => {
     const payload = [
         { chat_metadata: { integrity: '10000000-0000-4000-8000-000000000002', variables: { score: 3 } } },
@@ -70,17 +67,13 @@ test('jsonl: serialized records round-trip through bounded byte chunks', () => {
     assert.equal(Buffer.concat(chunks).toString('utf8'), payload.map(record => JSON.stringify(record)).join('\n'));
 });
 
-test('jsonl: stream visitors receive large records without a terminating newline', async () => {
+test('jsonl: stream visitors validate unterminated final records', async () => {
     const payload = [{}, { mes: 'x'.repeat(256 * 1024) }];
     const bytes = new TextEncoder().encode(payload.map(record => JSON.stringify(record)).join('\n'));
     const visited = [];
     await visitJsonlStream(byteStream(bytes, 1024), entry => visited.push(entry));
     assert.deepEqual(visited, payload);
-});
-
-test('jsonl: stream visitors fail on an invalid unterminated final line', async () => {
-    const stream = byteStream(new TextEncoder().encode('{"a":1}\n{bad}'));
-    await assert.rejects(visitJsonlStream(stream, () => {}), /line 2/);
+    await assert.rejects(visitJsonlStream(byteStream(new TextEncoder().encode('{}\n{bad}')), () => {}), /line 2/);
 });
 
 test('jsonl: parse failure cancels an unfinished stream', async () => {

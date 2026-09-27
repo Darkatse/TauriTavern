@@ -358,6 +358,7 @@ test('api.agent.startRunWithPromptSnapshot refreshes Model Target LLM connection
                 };
             }
             if (command === 'start_agent_run') {
+                assert.equal(args.dto.stableChatId, ' stable-chat-1\n');
                 return { runId: 'run-model-target' };
             }
             if (command === 'read_agent_run_events') {
@@ -395,7 +396,7 @@ test('api.agent.startRunWithPromptSnapshot refreshes Model Target LLM connection
 
     const handle = await agent.startRunWithPromptSnapshot({
         chatRef: { kind: 'character', characterId: 'char-1', fileName: 'Char.json' },
-        stableChatId: 'stable-chat-1',
+        stableChatId: ' stable-chat-1\n',
         generationType: 'normal',
         profileId: 'writer',
         promptSnapshot: {
@@ -546,6 +547,7 @@ test('api.agent.readTaskDetail requests result content explicitly and rejects in
 
 test('api.agent.listRuns fails fast on invalid history filters', async () => {
     const { calls, agent } = await installHarness();
+    await assert.rejects(agent.listRuns({ stableChatId: '' }));
 
     await assert.rejects(
         () => agent.listRuns(null),
@@ -1255,7 +1257,7 @@ test('Agent resume attaches from its returned cursor and saves completed present
     const chatRef = { kind: 'character', characterId: 'Writer', fileName: 'story' };
     const script = createFakeCommitScript(({ getMessage }) => getMessage);
     const presentation = {
-        chatRef: { ...chatRef, fileName: 'before-rename' }, stableChatId: 'stable-story', generationType: 'swipe', liveEnabled: false,
+        chatRef: { ...chatRef, fileName: 'before-rename' }, stableChatId: ' stable-story\n', generationType: 'swipe', liveEnabled: false,
         chatLength: 0, messageId: null, swipeId: null, createdMessage: null,
         rawCommittedText: '', commitSeq: 0, pendingWrite: null, liveMessageEventsEmitted: false,
         reasoning: { commitInvocationIds: ['inv_root'], turns: [], cursor: 0 },
@@ -1283,7 +1285,7 @@ test('Agent resume attaches from its returned cursor and saves completed present
     } });
     window.__TAURITAVERN__.api.chat = {
         current: { ref: () => chatRef },
-        open: () => ({ stableId: async () => 'stable-story' }),
+        open: () => ({ stableId: async () => ' stable-story\n' }),
     };
     const savedCheckpoint = await agent.readCheckpoint('run-resume');
     const handle = await agent.resume({ runId: 'run-resume', additionalRounds: 5, checkpoint: savedCheckpoint });
@@ -1297,7 +1299,7 @@ test('Agent resume attaches from its returned cursor and saves completed present
     assert.deepEqual(checkpoint.presentation.reasoning.turns, [{ invocationId: 'inv_root', round: 4, maxChars: 17 }]);
     assert.equal(calls.filter(call => call.command === 'finish_agent_run_presentation').length, 1);
     assert.deepEqual(calls.find(call => call.command === 'resume_agent_run').args.dto, {
-        runId: 'run-resume', expectedTerminalSeq: 10, chatRef, stableChatId: 'stable-story', additionalRounds: 5, hostPresentation: true,
+        runId: 'run-resume', expectedTerminalSeq: 10, chatRef, stableChatId: ' stable-story\n', additionalRounds: 5, hostPresentation: true,
     });
 });
 

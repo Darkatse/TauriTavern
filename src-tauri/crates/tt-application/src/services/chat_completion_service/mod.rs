@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::{RwLock, watch};
@@ -941,16 +942,20 @@ fn apply_opencode_session_header(
     let stable_chat_id = payload
         .get(OPENCODE_STABLE_CHAT_ID_FIELD)
         .and_then(Value::as_str)
-        .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
             ApplicationError::ValidationError(
                 "OpenCode requires a stable chat id for x-opencode-session".to_string(),
             )
         })?;
+    const ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+        .remove(b'-')
+        .remove(b'.')
+        .remove(b'_')
+        .remove(b'~');
     config.extra_headers.insert(
         OPENCODE_SESSION_HEADER.to_string(),
-        stable_chat_id.to_string(),
+        utf8_percent_encode(stable_chat_id, ENCODE_SET).to_string(),
     );
     Ok(())
 }
@@ -1096,21 +1101,16 @@ mod tests {
             )
             .is_err()
         );
-        let payload = json!({ "_tauritavern_stable_chat_id": "stable-chat" });
-
+        let payload = json!({ "_tauritavern_stable_chat_id": " stable-空% \n" });
         apply_opencode_session_header(
             ChatCompletionSource::OpenCode,
             payload.as_object().unwrap(),
             &mut config,
         )
         .unwrap();
-
         assert_eq!(
-            config
-                .extra_headers
-                .get("x-opencode-session")
-                .map(String::as_str),
-            Some("stable-chat")
+            config.extra_headers["x-opencode-session"],
+            "%20stable-%E7%A9%BA%25%20%0A"
         );
     }
 
