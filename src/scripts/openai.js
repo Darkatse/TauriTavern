@@ -6897,6 +6897,17 @@ async function onLogitBiasPresetDeleteClick() {
     saveSettingsDebounced();
 }
 
+/** @type {Promise<void>} Completion of the most recently started preset application. */
+let presetApplicationPromise = Promise.resolve();
+
+/**
+ * Waits for preset settings and their before/after events to finish applying.
+ * @returns {Promise<void>}
+ */
+export function getPresetApplicationPromise() {
+    return presetApplicationPromise;
+}
+
 // Load OpenAI preset settings
 function onSettingsPresetChange() {
     const presetNameBefore = oai_settings.preset_settings_openai;
@@ -6915,7 +6926,7 @@ function onSettingsPresetChange() {
     const updateCheckbox = (selector, value) => $(selector).prop('checked', value).trigger('input', { source: 'preset' });
 
     // Allow subscribers to alter the preset before applying deltas
-    eventSource.emit(event_types.OAI_PRESET_CHANGED_BEFORE, {
+    presetApplicationPromise = eventSource.emit(event_types.OAI_PRESET_CHANGED_BEFORE, {
         preset: preset,
         presetName: presetName,
         settingsToUpdate: settingsToUpdate,
