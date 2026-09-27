@@ -38,6 +38,8 @@ run_started
 
 `api.agent.readEvents({ runId, afterSeq, limit })` 读取游标之后的事件。`beforeSeq` 读取指定序号之前最近的一页，结果仍按序号升序排列。`api.agent.subscribe()` 在此基础上持续追踪新事件。
 
+活动 Run 每追加一条事件，原生端经 Channel 推送最新 `seq` 作为唤醒提示，订阅随即读取。提示不携带事件内容，事件仍经 `readEvents` 读取；同一订阅最多一次读取在途，读取期间到达的提示合并为紧随其后的一次读取。推送不依赖计时器，窗口隐藏时也能及时发现宿主提交请求；Windows 主窗口另以 WebView2 启动参数关闭后台计时器节流与遮挡检测（[window.rs](../../src-tauri/crates/tauritavern/src/app/host/window.rs)），使提交处理本身在窗口最小化或被遮挡时不停摆。兜底轮询（默认 2 秒）负责追赶、不在当前进程活动的 Run 及通道失败，失败写入控制台错误。
+
 传入 `invocationId` 可以读取某个 Agent 的过程。事件的 `payload.eventScope` 指出主要和相关 Invocation，后端按这些归属筛选后再分页。
 
 Timeline 还需要知道完整的 Agent 关系。`includeTimelineProjection: true` 会附带由 Invocation 和 Task 记录生成的关系图；它独立于当前事件页。任务详情通过 `readTaskDetail()` 读取，模型回合通过 `readModelTurn()` 读取，因此页面无需碰内部文件格式。
@@ -55,6 +57,7 @@ Timeline 还需要知道完整的 Agent 关系。`includeTimelineProjection: tru
 ## 源码
 
 - [journal.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/journal.rs)：事件归属与状态记录。
+- [agent-run-runtime.js](../../src/tauri/main/api/agent-run-runtime.js)：订阅的读取循环、唤醒提示与兜底轮询。
 - [run_store.rs](../../src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_repository/run_store.rs)、[event_journal.rs](../../src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_agent_repository/event_journal.rs)：追加与分页读取。
 - [agent_run_history_service.rs](../../src-tauri/crates/tt-application/src/services/agent_run_history_service.rs)：历史摘要和清理。
 - [run-event-presenter.ts](../../src/scripts/extensions/agent-system/src/run-event-presenter.ts)：Timeline 的事件展示。

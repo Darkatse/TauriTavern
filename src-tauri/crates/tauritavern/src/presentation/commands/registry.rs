@@ -344,6 +344,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::agent_commands::resume_agent_run,
         super::agent_commands::finish_agent_run_presentation,
         super::agent_commands::subscribe_agent_run_live_projection,
+        super::agent_commands::subscribe_agent_run_events,
         super::agent_commands::prepare_agent_prompt_assembly,
         super::agent_commands::build_agent_current_model_connection_snapshot,
         super::agent_commands::apply_agent_current_model_connection_snapshot,

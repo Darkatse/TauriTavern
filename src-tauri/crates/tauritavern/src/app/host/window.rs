@@ -12,6 +12,16 @@ use crate::presentation::web_resources::tauri_resource_adapter::handle_tauri_web
 use tauri_plugin_opener::OpenerExt;
 use tt_application::services::host_resource_service::HostResourceService;
 
+/// WebView2 stalls JS timers while the window is minimized or occluded, which
+/// freezes background work such as Agent chat commits and streaming replies.
+/// Setting these arguments replaces wry's defaults, so its `--disable-features`
+/// entries are kept; Chromium honors only one `--disable-features` flag. Every
+/// webview sharing the data directory must use identical arguments.
+#[cfg(windows)]
+const WEBVIEW2_BROWSER_ARGS: &str = "--disable-background-timer-throttling \
+    --disable-renderer-backgrounding --disable-backgrounding-occluded-windows \
+    --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,IntensiveWakeUpThrottling,CalculateNativeWinOcclusion";
+
 #[cfg(desktop)]
 fn desktop_window_state_flags() -> tauri_plugin_window_state::StateFlags {
     use tauri_plugin_window_state::StateFlags;
@@ -96,8 +106,10 @@ pub(super) fn create_main_window(
                     tauri::WebviewUrl::External("about:blank".parse().expect("valid URL")),
                 )
                 .window_features(features)
-                .title(title)
-                .build();
+                .title(title);
+                #[cfg(windows)]
+                let window = window.additional_browser_args(WEBVIEW2_BROWSER_ARGS);
+                let window = window.build();
 
                 return match window {
                     Ok(window) => tauri::webview::NewWindowResponse::Create { window },
@@ -121,6 +133,9 @@ pub(super) fn create_main_window(
     // Desktop windows start hidden so restored size/position apply before first
     // paint. Mobile platforms do not use the window-state plugin.
     let builder = builder.visible(false);
+
+    #[cfg(windows)]
+    let builder = builder.additional_browser_args(WEBVIEW2_BROWSER_ARGS);
 
     let window = builder.build()?;
 

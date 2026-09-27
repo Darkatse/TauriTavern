@@ -23,10 +23,11 @@ use tt_application::dto::agent_dto::{
     AgentReadWorkspaceFileDto, AgentRepairProfileFileDto, AgentResolveChatCommitDto,
     AgentResolvePersistentStateMetadataUpdateDto, AgentResolvePromptAssemblyDto,
     AgentResolveSystemPromptDto, AgentResolveSystemPromptResultDto, AgentResumeRunDto,
-    AgentRetargetPresetRefsDto, AgentRetargetPresetRefsResultDto, AgentRunHandleDto,
-    AgentRunLiveUpdateDto, AgentRunPruneApplyResultDto, AgentRunPrunePlanDto, AgentSaveProfileDto,
-    AgentStartRunDto, AgentSubmitGuidanceDto, AgentSubmitGuidanceResultDto,
-    AgentSubscribeRunLiveProjectionDto, AgentTaskDetailDto, AgentWorkspaceFileDto,
+    AgentRetargetPresetRefsDto, AgentRetargetPresetRefsResultDto, AgentRunEventHintDto,
+    AgentRunHandleDto, AgentRunLiveUpdateDto, AgentRunPruneApplyResultDto, AgentRunPrunePlanDto,
+    AgentSaveProfileDto, AgentStartRunDto, AgentSubmitGuidanceDto, AgentSubmitGuidanceResultDto,
+    AgentSubscribeRunEventsDto, AgentSubscribeRunLiveProjectionDto, AgentTaskDetailDto,
+    AgentWorkspaceFileDto,
 };
 use tt_application::errors::ApplicationError;
 use tt_application::services::agent_workspace_lifecycle_service::AgentChatWorkspaceTarget;
@@ -140,6 +141,39 @@ pub async fn subscribe_agent_run_live_projection(
                 return Ok(());
             }
         }
+    }
+}
+
+#[tauri::command]
+pub async fn subscribe_agent_run_events(
+    dto: AgentSubscribeRunEventsDto,
+    channel: Channel<AgentRunEventHintDto>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    log_command("subscribe_agent_run_events");
+
+    // Returning closes the subscription: the run is terminal or released its active
+    // handle. The frontend then catches up through its fallback event reads.
+    let Some(mut receiver) = app_state
+        .services
+        .agent_runtime_service
+        .subscribe_event_hints(&dto.run_id)
+        .await
+        .map_err(map_command_error("Failed to subscribe to agent run events"))?
+    else {
+        return Ok(());
+    };
+
+    // The current seq closes the gap between the frontend's first read and this subscription.
+    let mut seq = *receiver.borrow_and_update();
+    loop {
+        if channel.send(AgentRunEventHintDto { seq }).is_err() {
+            return Ok(());
+        }
+        if receiver.changed().await.is_err() {
+            return Ok(());
+        }
+        seq = *receiver.borrow_and_update();
     }
 }
 
