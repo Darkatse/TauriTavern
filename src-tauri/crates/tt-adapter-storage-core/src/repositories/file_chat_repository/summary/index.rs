@@ -10,13 +10,14 @@ use super::super::FileChatRepository;
 use super::search::SearchFingerprint;
 use super::{FileSignature, summary_cache_key};
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 const MAX_SEARCH_ENTRIES: usize = 128;
 
 #[derive(Clone, Debug)]
 pub(in crate::repositories::file_chat_repository) struct SummaryCacheEntry {
     pub(super) signature: FileSignature,
     pub(in crate::repositories::file_chat_repository) summary: ChatSearchResult,
+    pub(super) preview_unavailable: bool,
     pub(super) fingerprint: Option<SearchFingerprint>,
 }
 
@@ -57,6 +58,7 @@ struct SnapshotEntry {
     key: String,
     signature: FileSignature,
     summary: ChatSearchResult,
+    preview_unavailable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     fingerprint: Option<SearchFingerprint>,
 }
@@ -90,27 +92,27 @@ impl SummaryCache {
         self.search_cache.clear();
     }
 
-    pub(super) fn ensure_loaded(&mut self) -> Result<(), DomainError> {
+    pub(super) fn ensure_loaded(&mut self) {
         if self.loaded {
-            return Ok(());
+            return;
         }
         self.loaded = true;
         if !self.index_path.exists() {
-            return Ok(());
+            return;
         }
 
         let bytes = match std::fs::read(&self.index_path) {
             Ok(bytes) => bytes,
             Err(error) => {
                 tracing::warn!(path = %self.index_path.display(), %error, "Failed to read chat summary index");
-                return Ok(());
+                return;
             }
         };
         let mut snapshot: Snapshot = match serde_json::from_slice(&bytes) {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 tracing::warn!(path = %self.index_path.display(), %error, "Failed to parse chat summary index");
-                return Ok(());
+                return;
             }
         };
         if snapshot.schema_version != SCHEMA_VERSION {
@@ -119,7 +121,7 @@ impl SummaryCache {
                 expected = SCHEMA_VERSION,
                 "Skipping incompatible chat summary index"
             );
-            return Ok(());
+            return;
         }
 
         let previous_len = snapshot.entries.len() + snapshot.stats_entries.len();
@@ -145,6 +147,7 @@ impl SummaryCache {
                     SummaryCacheEntry {
                         signature: entry.signature,
                         summary: entry.summary,
+                        preview_unavailable: entry.preview_unavailable,
                         fingerprint,
                     },
                 )
@@ -163,7 +166,6 @@ impl SummaryCache {
                 )
             })
             .collect();
-        Ok(())
     }
 
     fn snapshot_bytes(&self) -> Result<Vec<u8>, DomainError> {
@@ -177,6 +179,7 @@ impl SummaryCache {
                     key: key.clone(),
                     signature: entry.signature,
                     summary: entry.summary.clone(),
+                    preview_unavailable: entry.preview_unavailable,
                     fingerprint: entry.fingerprint.clone(),
                 })
                 .collect(),
@@ -280,17 +283,14 @@ impl SummaryCache {
 impl FileChatRepository {
     pub(in crate::repositories::file_chat_repository) async fn clear_summary_cache(&self) {
         let mut cache = self.summary_cache.lock().await;
-        if cache.ensure_loaded().is_ok() {
-            cache.clear();
-        }
+        cache.ensure_loaded();
+        cache.clear();
     }
 
     pub async fn clear_chat_summary_index(&self) {
         {
             let mut cache = self.summary_cache.lock().await;
-            if cache.ensure_loaded().is_err() {
-                return;
-            }
+            cache.ensure_loaded();
             cache.clear();
         }
         self.flush_summary_index_best_effort().await;
@@ -301,9 +301,8 @@ impl FileChatRepository {
         path: &Path,
     ) {
         let mut cache = self.summary_cache.lock().await;
-        if cache.ensure_loaded().is_ok() {
-            cache.remove(&summary_cache_key(path));
-        }
+        cache.ensure_loaded();
+        cache.remove(&summary_cache_key(path));
     }
 
     pub(in crate::repositories::file_chat_repository) async fn get_cached_search_results(
@@ -311,7 +310,7 @@ impl FileChatRepository {
         key: &str,
     ) -> Option<Vec<ChatSearchResult>> {
         let mut cache = self.summary_cache.lock().await;
-        cache.ensure_loaded().ok()?;
+        cache.ensure_loaded();
         cache.get_search_results(key)
     }
 
@@ -321,16 +320,15 @@ impl FileChatRepository {
         results: Vec<ChatSearchResult>,
     ) {
         let mut cache = self.summary_cache.lock().await;
-        if cache.ensure_loaded().is_ok() {
-            cache.set_search_results(key, results);
-        }
+        cache.ensure_loaded();
+        cache.set_search_results(key, results);
     }
 
     pub(in crate::repositories::file_chat_repository) async fn flush_summary_index_if_needed(
         &self,
     ) -> Result<(), DomainError> {
         let mut cache = self.summary_cache.lock().await;
-        cache.ensure_loaded()?;
+        cache.ensure_loaded();
         if !cache.dirty {
             return Ok(());
         }

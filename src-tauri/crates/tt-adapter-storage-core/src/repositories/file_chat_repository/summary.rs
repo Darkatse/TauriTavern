@@ -15,6 +15,7 @@ mod search;
 mod stats;
 
 pub(super) use self::index::{SummaryCache, SummaryCacheEntry};
+use self::projection::{FileProjection, MessageText};
 use self::search::SearchFingerprint;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -24,11 +25,7 @@ pub(super) struct FileSignature {
 }
 
 struct ScannedSummary {
-    line_count: usize,
-    character_name: Option<String>,
-    chat_metadata: Option<Value>,
-    last_message: Option<String>,
-    send_date: Option<Value>,
+    projection: FileProjection,
     fingerprint: Option<SearchFingerprint>,
 }
 
@@ -41,6 +38,19 @@ pub(super) struct ChatFileDescriptor {
 
 fn summary_cache_key(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+fn directory_date(send_date: Option<&Value>, modified_millis: i64) -> i64 {
+    let parsed = parse_message_timestamp_value(send_date);
+    if parsed > 0 { parsed } else { modified_millis }
+}
+
+fn message_display_text(message: MessageText) -> Option<String> {
+    match message {
+        MessageText::Missing => None,
+        MessageText::Text(text) => Some(text),
+        MessageText::Unavailable => Some("Preview unavailable".to_string()),
+    }
 }
 
 impl FileChatRepository {
@@ -64,22 +74,23 @@ impl FileChatRepository {
         fallback_file_name: &str,
         signature: FileSignature,
         include_fingerprint: bool,
-    ) -> Result<SummaryCacheEntry, DomainError> {
+    ) -> Result<(SummaryCacheEntry, Option<String>), DomainError> {
         let scan = if include_fingerprint {
             search::scan_with_fingerprint(path, fallback_file_name).await?
         } else {
-            let projected = projection::scan_file(path).await?;
             ScannedSummary {
-                line_count: projected.line_count,
-                character_name: projected.header.character_name,
-                chat_metadata: projected.header.chat_metadata,
-                last_message: projected.tail.mes,
-                send_date: projected.tail.send_date,
+                projection: projection::scan_file(path).await?,
                 fingerprint: None,
             }
         };
 
-        let character_name = scan
+        let FileProjection {
+            line_count,
+            header,
+            tail,
+        } = scan.projection;
+
+        let character_name = header
             .character_name
             .as_deref()
             .filter(|name| {
@@ -88,7 +99,7 @@ impl FileChatRepository {
             })
             .unwrap_or(fallback_character_name)
             .to_string();
-        let chat_id = scan
+        let chat_id = header
             .chat_metadata
             .as_ref()
             .and_then(Value::as_object)
@@ -100,30 +111,30 @@ impl FileChatRepository {
                     .or_else(|| value.as_i64().map(|number| number.to_string()))
                     .or_else(|| value.as_str().map(ToString::to_string))
             });
-        let parsed_date = parse_message_timestamp_value(scan.send_date.as_ref());
+        let date = directory_date(tail.send_date.as_ref(), signature.modified_millis);
+        let preview_unavailable = matches!(&tail.mes, MessageText::Unavailable);
+        let last_message = message_display_text(tail.mes);
 
-        Ok(SummaryCacheEntry {
+        let entry = SummaryCacheEntry {
             signature,
             summary: ChatSearchResult {
                 character_name,
                 file_name: Self::normalize_jsonl_file_name(fallback_file_name)?,
                 file_size: signature.size,
-                message_count: scan.line_count.saturating_sub(1),
-                preview: scan
-                    .last_message
+                message_count: line_count.saturating_sub(1),
+                preview: last_message
                     .as_deref()
                     .map(preview_message_text)
                     .unwrap_or_default(),
-                date: if parsed_date > 0 {
-                    parsed_date
-                } else {
-                    signature.modified_millis
-                },
+                date,
                 chat_id,
-                chat_metadata: scan.chat_metadata,
+                chat_metadata: header.chat_metadata,
             },
+            preview_unavailable,
             fingerprint: scan.fingerprint,
-        })
+        };
+        // Full text belongs to this read, never to the bounded preview cache.
+        Ok((entry, last_message))
     }
 }
 

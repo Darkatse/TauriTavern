@@ -82,7 +82,10 @@ async fn empty_chat_reads_and_header_only_writes_keep_fields_open() {
             vec![json!({})]
         );
     }
-    let header = json!({"chat_metadata": 42, "user_name": [], "future": {"anything": true}});
+    let header = json!({
+        "chat_metadata": 42, "user_name": [], "future": {"anything": true},
+        "mes": "header is not a message", "send_date": "2099-01-01T00:00:00Z",
+    });
     commit_payload_bytes(&repository, target, header.to_string().as_bytes(), false)
         .await
         .unwrap();
@@ -93,6 +96,16 @@ async fn empty_chat_reads_and_header_only_writes_keep_fields_open() {
             .unwrap(),
         vec![header]
     );
+    let recent = repository
+        .list_recent_chat_summaries(Some("alice"), false, 10, &[])
+        .await
+        .unwrap();
+    let modified =
+        FileChatRepository::file_signature_from_metadata(&fs::metadata(&path).await.unwrap())
+            .modified_millis;
+    assert_eq!(recent[0].message_count, 0);
+    assert!(recent[0].preview.is_empty());
+    assert_eq!(recent[0].date, modified);
     cleanup_repository(repository, root).await;
 }
 

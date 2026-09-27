@@ -1,11 +1,8 @@
-use std::{io::SeekFrom, path::Path};
+use std::path::Path;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio::{
-    fs,
-    io::{AsyncReadExt, AsyncSeekExt},
-};
+use tokio::fs;
 
 use crate::png_card_metadata::{
     process_avatar_image, read_character_data_from_png, read_character_data_from_png_file,
@@ -15,16 +12,13 @@ use tt_adapter_storage_core::file_system::{replace_file, unique_temp_path};
 use tt_contracts::client_asset_paths::validate_path_segment;
 use tt_domain::errors::DomainError;
 use tt_domain::json_merge::merge_json_value;
-use tt_domain::models::{character::Character, chat::parse_message_timestamp_value};
+use tt_domain::models::character::Character;
 use tt_ports::repositories::character_repository::{
     CHARACTER_CREATE_WARNING_AVATAR_IMPORT_FAILED, CharacterChat, CharacterCreateResult,
     CharacterCreateWarning, CharacterRepository, ImageCrop,
 };
-use tt_ports::repositories::chat_repository::{ChatRepository, ChatSearchResult};
 
 use super::{FileCharacterRepository, importer::CharacterImportMode};
-
-const CHARACTER_CHAT_TAIL_SCAN_BUFFER_BYTES: usize = 64 * 1024;
 
 struct CreateAvatarCarrier {
     image_data: Vec<u8>,
@@ -200,139 +194,6 @@ impl FileCharacterRepository {
                 return Ok(candidate);
             }
             suffix += 1;
-        }
-    }
-
-    async fn character_chat_from_summary(
-        chat_dir: &Path,
-        summary: ChatSearchResult,
-    ) -> Result<CharacterChat, DomainError> {
-        let path = chat_dir.join(&summary.file_name);
-        let (last_message, last_message_date) =
-            Self::read_last_message_from_chat_file(&path, summary.date).await?;
-
-        Ok(CharacterChat {
-            file_name: summary.file_name,
-            file_size: format!("{:.2}kb", summary.file_size as f64 / 1024.0),
-            chat_items: summary.message_count,
-            last_message,
-            last_message_date,
-        })
-    }
-
-    async fn read_last_message_from_chat_file(
-        path: &Path,
-        fallback_date: i64,
-    ) -> Result<(String, i64), DomainError> {
-        let Some(line) = Self::read_last_non_empty_chat_line(path).await? else {
-            return Ok(("[The chat is empty]".to_string(), fallback_date));
-        };
-
-        let json = match serde_json::from_slice::<Value>(&line) {
-            Ok(json) => json,
-            Err(_) => return Ok(("[Invalid chat format]".to_string(), fallback_date)),
-        };
-
-        let message = json
-            .get("mes")
-            .and_then(Value::as_str)
-            .unwrap_or("[The chat is empty]")
-            .to_string();
-        let parsed_date = parse_message_timestamp_value(json.get("send_date"));
-        let last_message_date = if parsed_date > 0 {
-            parsed_date
-        } else {
-            fallback_date
-        };
-
-        Ok((message, last_message_date))
-    }
-
-    async fn read_last_non_empty_chat_line(path: &Path) -> Result<Option<Vec<u8>>, DomainError> {
-        let mut file = fs::File::open(path).await.map_err(|e| {
-            DomainError::InternalError(format!(
-                "Failed to open chat file '{}': {}",
-                path.display(),
-                e
-            ))
-        })?;
-        let metadata = file.metadata().await.map_err(|e| {
-            DomainError::InternalError(format!(
-                "Failed to read chat metadata '{}': {}",
-                path.display(),
-                e
-            ))
-        })?;
-
-        let mut position = metadata.len();
-        if position == 0 {
-            return Ok(None);
-        }
-
-        let mut reversed_line = Vec::new();
-        while position > 0 {
-            let read_len = position.min(CHARACTER_CHAT_TAIL_SCAN_BUFFER_BYTES as u64) as usize;
-            position -= read_len as u64;
-            file.seek(SeekFrom::Start(position)).await.map_err(|e| {
-                DomainError::InternalError(format!(
-                    "Failed to seek chat file '{}': {}",
-                    path.display(),
-                    e
-                ))
-            })?;
-
-            let mut buffer = vec![0_u8; read_len];
-            file.read_exact(&mut buffer).await.map_err(|e| {
-                DomainError::InternalError(format!(
-                    "Failed to read chat file '{}': {}",
-                    path.display(),
-                    e
-                ))
-            })?;
-
-            for &byte in buffer.iter().rev() {
-                if byte == b'\n' {
-                    if let Some(line) = Self::finish_reversed_chat_line(path, &mut reversed_line)? {
-                        return Ok(Some(line));
-                    }
-                } else {
-                    reversed_line.push(byte);
-                }
-            }
-        }
-
-        Self::finish_reversed_chat_line(path, &mut reversed_line)
-    }
-
-    fn finish_reversed_chat_line(
-        path: &Path,
-        reversed_line: &mut Vec<u8>,
-    ) -> Result<Option<Vec<u8>>, DomainError> {
-        if reversed_line.is_empty() {
-            return Ok(None);
-        }
-
-        reversed_line.reverse();
-        let mut line = std::mem::take(reversed_line);
-        Self::trim_trailing_carriage_returns(&mut line);
-        let text = std::str::from_utf8(&line).map_err(|e| {
-            DomainError::InternalError(format!(
-                "Failed to decode chat line '{}': {}",
-                path.display(),
-                e
-            ))
-        })?;
-
-        if text.trim().is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(line))
-        }
-    }
-
-    fn trim_trailing_carriage_returns(line: &mut Vec<u8>) {
-        while line.last() == Some(&b'\r') {
-            line.pop();
         }
     }
 
@@ -904,13 +765,12 @@ impl CharacterRepository for FileCharacterRepository {
         name: &str,
         simple: bool,
     ) -> Result<Vec<CharacterChat>, DomainError> {
-        let chat_dir = self.resolve_chat_directory(name).await?;
-
-        if !chat_dir.exists() {
-            return Ok(Vec::new());
-        }
-
         if simple {
+            let chat_dir = self.resolve_chat_directory(name).await?;
+            if !chat_dir.exists() {
+                return Ok(Vec::new());
+            }
+
             let mut entries = fs::read_dir(&chat_dir).await.map_err(|e| {
                 tracing::error!("Failed to read chat directory: {}", e);
                 DomainError::InternalError(format!("Failed to read chat directory: {}", e))
@@ -945,24 +805,19 @@ impl CharacterRepository for FileCharacterRepository {
 
         let summaries = self
             .chat_repository
-            .list_chat_summaries(Some(name), false)
+            .list_chat_summaries_with_full_text(name)
             .await?;
 
-        let mut chats = Vec::with_capacity(summaries.len());
-        for summary in summaries {
-            let file_name = summary.file_name.clone();
-            match Self::character_chat_from_summary(&chat_dir, summary).await {
-                Ok(chat) => chats.push(chat),
-                Err(error) => tracing::error!(
-                    target: tt_contracts::observability::USER_VISIBLE_ERROR,
-                    "Failed to inspect character chat '{}': {}",
-                    file_name,
-                    error
-                ),
-            }
-        }
-
-        Ok(chats)
+        Ok(summaries
+            .into_iter()
+            .map(|(summary, last_message)| CharacterChat {
+                file_name: summary.file_name,
+                file_size: format!("{:.2}kb", summary.file_size as f64 / 1024.0),
+                chat_items: summary.message_count,
+                last_message: last_message.unwrap_or_else(|| "[The chat is empty]".to_string()),
+                last_message_date: summary.date,
+            })
+            .collect())
     }
 
     async fn clear_cache(&self) -> Result<(), DomainError> {

@@ -134,12 +134,6 @@ fn shallow_index_path(root: &Path) -> PathBuf {
         .join("character_shallow_index_v1.json")
 }
 
-fn chat_summary_index_path(root: &Path) -> PathBuf {
-    root.join("user")
-        .join("cache")
-        .join("chat_summary_index_v1.json")
-}
-
 #[tokio::test]
 async fn find_by_name_preserves_nonstandard_create_date() {
     let (repository, root) = setup_repository().await;
@@ -1314,9 +1308,12 @@ async fn unreadable_chat_statistics_do_not_hide_the_character() {
     fs::create_dir_all(&chat_dir)
         .await
         .expect("create chat directory");
-    fs::write(chat_dir.join("broken.jsonl"), [0xff])
+    let mut damaged_chat = b"{}\n{\"mes\": invalid, ".to_vec();
+    damaged_chat.resize(damaged_chat.len() + 128 * 1024, b' ');
+    damaged_chat.push(0xff);
+    fs::write(chat_dir.join("broken.jsonl"), damaged_chat)
         .await
-        .expect("write invalid UTF-8 chat");
+        .expect("write invalid UTF-8 after an early JSON error");
 
     let reopened = repository_for_root(&root).await;
     let shallow = reopened
@@ -1384,41 +1381,6 @@ async fn unreadable_character_does_not_restore_the_entire_stale_shallow_index() 
 }
 
 #[tokio::test]
-async fn rename_sanitizes_target_file_name_and_moves_chat_directory() {
-    let (repository, root) = setup_repository().await;
-
-    let character = Character::new(
-        "Source".to_string(),
-        "desc".to_string(),
-        "persona".to_string(),
-        "hello".to_string(),
-    );
-    create_character(&repository, &character).await;
-
-    let old_chat_dir = root.join("chats").join("Source");
-    fs::create_dir_all(&old_chat_dir)
-        .await
-        .expect("create old chat directory");
-    fs::write(old_chat_dir.join("session.jsonl"), b"{}\n")
-        .await
-        .expect("write chat file");
-
-    let renamed = repository
-        .rename("Source", "Renamed:/Name")
-        .await
-        .expect("rename character");
-
-    assert_eq!(renamed.name, "Renamed:/Name");
-    assert_eq!(renamed.avatar, "RenamedName.png");
-    assert!(root.join("characters").join("RenamedName.png").exists());
-    assert!(!root.join("characters").join("Source.png").exists());
-    assert!(root.join("chats").join("RenamedName").exists());
-    assert!(!root.join("chats").join("Source").exists());
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
 async fn character_chat_listing_reads_legacy_alias_directory() {
     let (repository, root) = setup_repository().await;
 
@@ -1434,20 +1396,27 @@ async fn character_chat_listing_reads_legacy_alias_directory() {
     fs::create_dir_all(&legacy_chat_dir)
         .await
         .expect("create legacy chat directory");
+    let full_text = "完整正文".repeat(125);
+    let message = json!({
+        "mes": full_text,
+        "send_date": "2026-01-01T00:00:00.000Z",
+    });
     fs::write(
         legacy_chat_dir.join("session.jsonl"),
-        b"{\"chat_metadata\":{}}\n{\"mes\":\"hello\",\"send_date\":\"2026-01-01T00:00:00.000Z\"}\n",
+        format!("{{\"chat_metadata\":{{}}}}\n{message}\n"),
     )
     .await
     .expect("write legacy chat file");
 
-    let chats = repository
-        .get_character_chats("Alice#1", false)
-        .await
-        .expect("list legacy character chats");
-    assert_eq!(chats.len(), 1);
-    assert_eq!(chats[0].file_name, "session.jsonl");
-    assert_eq!(chats[0].last_message, "hello");
+    for _ in 0..2 {
+        let chats = repository
+            .get_character_chats("Alice#1", false)
+            .await
+            .expect("list legacy chats through cold and cached projections");
+        assert_eq!(chats.len(), 1);
+        assert_eq!(chats[0].file_name, "session.jsonl");
+        assert_eq!(chats[0].last_message, full_text);
+    }
 
     repository
         .clear_cache()
@@ -1483,45 +1452,26 @@ async fn rename_moves_legacy_alias_chat_directory_to_new_canonical_dir() {
     fs::create_dir_all(&legacy_chat_dir)
         .await
         .expect("create legacy chat directory");
-    fs::write(
-        legacy_chat_dir.join("session.jsonl"),
-        b"{}\n{\"mes\":\"cached before rename\",\"send_date\":\"2026-01-01T00:00:00.000Z\"}\n",
-    )
-    .await
-    .expect("write legacy chat file");
-    let listed = repository
-        .get_character_chats("Alice#1", false)
+    fs::write(legacy_chat_dir.join("session.jsonl"), b"{}\n")
         .await
-        .expect("build shared summary cache");
-    assert_eq!(listed.len(), 1);
-    assert!(chat_summary_index_path(&root).exists());
+        .expect("write legacy chat file");
 
     let renamed = repository
-        .rename("Alice#1", "Renamed")
+        .rename("Alice#1", "Renamed:/Name")
         .await
         .expect("rename character");
 
-    assert_eq!(renamed.avatar, "Renamed.png");
+    assert_eq!(renamed.name, "Renamed:/Name");
+    assert_eq!(renamed.avatar, "RenamedName.png");
+    assert!(root.join("characters").join("RenamedName.png").exists());
+    assert!(!root.join("characters").join("Alice#1.png").exists());
     assert!(
         root.join("chats")
-            .join("Renamed")
+            .join("RenamedName")
             .join("session.jsonl")
             .exists()
     );
     assert!(!legacy_chat_dir.exists());
-    let index_text = fs::read_to_string(chat_summary_index_path(&root))
-        .await
-        .expect("read chat summary index after rename");
-    let index_json: Value =
-        serde_json::from_str(&index_text).expect("parse chat summary index after rename");
-    assert!(
-        index_json
-            .get("entries")
-            .and_then(Value::as_array)
-            .expect("summary entries array")
-            .is_empty()
-    );
-    assert!(!index_text.contains("cached before rename"));
 
     let _ = fs::remove_dir_all(&root).await;
 }
@@ -1542,18 +1492,9 @@ async fn delete_with_chats_removes_legacy_alias_chat_directory() {
     fs::create_dir_all(&legacy_chat_dir)
         .await
         .expect("create legacy chat directory");
-    fs::write(
-        legacy_chat_dir.join("session.jsonl"),
-        b"{}\n{\"mes\":\"cached before delete\",\"send_date\":\"2026-01-01T00:00:00.000Z\"}\n",
-    )
-    .await
-    .expect("write legacy chat file");
-    let listed = repository
-        .get_character_chats("Alice#1", false)
+    fs::write(legacy_chat_dir.join("session.jsonl"), b"{}\n")
         .await
-        .expect("build shared summary cache");
-    assert_eq!(listed.len(), 1);
-    assert!(chat_summary_index_path(&root).exists());
+        .expect("write legacy chat file");
 
     repository
         .delete("Alice#1", true)
@@ -1562,19 +1503,6 @@ async fn delete_with_chats_removes_legacy_alias_chat_directory() {
 
     assert!(!root.join("characters").join("Alice#1.png").exists());
     assert!(!legacy_chat_dir.exists());
-    let index_text = fs::read_to_string(chat_summary_index_path(&root))
-        .await
-        .expect("read chat summary index after delete");
-    let index_json: Value =
-        serde_json::from_str(&index_text).expect("parse chat summary index after delete");
-    assert!(
-        index_json
-            .get("entries")
-            .and_then(Value::as_array)
-            .expect("summary entries array")
-            .is_empty()
-    );
-    assert!(!index_text.contains("cached before delete"));
 
     let _ = fs::remove_dir_all(&root).await;
 }

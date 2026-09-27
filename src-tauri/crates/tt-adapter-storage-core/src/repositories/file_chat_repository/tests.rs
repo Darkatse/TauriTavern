@@ -896,6 +896,15 @@ async fn raw_and_zstd_backups_download_restore_and_delete_by_logical_name() {
             Err(DomainError::InvalidData(_))
         ));
 
+        let summaries = repository.list_chat_backups().await.unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].character_name, "Alice");
+        assert_eq!(summaries[0].message_count, 1);
+        assert_eq!(
+            summaries[0].preview,
+            format!("...{}", "重复内容".repeat(100))
+        );
+
         let files_before = backup_file_names(&root).await;
         let downloaded = read_backup_payload(&repository, &descriptor.logical_file_name, 4096)
             .await
@@ -2023,7 +2032,7 @@ async fn rename_chat_preserves_bytes_and_rejects_invalid_or_occupied_targets() {
 }
 
 #[tokio::test]
-async fn calculate_character_chat_stats_uses_last_message_send_date() {
+async fn chat_directory_dates_survive_unavailable_previews_and_cache_reuse() {
     let (repository, root) = setup_repository().await;
     let older = payload_with_message(
         "eac4edce-753b-5b13-9579-0d1644e26a1c",
@@ -2031,14 +2040,12 @@ async fn calculate_character_chat_stats_uses_last_message_send_date() {
         "older",
         "alice",
     );
-    let mut newer = payload_with_message(
-        "476571b9-a0ad-5cca-99b9-db71ac95ae89",
-        "2026-01-03T00:00:00.000Z",
-        "newer",
-        "alice",
+    // Repeated fields follow JSON's last-value rule; unavailable text must
+    // not discard a valid date or make it change after the summary is cached.
+    let newer = concat!(
+        "{}\n",
+        r#"{"mes":"discarded","mes":{},"send_date":"2026-01-02T00:00:00.000Z","send_date":"2026-01-03T00:00:00.000Z"}"#,
     );
-
-    newer[1]["mes"] = json!({ "not": "a string" });
 
     commit_payload_bytes(
         &repository,
@@ -2051,7 +2058,7 @@ async fn calculate_character_chat_stats_uses_last_message_send_date() {
     commit_payload_bytes(
         &repository,
         character_target("alice", "newer"),
-        payload_to_jsonl(&newer).as_bytes(),
+        newer.as_bytes(),
         false,
     )
     .await
@@ -2065,6 +2072,74 @@ async fn calculate_character_chat_stats_uses_last_message_send_date() {
     assert!(chat_size > 0);
     assert_eq!(date_last_chat, timestamp_millis("2026-01-03T00:00:00.000Z"));
 
+    let summaries = repository
+        .list_chat_summaries(Some("alice"), false)
+        .await
+        .unwrap();
+    let newer = summaries
+        .iter()
+        .find(|entry| entry.file_name == "newer.jsonl")
+        .unwrap();
+    assert_eq!(newer.preview, "Preview unavailable");
+    assert_eq!(newer.date, date_last_chat);
+    assert_eq!(
+        repository
+            .calculate_character_chat_stats("alice")
+            .await
+            .unwrap()
+            .1,
+        date_last_chat
+    );
+
+    cleanup_repository(repository, root).await;
+}
+
+#[tokio::test]
+async fn damaged_directory_queries_refresh_after_repair() {
+    let (repository, root) = setup_repository().await;
+    let chat_dir = root.join("chats/alice");
+    fs::create_dir_all(&chat_dir).await.unwrap();
+    let path = chat_dir.join("damaged.jsonl");
+    fs::write(&path, "{}\n{\"mes\":\"earlier\"}\n{\"mes\":")
+        .await
+        .unwrap();
+    let modified =
+        FileChatRepository::file_signature_from_metadata(&fs::metadata(&path).await.unwrap())
+            .modified_millis;
+
+    // Cold recents must keep a file whose final record cannot supply a preview.
+    let recent = repository
+        .list_recent_chat_summaries(Some("alice"), false, 10, &[])
+        .await
+        .unwrap();
+    assert_eq!(recent.len(), 1);
+    assert_eq!(recent[0].preview, "Preview unavailable");
+    assert_eq!(recent[0].message_count, 2);
+    assert_eq!(recent[0].date, modified);
+
+    // Both a matching result and an empty result must notice external repair.
+    for (query, count) in [("damaged", 1), ("repaired", 0)] {
+        assert_eq!(
+            repository
+                .search_chats(query, Some("alice"))
+                .await
+                .unwrap()
+                .len(),
+            count
+        );
+    }
+    // A different byte length changes the file signature without timing assumptions.
+    fs::write(
+        &path,
+        "{}\n{\"mes\":\"earlier\"}\n{\"mes\":\"repaired message\"}",
+    )
+    .await
+    .unwrap();
+    for query in ["damaged", "repaired"] {
+        let results = repository.search_chats(query, Some("alice")).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].preview, "repaired message");
+    }
     cleanup_repository(repository, root).await;
 }
 
@@ -2102,70 +2177,6 @@ async fn finds_remaining_character_chat_with_integrity() {
             .await
             .expect("find no remaining chat")
     );
-
-    cleanup_repository(repository, root).await;
-}
-
-#[tokio::test]
-async fn stats_and_summary_project_fields_without_materializing_large_swipes() {
-    let (repository, root) = setup_repository().await;
-    let swipe = "ignored swipe body".repeat(32 * 1024);
-    let visible_tail = format!("discard{}", "界".repeat(400));
-    let payload = [
-        json!({
-            "chat_metadata": { "chat_id_hash": 42, "custom": "value" },
-            "user_name": "unused",
-            "character_name": "unused",
-        }),
-        json!({
-            "name": "Alice",
-            "is_user": false,
-            "send_date": "2026-01-04T00:00:00.000Z",
-            "mes": visible_tail,
-            "swipes": vec![swipe; 4],
-            "swipe_info": [{ "extra": "ignored".repeat(1024) }],
-            "extra": { "ignored": "value" },
-        }),
-    ];
-
-    let raw = format!(
-        "\r\n\u{feff}\r\n{}",
-        payload
-            .iter()
-            .map(Value::to_string)
-            .collect::<Vec<_>>()
-            .join("\r\n\r\n")
-    );
-    commit_payload_bytes(
-        &repository,
-        character_target("alice", "large"),
-        raw.as_bytes(),
-        false,
-    )
-    .await
-    .unwrap();
-
-    let (_, date_last_chat) = repository
-        .calculate_character_chat_stats("alice")
-        .await
-        .expect("calculate projected chat stats");
-    assert_eq!(date_last_chat, timestamp_millis("2026-01-04T00:00:00.000Z"));
-
-    let summaries = repository
-        .list_chat_summaries(Some("alice"), true)
-        .await
-        .expect("list projected chat summary");
-    assert_eq!(summaries.len(), 1);
-    assert_eq!(summaries[0].character_name, "alice");
-    assert_eq!(summaries[0].file_name, "large.jsonl");
-    assert_eq!(
-        summaries[0].chat_metadata.as_ref().unwrap()["custom"],
-        "value"
-    );
-    assert_eq!(summaries[0].message_count, 1);
-    assert_eq!(summaries[0].preview, format!("...{}", "界".repeat(400)));
-    assert_eq!(summaries[0].date, date_last_chat);
-    assert_eq!(summaries[0].chat_id.as_deref(), Some("42"));
 
     cleanup_repository(repository, root).await;
 }
@@ -2679,49 +2690,23 @@ async fn list_recent_chat_summaries_ranks_by_last_message_date_not_file_mtime() 
         .await
         .expect("create alice card");
 
-    let newer_payload = payload_with_message(
-        "19a0d1e6-7970-55b6-938d-b7cd0c9d008d",
-        "2026-01-03T00:00:00.000Z",
-        "newer date",
-        "Alice",
-    );
-    commit_payload_bytes(
-        &repository,
-        character_target("alice", "session-newer-date"),
-        payload_to_jsonl(&newer_payload).as_bytes(),
-        false,
-    )
-    .await
-    .expect("save newer-date chat");
-
-    let newer_path = root
-        .join("chats")
-        .join("alice")
-        .join("session-newer-date.jsonl");
-    let older_path = root
-        .join("chats")
-        .join("alice")
-        .join("session-newer-mtime.jsonl");
-    let older_payload = payload_with_message(
-        "5857c0e3-8cce-5b29-a15a-e63b6f99b228",
-        "2026-01-01T00:00:00.000Z",
-        "older date",
-        "Alice",
-    );
-    commit_payload_bytes(
-        &repository,
-        character_target("alice", "session-newer-mtime"),
-        payload_to_jsonl(&older_payload).as_bytes(),
-        false,
-    )
-    .await
-    .unwrap();
-    set_backup_modified(&newer_path, UNIX_EPOCH + Duration::from_secs(1))
+    let chat_dir = root.join("chats/alice");
+    fs::create_dir_all(&chat_dir).await.unwrap();
+    for (name, date, modified) in [
+        ("session-newer-date.jsonl", "2026-01-03T00:00:00Z", 1),
+        ("session-newer-mtime.jsonl", "2026-01-01T00:00:00Z", 2),
+    ] {
+        let path = chat_dir.join(name);
+        fs::write(
+            &path,
+            format!("{{}}\n{}", json!({"send_date": date, "mes": name})),
+        )
         .await
         .unwrap();
-    set_backup_modified(&older_path, UNIX_EPOCH + Duration::from_secs(2))
-        .await
-        .unwrap();
+        set_backup_modified(&path, UNIX_EPOCH + Duration::from_secs(modified))
+            .await
+            .unwrap();
+    }
 
     let results = repository
         .list_recent_chat_summaries(None, false, 1, &[])

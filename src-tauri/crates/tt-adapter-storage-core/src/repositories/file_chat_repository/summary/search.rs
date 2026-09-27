@@ -2,7 +2,6 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use crate::chat_jsonl::{RecordPrefix, trim_whitespace};
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -11,7 +10,7 @@ use tt_domain::models::chat::strip_jsonl_extension;
 use tt_ports::repositories::chat_repository::ChatSearchResult;
 
 use super::super::FileChatRepository;
-use super::projection::{HeaderProjection, TailProjection};
+use super::projection::{self, FileProjection, TailProjection};
 use super::{ChatFileDescriptor, ScannedSummary};
 
 const FINGERPRINT_WORDS: usize = 64;
@@ -120,6 +119,8 @@ impl FileChatRepository {
                     continue;
                 }
             };
+            // Even an unmatched damaged file prevents caching this whole query.
+            complete &= !entry.preview_unavailable;
             let mut summary = entry.summary.clone();
             summary.chat_metadata = None;
             let file_stem = strip_jsonl_extension(&descriptor.file_name);
@@ -251,7 +252,7 @@ pub(super) async fn scan_with_fingerprint(
             continue;
         }
         if header.is_none() {
-            header = Some(parse_record(path, "chat header", record)?);
+            header = Some(projection::parse_header(record, path)?);
         }
         line_count += 1;
         fingerprint.add_text(&line);
@@ -259,37 +260,17 @@ pub(super) async fn scan_with_fingerprint(
         last_line.extend_from_slice(record);
     }
 
-    let header: HeaderProjection = header.unwrap_or_default();
-    let tail: TailProjection = if line_count == 0 {
+    let tail = if line_count <= 1 {
         TailProjection::default()
     } else {
-        parse_record(path, "last non-empty chat record", &last_line)?
+        projection::parse_tail(&last_line, path)?
     };
     Ok(ScannedSummary {
-        line_count,
-        character_name: header.character_name,
-        chat_metadata: header.chat_metadata,
-        last_message: tail.mes,
-        send_date: tail.send_date,
+        projection: FileProjection {
+            line_count,
+            header: header.unwrap_or_default(),
+            tail,
+        },
         fingerprint: Some(fingerprint),
-    })
-}
-
-fn parse_record<T: DeserializeOwned>(
-    path: &Path,
-    record_name: &str,
-    line: &[u8],
-) -> Result<T, DomainError> {
-    if !trim_whitespace(line).starts_with(b"{") {
-        return Err(DomainError::InvalidData(format!(
-            "The {record_name} in {} must be a JSON object",
-            path.display()
-        )));
-    }
-    serde_json::from_slice(line).map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Failed to parse {record_name} in {}: {error}",
-            path.display()
-        ))
     })
 }
