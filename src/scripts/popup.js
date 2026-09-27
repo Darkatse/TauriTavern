@@ -85,6 +85,7 @@ export const POPUP_RESULT = {
  * @property {number?} [max] - The maximum value for number inputs
  * @property {number?} [step] - The step value for number inputs
  * @property {boolean?} [disabled=false] - Whether the input should be disabled
+ * @property {boolean?} [autoFocus=false] - Whether this input should be auto-focused when the popup opens
  */
 
 /**
@@ -396,6 +397,7 @@ export class Popup {
                 inputElement.id = input.id;
                 inputElement.checked = Boolean(input.defaultState ?? false);
                 inputElement.disabled = Boolean(input.disabled ?? false);
+                if (input.autoFocus) { inputElement.setAttribute('autofocus', ''); inputElement.tabIndex = 0; }
                 label.appendChild(inputElement);
                 const labelText = document.createElement('span');
                 labelText.innerText = input.label;
@@ -422,6 +424,7 @@ export class Popup {
                 inputElement.value = String(input.defaultState ?? '');
                 inputElement.placeholder = input.tooltip ?? '';
                 inputElement.disabled = Boolean(input.disabled ?? false);
+                if (input.autoFocus) { inputElement.setAttribute('autofocus', ''); inputElement.tabIndex = 0; }
                 setTitleFromTooltip(inputElement, input.tooltip);
 
                 const labelText = document.createElement('span');
@@ -444,6 +447,7 @@ export class Popup {
                 inputElement.rows = input.rows ?? 1;
                 inputElement.placeholder = input.tooltip ?? '';
                 inputElement.disabled = Boolean(input.disabled ?? false);
+                if (input.autoFocus) { inputElement.setAttribute('autofocus', ''); inputElement.tabIndex = 0; }
                 setTitleFromTooltip(inputElement, input.tooltip);
 
                 const labelText = document.createElement('span');
@@ -469,6 +473,7 @@ export class Popup {
                 inputElement.max = String(input.max ?? '');
                 inputElement.step = String(input.step ?? '');
                 inputElement.disabled = Boolean(input.disabled ?? false);
+                if (input.autoFocus) { inputElement.setAttribute('autofocus', ''); inputElement.tabIndex = 0; }
                 setTitleFromTooltip(inputElement, input.tooltip);
 
                 inputElement.addEventListener('change', () => {
