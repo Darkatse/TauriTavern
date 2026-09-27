@@ -98,6 +98,7 @@
     "agent_system.modelRetries": "模型重試次數",
     "agent_system.modelSource": "模型來源",
     "agent_system.modelTargetInvalidationFailed": "已儲存模型「{name}」無法移除過期的 Agent LLM 連線：{error}",
+    "agent_system.modelTargetCleanupFailed": "無法移除已刪除模型的 Agent LLM 連線：{error}",
     "agent_system.modelTargetSyncFailed": "已儲存模型「{name}」無法同步到 Agent LLM 連線：{error}",
     "agent_system.name": "名稱",
     "agent_system.new": "新增",

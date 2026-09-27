@@ -1,6 +1,6 @@
 # Models API
 
-`api.models` 列出用户在 Connection Manager 中保存的模型（Model Target），也就是 Agent Profile 和 App assistant 可选的那一份列表。它只读，不含密钥；保存、改名、删除仍在 Connection Manager 中完成。没有保存预设的 Connection Profile 虽然也显示在下拉框的「模型」组，但不在本列表中。
+`api.models` 列出用户在 Connection Manager 中保存的模型（Model Target），含文本补全模型（`mode: 'tc'`、`connectionRef` 为 `null`，在 Agent Profile 与 App assistant 的选择器中显示为不可用）。它只读，不含密钥；保存、改名、删除仍在 Connection Manager 中完成。没有保存预设的 Connection Profile 虽然也显示在下拉框的「模型」组，但不在本列表中。
 
 状态：Project Contract（实验性），签名可能调整。
 
@@ -57,7 +57,7 @@ const result = await ConnectionManagerRequestService.sendRequest(model.requestId
 
 ## 连接由谁决定
 
-选中模型，或选中记录了 API 的 Connection Profile（含「模型+预设」）时，由选中项决定连接：切换预设不改变连接，保存预设时保留预设原有的连接字段。选中项不记录 API 或未选中任何项时，由「预设绑定连接」开关决定，与上游一致。实时设置偏离选中项时，行内出现「重新应用」（API 面板还有「覆盖」），选项文字不变。选中项不决定连接且开启绑定时，导入一个会切换当前连接的预设会先询问是加载并切换连接，还是只导入预设。详见 [LLM Connection API](LlmConnections.md#connection-manager)。
+选中模型，或选中记录了 API 的 Connection Profile（含「模型+预设」）时，由选中项决定连接：切换预设不改变连接，保存预设时保留预设原有的连接字段。选中项不记录 API 或未选中任何项时，由「预设绑定连接」开关决定，与上游一致。实时设置偏离选中项时，行内出现「重新应用」，API 面板常驻的 💾 保存同时高亮；选项文字不变。选中项不决定连接且开启绑定时，导入一个会切换当前连接的预设会先询问是加载并切换连接，还是只导入预设。详见 [LLM Connection API](LlmConnections.md#connection-manager)。
 
 Agent Profile 与 App assistant 绑定模型后跟随模型：修改模型的模型名后无需重新选择；文本补全模型在选择器中显示为不可用。
 

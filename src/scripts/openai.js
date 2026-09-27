@@ -7029,9 +7029,9 @@ function onSettingsPresetChange() {
     const updateInput = (selector, value) => $(selector).val(value).trigger('input', { source: 'preset' });
     const updateCheckbox = (selector, value) => $(selector).prop('checked', value).trigger('input', { source: 'preset' });
 
-    // Allow subscribers to alter the preset before applying deltas. `bindConnection`
-    // starts from the user's binding toggle; a subscriber that owns the connection
-    // (Connection Manager with a selected model) clears it for this change only.
+    // Allow subscribers to alter the preset before applying deltas. A subscriber that owns
+    // the connection (Connection Manager with a selected model) sets `bindConnection` to false
+    // for this change only; left unset, the binding toggle decides, read after subscribers.
     const presetEvent = {
         preset: preset,
         presetName: presetName,
@@ -7039,11 +7039,11 @@ function onSettingsPresetChange() {
         settings: oai_settings,
         savePreset: saveOpenAIPreset,
         presetNameBefore: presetNameBefore,
-        bindConnection: oai_settings.bind_preset_to_connection,
+        bindConnection: /** @type {boolean | undefined} */ (undefined),
     };
     eventSource.emit(event_types.OAI_PRESET_CHANGED_BEFORE, presetEvent).finally(async () => {
         if (oai_settings.preset_settings_openai !== presetName) return;
-        const bindConnection = presetEvent.bindConnection;
+        const bindConnection = presetEvent.bindConnection ?? oai_settings.bind_preset_to_connection;
 
         // Custom formats self-heal through the source selector; an OpenCode format has no such
         // fallback, so a preset that would apply an unknown one is rejected before any field is.
@@ -9421,7 +9421,10 @@ export function initOpenAI() {
     });
 
     $('#openai_reasoning_effort').on('input', function () {
-        oai_settings.reasoning_effort = String($(this).val());
+        const value = $(this).val();
+        // A preset value outside this source's options can't be selected; keep it stored.
+        if (value === null) return;
+        oai_settings.reasoning_effort = String(value);
         saveSettingsDebounced();
     });
 

@@ -66,7 +66,7 @@ Agent System 将 Connection Manager 的 Model Target 物化为 `model-target-<ta
 新建时有两种保存方式，默认名称为模型名：
 
 - 「保存模型」生成 Model Target：只含路由（API、Custom 格式、服务器地址、模型、代理预设、密钥引用）和下文的请求整形，不含预设。
-- 「保存模型+预设」生成上游格式的 Connection Profile，只记录模型路由（API、格式、地址、模型、代理预设、密钥、提示词后处理）和设置预设；其余字段（停止字符串、以…开始回复、推理模板、正则预设，以及文本补全的模板类字段）记入 `exclude`。这类 Profile 带有标记 `extensions.tauritavern.kind = 'modelAndPreset'`，`/profile-update` 与编辑都会保留它；编辑时只提供改名，其他 Profile 仍打开上游的字段勾选编辑器。标记出现之前保存的此类 Profile，在首次加载时按 `exclude` 与上述集合完全一致识别并补上标记，只迁移一次（完成后记录 `modelAndPresetMarked`）。
+- 「保存模型+预设」生成上游格式的 Connection Profile，只记录模型路由（API、格式、地址、模型、代理预设、密钥、提示词后处理）和设置预设；其余字段（停止字符串、以…开始回复、推理模板、正则预设，以及文本补全的模板类字段）记入 `exclude`。这类 Profile 带有标记 `extensions.tauritavern.kind = 'modelAndPreset'`，`/profile-update` 与编辑都会保留它；编辑时只提供改名，其他 Profile 仍打开上游的字段勾选编辑器。
 
 需要包含全局格式化设置的完整 Profile 仍可用 `/profile-create` 创建，已有 Profile 照常编辑和应用。
 
@@ -90,11 +90,12 @@ Agent System 将 Connection Manager 的 Model Target 物化为 `model-target-<ta
 - Custom 端点的 include headers、include body、exclude body；
 - Custom Claude Messages 格式的 Claude 提示词缓存，Custom Responses 格式的 WebSocket 模式。
 
-include / exclude 三项在设置中按端点保存在 Additional Parameters 里，读写时使用该项自身格式对应的条目。选中时应用这些值；切换到其他项、选择「无」或删除选中项时，上一项写入的值恢复为当前加载预设所存的值，预设未存时为空或关闭。这一恢复不看「预设绑定连接」开关，开关关闭时也会发生：离开模型后这些值总回到预设所存，换来的是模型的整形不会残留到下一个连接。较早保存、缺少某项非开关提示的模型不改动该项。
+include / exclude 三项在设置中按端点保存在 Additional Parameters 里，读写时使用该项自身格式对应的条目。选中时应用这些值；切换到其他项时，上一项写入的值先恢复为当前加载预设所存的值（预设未存时为空或关闭），再写入新项自己的值。这一恢复不看「预设绑定连接」开关，开关关闭时也会发生，换来的是模型的整形不会残留到下一个连接。选择「无」或删除选中项不改动实时连接，整形也随之保留，与路由保持配套，直到进入下一项。新建或另存为的项从实时设置采集整形，保存后即由它负责这些值。较早保存、缺少某项非开关提示的模型不改动该项。
 
 ### 已知限制
 
-- 省略回复上限时，后端为要求 `max_tokens` 的 Claude Messages 与 Bedrock 请求补 25k。输出上限较低的旧模型（如 Claude 3 的 4096 / 8192）会拒绝该请求，使用这些模型时需要保留回复上限。
+- 省略回复上限时，后端为所有 Claude Messages 请求（原生、Vertex、Bedrock、Custom Claude Messages）与 Bedrock 自定义模板补 25k。输出上限较低的旧模型（如 Claude 3 的 4096 / 8192）会拒绝该请求，使用这些模型时需要保留回复上限。
+- 在 Custom / OpenCode 格式下选择的 `none` / `minimal`（以及 dev 上已有的 `xhigh`）会随预设导出；上游 SillyTavern 的下拉框没有这些值，读到的是 `null`，按该值发送可能被接口拒绝。与上游共用的预设宜避开这些档位，或导入后重新选择。
 - 连接的 `modelId` 与 Agent Profile 推理强度的 `none` / `minimal` 是新字段和新取值。后端结构拒绝未知字段与取值，较旧的 TauriTavern 版本无法读取含有它们的连接和 Profile 文件，不支持降级。
 
 ## 实现

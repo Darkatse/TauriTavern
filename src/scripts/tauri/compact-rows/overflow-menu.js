@@ -1,6 +1,7 @@
 // @ts-check
 
 import { Popper } from '../../../lib.js';
+import { SURFACE, applySurface } from '../../tauritavern/layout-kit.js';
 
 const STYLE_ID = 'tauritavern-compact-rows-style';
 
@@ -165,6 +166,12 @@ function open(button, items) {
         });
         menu.append(entry);
     }
+    // The menu sits on <body>, outside the drawer it belongs to: keep SillyTavern's
+    // "press outside closes drawers" handler off it, and keep the mobile geometry
+    // firewall from treating it as a top-edge window (Popper places it).
+    menu.addEventListener('mousedown', event => event.stopPropagation());
+    menu.addEventListener('touchstart', event => event.stopPropagation(), { passive: true });
+    applySurface(menu, SURFACE.None);
     document.body.append(menu);
 
     const popper = Popper.createPopper(button, menu, {
@@ -176,7 +183,8 @@ function open(button, items) {
     /** @type {(Element | Window)[]} */
     const scrollTargets = [...scrollAncestorsOf(button), window];
 
-    const onPointerDown = (/** @type {PointerEvent} */ event) => {
+    // `mousedown` too: the Android back button dispatches a synthetic one on <html>.
+    const onPointerDown = (/** @type {Event} */ event) => {
         if (!menu.contains(/** @type {Node} */ (event.target)) && !button.contains(/** @type {Node} */ (event.target))) close();
     };
     const onKeyDown = (/** @type {KeyboardEvent} */ event) => {
@@ -206,6 +214,7 @@ function open(button, items) {
         if (closed) return;
         closed = true;
         document.removeEventListener('pointerdown', onPointerDown, true);
+        document.removeEventListener('mousedown', onPointerDown, true);
         document.removeEventListener('keydown', onKeyDown, true);
         menu.removeEventListener('focusout', onFocusOut);
         for (const target of scrollTargets) target.removeEventListener('scroll', onMoved);
@@ -218,6 +227,7 @@ function open(button, items) {
     closeOpenMenu = close;
 
     document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('mousedown', onPointerDown, true);
     document.addEventListener('keydown', onKeyDown, true);
     menu.addEventListener('focusout', onFocusOut);
     for (const target of scrollTargets) target.addEventListener('scroll', onMoved, { passive: true });

@@ -18,7 +18,7 @@ const WATCHED_EVENTS = [
  * @param {object} options
  * @param {() => boolean} options.isBusy Whether an item is being applied right now
  * @param {(dirty: boolean) => void} options.onChange Called when the state flips
- * @returns {{ track: (readFingerprint: () => Promise<string>) => Promise<void>, clear: () => void, isDirty: () => boolean }}
+ * @returns {{ track: (readFingerprint: () => Promise<string>) => Promise<void>, clear: () => void }}
  */
 export function installDriftTracker({ isBusy, onChange }) {
     /** @type {{ read: () => Promise<string>, fingerprint: string } | null} */
@@ -67,6 +67,5 @@ export function installDriftTracker({ isBusy, onChange }) {
             baseline = null;
             setDirty(false);
         },
-        isDirty: () => dirty,
     };
 }

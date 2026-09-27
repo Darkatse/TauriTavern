@@ -155,6 +155,7 @@ export const DEFAULT_MESSAGES = {
     "modelRequiresConfiguration": "Select a model before running",
     "modelRetries": "Model Retries",
     "modelSource": "Model Source",
+    "modelTargetCleanupFailed": "Could not remove Agent LLM connections of deleted models: {error}",
     "modelTargetInvalidationFailed": "Saved model \"{name}\" could not remove its stale Agent LLM connection: {error}",
     "modelTargetSyncFailed": "Saved model \"{name}\" could not be synced to Agent LLM connections: {error}",
     "noPromptPreset": "No preset",

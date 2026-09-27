@@ -427,16 +427,6 @@ function normalizeConnectionManagerSettings() {
     if (settings.selectedItem?.kind) {
         settings.selectedProfile = settings.selectedItem.kind === CONNECTION_ITEM_KIND.PROFILE ? settings.selectedItem.id : null;
     }
-    if (!settings.modelAndPresetMarked) {
-        const expected = getModelAndPresetExclude();
-        for (const profile of settings.profiles) {
-            const exclude = Array.isArray(profile.exclude) ? profile.exclude : [];
-            if (exclude.length === expected.length && expected.every(command => exclude.includes(command))) {
-                markModelAndPresetProfile(profile);
-            }
-        }
-        settings.modelAndPresetMarked = true;
-    }
 }
 
 /**
@@ -1561,7 +1551,7 @@ async function editLegacyProfile(profile) {
     if (update) {
         await updateConnectionProfile(profile);
     } else if (excludeChanged) {
-        toastr.info(t`Press "Update" to record them into the profile.`, t`Included settings list updated`);
+        toastr.info(t`Press 💾 to record them into the profile.`, t`Included settings list updated`);
     }
     if (update || excludeChanged) {
         // The profile records other fields now.
@@ -1906,6 +1896,7 @@ export async function init() {
 
     /** Keeps save / save as / create in the row; the rest moves into the "⋯" menu. */
     function installCompactActions() {
+        profiles.parentElement.classList.add('tt-sel-row');
         for (const button of [viewDetails, editButton, deleteButton, reloadButton]) {
             button.classList.add('tt-hidden');
         }
@@ -1967,8 +1958,8 @@ export async function init() {
         await refreshSelectionUi();
 
         if (!ref) {
-            // None keeps the connection, but not the request hints a model wrote.
-            switchRequestHints(null);
+            // None keeps the live connection as it is, request hints included; the next
+            // item entered restores what the previous one wrote.
             trackSelectedItem();
             await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, NONE);
             return true;
@@ -2008,6 +1999,9 @@ export async function init() {
      * @param {{kind:string, item:ConnectionProfile|LlmModelTarget}} created
      */
     async function addCreatedItem(created) {
+        if (decidedHints(created.item).length > 0) {
+            switchRequestHints(created.item);
+        }
         const isProfile = created.kind === CONNECTION_ITEM_KIND.PROFILE;
         (isProfile ? extension_settings.connectionManager.profiles : extension_settings.connectionManager.modelTargets).push(created.item);
         setSelectedItemRef({ kind: created.kind, id: created.item.id });
@@ -2057,8 +2051,7 @@ export async function init() {
         if (!deleted) {
             return;
         }
-        // Nothing is selected now: as with choosing none, the deleted item's hints go.
-        switchRequestHints(null);
+        // Nothing is selected now; as with choosing none, the live connection stays.
         trackSelectedItem();
         await eventSource.emit(isTarget ? event_types.MODEL_TARGET_LOADED : event_types.CONNECTION_PROFILE_LOADED, NONE);
         await refreshSelectionUi();

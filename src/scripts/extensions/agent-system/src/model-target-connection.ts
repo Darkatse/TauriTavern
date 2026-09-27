@@ -79,17 +79,11 @@ export async function saveModelTargetAsLlmConnection(
 }
 
 export async function syncSavedModelTargetLlmConnections(): Promise<void> {
-    const targets = listSavedModelTargets();
-    // Connections this pass saved or already tried to remove; any other model connection is an orphan.
-    const handledConnectionIds = new Set<string>();
-
-    for (const target of targets) {
+    for (const target of listSavedModelTargets()) {
         try {
-            const connection = await saveModelTargetAsLlmConnection(target);
-            handledConnectionIds.add(connection.id);
+            await saveModelTargetAsLlmConnection(target);
         } catch (error) {
             const invalidation = await invalidateModelTargetLlmConnection(target);
-            handledConnectionIds.add(invalidation.connectionId);
             console.warn('[AgentSystem] Skipped Model Target LLM Connection sync', target, error, invalidation);
             if (invalidation.error) {
                 reportModelTargetInvalidationFailure(target, invalidation);
@@ -97,16 +91,24 @@ export async function syncSavedModelTargetLlmConnections(): Promise<void> {
         }
     }
 
-    await deleteOrphanModelTargetLlmConnections(handledConnectionIds);
+    // Housekeeping: a failure is reported but must not keep Agent System from starting.
+    try {
+        await deleteOrphanModelTargetLlmConnections();
+    } catch (error) {
+        console.error('[AgentSystem] Failed to clean up orphaned Model Target LLM Connections', error);
+        window.toastr?.error?.(tr('modelTargetCleanupFailed', { error: errorText(error) }));
+    }
 }
 
 /**
  * Deletion normally follows MODEL_TARGET_DELETED; a model deleted while this listener was
  * not running (Agent System disabled, app closed mid-way) leaves its connection behind.
  */
-async function deleteOrphanModelTargetLlmConnections(keptConnectionIds: ReadonlySet<string>): Promise<void> {
+async function deleteOrphanModelTargetLlmConnections(): Promise<void> {
     const llmConnectionsApi = requireLlmConnectionsApi();
     const { connections } = await llmConnectionsApi.list();
+    // Read after listing, so a model saved meanwhile keeps its connection.
+    const keptConnectionIds = new Set(listSavedModelTargets().map(modelTargetConnectionRef));
     for (const connection of connections) {
         if (!modelTargetIdFromConnectionRef(connection.id) || keptConnectionIds.has(connection.id)) {
             continue;
