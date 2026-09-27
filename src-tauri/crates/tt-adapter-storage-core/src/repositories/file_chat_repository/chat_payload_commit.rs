@@ -1,3 +1,4 @@
+use crate::chat_jsonl::{parse_header_integrity, read_header_record_async};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -353,6 +354,12 @@ impl ChatPayloadCommitRepository for FileChatRepository {
                     "Chat commit size mismatch: expected {expected_size}, accepted {accepted_offset}, staged {actual_size}"
                 )));
             }
+            // Validate only the incoming header. Body interpretation belongs to readers;
+            // the normal complete commit must not add another full-payload scan.
+            let (header, _) = read_header_record_async(&mut tokio::io::BufReader::new(
+                super::windowed_payload_io::open_existing_payload_file(&stage_path).await?,
+            )).await?.ok_or_else(|| DomainError::InvalidData("Chat payload must contain a header".into()))?;
+            let incoming_integrity = parse_header_integrity(&header)?;
             let (file, publish_path, published_size, digest) = if let Some(cold) = cold_source {
                 drop(file);
                 let restored = cold.source.restore_payload(cold.id, &stage_path, &expanded_path, content_hasher.is_some()).await?;
@@ -375,9 +382,6 @@ impl ChatPayloadCommitRepository for FileChatRepository {
                     },
                 )
             });
-
-            let incoming_integrity =
-                Self::read_incoming_integrity_from_file(&stage_path).await?;
 
             let _write_guard = self.acquire_payload_mutation_lock(&target_path).await;
             if !force {

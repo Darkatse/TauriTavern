@@ -20,8 +20,6 @@ use super::backup_inventory::{
     BackupCandidate, BackupEntry, BackupHistoryState, BackupInventory, BackupInventoryState,
     parsed_backup_prefix, plan_evictions,
 };
-#[cfg(test)]
-use super::summary::ChatFileDescriptor;
 use crate::file_system::persist_file;
 
 enum BackupPublishOutcome {
@@ -678,22 +676,6 @@ impl FileChatRepository {
                 Err(error)
             }
         }
-    }
-
-    #[cfg(test)]
-    pub(super) async fn list_chat_backup_files(
-        &self,
-    ) -> Result<Vec<ChatFileDescriptor>, DomainError> {
-        Ok(self
-            .list_chat_backup_entries()
-            .await?
-            .into_iter()
-            .map(|entry| ChatFileDescriptor {
-                character_name: String::new(),
-                file_name: entry.logical_file_name,
-                path: self.backups_dir.join(entry.file_name),
-            })
-            .collect())
     }
 
     pub(super) async fn list_chat_backup_entries(&self) -> Result<Vec<BackupEntry>, DomainError> {

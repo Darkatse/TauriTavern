@@ -11,6 +11,9 @@ use tt_ports::repositories::chat_types::{
 };
 
 use super::{FileChatRepository, classify_message_role};
+use crate::chat_jsonl::{
+    parse_header_integrity, parse_record, read_header_record_async, trim_whitespace,
+};
 
 impl FileChatRepository {
     pub(super) async fn read_character_chat_messages_internal(
@@ -52,23 +55,11 @@ async fn read_chat_messages_from_path(
         }
     })?;
     let target_indices = indices.iter().copied().collect::<HashSet<_>>();
-    let mut lines = BufReader::new(file).lines();
-
-    let Some(header) = lines.next_line().await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to read chat payload header {}: {}",
-            path.display(),
-            error
-        ))
-    })?
-    else {
-        return Err(DomainError::InvalidData(format!(
-            "Chat payload is empty: {}",
-            path.display()
-        )));
-    };
-    parse_json_line(&header, path, 1)?;
-
+    let mut reader = BufReader::new(file);
+    if let Some((header, _)) = read_header_record_async(&mut reader).await? {
+        parse_header_integrity(&header)?;
+    }
+    let mut lines = reader.lines();
     let mut messages = Vec::new();
     let mut index = 0_usize;
     while let Some(line) = lines.next_line().await.map_err(|error| {
@@ -78,15 +69,16 @@ async fn read_chat_messages_from_path(
             error
         ))
     })? {
-        if line.trim().is_empty() {
-            return Err(DomainError::InvalidData(format!(
-                "Chat payload contains a blank message line at JSONL line {} for {}",
-                index + 2,
-                path.display()
-            )));
+        if trim_whitespace(line.as_bytes()).is_empty() {
+            continue;
         }
 
-        let value = parse_json_line(&line, path, index + 2)?;
+        let value = parse_record(line.as_bytes()).map_err(|error| {
+            DomainError::InvalidData(format!(
+                "Invalid chat message {index} in {}: {error}",
+                path.display()
+            ))
+        })?;
         if target_indices.contains(&index) {
             messages.push(read_item_from_value(index, &value)?);
         }
@@ -96,17 +88,6 @@ async fn read_chat_messages_from_path(
     Ok(ChatMessagesReadResult {
         total_messages: index,
         messages,
-    })
-}
-
-fn parse_json_line(line: &str, path: &Path, line_number: usize) -> Result<Value, DomainError> {
-    serde_json::from_str::<Value>(line).map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Failed to parse chat payload JSON at line {} for {}: {}",
-            line_number,
-            path.display(),
-            error
-        ))
     })
 }
 

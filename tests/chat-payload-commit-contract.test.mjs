@@ -133,7 +133,7 @@ for (const scenario of [
             await release.promise;
             calls.push({ command, args: JSON.parse(JSON.stringify(args)) });
         });
-        const chatMetadata = { integrity: 'chat', variables: { score: 1 } };
+        const chatMetadata = { integrity: '10000000-0000-4000-8000-000000000002', variables: { score: 1 } };
         try {
             const pending = scenario.save(chatMetadata);
             chatMetadata.variables.score = 2;
@@ -141,7 +141,7 @@ for (const scenario of [
             await pending;
             assert.deepEqual(calls, [{
                 command: 'commit_chat_metadata',
-                args: { target: scenario.target, chatMetadata: { integrity: 'chat', variables: { score: 1 } } },
+                args: { target: scenario.target, chatMetadata: { integrity: '10000000-0000-4000-8000-000000000002', variables: { score: 1 } } },
             }]);
         } finally {
             restore();
@@ -246,7 +246,7 @@ for (const scenario of [
         });
         const restore = installRuntime('Mozilla/5.0 (Linux; Android 14)', host.invoke);
         const payload = [
-            { chat_metadata: { integrity: 'chat', variables: { score: 1 } } },
+            { chat_metadata: { integrity: '10000000-0000-4000-8000-000000000002', variables: { score: 1 } } },
             { mes: 'first message', extra: { extension: { enabled: true } } },
             { mes: 'last message', swipes: ['original swipe'] },
         ];
@@ -292,7 +292,13 @@ test('chat payload commit rejects invalid payloads before opening a session', as
     const restore = installRuntime('Mozilla/5.0 (Macintosh)', host.invoke);
 
     try {
-        await assert.rejects(() => commit([null]), /entry at index 0/i);
+        for (const payload of [
+            [], [null], [{}, []],
+            [{ chat_metadata: { integrity: 'invalid' } }],
+            [{ chat_metadata: { integrity: '10000000-0000-4000-8000-000000000002\n' } }],
+        ]) {
+            await assert.rejects(commitChatPayload({ target: TARGET, payload, force: true, commitReason: 'mutation' }));
+        }
         assert.deepEqual(host.calls, []);
     } finally {
         restore();
@@ -427,7 +433,7 @@ for (const route of [
                 const response = await router.handle({
                     method: 'POST',
                     path: route.path,
-                    body: { ...route.body, chat: [{ chat_metadata: { integrity: 'chat' } }, { mes: 'saved' }] },
+                    body: { ...route.body, chat: [{ chat_metadata: { integrity: '10000000-0000-4000-8000-000000000002' } }, { mes: 'saved' }] },
                 });
                 assert.equal(response.status, scenario.status);
                 assert.deepEqual(await response.json(), scenario.body);
@@ -440,7 +446,7 @@ for (const route of [
 
 
 test('cold commit preserves the captured marker and accepts an expanded published size', async () => {
-    const payload = [{ chat_metadata:{} }, {mes:'active',swipe_id:1,swipes:[null,'active'],swipe_info:[null,{}],tt_swipe_cold:{sourceId:7,record:3}}];
+    const payload = [{ chat_metadata:{}, tt_swipe_cold:{opaque_header_field:true} }, {mes:'active',swipe_id:1,swipes:[null,'active'],swipe_info:[null,{}],tt_swipe_cold:{sourceId:7,record:3}}];
     const host = createCommitHost({ expectedColdSourceId:7, publishedSizeDelta:500 });
     const restore = installRuntime('Desktop', host.invoke);
     try {
@@ -449,6 +455,7 @@ test('cold commit preserves the captured marker and accepts an expanded publishe
         payload[1].mes = 'later';
         await pending;
         const sent = Buffer.concat(host.frames.map(frame => Buffer.from(frame.bytes))).toString();
+        assert.deepEqual(JSON.parse(sent.split('\n')[0]), payload[0]);
         const message = JSON.parse(sent.split('\n')[1]);
         assert.equal(message.tt_swipe_cold.sourceId, 7);
         assert.equal(message.mes, 'active');
@@ -459,7 +466,7 @@ test('mixed cold sources reject before starting a commit', async () => {
     const host = createCommitHost();
     const restore = installRuntime('Desktop', host.invoke);
     try {
-        await assert.rejects(commit([{tt_swipe_cold:{sourceId:7,record:1}},{tt_swipe_cold:{sourceId:8,record:2}}]), /mixed cold swipe sources/);
+        await assert.rejects(commit([{}, {tt_swipe_cold:{sourceId:7,record:1}},{tt_swipe_cold:{sourceId:8,record:2}}]), /mixed cold swipe sources/);
         assert.equal(host.calls.length, 0);
     } finally { restore(); }
 });

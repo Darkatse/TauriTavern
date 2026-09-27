@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { randomUUID } from 'node:crypto';
 import { createBrowserRuntime } from './runtime.mjs';
 
 function chatPayload(fileName) {
     return [
-        { user_name: 'User', character_name: 'Review', chat_metadata: { integrity: fileName } },
+        { user_name: 'User', character_name: 'Review', chat_metadata: { integrity: randomUUID() } },
         { name: 'User', is_user: true, is_system: false, mes: fileName, send_date: '2026-01-01T12:00:00Z', extra: {} },
     ].map(entry => JSON.stringify(entry)).join('\n');
 }
@@ -289,6 +290,19 @@ test('chat persistence and navigation', async (context) => {
         }
 
         for (const kind of ['character', 'group']) {
+            await context.test(`${kind}: persisted empty chats and field-free headers load without a message`, async () => {
+                await reset(kind);
+                for (const text of ['', ' \n\uFEFF\n\t', '{}']) {
+                    await openExplicit('later-chat');
+                    assert.equal(main.chat.length, 1);
+                    payloads.set('target-chat', text);
+                    await openExplicit('target-chat');
+                    assert.equal(main.chat.length, 0);
+                    assert.equal(storedChat, 'target-chat');
+                    assert.deepEqual(errors, []);
+                }
+            });
+
             await context.test(`${kind}: recent opens only its target and supports a subsequent same-entity switch`, async () => {
                 await reset(kind);
                 await clickRecent();
@@ -355,7 +369,7 @@ test('chat persistence and navigation', async (context) => {
             await context.test(`${kind}: cold deletion stays synchronous, appended swipes save, and historical rollback hydrates on demand`, async () => {
                 await reset(kind);
                 const original = [
-                    { chat_metadata: { integrity: 'target-chat' } },
+                    { chat_metadata: { integrity: randomUUID() } },
                     { name:'Review', mes:'active', swipe_id:1, swipes:['older','active'], swipe_info:[{extra:{}},{extra:{}}], variables:[{score:0},{score:1}], extra:{} },
                     { name:'User', mes:'tail', is_user:true, extra:{} },
                 ];
@@ -508,7 +522,7 @@ test('chat persistence and navigation', async (context) => {
                     assert.equal(main.isChatSaving, false);
                     assert.equal(nextEntered, true);
                     assert.deepEqual(commits, [{ kind: 'full', fileName: 'target-chat', force: true, reason: 'mutation' }]);
-                    assert.equal(readHeader('target-chat').chat_metadata.integrity, 'target-chat');
+                    assert.equal(readHeader('target-chat').chat_metadata.integrity, main.chat_metadata.integrity);
                     assert.equal(JSON.parse(payloads.get('target-chat').split('\n')[1]).mes, 'local body');
                 } finally {
                     Popup.show.input = originalInput;

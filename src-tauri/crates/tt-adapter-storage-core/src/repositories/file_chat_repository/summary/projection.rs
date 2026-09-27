@@ -1,6 +1,7 @@
-use std::io::{self, BufReader, Read, Seek, SeekFrom};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
+use crate::chat_jsonl::{is_whitespace, skip_preamble, validate_metadata_integrity};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -59,7 +60,9 @@ fn deserialize_present_json_value<'de, D>(deserializer: D) -> Result<Option<Valu
 where
     D: serde::Deserializer<'de>,
 {
-    Value::deserialize(deserializer).map(Some)
+    let value = Value::deserialize(deserializer)?;
+    validate_metadata_integrity(&value).map_err(serde::de::Error::custom)?;
+    Ok(Some(value))
 }
 
 pub(super) async fn read_last_raw_date(
@@ -72,7 +75,32 @@ pub(super) async fn read_last_raw_date(
     };
     let task_path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        read_raw_record::<DateProjection>(&task_path, span).map(|record| record.send_date)
+        let mut reader = BufReader::with_capacity(BUFFER_BYTES, open_raw(&task_path)?);
+        let header_start = skip_preamble(&mut reader)?;
+        if header_start == file_size {
+            return Ok(None);
+        }
+        let header_only = span.start <= header_start;
+        let span = RecordSpan {
+            start: span.start.max(header_start),
+            end: span.end,
+        };
+        let mut file = reader.into_inner();
+        file.seek(SeekFrom::Start(span.start))
+            .map_err(|error| file_io_error("seek", &task_path, error))?;
+        let reader = Utf8Reader {
+            inner: file.take(span.len()),
+            path: &task_path,
+            offset: span.start,
+            pending: Vec::with_capacity(3),
+            scratch: Vec::with_capacity(BUFFER_BYTES + 3),
+        };
+        if header_only {
+            parse_record::<HeaderProjection>(reader, &task_path, span)?;
+            Ok(None)
+        } else {
+            parse_record::<DateProjection>(reader, &task_path, span).map(|record| record.send_date)
+        }
     })
     .await
     .map_err(|error| {
@@ -143,7 +171,7 @@ async fn find_last_record_span(
                 }
                 record_end = offset;
                 has_content = false;
-            } else if !byte.is_ascii_whitespace() {
+            } else if !is_whitespace(byte) {
                 has_content = true;
             }
         }
@@ -200,16 +228,23 @@ fn open_zstd(path: &Path) -> Result<impl Read, DomainError> {
 }
 
 fn scan_record_spans(
-    mut reader: impl Read,
+    reader: impl Read,
     path: &Path,
     format: BackupFormat,
 ) -> Result<SpanScan, DomainError> {
     let mut scan = SpanScan::default();
+    let mut reader = BufReader::with_capacity(BUFFER_BYTES, reader);
+    let preamble_len = skip_preamble(&mut reader)?;
+    let mut reader = Utf8Reader {
+        inner: reader,
+        path,
+        offset: preamble_len,
+        pending: Vec::with_capacity(3),
+        scratch: Vec::with_capacity(BUFFER_BYTES + 3),
+    };
     let mut buffer = vec![0; BUFFER_BYTES];
-    let mut utf8_pending = Vec::with_capacity(3);
-    let mut utf8_scratch = Vec::with_capacity(BUFFER_BYTES + 3);
-    let mut offset = 0u64;
-    let mut record_start = 0u64;
+    let mut offset = preamble_len;
+    let mut record_start = preamble_len;
     let mut has_content = false;
 
     loop {
@@ -219,33 +254,18 @@ fn scan_record_spans(
         if bytes_read == 0 {
             break;
         }
-        validate_utf8_chunk(
-            path,
-            offset,
-            &buffer[..bytes_read],
-            &mut utf8_pending,
-            &mut utf8_scratch,
-        )?;
-
         for &byte in &buffer[..bytes_read] {
             if byte == b'\n' {
                 record_finished(&mut scan, record_start, offset, has_content);
                 record_start = offset + 1;
                 has_content = false;
-            } else if !byte.is_ascii_whitespace() {
+            } else if !is_whitespace(byte) {
                 has_content = true;
             }
             offset += 1;
         }
     }
 
-    if !utf8_pending.is_empty() {
-        return Err(DomainError::InvalidData(format!(
-            "Chat file {} ends with incomplete UTF-8 at byte {}",
-            path.display(),
-            offset - utf8_pending.len() as u64
-        )));
-    }
     record_finished(&mut scan, record_start, offset, has_content);
     Ok(scan)
 }
@@ -258,33 +278,6 @@ fn record_finished(scan: &mut SpanScan, start: u64, end: u64, has_content: bool)
     scan.line_count += 1;
     scan.first.get_or_insert(span);
     scan.last = Some(span);
-}
-
-fn validate_utf8_chunk(
-    path: &Path,
-    offset: u64,
-    bytes: &[u8],
-    pending: &mut Vec<u8>,
-    scratch: &mut Vec<u8>,
-) -> Result<(), DomainError> {
-    let pending_len = pending.len();
-    scratch.clear();
-    scratch.extend_from_slice(pending);
-    scratch.extend_from_slice(bytes);
-    pending.clear();
-
-    match std::str::from_utf8(scratch) {
-        Ok(_) => Ok(()),
-        Err(error) if error.error_len().is_none() => {
-            pending.extend_from_slice(&scratch[error.valid_up_to()..]);
-            Ok(())
-        }
-        Err(error) => Err(DomainError::InvalidData(format!(
-            "Chat file {} contains invalid UTF-8 at byte {}",
-            path.display(),
-            offset - pending_len as u64 + error.valid_up_to() as u64
-        ))),
-    }
 }
 
 fn read_raw_record<T: DeserializeOwned>(path: &Path, span: RecordSpan) -> Result<T, DomainError> {
@@ -335,8 +328,41 @@ fn parse_record<T: DeserializeOwned>(
     path: &Path,
     span: RecordSpan,
 ) -> Result<T, DomainError> {
-    let mut deserializer =
-        serde_json::Deserializer::from_reader(BufReader::with_capacity(BUFFER_BYTES, reader));
+    let mut reader = BufReader::with_capacity(BUFFER_BYTES, reader);
+    loop {
+        let bytes = reader.fill_buf().map_err(|error| {
+            if error.kind() == io::ErrorKind::InvalidData {
+                DomainError::InvalidData(format!(
+                    "Invalid chat record in {}: {error}",
+                    path.display()
+                ))
+            } else {
+                file_io_error("read", path, error)
+            }
+        })?;
+        let whitespace = bytes
+            .iter()
+            .take_while(|&&byte| is_whitespace(byte))
+            .count();
+        if whitespace < bytes.len() {
+            if bytes[whitespace] != b'{' {
+                return Err(DomainError::InvalidData(format!(
+                    "Chat record at byte {} in {} must be a JSON object",
+                    span.start,
+                    path.display()
+                )));
+            }
+            break;
+        }
+        if bytes.is_empty() {
+            return Err(DomainError::InvalidData(format!(
+                "Empty chat record in {}",
+                path.display()
+            )));
+        }
+        reader.consume(whitespace);
+    }
+    let mut deserializer = serde_json::Deserializer::from_reader(reader);
     let projection = T::deserialize(&mut deserializer).map_err(|error| {
         DomainError::InvalidData(format!(
             "Failed to parse chat record {}..{} in {}: {error}",
@@ -356,6 +382,57 @@ fn parse_record<T: DeserializeOwned>(
     Ok(projection)
 }
 
+struct Utf8Reader<'a, R> {
+    inner: R,
+    path: &'a Path,
+    offset: u64,
+    pending: Vec<u8>,
+    scratch: Vec<u8>,
+}
+
+impl<R: Read> Read for Utf8Reader<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        let len = self.inner.read(buffer)?;
+        if len == 0 && !self.pending.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Chat file {} ends with incomplete UTF-8 at byte {}",
+                    self.path.display(),
+                    self.offset - self.pending.len() as u64
+                ),
+            ));
+        }
+        let pending_len = self.pending.len();
+        self.scratch.clear();
+        self.scratch.extend_from_slice(&self.pending);
+        self.scratch.extend_from_slice(&buffer[..len]);
+        self.pending.clear();
+        match std::str::from_utf8(&self.scratch) {
+            Ok(_) => {}
+            Err(error) if error.error_len().is_none() => {
+                self.pending
+                    .extend_from_slice(&self.scratch[error.valid_up_to()..]);
+            }
+            Err(error) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Chat file {} contains invalid UTF-8 at byte {}",
+                        self.path.display(),
+                        self.offset - pending_len as u64 + error.valid_up_to() as u64
+                    ),
+                ));
+            }
+        }
+        self.offset += len as u64;
+        Ok(len)
+    }
+}
+
 fn file_io_error(operation: &str, path: &Path, error: io::Error) -> DomainError {
     DomainError::InternalError(format!(
         "Failed to {operation} chat file {}: {error}",
@@ -364,6 +441,9 @@ fn file_io_error(operation: &str, path: &Path, error: io::Error) -> DomainError 
 }
 
 fn read_error(path: &Path, format: BackupFormat, error: io::Error) -> DomainError {
+    if error.kind() == io::ErrorKind::InvalidData {
+        return DomainError::InvalidData(format!("Invalid chat file {}: {error}", path.display()));
+    }
     match format {
         BackupFormat::RawJsonl => file_io_error("read", path, error),
         BackupFormat::Zstd => DomainError::InvalidData(format!(
@@ -411,24 +491,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stats_projection_ignores_message_body() {
+    async fn stats_validate_record_shape_and_utf8_without_materializing_ignored_fields() {
         let path = std::env::temp_dir().join(format!(
-            "tauritavern-stats-projection-{}.jsonl",
+            "tauritavern-stats-format-{}.jsonl",
             random::<u64>()
         ));
-        let raw = json!({
-            "mes": { "not": "a string" },
-            "send_date": "2026-08-30T00:00:00.000Z"
-        })
-        .to_string();
-        fs::write(&path, &raw).await.unwrap();
-
-        let mut file = File::open(&path).await.unwrap();
-        let send_date = read_last_raw_date(&mut file, &path, raw.len() as u64)
-            .await
-            .unwrap();
-        assert_eq!(send_date, Some(json!("2026-08-30T00:00:00.000Z")));
-
-        let _ = fs::remove_file(path).await;
+        for message in [b"[]".as_slice(), b"{\"ignored\":\"\xff\"}".as_slice()] {
+            let raw = [b"{}\n".as_slice(), message].concat();
+            fs::write(&path, &raw).await.unwrap();
+            let mut file = File::open(&path).await.unwrap();
+            assert!(matches!(
+                read_last_raw_date(&mut file, &path, raw.len() as u64).await,
+                Err(DomainError::InvalidData(_))
+            ));
+        }
+        for raw in [" \r\n\u{feff}\n\t", " \n\u{feff}\n {}\n\t"] {
+            fs::write(&path, raw).await.unwrap();
+            let mut file = File::open(&path).await.unwrap();
+            assert_eq!(
+                read_last_raw_date(&mut file, &path, raw.len() as u64)
+                    .await
+                    .unwrap(),
+                None
+            );
+        }
+        fs::remove_file(path).await.unwrap();
     }
 }

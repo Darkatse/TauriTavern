@@ -4,7 +4,7 @@
 
 ## 1. 核心契约
 
-对合法 SillyTavern JSONL，第一行是 header，后续每个非空记录都是一条消息。当前聊天加载完成后：
+聊天 JSONL 的首个非空记录是 header，后续每个非空记录都是一条消息。当前聊天加载完成后：
 
 - `chat[]` 包含 header 之后的全部消息，顺序与磁盘一致。
 - `chat[i]` 始终是 0-based 绝对消息索引。
@@ -14,6 +14,17 @@
 - 未显式切换聊天时，角色的 `chat` 文件 stem 在浅层、完整和重复读取之间保持稳定。
 
 消息集合与索引遵循 SillyTavern 1.18.0；显式开启历史滑动按需加载时，候选内容采用下述受限表示。TauriTavern 不再提供 `chat_history_mode`，也不存在前端 window state、生成时 backfill 或局部 patch 保存。
+
+### 1.1 统一格式底线
+
+- header 和消息均须为 JSON object。`chat_metadata.integrity` 可缺省，出现则须为合法 UUID，不限版本，按原字符串比较；其他字段由使用它们的用例解释。
+- 严格解码 UTF-8，结构空白仅限空格、Tab、CR、LF。首个记录前允许空白和最多一个 BOM，由格式层统一消费；正文记录外不允许 BOM。
+- 无记录可读为空聊天；新完整提交必须自带合法 header，force 也不例外。无消息聊天写为 header-only。
+- 读取严格验证实际解释的记录，不跳过坏记录；原生完整字节提交只验证 header，不额外扫描正文。
+- TT 重新序列化写出无 BOM 的 UTF-8；原样传输、备份和复制保留字节。metadata 更新保留正文原字节，见 §3.1。
+- byte offset 以原文件计数；空白行不占逻辑记录编号。分页和 cold 消息切片不另设 header/BOM 前导区。
+
+迁移：摘要缓存按新格式语义重建，聊天文件不迁移。
 
 ## 2. 完整加载与受限 DOM
 
@@ -156,7 +167,7 @@ Rust：
 
 - DTO / service：`tt-application`。
 - repository ports：`tt-ports`。
-- JSONL 具体 I/O：`tt-adapter-storage-core`。
+- JSONL 格式与具体 I/O：`tt-adapter-storage-core`，共同格式规则位于 `chat_jsonl.rs`。
 - Tauri commands：`tauritavern` presentation 层。
 - 分页读取实现暂位于 `windowed_payload.rs` 与 `windowed_payload_io.rs`；文件名是内部历史命名，不代表前端 window mode。
 

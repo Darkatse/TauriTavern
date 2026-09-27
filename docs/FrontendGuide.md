@@ -138,7 +138,7 @@ src/
 - `saveMetadata()` 只保存 header 的 `chat_metadata`，通过同一 transport facade 发送独立 JSON 快照，不遍历或传输消息。它仍经当前聊天保存队列，但不取消挂起的完整保存、不保存消息派生缓存。角色与群聊、完整与 metadata 四种当前聊天写入共用 `runChatSave()` 的失败策略：integrity 弹窗与强制完整保存恢复都留在同一次队列任务中，其他失败提示并抛出。
 - 新群聊在问候扩展事件前绑定 metadata 并落盘初始 header，保证 metadata 保存的文件存在前提；后续初始化不得覆盖事件修改。修改消息的扩展需显式调用完整保存。
 - tail/before/beforePages 只属于 `api.chat.history` 与 Agent 的显式只读查询，不参与前端当前聊天状态。
-- 合法 JSONL 任一记录解析失败时整体加载失败；不得提交部分历史或静默降级。
+- 聊天格式遵循 [ChatPayload §1.1](CurrentState/ChatPayload.md#11-统一格式底线)；解析失败必须传播，不能提交部分历史。
 
 完整现状见 `docs/CurrentState/ChatPayload.md`。
 

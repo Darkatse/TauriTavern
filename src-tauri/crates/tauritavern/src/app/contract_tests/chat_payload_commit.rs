@@ -78,13 +78,16 @@ async fn chat_payload_commit_notifies_history_only_after_successful_publish() {
     service
         .commit_metadata(
             target.clone(),
-            serde_json::json!({ "integrity": "metadata" }),
+            serde_json::json!({ "integrity": "92698fe9-2d05-54b0-9734-a55213d002d5" }),
         )
         .await
         .expect("commit metadata on the existing legacy header");
     assert_eq!(coordinator.commit_sequence_for_test().await, 2);
     service
-        .commit_metadata(target, serde_json::json!({ "integrity": "different" }))
+        .commit_metadata(
+            target,
+            serde_json::json!({ "integrity": "79668777-279a-5f34-abd6-16a7f12b83b6" }),
+        )
         .await
         .expect_err("metadata identity conflict must not notify history");
     assert_eq!(coordinator.commit_sequence_for_test().await, 2);

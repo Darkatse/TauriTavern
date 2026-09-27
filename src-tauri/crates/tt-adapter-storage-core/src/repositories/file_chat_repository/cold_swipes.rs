@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
+use crate::chat_jsonl::{RecordPrefix, parse_header_integrity};
 use async_trait::async_trait;
 use indexmap::IndexMap;
 use serde::ser::SerializeMap;
@@ -18,6 +19,11 @@ use tt_ports::repositories::chat_repository::ChatByteReader;
 
 const COLD: &str = "tt_swipe_cold";
 type Fields<'a> = IndexMap<String, &'a RawValue>;
+
+fn parse_fields(input: &[u8]) -> io::Result<Fields<'_>> {
+    let text = std::str::from_utf8(input).map_err(io::Error::other)?;
+    serde_json::from_str(text).map_err(io::Error::other)
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -146,7 +152,7 @@ fn byte_reader(reader: impl Read + Send + 'static) -> Box<dyn ChatByteReader> {
 struct Records<R> {
     reader: BufReader<R>,
     offset: u64,
-    first: bool,
+    prefix: RecordPrefix,
 }
 
 impl<R: Read> Records<R> {
@@ -154,7 +160,7 @@ impl<R: Read> Records<R> {
         Self {
             reader: BufReader::with_capacity(64 * 1024, reader),
             offset: 0,
-            first: true,
+            prefix: RecordPrefix::default(),
         }
     }
 
@@ -167,23 +173,17 @@ impl<R: Read> Records<R> {
                 return Ok(None);
             }
             self.offset += n as u64;
-            let mut begin = buffer.iter().position(|b| *b > 32).unwrap_or(n);
-            let end = buffer
-                .iter()
-                .rposition(|b| *b > 32)
-                .map_or(begin, |i| i + 1);
-            if self.first && buffer[begin..end].starts_with(b"\xef\xbb\xbf") {
-                begin += 3;
-            }
-            if begin == end {
+            let normalized = self.prefix.normalize(buffer);
+            if normalized.is_empty() {
                 continue;
             }
-            self.first = false;
+            let begin = normalized.as_ptr() as usize - buffer.as_ptr() as usize;
+            let len = normalized.len();
             buffer.drain(..begin);
-            buffer.truncate(end - begin);
+            buffer.truncate(len);
             return Ok(Some(RecordSpan {
                 start: start + begin as u64,
-                end: start + end as u64,
+                end: start + (begin + len) as u64,
             }));
         }
     }
@@ -214,7 +214,7 @@ impl ProjectionReader {
             };
             self.source.spans.lock().unwrap().push(span);
             // Validate without materializing the header's unknown JSON values.
-            serde_json::from_slice::<Fields<'_>>(&self.pending)?;
+            parse_header_integrity(&self.pending).map_err(io::Error::other)?;
             std::mem::swap(self.output.get_mut(), &mut self.pending);
             self.pending.clear();
         } else {
@@ -235,7 +235,7 @@ impl ProjectionReader {
                     self.output.get_mut(),
                 )?;
             } else {
-                serde_json::from_slice::<Fields<'_>>(&self.pending)?;
+                parse_fields(&self.pending)?;
                 std::mem::swap(self.output.get_mut(), &mut self.pending);
                 self.finished = true;
                 // The lookahead buffer may have held a much larger historical record.
@@ -300,7 +300,7 @@ fn write_message(
 }
 
 fn project(input: &[u8], source_id: u32, record: usize, output: &mut Vec<u8>) -> io::Result<()> {
-    let fields: Fields<'_> = serde_json::from_slice(input)?;
+    let fields = parse_fields(input)?;
     if let Some((index, swipes, info)) = swipe_arrays(&fields)
         && swipes.iter().all(|v| v.get().starts_with('"'))
         && info.iter().all(|v| v.get().starts_with('{'))
@@ -322,12 +322,11 @@ fn project(input: &[u8], source_id: u32, record: usize, output: &mut Vec<u8>) ->
     Ok(())
 }
 
-fn restore(input: &[u8], original: &[u8], output: &mut impl Write) -> io::Result<()> {
-    let fields: Fields<'_> = serde_json::from_slice(input)?;
-    let original: Fields<'_> = serde_json::from_slice(original)?;
+fn restore(fields: &Fields<'_>, original: &[u8], output: &mut impl Write) -> io::Result<()> {
+    let original = parse_fields(original)?;
     let invalid =
         || io::Error::other("Cold swipe structure changed; load swipes before modifying history");
-    let (_, mut live_swipes, mut live_info) = swipe_arrays(&fields).ok_or_else(invalid)?;
+    let (_, mut live_swipes, mut live_info) = swipe_arrays(fields).ok_or_else(invalid)?;
     let (_, swipes, info) = swipe_arrays(&original).ok_or_else(invalid)?;
     if live_swipes.len() < swipes.len() {
         return Err(invalid());
@@ -344,7 +343,7 @@ fn restore(input: &[u8], original: &[u8], output: &mut impl Write) -> io::Result
     }
     let swipes: Vec<_> = live_swipes.into_iter().map(Some).collect();
     let info: Vec<_> = live_info.into_iter().map(Some).collect();
-    write_message(output, &fields, &swipes, &info, None)
+    write_message(output, fields, &swipes, &info, None)
 }
 
 struct Output {
@@ -423,8 +422,13 @@ impl ChatSwipeSource for FileSwipeSource {
             };
             let mut line = Vec::new();
             let mut original = Vec::new();
+            if records.next(&mut line)?.is_some() {
+                parse_header_integrity(&line).map_err(io::Error::other)?;
+                output.write_all(&line)?;
+                output.write_all(b"\n")?;
+            }
             while records.next(&mut line)?.is_some() {
-                let fields: Fields<'_> = serde_json::from_slice(&line)?;
+                let fields = parse_fields(&line)?;
                 if let Some(reference) = fields.get(COLD) {
                     let reference: ColdReference = serde_json::from_str(reference.get())?;
                     if reference.source_id != source_id {
@@ -433,7 +437,7 @@ impl ChatSwipeSource for FileSwipeSource {
                     original.clear();
                     self.range(self.record_span(reference.record)?)
                         .read_to_end(&mut original)?;
-                    restore(&line, &original, &mut output)?;
+                    restore(&fields, &original, &mut output)?;
                 } else {
                     output.write_all(&line)?;
                 }

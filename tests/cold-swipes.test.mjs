@@ -9,6 +9,7 @@ const original = {
     mes: 'current body', swipe_id: 1, swipes: ['older', 'active'],
     swipe_info: [{ extra: { state: 'old' } }, { extra: { state: 'current' } }],
     variables: [{ score: 0 }, { score: 1 }], extra: { content: 'live' },
+    chat_metadata: { integrity: 'ordinary message data' },
 };
 
 function cold(sourceId = 0) {

@@ -9,10 +9,8 @@ use tokio::fs;
 use crate::chat_format_importers::{
     export_payload_to_plain_text, import_chat_jsonl_bytes, import_chat_payloads_from_json,
 };
+use crate::chat_jsonl::{read_payload, write_payload, write_payload_bytes};
 use crate::file_system::{list_files_with_extension, move_file_no_replace_with_fallback};
-use crate::jsonl_utils::{
-    parse_jsonl_bytes, read_jsonl_file, write_jsonl_bytes_file, write_jsonl_file,
-};
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage, strip_jsonl_extension};
 use tt_ports::repositories::chat_payload_commit_repository::ChatPayloadTarget;
@@ -144,7 +142,7 @@ impl ChatRepository for FileChatRepository {
                     .unwrap_or("")
                     .to_string();
 
-                let payload = read_jsonl_file(&path).await?;
+                let payload = read_payload(&path).await?;
                 let chat = self.parse_chat_from_payload("", &file_name, &payload)?;
                 all_chats.push(chat);
             }
@@ -540,10 +538,10 @@ impl ChatRepository for FileChatRepository {
         character_name: &str,
         file_name: &str,
     ) -> Result<Vec<Value>, DomainError> {
-        let bytes = self
-            .get_chat_payload_bytes(character_name, file_name)
+        let path = self
+            .resolve_character_chat_path(character_name, file_name)
             .await?;
-        parse_jsonl_bytes(&bytes)
+        read_payload(&path).await
     }
 
     async fn get_chat_payload_bytes(
@@ -554,14 +552,15 @@ impl ChatRepository for FileChatRepository {
         let path = self
             .resolve_character_chat_path(character_name, file_name)
             .await?;
-        if !path.exists() {
-            return Err(DomainError::NotFound(format!(
-                "Chat not found: {}/{}",
-                character_name, file_name
-            )));
-        }
-
-        self.read_payload_bytes_from_path(&path).await
+        fs::read(&path).await.map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => {
+                DomainError::NotFound(format!("Chat not found: {}/{}", character_name, file_name))
+            }
+            _ => DomainError::InternalError(format!(
+                "Failed to read chat {}: {error}",
+                path.display()
+            )),
+        })
     }
 
     async fn get_chat_payload_path(
@@ -659,7 +658,7 @@ impl ChatRepository for FileChatRepository {
                 let file_stem =
                     self.next_import_chat_file_stem_in_dir(&dir_key, character_display_name, 0)?;
                 let path = self.get_chat_path_for_dir_key(&dir_key, &file_stem)?;
-                write_jsonl_bytes_file(&path, &payload_bytes).await?;
+                write_payload_bytes(&path, &payload_bytes).await?;
                 self.remove_summary_cache_for_path(&path).await;
                 return Ok(vec![Self::normalize_jsonl_file_name(&file_stem)?]);
             }
@@ -671,7 +670,7 @@ impl ChatRepository for FileChatRepository {
             let file_stem =
                 self.next_import_chat_file_stem_in_dir(&dir_key, character_display_name, index)?;
             let path = self.get_chat_path_for_dir_key(&dir_key, &file_stem)?;
-            write_jsonl_file(&path, payload).await?;
+            write_payload(&path, payload).await?;
             self.remove_summary_cache_for_path(&path).await;
             created_files.push(Self::normalize_jsonl_file_name(&file_stem)?);
         }

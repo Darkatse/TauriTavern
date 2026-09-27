@@ -1,17 +1,13 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use chrono::DateTime;
 use rand::random;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use tokio::fs;
-use tokio::sync::Barrier;
 
 use crate::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use tt_domain::errors::DomainError;
-use tt_domain::models::filename::sanitize_filename;
 use tt_domain::models::settings::ChatBackupSettings;
 use tt_ports::repositories::chat_payload_commit_repository::{
     ChatPayloadCommitRepository, ChatPayloadTarget, CommittedChatPayload,
@@ -25,8 +21,9 @@ use tt_ports::settings::ChatBackupRuntime;
 
 use super::FileChatRepository;
 use super::backup_codec::set_backup_modified;
-use super::backup_inventory::BackupInventoryState;
 use super::chat_payload_commit::MAX_ACTIVE_CHAT_COMMIT_SESSIONS;
+
+mod format_contract;
 
 fn unique_temp_root() -> PathBuf {
     std::env::temp_dir().join(format!("tauritavern-chat-repo-{}", random::<u64>()))
@@ -90,48 +87,6 @@ async fn commit_payload_bytes(
         .await
 }
 
-async fn commit_character_payload_file(
-    repository: &FileChatRepository,
-    character_id: &str,
-    file_name: &str,
-    source_path: &Path,
-    force: bool,
-) -> Result<CommittedChatPayload, DomainError> {
-    let bytes = fs::read(source_path).await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to read test payload fixture: {error}"))
-    })?;
-    commit_payload_bytes(
-        repository,
-        ChatPayloadTarget::Character {
-            character_id: character_id.to_string(),
-            file_name: file_name.to_string(),
-        },
-        &bytes,
-        force,
-    )
-    .await
-}
-
-async fn commit_group_payload_file(
-    repository: &FileChatRepository,
-    chat_id: &str,
-    source_path: &Path,
-    force: bool,
-) -> Result<CommittedChatPayload, DomainError> {
-    let bytes = fs::read(source_path).await.map_err(|error| {
-        DomainError::InternalError(format!("Failed to read test payload fixture: {error}"))
-    })?;
-    commit_payload_bytes(
-        repository,
-        ChatPayloadTarget::Group {
-            chat_id: chat_id.to_string(),
-        },
-        &bytes,
-        force,
-    )
-    .await
-}
-
 fn character_target(character_id: &str, file_name: &str) -> ChatPayloadTarget {
     ChatPayloadTarget::Character {
         character_id: character_id.to_string(),
@@ -189,50 +144,43 @@ async fn chat_commit_protocol_rejects_invalid_frames_and_abort_is_idempotent() {
 }
 
 #[tokio::test]
-async fn chat_commit_preserves_exact_bytes_across_multiple_frames() {
+async fn chat_commit_publishes_exact_bytes_only_after_all_frames_finish() {
     let (repository, root) = setup_repository().await;
-    let payload = r#"{"user_name":"User"}
-{"name":"Alice","mes":"你好"}"#
-        .as_bytes();
-    let session = repository
-        .begin(character_target("alice", "multi-frame"), false, None)
+    let target = character_target("alice", "multi-frame");
+    let original = b"{}\n{\"mes\":\"old\"}";
+    commit_payload_bytes(&repository, target.clone(), original, false)
         .await
-        .expect("begin multi-frame commit");
-    let boundaries = [1, 13, payload.len()];
+        .unwrap();
+    let payload = "{}\n{\"mes\":\"你好\"}".as_bytes();
+    let session = repository.begin(target, false, None).await.unwrap();
     let mut start = 0;
     let mut offset = 0;
-
-    for end in boundaries {
+    for end in [1, 13, payload.len()] {
         offset = repository
             .append(&session.session_id, offset, &payload[start..end])
             .await
-            .expect("append frame");
+            .unwrap();
         start = end;
+        assert_eq!(
+            repository
+                .get_chat_payload_bytes("alice", "multi-frame")
+                .await
+                .unwrap(),
+            original
+        );
     }
     repository
         .finish(&session.session_id, payload.len() as u64)
         .await
-        .expect("finish multi-frame commit");
-
+        .unwrap();
     assert_eq!(
         repository
             .get_chat_payload_bytes("alice", "multi-frame")
             .await
-            .expect("read multi-frame payload"),
+            .unwrap(),
         payload
     );
-    let path = repository
-        .get_chat_payload_path("alice", "multi-frame")
-        .await
-        .expect("resolve multi-frame payload path");
-    let signature = repository
-        .current_content_signature_for_size(&path, payload.len() as u64)
-        .await
-        .expect("successful commit records its content signature");
-    let expected_digest: [u8; 32] = Sha256::digest(payload).into();
-    assert_eq!(signature.sha256, expected_digest);
-
-    let _ = fs::remove_dir_all(root).await;
+    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
@@ -241,12 +189,15 @@ async fn metadata_commit_preserves_header_fields_and_exact_body_bytes() {
     let header = json!({
         "user_name": "Original user", "character_name": "Original character",
         "create_date": "legacy date", "unknown": { "keep": [1, true] },
-        "chat_metadata": { "integrity": "metadata", "deleted": true },
+        "chat_metadata": { "integrity": "92698fe9-2d05-54b0-9734-a55213d002d5", "deleted": true },
     });
-    let body = format!(
+    let mut body = format!(
         "\r\n{{ \"mes\": \"你好{}\", \"unknown\": [1, 2] }}\r\n\n{{\"mes\":\"last\"}}",
         "x".repeat(20_000)
-    );
+    )
+    .into_bytes();
+    // A metadata edit must preserve even a body that cannot be decoded as UTF-8.
+    body.push(0xff);
     for target in [
         character_target("Alice", "metadata"),
         ChatPayloadTarget::Group {
@@ -257,11 +208,17 @@ async fn metadata_commit_preserves_header_fields_and_exact_body_bytes() {
             .resolve_chat_commit_target(&target)
             .await
             .unwrap();
-        for original in [format!("{header}\r\n{body}"), header.to_string()] {
-            commit_payload_bytes(&repository, target.clone(), original.as_bytes(), false)
+        for (original, expected_body) in [
+            (
+                [format!("\r\n\u{feff}\r\n{header}\r\n").as_bytes(), &body].concat(),
+                body.as_slice(),
+            ),
+            (header.to_string().into_bytes(), b"".as_slice()),
+        ] {
+            commit_payload_bytes(&repository, target.clone(), &original, false)
                 .await
                 .unwrap();
-            let metadata = json!({ "integrity": "metadata", "variables": { "new": "value" } });
+            let metadata = json!({ "integrity": "92698fe9-2d05-54b0-9734-a55213d002d5", "variables": { "new": "value" } });
             repository
                 .commit_metadata(target.clone(), metadata.clone())
                 .await
@@ -274,10 +231,7 @@ async fn metadata_commit_preserves_header_fields_and_exact_body_bytes() {
                 serde_json::from_slice::<Value>(&updated[..split]).unwrap(),
                 expected_header
             );
-            let original_body = original
-                .find('\n')
-                .map_or("", |index| &original[index + 1..]);
-            assert_eq!(&updated[split + 1..], original_body.as_bytes());
+            assert_eq!(&updated[split + 1..], expected_body);
         }
     }
     fs::remove_dir_all(root).await.unwrap();
@@ -303,12 +257,14 @@ async fn metadata_commit_rejects_invalid_updates_without_changing_the_file() {
         assert!(matches!(missing, DomainError::NotFound(_)));
         assert!(!path.exists());
 
-        let original = payload_to_jsonl(&payload_with_integrity("metadata"));
+        let original = payload_to_jsonl(&payload_with_integrity(
+            "92698fe9-2d05-54b0-9734-a55213d002d5",
+        ));
         commit_payload_bytes(&repository, target.clone(), original.as_bytes(), false)
             .await
             .unwrap();
         for metadata in [
-            json!({ "integrity": "other" }),
+            json!({ "integrity": "55ca7f51-3c7c-5dca-980a-0d89bd5d038f" }),
             json!({}),
             Value::Null,
             json!([]),
@@ -339,7 +295,10 @@ async fn metadata_commit_rejects_invalid_updates_without_changing_the_file() {
         }
         fs::write(&path, "{\"chat_metadata\":{}}\n").await.unwrap();
         repository
-            .commit_metadata(target.clone(), json!({ "integrity": "adopted" }))
+            .commit_metadata(
+                target.clone(),
+                json!({ "integrity": "7f565cd0-b165-5376-82e9-dc222dc3d5cd" }),
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -347,7 +306,7 @@ async fn metadata_commit_rejects_invalid_updates_without_changing_the_file() {
                 .read_chat_metadata_from_path(&path)
                 .await
                 .unwrap(),
-            json!({ "integrity": "adopted" })
+            json!({ "integrity": "7f565cd0-b165-5376-82e9-dc222dc3d5cd" })
         );
         let mut files = fs::read_dir(path.parent().unwrap()).await.unwrap();
         while let Some(file) = files.next_entry().await.unwrap() {
@@ -365,7 +324,9 @@ async fn metadata_commit_rejects_invalid_updates_without_changing_the_file() {
 async fn metadata_writers_invalidate_cached_reads_and_preserve_extension_semantics() {
     let (repository, root) = setup_repository().await;
     let target = character_target("Alice", "metadata");
-    let original = payload_to_jsonl(&payload_with_integrity("metadata"));
+    let original = payload_to_jsonl(&payload_with_integrity(
+        "92698fe9-2d05-54b0-9734-a55213d002d5",
+    ));
     commit_payload_bytes(&repository, target.clone(), original.as_bytes(), false)
         .await
         .unwrap();
@@ -375,7 +336,7 @@ async fn metadata_writers_invalidate_cached_reads_and_preserve_extension_semanti
         .await
         .unwrap();
 
-    let metadata = json!({ "integrity": "metadata", "variables": { "score": "1" } });
+    let metadata = json!({ "integrity": "92698fe9-2d05-54b0-9734-a55213d002d5", "variables": { "score": "1" } });
     repository
         .commit_metadata(target, metadata.clone())
         .await
@@ -421,38 +382,6 @@ async fn metadata_writers_invalidate_cached_reads_and_preserve_extension_semanti
         );
     }
 
-    commit_payload_bytes(
-        &repository,
-        ChatPayloadTarget::Group {
-            chat_id: "group-metadata".into(),
-        },
-        original.as_bytes(),
-        false,
-    )
-    .await
-    .unwrap();
-    repository
-        .set_group_chat_metadata_extension("group-metadata", "example", json!({ "floor": 42 }))
-        .await
-        .unwrap();
-    assert_eq!(
-        repository
-            .get_group_chat_metadata("group-metadata")
-            .await
-            .unwrap()["extensions"]["example"]["floor"],
-        42
-    );
-    repository
-        .set_group_chat_metadata_extension("group-metadata", "example", Value::Null)
-        .await
-        .unwrap();
-    assert_eq!(
-        repository
-            .get_group_chat_metadata("group-metadata")
-            .await
-            .unwrap(),
-        json!({ "integrity": "metadata", "extensions": {} })
-    );
     fs::remove_dir_all(root).await.unwrap();
 }
 
@@ -461,7 +390,7 @@ async fn metadata_commit_does_not_skip_backup_after_an_equal_length_change() {
     let (repository, root) = setup_repository().await;
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
     let target = character_target("Alice", "metadata");
-    let mut payload = payload_with_integrity("metadata");
+    let mut payload = payload_with_integrity("92698fe9-2d05-54b0-9734-a55213d002d5");
     payload[0]["chat_metadata"]["variables"] = json!({ "score": "1" });
     let original = payload_to_jsonl(&payload);
     commit_payload_bytes(&repository, target.clone(), original.as_bytes(), false)
@@ -502,43 +431,41 @@ async fn metadata_commit_does_not_skip_backup_after_an_equal_length_change() {
 }
 
 #[tokio::test]
-async fn global_invalidation_prevents_an_inflight_commit_from_restoring_old_provenance() {
+async fn cache_clear_during_commit_keeps_automatic_backups_conservative() {
     let (repository, root) = setup_repository().await;
-    let payload = payload_to_jsonl(&payload_with_integrity("signature-epoch"));
+    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+    let payload = b"{}";
     let session = repository
         .begin(character_target("Alice", "session"), false, None)
         .await
-        .expect("begin commit");
+        .unwrap();
     repository
-        .append(&session.session_id, 0, payload.as_bytes())
+        .append(&session.session_id, 0, payload)
         .await
-        .expect("append payload");
-
-    repository.invalidate_all_payload_signatures().await;
+        .unwrap();
+    <FileChatRepository as ChatRepository>::clear_cache(&repository)
+        .await
+        .unwrap();
     repository
         .finish(&session.session_id, payload.len() as u64)
         .await
-        .expect("publish current after invalidation");
+        .unwrap();
 
-    let path = repository
-        .get_chat_payload_path("Alice", "session")
-        .await
-        .expect("resolve current");
-    assert!(
+    for _ in 0..2 {
         repository
-            .current_content_signature_for_size(&path, payload.len() as u64)
+            .backup_chat_automatic("Alice", "session")
             .await
-            .is_none()
-    );
-
-    let _ = fs::remove_dir_all(root).await;
+            .unwrap();
+    }
+    assert_eq!(backup_file_names(&root).await.len(), 2);
+    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn chat_commit_size_mismatch_preserves_current_and_consumes_session() {
     let (repository, root) = setup_repository().await;
     let old_payload = payload_to_jsonl(&payload_with_message(
-        "same",
+        "d6ddecec-7267-5279-a976-56f8762960a0",
         "2026-01-01T00:00:00.000Z",
         "old",
         "Assistant",
@@ -552,7 +479,7 @@ async fn chat_commit_size_mismatch_preserves_current_and_consumes_session() {
     .await
     .expect("commit old current");
     let new_payload = payload_to_jsonl(&payload_with_message(
-        "same",
+        "d6ddecec-7267-5279-a976-56f8762960a0",
         "2026-01-01T00:00:01.000Z",
         "new",
         "Assistant",
@@ -600,110 +527,45 @@ async fn chat_commit_size_mismatch_preserves_current_and_consumes_session() {
 }
 
 #[tokio::test]
-async fn streaming_chat_commit_keeps_old_current_visible_until_finish() {
-    let (repository, root) = setup_repository().await;
-    let old_payload = payload_to_jsonl(&payload_with_message(
-        "same",
-        "2026-01-01T00:00:00.000Z",
-        "old",
-        "Assistant",
-    ));
-    commit_payload_bytes(
-        &repository,
-        character_target("alice", "session"),
-        old_payload.as_bytes(),
-        false,
-    )
-    .await
-    .expect("commit old current");
-    let new_payload = payload_to_jsonl(&payload_with_message(
-        "same",
-        "2026-01-01T00:00:01.000Z",
-        "new",
-        "Assistant",
-    ));
-    let session = repository
-        .begin(character_target("alice", "session"), false, None)
-        .await
-        .expect("begin replacement");
-    let split = new_payload.len() / 2;
-    repository
-        .append(&session.session_id, 0, &new_payload.as_bytes()[..split])
-        .await
-        .expect("append partial replacement");
-
-    assert_eq!(
-        repository
-            .get_chat_payload_bytes("alice", "session")
-            .await
-            .expect("read current during streaming"),
-        old_payload.as_bytes()
-    );
-    repository
-        .abort(&session.session_id)
-        .await
-        .expect("abort partial replacement");
-
-    let _ = fs::remove_dir_all(root).await;
-}
-
-#[tokio::test]
 async fn same_target_sessions_are_complete_and_last_finish_wins() {
     let (repository, root) = setup_repository().await;
-    let payload_a = payload_to_jsonl(&payload_with_message(
-        "same",
-        "2026-01-01T00:00:00.000Z",
-        "a",
-        "Assistant",
-    ));
-    let payload_b = payload_to_jsonl(&payload_with_message(
-        "same",
-        "2026-01-01T00:00:01.000Z",
-        "b",
-        "Assistant",
-    ));
+    let payload_a = b"{}\n{\"mes\":\"a\"}";
+    let payload_b = b"{}\n{\"mes\":\"b\"}";
     let target = character_target("alice", "session");
-    let session_a = repository
-        .begin(target.clone(), false, None)
-        .await
-        .expect("begin a");
-    let session_b = repository
-        .begin(target, false, None)
-        .await
-        .expect("begin b");
+    let session_a = repository.begin(target.clone(), false, None).await.unwrap();
+    let session_b = repository.begin(target.clone(), false, None).await.unwrap();
     repository
-        .append(&session_a.session_id, 0, payload_a.as_bytes())
+        .append(&session_a.session_id, 0, payload_a)
         .await
-        .expect("append a");
+        .unwrap();
     repository
-        .append(&session_b.session_id, 0, payload_b.as_bytes())
+        .append(&session_b.session_id, 0, payload_b)
         .await
-        .expect("append b");
+        .unwrap();
 
-    repository
-        .finish(&session_a.session_id, payload_a.len() as u64)
+    tokio::try_join!(
+        repository.finish(&session_a.session_id, payload_a.len() as u64),
+        repository.finish(&session_b.session_id, payload_b.len() as u64),
+    )
+    .expect("both concurrent commits succeed");
+    let published = repository
+        .get_chat_payload_bytes("alice", "session")
         .await
-        .expect("finish a");
+        .unwrap();
+    assert!(published == payload_a || published == payload_b);
+
+    let last = b"{}\n{\"mes\":\"last\"}";
+    commit_payload_bytes(&repository, target, last, false)
+        .await
+        .unwrap();
     assert_eq!(
         repository
             .get_chat_payload_bytes("alice", "session")
             .await
-            .expect("read a"),
-        payload_a.as_bytes()
+            .unwrap(),
+        last
     );
-    repository
-        .finish(&session_b.session_id, payload_b.len() as u64)
-        .await
-        .expect("finish b");
-    assert_eq!(
-        repository
-            .get_chat_payload_bytes("alice", "session")
-            .await
-            .expect("read b"),
-        payload_b.as_bytes()
-    );
-
-    let _ = fs::remove_dir_all(root).await;
+    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
@@ -835,23 +697,6 @@ fn payload_with_integrity(integrity: &str) -> Vec<Value> {
     ]
 }
 
-fn payload_without_integrity() -> Vec<Value> {
-    vec![
-        json!({
-            "chat_metadata": {},
-            "user_name": "unused",
-            "character_name": "unused",
-        }),
-        json!({
-            "name": "User",
-            "is_user": true,
-            "send_date": "2026-01-01T00:00:00.000Z",
-            "mes": "hello",
-            "extra": {},
-        }),
-    ]
-}
-
 fn payload_with_message(
     integrity: &str,
     send_date: &str,
@@ -882,94 +727,48 @@ fn timestamp_millis(value: &str) -> i64 {
         .timestamp_millis()
 }
 
-async fn modified_millis(path: &Path) -> i64 {
-    fs::metadata(path)
-        .await
-        .expect("read file metadata")
-        .modified()
-        .expect("read modified time")
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("modified time after UNIX_EPOCH")
-        .as_millis() as i64
-}
-
-#[test]
-fn backup_name_matches_sillytavern_sanitization() {
-    let key = FileChatRepository::sanitize_backup_name_for_sillytavern("A:li*ce Name");
-    assert_eq!(key, "alice_name");
-
-    let unicode = FileChatRepository::sanitize_backup_name_for_sillytavern("角色-A");
-    assert_eq!(unicode, "角色_a");
-}
-
-#[test]
-fn backup_file_name_preserves_unicode_within_component_limit() {
-    let name = FileChatRepository::backup_file_name(&"角色".repeat(200));
-
-    assert!(name.starts_with("chat_角色"));
-    assert!(name.len() <= 255);
-    assert!(name.is_char_boundary(name.len()));
-}
-
-#[test]
-fn normalize_backup_file_name_rejects_non_finalized_suffix() {
-    let result =
-        FileChatRepository::normalize_backup_file_name("chat_alice_20260101-000000.jsonl.partial");
-    assert!(matches!(result, Err(DomainError::InvalidData(_))));
-}
-
 #[tokio::test]
 async fn explicit_backups_keep_readable_format_without_same_second_overwrite() {
     let (repository, root) = setup_repository().await;
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
     let source = root.join("source.jsonl");
-    fs::write(&source, payload_to_jsonl(&payload_with_integrity("unique")))
-        .await
-        .expect("write source");
+    fs::write(
+        &source,
+        payload_to_jsonl(&payload_with_integrity(
+            "0548d47e-3dc3-594d-b8b3-8e70fa7b0986",
+        )),
+    )
+    .await
+    .expect("write source");
 
+    let key = "角:色-A* Name".repeat(100);
     repository
-        .backup_chat_file_explicit(&source, "角色-A")
+        .backup_chat_file_explicit(&source, &key)
         .await
         .expect("first backup");
     repository
-        .backup_chat_file_explicit(&source, "角色-A")
+        .backup_chat_file_explicit(&source, &key)
         .await
         .expect("second backup");
 
     let names = backup_file_names(&root).await;
     assert_eq!(names.len(), 2);
     assert_ne!(names[0], names[1]);
-    assert!(names.iter().all(|name| name.starts_with("chat_角色_a_")));
-}
-
-#[tokio::test]
-async fn raw_backup_download_streams_the_published_file_without_writes() {
-    let (repository, root) = setup_repository().await;
-    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
-    let payload = payload_to_jsonl(&payload_with_integrity("direct"));
-    let chat = root.join("source.jsonl");
-    fs::write(&chat, &payload).await.expect("write source");
-    repository
-        .backup_chat_file_explicit(&chat, "Alice")
-        .await
-        .expect("create raw backup");
-
-    let files_before = backup_file_names(&root).await;
-    let logical_name = files_before[0].clone();
-    let downloaded = read_backup_payload(&repository, &logical_name, 7)
-        .await
-        .expect("stream raw backup");
-
-    assert_eq!(downloaded, payload.as_bytes());
-    assert_eq!(backup_file_names(&root).await, files_before);
-    assert!(!repository.chat_commit_staging_dir.exists());
+    assert!(
+        names
+            .iter()
+            .all(|name| name.starts_with("chat_角色_a_name") && name.len() <= 255)
+    );
+    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn zstd_setting_converts_all_backups_in_both_directions() {
     let (repository, root) = setup_repository().await;
     let source = root.join("source.jsonl");
-    let payload = payload_to_jsonl(&payload_with_integrity("format"));
+    let payload = payload_to_jsonl(&payload_with_integrity(
+        "945cfdae-6502-5126-a0ef-783d446b8b44",
+    ));
     fs::write(&source, &payload).await.expect("write source");
 
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
@@ -1044,102 +843,103 @@ async fn zstd_setting_converts_all_backups_in_both_directions() {
     );
 
     let logical_names: Vec<_> = repository
-        .list_chat_backup_files()
+        .list_chat_backup_entries()
         .await
         .expect("list converged backups")
         .into_iter()
-        .map(|entry| entry.file_name)
+        .map(|entry| entry.logical_file_name)
         .collect();
     assert_eq!(logical_names, vec![logical_name]);
 }
 
 #[tokio::test]
-async fn zstd_backup_download_and_restore_are_streamed_and_byte_exact() {
-    let (repository, root) = setup_repository().await;
-    let mut policy = backup_policy(-1, -1, -1);
-    policy.zstd_compression_enabled = true;
-    apply_and_reconcile_backups(&repository, policy).await;
+async fn raw_and_zstd_backups_download_restore_and_delete_by_logical_name() {
+    for compression in [false, true] {
+        let (repository, root) = setup_repository().await;
+        let mut policy = backup_policy(-1, -1, -1);
+        policy.zstd_compression_enabled = compression;
+        apply_and_reconcile_backups(&repository, policy).await;
 
-    let payload = format!(
-        "{{\"chat_metadata\":{{\"integrity\":\"zstd\"}},\"user_name\":\"User\",\"character_name\":\"Alice\"}}\n{{\"name\":\"Alice\",\"is_user\":false,\"send_date\":\"2026-01-01T00:00:00.000Z\",\"mes\":\"{}\",\"extra\":{{}}}}",
-        "重复内容".repeat(32_768)
-    );
-    let source = root.join("large-source.jsonl");
-    fs::write(&source, payload.as_bytes())
-        .await
-        .expect("write large source");
-    repository
-        .backup_chat_file_explicit(&source, "Alice")
-        .await
-        .expect("create zstd backup");
-
-    let descriptor = repository
-        .list_chat_backup_files()
-        .await
-        .expect("list zstd backup")
-        .pop()
-        .expect("zstd backup descriptor");
-    assert!(descriptor.path.to_string_lossy().ends_with(".jsonl.zst"));
-    assert!(
-        fs::metadata(&descriptor.path)
+        let payload = format!(
+            "\r\n\u{feff}\r\n{{\"chat_metadata\":{{\"integrity\":\"1a5043ab-06bc-58d8-9dcf-f751842e32e9\"}},\"user_name\":\"User\",\"character_name\":\"Alice\"}}\n{{\"name\":\"Alice\",\"is_user\":false,\"send_date\":\"2026-01-01T00:00:00.000Z\",\"mes\":\"{}\",\"extra\":{{}}}}",
+            "重复内容".repeat(32_768)
+        );
+        let source = root.join("large-source.jsonl");
+        fs::write(&source, payload.as_bytes())
             .await
-            .expect("read compressed metadata")
-            .len()
-            < payload.len() as u64
-    );
-
-    let files_before = backup_file_names(&root).await;
-    let downloaded = read_backup_payload(&repository, &descriptor.file_name, 4096)
-        .await
-        .expect("stream zstd backup");
-    assert_eq!(downloaded, payload.as_bytes());
-    assert_eq!(backup_file_names(&root).await, files_before);
-    assert!(!repository.chat_commit_staging_dir.exists());
-
-    let restored_character = repository
-        .restore_character_chat_backup(&descriptor.file_name, "alice", "Alice")
-        .await
-        .expect("restore character chat");
-    assert_eq!(restored_character.len(), 1);
-    assert_eq!(
+            .expect("write large source");
         repository
-            .get_chat_payload_bytes("alice", &restored_character[0])
+            .backup_chat_file_explicit(&source, "Alice")
             .await
-            .expect("read restored character chat"),
-        payload.as_bytes()
-    );
+            .expect("create backup");
 
-    let restored_group = repository
-        .restore_group_chat_backup(&descriptor.file_name)
-        .await
-        .expect("restore group chat");
-    assert_eq!(
-        fs::read(
+        let descriptor = repository
+            .list_chat_backup_entries()
+            .await
+            .expect("list backup")
+            .pop()
+            .expect("backup descriptor");
+        assert!(matches!(
             repository
-                .get_group_chat_payload_path(&restored_group)
-                .await
-                .expect("resolve restored group chat")
-        )
-        .await
-        .expect("read restored group chat"),
-        payload.as_bytes()
-    );
+                .open_chat_backup_download(&format!("{}.partial", descriptor.logical_file_name))
+                .await,
+            Err(DomainError::InvalidData(_))
+        ));
 
-    repository
-        .delete_chat_backup(&descriptor.file_name)
-        .await
-        .expect("delete zstd backup by logical name");
-    assert!(!descriptor.path.exists());
-    let mut staging_entries = fs::read_dir(&repository.chat_commit_staging_dir)
-        .await
-        .expect("read chat staging directory");
-    assert!(
-        staging_entries
-            .next_entry()
+        let files_before = backup_file_names(&root).await;
+        let downloaded = read_backup_payload(&repository, &descriptor.logical_file_name, 4096)
             .await
-            .expect("read chat staging entry")
-            .is_none()
-    );
+            .expect("stream backup");
+        assert_eq!(downloaded, payload.as_bytes());
+        assert_eq!(backup_file_names(&root).await, files_before);
+        assert!(!repository.chat_commit_staging_dir.exists());
+
+        let restored_character = repository
+            .restore_character_chat_backup(&descriptor.logical_file_name, "alice", "Alice")
+            .await
+            .expect("restore character chat");
+        assert_eq!(restored_character.len(), 1);
+        assert_eq!(
+            repository
+                .get_chat_payload_bytes("alice", &restored_character[0])
+                .await
+                .expect("read restored character chat"),
+            payload.as_bytes()
+        );
+
+        let restored_group = repository
+            .restore_group_chat_backup(&descriptor.logical_file_name)
+            .await
+            .expect("restore group chat");
+        assert_eq!(
+            fs::read(
+                repository
+                    .get_group_chat_payload_path(&restored_group)
+                    .await
+                    .expect("resolve restored group chat")
+            )
+            .await
+            .expect("read restored group chat"),
+            payload.as_bytes()
+        );
+
+        repository
+            .delete_chat_backup(&descriptor.logical_file_name)
+            .await
+            .expect("delete backup by logical name");
+        assert!(!root.join("backups").join(&descriptor.file_name).exists());
+        let mut staging_entries = fs::read_dir(&repository.chat_commit_staging_dir)
+            .await
+            .expect("read chat staging directory");
+        assert!(
+            staging_entries
+                .next_entry()
+                .await
+                .expect("read chat staging entry")
+                .is_none()
+        );
+        fs::remove_dir_all(root).await.unwrap();
+    }
 }
 
 #[tokio::test]
@@ -1179,7 +979,9 @@ async fn zstd_quota_uses_actual_compressed_bytes() {
 #[tokio::test]
 async fn rejected_raw_candidate_does_not_stage_or_delete_history() {
     let (repository, root) = setup_repository().await;
-    let small_payload = payload_to_jsonl(&payload_with_integrity("retained"));
+    let small_payload = payload_to_jsonl(&payload_with_integrity(
+        "938c7216-88af-52ae-a02f-8dea9d7f3fba",
+    ));
     let small_source = root.join("small.jsonl");
     fs::write(&small_source, &small_payload)
         .await
@@ -1228,7 +1030,9 @@ async fn truncated_zstd_backup_does_not_poison_healthy_inventory_entries() {
     apply_and_reconcile_backups(&repository, policy).await;
 
     let source = root.join("source.jsonl");
-    let healthy_payload = payload_to_jsonl(&payload_with_integrity("healthy"));
+    let healthy_payload = payload_to_jsonl(&payload_with_integrity(
+        "976a0bc9-79c7-5c79-befd-8e43897b2a2b",
+    ));
     fs::write(&source, &healthy_payload)
         .await
         .expect("write healthy source");
@@ -1237,7 +1041,7 @@ async fn truncated_zstd_backup_does_not_poison_healthy_inventory_entries() {
         .await
         .expect("create healthy zstd backup");
     let healthy = repository
-        .list_chat_backup_files()
+        .list_chat_backup_entries()
         .await
         .expect("list healthy zstd backup")
         .pop()
@@ -1245,7 +1049,9 @@ async fn truncated_zstd_backup_does_not_poison_healthy_inventory_entries() {
 
     fs::write(
         &source,
-        payload_to_jsonl(&payload_with_integrity("truncated")),
+        payload_to_jsonl(&payload_with_integrity(
+            "fe4b8528-255a-5743-b06f-a46512fe87ca",
+        )),
     )
     .await
     .expect("write source to corrupt");
@@ -1254,39 +1060,45 @@ async fn truncated_zstd_backup_does_not_poison_healthy_inventory_entries() {
         .await
         .expect("create zstd backup to corrupt");
     let descriptor = repository
-        .list_chat_backup_files()
+        .list_chat_backup_entries()
         .await
         .expect("list zstd backups")
         .into_iter()
-        .find(|candidate| candidate.file_name != healthy.file_name)
+        .find(|candidate| candidate.logical_file_name != healthy.logical_file_name)
         .expect("zstd descriptor to corrupt");
-    let compressed_len = fs::metadata(&descriptor.path)
+    let compressed_len = fs::metadata(&root.join("backups").join(&descriptor.file_name))
         .await
         .expect("read zstd metadata")
         .len();
     fs::OpenOptions::new()
         .write(true)
-        .open(&descriptor.path)
+        .open(&root.join("backups").join(&descriptor.file_name))
         .await
         .expect("open zstd backup for truncation")
         .set_len(compressed_len - 4)
         .await
         .expect("truncate zstd checksum");
-    set_backup_modified(&healthy.path, UNIX_EPOCH + Duration::from_secs(1))
-        .await
-        .expect("age healthy backup");
-    set_backup_modified(&descriptor.path, UNIX_EPOCH + Duration::from_secs(2))
-        .await
-        .expect("make corrupt backup newest");
+    set_backup_modified(
+        &root.join("backups").join(&healthy.file_name),
+        UNIX_EPOCH + Duration::from_secs(1),
+    )
+    .await
+    .expect("age healthy backup");
+    set_backup_modified(
+        &root.join("backups").join(&descriptor.file_name),
+        UNIX_EPOCH + Duration::from_secs(2),
+    )
+    .await
+    .expect("make corrupt backup newest");
 
     assert!(
-        read_backup_payload(&repository, &descriptor.file_name, 4096)
+        read_backup_payload(&repository, &descriptor.logical_file_name, 4096)
             .await
             .is_err()
     );
     assert!(
         repository
-            .restore_character_chat_backup(&descriptor.file_name, "alice", "Alice")
+            .restore_character_chat_backup(&descriptor.logical_file_name, "alice", "Alice")
             .await
             .is_err()
     );
@@ -1309,19 +1121,28 @@ async fn truncated_zstd_backup_does_not_poison_healthy_inventory_entries() {
         repository.reconcile_chat_backups().await.is_err(),
         "corrupt zstd must fail background conversion"
     );
-    assert!(descriptor.path.exists());
-    assert!(!root.join("backups").join(&descriptor.file_name).exists());
+    assert!(root.join("backups").join(&descriptor.file_name).exists());
+    assert!(
+        !root
+            .join("backups")
+            .join(&descriptor.logical_file_name)
+            .exists()
+    );
     assert_eq!(
         repository
-            .list_chat_backup_files()
+            .list_chat_backup_entries()
             .await
             .expect("list usable inventory after conversion failure")
             .len(),
         2
     );
-    assert!(root.join("backups").join(&healthy.file_name).exists());
-    assert!(!healthy.path.exists());
-    let downloaded = read_backup_payload(&repository, &healthy.file_name, 13)
+    assert!(
+        root.join("backups")
+            .join(&healthy.logical_file_name)
+            .exists()
+    );
+    assert!(!root.join("backups").join(&healthy.file_name).exists());
+    let downloaded = read_backup_payload(&repository, &healthy.logical_file_name, 13)
         .await
         .expect("stream converted healthy backup");
     assert_eq!(downloaded, healthy_payload.as_bytes());
@@ -1341,14 +1162,17 @@ async fn truncated_zstd_backup_does_not_poison_healthy_inventory_entries() {
         );
     }
     repository
-        .delete_chat_backup(&descriptor.file_name)
+        .delete_chat_backup(&descriptor.logical_file_name)
         .await
         .expect("delete failed conversion source");
     repository
         .reconcile_chat_backups()
         .await
         .expect("finish convergence after removing corrupt backup");
-    assert_eq!(backup_file_names(&root).await, vec![healthy.file_name]);
+    assert_eq!(
+        backup_file_names(&root).await,
+        vec![healthy.logical_file_name]
+    );
 
     let _ = fs::remove_dir_all(root).await;
 }
@@ -1359,7 +1183,9 @@ async fn inventory_recovers_interrupted_conversion_using_the_selected_format() {
     let logical_name = "chat_alice_20260101-000000.jsonl";
     let raw_path = root.join("backups").join(logical_name);
     let compressed_path = root.join("backups").join(format!("{logical_name}.zst"));
-    let payload = payload_to_jsonl(&payload_with_integrity("collision"));
+    let payload = payload_to_jsonl(&payload_with_integrity(
+        "2da3e6dc-7e74-548a-99e0-a818cd1063ee",
+    ));
     fs::write(&raw_path, payload.as_bytes())
         .await
         .expect("write raw backup");
@@ -1410,9 +1236,14 @@ async fn inventory_enforces_prefix_and_global_file_limits() {
     let (repository, root) = setup_repository().await;
     apply_and_reconcile_backups(&repository, backup_policy(2, 3, -1)).await;
     let source = root.join("source.jsonl");
-    fs::write(&source, payload_to_jsonl(&payload_with_integrity("quota")))
-        .await
-        .expect("write source");
+    fs::write(
+        &source,
+        payload_to_jsonl(&payload_with_integrity(
+            "f00f6c0b-3a51-55e8-bffa-4d63f0c6c9da",
+        )),
+    )
+    .await
+    .expect("write source");
 
     for _ in 0..3 {
         repository
@@ -1452,7 +1283,9 @@ async fn reconcile_prunes_legacy_overage_and_zero_limit_clears_history() {
         fs::write(
             root.join("backups")
                 .join(format!("chat_alice_20260101-00000{index}.jsonl")),
-            payload_to_jsonl(&payload_with_integrity("legacy")),
+            payload_to_jsonl(&payload_with_integrity(
+                "23c20f0a-d721-56f4-a070-93b0e4fc04d2",
+            )),
         )
         .await
         .expect("write legacy backup");
@@ -1469,13 +1302,18 @@ async fn reconcile_prunes_legacy_overage_and_zero_limit_clears_history() {
 async fn automatic_quota_rejection_does_not_fail_current_save() {
     let (repository, root) = setup_repository().await;
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, 1)).await;
-    let source = root.join("source.jsonl");
-    let payload = payload_to_jsonl(&payload_with_integrity("too-large"));
-    fs::write(&source, &payload).await.expect("write source");
+    let payload = payload_to_jsonl(&payload_with_integrity(
+        "39b864b4-8182-5c5c-83eb-2cc4c27d44d1",
+    ));
 
-    commit_character_payload_file(&repository, "Alice", "session", &source, false)
-        .await
-        .expect("current save must succeed");
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "session"),
+        payload.as_bytes(),
+        false,
+    )
+    .await
+    .expect("current save must succeed");
     assert!(backup_file_names(&root).await.is_empty());
 
     repository
@@ -1503,13 +1341,13 @@ async fn automatic_deduplication_preserves_prefix_and_latest_state() {
     let (repository, root) = setup_repository().await;
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
     let payload_a = payload_to_jsonl(&payload_with_message(
-        "timeline",
+        "0f62c7c2-a8a9-56a3-ac00-90277833bf63",
         "2026-01-01T00:00:00.000Z",
         "alpha",
         "Assistant",
     ));
     let payload_b = payload_to_jsonl(&payload_with_message(
-        "timeline",
+        "0f62c7c2-a8a9-56a3-ac00-90277833bf63",
         "2026-01-01T00:00:00.000Z",
         "bravo",
         "Assistant",
@@ -1595,7 +1433,7 @@ async fn automatic_deduplication_preserves_prefix_and_latest_state() {
 async fn non_c2_mutation_fails_closed_and_group_uses_the_same_guard() {
     let (repository, root) = setup_repository().await;
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
-    let payload = payload_with_integrity("mutation");
+    let payload = payload_with_integrity("8f145f8a-090d-5fe0-888f-5a6abd9bceca");
     let jsonl = format!("{}\n", payload_to_jsonl(&payload));
     commit_payload_bytes(
         &repository,
@@ -1615,7 +1453,10 @@ async fn non_c2_mutation_fails_closed_and_group_uses_the_same_guard() {
         .await
         .expect("resolve current path");
     repository
-        .write_payload_to_path(&current_path, &payload, false)
+        .commit_metadata(
+            character_target("Alice", "session"),
+            payload[0]["chat_metadata"].clone(),
+        )
         .await
         .expect("rewrite the same bytes through a non-C2 mutation");
     assert_eq!(
@@ -1623,12 +1464,6 @@ async fn non_c2_mutation_fails_closed_and_group_uses_the_same_guard() {
             .await
             .expect("read rewritten current"),
         jsonl.as_bytes()
-    );
-    assert!(
-        repository
-            .current_content_signature_for_size(&current_path, jsonl.len() as u64)
-            .await
-            .is_none()
     );
     repository
         .backup_chat_automatic("Alice", "session")
@@ -1656,24 +1491,14 @@ async fn non_c2_mutation_fails_closed_and_group_uses_the_same_guard() {
         .expect("skip unchanged group snapshot");
     assert_eq!(backup_file_names(&root).await.len(), 3);
 
-    let group_path = repository
-        .get_group_chat_path("group-session")
-        .expect("resolve group path");
-    assert!(
-        repository
-            .current_content_signature_for_size(&group_path, jsonl.len() as u64)
-            .await
-            .is_some()
-    );
     <FileChatRepository as ChatRepository>::clear_cache(&repository)
         .await
         .expect("clear chat runtime cache");
-    assert!(
-        repository
-            .current_content_signature_for_size(&group_path, jsonl.len() as u64)
-            .await
-            .is_none()
-    );
+    repository
+        .backup_group_chat_automatic("group-session")
+        .await
+        .unwrap();
+    assert_eq!(backup_file_names(&root).await.len(), 4);
 
     let _ = fs::remove_dir_all(root).await;
 }
@@ -1682,16 +1507,14 @@ async fn non_c2_mutation_fails_closed_and_group_uses_the_same_guard() {
 async fn automatic_snapshot_defers_instead_of_waiting_for_a_busy_current() {
     let (repository, root) = setup_repository().await;
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
-    let source = root.join("source.jsonl");
-    fs::write(
-        &source,
-        payload_to_jsonl(&payload_with_integrity("automatic-busy")),
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "session"),
+        b"{}",
+        false,
     )
     .await
-    .expect("write source");
-    commit_character_payload_file(&repository, "Alice", "session", &source, false)
-        .await
-        .expect("save character current");
+    .unwrap();
 
     let current_path = repository
         .get_chat_payload_path("Alice", "session")
@@ -1718,164 +1541,65 @@ async fn automatic_snapshot_defers_instead_of_waiting_for_a_busy_current() {
 #[tokio::test]
 async fn explicit_access_retries_a_failed_inventory_build() {
     let (repository, root) = setup_repository().await;
-    fs::write(
-        root.join("backups/chat_external_20260101-000000.jsonl"),
-        payload_to_jsonl(&payload_with_integrity("external")),
-    )
-    .await
-    .expect("write external backup");
-    repository.backup_history.lock().await.inventory =
-        BackupInventoryState::Failed("transient scan failure".into());
+    let backups = root.join("backups");
+    fs::remove_dir(&backups).await.unwrap();
+    fs::write(&backups, b"blocks directory access")
+        .await
+        .unwrap();
+    assert!(repository.list_chat_backup_catalog().await.is_err());
 
+    fs::remove_file(&backups).await.unwrap();
+    fs::create_dir(&backups).await.unwrap();
+    fs::write(backups.join("chat_external_20260101-000000.jsonl"), b"{}")
+        .await
+        .unwrap();
     assert_eq!(
-        repository
-            .list_chat_backup_files()
-            .await
-            .expect("retry inventory build")
-            .len(),
+        repository.list_chat_backup_catalog().await.unwrap().len(),
         1
     );
+    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
-async fn chat_payload_bytes_roundtrip_and_path() {
+async fn chat_commit_sanitizes_paths_and_preserves_unicode_spacing() {
     let (repository, root) = setup_repository().await;
-
-    let raw_payload = payload_to_jsonl(&payload_with_integrity("bytes-a"));
-    let source = root.join("chat-source.jsonl");
-    fs::write(&source, &raw_payload)
-        .await
-        .expect("write chat source payload");
-    commit_character_payload_file(&repository, "alice", "session", &source, false)
-        .await
-        .expect("save payload from source file");
-
-    let loaded_bytes = repository
-        .get_chat_payload_bytes("alice", "session")
-        .await
-        .expect("load raw payload bytes");
-    assert_eq!(loaded_bytes, raw_payload.as_bytes());
-
-    let payload_path = repository
-        .get_chat_payload_path("alice", "session")
-        .await
-        .expect("get payload path");
-    assert!(payload_path.exists());
-    assert_eq!(
-        payload_path.file_name().and_then(|name| name.to_str()),
-        Some("session.jsonl")
-    );
-
-    let _ = fs::remove_dir_all(&root).await;
+    for (character, name, read_name, expected) in [
+        (
+            "ali:ce",
+            "session:2026/02*21?",
+            "session:2026/02*21?",
+            "alice/session20260221.jsonl",
+        ),
+        (
+            "角色",
+            " 中文会话 .jsonl",
+            " 中文会话 ",
+            "角色/ 中文会话 .jsonl",
+        ),
+    ] {
+        commit_payload_bytes(&repository, character_target(character, name), b"{}", false)
+            .await
+            .unwrap();
+        assert_eq!(
+            repository
+                .get_chat_payload_path(character, read_name)
+                .await
+                .unwrap(),
+            root.join("chats").join(expected)
+        );
+        assert_eq!(
+            repository
+                .get_chat_payload_bytes(character, read_name)
+                .await
+                .unwrap(),
+            b"{}"
+        );
+    }
+    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
-async fn chat_commit_sanitizes_windows_unsafe_path_segments() {
-    let (repository, root) = setup_repository().await;
-
-    let character_name = "ali:ce";
-    let file_name = "session:2026/02*21?";
-    let raw_payload = payload_to_jsonl(&payload_with_integrity("bytes-safe-path"));
-    let source = root.join("unsafe-path-source.jsonl");
-    fs::write(&source, &raw_payload)
-        .await
-        .expect("write unsafe chat payload source");
-
-    commit_character_payload_file(&repository, character_name, file_name, &source, false)
-        .await
-        .expect("save payload from source file with unsafe path segments");
-
-    let expected_path = root
-        .join("chats")
-        .join(sanitize_filename(character_name))
-        .join(format!("{}.jsonl", sanitize_filename(file_name)));
-    assert!(expected_path.exists());
-
-    let loaded_bytes = repository
-        .get_chat_payload_bytes(character_name, file_name)
-        .await
-        .expect("load raw payload bytes via unsanitized identifiers");
-    assert_eq!(loaded_bytes, raw_payload.as_bytes());
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn chat_commit_preserves_unicode_and_upstream_spacing() {
-    let (repository, root) = setup_repository().await;
-
-    let character_name = "角色";
-    let file_name = " 中文会话 .jsonl";
-    let raw_payload = payload_to_jsonl(&payload_with_integrity("unicode-file-name"));
-    let source = root.join("unicode-chat-source.jsonl");
-    fs::write(&source, &raw_payload)
-        .await
-        .expect("write unicode chat payload source");
-
-    commit_character_payload_file(&repository, character_name, file_name, &source, false)
-        .await
-        .expect("save payload with unicode chat file name");
-
-    let expected_path = root
-        .join("chats")
-        .join(sanitize_filename(character_name))
-        .join(" 中文会话 .jsonl");
-    assert!(expected_path.exists());
-    assert!(
-        !root
-            .join("chats")
-            .join(sanitize_filename(character_name))
-            .join("中文会话.jsonl")
-            .exists()
-    );
-
-    let loaded_bytes = repository
-        .get_chat_payload_bytes(character_name, " 中文会话 ")
-        .await
-        .expect("load unicode chat payload bytes");
-    assert_eq!(loaded_bytes, raw_payload.as_bytes());
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn legacy_hash_truncated_chat_dir_is_read_through_alias() {
-    let (repository, root) = setup_repository().await;
-
-    let characters_dir = root.join("characters");
-    fs::create_dir_all(&characters_dir)
-        .await
-        .expect("create characters directory");
-    fs::write(characters_dir.join("Alice#1.png"), b"")
-        .await
-        .expect("create exact character card");
-
-    let legacy_dir = root.join("chats").join("Alice");
-    fs::create_dir_all(&legacy_dir)
-        .await
-        .expect("create legacy chat dir");
-    let raw_payload = payload_to_jsonl(&payload_with_integrity("legacy-hash"));
-    fs::write(legacy_dir.join("session.jsonl"), &raw_payload)
-        .await
-        .expect("write legacy chat payload");
-
-    let loaded = repository
-        .get_chat_payload_bytes("Alice#1", "session")
-        .await
-        .expect("read legacy payload through exact identity");
-    assert_eq!(loaded, raw_payload.as_bytes());
-
-    let aliases = fs::read_to_string(root.join("user").join("cache").join("chat_aliases_v1.json"))
-        .await
-        .expect("read alias file");
-    assert!(aliases.contains("\"Alice#1\""));
-    assert!(aliases.contains("\"dir\": \"Alice\""));
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn shared_alias_store_serializes_concurrent_repository_writes() {
+async fn shared_legacy_aliases_survive_concurrent_discovery_and_restart() {
     let root = unique_temp_root();
     let chat_aliases = new_shared_chat_alias_store_for_user_dir(&root);
     let repository_a = FileChatRepository::with_chat_aliases(
@@ -1898,7 +1622,17 @@ async fn shared_alias_store_serializes_concurrent_repository_writes() {
         .await
         .expect("create shared repository dirs");
 
-    for (dir_name, integrity) in [("Alice", "shared-alias-a"), ("Bob", "shared-alias-b")] {
+    fs::create_dir_all(root.join("characters")).await.unwrap();
+    for (dir_name, integrity) in [
+        ("Alice", "88d48985-6eec-55bf-97d3-497203d5a324"),
+        ("Bob", "a2402e7d-fc18-501b-ba6c-71eb088ac1ee"),
+    ] {
+        fs::write(
+            root.join("characters").join(format!("{dir_name}#1.png")),
+            b"",
+        )
+        .await
+        .unwrap();
         let legacy_dir = root.join("chats").join(dir_name);
         fs::create_dir_all(&legacy_dir)
             .await
@@ -1918,208 +1652,87 @@ async fn shared_alias_store_serializes_concurrent_repository_writes() {
     .expect("shared alias store writes both aliases");
     assert_eq!(
         loaded_a,
-        payload_to_jsonl(&payload_with_integrity("shared-alias-a")).as_bytes()
+        payload_to_jsonl(&payload_with_integrity(
+            "88d48985-6eec-55bf-97d3-497203d5a324"
+        ))
+        .as_bytes()
     );
     assert_eq!(
         loaded_b,
-        payload_to_jsonl(&payload_with_integrity("shared-alias-b")).as_bytes()
+        payload_to_jsonl(&payload_with_integrity(
+            "a2402e7d-fc18-501b-ba6c-71eb088ac1ee"
+        ))
+        .as_bytes()
     );
 
-    let aliases = fs::read_to_string(root.join("user").join("cache").join("chat_aliases_v1.json"))
-        .await
-        .expect("read alias file");
-    assert!(aliases.contains("\"Alice#1\""));
-    assert!(aliases.contains("\"dir\": \"Alice\""));
-    assert!(aliases.contains("\"Bob#1\""));
-    assert!(aliases.contains("\"dir\": \"Bob\""));
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn chat_commit_rejects_chat_file_names_that_sanitize_to_empty() {
-    let (repository, root) = setup_repository().await;
-
-    let raw_payload = payload_to_jsonl(&payload_with_integrity("invalid-file-name"));
-    let source = root.join("invalid-chat-name-source.jsonl");
-    fs::write(&source, &raw_payload)
-        .await
-        .expect("write invalid chat payload source");
-
-    let error = commit_character_payload_file(&repository, "alice", "*.jsonl", &source, false)
-        .await
-        .expect_err("empty sanitized chat file name should fail");
-
-    assert!(
-        matches!(error, DomainError::InvalidData(message) if message == "Invalid chat file name")
-    );
-    assert!(!root.join("chats").join("alice").join("chat.jsonl").exists());
-    assert!(!root.join("chats").join("alice").join(".jsonl").exists());
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn chat_commit_rejects_names_that_lose_jsonl_suffix_after_truncation() {
-    let (repository, root) = setup_repository().await;
-
-    let raw_payload = payload_to_jsonl(&payload_with_integrity("truncated-extension"));
-    let source = root.join("truncated-extension-source.jsonl");
-    fs::write(&source, &raw_payload)
-        .await
-        .expect("write chat payload source");
-
-    let overlong_file_name = "a".repeat(250);
-    let error =
-        commit_character_payload_file(&repository, "alice", &overlong_file_name, &source, false)
+    // Saved aliases must still win after restart, even if canonical directories now exist.
+    let reopened = repository_for_root(&root);
+    for (character, expected) in [("Alice#1", loaded_a), ("Bob#1", loaded_b)] {
+        fs::create_dir(root.join("chats").join(character))
             .await
-            .expect_err("chat file name must keep a complete jsonl suffix");
-
-    assert!(
-        matches!(error, DomainError::InvalidData(message) if message == "Invalid chat file name")
-    );
-    assert!(!root.join("chats").join("alice").exists());
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn chat_commit_enforces_integrity() {
-    let (repository, root) = setup_repository().await;
-
-    let source_a = root.join("source-a.jsonl");
-    let payload_a = payload_to_jsonl(&payload_with_integrity("path-a"));
-    fs::write(&source_a, &payload_a)
-        .await
-        .expect("write first source payload");
-
-    commit_character_payload_file(&repository, "alice", "session", &source_a, false)
-        .await
-        .expect("save payload from source file");
-
-    let source_b = root.join("source-b.jsonl");
-    let payload_b = payload_to_jsonl(&payload_with_integrity("path-b"));
-    fs::write(&source_b, &payload_b)
-        .await
-        .expect("write second source payload");
-
-    let error = commit_character_payload_file(&repository, "alice", "session", &source_b, false)
-        .await
-        .expect_err("save should fail on integrity mismatch");
-    assert!(matches!(error, DomainError::InvalidData(message) if message == "integrity"));
-
-    commit_character_payload_file(&repository, "alice", "session", &source_b, true)
-        .await
-        .expect("forced save should bypass integrity check");
-
-    let loaded_bytes = repository
-        .get_chat_payload_bytes("alice", "session")
-        .await
-        .expect("load chat payload bytes");
-    assert_eq!(loaded_bytes, payload_b.as_bytes());
+            .unwrap();
+        assert_eq!(
+            reopened
+                .get_chat_payload_bytes(character, "session")
+                .await
+                .unwrap(),
+            expected
+        );
+    }
 
     let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
-async fn chat_commit_rejects_missing_integrity_when_existing_has_one() {
+async fn chat_commit_rejects_empty_names_and_truncated_jsonl_suffixes() {
     let (repository, root) = setup_repository().await;
-
-    let source_a = root.join("source-with-integrity.jsonl");
-    let payload_a = payload_to_jsonl(&payload_with_integrity("path-a"));
-    fs::write(&source_a, &payload_a)
-        .await
-        .expect("write source payload with integrity");
-
-    commit_character_payload_file(&repository, "alice", "session", &source_a, false)
-        .await
-        .expect("save payload from source file");
-
-    let source_b = root.join("source-without-integrity.jsonl");
-    let payload_b = payload_to_jsonl(&payload_without_integrity());
-    fs::write(&source_b, &payload_b)
-        .await
-        .expect("write source payload without integrity");
-
-    let error = commit_character_payload_file(&repository, "alice", "session", &source_b, false)
-        .await
-        .expect_err("save should fail when incoming integrity is missing");
-    assert!(matches!(error, DomainError::InvalidData(message) if message == "integrity"));
-
-    commit_character_payload_file(&repository, "alice", "session", &source_b, true)
-        .await
-        .expect("forced save should bypass missing integrity check");
-
-    let _ = fs::remove_dir_all(&root).await;
+    for name in ["*.jsonl".to_string(), "a".repeat(250)] {
+        assert!(matches!(
+            repository
+                .begin(character_target("alice", &name), false, None)
+                .await,
+            Err(DomainError::InvalidData(_))
+        ));
+    }
+    assert!(!root.join("chats/alice").exists());
+    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
-async fn concurrent_chat_commits_publish_only_complete_payloads() {
+async fn chat_commit_requires_force_to_replace_or_remove_existing_integrity() {
     let (repository, root) = setup_repository().await;
-    let repository = Arc::new(repository);
-    let payload_a = payload_to_jsonl(&payload_with_message(
-        "path-concurrent",
-        "2026-01-01T00:00:00.000Z",
-        "concurrent-a",
-        "Assistant",
-    ));
-    let payload_b = payload_to_jsonl(&payload_with_message(
-        "path-concurrent",
-        "2026-01-01T00:00:00.000Z",
-        "concurrent-b",
-        "Assistant",
-    ));
-    let target = character_target("alice", "session");
-    let session_a = repository
-        .begin(target.clone(), false, None)
-        .await
-        .expect("begin concurrent a");
-    let session_b = repository
-        .begin(target, false, None)
-        .await
-        .expect("begin concurrent b");
-    repository
-        .append(&session_a.session_id, 0, payload_a.as_bytes())
-        .await
-        .expect("stage concurrent a");
-    repository
-        .append(&session_b.session_id, 0, payload_b.as_bytes())
-        .await
-        .expect("stage concurrent b");
-
-    let barrier = Arc::new(Barrier::new(3));
-    let repository_a = Arc::clone(&repository);
-    let repository_b = Arc::clone(&repository);
-    let barrier_a = Arc::clone(&barrier);
-    let barrier_b = Arc::clone(&barrier);
-    let size_a = payload_a.len() as u64;
-    let size_b = payload_b.len() as u64;
-
-    let save_a = tokio::spawn(async move {
-        barrier_a.wait().await;
-        repository_a.finish(&session_a.session_id, size_a).await
-    });
-    let save_b = tokio::spawn(async move {
-        barrier_b.wait().await;
-        repository_b.finish(&session_b.session_id, size_b).await
-    });
-    barrier.wait().await;
-
-    let result_a = save_a.await.expect("join concurrent save a");
-    let result_b = save_b.await.expect("join concurrent save b");
-    assert!(result_a.is_ok(), "first concurrent save should succeed");
-    assert!(result_b.is_ok(), "second concurrent save should succeed");
-
-    let loaded_bytes = repository
-        .get_chat_payload_bytes("alice", "session")
-        .await
-        .expect("load concurrent payload bytes");
-    assert!(
-        loaded_bytes == payload_a.as_bytes() || loaded_bytes == payload_b.as_bytes(),
-        "final payload should match one completed save"
-    );
-
-    let _ = fs::remove_dir_all(&root).await;
+    let original = br#"{"chat_metadata":{"integrity":"e39c8f17-c0f9-5b07-9f3a-f12428ab9fd1"}}"#;
+    for (target, path) in [
+        (
+            character_target("alice", "session"),
+            root.join("chats/alice/session.jsonl"),
+        ),
+        (
+            ChatPayloadTarget::Group {
+                chat_id: "group-session".into(),
+            },
+            root.join("group chats/group-session.jsonl"),
+        ),
+    ] {
+        for incoming in [
+            br#"{"chat_metadata":{"integrity":"f559b7b7-2a9b-5621-8fd2-d9f39726e511"}}"#.as_slice(),
+            b"{}",
+        ] {
+            commit_payload_bytes(&repository, target.clone(), original, true)
+                .await
+                .unwrap();
+            let error = commit_payload_bytes(&repository, target.clone(), incoming, false)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, DomainError::InvalidData(message) if message == "integrity"));
+            assert_eq!(fs::read(&path).await.unwrap(), original);
+            commit_payload_bytes(&repository, target.clone(), incoming, true)
+                .await
+                .unwrap();
+            assert_eq!(fs::read(&path).await.unwrap(), incoming);
+        }
+    }
+    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
@@ -2129,7 +1742,7 @@ async fn save_and_load_chat_preserves_additional_fields() {
     let payload = vec![
         json!({
             "chat_metadata": {
-                "integrity": "slug-a",
+                "integrity": "987c74ae-cd97-51d8-847b-a5dc2f6cdf84",
                 "scenario": "metadata value",
             },
             "user_name": "unused",
@@ -2148,9 +1761,14 @@ async fn save_and_load_chat_preserves_additional_fields() {
         }),
     ];
 
-    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
-        .await
-        .expect("save payload");
+    commit_payload_bytes(
+        &repository,
+        character_target("alice", "session"),
+        payload_to_jsonl(&payload).as_bytes(),
+        false,
+    )
+    .await
+    .expect("save payload");
 
     let chat = repository
         .get_chat("alice", "session")
@@ -2185,68 +1803,29 @@ async fn save_and_load_chat_preserves_additional_fields() {
 }
 
 #[tokio::test]
-async fn group_chat_commit_enforces_integrity() {
-    let (repository, root) = setup_repository().await;
-
-    let source_a = root.join("group-source-a.jsonl");
-    let payload_a = payload_to_jsonl(&payload_with_integrity("group-path-a"));
-    fs::write(&source_a, &payload_a)
-        .await
-        .expect("write first group source payload");
-
-    commit_group_payload_file(&repository, "group-session", &source_a, false)
-        .await
-        .expect("save group payload from source file");
-
-    let source_b = root.join("group-source-b.jsonl");
-    let payload_b = payload_to_jsonl(&payload_with_integrity("group-path-b"));
-    fs::write(&source_b, &payload_b)
-        .await
-        .expect("write second group source payload");
-
-    let error = commit_group_payload_file(&repository, "group-session", &source_b, false)
-        .await
-        .expect_err("save should fail on integrity mismatch");
-    assert!(matches!(error, DomainError::InvalidData(message) if message == "integrity"));
-
-    commit_group_payload_file(&repository, "group-session", &source_b, true)
-        .await
-        .expect("forced group save should bypass integrity check");
-
-    let payload_path = repository
-        .get_group_chat_payload_path("group-session")
-        .await
-        .expect("get group payload path");
-    let loaded_bytes = fs::read(&payload_path)
-        .await
-        .expect("load group payload bytes");
-    assert_eq!(loaded_bytes, payload_b.as_bytes());
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
 async fn group_chat_payload_roundtrip_and_delete() {
     let (repository, root) = setup_repository().await;
-    let payload = payload_with_integrity("group-a");
+    let payload = payload_with_integrity("241855c8-7d0f-5c84-9b6c-949b417f0743");
 
-    let source = root.join("group-roundtrip.jsonl");
-    fs::write(&source, payload_to_jsonl(&payload))
-        .await
-        .expect("write group payload source");
-    commit_group_payload_file(&repository, "group-session", &source, false)
-        .await
-        .expect("save group payload from source file");
+    commit_payload_bytes(
+        &repository,
+        ChatPayloadTarget::Group {
+            chat_id: "group-session".into(),
+        },
+        payload_to_jsonl(&payload).as_bytes(),
+        false,
+    )
+    .await
+    .unwrap();
 
     let payload_path = repository
         .get_group_chat_payload_path("group-session")
         .await
         .expect("get group payload path");
-    let bytes = fs::read(&payload_path)
+    let saved = crate::chat_jsonl::read_payload(&payload_path)
         .await
-        .expect("read group payload bytes");
-    let saved = crate::jsonl_utils::parse_jsonl_bytes(&bytes).expect("parse group payload");
-    assert_eq!(saved.len(), payload.len());
+        .expect("read group payload");
+    assert_eq!(saved, payload);
 
     repository
         .delete_group_chat_payload("group-session")
@@ -2266,7 +1845,9 @@ async fn import_chat_payload_creates_unique_files() {
     let (repository, root) = setup_repository().await;
 
     let import_path = root.join("import.jsonl");
-    let import_content = payload_to_jsonl(&payload_with_integrity("import-a"));
+    let import_content = payload_to_jsonl(&payload_with_integrity(
+        "de03bd09-1535-5105-b5d3-37baf9e0a476",
+    ));
     fs::write(&import_path, import_content)
         .await
         .expect("write import file");
@@ -2295,7 +1876,8 @@ async fn import_chat_payload_preserves_unchanged_jsonl_bytes() {
 
     let import_path = root.join("raw-import.jsonl");
     let import_content = concat!(
-        "{ \"chat_metadata\" : { \"integrity\" : \"raw-import\" } }\r\n",
+        "\r\n\u{feff}\r\n",
+        "{ \"chat_metadata\" : { \"integrity\" : \"3c3f2f06-e625-52df-ba40-57e6600145ad\" } }\r\n",
         "{ \"name\" : \"Alice\", \"is_user\" : false, \"mes\" : \"kept\", \"extra\" : { \"note\" : true } }\n",
         "not-json but SillyTavern keeps it\n"
     );
@@ -2322,7 +1904,7 @@ async fn import_chat_payload_flattens_chub_jsonl_without_normalizing_messages() 
 
     let import_path = root.join("chub-import.jsonl");
     let import_content = [
-        r#"{"chat_metadata":{"integrity":"chub-import"}}"#,
+        r#"{"chat_metadata":{"integrity":"a558cfca-42e3-5b78-b480-e7f8a253f52a"}}"#,
         r#"{"is_user":false,"mes":{"message":"hello"},"swipes":[{"message":"alt"},{"message":""},{"other":"kept"}]}"#,
     ]
     .join("\n");
@@ -2335,10 +1917,10 @@ async fn import_chat_payload_flattens_chub_jsonl_without_normalizing_messages() 
         .await
         .expect("import Chub JSONL");
 
-    let saved_bytes = fs::read(root.join("chats").join("alice").join(&files[0]))
+    let saved = repository
+        .get_chat_payload("alice", &files[0])
         .await
-        .expect("read imported Chub JSONL");
-    let saved = crate::jsonl_utils::parse_jsonl_bytes(&saved_bytes).expect("parse Chub import");
+        .expect("read Chub import");
 
     assert_eq!(saved.len(), 2);
     assert_eq!(saved[1].get("mes"), Some(&json!("hello")));
@@ -2351,152 +1933,103 @@ async fn import_chat_payload_flattens_chub_jsonl_without_normalizing_messages() 
 }
 
 #[tokio::test]
-async fn rename_chat_keeps_raw_header_fields_intact() {
+async fn rename_chat_preserves_bytes_and_rejects_invalid_or_occupied_targets() {
     let (repository, root) = setup_repository().await;
-    let payload = vec![
-        json!({
-            "chat_metadata": {
-                "integrity": "rename-a",
-            },
-            "user_name": "unused",
-            "character_name": "unused",
-            "custom_header": {
-                "keep": true,
-            },
-        }),
-        json!({
-            "name": "User",
-            "is_user": true,
-            "send_date": "2026-01-01T00:00:00.000Z",
-            "mes": "hello",
-            "extra": {},
-        }),
-    ];
+    let original = b"{\"custom_header\":{\"keep\":true}}\n{\"mes\":\"hello\"}";
+    let occupied = b"{}\n{\"mes\":\"occupied\"}";
+    commit_payload_bytes(
+        &repository,
+        character_target("alice", "session"),
+        original,
+        false,
+    )
+    .await
+    .unwrap();
+    commit_payload_bytes(
+        &repository,
+        character_target("alice", "occupied"),
+        occupied,
+        false,
+    )
+    .await
+    .unwrap();
 
-    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
-        .await
-        .expect("save payload");
-
-    let committed_file_name = repository
-        .rename_chat("alice", "session", "session-renamed.jsonl")
-        .await
-        .expect("rename chat");
-    assert_eq!(committed_file_name, "session-renamed");
-
-    let renamed = repository
-        .get_chat_payload("alice", "session-renamed")
-        .await
-        .expect("read renamed payload");
+    for name in ["*.jsonl", "occupied"] {
+        assert!(matches!(
+            repository.rename_chat("alice", "session", name).await,
+            Err(DomainError::InvalidData(_))
+        ));
+        assert_eq!(
+            repository
+                .get_chat_payload_bytes("alice", "session")
+                .await
+                .unwrap(),
+            original
+        );
+        assert_eq!(
+            repository
+                .get_chat_payload_bytes("alice", "occupied")
+                .await
+                .unwrap(),
+            occupied
+        );
+    }
+    assert!(!root.join("chats/alice/chat.jsonl").exists());
     assert_eq!(
-        renamed[0]
-            .get("custom_header")
-            .and_then(Value::as_object)
-            .and_then(|entry| entry.get("keep"))
-            .and_then(Value::as_bool),
-        Some(true)
+        repository
+            .rename_chat("alice", "session", "renamed.jsonl")
+            .await
+            .unwrap(),
+        "renamed"
     );
-
-    let old = repository.get_chat_payload("alice", "session").await;
-    assert!(matches!(old, Err(DomainError::NotFound(_))));
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn rename_chat_rejects_empty_sanitized_target_without_fallback() {
-    let (repository, root) = setup_repository().await;
-
-    save_chat_payload_from_values(
-        &repository,
-        &root,
-        "alice",
-        "session",
-        &payload_with_integrity("rename-invalid-target"),
-        false,
-    )
-    .await
-    .expect("save payload");
-
-    let error = repository
-        .rename_chat("alice", "session", "*.jsonl")
-        .await
-        .expect_err("empty sanitized rename target should fail");
-
-    assert!(
-        matches!(error, DomainError::InvalidData(message) if message == "Invalid chat file name")
+    assert_eq!(
+        repository
+            .get_chat_payload_bytes("alice", "renamed")
+            .await
+            .unwrap(),
+        original
     );
-    assert!(
-        root.join("chats")
-            .join("alice")
-            .join("session.jsonl")
-            .exists()
-    );
-    assert!(!root.join("chats").join("alice").join("chat.jsonl").exists());
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn rename_chat_rejects_existing_target_without_overwrite() {
-    let (repository, root) = setup_repository().await;
-
-    save_chat_payload_from_values(
-        &repository,
-        &root,
-        "alice",
-        "session",
-        &payload_with_integrity("rename-source"),
-        false,
-    )
-    .await
-    .expect("save source payload");
-    save_chat_payload_from_values(
-        &repository,
-        &root,
-        "alice",
-        "session-renamed",
-        &payload_with_integrity("rename-target"),
-        false,
-    )
-    .await
-    .expect("save target payload");
-
-    let error = repository
-        .rename_chat("alice", "session", "session-renamed")
-        .await
-        .expect_err("existing target should fail");
-
-    assert!(
-        matches!(error, DomainError::InvalidData(message) if message.contains("Chat already exists"))
-    );
-    assert!(
-        root.join("chats")
-            .join("alice")
-            .join("session.jsonl")
-            .exists()
-    );
-    assert!(
-        root.join("chats")
-            .join("alice")
-            .join("session-renamed.jsonl")
-            .exists()
-    );
-
-    let _ = fs::remove_dir_all(&root).await;
+    assert!(matches!(
+        repository.get_chat_payload_bytes("alice", "session").await,
+        Err(DomainError::NotFound(_))
+    ));
+    fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
 async fn calculate_character_chat_stats_uses_last_message_send_date() {
     let (repository, root) = setup_repository().await;
-    let older = payload_with_message("stats-old", "2026-01-01T00:00:00.000Z", "older", "alice");
-    let newer = payload_with_message("stats-new", "2026-01-03T00:00:00.000Z", "newer", "alice");
+    let older = payload_with_message(
+        "eac4edce-753b-5b13-9579-0d1644e26a1c",
+        "2026-01-01T00:00:00.000Z",
+        "older",
+        "alice",
+    );
+    let mut newer = payload_with_message(
+        "476571b9-a0ad-5cca-99b9-db71ac95ae89",
+        "2026-01-03T00:00:00.000Z",
+        "newer",
+        "alice",
+    );
 
-    save_chat_payload_from_values(&repository, &root, "alice", "older", &older, false)
-        .await
-        .expect("save older payload");
-    save_chat_payload_from_values(&repository, &root, "alice", "newer", &newer, false)
-        .await
-        .expect("save newer payload");
+    newer[1]["mes"] = json!({ "not": "a string" });
+
+    commit_payload_bytes(
+        &repository,
+        character_target("alice", "older"),
+        payload_to_jsonl(&older).as_bytes(),
+        false,
+    )
+    .await
+    .expect("save older payload");
+    commit_payload_bytes(
+        &repository,
+        character_target("alice", "newer"),
+        payload_to_jsonl(&newer).as_bytes(),
+        false,
+    )
+    .await
+    .expect("save newer payload");
 
     let (chat_size, date_last_chat) = repository
         .calculate_character_chat_stats("alice")
@@ -2506,87 +2039,6 @@ async fn calculate_character_chat_stats_uses_last_message_send_date() {
     assert!(chat_size > 0);
     assert_eq!(date_last_chat, timestamp_millis("2026-01-03T00:00:00.000Z"));
 
-    let index_path = root
-        .join("user")
-        .join("cache")
-        .join("chat_summary_index_v1.json");
-    let parsed: Value = serde_json::from_str(
-        &fs::read_to_string(&index_path)
-            .await
-            .expect("read summary index"),
-    )
-    .expect("parse summary index");
-    assert_eq!(
-        parsed
-            .get("entries")
-            .and_then(Value::as_array)
-            .map(Vec::len),
-        Some(0)
-    );
-    assert_eq!(
-        parsed
-            .get("stats_entries")
-            .and_then(Value::as_array)
-            .map(Vec::len),
-        Some(2)
-    );
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
-async fn list_chat_summaries_returns_streamed_metadata() {
-    let (repository, root) = setup_repository().await;
-    let payload = vec![
-        json!({
-            "chat_metadata": {
-                "integrity": "summary-a",
-                "chat_id_hash": 42,
-                "custom": "value",
-            },
-            "user_name": "unused",
-            "character_name": "unused",
-        }),
-        json!({
-            "name": "User",
-            "is_user": true,
-            "send_date": "2026-01-01T00:00:00.000Z",
-            "mes": "hello there",
-            "extra": {},
-        }),
-        json!({
-            "name": "Alice",
-            "is_user": false,
-            "send_date": "2026-01-02T00:00:00.000Z",
-            "mes": "latest response",
-            "extra": {},
-        }),
-    ];
-
-    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
-        .await
-        .expect("save payload");
-
-    let summaries = repository
-        .list_chat_summaries(Some("alice"), true)
-        .await
-        .expect("list chat summaries");
-    assert_eq!(summaries.len(), 1);
-    let summary = &summaries[0];
-    assert_eq!(summary.character_name, "alice");
-    assert_eq!(summary.file_name, "session.jsonl");
-    assert_eq!(summary.message_count, 2);
-    assert_eq!(summary.preview, "latest response");
-    assert_eq!(summary.chat_id.as_deref(), Some("42"));
-    assert_eq!(
-        summary
-            .chat_metadata
-            .as_ref()
-            .and_then(|meta| meta.get("custom"))
-            .and_then(Value::as_str),
-        Some("value")
-    );
-
     let _ = fs::remove_dir_all(&root).await;
 }
 
@@ -2594,12 +2046,13 @@ async fn list_chat_summaries_returns_streamed_metadata() {
 async fn finds_remaining_character_chat_with_integrity() {
     let (repository, root) = setup_repository().await;
     for name in ["first", "second"] {
-        save_chat_payload_from_values(
+        commit_payload_bytes(
             &repository,
-            &root,
-            "alice",
-            name,
-            &payload_with_integrity("shared"),
+            character_target("alice", name),
+            payload_to_jsonl(&payload_with_integrity(
+                "3791c50c-1734-5403-bc29-72619e1013f2",
+            ))
+            .as_bytes(),
             false,
         )
         .await
@@ -2612,7 +2065,7 @@ async fn finds_remaining_character_chat_with_integrity() {
         .expect("delete first chat");
     assert!(
         repository
-            .has_character_chat_with_integrity("alice", "shared")
+            .has_character_chat_with_integrity("alice", "3791c50c-1734-5403-bc29-72619e1013f2")
             .await
             .expect("find remaining chat")
     );
@@ -2622,7 +2075,7 @@ async fn finds_remaining_character_chat_with_integrity() {
         .expect("delete second chat");
     assert!(
         !repository
-            .has_character_chat_with_integrity("alice", "shared")
+            .has_character_chat_with_integrity("alice", "3791c50c-1734-5403-bc29-72619e1013f2")
             .await
             .expect("find no remaining chat")
     );
@@ -2635,9 +2088,9 @@ async fn stats_and_summary_project_fields_without_materializing_large_swipes() {
     let (repository, root) = setup_repository().await;
     let swipe = "ignored swipe body".repeat(32 * 1024);
     let visible_tail = format!("discard{}", "界".repeat(400));
-    let payload = vec![
+    let payload = [
         json!({
-            "chat_metadata": { "chat_id_hash": 42 },
+            "chat_metadata": { "chat_id_hash": 42, "custom": "value" },
             "user_name": "unused",
             "character_name": "unused",
         }),
@@ -2652,9 +2105,22 @@ async fn stats_and_summary_project_fields_without_materializing_large_swipes() {
         }),
     ];
 
-    save_chat_payload_from_values(&repository, &root, "alice", "large", &payload, false)
-        .await
-        .expect("save large-swipe payload");
+    let raw = format!(
+        "\r\n\u{feff}\r\n{}",
+        payload
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\r\n\r\n")
+    );
+    commit_payload_bytes(
+        &repository,
+        character_target("alice", "large"),
+        raw.as_bytes(),
+        false,
+    )
+    .await
+    .unwrap();
 
     let (_, date_last_chat) = repository
         .calculate_character_chat_stats("alice")
@@ -2667,6 +2133,12 @@ async fn stats_and_summary_project_fields_without_materializing_large_swipes() {
         .await
         .expect("list projected chat summary");
     assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].character_name, "alice");
+    assert_eq!(summaries[0].file_name, "large.jsonl");
+    assert_eq!(
+        summaries[0].chat_metadata.as_ref().unwrap()["custom"],
+        "value"
+    );
     assert_eq!(summaries[0].message_count, 1);
     assert_eq!(summaries[0].preview, format!("...{}", "界".repeat(400)));
     assert_eq!(summaries[0].date, date_last_chat);
@@ -2678,12 +2150,13 @@ async fn stats_and_summary_project_fields_without_materializing_large_swipes() {
 #[tokio::test]
 async fn summary_index_write_failure_does_not_change_query_or_delete_outcome() {
     let (repository, root) = setup_repository().await;
-    save_chat_payload_from_values(
+    commit_payload_bytes(
         &repository,
-        &root,
-        "alice",
-        "session",
-        &payload_with_integrity("summary-cache-failure"),
+        character_target("alice", "session"),
+        payload_to_jsonl(&payload_with_integrity(
+            "9f263ea6-8826-5eaa-a035-da50568229ce",
+        ))
+        .as_bytes(),
         false,
     )
     .await
@@ -2715,17 +2188,16 @@ async fn summary_index_write_failure_does_not_change_query_or_delete_outcome() {
 #[tokio::test]
 async fn aggregate_chat_queries_skip_an_invalid_sibling() {
     let (repository, root) = setup_repository().await;
-    save_chat_payload_from_values(
+    commit_payload_bytes(
         &repository,
-        &root,
-        "alice",
-        "valid",
-        &payload_with_message(
-            "aggregate-partial",
+        character_target("alice", "valid"),
+        payload_to_jsonl(&payload_with_message(
+            "133cbadf-2d0c-5f69-aa32-ab9c9f757080",
             "2026-01-01T00:00:00.000Z",
             "search needle",
             "Alice",
-        ),
+        ))
+        .as_bytes(),
         false,
     )
     .await
@@ -2768,7 +2240,7 @@ async fn search_character_chat_messages_returns_scored_hits_and_respects_role_fi
     let payload = vec![
         json!({
             "chat_metadata": {
-                "integrity": "search-a",
+                "integrity": "ebb522b7-d6f9-5855-87fc-d676dfefe8ee",
             },
             "user_name": "unused",
             "character_name": "unused",
@@ -2807,9 +2279,14 @@ async fn search_character_chat_messages_returns_scored_hits_and_respects_role_fi
         }),
     ];
 
-    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
-        .await
-        .expect("save payload");
+    commit_payload_bytes(
+        &repository,
+        character_target("alice", "session"),
+        payload_to_jsonl(&payload).as_bytes(),
+        false,
+    )
+    .await
+    .expect("save payload");
 
     let hits = repository
         .search_character_chat_messages(
@@ -2861,10 +2338,10 @@ async fn search_character_chat_messages_returns_scored_hits_and_respects_role_fi
 async fn read_character_chat_messages_returns_selected_messages_and_total_count() {
     let (repository, root) = setup_repository().await;
 
-    let payload = vec![
+    let payload = [
         json!({
             "chat_metadata": {
-                "integrity": "read-a",
+                "integrity": "695e7861-f59b-519d-8712-4a40f8bef7a5",
             },
             "user_name": "unused",
             "character_name": "unused",
@@ -2895,9 +2372,22 @@ async fn read_character_chat_messages_returns_selected_messages_and_total_count(
         }),
     ];
 
-    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
-        .await
-        .expect("save payload");
+    let raw = format!(
+        "\r\n\u{feff}\r\n{}",
+        payload
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\r\n\r\n")
+    );
+    commit_payload_bytes(
+        &repository,
+        character_target("alice", "session"),
+        raw.as_bytes(),
+        false,
+    )
+    .await
+    .unwrap();
 
     let result = repository
         .read_character_chat_messages("alice", "session", &[2, 0])
@@ -2920,7 +2410,7 @@ async fn tool_role_roundtrips_and_is_distinct_from_system() {
     let (repository, root) = setup_repository().await;
     let payload = vec![
         json!({
-            "chat_metadata": { "integrity": "tool-role-a" },
+            "chat_metadata": { "integrity": "fd0b8038-8ff6-54b9-95f7-e451f488b239" },
             "user_name": "User",
             "character_name": "Alice",
         }),
@@ -2950,9 +2440,14 @@ async fn tool_role_roundtrips_and_is_distinct_from_system() {
         }),
     ];
 
-    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
-        .await
-        .expect("save payload");
+    commit_payload_bytes(
+        &repository,
+        character_target("alice", "session"),
+        payload_to_jsonl(&payload).as_bytes(),
+        false,
+    )
+    .await
+    .expect("save payload");
 
     let chat = repository
         .get_chat("alice", "session")
@@ -3072,7 +2567,7 @@ async fn search_group_chat_messages_respects_scan_limit() {
     let payload = vec![
         json!({
             "chat_metadata": {
-                "integrity": "group-search-a",
+                "integrity": "b4bbd40a-46b0-5a1d-a73f-5cb96857417d",
             },
             "user_name": "User",
             "character_name": "unused",
@@ -3095,9 +2590,16 @@ async fn search_group_chat_messages_respects_scan_limit() {
         }),
     ];
 
-    save_group_chat_payload_from_values(&repository, &root, "group-one", &payload, false)
-        .await
-        .expect("save group payload");
+    commit_payload_bytes(
+        &repository,
+        ChatPayloadTarget::Group {
+            chat_id: "group-one".into(),
+        },
+        payload_to_jsonl(&payload).as_bytes(),
+        false,
+    )
+    .await
+    .expect("save group payload");
 
     let limited = repository
         .search_group_chat_messages(
@@ -3155,17 +2657,15 @@ async fn list_recent_chat_summaries_ranks_by_last_message_date_not_file_mtime() 
         .expect("create alice card");
 
     let newer_payload = payload_with_message(
-        "recent-newer-date",
+        "19a0d1e6-7970-55b6-938d-b7cd0c9d008d",
         "2026-01-03T00:00:00.000Z",
         "newer date",
         "Alice",
     );
-    save_chat_payload_from_values(
+    commit_payload_bytes(
         &repository,
-        &root,
-        "alice",
-        "session-newer-date",
-        &newer_payload,
+        character_target("alice", "session-newer-date"),
+        payload_to_jsonl(&newer_payload).as_bytes(),
         false,
     )
     .await
@@ -3180,32 +2680,25 @@ async fn list_recent_chat_summaries_ranks_by_last_message_date_not_file_mtime() 
         .join("alice")
         .join("session-newer-mtime.jsonl");
     let older_payload = payload_with_message(
-        "recent-older-date",
+        "5857c0e3-8cce-5b29-a15a-e63b6f99b228",
         "2026-01-01T00:00:00.000Z",
         "older date",
         "Alice",
     );
-    for _ in 0..50 {
-        save_chat_payload_from_values(
-            &repository,
-            &root,
-            "alice",
-            "session-newer-mtime",
-            &older_payload,
-            false,
-        )
+    commit_payload_bytes(
+        &repository,
+        character_target("alice", "session-newer-mtime"),
+        payload_to_jsonl(&older_payload).as_bytes(),
+        false,
+    )
+    .await
+    .unwrap();
+    set_backup_modified(&newer_path, UNIX_EPOCH + Duration::from_secs(1))
         .await
-        .expect("save newer-mtime chat");
-
-        if modified_millis(&older_path).await > modified_millis(&newer_path).await {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert!(
-        modified_millis(&older_path).await > modified_millis(&newer_path).await,
-        "test precondition: older send_date file must have newer mtime"
-    );
+        .unwrap();
+    set_backup_modified(&older_path, UNIX_EPOCH + Duration::from_secs(2))
+        .await
+        .unwrap();
 
     let results = repository
         .list_recent_chat_summaries(None, false, 1, &[])
@@ -3215,44 +2708,20 @@ async fn list_recent_chat_summaries_ranks_by_last_message_date_not_file_mtime() 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].file_name, "session-newer-date.jsonl");
 
-    let index_path = root
-        .join("user")
-        .join("cache")
-        .join("chat_summary_index_v1.json");
-    let parsed: Value = serde_json::from_str(
-        &fs::read_to_string(&index_path)
-            .await
-            .expect("read summary index"),
-    )
-    .expect("parse summary index");
-    assert_eq!(
-        parsed
-            .get("entries")
-            .and_then(Value::as_array)
-            .map(Vec::len),
-        Some(1)
-    );
-    assert_eq!(
-        parsed
-            .get("stats_entries")
-            .and_then(Value::as_array)
-            .map(Vec::len),
-        Some(1)
-    );
-
     let _ = fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
-async fn character_chat_store_update_json_merges_and_replaces_values() {
+async fn character_chat_store_merges_replaces_upserts_and_renames_entries() {
     let (repository, root) = setup_repository().await;
 
-    save_chat_payload_from_values(
+    commit_payload_bytes(
         &repository,
-        &root,
-        "alice",
-        "session",
-        &payload_with_integrity("store-merge-a"),
+        character_target("alice", "session"),
+        payload_to_jsonl(&payload_with_integrity(
+            "4a237fe9-2508-5d9f-8cb7-66f10c159d2a",
+        ))
+        .as_bytes(),
         false,
     )
     .await
@@ -3271,6 +2740,15 @@ async fn character_chat_store_update_json_merges_and_replaces_values() {
         )
         .await
         .expect("seed store json");
+
+    let path = repository
+        .get_chat_payload_path("alice", "session")
+        .await
+        .unwrap();
+    let bytes = fs::read(&path).await.unwrap();
+    fs::write(&path, ["\r\n\u{feff}\r\n".as_bytes(), &bytes].concat())
+        .await
+        .unwrap();
 
     repository
         .update_character_chat_store_json(
@@ -3321,8 +2799,25 @@ async fn character_chat_store_update_json_merges_and_replaces_values() {
         .await
         .expect("upsert store json");
 
+    repository
+        .rename_character_chat_store_key("alice", "session", "my-ext", "missing", "renamed")
+        .await
+        .unwrap();
+    assert!(matches!(
+        repository
+            .get_character_chat_store_json("alice", "session", "my-ext", "missing")
+            .await,
+        Err(DomainError::NotFound(_))
+    ));
+    assert_eq!(
+        repository
+            .list_character_chat_store_keys("alice", "session", "my-ext")
+            .await
+            .unwrap(),
+        ["index", "renamed"]
+    );
     let created = repository
-        .get_character_chat_store_json("alice", "session", "my-ext", "missing")
+        .get_character_chat_store_json("alice", "session", "my-ext", "renamed")
         .await
         .expect("read created store json");
     assert_eq!(created, json!({ "created": true }));
@@ -3331,67 +2826,8 @@ async fn character_chat_store_update_json_merges_and_replaces_values() {
 }
 
 #[tokio::test]
-async fn character_chat_store_update_key_renames_entry() {
-    let (repository, root) = setup_repository().await;
-
-    save_chat_payload_from_values(
-        &repository,
-        &root,
-        "alice",
-        "session",
-        &payload_with_integrity("store-rename-a"),
-        false,
-    )
-    .await
-    .expect("save chat payload");
-
-    repository
-        .set_character_chat_store_json("alice", "session", "my-ext", "old", json!({ "ok": true }))
-        .await
-        .expect("seed store json");
-
-    repository
-        .rename_character_chat_store_key("alice", "session", "my-ext", "old", "new")
-        .await
-        .expect("rename store key");
-
-    let err = repository
-        .get_character_chat_store_json("alice", "session", "my-ext", "old")
-        .await
-        .expect_err("old key should be gone");
-    assert!(
-        matches!(err, DomainError::NotFound(_)),
-        "expected not found for old key"
-    );
-
-    let value = repository
-        .get_character_chat_store_json("alice", "session", "my-ext", "new")
-        .await
-        .expect("read renamed key");
-    assert_eq!(value, json!({ "ok": true }));
-
-    let keys = repository
-        .list_character_chat_store_keys("alice", "session", "my-ext")
-        .await
-        .expect("list keys");
-    assert_eq!(keys, vec![String::from("new")]);
-
-    let _ = fs::remove_dir_all(&root).await;
-}
-
-#[tokio::test]
 async fn group_chat_store_update_json_and_key_work() {
     let (repository, root) = setup_repository().await;
-
-    save_group_chat_payload_from_values(
-        &repository,
-        &root,
-        "group-session",
-        &payload_with_integrity("store-group-a"),
-        false,
-    )
-    .await
-    .expect("save group chat payload");
 
     repository
         .update_group_chat_store_json(
@@ -3417,38 +2853,34 @@ async fn group_chat_store_update_json_and_key_work() {
     let _ = fs::remove_dir_all(&root).await;
 }
 
-async fn save_chat_payload_from_values(
-    repository: &FileChatRepository,
-    root: &Path,
-    character_name: &str,
-    file_name: &str,
-    payload: &[Value],
-    force: bool,
-) -> Result<(), DomainError> {
-    let source_path = root.join(format!("chat-payload-{}.jsonl", random::<u64>()));
-    fs::write(&source_path, payload_to_jsonl(payload))
-        .await
-        .expect("write chat payload source file");
-
-    commit_character_payload_file(repository, character_name, file_name, &source_path, force)
-        .await
-        .map(|_| ())
-}
-
 #[tokio::test]
 async fn chat_payload_paging_returns_tail_and_before_for_character_and_group() {
     let (repository, root) = setup_repository().await;
-    let mut payload = vec![payload_with_integrity("paging-a")[0].clone()];
+    let mut payload =
+        vec![payload_with_integrity("a7f82e6b-7dbd-51f7-8e4a-57966e2a3071")[0].clone()];
     for index in 0..4 {
         payload.push(json!({ "mes": format!("message {index}") }));
     }
 
-    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
-        .await
-        .expect("save character payload");
-    save_group_chat_payload_from_values(&repository, &root, "group-session", &payload, false)
-        .await
-        .expect("save group payload");
+    let blank_gap = " \t\r\n".repeat(20_000);
+    let raw = format!(
+        "\r\n\u{feff}\r\n{}",
+        payload
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join(&blank_gap)
+    );
+    for target in [
+        character_target("alice", "session"),
+        ChatPayloadTarget::Group {
+            chat_id: "group-session".into(),
+        },
+    ] {
+        commit_payload_bytes(&repository, target, raw.as_bytes(), false)
+            .await
+            .unwrap();
+    }
 
     let character_tail = repository
         .get_chat_payload_tail_lines("alice", "session", 2)
@@ -3494,32 +2926,20 @@ async fn chat_payload_paging_returns_tail_and_before_for_character_and_group() {
 
     let stale_cursor = character_tail.cursor;
     payload.push(json!({ "mes": "message 4" }));
-    save_chat_payload_from_values(&repository, &root, "alice", "session", &payload, false)
-        .await
-        .expect("replace character payload");
+    commit_payload_bytes(
+        &repository,
+        character_target("alice", "session"),
+        payload_to_jsonl(&payload).as_bytes(),
+        false,
+    )
+    .await
+    .expect("replace character payload");
     let stale = repository
         .get_chat_payload_before_lines("alice", "session", stale_cursor, 1)
         .await;
     assert!(stale.is_err(), "stale paging cursor must be rejected");
 
     let _ = fs::remove_dir_all(&root).await;
-}
-
-async fn save_group_chat_payload_from_values(
-    repository: &FileChatRepository,
-    root: &Path,
-    chat_id: &str,
-    payload: &[Value],
-    force: bool,
-) -> Result<(), DomainError> {
-    let source_path = root.join(format!("group-chat-payload-{}.jsonl", random::<u64>()));
-    fs::write(&source_path, payload_to_jsonl(payload))
-        .await
-        .expect("write group chat payload source file");
-
-    commit_group_payload_file(repository, chat_id, &source_path, force)
-        .await
-        .map(|_| ())
 }
 
 fn payload_to_jsonl(payload: &[Value]) -> String {
@@ -3558,7 +2978,7 @@ async fn read_chat_stream(
 
 fn swipe_fixture() -> Vec<Value> {
     vec![
-        json!({"chat_metadata":{"integrity":"cold-test"},"user_name":"User"}),
+        json!({"chat_metadata":{"integrity":"38aedc23-2370-574f-8194-ff3a25bdfad3"},"user_name":"User"}),
         json!({"mes":"current body", "is_user":false, "swipe_id":2,
             "swipes":["历史零", "history one", "active two"],
             "swipe_info":[{"extra":{"tauritavern":{"agent":{"persistStateId":"old"}}}}, {"extra":{}}, {"extra":{"live":true}}],
@@ -3579,9 +2999,10 @@ async fn cold_swipes_round_trip_retains_source_across_metadata_publish_reorder_a
         },
     ] {
         let (repository, root) = setup_repository().await;
-        let original = swipe_fixture();
+        let mut original = swipe_fixture();
+        original[0]["tt_swipe_cold"] = json!({ "opaque_header_field": true });
         let input = format!(
-            "{}\r\n \t\r\n",
+            "\r\n\u{feff}\r\n{}\r\n \t\r\n",
             original
                 .iter()
                 .map(Value::to_string)
@@ -3605,7 +3026,7 @@ async fn cold_swipes_round_trip_retains_source_across_metadata_publish_reorder_a
         repository
             .commit_metadata(
                 target.clone(),
-                json!({"integrity":"cold-test","note":"longer metadata"}),
+                json!({"integrity":"38aedc23-2370-574f-8194-ff3a25bdfad3","note":"longer metadata"}),
             )
             .await
             .unwrap();
@@ -3663,11 +3084,6 @@ async fn cold_swipes_round_trip_retains_source_across_metadata_publish_reorder_a
             .unwrap();
         let saved = fs::read(&path).await.unwrap();
         assert_eq!(committed.size, saved.len() as u64);
-        let signature = repository
-            .current_content_signature_for_size(&path, committed.size)
-            .await
-            .unwrap();
-        assert_eq!(signature.sha256, <[u8; 32]>::from(Sha256::digest(&saved)));
         let restored: Vec<Value> = std::str::from_utf8(&saved)
             .unwrap()
             .lines()
@@ -3687,6 +3103,28 @@ async fn cold_swipes_round_trip_retains_source_across_metadata_publish_reorder_a
         expected[3] = original[1].clone();
         expected[3]["swipe_id"] = json!(0);
         assert_eq!(restored, expected);
+        if let ChatPayloadTarget::Character {
+            character_id,
+            file_name,
+        } = &target
+        {
+            apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
+            repository
+                .backup_chat_automatic(character_id, file_name)
+                .await
+                .unwrap();
+            let backups = backup_file_names(&root).await;
+            // A full commit of the restored bytes must remain the same backup state.
+            commit_payload_bytes(&repository, target.clone(), &saved, false)
+                .await
+                .unwrap();
+            repository
+                .backup_chat_automatic(character_id, file_name)
+                .await
+                .unwrap();
+            assert_eq!(backup_file_names(&root).await, backups);
+        }
+
         fs::remove_dir_all(root).await.unwrap();
     }
 }

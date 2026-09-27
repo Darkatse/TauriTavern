@@ -1,6 +1,7 @@
 // @ts-check
 
 import { stripJsonl } from '../kernel/chat-utils.js';
+import { parseJsonlRecord } from '../../../scripts/tauri/chat/jsonl.js';
 
 /**
  * @typedef {{ kind: 'character'; characterId: string; fileName: string }} CharacterChatRef
@@ -13,7 +14,7 @@ import { stripJsonl } from '../kernel/chat-utils.js';
  * @returns {any[]}
  */
 export function parseJsonLines(lines) {
-    return lines.map((line) => JSON.parse(String(line)));
+    return lines.map((line, index) => parseJsonlRecord(String(line), index + 1));
 }
 
 /**

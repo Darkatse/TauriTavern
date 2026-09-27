@@ -48,7 +48,7 @@ export async function loadColdChatPayload(target, allowNotFound) {
     if (!opened) return [];
     try {
         const payload = await jsonlStreamToPayload(createChatByteStream(opened.readerId));
-        if (payload.some(message => message.tt_swipe_cold)) {
+        if (payload.some((record, index) => index > 0 && record.tt_swipe_cold)) {
             pendingSources.set(payload, opened.sourceId);
         } else {
             closeSource(opened.sourceId);
@@ -62,7 +62,7 @@ export async function loadColdChatPayload(target, allowNotFound) {
 
 export async function readColdSwipeRecord(reference) {
     const rid = await invoke('open_cold_swipe_record', reference);
-    const records = await jsonlStreamToPayload(createChatByteStream(rid));
+    const records = await jsonlStreamToPayload(createChatByteStream(rid), { hasHeader: false });
     if (records.length !== 1) throw new Error('Cold swipe source did not return one message');
     return records[0];
 }
@@ -91,8 +91,8 @@ export async function hydrateMessageSwipes(message) {
 /** The capture runs synchronously alongside JSON serialization; one commit has one opened source. */
 export function coldSourceForPayload(payload) {
     let sourceId;
-    for (const message of payload) {
-        const reference = message?.tt_swipe_cold;
+    for (let index = 1; index < payload.length; index++) {
+        const reference = payload[index].tt_swipe_cold;
         if (!reference) continue;
         if (!Number.isInteger(reference.sourceId) || reference.sourceId < 0) {
             throw new Error('Cold swipe message has no source');

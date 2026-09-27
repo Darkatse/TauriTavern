@@ -1,70 +1,82 @@
 const textEncoder = new TextEncoder();
+const hyphenatedUuid = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
+const uuidPattern = new RegExp(`^(?:[0-9a-fA-F]{32}|${hyphenatedUuid}|\\{${hyphenatedUuid}\\}|urn:uuid:${hyphenatedUuid})$`);
 
-function trimAsciiWhitespaceRange(value) {
-    let start = 0;
+function isJsonWhitespace(code) {
+    return code === 0x20 || code === 0x09 || code === 0x0A || code === 0x0D;
+}
+
+function trimJsonWhitespaceRange(value, start = 0) {
     let end = value.length;
-
-    while (start < end) {
-        const code = value.charCodeAt(start);
-        if (code > 32) {
-            break;
-        }
-        start += 1;
-    }
-
-    while (end > start) {
-        const code = value.charCodeAt(end - 1);
-        if (code > 32) {
-            break;
-        }
-        end -= 1;
-    }
-
+    while (start < end && isJsonWhitespace(value.charCodeAt(start))) start += 1;
+    while (end > start && isJsonWhitespace(value.charCodeAt(end - 1))) end -= 1;
     return [start, end];
 }
 
-function parseJsonlLine(line, { isFirstPayloadLine, lineNumber }) {
-    const [start, end] = trimAsciiWhitespaceRange(line);
-    if (end <= start) {
-        return undefined;
-    }
+function assertHeader(header) {
+    const metadata = header.chat_metadata;
+    if (!metadata || !Object.hasOwn(metadata, 'integrity')) return;
 
-    let jsonStart = start;
-    if (isFirstPayloadLine && line.charCodeAt(jsonStart) === 0xFEFF) {
-        jsonStart += 1;
+    // Match Rust Uuid::try_parse without restricting the UUID version or rewriting its text.
+    const value = metadata.integrity;
+    if (typeof value !== 'string' || uuidPattern.exec(value)?.[0] !== value) {
+        throw new Error('Chat header integrity must be a UUID');
     }
+}
 
-    if (end <= jsonStart) {
-        return undefined;
-    }
-
+/** Parses one record; message slices have no header or BOM preamble of their own. */
+export function parseJsonlRecord(text, lineNumber) {
     try {
-        return JSON.parse(line.slice(jsonStart, end));
+        const record = JSON.parse(text);
+        if (!record || typeof record !== 'object' || Array.isArray(record)) {
+            throw new Error('Chat record must be an object');
+        }
+        return record;
     } catch (error) {
         throw new Error(`Invalid JSONL at line ${lineNumber}`, { cause: error });
     }
 }
 
-function assertPayloadArray(payload) {
-    if (!Array.isArray(payload)) {
-        throw new Error('Chat payload must be an array');
-    }
+function createJsonlParser(hasHeader = true) {
+    let headerPending = hasHeader;
+    let bomConsumed = false;
+    let lineNumber = 0;
 
-    return payload;
+    return (line) => {
+        lineNumber += 1;
+        let [start, end] = trimJsonWhitespaceRange(line);
+        if (headerPending && !bomConsumed && line.charCodeAt(start) === 0xFEFF) {
+            bomConsumed = true;
+            [start, end] = trimJsonWhitespaceRange(line, start + 1);
+        }
+        if (start === end) return undefined;
+
+        const record = parseJsonlRecord(line.slice(start, end), lineNumber);
+        if (headerPending) {
+            try {
+                assertHeader(record);
+            } catch (error) {
+                throw new Error(`Invalid JSONL header at line ${lineNumber}`, { cause: error });
+            }
+            headerPending = false;
+        }
+        return record;
+    };
 }
 
 /** Captures all records before asynchronous transport can observe later mutations. */
 export function serializeChatPayload(payload) {
-    const normalized = assertPayloadArray(payload);
+    if (!Array.isArray(payload)) {
+        throw new Error('Chat payload must be an array');
+    }
+    if (payload.length === 0) throw new Error('Chat payload must contain a header');
     const records = [];
 
-    for (let index = 0; index < normalized.length; index += 1) {
-        const entry = normalized[index];
-        if (!entry || typeof entry !== 'object') {
-            throw new Error(`Chat payload entry at index ${index} must be an object`);
-        }
-
-        records.push(JSON.stringify(entry));
+    for (let index = 0; index < payload.length; index += 1) {
+        const record = JSON.stringify(payload[index]);
+        if (record?.[0] !== '{') throw new Error(`Chat payload entry at index ${index} must serialize to an object`);
+        if (index === 0) assertHeader(JSON.parse(record));
+        records.push(record);
     }
 
     return records;
@@ -82,19 +94,14 @@ export function jsonlToPayload(text) {
     const input = String(text);
     const payload = [];
     let cursor = 0;
-    let lineNumber = 0;
-    let isFirstPayloadLine = true;
+    const parseLine = createJsonlParser();
 
     while (cursor <= input.length) {
         const nextNewline = input.indexOf('\n', cursor);
         const end = nextNewline === -1 ? input.length : nextNewline;
         const line = input.slice(cursor, end);
-        lineNumber += 1;
-        const parsed = parseJsonlLine(line, { isFirstPayloadLine, lineNumber });
-        if (parsed !== undefined) {
-            payload.push(parsed);
-            isFirstPayloadLine = false;
-        }
+        const parsed = parseLine(line);
+        if (parsed !== undefined) payload.push(parsed);
 
         if (nextNewline === -1) {
             break;
@@ -106,27 +113,16 @@ export function jsonlToPayload(text) {
     return payload;
 }
 
-export async function visitJsonlStream(stream, visit) {
-    if (!stream || typeof stream.getReader !== 'function') {
-        throw new Error('JSONL stream must be a ReadableStream');
-    }
-    if (typeof visit !== 'function') {
-        throw new Error('JSONL visitor must be a function');
-    }
-
+export async function visitJsonlStream(stream, visit, { hasHeader = true } = {}) {
     const reader = stream.getReader();
-    const decoder = new TextDecoder();
+    // Preserve the BOM for the document parser; decoding must never repair invalid UTF-8.
+    const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
     const lineFragments = [];
-    let lineNumber = 0;
-    let isFirstPayloadLine = true;
+    const parseLine = createJsonlParser(hasHeader);
 
     function visitLine(rawLine) {
-        lineNumber += 1;
-        const parsed = parseJsonlLine(rawLine, { isFirstPayloadLine, lineNumber });
-        if (parsed !== undefined) {
-            visit(parsed);
-            isFirstPayloadLine = false;
-        }
+        const parsed = parseLine(rawLine);
+        if (parsed !== undefined) visit(parsed);
     }
 
     function consumeText(text) {
@@ -173,9 +169,9 @@ export async function visitJsonlStream(stream, visit) {
     }
 }
 
-export async function jsonlStreamToPayload(stream) {
+export async function jsonlStreamToPayload(stream, options) {
     const payload = [];
-    await visitJsonlStream(stream, (entry) => payload.push(entry));
+    await visitJsonlStream(stream, (entry) => payload.push(entry), options);
 
     return payload;
 }

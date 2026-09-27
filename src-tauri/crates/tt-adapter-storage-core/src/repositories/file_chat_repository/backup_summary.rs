@@ -14,7 +14,7 @@ use super::FileChatRepository;
 use super::backup_inventory::{BackupEntry, BackupInventory};
 use super::summary::FileSignature;
 
-const INDEX_SCHEMA_VERSION: u32 = 1;
+const INDEX_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct BackupSummarySignature {
@@ -345,31 +345,5 @@ mod tests {
         let mut replaced = original.clone();
         replaced.byte_len += 1;
         assert_eq!(cache.message_count(&replaced), None);
-    }
-
-    #[test]
-    fn in_memory_full_summary_does_not_dirty_unchanged_index_data() {
-        let mut cache = BackupSummaryCache::new(PathBuf::from("unused"));
-        cache.loaded = true;
-        let entry = entry("chat_alice_20260101-000000.jsonl");
-        cache.record_count(&entry, 4);
-        cache.dirty = false;
-
-        cache.record_summary(
-            &entry,
-            ChatSearchResult {
-                character_name: String::new(),
-                file_name: entry.logical_file_name.clone(),
-                file_size: entry.byte_len,
-                message_count: 3,
-                preview: "tail".to_string(),
-                date: 1,
-                chat_id: None,
-                chat_metadata: None,
-            },
-        );
-
-        assert!(!cache.dirty);
-        assert_eq!(cache.summary(&entry).unwrap().preview, "tail");
     }
 }

@@ -9287,18 +9287,11 @@ export async function getChat({ allowNewChat = false } = {}) {
             return;
         }
 
-        if (data.length > 0) {
-            /** @type {ChatHeader} */
-            const chatHeader = data.shift();
-            chat_metadata = chatHeader?.chat_metadata ?? {};
-            replaceChatContents(data);
-            chat.forEach(ensureMessageMediaIsArray);
-        } else if (allowNewChat) {
-            replaceChatContents(data);
-            chat_metadata = {};
-        } else {
-            throw new Error('Chat payload is empty');
-        }
+        /** @type {ChatHeader} */
+        const chatHeader = data.shift();
+        chat_metadata = chatHeader?.chat_metadata ?? {};
+        replaceChatContents(data);
+        chat.forEach(ensureMessageMediaIsArray);
 
         if (!chat_metadata.integrity) {
             chat_metadata.integrity = uuidv4();

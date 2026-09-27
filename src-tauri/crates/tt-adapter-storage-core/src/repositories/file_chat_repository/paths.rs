@@ -269,11 +269,6 @@ impl FileChatRepository {
         )
     }
 
-    #[cfg(test)]
-    pub(super) fn backup_file_name(character_name: &str) -> String {
-        Self::backup_file_name_at(character_name, Local::now())
-    }
-
     pub(super) fn backup_temp_path(&self) -> PathBuf {
         self.backups_dir.join(format!(
             "{}{}",

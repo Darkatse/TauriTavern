@@ -3,6 +3,8 @@ use serde_json::{Value, json};
 
 use tt_domain::errors::DomainError;
 
+use crate::chat_jsonl::{parse_header, read_header_record};
+
 fn default_header() -> Value {
     json!({
         "chat_metadata": {},
@@ -332,8 +334,10 @@ pub fn import_chat_payloads_from_json(
 
 /// Import a SillyTavern JSONL payload (with Chub flattening compatibility).
 pub fn import_chat_jsonl_bytes(data: &str) -> Result<Vec<u8>, DomainError> {
-    let header_line = data.split('\n').next().unwrap_or_default();
-    validate_chat_jsonl_header_line(header_line)?;
+    let (header, _) = read_header_record(&mut data.as_bytes())?.ok_or_else(|| {
+        DomainError::InvalidData("Unsupported chat import JSONL format: no header".to_string())
+    })?;
+    validate_import_header(&header)?;
 
     let Ok((flattened, changed)) = flatten_chub_jsonl(data) else {
         return Ok(data.as_bytes().to_vec());
@@ -347,10 +351,8 @@ pub fn import_chat_jsonl_bytes(data: &str) -> Result<Vec<u8>, DomainError> {
 }
 
 /// Validate the SillyTavern JSONL header without loading the remaining payload.
-pub fn validate_chat_jsonl_header_line(header_line: &str) -> Result<(), DomainError> {
-    let header: Value = serde_json::from_str(header_line).map_err(|e| {
-        DomainError::InvalidData(format!("Unsupported chat import JSONL format: {}", e))
-    })?;
+pub fn validate_import_header(bytes: &[u8]) -> Result<(), DomainError> {
+    let header = parse_header(bytes)?;
     let is_valid_header = header
         .get("user_name")
         .or_else(|| header.get("name"))

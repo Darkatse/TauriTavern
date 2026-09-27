@@ -293,13 +293,9 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
         if (!isStillActive()) {
             return;
         }
-        const metadata = data?.[0]?.chat_metadata ?? {};
-        const freshChat = allowNewChat && !metadata.tainted && (!Array.isArray(data) || !data.length);
-
-        // Remove chat file header if present
-        if (Array.isArray(data) && data.length && Object.hasOwn(data[0], 'chat_metadata')) {
-            data.shift();
-        }
+        const freshChat = allowNewChat && data.length === 0;
+        // The first record is always the header, independent of its optional fields.
+        const metadata = data.shift()?.chat_metadata ?? {};
 
         // Add integrity slug if missing
         if (!metadata.integrity) {
@@ -345,7 +341,7 @@ export async function getGroupChat(groupId, reload = false, { allowNewChat = fal
                 await finalizeMessageContent(messageId, event_types.CHARACTER_MESSAGE_RENDERED, 'first_message');
             }
             await saveGroupChat(groupId, false, false, CHAT_COMMIT_REASON.MAINTENANCE);
-        } else if (Array.isArray(data) && data.length) {
+        } else {
             if (!isStillActive()) {
                 return;
             }

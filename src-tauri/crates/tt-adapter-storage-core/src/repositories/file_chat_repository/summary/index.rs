@@ -10,7 +10,7 @@ use super::super::FileChatRepository;
 use super::search::SearchFingerprint;
 use super::{FileSignature, summary_cache_key};
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 const MAX_SEARCH_ENTRIES: usize = 128;
 
 #[derive(Clone, Debug)]

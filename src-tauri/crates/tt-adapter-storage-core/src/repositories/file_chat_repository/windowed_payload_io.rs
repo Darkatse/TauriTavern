@@ -1,8 +1,6 @@
 use std::path::Path;
-use std::str;
 
 use tokio::fs::{self, File};
-use tokio::io::AsyncReadExt;
 
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_repository::ChatPayloadCursor;
@@ -84,62 +82,6 @@ pub(super) fn cursor_from_metadata(
         size,
         modified_millis,
     })
-}
-
-pub(super) fn decode_jsonl_line_bytes(bytes: &[u8]) -> Result<String, DomainError> {
-    let text = str::from_utf8(bytes).map_err(|error| {
-        DomainError::InvalidData(format!("JSONL payload is not valid UTF-8: {}", error))
-    })?;
-    Ok(text.trim_end_matches(['\r', '\n']).to_string())
-}
-
-pub(super) async fn read_first_line_and_end_offset(
-    path: &Path,
-) -> Result<(String, u64), DomainError> {
-    let mut file = open_existing_payload_file(path).await?;
-
-    let mut buffer = [0u8; 8192];
-    let mut bytes = Vec::new();
-    let mut offset: u64 = 0;
-
-    loop {
-        let read = file.read(&mut buffer).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read chat payload header {:?}: {}",
-                path, error
-            ))
-        })?;
-
-        if read == 0 {
-            if bytes.is_empty() {
-                return Err(DomainError::InvalidData("Empty JSONL file".to_string()));
-            }
-
-            let line = decode_jsonl_line_bytes(&bytes)?;
-            if line.trim().is_empty() {
-                return Err(DomainError::InvalidData(
-                    "Chat payload header line is empty".to_string(),
-                ));
-            }
-            return Ok((line, offset));
-        }
-
-        if let Some(newline_pos) = buffer[..read].iter().position(|&value| value == b'\n') {
-            bytes.extend_from_slice(&buffer[..newline_pos]);
-            offset += (newline_pos + 1) as u64;
-
-            let line = decode_jsonl_line_bytes(&bytes)?;
-            if line.trim().is_empty() {
-                return Err(DomainError::InvalidData(
-                    "Chat payload header line is empty".to_string(),
-                ));
-            }
-            return Ok((line, offset));
-        }
-
-        bytes.extend_from_slice(&buffer[..read]);
-        offset += read as u64;
-    }
 }
 
 pub(super) fn verify_cursor_signature(
