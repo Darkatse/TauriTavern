@@ -32,8 +32,13 @@ const OPENAI_REASONING_EFFORT_MODELS: &[&str] = &[
     "gpt-5.5-2026-04-23",
 ];
 
-const OPENAI_MAX_REASONING_EFFORT_MODELS: &[&str] =
-    &["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
+const OPENAI_MAX_REASONING_EFFORT_MODELS: &[&str] = &[
+    "gpt-5.6",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-6-astra",
+];
 
 // OpenAI documents xhigh as starting at gpt-5.1-codex-max and later GPT models.
 const OPENAI_XHIGH_REASONING_THRESHOLD: &str = "gpt-5.1-codex-max";
@@ -52,12 +57,14 @@ pub(super) fn normalize_openai_reasoning_effort<'a>(
     let value = value.trim();
     match RequestedReasoningEffort::parse(value) {
         Some(RequestedReasoningEffort::Auto) => None,
-        Some(RequestedReasoningEffort::None | RequestedReasoningEffort::Minimal) => Some("none"),
+        Some(RequestedReasoningEffort::None | RequestedReasoningEffort::Minimal) => {
+            Some(openai_lowest_reasoning_effort(model))
+        }
         Some(RequestedReasoningEffort::Low) => Some("low"),
         Some(RequestedReasoningEffort::Medium) => Some("medium"),
         Some(RequestedReasoningEffort::High) => Some("high"),
         Some(RequestedReasoningEffort::XHigh) => {
-            Some(if supports_openai_max_reasoning_effort(model) {
+            Some(if supports_openai_xhigh_reasoning_effort(model) {
                 "xhigh"
             } else {
                 "high"
@@ -73,6 +80,25 @@ pub(super) fn normalize_openai_reasoning_effort<'a>(
             })
         }
         None => Some(value),
+    }
+}
+
+/// o-series only accepts low..high; original gpt-5 snapshots accept `minimal`
+/// but not `none`; gpt-5.1 and later accept `none`.
+fn openai_lowest_reasoning_effort(model: &str) -> &'static str {
+    let model = model.trim().to_ascii_lowercase();
+    let is_family = |family: &str| {
+        model
+            .strip_prefix(family)
+            .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('-'))
+    };
+
+    if ["o1", "o3", "o4"].into_iter().any(is_family) {
+        "low"
+    } else if is_family("gpt-5") {
+        "minimal"
+    } else {
+        "none"
     }
 }
 
@@ -148,27 +174,25 @@ mod tests {
     }
 
     #[test]
-    fn openai_reasoning_normalizes_project_maximum_aliases_to_provider_values() {
-        assert_eq!(
-            normalize_openai_reasoning_effort("minimum", "unknown"),
-            Some("none")
-        );
-        assert_eq!(
-            normalize_openai_reasoning_effort("max", "gpt-5.1"),
-            Some("high")
-        );
-        assert_eq!(
-            normalize_openai_reasoning_effort("xhigh", "gpt-5.1"),
-            Some("high")
-        );
-        assert_eq!(
-            normalize_openai_reasoning_effort("xhigh", "gpt-5.2"),
-            Some("high")
-        );
-        assert_eq!(
-            normalize_openai_reasoning_effort("max", "gpt-5.2"),
-            Some("xhigh")
-        );
+    fn openai_reasoning_maps_project_extremes_to_model_family_values() {
+        for (effort, model, expected) in [
+            ("min", "o3-mini", "low"),
+            ("min", "o4-mini-2025-04-16", "low"),
+            ("min", "gpt-5", "minimal"),
+            ("min", "gpt-5-mini-2025-08-07", "minimal"),
+            ("min", "gpt-5.1", "none"),
+            ("max", "gpt-5.1", "high"),
+            ("xhigh", "gpt-5.1", "high"),
+            ("xhigh", "gpt-5.2", "xhigh"),
+            ("xhigh", "gpt-5.1-codex-max", "xhigh"),
+            ("max", "gpt-5.2", "xhigh"),
+        ] {
+            assert_eq!(
+                normalize_openai_reasoning_effort(effort, model),
+                Some(expected),
+                "{effort} on {model}"
+            );
+        }
     }
 
     #[test]

@@ -40,7 +40,8 @@ mod tests {
         let payload = json!({
             "model": "claude-opus-4-7",
             "messages": [{"role": "user", "content": "hello"}],
-            "top_k": 40
+            "top_k": 40,
+            "thinking": {"type": "adaptive", "display": "omitted"}
         })
         .as_object()
         .cloned()
@@ -52,6 +53,10 @@ mod tests {
         assert_eq!(
             body.get("top_k").and_then(serde_json::Value::as_i64),
             Some(40)
+        );
+        assert_eq!(
+            body.get("thinking"),
+            Some(&json!({"type": "adaptive", "display": "omitted"}))
         );
     }
 }

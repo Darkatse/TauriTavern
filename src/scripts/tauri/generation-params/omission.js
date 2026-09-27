@@ -1,6 +1,6 @@
 // @ts-check
 
-import { REQUEST_PARAM_KEYS } from './catalog.js';
+import { OMITTED_MAX_TOKENS_BUDGET, PAYLOAD_KEY_ALIASES, REQUEST_PARAM_KEYS } from './catalog.js';
 
 const NAMESPACE = 'tauritavern';
 const FIELD = 'omit_params';
@@ -65,6 +65,9 @@ export function setParamOmitted(settings, key, omitted) {
 export function applyParamOmissions(generateData, settings) {
     for (const key of getOmittedParams(settings)) {
         delete generateData[key];
+        for (const alias of PAYLOAD_KEY_ALIASES[key] ?? []) {
+            delete generateData[alias];
+        }
     }
     return generateData;
 }
@@ -78,6 +81,7 @@ export function getEffectiveGenerationSettings(settings) {
     return {
         ...settings,
         ...(omitted.includes('n') ? { n: 1 } : {}),
+        ...(omitted.includes('max_tokens') ? { openai_max_tokens: OMITTED_MAX_TOKENS_BUDGET } : {}),
         ...(omitted.includes('assistant_prefill') ? { assistant_prefill: '', assistant_impersonation: '' } : {}),
         ...(omitted.includes('reasoning_effort') ? { reasoning_effort: 'auto' } : {}),
     };

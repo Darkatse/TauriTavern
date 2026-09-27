@@ -179,7 +179,8 @@ fn build_chat_completion_payload(
         );
     }
 
-    if source == "custom"
+    // Custom / OpenCode: the UI offers the format's own vocabulary, so the value is sent verbatim.
+    if matches!(source, "custom" | "opencode")
         && let Some(reasoning_effort) = payload.get("reasoning_effort")
     {
         request.insert("reasoning_effort".to_string(), reasoning_effort.clone());
@@ -440,7 +441,7 @@ mod tests {
 
     #[test]
     fn custom_payload_preserves_reasoning_effort_for_openai_model_names() {
-        for reasoning_effort in ["min", "max", "xhigh", "auto"] {
+        for reasoning_effort in ["none", "minimal", "max", "xhigh"] {
             let payload = json!({
                 "chat_completion_source": "custom",
                 "model": "gpt-5.1",

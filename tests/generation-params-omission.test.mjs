@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { OMITTED_MAX_TOKENS_BUDGET } from '../src/scripts/tauri/generation-params/catalog.js';
 import {
     applyParamOmissions,
     getEffectiveGenerationSettings,
@@ -39,4 +40,12 @@ test('removed settings stop affecting generation without overwriting the preset'
     assert.equal(settings.assistant_prefill, 'Prefill');
     setParamOmitted(settings, 'n', false);
     assert.equal(getEffectiveGenerationSettings(settings).n, 4);
+});
+
+test('an omitted max_tokens leaves the request under every name and keeps a budget reserve', () => {
+    const settings = { openai_max_tokens: 65535 };
+    setParamOmitted(settings, 'max_tokens', true);
+    assert.deepEqual(applyParamOmissions({ messages: [], max_completion_tokens: 65535 }, settings), { messages: [] });
+    assert.equal(getEffectiveGenerationSettings(settings).openai_max_tokens, OMITTED_MAX_TOKENS_BUDGET);
+    assert.equal(settings.openai_max_tokens, 65535);
 });

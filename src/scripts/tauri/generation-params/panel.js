@@ -1,27 +1,32 @@
 // @ts-check
 
-import { saveSettingsDebounced } from '../../../script.js';
+import { main_api, saveSettingsDebounced } from '../../../script.js';
 import { eventSource, event_types } from '../../events.js';
-import { translate } from '../../i18n.js';
+import { t, translate } from '../../i18n.js';
 import { oai_settings, settingsToUpdate } from '../../openai.js';
-import { DRAWERS, EXCLUDED_PRESET_KEYS, PANEL_SCOPE, PAYLOAD_KEYS, SOURCE_SPECIFIC_MAX_SOURCES } from './catalog.js';
+import { ensureCompactRowsStyle } from '../compact-rows/overflow-menu.js';
+import { DRAWERS, FALLBACK_VALUES, PANEL_SCOPE, PINNED_PRESET_KEYS, PAYLOAD_KEYS, SOURCE_SPECIFIC_MAX_SOURCES } from './catalog.js';
+import { hideOwnDescriptions, placeHint } from './hints.js';
 import { parseParams, serializeParams } from './json-view.js';
 import { getOmittedParams, setParamOmitted } from './omission.js';
+import { getEffectiveReasoningEffort } from './reasoning-effort-options.js';
 
 const INACTIVE_CLASS = 'tt-gp-inactive';
 const STYLE_ID = 'tauritavern-generation-params-style';
 const HIDDEN_BLOCKS_KEY = 'tt:generationParams:hiddenBlocks';
+const COLLAPSED_KEY = 'tt:generationParams:collapsed';
 
 /**
  * `key` is the payload key for `request`, the `oai_settings` field for
- * `toggle`, and a stable local id for `local`. `scope` is `source` when the
+ * `toggle`, and the preset key for `local` and `fallback`. `scope` is `source` when the
  * block is a provider-specific feature (see `SOURCE_SPECIFIC_MAX_SOURCES`),
  * otherwise `common`.
- * @typedef {{ kind: 'request' | 'toggle' | 'local', scope: 'common' | 'source', key: string, settingsKey: string }} GenerationParam
+ * @typedef {{ kind: 'request' | 'toggle' | 'local' | 'fallback', scope: 'common' | 'source', key: string, settingsKey: string }} GenerationParam
  * @typedef {{ param: GenerationParam, block: HTMLElement, control: HTMLElement }} Entry
  */
 
 function ensureStyle() {
+    ensureCompactRowsStyle(); // defines the shared `.tt-hidden`
     if (document.getElementById(STYLE_ID)) return;
     const link = document.createElement('link');
     link.id = STYLE_ID;
@@ -59,12 +64,14 @@ function resolveEntries() {
     /** @type {Entry[]} */
     const found = [];
     for (const [presetKey, [selector, settingsKey, isCheckbox]] of Object.entries(settingsToUpdate)) {
-        if (!selector || EXCLUDED_PRESET_KEYS.has(presetKey)) continue;
+        if (!selector || PINNED_PRESET_KEYS.includes(presetKey)) continue;
         const control = document.querySelector(selector);
         if (!(control instanceof HTMLElement) || !control.closest(PANEL_SCOPE)) continue;
         const block = control.closest('[data-source], .range-block, .inline-drawer');
         if (!(block instanceof HTMLElement)) continue;
-        const kind = isCheckbox ? 'toggle' : presetKey in PAYLOAD_KEYS ? 'request' : 'local';
+        const kind = isCheckbox ? 'toggle'
+            : presetKey in PAYLOAD_KEYS ? 'request'
+                : presetKey in FALLBACK_VALUES ? 'fallback' : 'local';
         const key = kind === 'request' ? PAYLOAD_KEYS[presetKey] : kind === 'toggle' ? settingsKey : presetKey;
         found.push({ param: { kind, scope: scopeOf(block), key, settingsKey }, block, control });
     }
@@ -90,6 +97,19 @@ function resolveEntries() {
     return kept.sort((a, b) => (a.block.compareDocumentPosition(b.block) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
 }
 
+/**
+ * @param {string} presetKey `settingsToUpdate` key of an upstream control the panel relies on
+ * @returns {HTMLElement}
+ */
+function requireControl(presetKey) {
+    const selector = settingsToUpdate[presetKey]?.[0];
+    const control = selector ? document.querySelector(selector) : null;
+    if (!(control instanceof HTMLElement)) {
+        throw new Error(`Generation parameter control not found: ${presetKey}`);
+    }
+    return control;
+}
+
 /** @param {HTMLElement} block */
 function scopeOf(block) {
     if (block.getAttribute('data-source-mode') === 'except') return 'common';
@@ -107,7 +127,10 @@ function sourceLabel() {
 function labelElementOf(/** @type {Entry} */ { block, control }) {
     return /** @type {HTMLInputElement} */ (control).labels?.[0]
         ?? document.getElementById(`${control.id}_text`)
-        ?? block.querySelector('.range-block-title, .inline-drawer-header b, .inline-drawer-header');
+        // A drawer's own title sits in its header; titles inside its body belong to sub-settings.
+        ?? (block.classList.contains('inline-drawer')
+            ? block.querySelector(':scope > .inline-drawer-header b') ?? block.querySelector(':scope > .inline-drawer-header')
+            : block.querySelector('.range-block-title'));
 }
 
 /** Localized label straight from upstream markup, so no parallel i18n table. */
@@ -118,11 +141,16 @@ function labelOf(/** @type {Entry} */ entry) {
 /** @param {Entry} entry */
 const isSupported = entry => entry.block.style.display !== 'none';
 
+/** Fallback blocks added back this session; otherwise they show only when their value differs from the fallback. */
+const revealedFallbacks = new Set();
+
 /** @param {Entry} entry */
 function isActive({ param }) {
     switch (param.kind) {
         case 'toggle': return Boolean(/** @type {Record<string, unknown>} */ (oai_settings)[param.settingsKey]);
         case 'local': return !hiddenBlocks.has(param.key);
+        case 'fallback': return revealedFallbacks.has(param.key)
+            || Number(/** @type {Record<string, unknown>} */ (oai_settings)[param.settingsKey]) !== FALLBACK_VALUES[param.key];
         default: return !getOmittedParams(oai_settings).includes(param.key);
     }
 }
@@ -134,7 +162,8 @@ function isActive({ param }) {
  * @param {Entry} entry
  * @param {boolean} active
  */
-function setActive({ param, control }, active) {
+function setActive(entry, active) {
+    const { param, control } = entry;
     switch (param.kind) {
         case 'toggle': {
             if (!(control instanceof HTMLInputElement) || control.checked === active) return;
@@ -146,6 +175,14 @@ function setActive({ param, control }, active) {
         case 'local':
             setBlockHidden(param.key, !active);
             return;
+        case 'fallback':
+            if (active) {
+                revealedFallbacks.add(param.key);
+            } else {
+                revealedFallbacks.delete(param.key);
+                writeValue(entry, FALLBACK_VALUES[param.key]);
+            }
+            return;
         default:
             if (setParamOmitted(oai_settings, param.key, !active)) {
                 saveSettingsDebounced();
@@ -153,7 +190,7 @@ function setActive({ param, control }, active) {
     }
 }
 
-const REMOVE_TITLE = { request: 'Remove from request', toggle: 'Turn off and hide', local: 'Hide section' };
+const REMOVE_TITLE = { request: 'Remove from request', toggle: 'Turn off and hide', local: 'Hide section', fallback: 'Reset to default and hide' };
 
 /** @param {Entry} entry */
 function readValue({ param }) {
@@ -192,6 +229,42 @@ function fieldTypeOf({ control }) {
     return { type: 'boolean' };
 }
 
+/**
+ * Upstream's "click slider numbers to input manually" tip. This panel turns the Chat
+ * Completion sliders into number boxes, so the tip only applies to the other APIs.
+ */
+function installSliderTipToggle() {
+    const tip = document.getElementById('clickSlidersTips');
+    if (!tip) {
+        throw new Error('#clickSlidersTips not found; cannot hide it for Chat Completion');
+    }
+    const sync = () => tip.classList.toggle('tt-hidden', main_api === 'openai');
+    eventSource.on(event_types.MAIN_API_CHANGED, sync);
+    eventSource.on(event_types.SETTINGS_LOADED_AFTER, sync);
+    sync();
+}
+
+/**
+ * One muted line under the pinned Reasoning Effort select when the current connection
+ * cannot use the preset's stored value at all: the select shows Auto (what is sent), and
+ * the note says why. The stored value is kept, so it applies again on a connection that has it.
+ * @param {HTMLElement} select
+ * @returns {() => void} Updates the note from the current settings
+ */
+function installEffortNote(select) {
+    const note = document.createElement('small');
+    note.className = 'tt-gp-effort-note';
+    note.hidden = true;
+    select.after(note);
+    return () => {
+        const stored = oai_settings.reasoning_effort;
+        const unsupported = typeof stored === 'string' && stored !== '' && stored !== 'auto'
+            && getEffectiveReasoningEffort(oai_settings) === 'auto';
+        note.hidden = !unsupported;
+        note.textContent = unsupported ? t`Preset value "${stored}" isn't supported here; sent as Auto.` : '';
+    };
+}
+
 export function installGenerationParamsPanel() {
     const entries = resolveEntries();
     const anchor = entries[0]?.block;
@@ -203,7 +276,10 @@ export function installGenerationParamsPanel() {
     const bar = document.createElement('div');
     bar.className = 'tt-gp-bar';
     bar.innerHTML = `
-        <div class="tt-gp-title">${translate('Request Parameter Management')}</div>
+        <div class="tt-gp-title inline-drawer-header" role="button" tabindex="0" aria-expanded="true">
+            <b>${translate('Request Parameter Management')}</b>
+            <i class="fa-solid inline-drawer-icon" aria-hidden="true"></i>
+        </div>
         <div class="tt-gp-actions">
             <button type="button" class="menu_button tt-gp-add" aria-expanded="false">
                 <i class="fa-solid fa-plus" aria-hidden="true"></i><span>${translate('Add parameter')}</span>
@@ -223,6 +299,31 @@ export function installGenerationParamsPanel() {
             </div>
         </div>`;
     anchor.parentElement.insertBefore(bar, anchor);
+    // Pinned settings sit above the section, so folding it never hides them.
+    for (const presetKey of PINNED_PRESET_KEYS) {
+        const control = requireControl(presetKey);
+        const block = control.closest('[data-source], .range-block');
+        if (!(block instanceof HTMLElement)) {
+            throw new Error(`Pinned generation parameter block not found: ${presetKey}`);
+        }
+        bar.before(block);
+        if (placeHint(labelElementOf(/** @type {Entry} */ ({ block, control })), presetKey)) hideOwnDescriptions(block);
+    }
+    // Reasoning effort is no longer removable; a preset that removed it meant "not sent", which is Auto.
+    const normalizePinned = () => {
+        if (setParamOmitted(oai_settings, PAYLOAD_KEYS.reasoning_effort, false)) {
+            oai_settings.reasoning_effort = 'auto';
+            $(settingsToUpdate.reasoning_effort[0]).val('auto');
+            saveSettingsDebounced();
+        }
+    };
+    normalizePinned();
+    const effortSelect = requireControl('reasoning_effort');
+    const syncEffortNote = installEffortNote(effortSelect);
+    // jQuery, so `.trigger('input')` counts too. The OpenCode API format changes the
+    // vocabulary without an event of its own.
+    $([effortSelect, requireControl('opencode_api_format')]).on('input', syncEffortNote);
+    installSliderTipToggle();
     const q = (/** @type {string} */ selector) => /** @type {HTMLElement} */ (bar.querySelector(selector));
     const addButton = /** @type {HTMLButtonElement} */ (q('.tt-gp-add'));
     const modeButton = /** @type {HTMLButtonElement} */ (q('.tt-gp-mode'));
@@ -231,11 +332,15 @@ export function installGenerationParamsPanel() {
     const jsonText = /** @type {HTMLTextAreaElement} */ (q('.tt-gp-json-text'));
     const jsonError = q('.tt-gp-json-error');
     const jsonHint = q('.tt-gp-json-hint');
+    const title = q('.tt-gp-title');
+    const chevron = q('.tt-gp-title .inline-drawer-icon');
     const defaultJsonHint = jsonHint.textContent;
 
     // Local blocks are display preferences, not request configuration; JSON covers the rest.
     const jsonEntries = entries.filter(entry => entry.param.kind !== 'local');
     let jsonMode = false;
+    // Folding the section is a device preference, like hidden local blocks.
+    let collapsed = localStorage.getItem(COLLAPSED_KEY) === 'true';
     let jsonSnapshot = '';
 
     const addable = () => entries.filter(entry => isSupported(entry) && !isActive(entry));
@@ -273,8 +378,12 @@ export function installGenerationParamsPanel() {
         for (const entry of entries) {
             const { style } = entry.block;
             if (style.display && style.display !== 'none') style.display = ''; // jQuery show() artefact
-            entry.block.classList.toggle(INACTIVE_CLASS, !isActive(entry) || (jsonMode && entry.param.kind !== 'local'));
+            entry.block.classList.toggle(INACTIVE_CLASS, collapsed || !isActive(entry) || (jsonMode && entry.param.kind !== 'local'));
         }
+        bar.classList.toggle('tt-gp-collapsed', collapsed);
+        title.setAttribute('aria-expanded', String(!collapsed));
+        chevron.classList.toggle('fa-circle-chevron-up', !collapsed);
+        chevron.classList.toggle('fa-circle-chevron-down', collapsed);
         const empty = addable().length === 0;
         addButton.disabled = empty;
         if (empty) setPickerOpen(false);
@@ -313,7 +422,7 @@ export function installGenerationParamsPanel() {
             const value = values.get(entry.param.key);
             const active = entry.param.kind === 'toggle' ? value === true : value !== undefined;
             setActive(entry, active);
-            if (active && entry.param.kind === 'request') writeValue(entry, value);
+            if (active && (entry.param.kind === 'request' || entry.param.kind === 'fallback')) writeValue(entry, value);
         }
         sync();
         renderJson();
@@ -331,6 +440,20 @@ export function installGenerationParamsPanel() {
         if (on) { setPickerOpen(false); renderJson(); }
         sync();
     }
+
+    function toggleCollapsed() {
+        collapsed = !collapsed;
+        localStorage.setItem(COLLAPSED_KEY, String(collapsed));
+        if (collapsed) setPickerOpen(false);
+        sync();
+    }
+    title.addEventListener('click', toggleCollapsed);
+    title.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            toggleCollapsed();
+        }
+    });
 
     modeButton.addEventListener('click', () => setJsonMode(!jsonMode));
     q('.tt-gp-json-apply').addEventListener('click', applyJson);
@@ -359,12 +482,6 @@ export function installGenerationParamsPanel() {
         entry.block.dataset.ttParam = entry.param.key;
         entry.block.dataset.ttKind = entry.param.kind;
         entry.block.dataset.ttScope = entry.param.scope;
-        // Sliders collapse to their number box: one compact row per parameter.
-        // Upstream keeps syncing number → slider via `data-for`, so the hidden
-        // range input remains the value owner.
-        if (entry.control instanceof HTMLInputElement && entry.control.type === 'range') {
-            entry.block.classList.add('tt-gp-compact');
-        }
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'tt-gp-remove';
@@ -376,10 +493,32 @@ export function installGenerationParamsPanel() {
             setActive(entry, false);
             sync();
         });
-        // Localization replaces label contents; keep the button outside that node.
+        // Localization replaces label contents; keep the buttons outside that node.
         const label = labelElementOf(entry);
-        if (label) label.after(remove); else entry.block.append(remove);
+        // × follows the explanation icon (or sits inside a toggle's label, a
+        // full-width row once its checkbox is hidden) to stay on the label's line.
+        const hint = placeHint(label, entry.param.key);
+        if (hint) hint.after(remove);
+        else if (entry.param.kind === 'toggle' && label instanceof HTMLLabelElement) label.append(remove);
+        else if (label) label.after(remove);
+        else entry.block.append(remove);
+        if (hint) hideOwnDescriptions(entry.block);
+        // Sliders collapse to their number box: one compact row per parameter.
+        // Upstream keeps syncing number → slider via `data-for`, so the hidden
+        // range input remains the value owner.
+        // Plain number boxes (max response length, swipes) join them unless a
+        // description needs the block's full width.
+        if (entry.control instanceof HTMLInputElement && (entry.control.type === 'range'
+            || (entry.control.type === 'number' && !entry.block.querySelector('.toggle-description:not(.tt-hidden)')))) {
+            entry.block.classList.add('tt-gp-compact');
+        }
         if (entry.param.kind === 'toggle') {
+            // Shown means on and × turns it off, so the checkbox itself is
+            // redundant; its label must not toggle it either.
+            entry.control.classList.add('tt-hidden');
+            if (entry.control instanceof HTMLInputElement) {
+                entry.control.labels?.[0]?.addEventListener('click', event => event.preventDefault());
+            }
             $(entry.control).on('input change', sync);
         }
     }
@@ -390,7 +529,9 @@ export function installGenerationParamsPanel() {
         event_types.CHATCOMPLETION_SOURCE_CHANGED,
     ]) {
         eventSource.on(eventName, () => {
+            normalizePinned();
             sync();
+            syncEffortNote();
             if (jsonMode) {
                 if (jsonText.value === jsonSnapshot) renderJson();
                 else jsonHint.textContent = translate('Settings changed. Your draft is kept. Apply to use it here, or Reset to reload.');
@@ -398,4 +539,5 @@ export function installGenerationParamsPanel() {
         });
     }
     sync();
+    syncEffortNote();
 }

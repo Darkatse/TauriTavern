@@ -630,20 +630,6 @@
                             </div>
                             <div id="range_block_openai">
                                 <div class="range-block">
-                                    <label class="checkbox_label">
-                                        <input id="oai_max_context_unlocked" type="checkbox" />
-                                        <span data-i18n="Unlocked Context Size">
-                                            Unlocked Context Size
-                                        </span>
-                                    </label>
-                                    <div class="toggle-description justifyLeft">
-                                        <span data-i18n="Unrestricted maximum value for the context slider">
-                                            Unrestricted maximum value for the context size slider. Enable only if you know
-                                            what you're doing.
-                                        </span>
-                                    </div>
-                                </div>
-                                <div class="range-block">
                                     <div class="range-block-title" data-i18n="Context Size (tokens)">
                                         Context Size (tokens)
                                     </div>
@@ -700,14 +686,6 @@
                                         <input id="stream_toggle" type="checkbox" /><span data-i18n="Streaming">
                                             Streaming</span>
                                     </label>
-                                    <div class="toggle-description justifyLeft">
-                                        <span data-i18n="Display the response bit by bit as it is generated.">
-                                            Display the response bit by bit as it is generated.
-                                        </span><br>
-                                        <span data-i18n="When this is off, responses will be displayed all at once when they are complete.">
-                                            When this is off, responses will be displayed all at once when they are complete.
-                                        </span>
-                                    </div>
                                 </div>
                                 <div class="range-block" data-source="openai,opencode,claude,aws_bedrock,aimlapi,openrouter,ai21,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,siliconflow,minimax,electronhub,chutes,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,zai,workers_ai">
                                     <div class="range-block-title" data-i18n="Temperature">
@@ -2011,6 +1989,18 @@
                                             </span>
                                         </div>
                                     </div>
+                                    <div class="range-block" data-source="custom" data-custom-api-format="claude_messages">
+                                        <label for="custom_claude_adaptive_thinking" class="checkbox_label widthFreeExpand">
+                                            <input id="custom_claude_adaptive_thinking" type="checkbox" />
+                                            <span>thinking: adaptive</span>
+                                        </label>
+                                    </div>
+                                    <div class="range-block" data-source="custom" data-custom-api-format="openai_responses">
+                                        <label for="custom_responses_reasoning_summary" class="checkbox_label widthFreeExpand">
+                                            <input id="custom_responses_reasoning_summary" type="checkbox" />
+                                            <span>reasoning.summary: auto</span>
+                                        </label>
+                                    </div>
                                     <div class="range-block" data-source="makersuite,vertexai,aimlapi,openrouter,claude,electronhub,chutes,nanogpt,custom" data-custom-api-format="claude_messages,openai_responses,gemini_generate_content">
                                         <label for="openai_enable_web_search" class="checkbox_label flexWrap widthFreeExpand">
                                             <input id="openai_enable_web_search" type="checkbox" />
@@ -2197,7 +2187,7 @@
                                                 <option data-i18n="openai_reasoning_effort_xhigh" value="xhigh">XHigh</option>
                                                 <option data-i18n="openai_reasoning_effort_maximum" value="max">Maximum</option>
                                             </select>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="openai,custom,xai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes" data-i18n="Reasoning effort is ordered High, XHigh, Maximum. Provider adapters map these project levels to the nearest supported upstream value. Auto does not send an effort level.">
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="openai,xai,aimlapi,openrouter,pollinations,perplexity,cometapi,electronhub,azure_openai,chutes,makersuite,vertexai" data-i18n="Reasoning effort is ordered High, XHigh, Maximum. Provider adapters map these project levels to the nearest supported upstream value. Auto does not send an effort level.">
                                                 Reasoning effort is ordered High, XHigh, Maximum. Provider adapters map these project levels to the nearest supported upstream value. Auto does not send an effort level.
                                             </div>
                                             <div class="toggle-description justifyLeft marginBot5" data-source="deepseek" data-i18n="DeepSeek V4 options: Auto omits the effort field, Minimum and Low request low effort, Medium through XHigh request high effort, and Maximum requests max effort.">
@@ -2209,17 +2199,8 @@
                                             <strong class="toggle-description justifyLeft marginBot5" data-source="openrouter">
                                                 Request model reasoning = Off with Reasoning Effort = Minimum disables reasoning entirely on models that support that, but can cause errors with some models.
                                             </strong>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock,vertexai,custom" data-custom-api-format="claude_messages" data-i18n="Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default. Claude 5 models think by default.">
+                                            <div class="toggle-description justifyLeft marginBot5" data-source="claude,aws_bedrock,vertexai" data-i18n="Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default. Claude 5 models think by default.">
                                                 Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default. Claude 5 models think by default.
-                                            </div>
-                                            <div class="toggle-description justifyLeft marginBot5" data-source="makersuite,vertexai,custom" data-custom-api-format="gemini_generate_content">
-                                                <span data-i18n="Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.">
-                                                    Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.
-                                                </span>
-                                                <br>
-                                                <span data-i18n="Allocates a portion of the response length for thinking (Flash 2.5/Pro 2.5) (min: 0/128 tokens, low: 10%, medium: 25%, high: 50%, max: 24576/32768 tokens). Auto lets the model decide.">
-                                                    Allocates a portion of the response length for thinking (Flash 2.5/Pro 2.5) (min: 0/128 tokens, low: 10%, medium: 25%, high: 50%, max: 24576/32768 tokens). Auto lets the model decide.
-                                                </span>
                                             </div>
                                         </div>
                                     </div>

@@ -29,6 +29,7 @@ import {
 import { isInlineDrawerContentOpen, setInlineDrawerContentOpen } from './scripts/tauri/perf/inline-drawer-motion.js';
 import { initializeCodeMirrorEditor } from './scripts/tauri/codemirror-editor.js';
 import { getStreamingRenderInterval, normalizeStreamingFps, shouldCommitStreamingMessage } from './scripts/tauri/perf/streaming-render-policy.js';
+import { getEffectiveGenerationSettings } from './scripts/tauri/generation-params/omission.js';
 import {
     CHAT_COMMIT_REASON,
     initializeColdSwipes,
@@ -7507,7 +7508,8 @@ export function getMaxResponseTokens() {
         return amount_gen;
     }
     if (main_api == 'openai') {
-        return oai_settings.openai_max_tokens;
+        // An omitted reply limit reserves its fallback share, as the chat-completion budget does.
+        return getEffectiveGenerationSettings(oai_settings).openai_max_tokens;
     }
     return 0;
 }

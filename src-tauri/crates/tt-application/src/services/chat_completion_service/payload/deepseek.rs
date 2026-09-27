@@ -72,7 +72,7 @@ impl RequestOptions {
                 DeepSeekThinkingMode::Enabled
             };
         // Compatible gateways own their parameter contract. Preserve explicit values,
-        // including effort that the OpenCode wire builder would otherwise discard.
+        // including effort, verbatim.
         Ok(Some(Self {
             thinking_mode: Some(thinking_mode),
             reasoning_effort: payload.get("reasoning_effort").cloned(),

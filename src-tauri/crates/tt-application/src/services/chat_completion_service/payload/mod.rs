@@ -33,6 +33,12 @@ mod workers_ai;
 mod xai;
 mod zai;
 
+/// `max_tokens` for formats that require it when the request omits the field
+/// (the request parameter panel's omitted reply limit). The frontend reserves
+/// the same share of the prompt budget: `OMITTED_MAX_TOKENS_BUDGET` in
+/// `src/scripts/tauri/generation-params/catalog.js`; keep the two in step.
+const OMITTED_MAX_TOKENS: i64 = 25_000;
+
 pub(super) fn build_payload(
     source: ChatCompletionSource,
     payload: Map<String, Value>,
@@ -57,7 +63,7 @@ pub(super) fn build_payload(
         && ChatCompletionProviderFormat::from_payload(source, &payload)?
             == ChatCompletionProviderFormat::OpenAiResponses
     {
-        return openai_responses::build(payload);
+        return openai_responses::build_native_openai(payload);
     }
 
     let (endpoint, mut body) = match source {
@@ -258,6 +264,7 @@ mod tests {
             "custom_api_format": "openai_responses",
             "model": "gateway/deepseek-v4-pro",
             "reasoning_effort": "medium",
+            "reasoning_summary": "auto",
             "messages": [
                 { "role": "user", "content": "hi" },
                 {
@@ -287,7 +294,10 @@ mod tests {
             build_payload(ChatCompletionSource::Custom, payload).expect("payload should build");
 
         assert_eq!(endpoint, "/responses");
-        assert_eq!(upstream["reasoning"]["effort"], "medium");
+        assert_eq!(
+            upstream["reasoning"],
+            json!({ "effort": "medium", "summary": "auto" })
+        );
         assert!(upstream.get("thinking").is_none());
         assert!(upstream.get("reasoning_effort").is_none());
         let input = upstream
