@@ -1,0 +1,163 @@
+/* Compact "label | select | buttons" rows and their "⋯" menus.
+   Uses only SmartTheme variables so user themes keep applying. */
+
+/* TauriTavern's hide utility for upstream parts the compact UI folds away. It is separate from
+   upstream's `.displayNone`, so upstream toggling that class cannot undo ours. Buttons that
+   opt into a row's ⋯ menu (`data-tt-overflow`, see overflow-menu.js) are hidden with it. */
+.tt-hidden,
+.tt-overflow-host [data-tt-overflow] {
+    display: none !important;
+}
+
+.tt-sel-row {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 4px;
+}
+
+.tt-sel-label {
+    flex: 0 0 auto;
+    min-width: 2.5em;
+    color: var(--SmartThemeBodyColor);
+    white-space: nowrap;
+}
+
+.tt-sel-row select {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+}
+
+/* Every button in a row (ours and extensions') is as tall as the row. */
+.tt-sel-row .menu_button {
+    flex: none;
+    align-self: stretch;
+    margin: 0;
+}
+
+.tt-row-button.menu_button {
+    flex: none;
+    margin: 0;
+}
+
+/* Upstream's `.hidden` only makes an element invisible; in a row it must not keep its width
+   either (the model row's spinner), or the rows' right edges drift apart. */
+.tt-sel-row > .hidden {
+    display: none;
+}
+
+/* The preset row: upstream's button bar joins the row, so one gap spaces everything and the
+   order holds whatever extensions add: label, select, save, extension buttons, ⋯. */
+.tt-compact-presets .tt-sel-row > .flex-container {
+    display: contents;
+}
+
+.tt-compact-presets .tt-sel-row > :is(.tt-sel-label, select) {
+    order: -2;
+}
+
+.tt-compact-presets #update_oai_preset {
+    order: -1;
+}
+
+.tt-compact-presets .tt-overflow-button {
+    order: 1;
+}
+
+/* preset-row.js hides the header's upstream parts; the header itself collapses only while
+   nothing else is left in it, so buttons an extension adds there stay reachable. */
+.tt-compact-presets .standoutHeader:not(:has(> :not(.tt-hidden, .displayNone, [hidden], .flex-container), > .flex-container > :not(.tt-hidden, .displayNone, [hidden]))) {
+    display: none;
+}
+
+/* Same surface as the extensions (wand) menu. */
+.tt-overflow-menu {
+    position: fixed;
+    z-index: 29999;
+    min-width: 11em;
+    max-width: min(20em, calc(100vw - 16px));
+    max-height: calc(100dvh - 16px);
+    overflow-y: auto;
+    padding: 4px 0;
+    background-color: var(--SmartThemeBlurTintColor);
+    -webkit-backdrop-filter: blur(var(--SmartThemeBlurStrength));
+    backdrop-filter: blur(var(--SmartThemeBlurStrength));
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+}
+
+/* The global .list-group-item fades to 50% until hovered, which reads as disabled on touch. */
+.tt-overflow-menu .tt-overflow-item {
+    align-items: center;
+    padding: 6px 12px;
+    opacity: 0.85;
+}
+
+.tt-overflow-menu .tt-overflow-item:hover,
+.tt-overflow-menu .tt-overflow-item:focus-visible,
+.tt-overflow-menu .tt-overflow-item:active {
+    opacity: 1;
+    outline: none;
+}
+
+.tt-overflow-menu .tt-overflow-item[aria-disabled="true"] {
+    flex-wrap: wrap;
+    cursor: default;
+    opacity: 0.45;
+}
+
+/* Font Awesome glyphs and icons copied from extension buttons share one fixed-width slot. */
+.tt-overflow-icon {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 1.25em;
+}
+
+.tt-overflow-icon > svg,
+.tt-overflow-icon > img {
+    width: 1em;
+    height: 1em;
+}
+
+.tt-overflow-menu .tt-overflow-item small {
+    flex-basis: 100%;
+    padding-left: calc(1.25em + 10px);
+}
+
+.tt-overflow-menu .tt-overflow-danger {
+    color: var(--fullred);
+}
+
+/* `.list-group > div` pads every child; a rule must stay a hairline. */
+.tt-overflow-menu > .tt-overflow-rule {
+    display: block;
+    height: 1px;
+    margin: 4px 8px;
+    padding: 0;
+    background-color: var(--SmartThemeBorderColor);
+}
+
+@media (pointer: coarse) {
+    .tt-sel-row select,
+    .tt-row-button.menu_button {
+        min-height: 36px;
+    }
+
+    .tt-sel-row .menu_button {
+        min-width: 36px;
+        min-height: 36px;
+    }
+
+    .tt-overflow-menu .tt-overflow-item {
+        min-height: 40px;
+    }
+}
+
+@media (max-width: 450px) {
+    .tt-sel-label {
+        min-width: 2em;
+    }
+}

@@ -415,6 +415,9 @@ export function bootstrapTauriMain() {
         void import('../../scripts/tauri/generation-params/panel.js')
             .then(({ installGenerationParamsPanel }) => installGenerationParamsPanel())
             .catch((error) => { console.error('TauriTavern: Failed to install generation parameter panel:', error); });
+        void import('../../scripts/tauri/compact-rows/preset-row.js')
+            .then(({ installCompactPresetRow }) => installCompactPresetRow())
+            .catch((error) => { console.error('TauriTavern: Failed to install compact preset row:', error); });
     });
     runAfterTauriReady(() => import('./services/dynamic-theme/install.js')
         .then(({ installDynamicTheme }) => installDynamicTheme()));
