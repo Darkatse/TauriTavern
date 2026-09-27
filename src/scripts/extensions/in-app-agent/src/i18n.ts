@@ -66,7 +66,7 @@ const messages = {
     "modelUnavailable": "Unavailable",
     "textCompletionModel": "Text completion, unsupported",
     "noModels": "No saved models yet",
-    "noModelsNote": "In connection settings, click “Save the current model” under “Model” and choose “Save Model”.",
+    "noModelsNote": "In connection settings, click “Create new” (+) under “Model” and choose “Save Model”.",
     "connections": "Open connection settings",
     "reasoningEffort": "Reasoning effort",
     "effortMenu": "Reasoning effort: {name}",

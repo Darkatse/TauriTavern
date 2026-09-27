@@ -1,6 +1,7 @@
 // @ts-check
 
 import { translate } from '../../i18n.js';
+import { exportOpenAIPreset } from '../../openai.js';
 import { adoptOverflowButtons, createOverflowMenuButton, ensureCompactRowsStyle } from './overflow-menu.js';
 
 /**
@@ -58,6 +59,13 @@ export function installCompactPresetRow() {
     for (const element of folded) element.classList.add('tt-hidden');
     const extensionItems = adoptOverflowButtons(row);
     const withEllipsis = (/** @type {string} */ text) => `${translate(text)}…`;
+    /** The two upstream export choices, picked in the menu instead of a second popup. */
+    const exportItem = (/** @type {boolean} */ includeConnection) => () => {
+        exportOpenAIPreset({ includeConnection }).catch((error) => {
+            console.error('Chat Completion preset export failed', error);
+            toastr.error(error instanceof Error ? error.message : String(error));
+        });
+    };
 
     buttonBar.append(createOverflowMenuButton({
         title: translate('More'),
@@ -65,7 +73,18 @@ export function installCompactPresetRow() {
             { label: withEllipsis('Save as'), icon: 'file-circle-plus', onSelect: () => actions.saveAs.click() },
             { label: withEllipsis('Rename'), icon: 'pencil', onSelect: () => actions.rename.click() },
             { label: withEllipsis('Import'), icon: 'file-import', separatorBefore: true, onSelect: () => actions.importPreset.click() },
-            { label: withEllipsis('Export'), icon: 'file-export', onSelect: () => actions.exportPreset.click() },
+            {
+                label: translate('Export preset'),
+                hint: translate('Prompts and parameters only, without the API connection.'),
+                icon: 'file-export',
+                onSelect: exportItem(false),
+            },
+            {
+                label: translate('Export preset with connection'),
+                hint: translate('Also keeps the API, server URL, model and proxy stored in the preset.'),
+                icon: 'file-export',
+                onSelect: exportItem(true),
+            },
             ...extensionItems(),
             {
                 label: translate('Bind preset to connection'),

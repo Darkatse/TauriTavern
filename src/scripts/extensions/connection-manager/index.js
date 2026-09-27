@@ -1039,14 +1039,53 @@ async function createConnectionItem() {
     if (popup.result === CREATE_MODEL_TARGET_RESULT) {
         return { kind: CONNECTION_ITEM_KIND.MODEL_TARGET, item: await createModelTarget(name) };
     }
+    return { kind: CONNECTION_ITEM_KIND.PROFILE, item: await captureProfile(mode, name, { exclude: getModelAndPresetExclude(), modelAndPreset: true }) };
+}
 
+/**
+ * Captures a profile from the current settings.
+ * @param {string} mode Profile mode
+ * @param {string} name Profile name
+ * @param {{ exclude: string[], modelAndPreset: boolean }} shape Commands left out, and whether it is a "model + preset" item
+ * @returns {Promise<ConnectionProfile>}
+ */
+async function captureProfile(mode, name, { exclude, modelAndPreset }) {
     /** @type {ConnectionProfile} */
-    const profile = { id: uuidv4(), mode, name: String(name), exclude: getModelAndPresetExclude() };
-    markModelAndPresetProfile(profile);
-    // Excluded commands are not read, so only the model route and the preset are recorded.
+    const profile = { id: uuidv4(), mode, name: String(name), exclude: [...exclude] };
+    if (modelAndPreset) {
+        markModelAndPresetProfile(profile);
+    }
+    // Excluded commands are not read, so only what the shape records is captured.
     await readProfileFromCommands(mode, profile);
-    readRequestHints(profile);
-    return { kind: CONNECTION_ITEM_KIND.PROFILE, item: profile };
+    if (modelAndPreset) {
+        readRequestHints(profile);
+    }
+    return profile;
+}
+
+/**
+ * Saves the current settings as a new item shaped like the selected one: a model stays a
+ * model, a "model + preset" item stays one, and an older profile keeps the fields it records.
+ * @param {{kind:string, item:ConnectionProfile|LlmModelTarget}} selected Item to copy the shape of
+ * @returns {Promise<{kind:string, item:ConnectionProfile|LlmModelTarget}|null>}
+ */
+async function saveItemAs(selected) {
+    const suggestedName = getUniqueName(selected.item.name, isItemNameTaken);
+    const name = normalizeItemName(await Popup.show.input(t`Enter a name:`, null, suggestedName));
+    if (!name) {
+        return null;
+    }
+    if (isItemNameTaken(name)) {
+        toastr.error(t`This name is already in use.`);
+        return null;
+    }
+    if (selected.kind === CONNECTION_ITEM_KIND.MODEL_TARGET) {
+        return { kind: CONNECTION_ITEM_KIND.MODEL_TARGET, item: await createModelTarget(name) };
+    }
+    const profile = /** @type {ConnectionProfile} */ (selected.item);
+    const mode = main_api === 'openai' ? 'cc' : 'tc';
+    const shape = { exclude: Array.isArray(profile.exclude) ? profile.exclude : [], modelAndPreset: isModelAndPresetProfile(profile) };
+    return { kind: CONNECTION_ITEM_KIND.PROFILE, item: await captureProfile(mode, name, shape) };
 }
 
 /**
@@ -1831,6 +1870,7 @@ export async function init() {
     const detailsContent = document.getElementById('connection_profile_details_content');
     const reloadButton = document.getElementById('reload_connection_profile');
     const updateButton = document.getElementById('update_connection_profile');
+    const saveAsButton = document.getElementById('save_as_connection_profile');
     const editButton = document.getElementById('edit_connection_profile');
     const deleteButton = document.getElementById('delete_connection_profile');
 
@@ -1842,10 +1882,10 @@ export async function init() {
         drift: installDriftTracker({
             isBusy: () => applyingCount > 0,
             onChange: (dirty) => {
-                // "Reapply" and "overwrite" sit in the row only while the settings differ from the
-                // selected item; otherwise they live in the menu.
+                // "Reapply" sits in the row only while the settings differ from the selected
+                // item (otherwise it lives in the menu); "save" stays and is highlighted then.
+                reloadButton.classList.toggle('tt-hidden', !dirty);
                 for (const button of [reloadButton, updateButton]) {
-                    button.classList.toggle('tt-hidden', !dirty);
                     button.classList.toggle('tt-cm-dirty', dirty);
                 }
                 sidebar.setDirty(dirty);
@@ -1859,14 +1899,14 @@ export async function init() {
 
     function toggleProfileSpecificButtons() {
         const hasSelection = Boolean(getSelectedItem());
-        for (const button of [updateButton, editButton, reloadButton, deleteButton]) {
+        for (const button of [updateButton, saveAsButton, editButton, reloadButton, deleteButton]) {
             button.classList.toggle('disabled', !hasSelection);
         }
     }
 
-    /** Keeps "save" in the row; the rest moves into the "⋯" menu. */
+    /** Keeps save / save as / create in the row; the rest moves into the "⋯" menu. */
     function installCompactActions() {
-        for (const button of [viewDetails, editButton, deleteButton, reloadButton, updateButton]) {
+        for (const button of [viewDetails, editButton, deleteButton, reloadButton]) {
             button.classList.add('tt-hidden');
         }
         const needsSelection = () => (getSelectedItem() ? null : t`No model selected`);
@@ -1875,7 +1915,6 @@ export async function init() {
             items: () => [
                 { label: t`Show/hide details`, icon: 'circle-info', onSelect: () => viewDetails.click() },
                 { label: t`Rename`, icon: 'pencil', disabledReason: needsSelection, onSelect: () => editButton.click() },
-                { label: t`Overwrite with the current settings`, icon: 'save', disabledReason: needsSelection, onSelect: () => updateButton.click() },
                 { label: t`Reapply`, icon: 'recycle', disabledReason: needsSelection, onSelect: () => reloadButton.click() },
                 { label: t`Delete`, icon: 'trash-can', danger: true, separatorBefore: true, disabledReason: needsSelection, onSelect: () => deleteButton.click() },
             ],
@@ -1964,13 +2003,11 @@ export async function init() {
         toastr.success(t`Reapplied`, '', { timeOut: 1500 });
     }));
 
-    const createButton = document.getElementById('create_connection_profile');
-    createButton.addEventListener('click', () => runUiAction(async () => {
-        const created = await createConnectionItem();
-        if (!created) {
-            return;
-        }
-
+    /**
+     * Stores a newly captured item and selects it.
+     * @param {{kind:string, item:ConnectionProfile|LlmModelTarget}} created
+     */
+    async function addCreatedItem(created) {
         const isProfile = created.kind === CONNECTION_ITEM_KIND.PROFILE;
         (isProfile ? extension_settings.connectionManager.profiles : extension_settings.connectionManager.modelTargets).push(created.item);
         setSelectedItemRef({ kind: created.kind, id: created.item.id });
@@ -1980,6 +2017,22 @@ export async function init() {
         await eventSource.emit(isProfile ? event_types.CONNECTION_PROFILE_CREATED : event_types.MODEL_TARGET_CREATED, created.item);
         await eventSource.emit(isProfile ? event_types.CONNECTION_PROFILE_LOADED : event_types.MODEL_TARGET_LOADED, created.item.name);
         await refreshSelectionUi();
+    }
+
+    const createButton = document.getElementById('create_connection_profile');
+    createButton.addEventListener('click', () => runUiAction(async () => {
+        const created = await createConnectionItem();
+        if (created) {
+            await addCreatedItem(created);
+        }
+    }));
+
+    saveAsButton.addEventListener('click', () => runUiAction(async () => {
+        const selected = getSelectedItem();
+        const created = selected ? await saveItemAs(selected) : null;
+        if (created) {
+            await addCreatedItem(created);
+        }
     }));
 
     updateButton.addEventListener('click', () => runUiAction(async () => {
