@@ -48,6 +48,8 @@
 
 ## 3. 全局 API（Public）
 
+`SillyTavern.getContext().macros` 提供宏注册与独立求值，接口和使用范围见[宏求值 API](API/Macros.md)。
+
 > 这些符号被第三方脚本/扩展/角色卡直接调用，变更需极度谨慎。
 
 ### 3.1 资源与缩略图（Public）

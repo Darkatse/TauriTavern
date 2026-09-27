@@ -801,7 +801,7 @@ fn ensure_json_object(value: &Value, message: &str) -> Result<(), ApplicationErr
     Ok(())
 }
 
-fn sha256_value(value: &Value) -> Result<String, ApplicationError> {
+pub(crate) fn sha256_value(value: &Value) -> Result<String, ApplicationError> {
     let bytes = serde_json::to_vec(value).map_err(|error| {
         ApplicationError::InternalError(format!("prompt_assembly.fingerprint_failed: {error}"))
     })?;

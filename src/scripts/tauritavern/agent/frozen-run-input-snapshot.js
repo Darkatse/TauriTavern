@@ -1,3 +1,6 @@
+import { snapshotVariableMacroValues } from '../../variables/values.js';
+import { normalizeMacroResult } from '../../macros/values.js';
+
 export const FROZEN_RUN_INPUT_SNAPSHOT_KIND = 'tauritavern.agentFrozenRunInputSnapshot';
 export const FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION = 1;
 export const CURRENT_MODEL_CONNECTION_SNAPSHOT_KIND = 'tauritavern.currentModelConnectionSnapshot';
@@ -27,6 +30,42 @@ export function buildFrozenRunInputSnapshot({
         macroContext: frozenMacroContext,
         ...(variables ? { variables: clonePlainObject(variables, 'agent.frozen_run_input_variables_invalid: variables must be a structured-cloneable object') } : {}),
         ...(currentModelConnection ? { currentModelConnection: normalizeCurrentModelConnectionSnapshot(currentModelConnection) } : {}),
+    };
+}
+
+/**
+ * Keep the existing read-only values usable by old Run readers. Only character
+ * templates need a second representation; names, settings and chat facts are shared.
+ */
+export function updateFrozenMacroContext(snapshot, context, { characterValues = {}, builtins = {} } = {}) {
+    const { variables, character, extensionPrompts, bannedWords, ...facts } = context;
+    return {
+        ...snapshot,
+        macroContext: {
+            ...facts,
+            characterTemplates: character,
+            character: characterValues,
+            builtins,
+            variableValues: snapshotVariableMacroValues(variables,
+                context.engine === 'new' ? normalizeMacroResult : String),
+        },
+        variables,
+    };
+}
+
+/** Only rebuilding needs raw templates. Viewing/resuming a prepared old Run does not. */
+export function createMacroContextFromSnapshot(snapshot) {
+    const saved = snapshot.macroContext;
+    if (!saved?.characterTemplates || !saved.settings || !saved.engine || !snapshot.variables) {
+        throw new Error('agent.macro_context_rebuild_unavailable: This Run has no captured macro inputs for independent prompt assembly; start a new Run to rebuild its prompt');
+    }
+    const { characterTemplates, character, builtins, variableValues, ...facts } = saved;
+    return {
+        ...facts,
+        character: characterTemplates,
+        variables: snapshot.variables,
+        extensionPrompts: snapshot.promptInputs.extensionPrompts ?? {},
+        bannedWords: [],
     };
 }
 

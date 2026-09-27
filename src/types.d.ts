@@ -263,7 +263,7 @@ type TauriTavernAgentSessionsApi = {
         nextBeforeSeq: number | null;
         activeRun: TauriTavernAgentSessionRunHandle | null;
     }>;
-    send: (input: { sessionId: string; text: string }) => Promise<TauriTavernAgentSessionRunHandle>;
+    send: (input: { sessionId: string; text: string; variables?: { local?: Record<string, unknown> } }) => Promise<TauriTavernAgentSessionRunHandle>;
 };
 
 type TauriTavernAgentRunCheckpoint = {

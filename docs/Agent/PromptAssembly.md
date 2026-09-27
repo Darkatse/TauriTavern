@@ -4,18 +4,21 @@ Agent 继续使用 SillyTavern 的 PromptManager 组装提示词。Rust 解析 P
 
 ## 冻结一次输入
 
-生成准备阶段创建 `FrozenRunInputSnapshot`，保存本次运行需要的输入：
+Chat 的 `Generate()` 在 `GENERATE_AFTER_DATA` 的异步处理完成后、dry-run 返回前创建 `FrozenRunInputSnapshot`，供 Chat 与 SDK 使用：
 
 | 内容 | 来源和用途 |
 | --- | --- |
 | `promptInputs` | 聊天、角色、示例、扩展提示词等 PromptManager 输入 |
 | `worldInfoActivation` | 本次生成激活的世界书 |
-| `macroContext` | 本次生成的名称、变量、角色与其他宏值 |
+| `macroContext` | 名称、角色模板、聊天事实、设置与模块数据，以及供原生端使用的只读文本 |
+| `variables` | local/global 变量原值 |
 | `currentModelConnection` | 本次生成使用的模型连接 |
 
-这份输入供根 Agent、子 Agent 和接手的 Agent 使用。每个 Invocation 可以根据自己的 Profile 决定初始历史范围、提示词和模型。组装在工作副本上进行，保存的输入留作后续组装和诊断。
+根 Agent、子 Agent 和接手的 Agent 共用这份输入，各自按 Profile 决定历史范围、提示词和模型。每次组装使用工作副本，提示词和请求参数通过同一[宏求值入口](../API/Macros.md)共享本次变量，保存的输入保持不变。
 
-Session 从自身历史与本次用户消息准备输入，沿用指定预设组装。完整历史保存在 JSONL 中；Run 只保存预算内的最终消息和运行上下文。
+Session 从自身历史与本次用户消息准备输入，使用指定预设，不取当前角色聊天的数据。变量来源见 [Session API](../API/Agent.md#持续-session)。完整历史保存在 JSONL 中；Run 只保存预算内的最终消息和运行上下文。
+
+捕获保存原始角色模板，不执行其中的宏；原生只读文本复用首次生成的结果。旧 Run 可查看和尝试 resume/fix，独立重建缺少必要输入时返回 `agent.macro_context_rebuild_unavailable`。
 
 ## 两条组装路径
 
@@ -34,7 +37,7 @@ Session 从自身历史与本次用户消息准备输入，沿用指定预设组
 
 Snapshot 使用 `messages: AgentModelMessage[]` 与独立的 `generationParameters`，旧 Chat payload 在入口适配。
 
-普通 Chat 在 `CHAT_COMPLETION_SETTINGS_READY` 事件修改完成后统一转换 snapshot；SDK 的独立组装不触发该 Chat 事件。
+普通 Chat 在 `CHAT_COMPLETION_SETTINGS_READY` 完成后转换最终请求；其中的 live 变量修改不写回冻结输入。SDK 独立组装不触发此事件。
 
 Session 历史按完整的工具调用与结果组参与预算裁剪，保留原始内容和 metadata，不重新展开历史宏。未闭合工具组在下次组装时呈现为中断说明，原历史不改写，工具不重放。实际输入范围由预设预算与 Profile 的历史窗口决定。
 
@@ -47,6 +50,8 @@ Skill 目录与文件视图使用同一份有效绑定；Agent 目录由实际�
 ## 预设与连接各管什么
 
 Preset 提供提示词布局和生成设置。Profile 的 model binding 提供最终 source、model、endpoint、secret 和路由；这些连接字段会覆盖预设中的旧值。
+
+Additional Parameters 在前端准备请求时展开，后续轮次复用结果；适用范围见[宏与请求模板](../API/Macros.md#agent-与请求模板)。
 
 显式的 `preset.reasoningEffort` 优先于预设的参数省略设置；所解析连接映射后仍无法发送的值被忽略，沿用预设值（见 [Profile 与预设](ProfilesAndPreset.md)）。实际值由 PromptManager 按 source 和模型归一化，再由 provider adapter 映射协议。组装不修改保存的预设。
 

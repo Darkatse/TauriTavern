@@ -547,19 +547,38 @@ export function getGroupCharacterCards(groupId, characterId) {
 }
 
 /**
- * Returns group character cards with lazy evaluation.
- * Each field is only processed when first accessed.
+ * Select group card inputs without interpreting their templates.
  * @param {string} groupId Group ID
  * @param {number} characterId Current Character ID
- * @returns {{description: string, personality: string, scenario: string, mesExamples: string}} Group character cards with lazy getters
  */
-export function getGroupCharacterCardsLazy(groupId, characterId) {
+export function getGroupCharacterCardsSource(groupId, characterId) {
     const group = groups.find(x => x.id === groupId);
+    if (!group?.generation_mode || !group.members?.length) return null;
 
-    // If no group cards should be generated, return null so caller knows to fall back
-    if (!group || !group?.generation_mode || !Array.isArray(group.members) || !group.members.length) {
-        return null;
-    }
+    const members = group.members.flatMap(avatar => {
+        const index = characters.findIndex(character => character.avatar === avatar);
+        const character = characters[index];
+        if (!character || (group.disabled_members.includes(avatar) && characterId !== index
+            && group.generation_mode !== group_generation_mode.APPEND_DISABLED)) return [];
+        return [{
+            name: character.name,
+            description: character.description,
+            personality: character.personality,
+            scenario: character.scenario,
+            mes_example: character.mes_example,
+        }];
+    });
+    return {
+        members,
+        prefix: group.generation_mode_join_prefix,
+        suffix: group.generation_mode_join_suffix,
+        scenarioOverride: String(chat_metadata.scenario || ''),
+        mesExamplesOverride: String(chat_metadata.mes_example || ''),
+    };
+}
+
+export function getGroupCharacterCardsLazy(groupId, characterId, { source = getGroupCharacterCardsSource(groupId, characterId), replace = baseChatReplace } = {}) {
+    if (!source) return null;
 
     /**
      * Runs baseChatReplace on a text, with custom <FIELDNAME> replace
@@ -573,7 +592,7 @@ export function getGroupCharacterCardsLazy(groupId, characterId) {
         if (!value) return '';
         value = value.replace(/<FIELDNAME>/gi, fieldName);
         value = trim ? value.trim() : value;
-        return baseChatReplace(value, null, characterName);
+        return replace(value, null, characterName);
     }
 
     /**
@@ -590,8 +609,8 @@ export function getGroupCharacterCardsLazy(groupId, characterId) {
         if (typeof preprocess === 'function') {
             value = preprocess(value);
         }
-        const prefix = customTransform(group.generation_mode_join_prefix, fieldName, characterName, false);
-        const suffix = customTransform(group.generation_mode_join_suffix, fieldName, characterName, false);
+        const prefix = customTransform(source.prefix, fieldName, characterName, false);
+        const suffix = customTransform(source.suffix, fieldName, characterName, false);
         value = customTransform(value, fieldName, characterName, true);
         return `${prefix}${value}${suffix}`;
     }
@@ -605,26 +624,19 @@ export function getGroupCharacterCardsLazy(groupId, characterId) {
      */
     function collectField(fieldName, getter, preprocess = null) {
         const values = [];
-        for (const member of group.members) {
-            const index = characters.findIndex(x => x.avatar === member);
-            const character = characters[index];
-            if (index === -1 || !character) continue;
-            if (group.disabled_members.includes(member) && characterId !== index && group.generation_mode !== group_generation_mode.APPEND_DISABLED) {
-                continue;
-            }
+        for (const character of source.members) {
             values.push(replaceAndPrepareForJoin(getter(character), character.name, fieldName, preprocess));
         }
         return values.filter(x => x.length).join('\n');
     }
 
-    const scenarioOverride = String(chat_metadata.scenario || '');
-    const mesExamplesOverride = String(chat_metadata.mes_example || '');
+    const { scenarioOverride, mesExamplesOverride } = source;
 
     return createLazyFields({
         description: () => collectField('Description', c => c.description),
         personality: () => collectField('Personality', c => c.personality),
-        scenario: () => baseChatReplace(scenarioOverride?.trim()) || collectField('Scenario', c => c.scenario),
-        mesExamples: () => baseChatReplace(mesExamplesOverride?.trim()) ||
+        scenario: () => replace(scenarioOverride?.trim()) || collectField('Scenario', c => c.scenario),
+        mesExamples: () => replace(mesExamplesOverride?.trim()) ||
             collectField('Example Messages', c => c.mes_example, x => !x.startsWith('<START>') ? `<START>\n${x}` : x),
     });
 }

@@ -1212,17 +1212,17 @@ function registerReasoningMacros() {
     macros.register('reasoningPrefix', {
         category: MacroCategory.PROMPTS,
         description: t`The prefix string used before reasoning blocks`,
-        handler: () => power_user.reasoning.prefix,
+        handler: ({ env }) => env.settings.reasoning.prefix,
     });
     macros.register('reasoningSuffix', {
         category: MacroCategory.PROMPTS,
         description: t`The suffix string used after reasoning blocks`,
-        handler: () => power_user.reasoning.suffix,
+        handler: ({ env }) => env.settings.reasoning.suffix,
     });
     macros.register('reasoningSeparator', {
         category: MacroCategory.PROMPTS,
         description: t`The separator between thinking content and response`,
-        handler: () => power_user.reasoning.separator,
+        handler: ({ env }) => env.settings.reasoning.separator,
     });
 }
 

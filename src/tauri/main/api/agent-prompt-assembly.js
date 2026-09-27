@@ -8,7 +8,7 @@ import {
     loadResolvedAgentSystemPrompt,
     normalizeAgentSystemPrompt,
 } from '../../../scripts/tauritavern/agent/agent-system-prompt.js';
-import { normalizeFrozenRunInputSnapshot } from '../../../scripts/tauritavern/agent/frozen-run-input-snapshot.js';
+import { createMacroContextFromSnapshot, normalizeFrozenRunInputSnapshot } from '../../../scripts/tauritavern/agent/frozen-run-input-snapshot.js';
 import { createAgentPromptSnapshot } from '../../../scripts/tauritavern/agent/agent-model-messages.js';
 import { setParamOmitted } from '../../../scripts/tauri/generation-params/omission.js';
 import { getEffectiveReasoningEffort } from '../../../scripts/tauri/generation-params/reasoning-effort-options.js';
@@ -123,10 +123,7 @@ async function normalizePromptAssemblyRequest(input) {
         frozenRunInputSnapshot.promptInputs,
         'prompt_assembly.prompt_inputs_required: promptInputs must be an object',
     );
-    const macroContext = requirePlainObject(
-        frozenRunInputSnapshot.macroContext,
-        'prompt_assembly.macro_context_required: macroContext must be an object',
-    );
+    const macroContext = createMacroContextFromSnapshot(frozenRunInputSnapshot);
     const settings = normalizeSettings(input);
     const agentContextPolicy = input.agentContextPolicy || input.contextPolicy
         ? normalizeAgentContextPolicy(input.agentContextPolicy ?? input.contextPolicy)

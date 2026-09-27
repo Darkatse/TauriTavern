@@ -1,7 +1,7 @@
 import { CONNECT_API_MAP, createModelIcon, getRequestHeaders } from '../../script.js';
 import { extension_settings, openThirdPartyExtensionMenu } from '../extensions.js';
 import { t } from '../i18n.js';
-import { getAdditionalParametersForSource, oai_settings, POLLINATIONS_ENDPOINT, proxies, ZAI_ENDPOINT } from '../openai.js';
+import { applyAdditionalParametersToRequest, oai_settings, POLLINATIONS_ENDPOINT, proxies, ZAI_ENDPOINT } from '../openai.js';
 import { SECRET_KEYS, secret_state } from '../secrets.js';
 import { textgen_types, textgenerationwebui_settings } from '../textgen-settings.js';
 import { getTokenCountAsync } from '../tokenizers.js';
@@ -147,14 +147,7 @@ export async function getMultimodalCaption(base64Img, prompt, signal) {
         }
 
         requestBody.server_url = oai_settings.custom_url;
-        const additionalParameters = getAdditionalParametersForSource(
-            oai_settings,
-            'custom',
-            { create: false },
-        );
-        requestBody.custom_include_headers = additionalParameters.include_headers;
-        requestBody.custom_include_body = additionalParameters.include_body;
-        requestBody.custom_exclude_body = additionalParameters.exclude_body;
+        applyAdditionalParametersToRequest(requestBody, oai_settings, { sourceKey: 'custom' });
     }
 
     if (extension_settings.caption.multimodal_api === 'zai') {

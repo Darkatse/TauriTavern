@@ -197,7 +197,7 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
   - `src/script.js`：`tt:startup:shell/core/full` + `tt:startup:ready`
 - 运行时提示：
   - `src/scripts/tauri/startup/startup-status-overlay.js`：右下角非阻塞启动状态 overlay（`APP_READY` 后移除）
-- `pnpm run check:startup` 构建 vendor bundle 并运行 `tests/browser/startup-order.mjs`，验证 Host-ready 模块先加载时主应用仍能正常初始化、早到的事件等待应用就绪后呈现。该检查包含在默认 `pnpm run check` 中。
+- `pnpm run test:browser` 构建 vendor bundle 并运行 `tests/browser/*.test.mjs`。其中 `startup-order.test.mjs` 验证 Host-ready 模块先加载时主应用仍能正常初始化、早到的事件等待应用就绪后呈现。该测试组包含在 `pnpm test` 和 `pnpm run check` 中。
 
 ---
 

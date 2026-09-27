@@ -4,8 +4,8 @@ import { characters, eventSource, event_types, generateQuietPrompt, generateRaw,
 import { dragElement, isMobile } from '../../RossAscends-mods.js';
 import { getContext, getApiUrl, modules, extension_settings, ModuleWorkerWrapper, doExtrasFetch, renderExtensionTemplateAsync } from '../../extensions.js';
 import { loadMovingUIState, performFuzzySearch, power_user } from '../../power-user.js';
-import { onlyUnique, debounce, getCharaFilename, trimToEndSentence, trimToStartSentence, waitUntilCondition, findChar, isFalseBoolean, includesIgnoreCaseAndAccents } from '../../utils.js';
-import { hideMutedSprites, selected_group } from '../../group-chats.js';
+import { onlyUnique, debounce, getCharaFilename, trimToEndSentence, trimToStartSentence, waitUntilCondition, findChar, isFalseBoolean, includesIgnoreCaseAndAccents, equalsIgnoreCaseAndAccents } from '../../utils.js';
+import { groups, hideMutedSprites, selected_group } from '../../group-chats.js';
 import { isJsonSchemaSupported } from '../../textgen-settings.js';
 import { debounce_timeout } from '../../constants.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
@@ -1142,7 +1142,7 @@ function getLastCharacterMessage({ character } = {}) {
 
     for (let i = context.chat.length - 1; i >= 0; i--) {
         const mes = context.chat[i];
-        if (mes.role === 'tool' || mes.is_user || mes.is_system || mes.extra?.type === system_message_types.NARRATOR) {
+        if (!isExpressionCharacterMessage(mes)) {
             continue;
         }
 
@@ -1157,6 +1157,10 @@ function getLastCharacterMessage({ character } = {}) {
     }
 
     return { mes: '', name: null, original_avatar: null, force_avatar: null };
+}
+
+function isExpressionCharacterMessage(message) {
+    return message.role !== 'tool' && !message.is_user && !message.is_system && message.extra?.type !== system_message_types.NARRATOR;
 }
 
 function removeExpression() {
@@ -1456,23 +1460,68 @@ export async function getExpressionsList({ filterAvailable = false } = {}) {
     }
 }
 
-/** Returns the last requested expression for a character, respecting its sprite override. */
-function getLastExpression({ characterName = '' } = {}) {
-    if (typeof characterName !== 'string') throw new Error('Character name must be a string');
-
-    const character = characterName
-        ? characters.find(character => character.avatar === characterName) ?? findChar({ name: characterName, quiet: true })
-        : selected_group ? null : characters[this_chid];
-    if (characterName && !character) return '';
-
-    const message = getLastCharacterMessage({ character });
-    const name = message.name ?? character?.name;
+function getMessageLastExpression(message, character = null) {
+    const name = message?.name ?? character?.name;
     if (!name) return '';
-
     // An explicit target must not borrow the active chat's avatar or folder override.
     const targetMessage = character ? { ...message, original_avatar: character.avatar } : message;
-    const spriteFolderName = getSpriteFolderName(targetMessage, name);
-    return lastExpression[spriteFolderName.split('/')[0]] ?? '';
+    return lastExpression[getSpriteFolderName(targetMessage, name).split('/')[0]] ?? '';
+}
+
+/** Index history once when all character identities are needed for lookup or capture. */
+function getCharacterExpressionValues() {
+    const latestByAvatar = new Map();
+    const latestByName = new Map();
+    const chat = getContext().chat;
+    for (let index = chat.length - 1; index >= 0; index--) {
+        const message = chat[index];
+        if (!isExpressionCharacterMessage(message)) continue;
+        const avatar = getAvatarByMessage(message);
+        const target = avatar ? latestByAvatar : latestByName;
+        const key = avatar || message.name;
+        if (!target.has(key)) target.set(key, { index, message });
+    }
+    return characters.map(character => {
+        const byAvatar = latestByAvatar.get(character.avatar);
+        const byName = latestByName.get(character.name);
+        const latest = (byAvatar?.index ?? -1) > (byName?.index ?? -1) ? byAvatar : byName;
+        return {
+            name: character.name,
+            avatar: character.avatar,
+            expression: getMessageLastExpression(latest?.message, character),
+        };
+    });
+}
+
+/** Ordinary macros read only the requested facts; explicit capture materializes all getters. */
+const expressionMacroData = Object.freeze({
+    get fallback() { return getCurrentFallbackExpression(); },
+    get labels() { return getCachedExpressions(); },
+    get characters() { return getCharacterExpressionValues(); },
+    get preferredAvatars() {
+        return selected_group
+            ? groups.find(group => group.id === selected_group)?.members ?? []
+            : [characters[this_chid]?.avatar].filter(Boolean);
+    },
+    get current() {
+        const character = selected_group ? null : characters[this_chid];
+        return getMessageLastExpression(getLastCharacterMessage({ character }), character);
+    },
+});
+
+/** Returns the last requested expression for a character, respecting its sprite override. */
+function getLastExpression({ characterName = '', data = expressionMacroData } = {}) {
+    if (typeof characterName !== 'string') throw new Error('Character name must be a string');
+    if (!data) return '';
+    if (!characterName) return data.current;
+
+    const candidates = data.characters;
+    const matches = character => character.avatar === characterName || equalsIgnoreCaseAndAccents(character.name, characterName);
+    const character = candidates.find(character => character.avatar === characterName)
+        ?? data.preferredAvatars.map(avatar => candidates.find(character => character.avatar === avatar)).find(character => character && matches(character))
+        ?? (!characterName.endsWith('.png') ? candidates.find(character => character.avatar === `${characterName}.png`) : null)
+        ?? candidates.find(matches);
+    return character?.expression ?? '';
 }
 
 /**
@@ -2604,16 +2653,19 @@ export async function init() {
         `,
     }));
 
+    macros.envBuilder.registerProvider(env => {
+        env.extra.expressions = expressionMacroData;
+    });
     if (power_user.experimental_macro_engine) {
         macros.register('defaultExpression', {
-            handler: getCurrentFallbackExpression,
+            handler: ({ env }) => env.extra.expressions?.fallback ?? '',
             category: macros.category.MISC,
             description: 'Returns the global fallback expression.',
             returns: 'Expression label, #none, or #emoji',
             exampleUsage: '{{defaultExpression}}',
         });
         macros.register('lastExpression', {
-            handler: ({ args: [name = '{{char}}'], resolve }) => getLastExpression({ characterName: resolve(name || '') }),
+            handler: ({ args: [name = '{{char}}'], resolve, env }) => getLastExpression({ characterName: resolve(name || ''), data: env.extra.expressions ?? null }),
             unnamedArgs: [{
                 name: 'name',
                 description: 'Character name or avatar key',
@@ -2628,15 +2680,15 @@ export async function init() {
             exampleUsage: ['{{lastExpression}}', '{{lastExpression::John}}', '{{lastExpression::{{char}}}}'],
         });
         macros.register('availableExpressions', {
-            handler: () => getCachedExpressions().join(', '),
+            handler: ({ env }) => env.extra.expressions?.labels.join(', ') ?? '',
             category: macros.category.MISC,
             description: 'Returns the cached expression labels, including custom expressions.',
             returns: 'Expression label list',
             exampleUsage: '{{availableExpressions}}',
         });
     } else {
-        MacrosParser.registerMacro('defaultExpression', getCurrentFallbackExpression, t`Returns the global fallback expression.`);
-        MacrosParser.registerMacro('lastExpression', () => getLastExpression(), t`Returns the last expression used.`);
-        MacrosParser.registerMacro('availableExpressions', () => getCachedExpressions().join(', '), t`Returns the available expression labels.`);
+        MacrosParser.registerMacro('defaultExpression', (_nonce, env) => env.extra.expressions?.fallback ?? '', t`Returns the global fallback expression.`);
+        MacrosParser.registerMacro('lastExpression', (_nonce, env) => getLastExpression({ data: env.extra.expressions ?? null }), t`Returns the last expression used.`);
+        MacrosParser.registerMacro('availableExpressions', (_nonce, env) => env.extra.expressions?.labels.join(', ') ?? '', t`Returns the available expression labels.`);
     }
 }

@@ -10,6 +10,7 @@ import {
 } from '../../../scripts/tauritavern/agent/agent-system-prompt.js';
 import {
     buildSettingsWithCurrentModelConnectionSnapshot,
+    createMacroContextFromSnapshot,
     normalizeFrozenRunInputSnapshot,
 } from '../../../scripts/tauritavern/agent/frozen-run-input-snapshot.js';
 import { createAgentPromptSnapshot } from '../../../scripts/tauritavern/agent/agent-model-messages.js';
@@ -98,6 +99,9 @@ export async function materializeCurrentPromptSnapshot(input) {
         {
             jsonSchema: seed.jsonSchema ?? null,
             agentMode: true,
+            macroContext: openai.createChatCompletionMacroContext(
+                createMacroContextFromSnapshot(frozenRunInputSnapshot), settings, model,
+            ),
         },
     );
 

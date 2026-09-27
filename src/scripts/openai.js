@@ -93,7 +93,8 @@ import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { t } from './i18n.js';
 import { ToolManager } from './tool-calling.js';
 import { accountStorage } from './util/AccountStorage.js';
-import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL, MEDIA_DISPLAY, MEDIA_TYPE, inject_ids } from './constants.js';
+import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL, MEDIA_DISPLAY, MEDIA_TYPE } from './constants.js';
+import { macros } from './macros/macro-system.js';
 import { syncNanoGptProvidersForModel, syncOpenRouterProvidersForModel, updateNanoGptProvidersWarning, updateOpenRouterProvidersWarning } from './textgen-models.js';
 
 export {
@@ -937,19 +938,24 @@ function getLegacyAdditionalParameters(settings) {
     };
 }
 
-function applyAdditionalParametersToRequest(request, settings = oai_settings, { includeBody = true } = {}) {
+export function applyAdditionalParametersToRequest(request, settings = oai_settings, {
+    includeBody = true,
+    sourceKey = getAdditionalParametersSourceKey(settings),
+    macroContext = null,
+} = {}) {
     const parameters = getAdditionalParametersForSource(
         settings,
-        getAdditionalParametersSourceKey(settings),
+        sourceKey,
         { create: false },
     );
+    const runtime = { macroContext, model: request.model ?? getChatCompletionModel(settings) };
 
     if (includeBody) {
-        request.custom_include_body = parameters.include_body;
-        request.custom_exclude_body = parameters.exclude_body;
+        request.custom_include_body = substitutePromptParams(parameters.include_body, {}, runtime);
+        request.custom_exclude_body = substitutePromptParams(parameters.exclude_body, {}, runtime);
     }
 
-    request.custom_include_headers = parameters.include_headers;
+    request.custom_include_headers = substitutePromptParams(parameters.include_headers, {}, runtime);
 }
 
 function hasSensitiveFieldValue(value) {
@@ -1216,7 +1222,7 @@ function createPromptAssemblyRuntime({
         promptManager: assemblyPromptManager,
         settings: getEffectiveGenerationSettings(serviceSettings),
         tokenHandler: serviceTokenHandler,
-        macroContext: normalizePromptAssemblyMacroContext(macroContext),
+        macroContext,
         extensionPrompts: normalizePromptAssemblyExtensionPrompts(extensionPrompts),
         model: normalizePromptAssemblyString(model),
         emitPromptReady: Boolean(emitPromptReady),
@@ -1240,9 +1246,7 @@ function getPromptAssemblyRuntime(runtime = null) {
 }
 
 function createHeadlessChatCompletionPromptManager(settings, {
-    macroContext = null,
-    extensionPrompts = null,
-    model = null,
+    macroContext,
 } = {}) {
     if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
         throw new Error('prompt_assembly.settings_required: Headless prompt assembly requires chat-completion settings');
@@ -1258,24 +1262,12 @@ function createHeadlessChatCompletionPromptManager(settings, {
     assemblyPromptManager.saveServiceSettings = () => Promise.resolve();
     assemblyPromptManager.tryGenerate = () => Promise.resolve();
     assemblyPromptManager.tokenHandler = new TokenHandler((messages, full) => countTokensOpenAIAsync(messages, full, serviceSettings));
-    assemblyPromptManager.substituteParams = (content, options = {}) => substitutePromptParams(content, options, {
+    assemblyPromptManager.substituteParams = (content, options = {}) => substitutePromptParams(content ?? '', options, {
         macroContext,
-        extensionPrompts,
-        model,
     });
     assemblyPromptManager.sanitizeServiceSettings();
 
     return assemblyPromptManager;
-}
-
-function normalizePromptAssemblyMacroContext(value) {
-    if (value == null) {
-        return null;
-    }
-    if (typeof value !== 'object' || Array.isArray(value)) {
-        throw new Error('prompt_assembly.macro_context_invalid: macroContext must be an object');
-    }
-    return value;
 }
 
 function normalizePromptAssemblyExtensionPrompts(value) {
@@ -1294,118 +1286,41 @@ function normalizePromptAssemblyString(value) {
 }
 
 function substitutePromptParams(content, options = {}, runtime = null) {
-    const macroContext = normalizePromptAssemblyMacroContext(runtime?.macroContext ?? null);
-    const extensionPrompts = normalizePromptAssemblyExtensionPrompts(runtime?.extensionPrompts ?? null);
-    const model = normalizePromptAssemblyString(runtime?.model ?? null);
-
-    if (!macroContext && !extensionPrompts && !model) {
-        return substituteParams(content, options);
+    if (runtime?.macroContext) {
+        return macros.evaluateWithContext(content, runtime.macroContext, options);
     }
-
-    const preparedContent = replaceFrozenOutletMacros(content, extensionPrompts);
-    const macroOptions = macroContext
-        ? withPromptAssemblyMacroContext(options, macroContext, { model })
-        : options;
-
-    return substituteParams(preparedContent, macroOptions);
-}
-
-function withPromptAssemblyMacroContext(options, macroContext, { model = null } = {}) {
-    const names = macroContext.names && typeof macroContext.names === 'object' ? macroContext.names : {};
-    const character = macroContext.character && typeof macroContext.character === 'object' ? macroContext.character : {};
-    const system = macroContext.system && typeof macroContext.system === 'object' ? macroContext.system : {};
-    const chat = macroContext.chat && typeof macroContext.chat === 'object' ? macroContext.chat : {};
-    const dynamicMacros = {
-        user: stringOrEmpty(names.user),
-        char: stringOrEmpty(names.char),
-        group: stringOrEmpty(names.group),
-        charIfNotGroup: stringOrEmpty(names.group ?? names.char),
-        groupNotMuted: stringOrEmpty(names.groupNotMuted),
-        notChar: stringOrEmpty(names.notChar),
-        charPrompt: stringOrEmpty(character.charPrompt),
-        charInstruction: stringOrEmpty(character.charInstruction ?? character.charJailbreak),
-        charJailbreak: stringOrEmpty(character.charJailbreak ?? character.charInstruction),
-        charDescription: stringOrEmpty(character.description),
-        description: stringOrEmpty(character.description),
-        charPersonality: stringOrEmpty(character.personality),
-        personality: stringOrEmpty(character.personality),
-        charScenario: stringOrEmpty(character.scenario),
-        scenario: stringOrEmpty(character.scenario),
-        persona: stringOrEmpty(character.persona),
-        personaPosition: stringOrEmpty(character.personaPosition),
-        mesExamplesRaw: stringOrEmpty(character.mesExamplesRaw),
-        mesExamples: stringOrEmpty(character.mesExamples),
-        charDepthPrompt: stringOrEmpty(character.charDepthPrompt),
-        charCreatorNotes: stringOrEmpty(character.creatorNotes),
-        creatorNotes: stringOrEmpty(character.creatorNotes),
-        charVersion: stringOrEmpty(character.version),
-        version: stringOrEmpty(character.version),
-        char_version: stringOrEmpty(character.version),
-        greeting: stringOrEmpty(character.firstMessage),
-        charFirstMessage: stringOrEmpty(character.firstMessage),
-        model: stringOrEmpty(model ?? system.model),
-        lastMessageId: stringOrEmpty(chat.lastMessageId),
-        lastSwipeId: stringOrEmpty(chat.lastSwipeId),
-        currentSwipeId: stringOrEmpty(chat.currentSwipeId),
-        ...(options?.dynamicMacros ?? {}),
-    };
-
-    return {
+    return substituteParams(content, runtime?.model ? {
         ...options,
-        name1Override: options?.name1Override ?? stringOrEmpty(names.user),
-        name2Override: options?.name2Override ?? stringOrEmpty(names.char),
-        groupOverride: options?.groupOverride ?? stringOrEmpty(names.group),
-        dynamicMacros,
-    };
-}
-
-function replaceFrozenOutletMacros(content, extensionPrompts) {
-    if (!extensionPrompts || typeof content !== 'string' || !content.includes('{{outlet::')) {
-        return content;
-    }
-
-    return content.replace(/{{outlet::(.+?)}}/gi, (_, key) => {
-        return getOutletPromptFromExtensionPrompts(extensionPrompts, String(key ?? '').trim());
-    });
-}
-
-function getOutletPromptFromExtensionPrompts(extensionPrompts, key) {
-    if (!key) {
-        return '';
-    }
-
-    const outletPrompt = extensionPrompts[inject_ids.CUSTOM_WI_OUTLET(key)];
-
-    return stringOrEmpty(outletPrompt?.value);
+        dynamicMacros: { model: runtime.model, ...options.dynamicMacros },
+    } : options);
 }
 
 function stringOrEmpty(value) {
     return value == null ? '' : String(value);
 }
 
-function splitPromptAssemblyGroupNames(value) {
-    const text = stringOrEmpty(value).trim();
-    if (!text) {
-        return [];
-    }
-    return text.split(',').map(name => name.trim()).filter(Boolean);
-}
-
 /**
  * Parses the example messages into individual messages.
  * @param {string} messageExampleString - The string containing the example messages
  * @param {boolean} appendNamesForGroup - Whether to append the character name for group chats
+ * @param {{ name1: string, name2: string, isGroup: boolean, groupNames: string[] }} [context] Explicit names for independent macro evaluation
  * @returns {Message[]} Array of message objects
  */
-export function parseExampleIntoIndividual(messageExampleString, appendNamesForGroup = true) {
-    const groupBotNames = getGroupNames().map(name => `${name}:`);
+export function parseExampleIntoIndividual(messageExampleString, appendNamesForGroup = true, context = {
+    name1,
+    name2,
+    isGroup: Boolean(selected_group),
+    groupNames: getGroupNames(),
+}) {
+    const { name1: userName, name2: charName, isGroup, groupNames } = context;
+    const groupBotNames = groupNames.map(name => `${name}:`);
 
     let result = []; // array of msgs
     let tmp = messageExampleString.split('\n');
     let cur_msg_lines = [];
     let in_user = false;
     let in_bot = false;
-    let botName = name2;
+    let botName = charName;
 
     // DRY my cock and balls :)
     function add_msg(name, role, system_name) {
@@ -1414,7 +1329,7 @@ export function parseExampleIntoIndividual(messageExampleString, appendNamesForG
         // strip to remove extra spaces
         let parsed_msg = cur_msg_lines.join('\n').replace(name + ':', '').trim();
 
-        if (appendNamesForGroup && selected_group && ['example_user', 'example_assistant'].includes(system_name)) {
+        if (appendNamesForGroup && isGroup && ['example_user', 'example_assistant'].includes(system_name)) {
             parsed_msg = `${name}: ${parsed_msg}`;
         }
 
@@ -1426,22 +1341,22 @@ export function parseExampleIntoIndividual(messageExampleString, appendNamesForG
         let cur_str = tmp[i];
         // if it's the user message, switch into user mode and out of bot mode
         // yes, repeated code, but I don't care
-        if (cur_str.startsWith(name1 + ':')) {
+        if (cur_str.startsWith(userName + ':')) {
             in_user = true;
             // we were in the bot mode previously, add the message
             if (in_bot) {
                 add_msg(botName, 'system', 'example_assistant');
             }
             in_bot = false;
-        } else if (cur_str.startsWith(name2 + ':') || groupBotNames.some(n => cur_str.startsWith(n))) {
-            if (!cur_str.startsWith(name2 + ':') && groupBotNames.length) {
+        } else if (cur_str.startsWith(charName + ':') || groupBotNames.some(n => cur_str.startsWith(n))) {
+            if (!cur_str.startsWith(charName + ':') && groupBotNames.length) {
                 botName = cur_str.split(':')[0];
             }
 
             in_bot = true;
             // we were in the user mode previously, add the message
             if (in_user) {
-                add_msg(name1, 'system', 'example_user');
+                add_msg(userName, 'system', 'example_user');
             }
             in_user = false;
         }
@@ -1450,7 +1365,7 @@ export function parseExampleIntoIndividual(messageExampleString, appendNamesForG
     }
     // Special case for last message in a block because we don't have a new message to trigger the switch
     if (in_user) {
-        add_msg(name1, 'system', 'example_user');
+        add_msg(userName, 'system', 'example_user');
     } else if (in_bot) {
         add_msg(botName, 'system', 'example_assistant');
     }
@@ -1593,7 +1508,9 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
     const activePromptManager = assemblyRuntime.promptManager;
     const settings = assemblyRuntime.settings;
     const assemblyTokenHandler = assemblyRuntime.tokenHandler;
-    const isGroup = assemblyRuntime.contextKind === 'chat' && selected_group;
+    const isGroup = assemblyRuntime.contextKind === 'chat' && (assemblyRuntime.macroContext
+        ? assemblyRuntime.macroContext.settings.isGroup
+        : Boolean(selected_group));
 
     if (!prompts.has('chatHistory')) {
         if (assemblyRuntime.contextKind === 'session') {
@@ -2276,7 +2193,10 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
 
     // Decide whether dialogue examples should always be added
     let chatSourceCount;
-    if (power_user.pin_examples) {
+    const pinExamples = assemblyRuntime.macroContext
+        ? assemblyRuntime.macroContext.settings.pin_examples
+        : power_user.pin_examples;
+    if (pinExamples) {
         await populateDialogueExamples(prompts, chatCompletion, messageExamples, assemblyRuntime);
         chatSourceCount = await populateChatHistory(messages, prompts, chatCompletion, type, cyclePrompt, assemblyRuntime);
     } else {
@@ -2652,11 +2572,10 @@ export async function assembleOpenAIChatCompletionPrompt({
     if (!resolvedModel) {
         throw new Error('prompt_assembly.model_required: chat-completion settings did not resolve a model');
     }
+    macroContext = createChatCompletionMacroContext(macroContext, settings, resolvedModel);
     const extensionPrompts = normalizePromptAssemblyExtensionPrompts(promptInputs.extensionPrompts);
     const assemblyPromptManager = createHeadlessChatCompletionPromptManager(settings, {
         macroContext,
-        extensionPrompts,
-        model: resolvedModel,
     });
     const runtime = createPromptAssemblyRuntime({
         promptManager: assemblyPromptManager,
@@ -2694,7 +2613,6 @@ export async function assembleOpenAIChatCompletionPrompt({
             jsonSchema,
             agentMode,
             macroContext,
-            extensionPrompts,
             toolData,
         },
     );
@@ -2704,6 +2622,19 @@ export async function assembleOpenAIChatCompletionPrompt({
         chatCompletionPayload,
         tokenCounts,
     };
+}
+
+/** Create the one variable workspace shared by this assembly's prompts and parameters. */
+export function createChatCompletionMacroContext(context, settings, model) {
+    const macroContext = structuredClone(context);
+    Object.assign(macroContext.system, {
+        model,
+        api: 'openai',
+        maxContext: Number(settings.openai_max_context),
+        maxResponse: Number(settings.openai_max_tokens),
+        maxPrompt: Number(settings.openai_max_context) - Number(settings.openai_max_tokens),
+    });
+    return macroContext;
 }
 
 /**
@@ -4334,10 +4265,10 @@ function getVerbosity(settings = null) {
  * @param {string} model Model name
  * @param {string} type Request type (impersonate, quiet, continue, etc)
  * @param {ChatCompletionMessage[]} messages Array of chat completion messages
- * @param {import('../script.js').AdditionalRequestOptions & { agentMode?: boolean; macroContext?: object|null; extensionPrompts?: object|null }} options Additional request options
+ * @param {import('../script.js').AdditionalRequestOptions & { agentMode?: boolean; macroContext?: object|null }} options Additional request options
  * @returns {Promise<object>} Final generation parameters object appropriate for the chat completion source
  */
-export async function createGenerationParameters(settings, model, type, messages, { jsonSchema = null, agentMode = false, allowToolCalls = true, macroContext = null, extensionPrompts = null, toolData = undefined } = {}) {
+export async function createGenerationParameters(settings, model, type, messages, { jsonSchema = null, agentMode = false, allowToolCalls = true, macroContext = null, toolData = undefined } = {}) {
     settings = getEffectiveGenerationSettings(settings);
     // HACK: Filter out null and non-object messages
     if (!Array.isArray(messages)) {
@@ -4410,7 +4341,6 @@ export async function createGenerationParameters(settings, model, type, messages
     const stream = !agentMode && settings.stream_openai && type !== 'quiet' && !isO1 && !isWorkersAIJsonMode;
 
     const canMultiSwipe = !agentMode && ToolManager.canPerformMultiSwipe(type, settings);
-    const macroNames = macroContext?.names && typeof macroContext.names === 'object' ? macroContext.names : null;
     const isVertexAiClaude = settings.chat_completion_source === chat_completion_sources.VERTEXAI && isVertexAiClaudeModelId(model);
     const isOpenCodeClaude = settings.chat_completion_source === chat_completion_sources.OPENCODE
         && settings.opencode_api_format === OPENCODE_API_FORMAT.CLAUDE_MESSAGES;
@@ -4430,6 +4360,10 @@ export async function createGenerationParameters(settings, model, type, messages
         logit_bias = undefined;
     }
 
+    const stoppingStrings = getCustomStoppingStrings(undefined, {
+        ...(macroContext ? { settings: macroContext.settings, ephemeral: macroContext.state.ephemeralStoppingStrings } : {}),
+        substitute: text => substitutePromptParams(text, {}, { macroContext, model }),
+    });
     const generate_data = {
         'type': type,
         'messages': messages,
@@ -4441,12 +4375,12 @@ export async function createGenerationParameters(settings, model, type, messages
         'max_tokens': settings.openai_max_tokens,
         'stream': stream,
         'logit_bias': logit_bias,
-        'stop': getCustomStoppingStrings(openai_max_stop_strings),
+        'stop': stoppingStrings.slice(0, openai_max_stop_strings),
         'chat_completion_source': settings.chat_completion_source,
         'n': canMultiSwipe ? settings.n : undefined,
-        'user_name': macroNames ? stringOrEmpty(macroNames.user) : name1,
-        'char_name': macroNames ? stringOrEmpty(macroNames.char) : name2,
-        'group_names': macroNames ? splitPromptAssemblyGroupNames(macroNames.group) : getGroupNames(),
+        'user_name': macroContext ? macroContext.names.user : name1,
+        'char_name': macroContext ? macroContext.names.char : name2,
+        'group_names': macroContext ? macroContext.settings.groupNames : getGroupNames(),
         'include_reasoning': Boolean(settings.show_thoughts),
         'reasoning_effort': getReasoningEffort(settings, model),
         'enable_web_search': Boolean(settings.enable_web_search),
@@ -4508,7 +4442,7 @@ export async function createGenerationParameters(settings, model, type, messages
     if (buildsClaudeMessagesRequest(settings, model)) {
         generate_data.top_k = Number(settings.top_k_openai);
         generate_data.use_sysprompt = settings.use_sysprompt;
-        generate_data.stop = getCustomStoppingStrings(); // Claude shouldn't have limits on stop strings.
+        generate_data.stop = stoppingStrings; // Claude shouldn't have limits on stop strings.
         // Anthropic fast-mode beta: first-party endpoint or a Messages-compatible proxy (custom).
         if (settings.claude_fast_mode && !isVertexAiClaude && !isOpenCodeClaude) {
             generate_data.speed = 'fast';
@@ -4516,8 +4450,8 @@ export async function createGenerationParameters(settings, model, type, messages
         // Don't add a prefill on quiet gens (summarization) and when using continue prefill.
         if (type !== 'quiet' && !(type === 'continue' && settings.continue_prefill)) {
             generate_data.assistant_prefill = type === 'impersonate'
-                ? substitutePromptParams(settings.assistant_impersonation, {}, { macroContext, extensionPrompts, model })
-                : substitutePromptParams(settings.assistant_prefill, {}, { macroContext, extensionPrompts, model });
+                ? substitutePromptParams(settings.assistant_impersonation, {}, { macroContext, model })
+                : substitutePromptParams(settings.assistant_prefill, {}, { macroContext, model });
         }
     }
 
@@ -4537,7 +4471,7 @@ export async function createGenerationParameters(settings, model, type, messages
         const stopStringsLimit = 5;
         generate_data.top_k = Number(settings.top_k_openai);
         if (!isVertexAiClaude) {
-            generate_data.stop = getCustomStoppingStrings(stopStringsLimit).slice(0, stopStringsLimit).filter(x => x.length >= 1 && x.length <= 16);
+            generate_data.stop = stoppingStrings.slice(0, stopStringsLimit).filter(x => x.length >= 1 && x.length <= 16);
         }
         generate_data.use_sysprompt = settings.use_sysprompt;
         if (settings.chat_completion_source === chat_completion_sources.VERTEXAI) {
@@ -4549,10 +4483,10 @@ export async function createGenerationParameters(settings, model, type, messages
 
     if (settings.chat_completion_source === chat_completion_sources.MISTRALAI) {
         generate_data.safe_prompt = false; // already defaults to false, but just incase they change that in the future.
-        generate_data.stop = getCustomStoppingStrings(); // Mistral shouldn't have limits on stop strings.
+        generate_data.stop = stoppingStrings; // Mistral shouldn't have limits on stop strings.
     }
 
-    applyAdditionalParametersToRequest(generate_data, settings);
+    applyAdditionalParametersToRequest(generate_data, settings, { macroContext });
 
     if (settings.chat_completion_source === chat_completion_sources.CUSTOM) {
         generate_data.custom_url = settings.custom_url;
@@ -4584,7 +4518,7 @@ export async function createGenerationParameters(settings, model, type, messages
         // Clamp to 0 -> 1
         generate_data.frequency_penalty = Math.min(Math.max(Number(settings.freq_pen_openai), 0), 1);
         generate_data.presence_penalty = Math.min(Math.max(Number(settings.pres_pen_openai), 0), 1);
-        generate_data.stop = getCustomStoppingStrings(5);
+        generate_data.stop = stoppingStrings.slice(0, 5);
     }
 
     if (settings.chat_completion_source === chat_completion_sources.PERPLEXITY) {
@@ -4632,13 +4566,13 @@ export async function createGenerationParameters(settings, model, type, messages
         generate_data.min_p = Number(settings.min_p_openai);
         generate_data.top_k = settings.top_k_openai > 0 ? Number(settings.top_k_openai) : undefined;
         generate_data.repetition_penalty = Number(settings.repetition_penalty_openai);
-        generate_data.stop = getCustomStoppingStrings();
+        generate_data.stop = stoppingStrings;
     }
 
     // https://docs.z.ai/api-reference/llm/chat-completion
     if (settings.chat_completion_source === chat_completion_sources.ZAI) {
         generate_data.top_p = generate_data.top_p || 0.01;
-        generate_data.stop = getCustomStoppingStrings(1);
+        generate_data.stop = stoppingStrings.slice(0, 1);
         generate_data.zai_endpoint = settings.zai_endpoint || ZAI_ENDPOINT.COMMON;
         delete generate_data.presence_penalty;
         delete generate_data.frequency_penalty;
@@ -4657,7 +4591,7 @@ export async function createGenerationParameters(settings, model, type, messages
         generate_data.aws_bedrock_region = (settings.aws_bedrock_region || AWS_BEDROCK_REGION_DEFAULT).trim();
         generate_data.top_k = Number(settings.top_k_openai);
         generate_data.use_sysprompt = settings.use_sysprompt;
-        generate_data.stop = getCustomStoppingStrings();
+        generate_data.stop = stoppingStrings;
         if (!capabilities?.webSearch) {
             generate_data.enable_web_search = false;
         }
