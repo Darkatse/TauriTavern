@@ -401,6 +401,7 @@ import { shouldEmitCharacterMessageEvents, shouldUnblockGenerationAfterUnhandled
 import { AudioPlayer } from './scripts/audio-player.js';
 import { evaluateMacroEnv, captureContext as captureMacroContext } from './scripts/macros/macro-system.js';
 import { MacroEnvBuilder } from './scripts/macros/engine/MacroEnvBuilder.js';
+import { MessageFormatter } from './scripts/message-formatter.js';
 import { addChatBackupsBrowser } from './scripts/chat-backups.js';
 import { onboardingExperimentalMacroEngine } from './scripts/macros/engine/MacroDiagnostics.js';
 import { createStartupStatusOverlay } from './scripts/tauri/startup/startup-status-overlay.js';
@@ -745,16 +746,16 @@ registerHtmlCodePreviewParticipant({
 const chatSurface = installChatSurfaceRuntime({
     root: /** @type {HTMLElement} */ (chatElement[0]),
     getMessages: () => chat,
-    prepareMaterializeOptions: prepareMessageRegexOptions,
+    prepareMaterializeOptions: prepareMessageContent,
     formatMessageContent: (message, messageId) => getMessageTextHTML(message, { messageId }),
+    refreshMessageDetails: updateReasoningUI,
     prepareContentTransaction: prepareMesTextHtmlWithRuntimePolicy,
     emitEvent: eventSource.emit.bind(eventSource),
     materializeMessage: ({ message, messageId, frontendSourceHandoffEvent, materializeOptions }) => updateMessageElement(message, {
         messageId,
         frontendSourceHandoffEvent,
         adjustMediaScroll: materializeOptions?.adjustMediaScroll ?? SCROLL_BEHAVIOR.NONE,
-        regexSourceText: materializeOptions?.regexSourceText,
-        regexedText: materializeOptions?.regexedText,
+        messageHtml: materializeOptions?.messageHtml,
         transient: materializeOptions?.transient,
     }),
     syncMountedViewState: syncMountedChatViewState,
@@ -765,6 +766,7 @@ const chatSurface = installChatSurfaceRuntime({
 });
 
 export const finalizeMessageContent = chatSurface.finishContent;
+export const refreshChatContent = chatSurface.refreshContent;
 
 let dialogueResolve = null;
 let dialogueCloseStop = false;
@@ -1257,7 +1259,7 @@ async function firstLoadInit() {
             }
         }
 
-        void autoloadLastChat().catch((error) => {
+        const initialChatLoad = autoloadLastChat().catch((error) => {
             console.error('Failed to auto-load the last chat:', error);
             toastr.error(t`Failed to auto-load the last chat. Check the console for details.`);
         });
@@ -1280,6 +1282,13 @@ async function firstLoadInit() {
                 await activateDeferredThirdPartyExtensions({ parallelism: 1 });
                 await eventSource.emit(event_types.EXTENSION_SETTINGS_LOADED);
                 doDailyExtensionUpdatesCheck();
+                await initialChatLoad;
+                try {
+                    await refreshChatContent();
+                } catch (error) {
+                    console.error('Failed to refresh messages after extension initialization:', error);
+                    toastr.error(t`Could not refresh message contents. Reopen the chat to try again.`);
+                }
             }
         })();
 
@@ -2412,17 +2421,6 @@ async function maybeSubmitAgentGuidanceFromComposer() {
     return true;
 }
 
-/**
- * Formats the message text into an HTML string using Markdown and other formatting.
- * @param {string} mes Message text
- * @param {string} ch_name Character name
- * @param {boolean} isSystem If the message was sent by the system
- * @param {boolean} isUser If the message was sent by the user
- * @param {number} messageId Message index in chat array
- * @param {Partial<DOMPurify.Config>} [sanitizerOverrides] DOMPurify sanitizer option overrides
- * @param {boolean} [isReasoning] If the message is reasoning output
- * @returns {string} HTML string
- */
 let nonSystemDepthByMesId = null;
 
 function rebuildNonSystemDepthByMesId() {
@@ -2453,7 +2451,7 @@ function getNonSystemDepth(messageId) {
     return depth >= 0 ? depth : undefined;
 }
 
-export function getMessageFormattingRegexContext(isUser, messageId, isReasoning = false) {
+function getMessageFormattingRegexContext(isUser, messageId, isReasoning = false) {
     const numericMessageId = Number(messageId);
     const placement = isReasoning
         ? regex_placement.REASONING
@@ -2469,114 +2467,55 @@ export function getMessageFormattingRegexContext(isUser, messageId, isReasoning 
     };
 }
 
-function normalizeMessageSystemFlag(chName, isSystem) {
-    return isSystem && chName === systemUserName;
-}
-
-function getMessageDisplayText(message) {
-    return message.extra?.display_text || message.mes;
-}
-
-function substituteFirstMessage(mes, chName, isSystem, isUser, messageId, isReasoning) {
-    if (Number(messageId) !== 0 || isSystem || isUser || isReasoning) {
-        return mes;
+// Preparation and completion stay inside the formatter; callers only receive HTML.
+function prepareMessageFormatting(mes, ch_name, isSystem, isUser, messageId, sanitizerOverrides = {}, isReasoning = false) {
+    if (!mes) return null;
+    if (Number(messageId) === 0 && !isSystem && !isUser && !isReasoning) {
+        // Display substitution must not rewrite the saved greeting or its swipe.
+        mes = substituteParams(mes, { name2Override: ch_name });
     }
-    // Rendering must not rewrite saved text or desynchronize the selected swipe.
-    return substituteParams(mes, undefined, chName);
-}
-
-function removeMessagePromptBias(mes, chName, isSystem, isUser) {
+    const sourceText = mes;
+    isSystem = isSystem && ch_name === systemUserName;
     const promptBias = power_user.user_prompt_bias && substituteParams(power_user.user_prompt_bias);
-    return !power_user.show_user_prompt_bias && chName && !isUser && !isSystem && promptBias && mes.startsWith(promptBias)
-        ? mes.slice(promptBias.length)
-        : mes;
+    if (!power_user.show_user_prompt_bias && ch_name && !isUser && !isSystem && promptBias && mes.startsWith(promptBias)) {
+        mes = mes.slice(promptBias.length);
+    }
+
+    const context = { ch_name, isSystem, isUser, messageId, isReasoning };
+    const { placement, depth } = getMessageFormattingRegexContext(isUser, messageId, isReasoning);
+    const regex = isSystem ? null : {
+        placement,
+        params: { characterOverride: ch_name, isMarkdown: true, depth },
+    };
+    if (regex) mes = MessageFormatter.runStage(MessageFormatter.stage.BEFORE_REGEX, mes, context);
+    return { sourceText, text: mes, context, regex, sanitizerOverrides };
 }
 
 /**
- * Prepares the regex output consumed by a ChatSurface materialization batch.
- * @param {{ messages: ChatMessage[]; messageIds: number[]; assertUnchanged?: boolean }} input
- * @returns {Promise<Map<number, { regexSourceText: string; regexedText: string }>>}
+ * Formats the message text into an HTML string using Markdown and other formatting.
+ * @param {string} mes Message text
+ * @param {string} ch_name Character name
+ * @param {boolean} isSystem If the message was sent by the system
+ * @param {boolean} isUser If the message was sent by the user
+ * @param {number} messageId Message index in chat array
+ * @param {Partial<DOMPurify.Config>} [sanitizerOverrides] DOMPurify sanitizer option overrides
+ * @param {boolean} [isReasoning] If the message is reasoning output
+ * @returns {string} HTML string
  */
-export async function prepareMessageRegexOptions({ messages, messageIds, assertUnchanged = true }) {
-    const requests = [];
-    const owners = [];
-
-    for (const messageId of messageIds) {
-        const message = messages[messageId];
-        if (!message) {
-            throw new Error(`Cannot prepare regex for missing message ${messageId}`);
-        }
-        if (message.role === 'tool') {
-            continue;
-        }
-
-        const isToolFloor = message.is_system === true
-            && message.is_user !== true
-            && Array.isArray(message.extra?.tool_invocations);
-        const chName = isToolFloor ? systemUserName : message.name;
-        const isSystem = normalizeMessageSystemFlag(chName, isToolFloor || message.is_system);
-        if (isSystem) {
-            continue;
-        }
-
-        const regexSourceText = substituteFirstMessage(
-            getMessageDisplayText(message),
-            chName,
-            isToolFloor || message.is_system,
-            message.is_user,
-            messageId,
-            false,
-        );
-        const { placement, depth } = getMessageFormattingRegexContext(message.is_user, messageId, false);
-        requests.push({
-            rawString: removeMessagePromptBias(regexSourceText, chName, isSystem, message.is_user),
-            placement,
-            params: { characterOverride: chName, isMarkdown: true, depth },
-        });
-        owners.push({ messageId, message, regexSourceText });
-    }
-
-    const texts = await getRegexedStringBatchAsync(requests);
-    if (assertUnchanged) {
-        for (const owner of owners) {
-            if (messages[owner.messageId] !== owner.message) {
-                throw new Error(`Message ${owner.messageId} changed while preparing regex`);
-            }
-        }
-    }
-    return new Map(owners.map((owner, index) => [owner.messageId, {
-        regexSourceText: owner.regexSourceText,
-        regexedText: texts[index],
-    }]));
+export function messageFormatting(mes, ch_name, isSystem, isUser, messageId, sanitizerOverrides = {}, isReasoning = false) {
+    const input = prepareMessageFormatting(mes, ch_name, isSystem, isUser, messageId, sanitizerOverrides, isReasoning);
+    const text = input?.regex
+        ? getRegexedString(input.text, input.regex.placement, input.regex.params)
+        : input?.text;
+    return finishMessageFormatting(input, text);
 }
 
-export function messageFormatting(mes, ch_name, isSystem, isUser, messageId, sanitizerOverrides = {}, isReasoning = false, formattingOptions = {}) {
-    if (!mes) {
-        return '';
-    }
-
-    if (!formattingOptions?.regexPrepared) {
-        mes = substituteFirstMessage(mes, ch_name, isSystem, isUser, messageId, isReasoning);
-    }
-
-    mesForShowdownParse = formattingOptions?.regexSourceText ?? mes;
-
-    // Let comment and hidden messages have markdown.
-    isSystem = normalizeMessageSystemFlag(ch_name, isSystem);
-
-    if (!formattingOptions?.regexPrepared) {
-        mes = removeMessagePromptBias(mes, ch_name, isSystem, isUser);
-        if (!isSystem) {
-            const { placement: regexPlacement, depth } = getMessageFormattingRegexContext(isUser, messageId, isReasoning);
-
-            // Always override the character name
-            mes = getRegexedString(mes, regexPlacement, {
-                characterOverride: ch_name,
-                isMarkdown: true,
-                depth: depth,
-            });
-        }
-    }
+function finishMessageFormatting(input, mes = input?.text) {
+    if (!input) return '';
+    const { ch_name, isSystem, isUser } = input.context;
+    const { sanitizerOverrides } = input;
+    mesForShowdownParse = input.sourceText;
+    if (!isSystem) mes = MessageFormatter.runStage(MessageFormatter.stage.AFTER_REGEX, mes, input.context);
 
     if (power_user.auto_fix_generated_markdown) {
         mes = fixMarkdown(mes, true);
@@ -2654,6 +2593,8 @@ export function messageFormatting(mes, ch_name, isSystem, isUser, messageId, san
         mes = mes.replace(/<code(.*)>[\s\S]*?<\/code>/g, function (match) {
             return match.replace(/&amp;/g, '&');
         });
+
+        mes = MessageFormatter.runStage(MessageFormatter.stage.AFTER_MARKDOWN, mes, input.context);
     }
 
     if (!power_user.allow_name2_display && ch_name && !isUser && !isSystem) {
@@ -3271,40 +3212,59 @@ function getToolMessageHTML(message, messageId) {
     return null;
 }
 
-/**
- * Gets messageFormatting for a ChatMessage object.
- * @param {ChatMessage} message
- * @param {object} options Options
- * @param {number} [options.messageId] Message ID
- * @param {string} [options.regexSourceText] Original display text before regex
- * @param {string} [options.regexedText] Precomputed display regex output
- * @returns {string} Formatted message HTML
- */
-function getMessageTextHTML(message, { messageId = chat.indexOf(message), regexSourceText, regexedText }) {
-    // if mes.extra.uses_system_ui is true, set an override on the sanitizer options
-    /** @type {Partial<DOMPurify.Config>} */
-    const sanitizerOverrides = message.extra?.uses_system_ui ? { MESSAGE_ALLOW_SYSTEM_UI: true } : {};
+/** The message owns its display source and sanitizer policy in both execution modes. */
+function getMessageFormattingArgs(message, messageId) {
     const isToolFloor = message.is_system === true
         && message.is_user !== true
         && Array.isArray(message.extra?.tool_invocations);
-    const invocations = isToolFloor
-        ? readLegacyToolInvocations(message, messageId).invocations
-        : null;
+    const text = isToolFloor
+        ? ToolManager.formatToolInvocationMessage(readLegacyToolInvocations(message, messageId).invocations)
+        : (message.extra?.display_text || message.mes);
+    return [
+        text,
+        isToolFloor ? systemUserName : message.name,
+        isToolFloor || message.is_system,
+        message.is_user,
+        messageId,
+        message.extra?.uses_system_ui ? { MESSAGE_ALLOW_SYSTEM_UI: true } : {},
+    ];
+}
 
-    const hasRegexedText = regexedText !== undefined;
+/** @param {ChatMessage} message @param {{ messageId?: number }} options */
+function getMessageTextHTML(message, { messageId = chat.indexOf(message) }) {
     return getToolMessageHTML(message, messageId)
-        ?? messageFormatting(
-            hasRegexedText
-                ? regexedText
-                : (invocations ? ToolManager.formatToolInvocationMessage(invocations) : getMessageDisplayText(message)),
-            isToolFloor ? systemUserName : message.name,
-            isToolFloor || message.is_system,
-            message.is_user,
-            messageId,
-            sanitizerOverrides,
-            false,
-            { regexPrepared: hasRegexedText, regexSourceText },
-        );
+        ?? messageFormatting(...getMessageFormattingArgs(message, messageId));
+}
+
+/**
+ * Batch formatting uses the same preparation and completion as messageFormatting.
+ * Only regex execution is asynchronous; no partial formatting state escapes.
+ * @param {{ messages: ChatMessage[]; messageIds: number[] }} input
+ * @returns {Promise<Map<number, { messageHtml: string }>>}
+ */
+async function prepareMessageContent({ messages, messageIds }) {
+    const entries = messageIds.map(messageId => {
+        const message = messages[messageId];
+        const html = getToolMessageHTML(message, messageId);
+        const input = html === null ? prepareMessageFormatting(...getMessageFormattingArgs(message, messageId)) : null;
+        return { messageId, html, input };
+    });
+    const requests = entries.filter(entry => entry.input?.regex)
+        .map(({ input }) => ({ rawString: input.text, ...input.regex }));
+    const texts = await getRegexedStringBatchAsync(requests);
+    const results = new Map();
+    let regexIndex = 0;
+    let start = performance.now();
+    for (const { messageId, html, input } of entries) {
+        results.set(messageId, {
+            messageHtml: html ?? finishMessageFormatting(input, input?.regex ? texts[regexIndex++] : input?.text),
+        });
+        if (performance.now() - start > 8) {
+            await delay(0);
+            start = performance.now();
+        }
+    }
+    return results;
 }
 
 /** @type {WeakMap<ChatMessage, Array<ChatToolCall & { result?: string, error?: boolean }>>} */
@@ -3447,12 +3407,11 @@ export function addOneMessage(mes, { type = undefined, insertAfter = null, scrol
  * @param {JQuery<HTMLElement>} [options.messageElement=messageTemplate.clone()] This message element will be updated with the ChatMessage object.
  * @param {SCROLL_BEHAVIOR} [options.adjustMediaScroll=SCROLL_BEHAVIOR.NONE] Scroll behavior option passed to appendMediaToMessage.
  * @param {string|null} [options.frontendSourceHandoffEvent=null] Event after which detached frontend source cover is released.
- * @param {string} [options.regexSourceText] Original display text before regex.
- * @param {string} [options.regexedText] Precomputed display regex output.
+ * @param {string} [options.messageHtml] Fully formatted message body.
  * @param {boolean} [options.transient=false] Whether to defer content processors and runtimes.
  * @returns {JQuery<HTMLElement>} Rendered HTMLElement.
  */
-export function updateMessageElement(mes, { messageId = chat.length - 1, messageElement = messageTemplate.clone(), adjustMediaScroll = SCROLL_BEHAVIOR.NONE, frontendSourceHandoffEvent = null, regexSourceText, regexedText, transient = false } = {}) {
+export function updateMessageElement(mes, { messageId = chat.length - 1, messageElement = messageTemplate.clone(), adjustMediaScroll = SCROLL_BEHAVIOR.NONE, frontendSourceHandoffEvent = null, messageHtml, transient = false } = {}) {
     let avatarImg = getThumbnailUrl('persona', user_avatar);
 
     //for non-user messages
@@ -3476,7 +3435,7 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
     }
     const momentDate = timestampToMoment(mes.send_date);
     const timestamp = momentDate.isValid() ? momentDate.format('LL LT') : '';
-    const messageHTML = getMessageTextHTML(mes, { messageId, regexSourceText, regexedText });
+    const messageHTML = messageHtml ?? getMessageTextHTML(mes, { messageId });
     const bookmarkLink = mes?.extra?.bookmark_link;
     const tokenCount = mes.extra?.token_count;
     const { timerValue, timerTitle, tokenRate } = formatGenerationTimer(mes.gen_started, mes.gen_finished, mes.extra?.token_count, mes.extra?.reasoning_duration, mes.extra?.time_to_first_token);

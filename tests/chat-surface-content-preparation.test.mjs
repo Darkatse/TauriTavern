@@ -47,7 +47,7 @@ test('prepared content survives projection changes and commits before runtime cl
         const surface = installChatSurfaceRuntime({
             root,
             getMessages: () => messages,
-            prepareMaterializeOptions: async () => new Map(),
+            prepareMaterializeOptions: async ({ messages, messageIds }) => new Map(messageIds.map(id => [id, { messageHtml: messages[id].mes }])),
             formatMessageContent: message => message.mes,
             prepareContentTransaction: transaction,
             async emitEvent(...args) { events.push(args); },
@@ -60,6 +60,7 @@ test('prepared content survives projection changes and commits before runtime cl
                 element._setRect({ height: 200 });
                 return element;
             },
+            refreshMessageDetails() {},
             syncMountedViewState() {},
             onFault: error => faults.push(error),
         });

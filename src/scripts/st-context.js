@@ -111,6 +111,7 @@ import { ConnectionManagerRequestService } from './extensions/shared.js';
 import { updateReasoningUI, parseReasoningFromString, getReasoningTemplateByName } from './reasoning.js';
 import { IGNORE_SYMBOL } from './constants.js';
 import { macros } from './macros/macro-system.js';
+import { MessageFormatter } from './message-formatter.js';
 import { createSafeGenerate } from './util/safe-generate.js';
 
 const generateSafely = createSafeGenerate({
@@ -249,6 +250,7 @@ export function getContext() {
         scrollChatToBottom,
         scrollOnMediaLoad,
         macros,
+        messageFormatter: MessageFormatter,
         loader,
         swipe: {
             left: swipe_left,

@@ -39,6 +39,7 @@ test('bounded redraw follows the remaining messages after deletions', async () =
                 element._setRect({ height: 200 });
                 return element;
             },
+            refreshMessageDetails() {},
             syncMountedViewState() {},
             onFault(error) { throw error; },
         });
