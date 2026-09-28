@@ -31,8 +31,8 @@
 
 补充约束：
 
-- discovery 只投影扩展目录、类型与 Git/source 管理状态，不读取或建模 manifest；单个损坏的 legacy source 状态只会使对应扩展降为 unmanaged。
-- 浏览器运行时 manifest 由前端从原始 `manifest.json` 读取并消费，包括 `display_name` / `version` / `author` 与 `js` / `css` / `i18n` 等字段；缺失、损坏或非 object manifest 以及单扩展激活异常都不会阻断其他扩展。
+- discovery 只返回扩展名称与类型，跳过没有 `manifest.json` 的第三方目录；Git/source 信息由版本查询和管理操作按需读取。
+- 前端读取原始 `manifest.json`，只将成功加载的 JSON object 发布到可用扩展列表；失败会报告并隔离，不阻断其他扩展。各入口共同消费该列表，启用与激活仍由原有机制处理。
 - install/update/switch 的 candidate preflight 仍要求根 `manifest.json` 存在、是普通文件且为 JSON object；`display_name` / `version` / `author` 仅作为安装结果展示元数据提取，缺失或非字符串值不影响候选合法性。
 
 扩展命名约定：
@@ -136,7 +136,7 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 
 当前优先级规则：
 
-- 发现时：若 local 与 global 同名，保留 local，跳过 global
+- 发现时：含 manifest 的 local 与 global 同名时保留 local；无 manifest 的 local 残留目录不遮挡 global
 - 读资源时：先查 local，再查 global
 
 这意味着 local 扩展可以覆盖同名 global 扩展。

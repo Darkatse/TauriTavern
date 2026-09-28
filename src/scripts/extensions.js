@@ -374,17 +374,16 @@ export function startOfflineExtensionsDiscovery({ forceRefresh = false } = {}) {
     offlineExtensionsDiscoveryPromise = (async () => {
         await waitForTauriMainReady();
         const extensions = await discoverExtensions();
-        const nextExtensionNames = extensions.map(x => x.name);
-        const nextExtensionTypes = Object.fromEntries(extensions.map(x => [x.name, x.type]));
-        const nextManifests = await getManifests(nextExtensionNames);
+        const nextManifests = await getManifests(extensions.map(x => x.name));
         if (generation !== offlineExtensionsDiscoveryGeneration) {
             return offlineExtensionsDiscoveryPromise ?? [];
         }
 
-        extensionNames = nextExtensionNames;
-        extensionTypes = nextExtensionTypes;
+        const availableExtensions = extensions.filter(x => Object.hasOwn(nextManifests, x.name));
+        extensionNames = availableExtensions.map(x => x.name);
+        extensionTypes = Object.fromEntries(availableExtensions.map(x => [x.name, x.type]));
         manifests = nextManifests;
-        return extensions;
+        return availableExtensions;
     })();
 
     return offlineExtensionsDiscoveryPromise;

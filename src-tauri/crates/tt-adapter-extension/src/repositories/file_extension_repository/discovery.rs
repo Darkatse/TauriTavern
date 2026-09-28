@@ -1,153 +1,78 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::io;
+use std::path::Path;
 
+use tokio::fs;
 use tt_domain::errors::DomainError;
 use tt_domain::models::extension::{Extension, ExtensionType};
 
 use super::FileExtensionRepository;
-use super::git_remote::open_embedded;
-use super::git_worktree::{has_standard_embedded_git, read_managed_state};
-use super::source_store::ExtensionStoreScope;
 
 pub(super) async fn discover_extensions(
     repository: &FileExtensionRepository,
 ) -> Result<Vec<Extension>, DomainError> {
-    tracing::info!("Discovering extensions");
-
-    let mut extensions = Vec::new();
-    for &name in super::SYSTEM_EXTENSIONS {
-        extensions.push(Extension {
-            name: name.to_string(),
+    let mut extensions = super::SYSTEM_EXTENSIONS
+        .iter()
+        .map(|name| Extension {
+            name: (*name).to_string(),
             extension_type: ExtensionType::System,
-            managed: true,
-            path: PathBuf::from(format!("scripts/extensions/{}", name)),
-            remote_url: None,
-            commit_hash: None,
-            branch_name: None,
-            is_up_to_date: None,
-        });
+        })
+        .collect::<Vec<_>>();
+
+    for (directory, extension_type) in [
+        (&repository.user_extensions_dir, ExtensionType::Local),
+        (&repository.global_extensions_dir, ExtensionType::Global),
+    ] {
+        discover_directory(directory, extension_type, &mut extensions)
+            .await
+            .map_err(|error| {
+                DomainError::InternalError(format!(
+                    "Failed to discover extensions in '{}': {error}",
+                    directory.display()
+                ))
+            })?;
     }
 
-    discover_scoped_extensions(repository, ExtensionStoreScope::Local, &mut extensions).await?;
-    discover_scoped_extensions(repository, ExtensionStoreScope::Global, &mut extensions).await?;
-
-    tracing::debug!("Discovered {} extensions", extensions.len());
     Ok(extensions)
 }
 
-async fn discover_scoped_extensions(
-    repository: &FileExtensionRepository,
-    scope: ExtensionStoreScope,
+async fn discover_directory(
+    directory: &Path,
+    extension_type: ExtensionType,
     extensions: &mut Vec<Extension>,
-) -> Result<(), DomainError> {
-    let extensions_dir = repository.extension_dir_for_scope(scope);
-    if !extensions_dir.exists() {
-        return Ok(());
-    }
+) -> io::Result<()> {
+    let mut entries = match fs::read_dir(directory).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
 
-    let entries = fs::read_dir(extensions_dir).map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to read extensions directory '{}': {}",
-            extensions_dir.display(),
-            error
-        ))
-    })?;
+    while let Some(entry) = entries.next_entry().await? {
+        let folder = entry.file_name().to_string_lossy().into_owned();
+        if folder.starts_with('.') {
+            continue;
+        }
+        let name = format!("third-party/{folder}");
+        if extensions.iter().any(|extension| extension.name == name) {
+            continue;
+        }
 
-    for entry in entries {
-        let entry = entry.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read extension directory entry in '{}': {}",
-                extensions_dir.display(),
-                error
-            ))
-        })?;
         let path = entry.path();
-        if !path.is_dir() {
+        if !fs::metadata(&path).await?.is_dir() {
             continue;
         }
-        let Some(file_name) = path.file_name() else {
-            continue;
-        };
-        let extension_folder_name = file_name.to_string_lossy().to_string();
-        if extension_folder_name.starts_with('.') {
-            continue;
-        }
-
-        let extension_name = format!("third-party/{}", extension_folder_name);
-        if scope == ExtensionStoreScope::Global
-            && extensions
-                .iter()
-                .any(|extension| extension.name == extension_name)
-        {
+        if !fs::try_exists(path.join("manifest.json")).await? {
+            tracing::warn!(
+                "Skipping extension without manifest.json: {}",
+                path.display()
+            );
             continue;
         }
-
-        let projection = git_projection(&path);
-        let (managed, remote_url, commit_hash, branch_name) = match projection {
-            Ok(Some(projection)) => projection,
-            Ok(None) => match repository
-                .source_store
-                .read(scope, &extension_folder_name, &path)
-                .await
-            {
-                Ok(Some(source)) => (
-                    true,
-                    Some(source.remote_url),
-                    Some(source.installed_commit),
-                    Some(source.reference),
-                ),
-                Ok(None) => (false, None, None, None),
-                Err(error) => {
-                    tracing::warn!(
-                        "Ignoring invalid source state for '{}' at '{}': {}",
-                        extension_folder_name,
-                        path.display(),
-                        error
-                    );
-                    (false, None, None, None)
-                }
-            },
-            Err(error) => {
-                tracing::warn!(
-                    "Failed to project embedded Git state for '{}' at '{}': {}",
-                    extension_folder_name,
-                    path.display(),
-                    error
-                );
-                (false, None, None, None)
-            }
-        };
 
         extensions.push(Extension {
-            name: extension_name,
-            extension_type: match scope {
-                ExtensionStoreScope::Local => ExtensionType::Local,
-                ExtensionStoreScope::Global => ExtensionType::Global,
-            },
-            managed,
-            path,
-            remote_url,
-            commit_hash,
-            branch_name,
-            is_up_to_date: None,
+            name,
+            extension_type: extension_type.clone(),
         });
     }
 
     Ok(())
-}
-
-type GitProjection = (bool, Option<String>, Option<String>, Option<String>);
-
-fn git_projection(path: &Path) -> Result<Option<GitProjection>, DomainError> {
-    if !has_standard_embedded_git(path)? {
-        return Ok(None);
-    }
-    let repo = open_embedded(path)?;
-    let state = read_managed_state(&repo)?;
-    Ok(Some((
-        true,
-        Some(state.remote_url),
-        Some(state.deployed.to_string()),
-        Some(state.selected.display_name().to_string()),
-    )))
 }
