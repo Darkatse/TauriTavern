@@ -30,8 +30,7 @@ pub struct OpenAiTokenPrefixCountRequestDto {
     pub base: String,
     #[serde(default)]
     pub suffixes: Vec<String>,
-    /// Caller-visible text token threshold. The raw single-message wrapper
-    /// offset is excluded when deciding whether this limit has been reached.
+    /// Threshold in caller-visible text token counts, matching the returned counts.
     #[serde(default)]
     pub stop_at: Option<usize>,
 }
