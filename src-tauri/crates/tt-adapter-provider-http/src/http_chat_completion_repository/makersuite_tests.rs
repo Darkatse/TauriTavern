@@ -13,37 +13,41 @@ use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
 use super::HttpChatCompletionRepository;
 
-async fn upstream(body: String) -> (String, tokio::task::JoinHandle<String>) {
+async fn upstream(bodies: Vec<String>) -> (String, tokio::task::JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
-        let (mut socket, _) = listener.accept().await.unwrap();
-        let mut request = Vec::new();
-        let mut chunk = [0; 4096];
-        loop {
-            let count = socket.read(&mut chunk).await.unwrap();
-            assert_ne!(count, 0);
-            request.extend_from_slice(&chunk[..count]);
-            if let Some(end) = request.windows(4).position(|part| part == b"\r\n\r\n") {
-                let headers = String::from_utf8_lossy(&request[..end]).to_lowercase();
-                let length = headers
-                    .lines()
-                    .find_map(|line| {
-                        line.strip_prefix("content-length: ")
-                            .map(|value| value.parse::<usize>().unwrap())
-                    })
-                    .unwrap_or(0);
-                if request.len() >= end + 4 + length {
-                    break;
+        let mut requests = Vec::new();
+        for body in bodies {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 4096];
+            loop {
+                let count = socket.read(&mut chunk).await.unwrap();
+                assert_ne!(count, 0);
+                request.extend_from_slice(&chunk[..count]);
+                if let Some(end) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&request[..end]).to_lowercase();
+                    let length = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.strip_prefix("content-length: ")
+                                .map(|value| value.parse::<usize>().unwrap())
+                        })
+                        .unwrap_or(0);
+                    if request.len() >= end + 4 + length {
+                        break;
+                    }
                 }
             }
-        }
-        socket.write_all(format!(
+            socket.write_all(format!(
             "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             if body.starts_with("data:") { "text/event-stream" } else { "application/json" },
             body.len(),
         ).as_bytes()).await.unwrap();
-        String::from_utf8(request).unwrap()
+            requests.push(String::from_utf8(request).unwrap());
+        }
+        requests
     });
     (base, task)
 }
@@ -94,7 +98,7 @@ async fn custom_gemini_generate_content_http_contract() {
                 .map(|event| format!("data: {event}\n\n"))
                 .collect()
         };
-        let (base, server) = upstream(body).await;
+        let (base, server) = upstream(vec![body]).await;
         let (repository, config) = repository(format!("{base}/proxy/v1/"));
         let payload = json!({ "model": "models/gemini-test", "contents": [{ "role": "user", "parts": [{ "text": "Hi" }] }] });
         let endpoint = if !stream {
@@ -129,7 +133,7 @@ async fn custom_gemini_generate_content_http_contract() {
             message["native"].clone()
         };
         assert_eq!(native["gemini"]["content"]["parts"], parts);
-        let request = server.await.unwrap();
+        let request = server.await.unwrap().remove(0);
         let (headers, body) = request.split_once("\r\n\r\n").unwrap();
         let target = headers
             .lines()
@@ -172,7 +176,7 @@ async fn custom_gemini_stream_rejects_incomplete_or_error_events_without_native_
             "stream rejected",
         ),
     ] {
-        let (base, server) = upstream(format!("data: {event}\n\n")).await;
+        let (base, server) = upstream(vec![format!("data: {event}\n\n")]).await;
         let (repository, config) = repository(base);
         let (sender, mut receiver) = mpsc::unbounded_channel();
         let (_cancel, cancel) = watch::channel(false);
@@ -193,5 +197,58 @@ async fn custom_gemini_stream_rejects_incomplete_or_error_events_without_native_
             assert!(chunk.pointer("/choices/0/delta/native").is_none());
         }
         server.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn models_pagination_preserves_metadata_and_headers_and_rejects_partial_results() {
+    let first = json!({
+        "models": [{"name": "models/first", "displayName": "First", "inputTokenLimit": 123,
+            "supportedGenerationMethods": ["generateContent"]}],
+        "nextPageToken": "page +/2"
+    });
+    let second = json!({"models": [
+        {"name": "models/second", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/embed", "supportedGenerationMethods": ["embedContent"]}
+    ]});
+    for error in [None, Some(json!({"error": "quota exceeded"}))] {
+        let (base, server) = upstream(vec![
+            first.to_string(),
+            error.as_ref().unwrap_or(&second).to_string(),
+        ])
+        .await;
+        let (repository, config) = repository(format!("{base}/proxy/v1/"));
+        let result = repository
+            .list_models(ChatCompletionSource::Makersuite, &config)
+            .await;
+        if error.is_some() {
+            assert!(result.unwrap_err().to_string().contains("quota"));
+        } else {
+            let result = result.unwrap();
+            assert_eq!(result["data"].as_array().unwrap().len(), 2);
+            assert_eq!(result["data"][0]["id"], "first");
+            assert_eq!(result["data"][0]["displayName"], "First");
+            assert_eq!(result["data"][0]["inputTokenLimit"], 123);
+            assert_eq!(result["data"][1]["id"], "second");
+        }
+        let requests = server.await.unwrap();
+        for (index, request) in requests.iter().enumerate() {
+            assert!(request.contains("x-goog-api-key: header-override"));
+            let target = request
+                .lines()
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .nth(1)
+                .unwrap();
+            let url = reqwest::Url::parse(&format!("{base}{target}")).unwrap();
+            assert_eq!(url.path(), "/proxy/v1/models");
+            let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+            assert_eq!(query.get("key").map(String::as_str), Some("custom-key"));
+            assert_eq!(
+                query.get("pageToken").map(String::as_str),
+                (index == 1).then_some("page +/2")
+            );
+        }
     }
 }

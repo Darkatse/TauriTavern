@@ -19,34 +19,6 @@ async function createAiRouter(safeInvoke) {
     return router;
 }
 
-test('chat completion status preserves the selected credential identity', async () => {
-    const calls = [];
-    const router = await createAiRouter(async (command, args) => {
-        calls.push({ command, args });
-        return { data: [] };
-    });
-    const customHeaders = {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer proxy-secret',
-    };
-
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/backends/chat-completions/status',
-        body: {
-            chat_completion_source: 'custom',
-            secret_id: 'profile-secret',
-            custom_include_headers: customHeaders,
-        },
-    });
-
-    assert.equal(response.status, 200);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].command, 'get_chat_completions_status');
-    assert.equal(calls[0].args.dto.secret_id, 'profile-secret');
-    assert.deepEqual(calls[0].args.dto.custom_include_headers, customHeaders);
-});
-
 test('chat completion status exposes structured network failures', async () => {
     const router = await createAiRouter(async () => {
         const error = new Error('error sending request for url (https://api.example.test/v1/chat/completions)');

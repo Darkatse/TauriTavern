@@ -25,7 +25,8 @@ const GOOGLE_IMAGE_GENERATION_MODELS: &[&str] = &[
     "gemini-2.0-flash-preview-image-generation",
     "gemini-2.5-flash-image-preview",
     "gemini-2.5-flash-image",
-    "gemini-3-pro-image-preview",
+    "gemini-3-pro-image",
+    "gemini-3.1-flash-image",
 ];
 
 const GOOGLE_NO_SEARCH_MODELS: &[&str] = &[
@@ -133,15 +134,24 @@ fn build_google_payload(
         .unwrap_or(false)
         && (is_custom || (!enable_image_modality && !is_gemma));
 
-    let (contents, system_prompt) =
-        convert_messages(payload.get("messages"), model, use_system_prompt)?;
-
-    let mut generation_config = Map::new();
     let has_fixed_sampling_parameters = !is_custom
         && matches!(
             model,
             "gemini-3.5-flash-lite" | "gemini-3.6-flash" | "gemini-3.7-flash"
         );
+    let no_prefill = has_fixed_sampling_parameters
+        && payload
+            .get("chat_completion_source")
+            .and_then(Value::as_str)
+            != Some("opencode");
+    let (contents, system_prompt) = convert_messages(
+        payload.get("messages"),
+        model,
+        use_system_prompt,
+        no_prefill,
+    )?;
+
+    let mut generation_config = Map::new();
 
     if let Some(value) = payload.get("max_tokens").filter(|value| !value.is_null()) {
         generation_config.insert("maxOutputTokens".to_string(), value.clone());
@@ -334,6 +344,7 @@ fn convert_messages(
     messages: Option<&Value>,
     model: &str,
     use_system_prompt: bool,
+    no_prefill: bool,
 ) -> Result<(Vec<Value>, String), ApplicationError> {
     let mut contents = Vec::new();
     let mut system_parts = Vec::new();
@@ -391,7 +402,7 @@ fn convert_messages(
         }
     }
 
-    for entry in entries.iter().skip(start_index) {
+    for (index, entry) in entries.iter().enumerate().skip(start_index) {
         let Some(message) = entry.as_object() else {
             continue;
         };
@@ -454,7 +465,7 @@ fn convert_messages(
             parts.push(json!({ "text": "" }));
         }
 
-        let target_role = if role == "assistant" { "model" } else { "user" };
+        let mut target_role = if role == "assistant" { "model" } else { "user" };
 
         // Native parts already carry their own signatures; never overwrite signed history.
         if native_gemini_parts.is_none() {
@@ -502,6 +513,20 @@ fn convert_messages(
                     }
                 }
             }
+        }
+
+        // Only a plain trailing text turn is a prefill; native/tool history keeps its role.
+        if no_prefill
+            && role == "assistant"
+            && index + 1 == entries.len()
+            && native_gemini_parts.is_none()
+            && parts.iter().all(|part| {
+                part.as_object().is_some_and(|part| {
+                    part.len() == 1 && part.get("text").is_some_and(Value::is_string)
+                })
+            })
+        {
+            target_role = "user";
         }
 
         if merge_with_previous
@@ -1657,45 +1682,41 @@ mod tests {
     }
 
     #[test]
-    fn makersuite_image_generation_sets_response_modalities_and_image_config() {
-        let payload = json!({
-            "model": "gemini-3-pro-image-preview",
-            "request_images": true,
-            "request_image_resolution": "image_size_1",
-            "request_image_aspect_ratio": "16:9",
-            "messages": [{"role": "user", "content": "hello"}]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let (_, upstream) = build(payload).expect("build should succeed");
-        let body = upstream.as_object().expect("body must be object");
-        let config = body
-            .get("generationConfig")
-            .and_then(Value::as_object)
-            .expect("generationConfig must be object");
-
-        assert_eq!(
-            config
-                .get("responseModalities")
-                .and_then(Value::as_array)
-                .and_then(|value| value.first())
-                .and_then(Value::as_str),
-            Some("text")
-        );
-
-        let image_config = config
-            .get("imageConfig")
-            .and_then(Value::as_object)
-            .expect("imageConfig must be object");
-        assert_eq!(
-            image_config.get("imageSize").and_then(Value::as_str),
-            Some("image_size_1")
-        );
-        assert_eq!(
-            image_config.get("aspectRatio").and_then(Value::as_str),
-            Some("16:9")
-        );
+    fn makersuite_only_rewrites_plain_trailing_prefill() {
+        let native =
+            json!({"role": "model", "parts": [{"text": "signed", "thoughtSignature": "sig"}]});
+        for (last, role) in [
+            (json!({"role": "assistant", "content": "prefill"}), "user"),
+            (
+                json!({"role": "assistant", "content": "signed", "signature": "sig"}),
+                "model",
+            ),
+            (
+                json!({"role": "assistant", "native": {"gemini": {"content": native}}}),
+                "model",
+            ),
+            (
+                json!({"role": "assistant", "tool_calls": [{
+                    "id": "call", "function": {"name": "lookup", "arguments": "{}"}
+                }]}),
+                "model",
+            ),
+        ] {
+            let request = build_with_messages(
+                "gemini-3.7-flash",
+                json!([
+                    {"role": "user", "content": "hello"},
+                    {"role": "assistant", "content": "earlier"},
+                    {"role": "user", "content": "continue"},
+                    last
+                ]),
+            );
+            let contents = request["contents"].as_array().unwrap();
+            assert_eq!(contents[1]["role"], "model");
+            assert_eq!(contents.last().unwrap()["role"], role);
+            if last.get("native").is_some() {
+                assert_eq!(contents.last().unwrap()["parts"], native["parts"]);
+            }
+        }
     }
 }

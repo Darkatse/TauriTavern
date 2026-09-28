@@ -989,14 +989,14 @@ fn extract_error_message(body: &str, default_message: &str) -> String {
     }
 
     if let Ok(value) = serde_json::from_str::<Value>(body)
-        && let Some(message) = value
-            .pointer("/error/message")
-            .or_else(|| value.get("message"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
+        && let Some(message) = response_body::provider_error_message(&value).or_else(|| {
+            value
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
     {
-        return message.to_string();
+        return message;
     }
 
     body.to_string()

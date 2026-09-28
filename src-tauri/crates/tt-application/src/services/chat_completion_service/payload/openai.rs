@@ -179,7 +179,9 @@ fn build_chat_completion_payload(
         );
     }
 
-    if source == "custom"
+    if (source == "custom"
+        || (source == "pollinations"
+            && payload.get("pollinations_endpoint").and_then(Value::as_str) != Some("anonymous")))
         && let Some(reasoning_effort) = payload.get("reasoning_effort")
     {
         request.insert("reasoning_effort".to_string(), reasoning_effort.clone());

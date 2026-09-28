@@ -17,7 +17,6 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
 
     let mut upstream_payload = Value::Object(request);
     copy_internal_provider_state(&payload, &mut upstream_payload)?;
-    finalize_openai_responses_payload(&mut upstream_payload)?;
 
     Ok(("/responses".to_string(), upstream_payload))
 }
@@ -42,13 +41,15 @@ fn build_openai_responses_payload(
     let mut request = Map::new();
     request.insert("model".to_string(), Value::String(model.to_string()));
     request.insert("input".to_string(), Value::Array(input));
+    let store = payload.get("store").filter(|value| !value.is_null());
+    if store.is_some_and(|value| !value.is_boolean()) {
+        return Err(ApplicationError::ValidationError(
+            "OpenAI Responses store must be a boolean".to_string(),
+        ));
+    }
     request.insert(
         "store".to_string(),
-        payload
-            .get("store")
-            .filter(|value| !value.is_null())
-            .cloned()
-            .unwrap_or(Value::Bool(false)),
+        store.cloned().unwrap_or(Value::Bool(false)),
     );
 
     for key in [
@@ -518,45 +519,12 @@ fn message_native_openai_responses_output(
     Ok(Some(output))
 }
 
-fn finalize_openai_responses_payload(payload: &mut Value) -> Result<(), ApplicationError> {
-    let object = payload.as_object_mut().ok_or_else(|| {
-        ApplicationError::InternalError("OpenAI Responses payload must be an object".to_string())
-    })?;
-
-    validate_openai_responses_payload(object)?;
-    ensure_reasoning_encrypted_include(object)?;
-    validate_openai_responses_payload(object)
-}
-
-fn validate_openai_responses_payload(object: &Map<String, Value>) -> Result<(), ApplicationError> {
-    non_empty_string(object.get("model")).ok_or_else(|| {
-        ApplicationError::ValidationError("OpenAI Responses payload is missing model".to_string())
-    })?;
-
-    if object.get("input").and_then(Value::as_array).is_none() {
-        return Err(ApplicationError::ValidationError(
-            "OpenAI Responses payload is missing input array".to_string(),
-        ));
-    }
-
-    if let Some(store) = object.get("store")
-        && !store.is_boolean()
-    {
-        return Err(ApplicationError::ValidationError(
-            "OpenAI Responses store must be a boolean".to_string(),
-        ));
-    }
-
-    if let Some(include) = object.get("include") {
-        validate_include(include)?;
-    }
-
-    Ok(())
-}
-
 fn ensure_reasoning_encrypted_include(
     object: &mut Map<String, Value>,
 ) -> Result<(), ApplicationError> {
+    if let Some(include) = object.get("include") {
+        validate_include(include)?;
+    }
     let entry = object
         .entry("include".to_string())
         .or_insert_with(|| Value::Array(Vec::new()));

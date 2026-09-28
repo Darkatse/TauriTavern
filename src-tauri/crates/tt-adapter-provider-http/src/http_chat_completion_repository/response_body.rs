@@ -104,7 +104,12 @@ pub(super) fn parse_upstream_json_body(
     body: &[u8],
 ) -> Result<Value, DomainError> {
     match serde_json::from_slice::<Value>(body) {
-        Ok(value) => Ok(value),
+        Ok(value) => match provider_error_message(&value) {
+            Some(message) => Err(DomainError::InvalidData(format!(
+                "{provider_name}: {message}"
+            ))),
+            None => Ok(value),
+        },
         Err(error) => {
             log_upstream_body_parse_failure(
                 provider_name,
@@ -120,6 +125,30 @@ pub(super) fn parse_upstream_json_body(
             )))
         }
     }
+}
+
+/// Provider-declared errors can arrive in a successful HTTP response.
+pub(super) fn provider_error_message(value: &Value) -> Option<String> {
+    let error = value
+        .get("error")
+        .or_else(|| value.pointer("/detail/error"))
+        .filter(|error| !error.is_null() && **error != Value::Bool(false))?;
+    let message = if error.is_string() {
+        error
+    } else {
+        error
+            .get("message")
+            .or_else(|| value.get("message"))
+            .or_else(|| error.get("code"))
+            .or_else(|| error.get("type"))
+            .unwrap_or(error)
+    };
+    Some(
+        message
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| message.to_string()),
+    )
 }
 
 #[cfg(test)]

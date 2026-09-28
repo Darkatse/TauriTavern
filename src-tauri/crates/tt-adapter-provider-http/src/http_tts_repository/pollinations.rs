@@ -46,6 +46,10 @@ async fn voices(client: reqwest::Client, model: String) -> Result<TtsRouteRespon
         .and_then(|models| {
             models.iter().find(|candidate| {
                 candidate.get("name").and_then(Value::as_str) == Some(model.as_str())
+                    || candidate
+                        .get("aliases")
+                        .and_then(Value::as_array)
+                        .is_some_and(|aliases| aliases.iter().any(|alias| alias == model.as_str()))
             })
         })
         .and_then(|model| model.get("voices"))
@@ -126,22 +130,4 @@ async fn generate(
         }
     };
     Ok(TtsRouteResponse::bytes(200, "audio/mpeg", audio))
-}
-
-#[cfg(test)]
-mod tests {
-    use base64::Engine;
-    use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-    use serde_json::json;
-
-    #[test]
-    fn pollinations_audio_shape_matches_frontend_contract() {
-        let payload = json!({
-            "choices": [{"message": {"audio": {"data": BASE64_STANDARD.encode([1, 2, 3])}}}]
-        });
-        let encoded = payload["choices"][0]["message"]["audio"]["data"]
-            .as_str()
-            .unwrap();
-        assert_eq!(BASE64_STANDARD.decode(encoded).unwrap(), [1, 2, 3]);
-    }
 }

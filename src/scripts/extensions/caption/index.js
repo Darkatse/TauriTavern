@@ -19,6 +19,12 @@ const MODULE_NAME = 'caption';
 const PROMPT_DEFAULT = 'What\'s in this image?';
 const TEMPLATE_DEFAULT = '[{{user}} sends {{char}} a picture that contains: {{caption}}]';
 
+const GOOGLE_MODEL_MIGRATIONS = new Map([
+    ['gemini-3.1-flash-lite-preview', 'gemini-3.1-flash-lite'],
+    ['gemini-3.1-flash-image-preview', 'gemini-3.1-flash-image'],
+    ['gemini-3-pro-image-preview', 'gemini-3-pro-image'],
+]);
+
 /**
  * Migrates old extension settings to the new format.
  * Must keep this function for compatibility with old settings.
@@ -37,7 +43,12 @@ function migrateSettings() {
     if (extension_settings.caption.source === 'openai') {
         extension_settings.caption.source = 'multimodal';
         extension_settings.caption.multimodal_api = 'openai';
-        extension_settings.caption.multimodal_model = 'gpt-4-turbo';
+        extension_settings.caption.multimodal_model = 'gpt-5.6-luna';
+    }
+
+    if (['google', 'vertexai'].includes(extension_settings.caption.multimodal_api)) {
+        extension_settings.caption.multimodal_model = GOOGLE_MODEL_MIGRATIONS.get(extension_settings.caption.multimodal_model)
+            ?? extension_settings.caption.multimodal_model;
     }
 
     if (!extension_settings.caption.multimodal_api) {
@@ -45,7 +56,7 @@ function migrateSettings() {
     }
 
     if (!extension_settings.caption.multimodal_model) {
-        extension_settings.caption.multimodal_model = 'gpt-4-turbo';
+        extension_settings.caption.multimodal_model = 'gpt-5.6-luna';
     }
 
     if (!extension_settings.caption.prompt) {

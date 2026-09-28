@@ -632,8 +632,8 @@
             ]
         },
         "wi_format": "{0}",
-        "openai_model": "gpt-4-turbo",
-        "claude_model": "claude-3-5-sonnet-20240620",
+        "openai_model": "gpt-5.6-terra",
+        "claude_model": "claude-sonnet-5",
         "ai21_model": "jamba-1.5-large",
         "windowai_model": "",
         "openrouter_model": "OR_Website",

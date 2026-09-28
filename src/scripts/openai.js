@@ -152,6 +152,7 @@ const max_256k = 256 * 1000;
 const max_400k = 400 * 1000;
 const max_500k = 500 * 1000;
 const max_1mil = 1000 * 1000;
+const max_1050k = 1050 * 1000;
 const max_2mil = 2000 * 1000;
 const unlocked_max = max_2mil;
 const oai_max_temp = 2.0;
@@ -620,13 +621,13 @@ const default_settings = {
     group_nudge_prompt: default_group_nudge_prompt,
     scenario_format: default_scenario_format,
     personality_format: default_personality_format,
-    openai_model: 'gpt-4-turbo',
+    openai_model: 'gpt-5.6-terra',
     opencode_model: '',
     opencode_endpoint: OPENCODE_ENDPOINT.ZEN,
     opencode_api_format: OPENCODE_API_FORMAT.OPENAI_COMPAT,
-    claude_model: 'claude-sonnet-4-5',
-    google_model: 'gemini-2.5-pro',
-    vertexai_model: 'gemini-2.5-pro',
+    claude_model: 'claude-sonnet-5',
+    google_model: 'gemini-3.7-flash',
+    vertexai_model: 'gemini-3.7-flash',
     ai21_model: 'jamba-large',
     mistralai_model: 'mistral-large-latest',
     cohere_model: 'command-r-plus',
@@ -2652,6 +2653,12 @@ export function normalizeChatCompletionSettingsForPromptAssembly(settings) {
     return normalized;
 }
 
+function getChatCompletionErrorMessage(data, response) {
+    const error = data?.error ?? data?.detail?.error;
+    const message = typeof error === 'string' ? error : (error?.message || error?.code || error?.type);
+    return String(message || (!response.ok && response.statusText) || t`Unknown error`);
+}
+
 /**
  * Handles errors during streaming requests.
  * @param {Response} response
@@ -2660,36 +2667,22 @@ export function normalizeChatCompletionSettingsForPromptAssembly(settings) {
  * @param {boolean?} [options.quiet=false] Suppress toast messages
  */
 export function tryParseStreamingError(response, decoded, { quiet = false } = {}) {
+    let data;
     try {
-        const data = JSON.parse(decoded);
-
-        if (!data) {
-            return;
-        }
-
-        checkQuotaError(data, { quiet });
-        checkModerationError(data, { quiet });
-
-        // these do not throw correctly (equiv to Error("[object Object]"))
-        // if trying to fix "[object Object]" displayed to users, start here
-
-        if (data.error) {
-            !quiet && toastr.error(data.error.message || response.statusText, 'Chat Completion API');
-            throw new Error(data);
-        }
-
-        if (data.message) {
-            !quiet && toastr.error(data.message, 'Chat Completion API');
-            throw new Error(data);
-        }
-
-        if (data.detail) {
-            !quiet && toastr.error(data.detail?.error?.message || response.statusText, 'Chat Completion API');
-            throw new Error(data);
-        }
+        data = JSON.parse(decoded);
+    } catch {
+        return;
     }
-    catch {
-        // No JSON. Do nothing.
+    if (!data) {
+        return;
+    }
+
+    checkQuotaError(data, { quiet });
+    checkModerationError(data, { quiet });
+    if (data.error || typeof data.message === 'string' || data.detail) {
+        const message = typeof data.message === 'string' ? data.message : getChatCompletionErrorMessage(data, response);
+        !quiet && toastr.error(message, 'Chat Completion API');
+        throw new Error(message);
     }
 }
 
@@ -4296,6 +4289,7 @@ export async function createGenerationParameters(settings, model, type, messages
     // Sources that support logprobs
     const logprobsSupportedSources = [
         chat_completion_sources.OPENAI,
+        chat_completion_sources.OPENROUTER,
         chat_completion_sources.AZURE_OPENAI,
         chat_completion_sources.CUSTOM,
         chat_completion_sources.DEEPSEEK,
@@ -4781,7 +4775,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
         checkModerationError(data);
 
         if (data.error) {
-            const message = data.error.message || response.statusText || t`Unknown error`;
+            const message = getChatCompletionErrorMessage(data, response);
             toastr.error(message, t`API returned an error`);
             throw new Error(message);
         }
@@ -4946,6 +4940,7 @@ function parseChatCompletionLogprobs(data) {
                 ? parseOpenAIChatLogprobs(data.choices[0]?.logprobs)
                 : parseOpenAITextLogprobs(data.choices[0]?.logprobs);
         case chat_completion_sources.OPENAI:
+        case chat_completion_sources.OPENROUTER:
         case chat_completion_sources.AZURE_OPENAI:
         case chat_completion_sources.DEEPSEEK:
         case chat_completion_sources.XAI:
@@ -5944,6 +5939,12 @@ function migrateChatCompletionSettings(settings) {
         { oldKey: 'chat_completion_source', oldValue: 'palm', newKey: 'chat_completion_source', newValue: chat_completion_sources.MAKERSUITE },
         { oldKey: 'custom_prompt_post_processing', oldValue: custom_prompt_post_processing_types.CLAUDE, newKey: 'custom_prompt_post_processing', newValue: custom_prompt_post_processing_types.MERGE },
         { oldKey: 'ai21_model', oldValue: /^j2-/, newKey: 'ai21_model', newValue: 'jamba-large' },
+        { oldKey: 'google_model', oldValue: 'gemini-3.1-flash-lite-preview', newKey: 'google_model', newValue: 'gemini-3.1-flash-lite' },
+        { oldKey: 'vertexai_model', oldValue: 'gemini-3.1-flash-lite-preview', newKey: 'vertexai_model', newValue: 'gemini-3.1-flash-lite' },
+        { oldKey: 'google_model', oldValue: 'gemini-3.1-flash-image-preview', newKey: 'google_model', newValue: 'gemini-3.1-flash-image' },
+        { oldKey: 'vertexai_model', oldValue: 'gemini-3.1-flash-image-preview', newKey: 'vertexai_model', newValue: 'gemini-3.1-flash-image' },
+        { oldKey: 'google_model', oldValue: 'gemini-3-pro-image-preview', newKey: 'google_model', newValue: 'gemini-3-pro-image' },
+        { oldKey: 'vertexai_model', oldValue: 'gemini-3-pro-image-preview', newKey: 'vertexai_model', newValue: 'gemini-3-pro-image' },
         { oldKey: 'image_inlining', oldValue: false, newKey: 'media_inlining', newValue: false },
         { oldKey: 'image_inlining', oldValue: true, newKey: 'media_inlining', newValue: true },
         { oldKey: 'video_inlining', oldValue: true, newKey: 'media_inlining', newValue: true },
@@ -6983,7 +6984,10 @@ function getMaxContextOpenAI(value) {
     if (oai_settings.max_context_unlocked) {
         return unlocked_max;
     }
-    else if (/^gpt-5\.[45](?:$|-\d)/.test(value) || /^gpt-5\.6(?:-(?:sol|terra|luna))?$/.test(value) || value === 'gpt-6-astra') {
+    else if (/^gpt-5\.6(?:-(?:sol|terra|luna))?$/.test(value) || value === 'gpt-6-astra') {
+        return max_1050k;
+    }
+    else if (/^gpt-5\.[45](?:$|-\d)/.test(value)) {
         return max_1mil;
     }
     else if (value.startsWith('gpt-5')) {
@@ -7598,6 +7602,8 @@ async function onModelChange() {
             $('#openai_max_context').attr('max', max_2mil);
         } else if (value.includes('gemini-2.5-flash-image')) {
             $('#openai_max_context').attr('max', max_32k);
+        } else if (value.includes('gemini-3.1-flash-image')) {
+            $('#openai_max_context').attr('max', max_128k);
         } else if (value.includes('gemini-3-pro-image')) {
             $('#openai_max_context').attr('max', max_64k);
         } else if (/gemini-3[.\d]*-(pro|flash)/.test(value) || /gemini-2.5-(pro|flash)/.test(value) || /gemini-2.0-(pro|flash)/.test(value)) {

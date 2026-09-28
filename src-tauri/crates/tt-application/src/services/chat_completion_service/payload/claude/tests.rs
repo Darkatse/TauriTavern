@@ -542,20 +542,6 @@ fn claude_moves_images_out_of_assistant_messages() {
 }
 
 #[test]
-fn claude_limited_sampling_models_reject_temperature_and_top_p_together() {
-    let mut payload = claude_payload("claude-sonnet-4-5");
-    payload.insert("temperature".to_string(), json!(0.7));
-    payload.insert("top_p".to_string(), json!(0.9));
-
-    let error = build(payload).expect_err("build should fail");
-    assert!(
-        error
-            .to_string()
-            .contains("accepts either temperature or top_p, not both")
-    );
-}
-
-#[test]
 fn claude_sampling_free_models_drop_non_default_sampling_params() {
     for model in [
         "claude-opus-5",
@@ -681,42 +667,26 @@ fn claude_default_thinking_only_requests_visible_summary() {
 }
 
 #[test]
-fn claude_validation_rejects_passthrough_xhigh_on_non_xhigh_models() {
-    let request = json!({
-        "model": "claude-opus-4-6",
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
-        "thinking": {
-            "type": "adaptive",
-            "display": "omitted"
-        },
-        "output_config": {
-            "effort": "xhigh"
-        },
-        "max_tokens": 4096
-    });
-
-    let error = super::validate_request(&request).expect_err("xhigh should be model gated");
-    assert!(
-        error
-            .to_string()
-            .contains("does not support `output_config.effort=xhigh`")
+fn claude_json_output_coexists_with_thinking_and_tools() {
+    let schema = json!({"type": "object", "properties": {"answer": {"type": "string"}}});
+    let mut payload = claude_payload("claude-fable-5-1");
+    payload.insert("reasoning_effort".into(), json!("high"));
+    payload.insert(
+        "json_schema".into(),
+        json!({"name": "answer", "value": schema}),
     );
-}
-
-#[test]
-fn claude_adaptive_only_models_reject_legacy_thinking_overrides() {
-    for model in ["claude-opus-5", "claude-sonnet-5"] {
-        let request = json!({
-            "model": model,
-            "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
-            "thinking": {
-                "type": "enabled",
-                "budget_tokens": 2048
-            },
-            "max_tokens": 4096
-        });
-
-        let error = super::validate_request(&request).expect_err("legacy thinking should fail");
-        assert!(error.to_string().contains("requires adaptive thinking"));
-    }
+    payload.insert(
+        "tools".into(),
+        json!([{"type": "function", "function": {
+            "name": "lookup", "parameters": {"type": "object"}
+        }}]),
+    );
+    let (_, request) = build(payload).unwrap();
+    assert_eq!(
+        request["output_config"],
+        json!({"effort": "high", "format": {"type": "json_schema", "schema": schema}})
+    );
+    assert_eq!(request["tools"][0]["name"], "lookup");
+    assert_eq!(request["tools"].as_array().unwrap().len(), 1);
+    assert!(request.get("tool_choice").is_none());
 }

@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 use crate::errors::ApplicationError;
 
 use super::super::custom_api_format::CustomApiFormat;
-use super::claude_messages;
+use super::claude;
 use super::gemini_interactions;
 use super::makersuite;
 use super::openai;
@@ -22,7 +22,7 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
         CustomApiFormat::GeminiInteractions => return gemini_interactions::build(payload),
         CustomApiFormat::GeminiGenerateContent => return makersuite::build_custom(payload),
         CustomApiFormat::OpenAiCompat => {}
-        CustomApiFormat::ClaudeMessages => return claude_messages::build(payload),
+        CustomApiFormat::ClaudeMessages => return claude::build_passthrough(payload),
     }
 
     openai::build(payload)

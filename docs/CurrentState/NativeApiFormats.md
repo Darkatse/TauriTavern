@@ -60,6 +60,8 @@ Connection Profiles（Connection Manager 扩展）：
 
 DeepSeek 的原生与 Custom/OpenCode 兼容请求共享后端适配，保留各来源的参数与提示词策略；适配在协议构建后、用户覆盖前执行。
 
+内建渠道的模型规则只用于构造请求，不再对构造出的 Claude payload 重复执行远端参数校验。Fable 5.1 的 JSON schema 使用 output_config.format，与 effort 和普通 tools 共存；其他 Claude 保留 schema tool。Custom 仍保留显式参数，最终是否接受由上游响应说明。
+
 ### 2.3 HTTP 调用 + Stream 处理（Rust repository）
 
 仓库层对 `ChatCompletionSource::Custom` 以 **endpoint_path** 再分流（`http_chat_completion_repository/mod.rs`）：
@@ -70,6 +72,8 @@ DeepSeek 的原生与 Custom/OpenCode 兼容请求共享后端适配，保留各
 - 其他 → Custom OpenAI-compatible（`/chat/completions`）
 
 > 备注：Claude 的 streaming 仍保持“Anthropic 事件流 JSON”语义；Responses/Interactions streaming 则统一归一化为 OpenAI `chat.completion.chunk`。
+
+JSON 响应中的明确 error（包括 HTTP 200）在共同读取处转为错误，Legacy 与 Agent 使用同一传播路径；流式前端只忽略非 JSON 帧，不吞掉已识别的 provider 错误。
 
 ---
 
@@ -88,7 +92,7 @@ DeepSeek 的原生与 Custom/OpenCode 兼容请求共享后端适配，保留各
 ### 3.2 明确的当前限制
 
 - **Custom OpenAI Responses 不再维护 call_id → response_id 内存缓存**。普通 Custom 请求和默认关闭增强模式的 Agent 请求依赖完整 transcript / native output replay；显式启用 Responses WebSocket 模式后，Agent 才通过 run-scoped `provider_state` 使用 `previous_response_id` 与 incremental input。
-- **Custom 的 model list / status check** 已按 `custom_api_format` 对齐传输协议：OpenAI-compatible / Responses 继续使用兼容 `/models`，Claude Messages 使用 Claude `/models`，Gemini generateContent / Interactions 均使用 Gemini `/models`。
+- **Custom 的 model list / status check** 已按 `custom_api_format` 对齐传输协议：OpenAI-compatible / Responses 继续使用兼容 `/models`，Claude Messages 使用 Claude `/models`，Gemini generateContent / Interactions 均使用 Gemini `/models`。Google 模型列表读取完整分页并保留模型 metadata，中途失败不返回部分列表。
 - **Claude streaming 不做 chunk 归一化**：前端需走 Anthropic events 分支解析（现状就是如此，优先复用既有 Claude 语义）。
 
 ---

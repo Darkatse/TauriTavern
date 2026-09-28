@@ -16,56 +16,75 @@ use crate::endpoint_url::append_google_api_path;
 
 const GEMINI_API_VERSION: &str = "v1beta";
 
+#[derive(serde::Deserialize)]
+struct ModelsPage {
+    models: Vec<Value>,
+    #[serde(rename = "nextPageToken")]
+    next_page_token: Option<String>,
+}
+
 pub(super) async fn list_models(
     repository: &HttpChatCompletionRepository,
     config: &ChatCompletionApiConfig,
 ) -> Result<Value, DomainError> {
     let url = build_gemini_url(&config.base_url, "models");
-
     let client = repository.metadata_client(config)?;
-    let request = client.get(url).header(ACCEPT, "application/json");
-    let request = apply_gemini_auth(request, config);
-    let request = HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
-    let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
+    let mut page_token = None;
+    let mut models = Vec::new();
 
-    let response = HttpChatCompletionRepository::send_checked(
-        request,
-        "Google Gemini",
-        "Failed to list models",
-    )
-    .await?;
+    loop {
+        let mut request = client
+            .get(&url)
+            .header(ACCEPT, "application/json")
+            .query(&[("pageSize", 1000)]);
+        if let Some(token) = &page_token {
+            request = request.query(&[("pageToken", token)]);
+        }
+        let request = apply_gemini_auth(request, config);
+        let request =
+            HttpChatCompletionRepository::apply_extra_headers(request, &config.extra_headers);
+        let request = HttpChatCompletionRepository::apply_additional_headers(request, config);
+        let response = HttpChatCompletionRepository::send_checked(
+            request,
+            "Google Gemini",
+            "Failed to list models",
+        )
+        .await?;
+        let body = read_upstream_json_body("Google Gemini", "list_models", response).await?;
+        let page: ModelsPage = serde_json::from_value(body).map_err(|error| {
+            DomainError::InvalidData(format!("Invalid Google Gemini models page: {error}"))
+        })?;
 
-    let body = read_upstream_json_body("Google Gemini", "list_models", response).await?;
+        for mut model in page.models {
+            if !model
+                .get("supportedGenerationMethods")
+                .and_then(Value::as_array)
+                .is_some_and(|methods| methods.iter().any(|method| method == "generateContent"))
+            {
+                continue;
+            }
+            let name = model
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| {
+                    DomainError::InvalidData("Google Gemini model is missing name".to_string())
+                })?;
+            model["id"] = Value::String(name.strip_prefix("models/").unwrap_or(name).to_string());
+            models.push(model);
+        }
 
-    let models = body
-        .get("models")
-        .and_then(Value::as_array)
-        .map(|models| {
-            models
-                .iter()
-                .filter(|model| {
-                    model
-                        .get("supportedGenerationMethods")
-                        .and_then(Value::as_array)
-                        .is_some_and(|methods| {
-                            methods
-                                .iter()
-                                .any(|entry| entry.as_str() == Some("generateContent"))
-                        })
-                })
-                .filter_map(|model| {
-                    let id = model
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .map(|name| name.trim_start_matches("models/"))
-                        .map(str::trim)
-                        .filter(|name| !name.is_empty())?;
-
-                    Some(json!({ "id": id }))
-                })
-                .collect::<Vec<Value>>()
-        })
-        .unwrap_or_default();
+        let next = page.next_page_token.filter(|token| !token.is_empty());
+        if next.is_none() {
+            break;
+        }
+        if next == page_token {
+            return Err(DomainError::InvalidData(
+                "Google Gemini models pagination did not advance".to_string(),
+            ));
+        }
+        page_token = next;
+    }
 
     Ok(json!({ "data": models }))
 }

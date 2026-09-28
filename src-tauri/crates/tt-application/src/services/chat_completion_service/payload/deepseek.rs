@@ -10,7 +10,6 @@ use super::super::model_capabilities::{
 use super::openai;
 use super::prompt_post_processing::{PromptNames, PromptProcessingType, post_process_prompt};
 use super::shared::add_assistant_prefix;
-use super::tool_calls;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DeepSeekThinkingMode {
@@ -125,6 +124,8 @@ impl RequestOptions {
 
 /// The native source owns its prompt preset; compatible sources keep the user's preset.
 pub(super) fn build(mut payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
+    let is_vision =
+        payload.get("model").and_then(Value::as_str) == Some("deepseek-v4-flash-vision-exp");
     let names = PromptNames::from_payload(&payload);
     let has_tools = payload
         .get("tools")
@@ -132,6 +133,28 @@ pub(super) fn build(mut payload: Map<String, Value>) -> Result<(String, Value), 
         .is_some_and(|tools| !tools.is_empty());
 
     if let Some(messages) = payload.get_mut("messages").and_then(Value::as_array_mut) {
+        if is_vision {
+            // Filter before SemiTools rewrites system roles; keep tool/native metadata.
+            messages.retain_mut(|message| {
+                if !matches!(
+                    message.get("role").and_then(Value::as_str),
+                    Some("system" | "assistant")
+                ) {
+                    return true;
+                }
+                let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
+                    return true;
+                };
+                content
+                    .retain(|part| part.get("type").and_then(Value::as_str) != Some("image_url"));
+                !content.is_empty()
+                    || message.as_object().is_some_and(|message| {
+                        message
+                            .keys()
+                            .any(|key| !matches!(key.as_str(), "role" | "content" | "name"))
+                    })
+            });
+        }
         let raw = std::mem::take(messages);
         let mut processed = post_process_prompt(raw, PromptProcessingType::SemiTools, &names);
         let has_tool_messages = processed.iter().any(|message| {
@@ -147,7 +170,6 @@ pub(super) fn build(mut payload: Map<String, Value>) -> Result<(String, Value), 
         }
 
         let processed = Value::Array(processed);
-        tool_calls::validate_openai_chat_tool_transcript(Some(&processed), false)?;
         payload.insert("messages".to_string(), processed);
     }
 
@@ -429,5 +451,45 @@ mod tests {
                 .to_string()
                 .contains("Unsupported DeepSeek reasoning_effort")
         );
+    }
+    #[test]
+    fn deepseek_vision_filters_non_user_images_without_losing_tool_turns() {
+        let image =
+            json!({"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}});
+        let messages = json!([
+            {"role": "system", "content": [image]},
+            {"role": "user", "content": [{"type": "text", "text": "describe"}, image]},
+            {"role": "assistant", "content": [image], "tool_calls": [{
+                "id": "call", "type": "function", "function": {"name": "lookup", "arguments": "{}"}
+            }], "reasoning_content": "keep this"},
+            {"role": "tool", "tool_call_id": "call", "content": "found"}
+        ]);
+        for source in ["deepseek", "custom"] {
+            let payload = json!({
+                "chat_completion_source": source, "model": "deepseek-v4-flash-vision-exp",
+                "messages": messages
+            });
+            let source = ChatCompletionSource::parse(source).unwrap();
+            let (_, request) =
+                super::super::build_payload(source, payload.as_object().unwrap().clone()).unwrap();
+            let messages = request["messages"].as_array().unwrap();
+            let user = messages
+                .iter()
+                .find(|message| message["role"] == "user")
+                .unwrap();
+            assert!(user["content"].as_array().unwrap().contains(&image));
+            let assistant = messages
+                .iter()
+                .find(|message| message["role"] == "assistant")
+                .unwrap();
+            assert_eq!(assistant["tool_calls"][0]["id"], "call");
+            assert_eq!(assistant["reasoning_content"], "keep this");
+            if source == ChatCompletionSource::DeepSeek {
+                assert_eq!(assistant["content"], "");
+                assert!(!messages.iter().any(|message| message["role"] == "system"));
+            } else {
+                assert_eq!(assistant["content"], json!([image]));
+            }
+        }
     }
 }

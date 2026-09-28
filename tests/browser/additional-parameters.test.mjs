@@ -116,6 +116,15 @@ try {
         }
     });
 
+    await test('stream errors propagate provider text without rejecting Claude message events', () => {
+        const response = new window.Response('', { status: 200, statusText: 'OK' });
+        assert.throws(() => openai.tryParseStreamingError(response, '{"error":"blocked"}', { quiet: true }), /blocked/);
+        assert.doesNotThrow(() => openai.tryParseStreamingError(response, '[DONE]', { quiet: true }));
+        assert.doesNotThrow(() => openai.tryParseStreamingError(response, JSON.stringify({
+            type: 'message_start', message: { id: 'msg_1', role: 'assistant', content: [] },
+        }), { quiet: true }));
+    });
+
     await test('Custom Caption uses its own source bucket and actual model', async () => {
         openai.oai_settings.chat_completion_source = 'claude';
         openai.oai_settings.claude_model = 'chat-model';

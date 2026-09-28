@@ -9,7 +9,7 @@ use tt_ports::repositories::chat_completion_repository::{
 };
 
 use super::HttpChatCompletionRepository;
-use super::response_body::read_upstream_json_body;
+use super::response_body::{provider_error_message, read_upstream_json_body};
 
 pub(super) async fn list_models(
     repository: &HttpChatCompletionRepository,
@@ -198,15 +198,12 @@ impl OpenAiChatAccumulator {
         let mut event = serde_json::from_slice::<Value>(raw_event).map_err(|error| {
             invalid_openai_response(format!("event is not valid JSON: {error}"))
         })?;
+        if let Some(message) = provider_error_message(&event) {
+            return Err(DomainError::InvalidData(message));
+        }
         let event = event
             .as_object_mut()
             .ok_or_else(|| invalid_openai_response("event must be an object"))?;
-
-        if let Some(error) = event.get("error").filter(|error| !error.is_null()) {
-            return Err(invalid_openai_response(format!(
-                "upstream returned an error event: {error}"
-            )));
-        }
 
         if self.id.is_none() {
             self.id = take_optional_string(event, "id")?;

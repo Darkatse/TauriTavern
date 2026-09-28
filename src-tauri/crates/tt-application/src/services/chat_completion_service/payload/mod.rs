@@ -10,7 +10,6 @@ use super::opencode::{self, OpenCodeApiFormat};
 mod aws_bedrock;
 mod chutes;
 mod claude;
-mod claude_messages;
 mod cohere;
 mod content_parts;
 mod custom;
@@ -69,7 +68,7 @@ pub(super) fn build_payload(
             match opencode_format.expect("OpenCode format resolved") {
                 OpenCodeApiFormat::OpenAiCompat => openai::build_chat(payload),
                 OpenCodeApiFormat::OpenAiResponses => openai_responses::build(payload),
-                OpenCodeApiFormat::ClaudeMessages => claude_messages::build(payload),
+                OpenCodeApiFormat::ClaudeMessages => claude::build_passthrough(payload),
                 OpenCodeApiFormat::Gemini => makersuite::build(payload),
             }
         }
