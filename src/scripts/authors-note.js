@@ -8,9 +8,10 @@ import {
     this_chid,
 } from '../script.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
+import { isInlineDrawerOpen } from './drawers.js';
 import { selected_group } from './group-chats.js';
 import { extension_settings, getContext, saveMetadataDebounced } from './extensions.js';
-import { getCharaFilename, debounce, delay } from './utils.js';
+import { getCharaFilename, debounce, delay, toggleDrawer } from './utils.js';
 import { getTokenCountAsync } from './tokenizers.js';
 import { debounce_timeout } from './constants.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
@@ -413,12 +414,8 @@ function onANMenuItemClick() {
         });
 
         //auto-open the main AN inline drawer
-        if ($('#ANBlockToggle')
-            .siblings('.inline-drawer-content')
-            .css('display') !== 'block') {
-            $ANcontainer.addClass('resizing');
-            $('#ANBlockToggle').trigger('click');
-        }
+        const drawer = document.getElementById('ANBlockToggle').closest('.inline-drawer');
+        if (!isInlineDrawerOpen(drawer)) toggleDrawer(drawer, true);
     } else {
         //hide AN if it's already displayed
         $ANcontainer.addClass('resizing');

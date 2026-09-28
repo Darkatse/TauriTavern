@@ -202,6 +202,8 @@ body.no-blur .popup[open]::backdrop {
 }
 
 .popup .popup-button-close {
+    background: none;
+    border: 0;
     position: absolute;
     top: -6px;
     right: -6px;

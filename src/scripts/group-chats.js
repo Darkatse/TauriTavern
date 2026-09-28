@@ -1,4 +1,5 @@
 import { Fuse } from '../lib.js';
+import { isInlineDrawerOpen, setInlineDrawerOpen } from './drawers.js';
 
 import {
     shuffle,
@@ -1921,9 +1922,8 @@ function select_group_chats(groupId, skipAnimation) {
         $('#group_media_forbidden_icon').toggle(!isMediaAllowed);
     } else {
         $('#rm_group_submit').show();
-        if ($('#groupAddMemberListToggle .inline-drawer-content').css('display') !== 'block') {
-            $('#groupAddMemberListToggle').trigger('click');
-        }
+        const drawer = document.getElementById('groupAddMemberListToggle').closest('.inline-drawer');
+        if (!isInlineDrawerOpen(drawer)) setInlineDrawerOpen(drawer, true);
         $('#rm_group_delete').hide();
         $('#rm_group_scenario').hide();
         $('#group-metadata-controls .chat_lorebook_button').addClass('disabled').prop('disabled', true);

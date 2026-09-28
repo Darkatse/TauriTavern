@@ -3,7 +3,7 @@ import { registerAssistantTools } from './tools';
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AssistantApp } from './AssistantApp';
-import { installAssistantDrawer } from './drawer';
+import { installAssistantDrawer, type DrawerState } from './drawer';
 import { assistantSelection, createAssistantActions, requireContext } from './host';
 import { createInteractionCursor } from './ui/cursor';
 
@@ -43,8 +43,13 @@ context.eventSource.once(context.eventTypes.APP_READY, () => {
     });
 });
 async function mount() {
-    const actions = await createAssistantActions(hostApi, context);
-    const drawer = installAssistantDrawer();
+    // Reuse the page's drawer runtime instead of bundling another state owner.
+    const drawerUrl = '/scripts/drawers.js';
+    const [actions, drawers] = await Promise.all([
+        createAssistantActions(hostApi, context),
+        import(drawerUrl /* webpackIgnore: true */) as Promise<DrawerState>,
+    ]);
+    const drawer = installAssistantDrawer(drawers);
     const root = createRoot(drawer.mount);
     root.render(createElement(AssistantApp, { controller, actions, drawer }));
     window.addEventListener('pagehide', () => {

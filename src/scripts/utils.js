@@ -7,6 +7,7 @@ import {
 } from '../lib.js';
 
 import { getContext } from './extensions.js';
+import { setInlineDrawerOpen } from './drawers.js';
 import { animation_duration, characters, getRequestHeaders, processDroppedFiles, this_chid, user_avatar } from '../script.js';
 import { isMobile } from './RossAscends-mods.js';
 import { collapseNewlines, power_user } from './power-user.js';
@@ -2586,31 +2587,11 @@ export function getFreeName(name, list, numberFormatter = (n) => ` #${n}`) {
  * @param {boolean} [expand=true] - Whether to expand or collapse the drawer
  */
 export function toggleDrawer(drawer, expand = true) {
-    /** @type {HTMLElement} */
-    const icon = drawer.querySelector(':scope > .inline-drawer-header .inline-drawer-icon');
-    /** @type {HTMLElement} */
-    const content = drawer.querySelector(':scope > .inline-drawer-content');
-
-    if (!icon || !content) {
-        console.debug('toggleDrawer: No icon or content found in the drawer element.');
-        return;
-    }
-
-    if (expand) {
-        icon.classList.remove('down', 'fa-circle-chevron-down');
-        icon.classList.add('up', 'fa-circle-chevron-up');
-        content.style.display = 'block';
-    } else {
-        icon.classList.remove('up', 'fa-circle-chevron-up');
-        icon.classList.add('down', 'fa-circle-chevron-down');
-        content.style.display = 'none';
-    }
-
-    drawer.dispatchEvent(new CustomEvent('inline-drawer-toggle', { bubbles: true }));
+    setInlineDrawerOpen(drawer, expand);
 
     // Set the height of "autoSetHeight" textareas within the inline-drawer to their scroll height
     if (!CSS.supports('field-sizing', 'content')) {
-        content.querySelectorAll('textarea.autoSetHeight').forEach(resetScrollHeight);
+        drawer.querySelectorAll(':scope > .inline-drawer-content textarea.autoSetHeight').forEach(resetScrollHeight);
     }
 }
 

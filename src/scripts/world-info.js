@@ -1,4 +1,5 @@
 import { Fuse } from '../lib.js';
+import { isInlineDrawerOpen } from './drawers.js';
 
 import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, getExtensionPromptByName, saveMetadata, getCurrentChatId, create_save, createOrEditCharacter, name1, getOneCharacter, select_selected_character } from '../script.js';
 import { extension_prompt_roles } from './extension-prompts.js';
@@ -3764,12 +3765,12 @@ export async function getWorldEntry(name, data, entry) {
             clearTimeout(drawerDestroyTimeout);
             drawerDestroyTimeout = null;
         }
-        const open = event.originalEvent?.detail?.open ?? editOutlet.is(':visible');
+        const open = event.originalEvent?.detail?.open ?? isInlineDrawerOpen(editOutlet.closest('.inline-drawer').get(0));
         if (!open) {
             commitContent();
             drawerDestroyTimeout = setTimeout(() => {
                 // Drawer was reopened, so we don't destroy it
-                if (editOutlet.is(':visible')) {
+                if (isInlineDrawerOpen(editOutlet.closest('.inline-drawer').get(0))) {
                     return;
                 }
                 commitContent();

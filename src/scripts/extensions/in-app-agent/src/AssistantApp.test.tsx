@@ -1,3 +1,4 @@
+import * as drawers from '../../../drawers.js';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test, rstest as vi } from '@rstest/core';
 import { modelBindingFromTarget } from '../../../tauritavern/agent/model-target-llm-connection.js';
@@ -54,8 +55,8 @@ function harness() {
     return { controller, actions, sendMessage, get snapshot() { return snapshot; }, publish };
 }
 test('IME and modified Enter never send to character chat; switching formatting retains a draft', async () => {
-    document.body.innerHTML = '<div id="advanced-formatting-button"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="openDrawer"></div></div>';
-    const drawer = installAssistantDrawer();
+    document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
+    const drawer = installAssistantDrawer(drawers);
     const h = harness();
     const globalKey = vi.fn();
     document.addEventListener('keydown', globalKey);
@@ -78,8 +79,8 @@ test('IME and modified Enter never send to character chat; switching formatting 
 });
 
 test('Escape closes the composer menu before the drawer', () => {
-    document.body.innerHTML = '<div id="advanced-formatting-button"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="openDrawer"></div></div>';
-    const drawer = installAssistantDrawer();
+    document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
+    const drawer = installAssistantDrawer(drawers);
     const close = vi.spyOn(drawer, 'close');
     const h = harness();
     render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
@@ -112,8 +113,8 @@ test('reasoning precedes the answer and stays expanded when history replaces the
 });
 
 test('stop remains pending until a terminal update and preserves the next draft', async () => {
-    document.body.innerHTML = '<div id="advanced-formatting-button"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="openDrawer"></div></div>';
-    const drawer = installAssistantDrawer();
+    document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
+    const drawer = installAssistantDrawer(drawers);
     const h = harness();
     h.publish({ run: { runId: 'run', active: true, status: 'calling_model' }, activeRun: { sessionId: 'session', runId: 'run', active: true, status: 'calling_model' } });
     render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
@@ -221,8 +222,8 @@ test('paging skips collapsed rows, preserves the visible anchor, and never follo
 });
 
 test('cancelling settings releases an unconfirmed Skill import and saving waits for its selection', async () => {
-    document.body.innerHTML = '<div id="advanced-formatting-button"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="openDrawer"></div></div>';
-    const drawer = installAssistantDrawer();
+    document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
+    const drawer = installAssistantDrawer(drawers);
     const h = harness();
     let importing = false;
     const input: TauriTavernSkillImportInput = { kind: 'inlineFiles', files: [] };

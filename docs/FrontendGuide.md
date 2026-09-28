@@ -4,6 +4,8 @@
 
 宿主层对外契约清单见：`docs/FrontendHostContract.md`（重构时优先保障其不回归）。
 
+共同控件与无障碍约定见 [FrontendAccessibility](FrontendAccessibility.md)。
+
 ## 1. 目标与原则
 
 - **最小侵入**：尽量保持上游 SillyTavern 前端行为不变。

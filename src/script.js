@@ -26,7 +26,7 @@ import {
     initializeChatVirtualization,
     isChatVirtualizationEnabled,
 } from './tauri/main/services/chat-surface/chat-virtualization-state.js';
-import { isInlineDrawerContentOpen, setInlineDrawerContentOpen } from './scripts/tauri/perf/inline-drawer-motion.js';
+import { initDrawers, getTopLevelDrawerPanel, isTopLevelDrawerOpen, setTopLevelDrawerOpen, toggleInlineDrawer } from './scripts/drawers.js';
 import { initializeCodeMirrorEditor } from './scripts/tauri/codemirror-editor.js';
 import { getStreamingRenderInterval, normalizeStreamingFps, shouldCommitStreamingMessage } from './scripts/tauri/perf/streaming-render-policy.js';
 import {
@@ -1189,6 +1189,7 @@ async function firstLoadInit() {
         await checkOpenRouterAuth();
         syncMobileImmersiveFullscreenUi();
         initKeyboard();
+        initDrawers();
         initDynamicStyles();
         initTags();
         initBookmarks();
@@ -12910,8 +12911,8 @@ function doDrawerOpenClick() {
     const targetDrawerID = $(this).attr('data-target');
     const drawer = $(`#${targetDrawerID}`);
     const drawerToggle = drawer.find('.drawer-toggle');
-    const drawerWasOpenAlready = drawerToggle.parent().find('.drawer-content').hasClass('openDrawer');
-    if (drawerWasOpenAlready || drawer.hasClass('resizing')) { return; }
+    const panel = getTopLevelDrawerPanel(drawerToggle.get(0));
+    if (!panel || isTopLevelDrawerOpen(panel) || drawer.hasClass('resizing')) { return; }
     doNavbarIconClick.call(drawerToggle);
 }
 
@@ -12921,41 +12922,32 @@ function doDrawerOpenClick() {
  * @returns {Promise<void>}
  */
 export async function doNavbarIconClick() {
-    const icon = $(this).find('.drawer-icon');
-    const drawer = $(this).parent().find('.drawer-content');
-    const drawerWasOpenAlready = $(this).parent().find('.drawer-content').hasClass('openDrawer');
-    const targetDrawerID = $(this).parent().find('.drawer-content').attr('id');
+    const panel = getTopLevelDrawerPanel($(this).get(0));
+    if (!panel) return;
+    const drawerWasOpenAlready = isTopLevelDrawerOpen(panel);
 
     if (!drawerWasOpenAlready) {
-        const $openDrawers = $('.openDrawer:not(.pinnedOpen)');
-        const $openIcons = $('.openIcon:not(.drawerPinnedOpen)');
-        for (const iconEl of $openIcons) {
-            $(iconEl).toggleClass('closedIcon openIcon');
-        }
-        for (const el of $openDrawers) {
-            $(el).toggleClass('closedDrawer openDrawer');
-        }
-        if ($openDrawers.length && animation_duration) {
+        const openDrawers = document.querySelectorAll('.drawer-content.openDrawer:not(.pinnedOpen)');
+        for (const openPanel of openDrawers) setTopLevelDrawerOpen(openPanel, false);
+        if (openDrawers.length && animation_duration) {
             await delay(animation_duration);
         }
-        icon.toggleClass('openIcon closedIcon');
-        drawer.toggleClass('openDrawer closedDrawer');
+        setTopLevelDrawerOpen(panel, true);
 
-        if (targetDrawerID === 'right-nav-panel') {
+        if (panel.id === 'right-nav-panel') {
             favsToHotswap();
             $('#rm_print_characters_block').trigger('scroll');
         }
 
         // Set the height of "autoSetHeight" textareas within the drawer to their scroll height
         if (!CSS.supports('field-sizing', 'content')) {
-            const textareas = $(this).closest('.drawer').find('.drawer-content textarea.autoSetHeight');
+            const textareas = panel.querySelectorAll('textarea.autoSetHeight');
             for (const textarea of textareas) {
                 await resetScrollHeight($(textarea));
             }
         }
-    } else if (drawerWasOpenAlready) {
-        icon.toggleClass('closedIcon openIcon');
-        drawer.toggleClass('closedDrawer openDrawer');
+    } else {
+        setTopLevelDrawerOpen(panel, false);
     }
 }
 
@@ -14169,11 +14161,10 @@ jQuery(async function () {
         // This autocloses open drawers that are not pinned if a click happens inside the app which does not target them.
         const targetParentHasOpenDrawer = clickTarget.parents('.openDrawer').length;
         if (!clickTarget.hasClass('drawer-icon') && !clickTarget.hasClass('openDrawer')) {
-            const $openDrawers = $('.openDrawer').not('.pinnedOpen');
-            if ($openDrawers.length && targetParentHasOpenDrawer === 0) {
-                // Toggle icon and drawer classes
-                $('.openIcon').not('.drawerPinnedOpen').toggleClass('closedIcon openIcon');
-                $openDrawers.toggleClass('closedDrawer openDrawer');
+            if (targetParentHasOpenDrawer === 0) {
+                for (const panel of document.querySelectorAll('.drawer-content.openDrawer:not(.pinnedOpen)')) {
+                    setTopLevelDrawerOpen(panel, false);
+                }
             }
         }
     });
@@ -14188,7 +14179,6 @@ jQuery(async function () {
             console.debug('inline-drawer-toggle: .inline-drawer ancestor not found', this);
             return;
         }
-        const icon = drawer.find('>.inline-drawer-header .inline-drawer-icon');
         const drawerContent = drawer.find('>.inline-drawer-content');
         const drawerContentEl = drawerContent.get(0);
         if (!drawerContentEl || drawerContentEl.nodeType !== 1) {
@@ -14196,16 +14186,7 @@ jQuery(async function () {
             return;
         }
 
-        const open = !isInlineDrawerContentOpen(drawerContentEl);
-        icon.toggleClass('down', !open);
-        icon.toggleClass('up', open);
-        icon.toggleClass('fa-circle-chevron-down', !open);
-        icon.toggleClass('fa-circle-chevron-up', open);
-        drawerEl.dispatchEvent(new CustomEvent('inline-drawer-toggle', { bubbles: true, detail: { open } }));
-        const motion = setInlineDrawerContentOpen(drawerContentEl, open, { durationMs: animation_duration });
-        void motion.then(() => {
-            drawerEl.dispatchEvent(new CustomEvent('inline-drawer-motion-complete', { bubbles: true, detail: { open } }));
-        });
+        const open = toggleInlineDrawer(drawerEl, animation_duration);
 
         // Set the height of "autoSetHeight" textareas within the inline-drawer to their scroll height
         if (open && !CSS.supports('field-sizing', 'content')) {

@@ -435,6 +435,7 @@ export async function openTauriTavernSettingsPopup() {
 
     try {
         const popup = createTauriTavernPanelPopup(mount, POPUP_TYPE.CONFIRM, '', {
+            label: translate('TauriTavern Settings'),
             okButton: translate('Save'),
             cancelButton: translate('Close'),
             allowVerticalScrolling: true,
@@ -484,7 +485,6 @@ export async function openTauriTavernSettingsPopup() {
                 }
             },
         });
-        popup.dlg.setAttribute('aria-label', translate('TauriTavern Settings'));
         const popupPromise = popup.show();
         if (viewModel.values.chatBackups.zstdCompressionEnabled) {
             void loadChatBackupStorageStats()
