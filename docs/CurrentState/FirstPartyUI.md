@@ -1,6 +1,6 @@
 # First-party UI 当前架构
 
-本文说明 TauriTavern 自有前端的现行架构与维护边界。SillyTavern 1.18.0 仍拥有页面、扩展加载和全局生命周期；TauriTavern 只在既有页面中挂载独立的 React client island，不建立第二套页面壳或路由。
+本文说明 TauriTavern 自有前端的现行架构与维护边界。SillyTavern 前端仍拥有页面、扩展加载和全局生命周期；TauriTavern 只在既有页面中挂载独立的 React client island，不建立第二套页面壳或路由。
 
 ## 1. 范围
 

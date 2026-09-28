@@ -140,7 +140,7 @@ tt-adapter-media            -> tt-adapter-storage-core
 
 ## 5. 上游兼容契约
 
-TauriTavern 不复刻 SillyTavern 1.18.0 的 Node/Express 实现细节。它复刻的是上游前端、扩展、脚本和角色卡能观察到的契约：
+TauriTavern 不复刻 SillyTavern 的 Node/Express 实现细节。它复刻的是上游前端、扩展、脚本和角色卡能观察到的契约：
 
 - 同源 URL、HTTP method、状态码、请求体解析、JSON/text/stream 响应形状。
 - 上传字段名和资源路径，例如 `/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*`、`/scripts/extensions/third-party/*`。

@@ -8,7 +8,7 @@ use crate::presentation::errors::CommandError;
 #[cfg(any(dev, debug_assertions))]
 use crate::presentation::web_resources::tauri_resource_adapter::serve_dev_ipc_resource_from_app;
 
-const SILLYTAVERN_COMPAT_VERSION: &str = "1.18.0";
+const SILLYTAVERN_COMPAT_VERSION: &str = "1.19.0";
 use tt_domain::models::update::UpdateChannel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

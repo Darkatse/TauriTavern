@@ -143,7 +143,7 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 
 ## 这是什么
 
-TauriTavern 把 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 移植为真正的原生应用：前端完整保留上游体验（已同步 1.18.0），后端从 Node.js 重构为 Rust（Tauri v2）。
+TauriTavern 把 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 移植为真正的原生应用：前端完整保留上游体验（已同步 1.19.0），后端从 Node.js 重构为 Rust（Tauri v2）。
 
 不需要安装 Node.js，不需要命令行，安装即用。你的角色卡、聊天记录、预设、世界书与前端扩展，全部兼容。
 
@@ -152,7 +152,7 @@ TauriTavern 把 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 移植
 ## 特性亮点
 
 - 🖥️ **全平台原生**：Windows、macOS、Linux、Android、iOS，桌面与移动同一份体验
-- 🎭 **完整 SillyTavern 体验**：前端同步上游 1.18.0，数据格式与目录布局完全兼容
+- 🎭 **完整 SillyTavern 体验**：前端同步上游 1.19.0，数据格式与目录布局完全兼容
 - 🧩 **前端扩展生态**：内置原生 Git，安装、更新、切换分支都在界面内完成（不支持上游 Node-only 后端插件）
 - 🔄 **内置多设备同步**：局域网加密配对同步，或经远端 TT-Sync v2 自动上传
 - 🤖 **Agent 框架**：工具调用、Skills、子代理与运行时间线，持续演进中

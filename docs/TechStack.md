@@ -4,7 +4,7 @@
 
 ## 1. 项目定位
 
-TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，并用 Rust 后端替代上游 Node/Express 后端。
+TauriTavern 将 SillyTavern 前端移植到 Tauri v2 原生应用中，当前已同步至 1.19.0，并用 Rust 后端替代上游 Node/Express 后端。
 
 核心取舍：
 
@@ -74,7 +74,7 @@ TauriTavern 将 SillyTavern 1.18.0 前端移植到 Tauri v2 原生应用中，�
 
 ## 5. 前端技术栈
 
-前端主体来自 SillyTavern 1.18.0，保留其 HTML/CSS/JavaScript 组织方式和上游依赖生态。
+前端主体来自 SillyTavern，保留其 HTML/CSS/JavaScript 组织方式和上游依赖生态。
 
 常见技术：
 
