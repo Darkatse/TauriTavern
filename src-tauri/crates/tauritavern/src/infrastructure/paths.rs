@@ -1,7 +1,7 @@
 use std::error::Error;
-#[cfg(not(target_os = "ios"))]
+#[cfg(any(desktop, target_os = "android"))]
 use std::io;
-#[cfg(not(target_os = "ios"))]
+#[cfg(any(desktop, target_os = "android"))]
 use std::path::Path;
 use std::path::PathBuf;
 
