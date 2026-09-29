@@ -3,7 +3,7 @@
 import { isTopLevelDrawerOpen, subscribeDrawerState } from '../../../../scripts/drawers.js';
 
 import { PanelRuntimeKind } from '../../services/panel-runtime/panel-runtime-kinds.js';
-import { syncWorldInfoListOptions } from '../st/world-info.js';
+import { runPanelRestoreHooks } from '../../services/panel-runtime/panel-restore-hooks.js';
 
 /**
  * @typedef {import('../../services/embedded-runtime/embedded-runtime-manager.js').createEmbeddedRuntimeManager} createEmbeddedRuntimeManager
@@ -241,6 +241,7 @@ function registerDrawerParking(manager, { panelId, parkedSelector, pinnedSelecto
         if (afterHydrate) {
             afterHydrate(reason);
         }
+        runPanelRestoreHooks(panelId);
     };
 
     /** @param {string} reason */
@@ -311,16 +312,7 @@ export function installTopSettingsPanelParking({ manager }) {
             afterHydrate: () => syncLeftNavMainApiUi(),
         }),
         registerDrawerParking(manager, { panelId: 'AdvancedFormatting', parkedSelector: '.flex-container.spaceEvenly' }),
-        registerDrawerParking(manager, {
-            panelId: 'WorldInfo',
-            parkedSelector: '#wi-holder',
-            // updateWorldInfoList() cannot reach the World Info selects while they are parked.
-            afterHydrate: () => {
-                syncWorldInfoListOptions().catch((error) => {
-                    console.error('PanelParking(WorldInfo): failed to sync World Info lists:', error);
-                });
-            },
-        }),
+        registerDrawerParking(manager, { panelId: 'WorldInfo', parkedSelector: '#wi-holder' }),
         registerDrawerParking(manager, { panelId: 'user-settings-block', parkedSelector: '#user-settings-block-content' }),
         registerDrawerParking(manager, { panelId: 'Backgrounds', parkedSelector: '#bg_tabs' }),
     ];
