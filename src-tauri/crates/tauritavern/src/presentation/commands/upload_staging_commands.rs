@@ -88,7 +88,8 @@ fn chunk_size_for_kind(kind: &str) -> u64 {
 
 fn staging_root(app: &AppHandle, kind: &str) -> Result<PathBuf, CommandError> {
     let path_resolver = app.path();
-    let base = crate::infrastructure::paths::resolve_app_cache_dir(app)
+    let base = path_resolver
+        .app_cache_dir()
         .or_else(|_| path_resolver.temp_dir())
         .map_err(|error| {
             CommandError::InternalServerError(format!(

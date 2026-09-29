@@ -47,6 +47,8 @@ jobs:
           export PATH="$HARMONY_TOOLS_DIR/command-line-tools/tool/node/bin:$HARMONY_TOOLS_DIR/command-line-tools/bin:$PATH"
           node scripts/tauri-app.mjs ohos init --ci --skip-targets-install
           python3 scripts/ohos/configure-hap.py
+          ohos_plugins_dir="$(cat src-tauri/crates/tauritavern/gen/ohos-plugins-source)"
+          python3 "$ohos_plugins_dir/shared/ohos/install.py" src-tauri/crates/tauritavern
           node scripts/tauri-app.mjs ohos build --ci --target aarch64 --ignore-version-mismatches -- --lib
       - uses: actions/upload-artifact@v7.0.1
         with:

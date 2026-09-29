@@ -22,7 +22,6 @@ pub(super) fn install<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::B
     // Keep the remaining cross-platform plugins together and cfg-gated plugins local to this file.
     // Moving desktop/mobile plugins into setup would make capability availability
     // depend on runtime initialization order instead of Builder construction.
-    #[cfg(not(target_env = "ohos"))]
     let builder = builder
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
@@ -39,7 +38,7 @@ pub(super) fn install<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::B
     #[cfg(all(feature = "devtools-pilot", desktop))]
     let builder = builder.plugin(tauri_plugin_pilot::init());
 
-    #[cfg(any(target_os = "android", target_os = "ios"))]
+    #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
 
     #[cfg(any(dev, debug_assertions))]
