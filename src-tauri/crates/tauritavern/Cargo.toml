@@ -19,6 +19,11 @@ tauri-build = { version = "2.6.3", features = [] }
 serde_json = { workspace = true }
 
 [dependencies]
+tauri-plugin-opener = "2.5.5"
+tauri-plugin-fs = "2.5.2"
+tauri-plugin-notification = "2.4.0"
+tauri-plugin-dialog = "2.7.3"
+tauri-plugin-clipboard-manager = "2.3.3"
 tauri = { version = "2.11.6", features = ["protocol-asset"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -78,7 +83,7 @@ tauri-plugin-window-state = "2.4.1"
 tauri = { version = "2.11.6", features = ["tray-icon"] }
 tauri-winrt-notification = "0.7.3"
 
-[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+[target.'cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))'.dependencies]
 tauri-plugin-barcode-scanner = "2.4.6"
 
 [target.'cfg(target_os = "ios")'.dependencies]
@@ -101,10 +106,3 @@ default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 devtools-pilot = ["dep:tauri-plugin-pilot"]
 portable = []
-
-[target.'cfg(not(target_env = "ohos"))'.dependencies]
-tauri-plugin-opener = "2.5.5"
-tauri-plugin-fs = "2.5.2"
-tauri-plugin-notification = "2.4.0"
-tauri-plugin-dialog = "2.7.3"
-tauri-plugin-clipboard-manager = "2.3.3"

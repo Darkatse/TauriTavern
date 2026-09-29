@@ -28,20 +28,7 @@ pub(crate) fn run() {
     // Builder order is part of the host contract: install native capabilities,
     // run setup to publish managed state and create the window, then expose the
     // fixed command registry.
-    let builder = tauri::Builder::default();
-    #[cfg(target_env = "ohos")]
-    let builder = {
-        // The experimental runtime takes APP during build; capture filesDir first.
-        let ability = tauri::ohos::APP.lock().expect("OHOS Ability lock poisoned");
-        let root = ability
-            .as_ref()
-            .and_then(|app| app.base_path())
-            .map(std::path::PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .expect("OHOS did not provide an absolute private files directory");
-        builder.manage(crate::infrastructure::paths::OhosDataDirectory(root))
-    };
-    plugins::install(builder)
+    plugins::install(tauri::Builder::default())
         .setup(setup::setup)
         .invoke_handler(invoke_handler())
         .on_page_load(|webview, payload| {

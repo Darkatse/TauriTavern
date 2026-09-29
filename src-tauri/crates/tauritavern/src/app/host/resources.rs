@@ -11,7 +11,6 @@ use crate::app::StartupProfile;
 use crate::infrastructure::bundled_resources::BundledResourceStore;
 use crate::infrastructure::paths::RuntimePaths;
 use tauri::Manager;
-#[cfg(not(target_env = "ohos"))]
 use tauri_plugin_fs::FsExt;
 use tt_adapter_media::{FilesystemHostResourceStore, FilesystemUserMediaStore};
 use tt_application::services::bundled_template_service::BundledTemplateService;
@@ -46,7 +45,6 @@ pub(super) fn install_runtime_resources(
         );
     }
 
-    #[cfg(not(target_env = "ohos"))]
     app_handle
         .fs_scope()
         .allow_directory(&runtime_paths.data_root, true)
