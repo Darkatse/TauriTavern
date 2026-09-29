@@ -30,6 +30,7 @@ text = re.sub(r'^tauri-plugin-.*\n', '', text, flags=re.MULTILINE)
 text = text.replace('devtools-pilot = ["dep:tauri-plugin-pilot"]', 'devtools-pilot = []')
 for name in ("tauri", "tauri-build"):
     text = re.sub(rf'^{name} = \{{ version = "[^"]+"', f'{name} = {{ path = "{patches[name]}"', text, flags=re.MULTILINE)
+text += '\n[target.\'cfg(target_env = "ohos")\'.dependencies]\nnapi-ohos = "=1.2.0"\nnapi-derive-ohos = "=1.2.0"\n'
 manifest.write_text(text)
 manifest = root / "src-tauri/Cargo.toml"
 with manifest.open("a") as output:

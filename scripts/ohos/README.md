@@ -11,24 +11,24 @@ Normal builds continue to use the existing stable Tauri dependencies.
 
 On Linux, install Rust with `aarch64-unknown-linux-ohos`, Node 24+, pnpm, Python 3.11+
 with `json5`, and Huawei command-line tools / SDK 6.0 (API 20). Set `DEVECO_SDK_HOME`
-to the SDK `default` directory and put the tools' `bin` on `PATH`.
+to the SDK directory and put the tools' `bin` on `PATH`.
 Keep the experimental source directory **outside** this workspace.
 
 ```sh
 export OHOS_TAURI_SOURCES=/absolute/path/to/ohos-tauri
-export OHOS_HOME="$DEVECO_SDK_HOME/openharmony"
+export OHOS_HOME="$DEVECO_SDK_HOME/default/openharmony"
 export TARGET_TRIPLE=aarch64-unknown-linux-ohos
 python3 scripts/ohos/prepare-toolchain.py
-cargo install --locked --path "$OHOS_TAURI_SOURCES/tauri/crates/tauri-cli"
+cargo install --path "$OHOS_TAURI_SOURCES/tauri/crates/tauri-cli"
 cargo install --locked ohrs --version 1.5.0
 pnpm install --frozen-lockfile
 python3 scripts/ohos/prepare.py
 source scripts/ohos/env.sh
 pnpm run web:build
 export TAURITAVERN_SKIP_WEB_BUILD=1
-pnpm ohos init --ci --skip-targets-install
+node scripts/tauri-app.mjs ohos init --ci --skip-targets-install
 python3 scripts/ohos/configure-hap.py
-pnpm ohos build --ci --target aarch64 --ignore-version-mismatches -- --lib
+node scripts/tauri-app.mjs ohos build --ci --target aarch64 --ignore-version-mismatches -- --lib
 ```
 
 `prepare-toolchain.py` fetches the revisions in `tauri-pins.json` into a new directory,
