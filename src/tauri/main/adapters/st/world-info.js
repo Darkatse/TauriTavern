@@ -33,3 +33,20 @@ export async function openWorldInfoEntry(ref) {
 
     return openWorldInfoEntry(ref.world, ref.uid);
 }
+
+/**
+ * Brings the World Info selects up to date after Panel Runtime reattached them.
+ */
+export async function syncWorldInfoListOptions() {
+    const { syncWorldInfoListOptions } = await import('../../../../scripts/world-info.js');
+    if (typeof syncWorldInfoListOptions !== 'function') {
+        throw new Error('world-info syncWorldInfoListOptions() is unavailable');
+    }
+
+    // The drawer may have closed again while the import settled; its next hydrate syncs instead.
+    if (!document.getElementById('world_info')) {
+        return;
+    }
+
+    syncWorldInfoListOptions();
+}

@@ -2290,18 +2290,60 @@ export async function updateWorldInfoList() {
         const data = await result.json();
         const editorSelected = String($('#world_editor_select').find(':selected').text());
         world_names = data.world_names?.length ? data.world_names : [];
-        $('#world_info').find('option[value!=""]').remove();
-        $('#world_editor_select').find('option[value!=""]').remove();
-
-        world_names.forEach((item, i) => {
-            const globalListOption = new Option(item, i.toString());
-            globalListOption.selected = selected_world_info.includes(item);
-            const editorListOption = new Option(item, i.toString());
-            editorListOption.selected = editorSelected === item;
-            $('#world_info').append(globalListOption);
-            $('#world_editor_select').append(editorListOption);
-        });
+        renderWorldInfoListOptions(editorSelected);
     }
+}
+
+/**
+ * Rebuilds the global and editor World Info selects from `world_names`.
+ * @param {string} editorSelected Name of the World Info to keep selected in the editor select
+ */
+function renderWorldInfoListOptions(editorSelected) {
+    $('#world_info').find('option[value!=""]').remove();
+    $('#world_editor_select').find('option[value!=""]').remove();
+
+    world_names.forEach((item, i) => {
+        const globalListOption = new Option(item, i.toString());
+        globalListOption.selected = selected_world_info.includes(item);
+        const editorListOption = new Option(item, i.toString());
+        editorListOption.selected = editorSelected === item;
+        $('#world_info').append(globalListOption);
+        $('#world_editor_select').append(editorListOption);
+    });
+}
+
+/**
+ * @param {HTMLSelectElement} select
+ * @param {(name: string) => boolean} [isSelected] Expected selection state, when the select mirrors one
+ */
+function isWorldInfoSelectCurrent(select, isSelected) {
+    const options = Array.from(select.options).filter(option => option.value !== '');
+    return options.length === world_names.length && options.every(option =>
+        world_names[Number(option.value)] === option.textContent
+        && (!isSelected || option.selected === isSelected(option.textContent)));
+}
+
+/**
+ * Re-renders the World Info selects when they no longer mirror `world_names`.
+ * TauriTavern Panel Runtime detaches them while the drawer is closed, so
+ * updateWorldInfoList() cannot reach them during that time.
+ */
+export function syncWorldInfoListOptions() {
+    const globalSelect = document.getElementById('world_info');
+    const editorSelect = document.getElementById('world_editor_select');
+    if (!(globalSelect instanceof HTMLSelectElement) || !(editorSelect instanceof HTMLSelectElement)) {
+        throw new Error('World Info selects must be attached before their options can be synced');
+    }
+
+    if (isWorldInfoSelectCurrent(globalSelect, name => selected_world_info.includes(name))
+        && isWorldInfoSelectCurrent(editorSelect)) {
+        return;
+    }
+
+    renderWorldInfoListOptions(String($(editorSelect).find(':selected').text()));
+    // Refresh select2 renderings without running the selects' own change handlers.
+    $(globalSelect).trigger('change.select2');
+    $(editorSelect).trigger('change.select2');
 }
 
 async function hideWorldEditor() {
