@@ -1065,4 +1065,3 @@ mod tests {
         std::os::windows::fs::symlink_file(target, link)
     }
 }
-
