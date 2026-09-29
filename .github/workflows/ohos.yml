@@ -1,0 +1,55 @@
+name: Experimental OpenHarmony HAP
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/ohos.yml
+      - scripts/ohos/**
+      - scripts/tauri-app.mjs
+      - src-tauri/**
+      - src/**
+      - package.json
+      - pnpm-lock.yaml
+permissions:
+  contents: read
+concurrency:
+  group: ohos-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  hap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/leenhawk/tauri-harmony@sha256:01cfb6a9fa7fa35f1cf756fb89d4333d272820b66fe8dcf032375911eebddfdd
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET_TRIPLE: aarch64-unknown-linux-ohos
+      CARGO_PROFILE_RELEASE_LTO: thin
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '8'
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: git config --global --add safe.directory "$PWD"
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/check-rust-crate-boundaries.mjs
+      - run: python3 scripts/ohos/prepare.py
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: src-tauri
+          shared-key: ohos-hap
+          cache-on-failure: true
+      - run: pnpm run web:build
+      - name: Build unsigned ARM64 HAP
+        run: |
+          source scripts/ohos/env.sh
+          export TAURITAVERN_SKIP_WEB_BUILD=1
+          export PATH="$HARMONY_TOOLS_DIR/command-line-tools/tool/node/bin:$HARMONY_TOOLS_DIR/command-line-tools/bin:$PATH"
+          node scripts/tauri-app.mjs ohos init --ci --skip-targets-install
+          python3 scripts/ohos/configure-hap.py
+          node scripts/tauri-app.mjs ohos build --ci --target aarch64 --ignore-version-mismatches -- --lib
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: tauritavern-ohos-arm64-unsigned
+          path: src-tauri/crates/tauritavern/gen/ohos/entry/build/default/outputs/default/*.hap
+          if-no-files-found: error

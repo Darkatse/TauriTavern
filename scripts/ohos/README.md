@@ -9,34 +9,28 @@ Normal builds continue to use the existing stable Tauri dependencies.
 
 ## Build
 
-On Linux, install Rust with `aarch64-unknown-linux-ohos`, Node 24+, pnpm, Python 3.11+
-with `json5`, and Huawei command-line tools / SDK 6.0 (API 20). Set `DEVECO_SDK_HOME`
-to the SDK directory and put the tools' `bin` on `PATH`.
-Keep the experimental source directory **outside** this workspace.
+The [OpenHarmony workflow](../../.github/workflows/ohos.yml) runs in this repository
+using the public [tauri-harmony toolchain](https://github.com/LeenHawk/tauri-harmony),
+pinned by digest. It needs no registry login or application signing secrets.
+SDK and experimental Tauri installation are maintained in that independent repository.
+`prepare.py` checks the source commits against `tauri-pins.json` before applying the
+disposable dependency overlay.
+
+To use the same image manually, run these commands from a disposable checkout mounted
+inside the container (see the image repository for Docker usage):
 
 ```sh
-export OHOS_TAURI_SOURCES=/absolute/path/to/ohos-tauri
-export OHOS_HOME="$DEVECO_SDK_HOME/default/openharmony"
-export TARGET_TRIPLE=aarch64-unknown-linux-ohos
-python3 scripts/ohos/prepare-toolchain.py
-cargo install --path "$OHOS_TAURI_SOURCES/tauri/crates/tauri-cli"
-cargo install --locked ohrs --version 1.5.0
 pnpm install --frozen-lockfile
 python3 scripts/ohos/prepare.py
+export TARGET_TRIPLE=aarch64-unknown-linux-ohos
 source scripts/ohos/env.sh
 pnpm run web:build
 export TAURITAVERN_SKIP_WEB_BUILD=1
+export PATH="$HARMONY_TOOLS_DIR/command-line-tools/tool/node/bin:$HARMONY_TOOLS_DIR/command-line-tools/bin:$PATH"
 node scripts/tauri-app.mjs ohos init --ci --skip-targets-install
 python3 scripts/ohos/configure-hap.py
 node scripts/tauri-app.mjs ohos build --ci --target aarch64 --ignore-version-mismatches -- --lib
 ```
-
-`prepare-toolchain.py` fetches the revisions in `tauri-pins.json` into a new directory,
-including the Ability revision used by upstream. It also fixes the experimental CLI's
-SDK-directory lookup for the vendor layout. These sources and installed tools can be
-cached between builds; `prepare.py` must run once in each fresh application checkout.
-Hvigor uses the SDK's bundled Node executable; keep that directory on `PATH` during
-`init` / `build` if required by your SDK. SDK resource tools also require `libGL.so.1`.
 
 `configure-hap.py` sets the bundle identity, API level, ARM64 architecture and release
 Rust callback, and disables signing and cloud backup in the generated project.
