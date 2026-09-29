@@ -222,23 +222,23 @@ pub fn request_notification_permission(
     }
     #[cfg(not(target_env = "ohos"))]
     {
-    log_command("request_notification_permission");
+        log_command("request_notification_permission");
 
-    if !matches!(
-        get_notification_permission_state_inner(&app)?,
-        NotificationPermissionStateDto::Prompt
-    ) {
-        return get_notification_permission_state_inner(&app);
-    }
+        if !matches!(
+            get_notification_permission_state_inner(&app)?,
+            NotificationPermissionStateDto::Prompt
+        ) {
+            return get_notification_permission_state_inner(&app);
+        }
 
-    let requested_state = app.notification().request_permission().map_err(|error| {
-        CommandError::InternalServerError(format!(
-            "Failed to request notification permission: {}",
-            error
-        ))
-    })?;
+        let requested_state = app.notification().request_permission().map_err(|error| {
+            CommandError::InternalServerError(format!(
+                "Failed to request notification permission: {}",
+                error
+            ))
+        })?;
 
-    Ok(normalize_notification_permission_state(requested_state))
+        Ok(normalize_notification_permission_state(requested_state))
     }
 }
 
@@ -254,49 +254,49 @@ pub fn show_system_notification(
     }
     #[cfg(not(target_env = "ohos"))]
     {
-    log_command("show_system_notification");
+        log_command("show_system_notification");
 
-    let title = dto.title.trim();
-    let body = dto.body.trim();
+        let title = dto.title.trim();
+        let body = dto.body.trim();
 
-    if title.is_empty() && body.is_empty() {
-        return Err(CommandError::BadRequest(
-            "Notification title and body cannot both be empty".to_string(),
-        ));
-    }
+        if title.is_empty() && body.is_empty() {
+            return Err(CommandError::BadRequest(
+                "Notification title and body cannot both be empty".to_string(),
+            ));
+        }
 
-    if !matches!(
-        get_notification_permission_state_inner(&app)?,
-        NotificationPermissionStateDto::Granted
-    ) {
-        return Err(CommandError::Unauthorized(
-            "Notification permission is not granted".to_string(),
-        ));
-    }
+        if !matches!(
+            get_notification_permission_state_inner(&app)?,
+            NotificationPermissionStateDto::Granted
+        ) {
+            return Err(CommandError::Unauthorized(
+                "Notification permission is not granted".to_string(),
+            ));
+        }
 
-    #[cfg(target_os = "windows")]
-    crate::presentation::windows_notifications::show_system_notification(&app, title, body)
-        .map_err(|error| {
-            CommandError::InternalServerError(format!(
-                "Failed to show system notification: {}",
-                error
-            ))
-        })?;
+        #[cfg(target_os = "windows")]
+        crate::presentation::windows_notifications::show_system_notification(&app, title, body)
+            .map_err(|error| {
+                CommandError::InternalServerError(format!(
+                    "Failed to show system notification: {}",
+                    error
+                ))
+            })?;
 
-    #[cfg(not(target_os = "windows"))]
-    app.notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .show()
-        .map_err(|error| {
-            CommandError::InternalServerError(format!(
-                "Failed to show system notification: {}",
-                error
-            ))
-        })?;
+        #[cfg(not(target_os = "windows"))]
+        app.notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show()
+            .map_err(|error| {
+                CommandError::InternalServerError(format!(
+                    "Failed to show system notification: {}",
+                    error
+                ))
+            })?;
 
-    Ok(())
+        Ok(())
     }
 }
 

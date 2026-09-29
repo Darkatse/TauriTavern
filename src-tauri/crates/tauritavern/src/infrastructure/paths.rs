@@ -302,6 +302,18 @@ pub fn resolve_app_data_dir(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn E
     }
 }
 
+/// OHOS caches use the same private sandbox as application data.
+pub fn resolve_app_cache_dir(app_handle: &AppHandle) -> tauri::Result<PathBuf> {
+    #[cfg(target_env = "ohos")]
+    {
+        Ok(app_handle.state::<OhosDataDirectory>().0.join("cache"))
+    }
+    #[cfg(not(target_env = "ohos"))]
+    {
+        app_handle.path().app_cache_dir()
+    }
+}
+
 #[cfg(target_os = "android")]
 fn resolve_android_app_data_dir(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn Error>> {
     let reported_app_data_dir = app_handle.path().app_data_dir().ok();
