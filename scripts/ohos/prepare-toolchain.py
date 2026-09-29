@@ -39,4 +39,3 @@ if count != 1:
     raise ValueError("Upstream OpenHarmony SDK layout helper changed")
 env_file.write_text(text)
 marker.write_text(json.dumps(pins, indent=2) + "\n")
-
