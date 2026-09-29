@@ -291,7 +291,12 @@ pub fn resolve_app_data_dir(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn E
         resolve_android_app_data_dir(app_handle)
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_env = "ohos")]
+    {
+        Ok(app_handle.state::<OhosDataDirectory>().0.clone())
+    }
+
+    #[cfg(not(any(target_os = "android", target_env = "ohos")))]
     {
         Ok(app_handle.path().app_data_dir()?)
     }
@@ -1065,3 +1070,7 @@ mod tests {
         std::os::windows::fs::symlink_file(target, link)
     }
 }
+
+/// Captured before the OHOS runtime consumes the native Ability.
+#[cfg(target_env = "ohos")]
+pub(crate) struct OhosDataDirectory(pub PathBuf);

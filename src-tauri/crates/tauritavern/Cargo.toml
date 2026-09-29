@@ -20,11 +20,6 @@ serde_json = { workspace = true }
 
 [dependencies]
 tauri = { version = "2.11.6", features = ["protocol-asset"] }
-tauri-plugin-opener = "2.5.5"
-tauri-plugin-fs = "2.5.2"
-tauri-plugin-notification = "2.4.0"
-tauri-plugin-dialog = "2.7.3"
-tauri-plugin-clipboard-manager = "2.3.3"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -106,3 +101,14 @@ default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 devtools-pilot = ["dep:tauri-plugin-pilot"]
 portable = []
+
+[target.'cfg(not(target_env = "ohos"))'.dependencies]
+tauri-plugin-opener = "2.5.5"
+tauri-plugin-fs = "2.5.2"
+tauri-plugin-notification = "2.4.0"
+tauri-plugin-dialog = "2.7.3"
+tauri-plugin-clipboard-manager = "2.3.3"
+
+[target.'cfg(target_env = "ohos")'.dependencies]
+napi-ohos = "=1.2.0"
+napi-derive-ohos = "=1.2.0"

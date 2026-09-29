@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{Emitter, Window};
+#[cfg(not(target_env = "ohos"))]
 use tauri_plugin_notification::{NotificationExt, PermissionState};
 
 use crate::presentation::commands::helpers::{log_command, map_command_error};
@@ -174,6 +175,7 @@ pub enum NotificationPermissionStateDto {
     Prompt,
 }
 
+#[cfg(not(target_env = "ohos"))]
 fn normalize_notification_permission_state(
     state: PermissionState,
 ) -> NotificationPermissionStateDto {
@@ -186,6 +188,7 @@ fn normalize_notification_permission_state(
     }
 }
 
+#[cfg(not(target_env = "ohos"))]
 fn get_notification_permission_state_inner(
     app: &tauri::AppHandle,
 ) -> Result<NotificationPermissionStateDto, CommandError> {
@@ -212,6 +215,13 @@ pub fn get_notification_permission_state(
 pub fn request_notification_permission(
     app: tauri::AppHandle,
 ) -> Result<NotificationPermissionStateDto, CommandError> {
+    #[cfg(target_env = "ohos")]
+    {
+        let _ = app;
+        Err(CommandError::BadRequest("Notifications are unavailable on OpenHarmony".to_string()))
+    }
+    #[cfg(not(target_env = "ohos"))]
+    {
     log_command("request_notification_permission");
 
     if !matches!(
@@ -229,6 +239,7 @@ pub fn request_notification_permission(
     })?;
 
     Ok(normalize_notification_permission_state(requested_state))
+    }
 }
 
 #[tauri::command]
@@ -236,6 +247,13 @@ pub fn show_system_notification(
     app: tauri::AppHandle,
     dto: ShowSystemNotificationDto,
 ) -> Result<(), CommandError> {
+    #[cfg(target_env = "ohos")]
+    {
+        let _ = (app, dto);
+        Err(CommandError::BadRequest("Notifications are unavailable on OpenHarmony".to_string()))
+    }
+    #[cfg(not(target_env = "ohos"))]
+    {
     log_command("show_system_notification");
 
     let title = dto.title.trim();
@@ -279,6 +297,7 @@ pub fn show_system_notification(
         })?;
 
     Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -327,4 +346,11 @@ mod tests {
 
         assert!(matches!(result, Err(CommandError::BadRequest(_))));
     }
+}
+
+#[cfg(target_env = "ohos")]
+fn get_notification_permission_state_inner(
+    _app: &tauri::AppHandle,
+) -> Result<NotificationPermissionStateDto, CommandError> {
+    Err(CommandError::BadRequest("Notifications are unavailable on OpenHarmony".to_string()))
 }

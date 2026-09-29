@@ -1,6 +1,9 @@
 use tauri::AppHandle;
+#[cfg(not(target_env = "ohos"))]
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::Mutex;
+#[cfg(not(target_env = "ohos"))]
+use tokio::sync::oneshot;
 
 use crate::presentation::errors::CommandError;
 use tt_application::services::user_endpoint_access_service::UserEndpointAccessService;
@@ -35,6 +38,7 @@ pub(super) async fn ensure_user_endpoint_access(
     Ok(())
 }
 
+#[cfg(not(target_env = "ohos"))]
 async fn show_authorization_dialog(
     app_handle: &AppHandle,
     endpoint: &str,
@@ -72,6 +76,7 @@ async fn show_authorization_dialog(
     })
 }
 
+#[cfg(not(target_env = "ohos"))]
 struct DialogCopy {
     title: &'static str,
     endpoint_label: &'static str,
@@ -81,6 +86,7 @@ struct DialogCopy {
     cancel: &'static str,
 }
 
+#[cfg(not(target_env = "ohos"))]
 fn dialog_copy(locale: &str) -> DialogCopy {
     let locale = locale.trim().to_ascii_lowercase();
     if locale.starts_with("zh-cn") || locale.starts_with("zh-hans") {
@@ -112,4 +118,15 @@ fn dialog_copy(locale: &str) -> DialogCopy {
         confirm: "Trust & Connect",
         cancel: "Cancel",
     }
+}
+
+#[cfg(target_env = "ohos")]
+async fn show_authorization_dialog(
+    _app_handle: &AppHandle,
+    _endpoint: &str,
+    _locale: &str,
+) -> Result<bool, CommandError> {
+    Err(CommandError::Unauthorized(
+        "Custom endpoint authorization requires a native dialog, unavailable on OpenHarmony".to_string(),
+    ))
 }
