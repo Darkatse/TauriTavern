@@ -185,7 +185,7 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
   - 左栏 pinned 锚点分两类，判据不同：
     - `LEFT_NAV_REQUIRED_ANCHORS`（所有档位，正确性）：面板外代码读取的节点保持在线，包括 `onModelChange` 读取边界值的 `#range_block_openai`，以及助手读取支持来源的 `#openai_reasoning_effort_block`。
     - `LEFT_NAV_COMPAT_ANCHORS`（仅 `compat`，兼容让步）：`#openai_api-presets`、`#completion_prompt_manager`，让第三方脚本在抽屉关闭时仍能选中。
-  - 世界书抽屉 park `#wi-holder` 时，`updateWorldInfoList()` 只能更新 `world_names`，改不到 `#world_info` / `#world_editor_select`（例如导入角色卡时后端自动创建并绑定世界书）。抽屉 hydrate 后调用 `world-info.js` 的 `syncWorldInfoListOptions()`，按 `world_names` 与 `selected_world_info` 重建两个下拉框；已同步时不做任何改动。
+  - 世界书抽屉 park `#wi-holder` 时，`updateWorldInfoList()` 只能更新 `world_names`，改不到 `#world_info` / `#world_editor_select`（例如导入角色卡时后端自动创建并绑定世界书）。抽屉 hydrate 后调用 `world-info.js` 的 `syncWorldInfoListOptions()`，按 `world_names` 与 `selected_world_info` 重建两个下拉框；已同步时不做任何改动。`/world` 斜杠命令按 `world_names` 查找世界书，不依赖停放中的选项。
 
 ---
 

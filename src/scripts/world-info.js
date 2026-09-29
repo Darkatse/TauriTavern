@@ -6175,9 +6175,10 @@ export function onWorldInfoChange(args, text) {
             const slashInputSplitText = text.trim().toLowerCase().split(',');
 
             slashInputSplitText.forEach((worldName) => {
-                const wiElement = getWIElement(worldName);
-                if (wiElement.length > 0) {
-                    const name = wiElement.text();
+                // Resolve from world_names: Panel Runtime may have parked the #world_info options.
+                const name = world_names.find(item => item.toLowerCase() === worldName.toLowerCase());
+                if (name) {
+                    const wiElement = getWIElement(name);
                     switch (args.state) {
                         case 'off': {
                             if (selected_world_info.includes(name)) {
