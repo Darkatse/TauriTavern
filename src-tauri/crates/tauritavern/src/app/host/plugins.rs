@@ -36,10 +36,7 @@ pub(super) fn install<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::B
         .plugin(crate::platform::lan_discovery::plugin())
         .plugin(crate::platform::speech_synthesis::plugin());
 
-    #[cfg(all(
-        feature = "devtools-pilot",
-        desktop
-    ))]
+    #[cfg(all(feature = "devtools-pilot", desktop))]
     let builder = builder.plugin(tauri_plugin_pilot::init());
 
     #[cfg(any(target_os = "android", target_os = "ios"))]

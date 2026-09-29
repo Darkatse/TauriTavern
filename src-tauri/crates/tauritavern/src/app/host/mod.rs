@@ -32,7 +32,9 @@ pub(crate) fn run() {
     let builder = {
         // The experimental runtime takes APP during build; capture filesDir first.
         let ability = tauri::ohos::APP.lock().expect("OHOS Ability lock poisoned");
-        let root = ability.as_ref().and_then(|app| app.base_path())
+        let root = ability
+            .as_ref()
+            .and_then(|app| app.base_path())
             .map(std::path::PathBuf::from)
             .filter(|path| path.is_absolute())
             .expect("OHOS did not provide an absolute private files directory");

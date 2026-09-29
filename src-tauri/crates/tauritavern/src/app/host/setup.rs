@@ -37,7 +37,7 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
     // 3. Bring up observability before emitting user-visible startup diagnostics.
     let observability = super::observability::install(app, &app_handle, &runtime_paths)?;
 
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(desktop)]
     super::observability::emit_pending_runtime_migration_error(&runtime_paths);
 
     tracing::debug!("Starting TauriTavern application");

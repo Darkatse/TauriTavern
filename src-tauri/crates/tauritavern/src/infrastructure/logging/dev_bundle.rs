@@ -202,7 +202,7 @@ fn resolve_bundle_output_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, D
         return Ok(download_dir);
     }
 
-    let cache_dir = app_handle.path().app_cache_dir().map_err(|error| {
+    let cache_dir = crate::infrastructure::paths::resolve_app_cache_dir(app_handle).map_err(|error| {
         DomainError::InternalError(format!(
             "Failed to resolve app cache directory for export: {}",
             error

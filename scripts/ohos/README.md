@@ -41,7 +41,7 @@ An unsigned HAP needs your own signing certificate and device profile before ins
 ## Current boundaries
 
 - Reuses the existing Rust application, frontend and embedded default resources.
-- Data and logs live under the Ability's private `filesDir`, captured before Tauri
+- Data, caches and logs live under the Ability's private `filesDir`, captured before Tauri
   consumes the Ability during runtime creation. Desktop portable/migration controls
   and desktop window/tray plugins are excluded.
 - Upstream clipboard, notification, opener, file-dialog/filesystem and barcode plugins
