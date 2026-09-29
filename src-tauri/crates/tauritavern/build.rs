@@ -32,6 +32,7 @@ fn main() {
 
 fn needs_embedded_resources() -> bool {
     std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android")
+        || std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("ohos")
         || std::env::var_os("CARGO_FEATURE_PORTABLE").is_some()
 }
 

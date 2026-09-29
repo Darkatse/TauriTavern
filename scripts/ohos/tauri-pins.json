@@ -1,0 +1,7 @@
+{
+  "tauri": {"repository": "tauri-apps/tauri", "revision": "e3bf6eb168bacc7bb5c8c32d923bb8beaf77c92b"},
+  "wry": {"repository": "tauri-apps/wry", "revision": "6aaf4b84b6e420015c6a14f264f1c7399f150392"},
+  "tao": {"repository": "tauri-apps/tao", "revision": "813572fbe582005e2fb513458bc212842745ceab"},
+  "cargo-mobile2": {"repository": "tauri-apps/cargo-mobile2", "revision": "5060cae66c5b7cfdcf8be1eeb012bee401c53778"},
+  "ability": {"repository": "harmony-contrib/openharmony-ability", "revision": "295a276a699ba2352addc69b8cacb6acd3be6ab1"}
+}

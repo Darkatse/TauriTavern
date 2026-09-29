@@ -15,7 +15,7 @@ import { EmbeddedRuntimeKind } from './runtime-kinds.js';
 
 function isMobileUserAgent() {
     const userAgent = typeof navigator?.userAgent === 'string' ? navigator.userAgent : '';
-    if (/android|iphone|ipad|ipod/i.test(userAgent)) {
+    if (/android|iphone|ipad|ipod|harmonyos|openharmony/i.test(userAgent)) {
         return true;
     }
 

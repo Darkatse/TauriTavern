@@ -118,9 +118,9 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::settings_commands::get_tauritavern_settings,
         super::settings_commands::get_chat_backup_storage_stats,
         super::settings_commands::update_tauritavern_settings,
-        #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+        #[cfg(desktop)]
         super::runtime_paths_commands::get_runtime_paths,
-        #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+        #[cfg(desktop)]
         super::runtime_paths_commands::set_data_root,
         super::settings_commands::save_user_settings,
         super::settings_commands::save_user_settings_patch,

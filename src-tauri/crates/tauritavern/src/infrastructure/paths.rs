@@ -5,22 +5,22 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 const RUNTIME_MODE_ENV: &str = "TAURITAVERN_RUNTIME_MODE";
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 const PORTABLE_MARKER_FILE: &str = "portable.flag";
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 const RUNTIME_CONFIG_FILE: &str = "tauritavern-runtime.json";
 const DATA_ARCHIVE_ROOT_DIR: &str = ".data-archive";
 const DATA_ARCHIVE_IMPORTS_DIR: &str = "imports";
 const DATA_ARCHIVE_EXPORTS_DIR: &str = "exports";
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 const DEFAULT_USER_DIR_NAME: &str = "default-user";
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 const EFFECTIVELY_EMPTY_DIRECTORY_ENTRIES: &[&str] = &[
     ".ds_store",
     ".localized",
@@ -32,7 +32,7 @@ const EFFECTIVELY_EMPTY_DIRECTORY_ENTRIES: &[&str] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeMode {
     Standard,
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(desktop)]
     Portable,
 }
 
@@ -77,12 +77,12 @@ pub fn resolve_runtime_paths(app_handle: &AppHandle) -> Result<RuntimePaths, Box
     Ok(paths)
 }
 
-#[cfg(any(target_os = "android", target_os = "ios"))]
+#[cfg(mobile)]
 fn resolve_runtime_paths_inner(app_handle: &AppHandle) -> Result<RuntimePaths, Box<dyn Error>> {
     resolve_standard_runtime_paths(app_handle)
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn resolve_runtime_paths_inner(app_handle: &AppHandle) -> Result<RuntimePaths, Box<dyn Error>> {
     let mode = detect_desktop_runtime_mode();
     let paths = match mode {
@@ -93,7 +93,7 @@ fn resolve_runtime_paths_inner(app_handle: &AppHandle) -> Result<RuntimePaths, B
     apply_runtime_config(paths)
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn apply_runtime_config(mut paths: RuntimePaths) -> Result<RuntimePaths, Box<dyn Error>> {
     let Some(mut config) = load_runtime_config(&paths.app_root)? else {
         return Ok(paths);
@@ -109,7 +109,7 @@ fn apply_runtime_config(mut paths: RuntimePaths) -> Result<RuntimePaths, Box<dyn
     Ok(paths)
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn resolve_pending_data_root_migration(
     app_root: &Path,
     config: &mut TauriTavernRuntimeConfig,
@@ -177,7 +177,7 @@ fn resolve_pending_data_root_migration(
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn persist_runtime_config_best_effort(
     config_path: &Path,
     config: &TauriTavernRuntimeConfig,
@@ -194,7 +194,7 @@ fn ensure_startup_paths(paths: &RuntimePaths) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn detect_desktop_runtime_mode() -> RuntimeMode {
     if cfg!(feature = "portable") {
         tracing::info!("Portable mode forced by cargo feature 'portable'");
@@ -228,7 +228,7 @@ fn detect_desktop_runtime_mode() -> RuntimeMode {
     RuntimeMode::Standard
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn parse_runtime_mode_env() -> Option<RuntimeMode> {
     if let Ok(raw) = std::env::var(RUNTIME_MODE_ENV) {
         let normalized = raw.trim().to_ascii_lowercase();
@@ -262,7 +262,7 @@ fn parse_runtime_mode_env() -> Option<RuntimeMode> {
     None
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn resolve_portable_runtime_paths() -> Result<RuntimePaths, Box<dyn Error>> {
     let exe_dir = resolve_executable_directory()?;
     Ok(RuntimePaths::new(RuntimeMode::Portable, exe_dir))
@@ -273,7 +273,7 @@ fn resolve_standard_runtime_paths(app_handle: &AppHandle) -> Result<RuntimePaths
     Ok(RuntimePaths::new(RuntimeMode::Standard, app_root))
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn resolve_executable_directory() -> Result<PathBuf, Box<dyn Error>> {
     let executable_path = std::env::current_exe()?;
     let exe_dir = executable_path.parent().ok_or_else(|| {
@@ -291,7 +291,12 @@ pub fn resolve_app_data_dir(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn E
         resolve_android_app_data_dir(app_handle)
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(target_env = "ohos")]
+    {
+        Ok(app_handle.state::<OhosDataDirectory>().0.clone())
+    }
+
+    #[cfg(not(any(target_os = "android", target_env = "ohos")))]
     {
         Ok(app_handle.path().app_data_dir()?)
     }
@@ -385,7 +390,7 @@ fn normalize_android_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/").to_lowercase()
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn is_ignorable_effectively_empty_entry(entry: &std::fs::DirEntry) -> Result<bool, io::Error> {
     if !entry.file_type()?.is_file() {
         return Ok(false);
@@ -399,7 +404,7 @@ fn is_ignorable_effectively_empty_entry(entry: &std::fs::DirEntry) -> Result<boo
     Ok(EFFECTIVELY_EMPTY_DIRECTORY_ENTRIES.contains(&normalized.as_str()))
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn collect_ignorable_effectively_empty_entries(
     path: &Path,
 ) -> Result<Option<Vec<PathBuf>>, io::Error> {
@@ -418,12 +423,12 @@ fn collect_ignorable_effectively_empty_entries(
     Ok(Some(ignorable_entries))
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 pub(crate) fn is_effectively_empty_directory(path: &Path) -> Result<bool, io::Error> {
     Ok(collect_ignorable_effectively_empty_entries(path)?.is_some())
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn non_empty_directory_error(path: &Path) -> io::Error {
     io::Error::new(
         io::ErrorKind::AlreadyExists,
@@ -434,7 +439,7 @@ fn non_empty_directory_error(path: &Path) -> io::Error {
     )
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn prepare_effectively_empty_directory(path: &Path) -> Result<(), Box<dyn Error>> {
     std::fs::create_dir_all(path)?;
     if !path.is_dir() {
@@ -455,12 +460,12 @@ fn prepare_effectively_empty_directory(path: &Path) -> Result<(), Box<dyn Error>
     Ok(())
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn is_initialized_data_root(path: &Path) -> bool {
     path.join(DEFAULT_USER_DIR_NAME).is_dir()
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 pub(crate) async fn request_runtime_data_root_change(
     app_root: &Path,
     current_data_root: &Path,
@@ -534,7 +539,7 @@ pub(crate) async fn request_runtime_data_root_change(
         .await
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct TauriTavernRuntimeConfig {
@@ -547,27 +552,27 @@ pub struct TauriTavernRuntimeConfig {
     pub migration_error: Option<String>,
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct DataRootMigration {
     pub from: PathBuf,
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn runtime_config_version() -> u32 {
     TAURITAVERN_RUNTIME_CONFIG_VERSION
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 pub const TAURITAVERN_RUNTIME_CONFIG_VERSION: u32 = 1;
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 pub fn runtime_config_path(app_root: impl AsRef<std::path::Path>) -> PathBuf {
     app_root.as_ref().join(RUNTIME_CONFIG_FILE)
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 pub(crate) fn load_runtime_config(
     app_root: &std::path::Path,
 ) -> Result<Option<TauriTavernRuntimeConfig>, Box<dyn Error>> {
@@ -613,7 +618,7 @@ pub(crate) fn load_runtime_config(
     Ok(Some(config))
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn write_runtime_config_sync(
     path: &std::path::Path,
     config: &TauriTavernRuntimeConfig,
@@ -623,7 +628,7 @@ fn write_runtime_config_sync(
     Ok(())
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn migrate_data_root(from: &std::path::Path, to: &std::path::Path) -> Result<(), Box<dyn Error>> {
     if from == to {
         return Ok(());
@@ -681,7 +686,7 @@ fn migrate_data_root(from: &std::path::Path, to: &std::path::Path) -> Result<(),
     Ok(())
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(desktop)]
 fn copy_dir_recursive(from: &std::path::Path, to: &std::path::Path) -> Result<(), Box<dyn Error>> {
     std::fs::create_dir_all(to)?;
 
@@ -719,7 +724,7 @@ fn copy_dir_recursive(from: &std::path::Path, to: &std::path::Path) -> Result<()
     Ok(())
 }
 
-#[cfg(all(not(any(target_os = "android", target_os = "ios")), unix))]
+#[cfg(all(desktop, unix))]
 fn copy_symlink(from: &std::path::Path, to: &std::path::Path) -> Result<(), Box<dyn Error>> {
     use std::os::unix::fs::symlink;
 
@@ -728,7 +733,7 @@ fn copy_symlink(from: &std::path::Path, to: &std::path::Path) -> Result<(), Box<
     Ok(())
 }
 
-#[cfg(all(not(any(target_os = "android", target_os = "ios")), windows))]
+#[cfg(all(desktop, windows))]
 fn copy_symlink(from: &std::path::Path, to: &std::path::Path) -> Result<(), Box<dyn Error>> {
     use std::os::windows::fs::{symlink_dir, symlink_file};
 
@@ -747,7 +752,7 @@ fn copy_symlink(from: &std::path::Path, to: &std::path::Path) -> Result<(), Box<
     Ok(())
 }
 
-#[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
+#[cfg(all(test, desktop))]
 mod tests {
     use super::*;
     use std::fs;
@@ -1065,3 +1070,7 @@ mod tests {
         std::os::windows::fs::symlink_file(target, link)
     }
 }
+
+/// Captured before the OHOS runtime consumes the native Ability.
+#[cfg(target_env = "ohos")]
+pub(crate) struct OhosDataDirectory(pub PathBuf);
