@@ -38,7 +38,7 @@ run_started
 
 `api.agent.readEvents({ runId, afterSeq, limit })` 读取游标之后的事件。`beforeSeq` 读取指定序号之前最近的一页，结果仍按序号升序排列。`api.agent.subscribe()` 在此基础上持续追踪新事件。
 
-活动 Run 每追加一条事件，原生端经 Channel 推送最新 `seq` 作为唤醒提示，订阅随即读取。提示不携带事件内容，事件仍经 `readEvents` 读取；同一订阅最多一次读取在途，读取期间到达的提示合并为紧随其后的一次读取。推送不依赖计时器，窗口隐藏时也能及时发现宿主提交请求；Windows 主窗口另以 WebView2 启动参数关闭后台计时器节流与遮挡检测（[window.rs](../../src-tauri/crates/tauritavern/src/app/host/window.rs)），使提交处理本身在窗口最小化或被遮挡时不停摆。兜底轮询（默认 2 秒）负责追赶、不在当前进程活动的 Run 及通道失败，失败写入控制台错误。
+活动 Run 每追加一条事件，原生端经 Channel 推送最新 `seq` 作为唤醒提示，订阅随即读取。提示不携带事件内容，事件仍经 `readEvents` 读取；同一订阅最多一次读取在途，读取期间到达的提示合并为紧随其后的一次读取。推送不依赖页面计时器，窗口隐藏时也能及时发现宿主提交请求；窗口隐藏时的页面计时器行为见[宿主契约 §5.7](../FrontendHostContract.md#57-windows-后台计时器public-in-practice)。兜底轮询（默认 2 秒）负责追赶、不在当前进程活动的 Run 及通道失败，失败写入控制台错误。
 
 传入 `invocationId` 可以读取某个 Agent 的过程。事件的 `payload.eventScope` 指出主要和相关 Invocation，后端按这些归属筛选后再分页。
 

@@ -368,6 +368,13 @@ TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板�
 - 文件格式校验、导入提示和持久化继续由原有前端/后端导入流程负责；普通文件选择器入口不变。
 - 移动端与独立 popup WebView 的拖放策略不变；主页面内的 HTML 弹窗仍由各自的 DOM 拖放处理器负责。
 
+### 5.7 Windows 后台计时器（Public in practice）
+
+- 仅 Windows：主窗口与 5.4 中 `window.open()` 在 App 内创建的 popup 窗口以 WebView2 启动参数关闭后台计时器节流、渲染进程后台降级与遮挡检测。同一数据目录下的 WebView2 必须使用相同参数，因此两者共用一组。
+- 窗口最小化或被遮挡时，页面计时器（上游脚本、扩展、角色卡 iframe）不降速；关闭遮挡检测后页面仍被视为可见，渲染与动画（`requestAnimationFrame`、CSS 动画、视频）也继续进行，所以后台耗电增加不只来自计时器。
+- 目的：前台 Agent 的宿主提交在窗口隐藏时也要继续推进。Run 事件的唤醒推送不依赖计时器（见[运行日志](Agent/RunEventJournal.md#读取与展示)），但提交处理本身在页面内执行。
+- 维护：参数定义在 `src-tauri/crates/tauritavern/src/app/host/window.rs` 的 `WEBVIEW2_BROWSER_ARGS`。自定义参数会替换 wry 的默认参数，其中 `--disable-features` 手抄了 wry 的默认值；升级 wry 时需复查，并跑第 6 节第 5 条。
+
 ## 6. Smoke Tests（Public 回归用例）
 
 这些用例是“最小但真实”的兼容回归集（来源：你提供的 `.cache` 样本）：
@@ -385,6 +392,8 @@ TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板�
    - `/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*` 作为子资源可直接加载
    - `/scripts/extensions/third-party/*` 的 ESM/CSS/图片/字体均可加载，未命中返回 `404`；无秘密 fixture 的 `.git/HEAD` / `.git/config` 采用同一文件级路径语义
    - 媒体 Range 契约：`/backgrounds/<file>.mp4` 的 `Range: bytes=0-1` 返回 `206` 且包含 `Content-Range`
+5. **Windows 后台计时器**
+   - 前台 Agent 运行期间最小化或遮挡主窗口，宿主提交仍能完成；恢复窗口后回复已保存到聊天。
 
 任何涉及第 3/4 节契约的改动，都必须至少跑通以上 smoke tests。
 
