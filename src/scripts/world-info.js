@@ -68,6 +68,8 @@ export const scan_state = {
 
 const WI_ENTRY_HEADER_TEMPLATE = $('#entry_edit_template .world_entry');
 const WI_ENTRY_EDIT_TEMPLATE = $('#entry_edit_template .world_entry_edit');
+// The editor keeps the same list even when Panel Runtime detaches it from document.
+const worldEntriesList = $('#world_popup_entries_list');
 
 export let world_info = {};
 export let selected_world_info = [];
@@ -2538,7 +2540,6 @@ function clearEntryList($list) {
 async function displayWorldEntries(name, data, navigation = navigation_option.none, flashOnNav = true) {
     updateEditor = async (navigation, flashOnNav = true) => await displayWorldEntries(name, data, navigation, flashOnNav);
 
-    const worldEntriesList = $('#world_popup_entries_list');
     clearEntryList(worldEntriesList);
     worldEntriesList.show();
 
@@ -2671,21 +2672,23 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
             accountStorage.setItem(storageKey, e.target.value);
         },
         afterPaging: function () {
-            $('#world_popup_entries_list textarea[name="comment"]').each(function () {
+            if (!worldEntriesList[0].isConnected) return;
+            worldEntriesList.find('textarea[name="comment"]').each(function () {
                 initScrollHeight($(this));
             });
         },
     });
 
     if (typeof navigation === 'number' && Number(navigation) >= 0) {
-        const selector = `#world_popup_entries_list [uid="${navigation}"]`;
-        waitUntilCondition(() => document.querySelector(selector) !== null).finally(() => {
-            const element = $(selector);
+        const selector = `[uid="${navigation}"]`;
+        waitUntilCondition(() => worldEntriesList.find(selector).length > 0).finally(() => {
+            const element = worldEntriesList.find(selector);
 
             if (element.length === 0) {
                 console.log(`Could not find element for uid ${navigation}`);
                 return;
             }
+            if (!element[0].isConnected) return;
 
             const elementOffset = element.offset();
             const parentOffset = element.parent().offset();
@@ -2881,9 +2884,9 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         delay: getSortableDelay(),
         handle: '.drag-handle',
         stop: async function (_event, _ui) {
-            const firstEntryUid = $('#world_popup_entries_list .world_entry').first().data('uid');
+            const firstEntryUid = worldEntriesList.find('.world_entry').first().data('uid');
             const minDisplayIndex = data?.entries[firstEntryUid]?.displayIndex ?? 0;
-            $('#world_popup_entries_list .world_entry').each(function (index) {
+            worldEntriesList.find('.world_entry').each(function (index) {
                 const uid = $(this).data('uid');
 
                 // Update the display index in the data array
@@ -2903,8 +2906,6 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
             await saveWorldInfo(name, data);
         },
     });
-
-    //$("#world_popup_entries_list").disableSelection();
 }
 
 export const originalWIDataKeyMap = {

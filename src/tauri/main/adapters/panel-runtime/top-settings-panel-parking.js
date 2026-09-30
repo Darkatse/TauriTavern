@@ -310,7 +310,12 @@ export function installTopSettingsPanelParking({ manager }) {
             afterHydrate: () => syncLeftNavMainApiUi(),
         }),
         registerDrawerParking(manager, { panelId: 'AdvancedFormatting', parkedSelector: '.flex-container.spaceEvenly' }),
-        registerDrawerParking(manager, { panelId: 'WorldInfo', parkedSelector: '#wi-holder' }),
+        registerDrawerParking(manager, {
+            panelId: 'WorldInfo',
+            // compat parks only the entry list, which holds nearly all World Info DOM. The lorebook
+            // selects, pagination and editor buttons stay connected for the code that updates them.
+            parkedSelector: manager.profile === 'compat' ? '#world_popup_entries_list' : '#wi-holder',
+        }),
         registerDrawerParking(manager, { panelId: 'user-settings-block', parkedSelector: '#user-settings-block-content' }),
         registerDrawerParking(manager, { panelId: 'Backgrounds', parkedSelector: '#bg_tabs' }),
     ];
