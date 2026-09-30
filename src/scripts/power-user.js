@@ -30,6 +30,8 @@ import {
     chat_metadata,
     this_chid,
     saveMetadata,
+    max_context,
+    amount_gen,
 } from '../script.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { isMobile, initMovingUI, favsToHotswap } from './RossAscends-mods.js';
@@ -606,13 +608,10 @@ async function switchLabMode({ noReset = false } = {}) {
         $('#labModeWarning').removeClass('displayNone');
         //$("#advanced-ai-config-block input[type='range']").hide()
 
-        $('#amount_gen_counter').attr('min', '1')
-            .attr('max', '99999')
-            .attr('step', '1');
         $('#amount_gen').attr('min', '1')
             .attr('max', '99999')
             .attr('step', '1');
-
+        $('#advanced-ai-config-block input[type="range"], #amount_gen').trigger('input');
 
     } else if (!noReset) {
         //re apply the original sliders values to each input
@@ -2180,45 +2179,24 @@ function loadMaxContextUnlocked() {
 
 function switchMaxContextSize() {
     const elements = [
-        $('#max_context'),
-        $('#max_context_counter'),
         $('#rep_pen_range'),
-        $('#rep_pen_range_counter'),
         $('#rep_pen_range_textgenerationwebui'),
-        $('#rep_pen_range_counter_textgenerationwebui'),
         $('#dry_penalty_last_n_textgenerationwebui'),
-        $('#dry_penalty_last_n_counter_textgenerationwebui'),
         $('#rep_pen_decay_textgenerationwebui'),
-        $('#rep_pen_decay_counter_textgenerationwebui'),
     ];
     const maxValue = power_user.max_context_unlocked ? MAX_CONTEXT_UNLOCKED : MAX_CONTEXT_DEFAULT;
-    const minValue = power_user.max_context_unlocked ? maxContextMin : maxContextMin;
     const steps = power_user.max_context_unlocked ? unlockedMaxContextStep : maxContextStep;
+    // Restore the loaded business values only after applying their final bounds.
+    $('#max_context').attr({ min: maxContextMin, max: maxValue, step: steps }).val(max_context).trigger('input');
     $('#rep_pen_range_textgenerationwebui_zenslider').remove(); //unsure why, but this is necessary.
     $('#dry_penalty_last_n_textgenerationwebui_zenslider').remove();
     $('#rep_pen_decay_textgenerationwebui_zenslider').remove();
     for (const element of elements) {
-        const id = element.attr('id');
-        element.attr('max', maxValue);
-
-        if (typeof id === 'string' && id?.indexOf('max_context') !== -1) {
-            element.attr('min', minValue);
-            element.attr('step', steps); //only change setps for max context, because rep pen range needs step of 1 due to important values of -1 and 0
-        }
-        const value = Number(element.val());
-
-        if (value >= maxValue) {
-            element.val(maxValue).trigger('input');
-        }
+        element.attr('max', maxValue).trigger('input');
     }
 
     const maxAmountGen = power_user.max_context_unlocked ? MAX_RESPONSE_UNLOCKED : MAX_RESPONSE_DEFAULT;
-    $('#amount_gen').attr('max', maxAmountGen);
-    $('#amount_gen_counter').attr('max', maxAmountGen);
-
-    if (Number($('#amount_gen').val()) >= maxAmountGen) {
-        $('#amount_gen').val(maxAmountGen).trigger('input');
-    }
+    $('#amount_gen').attr('max', maxAmountGen).val(amount_gen).trigger('input');
 
     if (power_user.enableZenSliders) {
         $('#max_context_zenslider').remove();

@@ -16,12 +16,14 @@ async function submitDeviceInput({ title, hint, value = '', placeholder = '', la
 
     let saved = false;
     await callGenericPopup(content, POPUP_TYPE.INPUT, value, {
+        label: heading,
+        inputLabel: heading,
+        inputDescription: description,
         okButton: translate(label),
         cancelButton: translate('Cancel'),
         placeholder,
         rows: 1,
         onOpen(popup) {
-            popup.mainInput.setAttribute('aria-label', translate(title));
             popup.mainInput.spellcheck = false;
             popup.mainInput.setAttribute('autocapitalize', 'off');
             popup.mainInput.after(feedback);

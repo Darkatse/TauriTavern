@@ -53,10 +53,11 @@ test('a paginated region stays actionable while earlier page and run refs expire
     expect(next.tree).not.toContain('omitted-body-tail');
     expect(() => observation.snapshot({ root: oldRef })).toThrow();
     const button = screen.getByRole('button', { name: 'Action 109' });
-    button.onclick = () => { button.textContent = 'Done'; };
+    button.onclick = () => { button.textContent = 'Done'; button.setAttribute('aria-pressed', 'true'); };
     hit = button;
-    await interact({ action: 'click', ref: ref(next.tree, 'Action 109') }, observation, signal());
+    const action = await interact({ action: 'click', ref: ref(next.tree, 'Action 109') }, observation, signal());
     expect(button.textContent).toBe('Done');
+    expect(action.observed).toMatchObject({ pressed: true });
     observation.enterRun('two');
     expect(() => observation.snapshot({ root: ref(next.tree, 'Actions') })).toThrow();
 });
@@ -162,11 +163,20 @@ test('snapshots preserve control state while bounding text and omitting sensitiv
         <div class="ttia-history-area">assistant-history-should-not-appear</div>
         <label><input type="checkbox">Show <span id="secret-label" data-tt-sensitive>secret-label-should-not-appear</span></label>
         <button aria-labelledby="secret-label"></button>
+        <button aria-label="Public action" aria-describedby="secret-label"></button>
+        <span id="owned-description" aria-owns="secret-label">Public explanation</span>
+        <button aria-label="Owned description" aria-describedby="owned-description"></button>
+        <label for="described-field" data-tt-sensitive>secret-label-should-not-appear</label>
+        <input id="described-field">
+        <button aria-label="Label description" aria-describedby="described-field"></button>
         <input aria-label="Readonly" readonly aria-readonly="false">
         <input type="checkbox" aria-label="Checked" checked aria-checked="false">
+        <input type="number" aria-label="Limited" min="0" max="2" step="any" value="3" aria-invalid="false">
+        <span id="long-description" hidden>${'Long description '.repeat(1_000)}</span>
     `;
     const input = document.createElement('textarea');
     input.setAttribute('aria-label', 'Long value');
+    input.setAttribute('aria-describedby', 'long-description');
     input.value = '\u0001\n"'.repeat(100_000);
     document.body.append(input);
     for (let index = 0; index < 8; index++) {
@@ -180,12 +190,17 @@ test('snapshots preserve control state while bounding text and omitting sensitiv
     const snapshot = observation.snapshot({});
     expect(snapshot.tree.match(/Model A/g)).toHaveLength(1);
     expect(snapshot.tree).toContain('valueTruncated=true');
+    expect(snapshot.tree).toContain('descriptionTruncated=true');
+    expect(snapshot.tree).toContain('"Public action"');
     expect(snapshot.tree).not.toContain('secret-should-not-appear');
     expect(snapshot.tree).not.toContain('assistant-history-should-not-appear');
     expect(snapshot.tree).not.toContain('secret-label-should-not-appear');
     expect(snapshot.tree.split('\n').find(line => line.includes('"Readonly"'))).toContain('readOnly=true');
     expect(snapshot.tree.split('\n').find(line => line.includes('"Checked"'))).toContain('checked=true');
+    expect(snapshot.tree.split('\n').find(line => line.includes('"Limited"'))).toContain('invalid=true');
     expect(JSON.stringify(snapshot).length).toBeLessThan(8_000);
+    screen.getByRole<HTMLInputElement>('spinbutton', { name: 'Limited' }).value = '1';
+    expect(observation.snapshot({}).tree.split('\n').find(line => line.includes('"Limited"'))).toContain('invalid=false');
 });
 
 test('fill updates React controlled state, not just the DOM value', async () => {

@@ -81,7 +81,7 @@
             <div class="drawer-toggle drawer-header">
                 <div id="leftNavDrawerIcon" class="drawer-icon fa-solid fa-sliders fa-fw closedIcon" title="AI Response Configuration" data-i18n="[title]AI Response Configuration"></div>
             </div>
-            <div id="left-nav-panel" class="drawer-content fillLeft closedDrawer">
+            <div id="left-nav-panel" class="drawer-content fillLeft closedDrawer" role="region" aria-labelledby="leftNavDrawerIcon">
                 <div id="left-nav-panelheader" class="fa-solid fa-grip drag-grabber"></div>
                 <div id="lm_button_panel_pin_div" title="Locked = AI Configuration panel will stay open" data-i18n="[title]AI Configuration panel will stay open">
                     <input type="checkbox" id="lm_button_panel_pin">
@@ -185,7 +185,7 @@
                                 <div>
                                     <div class="margin0 title_restorable standoutHeader">
                                         <strong>
-                                            <span data-i18n="openaipresets">Chat Completion Presets</span>
+                                            <span id="chat_completion_presets_label" data-i18n="openaipresets">Chat Completion Presets</span>
                                         </strong>
 
                                         <div class="flex-container gap3px">
@@ -207,7 +207,7 @@
                                     </div>
 
                                     <div class="flex-container flexNoGap">
-                                        <select id="settings_preset_openai" class="flex1 text_pole" data-preset-manager-for="openai">
+                                        <select id="settings_preset_openai" class="flex1 text_pole" data-preset-manager-for="openai" aria-labelledby="chat_completion_presets_label">
                                             <option value="gui" data-i18n="Default">Default</option>
                                         </select>
                                         <div class="flex-container marginLeft5 gap3px">
@@ -710,17 +710,18 @@
                                     </div>
                                 </div>
                                 <div class="range-block" data-source="openai,opencode,claude,aws_bedrock,aimlapi,openrouter,ai21,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,siliconflow,minimax,electronhub,chutes,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,zai,workers_ai">
-                                    <div class="range-block-title" data-i18n="Temperature">
+                                    <div id="temp_openai_label" class="range-block-title" data-i18n="Temperature">
                                         Temperature
                                     </div>
                                     <div class="range-block-range-and-counter">
                                         <div class="range-block-range">
-                                            <input type="range" id="temp_openai" name="volume" min="0" max="2.0" step="0.01">
+                                            <input type="range" id="temp_openai" name="volume" min="0" max="2.0" step="0.01" aria-labelledby="temp_openai_label" aria-describedby="temp_openai_description">
                                         </div>
                                         <div class="range-block-counter">
-                                            <input type="number" min="0" max="2.0" step="0.01" data-for="temp_openai" id="temp_counter_openai">
+                                            <input type="number" min="0" max="2.0" step="0.01" data-for="temp_openai" id="temp_counter_openai" aria-labelledby="temp_openai_label" aria-describedby="temp_openai_description">
                                         </div>
                                     </div>
+                                    <small id="temp_openai_description" class="range-input-description" data-i18n="Controls token randomness.">Controls token randomness.</small>
                                 </div>
                                 <div class="range-block" data-source="openai,opencode,aimlapi,openrouter,custom,cohere,perplexity,groq,siliconflow,mistralai,electronhub,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai,chutes,workers_ai">
                                     <div class="range-block-title" data-i18n="Frequency Penalty">
@@ -1272,11 +1273,12 @@
                                 <div class="flex-container gap10h5v justifyCenter">
                                     <div data-tg-samplers="temp" class="alignitemscenter flex-container flexFlowColumn flexBasis30p flexGrow flexShrink gap0">
                                         <small>
-                                            <span data-i18n="Temperature">Temperature</span>
+                                            <span id="temp_textgenerationwebui_label" data-i18n="Temperature">Temperature</span>
                                             <div class="fa-solid fa-circle-info opacity50p" data-i18n="[title]Temperature controls the randomness in token selection" title="Temperature controls the randomness in token selection:&#13;- low temperature (<1.0) leads to more predictable text, favoring higher probability tokens.&#13;- high temperature (>1.0) increases creativity and diversity in the output by giving lower probability tokens a better chance.&#13;Set to 1.0 for the original probabilities."></div>
                                         </small>
-                                        <input class="neo-range-slider" type="range" id="temp_textgenerationwebui" name="volume" min="0.0" max="5.0" step="0.01" x-setting-id="temp">
-                                        <input class="neo-range-input" type="number" min="0.0" max="5.0" step="0.01" data-for="temp_textgenerationwebui" id="temp_counter_textgenerationwebui">
+                                        <input class="neo-range-slider" type="range" id="temp_textgenerationwebui" name="volume" min="0.0" max="5.0" step="0.01" x-setting-id="temp" aria-labelledby="temp_textgenerationwebui_label" aria-describedby="temp_textgenerationwebui_description">
+                                        <input class="neo-range-input" type="number" min="0.0" max="5.0" step="0.01" data-for="temp_textgenerationwebui" id="temp_counter_textgenerationwebui" aria-labelledby="temp_textgenerationwebui_label" aria-describedby="temp_textgenerationwebui_description">
+                                        <small id="temp_textgenerationwebui_description" class="range-input-description" data-i18n="Controls token randomness.">Controls token randomness.</small>
                                     </div>
                                     <!-- Note: "except" mode = show for all BUT types in data-tg-type -->
                                     <div data-tg-type-mode="except" data-tg-type="generic" data-tg-samplers="top_k" class="alignitemscenter flex-container flexFlowColumn flexBasis30p flexGrow flexShrink gap0">

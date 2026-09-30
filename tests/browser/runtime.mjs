@@ -47,6 +47,15 @@ export function createBrowserRuntime() {
     // Exercise actual module evaluation without starting chat/settings IO through DOM-ready callbacks.
     window.jQuery.holdReady(true);
     window.structuredClone = structuredClone;
+    // happy-dom exposes option elements but omits the browser's Option constructor.
+    window.Option = function (text = '', value = text, defaultSelected = false, selected = false) {
+        const option = window.document.createElement('option');
+        option.text = text;
+        option.value = value;
+        option.defaultSelected = defaultSelected;
+        option.selected = selected;
+        return option;
+    };
     const scheduleTimeout = window.setTimeout.bind(window);
     window.setTimeout = (callback, delay = 0, ...args) =>
         scheduleTimeout(callback, Math.ceil(delay / TIMER_SCALE), ...args);

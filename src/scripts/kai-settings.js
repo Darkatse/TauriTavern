@@ -149,7 +149,7 @@ function loadKoboldSettingsFromPreset(preset) {
         const formattedValue = slider.format(value);
         slider.setValue(value);
         $(slider.sliderId).val(value);
-        $(slider.counterId).val(formattedValue);
+        $(slider.counterId).val(formattedValue).trigger('input');
     }
 
     if (Object.hasOwn(preset, 'streaming_kobold')) {

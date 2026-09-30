@@ -133,6 +133,10 @@
     margin-bottom: 2px;
 }
 
+.tt-gp-compact:has(> .range-input-description, > .range-input-error) {
+    flex-wrap: wrap;
+}
+
 .tt-gp-compact > .range-block-title {
     flex: 1 1 auto;
     text-align: left;

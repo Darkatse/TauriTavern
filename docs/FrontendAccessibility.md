@@ -10,6 +10,12 @@
 
 样式与业务状态不能单独决定控件语义：分组容器不是按钮，条目的 `.disabled` 也不代表其内部操作不可用。已有扩展的 DOM、角色与焦点约定应按实际用途保留。
 
+## 配对数值控件
+
+[`dom-handlers.js`](../src/scripts/dom-handlers.js) 管理已有 `.range-block-counter`、`.neo-range-input` 数字框与 `data-for` 指向的 range。数字框允许编辑草稿，`change`、Enter 和滚轮沿 range 的既有 `input` 业务路径提交；无效值留在字段中供修正，不写入设置，也不阻止离开字段。
+
+range 提供 `min/max/step`，API 修改约束后发送 `input`，共同实现同步数字框。恢复设置时先准备约束再写入已加载的业务值；直接刷新数字框的加载路径同样发送 `input`，更新字段反馈。保留 API 自身的格式化与保存职责，不从 DOM 观察器反推业务变化。
+
 ## Drawer
 
 [`drawers.js`](../src/scripts/drawers.js) 管理展开状态、ARIA 关联和变化订阅。
@@ -26,6 +32,8 @@ Inline 的 display 属于动画表现，即时设置会取消旧动画。`inline
 ## Popup
 
 [`popup.js`](../src/scripts/popup.js) 通过可选的 `label: string | HTMLElement` 接收名称或弹窗内的可见标题，统一建立 ARIA 关联。`Popup.show.*` helper 自动使用传入的 header。
+
+主输入框可通过 `inputLabel`、`inputDescription` 接收字符串或弹窗内的元素，分别表达字段用途与说明。需要等待保存结果的业务复用异步 `onClosing`：成功允许关闭，失败返回 `false` 并保留输入；忙碌与结果文案由该业务提供。
 
 自带按钮的键盘与指针操作共用 click 路径；文本输入保留多行、Ctrl+Enter 与 `.result-control` 提交规则。
 

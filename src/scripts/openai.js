@@ -90,6 +90,7 @@ import { renderTemplateAsync } from './templates.js';
 import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { t } from './i18n.js';
+import { toUserFacingErrorText } from './util/user-facing-error.js';
 import { ToolManager } from './tool-calling.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL, MEDIA_DISPLAY, MEDIA_TYPE } from './constants.js';
@@ -6510,8 +6511,7 @@ async function saveOpenAIPreset(name, settings, triggerUi = true) {
             if (triggerUi) $('#settings_preset_openai').append(option).trigger('change');
         }
     } else {
-        toastr.error(t`Failed to save preset`);
-        throw new Error('Failed to save preset');
+        throw new Error(t`Failed to save preset`);
     }
 }
 
@@ -7955,8 +7955,6 @@ async function onModelChange() {
         $('#temp_openai').attr('max', claude_max_temp).val(oai_settings.temp_openai).trigger('input');
     }
 
-    $('#openai_max_context_counter').attr('max', Number($('#openai_max_context').attr('max')));
-
     saveSettingsDebounced();
     updateFeatureSupportFlags();
     eventSource.emit(event_types.CHATCOMPLETION_MODEL_CHANGED, value);
@@ -7975,13 +7973,62 @@ async function onElectronHubModelSortChange() {
 }
 
 async function onNewPresetClick() {
-    const name = await Popup.show.input(t`Preset name:`, t`Hint: Use a character/group name to bind preset to a specific chat.`, oai_settings.preset_settings_openai);
+    const content = document.createElement('div');
+    const heading = document.createElement('h3');
+    heading.textContent = t`Preset name:`;
+    const hint = document.createElement('p');
+    hint.textContent = t`Hint: Use a character/group name to bind preset to a specific chat.`;
+    const feedback = document.createElement('p');
+    feedback.setAttribute('role', 'status');
+    feedback.hidden = true;
+    content.append(heading, hint, feedback);
 
-    if (!name) {
-        return;
-    }
+    const popup = new Popup(content, POPUP_TYPE.INPUT, oai_settings.preset_settings_openai, {
+        label: heading,
+        inputLabel: heading,
+        inputDescription: hint,
+        okButton: t`Save`,
+        cancelButton: t`Cancel`,
+        async onClosing(popup) {
+            if (popup.result !== POPUP_RESULT.AFFIRMATIVE) return true;
+            const name = popup.mainInput.value;
+            feedback.hidden = false;
+            if (!name.trim()) {
+                popup.mainInput.setAttribute('aria-invalid', 'true');
+                feedback.textContent = t`Preset name cannot be empty`;
+                popup.mainInput.focus();
+                return false;
+            }
 
-    await saveOpenAIPreset(name, oai_settings);
+            popup.mainInput.readOnly = true;
+            const buttons = [popup.okButton, popup.cancelButton, popup.closeButton];
+            for (const button of buttons) button.disabled = true;
+            popup.okButton.setAttribute('aria-busy', 'true');
+            feedback.textContent = t`Saving…`;
+            try {
+                await saveOpenAIPreset(name, oai_settings);
+                toastr.success(t`Preset saved`);
+                // The file is saved even if an extension later fails to apply it.
+                void getPresetApplicationPromise().catch(error => {
+                    toastr.error(toUserFacingErrorText(error), t`Preset saved, but could not be applied.`);
+                });
+                return true;
+            } catch (error) {
+                feedback.textContent = toUserFacingErrorText(error);
+                popup.mainInput.focus();
+                return false;
+            } finally {
+                popup.mainInput.readOnly = false;
+                for (const button of buttons) button.disabled = false;
+                popup.okButton.removeAttribute('aria-busy');
+            }
+        },
+    });
+    popup.mainInput.addEventListener('input', () => {
+        popup.mainInput.removeAttribute('aria-invalid');
+        feedback.hidden = true;
+    });
+    await popup.show();
 }
 
 function onReverseProxyInput() {
@@ -8956,8 +9003,12 @@ export function initOpenAI() {
 
     $('#update_oai_preset').on('click', async function () {
         const name = oai_settings.preset_settings_openai;
-        await saveOpenAIPreset(name, oai_settings, false);
-        toastr.success(t`Preset updated`);
+        try {
+            await saveOpenAIPreset(name, oai_settings, false);
+            toastr.success(t`Preset updated`);
+        } catch (error) {
+            toastr.error(toUserFacingErrorText(error));
+        }
     });
 
     $('#impersonation_prompt_restore').on('click', function () {

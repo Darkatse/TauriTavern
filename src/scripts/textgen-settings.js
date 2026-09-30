@@ -926,18 +926,17 @@ export function initTextGenSettings() {
             //special handling for vLLM/Aphrodite topK -1 disable state
             $('#top_k_textgenerationwebui').attr('min', -1);
             if ($('#top_k_textgenerationwebui').val() === '0' || textgenerationwebui_settings.top_k === 0) {
-                textgenerationwebui_settings.top_k = -1;
-                $('#top_k_textgenerationwebui').val('-1').trigger('input');
+                $('#top_k_textgenerationwebui').val('-1');
             }
         } else {
             $('#mirostat_mode_textgenerationwebui').attr('step', 1);
             //undo special vLLM/Aphrodite setup for topK
             $('#top_k_textgenerationwebui').attr('min', 0);
             if ($('#top_k_textgenerationwebui').val() === '-1' || textgenerationwebui_settings.top_k === -1) {
-                textgenerationwebui_settings.top_k = 0;
-                $('#top_k_textgenerationwebui').val('0').trigger('input');
+                $('#top_k_textgenerationwebui').val('0');
             }
         }
+        $('#mirostat_mode_textgenerationwebui, #top_k_textgenerationwebui').trigger('input');
 
         showSamplerControls(type);
         setOnlineStatus('no_connection');

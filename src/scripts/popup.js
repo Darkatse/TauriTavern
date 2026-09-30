@@ -40,6 +40,8 @@ export const POPUP_RESULT = {
 /**
  * @typedef {object} PopupOptions
  * @property {string|HTMLElement} [label] - Accessible name, or an explicit title element inside this popup whose text supplies its name.
+ * @property {string|HTMLElement} [inputLabel] - Name or visible label for the main input.
+ * @property {string|HTMLElement} [inputDescription] - Instructions or a visible description for the main input.
  * @property {string|boolean?} [okButton=null] - Custom text for the OK button. A set text will always show the button. `true` or `false` to explicitly show or hide the button. `null` will leave the behavior and display of the button unchanged, based on the popup type.
  * @property {string|boolean?} [cancelButton=null] - Custom text for the Cancel button. A set text will always show the button. `true` or `false` to explicitly show or hide the button. `null` will leave the behavior and display of the button unchanged, based on the popup type.
  * @property {number?} [rows=1] - The number of rows for the input field
@@ -109,7 +111,7 @@ const showPopupHelper = {
     input: async (header, text, defaultValue = '', popupOptions = {}) => {
         const content = PopupUtils.BuildTextWithHeader(header, text);
         const popup = new Popup(content, POPUP_TYPE.INPUT, defaultValue, popupOptions);
-        if (header && popupOptions.label === undefined) setPopupLabel(popup, popup.content.firstElementChild);
+        if (header && popupOptions.label === undefined) setPopupText(popup, popup.dlg, 'label', popup.content.firstElementChild);
         const value = await popup.show();
         // Return values: If empty string, we explicitly handle that as returning that empty string as "success" provided.
         // Otherwise, all non-truthy values (false, null, undefined) are treated as "cancel" and return null.
@@ -128,7 +130,7 @@ const showPopupHelper = {
     confirm: async (header, text, popupOptions = {}) => {
         const content = PopupUtils.BuildTextWithHeader(header, text);
         const popup = new Popup(content, POPUP_TYPE.CONFIRM, null, popupOptions);
-        if (header && popupOptions.label === undefined) setPopupLabel(popup, popup.content.firstElementChild);
+        if (header && popupOptions.label === undefined) setPopupText(popup, popup.dlg, 'label', popup.content.firstElementChild);
         const result = await popup.show();
         if (typeof result === 'string' || typeof result === 'boolean') throw new Error(`Invalid popup result. CONFIRM popups only support numbers, or null. Result: ${result}`);
         return result;
@@ -144,25 +146,27 @@ const showPopupHelper = {
     text: async (header, text, popupOptions = {}) => {
         const content = PopupUtils.BuildTextWithHeader(header, text);
         const popup = new Popup(content, POPUP_TYPE.TEXT, null, popupOptions);
-        if (header && popupOptions.label === undefined) setPopupLabel(popup, popup.content.firstElementChild);
+        if (header && popupOptions.label === undefined) setPopupText(popup, popup.dlg, 'label', popup.content.firstElementChild);
         const result = await popup.show();
         if (typeof result === 'string' || typeof result === 'boolean') throw new Error(`Invalid popup result. TEXT popups only support numbers, or null. Result: ${result}`);
         return result;
     },
 };
 
-/** @param {Popup} popup @param {string|Element} [label] */
-function setPopupLabel(popup, label) {
-    if (label === undefined) return;
-    if (typeof label === 'string') {
-        popup.dlg.setAttribute('aria-label', label);
-        popup.dlg.removeAttribute('aria-labelledby');
-    } else if (label instanceof HTMLElement && popup.dlg.contains(label)) {
-        label.id ||= `${popup.id}-label`;
-        popup.dlg.setAttribute('aria-labelledby', label.id);
-        popup.dlg.removeAttribute('aria-label');
+/** @param {Popup} popup @param {HTMLElement} target @param {'label'|'description'} kind @param {string|Element} [text] */
+function setPopupText(popup, target, kind, text) {
+    if (text === undefined) return;
+    const attribute = `aria-${kind}`;
+    const reference = kind === 'label' ? 'aria-labelledby' : 'aria-describedby';
+    if (typeof text === 'string') {
+        target.setAttribute(attribute, text);
+        target.removeAttribute(reference);
+    } else if (text instanceof HTMLElement && popup.dlg.contains(text)) {
+        text.id ||= `${popup.id}-${target === popup.dlg ? 'dialog' : 'input'}-${kind}`;
+        target.setAttribute(reference, text.id);
+        target.removeAttribute(attribute);
     } else {
-        throw new Error('Popup label must be a string or a title element inside this popup.');
+        throw new Error(`Popup ${kind} must be a string or an element inside this popup.`);
     }
 }
 
@@ -288,6 +292,8 @@ export class Popup {
      */
     constructor(content, type, inputValue = '', {
         label,
+        inputLabel,
+        inputDescription,
         okButton = null,
         cancelButton = null,
         rows = 1,
@@ -622,7 +628,9 @@ export class Popup {
         } else {
             console.warn('Unknown popup text type. Should be jQuery, HTMLElement or string.', content);
         }
-        setPopupLabel(this, label);
+        setPopupText(this, this.dlg, 'label', label);
+        setPopupText(this, this.mainInput, 'label', inputLabel);
+        setPopupText(this, this.mainInput, 'description', inputDescription);
 
         // Already prepare the auto-focus control by adding the "autofocus" attribute, this should be respected by showModal()
         this.setAutoFocus({ applyAutoFocus: true });

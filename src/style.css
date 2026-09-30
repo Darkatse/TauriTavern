@@ -4527,6 +4527,21 @@ input[type='checkbox'].del_checkbox {
     width: 100%;
 }
 
+.range-input-description,
+.range-input-error {
+    display: block;
+    width: 100%;
+    text-align: start;
+}
+
+.range-input-description {
+    color: var(--SmartThemeEmColor);
+}
+
+.range-input-error {
+    color: var(--warning);
+}
+
 .neo-range-slider {
     -webkit-appearance: none !important;
     appearance: none !important;

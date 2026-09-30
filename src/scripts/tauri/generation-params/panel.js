@@ -232,6 +232,8 @@ export function installGenerationParamsPanel() {
     const jsonError = q('.tt-gp-json-error');
     const jsonHint = q('.tt-gp-json-hint');
     const defaultJsonHint = jsonHint.textContent;
+    picker.id = 'tt-gp-picker';
+    addButton.setAttribute('aria-controls', picker.id);
 
     // Local blocks are display preferences, not request configuration; JSON covers the rest.
     const jsonEntries = entries.filter(entry => entry.param.kind !== 'local');
@@ -254,6 +256,14 @@ export function installGenerationParamsPanel() {
                 chip.addEventListener('click', () => {
                     setActive(entry, true);
                     sync();
+                    setPickerOpen(false);
+                    const target = entry.control.matches('input[type="range"]')
+                        ? /** @type {HTMLElement} */ (entry.block.querySelector(`input[type="number"][data-for="${CSS.escape(entry.control.id)}"]`))
+                        : entry.control;
+                    const drawerToggle = entry.block.matches('.inline-drawer')
+                        ? /** @type {HTMLElement} */ (entry.block.querySelector('.inline-drawer-icon'))
+                        : null;
+                    (drawerToggle ?? target).focus();
                 });
                 return chip;
             });
@@ -347,6 +357,13 @@ export function installGenerationParamsPanel() {
     }
 
     addButton.addEventListener('click', () => setPickerOpen(picker.hidden));
+    picker.addEventListener('keydown', event => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        event.stopPropagation();
+        setPickerOpen(false);
+        addButton.focus();
+    });
     document.addEventListener('click', event => {
         if (!picker.hidden && event.target instanceof Node && !bar.contains(event.target)) {
             setPickerOpen(false);
@@ -368,13 +385,14 @@ export function installGenerationParamsPanel() {
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'tt-gp-remove';
-        remove.title = remove.ariaLabel = translate(REMOVE_TITLE[entry.param.kind]);
+        remove.title = remove.ariaLabel = `${translate(REMOVE_TITLE[entry.param.kind])}: ${labelOf(entry)}`;
         remove.innerHTML = '<i class="fa-solid fa-xmark" aria-hidden="true"></i>';
         remove.addEventListener('click', event => {
             // Inside a drawer header the click would also toggle the drawer.
             if (entry.block.classList.contains('inline-drawer')) event.stopPropagation();
             setActive(entry, false);
             sync();
+            addButton.focus();
         });
         // Localization replaces label contents; keep the button outside that node.
         const label = labelElementOf(entry);

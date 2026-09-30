@@ -4664,5 +4664,8 @@
     "Server": "服务器",
     "Device name must contain 1–64 characters without control characters": "设备名称需为 1–64 个字符，不能包含控制字符。",
     "Enter an IP address and port, for example 192.168.1.10:50000": "请输入 IP 地址和端口，例如 192.168.1.10:50000。",
-    "Invalid LAN device address or port": "局域网设备地址或端口无效。"
+    "Invalid LAN device address or port": "局域网设备地址或端口无效。",
+    "Controls token randomness.": "控制词符选择的随机性。",
+    "Preset name cannot be empty": "预设名称不能为空。",
+    "Preset saved, but could not be applied.": "预设已保存，但未能应用。"
 }

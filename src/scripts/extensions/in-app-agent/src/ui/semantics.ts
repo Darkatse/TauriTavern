@@ -1,11 +1,10 @@
-import { computeAccessibleName, getRole } from 'dom-accessibility-api';
+import { computeAccessibleDescription, computeAccessibleName, getRole } from 'dom-accessibility-api';
 import { documentWindow, isHtmlTag } from './document';
 
 export const MAX_PREVIEW = 200;
 export type ElementDescription = Record<string, string | number | boolean>;
 
 const FORM_CONTROLS = 'input,textarea,select,button';
-const SENSITIVE_CONTENT = '[data-tt-sensitive],input[type="password"]';
 const NAME_FROM_CONTENT_ROLES = new Set([
     'button', 'link', 'heading', 'checkbox', 'radio', 'option', 'tab',
     'menuitem', 'menuitemradio', 'menuitemcheckbox',
@@ -45,24 +44,24 @@ export function isCheckableInput(element: Element): element is HTMLInputElement 
     return isHtmlTag(element, 'input') && (element.type === 'checkbox' || element.type === 'radio');
 }
 
-function hasSensitiveNameSource(element: Element): boolean {
-    const sources = [element];
-    const hasNativeLabels = isHtmlTag(element, 'input')
-        || isHtmlTag(element, 'textarea')
-        || isHtmlTag(element, 'select')
-        || isHtmlTag(element, 'button');
-    if (hasNativeLabels) {
-        sources.push(...Array.from(element.labels ?? []));
-    }
-
-    const labelIds = (element.getAttribute('aria-labelledby') ?? '').split(/\s+/);
-    for (const id of labelIds) {
-        const label = element.ownerDocument.getElementById(id);
-        if (label) {
-            sources.push(label);
+function hasSensitiveTextSource(element: Element, reference: 'aria-labelledby' | 'aria-describedby'): boolean {
+    // Accessible text can follow external labels and owned nodes, including cycles.
+    const sources = new Set([element]);
+    for (const source of sources) {
+        if (isSensitive(source)) return true;
+        for (const child of source.children) sources.add(child);
+        if (isHtmlTag(source, 'input') || isHtmlTag(source, 'textarea')
+            || isHtmlTag(source, 'select') || isHtmlTag(source, 'button')) {
+            for (const label of source.labels ?? []) sources.add(label);
+        }
+        for (const attribute of [reference, 'aria-labelledby', 'aria-owns']) {
+            for (const id of (source.getAttribute(attribute) ?? '').split(/\s+/)) {
+                const related = source.ownerDocument.getElementById(id);
+                if (related) sources.add(related);
+            }
         }
     }
-    return sources.some(source => isSensitive(source) || source.querySelector(SENSITIVE_CONTENT) !== null);
+    return false;
 }
 
 /** Styles belong to one observation/action, never to a persistent DOM mirror. */
@@ -193,7 +192,7 @@ export function createSemantics() {
 
     function readName(element: Element): string {
         // Associated labels can contain sensitive values too; avoid deriving a name from those contents.
-        if (hasSensitiveNameSource(element)) {
+        if (hasSensitiveTextSource(element, 'aria-labelledby')) {
             return element.getAttribute('aria-label') ?? element.getAttribute('title') ?? '';
         }
         if (isHtmlTag(element, 'option')) {
@@ -215,6 +214,13 @@ export function createSemantics() {
             const name = readName(element);
             if (name) {
                 result.name = name;
+            }
+            if (!hasSensitiveTextSource(element, 'aria-describedby')) {
+                const description = computeAccessibleDescription(element, {
+                    getComputedStyle: getStyle,
+                    computedStyleSupportsPseudoElements: false,
+                });
+                if (description && description !== name) result.description = description;
             }
         }
 
@@ -244,6 +250,10 @@ export function createSemantics() {
 export type Semantics = ReturnType<typeof createSemantics>;
 
 function appendControlState(element: Element, result: ElementDescription) {
+    if ((isHtmlTag(element, 'input') || isHtmlTag(element, 'textarea') || isHtmlTag(element, 'select'))
+        && !element.validity.valid) {
+        result.invalid = true;
+    }
     if (isHtmlTag(element, 'input') || isHtmlTag(element, 'textarea')) {
         if (element.readOnly) {
             result.readOnly = true;
@@ -252,6 +262,11 @@ function appendControlState(element: Element, result: ElementDescription) {
 
     if (isHtmlTag(element, 'input')) {
         result.inputType = element.type;
+        if (element.type === 'number' || element.type === 'range') {
+            for (const constraint of ['min', 'max', 'step'] as const) {
+                if (element[constraint]) result[constraint] = element[constraint];
+            }
+        }
         if (isCheckableInput(element)) {
             result.checked = element.checked;
             if (element.indeterminate) {
@@ -273,14 +288,17 @@ function appendControlState(element: Element, result: ElementDescription) {
 }
 
 function appendAriaState(element: Element, result: ElementDescription) {
-    for (const state of ['checked', 'selected', 'expanded', 'readonly']) {
+    for (const state of ['checked', 'selected', 'expanded', 'readonly', 'pressed', 'busy']) {
         const value = element.getAttribute(`aria-${state}`);
-        if (value !== 'true' && value !== 'false' && value !== 'mixed') {
+        if (value !== 'true' && value !== 'false' && !(value === 'mixed' && (state === 'checked' || state === 'pressed'))) {
             continue;
         }
         const key = state === 'readonly' ? 'readOnly' : state;
         result[key] = value === 'mixed' ? value : value === 'true';
     }
+    const invalid = element.getAttribute('aria-invalid');
+    if (invalid === 'true' || invalid === 'false') result.invalid = invalid === 'true';
+    else if (invalid === 'grammar' || invalid === 'spelling') result.invalid = invalid;
 }
 
 function appendDisclosureState(element: Element, result: ElementDescription) {
