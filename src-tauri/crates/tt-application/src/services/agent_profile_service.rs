@@ -33,6 +33,7 @@ pub use model_config::{
 pub use output_policy::require_output;
 pub(crate) use preset_refs::preset_exists_for_type;
 pub use readiness::validate_chat_profile;
+pub(crate) use system_prompt::WORKSPACE_INDEX_PLACEHOLDER;
 pub use system_prompt::materialize_agent_system_prompt;
 pub(crate) use validation::is_retired_agent_tool;
 pub use workspace_policy::{commit_policy_from_profile, workspace_roots_from_profile};

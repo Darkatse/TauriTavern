@@ -1,6 +1,6 @@
 # 工作区
 
-工作区保存 Agent 可以反复处理的文件。Chat 的工作文件属于 Run，Session 的工作文件由同一会话的历次 Run 共用，各自按 Profile 获得读写范围；`skills/` 则按当前 Invocation 的有效 Skill 绑定提供只读文件视图。
+工作区保存 Agent 可以反复处理的文件。Chat 的工作文件属于 Run，Session 的工作文件由同一会话的历次 Run 共用，各自按 Profile 获得读写范围；`skills/` 按当前 Invocation 的有效 Skill 绑定提供只读文件视图，`chat.json` 与 `floors/` 提供当前角色聊天的只读楼层视图。
 
 ## 文件放在哪里
 
@@ -15,20 +15,37 @@
 | `persist/` | 本次运行的持久内容工作副本 |
 | `tool-results/` | 工具结果及较长结果的可读版本，只读 |
 | `skills/` | 当前 Invocation 的有效 Skill 安装包，只读；无绑定时为空目录 |
+| `chat.json`、`floors/` | 当前角色聊天的概况与楼层，只读，仅 Chat Run，见[聊天挂载](#聊天挂载) |
 
-Chat Invocation 的 Agent 系统提示词附有开始时可见文件清单，见 [Prompt assembly](PromptAssembly.md#开始时文件清单)。模型用 `workspace.search_files`、`read_file`（及 Profile 开启的 `list_files`）寻找和读取材料，用 `write_file`、`apply_patch` 修改文本，或用 `workspace.shell` 列目录和批量处理文件。路径相对于工作区，例如 `output/main.md`；Shell 中的 `/output/main.md` 指向同一文件。
+Chat Invocation 的 Agent 系统提示词附有开局工作区索引，见 [Prompt assembly](PromptAssembly.md#开局工作区索引)。模型用 `chat.search`、`workspace.search_files`、`read_file`（及 Profile 开启的 `list_files`）寻找和读取材料，用 `write_file`、`apply_patch` 修改文本，或用 `workspace.shell` 列目录和批量处理文件。路径相对于工作区，例如 `output/main.md`；Shell 中的 `/output/main.md` 指向同一文件。
 
 文本工具替换已有文件和应用补丁时，使用读取记录和内容 SHA 检查冲突。Shell 不建立此读取记录；Shell 修改文件后，替换文件或应用补丁前需重新读取。
 
-普通 Run 文件读取返回原文，脚本可用 `macros.render()` 展开模板；Skill 文件的宏规则见 [Skill](Skill.md)。聊天与世界书通过各自工具读取。
+普通 Run 文件读取返回原文，脚本可用 `macros.render()` 展开模板；Skill 文件的宏规则见 [Skill](Skill.md)。聊天楼层可经只读挂载读取原文：按问题找旧剧情用 `chat_search`，它给出楼层文件路径；精确的词或正则用 `grep`；再用 `read floors/NNNNNN/message.md` 读取。世界书通过专用工具读取。
 
 ## 统一文件链路
 
 文本工具与 Shell（含 Python、JavaScript）通过 `WorkspaceFs` 访问同一逻辑视图。普通文件和 runtime 材料保存在 Run 的真实目录，`WorkspaceRepository` 负责初始化、manifest 与持久版本发布；Skill 原始文件由 `SkillRepository` 读取，应用层负责绑定和宏投影。
 
-模型侧使用当前 Invocation 的 `ScopedWorkspaceFs`；业务根本身不可修改，`tool-results` 和 `skills` 只读。Skill 是外部挂载，不复制到 Run 目录。
+模型侧使用当前 Invocation 的 `ScopedWorkspaceFs`；业务根本身不可修改，`tool-results`、`skills`、`chat.json` 和 `floors` 只读。`skills/` 与聊天是外部挂载，不复制到 Run 目录：`ScopedWorkspaceFs` 内部维护一张挂载表，顶层名 `skills`、`chat.json`、`floors` 由挂载提供，其余路径属于 Run 目录。
 
 Run 工作文件允许并行读取，按单次操作串行修改；CAS 的条件检查与写入在同一锁内完成。多步操作不构成事务，已成功的操作立即生效；Shell 失败或取消不回滚已完成的修改。追加使用原生 append，失败可能部分生效，不自动重放。
+
+## 聊天挂载
+
+角色聊天的 Chat Run 把当前聊天挂在工作区根目录，与 `output/`、`persist/` 等并列。一个 Run 只对应一段聊天，路径不带角色或聊天前缀：
+
+```text
+chat.json                  title（聊天文件名去扩展名）、stableChatId、character、floorCount
+floors/000000/message.md   该楼 `mes` 原文，不展开宏，不经过正则
+floors/000000/meta.json    index、name、role、is_system、send_date、swipe_id、swipe_count；有 extra.type 时加 type
+```
+
+- 楼号从 0 开始，6 位补零，与 SillyTavern 的 `#mesid` 一致。只包含本次输入冻结前的楼层（`input_message_count` 之前）；隐藏楼层保留，`is_system: true`。
+- `role`：原 `role` 为 `tool` 时是 tool，`is_user` 时是 user，`extra.type` 为 `narrator` 时是 system，其余是 assistant。
+- 读取、列目录、搜索和 Shell 都能访问；写入、编辑、改名和删除返回只读错误，与 `skills/` 相同。`grep` 搜楼层（不带 `path` 或指向楼层目录）时只匹配 `message.md`，`meta.json` 与 `chat.json` 需直接指定文件；直接扫描快照而非逐文件遍历，结果与 Run 文件一起按路径排列，隐藏楼层标 `[hidden]`。
+- 每个 Invocation 首次访问时读取整份聊天并在内存中复用，不写入 checkpoint。恢复运行会重新读取；本期不校验恢复前后已有楼层是否一致，期间被编辑的楼层会直接反映在读取结果里。
+- Session 与群聊没有此挂载。
 
 ## JavaScript
 

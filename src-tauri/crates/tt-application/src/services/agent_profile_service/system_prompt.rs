@@ -9,6 +9,20 @@ use super::constants::{
     AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, TASK_RETURN_TOOL,
 };
 
+/// Where the runtime puts the workspace index in the Agent system prompt. The default
+/// instructions end with it when workspace tools are enabled; custom instructions choose
+/// its place, and without it they get no index.
+pub(crate) const WORKSPACE_INDEX_PLACEHOLDER: &str = "{{workspace}}";
+
+const WORKSPACE_TOOLS: [&str; 6] = [
+    "workspace.list_files",
+    "workspace.read_file",
+    "workspace.search_files",
+    "workspace.write_file",
+    "workspace.apply_patch",
+    "workspace.shell",
+];
+
 pub fn materialize_agent_system_prompt(
     tools: &[AgentModelTool],
     profile: &ResolvedAgentProfile,
@@ -23,17 +37,7 @@ pub fn materialize_agent_system_prompt(
             "Assist the user with their request. Use tools when needed and reply directly when finished."
                 .to_string(),
         ];
-        if [
-            "workspace.list_files",
-            "workspace.read_file",
-            "workspace.search_files",
-            "workspace.write_file",
-            "workspace.apply_patch",
-            "workspace.shell",
-        ]
-        .iter()
-        .any(|name| has_tool(tools, name))
-        {
+        if WORKSPACE_TOOLS.iter().any(|name| has_tool(tools, name)) {
             lines.extend([
                 format!(
                     "Readable workspace directories: {}.",
@@ -116,10 +120,26 @@ pub fn materialize_agent_system_prompt(
             alias("chat.search"),
             alias("chat.read_messages")
         )),
-        (true, false) => lines.push(format!(
-            "- Use {} to find earlier chat messages.",
-            alias("chat.search")
-        )),
+        (true, false) => {
+            let mut hint = format!(
+                "- To find earlier plot by topic, use {}",
+                alias("chat.search")
+            );
+            if has("workspace.search_files") {
+                hint.push_str(&format!(
+                    "; for exact words or a regex, use {}",
+                    alias("workspace.search_files")
+                ));
+            }
+            if has("workspace.read_file") {
+                hint.push_str(&format!(
+                    "; read the original with {} floors/NNNNNN/message.md",
+                    alias("workspace.read_file")
+                ));
+            }
+            hint.push('.');
+            lines.push(hint);
+        }
         (false, true) => lines.push(format!(
             "- Use {} to read earlier chat messages by index.",
             alias("chat.read_messages")
@@ -172,15 +192,7 @@ pub fn materialize_agent_system_prompt(
     if persist_writable {
         lines.push("- Use persist/ for concise information that should carry into later turns of this chat: plot facts, unresolved threads, relationship states, user style preferences. Do not copy chat history, replies, tool results, or reasoning into it.".to_string());
     }
-
-    lines.push(format!(
-        "- Readable workspace directories: {}.",
-        format_model_visible_workspace_roots(&profile.workspace.visible_roots)
-    ));
-    lines.push(format!(
-        "- Writable workspace directories: {}.",
-        format_model_workspace_roots(&profile.workspace.writable_roots)
-    ));
+    // Readable and writable roots are named by the workspace index the runtime appends.
 
     if has(TASK_RETURN_TOOL) {
         lines.push(
@@ -240,6 +252,9 @@ pub fn materialize_agent_system_prompt(
         lines.push(String::new());
     }
     lines.push("Anyway: TOOLS&SKILLS IS ALL YOU NEED".to_string());
+    if WORKSPACE_TOOLS.iter().any(|name| has(name)) {
+        lines.extend([String::new(), WORKSPACE_INDEX_PLACEHOLDER.to_string()]);
+    }
 
     lines.join("\n")
 }

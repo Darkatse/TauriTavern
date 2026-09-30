@@ -12,6 +12,7 @@ use crate::services::agent_tools::common::{
     optional_usize_arg, required_trimmed_string_arg, tool_error,
 };
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
+use crate::services::agent_workspace_scope::floor_message_path;
 use tt_domain::errors::DomainError;
 use tt_domain::frozen_macros::FrozenMacros;
 use tt_domain::models::agent::{AgentChatRef, AgentToolResult};
@@ -43,6 +44,9 @@ struct ChatSearchHitStructured<'a> {
     metrics: TextMetricsPayload,
     #[serde(rename = "ref")]
     ref_id: String,
+    /// The floor file in the chat mount; group chats have no mount.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
 }
 
 pub(in crate::services::agent_tools) async fn search(
@@ -99,6 +103,8 @@ pub(in crate::services::agent_tools) async fn search(
         };
         search_query = bounded_query;
     }
+    // Character chats are mounted as floor files, so hits point at the file to read.
+    let floor_files = matches!(run.chat_target()?.chat_ref, AgentChatRef::Character { .. });
     let hits = match &run.chat_target()?.chat_ref {
         AgentChatRef::Character {
             character_id,
@@ -125,10 +131,16 @@ pub(in crate::services::agent_tools) async fn search(
         Err(error) => return Err(error.into()),
     };
 
-    let content = render_content(&search_query.query, &hits);
+    let content = render_content(&search_query.query, &hits, floor_files);
     let resource_refs = hits
         .iter()
-        .map(|hit| format!("chat:current#{}", hit.index))
+        .map(|hit| {
+            if floor_files {
+                format!("workspace:{}", floor_message_path(hit.index))
+            } else {
+                format!("chat:current#{}", hit.index)
+            }
+        })
         .collect::<Vec<_>>();
 
     Ok((
@@ -138,7 +150,10 @@ pub(in crate::services::agent_tools) async fn search(
             content,
             structured: structured_value(ChatSearchStructured {
                 query: search_query.query.as_str(),
-                hits: hits.iter().map(structured_hit).collect(),
+                hits: hits
+                    .iter()
+                    .map(|hit| structured_hit(hit, floor_files))
+                    .collect(),
             }),
             is_error: false,
             error_code: None,
@@ -192,7 +207,7 @@ fn empty_result(call: &ToolInvocation, query: &str) -> (AgentToolResult, AgentTo
         AgentToolResult {
             call_id: call.call_id.clone(),
             tool_id: call.tool_id.clone(),
-            content: render_content(query, &[]),
+            content: render_content(query, &[], false),
             structured: structured_value(ChatSearchStructured {
                 query,
                 hits: Vec::new(),
@@ -258,30 +273,39 @@ fn parse_search_query(
     })
 }
 
-fn render_content(query: &str, hits: &[ChatMessageSearchHit]) -> String {
+fn render_content(query: &str, hits: &[ChatMessageSearchHit], floor_files: bool) -> String {
     if hits.is_empty() {
         return format!("No messages matched `{query}` in the current chat.");
     }
 
     let mut content = format!(
-        "Search `{query}` matched {} message{} in the current chat. Use chat_read_messages with the message index to read exact text.",
+        "Search `{query}` matched {} message{} in the current chat. {}",
         hits.len(),
-        if hits.len() == 1 { "" } else { "s" }
+        if hits.len() == 1 { "" } else { "s" },
+        if floor_files {
+            "Read the floor file for the exact text."
+        } else {
+            "Use chat_read_messages with the message index to read exact text."
+        }
     );
     for hit in hits {
+        let location = if floor_files {
+            floor_message_path(hit.index)
+        } else {
+            format!("ref chat:current#{}", hit.index)
+        };
         content.push_str(&format!(
-            "\n\nmessage {} {} score {:.3} ref chat:current#{}\n{}",
+            "\n\nmessage {} {} score {:.3} {location}\n{}",
             hit.index,
             role_as_str(hit.role),
             hit.score,
-            hit.index,
             hit.snippet
         ));
     }
     content
 }
 
-fn structured_hit(hit: &ChatMessageSearchHit) -> ChatSearchHitStructured<'_> {
+fn structured_hit(hit: &ChatMessageSearchHit, floor_files: bool) -> ChatSearchHitStructured<'_> {
     let metrics = TextMetrics::from_text(&hit.snippet);
     ChatSearchHitStructured {
         index: hit.index,
@@ -290,5 +314,6 @@ fn structured_hit(hit: &ChatMessageSearchHit) -> ChatSearchHitStructured<'_> {
         snippet: hit.snippet.as_str(),
         metrics: metrics.into(),
         ref_id: format!("chat:current#{}", hit.index),
+        path: floor_files.then(|| floor_message_path(hit.index)),
     }
 }

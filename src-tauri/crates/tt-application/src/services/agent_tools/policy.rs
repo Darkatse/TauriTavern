@@ -138,7 +138,7 @@ pub(super) fn builtin_model_alias(name: &str) -> String {
         WORKSPACE_READ_FILE => "read",
         WORKSPACE_WRITE_FILE => "write",
         WORKSPACE_APPLY_PATCH => "edit",
-        WORKSPACE_SEARCH_FILES => "search",
+        WORKSPACE_SEARCH_FILES => "grep",
         WORKSPACE_LIST_FILES => "list",
         WORKSPACE_SHELL => "shell",
         WORKSPACE_COMMIT => "commit",
@@ -151,13 +151,16 @@ pub(super) fn builtin_model_alias(name: &str) -> String {
 /// Parameters renamed when the model-facing names were aligned with common harness
 /// conventions; `None` marks a removed parameter. Profile migration moves saved
 /// description overrides along, and argument validation names the current parameter.
-pub(crate) const RENAMED_TOOL_PARAMETERS: [(&str, &str, Option<&str>); 6] = [
+pub(crate) const RENAMED_TOOL_PARAMETERS: [(&str, &str, Option<&str>); 9] = [
     ("builtin:workspace.read_file", "path", Some("file_path")),
     ("builtin:workspace.read_file", "start_line", Some("offset")),
     ("builtin:workspace.read_file", "line_count", Some("limit")),
     ("builtin:workspace.write_file", "path", Some("file_path")),
     ("builtin:workspace.apply_patch", "path", Some("file_path")),
     ("builtin:workspace.commit", "path", Some("file_path")),
+    ("builtin:workspace.search_files", "query", Some("pattern")),
+    ("builtin:workspace.search_files", "limit", None),
+    ("builtin:workspace.search_files", "context_lines", None),
 ];
 
 /// Builtin schemas are closed (`additionalProperties: false`). The runtime enforces this

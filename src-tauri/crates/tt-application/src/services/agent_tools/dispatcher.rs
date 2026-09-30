@@ -10,7 +10,7 @@ use super::session::AgentToolSession;
 use super::workspace;
 use super::world_info;
 use crate::errors::ApplicationError;
-use crate::services::agent_workspace_scope::{ScopedWorkspaceFs, WorkspaceAccessPolicy};
+use crate::services::agent_workspace_scope::{ChatMount, ScopedWorkspaceFs, WorkspaceAccessPolicy};
 use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
@@ -108,6 +108,14 @@ impl AgentToolDispatcher {
         auto_commit_candidate: Option<WorkspacePath>,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
+        let chat_mount = session
+            .chat_mount
+            .get_or_try_init(|| async {
+                let run = self.run_repository.load_run(run_id).await?;
+                ChatMount::for_run(&run, self.chat_repository.clone())
+            })
+            .await?
+            .clone();
         let workspace = ScopedWorkspaceFs::new(
             raw_files.clone(),
             WorkspaceAccessPolicy::from_profile(profile),
@@ -116,7 +124,8 @@ impl AgentToolDispatcher {
             self.skill_service.file_repository(),
             session.effective_skills.clone(),
             session.runtime_context.frozen_macros.clone(),
-        );
+        )
+        .with_chat(chat_mount);
         let outcome = match builtin_tool_name(&call.tool_id)? {
             chat::CHAT_SEARCH => {
                 chat::search(

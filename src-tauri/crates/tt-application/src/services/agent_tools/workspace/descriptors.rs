@@ -65,29 +65,21 @@ pub(in crate::services::agent_tools) fn workspace_search_files_descriptor() -> T
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_SEARCH_FILES).expect("builtin tool name must be valid"),
         title: Some("Workspace Search Files".to_string()),
-        description: Some("Search workspace files by words, not regex; lines matching more words rank first and include context.".to_string()),
+        description: Some("Search file contents with a regular expression (Rust regex syntax; prefix (?i) to ignore case). Returns matching lines with paths and line numbers.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
-                "query": {
+                "pattern": {
                     "type": "string",
-                    "description": "Words to find."
+                    "description": "Regular expression to match within a line."
                 },
                 "path": {
                     "type": "string",
-                    "description": "File or directory to search. Defaults to all readable directories."
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum hits. Defaults to 20, at most 50."
-                },
-                "context_lines": {
-                    "type": "integer",
-                    "description": "Lines around each hit. Defaults to 2, at most 5."
+                    "description": "File or directory to search. Defaults to readable directories other than tool-results/ and skills/, plus chat floor messages."
                 }
             },
-            "required": ["query"]
+            "required": ["pattern"]
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true }),

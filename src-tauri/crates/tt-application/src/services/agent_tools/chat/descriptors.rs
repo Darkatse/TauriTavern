@@ -53,7 +53,7 @@ pub(in crate::services::agent_tools) fn chat_search_descriptor() -> ToolDescript
         id: ToolId::builtin(CHAT_SEARCH).expect("builtin tool name must be valid"),
         title: Some("Chat Search".to_string()),
         description: Some(
-            "Search this chat's messages; returns message indexes and snippets.".to_string(),
+            "Search this chat's messages by words; any matching word counts and the best matches come first. Returns floor files (floors/NNNNNN/message.md) with snippets.".to_string(),
         ),
         input_schema: json!({
             "type": "object",

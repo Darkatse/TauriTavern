@@ -128,6 +128,10 @@ JS
     );
     let profile = resolve_contract_profile(&fixture).await;
     let run = contract_run("shell_writing", AgentRunPresentation::Foreground, &profile);
+    // Listing the workspace root reads the chat mounted beside the Run roots.
+    let mut chat = Chat::new("User", "Alice");
+    chat.file_name = Some("Alice.png".into());
+    fixture.chat_repository.save(&chat).await.unwrap();
     fixture.agent_repository.create_run(&run).await.unwrap();
     let request = chat_request("prepare and revise a draft with shell and text tools");
     let prompt_snapshot = json!({"chatCompletionPayload": request.payload.clone()});

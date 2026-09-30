@@ -383,6 +383,10 @@ async fn agent_runtime_normalizes_empty_arguments_and_recovers_from_invalid_argu
         .max_calls_per_tool
         .insert(ToolId::builtin("workspace.list_files").unwrap(), 2);
     let run = contract_run("run_arguments", AgentRunPresentation::Background, &profile);
+    // Listing the workspace root reads the chat mounted beside the Run roots.
+    let mut chat = Chat::new("User", "Alice");
+    chat.file_name = Some("Alice.png".into());
+    fixture.chat_repository.save(&chat).await.unwrap();
     fixture.agent_repository.create_run(&run).await.unwrap();
     let request = chat_request("list files and write an output");
     let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
@@ -1577,8 +1581,8 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
                 ),
                 model_tool_call(
                     "skill_search",
-                    "search",
-                    json!({ "path": "skills/macro-demo/references", "query": "lantern" }),
+                    "grep",
+                    json!({ "path": "skills/macro-demo/references", "pattern": "lantern" }),
                 ),
                 model_tool_call(
                     "chat_read",
@@ -1593,8 +1597,8 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
                 ),
                 model_tool_call(
                     "file_search",
-                    "search",
-                    json!({ "path": "output", "query": "lantern" }),
+                    "grep",
+                    json!({ "path": "output", "pattern": "lantern" }),
                 ),
                 model_tool_call(
                     "script",
@@ -1727,17 +1731,23 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
         results["chat_read"].structured["messages"][0]["text"],
         "blue lantern"
     );
-    for id in ["skill_search", "chat_search"] {
-        assert_eq!(
-            results[id].structured["hits"].as_array().unwrap().len(),
-            1,
-            "{id}"
-        );
-    }
-    assert_eq!(results["skill_search"].structured["skippedFiles"], 1);
-    assert_eq!(results["skill_search"].structured["searchedFiles"], 1);
+    assert_eq!(
+        results["chat_search"].structured["hits"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    // The Skill file is matched as rendered; the binary file beside it is skipped.
+    assert_eq!(
+        results["skill_search"].structured["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     assert!(
-        results["file_search"].structured["hits"]
+        results["file_search"].structured["matches"]
             .as_array()
             .unwrap()
             .is_empty()

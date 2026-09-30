@@ -41,11 +41,12 @@ pub(crate) const WORKSPACE_FINISH: &str = "workspace.finish";
 const DEFAULT_LIST_DEPTH: usize = 2;
 const MAX_LIST_DEPTH: usize = 4;
 const MAX_LIST_ENTRIES: usize = 200;
-const MAX_INVENTORY_FILES: usize = 50;
+/// First-level `persist/` entries named in the workspace index.
+const MAX_INDEX_STATE_ENTRIES: usize = 12;
+/// Files already in work roots named in the workspace index.
+const MAX_INDEX_EXISTING_FILES: usize = 20;
 const MAX_READ_BYTES: u64 = 256 * 1024;
 const MAX_READ_LINES: usize = 1200;
 const MAX_READ_CHARS: usize = 80_000;
-const MAX_SEARCH_CONTEXT_LINES: usize = 5;
 const MAX_SEARCH_DEPTH: usize = 8;
 const MAX_SEARCH_FILES: usize = 1000;
-const MAX_SEARCH_LIMIT: usize = 50;

@@ -3,8 +3,9 @@ use serde_json::{Map, Value, json};
 use std::sync::Arc;
 
 use crate::errors::ApplicationError;
+use crate::services::agent_profile_service::WORKSPACE_INDEX_PLACEHOLDER;
 use crate::services::agent_tools::render_workspace_inventory;
-use crate::services::agent_workspace_scope::{ScopedWorkspaceFs, WorkspaceAccessPolicy};
+use crate::services::agent_workspace_scope::{ChatMount, ScopedWorkspaceFs, WorkspaceAccessPolicy};
 use crate::services::chat_completion_service::OPENCODE_STABLE_CHAT_ID_FIELD;
 use tt_domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile};
 use tt_domain::models::agent::{
@@ -26,7 +27,9 @@ pub(super) struct AgentPromptRequest {
 }
 
 /// PromptManager supplies the component identity; its position and role belong
-/// to the preset. Append the invocation's available skills and agents together.
+/// to the preset. Append the invocation's available skills and agents together, at the
+/// end of the text or, when it places the workspace index, right before the index and the
+/// blank lines leading to it, so the runtime sections keep one order.
 pub(super) fn append_runtime_catalogs(
     request: &mut AgentPromptRequest,
     skills: &[SkillIndexEntry],
@@ -35,38 +38,69 @@ pub(super) fn append_runtime_catalogs(
     if skills.is_empty() && agents.is_empty() {
         return Ok(());
     }
-    append_runtime_catalogs_text(agent_system_prompt_text(request)?, skills, agents);
+    let text = agent_system_prompt_text(request)?;
+    let at = text
+        .find(WORKSPACE_INDEX_PLACEHOLDER)
+        .map_or(text.len(), |at| text[..at].trim_end().len());
+    let mut catalogs = String::new();
+    append_runtime_catalogs_text(&mut catalogs, skills, agents);
+    text.insert_str(at, &catalogs);
     Ok(())
 }
 
-/// Appends the files visible at invocation start to the agent system prompt, so the
-/// model can act without first listing the workspace. The trailing messages belong to
-/// the preset (post-history instructions, prefill-style format openers) and must stay
-/// untouched. The list carries paths only, so the cached prefix changes only when files
-/// are added or removed. It is rendered once while preparing the invocation; later
-/// rounds, resume, and revision reuse the prepared request unchanged.
+/// Expands `{{workspace}}` in the agent system prompt into the workspace index, so the
+/// model can act without first listing the workspace; text without it gets no index. The
+/// trailing messages belong to the preset (post-history instructions, prefill-style format
+/// openers) and must stay untouched. The index is rendered once while preparing the
+/// invocation; later rounds, resume, and revision reuse the prepared request unchanged.
 pub(super) async fn append_workspace_inventory(
     request: &mut AgentPromptRequest,
     files: Arc<dyn WorkspaceFs>,
+    chat: Option<Arc<ChatMount>>,
     profile: &ResolvedAgentProfile,
     tools: &[AgentModelTool],
 ) -> Result<(), ApplicationError> {
-    let can_read_workspace = tools.iter().any(|tool| {
+    if !agent_system_prompt_text(request)?.contains(WORKSPACE_INDEX_PLACEHOLDER) {
+        return Ok(());
+    }
+    let uses_workspace = tools.iter().any(|tool| {
         tool.tool_id.is_builtin()
             && matches!(
                 tool.tool_id.native_name(),
-                "workspace.list_files" | "workspace.read_file" | "workspace.search_files"
+                "workspace.list_files"
+                    | "workspace.read_file"
+                    | "workspace.search_files"
+                    | "workspace.write_file"
+                    | "workspace.apply_patch"
+                    | "workspace.shell"
             )
     });
-    if !can_read_workspace {
-        return Ok(());
-    }
-    let workspace = ScopedWorkspaceFs::new(files, WorkspaceAccessPolicy::from_profile(profile));
-    let inventory = render_workspace_inventory(&workspace).await?;
-    let text = agent_system_prompt_text(request)?;
-    text.push_str("\n\n");
-    text.push_str(&inventory);
+    // Without workspace tools the index has nothing to point at.
+    let inventory = if uses_workspace {
+        let workspace = ScopedWorkspaceFs::new(files, WorkspaceAccessPolicy::from_profile(profile))
+            .with_chat(chat);
+        render_workspace_inventory(&workspace, profile).await?
+    } else {
+        String::new()
+    };
+    expand_workspace_placeholder(agent_system_prompt_text(request)?, &inventory);
     Ok(())
+}
+
+/// Replaces each placeholder with `index`. An empty index also drops the blank lines
+/// before the placeholder, leaving the text as if it had never been there.
+fn expand_workspace_placeholder(text: &mut String, index: &str) {
+    let mut from = 0;
+    while let Some(found) = text[from..].find(WORKSPACE_INDEX_PLACEHOLDER) {
+        let at = from + found;
+        let start = if index.is_empty() {
+            text[..at].trim_end().len()
+        } else {
+            at
+        };
+        text.replace_range(start..at + WORKSPACE_INDEX_PLACEHOLDER.len(), index);
+        from = start + index.len();
+    }
 }
 
 fn agent_system_prompt_text(

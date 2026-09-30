@@ -18,6 +18,7 @@ use super::tool_snapshot::tool_snapshot_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::ensure_profile_model_configured;
+use crate::services::agent_workspace_scope::ChatMount;
 use tt_domain::models::agent::profile::{AgentModelBindingMode, ResolvedAgentProfile};
 use tt_domain::models::agent::{
     AgentInvocationStatus, AgentRunEventLevel, AgentRunStatus, WorkspacePath,
@@ -372,6 +373,7 @@ impl AgentRuntimeService {
             super::prompt_snapshot::append_workspace_inventory(
                 &mut request,
                 self.workspace_files(run_id).await?,
+                ChatMount::for_run(&run, self.chat_repository.clone())?,
                 &resolved_profile,
                 &visible_tools,
             )

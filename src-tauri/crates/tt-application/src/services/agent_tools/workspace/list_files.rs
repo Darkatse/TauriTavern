@@ -5,18 +5,22 @@ use super::args::{
     ensure_visible_workspace_path, optional_list_path_arg, optional_usize_arg, tool_error,
 };
 use super::render::render_file_list;
-use super::{DEFAULT_LIST_DEPTH, MAX_INVENTORY_FILES, MAX_LIST_DEPTH, MAX_LIST_ENTRIES};
-use crate::errors::ApplicationError;
-use crate::services::agent_workspace_scope::{
-    AGENT_TOOL_RESULTS_ROOT, SKILLS_ROOT, ScopedWorkspaceFs,
+use super::{
+    DEFAULT_LIST_DEPTH, MAX_INDEX_EXISTING_FILES, MAX_INDEX_STATE_ENTRIES, MAX_LIST_DEPTH,
+    MAX_LIST_ENTRIES,
 };
+use crate::errors::ApplicationError;
+use crate::services::agent_workspace_scope::ScopedWorkspaceFs;
 use tt_domain::errors::DomainError;
+use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{AgentToolResult, WorkspacePath};
 use tt_domain::models::tool::ToolInvocation;
 use tt_ports::workspace_fs::{WorkspaceEntryKind, WorkspaceFs};
 
 use super::super::dispatcher::AgentToolEffect;
 use super::super::structured::structured_value;
+
+const PERSIST_ROOT: &str = "persist";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -121,25 +125,63 @@ pub(in crate::services::agent_tools) async fn list_files(
     ))
 }
 
-/// Files visible to an invocation when it starts, rendered once into its prompt so the
-/// model does not spend a round listing the workspace. Skill packages and tool results
-/// have their own entry points (the Skill catalog and the result that names them).
+/// The workspace index at the top of the invocation's agent system prompt: the chat
+/// files, which roots are work files, files already written to them, and the first
+/// level of persistent state, so the model does not spend a round listing the workspace.
+/// It sits at the head of the cached prompt prefix, so it must not carry anything that
+/// changes every floor (floor numbers, times); for a Chat Run only adding or removing a
+/// top-level `persist/` entry changes it. Skill packages and tool results have their own
+/// entry points (the Skill catalog and the result that names them).
 pub(crate) async fn render_workspace_inventory(
     workspace: &ScopedWorkspaceFs,
+    profile: &ResolvedAgentProfile,
 ) -> Result<String, ApplicationError> {
-    let workspace_files: &dyn WorkspaceFs = workspace;
-    let mut files = Vec::new();
-    let mut truncated = false;
-    let mut deeper = false;
-    for root in workspace
-        .policy
+    let roots = &profile.workspace;
+    let writable = |root: &str| roots.writable_roots.iter().any(|writable| writable == root);
+    let mut lines = vec!["# Workspace".to_string()];
+    if workspace.has_chat() {
+        lines.push(
+            "Chat (read-only): chat.json, floors/NNNNNN/{message.md (raw),meta.json}".to_string(),
+        );
+    }
+
+    let (work, read_only): (Vec<&str>, Vec<&str>) = roots
         .visible_roots
         .iter()
-        .filter(|root| ![AGENT_TOOL_RESULTS_ROOT, SKILLS_ROOT].contains(&root.as_str()))
-    {
-        let root = WorkspacePath::parse(root)?;
+        .map(String::as_str)
+        .filter(|root| *root != PERSIST_ROOT)
+        .partition(|root| writable(root));
+    let dirs = |roots: &[&str]| {
+        roots
+            .iter()
+            .map(|root| format!("{root}/"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    match (work.is_empty(), read_only.is_empty()) {
+        (false, true) => lines.push(format!("Work: {} (this run)", dirs(&work))),
+        (false, false) => lines.push(format!(
+            "Work: {} (this run); read-only: {}",
+            dirs(&work),
+            dirs(&read_only)
+        )),
+        (true, false) => lines.push(format!("Work: {} (read-only, this run)", dirs(&read_only))),
+        (true, true) => {}
+    }
+
+    // A Chat Run starts with empty work roots, so this line stays out of its cached
+    // prefix. Handoff targets and subagents start after earlier writes in the same Run
+    // and should see the ones their own roots allow.
+    let workspace_files: &dyn WorkspaceFs = workspace;
+    let mut existing = Vec::new();
+    let mut truncated = false;
+    for root in work.iter().chain(&read_only) {
         let list = match workspace_files
-            .list_files(Some(&root), MAX_LIST_DEPTH, MAX_LIST_ENTRIES)
+            .list_files(
+                Some(&WorkspacePath::parse(root)?),
+                MAX_LIST_DEPTH,
+                MAX_LIST_ENTRIES,
+            )
             .await
         {
             Ok(list) => list,
@@ -148,52 +190,71 @@ pub(crate) async fn render_workspace_inventory(
             Err(error) => return Err(error.into()),
         };
         truncated |= list.truncated;
-        // Directories at this depth are listed but not expanded; their contents are
-        // unknown here, so the inventory must not claim to be complete.
-        let unexpanded_segments = path_segments(&root) + MAX_LIST_DEPTH + 1;
-        deeper |= list.entries.iter().any(|entry| {
-            entry.kind == WorkspaceEntryKind::Directory
-                && path_segments(&entry.path) >= unexpanded_segments
-        });
-        files.extend(
+        existing.extend(
             list.entries
                 .into_iter()
                 .filter(|entry| entry.kind == WorkspaceEntryKind::File)
-                .map(|entry| entry.path),
+                .map(|entry| entry.path.as_str().to_string()),
         );
     }
-    if files.is_empty() && !truncated && !deeper {
-        let persist_visible = workspace
-            .policy
-            .visible_roots
-            .iter()
-            .any(|root| root == "persist");
-        return Ok(if persist_visible {
-            "Workspace files at start: none; persist/ is empty.".to_string()
-        } else {
-            "Workspace files at start: none.".to_string()
-        });
+    if !existing.is_empty() {
+        existing.sort_unstable();
+        truncated |= existing.len() > MAX_INDEX_EXISTING_FILES;
+        existing.truncate(MAX_INDEX_EXISTING_FILES);
+        if truncated {
+            existing.push("\u{2026}".to_string());
+        }
+        lines.push(format!("Existing: {}", existing.join(", ")));
     }
-    files.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-    let mut lines = vec!["Workspace files at start:".to_string()];
-    lines.extend(
-        files
-            .iter()
-            .take(MAX_INVENTORY_FILES)
-            .map(|path| format!("- {}", path.as_str())),
-    );
-    let hidden = files.len().saturating_sub(MAX_INVENTORY_FILES);
-    if truncated {
-        lines.push("- ... more files not shown".to_string());
-    } else if hidden > 0 {
-        lines.push(format!("- ... {hidden} more files"));
-    }
-    if deeper && !truncated {
-        lines.push("- ... files in deeper directories not listed".to_string());
-    }
-    Ok(lines.join("\n"))
-}
 
-fn path_segments(path: &WorkspacePath) -> usize {
-    path.as_str().split('/').count()
+    if roots.visible_roots.iter().any(|root| root == PERSIST_ROOT) {
+        let access = if writable(PERSIST_ROOT) {
+            "writable"
+        } else {
+            "read-only"
+        };
+        let entries = match workspace_files
+            .read_dir(Some(&WorkspacePath::parse(PERSIST_ROOT)?), usize::MAX)
+            .await
+        {
+            Ok(entries) => entries,
+            // A visible root that was never created holds no files.
+            Err(DomainError::NotFound(_)) => Vec::new(),
+            Err(error) => return Err(error.into()),
+        };
+        if entries.is_empty() {
+            lines.push(format!("State: persist/ (empty; {access}, kept per floor)"));
+        } else {
+            let mut names = entries
+                .iter()
+                .map(|entry| {
+                    let name = entry
+                        .path
+                        .as_str()
+                        .rsplit_once('/')
+                        .map_or(entry.path.as_str(), |(_, name)| name);
+                    match entry.metadata.kind {
+                        WorkspaceEntryKind::Directory => format!("{name}/"),
+                        WorkspaceEntryKind::File => name.to_string(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            // Directory order is platform-dependent; the cached prefix must not be.
+            names.sort_unstable();
+            if names.len() > MAX_INDEX_STATE_ENTRIES {
+                names.truncate(MAX_INDEX_STATE_ENTRIES);
+                names.push("\u{2026}".to_string());
+            }
+            lines.push(format!(
+                "State: persist/{{{}}} ({access}, kept per floor)",
+                names.join(",")
+            ));
+        }
+    }
+
+    Ok(if lines.len() == 1 {
+        String::new()
+    } else {
+        lines.join("\n")
+    })
 }

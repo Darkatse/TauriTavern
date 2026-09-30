@@ -174,3 +174,267 @@ async fn agent_runtime_parent_and_child_read_their_own_skill_binding() {
     );
     fs::remove_dir_all(root).await.unwrap();
 }
+
+#[tokio::test]
+async fn agent_runtime_places_the_workspace_index_only_where_instructions_ask() {
+    let root = temp_root("agent-workspace-placeholder");
+    let finish = || model_tool_response(vec![model_tool_call("finish", "finish", json!({}))]);
+    let fixture = agent_runtime_fixture_with_responses(&root, vec![finish(), finish()]);
+    let profile = resolve_contract_profile(&fixture).await;
+    for (id, instructions) in [
+        (
+            "run_index_middle",
+            "Before the index.\n\n{{workspace}}\n\nAfter the index.",
+        ),
+        ("run_index_absent", "Use the available Agent tools."),
+    ] {
+        let run = contract_run(id, AgentRunPresentation::Background, &profile);
+        fixture.agent_repository.create_run(&run).await.unwrap();
+        let mut request = chat_request("Write the reply.");
+        request.payload["messages"][0]["content"] = json!(instructions);
+        let snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
+        let (_cancel, mut receiver) = watch::channel(false);
+        fixture
+            .service
+            .execute_agent_loop_run_inner(
+                &run.id,
+                snapshot,
+                request,
+                profile.clone(),
+                &mut receiver,
+            )
+            .await
+            .expect("run completes");
+    }
+
+    let requests = fixture.model_gateway.requests().await;
+    let placed = message_text_for_role(&requests[0], AgentModelRole::System);
+    let index = placed.find("# Workspace").expect("the index is placed");
+    let after = placed.find("After the index.").unwrap();
+    assert!(
+        placed.starts_with("Before the index.") && index < after,
+        "{placed}"
+    );
+    assert!(!placed.contains("{{workspace}}"), "{placed}");
+    let absent = message_text_for_role(&requests[1], AgentModelRole::System);
+    assert!(!absent.contains("# Workspace"), "{absent}");
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn agent_runtime_mounts_the_current_chat_as_read_only_floors() {
+    use tt_domain::models::chat::ChatMessage;
+
+    let root = temp_root("agent-chat-mount");
+    let character = "雪之下 雪乃（v2.1)";
+    let floor = |index: usize, file: &str| format!("floors/{index:06}/{file}");
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![
+            model_tool_response(vec![
+                model_tool_call("list", "list", json!({ "depth": 2 })),
+                model_tool_call(
+                    "read_raw",
+                    "read",
+                    json!({ "file_path": floor(0, "message.md") }),
+                ),
+                model_tool_call(
+                    "read_hidden",
+                    "read",
+                    json!({ "file_path": floor(1, "meta.json") }),
+                ),
+                model_tool_call(
+                    "read_after_input",
+                    "read",
+                    json!({ "file_path": floor(2, "message.md") }),
+                ),
+                model_tool_call(
+                    "write_mount",
+                    "write",
+                    json!({ "file_path": floor(0, "message.md"), "content": "edited" }),
+                ),
+                model_tool_call("shell_cat", "shell", json!({ "command": "cat /chat.json" })),
+                model_tool_call(
+                    "grep_regex",
+                    "grep",
+                    json!({ "pattern": "(?i)^hello|隐藏的?旁白" }),
+                ),
+                model_tool_call("grep_after_input", "grep", json!({ "pattern": "froze" })),
+                model_tool_call(
+                    "grep_literal",
+                    "grep",
+                    json!({ "path": "floors", "pattern": r"\{\{char\}\}" }),
+                ),
+                model_tool_call(
+                    "grep_results_default",
+                    "grep",
+                    json!({ "pattern": "floorCount" }),
+                ),
+                model_tool_call(
+                    "grep_results_named",
+                    "grep",
+                    json!({ "path": "tool-results", "pattern": "floorCount" }),
+                ),
+                model_tool_call("grep_invalid", "grep", json!({ "pattern": "(" })),
+            ]),
+            model_tool_response(vec![model_tool_call("finish", "finish", json!({}))]),
+        ],
+    );
+    let mut profile = resolve_contract_profile(&fixture).await;
+    profile.tools.max_calls_per_run = 20;
+    let mut run = contract_run("run_chat_mount", AgentRunPresentation::Background, &profile);
+    let target = run.chat_target_mut().unwrap();
+    target.stable_chat_id = "3f9a1c2e-7b4d-4c1a-9e2f-0123456789ab".into();
+    target.chat_ref = AgentChatRef::Character {
+        character_id: character.into(),
+        file_name: "Branch #2.jsonl".into(),
+    };
+    target.input_message_count = Some(2);
+    let mut chat = Chat::new("User", character);
+    chat.file_name = Some("Branch #2.jsonl".into());
+    chat.add_message(ChatMessage::user("User", "Hello {{char}}, <b>raw</b>"));
+    let mut hidden = ChatMessage::character(character, "一段隐藏的旁白。");
+    hidden.is_system = true;
+    chat.add_message(hidden);
+    chat.add_message(ChatMessage::character(
+        character,
+        "Written after the input froze.",
+    ));
+    fixture.chat_repository.save(&chat).await.unwrap();
+    fixture.agent_repository.create_run(&run).await.unwrap();
+    let mut request = chat_request("Read the chat mount.");
+    // The default instructions end with the index placeholder.
+    request.payload["messages"][0]["content"] =
+        json!("Use the available Agent tools.\n\n{{workspace}}");
+    let snapshot = json!({
+        "chatCompletionPayload": request.payload.clone(),
+        "frozenRunInputSnapshot": {
+            "macroContext": { "names": { "char": "Frozen Yukino" } }
+        }
+    });
+    let (_cancel, mut receiver) = watch::channel(false);
+    fixture
+        .service
+        .execute_agent_loop_run_inner(&run.id, snapshot, request, profile, &mut receiver)
+        .await
+        .expect("chat mount run completes");
+
+    let requests = fixture.model_gateway.requests().await;
+    let instructions = message_text_for_role(&requests[0], AgentModelRole::System);
+    assert!(instructions.contains("chat.json"), "{instructions}");
+    let results = requests[1]
+        .messages
+        .iter()
+        .flat_map(|message| &message.parts)
+        .filter_map(|part| match part {
+            AgentModelContentPart::ToolResult { result } => Some((result.call_id.as_str(), result)),
+            _ => None,
+        })
+        .collect::<HashMap<_, _>>();
+
+    let listed = results["list"].structured["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["path"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    // Listing the root shows the chat mount beside the Run roots.
+    for expected in ["chat.json", "floors/000000", "floors/000001"] {
+        assert!(listed.iter().any(|path| path == expected), "{listed:?}");
+    }
+    assert!(
+        !listed.iter().any(|path| path == "floors/000002"),
+        "{listed:?}"
+    );
+
+    let raw = &results["read_raw"];
+    assert!(!raw.is_error, "{}", raw.content);
+    assert!(
+        raw.content.contains("Hello {{char}}, <b>raw</b>"),
+        "{}",
+        raw.content
+    );
+    assert!(!raw.content.contains("Frozen Yukino"), "{}", raw.content);
+
+    let hidden = &results["read_hidden"];
+    assert!(!hidden.is_error, "{}", hidden.content);
+    assert!(
+        hidden.content.contains(r#""is_system": true"#),
+        "{}",
+        hidden.content
+    );
+
+    let after_input = &results["read_after_input"];
+    assert!(after_input.is_error);
+    assert_eq!(
+        after_input.error_code.as_deref(),
+        Some("workspace.file_not_found")
+    );
+
+    let write = &results["write_mount"];
+    assert!(write.is_error);
+    assert_eq!(
+        write.error_code.as_deref(),
+        Some("workspace.path_not_writable")
+    );
+
+    let shell = &results["shell_cat"];
+    assert!(!shell.is_error, "{}", shell.content);
+    assert!(
+        shell.content.contains(r#""floorCount": 2"#),
+        "{}",
+        shell.content
+    );
+
+    let hit_paths = |id: &str| {
+        results[id].structured["matches"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{id}: {}", results[id].content))
+            .iter()
+            .map(|found| found["path"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    let hidden_hit = floor(1, "message.md");
+    // Without a path, grep covers Run files and chat floors together.
+    let regex_hits = hit_paths("grep_regex");
+    assert!(
+        regex_hits.contains(&floor(0, "message.md")),
+        "{regex_hits:?}"
+    );
+    assert!(regex_hits.contains(&hidden_hit), "{regex_hits:?}");
+    assert!(
+        results["grep_regex"]
+            .content
+            .contains(&format!("{hidden_hit} [hidden]")),
+        "{}",
+        results["grep_regex"].content
+    );
+    assert!(
+        !hit_paths("grep_after_input")
+            .iter()
+            .any(|path| path.starts_with("floors/"))
+    );
+    assert_eq!(hit_paths("grep_literal"), [floor(0, "message.md")]);
+    // Tool results are searched only when the path names them.
+    assert!(
+        !hit_paths("grep_results_default")
+            .iter()
+            .any(|path| path.starts_with("tool-results/"))
+    );
+    let named = hit_paths("grep_results_named");
+    assert!(
+        !named.is_empty(),
+        "{}",
+        results["grep_results_named"].content
+    );
+    assert!(named.iter().all(|path| path.starts_with("tool-results/")));
+    let invalid = &results["grep_invalid"];
+    assert!(invalid.is_error);
+    assert_eq!(
+        invalid.error_code.as_deref(),
+        Some("workspace.grep_pattern_invalid")
+    );
+
+    let _ = fs::remove_dir_all(root).await;
+}

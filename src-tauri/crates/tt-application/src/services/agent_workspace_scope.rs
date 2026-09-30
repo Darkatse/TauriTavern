@@ -1,11 +1,15 @@
 use crate::errors::ApplicationError;
 use async_trait::async_trait;
+use serde::Serialize;
+use serde_json::Value;
 use std::sync::{Arc, Mutex, MutexGuard};
+use tokio::sync::OnceCell;
 use tt_domain::errors::DomainError;
 use tt_domain::frozen_macros::FrozenMacros;
-use tt_domain::models::agent::WorkspacePath;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
+use tt_domain::models::agent::{AgentChatRef, AgentRun, AgentRunTarget, WorkspacePath};
 use tt_domain::models::skill::SkillIndexEntry;
+use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::skill_repository::SkillRepository;
 use tt_ports::workspace_fs::{
     WorkspaceAppendResult, WorkspaceDirectoryEntry, WorkspaceEntryKind, WorkspaceFs,
@@ -16,6 +20,11 @@ mod skills;
 
 pub(crate) const AGENT_TOOL_RESULTS_ROOT: &str = "tool-results";
 pub(crate) const SKILLS_ROOT: &str = "skills";
+const CHAT_FILE: &str = "chat.json";
+const FLOORS_ROOT: &str = "floors";
+/// The mount table: top-level names served only by mounts, never by the Run directory.
+/// All are read-only.
+const MOUNT_ROOTS: [&str; 3] = [SKILLS_ROOT, CHAT_FILE, FLOORS_ROOT];
 
 pub(crate) fn task_result_summary_path(workspace_key: &str) -> Result<WorkspacePath, DomainError> {
     WorkspacePath::parse(format!("summaries/{workspace_key}-result.md"))
@@ -131,12 +140,13 @@ impl WorkspaceAccessPolicy {
         )))
     }
 
+    /// Mounted paths are visible by construction; an absent mount reads as not found.
     pub(crate) fn is_visible(&self, path: &WorkspacePath) -> bool {
-        workspace_path_is_under_any_root(path, &self.visible_roots)
+        is_mount_path(path) || workspace_path_is_under_any_root(path, &self.visible_roots)
     }
 
     pub(crate) fn is_writable(&self, path: &WorkspacePath) -> bool {
-        !is_skill_path(path)
+        !is_mount_path(path)
             && self
                 .writable_roots
                 .iter()
@@ -151,7 +161,22 @@ pub(crate) struct ScopedWorkspaceFs {
     skill_repository: Option<Arc<dyn SkillRepository>>,
     skill_bindings: Arc<[SkillIndexEntry]>,
     frozen_macros: Arc<FrozenMacros>,
+    chat: Option<Arc<ChatMount>>,
     text_mutation: Option<Mutex<WorkspaceTextMutation>>,
+}
+
+/// A read-only view mounted at top-level names of the logical tree.
+#[derive(Clone, Copy)]
+enum Mount<'a> {
+    Skills,
+    Chat(&'a ChatMount),
+}
+
+enum Route<'a> {
+    Run,
+    Mount(Mount<'a>),
+    /// A mount name whose mount this run does not have.
+    Missing,
 }
 
 /// A Shell call starts from the round's candidate and reports whether it changed.
@@ -171,6 +196,7 @@ impl ScopedWorkspaceFs {
             skill_repository: None,
             skill_bindings: Arc::default(),
             frozen_macros: Arc::default(),
+            chat: None,
             text_mutation: None,
         }
     }
@@ -185,6 +211,58 @@ impl ScopedWorkspaceFs {
         self.skill_bindings = bindings;
         self.frozen_macros = frozen_macros;
         self
+    }
+
+    pub(crate) fn with_chat(mut self, chat: Option<Arc<ChatMount>>) -> Self {
+        self.chat = chat;
+        self
+    }
+
+    pub(crate) fn has_chat(&self) -> bool {
+        self.chat.is_some()
+    }
+
+    /// Chat texts to search from the snapshot, never traversed as files: every floor's
+    /// `message.md` when `path` is `None`, otherwise every chat file at or under `path`.
+    /// Empty when `path` lies outside the chat mount or the run has no chat.
+    pub(crate) async fn chat_texts(
+        &self,
+        path: Option<&WorkspacePath>,
+    ) -> Result<Vec<ChatText<'_>>, DomainError> {
+        let Some(path) = path else {
+            return match self.chat.as_deref() {
+                Some(chat) => chat.texts(None).await,
+                None => Ok(Vec::new()),
+            };
+        };
+        self.check(path, false)?;
+        match self.route(path) {
+            Route::Mount(Mount::Chat(chat)) => chat.texts(Some(path)).await,
+            Route::Missing => Err(mounted_path_not_found(path)),
+            Route::Run | Route::Mount(Mount::Skills) => Ok(Vec::new()),
+        }
+    }
+
+    /// The mount serving a top-level mount name, `None` when this run does not have it.
+    fn mount(&self, root: &str) -> Option<Mount<'_>> {
+        match root {
+            SKILLS_ROOT => Some(Mount::Skills),
+            CHAT_FILE | FLOORS_ROOT => self.chat.as_deref().map(Mount::Chat),
+            _ => None,
+        }
+    }
+
+    fn route(&self, path: &WorkspacePath) -> Route<'_> {
+        let top = path
+            .as_str()
+            .split('/')
+            .next()
+            .expect("split yields a segment");
+        if MOUNT_ROOTS.contains(&top) {
+            self.mount(top).map_or(Route::Missing, Route::Mount)
+        } else {
+            Route::Run
+        }
     }
 
     pub(crate) fn track_text_mutations(
@@ -256,10 +334,12 @@ impl WorkspaceFs for ScopedWorkspaceFs {
         maximum_bytes: usize,
     ) -> Result<Vec<u8>, DomainError> {
         self.check(path, false)?;
-        if is_skill_path(path) {
-            return self.read_skill_file(path, maximum_bytes).await;
+        match self.route(path) {
+            Route::Run => self.inner.read_file(path, maximum_bytes).await,
+            Route::Mount(Mount::Skills) => self.read_skill_file(path, maximum_bytes).await,
+            Route::Mount(Mount::Chat(chat)) => chat.read_file(path, maximum_bytes).await,
+            Route::Missing => Err(mounted_path_not_found(path)),
         }
-        self.inner.read_file(path, maximum_bytes).await
     }
     async fn write_file(
         &self,
@@ -295,17 +375,14 @@ impl WorkspaceFs for ScopedWorkspaceFs {
         match path {
             Some(path) => {
                 self.check(path, false)?;
-                if is_skill_path(path) {
-                    return self.skill_metadata(path).await;
+                match self.route(path) {
+                    Route::Run => self.inner.metadata(Some(path)).await,
+                    Route::Mount(Mount::Skills) => self.skill_metadata(path).await,
+                    Route::Mount(Mount::Chat(chat)) => chat.metadata(path).await,
+                    Route::Missing => Err(mounted_path_not_found(path)),
                 }
-                self.inner.metadata(Some(path)).await
             }
-            None => Ok(WorkspaceMetadata {
-                kind: WorkspaceEntryKind::Directory,
-                bytes: 0,
-                modified: None,
-                created: None,
-            }),
+            None => Ok(virtual_directory_metadata()),
         }
     }
     async fn read_dir(
@@ -315,18 +392,26 @@ impl WorkspaceFs for ScopedWorkspaceFs {
     ) -> Result<Vec<WorkspaceDirectoryEntry>, DomainError> {
         if let Some(path) = path {
             self.check(path, false)?;
-            if is_skill_path(path) {
-                return self.read_skill_dir(path, maximum_entries).await;
-            }
-            return self.inner.read_dir(Some(path), maximum_entries).await;
+            return match self.route(path) {
+                Route::Run => self.inner.read_dir(Some(path), maximum_entries).await,
+                Route::Mount(Mount::Skills) => self.read_skill_dir(path, maximum_entries).await,
+                Route::Mount(Mount::Chat(chat)) => chat.read_dir(path, maximum_entries).await,
+                Route::Missing => Err(mounted_path_not_found(path)),
+            };
         }
-        if self.policy.visible_roots.len() > maximum_entries {
+        let mut roots = self.policy.visible_roots.clone();
+        for mount_root in MOUNT_ROOTS {
+            if self.mount(mount_root).is_some() && !roots.iter().any(|root| root == mount_root) {
+                roots.push(mount_root.to_string());
+            }
+        }
+        if roots.len() > maximum_entries {
             return Err(DomainError::InvalidData(format!(
                 "Workspace root exceeds {maximum_entries} entries"
             )));
         }
         let mut entries = Vec::new();
-        for root in &self.policy.visible_roots {
+        for root in &roots {
             let path = WorkspacePath::parse(root)?;
             let metadata = self.metadata(Some(&path)).await?;
             entries.push(WorkspaceDirectoryEntry { path, metadata });
@@ -380,19 +465,416 @@ impl WorkspaceFs for ScopedWorkspaceFs {
     ) -> Result<(), DomainError> {
         self.check(source, false)?;
         self.check(target, true)?;
-        if is_skill_path(source) {
-            let bytes = self.read_skill_file(source, usize::MAX).await?;
+        if matches!(self.route(source), Route::Run) {
+            self.inner.copy_file(source, target).await?;
+        } else {
+            let bytes = self.read_file(source, usize::MAX).await?;
             self.inner
                 .write_file(target, &bytes, WorkspaceWriteGuard::Unchecked)
                 .await?;
-        } else {
-            self.inner.copy_file(source, target).await?;
         }
         self.remember_write(target);
         Ok(())
     }
 }
 
-fn is_skill_path(path: &WorkspacePath) -> bool {
-    path_matches_root_or_child(path.as_str(), SKILLS_ROOT)
+/// Paths served by the chat mount, which search reads from its snapshot.
+pub(crate) fn is_chat_mount_path(path: &WorkspacePath) -> bool {
+    [CHAT_FILE, FLOORS_ROOT]
+        .iter()
+        .any(|root| path_matches_root_or_child(path.as_str(), root))
+}
+
+fn is_mount_path(path: &WorkspacePath) -> bool {
+    MOUNT_ROOTS
+        .iter()
+        .any(|root| path_matches_root_or_child(path.as_str(), root))
+}
+
+fn mounted_path_not_found(path: &WorkspacePath) -> DomainError {
+    DomainError::NotFound(format!("Workspace path not found: {}", path.as_str()))
+}
+
+fn virtual_directory_metadata() -> WorkspaceMetadata {
+    WorkspaceMetadata {
+        kind: WorkspaceEntryKind::Directory,
+        bytes: 0,
+        modified: None,
+        created: None,
+    }
+}
+
+/// The current character chat as read-only files at the workspace root:
+/// `chat.json` and `floors/NNNNNN/{message.md,meta.json}`.
+/// `message.md` is the raw `mes` (no macros, no regex). Floors at or after the run's
+/// frozen input count are not part of the view. The chat is read once, on first access,
+/// and kept for the holder of this mount; a resumed run reads it again, without checking
+/// that earlier floors are unchanged.
+pub(crate) struct ChatMount {
+    character: String,
+    file_name: String,
+    stable_chat_id: String,
+    input_message_count: Option<usize>,
+    repository: Arc<dyn ChatRepository>,
+    snapshot: OnceCell<ChatSnapshot>,
+}
+
+impl std::fmt::Debug for ChatMount {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ChatMount")
+            .field("file_name", &self.file_name)
+            .field("input_message_count", &self.input_message_count)
+            .finish_non_exhaustive()
+    }
+}
+
+struct ChatSnapshot {
+    chat_json: String,
+    floors: Vec<ChatFloor>,
+}
+
+impl ChatSnapshot {
+    /// The chosen files of `floors`, in path order.
+    fn floor_texts(
+        &self,
+        floors: std::ops::Range<usize>,
+        message: bool,
+        meta: bool,
+    ) -> Vec<ChatText<'_>> {
+        floors
+            .flat_map(|index| {
+                let floor = &self.floors[index];
+                [
+                    (message, "message.md", &floor.message),
+                    (meta, "meta.json", &floor.meta),
+                ]
+                .into_iter()
+                .filter(|(included, ..)| *included)
+                .map(move |(_, file, text)| ChatText {
+                    path: floor_file_path(index, file),
+                    text,
+                    hidden: floor.hidden,
+                })
+            })
+            .collect()
+    }
+}
+
+struct ChatFloor {
+    message: String,
+    meta: String,
+    hidden: bool,
+}
+
+/// A chat file's text as searched in place, without reading it as a file.
+pub(crate) struct ChatText<'a> {
+    pub(crate) path: String,
+    pub(crate) text: &'a str,
+    /// `is_system`: hidden from the prompt by the user, still part of the chat.
+    pub(crate) hidden: bool,
+}
+
+#[derive(Clone, Copy)]
+enum ChatNode {
+    ChatJson,
+    Floors,
+    Floor(usize),
+    Message(usize),
+    Meta(usize),
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatInfo<'a> {
+    title: &'a str,
+    stable_chat_id: &'a str,
+    character: &'a str,
+    floor_count: usize,
+}
+
+/// SillyTavern field names, as in the chat file.
+#[derive(Serialize)]
+struct FloorMeta<'a> {
+    index: usize,
+    name: &'a Value,
+    role: &'static str,
+    is_system: bool,
+    send_date: &'a Value,
+    swipe_id: &'a Value,
+    swipe_count: Option<usize>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    kind: Option<&'a Value>,
+}
+
+impl ChatMount {
+    /// Only character chat runs have a chat mount; Agent mode does not run in group chats.
+    pub(crate) fn for_run(
+        run: &AgentRun,
+        repository: Arc<dyn ChatRepository>,
+    ) -> Result<Option<Arc<Self>>, DomainError> {
+        let AgentRunTarget::Chat(chat) = &run.target else {
+            return Ok(None);
+        };
+        let AgentChatRef::Character {
+            character_id,
+            file_name,
+        } = &chat.chat_ref
+        else {
+            return Ok(None);
+        };
+        Ok(Some(Arc::new(Self {
+            character: character_id.clone(),
+            file_name: file_name.clone(),
+            stable_chat_id: chat.stable_chat_id.clone(),
+            input_message_count: chat.input_message_count,
+            repository,
+            snapshot: OnceCell::new(),
+        })))
+    }
+
+    async fn snapshot(&self) -> Result<&ChatSnapshot, DomainError> {
+        self.snapshot.get_or_try_init(|| self.read_snapshot()).await
+    }
+
+    async fn read_snapshot(&self) -> Result<ChatSnapshot, DomainError> {
+        let payload = self
+            .repository
+            .get_chat_payload(&self.character, &self.file_name)
+            .await?;
+        // The first record is the chat header.
+        let messages = payload.get(1..).unwrap_or_default();
+        // Same bound as the chat tools: only floors before the run's frozen input.
+        let floor_count = match self.input_message_count {
+            Some(count) if messages.len() < count => {
+                return Err(DomainError::InvalidData(format!(
+                    "agent.input_history_conflict: run input requires {count} messages, but chat payload has {}",
+                    messages.len()
+                )));
+            }
+            Some(count) => count,
+            None => messages.len(),
+        };
+        let floors = messages[..floor_count]
+            .iter()
+            .enumerate()
+            .map(|(index, message)| project_floor(index, message))
+            .collect::<Result<Vec<_>, _>>()?;
+        let chat_json = to_pretty_json(&ChatInfo {
+            title: self
+                .file_name
+                .strip_suffix(".jsonl")
+                .unwrap_or(&self.file_name),
+            stable_chat_id: &self.stable_chat_id,
+            character: &self.character,
+            floor_count,
+        })?;
+        Ok(ChatSnapshot { chat_json, floors })
+    }
+
+    fn node(path: &WorkspacePath) -> Option<ChatNode> {
+        let mut parts = path.as_str().split('/');
+        let node = match (parts.next(), parts.next(), parts.next()) {
+            (Some(CHAT_FILE), None, None) => ChatNode::ChatJson,
+            (Some(FLOORS_ROOT), None, None) => ChatNode::Floors,
+            (Some(FLOORS_ROOT), Some(floor), file) => {
+                let index = parse_floor(floor)?;
+                match file {
+                    None => ChatNode::Floor(index),
+                    Some("message.md") => ChatNode::Message(index),
+                    Some("meta.json") => ChatNode::Meta(index),
+                    Some(_) => return None,
+                }
+            }
+            _ => return None,
+        };
+        parts.next().is_none().then_some(node)
+    }
+
+    async fn resolve(
+        &self,
+        path: &WorkspacePath,
+    ) -> Result<(&ChatSnapshot, ChatNode), DomainError> {
+        let snapshot = self.snapshot().await?;
+        let node = Self::node(path).ok_or_else(|| mounted_path_not_found(path))?;
+        if let ChatNode::Floor(index) | ChatNode::Message(index) | ChatNode::Meta(index) = node
+            && index >= snapshot.floors.len()
+        {
+            return Err(DomainError::NotFound(format!(
+                "Workspace path not found: {}; this chat has {} floors.",
+                path.as_str(),
+                snapshot.floors.len()
+            )));
+        }
+        Ok((snapshot, node))
+    }
+
+    /// Every floor's `message.md` when `path` is `None`, otherwise the files at or under
+    /// `path`.
+    async fn texts(&self, path: Option<&WorkspacePath>) -> Result<Vec<ChatText<'_>>, DomainError> {
+        let Some(path) = path else {
+            let snapshot = self.snapshot().await?;
+            return Ok(snapshot.floor_texts(0..snapshot.floors.len(), true, false));
+        };
+        let (snapshot, node) = self.resolve(path).await?;
+        Ok(match node {
+            ChatNode::ChatJson => vec![ChatText {
+                path: CHAT_FILE.to_owned(),
+                text: &snapshot.chat_json,
+                hidden: false,
+            }],
+            // A directory search covers messages; meta.json is searched only when named.
+            ChatNode::Floors => snapshot.floor_texts(0..snapshot.floors.len(), true, false),
+            ChatNode::Floor(index) => snapshot.floor_texts(index..index + 1, true, false),
+            ChatNode::Message(index) => snapshot.floor_texts(index..index + 1, true, false),
+            ChatNode::Meta(index) => snapshot.floor_texts(index..index + 1, false, true),
+        })
+    }
+
+    async fn read_file(
+        &self,
+        path: &WorkspacePath,
+        maximum_bytes: usize,
+    ) -> Result<Vec<u8>, DomainError> {
+        let (snapshot, node) = self.resolve(path).await?;
+        let text = match node {
+            ChatNode::ChatJson => &snapshot.chat_json,
+            ChatNode::Message(index) => &snapshot.floors[index].message,
+            ChatNode::Meta(index) => &snapshot.floors[index].meta,
+            ChatNode::Floors | ChatNode::Floor(_) => {
+                return Err(DomainError::workspace_path_is_directory(path.as_str()));
+            }
+        };
+        if text.len() > maximum_bytes {
+            return Err(DomainError::InvalidData(format!(
+                "Workspace read exceeds {maximum_bytes} bytes: {}",
+                path.as_str()
+            )));
+        }
+        Ok(text.as_bytes().to_vec())
+    }
+
+    async fn metadata(&self, path: &WorkspacePath) -> Result<WorkspaceMetadata, DomainError> {
+        let (snapshot, node) = self.resolve(path).await?;
+        Ok(match node {
+            ChatNode::ChatJson => file_metadata(&snapshot.chat_json),
+            ChatNode::Message(index) => file_metadata(&snapshot.floors[index].message),
+            ChatNode::Meta(index) => file_metadata(&snapshot.floors[index].meta),
+            ChatNode::Floors | ChatNode::Floor(_) => virtual_directory_metadata(),
+        })
+    }
+
+    async fn read_dir(
+        &self,
+        path: &WorkspacePath,
+        maximum_entries: usize,
+    ) -> Result<Vec<WorkspaceDirectoryEntry>, DomainError> {
+        let (snapshot, node) = self.resolve(path).await?;
+        let entries = match node {
+            ChatNode::Floors => (0..snapshot.floors.len())
+                .map(|index| (floor_name(index), virtual_directory_metadata()))
+                .collect(),
+            ChatNode::Floor(index) => {
+                let floor = &snapshot.floors[index];
+                vec![
+                    ("message.md".to_string(), file_metadata(&floor.message)),
+                    ("meta.json".to_string(), file_metadata(&floor.meta)),
+                ]
+            }
+            ChatNode::ChatJson | ChatNode::Message(_) | ChatNode::Meta(_) => {
+                return Err(DomainError::file_io(
+                    "list",
+                    path.as_str(),
+                    std::io::Error::from(std::io::ErrorKind::NotADirectory),
+                ));
+            }
+        };
+        if entries.len() > maximum_entries {
+            return Err(DomainError::InvalidData(format!(
+                "Workspace directory exceeds {maximum_entries} entries: {}",
+                path.as_str()
+            )));
+        }
+        entries
+            .into_iter()
+            .map(|(name, metadata)| {
+                Ok(WorkspaceDirectoryEntry {
+                    path: WorkspacePath::parse(format!("{}/{name}", path.as_str()))?,
+                    metadata,
+                })
+            })
+            .collect()
+    }
+}
+
+fn floor_name(index: usize) -> String {
+    format!("{index:06}")
+}
+
+fn floor_file_path(index: usize, file: &str) -> String {
+    format!("{FLOORS_ROOT}/{}/{file}", floor_name(index))
+}
+
+/// Where the chat mount serves a floor's raw message, e.g. `floors/000003/message.md`.
+pub(crate) fn floor_message_path(index: usize) -> String {
+    floor_file_path(index, "message.md")
+}
+
+/// Only the canonical name is a floor: `12` and `+00012` are not `000012`.
+fn parse_floor(name: &str) -> Option<usize> {
+    let index = name.parse::<usize>().ok()?;
+    (floor_name(index) == name).then_some(index)
+}
+
+fn project_floor(index: usize, message: &Value) -> Result<ChatFloor, DomainError> {
+    static NULL: Value = Value::Null;
+    let field = |key: &str| message.get(key).unwrap_or(&NULL);
+    let text = message.get("mes").and_then(Value::as_str).ok_or_else(|| {
+        DomainError::InvalidData(format!("Chat message {index} has no string `mes` field"))
+    })?;
+    let kind = message
+        .pointer("/extra/type")
+        .filter(|value| !value.is_null());
+    let role = if message.get("role").and_then(Value::as_str) == Some("tool") {
+        "tool"
+    } else if field("is_user").as_bool().unwrap_or(false) {
+        "user"
+    } else if kind.and_then(Value::as_str) == Some("narrator") {
+        "system"
+    } else {
+        "assistant"
+    };
+    let hidden = field("is_system").as_bool().unwrap_or(false);
+    let meta = to_pretty_json(&FloorMeta {
+        index,
+        name: field("name"),
+        role,
+        is_system: hidden,
+        send_date: field("send_date"),
+        swipe_id: field("swipe_id"),
+        swipe_count: message
+            .get("swipes")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        kind,
+    })?;
+    Ok(ChatFloor {
+        message: text.to_owned(),
+        meta,
+        hidden,
+    })
+}
+
+fn to_pretty_json(value: &impl Serialize) -> Result<String, DomainError> {
+    serde_json::to_string_pretty(value)
+        .map_err(|error| DomainError::InternalError(format!("Chat mount JSON failed: {error}")))
+}
+
+fn file_metadata(text: &str) -> WorkspaceMetadata {
+    WorkspaceMetadata {
+        kind: WorkspaceEntryKind::File,
+        bytes: text.len() as u64,
+        modified: None,
+        created: None,
+    }
 }
