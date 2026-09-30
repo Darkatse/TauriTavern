@@ -185,7 +185,7 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
   - 左栏 pinned 锚点分两类，判据不同：
     - `LEFT_NAV_REQUIRED_ANCHORS`（所有档位，正确性）：面板外代码读取的节点保持在线，包括 `onModelChange` 读取边界值的 `#range_block_openai`，以及助手读取支持来源的 `#openai_reasoning_effort_block`。
     - `LEFT_NAV_COMPAT_ANCHORS`（仅 `compat`，兼容让步）：`#openai_api-presets`、`#completion_prompt_manager`，让第三方脚本在抽屉关闭时仍能选中。
-  - 世界书抽屉：`compat` 只 park 条目列表 `#world_popup_entries_list`（世界书 DOM 的主体），世界书下拉框、分页和编辑按钮保持在线，导入角色卡、`/world` 等在抽屉关闭时的更新照常生效；`aggressive` 仍 park 整个 `#wi-holder`。抽屉关闭期间的编辑器渲染因条目列表不在文档中而落空，hydrate 后通过 `refreshWorldInfoEditor()` 按编辑器当前状态重新渲染当前页。
+  - 世界书抽屉：`compat` 只 park 条目列表 `#world_popup_entries_list`（世界书 DOM 的主体），世界书下拉框、分页和编辑按钮保持在线；`aggressive` 仍 park 整个 `#wi-holder`。世界书模块持有列表节点，正常渲染与停放期间的更新使用同一个目标；重新打开只挂回原节点，不额外刷新。离屏更新仍有渲染计算，但停放期间的重型条目不连接 document，保留 DOM 裁剪收益；列表的分页后测量与条目定位跳过离屏节点。
 
 ---
 

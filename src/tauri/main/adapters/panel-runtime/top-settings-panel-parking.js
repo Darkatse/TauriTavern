@@ -3,7 +3,6 @@
 import { isTopLevelDrawerOpen, subscribeDrawerState } from '../../../../scripts/drawers.js';
 
 import { PanelRuntimeKind } from '../../services/panel-runtime/panel-runtime-kinds.js';
-import { refreshWorldInfoEditor } from '../st/world-info.js';
 
 /**
  * @typedef {import('../../services/embedded-runtime/embedded-runtime-manager.js').createEmbeddedRuntimeManager} createEmbeddedRuntimeManager
@@ -316,12 +315,6 @@ export function installTopSettingsPanelParking({ manager }) {
             // compat parks only the entry list, which holds nearly all World Info DOM. The lorebook
             // selects, pagination and editor buttons stay connected for the code that updates them.
             parkedSelector: manager.profile === 'compat' ? '#world_popup_entries_list' : '#wi-holder',
-            // Renders made while parked had no list to write to; show what the editor holds now.
-            afterHydrate: () => {
-                refreshWorldInfoEditor().catch((error) => {
-                    console.error('PanelParking(WorldInfo): failed to refresh the World Info editor:', error);
-                });
-            },
         }),
         registerDrawerParking(manager, { panelId: 'user-settings-block', parkedSelector: '#user-settings-block-content' }),
         registerDrawerParking(manager, { panelId: 'Backgrounds', parkedSelector: '#bg_tabs' }),

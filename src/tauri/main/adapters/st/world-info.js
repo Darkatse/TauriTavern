@@ -33,12 +33,3 @@ export async function openWorldInfoEntry(ref) {
 
     return openWorldInfoEntry(ref.world, ref.uid);
 }
-
-export async function refreshWorldInfoEditor() {
-    const { refreshWorldInfoEditor } = await import('../../../../scripts/world-info.js');
-    if (typeof refreshWorldInfoEditor !== 'function') {
-        throw new Error('world-info refreshWorldInfoEditor() is unavailable');
-    }
-
-    await refreshWorldInfoEditor();
-}
