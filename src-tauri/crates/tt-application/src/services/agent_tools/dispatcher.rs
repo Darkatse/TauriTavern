@@ -6,6 +6,7 @@ use tokio::sync::watch;
 
 use super::chat;
 use super::dice;
+use super::registry::profile_tool_visible;
 use super::session::AgentToolSession;
 use super::workspace;
 use super::world_info;
@@ -14,7 +15,8 @@ use crate::services::agent_workspace_scope::{ScopedWorkspaceFs, WorkspaceAccessP
 use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
-    AgentChatCommitMode, AgentToolResult, WorkspaceFileWriteMode, WorkspacePath,
+    AgentChatCommitMode, AgentChatRef, AgentRunTarget, AgentToolResult, WorkspaceFileWriteMode,
+    WorkspacePath,
 };
 use tt_domain::models::tool::{ToolId, ToolInvocation};
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
@@ -163,10 +165,37 @@ impl AgentToolDispatcher {
                 workspace::apply_patch(&workspace, call, args, session).await?
             }
             workspace::WORKSPACE_SHELL => {
+                // Scripts reach the chat only where the Profile grants the model
+                // `chat.read_messages`; otherwise they would read history the
+                // Profile narrowed away. A failed `load_run` still propagates.
+                // Having no character chat is decided from the run target itself,
+                // not from a `chat_target()` error: a Session run, a group chat,
+                // and any non-character chat are all legitimate "no capability"
+                // outcomes that the script sees as `chat.unsupported`, not
+                // failures. Denying the capability also skips the run read.
+                let chat = if profile_tool_visible(profile, chat::CHAT_READ_MESSAGES) {
+                    let run = self.run_repository.load_run(run_id).await?;
+                    let is_character_chat = matches!(
+                        &run.target,
+                        AgentRunTarget::Chat(chat)
+                            if matches!(chat.chat_ref, AgentChatRef::Character { .. })
+                    );
+                    is_character_chat.then(|| {
+                        Arc::new(chat::CharacterChatMessageSource::new(
+                            run,
+                            self.chat_repository.clone(),
+                            session.runtime_context.frozen_macros.clone(),
+                        ))
+                            as Arc<dyn tt_ports::workspace_shell::ChatMessageSource>
+                    })
+                } else {
+                    None
+                };
                 workspace::shell(
                     self.workspace_shell.as_ref(),
                     Arc::new(workspace.track_text_mutations(auto_commit_candidate)),
                     session.runtime_context.clone(),
+                    chat,
                     call,
                     args,
                     cancel,

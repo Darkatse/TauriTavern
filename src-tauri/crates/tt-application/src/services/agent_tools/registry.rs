@@ -266,7 +266,11 @@ fn apply_profile_context(
     Ok(())
 }
 
-fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
+/// Whether the Profile grants a builtin tool to the model.
+///
+/// Shared with tool dispatch so a workspace capability that exposes the same data
+/// cannot be reached where the Profile denied its tool.
+pub(super) fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
     let id = ToolId::builtin(name).expect("builtin Agent tool names form valid ToolIds");
     profile.tools.allow.iter().any(|allowed| allowed == &id)
         && !profile.tools.deny.iter().any(|denied| denied == &id)

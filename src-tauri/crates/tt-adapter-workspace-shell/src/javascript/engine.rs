@@ -14,12 +14,14 @@ use super::runtime::{
     MAX_OUTPUT_BYTES, Output, RUNTIME_MODULE, RuntimeModule, RuntimeState, output_object,
     process_object,
 };
+use tt_ports::workspace_shell::ChatMessageSource;
 
 pub(super) fn execute(
     script: Script,
     cwd: String,
     files: Files,
     host: Arc<WorkspaceShellContext>,
+    chat: Option<Arc<dyn ChatMessageSource>>,
 ) -> Result<ExecResult, DomainError> {
     let (name, source, entry) = match source(script.source, &cwd, &files) {
         Ok(source) => source,
@@ -39,8 +41,10 @@ pub(super) fn execute(
     let exit_code = Rc::new(Cell::new(0));
     let outcome = context.with(|ctx| {
         ctx.store_userdata(RuntimeState {
+            runtime: files.runtime.clone(),
             files: files.clone(),
             context: host,
+            chat,
             output: output.clone(),
         })
         .map_err(|_| rquickjs::Error::Unknown)?;

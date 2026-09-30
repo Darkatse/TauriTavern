@@ -29,6 +29,8 @@
 
 聊天工具读取 Run 输入对应的历史范围；文件读取使用 1-based 行号，聊天消息索引使用 0-based。较长文本可以分段读取。完整工具集合会按 Profile 收窄，return-mode 子 Agent 使用 `task.return` 作为结束工具。
 
+JavaScript 脚本中的 `chat.getMessage` / `chat.getMessages` 提供同一份聊天历史的只读访问，索引语义与 `chat.read_messages` 一致，单次最多 500 条，且只在 Profile 授予 `chat.read_messages` 时可用，见 [Workspace](Workspace.md#javascript) 与 [Skill](Skill.md#读取聊天消息)。
+
 可调用 Agent 目录随提示词提供，协作方式与错误反馈见 [多 Agent 协作](SubAgent.md)。
 
 ## 参数

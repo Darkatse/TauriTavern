@@ -28,6 +28,22 @@ Chat context:
 context.worldInfo.entries, context.variables.local/global and context.macro contain chat values captured when the run started. Unavailable fields throw an error.
 macros.render(text) expands chat macros.
 
+Chat messages:
+  import { chat } from '@tauritavern/runtime';
+  const message = chat.getMessage(3);                 // {ok, index, role, name, sendDate, text, ref, startLine, endLine, totalLines, totalBytes, preview, totalMessages}
+  const part = chat.getMessage(3, { startLine: 10, lineCount: 20 });
+  const batch = chat.getMessages([3, 4, 5]);          // {ok, messages: [...], totalMessages}
+Indexes are 0-based over the current character chat's visible history; the run's frozen upper bound is totalMessages.
+getMessage returns one message; getMessages reads many in a single file scan, up to 500 per call.
+A read has no line cap: the per-message byte budget is the only server-side bound.
+A window the byte budget ended before the requested last line, or a single line it clipped, sets preview: true; continue with startLine.
+Failures do not throw: check result.ok and result.reason, one of chat.not_found, chat.message_not_found,
+chat.invalid_message_range, chat.message_too_large, chat.unsupported. Malformed arguments and failed reads do throw.
+A read without a range of a message over 1048576 bytes returns chat.message_too_large, reporting totalBytes and maxBytes;
+reread it with startLine/lineCount, which is not subject to that cap, and save long text to a workspace file.
+The Profile must grant chat.read_messages; otherwise valid calls return chat.unsupported.
+Group chats and non-character runs report chat.unsupported the same way.
+
 Output:
 console.log/info/debug write stdout; console.warn/error write stderr.
 Print structured results with console.log(JSON.stringify(result)); use workspace files for large inputs and outputs.

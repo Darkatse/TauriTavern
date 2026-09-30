@@ -71,7 +71,7 @@ Skill 脚本遵循统一的 [JavaScript 工作区契约](Workspace.md#javascript
 脚本在 QuickJS 中执行，支持 ES 模块和 `async` / `await`，不提供 Node/Deno 标准库、DOM、网络、子进程或定时器。宿主能力从统一模块导入：
 
 ```js
-import { workspace, context, macros, log } from '@tauritavern/runtime';
+import { workspace, context, macros, chat, log } from '@tauritavern/runtime';
 ```
 
 | 接口 | 用途 |
@@ -84,9 +84,36 @@ import { workspace, context, macros, log } from '@tauritavern/runtime';
 | `context.variables.local` / `global` | 保留原始 JSON 类型的 SillyTavern 变量 |
 | `context.macro` | 冻结的名称、角色和聊天位置等宏数据 |
 | `macros.render(text)` | 使用 Run 冻结值展开宏 |
+| `chat.getMessage(index, options?)` | 按索引读取当前角色聊天的一条消息 |
+| `chat.getMessages(indices, options?)` | 一次读取多条消息，共享同一次文件扫描 |
 | `log.info(text)` / `warn` / `error` / `debug` | 将日志写入 stderr |
 
 文件 API 的路径相对于工作区根。`context` 是冻结输入的副本，修改它不会写回宿主；缺少所需上下文时，访问对应字段会报错。
+
+### 读取聊天消息
+
+`chat` 只提供当前这次 Run 所属角色聊天的只读访问，索引是从 0 开始的绝对历史索引。`ok: true` 与 `chat.message_not_found` 的结果带 `totalMessages`，即 Run 冻结输入决定的上界，脚本据此判断可用范围。Profile 未授予 `chat.read_messages` 时，合法的 `chat` 调用都返回 `chat.unsupported`。
+
+```js
+import { chat } from '@tauritavern/runtime';
+
+const probe = chat.getMessage(0);
+if (probe.ok) {
+  const latest = chat.getMessage(probe.totalMessages - 1);
+  if (latest.ok) console.log(latest.role, latest.text);
+}
+
+const window = chat.getMessages([10, 11, 12], { startLine: 1, lineCount: 50 });
+if (window.ok) {
+  for (const message of window.messages) console.log(message.index, message.ref);
+}
+```
+
+`getMessage` 读一条，`getMessages` 读多条并共享一次文件扫描，单次最多 500 条。`options` 可含 `startLine`（1-based）与 `lineCount`，与 [`chat.read_messages`](ToolSystem.md#内置工具) 的行区间选择一致；`ref` 字段同样是 `chat:current#{index}:L{start}-L{end}`。
+
+脚本读取没有行数上限，单条消息的字节预算是唯一的服务端上界。窗口因字节预算在请求的最后一行之前结束，或某一行被字节预算截断时，结果带 `preview: true`，脚本应据此用 `startLine` 接续读取而不是把当前文本当作完整内容。
+
+失败不会抛异常，而是返回 `ok: false` 与 `reason`：`chat.not_found`、`chat.message_not_found`、`chat.invalid_message_range`、`chat.message_too_large`、`chat.unsupported`。参数格式错误才会抛错；读取本身失败（例如聊天内容无法渲染）同样直接失败。不带区间读取一条超过 1048576 字节的消息返回 `chat.message_too_large`，并附 `totalBytes` 与 `maxBytes`；带上 `startLine` / `lineCount` 的分段读取不受整条消息上限限制，可据此逐段读取长文本，长文本应写入工作区文件而不是日志。群聊与非角色聊天同样对合法调用返回 `chat.unsupported`。命令摘要见 `js --help`。
 
 ### 模块与工具箱
 

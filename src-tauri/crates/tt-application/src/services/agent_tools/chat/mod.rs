@@ -1,8 +1,10 @@
 mod descriptors;
+mod message_source;
 mod read_messages;
 mod search;
 
 pub(super) use descriptors::{chat_read_messages_descriptor, chat_search_descriptor};
+pub(super) use message_source::CharacterChatMessageSource;
 pub(super) use read_messages::read_messages;
 pub(super) use search::search;
 

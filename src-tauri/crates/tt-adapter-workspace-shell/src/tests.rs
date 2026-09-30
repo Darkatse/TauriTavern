@@ -109,6 +109,7 @@ async fn cancellation_finishes_current_write_and_stops_further_writes() {
             workdir: "/".to_string(),
             files: files.clone(),
             context: Arc::default(),
+            chat: None,
             cancel: receiver,
         };
         let mut task = tokio::spawn(async move { WorkspaceShellEngine.execute(request).await });

@@ -1,5 +1,6 @@
 use super::*;
 use tt_application::dto::agent_dto::{AgentCancelRunDto, AgentResumeRunDto};
+use tt_domain::models::tool::ToolId;
 use tt_ports::workspace_fs::{WorkspaceWriteGuard, sha256_hex};
 use tt_ports::workspace_shell::{
     WorkspaceShell, WorkspaceShellExit, WorkspaceShellRequest, WorkspaceShellResult,
@@ -334,6 +335,109 @@ async fn failed_shell_keeps_its_writes_without_publishing_an_earlier_candidate()
         AgentRunStatus::Completed,
     );
     fs::remove_dir_all(root).await.unwrap();
+}
+
+/// Run one script that reads the chat, optionally denying the Profile the
+/// `chat.read_messages` tool, and return the shell's reported content.
+async fn script_chat_read_content(label: &str, deny_chat: bool) -> String {
+    use tt_domain::models::chat::ChatMessage;
+
+    let root = temp_root(label);
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![
+            model_tool_response(vec![
+                model_tool_call(
+                    "seed",
+                    "workspace_write_file",
+                    json!({"path": "output/main.md", "content": "script chat probe"}),
+                ),
+                model_tool_call(
+                    "read_chat",
+                    "workspace_shell",
+                    json!({"command": r#"js -e 'import {chat} from "@tauritavern/runtime"; console.log(JSON.stringify(chat.getMessage(0)))'"#}),
+                ),
+            ]),
+            model_tool_response(vec![
+                model_tool_call("commit", "workspace_commit", json!({})),
+                model_tool_call("finish", "workspace_finish", json!({})),
+            ]),
+        ],
+    );
+    let mut profile = resolve_contract_profile(&fixture).await;
+    if deny_chat {
+        profile
+            .tools
+            .deny
+            .push(ToolId::builtin("chat.read_messages").unwrap());
+    }
+    let mut run = contract_run(
+        "run_script_chat",
+        AgentRunPresentation::Background,
+        &profile,
+    );
+    run.chat_target_mut().unwrap().chat_ref = AgentChatRef::Character {
+        character_id: "Alice".into(),
+        file_name: "shell-chat.jsonl".into(),
+    };
+    run.chat_target_mut().unwrap().input_message_count = Some(1);
+    let mut chat = Chat::new("User", "Alice");
+    chat.file_name = Some("shell-chat.jsonl".into());
+    chat.add_message(ChatMessage::user("User", "chat log heading\nblue lantern"));
+    fixture.chat_repository.save(&chat).await.unwrap();
+    fixture.agent_repository.create_run(&run).await.unwrap();
+
+    let request = chat_request("read the chat from a script");
+    let prompt_snapshot = json!({"chatCompletionPayload": request.payload.clone()});
+    let (_cancel_sender, mut cancel_receiver) = watch::channel(false);
+    execute_agent_loop_with_host_resolver(
+        fixture.service.clone(),
+        run.id.clone(),
+        prompt_snapshot,
+        request,
+        profile,
+        &mut cancel_receiver,
+        resolve_chat_commits_and_persistent_state_update(
+            fixture.service.clone(),
+            fixture.agent_repository.clone(),
+            run.id.clone(),
+            "message_shell",
+            &[],
+        ),
+    )
+    .await
+    .unwrap();
+
+    let events = read_agent_events(&fixture.agent_repository, &run.id).await;
+    let stored = events
+        .iter()
+        .find(|event| {
+            event.event_type == "tool_result_stored" && event.payload["callId"] == "read_chat"
+        })
+        .expect("the script has a confirmed tool result");
+    let result = read_workspace_json(
+        &fixture.agent_repository,
+        &run.id,
+        stored.payload["path"].as_str().unwrap(),
+    )
+    .await;
+    let content = result["content"].as_str().unwrap().to_string();
+    fs::remove_dir_all(root).await.unwrap();
+    content
+}
+
+#[tokio::test]
+async fn script_chat_reads_follow_the_profile_chat_grant() {
+    // A script must not reach history that the Profile narrowed away from the
+    // model, and the capability has to stay usable where the Profile allows it.
+    let denied = script_chat_read_content("agent-shell-chat-denied", true).await;
+    assert!(denied.contains("chat.unsupported"), "{denied}");
+    assert!(!denied.contains("chat log heading"), "{denied}");
+
+    let allowed = script_chat_read_content("agent-shell-chat-allowed", false).await;
+    assert!(allowed.contains("chat log heading"), "{allowed}");
+    assert!(allowed.contains("blue lantern"), "{allowed}");
+    assert!(!allowed.contains("chat.unsupported"), "{allowed}");
 }
 
 struct CancelledShell {

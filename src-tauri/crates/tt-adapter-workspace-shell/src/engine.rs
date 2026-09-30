@@ -33,13 +33,14 @@ impl WorkspaceShell for WorkspaceShellEngine {
             workdir,
             files,
             context,
+            chat,
             mut cancel,
         } = request;
         if *cancel.borrow() {
             return Ok(stopped(WorkspaceShellExit::Cancelled));
         }
         let files = Arc::new(WorkspaceFileSystem::new(files));
-        let javascript = Arc::new(Javascript::new(context));
+        let javascript = Arc::new(Javascript::new(context, chat));
         let workdir = bashkit::normalize_path(Path::new(&workdir));
         let mut bash = Bash::builder()
             .fs(files.clone())

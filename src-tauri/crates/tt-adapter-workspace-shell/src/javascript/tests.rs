@@ -7,7 +7,7 @@ use super::Javascript;
 use crate::engine::MAX_OUTPUT_BYTES;
 
 async fn execute(command: &str) -> bashkit::Result<ExecResult> {
-    let javascript = Arc::new(Javascript::new(Arc::default()));
+    let javascript = Arc::new(Javascript::new(Arc::default(), None));
     let mut bash = Bash::builder()
         .builtin("js", javascript.builtin("js"))
         .builtin("node", javascript.builtin("node"))
@@ -139,6 +139,407 @@ async fn execution_failures_override_exit_code_and_bound_output() {
         assert!(
             result.stderr.text_lossy().contains(reason),
             "{command}: {}",
+            result.stderr,
+        );
+    }
+}
+
+mod chat {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+    use bashkit::{Bash, ExecResult, ExecutionLimits};
+    use tt_domain::errors::DomainError;
+    use tt_ports::workspace_shell::{
+        ChatMessageOutcome, ChatMessageRead, ChatMessageSource, MessageRange,
+        SCRIPT_MAX_MESSAGES_PER_CALL,
+    };
+
+    use super::Javascript;
+
+    /// One message the fake chat exposes, in absolute 0-based order.
+    struct FakeMessage {
+        role: &'static str,
+        text: String,
+    }
+
+    /// A chat source that records the requests it receives and replays a scripted
+    /// outcome.
+    ///
+    /// It deliberately performs no rendering of its own: the window, limit, and
+    /// `ref` rules live in `message_source.rs` and are covered by its pure tests.
+    /// Keeping them out of here means the end-to-end tests below assert only that
+    /// the JS surface parses arguments and passes them through unchanged, and this
+    /// fake never has to track a change in the real render rules.
+    #[derive(Default)]
+    struct FakeChat {
+        messages: Vec<FakeMessage>,
+        /// Returned by `read` instead of reading `messages`, for tests that need a
+        /// specific failure outcome without reproducing the rule that produces it.
+        forced: Option<ChatMessageOutcome>,
+        calls: AtomicUsize,
+        /// Every request this source received, in order.
+        seen: Mutex<Vec<(usize, Option<MessageRange>)>>,
+    }
+
+    impl FakeChat {
+        fn new(messages: Vec<FakeMessage>) -> Arc<Self> {
+            Arc::new(Self {
+                messages,
+                ..Self::default()
+            })
+        }
+
+        /// A source whose every call returns `outcome`.
+        fn forced(outcome: ChatMessageOutcome) -> Arc<Self> {
+            Arc::new(Self {
+                forced: Some(outcome),
+                ..Self::default()
+            })
+        }
+
+        fn text(role: &'static str, body: impl Into<String>) -> FakeMessage {
+            FakeMessage {
+                role,
+                text: body.into(),
+            }
+        }
+
+        fn request_for(&self, position: usize) -> (usize, Option<MessageRange>) {
+            self.seen.lock().unwrap()[position]
+        }
+    }
+
+    #[async_trait]
+    impl ChatMessageSource for FakeChat {
+        async fn read(
+            &self,
+            requests: &[(usize, Option<MessageRange>)],
+        ) -> Result<ChatMessageOutcome, DomainError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.seen.lock().unwrap().extend_from_slice(requests);
+            if let Some(outcome) = &self.forced {
+                return Ok(outcome.clone());
+            }
+            let total = self.messages.len();
+            let mut rendered = Vec::with_capacity(requests.len());
+            for (index, range) in requests {
+                let Some(message) = self.messages.get(*index) else {
+                    return Ok(ChatMessageOutcome::MessageNotFound {
+                        index: *index,
+                        total_messages: total,
+                    });
+                };
+                // The slice mirrors the request mechanically; it is not a second
+                // implementation of the line-selection rules.
+                let lines = message.text.lines().collect::<Vec<_>>();
+                let start_line = range.map_or(1, |range| range.start_line);
+                let end_line = match range.and_then(|range| range.line_count) {
+                    Some(count) => (start_line - 1 + count).min(lines.len()),
+                    None => lines.len(),
+                };
+                rendered.push(ChatMessageRead {
+                    index: *index,
+                    role: message.role,
+                    name: None,
+                    send_date: Some("2024-01-01T00:00:00Z".into()),
+                    text: lines[start_line - 1..end_line].join("\n"),
+                    ref_id: format!("chat:current#{}:L{}-L{}", index, start_line, end_line),
+                    start_line,
+                    end_line,
+                    total_lines: lines.len(),
+                    total_bytes: message.text.len(),
+                    preview: false,
+                });
+            }
+            Ok(ChatMessageOutcome::Found {
+                total_messages: total,
+                messages: rendered,
+            })
+        }
+    }
+
+    /// A chat source that refuses every call, as group chats and Session runs do.
+    struct UnsupportedChat;
+
+    #[async_trait]
+    impl ChatMessageSource for UnsupportedChat {
+        async fn read(
+            &self,
+            _requests: &[(usize, Option<MessageRange>)],
+        ) -> Result<ChatMessageOutcome, DomainError> {
+            Ok(ChatMessageOutcome::Unsupported)
+        }
+    }
+
+    /// A chat source that fails the whole call, as an unusable chat payload or a
+    /// macro render failure does.
+    struct FailingChat;
+
+    #[async_trait]
+    impl ChatMessageSource for FailingChat {
+        async fn read(
+            &self,
+            _requests: &[(usize, Option<MessageRange>)],
+        ) -> Result<ChatMessageOutcome, DomainError> {
+            Err(DomainError::InvalidData(
+                "macro expansion exceeds 16777216 bytes".into(),
+            ))
+        }
+    }
+
+    async fn execute(script: &str, chat: Option<Arc<dyn ChatMessageSource>>) -> ExecResult {
+        let javascript = Arc::new(Javascript::new(Arc::default(), chat));
+        let mut bash = Bash::builder()
+            .builtin("js", javascript.builtin("js"))
+            .limits(ExecutionLimits::new().timeout(Duration::from_secs(5)))
+            .build();
+        // Modules need a file/stdin entry; `-e` parses only expressions.
+        let command = format!("js - <<'JS'\n{script}\nJS");
+        let result = bash.exec(&command).await;
+        javascript.finish().await.unwrap();
+        result.unwrap()
+    }
+
+    async fn run(script: &str) -> serde_json::Value {
+        let chat = FakeChat::new(vec![
+            FakeChat::text("user", "hello there"),
+            FakeChat::text("assistant", "line one\nline two\nline three"),
+        ]);
+        let result = execute(script, Some(chat)).await;
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+        serde_json::from_slice(result.stdout.as_bytes()).expect("structured stdout")
+    }
+
+    #[tokio::test]
+    async fn get_message_returns_indexed_fields() {
+        let value = run(r#"import { chat } from '@tauritavern/runtime';
+console.log(JSON.stringify(chat.getMessage(1)));"#)
+        .await;
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["index"], 1);
+        assert_eq!(value["role"], "assistant");
+        assert_eq!(value["text"], "line one\nline two\nline three");
+        assert_eq!(value["ref"], "chat:current#1:L1-L3");
+        assert_eq!(value["totalBytes"], "line one\nline two\nline three".len());
+        assert_eq!(value["totalMessages"], 2);
+    }
+
+    #[tokio::test]
+    async fn line_range_selects_a_window() {
+        let chat = FakeChat::new(vec![
+            FakeChat::text("user", "hello there"),
+            FakeChat::text("assistant", "line one\nline two\nline three"),
+        ]);
+        let result = execute(
+            r#"import { chat } from '@tauritavern/runtime';
+console.log(JSON.stringify(chat.getMessage(1, { startLine: 2, lineCount: 1 })));"#,
+            Some(chat.clone()),
+        )
+        .await;
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+
+        // The options must reach the source as a `MessageRange`, not be flattened
+        // into the index or applied by the JS layer.
+        assert_eq!(
+            chat.request_for(0),
+            (
+                1,
+                Some(MessageRange {
+                    start_line: 2,
+                    line_count: Some(1),
+                })
+            )
+        );
+
+        let value: serde_json::Value = serde_json::from_slice(result.stdout.as_bytes()).unwrap();
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["text"], "line two");
+        assert_eq!(value["startLine"], 2);
+        assert_eq!(value["endLine"], 2);
+        assert_eq!(value["totalLines"], 3);
+    }
+
+    #[tokio::test]
+    async fn get_messages_reads_the_batch_in_one_call() {
+        let chat = FakeChat::new(vec![
+            FakeChat::text("user", "one"),
+            FakeChat::text("assistant", "two"),
+            FakeChat::text("user", "three"),
+        ]);
+        let result = execute(
+            r#"import { chat } from '@tauritavern/runtime';
+console.log(JSON.stringify(chat.getMessages([0, 1, 2])));"#,
+            Some(chat.clone()),
+        )
+        .await;
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+
+        // The whole request must reach the source as a single scan.
+        assert_eq!(chat.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(chat.seen.lock().unwrap().len(), 3);
+
+        let value: serde_json::Value = serde_json::from_slice(result.stdout.as_bytes()).unwrap();
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["messages"].as_array().unwrap().len(), 3);
+        assert_eq!(value["totalMessages"], 3);
+        assert_eq!(value["messages"][1]["text"], "two");
+    }
+
+    #[tokio::test]
+    async fn missing_index_reports_not_found_without_throwing() {
+        let value = run(r#"import { chat } from '@tauritavern/runtime';
+console.log(JSON.stringify(chat.getMessage(9)));"#)
+        .await;
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["reason"], "chat.message_not_found");
+        assert_eq!(value["totalMessages"], 2);
+    }
+
+    #[tokio::test]
+    async fn oversized_message_reports_too_large() {
+        // The over-limit rule is enforced by the source; the JS surface must turn
+        // the outcome into a non-throwing result object that carries its numbers.
+        let chat = FakeChat::forced(ChatMessageOutcome::MessageTooLarge {
+            index: 2,
+            total_bytes: 50_000,
+            max_bytes: 40_000,
+        });
+        let result = execute(
+            r#"import { chat } from '@tauritavern/runtime';
+console.log(JSON.stringify(chat.getMessage(2)));"#,
+            Some(chat),
+        )
+        .await;
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+
+        let value: serde_json::Value = serde_json::from_slice(result.stdout.as_bytes()).unwrap();
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["reason"], "chat.message_too_large");
+        assert_eq!(value["maxBytes"], 40_000);
+        assert_eq!(value["totalBytes"], 50_000);
+    }
+
+    #[tokio::test]
+    async fn invalid_range_reports_invalid_message_range() {
+        // As with the over-limit case, the range verdict is the source's; here the
+        // JS surface only has to shape it.
+        let chat = FakeChat::forced(ChatMessageOutcome::InvalidRange {
+            index: 0,
+            message: "start_line 99 is beyond total lines 1".into(),
+        });
+        let result = execute(
+            r#"import { chat } from '@tauritavern/runtime';
+console.log(JSON.stringify(chat.getMessage(0, { startLine: 99 })));"#,
+            Some(chat),
+        )
+        .await;
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+
+        let value: serde_json::Value = serde_json::from_slice(result.stdout.as_bytes()).unwrap();
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["reason"], "chat.invalid_message_range");
+        assert_eq!(value["index"], 0);
+    }
+
+    #[tokio::test]
+    async fn unsupported_chat_reports_capability_absent() {
+        let result = execute(
+            r#"import { chat } from '@tauritavern/runtime';
+console.log(JSON.stringify(chat.getMessage(0)));"#,
+            Some(Arc::new(UnsupportedChat)),
+        )
+        .await;
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+        let value: serde_json::Value = serde_json::from_slice(result.stdout.as_bytes()).unwrap();
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["reason"], "chat.unsupported");
+    }
+
+    #[tokio::test]
+    async fn absent_chat_capability_reports_unsupported() {
+        let result = execute(
+            r#"import { chat } from '@tauritavern/runtime';
+console.log(JSON.stringify(chat.getMessages([0])));"#,
+            None,
+        )
+        .await;
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+        let value: serde_json::Value = serde_json::from_slice(result.stdout.as_bytes()).unwrap();
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["reason"], "chat.unsupported");
+    }
+
+    #[tokio::test]
+    async fn a_source_failure_throws_instead_of_reporting_a_reason() {
+        // Only the documented outcomes are recoverable verdicts. A read that fails
+        // outright has to fail loudly, matching `chat.read_messages`.
+        let result = execute(
+            r#"import { chat } from '@tauritavern/runtime';
+console.log(JSON.stringify(chat.getMessage(0)));"#,
+            Some(Arc::new(FailingChat)),
+        )
+        .await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stdout.is_empty(), "{}", result.stdout);
+        assert!(
+            result
+                .stderr
+                .text_lossy()
+                .contains("macro expansion exceeds"),
+            "{}",
+            result.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_arguments_throw() {
+        for script in [
+            "chat.getMessage(-1)",
+            "chat.getMessage('0')",
+            "chat.getMessages(0)",
+            "chat.getMessages([0, 'x'])",
+            "chat.getMessage(0, { lineCount: 2 })",
+            "chat.getMessage(0, { startLine: 0 })",
+        ] {
+            let result = execute(
+                &format!("import {{ chat }} from '@tauritavern/runtime';\n{script};"),
+                None,
+            )
+            .await;
+            assert_eq!(result.exit_code, 1, "{script}");
+            assert!(result.stdout.is_empty(), "{script}: {}", result.stdout);
+        }
+    }
+
+    #[tokio::test]
+    async fn batch_size_is_capped() {
+        // One past the ceiling must throw before any read reaches the source.
+        let chat = FakeChat::new(vec![]);
+        let build = format!(
+            "let indices = []; for (let i = 0; i < {}; i += 1) indices.push(i);",
+            SCRIPT_MAX_MESSAGES_PER_CALL + 1
+        );
+        let result = execute(
+            &format!(
+                "import {{ chat }} from '@tauritavern/runtime';\n{build}\nconsole.log(JSON.stringify(chat.getMessages(indices)));"
+            ),
+            Some(chat.clone()),
+        )
+        .await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stdout.is_empty());
+        assert_eq!(chat.calls.load(Ordering::SeqCst), 0);
+        // The thrown message names the ceiling; assert against the constant rather
+        // than a restated literal so a change to the bound cannot silently detach.
+        assert!(
+            result
+                .stderr
+                .text_lossy()
+                .contains(&format!("at most {SCRIPT_MAX_MESSAGES_PER_CALL}")),
+            "{}",
             result.stderr,
         );
     }

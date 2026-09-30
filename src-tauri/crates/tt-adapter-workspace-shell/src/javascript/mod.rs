@@ -14,7 +14,7 @@ use bashkit::{Builtin, BuiltinContext, ExecResult};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tt_domain::errors::DomainError;
-use tt_ports::workspace_shell::WorkspaceShellContext;
+use tt_ports::workspace_shell::{ChatMessageSource, WorkspaceShellContext};
 
 use cli::{Command, Script};
 use files::Files;
@@ -23,13 +23,18 @@ type Job = JoinHandle<Result<ExecResult, DomainError>>;
 
 pub(crate) struct Javascript {
     context: Arc<WorkspaceShellContext>,
+    chat: Option<Arc<dyn ChatMessageSource>>,
     current: Mutex<Option<Job>>,
 }
 
 impl Javascript {
-    pub(crate) fn new(context: Arc<WorkspaceShellContext>) -> Self {
+    pub(crate) fn new(
+        context: Arc<WorkspaceShellContext>,
+        chat: Option<Arc<dyn ChatMessageSource>>,
+    ) -> Self {
         Self {
             context,
+            chat,
             current: Mutex::new(None),
         }
     }
@@ -55,9 +60,10 @@ impl Javascript {
             DomainError::InternalError(format!("JavaScript execution queue closed: {error}"))
         })?;
         let context = self.context.clone();
+        let chat = self.chat.clone();
         *current = Some(tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            engine::execute(script, cwd, files, context)
+            engine::execute(script, cwd, files, context, chat)
         }));
         Ok(join_current(&mut current)
             .await?
