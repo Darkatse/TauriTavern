@@ -1,6 +1,5 @@
 use crate::errors::ApplicationError;
 use async_trait::async_trait;
-use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tt_domain::errors::DomainError;
 use tt_domain::frozen_macros::FrozenMacros;
@@ -17,17 +16,6 @@ mod skills;
 
 pub(crate) const AGENT_TOOL_RESULTS_ROOT: &str = "tool-results";
 pub(crate) const SKILLS_ROOT: &str = "skills";
-
-pub(crate) fn is_auto_commit_text_path(path: &WorkspacePath) -> bool {
-    Path::new(path.as_str())
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            ["md", "markdown", "txt", "text"]
-                .iter()
-                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-        })
-}
 
 pub(crate) fn task_result_summary_path(workspace_key: &str) -> Result<WorkspacePath, DomainError> {
     WorkspacePath::parse(format!("summaries/{workspace_key}-result.md"))
@@ -167,10 +155,12 @@ pub(crate) struct ScopedWorkspaceFs {
 }
 
 /// A Shell call starts from the round's candidate and reports whether it changed.
+/// Only the message body can be a candidate; other text files are working notes.
 #[derive(Clone)]
 pub(crate) struct WorkspaceTextMutation {
     pub(crate) candidate: Option<WorkspacePath>,
     pub(crate) changed: bool,
+    message_body: WorkspacePath,
 }
 
 impl ScopedWorkspaceFs {
@@ -197,10 +187,15 @@ impl ScopedWorkspaceFs {
         self
     }
 
-    pub(crate) fn track_text_mutations(mut self, candidate: Option<WorkspacePath>) -> Self {
+    pub(crate) fn track_text_mutations(
+        mut self,
+        message_body: WorkspacePath,
+        candidate: Option<WorkspacePath>,
+    ) -> Self {
         self.text_mutation = Some(Mutex::new(WorkspaceTextMutation {
             candidate,
             changed: false,
+            message_body,
         }));
         self
     }
@@ -218,8 +213,8 @@ impl ScopedWorkspaceFs {
     }
 
     fn remember_write(&self, path: &WorkspacePath) {
-        if is_auto_commit_text_path(path)
-            && let Some(mut mutation) = self.mutation()
+        if let Some(mut mutation) = self.mutation()
+            && mutation.message_body == *path
         {
             mutation.candidate = Some(path.clone());
             mutation.changed = true;
@@ -357,11 +352,11 @@ impl WorkspaceFs for ScopedWorkspaceFs {
         self.check(source, true)?;
         self.check(target, true)?;
         self.inner.rename(source, target).await?;
-        if self.text_mutation.is_some() {
-            let target_is_text_file = is_auto_commit_text_path(target)
+        if let Some(message_body) = self.text_mutation().map(|mutation| mutation.message_body) {
+            let target_is_body = *target == message_body
                 && self.inner.metadata(Some(target)).await?.kind == WorkspaceEntryKind::File;
             let mut mutation = self.mutation().expect("text mutation tracking is enabled");
-            if target_is_text_file {
+            if target_is_body {
                 mutation.candidate = Some(target.clone());
                 mutation.changed = true;
             } else if let Some(path) = mutation
@@ -372,7 +367,7 @@ impl WorkspaceFs for ScopedWorkspaceFs {
                 // Move the known candidate with its directory, without scanning the subtree.
                 let suffix = &path.as_str()[source.as_str().len()..];
                 let moved = WorkspacePath::parse(format!("{}{suffix}", target.as_str()))?;
-                mutation.candidate = is_auto_commit_text_path(&moved).then_some(moved);
+                mutation.candidate = (moved == message_body).then_some(moved);
                 mutation.changed = true;
             }
         }

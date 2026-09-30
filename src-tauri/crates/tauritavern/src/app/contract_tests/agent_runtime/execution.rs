@@ -742,6 +742,11 @@ async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_com
                     }),
                 ),
                 model_tool_call(
+                    "call_note",
+                    "write",
+                    json!({ "file_path": "persist/notes.md", "content": "working note" }),
+                ),
+                model_tool_call(
                     "call_commit",
                     "commit",
                     json!({ "reason": "Deliver the reply." }),
@@ -826,7 +831,7 @@ async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_com
     let automatic_commit_request = commit_requests
         .iter()
         .find(|event| event.payload["callId"] == "call_patch")
-        .expect("the round must auto-commit only its final text mutation");
+        .expect("the round must auto-commit its message body, not a later note");
     assert_eq!(automatic_commit_request.payload["isExplicit"], false);
     assert_eq!(automatic_commit_request.payload["path"], "output/main.md");
     assert_eq!(automatic_commit_request.payload["mode"], "replace");
@@ -838,7 +843,8 @@ async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_com
     assert!(
         commit_requests
             .iter()
-            .all(|event| event.payload["callId"] != "call_write")
+            .all(|event| event.payload["callId"] != "call_write"
+                && event.payload["path"] != "persist/notes.md")
     );
     let final_commit_request = commit_requests.last().unwrap();
     assert_eq!(final_commit_request.payload["isExplicit"], true);

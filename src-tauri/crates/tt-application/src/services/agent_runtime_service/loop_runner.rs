@@ -14,7 +14,6 @@ use crate::errors::ApplicationError;
 use crate::services::agent_tools::{
     AGENT_AWAIT, AGENT_HANDOFF, AgentToolEffect, TASK_RETURN, stage_can_finish_run,
 };
-use crate::services::agent_workspace_scope::is_auto_commit_text_path;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart, AgentModelMessage,
@@ -56,6 +55,14 @@ impl AgentRuntimeService {
         let auto_commit_text_mutations = updates_run_status
             && matches!(&active_run.target, tt_domain::models::agent::AgentRunTarget::Chat(chat)
                 if chat.presentation == AgentRunPresentation::Foreground);
+        // Only the run's message body is published without an explicit commit; persist/
+        // and other working notes never reach the chat.
+        let message_body = if auto_commit_text_mutations {
+            self.run_message_body_path(run_id).await?
+        } else {
+            None
+        };
+        let is_message_body = |path: &WorkspacePath| message_body.as_ref() == Some(path);
         let stream = self
             .active_run_handle(run_id)
             .await?
@@ -295,7 +302,8 @@ impl AgentRuntimeService {
                         // have changed an earlier candidate, so they cancel this round's publish.
                         let candidate = match &outcome.effect {
                             AgentToolEffect::WorkspaceFileWritten { file, .. } => {
-                                if stream && is_auto_commit_text_path(&file.path) {
+                                if stream && is_message_body(&file.path) {
+                                    // The host previews streamed body writes and keeps them.
                                     turn.auto_commit = None;
                                     None
                                 } else {
@@ -310,8 +318,7 @@ impl AgentRuntimeService {
                             _ => None,
                         };
                         if !result.is_error
-                            && let Some(path) =
-                                candidate.filter(|path| is_auto_commit_text_path(path))
+                            && let Some(path) = candidate.filter(|path| is_message_body(path))
                         {
                             turn.auto_commit =
                                 Some((call.call_id.clone(), AutoCommitFile { path: path.clone() }));
@@ -419,7 +426,9 @@ impl AgentRuntimeService {
                         self.ensure_not_cancelled(cancel)?;
                         continue;
                     }
-                    if auto_commit_text_mutations && let Some((call_id, file)) = &turn.auto_commit {
+                    if let Some((call_id, file)) = &turn.auto_commit
+                        && is_message_body(&file.path)
+                    {
                         progress.blocked_reason =
                             Some("The automatic chat commit has no confirmed result.".to_string());
                         self.auto_commit_text_file_if_eligible(

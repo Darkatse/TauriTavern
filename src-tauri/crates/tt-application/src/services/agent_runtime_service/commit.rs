@@ -14,11 +14,10 @@ use crate::errors::ApplicationError;
 use crate::services::agent_tools::{
     AgentToolDispatchOutcome, AgentToolEffect, classify_workspace_io_error,
 };
-use crate::services::agent_workspace_scope::is_auto_commit_text_path;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{
     AgentChatCommitMode, AgentRun, AgentRunEventLevel, AgentRunStatus, AgentToolResult,
-    ArtifactTarget, WorkspacePath, WorkspacePersistentChangeSet,
+    ArtifactSpec, ArtifactTarget, WorkspacePath, WorkspacePersistentChangeSet,
 };
 use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
@@ -238,7 +237,7 @@ impl AgentRuntimeService {
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
-        if commit_ledger.has_explicit_commit() || !is_auto_commit_text_path(path) {
+        if commit_ledger.has_explicit_commit() {
             return Ok(());
         }
         let files = &self.active_run_handle(run_id).await?.files;
@@ -272,6 +271,15 @@ impl AgentRuntimeService {
         )
         .await?;
         Ok(())
+    }
+
+    /// The run's message body file, the only file published without an explicit commit.
+    pub(super) async fn run_message_body_path(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<WorkspacePath>, ApplicationError> {
+        let manifest = self.workspace_repository.read_manifest(run_id).await?;
+        message_body_path(&manifest.artifacts)
     }
 
     async fn required_artifact_is_empty(
@@ -662,4 +670,15 @@ fn recoverable_tool_error(
         effect: AgentToolEffect::None,
         elapsed_ms,
     }
+}
+
+pub(super) fn message_body_path(
+    artifacts: &[ArtifactSpec],
+) -> Result<Option<WorkspacePath>, ApplicationError> {
+    artifacts
+        .iter()
+        .find(|artifact| matches!(artifact.target, ArtifactTarget::MessageBody))
+        .map(|artifact| WorkspacePath::parse(&artifact.path))
+        .transpose()
+        .map_err(ApplicationError::from)
 }

@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use tokio::sync::watch;
 use uuid::Uuid;
 
+use super::commit::message_body_path;
 use super::prompt_snapshot::{
     reject_external_tool_request, request_from_prompt_snapshot,
     validate_prompt_snapshot_context_policy,
@@ -198,6 +199,14 @@ impl AgentRuntimeService {
             .await
             .insert(run_id.clone(), active_handle);
 
+        // Same source as the run manifest's message body artifact, which is written later.
+        let message_body_path = resolved_profile
+            .output
+            .as_ref()
+            .map(|output| message_body_path(&output.artifacts))
+            .transpose()?
+            .flatten()
+            .map(|path| path.as_str().to_string());
         let service = self.clone();
         let background_run_id = run_id.clone();
         tokio::spawn(async move {
@@ -220,6 +229,7 @@ impl AgentRuntimeService {
             generation_type,
             status: AgentRunStatus::Created,
             after_seq: None,
+            message_body_path,
         })
     }
 
@@ -422,6 +432,7 @@ fn cancel_run_handle(run: AgentRun) -> AgentCancelRunResultDto {
             generation_type: chat.generation_type,
             status: run.status,
             after_seq: None,
+            message_body_path: None,
         }),
         AgentRunTarget::Session { session_id } => {
             AgentCancelRunResultDto::Session(AgentSessionRunHandleDto {
