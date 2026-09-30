@@ -2165,6 +2165,13 @@ async function renderWorldInfoEditor(name, options = {}) {
     return true;
 }
 
+/**
+ * Re-renders the lorebook the editor currently holds, keeping the current page.
+ */
+export async function refreshWorldInfoEditor() {
+    await updateEditor(navigation_option.previous);
+}
+
 export async function showWorldEditor(name) {
     name = String(name ?? '');
     if (name === '') {
