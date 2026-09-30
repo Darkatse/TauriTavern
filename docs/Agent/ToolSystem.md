@@ -27,9 +27,11 @@
 | 委派与交接 | `agent.delegate`、`agent.await`、`agent.handoff`、`task.return` |
 | 掷骰 | `dice.roll` |
 
-聊天工具读取 Run 输入对应的历史范围；文件读取使用 1-based 行号，聊天消息索引使用 0-based。较长文本可以分段读取。完整工具集合会按 Profile 收窄，return-mode 子 Agent 使用 `task.return` 作为结束工具。
+聊天工具读取 Run 输入对应的历史范围；文件读取使用 1-based 行号，聊天消息索引使用 0-based。较长文本可以分段读取；聊天消息的行区间读取（工具与脚本）给出 `line_count` 时必须同时给出 `start_line`，只给 `start_line` 读到末尾，两者都省略读整条，`workspace_read_file` 没有这条配对要求：只给 `line_count` 时从第 1 行起算。文件和聊天消息的空文本都按第 1 行寻址并返回 0 行（`startLine` 为 1、`endLine` 为 0）。完整工具集合会按 Profile 收窄，return-mode 子 Agent 使用 `task.return` 作为结束工具。
 
-JavaScript 脚本中的 `chat.getMessage` / `chat.getMessages` 提供同一份聊天历史的只读访问，索引语义与 `chat.read_messages` 一致，单次最多 500 条，且只在 Profile 授予 `chat.read_messages` 时可用，见 [Workspace](Workspace.md#javascript) 与 [Skill](Skill.md#读取聊天消息)。
+JavaScript 脚本中的 `chat.getMessage` / `chat.getMessages` 提供同一份聊天历史的只读访问，索引语义与 `chat.read_messages` 一致，超限按三层预算判定：单条消息 1 MiB 报 `chat.message_too_large`，整次调用 8 MiB 报 `chat.call_too_large`，返回的字节同时占用与文件读取相同的 Shell 聚合输入预算，且只在 Profile 授予 `chat.read_messages` 时可用，见 [Workspace](Workspace.md#javascript) 与 [Skill](Skill.md#读取聊天消息)。
+
+这三种读取的上界都由 Run 冻结输入计数 `input_message_count` 决定，应用创建的每个 Run 都带该字段。记录缺少它时三者一律以 `agent.chat_input_count_missing` 失败：这不是可恢复的 `chat.*` 工具错误，而是向 Run 收尾流程传播的存储状态错误——回退到实时聊天长度会暴露本次 Run 没有参与构建的历史。该标记把它与 `chat.unsupported`（能力本身缺失，例如 Profile 未授予或群聊目标）区分开。
 
 可调用 Agent 目录随提示词提供，协作方式与错误反馈见 [多 Agent 协作](SubAgent.md)。
 

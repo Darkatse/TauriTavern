@@ -101,7 +101,7 @@ impl Builtin for JavascriptBuiltin {
             Err(message) => return Ok(ExecResult::err(format!("js: {message}\n"), 2)),
         };
         let Command::Run(script) = command else {
-            return Ok(ExecResult::ok(cli::HELP));
+            return Ok(ExecResult::ok(cli::help()));
         };
         let budget = ctx.execution_budget().ok_or_else(|| {
             std::io::Error::other(DomainError::InternalError(

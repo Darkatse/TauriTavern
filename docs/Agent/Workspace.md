@@ -42,7 +42,7 @@ Run 工作文件允许并行读取，按单次操作串行修改；CAS 的条件
 
 `context` 和 `macros` 使用 Run 冻结输入，子 Agent 与恢复后的调用继续沿用。缺少聊天上下文不影响普通 JS 和文件操作，访问不可用的 context 字段才报错。
 
-`chat` 提供当前角色聊天的只读消息访问，索引为 0-based 绝对历史索引，上界来自 Run 冻结输入（见 [Skill](Skill.md#读取聊天消息)）；Profile 未授予 `chat.read_messages` 时不提供该能力。`getMessage(index, options?)` 读一条，`getMessages(indices, options?)` 一次读多条并共享同一次文件扫描，单次最多 500 条；脚本读取没有行数上限，单条消息的字节预算是唯一的服务端上界。查找与超限失败返回 `ok: false` 与 `reason`，不抛异常；参数格式错误或读取本身失败会抛错。单条消息超过 1048576 字节返回 `chat.message_too_large`，改用 `startLine` / `lineCount` 分段读取。窗口被字节预算在请求的最后一行之前截断，或单行被字节预算截断时结果带 `preview: true`。群聊和非角色聊天返回 `chat.unsupported`。
+`chat` 提供当前角色聊天的只读消息访问，索引为 0-based 绝对历史索引，上界来自 Run 冻结输入；Profile 未授予 `chat.read_messages` 时不提供该能力，群聊和非角色聊天目标同样不可用。`getMessage(index, options?)` 读一条，`getMessages(indices, options?)` 一次读多条并共享同一次文件扫描。读取没有行数上限；三层预算、`preview` 判据与失败语义见 [Skill](Skill.md#读取聊天消息)，这里只补充一点：返回的字节同时占用与文件读取相同的 Shell 聚合输入预算。
 
 取消停止后续 Shell 调度，等待当前 JS 和已开始的文件操作收尾。收尾以整个 `workspace.shell` 返回为界，内部 `timeout` 不保证单条命令已结束。
 

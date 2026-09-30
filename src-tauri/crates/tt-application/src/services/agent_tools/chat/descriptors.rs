@@ -14,7 +14,7 @@ pub(in crate::services::agent_tools) fn chat_read_messages_descriptor() -> ToolD
             "properties": {
                 "messages": {
                     "type": "array",
-                    "description": "Messages to read. Each item needs an absolute 0-based message index; optional start_line and line_count read a line range.",
+                    "description": "Messages to read. Each item needs an absolute 0-based message index. Give start_line and line_count together to read a bounded line range, start_line alone to read through the end, or neither to read the whole message. A line_count without start_line is rejected.",
                     "items": {
                         "type": "object",
                         "additionalProperties": false,
@@ -26,12 +26,12 @@ pub(in crate::services::agent_tools) fn chat_read_messages_descriptor() -> ToolD
                             "start_line": {
                                 "type": "integer",
                                 "minimum": 1,
-                                "description": "Optional 1-based starting line inside the message text."
+                                "description": "Optional 1-based starting line inside the message text. Required when line_count is set."
                             },
                             "line_count": {
                                 "type": "integer",
                                 "minimum": 1,
-                                "description": "Optional number of lines to read. Omit to read through the end; oversized results return a shorter preview."
+                                "description": "Number of lines to read. Requires start_line; oversized results return a shorter preview. Omit both to read the whole message."
                             }
                         },
                         "required": ["index"]

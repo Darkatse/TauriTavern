@@ -92,7 +92,7 @@ import { workspace, context, macros, chat, log } from '@tauritavern/runtime';
 
 ### 读取聊天消息
 
-`chat` 只提供当前这次 Run 所属角色聊天的只读访问，索引是从 0 开始的绝对历史索引。`ok: true` 与 `chat.message_not_found` 的结果带 `totalMessages`，即 Run 冻结输入决定的上界，脚本据此判断可用范围。Profile 未授予 `chat.read_messages` 时，合法的 `chat` 调用都返回 `chat.unsupported`。
+`chat` 只提供当前这次 Run 所属角色聊天的只读访问，索引是从 0 开始的绝对历史索引。`ok: true` 与 `chat.message_not_found` 的结果带 `totalMessages`，即 Run 冻结输入决定的上界。Profile 未授予 `chat.read_messages`、或目标是群聊与非角色聊天时，合法的 `chat` 调用都返回 `chat.unsupported`。
 
 ```js
 import { chat } from '@tauritavern/runtime';
@@ -109,11 +109,13 @@ if (window.ok) {
 }
 ```
 
-`getMessage` 读一条，`getMessages` 读多条并共享一次文件扫描，单次最多 500 条。`options` 可含 `startLine`（1-based）与 `lineCount`，与 [`chat.read_messages`](ToolSystem.md#内置工具) 的行区间选择一致；`ref` 字段同样是 `chat:current#{index}:L{start}-L{end}`。
+`options` 可含 `startLine`（1-based）与 `lineCount`：给出 `lineCount` 时必须同时给出 `startLine`，只给 `startLine` 表示读到消息末尾，两者都省略表示读整条；[`chat.read_messages`](ToolSystem.md#内置工具) 使用同一规则。`ref` 字段是 `chat:current#{index}:L{start}-L{end}`。
 
-脚本读取没有行数上限，单条消息的字节预算是唯一的服务端上界。窗口因字节预算在请求的最后一行之前结束，或某一行被字节预算截断时，结果带 `preview: true`，脚本应据此用 `startLine` 接续读取而不是把当前文本当作完整内容。
+脚本读取没有行数上限，一次调用受三层预算约束：单条消息 1 MiB；一次调用 8 MiB，按每条消息的返回文本加固定开销计费，条目数上限由该预算隐含给出，请求条数超过它就按参数错误抛错；聊天读取与文件读取共用同一份 Shell 聚合输入预算与 30 秒执行预算，超出会让脚本以异常结束。
 
-失败不会抛异常，而是返回 `ok: false` 与 `reason`：`chat.not_found`、`chat.message_not_found`、`chat.invalid_message_range`、`chat.message_too_large`、`chat.unsupported`。参数格式错误才会抛错；读取本身失败（例如聊天内容无法渲染）同样直接失败。不带区间读取一条超过 1048576 字节的消息返回 `chat.message_too_large`，并附 `totalBytes` 与 `maxBytes`；带上 `startLine` / `lineCount` 的分段读取不受整条消息上限限制，可据此逐段读取长文本，长文本应写入工作区文件而不是日志。群聊与非角色聊天同样对合法调用返回 `chat.unsupported`。命令摘要见 `js --help`。
+窗口因字节预算在请求的最后一行之前结束，或某一行被字节预算截断时，结果带 `preview: true`，应据此用 `startLine` 接续读取。注意工具侧 `chat.read_messages` 的 `(preview)` 还包含窗口短于消息末尾的情况，与这里的判据不同。
+
+失败返回 `ok: false` 与 `reason`：`chat.not_found`、`chat.message_not_found`、`chat.invalid_message_range`、`chat.message_too_large`、`chat.call_too_large`、`chat.unsupported`。只有参数格式错误（例如给 `getMessages` 传空索引数组）和读取本身失败（聊天内容无法渲染，或 Run 记录缺少冻结消息计数而报 `agent.chat_input_count_missing`）才抛错。不带区间读取一条超过 1 MiB 的消息返回 `chat.message_too_large`（附 `totalBytes` 与 `maxBytes`），一次调用超过 8 MiB 返回 `chat.call_too_large`（附 `usedBytes` 与 `maxBytes`）；带 `startLine` / `lineCount` 的分段读取不受整条消息上限限制，可据此逐段读取长文本——长文本应写入工作区文件而不是日志。命令摘要见 `js --help`。
 
 ### 模块与工具箱
 

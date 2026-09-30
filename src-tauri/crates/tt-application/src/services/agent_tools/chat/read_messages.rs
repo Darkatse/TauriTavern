@@ -44,6 +44,11 @@ struct ChatReadMessageStructured<'a> {
     ref_id: &'a str,
 }
 
+/// One requested message.
+///
+/// A `line_count` is only accepted together with a `start_line`; omitting both reads
+/// the whole message. `parse_message_request` enforces the pairing, which is why
+/// `render_message` can default the start to line 1.
 #[derive(Debug, Clone)]
 struct MessageRequest {
     index: usize,
@@ -248,10 +253,21 @@ fn parse_message_request(position: usize, value: &Value) -> Result<MessageReques
     let index =
         usize::try_from(index).map_err(|_| format!("messages[{position}].index is too large"))?;
 
+    let start_line = optional_request_usize(object, "start_line", position)?;
+    let line_count = optional_request_usize(object, "line_count", position)?;
+    // A line count without a start line leaves the window's beginning unspecified.
+    // The script-facing `chat` API rejects the same combination, so refusing it here
+    // keeps one rule for both entry points. Read the whole message by giving neither.
+    if line_count.is_some() && start_line.is_none() {
+        return Err(format!(
+            "messages[{position}].line_count requires start_line; give both or neither"
+        ));
+    }
+
     Ok(MessageRequest {
         index,
-        start_line: optional_request_usize(object, "start_line", position)?,
-        line_count: optional_request_usize(object, "line_count", position)?,
+        start_line,
+        line_count,
     })
 }
 
@@ -417,5 +433,31 @@ mod tests {
     fn character_ranges_are_not_accepted() {
         let error = parse_message_request(0, &json!({ "index": 7, "start_char": 0 })).unwrap_err();
         assert!(error.contains("start_char is not supported"));
+    }
+
+    #[test]
+    fn a_line_count_must_be_paired_with_a_start_line() {
+        // The script-facing `chat` API rejects a count without a start, so the tool
+        // does too: a count alone does not say where the window begins.
+        let error = parse_message_request(0, &json!({ "index": 7, "line_count": 2 })).unwrap_err();
+        assert!(error.contains("line_count requires start_line"), "{error}");
+
+        // The forms that stay valid: a bounded window, a start through to the end of
+        // the message, and the whole message.
+        for (value, expected) in [
+            (
+                json!({ "index": 7, "start_line": 3, "line_count": 2 }),
+                (Some(3), Some(2)),
+            ),
+            (json!({ "index": 7, "start_line": 3 }), (Some(3), None)),
+            (json!({ "index": 7 }), (None, None)),
+        ] {
+            let request = parse_message_request(0, &value).expect("accepted range");
+            assert_eq!(
+                (request.start_line, request.line_count),
+                expected,
+                "{value}"
+            );
+        }
     }
 }

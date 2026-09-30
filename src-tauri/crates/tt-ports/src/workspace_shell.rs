@@ -12,9 +12,10 @@ pub struct WorkspaceShellRequest {
     pub workdir: String,
     pub files: Arc<dyn WorkspaceFs>,
     pub context: Arc<WorkspaceShellContext>,
-    /// Optional read-only access to the current run's character chat. `None` means
-    /// the capability is unavailable (for example outside a character chat run),
-    /// and the JavaScript `chat` API reports `chat.unsupported` for every call.
+    /// Optional read-only access to the current run's character chat. `None` means the
+    /// capability is withheld from this run altogether — no character chat target, or a
+    /// Profile that does not grant it — and the JavaScript `chat` API reports
+    /// `chat.unsupported` for every call.
     pub chat: Option<Arc<dyn ChatMessageSource>>,
     pub cancel: watch::Receiver<bool>,
 }
@@ -37,12 +38,25 @@ pub struct MessageRange {
 /// line ranges. Long text belongs in a workspace file, not in output.
 pub const SCRIPT_MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
-/// Maximum number of messages one script call may request.
+/// Maximum bytes one script call may materialize from the chat.
 ///
-/// Every requested index is read in a single shared scan, but a large request on
-/// a large chat can still overrun the 30-second execution budget, so the batch
-/// size is capped.
-pub const SCRIPT_MAX_MESSAGES_PER_CALL: usize = 500;
+/// The budget is charged per returned message as its selected text plus
+/// [`SCRIPT_MESSAGE_ENTRY_BYTES`], so it bounds the batch size as well as the text:
+/// a script cannot trade many tiny messages for an unbounded number of result
+/// objects. A call that does not fit yields [`ChatMessageOutcome::CallTooLarge`].
+///
+/// Sized against the script runtime's own limits, like
+/// [`SCRIPT_MAX_MESSAGE_BYTES`]: the QuickJS heap is 32 MiB and also holds the
+/// script's own state, wide strings, and the per-message conversion peaks.
+pub const SCRIPT_MAX_CALL_BYTES: usize = 8 * 1024 * 1024;
+
+/// Bytes charged for one requested message on top of its selected text.
+///
+/// One message becomes a JavaScript object with a dozen fields and a `ref` string,
+/// so entry count costs heap independently of the text. Charging this overhead is
+/// what lets [`SCRIPT_MAX_CALL_BYTES`] bound a batch of near-empty messages instead
+/// of only the text it returns.
+pub const SCRIPT_MESSAGE_ENTRY_BYTES: usize = 256;
 
 /// One successfully read message, already macro-rendered and range-selected.
 #[derive(Debug, Clone)]
@@ -87,17 +101,37 @@ pub enum ChatMessageOutcome {
         total_bytes: usize,
         max_bytes: usize,
     },
-    /// The capability is unavailable for this run, such as a group chat.
+    /// The requested messages together exceed the per-call byte budget.
+    ///
+    /// `used_bytes` is the total the call would have needed and `index` is the
+    /// request that did not fit, both measured by [`SCRIPT_MAX_CALL_BYTES`]'s
+    /// accounting rule. Nothing is returned, so the script narrows the request.
+    CallTooLarge {
+        index: usize,
+        used_bytes: usize,
+        max_bytes: usize,
+    },
+    /// The run has no character chat to read: a group chat, or no character chat
+    /// target. A source reports this for a run it cannot serve; a caller that withholds
+    /// the capability altogether passes no source at all, see
+    /// [`WorkspaceShellRequest::chat`].
     Unsupported,
 }
 
 /// Read-only, character-chat-only access to chat messages by absolute index.
 ///
 /// Implementations must read from the frozen run input view, never beyond
-/// `input_message_count`. A run without a frozen input count has no bounded view,
-/// so implementations must report [`ChatMessageOutcome::Unsupported`] rather than
-/// fall back to the live chat length. Implementations must also take at most as
-/// many messages as the caller requests in a single call.
+/// `input_message_count`, and never return more messages than the caller requested.
+/// A run without a frozen input count has no trustworthy bound, so implementations
+/// must fail with the `agent.chat_input_count_missing` [`DomainError`] rather than
+/// fall back to the live chat length, which would expose history the run was not
+/// built from. Reporting [`ChatMessageOutcome::Unsupported`] there instead would
+/// leave a caller unable to tell a damaged record from an absent capability.
+///
+/// A caller that withholds the capability altogether, such as a Profile that does not
+/// grant it, passes no source at all — [`WorkspaceShellRequest::chat`] is `None` for
+/// that case — while [`ChatMessageOutcome::Unsupported`] is what a source reports for
+/// a run it cannot serve.
 #[async_trait]
 pub trait ChatMessageSource: Send + Sync {
     /// Read the requested messages in one pass. `requests` pairs an absolute

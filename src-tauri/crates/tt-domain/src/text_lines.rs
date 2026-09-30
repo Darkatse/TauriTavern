@@ -6,6 +6,10 @@ pub struct TextLineSelection {
     pub total_lines: usize,
     pub start_line: usize,
     pub end_line: usize,
+    /// Last line the caller asked for, clamped to `total_lines` when the selection
+    /// was built. A selection that stops before this line withheld content its
+    /// budget could not hold.
+    pub requested_end_line: usize,
     pub line_truncated: bool,
 }
 
@@ -79,14 +83,6 @@ impl TextLineSelection {
         )
     }
 
-    /// Last line the caller asked for, clamped to this selection's own length.
-    ///
-    /// Single source of truth for "short of the requested window": a selection
-    /// withholds content exactly when it stops before this line.
-    pub fn requested_end_line(&self, line_count: Option<usize>) -> usize {
-        requested_end(self.start_line, line_count, self.total_lines)
-    }
-
     fn select_within(
         text: &str,
         start_line: usize,
@@ -122,17 +118,24 @@ impl TextLineSelection {
                 total_lines,
             });
         }
+        // The window the caller asked for, established once here and carried on the
+        // selection: withheld content is exactly what lies between `end_line` and
+        // this line, so no caller has to re-derive it from its own request.
+        let requested_end = requested_end(start_line, line_count, total_lines);
         if total_lines == 0 {
+            // An empty source is still addressed by line 1, which simply holds no
+            // rows: reporting line 0 would make a caller's `end - start + 1` span one
+            // row that does not exist, and `L0-L0` reads as a real range.
             return Ok(Self {
                 content: String::new(),
                 total_lines: 0,
-                start_line: 0,
+                start_line: 1,
                 end_line: 0,
+                requested_end_line: requested_end,
                 line_truncated: false,
             });
         }
 
-        let requested_end = requested_end(start_line, line_count, total_lines);
         let capped_end = max_lines
             .map(|max_lines| start_line.saturating_add(max_lines - 1))
             .unwrap_or(requested_end)
@@ -167,7 +170,10 @@ impl TextLineSelection {
                     }
                 }
                 returned_lines = 1;
-                line_truncated = line_units > max_units;
+                // Reaching this branch at all means the line did not fit the budget
+                // on its own, so the clip above is what the caller gets in place of
+                // the whole line.
+                line_truncated = true;
             }
             break;
         }
@@ -177,6 +183,7 @@ impl TextLineSelection {
             total_lines,
             start_line,
             end_line: start_line + returned_lines - 1,
+            requested_end_line: requested_end,
             line_truncated,
         })
     }
@@ -190,7 +197,7 @@ impl TextLineSelection {
     }
 
     pub fn returned_line_count(&self) -> usize {
-        if self.start_line == 0 {
+        if self.end_line < self.start_line {
             0
         } else {
             self.end_line - self.start_line + 1
@@ -203,7 +210,9 @@ impl TextLineSelection {
 }
 
 pub fn format_lines_with_numbers(text: &str, start_line: usize, end_line: usize) -> String {
-    if start_line == 0 {
+    // A selection that returned no rows has nothing to number, and neither has one
+    // that starts before the first line.
+    if start_line == 0 || end_line < start_line {
         return String::new();
     }
 
@@ -264,6 +273,21 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_source_is_line_one_with_no_rows() {
+        // The empty selection still names a line, so a caller's span arithmetic and
+        // its `L{start}-L{end}` reference stay meaningful.
+        let empty = TextLineSelection::select("", 1, None, 10, 100).unwrap();
+        assert_eq!(empty.start_line, 1);
+        assert_eq!(empty.end_line, 0);
+        assert_eq!(empty.total_lines, 0);
+        assert_eq!(empty.requested_end_line, 0);
+        assert_eq!(empty.returned_line_count(), 0);
+        assert_eq!(empty.numbered_content(), "");
+        assert_eq!(empty.next_start_line(), None);
+        assert!(!empty.truncated());
+    }
+
+    #[test]
     fn a_byte_budget_clips_a_line_at_a_character_boundary() {
         // Three bytes per CJK character, so a 6-byte budget cannot hold a third.
         let clipped = TextLineSelection::select_bytes("你好世界", 1, None, 6).unwrap();
@@ -284,7 +308,7 @@ mod tests {
         let window = TextLineSelection::select_bytes(text, 2, Some(50), 64).unwrap();
         assert_eq!(window.content, "two\nthree\nfour");
         assert_eq!(window.end_line, 4);
-        assert_eq!(window.end_line, window.requested_end_line(Some(50)));
+        assert_eq!(window.end_line, window.requested_end_line);
         assert!(!window.line_truncated);
     }
 
@@ -294,7 +318,7 @@ mod tests {
             TextLineSelection::select_bytes("one\ntwo\nthree\nfour", 1, Some(3), 7).unwrap();
         assert_eq!(selection.content, "one\ntwo");
         assert_eq!(selection.end_line, 2);
-        assert_eq!(selection.requested_end_line(Some(3)), 3);
-        assert!(selection.end_line < selection.requested_end_line(Some(3)));
+        assert_eq!(selection.requested_end_line, 3);
+        assert!(selection.end_line < selection.requested_end_line);
     }
 }

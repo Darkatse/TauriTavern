@@ -154,7 +154,6 @@ mod chat {
     use tt_domain::errors::DomainError;
     use tt_ports::workspace_shell::{
         ChatMessageOutcome, ChatMessageRead, ChatMessageSource, MessageRange,
-        SCRIPT_MAX_MESSAGES_PER_CALL,
     };
 
     use super::Javascript;
@@ -291,16 +290,31 @@ mod chat {
     }
 
     async fn execute(script: &str, chat: Option<Arc<dyn ChatMessageSource>>) -> ExecResult {
+        execute_with_limits(script, chat, |limits| limits)
+            .await
+            .unwrap()
+    }
+
+    /// Run a script under shell limits the test chooses, so the resource budgets a
+    /// bridge charges can be exercised without moving large payloads. A spent budget
+    /// is fail-closed, so exhausting one surfaces as a shell error here.
+    async fn execute_with_limits(
+        script: &str,
+        chat: Option<Arc<dyn ChatMessageSource>>,
+        limits: impl FnOnce(ExecutionLimits) -> ExecutionLimits,
+    ) -> bashkit::Result<ExecResult> {
         let javascript = Arc::new(Javascript::new(Arc::default(), chat));
         let mut bash = Bash::builder()
             .builtin("js", javascript.builtin("js"))
-            .limits(ExecutionLimits::new().timeout(Duration::from_secs(5)))
+            .limits(limits(
+                ExecutionLimits::new().timeout(Duration::from_secs(5)),
+            ))
             .build();
         // Modules need a file/stdin entry; `-e` parses only expressions.
         let command = format!("js - <<'JS'\n{script}\nJS");
         let result = bash.exec(&command).await;
         javascript.finish().await.unwrap();
-        result.unwrap()
+        result
     }
 
     async fn run(script: &str) -> serde_json::Value {
@@ -501,6 +515,7 @@ console.log(JSON.stringify(chat.getMessage(0)));"#,
             "chat.getMessage('0')",
             "chat.getMessages(0)",
             "chat.getMessages([0, 'x'])",
+            "chat.getMessages([])",
             "chat.getMessage(0, { lineCount: 2 })",
             "chat.getMessage(0, { startLine: 0 })",
         ] {
@@ -515,32 +530,85 @@ console.log(JSON.stringify(chat.getMessage(0)));"#,
     }
 
     #[tokio::test]
-    async fn batch_size_is_capped() {
-        // One past the ceiling must throw before any read reaches the source.
-        let chat = FakeChat::new(vec![]);
-        let build = format!(
-            "let indices = []; for (let i = 0; i < {}; i += 1) indices.push(i);",
-            SCRIPT_MAX_MESSAGES_PER_CALL + 1
-        );
+    async fn chat_text_is_charged_against_the_shell_input_budget() {
+        // Chat history and workspace files share one budget, so every read charges
+        // the text it hands the script; a read that does not fit must stop the shell
+        // rather than grow the QuickJS heap past it.
+        let body = "x".repeat(60_000);
+        let source = || FakeChat::new(vec![FakeChat::text("user", body.clone())]);
+        let once = r#"import { chat } from '@tauritavern/runtime';
+console.log(`read ${chat.getMessage(0).ok}`);"#;
+        let twice = r#"import { chat } from '@tauritavern/runtime';
+chat.getMessage(0);
+console.log(`read ${chat.getMessage(0).ok}`);"#;
+
+        // One read of 60 KB fits a 100 KB budget; the 501 bytes bashkit charges for
+        // the script itself leave the threshold clear either way.
+        let single = execute_with_limits(once, Some(source()), |limits| {
+            limits.max_aggregate_input_bytes(100_000)
+        })
+        .await
+        .expect("one read fits the budget");
+        assert!(single.stdout.text_lossy().contains("read true"));
+
+        let over = execute_with_limits(twice, Some(source()), |limits| {
+            limits.max_aggregate_input_bytes(100_000)
+        })
+        .await
+        .expect_err("two reads must not fit the budget");
+        assert!(over.to_string().contains("aggregate input bytes"), "{over}");
+
+        // The same script under a budget with room for both reads succeeds, so the
+        // failure above is the accounting and not an unconditional error.
+        let roomy = execute_with_limits(twice, Some(source()), |limits| {
+            limits.max_aggregate_input_bytes(1_000_000)
+        })
+        .await
+        .expect("two reads fit a roomy budget");
+        assert!(roomy.stdout.text_lossy().contains("read true"));
+    }
+
+    #[tokio::test]
+    async fn a_call_over_the_budget_reports_its_measured_size() {
+        // Like the per-message limit, the per-call budget is the source's verdict;
+        // the JS surface returns it without throwing so the script can narrow the
+        // request instead of losing the call.
+        let chat = FakeChat::forced(ChatMessageOutcome::CallTooLarge {
+            index: 3,
+            used_bytes: 9_000_000,
+            max_bytes: 8_388_608,
+        });
         let result = execute(
-            &format!(
-                "import {{ chat }} from '@tauritavern/runtime';\n{build}\nconsole.log(JSON.stringify(chat.getMessages(indices)));"
-            ),
+            r#"import { chat } from '@tauritavern/runtime';
+console.log(JSON.stringify(chat.getMessages([1, 2, 3])));"#,
+            Some(chat),
+        )
+        .await;
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+
+        let value: serde_json::Value = serde_json::from_slice(result.stdout.as_bytes()).unwrap();
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["reason"], "chat.call_too_large");
+        assert_eq!(value["index"], 3);
+        assert_eq!(value["usedBytes"], 9_000_000);
+        assert_eq!(value["maxBytes"], 8_388_608);
+    }
+
+    #[tokio::test]
+    async fn a_batch_reaches_the_source_without_a_count_ceiling() {
+        // The per-call byte budget bounds a read now, so the length of the index
+        // list is not what the surface refuses.
+        let chat = FakeChat::new(vec![FakeChat::text("user", "one")]);
+        let result = execute(
+            r#"import { chat } from '@tauritavern/runtime';
+const indices = [];
+for (let i = 0; i < 600; i += 1) indices.push(0);
+console.log(JSON.stringify(chat.getMessages(indices).messages.length));"#,
             Some(chat.clone()),
         )
         .await;
-        assert_eq!(result.exit_code, 1);
-        assert!(result.stdout.is_empty());
-        assert_eq!(chat.calls.load(Ordering::SeqCst), 0);
-        // The thrown message names the ceiling; assert against the constant rather
-        // than a restated literal so a change to the bound cannot silently detach.
-        assert!(
-            result
-                .stderr
-                .text_lossy()
-                .contains(&format!("at most {SCRIPT_MAX_MESSAGES_PER_CALL}")),
-            "{}",
-            result.stderr,
-        );
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+        assert_eq!(chat.seen.lock().unwrap().len(), 600);
+        assert_eq!(result.stdout.text_lossy().trim(), "600");
     }
 }

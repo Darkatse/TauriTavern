@@ -41,7 +41,6 @@ pub(super) fn execute(
     let exit_code = Rc::new(Cell::new(0));
     let outcome = context.with(|ctx| {
         ctx.store_userdata(RuntimeState {
-            runtime: files.runtime.clone(),
             files: files.clone(),
             context: host,
             chat,

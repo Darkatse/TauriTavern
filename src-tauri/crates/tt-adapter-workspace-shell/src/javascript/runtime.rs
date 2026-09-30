@@ -8,8 +8,7 @@ use rquickjs::object::Accessor;
 use rquickjs::{Coerced, Ctx, Exception, FromJs, Function, JsLifetime, Object, Result, Value};
 use tt_domain::frozen_macros::MAX_EXPANDED_TEXT_BYTES;
 use tt_ports::workspace_shell::{
-    ChatMessageOutcome, ChatMessageSource, MessageRange, SCRIPT_MAX_MESSAGES_PER_CALL,
-    WorkspaceShellContext,
+    ChatMessageOutcome, ChatMessageRead, ChatMessageSource, MessageRange, WorkspaceShellContext,
 };
 
 use super::files::{Files, workspace_path};
@@ -41,12 +40,10 @@ impl Output {
 }
 
 pub(super) struct RuntimeState {
+    /// Carries the handle the bridges block on, as [`Files::runtime`].
     pub files: Files,
     pub context: Arc<WorkspaceShellContext>,
     pub chat: Option<Arc<dyn ChatMessageSource>>,
-    /// Captured where the runtime is entered, like [`Files::runtime`], so the JS
-    /// bridges never re-resolve it per call.
-    pub runtime: tokio::runtime::Handle,
     pub output: Rc<RefCell<Output>>,
 }
 
@@ -74,10 +71,14 @@ impl ModuleDef for RuntimeModule {
                 state.files.clone(),
                 state.context.clone(),
                 state.chat.clone(),
-                state.runtime.clone(),
+                state.files.runtime.clone(),
                 state.output.clone(),
             )
         };
+        // The chat bridge charges the shell's input budget exactly as the file
+        // bridge does, so it needs the files handle as well as the source. `files`
+        // is moved into the `listFiles` closure below, hence the clone here.
+        let chat_files = files.clone();
         let workspace = Object::new(ctx.clone())?;
         let read = files.clone();
         workspace.set(
@@ -153,7 +154,7 @@ impl ModuleDef for RuntimeModule {
             })?,
         )?;
         exports.export("macros", macros)?;
-        exports.export("chat", chat_object(ctx, chat, runtime)?)?;
+        exports.export("chat", chat_object(ctx, chat, chat_files, runtime)?)?;
         exports.export("log", output_object(ctx, output, true)?)?;
         Ok(())
     }
@@ -231,11 +232,13 @@ pub(super) fn output_object<'js>(
 fn chat_object<'js>(
     ctx: &Ctx<'js>,
     chat: Option<Arc<dyn ChatMessageSource>>,
+    files: Files,
     runtime: tokio::runtime::Handle,
 ) -> Result<Object<'js>> {
     let object = Object::new(ctx.clone())?;
 
     let single = chat.clone();
+    let single_files = files.clone();
     let single_runtime = runtime.clone();
     object.set(
         "getMessage",
@@ -247,6 +250,7 @@ fn chat_object<'js>(
                 chat_call(
                     &ctx,
                     single.clone(),
+                    single_files.clone(),
                     single_runtime.clone(),
                     vec![index],
                     vec![range],
@@ -262,17 +266,17 @@ fn chat_object<'js>(
             ctx.clone(),
             move |ctx: Ctx<'js>, indices: Value<'js>, options: Opt<Value<'js>>| {
                 let indices = chat_indices(&ctx, &indices)?;
-                if indices.len() > SCRIPT_MAX_MESSAGES_PER_CALL {
-                    return Err(Exception::throw_type(
-                        &ctx,
-                        &format!(
-                            "chat.getMessages reads at most {SCRIPT_MAX_MESSAGES_PER_CALL} message indexes per call."
-                        ),
-                    ));
-                }
                 let range = chat_range(&ctx, &options.0)?;
                 let ranges = vec![range; indices.len()];
-                chat_call(&ctx, chat.clone(), runtime.clone(), indices, ranges, true)
+                chat_call(
+                    &ctx,
+                    chat.clone(),
+                    files.clone(),
+                    runtime.clone(),
+                    indices,
+                    ranges,
+                    true,
+                )
             },
         )?,
     )?;
@@ -375,31 +379,51 @@ fn chat_range(ctx: &Ctx<'_>, options: &Option<Value<'_>>) -> Result<Option<Messa
 ///
 /// The bridge blocks the calling thread on `ChatMessageSource::read`, so this must
 /// run on a blocking thread. JavaScript execution is driven from `spawn_blocking`,
-/// and `runtime` is captured there rather than re-resolved per call, so an absent
-/// runtime is a construction-time problem instead of a mid-script panic.
+/// and `runtime` is the handle [`Files`] captured where the shell entered it, not
+/// one resolved per call, so an absent runtime is a construction-time problem
+/// instead of a mid-script panic.
 /// Load errors become JS exceptions (the script can catch them); ordinary lookup
 /// and over-limit failures are returned as discriminant objects so the script
 /// chooses how to recover. Only malformed arguments throw (see
-/// `chat_index`/`chat_range`). `batch` selects the multi-message result shape used
-/// by `getMessages`.
+/// `chat_index`/`chat_indices`/`chat_range` and the empty-list check below).
+/// `batch` selects the multi-message result shape used by `getMessages`.
+///
+/// Chat history is the same resource class as workspace files, so this bridge
+/// follows the file bridge exactly: `files.check()` gates the read against the
+/// shell's deadline and cancellation, and the text that reaches the script is
+/// charged to the shell's aggregate input budget. Both failures are JS exceptions,
+/// which is also why a script cannot read more history than it could read files.
 fn chat_call<'js>(
     ctx: &Ctx<'js>,
     chat: Option<Arc<dyn ChatMessageSource>>,
+    files: Files,
     runtime: tokio::runtime::Handle,
     indices: Vec<usize>,
     ranges: Vec<Option<MessageRange>>,
     batch: bool,
 ) -> Result<Value<'js>> {
-    let Some(chat) = chat else {
-        return unsupported_result(ctx);
-    };
+    // Argument validation runs before the capability check, exactly as the index and
+    // range parsing in the callers does: a malformed request is a script bug whether
+    // or not this run has the chat capability, and reporting it as `chat.unsupported`
+    // would hide that. The index list itself is validated there, so only its emptiness
+    // is left for here.
     if indices.is_empty() {
         return Err(Exception::throw_type(
             ctx,
             "Provide at least one message index.",
         ));
     }
+    let Some(chat) = chat else {
+        return unsupported_result(ctx);
+    };
     let requests = indices.iter().copied().zip(ranges).collect::<Vec<_>>();
+
+    // A read does not interrupt a scan in progress, so the gate has to sit before
+    // the scan starts: once the shell's budget is spent, starting another read
+    // would hold `workspace.shell` open past its own deadline.
+    files
+        .check()
+        .map_err(|message| Exception::throw_message(ctx, &message))?;
 
     let outcome = runtime.block_on(chat.read(&requests));
     let outcome = match outcome {
@@ -449,10 +473,32 @@ fn chat_call<'js>(
             object.set("maxBytes", max_bytes)?;
             Ok(object.into_value())
         }
+        ChatMessageOutcome::CallTooLarge {
+            index,
+            used_bytes,
+            max_bytes,
+        } => {
+            let object = Object::new(ctx.clone())?;
+            object.set("ok", false)?;
+            object.set("reason", "chat.call_too_large")?;
+            object.set("index", index)?;
+            object.set("usedBytes", used_bytes)?;
+            object.set("maxBytes", max_bytes)?;
+            Ok(object.into_value())
+        }
         ChatMessageOutcome::Found {
             total_messages,
             messages,
         } => {
+            // Charge before building the objects, so the budget fails the call
+            // instead of letting the heap grow past it.
+            let bytes = messages
+                .iter()
+                .map(|message| message.text.len())
+                .fold(0_usize, usize::saturating_add);
+            files
+                .charge_input(bytes)
+                .map_err(|message| Exception::throw_message(ctx, &message))?;
             let items = messages
                 .iter()
                 .map(|message| message_object(ctx, message, total_messages))
@@ -482,7 +528,7 @@ fn unsupported_result<'js>(ctx: &Ctx<'js>) -> Result<Value<'js>> {
 
 fn message_object<'js>(
     ctx: &Ctx<'js>,
-    message: &tt_ports::workspace_shell::ChatMessageRead,
+    message: &ChatMessageRead,
     total_messages: usize,
 ) -> Result<Value<'js>> {
     let object = Object::new(ctx.clone())?;

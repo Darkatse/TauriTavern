@@ -8,7 +8,6 @@ pub(super) use message_source::CharacterChatMessageSource;
 pub(super) use read_messages::read_messages;
 pub(super) use search::search;
 
-use crate::errors::ApplicationError;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{AgentChatRef, AgentRun};
 use tt_ports::repositories::chat_repository::ChatMessageRole;
@@ -83,27 +82,115 @@ fn chat_unavailable_message(message: &str) -> String {
     )
 }
 
-fn visible_total_messages(
-    run: &AgentRun,
-    raw_total_messages: usize,
-) -> Result<usize, ApplicationError> {
-    match run.chat_target()?.input_message_count {
-        Some(input_message_count) if raw_total_messages < input_message_count => {
-            Err(ApplicationError::ValidationError(format!(
-                "agent.input_history_conflict: run input requires {input_message_count} messages, but chat payload has {raw_total_messages}"
-            )))
-        }
-        Some(input_message_count) => Ok(input_message_count),
-        None => Ok(raw_total_messages),
+/// Failure every chat reader reports when a run carries no frozen input count.
+///
+/// The count is the only trustworthy upper bound for the run's history, so a reader
+/// without it has nothing to bound a read by. Every run the application creates has
+/// it (see `AgentRunInputContext`), so a missing one means the record is damaged or
+/// predates the field; falling back to the live chat length would expose messages the
+/// run was not built from. The marker is what lets a caller tell that state apart
+/// from `chat.unsupported`, where the capability itself is absent.
+fn chat_input_count_missing(run: &AgentRun) -> DomainError {
+    DomainError::InvalidData(format!(
+        "agent.chat_input_count_missing: run `{}` has no frozen input message count",
+        run.id
+    ))
+}
+
+/// Upper bound of the run's frozen input history, or a failure when that bound cannot
+/// be established.
+///
+/// Reported as a [`DomainError`] so every caller keeps the same message: tool callers
+/// convert it through `From<DomainError> for ApplicationError`, and the script-facing
+/// port returns it unchanged instead of re-wrapping it and burying the `agent.*`
+/// marker under an extra type prefix.
+fn visible_total_messages(run: &AgentRun, raw_total_messages: usize) -> Result<usize, DomainError> {
+    let Some(input_message_count) = run.chat_target()?.input_message_count else {
+        return Err(chat_input_count_missing(run));
+    };
+    if raw_total_messages < input_message_count {
+        return Err(DomainError::InvalidData(format!(
+            "agent.input_history_conflict: run input requires {input_message_count} messages, but chat payload has {raw_total_messages}"
+        )));
     }
+    Ok(input_message_count)
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
     use serde_json::Value;
 
-    use super::{chat_search_descriptor, parse_role, role_as_str};
+    use super::{chat_search_descriptor, parse_role, role_as_str, visible_total_messages};
+    use tt_domain::models::agent::{
+        AgentChatRef, AgentChatRunTarget, AgentRun, AgentRunPresentation, AgentRunSkillScopeRefs,
+        AgentRunStatus, AgentRunTarget,
+    };
     use tt_ports::repositories::chat_repository::ChatMessageRole;
+
+    /// A Chat run whose frozen input count the caller chooses.
+    ///
+    /// `None` models a record that predates the field or was damaged; every run the
+    /// application creates carries a count, so this is what the fail-fast path is for.
+    fn chat_run(input_message_count: Option<usize>) -> AgentRun {
+        AgentRun {
+            id: "run_visible_total".to_string(),
+            workspace_id: "workspace_visible_total".to_string(),
+            target: AgentRunTarget::Chat(AgentChatRunTarget {
+                stable_chat_id: "stable_visible_total".to_string(),
+                chat_ref: AgentChatRef::Character {
+                    character_id: "Alice".to_string(),
+                    file_name: "Alice.jsonl".to_string(),
+                },
+                generation_type: "normal".to_string(),
+                skill_scope_refs: AgentRunSkillScopeRefs::default(),
+                persist_base_state_id: None,
+                input_message_count,
+                presentation: AgentRunPresentation::Background,
+            }),
+            profile_id: None,
+            status: AgentRunStatus::Created,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn a_run_without_a_frozen_input_count_fails_every_chat_read() {
+        // The frozen count is the only trustworthy bound for the run's own history,
+        // so a reader without one fails instead of falling back to the live chat
+        // length and exposing messages the run was not built from. The marker is
+        // what lets a caller tell that state apart from `chat.unsupported`, where
+        // the capability itself is absent.
+        let error = visible_total_messages(&chat_run(None), 12)
+            .expect_err("a run without a frozen count cannot be bounded");
+        assert!(
+            error.to_string().contains("agent.chat_input_count_missing"),
+            "{error}"
+        );
+        assert!(error.to_string().contains("run_visible_total"), "{error}");
+    }
+
+    #[test]
+    fn the_frozen_input_count_bounds_the_visible_history() {
+        // A payload shorter than the frozen count means history the run was built
+        // from is gone; a longer one is normal, because the chat keeps growing after
+        // the run started. The frozen count is the bound either way.
+        let conflict = visible_total_messages(&chat_run(Some(12)), 11)
+            .expect_err("a payload shorter than the frozen count is a conflict");
+        assert!(
+            conflict
+                .to_string()
+                .contains("agent.input_history_conflict"),
+            "{conflict}"
+        );
+
+        for raw_total in [12, 40] {
+            let visible = visible_total_messages(&chat_run(Some(12)), raw_total)
+                .expect("a payload at or past the frozen count is fine");
+            assert_eq!(visible, 12, "raw total {raw_total}");
+        }
+    }
 
     #[test]
     fn tool_role_is_supported_by_chat_search() {

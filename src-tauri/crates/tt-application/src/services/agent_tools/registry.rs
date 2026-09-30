@@ -270,6 +270,11 @@ fn apply_profile_context(
 ///
 /// Shared with tool dispatch so a workspace capability that exposes the same data
 /// cannot be reached where the Profile denied its tool.
+///
+/// `agent_profile_service::validation::tool_is_visible` applies the same allow/deny
+/// rule while a Profile is being resolved. They stay apart so dispatch does not
+/// depend on the resolution module; a change to one must reach the other, or a
+/// Profile could grant a tool here and deny it there.
 pub(super) fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
     let id = ToolId::builtin(name).expect("builtin Agent tool names form valid ToolIds");
     profile.tools.allow.iter().any(|allowed| allowed == &id)

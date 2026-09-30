@@ -23,7 +23,7 @@ use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 use tt_ports::workspace_fs::{WorkspaceFile, WorkspaceFs};
-use tt_ports::workspace_shell::WorkspaceShell;
+use tt_ports::workspace_shell::{ChatMessageSource, WorkspaceShell};
 
 const RUN_PROMPT_SNAPSHOT_PATH: &str = "input/prompt_snapshot.json";
 
@@ -185,8 +185,7 @@ impl AgentToolDispatcher {
                             run,
                             self.chat_repository.clone(),
                             session.runtime_context.frozen_macros.clone(),
-                        ))
-                            as Arc<dyn tt_ports::workspace_shell::ChatMessageSource>
+                        )) as Arc<dyn ChatMessageSource>
                     })
                 } else {
                     None

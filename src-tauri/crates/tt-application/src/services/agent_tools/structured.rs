@@ -84,7 +84,8 @@ impl TextLineRangePayload {
         line_truncated: bool,
     ) -> Self {
         assert!(
-            (total_lines == 0 && start_line == 0 && end_line == 0)
+            // An empty selection names line 1 and returns no rows.
+            (total_lines == 0 && start_line == 1 && end_line == 0)
                 || (start_line >= 1 && start_line <= end_line && end_line <= total_lines),
             "agent.tool_text_line_range_invalid"
         );

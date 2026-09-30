@@ -75,30 +75,30 @@ pub(in crate::services::agent_tools) async fn search(
 
     search_query.frozen_macros = Some(macros.clone());
     let run = run_repository.load_run(run_id).await?;
-    if run.chat_target()?.input_message_count.is_some() {
-        let raw_total = match raw_total_messages(
-            chat_repository,
-            group_chat_repository,
-            &run.chat_target()?.chat_ref,
-        )
-        .await
-        {
-            Ok(total) => total,
-            Err(DomainError::NotFound(message)) => {
-                return Ok((
-                    tool_error(call, "chat.not_found", &chat_unavailable_message(&message)),
-                    AgentToolEffect::None,
-                ));
-            }
-            Err(error) => return Err(error.into()),
-        };
-        let visible_total = visible_total_messages(&run, raw_total)?;
-        let Some(bounded_query) = constrain_search_query(search_query, raw_total, visible_total)
-        else {
-            return Ok(empty_result(call, &query));
-        };
-        search_query = bounded_query;
-    }
+    // The frozen input count is the only trustworthy bound for the run's own history,
+    // so every search is reconciled against it: a run without one fails in
+    // `visible_total_messages` rather than scanning history the run was not built from.
+    let raw_total = match raw_total_messages(
+        chat_repository,
+        group_chat_repository,
+        &run.chat_target()?.chat_ref,
+    )
+    .await
+    {
+        Ok(total) => total,
+        Err(DomainError::NotFound(message)) => {
+            return Ok((
+                tool_error(call, "chat.not_found", &chat_unavailable_message(&message)),
+                AgentToolEffect::None,
+            ));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let visible_total = visible_total_messages(&run, raw_total)?;
+    let Some(bounded_query) = constrain_search_query(search_query, raw_total, visible_total) else {
+        return Ok(empty_result(call, &query));
+    };
+    search_query = bounded_query;
     let hits = match &run.chat_target()?.chat_ref {
         AgentChatRef::Character {
             character_id,
