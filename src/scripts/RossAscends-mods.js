@@ -22,6 +22,7 @@ import {
     menu_type,
     substituteParams,
     sendTextareaMessage,
+    canSubmitAgentGuidance,
     doNavbarIconClick,
     isSwipingAllowed,
     setChatScrollTop,
@@ -914,6 +915,7 @@ export function initRossMods() {
     installChatInputFullscreenEditor({
         sendTextArea,
         sendMessage: sendTextareaMessage,
+        canSubmitGuidance: canSubmitAgentGuidance,
         isMobile,
     });
 
@@ -1084,7 +1086,6 @@ export function initRossMods() {
                 function doRegenerate() {
                     console.debug('Regenerating with Ctrl+Enter');
                     $('#option_regenerate').trigger('click');
-                    $('#options').hide();
                 }
 
                 // If there is input text, we do not trigger a regenerate - we just send it

@@ -30,6 +30,7 @@ test('discovery excludes unavailable manifests and activation preserves required
             event_types: { EXTENSIONS_FIRST_LOAD: 'extensions_first_load' },
         },
         './templates.js': { renderTemplateAsync: noop },
+        './popup-menu.js': { initPopupMenu: noop },
         './utils.js': {
             delay: noop,
             equalsIgnoreCaseAndAccents: (left, right) => left.toLowerCase() === right.toLowerCase(),

@@ -1,4 +1,6 @@
 import { getMountedCodeMirrorEditor, mountCodeMirrorEditor } from './tauri/codemirror-editor.js';
+import { translate } from './i18n.js';
+import { subscribeAgentRunState } from './tauritavern/agent/agent-run-controller.js';
 
 const EXPAND_BUTTON_ID = 'send_textarea_expand';
 const EDITOR_DIALOG_ID = 'tt-chat-input-editor';
@@ -146,9 +148,10 @@ function createEditorDialog(sourceTextarea) {
  * @param {object} deps
  * @param {HTMLTextAreaElement} deps.sendTextArea
  * @param {() => Promise<void>|void} deps.sendMessage
+ * @param {(text: string) => boolean} deps.canSubmitGuidance
  * @param {() => boolean} deps.isMobile
  */
-export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, isMobile }) {
+export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, canSubmitGuidance, isMobile }) {
     if (!(sendTextArea instanceof HTMLTextAreaElement)) {
         throw new Error('sendTextArea must be an HTMLTextAreaElement');
     }
@@ -168,6 +171,16 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, is
     inputHost.appendChild(expandButton);
 
     const { dialog, textarea, collapseButton, sendButton } = createEditorDialog(sendTextArea);
+
+    const syncSendAction = () => {
+        getMountedCodeMirrorEditor(textarea)?.flush();
+        const label = canSubmitGuidance(textarea.value) ? 'Submit guidance' : 'Send a message';
+        sendButton.title = translate(label);
+        sendButton.setAttribute('aria-label', translate(label));
+        sendButton.dataset.i18n = `[title]${label};[aria-label]${label}`;
+    };
+    textarea.addEventListener('input', syncSendAction);
+    subscribeAgentRunState(() => { if (dialog.open) syncSendAction(); });
 
     let pendingButtonFrame = 0;
     let pendingSourceFocus = false;
@@ -230,12 +243,13 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, is
 
         textarea.value = sendTextArea.value;
         textarea.placeholder = sendTextArea.placeholder;
+        syncSendAction();
 
         dialog.showModal();
         textarea.focus();
         textarea.setSelectionRange(sendTextArea.selectionStart, sendTextArea.selectionEnd, sendTextArea.selectionDirection);
         editorMount = new AbortController();
-        await mountCodeMirrorEditor(textarea, { signal: editorMount.signal });
+        await mountCodeMirrorEditor(textarea, { signal: editorMount.signal, onChange: syncSendAction });
     };
 
     expandButton.addEventListener('click', (event) => {

@@ -131,10 +131,11 @@ function closeFloatingPanel() {
 function triggerBlankClickIfNeeded() {
     const hasOpenDrawer = Boolean(document.querySelector('.openDrawer:not(.pinnedOpen)'));
     const hasOptionsMenu = isVisible(document.getElementById('options'));
+    const hasExtensionsMenu = isVisible(document.getElementById('extensionsMenu'));
     const hasExtraMessageButtons = Boolean(document.querySelector('.extraMesButtons.visible'));
     const hasActionModal = Array.from(document.querySelectorAll('.actionButtonsModal')).some(isVisible);
 
-    if (!hasOpenDrawer && !hasOptionsMenu && !hasExtraMessageButtons && !hasActionModal) {
+    if (!hasOpenDrawer && !hasOptionsMenu && !hasExtensionsMenu && !hasExtraMessageButtons && !hasActionModal) {
         return false;
     }
 

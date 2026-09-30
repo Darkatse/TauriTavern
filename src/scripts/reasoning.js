@@ -28,6 +28,13 @@ function setDatasetPropertyIfChanged(element, name, value) {
     setDatasetProperty(element, name, value);
 }
 
+function restoreReasoningEditFocus(details, ownedFocus) {
+    if (ownedFocus && details.isConnected
+        && (document.activeElement === document.body || details.contains(document.activeElement))) {
+        details.querySelector('.mes_reasoning_edit').focus({ preventScroll: true });
+    }
+}
+
 /**
  * @typedef {object} ReasoningTemplate
  * @property {string} name - The name of the template
@@ -1285,6 +1292,9 @@ function setReasoningEventHandlers() {
         const textarea = document.createElement('textarea');
         const reasoningBlock = messageBlock.find('.mes_reasoning');
         textarea.classList.add('reasoning_edit_textarea');
+        textarea.setAttribute('aria-label', t`Edit reasoning`);
+        textarea.dataset.i18n = '[aria-label]Edit reasoning';
+        textarea.setAttribute('aria-describedby', messageBlock.closest('.mes').attr('aria-labelledby'));
         textarea.value = reasoning;
         $(textarea).insertBefore(reasoningBlock);
         syncChatSurfaceProjectionHold();
@@ -1329,6 +1339,8 @@ function setReasoningEventHandlers() {
             return;
         }
 
+        const details = messageBlock.find('.mes_reasoning_details')[0];
+        const ownedFocus = details.contains(document.activeElement);
         const textarea = messageBlock.find('.reasoning_edit_textarea');
         let newReasoning = String(textarea.val());
         newReasoning = substituteParams(newReasoning);
@@ -1336,10 +1348,15 @@ function setReasoningEventHandlers() {
         syncChatSurfaceProjectionHold();
         if (newReasoning === message.extra.reasoning) {
             updateReasoningUI(messageBlock);
+            restoreReasoningEditFocus(details, ownedFocus);
             return;
         }
         updateReasoningFromValue(message, newReasoning);
-        await saveChatConditional();
+        try {
+            await saveChatConditional();
+        } finally {
+            restoreReasoningEditFocus(details, ownedFocus);
+        }
         updateMessageBlock(messageId, message);
 
         messageBlock.find('.mes_edit_done:visible').trigger('click');
@@ -1351,11 +1368,14 @@ function setReasoningEventHandlers() {
         e.preventDefault();
 
         const { messageBlock } = getMessageFromJquery(this);
+        const details = messageBlock.find('.mes_reasoning_details')[0];
+        const ownedFocus = details.contains(document.activeElement);
         const textarea = messageBlock.find('.reasoning_edit_textarea');
         textarea.remove();
         syncChatSurfaceProjectionHold();
 
         updateReasoningUI(messageBlock);
+        restoreReasoningEditFocus(details, ownedFocus);
     });
 
     $(document).on('click', '.mes_edit_add_reasoning', async function () {
@@ -1407,7 +1427,7 @@ function setReasoningEventHandlers() {
         await eventSource.emit(event_types.MESSAGE_REASONING_DELETED, messageId);
     });
 
-    $(document).on('pointerup', '.mes_reasoning_copy', async function () {
+    $(document).on('click', '.mes_reasoning_copy', async function () {
         const { message } = getMessageFromJquery(this);
         const reasoning = String(message?.extra?.reasoning ?? '');
 

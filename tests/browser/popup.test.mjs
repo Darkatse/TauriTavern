@@ -14,6 +14,54 @@ test('Popup naming and result controls', async context => {
         const { document } = window;
         power_user.send_on_enter = send_on_enter_options.ENABLED;
 
+        await context.test('extension menus let Tab leave, consume Escape and hand dialogs a visible focus origin', async () => {
+            await getModule('scripts/extensions.js').namespace.ensureExtensionsUiReady();
+            const trigger = document.getElementById('extensionsMenuButton');
+            const panel = document.getElementById('extensionsMenu');
+            const action = document.createElement('button');
+            action.textContent = 'Edit extension';
+            panel.append(action);
+            let shown;
+            let focusAtOpen;
+            action.addEventListener('click', () => {
+                focusAtOpen = document.activeElement;
+                shown = Popup.show.input('Extension setting', '', '', { animation: 'none' });
+            });
+
+            trigger.click();
+            assert.equal(document.activeElement, panel);
+            const input = document.getElementById('send_textarea');
+            input.focus();
+            assert.equal(trigger.getAttribute('aria-expanded'), 'true', 'focus may leave without dismissing the menu');
+            action.focus();
+            let escapedToDocument = false;
+            const onEscape = () => { escapedToDocument = true; };
+            document.addEventListener('keydown', onEscape);
+            const escape = new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+            action.dispatchEvent(escape);
+            document.removeEventListener('keydown', onEscape);
+            assert.equal(escape.defaultPrevented, true);
+            assert.equal(escapedToDocument, false);
+            assert.equal(document.activeElement, trigger);
+
+            trigger.click();
+            action.focus();
+            action.click();
+            const popup = Popup.util.popups.at(-1);
+            assert.equal(panel.style.display, 'none');
+            // Native dialog autofocus/restoration is verified in WebView.
+            assert.equal(focusAtOpen, trigger);
+            assert.equal(popup.dlg.open, true);
+            await popup.completeCancelled();
+            await shown;
+
+            trigger.click();
+            input.focus();
+            input.click();
+            assert.equal(panel.style.display, 'none');
+            assert.equal(document.activeElement, input, 'outside clicks keep their own focus');
+        });
+
         async function enter(control, options = {}, cancelled = false) {
             control.focus();
             const event = new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...options });

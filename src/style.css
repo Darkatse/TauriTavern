@@ -4793,6 +4793,10 @@ input[type="range"]::-webkit-slider-thumb {
     display: none;
 }
 
+.extraMesButtons.visible {
+    display: flex;
+}
+
 .mes_button,
 .extraMesButtons>div {
     cursor: pointer;

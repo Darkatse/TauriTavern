@@ -4667,5 +4667,14 @@
     "Invalid LAN device address or port": "局域网设备地址或端口无效。",
     "Controls token randomness.": "控制词符选择的随机性。",
     "Preset name cannot be empty": "预设名称不能为空。",
-    "Preset saved, but could not be applied.": "预设已保存，但未能应用。"
+    "Preset saved, but could not be applied.": "预设已保存，但未能应用。",
+    "Chat message": "聊天消息",
+    "Chat options": "聊天选项",
+    "Submit guidance": "提交指引",
+    "Generating…": "正在生成…",
+    "Ready": "就绪",
+    "Select message": "选择消息",
+    "Previous reply": "上一条回复",
+    "Next reply": "下一条回复",
+    "Failed to copy message": "复制消息失败"
 }

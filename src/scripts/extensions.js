@@ -12,6 +12,7 @@ import { accountStorage } from './util/AccountStorage.js';
 import { stripCommandErrorPrefixes } from './util/command-error-utils.js';
 import { toUserFacingErrorText } from './util/user-facing-error.js';
 import { SimpleMutex } from './util/SimpleMutex.js';
+import { initPopupMenu } from './popup-menu.js';
 import { createThirdPartyStylesheetResolver } from './extensions/runtime/third-party-runtime.js';
 import { createExtensionAssetLoader } from './extensions/runtime/asset-loader.js';
 import { getExtensionResourceUrl, isThirdPartyExtension } from './extensions/runtime/resource-paths.js';
@@ -931,31 +932,14 @@ async function addExtensionsButtonAndMenu() {
 
     const button = $('#extensionsMenuButton');
     const dropdown = $('#extensionsMenu');
-    let isDropdownVisible = false;
 
     let popper = Popper.createPopper(button.get(0), dropdown.get(0), {
         placement: 'top-start',
     });
 
-    $(button).on('click', function () {
-        if (isDropdownVisible) {
-            dropdown.fadeOut(animation_duration);
-            isDropdownVisible = false;
-        } else {
-            dropdown.fadeIn(animation_duration);
-            isDropdownVisible = true;
-        }
-        popper.update();
-    });
-
-    $('html').on('click', function (e) {
-        if (!isDropdownVisible) return;
-        const clickTarget = $(e.target);
-        const noCloseTargets = ['#sd_gen', '#extensionsMenuButton', '#roll_dice'];
-        if (!noCloseTargets.some(id => clickTarget.closest(id).length > 0)) {
-            dropdown.fadeOut(animation_duration);
-            isDropdownVisible = false;
-        }
+    initPopupMenu(button[0], dropdown[0], {
+        onOpen: () => { popper.update(); },
+        closesOnClick: target => !target.closest('#sd_gen, #roll_dice'),
     });
 }
 

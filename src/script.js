@@ -396,6 +396,7 @@ import { event_types, eventSource } from './scripts/events.js';
 import { initAccessibility } from './scripts/a11y.js';
 import { initDomHandlers } from './scripts/dom-handlers.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
+import { initPopupMenu } from './scripts/popup-menu.js';
 import { createGenerationIdleGate } from './scripts/util/generation-idle-gate.js';
 import { shouldEmitCharacterMessageEvents, shouldUnblockGenerationAfterUnhandledError } from './scripts/util/generation-lifecycle.js';
 import { AudioPlayer } from './scripts/audio-player.js';
@@ -2235,6 +2236,8 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     if (!Number.isInteger(id) || id < 0 || id >= chat.length) {
         throw new RangeError(`Invalid message id: ${String(id)}`);
     }
+    const element = chatSurface.getMessageElement(id);
+    const ownedFocus = element?.contains(document.activeElement);
     const canDeleteSwipe = swipeDeletionIndex !== undefined && swipeDeletionIndex !== null;
     if (canDeleteSwipe) {
         if (swipeDeletionIndex < 0) {
@@ -2251,6 +2254,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     let deleteOnlySwipe = canDeleteSwipe;
     if (askConfirmation) {
         const result = await callGenericPopup(t`Are you sure you want to delete this message?`, POPUP_TYPE.CONFIRM, null, {
+            label: t`Delete Message`,
             okButton: canDeleteSwipe ? t`Delete Swipe` : t`Delete Message`,
             cancelButton: 'Cancel',
             customButtons: canDeleteSwipe ? [t`Delete Message`] : null,
@@ -2283,7 +2287,14 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
 
     refreshActiveSwipeButtons();
 
+    if (ownedFocus && document.activeElement === document.body) focusMessageOrInput(id);
     await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
+}
+
+function focusMessageOrInput(messageId) {
+    const element = chatSurface.getMessageElement(messageId) ?? chatSurface.getMessageElement(messageId - 1);
+    if (element) element.focus({ preventScroll: true });
+    else focusChatInput(ChatInputFocusIntent.RESTORATION);
 }
 
 export const reloadChatMutex = new SimpleMutex(reloadCurrentChatUnsafe);
@@ -2313,9 +2324,9 @@ export async function reloadCurrentChatUnsafe() {
     refreshSwipeButtons();
 }
 
-/**
- * Send the message currently typed into the chat box.
- */
+const userInputGenerateMutex = new SimpleMutex(generateFromChatInput);
+
+/** Send from every composer entry, allowing guidance during an active Agent run. */
 export async function sendTextareaMessage() {
     // don't proceed during swipeGenerate()
     if (swipeState == SWIPE_STATE.EDITING) {
@@ -2324,6 +2335,10 @@ export async function sendTextareaMessage() {
     }
     if (swipeState !== SWIPE_STATE.NONE) return; // don't proceed if mid-swipe.
     if (await maybeSubmitAgentGuidanceFromComposer()) return;
+    return await userInputGenerateMutex.update();
+}
+
+async function generateFromChatInput() {
     if (is_send_press) return;
     if (isExecutingCommandsFromChatInput) return;
 
@@ -2376,23 +2391,36 @@ function getAgentGuidanceComposerText() {
     return String($('#send_textarea').val() ?? '').trim();
 }
 
-function shouldOfferAgentGuidanceFromComposer() {
+/** Whether this draft can be submitted to the currently running Agent. */
+export function canSubmitAgentGuidance(text) {
     return hasActiveAgentRun()
-        && Boolean(getAgentGuidanceComposerText());
+        && Boolean(text.trim());
 }
 
-function syncAgentGuidanceComposerState() {
-    if (shouldOfferAgentGuidanceFromComposer()) {
+function syncChatInputState() {
+    const guidanceReady = canSubmitAgentGuidance(getAgentGuidanceComposerText());
+    if (guidanceReady) {
         document.body.dataset.agentGuidanceReady = 'true';
-        return;
+    } else {
+        delete document.body.dataset.agentGuidanceReady;
     }
-
-    delete document.body.dataset.agentGuidanceReady;
+    const label = guidanceReady ? 'Submit guidance' : 'Send a message';
+    $('#send_but').attr({
+        'aria-label': translate(label),
+        title: translate(label),
+        'data-i18n': `[aria-label]${label};[title]${label}`,
+    });
+    const status = document.getElementById('chat_generation_status');
+    const statusKey = document.body.dataset.generating === 'true' ? 'Generating…' : 'Ready';
+    if (status.dataset.i18n !== statusKey) {
+        status.dataset.i18n = statusKey;
+        status.textContent = translate(statusKey);
+    }
 }
 
 async function maybeSubmitAgentGuidanceFromComposer() {
-    if (!shouldOfferAgentGuidanceFromComposer()) {
-        syncAgentGuidanceComposerState();
+    if (!canSubmitAgentGuidance(getAgentGuidanceComposerText())) {
+        syncChatInputState();
         return false;
     }
 
@@ -2406,7 +2434,7 @@ async function maybeSubmitAgentGuidanceFromComposer() {
         },
     );
     if (result !== POPUP_RESULT.AFFIRMATIVE) {
-        syncAgentGuidanceComposerState();
+        syncChatInputState();
         return true;
     }
 
@@ -2418,7 +2446,7 @@ async function maybeSubmitAgentGuidanceFromComposer() {
     }
 
     $('#send_textarea').val('')[0]?.dispatchEvent(new Event('input', { bubbles: true }));
-    syncAgentGuidanceComposerState();
+    syncChatInputState();
     return true;
 }
 
@@ -3159,12 +3187,11 @@ export function addCopyToCodeBlocks(messageElement) {
 
             const copyButton = document.createElement('i');
             copyButton.classList.add('fa-solid', 'fa-copy', 'code-copy', 'interactable');
-            copyButton.title = 'Copy code';
+            copyButton.title = t`Copy code`;
+            copyButton.dataset.i18n = '[title]Copy code';
             codeBlock.appendChild(copyButton);
-            copyButton.addEventListener('click', function (e) {
+            copyButton.addEventListener('click', async function (e) {
                 e.stopPropagation();
-            });
-            copyButton.addEventListener('pointerup', async function () {
                 const text = codeBlock.textContent;
                 await copyText(text);
                 toastr.info(t`Copied!`, '', { timeOut: 2000 });
@@ -3458,6 +3485,16 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
     messageElement.find('.ch_name .name_text').text(mes.name);
     messageElement.find('.timestamp').text(timestamp).attr('title', `${mes.extra?.api ? mes.extra.api + ' - ' : ''}${mes.extra?.model ?? ''}`);
     messageElement.find('.mesIDDisplay').text(`#${messageId}`);
+    const root = messageElement[0];
+    const author = root.querySelector('.name_text');
+    const number = root.querySelector('.mesIDDisplay');
+    author.id ||= `message-author-${uuidv4()}`;
+    number.id ||= `message-number-${uuidv4()}`;
+    root.setAttribute('aria-labelledby', `${author.id} ${number.id}`);
+    const actions = root.querySelector('.extraMesButtons');
+    actions.id ||= `message-actions-${uuidv4()}`;
+    root.querySelector('.extraMesButtonsHint').setAttribute('aria-controls', actions.id);
+    root.querySelector('.del_checkbox').setAttribute('aria-describedby', `${author.id} ${number.id}`);
     tokenCount && messageElement.find('.tokenCounterDisplay').text(`${tokenCount}t`);
     mes.title && messageElement.attr('title', mes.title);
     timerValue && messageElement.find('.mes_timer').attr('title', timerTitle).text(timerValue);
@@ -4183,7 +4220,9 @@ function showStopButton() {
 function hideStopButton() {
     // prevent NOOP, because hideStopButton() gets called multiple times
     if ($('#mes_stop').css('display') !== 'none') {
+        const restoreFocus = document.activeElement === document.getElementById('mes_stop');
         $('#mes_stop').css({ 'display': 'none' });
+        if (restoreFocus) focusChatInput(ChatInputFocusIntent.RESTORATION);
         eventSource.emit(event_types.GENERATION_ENDED, chat.length);
     }
 }
@@ -8400,6 +8439,7 @@ export function activateSendButtons() {
     showSwipeButtons();
     delete document.body.dataset.generating;
     delete document.body.dataset.agentGuidanceReady;
+    syncChatInputState();
 }
 
 /**
@@ -8409,6 +8449,7 @@ export function deactivateSendButtons() {
     showStopButton();
     hideSwipeButtons();
     document.body.dataset.generating = 'true';
+    syncChatInputState();
 }
 
 export function resetChatState() {
@@ -9638,6 +9679,8 @@ function openMessageDelete(fromSlashCommand) {
         $('#dialogue_del_mes').css('display', 'block');
         $('#send_form').css('display', 'none');
         syncMountedDeleteState(chatSurface.getMountedMessageIds());
+        const target = chatElement[0].querySelector('.del_checkbox') ?? document.getElementById('dialogue_del_mes_cancel');
+        target.focus({ preventScroll: true });
     } else {
         console.debug(`
             ERR -- could not enter del mode
@@ -9645,6 +9688,21 @@ function openMessageDelete(fromSlashCommand) {
             is_send_press: ${is_send_press}
             selected_group: ${selected_group}
             is_group_generating: ${is_group_generating}`);
+    }
+}
+
+function setMessageActionsExpanded(message, expanded) {
+    const actions = message.querySelector('.extraMesButtons');
+    const trigger = message.querySelector('.extraMesButtonsHint');
+    actions.classList.toggle('visible', expanded);
+    trigger.setAttribute('aria-expanded', String(expanded));
+    if (!expanded && actions.contains(document.activeElement)) trigger.focus({ preventScroll: true });
+}
+
+function restoreMessageEditFocus(element, ownedFocus) {
+    if (ownedFocus && element.isConnected
+        && (document.activeElement === document.body || element.contains(document.activeElement))) {
+        element.querySelector('.mes_edit').focus({ preventScroll: true });
     }
 }
 
@@ -9714,6 +9772,9 @@ export async function messageEdit(editMessageId) {
     if (!(editTextArea instanceof HTMLTextAreaElement)) {
         throw new Error(`messageEdit: edit textarea missing for message ${editMessageId}`);
     }
+    editTextArea.setAttribute('aria-label', t`Edit Message`);
+    editTextArea.dataset.i18n = '[aria-label]Edit Message';
+    editTextArea.setAttribute('aria-describedby', messageElement[0].getAttribute('aria-labelledby'));
 
     const text = trimSpaces(editMessage.mes || '');
     const $editTextArea = $(editTextArea);
@@ -9752,6 +9813,7 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
     }
 
     const thisMesBlock = thisMesDiv.find('.mes_block');
+    const ownedFocus = thisMesDiv[0].contains(document.activeElement);
     thisMesDiv.find('.mes_edit_buttons').css('display', 'none');
     thisMesBlock.find('.mes_buttons').css('display', '');
 
@@ -9775,6 +9837,7 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
     }
 
     showSwipeButtons();
+    restoreMessageEditFocus(thisMesDiv[0], ownedFocus);
 }
 
 /**
@@ -9874,6 +9937,8 @@ async function messageEditDone(div) {
         return;
     }
 
+    const element = div.closest('.mes')[0];
+    const ownedFocus = element.contains(document.activeElement);
     const { mesBlock, bias } = updateMessage(div);
 
     await eventSource.emit(event_types.MESSAGE_EDITED, this_edit_mes_id);
@@ -9897,8 +9962,12 @@ async function messageEditDone(div) {
     await finalizeMessageContent(this_edit_mes_id, event_types.MESSAGE_UPDATED);
     this_edit_mes_id = undefined;
     syncChatSurfaceProjectionHold();
-    await saveChatConditional();
-    showSwipeButtons();
+    try {
+        await saveChatConditional();
+    } finally {
+        showSwipeButtons();
+        restoreMessageEditFocus(element, ownedFocus);
+    }
 }
 
 /**
@@ -10591,6 +10660,7 @@ export async function updateSwipeCounter(mesId, { message = undefined, messageEl
     const swipePickerButton = messageElement.find('.mes_swipe_picker');
     const canOpenSwipePicker = canOpenSwipePickerForMessage(mesId);
     const canJumpToSwipe = canJumpToSwipeForMessage(mesId);
+    const swipeAction = canJumpToSwipe ? t`Click to jump to a swipe` : canOpenSwipePicker ? t`Click to view swipe history` : null;
 
     swipeCounter
         .text(swipeCounterText)
@@ -10598,7 +10668,9 @@ export async function updateSwipeCounter(mesId, { message = undefined, messageEl
         .toggleClass('swipe-picker-enabled', canOpenSwipePicker)
         .toggleClass(INTERACTABLE_CONTROL_CLASS, canOpenSwipePicker)
         .attr('role', canOpenSwipePicker ? 'button' : null)
-        .attr('title', canJumpToSwipe ? t`Click to jump to a swipe` : canOpenSwipePicker ? t`Click to view swipe history` : null);
+        .attr('aria-label', swipeAction)
+        .attr('aria-description', canOpenSwipePicker ? swipeCounterText : null)
+        .attr('title', swipeAction);
     swipePickerButton.toggle(canOpenSwipePicker);
 
     if (!canOpenSwipePicker) {
@@ -11132,8 +11204,10 @@ export function updateEditArrowClasses() {
 
     const messageId = Number(this_edit_mes_id);
     const mountedIds = new Set(chatSurface.getMountedMessageIds());
-    downButton.toggleClass('disabled', !mountedIds.has(messageId + 1));
-    upButton.toggleClass('disabled', !mountedIds.has(messageId - 1));
+    const downDisabled = !mountedIds.has(messageId + 1);
+    const upDisabled = !mountedIds.has(messageId - 1);
+    downButton.toggleClass('disabled', downDisabled).attr('aria-disabled', String(downDisabled));
+    upButton.toggleClass('disabled', upDisabled).attr('aria-disabled', String(upDisabled));
 }
 
 /**
@@ -13066,9 +13140,9 @@ jQuery(async function () {
     $(document).on('click', '.api_loading', () => cancelStatusCheck('Canceled because connecting was manually canceled'));
 
     installChatInputFocusKeeper();
-    $('#send_textarea').on('input', syncAgentGuidanceComposerState);
-    subscribeAgentRunState(syncAgentGuidanceComposerState);
-    syncAgentGuidanceComposerState();
+    $('#send_textarea').on('input', syncChatInputState);
+    subscribeAgentRunState(syncChatInputState);
+    syncChatInputState();
 
     $('#swipes-checkbox').on('change', function () {
         swipes = !!$('#swipes-checkbox').prop('checked');
@@ -13097,13 +13171,8 @@ jQuery(async function () {
         $('#option_continue').trigger('click');
     });
 
-    const userInputGenerateMutex = new SimpleMutex(sendTextareaMessage);
     $('#send_but').on('click', async function () {
-        if (await maybeSubmitAgentGuidanceFromComposer()) {
-            return;
-        }
-
-        await userInputGenerateMutex.update();
+        await sendTextareaMessage();
     });
 
     //menu buttons setup
@@ -13230,12 +13299,11 @@ jQuery(async function () {
         }
 
         if (fromSlashCommand) {  // When called from `/delchat` command, don't re-open the history view.
-            $('#options').hide();  // Hide option popup menu.
+            closeOptionsMenu();
             await loaderHandle.hide();
         } else {  // Open the history view again after 2 seconds (delay to avoid edge cases for deleting last chat).
             setTimeout(async function () {
                 $('#option_select_chat').trigger('click');
-                $('#options').hide();  // Hide option popup menu.
                 await loaderHandle.hide();
             }, 2000);
         }
@@ -13427,7 +13495,6 @@ jQuery(async function () {
 
         await delay(250);
         $('#option_select_chat').trigger('click');
-        $('#options').hide();
     });
 
     $(document).on('click', '.exportChatButton, .exportRawChatButton', async function (e) {
@@ -13474,43 +13541,19 @@ jQuery(async function () {
     });
 
 
-    const button = $('#options_button');
-    const menu = $('#options');
-    let isOptionsMenuVisible = false;
-
-    function showMenu() {
-        showBookmarksButtons();
-        menu.fadeIn(animation_duration);
-        optionsPopper.update();
-        isOptionsMenuVisible = true;
-    }
-
-    function hideMenu() {
-        menu.fadeOut(animation_duration);
-        optionsPopper.update();
-        isOptionsMenuVisible = false;
-    }
-
-    function isMouseOverButtonOrMenu() {
-        return menu.is(':hover, :focus-within') || button.is(':hover, :focus');
-    }
-
-    button.on('click', function () {
-        if (isOptionsMenuVisible) {
-            hideMenu();
-        } else {
-            showMenu();
-        }
-    });
-    $(document).on('click', function () {
-        if (!isOptionsMenuVisible) return;
-        if (!isMouseOverButtonOrMenu()) { hideMenu(); }
+    const closeOptionsMenu = initPopupMenu(document.getElementById('options_button'), document.getElementById('options'), {
+        onOpen() {
+            showBookmarksButtons();
+            optionsPopper.update();
+        },
+        closesOnClick: target => Boolean(target.closest('#options a[id]')),
     });
 
     /* $('#set_chat_character_settings').on('click', setScenarioOverride); */
 
     ///////////// OPTIMIZED LISTENERS FOR LEFT SIDE OPTIONS POPUP MENU //////////////////////
     $('#options [id]').on('click', async function (event, customData) {
+        closeOptionsMenu();
         const fromSlashCommand = customData?.fromSlashCommand || false;
         var id = $(this).attr('id');
 
@@ -13626,7 +13669,6 @@ jQuery(async function () {
             }
             //}
         }
-        hideMenu();
     });
 
     $('#newChatFromManageScreenButton').on('click', async function () {
@@ -13644,10 +13686,13 @@ jQuery(async function () {
         is_delete_mode = false;
         syncMountedDeleteState(chatSurface.getMountedMessageIds());
         showSwipeButtons();
+        document.getElementById('options_button').focus({ preventScroll: true });
     });
 
     //confirms message deletion with the "ok" button
     $('#dialogue_del_mes_ok').on('click', async function () {
+        const ownedFocus = document.getElementById('dialogue_del_mes').contains(document.activeElement)
+            || document.activeElement.matches('.del_checkbox');
         $('#dialogue_del_mes').css('display', 'none');
         $('#send_form').css('display', css_send_form_display);
         const deleteFrom = this_del_mes;
@@ -13655,24 +13700,27 @@ jQuery(async function () {
         is_delete_mode = false;
         syncMountedDeleteState(chatSurface.getMountedMessageIds());
 
-        if (deleteFrom >= 0) {
-            const deletedMessages = chat.slice(deleteFrom);
-            for (let i = (chat.length - 1); i >= deleteFrom; i--) {
-                deleteItemizedPromptForMessage(i);
+        try {
+            if (deleteFrom >= 0) {
+                const deletedMessages = chat.slice(deleteFrom);
+                for (let i = (chat.length - 1); i >= deleteFrom; i--) {
+                    deleteItemizedPromptForMessage(i);
+                }
+                chat.length = deleteFrom;
+                reconcileMountedChatSurface();
+                chat_metadata.tainted = true;
+                const saved = saveChatConditional();
+                void cleanupDeletedMessageStates(deletedMessages, saved);
+                await saved;
+                setChatScrollTop(getChatScrollHeight());
+                await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
+            } else {
+                console.log('No message selected for deletion');
             }
-            chat.length = deleteFrom;
-            reconcileMountedChatSurface();
-            chat_metadata.tainted = true;
-            const saved = saveChatConditional();
-            void cleanupDeletedMessageStates(deletedMessages, saved);
-            await saved;
-            setChatScrollTop(getChatScrollHeight());
-            await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
-        } else {
-            console.log('No message selected for deletion');
+        } finally {
+            showSwipeButtons();
+            if (ownedFocus && document.activeElement === document.body) focusMessageOrInput(chat.length - 1);
         }
-
-        showSwipeButtons();
     });
 
     $('#main_api').on('change', async function () {
@@ -13743,15 +13791,16 @@ jQuery(async function () {
         setTimeout(function () { $('#shadow_select_chat_popup').css('display', 'none'); }, animation_duration);
     });
 
-    $(document).on('pointerup', '.mes_copy', async function () {
+    $(document).on('click', '.mes_copy', async function () {
         if (this_chid !== undefined || selected_group || name2 === neutralCharacterName) {
             try {
                 const messageId = $(this).closest('.mes').attr('mesid');
                 const text = chat[messageId].mes;
                 await copyText(text);
-                toastr.info('Copied!', '', { timeOut: 2000 });
+                toastr.info(t`Copied!`, '', { timeOut: 2000 });
             } catch (err) {
                 console.error('Failed to copy: ', err);
+                toastr.error(t`Failed to copy message`);
             }
         }
     });
@@ -13797,72 +13846,26 @@ jQuery(async function () {
         }
     });
 
-    $(document).on('click', '.extraMesButtonsHint', function (e) {
-        const $hint = $(e.target);
-        const $buttons = $hint.siblings('.extraMesButtons');
-
-        $hint.transition({
-            opacity: 0,
-            duration: animation_duration,
-            easing: animation_easing,
-            complete: function () {
-                $hint.hide();
-                $buttons
-                    .addClass('visible')
-                    .css({
-                        opacity: 0,
-                        display: 'flex',
-                    })
-                    .transition({
-                        opacity: 1,
-                        duration: animation_duration,
-                        easing: animation_easing,
-                    });
-            },
-        });
+    $(document).on('click', '.extraMesButtonsHint', function () {
+        const message = this.closest('.mes');
+        setMessageActionsExpanded(message, !message.querySelector('.extraMesButtons').classList.contains('visible'));
     });
 
-    $(document).on('click', function (e) {
-        // Expanded options don't need to be closed
-        if (power_user.expand_message_actions) {
-            return;
-        }
+    $(document).on('keydown', '.mes_buttons', function (event) {
+        if (event.key !== 'Escape' || event.isDefaultPrevented() || event.originalEvent?.isComposing
+            || event.keyCode === 229 || power_user.expand_message_actions) return;
+        const message = this.closest('.mes');
+        if (!message.querySelector('.extraMesButtons').classList.contains('visible')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setMessageActionsExpanded(message, false);
+    });
 
-        // Check if the click was outside the relevant elements
-        if (!$(e.target).closest('.extraMesButtons, .extraMesButtonsHint').length) {
-            const $visibleButtons = $('.extraMesButtons.visible');
-
-            if (!$visibleButtons.length) {
-                return;
-            }
-
-            const $hiddenHints = $('.extraMesButtonsHint:hidden');
-
-            // Transition out the .extraMesButtons first
-            $visibleButtons.transition({
-                opacity: 0,
-                duration: animation_duration,
-                easing: animation_easing,
-                complete: function () {
-                    // Hide the .extraMesButtons after the transition
-                    $(this)
-                        .hide()
-                        .removeClass('visible');
-
-                    // Transition the .extraMesButtonsHint back in
-                    $hiddenHints
-                        .show()
-                        .transition({
-                            opacity: 0.3,
-                            duration: animation_duration,
-                            easing: animation_easing,
-                            complete: function () {
-                                $(this).css('opacity', '');
-                            },
-                        });
-                },
-            });
-        }
+    $(document).on('click', function (event) {
+        if (power_user.expand_message_actions || $(event.target).closest('.extraMesButtons, .extraMesButtonsHint').length) return;
+        chatElement[0].querySelectorAll('.extraMesButtons.visible').forEach(actions => {
+            setMessageActionsExpanded(actions.closest('.mes'), false);
+        });
     });
 
     $(document).on('click', '.mes_edit_cancel', async function () {
@@ -13887,7 +13890,7 @@ jQuery(async function () {
     });
 
     $(document).on('click', '.mes_edit_copy', async function () {
-        const confirmation = await callGenericPopup(t`Create a copy of this message?`, POPUP_TYPE.CONFIRM);
+        const confirmation = await callGenericPopup(t`Create a copy of this message?`, POPUP_TYPE.CONFIRM, null, { label: t`Create a copy of this message?` });
         if (!confirmation) {
             return;
         }
@@ -14307,17 +14310,18 @@ jQuery(async function () {
     });
 
     $(document).on('keydown', function (e) {
-        if (e.key === 'Escape' && !e.originalEvent.isComposing) {
+        if (e.key === 'Escape' && !e.isDefaultPrevented() && !e.originalEvent?.isComposing
+            && e.keyCode !== 229 && !document.querySelector('dialog[open]')) {
             const isEditVisible = $('#curEditTextarea').is(':visible') || $('.reasoning_edit_textarea').length > 0;
             if (isEditVisible && power_user.auto_save_msg_edits === false) {
                 closeMessageEditor('all');
-                focusChatInput(ChatInputFocusIntent.EDITING);
+                e.preventDefault();
                 return;
             }
             if (isEditVisible && power_user.auto_save_msg_edits === true) {
                 chatElement.find(`.mes[mesid="${this_edit_mes_id}"] .mes_edit_done`).trigger('click');
                 closeMessageEditor('reasoning');
-                focusChatInput(ChatInputFocusIntent.EDITING);
+                e.preventDefault();
                 return;
             }
             if (this_edit_mes_id === undefined && $('#mes_stop').is(':visible')) {

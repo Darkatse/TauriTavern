@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { computeAccessibleDescription, computeAccessibleName } from 'dom-accessibility-api';
 import { applyV8RegexTasks } from '../../src/scripts/tauri/regex/v8-regex-worker.js';
 import { createBrowserRuntime } from './runtime.mjs';
 
@@ -97,4 +98,39 @@ test('cancelling an empty reasoning edit discards the draft and collapses the bl
     assert.equal(root.querySelector('.reasoning_edit_textarea'), null);
     assert.equal(root.querySelector('.mes_reasoning_details').open, false);
     assert.equal(script.chat[0].extra.reasoning, '');
+});
+
+test('message context stays distinct across clones and follows message renumbering', async t => {
+    const { window, script } = await openRuntime(t);
+    script.chat.push(message('First'), message('Second'));
+    await script.printMessages();
+    const roots = [...window.document.querySelectorAll('#chat > .mes')];
+    assert.deepEqual(roots.map(root => computeAccessibleName(root)), ['Alice #0', 'Alice #1']);
+    script.chat.shift();
+    script.updateViewMessageIds();
+    const remaining = window.document.querySelector('#chat > .mes');
+    assert.equal(computeAccessibleName(remaining), 'Alice #0');
+    await script.messageEdit(0);
+    const editor = remaining.querySelector('#curEditTextarea');
+    assert.equal(computeAccessibleDescription(editor), 'Alice #0');
+    assert.equal(editor.value, 'Second');
+});
+
+test('code copying uses the shared click activation once for keyboard and direct clicks', async t => {
+    const { window, script, getModule } = await openRuntime(t);
+    const root = window.document.createElement('div');
+    root.innerHTML = '<pre><code class="hljs">a &amp; b</code></pre>';
+    window.document.body.append(root);
+    const copied = [];
+    window.navigator.clipboard.writeText = async text => { copied.push(text); };
+    script.addCopyToCodeBlocks(root);
+    script.addCopyToCodeBlocks(root);
+    getModule('scripts/keyboard.js').namespace.initKeyboard();
+    const copy = root.querySelector('.code-copy');
+    copy.focus();
+    copy.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    copy.click();
+    await Promise.resolve();
+    assert.deepEqual(copied, ['a & b', 'a & b']);
 });
