@@ -3,7 +3,6 @@
 import { isTopLevelDrawerOpen, subscribeDrawerState } from '../../../../scripts/drawers.js';
 
 import { PanelRuntimeKind } from '../../services/panel-runtime/panel-runtime-kinds.js';
-import { runPanelRestoreHooks } from '../../services/panel-runtime/panel-restore-hooks.js';
 
 /**
  * @typedef {import('../../services/embedded-runtime/embedded-runtime-manager.js').createEmbeddedRuntimeManager} createEmbeddedRuntimeManager
@@ -241,7 +240,6 @@ function registerDrawerParking(manager, { panelId, parkedSelector, pinnedSelecto
         if (afterHydrate) {
             afterHydrate(reason);
         }
-        runPanelRestoreHooks(panelId);
     };
 
     /** @param {string} reason */

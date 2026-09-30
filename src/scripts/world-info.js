@@ -27,7 +27,6 @@ import { accountStorage } from './util/AccountStorage.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
 import { normalizeWorldInfoActivationBatch } from './tauritavern/agent/world-info-activation.js';
 import { registerLifecycleFlushHandler } from '../tauri/main/services/lifecycle/lifecycle-flush-service.js';
-import { registerPanelRestoreHook } from '../tauri/main/services/panel-runtime/panel-restore-hooks.js';
 import { canPrefetchWorldInfoTokenCount, getWorldInfoTokenPrefetchBatch } from './world-info-token-prefetch.js';
 import { prepareWorldInfoEntries } from './world-info-entry-prepare.js';
 import { getMountedCodeMirrorEditor, mountCodeMirrorEditor } from './tauri/codemirror-editor.js';
@@ -91,10 +90,6 @@ export let world_info_max_recursion_steps = 0;
 /** @type {Map<string, { data: any; revision: number }>} */
 const dirtyWorldInfos = new Map();
 let worldInfoDirtyRevision = 0;
-/** Books saved while Panel Runtime had the World Info editor parked. */
-const worldsSavedWhileParked = new Set();
-/** @type {string | null} Book picked for the editor while Panel Runtime had it parked. */
-let editorWorldPickedWhileParked = null;
 /** @type {Promise<void>} */
 let worldInfoFlushChain = Promise.resolve();
 
@@ -2295,117 +2290,18 @@ export async function updateWorldInfoList() {
         const data = await result.json();
         const editorSelected = String($('#world_editor_select').find(':selected').text());
         world_names = data.world_names?.length ? data.world_names : [];
-        renderWorldInfoListOptions(editorSelected);
+        $('#world_info').find('option[value!=""]').remove();
+        $('#world_editor_select').find('option[value!=""]').remove();
+
+        world_names.forEach((item, i) => {
+            const globalListOption = new Option(item, i.toString());
+            globalListOption.selected = selected_world_info.includes(item);
+            const editorListOption = new Option(item, i.toString());
+            editorListOption.selected = editorSelected === item;
+            $('#world_info').append(globalListOption);
+            $('#world_editor_select').append(editorListOption);
+        });
     }
-}
-
-/**
- * Rebuilds the global and editor World Info selects from `world_names`.
- * @param {string} editorSelected Name of the World Info to keep selected in the editor select
- */
-function renderWorldInfoListOptions(editorSelected) {
-    $('#world_info').find('option[value!=""]').remove();
-    $('#world_editor_select').find('option[value!=""]').remove();
-
-    world_names.forEach((item, i) => {
-        const globalListOption = new Option(item, i.toString());
-        globalListOption.selected = selected_world_info.includes(item);
-        const editorListOption = new Option(item, i.toString());
-        editorListOption.selected = editorSelected === item;
-        $('#world_info').append(globalListOption);
-        $('#world_editor_select').append(editorListOption);
-    });
-}
-
-/**
- * @param {HTMLSelectElement} select
- * @param {(name: string) => boolean} [isSelected] Expected selection state, when the select mirrors one
- */
-function isWorldInfoSelectCurrent(select, isSelected) {
-    const options = Array.from(select.options).filter(option => option.value !== '');
-    return options.length === world_names.length && options.every(option =>
-        world_names[Number(option.value)] === option.textContent
-        && (!isSelected || option.selected === isSelected(option.textContent)));
-}
-
-/**
- * Opens a book in the editor. While Panel Runtime has the editor parked, the pick is kept
- * and applied when the drawer is restored.
- * @param {string} name A name from `world_names`
- */
-function selectWorldInfoInEditor(name) {
-    if (!document.getElementById('world_editor_select')) {
-        editorWorldPickedWhileParked = name;
-        return;
-    }
-
-    $('#world_editor_select').val(world_names.indexOf(name)).trigger('change');
-}
-
-/**
- * @param {HTMLSelectElement} editorSelect
- * @returns {string} Name of the book picked in the editor select, or '' for the placeholder
- */
-function getEditorSelectedWorld(editorSelect) {
-    const option = editorSelect.options[editorSelect.selectedIndex];
-    return option && option.value !== '' ? String(option.textContent) : '';
-}
-
-/**
- * Re-renders the World Info selects when they no longer mirror `world_names`.
- * TauriTavern Panel Runtime detaches them while the drawer is closed, so
- * updateWorldInfoList() cannot reach them during that time.
- */
-function syncWorldInfoListOptions() {
-    const globalSelect = document.getElementById('world_info');
-    const editorSelect = document.getElementById('world_editor_select');
-    if (!(globalSelect instanceof HTMLSelectElement) || !(editorSelect instanceof HTMLSelectElement)) {
-        throw new Error('World Info selects must be attached before their options can be synced');
-    }
-
-    if (isWorldInfoSelectCurrent(globalSelect, name => selected_world_info.includes(name))
-        && isWorldInfoSelectCurrent(editorSelect)) {
-        return;
-    }
-
-    renderWorldInfoListOptions(getEditorSelectedWorld(editorSelect));
-    // Refresh select2 renderings without running the selects' own change handlers.
-    $(globalSelect).trigger('change.select2');
-    $(editorSelect).trigger('change.select2');
-}
-
-/**
- * Catches the World Info drawer up with changes made while Panel Runtime had it parked.
- * Runs synchronously when the drawer is restored, before the code that opened it
- * selects anything in the editor.
- */
-function restoreParkedWorldInfoPanel() {
-    const editorSelect = /** @type {HTMLSelectElement} */ (document.getElementById('world_editor_select'));
-    const editorWorld = getEditorSelectedWorld(editorSelect);
-    const changedWorlds = new Set(worldsSavedWhileParked);
-    const pickedWorld = editorWorldPickedWhileParked;
-    worldsSavedWhileParked.clear();
-    editorWorldPickedWhileParked = null;
-
-    syncWorldInfoListOptions();
-
-    if (pickedWorld && pickedWorld !== editorWorld && world_names.includes(pickedWorld)) {
-        // e.g. /createlore or a lorebook imported from a link picked it while the drawer was closed.
-        editorSelect.value = String(world_names.indexOf(pickedWorld));
-        $(editorSelect).trigger('change.select2');
-    } else if (!editorWorld || (world_names.includes(editorWorld) && !changedWorlds.has(editorWorld))) {
-        // The entry list still shows the book as it was when parked. It is reloaded below if the book
-        // was saved elsewhere or deleted meanwhile, so the next edit cannot write stale entries back.
-        return;
-    }
-
-    const selectedAfterSync = editorSelect.value;
-    queueMicrotask(() => {
-        // Leave it to the caller when opening the drawer also picked a book.
-        if (editorSelect.isConnected && editorSelect.value === selectedAfterSync) {
-            $(editorSelect).trigger('change');
-        }
-    });
 }
 
 async function hideWorldEditor() {
@@ -4547,9 +4443,6 @@ export async function saveWorldInfo(name, data, immediately = false) {
 
     // Update cache immediately, so any future call can pull from this
     worldInfoCache.set(name, data);
-    if (!document.getElementById('world_editor_select')) {
-        worldsSavedWhileParked.add(name);
-    }
     const revision = (worldInfoDirtyRevision += 1);
     dirtyWorldInfos.set(name, { data, revision });
 
@@ -4871,8 +4764,9 @@ export async function createNewWorldInfo(worldName, { interactive = false } = {}
     await saveWorldInfo(worldName, worldInfoTemplate, true);
     await updateWorldInfoList();
 
-    if (world_names.includes(worldName)) {
-        selectWorldInfoInEditor(worldName);
+    const selectedIndex = world_names.indexOf(worldName);
+    if (selectedIndex !== -1) {
+        $('#world_editor_select').val(selectedIndex).trigger('change');
     } else {
         await hideWorldEditor();
     }
@@ -6239,10 +6133,9 @@ export function onWorldInfoChange(args, text) {
             const slashInputSplitText = text.trim().toLowerCase().split(',');
 
             slashInputSplitText.forEach((worldName) => {
-                // Resolve from world_names: Panel Runtime may have parked the #world_info options.
-                const name = world_names.find(item => item.toLowerCase() === worldName.toLowerCase());
-                if (name) {
-                    const wiElement = getWIElement(name);
+                const wiElement = getWIElement(worldName);
+                if (wiElement.length > 0) {
+                    const name = wiElement.text();
                     switch (args.state) {
                         case 'off': {
                             if (selected_world_info.includes(name)) {
@@ -6386,8 +6279,9 @@ export async function importWorldInfo(file) {
         if (data.name) {
             await updateWorldInfoList();
 
-            if (world_names.includes(data.name)) {
-                selectWorldInfoInEditor(data.name);
+            const newIndex = world_names.indexOf(data.name);
+            if (newIndex >= 0) {
+                $('#world_editor_select').val(newIndex).trigger('change');
             }
 
             toastr.success(t`World Info "${data.name}" imported successfully!`);
@@ -6671,8 +6565,6 @@ function updateAuxBooks(fileName, computeNext) {
 }
 
 export function initWorldInfo() {
-    registerPanelRestoreHook('WorldInfo', restoreParkedWorldInfoPanel);
-
     $('#world_info').on('mousedown change', async function (e) {
         // If there's no world names, don't do anything
         if (world_names.length === 0) {

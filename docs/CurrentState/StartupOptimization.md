@@ -185,8 +185,6 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
   - 左栏 pinned 锚点分两类，判据不同：
     - `LEFT_NAV_REQUIRED_ANCHORS`（所有档位，正确性）：面板外代码读取的节点保持在线，包括 `onModelChange` 读取边界值的 `#range_block_openai`，以及助手读取支持来源的 `#openai_reasoning_effort_block`。
     - `LEFT_NAV_COMPAT_ANCHORS`（仅 `compat`，兼容让步）：`#openai_api-presets`、`#completion_prompt_manager`，让第三方脚本在抽屉关闭时仍能选中。
-  - 停放期间写不到子树的状态，由其所有者通过 `services/panel-runtime/panel-restore-hooks.js` 的 `registerPanelRestoreHook(panelId, hook)` 补齐。钩子在子树重新插入后同步执行，早于打开抽屉的代码操作恢复出来的 DOM。
-  - 世界书（`#wi-holder`）：`world-info.js` 注册恢复钩子，按 `world_names` / `selected_world_info` 重建两个下拉框（已一致则不动）；停放期间在别处保存或删除了编辑器正在显示的世界书时重新加载编辑器，避免之后的编辑把旧条目写回；停放期间新建或导入的世界书（如 `/createlore`）在抽屉打开时选中。`/world` 按 `world_names` 查找世界书，不依赖停放中的选项。
 
 ---
 
