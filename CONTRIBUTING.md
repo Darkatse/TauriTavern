@@ -108,6 +108,8 @@ KISS 要求我们选择能够完整解决当前问题的最简单方案。判断
 
 提交 PR 前，请阅读本文件，并在 PR 模板中勾选已阅读确认项。
 
+跨模块的结构调整或较大的重构，请先通过 issue 或 draft PR 与维护者对齐方案，再展开实现，避免难以评审的大改动和返工。
+
 其他贡献要求会在后续补充；在此之前，请尽量让变更保持清晰、可 review、可测试。
 
 ---
@@ -221,5 +223,7 @@ Do not test source text, literals, obvious control flow, direct delegation, impl
 ### Before Opening a PR
 
 Before opening a PR, please read this file and check the confirmation item in the PR template.
+
+For cross-module structural changes or large refactors, please align the approach with the maintainers in an issue or draft PR before implementing it. This keeps the change reviewable and avoids rework.
 
 More contribution requirements will be added later. Until then, please keep changes clear, reviewable, and testable.
