@@ -1,6 +1,10 @@
 use serde_json::{Map, Value, json};
 
+use std::sync::Arc;
+
 use crate::errors::ApplicationError;
+use crate::services::agent_tools::render_workspace_inventory;
+use crate::services::agent_workspace_scope::{ScopedWorkspaceFs, WorkspaceAccessPolicy};
 use crate::services::chat_completion_service::OPENCODE_STABLE_CHAT_ID_FIELD;
 use tt_domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile};
 use tt_domain::models::agent::{
@@ -9,6 +13,7 @@ use tt_domain::models::agent::{
 use tt_domain::models::skill::SkillIndexEntry;
 use tt_domain::models::tool::ToolChoice;
 use tt_ports::repositories::chat_completion_repository::OPENAI_RESPONSES_WEBSOCKET_TRANSPORT;
+use tt_ports::workspace_fs::WorkspaceFs;
 
 use super::invocation::model_session_id;
 
@@ -30,6 +35,43 @@ pub(super) fn append_runtime_catalogs(
     if skills.is_empty() && agents.is_empty() {
         return Ok(());
     }
+    append_runtime_catalogs_text(agent_system_prompt_text(request)?, skills, agents);
+    Ok(())
+}
+
+/// Appends the files visible at invocation start to the agent system prompt, so the
+/// model can act without first listing the workspace. The trailing messages belong to
+/// the preset (post-history instructions, prefill-style format openers) and must stay
+/// untouched. The list carries paths only, so the cached prefix changes only when files
+/// are added or removed. It is rendered once while preparing the invocation; later
+/// rounds, resume, and revision reuse the prepared request unchanged.
+pub(super) async fn append_workspace_inventory(
+    request: &mut AgentPromptRequest,
+    files: Arc<dyn WorkspaceFs>,
+    profile: &ResolvedAgentProfile,
+    tools: &[AgentModelTool],
+) -> Result<(), ApplicationError> {
+    let can_read_workspace = tools.iter().any(|tool| {
+        tool.tool_id.is_builtin()
+            && matches!(
+                tool.tool_id.native_name(),
+                "workspace.list_files" | "workspace.read_file" | "workspace.search_files"
+            )
+    });
+    if !can_read_workspace {
+        return Ok(());
+    }
+    let workspace = ScopedWorkspaceFs::new(files, WorkspaceAccessPolicy::from_profile(profile));
+    let inventory = render_workspace_inventory(&workspace).await?;
+    let text = agent_system_prompt_text(request)?;
+    text.push_str("\n\n");
+    text.push_str(&inventory);
+    Ok(())
+}
+
+fn agent_system_prompt_text(
+    request: &mut AgentPromptRequest,
+) -> Result<&mut String, ApplicationError> {
     let component = request.messages.iter_mut().find(|message| {
         message.provider_metadata.get("promptComponent").and_then(Value::as_str) == Some("agentSystemPrompt")
     }).ok_or_else(|| ApplicationError::ValidationError(
@@ -40,8 +82,7 @@ pub(super) fn append_runtime_catalogs(
             "agent.system_prompt_invalid: agentSystemPrompt content must be text".into(),
         ));
     };
-    append_runtime_catalogs_text(content, skills, agents);
-    Ok(())
+    Ok(content)
 }
 
 pub(super) fn append_runtime_catalogs_text(

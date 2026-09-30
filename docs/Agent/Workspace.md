@@ -16,7 +16,7 @@
 | `tool-results/` | 工具结果及较长结果的可读版本，只读 |
 | `skills/` | 当前 Invocation 的有效 Skill 安装包，只读；无绑定时为空目录 |
 
-模型用 `workspace.list_files`、`search_files`、`read_file` 寻找和读取材料，用 `write_file`、`apply_patch` 修改文本，或用 `workspace.shell` 批量处理文件。路径相对于工作区，例如 `output/main.md`；Shell 中的 `/output/main.md` 指向同一文件。
+Chat Invocation 的 Agent 系统提示词附有开始时可见文件清单，见 [Prompt assembly](PromptAssembly.md#开始时文件清单)。模型用 `workspace.search_files`、`read_file`（及 Profile 开启的 `list_files`）寻找和读取材料，用 `write_file`、`apply_patch` 修改文本，或用 `workspace.shell` 列目录和批量处理文件。路径相对于工作区，例如 `output/main.md`；Shell 中的 `/output/main.md` 指向同一文件。
 
 文本工具替换已有文件和应用补丁时，使用读取记录和内容 SHA 检查冲突。Shell 不建立此读取记录；Shell 修改文件后，替换文件或应用补丁前需重新读取。
 
@@ -94,7 +94,7 @@ Shell 与文本工具共用自动提交规则：每轮最多发布最后修改�
 
 `persist/` 的起点由 `persistBaseStateId` 指定。初始化时，仓储把对应持久版本复制到本次 Run；模型随后像处理普通文件一样修改它。
 
-`workspace.finish` 将 `persist/` 的文件与目录发布为不可变版本，并将其 ID 写入已提交消息的 Agent metadata。版本反映删除、移动和空目录等变化；修订未改变完整状态时复用上一版本。后续生成根据当前消息或 swipe 选择起点，因此不同候选可以保有各自的持久内容。
+运行结束时（`workspace.finish` 或带 `finish: true` 的提交），runtime 将 `persist/` 的文件与目录发布为不可变版本，并将其 ID 写入已提交消息的 Agent metadata。版本反映删除、移动和空目录等变化；修订未改变完整状态时复用上一版本。后续生成根据当前消息或 swipe 选择起点，因此不同候选可以保有各自的持久内容。
 
 聊天分叉会复制持久版本并使用新聊天身份。运行历史清理与持久版本清理分别处理：缩减旧 Run 的材料不会删除仍被聊天使用的持久内容。
 

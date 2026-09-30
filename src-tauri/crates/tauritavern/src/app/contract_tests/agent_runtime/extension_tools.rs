@@ -51,17 +51,17 @@ async fn chat_routes_colliding_extension_names_without_replacing_builtin_tools()
                 model_tool_call("inspect_other", "inspect__2", json!({"query":"layout"})),
                 model_tool_call(
                     "extension_write",
-                    "workspace_write_file__2",
+                    "write__2",
                     json!({"query":"extension state"}),
                 ),
             ]),
             model_tool_response(vec![
                 model_tool_call(
                     "write",
-                    "workspace_write_file",
-                    json!({"path":"output/main.md","content":"Theme inspected"}),
+                    "write",
+                    json!({"file_path":"output/main.md","content":"Theme inspected"}),
                 ),
-                model_tool_call("finish", "workspace_finish", json!({})),
+                model_tool_call("finish", "finish", json!({})),
             ]),
         ],
     );
@@ -73,18 +73,10 @@ async fn chat_routes_colliding_extension_names_without_replacing_builtin_tools()
     );
     let (other_id, mut other_events) =
         register_tool(&fixture, "another", "inspect", vec![AgentToolScope::Chat]);
-    let (collision_id, mut collision_events) = register_tool(
-        &fixture,
-        "contract",
-        "workspace_write_file",
-        vec![AgentToolScope::Chat],
-    );
-    let mut definition = fixture
-        .profile_service
-        .load_profile("default-writer")
-        .await
-        .unwrap()
-        .unwrap();
+    let (collision_id, mut collision_events) =
+        register_tool(&fixture, "contract", "write", vec![AgentToolScope::Chat]);
+    let mut definition =
+        crate::app::contract_tests::contract_writer_definition(&fixture.profile_service).await;
     definition.id = AgentProfileId::parse("extension-writer").unwrap();
     definition.tools.allow.splice(
         0..0,
@@ -349,8 +341,8 @@ async fn session_cancellation_stops_after_the_started_extension_call() {
             model_tool_call("waiting", "inspect", json!({})),
             model_tool_call(
                 "after_cancel",
-                "workspace_write_file",
-                json!({"path":"work/must-not-exist.md","content":"must not run"}),
+                "write",
+                json!({"file_path":"work/must-not-exist.md","content":"must not run"}),
             ),
         ])],
     );

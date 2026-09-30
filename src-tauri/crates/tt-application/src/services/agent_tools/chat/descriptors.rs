@@ -7,31 +7,33 @@ pub(in crate::services::agent_tools) fn chat_read_messages_descriptor() -> ToolD
     ToolDescriptor {
         id: ToolId::builtin(CHAT_READ_MESSAGES).expect("builtin tool name must be valid"),
         title: Some("Chat Read Messages".to_string()),
-        description: Some("Read selected messages from the current chat by 0-based message index. Each message is read in full by default; oversized messages return a bounded preview with the next line to read. Use chat_search first when you do not know the message index.".to_string()),
+        description: Some(
+            "Read chat messages by 0-based index, optionally a line range of each.".to_string(),
+        ),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
                 "messages": {
                     "type": "array",
-                    "description": "Messages to read. Each item needs an absolute 0-based message index; optional start_line and line_count read a line range.",
+                    "description": "Messages to read.",
                     "items": {
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
                             "index": {
                                 "type": "integer",
-                                "description": "0-based message index in the current chat."
+                                "description": "0-based message index."
                             },
                             "start_line": {
                                 "type": "integer",
                                 "minimum": 1,
-                                "description": "Optional 1-based starting line inside the message text."
+                                "description": "1-based first line. Defaults to 1."
                             },
                             "line_count": {
                                 "type": "integer",
                                 "minimum": 1,
-                                "description": "Optional number of lines to read. Omit to read through the end; oversized results return a shorter preview."
+                                "description": "Lines to return. Defaults to the rest."
                             }
                         },
                         "required": ["index"]
@@ -50,35 +52,37 @@ pub(in crate::services::agent_tools) fn chat_search_descriptor() -> ToolDescript
     ToolDescriptor {
         id: ToolId::builtin(CHAT_SEARCH).expect("builtin tool name must be valid"),
         title: Some("Chat Search".to_string()),
-        description: Some("Search messages in the current chat. Only query is required. Results return message indexes and snippets; call chat_read_messages to read exact messages or ranges.".to_string()),
+        description: Some(
+            "Search this chat's messages; returns message indexes and snippets.".to_string(),
+        ),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Text to search for in the current chat."
+                    "description": "Text to find."
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Optional maximum hits to return. Defaults to 20; maximum is 50."
+                    "description": "Maximum hits. Defaults to 20, at most 50."
                 },
                 "role": {
                     "type": "string",
                     "enum": ["user", "assistant", "system", "tool"],
-                    "description": "Optional role filter."
+                    "description": "Only messages from this role."
                 },
                 "start_message": {
                     "type": "integer",
-                    "description": "Optional first 0-based message index to search."
+                    "description": "First 0-based message index to search."
                 },
                 "end_message": {
                     "type": "integer",
-                    "description": "Optional last 0-based message index to search."
+                    "description": "Last 0-based message index to search."
                 },
                 "scan_limit": {
                     "type": "integer",
-                    "description": "Optional maximum number of recent messages to scan."
+                    "description": "Only scan this many recent messages."
                 }
             },
             "required": ["query"]

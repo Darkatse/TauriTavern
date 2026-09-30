@@ -365,6 +365,18 @@ impl AgentRuntimeService {
             .agent_catalog(&resolved_profile, &visible_tools)
             .await?;
         super::prompt_snapshot::append_runtime_catalogs(&mut request, &effective_skills, &agents)?;
+        if matches!(
+            run.target,
+            tt_domain::models::agent::AgentRunTarget::Chat(_)
+        ) {
+            super::prompt_snapshot::append_workspace_inventory(
+                &mut request,
+                self.workspace_files(run_id).await?,
+                &resolved_profile,
+                &visible_tools,
+            )
+            .await?;
+        }
         let request = prepare_agent_tool_request(
             request,
             &visible_tools,
@@ -432,7 +444,8 @@ impl AgentRuntimeService {
                         "agent.max_tool_rounds_exceeded: {} was not completed within {} rounds",
                         super::loop_runner::completion_tool_name(
                             frame.prepared.invocation.exit_policy,
-                            &frame.prepared.tool_turn
+                            &frame.prepared.tool_turn,
+                            &frame.prepared.request.tools,
                         ),
                         frame.progress.max_rounds
                     ))

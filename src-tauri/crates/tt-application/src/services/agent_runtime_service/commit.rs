@@ -202,11 +202,8 @@ impl AgentRuntimeService {
                 call_id: call.call_id.clone(),
                 tool_id: call.tool_id.clone(),
                 content: format!(
-                    "Committed {} to the current chat message with mode {:?}. \
-                     You may continue editing and commit again if needed. When all intended \
-                     commits are complete, call workspace_finish to end the run. Do not use \
-                     plain text as the final answer; the run must finish through \
-                     workspace_finish.",
+                    // The caller appends the next step, which depends on the finish admission.
+                    "Committed {} to the current chat message with mode {:?}.",
                     path.as_str(),
                     mode
                 ),

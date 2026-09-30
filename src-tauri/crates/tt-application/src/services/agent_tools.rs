@@ -19,10 +19,11 @@ pub(crate) use session::AgentToolSession;
 
 pub(crate) use agent::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, TASK_RETURN};
 pub(crate) use policy::{
-    ExternalAgentTool, builtin_available_in_scope, compile_invocation_tool_snapshot,
-    mcp_model_name, prepare_tool_bindings, project_agent_model_tools,
+    ExternalAgentTool, RENAMED_TOOL_PARAMETERS, builtin_available_in_scope,
+    compile_invocation_tool_snapshot, mcp_model_name, prepare_tool_bindings,
+    project_agent_model_tools, stage_can_finish_run, unsupported_builtin_argument,
 };
 pub(crate) use workspace::{
     WORKSPACE_APPLY_PATCH, WORKSPACE_FINISH, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE,
-    classify_workspace_io_error,
+    classify_workspace_io_error, render_workspace_inventory,
 };

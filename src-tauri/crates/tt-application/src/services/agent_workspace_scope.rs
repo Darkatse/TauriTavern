@@ -16,7 +16,7 @@ use tt_ports::workspace_fs::{
 mod skills;
 
 pub(crate) const AGENT_TOOL_RESULTS_ROOT: &str = "tool-results";
-const SKILLS_ROOT: &str = "skills";
+pub(crate) const SKILLS_ROOT: &str = "skills";
 
 pub(crate) fn is_auto_commit_text_path(path: &WorkspacePath) -> bool {
     Path::new(path.as_str())

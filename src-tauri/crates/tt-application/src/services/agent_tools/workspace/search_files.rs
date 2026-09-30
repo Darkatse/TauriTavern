@@ -274,7 +274,7 @@ fn render_content(query: &str, hits: &[WorkspaceSearchHit], truncated: bool) -> 
     }
 
     let mut content = format!(
-        "Search `{query}` matched {} workspace location{}. Use workspace_read_file with path and start_line/line_count to read exact text.",
+        "Search `{query}` matched {} workspace location{}. Read a file with offset/limit for the exact text.",
         hits.len(),
         if hits.len() == 1 { "" } else { "s" }
     );

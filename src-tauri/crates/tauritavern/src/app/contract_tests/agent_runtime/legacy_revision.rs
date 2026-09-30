@@ -41,12 +41,8 @@ async fn completed_legacy_revision_preserves_work_and_translates_only_affected_t
     }];
     checkpoint["state"]["foreground"]["prepared"]["request"]["messages"] =
         serde_json::to_value(&original.messages).unwrap();
-    let mut target = fixture
-        .profile_service
-        .load_profile(DEFAULT_AGENT_PROFILE_ID)
-        .await
-        .unwrap()
-        .unwrap();
+    let mut target =
+        crate::app::contract_tests::contract_writer_definition(&fixture.profile_service).await;
     target.id = AgentProfileId::parse("revision-editor").unwrap();
     target.tools.allow.retain(|name| {
         !matches!(
@@ -342,10 +338,10 @@ async fn completed_legacy_revision_preserves_work_and_translates_only_affected_t
         .push_back(Ok(model_tool_response(vec![
             model_tool_call(
                 "revision_read",
-                "workspace_read_file",
-                json!({ "path": "skills/style/SKILL.md" }),
+                "read",
+                json!({ "file_path": "skills/style/SKILL.md" }),
             ),
-            model_tool_call("revision_finish", "workspace_finish", json!({})),
+            model_tool_call("revision_finish", "finish", json!({})),
         ])));
     revise_checkpoint(
         &fixture,
@@ -509,7 +505,7 @@ async fn completed_legacy_revision_preserves_work_and_translates_only_affected_t
         .await
         .push_back(Ok(model_tool_response(vec![model_tool_call(
             "second_finish",
-            "workspace_finish",
+            "finish",
             json!({}),
         )])));
     revise_checkpoint(

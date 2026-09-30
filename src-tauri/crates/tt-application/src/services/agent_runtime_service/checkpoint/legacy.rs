@@ -91,7 +91,7 @@ pub(super) fn migrate_revision(
 
     // v1 did not retain PromptManager component identity. Keep its original
     // instructions/layout and add the new environment as revision context.
-    let mut notice = "Revision environment: Skills are now read-only files under skills/. Read them with the available workspace tools; run scripts with workspace_shell when available. The former skill tools and agent_list are no longer available. Use the directories below to choose skills and agents. Historical execution records describe past actions and do not need to be repeated.".to_string();
+    let mut notice = "Revision environment: Skills are now read-only files under skills/. Read them with the available workspace tools; run scripts with the shell tool when available. The former skill tools and agent_list are no longer available. Use the directories below to choose skills and agents. Historical execution records describe past actions and do not need to be repeated.".to_string();
     append_runtime_catalogs_text(&mut notice, &prepared.effective_skills, agents);
     prepared.request.messages.push(user_message(notice));
     Ok(())

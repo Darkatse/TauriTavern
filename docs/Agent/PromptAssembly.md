@@ -47,6 +47,10 @@ Runtime 准备 Invocation 时，将 Skill 与可调用 Agent 目录追加到 `ag
 
 Skill 目录与文件视图使用同一份有效绑定；Agent 目录由实际工具与目标调用资格决定。规则分别见 [Skill](Skill.md) 和 [多 Agent 协作](SubAgent.md)，手工 snapshot 的组件标记见 [API](../API/Agent.md)。
 
+## 开始时文件清单
+
+Chat Invocation 具备工作区读取工具时，runtime 在准备阶段列出开始时可见的文件（不含 `skills/`、`tool-results/`，最多 50 项；超出条数或目录层级时注明未列全），省去先列目录的一轮。清单追加在 `agentSystemPrompt` 正文末尾；末尾消息属于预设（历史后指令、预填式格式开头），runtime 不改动。清单只含路径，只有文件增删才改变缓存前缀，改写文件内容不影响跨 Run 的 provider 前缀缓存。清单只生成一次，后续轮次、恢复和修订沿用已准备请求，不随运行刷新。
+
 ## 预设与连接各管什么
 
 Preset 提供提示词布局和生成设置。Profile 的 model binding 提供最终 source、model、endpoint、secret 和路由；这些连接字段会覆盖预设中的旧值。

@@ -52,14 +52,39 @@ pub(super) fn migrate_profile_schema(
             profile.tools.deny.retain(|id| keep(id));
             profile.tools.tool_descriptions.retain(|id, _| keep(id));
             profile.tools.max_calls_per_tool.retain(|id, _| keep(id));
+            migrate_renamed_tool_parameters(&mut profile.tools);
             profile.schema_version = AGENT_PROFILE_SCHEMA_VERSION;
             Ok(true)
         }
-        AGENT_PROFILE_SCHEMA_VERSION => Ok(false),
+        AGENT_PROFILE_SCHEMA_VERSION => Ok(migrate_renamed_tool_parameters(&mut profile.tools)),
         version => Err(ApplicationError::ValidationError(format!(
             "agent.profile_schema_unsupported: schemaVersion {version} is unsupported"
         ))),
     }
+}
+
+/// File tools use the conventional parameter names (`file_path`, `offset`, `limit`, grep's
+/// `pattern`); description overrides written for the old names move to the new ones and
+/// overrides for removed parameters are dropped, so saved Profiles still load. Returns
+/// whether anything changed.
+fn migrate_renamed_tool_parameters(policy: &mut AgentToolPolicy) -> bool {
+    let mut changed = false;
+    for (tool_id, old, new) in crate::services::agent_tools::RENAMED_TOOL_PARAMETERS {
+        let Some(override_) = policy.tool_descriptions.get_mut(tool_id) else {
+            continue;
+        };
+        let Some(description) = override_.properties.remove(old) else {
+            continue;
+        };
+        changed = true;
+        if let Some(new) = new {
+            override_
+                .properties
+                .entry(new.to_string())
+                .or_insert(description);
+        }
+    }
+    changed
 }
 
 pub(crate) fn is_retired_agent_tool(id: &str) -> bool {

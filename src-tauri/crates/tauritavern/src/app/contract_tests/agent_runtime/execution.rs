@@ -6,15 +6,7 @@ use tt_domain::models::upstream_failure::{UPSTREAM_NETWORK_TIMEOUT, UpstreamFail
 async fn agent_runtime_background_run_finish_uses_run_presentation() {
     let root = temp_root("agent-runtime");
     let fixture = agent_runtime_fixture(&root);
-    let registry = BuiltinAgentToolRegistry::all();
-    let mut profile = fixture
-        .profile_service
-        .resolve_profile(AgentProfileResolveInput {
-            profile_id: None,
-            tool_catalog: registry.catalog(),
-        })
-        .await
-        .expect("resolve default profile");
+    let mut profile = resolve_contract_profile(&fixture).await;
     profile.run.presentation = AgentRunPresentation::Foreground;
     profile.tools.max_rounds = 2;
 
@@ -123,7 +115,7 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
         .as_str()
         .expect("arguments ref");
     let arguments = read_workspace_json(&fixture.agent_repository, &run.id, arguments_ref).await;
-    assert_eq!(arguments["path"], "output/main.md");
+    assert_eq!(arguments["file_path"], "output/main.md");
     let result_stored = events
         .iter()
         .find(|event| {
@@ -151,7 +143,7 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
             .is_some_and(|bindings| {
                 bindings.iter().any(|binding| {
                     binding["descriptor"]["id"] == "builtin:workspace.write_file"
-                        && binding["modelAlias"] == "workspace_write_file"
+                        && binding["modelAlias"] == "write"
                 })
             })
     );
@@ -206,12 +198,8 @@ async fn agent_runtime_streaming_keeps_the_existing_final_execution_path() {
     let root = temp_root("agent-runtime-streaming");
     let fixture = agent_runtime_fixture(&root);
     let registry = BuiltinAgentToolRegistry::all();
-    let mut definition = fixture
-        .profile_service
-        .load_profile(DEFAULT_AGENT_PROFILE_ID)
-        .await
-        .expect("load default profile")
-        .expect("default profile exists");
+    let mut definition =
+        crate::app::contract_tests::contract_writer_definition(&fixture.profile_service).await;
     definition.id = AgentProfileId::parse("streaming-profile").unwrap();
     definition.display_name = "Streaming Profile".to_string();
     definition.run.stream = true;
@@ -294,14 +282,10 @@ async fn agent_runtime_returns_missing_chat_reads_to_the_agent() {
             model_tool_response(vec![
                 model_tool_call(
                     "call_write_after_missing_chat",
-                    "workspace_write_file",
-                    json!({ "path": "output/main.md", "content": "continued safely" }),
+                    "write",
+                    json!({ "file_path": "output/main.md", "content": "continued safely" }),
                 ),
-                model_tool_call(
-                    "call_finish_after_missing_chat",
-                    "workspace_finish",
-                    json!({}),
-                ),
+                model_tool_call("call_finish_after_missing_chat", "finish", json!({})),
             ]),
         ],
     );
@@ -370,29 +354,30 @@ async fn agent_runtime_returns_missing_chat_reads_to_the_agent() {
 #[tokio::test]
 async fn agent_runtime_normalizes_empty_arguments_and_recovers_from_invalid_arguments() {
     let root = temp_root("agent-tool-arguments");
-    let mut malformed = model_tool_call("call_invalid", "workspace_list_files", json!({}));
+    let mut malformed = model_tool_call("call_invalid", "list", json!({}));
     malformed["function"]["arguments"] = json!(r#"{"path":"#);
     let fixture = agent_runtime_fixture_with_responses(
         &root,
         vec![
             model_tool_response(vec![
                 // The helper encodes this as the wire string "null".
-                model_tool_call("call_empty", "workspace_list_files", Value::Null),
+                model_tool_call("call_empty", "list", Value::Null),
                 malformed,
             ]),
             model_tool_response(vec![
-                model_tool_call("call_over_budget", "workspace_list_files", json!({})),
+                model_tool_call("call_over_budget", "list", json!({})),
                 model_tool_call(
                     "call_write",
-                    "workspace_write_file",
-                    json!({ "path": "output/main.md", "content": "continued after invalid arguments" }),
+                    "write",
+                    json!({ "file_path": "output/main.md", "content": "continued after invalid arguments" }),
                 ),
-                model_tool_call("call_finish", "workspace_finish", json!({})),
             ]),
+            // The over-budget error must reach the model before the run can finish.
+            model_tool_response(vec![model_tool_call("call_finish", "finish", json!({}))]),
         ],
     );
     let mut profile = resolve_contract_profile(&fixture).await;
-    profile.tools.max_rounds = 2;
+    profile.tools.max_rounds = 3;
     profile
         .tools
         .max_calls_per_tool
@@ -470,13 +455,13 @@ async fn agent_runtime_duplicate_tool_call_id_preserves_first_audit_facts() {
         vec![model_tool_response(vec![
             model_tool_call(
                 "duplicate_call",
-                "workspace_write_file",
-                json!({ "path": "output/first.md", "content": "first" }),
+                "write",
+                json!({ "file_path": "output/first.md", "content": "first" }),
             ),
             model_tool_call(
                 "duplicate_call",
-                "workspace_write_file",
-                json!({ "path": "output/second.md", "content": "second" }),
+                "write",
+                json!({ "file_path": "output/second.md", "content": "second" }),
             ),
         ])],
     );
@@ -506,7 +491,7 @@ async fn agent_runtime_duplicate_tool_call_id_preserves_first_audit_facts() {
         .expect("arguments ref");
     let arguments =
         read_workspace_json(&fixture.agent_repository, &handle.run_id, arguments_ref).await;
-    assert_eq!(arguments["path"], "output/first.md");
+    assert_eq!(arguments["file_path"], "output/first.md");
 
     let stored_results = events
         .iter()
@@ -554,17 +539,13 @@ async fn agent_runtime_discovers_callable_agents_and_refreshes_candidates_after_
             ]),
             model_tool_response(vec![model_tool_call(
                 "finish_after_selection_errors",
-                "workspace_finish",
+                "finish",
                 json!({}),
             )]),
         ],
     );
-    let mut caller = fixture
-        .profile_service
-        .load_profile(DEFAULT_AGENT_PROFILE_ID)
-        .await
-        .unwrap()
-        .unwrap();
+    let mut caller =
+        crate::app::contract_tests::contract_writer_definition(&fixture.profile_service).await;
     caller.tools.max_rounds = 2;
     caller.delegation.can_handoff = true;
     allow_profile_tool(&mut caller.tools.allow, "agent.handoff");
@@ -647,7 +628,7 @@ async fn agent_runtime_discovers_callable_agents_and_refreshes_candidates_after_
         .save_profile(caller, fixture.service.tool_catalog())
         .await
         .unwrap();
-    let profile = resolve_contract_profile(&fixture).await;
+    let profile = resolve_saved_default_profile(&fixture).await;
 
     // Freeze the model response after initial discovery, then change target availability.
     let response = fixture.model_gateway.responses.lock().await;
@@ -748,29 +729,37 @@ async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_com
             model_tool_response(vec![
                 model_tool_call(
                     "call_write",
-                    "workspace_write_file",
-                    json!({ "path": "output/main.md", "content": "foreground answer" }),
+                    "write",
+                    json!({ "file_path": "output/main.md", "content": "foreground answer" }),
                 ),
                 model_tool_call(
                     "call_patch",
-                    "workspace_apply_patch",
+                    "edit",
                     json!({
-                        "path": "output/main.md",
+                        "file_path": "output/main.md",
                         "old_string": "foreground answer",
                         "new_string": "revised foreground answer",
                     }),
                 ),
-                model_tool_call("call_commit", "workspace_commit", json!({})),
-                model_tool_call("call_finish_after_auto", "workspace_finish", json!({})),
+                model_tool_call(
+                    "call_commit",
+                    "commit",
+                    json!({ "reason": "Deliver the reply." }),
+                ),
+                model_tool_call("call_finish_after_auto", "finish", json!({})),
             ]),
             model_tool_response(vec![
-                model_tool_call("call_commit_retry", "workspace_commit", json!({})),
+                model_tool_call(
+                    "call_commit_retry",
+                    "commit",
+                    json!({ "reason": "Deliver the reply." }),
+                ),
                 model_tool_call(
                     "call_write_after_explicit",
-                    "workspace_write_file",
-                    json!({ "path": "scratch/after.txt", "content": "must not auto commit" }),
+                    "write",
+                    json!({ "file_path": "scratch/after.txt", "content": "must not auto commit" }),
                 ),
-                model_tool_call("call_finish", "workspace_finish", json!({})),
+                model_tool_call("call_finish", "finish", json!({})),
             ]),
         ],
     );
@@ -935,14 +924,14 @@ async fn agent_runtime_streamed_writes_defer_to_patch_and_explicit_commits() {
             model_tool_response(vec![
                 model_tool_call(
                     "call_write_first",
-                    "workspace_write_file",
-                    json!({ "path": "output/main.md", "content": "draft" }),
+                    "write",
+                    json!({ "file_path": "output/main.md", "content": "draft" }),
                 ),
                 model_tool_call(
                     "call_patch_first",
-                    "workspace_apply_patch",
+                    "edit",
                     json!({
-                        "path": "output/main.md",
+                        "file_path": "output/main.md",
                         "old_string": "draft",
                         "new_string": "patched",
                     }),
@@ -951,25 +940,29 @@ async fn agent_runtime_streamed_writes_defer_to_patch_and_explicit_commits() {
             model_tool_response(vec![
                 model_tool_call(
                     "call_patch_second",
-                    "workspace_apply_patch",
+                    "edit",
                     json!({
-                        "path": "output/main.md",
+                        "file_path": "output/main.md",
                         "old_string": "patched",
                         "new_string": "second patch",
                     }),
                 ),
                 model_tool_call(
                     "call_write_second",
-                    "workspace_write_file",
+                    "write",
                     json!({
-                        "path": "output/main.md",
+                        "file_path": "output/main.md",
                         "content": "streamed replacement",
                     }),
                 ),
             ]),
             model_tool_response(vec![
-                model_tool_call("call_commit", "workspace_commit", json!({})),
-                model_tool_call("call_finish", "workspace_finish", json!({})),
+                model_tool_call(
+                    "call_commit",
+                    "commit",
+                    json!({ "reason": "Deliver the reply." }),
+                ),
+                model_tool_call("call_finish", "finish", json!({})),
             ]),
         ],
     );
@@ -1017,6 +1010,387 @@ async fn agent_runtime_streamed_writes_defer_to_patch_and_explicit_commits() {
 }
 
 #[tokio::test]
+async fn agent_runtime_default_writer_finishes_with_a_final_commit() {
+    let root = temp_root("agent-default-writer-commit-finish");
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![model_tool_response(vec![
+            model_tool_call(
+                "call_write",
+                "write",
+                json!({ "file_path": "output/main.md", "content": "reply" }),
+            ),
+            model_tool_call(
+                "call_commit",
+                "commit",
+                json!({ "reason": "Deliver the reply.", "finish": true }),
+            ),
+        ])],
+    );
+    // The builtin Default Writer has no workspace.finish; its final commit ends the run.
+    let profile = resolve_saved_default_profile(&fixture).await;
+    let handle = start_contract_agent_run(
+        &fixture,
+        &profile,
+        AgentRunPresentation::Foreground,
+        "default-writer-commit-finish",
+        Some(false),
+    )
+    .await;
+
+    let (run, resolver) = tokio::join!(
+        wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id),
+        resolve_chat_commits_and_persistent_state_update(
+            fixture.service.clone(),
+            fixture.agent_repository.clone(),
+            handle.run_id.clone(),
+            "message_default_writer",
+            &[],
+        ),
+    );
+    resolver.expect("host resolver");
+    assert_eq!(run.status, AgentRunStatus::Completed);
+    assert_eq!(fixture.model_gateway.requests().await.len(), 1);
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn agent_runtime_answers_unknown_tool_names_and_continues() {
+    let root = temp_root("agent-unknown-tool");
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![
+            model_tool_response(vec![model_tool_call(
+                "call_old_name",
+                "workspace_write_file",
+                json!({ "path": "output/main.md", "content": "reply" }),
+            )]),
+            model_tool_response(vec![
+                model_tool_call(
+                    "call_write",
+                    "write",
+                    json!({ "file_path": "output/main.md", "content": "reply" }),
+                ),
+                model_tool_call(
+                    "call_commit",
+                    "commit",
+                    json!({ "reason": "Deliver the reply.", "finish": true }),
+                ),
+            ]),
+        ],
+    );
+    let profile = resolve_saved_default_profile(&fixture).await;
+    let handle = start_contract_agent_run(
+        &fixture,
+        &profile,
+        AgentRunPresentation::Foreground,
+        "unknown-tool",
+        Some(false),
+    )
+    .await;
+
+    let (run, resolver) = tokio::join!(
+        wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id),
+        resolve_chat_commits_and_persistent_state_update(
+            fixture.service.clone(),
+            fixture.agent_repository.clone(),
+            handle.run_id.clone(),
+            "message_unknown_tool",
+            &[],
+        ),
+    );
+    resolver.expect("host resolver");
+    assert_eq!(run.status, AgentRunStatus::Completed);
+    assert_eq!(fixture.model_gateway.requests().await.len(), 2);
+    let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+    let unknown = events
+        .iter()
+        .find(|event| {
+            event.event_type == "tool_call_failed" && event.payload["callId"] == "call_old_name"
+        })
+        .expect("an unknown tool name is answered with a recoverable error");
+    assert_eq!(unknown.payload["errorCode"], "model.unknown_tool_call");
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn agent_runtime_rejects_renamed_arguments_instead_of_publishing_the_default_file() {
+    let root = temp_root("agent-renamed-argument");
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![
+            model_tool_response(vec![
+                model_tool_call(
+                    "call_write",
+                    "write",
+                    json!({ "file_path": "output/draft.md", "content": "revised" }),
+                ),
+                model_tool_call(
+                    "call_old_commit",
+                    "commit",
+                    json!({ "reason": "Deliver the reply.", "path": "output/draft.md", "finish": true }),
+                ),
+            ]),
+            model_tool_response(vec![model_tool_call(
+                "call_commit",
+                "commit",
+                json!({ "reason": "Deliver the reply.", "file_path": "output/draft.md", "finish": true }),
+            )]),
+        ],
+    );
+    let profile = resolve_saved_default_profile(&fixture).await;
+    let handle = start_contract_agent_run(
+        &fixture,
+        &profile,
+        AgentRunPresentation::Foreground,
+        "renamed-argument",
+        Some(false),
+    )
+    .await;
+
+    let (run, resolver) = tokio::join!(
+        wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id),
+        resolve_chat_commits_and_persistent_state_update(
+            fixture.service.clone(),
+            fixture.agent_repository.clone(),
+            handle.run_id.clone(),
+            "message_renamed_argument",
+            &[],
+        ),
+    );
+    resolver.expect("host resolver");
+    assert_eq!(run.status, AgentRunStatus::Completed);
+    let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+    let rejected = events
+        .iter()
+        .find(|event| {
+            event.event_type == "tool_call_failed" && event.payload["callId"] == "call_old_commit"
+        })
+        .expect("a call shaped for the old schema is rejected");
+    assert_eq!(rejected.payload["errorCode"], "tool.invalid_arguments");
+    assert!(
+        rejected.payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("use `file_path`")
+    );
+    let explicit_commits = events
+        .iter()
+        .filter(|event| {
+            event.event_type == "chat_commit_requested" && event.payload["isExplicit"] == true
+        })
+        .map(|event| event.payload["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(explicit_commits, ["output/draft.md"]);
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn agent_runtime_commit_with_finish_ends_the_run_only_as_the_final_call() {
+    let root = temp_root("agent-commit-finish");
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![
+            model_tool_response(vec![
+                model_tool_call(
+                    "call_write_draft",
+                    "write",
+                    json!({ "file_path": "output/main.md", "content": "draft" }),
+                ),
+                model_tool_call(
+                    "call_commit_early",
+                    "commit",
+                    json!({ "reason": "Deliver the reply.", "finish": true }),
+                ),
+                model_tool_call(
+                    "call_write_notes",
+                    "write",
+                    json!({ "file_path": "scratch/notes.md", "content": "notes" }),
+                ),
+            ]),
+            model_tool_response(vec![
+                model_tool_call(
+                    "call_write_final",
+                    "write",
+                    json!({ "file_path": "output/main.md", "content": "final reply" }),
+                ),
+                model_tool_call(
+                    "call_commit_finish",
+                    "commit",
+                    json!({ "reason": "Deliver the reply.", "finish": true }),
+                ),
+            ]),
+        ],
+    );
+    let mut profile = resolve_contract_profile(&fixture).await;
+    profile.tools.max_rounds = 4;
+    let handle = start_contract_agent_run(
+        &fixture,
+        &profile,
+        AgentRunPresentation::Foreground,
+        "commit-finish",
+        Some(false),
+    )
+    .await;
+
+    let (run, resolver) = tokio::join!(
+        wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id),
+        resolve_chat_commits_and_persistent_state_update(
+            fixture.service.clone(),
+            fixture.agent_repository.clone(),
+            handle.run_id.clone(),
+            "message_commit_finish",
+            &[],
+        ),
+    );
+    resolver.expect("host resolver");
+    assert_eq!(run.status, AgentRunStatus::Completed);
+    // The committing round ends the run; the model is not asked again.
+    assert_eq!(fixture.model_gateway.requests().await.len(), 2);
+
+    let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+    let early = events
+        .iter()
+        .find(|event| {
+            event.event_type == "tool_call_failed" && event.payload["callId"] == "call_commit_early"
+        })
+        .expect("a finishing commit before other calls is a recoverable error");
+    assert_eq!(early.payload["errorCode"], "agent.tool_after_finish");
+    let explicit_commits = events
+        .iter()
+        .filter(|event| {
+            event.event_type == "chat_commit_requested" && event.payload["isExplicit"] == true
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(explicit_commits.len(), 1);
+    assert_eq!(explicit_commits[0].payload["callId"], "call_commit_finish");
+    let final_file = fixture
+        .agent_repository
+        .open_filesystem(&handle.run_id)
+        .await
+        .expect("open workspace")
+        .read_text(&WorkspacePath::parse("output/main.md").unwrap())
+        .await
+        .expect("read final output");
+    assert_eq!(final_file.text, "final reply");
+    assert_eq!(explicit_commits[0].payload["sha256"], final_file.sha256);
+    assert!(events.iter().any(|event| {
+        event.event_type == "chat_commit_completed"
+            && event.payload["callId"] == "call_commit_finish"
+            && event.payload["messageId"] == "message_commit_finish"
+    }));
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "run_completed")
+    );
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
+async fn agent_runtime_does_not_finish_after_a_failed_call_in_the_same_turn() {
+    let root = temp_root("agent-finish-after-failure");
+    let failing_patch = |call_id: &str| {
+        model_tool_call(
+            call_id,
+            "edit",
+            json!({ "file_path": "output/main.md", "old_string": "absent", "new_string": "x" }),
+        )
+    };
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![
+            model_tool_response(vec![
+                model_tool_call(
+                    "call_write",
+                    "write",
+                    json!({ "file_path": "output/main.md", "content": "draft" }),
+                ),
+                failing_patch("call_patch_first"),
+                model_tool_call(
+                    "call_commit_finish",
+                    "commit",
+                    json!({ "reason": "Deliver the reply.", "finish": true }),
+                ),
+            ]),
+            model_tool_response(vec![
+                failing_patch("call_patch_second"),
+                model_tool_call("call_finish_denied", "finish", json!({})),
+            ]),
+            model_tool_response(vec![model_tool_call("call_finish", "finish", json!({}))]),
+        ],
+    );
+    let mut profile = resolve_contract_profile(&fixture).await;
+    profile.tools.max_rounds = 4;
+    let handle = start_contract_agent_run(
+        &fixture,
+        &profile,
+        AgentRunPresentation::Foreground,
+        "finish-after-failure",
+        Some(false),
+    )
+    .await;
+
+    let (run, resolver) = tokio::join!(
+        wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id),
+        resolve_chat_commits_and_persistent_state_update(
+            fixture.service.clone(),
+            fixture.agent_repository.clone(),
+            handle.run_id.clone(),
+            "message_after_failure",
+            &[],
+        ),
+    );
+    resolver.expect("host resolver");
+    assert_eq!(run.status, AgentRunStatus::Completed);
+    let requests = fixture.model_gateway.requests().await;
+    assert_eq!(requests.len(), 3);
+
+    // The requested commit still lands, and the next round shows both results.
+    let round_two_result = |call_id: &str| {
+        requests[1]
+            .messages
+            .iter()
+            .flat_map(|message| &message.parts)
+            .find_map(|part| match part {
+                AgentModelContentPart::ToolResult { result } if result.call_id == call_id => {
+                    Some(result.clone())
+                }
+                _ => None,
+            })
+            .expect("round one tool result")
+    };
+    assert!(round_two_result("call_patch_first").is_error);
+    let commit = round_two_result("call_commit_finish");
+    assert!(!commit.is_error);
+    assert_eq!(commit.structured["messageId"], "message_after_failure");
+    assert_eq!(
+        commit.structured["finish"]["code"],
+        "agent.finish_after_failed_call"
+    );
+
+    let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+    assert!(events.iter().any(|event| {
+        event.event_type == "chat_commit_completed"
+            && event.payload["callId"] == "call_commit_finish"
+    }));
+    let denied = events
+        .iter()
+        .find(|event| {
+            event.event_type == "tool_call_failed"
+                && event.payload["callId"] == "call_finish_denied"
+        })
+        .expect("finishing after a failed call is a recoverable error");
+    assert_eq!(
+        denied.payload["errorCode"],
+        "agent.finish_after_failed_call"
+    );
+
+    let _ = fs::remove_dir_all(root).await;
+}
+
+#[tokio::test]
 async fn agent_runtime_retries_retryable_model_errors_with_real_repositories() {
     let root = temp_root("agent-retry");
     let fixture = agent_runtime_fixture_with_results(
@@ -1036,8 +1410,8 @@ async fn agent_runtime_retries_retryable_model_errors_with_real_repositories() {
                             "id": "call_write",
                             "type": "function",
                             "function": {
-                                "name": "workspace_write_file",
-                                "arguments": "{\"path\":\"output/main.md\",\"content\":\"retry succeeded\"}"
+                                "name": "write",
+                                "arguments": "{\"file_path\":\"output/main.md\",\"content\":\"retry succeeded\"}"
                             }
                         }]
                     }
@@ -1052,7 +1426,7 @@ async fn agent_runtime_retries_retryable_model_errors_with_real_repositories() {
                             "id": "call_finish",
                             "type": "function",
                             "function": {
-                                "name": "workspace_finish",
+                                "name": "finish",
                                 "arguments": "{}"
                             }
                         }]
@@ -1187,17 +1561,17 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
             model_tool_response(vec![
                 model_tool_call(
                     "write",
-                    "workspace_write_file",
-                    json!({ "path": "output/main.md", "content": source }),
+                    "write",
+                    json!({ "file_path": "output/main.md", "content": source }),
                 ),
                 model_tool_call(
                     "skill_read",
-                    "workspace_read_file",
-                    json!({ "path": "skills/macro-demo/references/template.md", "start_line": 3, "line_count": 1 }),
+                    "read",
+                    json!({ "file_path": "skills/macro-demo/references/template.md", "offset": 3, "limit": 1 }),
                 ),
                 model_tool_call(
                     "skill_search",
-                    "workspace_search_files",
+                    "search",
                     json!({ "path": "skills/macro-demo/references", "query": "lantern" }),
                 ),
                 model_tool_call(
@@ -1208,40 +1582,36 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
                 model_tool_call("chat_search", "chat_search", json!({ "query": "lantern" })),
                 model_tool_call(
                     "file_read",
-                    "workspace_read_file",
-                    json!({ "path": "output/main.md" }),
+                    "read",
+                    json!({ "file_path": "output/main.md" }),
                 ),
                 model_tool_call(
                     "file_search",
-                    "workspace_search_files",
+                    "search",
                     json!({ "path": "output", "query": "lantern" }),
                 ),
                 model_tool_call(
                     "script",
-                    "workspace_shell",
+                    "shell",
                     json!({ "command": "js /skills/macro-demo/scripts/helper.js skills/macro-demo/references/template.md" }),
                 ),
                 model_tool_call(
                     "shell_script",
-                    "workspace_shell",
+                    "shell",
                     json!({"command": r#"js -e 'import {workspace, macros, context} from "@tauritavern/runtime"; console.log(`${context.macro.names.char}: ${macros.render(workspace.readText("output/main.md"))}`);'"#}),
                 ),
                 model_tool_call(
                     "copy_skill",
-                    "workspace_shell",
+                    "shell",
                     json!({"command": r#"cp /skills/macro-demo/references/template.md /scratch/copied.md && printf '\nedited' >> /scratch/copied.md && cp /skills/macro-demo/references/binary.bin /scratch/copied.bin && sha256sum /skills/macro-demo/references/template.md && stat -c %s /skills/macro-demo/references/template.md && python3 -c 'from pathlib import Path; print(Path("/skills/macro-demo/references/template.md").read_text())'"#}),
                 ),
                 model_tool_call(
                     "readonly_skill",
-                    "workspace_shell",
+                    "shell",
                     json!({"command": "printf overwritten > /skills/macro-demo/references/template.md"}),
                 ),
             ]),
-            model_tool_response(vec![model_tool_call(
-                "finish",
-                "workspace_finish",
-                json!({}),
-            )]),
+            model_tool_response(vec![model_tool_call("finish", "finish", json!({}))]),
         ],
     );
     FileSkillRepository::new(root.join("_tauritavern/skills"))

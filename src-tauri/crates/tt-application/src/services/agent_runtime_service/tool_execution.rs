@@ -4,6 +4,7 @@ use serde_json::{Map, Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::commit_ledger::RunCommitLedger;
+use super::loop_runner::{builtin_alias, completion_tool_name, turn_can_finish_run};
 use super::model_stream_projection::remove_live_tool_call;
 use super::tool_results::{mcp_known_response_result, tool_call_audit_file_stem};
 use super::{AgentRuntimeService, PreparedInvocation};
@@ -12,11 +13,11 @@ use crate::services::tool_request_gate::{ToolRequestGate, ToolRequestGateError};
 
 use crate::services::agent_tools::{
     AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AgentToolDispatchOutcome, AgentToolEffect,
-    AgentToolSession, TASK_RETURN, WORKSPACE_FINISH, WORKSPACE_SHELL,
+    AgentToolSession, TASK_RETURN, WORKSPACE_FINISH, WORKSPACE_SHELL, unsupported_builtin_argument,
 };
 use tt_domain::models::agent::{
-    AgentInvocationExitPolicy, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
-    AgentToolResult, WorkspacePath,
+    AgentInvocationExitPolicy, AgentModelContentPart, AgentModelRole, AgentModelTool,
+    AgentRunEventLevel, AgentRunPresentation, AgentRunStatus, AgentToolResult, WorkspacePath,
 };
 use tt_domain::models::tool::{ToolArguments, ToolInvocation};
 use tt_ports::mcp::McpCallOutcome;
@@ -105,6 +106,14 @@ impl AgentRuntimeService {
                     );
                     return Ok(outcome);
                 }
+                if matches!(&rejection, ToolRequestGateError::ToolNotInSnapshot { .. }) {
+                    return Ok(recoverable_tool_error(
+                        tool_invocation,
+                        "model.unknown_tool_call",
+                        &unknown_tool_message(tool_invocation, &prepared.request.tools),
+                        started.elapsed().as_millis(),
+                    ));
+                }
 
                 let error = if matches!(
                     &rejection,
@@ -144,6 +153,25 @@ impl AgentRuntimeService {
                     ));
                 }
             };
+            if let Some(message) = self
+                .tool_catalog()
+                .get(&tool_invocation.tool_id)
+                .filter(|_| tool_invocation.tool_id.is_builtin())
+                .and_then(|descriptor| {
+                    unsupported_builtin_argument(
+                        descriptor,
+                        args,
+                        builtin_alias(&prepared.request.tools, tool_name),
+                    )
+                })
+            {
+                return Ok(recoverable_tool_error(
+                    tool_invocation,
+                    "tool.invalid_arguments",
+                    &message,
+                    started.elapsed().as_millis(),
+                ));
+            }
 
             let call = tool_invocation;
             if prepared.invocation.kind.owns_run_status() {
@@ -168,13 +196,9 @@ impl AgentRuntimeService {
             let builtin_name = call.tool_id.is_builtin().then_some(tool_name);
             started_tool = true;
             let dispatch_result = if !is_last_call && builtin_name.is_some_and(is_completion_tool) {
-                Ok(recoverable_tool_error(
+                Ok(completion_not_last_error(
                     call,
-                    "agent.tool_after_finish",
-                    &format!(
-                        "{} must be the final tool call in a model turn; complete the other work first, then call it again.",
-                        call.tool_id.native_name()
-                    ),
+                    call.tool_id.native_name(),
                     started.elapsed().as_millis(),
                 ))
             } else if builtin_name == Some(AGENT_DELEGATE) {
@@ -275,48 +299,105 @@ impl AgentRuntimeService {
                     ensure_tool_result_identity(tool_invocation, &outcome.result)?;
                     let outcome = match outcome.effect.clone() {
                         AgentToolEffect::Finish => {
-                            if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
-                                recoverable_tool_error(
+                            match self.admit_run_finish(prepared, commit_ledger).await? {
+                                None => outcome,
+                                Some(denial) => recoverable_tool_error(
                                     tool_invocation,
-                                    "agent.child_finish_denied",
-                                    "Return-mode child Agent invocations must complete with task.return, not workspace.finish.",
+                                    denial.code(),
+                                    &denial.message(),
                                     outcome.elapsed_ms,
-                                )
-                            } else if !commit_ledger.has_explicit_commit()
-                                && self.run_repository.load_run(run_id).await?.chat_target()?.presentation
-                                    == AgentRunPresentation::Foreground
-                            {
-                                recoverable_tool_error(
-                                    tool_invocation,
-                                    "agent.foreground_commit_required",
-                                    "Foreground Agent runs must call workspace.commit successfully before workspace.finish.",
-                                    outcome.elapsed_ms,
-                                )
-                            } else {
-                                if self.has_pending_child_tasks(run_id, invocation_id).await? {
-                                    self.active_run_handle(run_id)
-                                        .await?
-                                        .scheduler
-                                        .cancel_unfinished_for_parent(invocation_id)
-                                        .await?;
-                                }
-                                outcome
+                                ),
                             }
                         }
-                        AgentToolEffect::ChatCommitRequested { path, mode, reason } => {
-                            self.perform_explicit_host_chat_commit(
-                                run_id,
+                        AgentToolEffect::ChatCommitRequested {
+                            finish: true, ..
+                        } if !is_last_call => completion_not_last_error(
+                            call,
+                            &format!(
+                                "{} with finish: true",
+                                builtin_alias(&prepared.request.tools, "workspace.commit")
+                            ),
+                            outcome.elapsed_ms,
+                        ),
+                        AgentToolEffect::ChatCommitRequested {
+                            finish: true, ..
+                        } if !turn_can_finish_run(&prepared.tool_turn) => {
+                            recoverable_tool_error(
                                 call,
-                                path,
-                                mode,
-                                reason,
+                                "agent.finish_unavailable",
+                                &format!(
+                                    "This Agent stage cannot finish the run; commit without finish, then continue with {}.",
+                                    completion_tool_name(
+                                        exit_policy,
+                                        &prepared.tool_turn,
+                                        &prepared.request.tools,
+                                    )
+                                ),
                                 outcome.elapsed_ms,
-                                round,
-                                invocation_id,
-                                commit_ledger,
-                                cancel,
                             )
-                            .await?
+                        }
+                        AgentToolEffect::ChatCommitRequested {
+                            path,
+                            mode,
+                            reason,
+                            finish,
+                        } => {
+                            let mut committed = self
+                                .perform_explicit_host_chat_commit(
+                                    run_id,
+                                    call,
+                                    path,
+                                    mode,
+                                    reason,
+                                    outcome.elapsed_ms,
+                                    round,
+                                    invocation_id,
+                                    commit_ledger,
+                                    cancel,
+                                )
+                                .await?;
+                            // A rejected commit leaves the run open; the model sees the commit error.
+                            if !committed.result.is_error {
+                                let next_step = if !finish {
+                                    format!(
+                                        "Continue editing and commit again if needed; when the reply is final, call {}. Do not use plain text as the final answer.",
+                                        completion_tool_name(
+                                            exit_policy,
+                                            &prepared.tool_turn,
+                                            &prepared.request.tools,
+                                        )
+                                    )
+                                } else {
+                                    match self.admit_run_finish(prepared, commit_ledger).await? {
+                                        None => {
+                                            committed.effect = AgentToolEffect::Finish;
+                                            "The run is finished.".to_string()
+                                        }
+                                        // The commit was requested and confirmed; only the finish
+                                        // waits until the model has seen the earlier failure.
+                                        Some(denial @ FinishDenial::FailedEarlierCall { .. }) => {
+                                            committed.result.structured["finish"] = json!({
+                                                "admitted": false,
+                                                "code": denial.code(),
+                                                "message": denial.message(),
+                                            });
+                                            format!("The run is still open: {}", denial.message())
+                                        }
+                                        // A confirmed commit satisfies the foreground commit rule,
+                                        // and return-mode children cannot commit.
+                                        Some(denial) => {
+                                            return Err(ApplicationError::InternalError(format!(
+                                                "agent.commit_finish_denied: {} ({})",
+                                                denial.message(),
+                                                denial.code()
+                                            )));
+                                        }
+                                    }
+                                };
+                                committed.result.content.push(' ');
+                                committed.result.content.push_str(&next_step);
+                            }
+                            committed
                         }
                         _ => outcome,
                     };
@@ -347,6 +428,61 @@ impl AgentRuntimeService {
             error,
             started: started_tool,
         })
+    }
+
+    /// Admission shared by every call that ends the run: `workspace.finish` and a
+    /// confirmed `workspace.commit` with `finish: true`. Returns the model-facing denial,
+    /// or cancels this invocation's unfinished child tasks and admits the finish.
+    async fn admit_run_finish(
+        &self,
+        prepared: &PreparedInvocation,
+        commit_ledger: &RunCommitLedger,
+    ) -> Result<Option<FinishDenial>, ApplicationError> {
+        let run_id = prepared.invocation.run_id.as_str();
+        let invocation_id = prepared.invocation.id.as_str();
+        let alias = |name| builtin_alias(&prepared.request.tools, name);
+        if prepared.invocation.exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
+            return Ok(Some(FinishDenial::Policy {
+                code: "agent.child_finish_denied",
+                message: format!(
+                    "Return-mode child Agent invocations must complete with {}, not by finishing the run.",
+                    alias("task.return")
+                ),
+            }));
+        }
+        if !commit_ledger.has_explicit_commit()
+            && self
+                .run_repository
+                .load_run(run_id)
+                .await?
+                .chat_target()?
+                .presentation
+                == AgentRunPresentation::Foreground
+        {
+            return Ok(Some(FinishDenial::Policy {
+                code: "agent.foreground_commit_required",
+                message: format!(
+                    "Foreground Agent runs must call {} successfully before {}.",
+                    alias("workspace.commit"),
+                    alias("workspace.finish")
+                ),
+            }));
+        }
+        // Later calls in a turn still run after a recoverable failure. Ending the run here
+        // would hide that failure from the model and publish whatever the failed call left.
+        if let Some(tool) = failed_call_in_current_turn(prepared) {
+            return Ok(Some(FinishDenial::FailedEarlierCall {
+                tool: tool.to_string(),
+            }));
+        }
+        if self.has_pending_child_tasks(run_id, invocation_id).await? {
+            self.active_run_handle(run_id)
+                .await?
+                .scheduler
+                .cancel_unfinished_for_parent(invocation_id)
+                .await?;
+        }
+        Ok(None)
     }
 
     async fn call_mcp_tool(
@@ -409,6 +545,76 @@ fn is_completion_tool(tool_name: &str) -> bool {
     matches!(tool_name, WORKSPACE_FINISH | AGENT_HANDOFF | TASK_RETURN)
 }
 
+enum FinishDenial {
+    /// An earlier call in the current model turn returned an error result.
+    FailedEarlierCall {
+        tool: String,
+    },
+    Policy {
+        code: &'static str,
+        message: String,
+    },
+}
+
+impl FinishDenial {
+    fn code(&self) -> &'static str {
+        match self {
+            Self::FailedEarlierCall { .. } => "agent.finish_after_failed_call",
+            Self::Policy { code, .. } => code,
+        }
+    }
+
+    fn message(&self) -> String {
+        match self {
+            Self::FailedEarlierCall { tool } => {
+                format!("{tool} failed earlier in this turn; fix it, then finish.")
+            }
+            Self::Policy { message, .. } => message.clone(),
+        }
+    }
+}
+
+/// Model-facing name of the first call in the current turn whose result is an error.
+/// The turn's results follow its assistant message in the prepared request, which is
+/// also the checkpoint payload, so a resumed turn gives the same answer.
+fn failed_call_in_current_turn(prepared: &PreparedInvocation) -> Option<&str> {
+    let failed = prepared
+        .request
+        .messages
+        .iter()
+        .rev()
+        .take_while(|message| message.role != AgentModelRole::Assistant)
+        .flat_map(|message| message.parts.iter())
+        .filter_map(|part| match part {
+            AgentModelContentPart::ToolResult { result } if result.is_error => {
+                Some(&result.tool_id)
+            }
+            _ => None,
+        })
+        .last()?;
+    Some(
+        prepared
+            .tool_snapshot
+            .binding(failed)
+            .map_or_else(|| failed.native_name(), |binding| binding.model_alias()),
+    )
+}
+
+fn completion_not_last_error(
+    call: &ToolInvocation,
+    label: &str,
+    elapsed_ms: u128,
+) -> AgentToolDispatchOutcome {
+    recoverable_tool_error(
+        call,
+        "agent.tool_after_finish",
+        &format!(
+            "{label} must be the final tool call in a model turn; complete the other work first, then call it again."
+        ),
+        elapsed_ms,
+    )
+}
+
 pub(super) fn recoverable_tool_error(
     call: &ToolInvocation,
     code: &str,
@@ -446,6 +652,27 @@ fn ensure_tool_result_identity(
         "tool.result_identity_mismatch: invocation `{}` / `{}` produced result `{}` / `{}`",
         invocation.call_id, invocation.tool_id, result.call_id, result.tool_id
     )))
+}
+
+/// Names the model's unknown call, suggests the current alias when the model used a
+/// tool's older name (e.g. `workspace_write_file`), and lists what this turn offers.
+fn unknown_tool_message(call: &ToolInvocation, tools: &[AgentModelTool]) -> String {
+    let requested = call
+        .provider_metadata
+        .get("modelAlias")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| call.tool_id.native_name());
+    let suggestion = tools
+        .iter()
+        .find(|tool| tool.tool_id.native_name().replace('.', "_") == requested)
+        .map(|tool| format!(" Did you mean `{}`?", tool.model_alias))
+        .unwrap_or_default();
+    let available = tools
+        .iter()
+        .map(|tool| tool.model_alias.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("`{requested}` is not an available tool.{suggestion} Available tools: {available}.")
 }
 
 #[cfg(test)]

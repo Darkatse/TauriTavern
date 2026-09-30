@@ -1,8 +1,9 @@
+use crate::services::agent_tools::stage_can_finish_run;
 use crate::services::agent_workspace_scope::{
     format_model_visible_workspace_roots, format_model_workspace_roots,
 };
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
-use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool};
+use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool, AgentRunPresentation};
 
 use super::constants::{
     AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, TASK_RETURN_TOOL,
@@ -62,6 +63,12 @@ pub fn materialize_agent_system_prompt(
         return lines.join("\n");
     }
 
+    let has = |name: &str| has_tool(tools, name);
+    let alias = |name: &'static str| model_alias(tools, name);
+    let can_finish_run =
+        exit_policy == AgentInvocationExitPolicy::RunFinishAllowed && stage_can_finish_run(has);
+    let foreground = profile.run.presentation == AgentRunPresentation::Foreground;
+
     let mut lines = vec!["---".to_string(), "tools:".to_string()];
     lines.extend(
         tools
@@ -72,97 +79,87 @@ pub fn materialize_agent_system_prompt(
         "---".to_string(),
         String::new(),
         "# Agent Mode is active.".to_string(),
-        "- Work using the available agent tools. Tool results are working context, not chat messages.".to_string(),
-        "- Every model turn must include at least one Agent tool call. Plain text alone does not complete the current stage.".to_string(),
-        String::new(),
+        "- Work with the agent tools. Tool results are working context, not chat messages."
+            .to_string(),
     ]);
+    lines.push(if has("workspace.commit") {
+        "- Only committed text reaches the chat; a plain-text reply is never shown to the user. Every turn must call a tool.".to_string()
+    } else {
+        "- Every turn must call a tool; plain text alone does not complete this stage.".to_string()
+    });
 
-    if has_tool(tools, "chat.search") {
-        lines.push(format!(
-            "- When more context is needed, use {} to find relevant prior messages. Provide only the search query.",
-            model_alias(tools, "chat.search")
-        ));
+    let mut completion_tools = Vec::new();
+    if can_finish_run && has("workspace.commit") {
+        completion_tools.push(format!("{} with finish: true", alias("workspace.commit")));
     }
-    if has_tool(tools, "chat.read_messages") {
-        let source_hint = if has_tool(tools, "chat.search") {
-            format!(
-                "the message indices returned by {}",
-                model_alias(tools, "chat.search")
-            )
-        } else {
-            "exact indexes you already know".to_string()
-        };
-        lines.push(format!(
-            "- Use {} with {source_hint} for review. Messages are read in full by default; when a preview is returned, continue with start_line and line_count.",
-            model_alias(tools, "chat.read_messages")
-        ));
-    }
-    if has_tool(tools, "worldinfo.read_activated") {
-        lines.push(format!(
-            "- When activated world information is relevant to this run, use {}.",
-            model_alias(tools, "worldinfo.read_activated")
-        ));
-    }
-    if has_tool(tools, "dice.roll") {
-        lines.push(format!(
-            "- Use {} only when an explicit random roll, chance check, or tabletop/roleplay check is needed. Do not invent roll results.",
-            model_alias(tools, "dice.roll")
-        ));
-    }
-    if has_tool(tools, AGENT_DELEGATE_TOOL) {
-        if has_tool(tools, AGENT_AWAIT_TOOL) {
-            lines.push(format!(
-                "- Use {} to ask another Agent to handle a self-contained task. You can continue working after delegating; use {} when you need a delegated result or status before deciding.",
-                model_alias(tools, AGENT_DELEGATE_TOOL),
-                model_alias(tools, AGENT_AWAIT_TOOL)
-            ));
-            lines.push(
-                "- If delegated task results are provided later, review them before finalizing."
-                    .to_string(),
-            );
-        } else {
-            lines.push(format!(
-                "- Use {} to ask another Agent to handle a self-contained task. You can continue working after delegating.",
-                model_alias(tools, AGENT_DELEGATE_TOOL)
-            ));
+    for name in ["workspace.finish", TASK_RETURN_TOOL, AGENT_HANDOFF_TOOL] {
+        if has(name) {
+            completion_tools.push(alias(name).to_string());
         }
     }
-    if has_tool(tools, AGENT_HANDOFF_TOOL) {
+    if !completion_tools.is_empty() {
         lines.push(format!(
-            "- Use {} when you have finished your part and another Agent should continue. Provide a self-contained handoff brief with the objective, relevant workspace paths, decisions, constraints, and what done looks like.",
-            model_alias(tools, AGENT_HANDOFF_TOOL)
-        ));
-        lines.push(format!(
-            "- After {} succeeds, your part is done; do not call more tools.",
-            model_alias(tools, AGENT_HANDOFF_TOOL)
+            "- Call {} last in its turn.",
+            completion_tools.join(" or ")
         ));
     }
-    if has_tool(tools, "workspace.shell") {
+    if has("workspace.read_file") && (has("workspace.write_file") || has("workspace.apply_patch")) {
         lines.push(
-            "- Workspace tools share the same files. Each shell call starts a new session; files persist between calls."
+            "- Tool results confirm writes; do not re-read a file you just wrote unless you need its content."
                 .to_string(),
         );
-        if has_tool(tools, "workspace.read_file")
-            && (has_tool(tools, "workspace.apply_patch") || has_tool(tools, "workspace.write_file"))
-        {
-            lines.push(format!(
-                "- After editing a file with {}, read it with {} before patching or replacing it with the text tools.",
-                model_alias(tools, "workspace.shell"),
-                model_alias(tools, "workspace.read_file")
-            ));
-        }
     }
-    if let Some(output) = &profile.output
-        && has_tool(tools, "workspace.commit")
-    {
+
+    match (has("chat.search"), has("chat.read_messages")) {
+        (true, true) => lines.push(format!(
+            "- For earlier chat details, find messages with {} and read them by index with {}.",
+            alias("chat.search"),
+            alias("chat.read_messages")
+        )),
+        (true, false) => lines.push(format!(
+            "- Use {} to find earlier chat messages.",
+            alias("chat.search")
+        )),
+        (false, true) => lines.push(format!(
+            "- Use {} to read earlier chat messages by index.",
+            alias("chat.read_messages")
+        )),
+        (false, false) => {}
+    }
+    if has("worldinfo.read_activated") {
         lines.push(format!(
-            "- Use {} to publish Run workspace files into the current chat message. Without arguments, it will replace the current run's chat message with {}; mode append will append to the same message, creating it if this run has not committed yet.",
-            model_alias(tools, "workspace.commit"),
-            output.message_body_path
+            "- Use {} to read the World Info entries activated for this run.",
+            alias("worldinfo.read_activated")
+        ));
+    }
+    if has("dice.roll") {
+        lines.push(format!(
+            "- Use {} only when an explicit random roll, chance check, or tabletop/roleplay check is needed. Do not invent roll results.",
+            alias("dice.roll")
+        ));
+    }
+    if has(AGENT_DELEGATE_TOOL) {
+        let await_hint = if has(AGENT_AWAIT_TOOL) {
+            format!(
+                "; use {} when you need a delegated result or status before deciding, and review delegated results before finalizing",
+                alias(AGENT_AWAIT_TOOL)
+            )
+        } else {
+            String::new()
+        };
+        lines.push(format!(
+            "- Use {} to ask another Agent to handle a self-contained task. You can keep working after delegating{await_hint}.",
+            alias(AGENT_DELEGATE_TOOL)
+        ));
+    }
+    if has(AGENT_HANDOFF_TOOL) {
+        lines.push(format!(
+            "- Use {} when your part is done and another Agent should continue. Give a self-contained brief: objective, relevant workspace paths, decisions, constraints, and what done looks like. After it succeeds, do not call more tools.",
+            alias(AGENT_HANDOFF_TOOL)
         ));
     }
 
-    if profile
+    let persist_writable = profile
         .workspace
         .visible_roots
         .iter()
@@ -171,155 +168,76 @@ pub fn materialize_agent_system_prompt(
             .workspace
             .writable_roots
             .iter()
-            .any(|root| root == "persist")
-    {
-        lines.push("- Use persist/ to store concise information that should carry over into subsequent runs of the same chat, such as persistent plot facts, unresolved threads, relationship states, and user style preferences.".to_string());
-        lines.push(
-            "- **Do not** copy full chat history, final replies, tool results, or temporary reasoning into persist/."
-                .to_string(),
-        );
+            .any(|root| root == "persist");
+    if persist_writable {
+        lines.push("- Use persist/ for concise information that should carry into later turns of this chat: plot facts, unresolved threads, relationship states, user style preferences. Do not copy chat history, replies, tool results, or reasoning into it.".to_string());
     }
 
-    if has_tool(tools, TASK_RETURN_TOOL) {
+    lines.push(format!(
+        "- Readable workspace directories: {}.",
+        format_model_visible_workspace_roots(&profile.workspace.visible_roots)
+    ));
+    lines.push(format!(
+        "- Writable workspace directories: {}.",
+        format_model_workspace_roots(&profile.workspace.writable_roots)
+    ));
+
+    if has(TASK_RETURN_TOOL) {
         lines.push(
-            "- Delegated task workspace: use the same logical workspace paths as the Agent that asked for this task. Do not invent private path mappings."
+            "- This is a delegated task: use the workspace paths named in the task brief, the same logical paths as the requesting Agent, and write supporting notes only under writable roots."
                 .to_string(),
         );
+        lines.push(format!(
+            "# **Important**: Return your result only by calling {} with a concise result for the requesting Agent, referencing any workspace paths you wrote.",
+            alias(TASK_RETURN_TOOL)
+        ));
+    } else if !can_finish_run && has(AGENT_HANDOFF_TOOL) {
+        lines.push(format!(
+            "# **Important**: You cannot finish the run directly. When your part is complete, call {}.",
+            alias(AGENT_HANDOFF_TOOL)
+        ));
+    } else if !can_finish_run {
         lines.push(
-            "- Use the workspace paths named in the task brief. Write supporting notes or artifacts only under writable roots."
+            "# **Important**: You cannot finish the run or hand off. Use another available Agent tool to move the work forward."
                 .to_string(),
         );
+    } else if !foreground && has("workspace.finish") {
         lines.push(format!(
-            "- Readable workspace directories: {}.",
-            format_model_visible_workspace_roots(&profile.workspace.visible_roots)
+            "- Background runs may call {} without committing a chat message.",
+            alias("workspace.finish")
         ));
-        lines.push(format!(
-            "- Writable workspace directories: {}.",
-            format_model_workspace_roots(&profile.workspace.writable_roots)
-        ));
-        lines.push(format!(
-            "# **Important**: You are completing a delegated task. Return your result only by calling {} with a concise result for the requesting Agent.",
-            model_alias(tools, TASK_RETURN_TOOL)
-        ));
-        lines.push(
-            "- If useful, write supporting notes or requested artifacts, then reference those workspace paths in task_return."
-                .to_string(),
-        );
-    } else {
-        lines.push(format!(
-            "- Readable workspace directories: {}.",
-            format_model_visible_workspace_roots(&profile.workspace.visible_roots)
-        ));
-        lines.push(format!(
-            "- Writable workspace directories: {}.",
-            format_model_workspace_roots(&profile.workspace.writable_roots)
-        ));
-        lines.push(
-            "> You may encounter: \"No visible workspace files found.\" This happens because there are no persisted files; please continue."
-                .to_string(),
-        );
-        match (
-            profile.run.presentation,
-            has_tool(tools, "workspace.finish"),
-            has_tool(tools, "workspace.commit"),
-            has_tool(tools, AGENT_HANDOFF_TOOL),
-        ) {
-            (
-                tt_domain::models::agent::AgentRunPresentation::Foreground,
-                true,
-                true,
-                _,
-            ) => lines.push(format!(
-                "# **Important**: Before calling {}, you **must successfully call {} at least once** so that the user can see the final chat message.",
-                model_alias(tools, "workspace.finish"),
-                model_alias(tools, "workspace.commit")
-            )),
-            (
-                tt_domain::models::agent::AgentRunPresentation::Foreground,
-                true,
-                false,
-                _,
-            ) => lines.push(format!(
-                "# **Important**: Call {} only when this foreground stage can end without you publishing a new chat commit.",
-                model_alias(tools, "workspace.finish")
-            )),
-            (tt_domain::models::agent::AgentRunPresentation::Background, true, _, _) => {
-                lines.push(format!(
-                    "# Background runs may call {} without committing a chat message.",
-                    model_alias(tools, "workspace.finish")
-                ));
-            }
-            (_, false, _, true) => lines.push(format!(
-                "# **Important**: You cannot finish the run directly with the available tools. When your part is complete, call {}.",
-                model_alias(tools, AGENT_HANDOFF_TOOL)
-            )),
-            (_, false, _, false) => lines.push(
-                "# **Important**: You do not have a finish or handoff tool. Use another available Agent tool to move the work forward."
-                    .to_string(),
-            ),
-        }
-        if has_tool(tools, "workspace.finish") {
-            lines.push(format!(
-                "# **Important**: Do not answer in plain text. Finish by calling {}.",
-                model_alias(tools, "workspace.finish")
-            ));
-        } else if has_tool(tools, AGENT_HANDOFF_TOOL) {
-            lines.push(format!(
-                "# **Important**: Do not answer in plain text. Continue by calling {}.",
-                model_alias(tools, AGENT_HANDOFF_TOOL)
-            ));
-        }
     }
-    if has_tool(tools, "workspace.commit") && has_tool(tools, "workspace.finish") {
+
+    if foreground
+        && can_finish_run
+        && has("workspace.commit")
+        && let Some(output) = &profile.output
+    {
+        let write = if has("workspace.write_file") {
+            alias("workspace.write_file")
+        } else {
+            "write"
+        };
         lines.extend([
             String::new(),
             format!(
-                "# Basic tool calling flow (adjusted based on the actual situation, but the flow must include {} + {}):",
-                model_alias(tools, "workspace.commit"),
-                model_alias(tools, "workspace.finish")
+                "# Typical flow: {write} {}{}, then {} with finish: true.",
+                output.message_body_path,
+                if persist_writable {
+                    " (update persist/ first when needed)"
+                } else {
+                    ""
+                },
+                alias("workspace.commit")
             ),
-            String::new(),
-            "A simple template you can follow:".to_string(),
-            "    (thoughts before actions)".to_string(),
-            "    (call tools)(optional)".to_string(),
-            String::new(),
-            format!(
-                "    Now I need to call \"{}\" once.",
-                model_alias(tools, "workspace.commit")
-            ),
-            format!(
-                "    Good, it has been committed. Finally, don't forget to call \"{}\".",
-                model_alias(tools, "workspace.finish")
-            ),
-            String::new(),
-            "You also can follow commit-N-times template:".to_string(),
-            "    (thoughts before actions)".to_string(),
         ]);
-        if has_tool(tools, "workspace.read_file") {
+        if has("workspace.finish") {
             lines.push(format!(
-                "    ({})",
-                model_alias(tools, "workspace.read_file")
+                "- Call {} only to end the run without a new commit.",
+                alias("workspace.finish")
             ));
         }
-        if has_tool(tools, "worldinfo.read_activated") {
-            lines.push(format!(
-                "    ({})",
-                model_alias(tools, "worldinfo.read_activated")
-            ));
-        }
-        lines.extend([
-            format!(
-                "    (call {} with append mode)",
-                model_alias(tools, "workspace.commit")
-            ),
-            "    (think)".to_string(),
-            "    (edit if necessary)".to_string(),
-            format!(
-                "    ({} with append mode)",
-                model_alias(tools, "workspace.commit")
-            ),
-            String::new(),
-        ]);
+        lines.push(String::new());
     }
     lines.push("Anyway: TOOLS&SKILLS IS ALL YOU NEED".to_string());
 

@@ -330,6 +330,13 @@ impl AgentRuntimeService {
             &effective_skills,
             &agents,
         )?;
+        super::super::prompt_snapshot::append_workspace_inventory(
+            &mut request,
+            self.workspace_files(run_id).await?,
+            &profile,
+            &visible_tools,
+        )
+        .await?;
         let request = prepare_agent_tool_request(
             request,
             &visible_tools,

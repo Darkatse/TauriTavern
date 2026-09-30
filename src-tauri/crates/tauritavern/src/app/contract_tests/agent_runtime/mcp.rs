@@ -13,20 +13,20 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
             )]),
             model_tool_response(vec![model_tool_call(
                 "call_read",
-                "workspace_read_file",
+                "read",
                 json!({
-                    "path": "tool-results/inv_root/round-001-call_fe79da5f09df9787.txt",
-                    "start_line": 1,
-                    "line_count": 100
+                    "file_path": "tool-results/inv_root/round-001-call_fe79da5f09df9787.txt",
+                    "offset": 1,
+                    "limit": 100
                 }),
             )]),
             model_tool_response(vec![
                 model_tool_call(
                     "call_write",
-                    "workspace_write_file",
-                    json!({ "path": "output/main.md", "content": "MCP complete" }),
+                    "write",
+                    json!({ "file_path": "output/main.md", "content": "MCP complete" }),
                 ),
-                model_tool_call("call_finish", "workspace_finish", json!({})),
+                model_tool_call("call_finish", "finish", json!({})),
             ]),
         ],
     );
@@ -116,7 +116,7 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
         })
         .expect("MCP result returned to model");
     assert!(mcp_result.content.contains("preview"));
-    assert!(mcp_result.content.contains("workspace_read_file"));
+    assert!(mcp_result.content.contains("read"));
     assert_eq!(mcp_result.content.matches('界').count(), 3_000);
     assert!(!mcp_result.content.contains("End of result."));
     assert!(mcp_result.content.chars().count() < 10_000);
@@ -191,8 +191,8 @@ async fn agent_runtime_stops_after_unknown_mcp_call_outcome() {
             ),
             model_tool_call(
                 "call_after_unknown",
-                "workspace_write_file",
-                json!({ "path": "output/must-not-exist.md", "content": "must not run" }),
+                "write",
+                json!({ "file_path": "output/must-not-exist.md", "content": "must not run" }),
             ),
         ])],
     );
@@ -296,12 +296,8 @@ pub(super) async fn configure_mcp_profile(
         .await
         .unwrap();
 
-    let mut definition = fixture
-        .profile_service
-        .load_profile("default-writer")
-        .await
-        .unwrap()
-        .unwrap();
+    let mut definition =
+        crate::app::contract_tests::contract_writer_definition(&fixture.profile_service).await;
     definition.id = AgentProfileId::parse(profile_id).unwrap();
     let mcp_tool_id = format!("mcp/{}:issue.create", server.id);
     definition.tools.allow.push(mcp_tool_id.clone());
