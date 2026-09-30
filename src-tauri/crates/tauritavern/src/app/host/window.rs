@@ -14,9 +14,10 @@ use tt_application::services::host_resource_service::HostResourceService;
 
 /// WebView2 stalls JS timers while the window is minimized or occluded, which
 /// freezes background work such as Agent chat commits and streaming replies.
-/// Setting these arguments replaces wry's defaults, so its `--disable-features`
-/// entries are kept; Chromium honors only one `--disable-features` flag. Every
-/// webview sharing the data directory must use identical arguments.
+/// Setting these arguments replaces wry's defaults, so wry's own
+/// `--disable-features` entries are copied into the single flag Chromium
+/// honors; re-check them when upgrading wry. Every webview sharing the data
+/// directory must use identical arguments.
 #[cfg(windows)]
 const WEBVIEW2_BROWSER_ARGS: &str = "--disable-background-timer-throttling \
     --disable-renderer-backgrounding --disable-backgrounding-occluded-windows \

@@ -383,6 +383,13 @@ TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板�
 - 图片在其所在窗口按 `currentSrc` 读取，遵循同源与 CORS 规则；读取失败直接提示，不改走其他路径。保存的是原始字节，不重新编码。
 - 宿主不注册原生长按菜单，长按产生的 `contextmenu` 始终先交给页面处理。
 
+### 5.8 Windows 后台计时器（Public in practice）
+
+- 仅 Windows：主窗口与 5.4 中 `window.open()` 在 App 内创建的 popup 窗口以 WebView2 启动参数关闭后台计时器节流、渲染进程后台降级与遮挡检测。同一数据目录下的 WebView2 必须使用相同参数，因此两者共用一组。
+- 窗口最小化或被遮挡时，页面计时器（上游脚本、扩展、角色卡 iframe）不降速；关闭遮挡检测后页面仍被视为可见，渲染与动画（`requestAnimationFrame`、CSS 动画、视频）也继续进行，所以后台耗电增加不只来自计时器。
+- 目的：前台 Agent 的宿主提交在窗口隐藏时也要继续推进。Run 事件的唤醒推送不依赖计时器（见[运行日志](Agent/RunEventJournal.md#读取与展示)），但提交处理本身在页面内执行。
+- 维护：参数定义在 `src-tauri/crates/tauritavern/src/app/host/window.rs` 的 `WEBVIEW2_BROWSER_ARGS`。自定义参数会替换 wry 的默认参数，其中 `--disable-features` 手抄了 wry 的默认值；升级 wry 时需复查，并跑第 6 节第 6 条。
+
 ## 6. Smoke Tests（Public 回归用例）
 
 这些用例是“最小但真实”的兼容回归集（来源：你提供的 `.cache` 样本）：
@@ -403,6 +410,8 @@ TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板�
 5. **Android 图片长按保存**
    - 长按聊天图片出现保存确认，确认后文件写入 Downloads（Android 8–9 为用户选择的位置）。
    - 页面对该次 `contextmenu` 调用 `preventDefault()` 时，不出现确认框。
+6. **Windows 后台计时器**
+   - 前台 Agent 运行期间最小化或遮挡主窗口，宿主提交仍能完成；恢复窗口后回复已保存到聊天。
 
 任何涉及第 3/4 节契约的改动，都必须至少跑通以上 smoke tests。
 
