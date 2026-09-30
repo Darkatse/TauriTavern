@@ -10,7 +10,9 @@ use tt_domain::models::agent::profile::{
     AgentPresetRef, AgentProfileDefinition, AgentProfileId, ResolvedAgentProfile,
 };
 use tt_domain::models::agent::session::{AgentSession, AgentSessionMessage};
-use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelMessage, AgentModelTool};
+use tt_domain::models::agent::{
+    AgentInvocationExitPolicy, AgentModelMessage, AgentModelTool, AgentRunPresentation,
+};
 use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
 use tt_domain::models::tool::ToolId;
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
@@ -93,24 +95,30 @@ fn context_policy_normalizes_negative_history_window_to_full_history() {
 }
 
 #[test]
-fn chat_finish_requirement_depends_on_invocation_exit_policy() {
+fn chat_commit_requirement_applies_to_foreground_runs_only() {
     let mut profile = test_profile(None, "background");
     profile.run.direct_runnable = true;
     profile.tools = test_tool_policy(&["workspace.write_file"]);
     let error = super::validate_chat_profile(
         &profile,
         AgentInvocationExitPolicy::RunFinishAllowed,
-        profile.run.presentation,
+        AgentRunPresentation::Foreground,
     )
-    .expect_err("direct Chat profile without finish should fail");
+    .expect_err("a direct foreground Chat profile without commit should fail");
 
-    assert!(error.to_string().contains("agent.profile_finish_required"));
+    assert!(error.to_string().contains("agent.profile_commit_required"));
+    super::validate_chat_profile(
+        &profile,
+        AgentInvocationExitPolicy::RunFinishAllowed,
+        AgentRunPresentation::Background,
+    )
+    .expect("a background run ends when the model stops calling tools");
     super::validate_chat_profile(
         &profile,
         AgentInvocationExitPolicy::TaskReturnRequired,
-        profile.run.presentation,
+        AgentRunPresentation::Foreground,
     )
-    .expect("a child invocation returns to its parent without workspace.finish");
+    .expect("a child invocation returns to its parent without committing");
 }
 
 #[test]

@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use super::workspace::{
-    WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
-    WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE,
+    WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_LIST_FILES, WORKSPACE_READ_FILE,
+    WORKSPACE_SEARCH_FILES, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE,
 };
 use super::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, BuiltinAgentToolRegistry, TASK_RETURN};
 use crate::errors::ApplicationError;
@@ -13,20 +13,14 @@ use tt_domain::models::tool::{
     ToolTurnContract,
 };
 
-const RETURN_MODE_DENIED_TOOLS: [&str; 5] = [
-    WORKSPACE_COMMIT,
-    WORKSPACE_FINISH,
-    AGENT_DELEGATE,
-    AGENT_HANDOFF,
-    AGENT_AWAIT,
-];
+const RETURN_MODE_DENIED_TOOLS: [&str; 4] =
+    [WORKSPACE_COMMIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_AWAIT];
 
-const SESSION_DENIED_TOOLS: [&str; 9] = [
+const SESSION_DENIED_TOOLS: [&str; 8] = [
     "chat.search",
     "chat.read_messages",
     "worldinfo.read_activated",
     WORKSPACE_COMMIT,
-    WORKSPACE_FINISH,
     AGENT_DELEGATE,
     AGENT_HANDOFF,
     AGENT_AWAIT,
@@ -142,7 +136,6 @@ pub(super) fn builtin_model_alias(name: &str) -> String {
         WORKSPACE_LIST_FILES => "list",
         WORKSPACE_SHELL => "shell",
         WORKSPACE_COMMIT => "commit",
-        WORKSPACE_FINISH => "finish",
         _ => return name.replace('.', "_"),
     }
     .to_string()
@@ -205,10 +198,11 @@ pub(crate) fn unsupported_builtin_argument(
     })
 }
 
-/// Whether a stage with these builtin tools may end the run: with `workspace.finish`,
-/// or with a final `workspace.commit` unless the stage hands off instead of finishing.
+/// Whether a stage with these builtin tools may end the run. A stage that can hand off
+/// passes the run on instead; any other stage ends it by a final commit or as its finish
+/// policy allows.
 pub(crate) fn stage_can_finish_run(has_builtin: impl Fn(&str) -> bool) -> bool {
-    has_builtin(WORKSPACE_FINISH) || (has_builtin(WORKSPACE_COMMIT) && !has_builtin(AGENT_HANDOFF))
+    !has_builtin(AGENT_HANDOFF)
 }
 
 const MAX_MODEL_ALIAS_BYTES: usize = 64;

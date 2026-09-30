@@ -24,6 +24,6 @@ pub(crate) use policy::{
     project_agent_model_tools, stage_can_finish_run, unsupported_builtin_argument,
 };
 pub(crate) use workspace::{
-    WORKSPACE_APPLY_PATCH, WORKSPACE_FINISH, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE,
-    classify_workspace_io_error, render_workspace_inventory,
+    WORKSPACE_APPLY_PATCH, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE, classify_workspace_io_error,
+    render_workspace_inventory,
 };

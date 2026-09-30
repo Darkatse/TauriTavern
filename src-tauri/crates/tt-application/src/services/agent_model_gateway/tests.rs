@@ -139,7 +139,7 @@ fn openai_compatible_replays_opaque_continuation() {
                         "id": "call_1",
                         "type": "function",
                         "function": {
-                            "name": "workspace_finish",
+                            "name": "workspace_commit",
                             "arguments": "{}"
                         },
                         "extra_content": {
@@ -222,7 +222,7 @@ fn rejects_tool_call_without_id() {
             "message": {
                 "tool_calls": [{
                     "type": "function",
-                    "function": { "name": "workspace_finish", "arguments": "{}" }
+                    "function": { "name": "workspace_commit", "arguments": "{}" }
                 }]
             }
         }]
@@ -241,7 +241,7 @@ fn rejects_normalizer_synthetic_tool_call_id() {
                 "tool_calls": [{
                     "id": "tool_call_0",
                     "type": "function",
-                    "function": { "name": "workspace_finish", "arguments": "{}" }
+                    "function": { "name": "workspace_commit", "arguments": "{}" }
                 }]
             }
         }]
@@ -266,23 +266,23 @@ fn rejects_normalizer_synthetic_tool_call_id() {
 #[test]
 fn encodes_typed_tool_choice_against_advertised_tools() {
     let registry = BuiltinAgentToolRegistry::all();
-    let finish = model_tool(&registry, "workspace.finish");
+    let commit = model_tool(&registry, "workspace.commit");
     let cases = [
         (ToolChoice::None, json!("none")),
         (ToolChoice::Auto, json!("auto")),
         (ToolChoice::Required, json!("required")),
         (
-            ToolChoice::Specific(ToolId::builtin("workspace.finish").unwrap()),
+            ToolChoice::Specific(ToolId::builtin("workspace.commit").unwrap()),
             json!({
                 "type": "function",
-                "function": { "name": finish.model_alias }
+                "function": { "name": commit.model_alias }
             }),
         ),
     ];
 
     for (tool_choice, expected) in cases {
         let mut request = basic_request("openai", None, Vec::new());
-        request.tools = vec![finish.clone()];
+        request.tools = vec![commit.clone()];
         request.tool_choice = tool_choice;
 
         let dto = encode_chat_completion_request(&request, false).expect("choice should encode");
@@ -294,7 +294,7 @@ fn encodes_typed_tool_choice_against_advertised_tools() {
 fn rejects_tool_choice_outside_the_advertised_set() {
     let registry = BuiltinAgentToolRegistry::all();
     let mut request = basic_request("openai", None, Vec::new());
-    request.tools = vec![model_tool(&registry, "workspace.finish")];
+    request.tools = vec![model_tool(&registry, "workspace.commit")];
 
     request.tool_choice = ToolChoice::Specific(ToolId::builtin("workspace.write_file").unwrap());
     let error = encode_chat_completion_request(&request, false)
@@ -431,7 +431,7 @@ fn provider_stops_decide_whether_the_agent_turn_is_usable() {
         "choices": [{ "message": { "tool_calls": [{
             "id": "call_1",
             "type": "function",
-            "function": { "name": "workspace_finish", "arguments": "{}" }
+            "function": { "name": "workspace_commit", "arguments": "{}" }
         }] } }]
     });
 

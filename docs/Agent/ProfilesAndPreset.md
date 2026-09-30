@@ -4,7 +4,7 @@ Profile 描述一个 Agent 如何工作：使用什么提示词和模型，能�
 
 ## 从默认配置开始
 
-Agent System 的 Profile 面板可以复制和编辑配置。`Default Writer` 使用当前聊天的预设与模型，以 `output/main.md` 作为正文，支持工作区工具和 Skill，用 `chat_search` 按问题查找旧剧情、`grep` 查精确的词或正则、`read` 读取楼层原文；委派、按楼读取工具、激活世界书读取、文件列表与 `workspace.finish` 可在复制的 Profile 中开启。内置默认配置和新建 Profile 默认开启流式传输；已保存配置继续使用原有设置。先用它完成一次运行，再按任务需要修改配置。
+Agent System 的 Profile 面板可以复制和编辑配置。`Default Writer` 使用当前聊天的预设与模型，以 `output/main.md` 作为正文，支持工作区工具和 Skill，用 `chat_search` 按问题查找旧剧情、`grep` 查精确的词或正则、`read` 读取楼层原文；委派、按楼读取工具、激活世界书读取与文件列表可在复制的 Profile 中开启。内置默认配置和新建 Profile 默认开启流式传输；已保存配置继续使用原有设置。先用它完成一次运行，再按任务需要修改配置。
 
 扩展也可以读取默认配置后另存一份：
 
@@ -89,13 +89,13 @@ Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点�
 
 Session 使用相同的 `AgentProfileDefinition`，独立保存到 `_tauritavern/agent-workspaces/sessions/profile.json`，由所有 Session 共用，不进入普通 Profile 列表。修改从下一次发送准备时生效；预设重命名同时更新其引用。
 
-Session 必须指定 `preset.mode = ref` 和 `model.mode = connectionRef`，Skill 只取 Profile 自身作用域。正文产物与 commit/finish 要求属于 Chat 执行准入，Session 可使用空产物配置。目录与生命周期见 [Workspace](Workspace.md#session-的持续工作区)。
+Session 必须指定 `preset.mode = ref` 和 `model.mode = connectionRef`，Skill 只取 Profile 自身作用域。正文产物与前台的 commit 要求属于 Chat 执行准入，Session 可使用空产物配置。目录与生命周期见 [Workspace](Workspace.md#session-的持续工作区)。
 
 ## 源码
 
 普通 Profile 以 JSON 保存到 `_tauritavern/agent-profiles/profiles/`，当前 schema 版本为 4。
 
-schema 1–3 在加载或导入时自动迁移，移除旧 `skill.*`、`agent.list` 工具配置及 Skill 读取预算；保留其余配置，不自动授予新权限或重写指令。
+schema 1–3 在加载或导入时自动迁移，移除 Skill 读取预算。已下线的内置工具（旧 `skill.*`、`agent.list`、`workspace.finish`）在任何版本加载或导入时都会从工具配置中移除。两者都保留其余配置，不自动授予新权限或重写指令。
 
 旧 `tools.mcpResultInlineCharLimit` 的数值在读取时保留，再次保存使用 `tools.externalResultInlineCharLimit`。
 

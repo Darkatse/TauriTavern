@@ -24,10 +24,7 @@ use tt_domain::text_metrics::TextMetrics;
 use tt_ports::workspace_fs::WorkspaceFile;
 
 enum HostChatCommitOutcome {
-    Committed {
-        message_id: Option<String>,
-        message_index: Option<usize>,
-    },
+    Committed { message_id: Option<String> },
     Rejected(String),
 }
 
@@ -165,47 +162,60 @@ impl AgentRuntimeService {
         }
 
         let file_metrics = TextMetrics::from_text(&file.text);
-        let (message_id, message_index) = match self
-            .perform_host_chat_commit(
-                run_id,
-                HostChatCommit {
-                    call_id: call.call_id.as_str(),
-                    file: &file,
-                    is_explicit: true,
-                    mode,
-                    reason,
-                    round,
-                    invocation_id,
-                },
-                commit_ledger,
-                cancel,
+        // Publishing again would replay the host's message events (e.g. MESSAGE_RECEIVED),
+        // so extensions would settle an unchanged reply twice.
+        let (summary, message_id) = if commit_ledger.already_shows(&file, mode) {
+            (
+                format!(
+                    "{} is unchanged since the last commit; the chat message was not republished.",
+                    path.as_str()
+                ),
+                commit_ledger.latest_message_id().map(str::to_string),
             )
-            .await?
-        {
-            HostChatCommitOutcome::Committed {
-                message_id,
-                message_index,
-            } => (message_id, message_index),
-            HostChatCommitOutcome::Rejected(message) => {
-                return Ok(recoverable_tool_error(
-                    call,
-                    "agent.chat_commit_rejected",
-                    &message,
-                    elapsed_ms,
-                ));
+        } else {
+            match self
+                .perform_host_chat_commit(
+                    run_id,
+                    HostChatCommit {
+                        call_id: call.call_id.as_str(),
+                        file: &file,
+                        is_explicit: true,
+                        mode,
+                        reason,
+                        round,
+                        invocation_id,
+                    },
+                    commit_ledger,
+                    cancel,
+                )
+                .await?
+            {
+                HostChatCommitOutcome::Committed { message_id } => (
+                    format!(
+                        "Committed {} to the current chat message with mode {:?}.",
+                        path.as_str(),
+                        mode
+                    ),
+                    message_id,
+                ),
+                HostChatCommitOutcome::Rejected(message) => {
+                    return Ok(recoverable_tool_error(
+                        call,
+                        "agent.chat_commit_rejected",
+                        &message,
+                        elapsed_ms,
+                    ));
+                }
             }
         };
+        let message_index = message_index_from_message_id(message_id.as_deref());
 
         Ok(AgentToolDispatchOutcome {
             result: AgentToolResult {
                 call_id: call.call_id.clone(),
                 tool_id: call.tool_id.clone(),
-                content: format!(
-                    // The caller appends the next step, which depends on the finish admission.
-                    "Committed {} to the current chat message with mode {:?}.",
-                    path.as_str(),
-                    mode
-                ),
+                // The caller appends the next step, which depends on the finish admission.
+                content: summary,
                 structured: json!({
                     "path": path.as_str(),
                     "mode": mode,
@@ -376,13 +386,7 @@ impl AgentRuntimeService {
         match host_result {
             Ok(result) => {
                 let message_index = message_index_from_message_id(result.message_id.as_deref());
-                commit_ledger.record(
-                    &file.path,
-                    mode,
-                    result.message_id.clone(),
-                    round,
-                    is_explicit,
-                );
+                commit_ledger.record(file, mode, result.message_id.clone(), round, is_explicit);
                 self.transition_status(run_id, AgentRunStatus::DispatchingTool)
                     .await?;
                 self.event(
@@ -417,10 +421,10 @@ impl AgentRuntimeService {
 
                 Ok(HostChatCommitOutcome::Committed {
                     message_id: result.message_id,
-                    message_index,
                 })
             }
             Err(message) => {
+                commit_ledger.record_rejection();
                 self.transition_status(run_id, AgentRunStatus::DispatchingTool)
                     .await?;
                 self.event(

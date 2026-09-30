@@ -72,6 +72,8 @@ pub fn materialize_agent_system_prompt(
     let can_finish_run =
         exit_policy == AgentInvocationExitPolicy::RunFinishAllowed && stage_can_finish_run(has);
     let foreground = profile.run.presentation == AgentRunPresentation::Foreground;
+    // Background runs end when the model stops calling tools (the stage's finish policy).
+    let text_ends_run = can_finish_run && !foreground;
 
     let mut lines = vec!["---".to_string(), "tools:".to_string()];
     lines.extend(
@@ -86,17 +88,21 @@ pub fn materialize_agent_system_prompt(
         "- Work with the agent tools. Tool results are working context, not chat messages."
             .to_string(),
     ]);
-    lines.push(if has("workspace.commit") {
-        "- Only committed text reaches the chat; a plain-text reply is never shown to the user. Every turn must call a tool.".to_string()
-    } else {
-        "- Every turn must call a tool; plain text alone does not complete this stage.".to_string()
-    });
+    lines.push(
+        match (has("workspace.commit"), text_ends_run) {
+            (true, false) => "- Only committed text reaches the chat; a plain-text reply is never shown to the user. Every turn must call a tool.",
+            (false, false) => "- Every turn must call a tool; plain text alone does not complete this stage.",
+            (true, true) => "- Only committed text reaches the chat. When the run's work is complete, reply without calling a tool to end the run.",
+            (false, true) => "- When the run's work is complete, reply without calling a tool to end the run.",
+        }
+        .to_string(),
+    );
 
     let mut completion_tools = Vec::new();
     if can_finish_run && has("workspace.commit") {
         completion_tools.push(format!("{} with finish: true", alias("workspace.commit")));
     }
-    for name in ["workspace.finish", TASK_RETURN_TOOL, AGENT_HANDOFF_TOOL] {
+    for name in [TASK_RETURN_TOOL, AGENT_HANDOFF_TOOL] {
         if has(name) {
             completion_tools.push(alias(name).to_string());
         }
@@ -203,20 +209,11 @@ pub fn materialize_agent_system_prompt(
             "# **Important**: Return your result only by calling {} with a concise result for the requesting Agent, referencing any workspace paths you wrote.",
             alias(TASK_RETURN_TOOL)
         ));
-    } else if !can_finish_run && has(AGENT_HANDOFF_TOOL) {
+    } else if !can_finish_run {
+        // Only a stage that can hand off cannot finish the run itself.
         lines.push(format!(
             "# **Important**: You cannot finish the run directly. When your part is complete, call {}.",
             alias(AGENT_HANDOFF_TOOL)
-        ));
-    } else if !can_finish_run {
-        lines.push(
-            "# **Important**: You cannot finish the run or hand off. Use another available Agent tool to move the work forward."
-                .to_string(),
-        );
-    } else if !foreground && has("workspace.finish") {
-        lines.push(format!(
-            "- Background runs may call {} without committing a chat message.",
-            alias("workspace.finish")
         ));
     }
 
@@ -243,12 +240,6 @@ pub fn materialize_agent_system_prompt(
                 alias("workspace.commit")
             ),
         ]);
-        if has("workspace.finish") {
-            lines.push(format!(
-                "- Call {} only to end the run without a new commit.",
-                alias("workspace.finish")
-            ));
-        }
         lines.push(String::new());
     }
     lines.push("Anyway: TOOLS&SKILLS IS ALL YOU NEED".to_string());

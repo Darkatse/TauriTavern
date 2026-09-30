@@ -47,16 +47,16 @@ pub(super) fn migrate_profile_schema(
             if profile.schema_version < 3 {
                 migrate_tool_policy_to_canonical_ids(&mut profile.tools)?;
             }
-            let keep = |id: &str| !is_retired_agent_tool(id);
-            profile.tools.allow.retain(|id| keep(id));
-            profile.tools.deny.retain(|id| keep(id));
-            profile.tools.tool_descriptions.retain(|id, _| keep(id));
-            profile.tools.max_calls_per_tool.retain(|id, _| keep(id));
+            drop_retired_tools(&mut profile.tools);
             migrate_renamed_tool_parameters(&mut profile.tools);
             profile.schema_version = AGENT_PROFILE_SCHEMA_VERSION;
             Ok(true)
         }
-        AGENT_PROFILE_SCHEMA_VERSION => Ok(migrate_renamed_tool_parameters(&mut profile.tools)),
+        AGENT_PROFILE_SCHEMA_VERSION => {
+            let dropped = drop_retired_tools(&mut profile.tools);
+            let renamed = migrate_renamed_tool_parameters(&mut profile.tools);
+            Ok(dropped || renamed)
+        }
         version => Err(ApplicationError::ValidationError(format!(
             "agent.profile_schema_unsupported: schemaVersion {version} is unsupported"
         ))),
@@ -87,15 +87,38 @@ fn migrate_renamed_tool_parameters(policy: &mut AgentToolPolicy) -> bool {
     changed
 }
 
+/// Builtin tools that no longer exist. Saved Profiles drop them from every tool setting so
+/// they still load; a resumed run that calls one gets the unknown-tool answer.
+const RETIRED_AGENT_TOOLS: [&str; 6] = [
+    "builtin:skill.list",
+    "builtin:skill.read",
+    "builtin:skill.search",
+    "builtin:skill.run_script",
+    "builtin:agent.list",
+    "builtin:workspace.finish",
+];
+
 pub(crate) fn is_retired_agent_tool(id: &str) -> bool {
-    matches!(
-        id,
-        "builtin:skill.list"
-            | "builtin:skill.read"
-            | "builtin:skill.search"
-            | "builtin:skill.run_script"
-            | "builtin:agent.list"
-    )
+    RETIRED_AGENT_TOOLS.contains(&id)
+}
+
+/// Removes retired tools from the policy. Returns whether anything changed.
+fn drop_retired_tools(policy: &mut AgentToolPolicy) -> bool {
+    let sizes = |policy: &AgentToolPolicy| {
+        [
+            policy.allow.len(),
+            policy.deny.len(),
+            policy.tool_descriptions.len(),
+            policy.max_calls_per_tool.len(),
+        ]
+    };
+    let before = sizes(policy);
+    let keep = |id: &str| !is_retired_agent_tool(id);
+    policy.allow.retain(|id| keep(id));
+    policy.deny.retain(|id| keep(id));
+    policy.tool_descriptions.retain(|id, _| keep(id));
+    policy.max_calls_per_tool.retain(|id, _| keep(id));
+    sizes(policy) != before
 }
 
 fn migrate_tool_policy_to_canonical_ids(

@@ -35,7 +35,7 @@ async fn agent_runtime_parent_and_child_read_their_own_skill_binding() {
                     json!({ "summary": "Critique complete.", "status": "completed" }),
                 ),
             ]),
-            model_tool_response(vec![model_tool_call("finish", "finish", json!({}))]),
+            model_text_response("Done."),
         ],
     );
     let profile = super::delegation::configure_return_mode_profiles(&fixture).await;
@@ -178,8 +178,10 @@ async fn agent_runtime_parent_and_child_read_their_own_skill_binding() {
 #[tokio::test]
 async fn agent_runtime_places_the_workspace_index_only_where_instructions_ask() {
     let root = temp_root("agent-workspace-placeholder");
-    let finish = || model_tool_response(vec![model_tool_call("finish", "finish", json!({}))]);
-    let fixture = agent_runtime_fixture_with_responses(&root, vec![finish(), finish()]);
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![model_text_response("Done."), model_text_response("Done.")],
+    );
     let profile = resolve_contract_profile(&fixture).await;
     for (id, instructions) in [
         (
@@ -278,7 +280,7 @@ async fn agent_runtime_mounts_the_current_chat_as_read_only_floors() {
                 ),
                 model_tool_call("grep_invalid", "grep", json!({ "pattern": "(" })),
             ]),
-            model_tool_response(vec![model_tool_call("finish", "finish", json!({}))]),
+            model_text_response("Done."),
         ],
     );
     let mut profile = resolve_contract_profile(&fixture).await;

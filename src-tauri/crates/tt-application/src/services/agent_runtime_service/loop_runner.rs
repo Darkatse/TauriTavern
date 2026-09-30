@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 
 use super::commit_ledger::RunCommitLedger;
 use super::continuation::{AutoCommitFile, InvocationFrame, InvocationStep, PendingToolTurn};
+use super::finish_policy::FinishPolicy;
 use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
 use super::tool_execution::recoverable_tool_error;
@@ -175,7 +176,13 @@ impl AgentRuntimeService {
                     .await?;
 
                     let has_tools = !response.tool_calls.is_empty();
-                    let direct_output_path = if has_tools || replied {
+                    let finish_policy = FinishPolicy::for_stage(
+                        exit_policy,
+                        &active_run.target,
+                        &prepared.tool_turn,
+                    );
+                    let text_ends_run = !has_tools && finish_policy.ends_run(commit_ledger);
+                    let direct_output_path = if has_tools || replied || text_ends_run {
                         None
                     } else {
                         self.capture_direct_output(
@@ -192,6 +199,22 @@ impl AgentRuntimeService {
                     prepared.request.messages.push(response.message);
                     if replied {
                         return Ok(Some(AgentLoopExit::Replied));
+                    } else if text_ends_run {
+                        progress.step = InvocationStep::Exited(AgentLoopExit::Finished);
+                        self.event(
+                            run_id,
+                            AgentRunEventLevel::Info,
+                            "agent_loop_finished",
+                            json!({
+                                "commitCount": commit_ledger.len(),
+                                "round": round,
+                                "invocationId": invocation_id,
+                                "endedBy": "text_turn",
+                                "finishPolicy": finish_policy,
+                            }),
+                        )
+                        .await?;
+                        self.ensure_not_cancelled(cancel)?;
                     } else if !has_tools {
                         progress.drift_attempts += 1;
                         let nudge = build_drift_recovery_nudge(
@@ -563,17 +586,17 @@ pub(super) fn completion_tool_name(
 ) -> String {
     match exit_policy {
         AgentInvocationExitPolicy::RunFinishAllowed => {
-            if turn_can_finish_run(turn) && turn_has_builtin(turn, "workspace.commit") {
-                format!(
+            match (
+                turn_can_finish_run(turn),
+                turn_has_builtin(turn, "workspace.commit"),
+            ) {
+                (true, true) => format!(
                     "{} with finish: true",
                     builtin_alias(tools, "workspace.commit")
-                )
-            } else if turn_can_finish_run(turn) {
-                builtin_alias(tools, "workspace.finish").to_string()
-            } else if turn_has_builtin(turn, AGENT_HANDOFF) {
-                builtin_alias(tools, AGENT_HANDOFF).to_string()
-            } else {
-                "an available Agent control tool".to_string()
+                ),
+                (true, false) => "a final reply without tool calls".to_string(),
+                // Only a stage that can hand off cannot finish the run itself.
+                (false, _) => builtin_alias(tools, AGENT_HANDOFF).to_string(),
             }
         }
         AgentInvocationExitPolicy::TaskReturnRequired => {
@@ -608,10 +631,11 @@ fn drift_recovery_attempt_limit(max_rounds: usize) -> usize {
 }
 
 /// Build the corrective `user` message we inject when the model returns a
-/// turn with zero tool calls. The phrasing covers the common drift modes:
+/// turn with zero tool calls and the stage's finish policy does not end the run.
+/// The phrasing covers the common drift modes:
 ///
 /// * **Post-commit drift** (committed_count > 0): the chat already shows the
-///   committed reply; the model only needs to end the stage.
+///   committed reply; a final commit with `finish: true` ends the stage.
 /// * **No-commit drift** (committed_count == 0): model bypassed the tool
 ///   workflow entirely. We point it at the saved direct text and ask for a
 ///   commit with `finish: true`, so recovery costs a single round.
@@ -629,45 +653,34 @@ fn build_drift_recovery_nudge(
     let prefix = format!("[system reminder, direct output recovery attempt {attempt}]");
     match exit_policy {
         AgentInvocationExitPolicy::RunFinishAllowed => {
-            let commit = turn_has_builtin(turn, "workspace.commit")
+            let can_finish = turn_can_finish_run(turn);
+            let commit = (can_finish && turn_has_builtin(turn, "workspace.commit"))
                 .then(|| builtin_alias(tools, "workspace.commit"));
-            let finish = turn_has_builtin(turn, "workspace.finish")
-                .then(|| builtin_alias(tools, "workspace.finish"));
-            if turn_can_finish_run(turn) {
-                let next_step = match (commit, finish, committed_count) {
-                    (Some(commit), Some(finish), 1..) => format!(
-                        "You have committed {committed_count} message(s) to the chat; call {finish} now. \
-                         If the committed content needs changes, edit the file, then call {commit} with \
-                         finish: true."
-                    ),
-                    (Some(commit), None, 1..) => format!(
+            if let Some(commit) = commit {
+                let next_step = if committed_count > 0 {
+                    format!(
                         "The chat already shows your committed reply. If it needs changes, edit the file \
                          first; then call {commit} with finish: true to end the run."
-                    ),
-                    (Some(commit), _, 0) => {
-                        let write = builtin_alias(tools, "workspace.write_file");
-                        match direct_output_path {
-                            Some(path) => format!(
-                                "I saved your text to {path}. If it is the intended reply, call {commit} \
-                                 with file_path \"{path}\" and finish: true. Otherwise write the reply with \
-                                 {write}, then call {commit} with finish: true.",
-                                path = path.as_str()
-                            ),
-                            None => format!(
-                                "Write the reply with {write}, then call {commit} with finish: true."
-                            ),
-                        }
+                    )
+                } else {
+                    let write = builtin_alias(tools, "workspace.write_file");
+                    match direct_output_path {
+                        Some(path) => format!(
+                            "I saved your text to {path}. If it is the intended reply, call {commit} \
+                             with file_path \"{path}\" and finish: true. Otherwise write the reply with \
+                             {write}, then call {commit} with finish: true.",
+                            path = path.as_str()
+                        ),
+                        None => format!(
+                            "Write the reply with {write}, then call {commit} with finish: true."
+                        ),
                     }
-                    (None, Some(finish), _) => {
-                        format!("Call {finish} when the run's work is complete.")
-                    }
-                    (None, None, _) => unreachable!("a stage that can finish has commit or finish"),
                 };
                 format!(
                     "{prefix} You replied with plain text, but only committed text reaches the chat. \
                      {next_step} Do NOT answer directly in plain text."
                 )
-            } else if turn_has_builtin(turn, AGENT_HANDOFF) {
+            } else if !can_finish {
                 let handoff = builtin_alias(tools, AGENT_HANDOFF);
                 let direct_output_hint = direct_output_path
                     .map(|path| {

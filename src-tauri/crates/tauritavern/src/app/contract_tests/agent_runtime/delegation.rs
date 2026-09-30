@@ -33,11 +33,7 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
                     json!({ "summary": "Add a concrete sound.", "status": "completed" }),
                 ),
             ]),
-            model_tool_response(vec![model_tool_call(
-                "call_parent_finish",
-                "finish",
-                json!({}),
-            )]),
+            model_text_response("Done."),
         ],
     );
     let profile = configure_return_mode_profiles(&fixture).await;
@@ -215,11 +211,7 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
                 ),
             ]),
             // The denied write reaches the target before it can finish.
-            model_tool_response(vec![model_tool_call(
-                "call_target_finish",
-                "finish",
-                json!({}),
-            )]),
+            model_text_response("Done."),
         ],
     );
     let profile = configure_handoff_profiles(&fixture).await;
@@ -357,7 +349,7 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
         requests[1]
             .tools
             .iter()
-            .any(|tool| tool.tool_id.native_name() == "workspace.finish")
+            .any(|tool| tool.tool_id.native_name() == "workspace.write_file")
     );
     assert!(
         requests[1]
@@ -379,7 +371,7 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
             .as_array()
             .expect("handoff snapshot bindings")
             .iter()
-            .any(|binding| binding["descriptor"]["id"] == "builtin:workspace.finish")
+            .any(|binding| binding["descriptor"]["id"] == "builtin:workspace.write_file")
     );
     assert!(message_text_for_role(&requests[1], AgentModelRole::User).contains("# Handoff Brief"));
     wait_for_closed_sessions(
@@ -501,11 +493,7 @@ async fn agent_runtime_recovers_handoff_before_trailing_tool() {
                     "handoff": { "objective": "Take over and finish." }
                 }),
             )]),
-            model_tool_response(vec![model_tool_call(
-                "call_target_finish",
-                "finish",
-                json!({}),
-            )]),
+            model_text_response("Done."),
         ],
     );
     let profile = configure_handoff_profiles(&fixture).await;

@@ -6,7 +6,7 @@
 
 工具目录使用稳定的 `ToolId`。内置工具是 `builtin:<name>`，MCP 工具是 `mcp/<registration-id>:<name>`，扩展工具是 `extension/<extensionId>:<name>`。Profile 的工具配置和运行记录使用这些 ID。
 
-模型调用名称在 Invocation 创建时生成，与稳定 ID 的映射保存在工具快照中，续跑沿用快照中的名称。工作区工具使用模型熟悉的短名称：`read`、`write`、`edit`、`grep`、`list`、`shell`、`commit`、`finish`；其他内置工具保留命名空间，如 `chat_search`。扩展使用注册的 `name`，MCP 使用服务器与工具名，按模型协议规范字符和长度，重名时加 `__2` 等短后缀。
+模型调用名称在 Invocation 创建时生成，与稳定 ID 的映射保存在工具快照中，续跑沿用快照中的名称。工作区工具使用模型熟悉的短名称：`read`、`write`、`edit`、`grep`、`list`、`shell`、`commit`；其他内置工具保留命名空间，如 `chat_search`。扩展使用注册的 `name`，MCP 使用服务器与工具名，按模型协议规范字符和长度，重名时加 `__2` 等短后缀。
 
 模型调用本轮未提供的名称时，runtime 返回可恢复错误 `model.unknown_tool_call`，列出本轮可用的名称；使用旧名称（如 `workspace_write_file`）时提示对应的新名称。这类调用计入 Invocation 调用预算。
 
@@ -25,11 +25,11 @@
 | 读取工作文件与 Skill | `workspace.list_files`、`workspace.search_files`、`workspace.read_file` |
 | 修改文件 | `workspace.write_file`、`workspace.apply_patch` |
 | Shell 与数据处理 | `workspace.shell`，内含 jq、Python 与 JavaScript |
-| 发布与结束 | `workspace.commit`（`finish: true` 提交后结束）、`workspace.finish`（不发布新消息时结束，后台运行必需） |
+| 发布与结束 | `workspace.commit`（`finish: true` 提交后结束）；只回文字的一轮按[结束策略](Runtime.md#结束与交接)处理 |
 | 委派与交接 | `agent.delegate`、`agent.await`、`agent.handoff`、`task.return` |
 | 掷骰 | `dice.roll` |
 
-文件工具使用通用参数名：`file_path`，读取范围为 `offset`（1-based 起始行）与 `limit`；`workspace.search_files` 与 `workspace.list_files` 接受文件或目录，使用 `path`。`workspace.search_files`（模型名 `grep`）只有 `pattern` 与 `path` 两个参数，按行做正则匹配（Rust regex 语法，`(?i)` 忽略大小写）。不带 `path` 时搜索 `tool-results/`、`skills/` 以外的可见目录和聊天挂载各楼层的 `message.md`；带 `path` 时只搜该文件或子树，`tool-results/`、`skills/` 也可这样搜到；楼层目录仍只匹配 `message.md`，`meta.json`、`chat.json` 需直接指定文件。结果按路径和行号排列，长行只保留首个匹配附近约 300 个字符，最多列出 100 行并给出总数，非法正则返回可恢复的 `workspace.grep_pattern_invalid`。聊天楼层直接在内存快照中匹配，按原文、不展开宏，不占用逐文件遍历的预算，隐藏楼层标 `[hidden]`。`workspace.commit` 须附一句 `reason`，说明本次提交的内容与原因，供模型自查并记入运行记录。内置工具的参数表是封闭的：runtime 按当前定义拒绝未知参数（包括按旧 schema 续跑的调用），改名的参数会提示新名称。已保存 Profile 中写给旧参数名（`path`、`start_line`、`line_count`、`query`）的描述覆盖会在加载时迁移。聊天工具读取 Run 输入对应的历史范围；聊天消息索引使用 0-based，与楼号一致。`chat.search` 按词打分排序，角色聊天的每条命中给出楼层文件路径（如 `floors/000003/message.md`），结果与 `resourceRefs` 同时带上该路径。较长文本可以分段读取。完整工具集合会按 Profile 收窄，return-mode 子 Agent 使用 `task.return` 作为结束工具。
+文件工具使用通用参数名：`file_path`，读取范围为 `offset`（1-based 起始行）与 `limit`；`workspace.search_files` 与 `workspace.list_files` 接受文件或目录，使用 `path`。`workspace.search_files`（模型名 `grep`）只有 `pattern` 与 `path` 两个参数，按行做正则匹配（Rust regex 语法，`(?i)` 忽略大小写）。不带 `path` 时搜索 `tool-results/`、`skills/` 以外的可见目录和聊天挂载各楼层的 `message.md`；带 `path` 时只搜该文件或子树，`tool-results/`、`skills/` 也可这样搜到；楼层目录仍只匹配 `message.md`，`meta.json`、`chat.json` 需直接指定文件。结果按路径和行号排列，长行只保留首个匹配附近约 300 个字符，最多列出 100 行并给出总数，非法正则返回可恢复的 `workspace.grep_pattern_invalid`。聊天楼层直接在内存快照中匹配，按原文、不展开宏，不占用逐文件遍历的预算，隐藏楼层标 `[hidden]`。`workspace.commit` 须附一句 `reason`，说明本次提交的内容与原因，供模型自查并记入运行记录。内置工具的参数表是封闭的：runtime 按当前定义拒绝未知参数（包括按旧 schema 续跑的调用），改名的参数会提示新名称。已保存 Profile 中写给旧参数名（`path`、`start_line`、`line_count`、`query`）的描述覆盖会在加载时迁移；已下线的内置工具（如 `workspace.finish`）在加载时从工具配置中去掉，续跑的旧 Run 调用它们时按未知工具返回可恢复错误。聊天工具读取 Run 输入对应的历史范围；聊天消息索引使用 0-based，与楼号一致。`chat.search` 按词打分排序，角色聊天的每条命中给出楼层文件路径（如 `floors/000003/message.md`），结果与 `resourceRefs` 同时带上该路径。较长文本可以分段读取。完整工具集合会按 Profile 收窄，return-mode 子 Agent 使用 `task.return` 作为结束工具。
 
 可调用 Agent 目录随提示词提供，协作方式与错误反馈见 [多 Agent 协作](SubAgent.md)。
 

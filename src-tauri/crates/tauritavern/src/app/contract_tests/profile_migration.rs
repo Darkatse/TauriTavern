@@ -28,7 +28,6 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
             "workspace.read_file",
             "workspace.write_file",
             "workspace.commit",
-            "workspace.finish",
         ]
         .map(|name| format!("builtin:{name}"))
         .to_vec();
@@ -65,6 +64,7 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
             json!("builtin:skill.read"),
             json!("builtin:skill.run_script"),
             json!("builtin:agent.list"),
+            json!("builtin:workspace.finish"),
         ]);
         legacy["tools"]["deny"]
             .as_array_mut()
@@ -124,5 +124,32 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
                 .is_err()
         );
     }
+
+    // A current-schema Profile that still lists the removed finish tool loads without it.
+    let mut profile = service
+        .load_profile(DEFAULT_AGENT_PROFILE_ID)
+        .await
+        .unwrap()
+        .unwrap();
+    profile.id = AgentProfileId::parse("current-with-finish").unwrap();
+    let expected = serde_json::to_value(&profile).unwrap();
+    let mut stored = expected.clone();
+    stored["tools"]["allow"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("builtin:workspace.finish"));
+    stored["tools"]["maxCallsPerTool"]["builtin:workspace.finish"] = json!(1);
+    let path = root.join("profiles").join("current-with-finish.json");
+    fs::write(&path, serde_json::to_vec(&stored).unwrap())
+        .await
+        .unwrap();
+    let loaded = service
+        .load_profile("current-with-finish")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(serde_json::to_value(&loaded).unwrap(), expected);
+    let saved: Value = serde_json::from_slice(&fs::read(&path).await.unwrap()).unwrap();
+    assert_eq!(saved, expected);
     fs::remove_dir_all(root).await.unwrap();
 }

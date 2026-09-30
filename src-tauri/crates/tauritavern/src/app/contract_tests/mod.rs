@@ -293,23 +293,13 @@ fn default_agent_responses() -> Vec<Value> {
                 }
             }]
         }),
-        json!({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": null,
-                    "tool_calls": [{
-                        "id": "call_finish",
-                        "type": "function",
-                        "function": {
-                            "name": "finish",
-                            "arguments": "{}"
-                        }
-                    }]
-                }
-            }]
-        }),
+        model_text_response("Done."),
     ]
+}
+
+/// A text-only turn; it ends the run once the stage's finish policy is met.
+fn model_text_response(content: &str) -> Value {
+    json!({ "choices": [{ "message": { "role": "assistant", "content": content } }] })
 }
 
 /// The contract suite exercises every builtin the runtime supports, so its base profile

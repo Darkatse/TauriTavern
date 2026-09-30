@@ -2,7 +2,6 @@ mod apply_patch;
 mod args;
 mod commit;
 mod descriptors;
-mod finish;
 mod list_files;
 mod read_file;
 mod render;
@@ -17,11 +16,10 @@ pub(super) use self::apply_patch::apply_patch;
 pub(crate) use self::args::classify_workspace_io_error;
 pub(super) use self::commit::commit;
 pub(super) use self::descriptors::{
-    workspace_apply_patch_descriptor, workspace_commit_descriptor, workspace_finish_descriptor,
-    workspace_list_files_descriptor, workspace_read_file_descriptor,
-    workspace_search_files_descriptor, workspace_shell_descriptor, workspace_write_file_descriptor,
+    workspace_apply_patch_descriptor, workspace_commit_descriptor, workspace_list_files_descriptor,
+    workspace_read_file_descriptor, workspace_search_files_descriptor, workspace_shell_descriptor,
+    workspace_write_file_descriptor,
 };
-pub(super) use self::finish::finish;
 pub(super) use self::list_files::list_files;
 pub(crate) use self::list_files::render_workspace_inventory;
 pub(super) use self::read_file::read_file;
@@ -36,7 +34,6 @@ pub(crate) const WORKSPACE_WRITE_FILE: &str = "workspace.write_file";
 pub(crate) const WORKSPACE_APPLY_PATCH: &str = "workspace.apply_patch";
 pub(crate) const WORKSPACE_SHELL: &str = "workspace.shell";
 pub(super) const WORKSPACE_COMMIT: &str = "workspace.commit";
-pub(crate) const WORKSPACE_FINISH: &str = "workspace.finish";
 
 const DEFAULT_LIST_DEPTH: usize = 2;
 const MAX_LIST_DEPTH: usize = 4;
