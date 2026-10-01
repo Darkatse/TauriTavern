@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
 use reqwest::header::{CONTENT_DISPOSITION, CONTENT_TYPE, HeaderMap, HeaderName};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWriteExt, BufWriter};
 use url::Url;
 
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
@@ -70,14 +70,15 @@ impl ExternalImportDownloader for HttpExternalImportDownloader {
             )));
         }
 
-        let mut file = tokio::fs::File::create(path)
+        let file = tokio::fs::File::create(path)
             .await
             .map_err(internal_error)?;
+        let mut writer = BufWriter::with_capacity(64 * 1024, file);
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.try_next().await.map_err(internal_error)? {
-            file.write_all(&chunk).await.map_err(internal_error)?;
+            writer.write_all(&chunk).await.map_err(internal_error)?;
         }
-        file.flush().await.map_err(internal_error)
+        writer.flush().await.map_err(internal_error)
     }
 }
 
