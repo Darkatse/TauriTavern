@@ -4066,7 +4066,9 @@ function getZaiReasoningEffort(settings, model) {
 
 function supportsOpenAiMaxReasoningEffort(model) {
     const normalizedModel = String(model ?? '').trim().toLowerCase();
-    return /^(?:gpt-5\.6(?:-(?:sol|terra|luna))?|gpt-6-astra)$/.test(normalizedModel);
+    return /^gpt-5\.6(?:-(?:sol|terra|luna))?$/.test(normalizedModel)
+        || normalizedModel.startsWith('gpt-6-')
+        || normalizedModel.startsWith('gpt-6.');
 }
 
 function supportsOpenAiXHighReasoningEffort(model) {
@@ -6984,7 +6986,7 @@ function getMaxContextOpenAI(value) {
     if (oai_settings.max_context_unlocked) {
         return unlocked_max;
     }
-    else if (/^gpt-5\.6(?:-(?:sol|terra|luna))?$/.test(value) || value === 'gpt-6-astra') {
+    else if (/^gpt-5\.6(?:-(?:sol|terra|luna))?$/.test(value) || value.startsWith('gpt-6-') || value.startsWith('gpt-6.')) {
         return max_1050k;
     }
     else if (/^gpt-5\.[45](?:$|-\d)/.test(value)) {

@@ -201,22 +201,24 @@ mod tests {
     }
 
     #[test]
-    fn openai_gpt_6_astra_uses_responses_api() {
-        let payload = json!({
-            "model": "gpt-6-astra",
-            "messages": [{"role": "user", "content": "hello"}],
-            "temperature": 0.7
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
+    fn openai_gpt_6_family_uses_responses_api() {
+        for model in ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"] {
+            let payload = json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "hello"}],
+                "temperature": 0.7
+            })
+            .as_object()
+            .cloned()
+            .expect("payload must be object");
 
-        let (endpoint, upstream) =
-            build_payload(ChatCompletionSource::OpenAi, payload).expect("payload should build");
+            let (endpoint, upstream) =
+                build_payload(ChatCompletionSource::OpenAi, payload).expect("payload should build");
 
-        assert_eq!(endpoint, "/responses");
-        assert_eq!(upstream["model"], "gpt-6-astra");
-        assert_eq!(upstream["temperature"], 0.7);
+            assert_eq!(endpoint, "/responses", "{model}");
+            assert_eq!(upstream["model"], model);
+            assert_eq!(upstream["temperature"], 0.7);
+        }
     }
 
     #[test]
