@@ -47,8 +47,8 @@ use tt_ports::repositories::asset_repository::AssetRepository;
 use tt_ports::repositories::avatar_repository::AvatarRepository;
 use tt_ports::repositories::background_repository::BackgroundRepository;
 use tt_ports::repositories::character_repository::CharacterRepository;
+use tt_ports::repositories::chat_commit_repository::ChatCommitRepository;
 use tt_ports::repositories::chat_completion_repository::ChatCompletionRepository;
-use tt_ports::repositories::chat_payload_commit_repository::ChatPayloadCommitRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::content_repository::ContentRepository;
 use tt_ports::repositories::extension_repository::ExtensionRepository;
@@ -87,8 +87,7 @@ pub(in crate::app::composition) struct AppRepositories {
     pub(in crate::app::composition) character_repository: Arc<dyn CharacterRepository>,
     pub(in crate::app::composition) chat_repository: Arc<dyn ChatRepository>,
     pub(in crate::app::composition) group_chat_repository: Arc<dyn GroupChatRepository>,
-    pub(in crate::app::composition) chat_payload_commit_repository:
-        Arc<dyn ChatPayloadCommitRepository>,
+    pub(in crate::app::composition) chat_commit_repository: Arc<dyn ChatCommitRepository>,
     pub(in crate::app::composition) chat_backup_runtime: Arc<dyn ChatBackupRuntime>,
     pub(in crate::app::composition) user_repository: Arc<dyn UserRepository>,
     pub(in crate::app::composition) settings_repository: Arc<dyn SettingsRepository>,
@@ -170,8 +169,7 @@ pub(super) async fn build(
             file_chat_repository.clone(),
         ));
     let chat_repository: Arc<dyn ChatRepository> = file_chat_repository.clone();
-    let chat_payload_commit_repository: Arc<dyn ChatPayloadCommitRepository> =
-        file_chat_repository.clone();
+    let chat_commit_repository: Arc<dyn ChatCommitRepository> = file_chat_repository.clone();
     let chat_backup_runtime: Arc<dyn ChatBackupRuntime> = file_chat_repository.clone();
     let group_chat_repository: Arc<dyn GroupChatRepository> = file_chat_repository;
 
@@ -355,7 +353,7 @@ pub(super) async fn build(
         character_repository,
         chat_repository,
         group_chat_repository,
-        chat_payload_commit_repository,
+        chat_commit_repository,
         chat_backup_runtime,
         user_repository,
         settings_repository,

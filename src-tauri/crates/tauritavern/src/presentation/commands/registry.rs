@@ -268,10 +268,10 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::upload_staging_commands::stage_upload_finish,
         super::upload_staging_commands::stage_upload_discard,
         // Chat payload commit commands
-        super::chat_payload_commit_commands::begin_chat_commit,
-        super::chat_payload_commit_commands::append_chat_commit_chunk,
-        super::chat_payload_commit_commands::finish_chat_commit,
-        super::chat_payload_commit_commands::abort_chat_commit,
+        super::chat_commit_commands::begin_chat_commit,
+        super::chat_commit_commands::append_chat_commit_chunk,
+        super::chat_commit_commands::finish_chat_commit,
+        super::chat_commit_commands::abort_chat_commit,
         // File commands
         super::file_commands::sanitize_filename,
         super::file_commands::upload_user_file,

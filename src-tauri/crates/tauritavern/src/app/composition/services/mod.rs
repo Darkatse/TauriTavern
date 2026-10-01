@@ -19,9 +19,9 @@ use tt_application::services::asset_service::AssetService;
 use tt_application::services::avatar_service::AvatarService;
 use tt_application::services::background_service::BackgroundService;
 use tt_application::services::character_service::CharacterService;
+use tt_application::services::chat_commit_service::ChatCommitService;
 use tt_application::services::chat_completion_service::ChatCompletionService;
 use tt_application::services::chat_history_coordinator::ChatHistoryCoordinator;
-use tt_application::services::chat_payload_commit_service::ChatPayloadCommitService;
 use tt_application::services::chat_service::ChatService;
 use tt_application::services::content_service::ContentService;
 use tt_application::services::database_service::DatabaseService;
@@ -191,8 +191,8 @@ pub(super) async fn build(
         repositories.chat_repository.clone(),
         repositories.group_chat_repository.clone(),
     ));
-    let chat_payload_commit_service = Arc::new(ChatPayloadCommitService::new(
-        repositories.chat_payload_commit_repository.clone(),
+    let chat_commit_service = Arc::new(ChatCommitService::new(
+        repositories.chat_commit_repository.clone(),
         chat_history_coordinator.clone(),
     ));
 
@@ -265,7 +265,7 @@ pub(super) async fn build(
         chat_service,
         group_chat_service,
         chat_history_coordinator,
-        chat_payload_commit_service,
+        chat_commit_service,
         user_service,
         settings_service,
         user_directory_service,

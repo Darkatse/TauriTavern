@@ -10,9 +10,9 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tt_domain::errors::DomainError;
-use tt_ports::repositories::chat_payload_commit_repository::{
-    ChatCommitOperation, ChatPayloadCommitBegin, ChatPayloadCommitRepository, ChatPayloadTarget,
-    ChatSwipeSource, ColdSwipeCommitSource, CommittedChatPayload,
+use tt_ports::repositories::chat_commit_repository::{
+    ChatCommitBegin, ChatCommitOperation, ChatCommitRepository, ChatCommitResult, ChatCommitTarget,
+    ChatSwipeSource, ColdSwipeCommitSource,
 };
 use uuid::Uuid;
 
@@ -58,7 +58,7 @@ fn new_content_hasher() -> Option<Sha256> {
 }
 
 pub(super) struct CommitSession {
-    target: ChatPayloadTarget,
+    target: ChatCommitTarget,
     target_path: PathBuf,
     operation: ChatCommitOperation,
     stage: CommitStage,
@@ -131,27 +131,27 @@ impl FileChatRepository {
 
     pub(super) async fn resolve_chat_commit_target(
         &self,
-        target: &ChatPayloadTarget,
+        target: &ChatCommitTarget,
     ) -> Result<PathBuf, DomainError> {
         match target {
-            ChatPayloadTarget::Character {
+            ChatCommitTarget::Character {
                 character_id,
                 file_name,
             } => {
                 self.resolve_character_chat_path(character_id, file_name)
                     .await
             }
-            ChatPayloadTarget::Group { chat_id } => self.get_group_chat_path(chat_id),
+            ChatCommitTarget::Group { chat_id } => self.get_group_chat_path(chat_id),
         }
     }
 
     /// Drops cached reads of a chat whose file was just replaced.
     pub(super) async fn invalidate_chat_caches(
         &self,
-        target: &ChatPayloadTarget,
+        target: &ChatCommitTarget,
         path: &Path,
     ) -> Result<(), DomainError> {
-        if let ChatPayloadTarget::Character {
+        if let ChatCommitTarget::Character {
             character_id,
             file_name,
         } = target
@@ -253,10 +253,10 @@ impl FileChatRepository {
 }
 
 #[async_trait]
-impl ChatPayloadCommitRepository for FileChatRepository {
+impl ChatCommitRepository for FileChatRepository {
     async fn open_swipe_source(
         &self,
-        target: ChatPayloadTarget,
+        target: ChatCommitTarget,
     ) -> Result<Arc<dyn ChatSwipeSource>, DomainError> {
         let path = self.resolve_chat_commit_target(&target).await?;
         super::cold_swipes::FileSwipeSource::open(&path).await
@@ -264,9 +264,9 @@ impl ChatPayloadCommitRepository for FileChatRepository {
 
     async fn begin(
         &self,
-        target: ChatPayloadTarget,
+        target: ChatCommitTarget,
         operation: ChatCommitOperation,
-    ) -> Result<ChatPayloadCommitBegin, DomainError> {
+    ) -> Result<ChatCommitBegin, DomainError> {
         let target_path = self.resolve_chat_commit_target(&target).await?;
         if let Some(parent) = target_path.parent() {
             fs::create_dir_all(parent).await.map_err(|error| {
@@ -341,7 +341,7 @@ impl ChatPayloadCommitRepository for FileChatRepository {
         sessions.insert(session_id, session);
         drop(sessions);
 
-        Ok(ChatPayloadCommitBegin {
+        Ok(ChatCommitBegin {
             session_id: session_id.to_string(),
             max_frame_bytes,
         })
@@ -412,7 +412,7 @@ impl ChatPayloadCommitRepository for FileChatRepository {
         &self,
         session_id: &str,
         expected_size: u64,
-    ) -> Result<CommittedChatPayload, DomainError> {
+    ) -> Result<ChatCommitResult, DomainError> {
         let parsed_session_id = Self::parse_chat_commit_session_id(session_id)?;
         let session = self
             .chat_commit_sessions
@@ -473,7 +473,7 @@ impl ChatPayloadCommitRepository for FileChatRepository {
         self.remove_chat_commit_stage(&publish_path).await;
         let size = result?;
         self.invalidate_chat_caches(&target, &target_path).await?;
-        Ok(CommittedChatPayload {
+        Ok(ChatCommitResult {
             target,
             accepted_size,
             size,

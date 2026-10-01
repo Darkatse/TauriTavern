@@ -9,8 +9,8 @@ use tokio::fs;
 use crate::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::ChatBackupSettings;
-use tt_ports::repositories::chat_payload_commit_repository::{
-    ChatCommitOperation, ChatPayloadCommitRepository, ChatPayloadTarget, CommittedChatPayload,
+use tt_ports::repositories::chat_commit_repository::{
+    ChatCommitOperation, ChatCommitRepository, ChatCommitResult, ChatCommitTarget,
 };
 use tt_ports::repositories::chat_repository::{
     ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchQuery, ChatRepository,
@@ -81,10 +81,10 @@ async fn read_backup_payload(
 
 async fn commit_payload_bytes(
     repository: &FileChatRepository,
-    target: ChatPayloadTarget,
+    target: ChatCommitTarget,
     bytes: &[u8],
     force: bool,
-) -> Result<CommittedChatPayload, DomainError> {
+) -> Result<ChatCommitResult, DomainError> {
     commit_bytes(
         repository,
         target,
@@ -99,9 +99,9 @@ async fn commit_payload_bytes(
 
 async fn commit_metadata(
     repository: &FileChatRepository,
-    target: ChatPayloadTarget,
+    target: ChatCommitTarget,
     metadata: Value,
-) -> Result<CommittedChatPayload, DomainError> {
+) -> Result<ChatCommitResult, DomainError> {
     commit_bytes(
         repository,
         target,
@@ -113,10 +113,10 @@ async fn commit_metadata(
 
 async fn commit_bytes(
     repository: &FileChatRepository,
-    target: ChatPayloadTarget,
+    target: ChatCommitTarget,
     bytes: &[u8],
     operation: ChatCommitOperation,
-) -> Result<CommittedChatPayload, DomainError> {
+) -> Result<ChatCommitResult, DomainError> {
     let session = repository.begin(target, operation).await?;
     let frame_bytes = session.max_frame_bytes as usize;
     let mut offset = 0;
@@ -130,8 +130,8 @@ async fn commit_bytes(
         .await
 }
 
-fn character_target(character_id: &str, file_name: &str) -> ChatPayloadTarget {
-    ChatPayloadTarget::Character {
+fn character_target(character_id: &str, file_name: &str) -> ChatCommitTarget {
+    ChatCommitTarget::Character {
         character_id: character_id.to_string(),
         file_name: file_name.to_string(),
     }
@@ -256,7 +256,7 @@ async fn metadata_commit_preserves_header_fields_and_exact_body_bytes() {
     .into_bytes();
     // A metadata edit must preserve even a body that cannot be decoded as UTF-8.
     body.push(0xff);
-    let target = ChatPayloadTarget::Group {
+    let target = ChatCommitTarget::Group {
         chat_id: "metadata".into(),
     };
     let path = repository
@@ -1503,7 +1503,7 @@ async fn cache_clear_reenables_group_backup_after_deduplication() {
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
     commit_payload_bytes(
         &repository,
-        ChatPayloadTarget::Group {
+        ChatCommitTarget::Group {
             chat_id: "group-session".into(),
         },
         b"{}",
@@ -1708,7 +1708,7 @@ async fn chat_commit_requires_force_to_replace_or_remove_existing_integrity() {
             root.join("chats/alice/session.jsonl"),
         ),
         (
-            ChatPayloadTarget::Group {
+            ChatCommitTarget::Group {
                 chat_id: "group-session".into(),
             },
             root.join("group chats/group-session.jsonl"),
@@ -1809,7 +1809,7 @@ async fn group_chat_payload_roundtrip_and_delete() {
 
     commit_payload_bytes(
         &repository,
-        ChatPayloadTarget::Group {
+        ChatCommitTarget::Group {
             chat_id: "group-session".into(),
         },
         payload_to_jsonl(&payload).as_bytes(),
@@ -2612,7 +2612,7 @@ async fn search_group_chat_messages_respects_scan_limit() {
 
     commit_payload_bytes(
         &repository,
-        ChatPayloadTarget::Group {
+        ChatCommitTarget::Group {
             chat_id: "group-one".into(),
         },
         payload_to_jsonl(&payload).as_bytes(),
@@ -2884,7 +2884,7 @@ async fn chat_payload_paging_returns_tail_and_before_for_character_and_group() {
     );
     for target in [
         character_target("alice", "session"),
-        ChatPayloadTarget::Group {
+        ChatCommitTarget::Group {
             chat_id: "group-session".into(),
         },
     ] {
@@ -3002,10 +3002,10 @@ fn swipe_fixture() -> Vec<Value> {
 
 #[tokio::test]
 async fn cold_swipes_round_trip_retains_source_across_metadata_publish_reorder_and_copy() {
-    use tt_ports::repositories::chat_payload_commit_repository::ColdSwipeCommitSource;
+    use tt_ports::repositories::chat_commit_repository::ColdSwipeCommitSource;
     for target in [
         character_target("Alice", "cold"),
-        ChatPayloadTarget::Group {
+        ChatCommitTarget::Group {
             chat_id: "cold".into(),
         },
     ] {
@@ -3116,7 +3116,7 @@ async fn cold_swipes_round_trip_retains_source_across_metadata_publish_reorder_a
         expected[3] = original[1].clone();
         expected[3]["swipe_id"] = json!(0);
         assert_eq!(restored, expected);
-        if let ChatPayloadTarget::Character {
+        if let ChatCommitTarget::Character {
             character_id,
             file_name,
         } = &target
@@ -3144,9 +3144,9 @@ async fn cold_swipes_round_trip_retains_source_across_metadata_publish_reorder_a
 
 #[tokio::test]
 async fn cold_swipes_reject_invalid_merges_without_publishing_or_leaving_stages() {
-    use tt_ports::repositories::chat_payload_commit_repository::ColdSwipeCommitSource;
+    use tt_ports::repositories::chat_commit_repository::ColdSwipeCommitSource;
     let (repository, root) = setup_repository().await;
-    let target = ChatPayloadTarget::Group {
+    let target = ChatCommitTarget::Group {
         chat_id: "reject-cold".into(),
     };
     let original = payload_to_jsonl(&swipe_fixture());
@@ -3217,7 +3217,7 @@ async fn cold_swipes_reject_invalid_merges_without_publishing_or_leaving_stages(
 #[tokio::test]
 async fn cold_swipes_lookahead_handles_empty_header_only_and_unterminated_tail() {
     let (repository, root) = setup_repository().await;
-    let target = ChatPayloadTarget::Group {
+    let target = ChatCommitTarget::Group {
         chat_id: "boundaries".into(),
     };
     let path = repository
@@ -3250,9 +3250,9 @@ async fn cold_swipes_lookahead_handles_empty_header_only_and_unterminated_tail()
 
 #[tokio::test]
 async fn cold_swipes_project_and_restore_all_message_roles() {
-    use tt_ports::repositories::chat_payload_commit_repository::ColdSwipeCommitSource;
+    use tt_ports::repositories::chat_commit_repository::ColdSwipeCommitSource;
     let (repository, root) = setup_repository().await;
-    let target = ChatPayloadTarget::Group {
+    let target = ChatCommitTarget::Group {
         chat_id: "ordered-cold".into(),
     };
     let message = r#"{"z-extension":{"z":1,"a":2},"mes":"active","swipe_id":1,"swipes":["old","active"],"swipe_info":[{},{}],"a-extension":true}"#;

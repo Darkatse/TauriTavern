@@ -7,21 +7,21 @@ use crate::app::AppState;
 use crate::presentation::commands::chunk_body::chunk_bytes_from_request;
 use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
-use tt_ports::repositories::chat_payload_commit_repository::ChatCommitOperation;
+use tt_ports::repositories::chat_commit_repository::ChatCommitOperation;
 
 const HEADER_OFFSET: &str = "offset";
 const HEADER_SESSION_ID: &str = "session-id";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BeginChatCommitResult {
+pub struct ChatCommitBeginResponse {
     session_id: String,
     max_frame_bytes: u64,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FinishChatCommitResult {
+pub struct ChatCommitFinishResponse {
     accepted_size: u64,
     size: u64,
 }
@@ -56,7 +56,7 @@ pub async fn begin_chat_commit(
     operation: ChatCommitOperationDto,
     webview: Webview,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<BeginChatCommitResult, CommandError> {
+) -> Result<ChatCommitBeginResponse, CommandError> {
     let operation = match operation {
         ChatCommitOperationDto::Payload {
             force,
@@ -74,11 +74,11 @@ pub async fn begin_chat_commit(
     };
     let session = app_state
         .services
-        .chat_payload_commit_service
+        .chat_commit_service
         .begin(target, operation)
         .await?;
 
-    Ok(BeginChatCommitResult {
+    Ok(ChatCommitBeginResponse {
         session_id: session.session_id,
         max_frame_bytes: session.max_frame_bytes,
     })
@@ -97,7 +97,7 @@ pub async fn append_chat_commit_chunk(
 
     app_state
         .services
-        .chat_payload_commit_service
+        .chat_commit_service
         .append(&session_id, offset, &bytes)
         .await
         .map_err(Into::into)
@@ -109,14 +109,14 @@ pub async fn finish_chat_commit(
     expected_size: u64,
     commit_reason: CurrentCommitReason,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<FinishChatCommitResult, CommandError> {
+) -> Result<ChatCommitFinishResponse, CommandError> {
     let committed = app_state
         .services
-        .chat_payload_commit_service
+        .chat_commit_service
         .finish(&session_id, expected_size, commit_reason)
         .await?;
 
-    Ok(FinishChatCommitResult {
+    Ok(ChatCommitFinishResponse {
         accepted_size: committed.accepted_size,
         size: committed.size,
     })
@@ -129,7 +129,7 @@ pub async fn abort_chat_commit(
 ) -> Result<(), CommandError> {
     app_state
         .services
-        .chat_payload_commit_service
+        .chat_commit_service
         .abort(&session_id)
         .await
         .map_err(Into::into)

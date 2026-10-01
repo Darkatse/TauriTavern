@@ -12,9 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 use tt_domain::errors::DomainError;
-use tt_ports::repositories::chat_payload_commit_repository::{
-    ChatSwipeSource, RestoredChatPayload,
-};
+use tt_ports::repositories::chat_commit_repository::{ChatSwipeSource, RestoredChatPayload};
 use tt_ports::repositories::chat_repository::ChatByteReader;
 
 const COLD: &str = "tt_swipe_cold";

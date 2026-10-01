@@ -4,9 +4,7 @@ use serde::Serialize;
 use tauri::{Manager, Resource, ResourceId, State, Webview};
 use tokio::sync::Mutex;
 use tt_application::dto::chat_history_dto::ChatHistoryLocator;
-use tt_ports::repositories::chat_payload_commit_repository::{
-    ChatSwipeSource, ColdSwipeCommitSource,
-};
+use tt_ports::repositories::chat_commit_repository::{ChatSwipeSource, ColdSwipeCommitSource};
 
 use super::chat_commands::ChatByteResource;
 use crate::app::AppState;
@@ -49,7 +47,7 @@ pub async fn open_cold_chat(
 ) -> Result<Option<OpenColdChatResult>, CommandError> {
     let Some(source) = app_state
         .services
-        .chat_payload_commit_service
+        .chat_commit_service
         .open_swipe_source(target, allow_not_found)
         .await?
     else {

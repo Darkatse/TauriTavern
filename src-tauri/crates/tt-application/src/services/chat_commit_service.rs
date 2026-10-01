@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use tt_ports::repositories::chat_payload_commit_repository::{
-    ChatCommitOperation, ChatPayloadCommitBegin, ChatPayloadCommitRepository, ChatPayloadTarget,
-    ChatSwipeSource, CommittedChatPayload,
+use tt_ports::repositories::chat_commit_repository::{
+    ChatCommitBegin, ChatCommitOperation, ChatCommitRepository, ChatCommitResult, ChatCommitTarget,
+    ChatSwipeSource,
 };
 
 use crate::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
@@ -11,14 +11,14 @@ use crate::services::chat_file_validation::validate_chat_history_locator;
 use crate::services::chat_history_coordinator::ChatHistoryCoordinator;
 
 /// Coordinates full-payload and metadata commits with chat-history scheduling.
-pub struct ChatPayloadCommitService {
-    repository: Arc<dyn ChatPayloadCommitRepository>,
+pub struct ChatCommitService {
+    repository: Arc<dyn ChatCommitRepository>,
     chat_history_coordinator: Arc<ChatHistoryCoordinator>,
 }
 
-impl ChatPayloadCommitService {
+impl ChatCommitService {
     pub fn new(
-        repository: Arc<dyn ChatPayloadCommitRepository>,
+        repository: Arc<dyn ChatCommitRepository>,
         chat_history_coordinator: Arc<ChatHistoryCoordinator>,
     ) -> Self {
         Self {
@@ -31,7 +31,7 @@ impl ChatPayloadCommitService {
         &self,
         locator: ChatHistoryLocator,
         operation: ChatCommitOperation,
-    ) -> Result<ChatPayloadCommitBegin, ApplicationError> {
+    ) -> Result<ChatCommitBegin, ApplicationError> {
         validate_chat_history_locator(&locator)?;
         if let ChatCommitOperation::MetadataExtension { namespace } = &operation
             && namespace.trim().is_empty()
@@ -77,7 +77,7 @@ impl ChatPayloadCommitService {
         session_id: &str,
         expected_size: u64,
         commit_reason: CurrentCommitReason,
-    ) -> Result<CommittedChatPayload, ApplicationError> {
+    ) -> Result<ChatCommitResult, ApplicationError> {
         let committed = self.repository.finish(session_id, expected_size).await?;
         self.chat_history_coordinator
             .note_current_committed(committed.target.clone().into(), commit_reason)
@@ -90,30 +90,30 @@ impl ChatPayloadCommitService {
     }
 }
 
-fn target_from_locator(locator: ChatHistoryLocator) -> ChatPayloadTarget {
+fn target_from_locator(locator: ChatHistoryLocator) -> ChatCommitTarget {
     match locator {
         ChatHistoryLocator::Character {
             character_id,
             file_name,
-        } => ChatPayloadTarget::Character {
+        } => ChatCommitTarget::Character {
             character_id,
             file_name,
         },
-        ChatHistoryLocator::Group { chat_id } => ChatPayloadTarget::Group { chat_id },
+        ChatHistoryLocator::Group { chat_id } => ChatCommitTarget::Group { chat_id },
     }
 }
 
-impl From<ChatPayloadTarget> for ChatHistoryLocator {
-    fn from(target: ChatPayloadTarget) -> Self {
+impl From<ChatCommitTarget> for ChatHistoryLocator {
+    fn from(target: ChatCommitTarget) -> Self {
         match target {
-            ChatPayloadTarget::Character {
+            ChatCommitTarget::Character {
                 character_id,
                 file_name,
             } => Self::Character {
                 character_id,
                 file_name,
             },
-            ChatPayloadTarget::Group { chat_id } => Self::Group { chat_id },
+            ChatCommitTarget::Group { chat_id } => Self::Group { chat_id },
         }
     }
 }

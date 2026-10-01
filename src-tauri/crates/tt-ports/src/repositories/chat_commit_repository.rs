@@ -46,7 +46,7 @@ pub struct RestoredChatPayload {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ChatPayloadTarget {
+pub enum ChatCommitTarget {
     Character {
         character_id: String,
         file_name: String,
@@ -57,30 +57,30 @@ pub enum ChatPayloadTarget {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ChatPayloadCommitBegin {
+pub struct ChatCommitBegin {
     pub session_id: String,
     pub max_frame_bytes: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CommittedChatPayload {
-    pub target: ChatPayloadTarget,
+pub struct ChatCommitResult {
+    pub target: ChatCommitTarget,
     pub accepted_size: u64,
     pub size: u64,
 }
 
 /// Atomically publishes full chat payloads or metadata-only updates.
 #[async_trait]
-pub trait ChatPayloadCommitRepository: Send + Sync {
+pub trait ChatCommitRepository: Send + Sync {
     async fn open_swipe_source(
         &self,
-        target: ChatPayloadTarget,
+        target: ChatCommitTarget,
     ) -> Result<Arc<dyn ChatSwipeSource>, DomainError>;
     async fn begin(
         &self,
-        target: ChatPayloadTarget,
+        target: ChatCommitTarget,
         operation: ChatCommitOperation,
-    ) -> Result<ChatPayloadCommitBegin, DomainError>;
+    ) -> Result<ChatCommitBegin, DomainError>;
 
     async fn append(&self, session_id: &str, offset: u64, bytes: &[u8])
     -> Result<u64, DomainError>;
@@ -89,7 +89,7 @@ pub trait ChatPayloadCommitRepository: Send + Sync {
         &self,
         session_id: &str,
         expected_size: u64,
-    ) -> Result<CommittedChatPayload, DomainError>;
+    ) -> Result<ChatCommitResult, DomainError>;
 
     /// Aborting an absent or already-consumed session is a successful no-op.
     async fn abort(&self, session_id: &str) -> Result<(), DomainError>;
