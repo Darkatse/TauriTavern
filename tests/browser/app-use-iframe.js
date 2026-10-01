@@ -1,6 +1,8 @@
 import { createObservation } from '../../src/scripts/extensions/in-app-agent/src/ui/snapshot.ts';
 import { interact } from '../../src/scripts/extensions/in-app-agent/src/ui/interact.ts';
 import { parkManagedIframe, dropParkedManagedIframe } from '../../src/tauri/main/adapters/embedded-runtime/managed-iframe-parking-lot.js';
+import { initDrawers, toggleInlineDrawer } from '../../src/scripts/drawers.js';
+import { initLegacyControls } from '../../src/scripts/legacy-controls.js';
 
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const loaded = frame => new Promise(resolve => frame.addEventListener('load', resolve, { once: true }));
@@ -88,6 +90,30 @@ run.onclick = async () => {
         assert(adopted.value === 'adopted' && mainResult.observed.connected, 'unscoped selector did not use the main document');
         await act(page, 'Child text', { action: 'fill', value: 'after main-page action' });
         assert(child.querySelector('output').value === 'after main-page action', 'selector changed the existing snapshot scope');
+
+        initDrawers();
+        initLegacyControls();
+        const drawer = child.createElement('div');
+        drawer.className = 'inline-drawer';
+        drawer.innerHTML = '<div class="inline-drawer-toggle"><i class="inline-drawer-icon down"></i></div><div class="inline-drawer-content" style="display:none">Adopted panel</div>';
+        fixture.prepend(drawer);
+        assert(drawer.ownerDocument === document && !(drawer instanceof HTMLElement), 'fixture must retain the iframe prototype after adoption');
+        await new Promise(requestAnimationFrame);
+        const icon = drawer.querySelector('.inline-drawer-icon');
+        const content = drawer.querySelector('.inline-drawer-content');
+        assert(document.getElementById(icon.getAttribute('aria-controls')) === content && icon.tabIndex === 0, 'adopted drawer was not discovered');
+        icon.addEventListener('click', () => toggleInlineDrawer(drawer, 0));
+        icon.click();
+        assert(content.style.display === 'block' && icon.getAttribute('aria-expanded') === 'true', 'adopted drawer did not open');
+        icon.focus();
+        icon.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        assert(content.style.display === 'none' && icon.getAttribute('aria-expanded') === 'false', 'adopted drawer did not close through keyboard activation');
+        icon.classList.replace('down', 'up');
+        content.style.display = 'flex';
+        await new Promise(requestAnimationFrame);
+        assert(icon.getAttribute('aria-expanded') === 'true' && content.style.display === 'flex', 'adopted drawer lost external state projection');
+        drawer.remove();
+        reports.push('PASS: adopted script drawer discovery, click, keyboard and external state');
 
         const wrapper = document.createElement('div');
         wrapper.style.cssText = 'width:0;height:0';

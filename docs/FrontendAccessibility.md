@@ -10,6 +10,8 @@
 
 样式与业务状态不能单独决定控件语义：分组容器不是按钮，条目的 `.disabled` 也不代表其内部操作不可用。已有扩展的 DOM、角色与焦点约定应按实际用途保留。
 
+角色卡脚本可以在同源 iframe 中创建控件，再挂入宿主页面。抽屉与旧控件适配层通过节点类型和 HTML 命名空间识别这些节点；挂载不会改变其 JavaScript 原型，不能用主窗口的 `instanceof HTMLElement` 排除它们。
+
 ## 配对数值控件
 
 [`dom-handlers.js`](../src/scripts/dom-handlers.js) 管理已有 `.range-block-counter`、`.neo-range-input` 数字框与 `data-for` 指向的 range。数字框允许编辑草稿，`change`、Enter 和滚轮沿 range 的既有 `input` 业务路径提交；无效值留在字段中供修正，不写入设置，也不阻止离开字段。

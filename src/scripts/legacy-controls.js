@@ -1,4 +1,6 @@
 /** DOM-only compatibility for the old controls shared by login and the main app. */
+import { isElement, isHTMLElement } from './util/dom-types.js';
+
 export const INTERACTABLE_CONTROL_CLASS = 'interactable';
 export const CUSTOM_INTERACTABLE_CONTROL_CLASS = 'custom_interactable';
 export const NOT_FOCUSABLE_CONTROL_CLASS = 'not_focusable';
@@ -146,7 +148,7 @@ function syncControl(control) {
 
 /** @param {Element|Document} root */
 function initializeSubtree(root) {
-    if (root instanceof Element) syncControl(root);
+    if (isElement(root)) syncControl(root);
     root.querySelectorAll(`${interactableSelectors},${structuralSelectors}`).forEach(syncControl);
 }
 
@@ -192,7 +194,7 @@ export function initLegacyControls() {
         for (const mutation of mutations) {
             if (mutation.type === 'childList') {
                 for (const node of mutation.addedNodes) {
-                    if (node instanceof Element) initializeSubtree(node);
+                    if (isElement(node)) initializeSubtree(node);
                 }
                 continue;
             }
@@ -224,7 +226,7 @@ export function initLegacyControls() {
     doc.addEventListener('keydown', event => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
         const target = event.target;
-        if (!isUnmodifiedActivation(event) || !(target instanceof HTMLElement) || !needsLegacyActivation(target)) return;
+        if (!isUnmodifiedActivation(event) || !isHTMLElement(target) || !needsLegacyActivation(target)) return;
         if (isControlDisabled(target)) {
             event.preventDefault();
             return;

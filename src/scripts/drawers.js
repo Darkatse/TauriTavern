@@ -1,6 +1,7 @@
 // @ts-check
 
 import { cancelInlineDrawerMotion, setInlineDrawerContentOpen } from './tauri/perf/inline-drawer-motion.js';
+import { isElement, isHTMLElement } from './util/dom-types.js';
 
 const STATE_CHANGE = 'tt-drawer-state-change';
 /** @typedef {{ toggle: HTMLElement; icon: HTMLElement | null; control: HTMLElement }} TopLevelParts */
@@ -70,12 +71,12 @@ function projectTopLevelDrawer(panel) {
 function initializeTopLevelDrawer(drawer) {
     if (!isInstance(drawer)) return;
     const toggle = drawer.querySelector(':scope > .drawer-toggle');
-    if (!(toggle instanceof HTMLElement)) return;
+    if (!isHTMLElement(toggle)) return;
     const panel = panelByToggle.get(toggle) ?? drawer.querySelector(':scope > .drawer-content');
-    if (!(panel instanceof HTMLElement)) return;
+    if (!isHTMLElement(panel)) return;
     const icon = toggle.querySelector('.drawer-icon');
-    const control = toggle.matches('button') ? toggle : icon instanceof HTMLElement ? icon : toggle;
-    topLevelParts.set(panel, { toggle, icon: icon instanceof HTMLElement ? icon : null, control });
+    const control = toggle.matches('button') ? toggle : isHTMLElement(icon) ? icon : toggle;
+    topLevelParts.set(panel, { toggle, icon: isHTMLElement(icon) ? icon : null, control });
     panelByToggle.set(toggle, panel);
     if (!control.hasAttribute('aria-label') && !control.hasAttribute('aria-labelledby') && !control.title && toggle.title) {
         control.title = toggle.title;
@@ -86,10 +87,10 @@ function initializeTopLevelDrawer(drawer) {
 
 /** @param {HTMLElement | null | undefined} toggle @returns {HTMLElement | null} */
 export function getTopLevelDrawerPanel(toggle) {
-    if (!(toggle instanceof HTMLElement)) return null;
+    if (!isHTMLElement(toggle)) return null;
     initDrawers();
     const drawer = toggle.closest('.drawer');
-    if (drawer instanceof HTMLElement) initializeTopLevelDrawer(drawer);
+    if (isHTMLElement(drawer)) initializeTopLevelDrawer(drawer);
     return panelByToggle.get(toggle) ?? null;
 }
 
@@ -115,11 +116,11 @@ export function subscribeDrawerState(panel, listener) {
 /** @param {HTMLElement} drawer @returns {InlineParts | null} */
 function getInlineParts(drawer) {
     const content = drawer.querySelector(':scope > .inline-drawer-content');
-    if (!(content instanceof HTMLElement)) return null;
+    if (!isHTMLElement(content)) return null;
     const toggle = Array.from(drawer.querySelectorAll('.inline-drawer-toggle'))
         .find(element => element.closest('.inline-drawer') === drawer);
     const icon = toggle?.matches('.inline-drawer-icon') ? toggle : toggle?.querySelector('.inline-drawer-icon');
-    if (!(toggle instanceof HTMLElement) || !(icon instanceof HTMLElement)) return null;
+    if (!isHTMLElement(toggle) || !isHTMLElement(icon)) return null;
     return {
         content,
         icon,
@@ -210,7 +211,7 @@ export function setInlineDrawerOpen(drawer, open) {
 
 /** @param {Element} element */
 function initializeDrawer(element) {
-    if (!(element instanceof HTMLElement)) return;
+    if (!isHTMLElement(element)) return;
     if (element.matches('.drawer')) initializeTopLevelDrawer(element);
     if (element.matches('.inline-drawer')) initializeInlineDrawer(element);
 }
@@ -227,7 +228,7 @@ export function initDrawers() {
     initializedDocument = document;
     stateObserver = new MutationObserver(mutations => {
         for (const { target } of mutations) {
-            if (!(target instanceof HTMLElement)) continue;
+            if (!isHTMLElement(target)) continue;
             if (projectedTopLevelState.has(target)) projectTopLevelDrawer(target);
             const drawer = inlineDrawerByIcon.get(target);
             if (!drawer) continue;
@@ -240,7 +241,7 @@ export function initDrawers() {
     const discoveryObserver = new MutationObserver(mutations => {
         for (const { addedNodes } of mutations) {
             for (const node of addedNodes) {
-                if (!(node instanceof Element)) continue;
+                if (!isElement(node)) continue;
                 const drawer = node.parentElement?.closest('.drawer, .inline-drawer');
                 if (drawer) initializeDrawer(drawer);
                 initializeSubtree(node);
