@@ -13,7 +13,6 @@ use crate::chat_jsonl::{read_payload, write_payload, write_payload_bytes};
 use crate::file_system::{list_files_with_extension, move_file_no_replace_with_fallback};
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage, strip_jsonl_extension};
-use tt_ports::repositories::chat_payload_commit_repository::ChatPayloadTarget;
 use tt_ports::repositories::chat_repository::{
     CharacterChatIdentity, ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat,
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
@@ -740,21 +739,6 @@ impl ChatRepository for FileChatRepository {
             }
         }
         Ok(false)
-    }
-
-    async fn set_character_chat_metadata_extension(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        namespace: &str,
-        value: Value,
-    ) -> Result<(), DomainError> {
-        let target = ChatPayloadTarget::Character {
-            character_id: character_name.to_owned(),
-            file_name: file_name.to_owned(),
-        };
-        self.set_chat_metadata_extension(target, namespace, value)
-            .await
     }
 
     async fn get_character_chat_store_json(

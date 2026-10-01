@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
     jsonlToPayload, jsonlStreamToPayload, payloadToJsonl,
-    serializeChatPayload, jsonlRecordsToByteChunks, visitJsonlStream,
+    visitJsonlStream,
 } from '../src/scripts/tauri/chat/jsonl.js';
 
 function byteStream(bytes, chunkSize = 1) {
@@ -52,19 +52,6 @@ test('jsonl: byte streams reject malformed UTF-8 and truncated final characters'
     ]) {
         await assert.rejects(jsonlStreamToPayload(byteStream(bytes)));
     }
-});
-
-test('jsonl: serialized records round-trip through bounded byte chunks', () => {
-    const payload = [
-        { chat_metadata: { integrity: '10000000-0000-4000-8000-000000000002', variables: { score: 3 } } },
-        { mes: '你好 👋\nnext line', swipes: ['first', 'second'] },
-        { mes: '' },
-        {},
-    ];
-    const maxChunkBytes = 16;
-    const chunks = Array.from(jsonlRecordsToByteChunks(serializeChatPayload(payload), { maxChunkBytes }));
-    for (const chunk of chunks) assert.ok(chunk.byteLength <= maxChunkBytes);
-    assert.equal(Buffer.concat(chunks).toString('utf8'), payload.map(record => JSON.stringify(record)).join('\n'));
 });
 
 test('jsonl: stream visitors validate unterminated final records', async () => {

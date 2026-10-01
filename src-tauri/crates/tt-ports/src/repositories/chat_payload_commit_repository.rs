@@ -1,6 +1,5 @@
 use super::chat_repository::ChatByteReader;
 use async_trait::async_trait;
-use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
 use tt_domain::errors::DomainError;
@@ -26,6 +25,19 @@ pub trait ChatSwipeSource: Send + Sync {
 pub struct ColdSwipeCommitSource {
     pub id: u32,
     pub source: Arc<dyn ChatSwipeSource>,
+}
+
+/// What the staged JSON changes. Transport and publication share one lifecycle.
+pub enum ChatCommitOperation {
+    /// Replace the complete JSONL, optionally restoring unloaded swipe content.
+    Payload {
+        force: bool,
+        cold_source: Option<ColdSwipeCommitSource>,
+    },
+    /// Replace `chat_metadata` on an existing file, retaining header fields and body bytes.
+    Metadata,
+    /// Set one namespace on the latest disk metadata; a staged JSON null deletes it.
+    MetadataExtension { namespace: String },
 }
 
 pub struct RestoredChatPayload {
@@ -64,19 +76,10 @@ pub trait ChatPayloadCommitRepository: Send + Sync {
         &self,
         target: ChatPayloadTarget,
     ) -> Result<Arc<dyn ChatSwipeSource>, DomainError>;
-    /// Replaces `chat_metadata` on an existing chat, preserving all body bytes.
-    /// The incoming integrity must match any identity already in the header.
-    async fn commit_metadata(
-        &self,
-        target: ChatPayloadTarget,
-        chat_metadata: Value,
-    ) -> Result<(), DomainError>;
-
     async fn begin(
         &self,
         target: ChatPayloadTarget,
-        force: bool,
-        cold_source: Option<ColdSwipeCommitSource>,
+        operation: ChatCommitOperation,
     ) -> Result<ChatPayloadCommitBegin, DomainError>;
 
     async fn append(&self, session_id: &str, offset: u64, bytes: &[u8])

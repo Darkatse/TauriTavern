@@ -486,26 +486,13 @@ Android WebView 可能暴露 `navigator.clipboard.writeText()`，却在调用时
 
 Tauri 2.11.5 在 Android 上仍不支持 `InvokeBody::Raw`。业务 payload 进入完整 invoke envelope 后，nested `Uint8Array` 会被 JSON serializer 展开为 `number[]`；大型 payload 会因此产生不可接受的逐 byte 对象化内存开销。
 
-聊天 full-save 的正式契约是：
-
-```text
-begin_chat_commit(logical target, force)
-  -> bounded append_chat_commit_chunk
-     -> Android: { data: base64 }, one-in-flight
-     -> Desktop/iOS: root raw Uint8Array
-  -> finish_chat_commit(expectedSize, commitReason)
-  -> target-local strict rename publish
-```
-
-维护原则：
+聊天完整保存与 metadata 写入共用[聊天提交会话](CurrentState/ChatPayload.md#3-统一聊天提交)。Android 传输遵循：
 
 - Android 的大型 JS -> Rust bytes 不得以 raw/numeric-array payload 穿过 Tauri invoke。
 - base64 只能按 host 返回的 frame cap 逐帧生成和发送，不得先物化完整文件的 base64 表示。
-- 每个文件严格逐帧 await，并校验 raw byte offset ACK 与 finish size；失败不得回退旧 plugin-fs raw 路径。
-- renderer 只持有 opaque session ID，不接收 staging/target host path；Rust repository 在目标卷的 `.staging/chat-commits` 内独占 staging 生命周期。
-- finish 只允许 strict rename；失败显式返回，不得 copy 到 current。启动时仅清理该专用 staging 子树。
-- generic `stage_upload_*` 继续服务 avatar、import 与普通 Blob 物化，不参与聊天 full-save。
-- bounded base64 达到实机目标后即停止；只有 profile 证明其仍是主要热点时，才评估 text frame 或 AndroidX binary bridge。
+- 每次只有一帧在途，按原始字节数校验 ACK 与接收总量；失败不得回退 plugin-fs raw 路径。
+- renderer 只持有 opaque session ID，不接收 staging/target host path。
+- generic `stage_upload_*` 继续服务 avatar、import 与普通 Blob 物化，不参与聊天提交。
 
 Tauri 版本升级后也必须重新验证运行时 envelope，不能仅凭 API 表面接受 `Uint8Array` 就假定 Android Raw IPC 已可用。
 

@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use serde::Serialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 use tauri::{ResourceId, State, Webview};
 
 use crate::app::AppState;
 use crate::presentation::commands::chunk_body::chunk_bytes_from_request;
 use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
+use tt_ports::repositories::chat_payload_commit_repository::ChatCommitOperation;
 
 const HEADER_OFFSET: &str = "offset";
 const HEADER_SESSION_ID: &str = "session-id";
@@ -36,35 +36,46 @@ fn required_header(request: &tauri::ipc::Request<'_>, name: &str) -> Result<Stri
         .map_err(|_| CommandError::BadRequest(format!("Invalid chat commit header: {name}")))
 }
 
-#[tauri::command]
-pub async fn commit_chat_metadata(
-    target: ChatHistoryLocator,
-    chat_metadata: Value,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<(), CommandError> {
-    app_state
-        .services
-        .chat_payload_commit_service
-        .commit_metadata(target, chat_metadata)
-        .await
-        .map_err(Into::into)
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ChatCommitOperationDto {
+    Payload {
+        force: bool,
+        #[serde(rename = "coldSourceId")]
+        cold_source_id: Option<ResourceId>,
+    },
+    Metadata,
+    MetadataExtension {
+        namespace: String,
+    },
 }
 
 #[tauri::command]
 pub async fn begin_chat_commit(
     target: ChatHistoryLocator,
-    force: bool,
-    cold_source_id: Option<ResourceId>,
+    operation: ChatCommitOperationDto,
     webview: Webview,
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<BeginChatCommitResult, CommandError> {
-    let cold_source = cold_source_id
-        .map(|id| super::chat_swipe_commands::commit_source(&webview, id))
-        .transpose()?;
+    let operation = match operation {
+        ChatCommitOperationDto::Payload {
+            force,
+            cold_source_id,
+        } => ChatCommitOperation::Payload {
+            force,
+            cold_source: cold_source_id
+                .map(|id| super::chat_swipe_commands::commit_source(&webview, id))
+                .transpose()?,
+        },
+        ChatCommitOperationDto::Metadata => ChatCommitOperation::Metadata,
+        ChatCommitOperationDto::MetadataExtension { namespace } => {
+            ChatCommitOperation::MetadataExtension { namespace }
+        }
+    };
     let session = app_state
         .services
         .chat_payload_commit_service
-        .begin(target, force, cold_source)
+        .begin(target, operation)
         .await?;
 
     Ok(BeginChatCommitResult {

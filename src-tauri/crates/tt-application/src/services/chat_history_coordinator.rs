@@ -169,11 +169,6 @@ impl ChatHistoryCoordinator {
         self.wake.notify_one();
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub async fn commit_sequence_for_test(&self) -> u64 {
-        self.state.lock().await.next_commit_seq
-    }
-
     pub async fn lock_snapshot_execution(&self) -> MutexGuard<'_, ()> {
         self.execution_gate.lock().await
     }
@@ -647,7 +642,7 @@ mod tests {
             .finish_generation(&locator, now, Duration::from_secs(2), 32)
             .unwrap();
 
-        assert!(state.pending.is_empty());
+        assert!(state.take_ready(now + Duration::from_secs(2)).is_none());
     }
 
     #[test]
@@ -675,9 +670,14 @@ mod tests {
             .finish_generation(&locator, now, Duration::from_secs(2), 32)
             .unwrap();
 
-        let pending = state.pending.get(&locator).unwrap();
-        assert_eq!(pending.commit_seq, 2);
-        assert_eq!(pending.due_at, now + Duration::from_secs(2));
+        assert!(state.take_ready(now).is_none());
+        assert_eq!(
+            state
+                .take_ready(now + Duration::from_secs(2))
+                .unwrap()
+                .locator,
+            locator
+        );
     }
 
     #[test]
@@ -692,14 +692,20 @@ mod tests {
             Duration::from_secs(2),
             32,
         );
-        let expected_due = state.pending[&locator].due_at;
 
         state.begin_generation(locator.clone());
         state
             .finish_generation(&locator, now, Duration::from_secs(2), 32)
             .unwrap();
 
-        assert_eq!(state.pending[&locator].due_at, expected_due);
+        assert!(state.take_ready(now).is_none());
+        assert_eq!(
+            state
+                .take_ready(now + Duration::from_secs(2))
+                .unwrap()
+                .locator,
+            locator
+        );
     }
 
     #[test]
@@ -727,7 +733,7 @@ mod tests {
             .finish_generation(&locator, now, Duration::ZERO, 32)
             .unwrap();
 
-        assert!(state.pending.is_empty());
+        assert!(state.take_ready(now + Duration::from_secs(2)).is_none());
     }
 
     #[test]
@@ -763,7 +769,6 @@ mod tests {
             32,
         );
 
-        assert!(state.pending.contains_key(&waiting));
         assert_eq!(state.worker_decision(now), WorkerDecision::Stopped);
         state
             .finish_generation(&active, now, Duration::ZERO, 32)
@@ -791,11 +796,11 @@ mod tests {
             .finish_generation(&current, now, Duration::ZERO, 32)
             .unwrap();
 
-        assert!(state.pending.contains_key(&current));
+        assert_eq!(state.take_ready(now).unwrap().locator, current);
     }
 
     #[test]
-    fn repeated_commits_are_latest_wins_without_growing_the_map() {
+    fn repeated_commits_coalesce_at_the_latest_deadline() {
         let now = Instant::now();
         let locator = character("chat");
         let mut state = CoordinatorState::new(now);
@@ -814,8 +819,15 @@ mod tests {
             32,
         );
 
-        assert_eq!(state.pending.len(), 1);
-        assert_eq!(state.pending[&locator].commit_seq, 2);
+        assert!(state.take_ready(now).is_none());
+        assert_eq!(
+            state
+                .take_ready(now + Duration::from_secs(1))
+                .unwrap()
+                .locator,
+            locator
+        );
+        assert!(state.take_ready(now + Duration::from_secs(1)).is_none());
     }
 
     #[test]
@@ -841,7 +853,14 @@ mod tests {
 
         state.complete_explicit(&locator, explicit_started_at, now, Duration::from_secs(60));
 
-        assert_eq!(state.pending[&locator].commit_seq, 2);
+        assert!(state.take_ready(now).is_none());
+        assert_eq!(
+            state
+                .take_ready(now + Duration::from_secs(60))
+                .unwrap()
+                .locator,
+            locator
+        );
     }
 
     #[test]
@@ -867,7 +886,14 @@ mod tests {
         );
         state.complete_automatic(&attempt, now, Duration::from_secs(60));
 
-        assert_eq!(state.pending[&locator].commit_seq, 2);
+        assert!(state.take_ready(now).is_none());
+        assert_eq!(
+            state
+                .take_ready(now + Duration::from_secs(60))
+                .unwrap()
+                .locator,
+            locator
+        );
     }
 
     #[test]
@@ -886,12 +912,17 @@ mod tests {
 
         state.defer_automatic(&attempt, now + Duration::from_secs(2));
 
-        assert_eq!(state.pending[&locator].commit_seq, attempt.commit_seq);
         assert_eq!(
             state.worker_decision(now),
             WorkerDecision::WaitUntil(now + Duration::from_secs(2))
         );
-        assert_eq!(state.next_automatic_at, now);
+        assert_eq!(
+            state
+                .take_ready(now + Duration::from_secs(2))
+                .unwrap()
+                .locator,
+            locator
+        );
     }
 
     #[test]
@@ -931,8 +962,8 @@ mod tests {
             ),
             NoteOutcome::WakeWorker
         );
-        assert_eq!(state.pending.len(), 1);
-        assert_eq!(state.pending[&first].commit_seq, 3);
+        assert_eq!(state.take_ready(now).unwrap().locator, first);
+        assert!(state.take_ready(now).is_none());
     }
 
     #[test]
@@ -954,7 +985,7 @@ mod tests {
             .finish_generation(&locator, now, Duration::ZERO, 32)
             .unwrap();
 
-        assert!(state.pending.is_empty());
+        assert!(state.take_ready(now + Duration::from_secs(2)).is_none());
     }
 
     #[test]
@@ -983,7 +1014,7 @@ mod tests {
             .finish_generation(&locator, now, Duration::ZERO, 32)
             .unwrap();
 
-        assert_eq!(state.pending[&locator].commit_seq, 2);
+        assert_eq!(state.take_ready(now).unwrap().locator, locator);
     }
 
     #[test]

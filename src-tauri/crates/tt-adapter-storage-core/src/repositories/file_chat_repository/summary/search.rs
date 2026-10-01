@@ -249,6 +249,7 @@ pub(super) async fn scan_with_fingerprint(
         if record.is_empty() {
             continue;
         }
+        let record = &line.as_bytes()[record];
         if header.is_none() {
             header = Some(projection::parse_header(record, path)?);
         }

@@ -486,21 +486,6 @@ impl ChatService {
             .await?)
     }
 
-    pub async fn set_character_chat_metadata_extension(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        namespace: &str,
-        value: Value,
-    ) -> Result<(), ApplicationError> {
-        self.chat_repository
-            .set_character_chat_metadata_extension(character_name, file_name, namespace, value)
-            .await?;
-        self.note_current_committed(character_name, file_name, CurrentCommitReason::Mutation)
-            .await;
-        Ok(())
-    }
-
     pub async fn get_character_chat_store_json(
         &self,
         character_name: &str,

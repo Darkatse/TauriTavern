@@ -164,7 +164,7 @@ await handle.metadata.setExtension({ namespace: 'my-ext', value: { lastFloor: 42
 await handle.metadata.setExtension({ namespace: 'my-ext', value: null });
 ```
 
-数据存储在 `chat_metadata.extensions[namespace]` 中，跨端可迁移，开销稳定。
+数据存储在 `chat_metadata.extensions[namespace]` 中，与聊天文件一同迁移。每次调用只修改指定 namespace，不自动合并到当前页面的活 metadata。
 
 ---
 

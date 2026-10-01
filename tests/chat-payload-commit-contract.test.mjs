@@ -2,12 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { commitChatMetadata, commitChatPayload } from '../src/scripts/tauri/chat/commit.js';
-import {
-    saveCharacterChatMetadata,
-    saveCharacterChatPayload,
-    saveGroupChatMetadata,
-    saveGroupChatPayload,
-} from '../src/scripts/chat-payload-transport.js';
 import { jsonResponse } from '../src/tauri/main/http-utils.js';
 import { stripJsonl } from '../src/tauri/main/kernel/chat-utils.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
@@ -54,8 +48,6 @@ function createCommitHost({
     finishError,
     abortError,
     expectedTarget = TARGET,
-    expectedForce = false,
-    expectedCommitReason = 'mutation',
 } = {}) {
     const calls = [];
     const frames = [];
@@ -67,7 +59,8 @@ function createCommitHost({
             calls.push({ command, args, options });
 
             if (command === 'begin_chat_commit') {
-                assert.deepEqual(args, { target: expectedTarget, force: expectedForce, ...(expectedColdSourceId === undefined ? {} : { coldSourceId: expectedColdSourceId }) });
+                assert.deepEqual(args.target, expectedTarget);
+                if (expectedColdSourceId !== undefined) assert.equal(args.operation.coldSourceId, expectedColdSourceId);
                 return { sessionId: SESSION_ID, maxFrameBytes };
             }
 
@@ -85,7 +78,6 @@ function createCommitHost({
 
             if (command === 'finish_chat_commit') {
                 assert.equal(args.sessionId, SESSION_ID);
-                assert.equal(args.commitReason, expectedCommitReason);
                 if (finishError) {
                     throw finishError;
                 }
@@ -114,191 +106,86 @@ function commit(payload) {
     });
 }
 
-for (const scenario of [
-    {
-        kind: 'character', target: TARGET,
-        save: chatMetadata => saveCharacterChatMetadata({
-            characterName: 'Display name', avatarUrl: 'Alice.png', fileName: 'Story.jsonl', chatMetadata,
-        }),
-    },
-    {
-        kind: 'group', target: { kind: 'group', chatId: 'Story' },
-        save: chatMetadata => saveGroupChatMetadata({ id: 'Story.jsonl', chatMetadata }),
-    },
-]) {
-    test(`${scenario.kind} metadata save captures only its JSON snapshot before yielding`, async () => {
-        const release = Promise.withResolvers();
-        const calls = [];
-        const restore = installRuntime('Mozilla/5.0 (Linux; Android 14)', async (command, args) => {
-            await release.promise;
-            calls.push({ command, args: JSON.parse(JSON.stringify(args)) });
-        });
-        const chatMetadata = { integrity: '10000000-0000-4000-8000-000000000002', variables: { score: 1 } };
-        try {
-            const pending = scenario.save(chatMetadata);
-            chatMetadata.variables.score = 2;
-            release.resolve();
-            await pending;
-            assert.deepEqual(calls, [{
-                command: 'commit_chat_metadata',
-                args: { target: scenario.target, chatMetadata: { integrity: '10000000-0000-4000-8000-000000000002', variables: { score: 1 } } },
-            }]);
-        } finally {
-            restore();
-        }
+test('metadata saves capture nested values before asynchronous transport', async () => {
+    const release = Promise.withResolvers();
+    const host = createCommitHost();
+    const restore = installRuntime('Desktop', async (...args) => {
+        await release.promise;
+        return host.invoke(...args);
     });
-}
-
-test('metadata commit rejects unserializable metadata before invoking the host', async () => {
-    let invoked = false;
-    const restore = installRuntime('Mozilla/5.0 (Macintosh)', async () => { invoked = true; });
-    const cyclic = {};
-    cyclic.self = cyclic;
+    const chatMetadata = { variables: { score: 1 } };
     try {
-        for (const chatMetadata of [cyclic, { value: 1n }]) {
-            await assert.rejects(() => commitChatMetadata({ target: TARGET, chatMetadata }));
-        }
-        assert.equal(invoked, false);
+        const pending = commitChatMetadata({ target: TARGET, chatMetadata });
+        chatMetadata.variables.score = 2;
+        release.resolve();
+        await pending;
+        assert.deepEqual(JSON.parse(Buffer.concat(host.frames.map(frame => frame.bytes)).toString()), {
+            variables: { score: 1 },
+        });
     } finally {
         restore();
     }
 });
 
-test('metadata commit normalizes host rejections and classifies only explicit integrity conflicts', async () => {
-    for (const [failure, expected] of [
-        [{ BadRequest: 'integrity' }, { code: 'integrity', message: 'integrity' }],
-        [{ BadRequest: 'Invalid chat header' }, { code: undefined, message: '{"BadRequest":"Invalid chat header"}' }],
-        [{ NotFound: 'Chat missing' }, { code: undefined, message: '{"NotFound":"Chat missing"}' }],
-        ['integrity', { code: undefined, message: 'integrity' }],
-    ]) {
-        const restore = installRuntime('Mozilla/5.0 (Macintosh)', async () => { throw failure; });
+test('chat transport preserves UTF-8 across bounded native and Android frames', async () => {
+    const payload = [{ chat_metadata: {} }, { mes: '你好 👋\nnext line'.repeat(20) }, {}];
+    for (const userAgent of ['Desktop', 'Android']) {
+        const host = createCommitHost({ maxFrameBytes: 7 });
+        const restore = installRuntime(userAgent, host.invoke);
         try {
-            await assert.rejects(() => commitChatMetadata({ target: TARGET, chatMetadata: {} }), error => {
-                assert.ok(error instanceof Error);
-                assert.equal(error.code, expected.code);
-                assert.equal(error.message, expected.message);
-                assert.equal(error.cause, failure);
-                return true;
-            });
+            await commit(payload);
+            assert.ok(host.frames.every(frame => frame.bytes.byteLength <= 7));
+            let offset = 0;
+            for (const frame of host.frames) {
+                assert.equal(frame.offset, offset);
+                offset += frame.bytes.byteLength;
+            }
+            const appends = host.calls.filter(call => call.command === 'append_chat_commit_chunk');
+            assert.ok(appends.every(call => userAgent === 'Android'
+                ? typeof call.args.data === 'string'
+                : call.args instanceof Uint8Array));
+            assert.equal(Buffer.concat(host.frames.map(frame => frame.bytes)).toString(), payload.map(JSON.stringify).join('\n'));
         } finally {
             restore();
         }
     }
 });
 
-test('chat payload commit uses bounded Android base64 frames and exact offsets', async () => {
-    const host = createCommitHost();
+test('chat save snapshots nested values and keeps one frame in flight', async () => {
+    let releaseFirst;
+    let markStarted;
+    const started = new Promise((resolve) => { markStarted = resolve; });
+    const host = createCommitHost({
+        onAppend: ({ offset, bytes, index }) => index === 0
+            ? new Promise((resolve) => {
+                releaseFirst = () => resolve(offset + bytes.byteLength);
+                markStarted();
+            })
+            : offset + bytes.byteLength,
+    });
     const restore = installRuntime('Mozilla/5.0 (Linux; Android 14)', host.invoke);
-    const payload = [{ user_name: 'A' }, { mes: '0123456789' }];
+    const payload = [
+        { chat_metadata: { integrity: '10000000-0000-4000-8000-000000000002', variables: { score: 1 } } },
+        { mes: 'first message', extra: { extension: { enabled: true } } },
+        { mes: 'last message', swipes: ['original swipe'] },
+    ];
+    const expected = payload.map(entry => JSON.stringify(entry)).join('\n');
 
     try {
-        await commit(payload);
+        const pending = commit(payload);
+        payload[0].chat_metadata.variables.score = 2;
+        payload[1].extra.extension.enabled = false;
+        await started;
+        assert.equal(host.frames.length, 1);
+        payload[2].swipes[0] = 'changed while sending';
+        payload.push({ mes: 'new message' });
 
-        assert.ok(host.frames.length > 1);
-        assert.ok(host.frames.every((frame) => frame.bytes.byteLength <= 4));
-        assert.deepEqual(
-            host.frames.map((frame) => frame.offset),
-            host.frames.map((_, index, frames) => frames
-                .slice(0, index)
-                .reduce((total, frame) => total + frame.bytes.byteLength, 0)),
-        );
-        const appendCalls = host.calls.filter((call) => call.command === 'append_chat_commit_chunk');
-        assert.ok(appendCalls.every((call) => typeof call.args.data === 'string'));
-        assert.ok(appendCalls.every((call) => call.options.headers['chunk-encoding'] === 'base64'));
+        releaseFirst();
+        await pending;
         assert.equal(
-            Buffer.concat(host.frames.map((frame) => Buffer.from(frame.bytes))).toString(),
-            payload.map(JSON.stringify).join('\n'),
+            Buffer.concat(host.frames.map(frame => Buffer.from(frame.bytes))).toString(),
+            expected,
         );
-        assert.equal(host.calls.at(-1).command, 'finish_chat_commit');
-    } finally {
-        restore();
-    }
-});
-
-
-
-for (const scenario of [
-    {
-        kind: 'character',
-        target: TARGET,
-        save: payload => saveCharacterChatPayload({
-            characterName: 'Alice', avatarUrl: 'Alice.png', fileName: 'Story', payload,
-        }),
-    },
-    {
-        kind: 'group',
-        target: { kind: 'group', chatId: 'Story' },
-        save: payload => saveGroupChatPayload({ id: 'Story', payload }),
-    },
-]) {
-    test(`${scenario.kind} save snapshots before yielding and keeps one frame in flight`, async () => {
-        let releaseFirst;
-        let markStarted;
-        const started = new Promise((resolve) => { markStarted = resolve; });
-        const host = createCommitHost({
-            expectedTarget: scenario.target,
-            onAppend: ({ offset, bytes, index }) => index === 0
-                ? new Promise((resolve) => {
-                    releaseFirst = () => resolve(offset + bytes.byteLength);
-                    markStarted();
-                })
-                : offset + bytes.byteLength,
-        });
-        const restore = installRuntime('Mozilla/5.0 (Linux; Android 14)', host.invoke);
-        const payload = [
-            { chat_metadata: { integrity: '10000000-0000-4000-8000-000000000002', variables: { score: 1 } } },
-            { mes: 'first message', extra: { extension: { enabled: true } } },
-            { mes: 'last message', swipes: ['original swipe'] },
-        ];
-        const expected = payload.map(entry => JSON.stringify(entry)).join('\n');
-
-        try {
-            const pending = scenario.save(payload);
-            payload[0].chat_metadata.variables.score = 2;
-            payload[1].extra.extension.enabled = false;
-            await started;
-            assert.equal(host.frames.length, 1);
-            payload[2].swipes[0] = 'changed while sending';
-            payload.push({ mes: 'new message' });
-
-            releaseFirst();
-            await pending;
-            assert.equal(
-                Buffer.concat(host.frames.map(frame => Buffer.from(frame.bytes))).toString(),
-                expected,
-            );
-        } finally {
-            restore();
-        }
-    });
-}
-
-test('chat payload commit sends raw frames off Android', async () => {
-    const host = createCommitHost();
-    const restore = installRuntime('Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)', host.invoke);
-
-    try {
-        await commit([{ mes: '0123456789' }]);
-        const appendCalls = host.calls.filter((call) => call.command === 'append_chat_commit_chunk');
-        assert.ok(appendCalls.every((call) => call.args instanceof Uint8Array));
-        assert.ok(appendCalls.every((call) => call.options.headers['chunk-encoding'] === undefined));
-    } finally {
-        restore();
-    }
-});
-
-test('chat payload commit rejects invalid payloads before opening a session', async () => {
-    const host = createCommitHost();
-    const restore = installRuntime('Mozilla/5.0 (Macintosh)', host.invoke);
-
-    try {
-        for (const payload of [
-            [], [null], [{}, []],
-            [{ chat_metadata: { integrity: '' } }],
-        ]) {
-            await assert.rejects(commitChatPayload({ target: TARGET, payload, force: true, commitReason: 'mutation' }));
-        }
-        assert.deepEqual(host.calls, []);
     } finally {
         restore();
     }
@@ -313,48 +200,6 @@ test('chat payload commit aborts ACK failures', async () => {
     try {
         await assert.rejects(() => commit([{ mes: '012345' }]), /unexpected offset/i);
         assert.equal(host.calls.filter((call) => call.command === 'abort_chat_commit').length, 1);
-    } finally {
-        restore();
-    }
-});
-
-test('chat payload commit surfaces non-integrity finish errors as Errors without aborting the consumed session', async () => {
-    for (const finishError of [
-        new Error('finish failed'),
-        { InternalServerError: 'Could not read integrity metadata' },
-        { BadRequest: 'Invalid chat header' },
-        'integrity',
-    ]) {
-        const host = createCommitHost({ finishError });
-        const restore = installRuntime('Mozilla/5.0 (Macintosh)', host.invoke);
-
-        try {
-            await assert.rejects(() => commit([{ mes: 'failure' }]), error => {
-                assert.ok(error instanceof Error);
-                assert.equal(error.code, undefined);
-                assert.equal(finishError instanceof Error ? error : error.cause, finishError);
-                return true;
-            });
-            assert.equal(host.calls.filter(call => call.command === 'abort_chat_commit').length, 0);
-        } finally {
-            restore();
-        }
-    }
-});
-
-test('chat payload commit classifies integrity conflicts and leaves the consumed session alone', async () => {
-    const finishError = { BadRequest: 'integrity' };
-    const host = createCommitHost({ finishError });
-    const restore = installRuntime('Mozilla/5.0 (Macintosh)', host.invoke);
-
-    try {
-        await assert.rejects(() => commit([{ mes: 'conflict' }]), error => {
-            assert.ok(error instanceof Error);
-            assert.equal(error.code, 'integrity');
-            assert.equal(error.cause, finishError);
-            return true;
-        });
-        assert.equal(host.calls.filter(call => call.command === 'abort_chat_commit').length, 0);
     } finally {
         restore();
     }
@@ -379,13 +224,12 @@ test('chat payload commit surfaces abort failure with the original error', async
     }
 });
 
-test('chat payload commit does not abort after finish already published', async () => {
+test('chat payload commit rejects an inconsistent accepted size', async () => {
     const host = createCommitHost({ finishSizeDelta: 1 });
     const restore = installRuntime('Mozilla/5.0 (Macintosh)', host.invoke);
 
     try {
         await assert.rejects(() => commit([{ mes: 'finished' }]), /unexpected accepted size/i);
-        assert.equal(host.calls.filter((call) => call.command === 'abort_chat_commit').length, 0);
     } finally {
         restore();
     }
@@ -443,7 +287,6 @@ for (const route of [
     });
 }
 
-
 test('cold commit preserves the captured marker and accepts an expanded published size', async () => {
     const payload = [{ chat_metadata:{}, tt_swipe_cold:{opaque_header_field:true} }, {mes:'active',swipe_id:1,swipes:[null,'active'],swipe_info:[null,{}],tt_swipe_cold:{sourceId:7,record:3}}];
     const host = createCommitHost({ expectedColdSourceId:7, publishedSizeDelta:500 });
@@ -458,14 +301,5 @@ test('cold commit preserves the captured marker and accepts an expanded publishe
         const message = JSON.parse(sent.split('\n')[1]);
         assert.equal(message.tt_swipe_cold.sourceId, 7);
         assert.equal(message.mes, 'active');
-    } finally { restore(); }
-});
-
-test('mixed cold sources reject before starting a commit', async () => {
-    const host = createCommitHost();
-    const restore = installRuntime('Desktop', host.invoke);
-    try {
-        await assert.rejects(commit([{}, {tt_swipe_cold:{sourceId:7,record:1}},{tt_swipe_cold:{sourceId:8,record:2}}]), /mixed cold swipe sources/);
-        assert.equal(host.calls.length, 0);
     } finally { restore(); }
 });

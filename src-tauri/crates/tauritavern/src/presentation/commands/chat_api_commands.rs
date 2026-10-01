@@ -83,30 +83,6 @@ pub async fn get_character_chat_metadata(
 }
 
 #[tauri::command]
-pub async fn set_character_chat_metadata_extension(
-    character_name: String,
-    file_name: String,
-    namespace: String,
-    value: Value,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<(), CommandError> {
-    log_command(format!(
-        "set_character_chat_metadata_extension {}/{}:{}",
-        character_name, file_name, namespace
-    ));
-
-    app_state
-        .services
-        .chat_service
-        .set_character_chat_metadata_extension(&character_name, &file_name, &namespace, value)
-        .await
-        .map_err(map_command_error(format!(
-            "Failed to set chat metadata extension {}/{}:{}",
-            character_name, file_name, namespace
-        )))
-}
-
-#[tauri::command]
 pub async fn get_character_chat_store_json(
     character_name: String,
     file_name: String,

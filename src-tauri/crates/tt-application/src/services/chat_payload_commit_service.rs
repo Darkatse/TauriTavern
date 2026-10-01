@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
-use serde_json::Value;
 use tt_ports::repositories::chat_payload_commit_repository::{
-    ChatPayloadCommitBegin, ChatPayloadCommitRepository, ChatPayloadTarget, ChatSwipeSource,
-    ColdSwipeCommitSource, CommittedChatPayload,
+    ChatCommitOperation, ChatPayloadCommitBegin, ChatPayloadCommitRepository, ChatPayloadTarget,
+    ChatSwipeSource, CommittedChatPayload,
 };
 
 use crate::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
@@ -31,13 +30,19 @@ impl ChatPayloadCommitService {
     pub async fn begin(
         &self,
         locator: ChatHistoryLocator,
-        force: bool,
-        cold_source: Option<ColdSwipeCommitSource>,
+        operation: ChatCommitOperation,
     ) -> Result<ChatPayloadCommitBegin, ApplicationError> {
         validate_chat_history_locator(&locator)?;
+        if let ChatCommitOperation::MetadataExtension { namespace } = &operation
+            && namespace.trim().is_empty()
+        {
+            return Err(ApplicationError::ValidationError(
+                "namespace is required".into(),
+            ));
+        }
         Ok(self
             .repository
-            .begin(target_from_locator(locator), force, cold_source)
+            .begin(target_from_locator(locator), operation)
             .await?)
     }
 
@@ -56,21 +61,6 @@ impl ChatPayloadCommitService {
             Err(tt_domain::errors::DomainError::NotFound(_)) if allow_not_found => Ok(None),
             Err(error) => Err(error.into()),
         }
-    }
-
-    pub async fn commit_metadata(
-        &self,
-        locator: ChatHistoryLocator,
-        chat_metadata: Value,
-    ) -> Result<(), ApplicationError> {
-        validate_chat_history_locator(&locator)?;
-        self.repository
-            .commit_metadata(target_from_locator(locator.clone()), chat_metadata)
-            .await?;
-        self.chat_history_coordinator
-            .note_current_committed(locator, CurrentCommitReason::Mutation)
-            .await;
-        Ok(())
     }
 
     pub async fn append(

@@ -6,7 +6,6 @@ use tokio::fs;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::chat_directory_identity::sanitize_chat_dir_key;
-use crate::file_system::unique_temp_path;
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{normalize_chat_file_name, normalize_chat_file_stem};
 use tt_domain::models::filename::sanitize_filename;
@@ -164,10 +163,6 @@ impl FileChatRepository {
             .lock()
             .await
             .invalidate_all();
-    }
-
-    pub(super) fn temp_payload_path(path: &Path) -> PathBuf {
-        unique_temp_path(path)
     }
 
     pub(super) fn normalize_jsonl_file_stem(file_name: &str) -> Result<String, DomainError> {

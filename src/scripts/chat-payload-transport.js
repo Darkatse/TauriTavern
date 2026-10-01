@@ -1,4 +1,5 @@
 export { payloadToJsonl, jsonlToPayload } from './tauri/chat/jsonl.js';
+export { commitChatMetadataExtension } from './tauri/chat/commit.js';
 export {
     CHAT_COMMIT_REASON,
     normalizeChatFileName,

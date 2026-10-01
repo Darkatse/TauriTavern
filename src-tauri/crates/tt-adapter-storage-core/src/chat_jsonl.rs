@@ -1,6 +1,7 @@
 //! Chat JSONL grammar. I/O callers retain their own read scope and original byte offsets.
 use std::collections::HashMap;
 use std::io::BufRead;
+use std::ops::Range;
 use std::path::Path;
 
 use serde_json::{Map, Value, value::RawValue};
@@ -20,6 +21,10 @@ pub(crate) fn is_whitespace(byte: u8) -> bool {
 }
 
 pub(crate) fn trim_whitespace(bytes: &[u8]) -> &[u8] {
+    &bytes[trim_whitespace_range(bytes)]
+}
+
+fn trim_whitespace_range(bytes: &[u8]) -> Range<usize> {
     let start = bytes
         .iter()
         .position(|&b| !is_whitespace(b))
@@ -28,7 +33,7 @@ pub(crate) fn trim_whitespace(bytes: &[u8]) -> &[u8] {
         .iter()
         .rposition(|&b| !is_whitespace(b))
         .map_or(start, |i| i + 1);
-    &bytes[start..end]
+    start..end
 }
 
 /// One state per document, including BOM-only lines before the header.
@@ -39,11 +44,14 @@ pub(crate) struct RecordPrefix {
 }
 
 impl RecordPrefix {
-    pub(crate) fn normalize<'a>(&mut self, line: &'a [u8]) -> &'a [u8] {
-        let mut record = trim_whitespace(line);
-        if !self.record_seen && !self.bom_consumed && record.starts_with(BOM) {
+    /// Locate the record within its original buffer, retaining byte offsets for readers.
+    pub(crate) fn normalize(&mut self, line: &[u8]) -> Range<usize> {
+        let mut record = trim_whitespace_range(line);
+        if !self.record_seen && !self.bom_consumed && line[record.clone()].starts_with(BOM) {
             self.bom_consumed = true;
-            record = trim_whitespace(&record[BOM.len()..]);
+            let start = record.start + BOM.len();
+            let content = trim_whitespace_range(&line[start..record.end]);
+            record = start + content.start..start + content.end;
         }
         self.record_seen |= !record.is_empty();
         record
@@ -121,15 +129,20 @@ pub(crate) fn parse_header_integrity(bytes: &[u8]) -> Result<Option<String>, Dom
     let fields: HashMap<String, &RawValue> = serde_json::from_str(text).map_err(|error| {
         DomainError::InvalidData(format!("Invalid chat header object: {error}"))
     })?;
-    if let Some(metadata) = fields.get("chat_metadata")
-        && metadata.get().starts_with('{')
-    {
-        let metadata: HeaderMetadata = serde_json::from_str(metadata.get())
-            .map_err(|error| DomainError::InvalidData(format!("Invalid chat metadata: {error}")))?;
-        return Ok(metadata.integrity);
+    if let Some(metadata) = fields.get("chat_metadata") {
+        return parse_metadata_integrity(metadata);
     }
 
     Ok(None)
+}
+
+pub(crate) fn parse_metadata_integrity(metadata: &RawValue) -> Result<Option<String>, DomainError> {
+    if !metadata.get().starts_with('{') {
+        return Ok(None);
+    }
+    let metadata: HeaderMetadata = serde_json::from_str(metadata.get())
+        .map_err(|error| DomainError::InvalidData(format!("Invalid chat metadata: {error}")))?;
+    Ok(metadata.integrity)
 }
 
 pub(crate) fn parse_record(bytes: &[u8]) -> Result<Value, DomainError> {
@@ -160,7 +173,9 @@ pub(crate) fn read_header_record(
         offset += len as u64;
         let record = prefix.normalize(&bytes);
         if !record.is_empty() {
-            return Ok(Some((record.to_vec(), offset)));
+            bytes.truncate(record.end);
+            bytes.drain(..record.start);
+            return Ok(Some((bytes, offset)));
         }
     }
 }
@@ -183,7 +198,9 @@ pub(crate) async fn read_header_record_async(
         offset += len as u64;
         let record = prefix.normalize(&bytes);
         if !record.is_empty() {
-            return Ok(Some((record.to_vec(), offset)));
+            bytes.truncate(record.end);
+            bytes.drain(..record.start);
+            return Ok(Some((bytes, offset)));
         }
     }
 }
@@ -218,6 +235,7 @@ pub(crate) async fn read_payload(path: &Path) -> Result<Vec<Value>, DomainError>
         if record.is_empty() {
             continue;
         }
+        let record = &line[record];
         let object = if objects.is_empty() {
             parse_header(record).map(Value::Object)
         } else {

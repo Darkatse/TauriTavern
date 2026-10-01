@@ -133,16 +133,14 @@ src/
 
 - 上游接管点：`src/script.js`（character chat）与 `src/scripts/group-chats.js`（group chat）。
 - 统一入口：上游只 import `src/scripts/chat-payload-transport.js`，不要直接依赖 `src/scripts/tauri/chat/*`。
-- 第一方当前聊天通过 `src/scripts/chat-payload-transport.js` 加载全部楼层，可选[历史滑动按需加载](CurrentState/ChatPayload.md#21-历史滑动按需加载)；`/api/chats/get` 与 `/api/chats/group/get` 保留为扩展和脚本的兼容路由。header 与完整、有序的消息数组分离后，generation、扩展和保存共享同一个 canonical `chat[]`。
+- 第一方加载全部楼层，可选[历史滑动按需加载](CurrentState/ChatPayload.md#21-历史滑动按需加载)。header 与消息数组分离，generation、扩展和保存共享完整、有序的 canonical `chat[]`。
 - `chat_truncation` 只限制初始 DOM。Show More 从完整 `chat[]` 补挂楼层，不发起分页 I/O，不改变消息绝对索引。
-- 第一方完整保存通过统一 transport 直连；`/api/chats/save` 与 `/api/chats/group/save` 保留为扩展兼容路由。当前聊天业务入口仍经 `enqueueChatSave()`，transport 自身不重复入队。落盘的 header metadata 统一取自 `persistedChatMetadata()`，它去掉 `chat_metadata.lastInContextMessageId`；不要另行拼装。
-- commit 在首次异步让出前捕获逐记录 JSON 文本快照，再经 target-local commit session 编码、分帧和原子发布；保存期间的消息修改不混入本次提交。integrity 错误按明确的 `code` 处理，不按错误文案猜测。
-- `saveMetadata()` 只保存 header 的 `chat_metadata`，通过同一 transport facade 发送独立 JSON 快照，不遍历或传输消息。它仍经当前聊天保存队列，但不取消挂起的完整保存、不保存消息派生缓存。角色与群聊、完整与 metadata 四种当前聊天写入共用 `runChatSave()` 的失败策略：integrity 弹窗与强制完整保存恢复都留在同一次队列任务中，其他失败提示并抛出。
-- 新群聊在问候扩展事件前绑定 metadata 并落盘初始 header，保证 metadata 保存的文件存在前提；后续初始化不得覆盖事件修改。修改消息的扩展需显式调用完整保存。
+- 当前聊天完整保存与 metadata 保存共用 `enqueueChatSave()` 和 transport 提交会话；transport 自身不重复入队。提交捕获独立快照并原子发布，保存期间的修改不混入本次提交。
+- `saveMetadata()` 只保存 header 的 `chat_metadata`，不保存消息，也不取消待执行的完整保存。修改消息的扩展必须显式调用完整保存。
 - tail/before/beforePages 只属于 `api.chat.history` 与 Agent 的显式只读查询，不参与前端当前聊天状态。
 - 聊天格式遵循 [ChatPayload §1.1](CurrentState/ChatPayload.md#11-统一格式底线)；解析失败必须传播，不能提交部分历史。
 
-完整现状见 `docs/CurrentState/ChatPayload.md`。
+保存规则与职责见 [ChatPayload](CurrentState/ChatPayload.md)；兼容 get/save 路由及事件契约见 [FrontendHostContract §4.3](FrontendHostContract.md#43-路由表public)。
 
 ## 6.2 ChatSurface 所有权与 participant
 

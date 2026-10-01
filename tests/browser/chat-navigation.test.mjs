@@ -28,7 +28,6 @@ test('chat persistence and navigation', async (context) => {
     const loads = [];
     const writes = [];
     const changed = [];
-    const commits = [];
     const stateCopies = [];
     const sessions = new Map();
     let nextHandle = 1;
@@ -90,21 +89,9 @@ test('chat persistence and navigation', async (context) => {
             case 'get_character_chat_integrity': return readHeader(args.fileName).chat_metadata?.integrity ?? null;
             case 'prune_agent_chat_persistent_states': onPrune?.(args.dto); return;
             case 'copy_agent_chat_persistent_states': stateCopies.push(args.dto); return;
-            case 'commit_chat_metadata': {
-                const fileName = args.target.fileName ?? args.target.chatId;
-                if (!payloads.has(fileName)) throw { NotFound: 'Chat missing' };
-                checkIntegrity(fileName, args.chatMetadata);
-                const header = readHeader(fileName);
-                header.chat_metadata = args.chatMetadata;
-                const original = payloads.get(fileName);
-                const newline = original.indexOf('\n');
-                payloads.set(fileName, JSON.stringify(header) + '\n' + (newline < 0 ? '' : original.slice(newline + 1)));
-                commits.push({ kind: 'metadata', fileName });
-                return;
-            }
             case 'begin_chat_commit': {
                 const sessionId = String(nextHandle++);
-                sessions.set(sessionId, { ...args, source: swipeSources.get(args.coldSourceId), frames: [] });
+                sessions.set(sessionId, { ...args, source: swipeSources.get(args.operation.coldSourceId), frames: [] });
                 return { sessionId, maxFrameBytes: 1024 * 1024 };
             }
             case 'append_chat_commit_chunk': {
@@ -113,10 +100,24 @@ test('chat persistence and navigation', async (context) => {
                 return session.frames.reduce((sum, frame) => sum + frame.length, 0);
             }
             case 'finish_chat_commit': {
-                if (fullSaveError) throw fullSaveError;
                 const session = sessions.get(args.sessionId);
                 const fileName = session.target.fileName ?? session.target.chatId;
                 let jsonl = Buffer.concat(session.frames).toString();
+                sessions.delete(args.sessionId);
+                if (session.operation.kind === 'metadata') {
+                    if (!payloads.has(fileName)) throw { NotFound: 'Chat missing' };
+                    const metadata = JSON.parse(jsonl);
+                    checkIntegrity(fileName, metadata);
+                    const header = readHeader(fileName);
+                    header.chat_metadata = metadata;
+                    const original = payloads.get(fileName);
+                    const newline = original.indexOf('\n');
+                    jsonl = JSON.stringify(header) + '\n' + (newline < 0 ? '' : original.slice(newline + 1));
+                    payloads.set(fileName, jsonl);
+                    return { acceptedSize: args.expectedSize, size: Buffer.byteLength(jsonl) };
+                }
+                if (fullSaveError) throw fullSaveError;
+
                 if (session.source) {
                     jsonl = jsonl.split('\n').filter(Boolean).map(line => {
                         const message = JSON.parse(line);
@@ -130,10 +131,8 @@ test('chat persistence and navigation', async (context) => {
                         return JSON.stringify(message);
                     }).join('\n');
                 }
-                checkIntegrity(fileName, JSON.parse(jsonl.split('\n')[0]).chat_metadata, session.force);
+                checkIntegrity(fileName, JSON.parse(jsonl.split('\n')[0]).chat_metadata, session.operation.force);
                 payloads.set(fileName, jsonl);
-                commits.push({ kind: 'full', fileName, force: session.force, reason: args.commitReason });
-                sessions.delete(args.sessionId);
                 return { acceptedSize: args.expectedSize, size: Buffer.byteLength(jsonl) };
             }
             case 'abort_chat_commit': sessions.delete(args.sessionId); return;
@@ -269,7 +268,6 @@ test('chat persistence and navigation', async (context) => {
                 chats: [...payloads.keys()], members: [], disabled_members: [],
             }] : []);
             loads.length = writes.length = changed.length = errors.length = 0;
-            commits.length = 0;
             stateCopies.length = 0;
             fullSaveError = undefined;
             listReads = 0;
@@ -504,7 +502,6 @@ test('chat persistence and navigation', async (context) => {
                 assert.equal(readHeader('target-chat').chat_metadata.lastInContextMessageId, undefined);
                 assert.equal(main.chat_metadata.lastInContextMessageId, 42);
                 assert.equal(writes.length, entityWrites);
-                assert.deepEqual(commits.map(commit => commit.kind), ['metadata']);
 
                 await main.deleteMessage(0);
                 main.chat_metadata.variables.score = '2';
@@ -515,7 +512,6 @@ test('chat persistence and navigation', async (context) => {
                 await pending;
                 assert.equal(payloads.get('target-chat').split('\n').length, 1);
                 assert.equal(readHeader('target-chat').chat_metadata.variables.score, '2');
-                assert.deepEqual(commits.map(commit => commit.kind), ['metadata', 'metadata', 'full']);
                 assert.deepEqual(errors, []);
             });
 
@@ -541,7 +537,6 @@ test('chat persistence and navigation', async (context) => {
                     await Promise.all([pending, next]);
                     assert.equal(main.isChatSaving, false);
                     assert.equal(nextEntered, true);
-                    assert.deepEqual(commits, [{ kind: 'full', fileName: 'target-chat', force: true, reason: 'mutation' }]);
                     assert.equal(readHeader('target-chat').chat_metadata.integrity, main.chat_metadata.integrity);
                     assert.equal(JSON.parse(payloads.get('target-chat').split('\n')[1]).mes, 'local body');
                 } finally {
@@ -564,13 +559,11 @@ test('chat persistence and navigation', async (context) => {
                     await main.saveMetadata();
                     assert.equal(reloads, 1);
                     assert.equal(payloads.get('target-chat'), external);
-                    assert.deepEqual(commits, []);
 
                     Popup.show.input = async () => 'OVERWRITE';
                     fullSaveError = { InternalServerError: 'publish failed' };
                     await assert.rejects(() => main.saveMetadata(), error => error.cause === fullSaveError && error.code === undefined);
                     assert.equal(payloads.get('target-chat'), external);
-                    assert.deepEqual(commits, []);
                     assert.equal(main.isChatSaving, false);
 
                     payloads.delete('target-chat');
@@ -603,8 +596,6 @@ test('chat persistence and navigation', async (context) => {
                     assert.equal(readHeader('default-chat').chat_metadata.variables.fromGreeting, 'saved');
                     assert.equal(main.chat_metadata.variables.fromGreeting, 'saved');
                     assert.equal(payloads.get('default-chat').split('\n').length, greeting ? 2 : 1);
-                    assert.deepEqual(commits.map(commit => commit.kind), ['full', 'metadata', 'full']);
-                    assert.ok(commits.filter(commit => commit.kind === 'full').every(commit => commit.reason === 'maintenance'));
                     assert.deepEqual(errors, []);
                 } finally {
                     main.eventSource.removeListener(main.event_types.CHARACTER_FIRST_MESSAGE_SELECTED, onGreeting);

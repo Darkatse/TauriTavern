@@ -1,6 +1,7 @@
 // @ts-check
 
 import { getActiveChatSnapshot } from '../adapters/st/active-chat-ref.js';
+import { commitChatMetadataExtension } from '../../../scripts/chat-payload-transport.js';
 import { createChatSearchMessages } from './chat-search-messages.js';
 import { mustArray, mustNumber, normalizeChatRef, parseJsonLines } from './chat-utils.js';
 
@@ -58,22 +59,7 @@ function createChatHandle({ safeInvoke, ref }) {
             throw new Error('namespace is required');
         }
 
-        const value = options?.value;
-
-        if (normalized.kind === 'character') {
-            return safeInvoke('set_character_chat_metadata_extension', {
-                characterName: normalized.characterId,
-                fileName: normalized.fileName,
-                namespace,
-                value,
-            });
-        }
-
-        return safeInvoke('set_group_chat_metadata_extension', {
-            chatId: normalized.chatId,
-            namespace,
-            value,
-        });
+        return commitChatMetadataExtension({ target: normalized, namespace, value: options?.value });
     }
 
     async function getStoreJson(options) {

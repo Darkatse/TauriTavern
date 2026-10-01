@@ -36,15 +36,43 @@ function positiveSafeInteger(value, label) {
 }
 
 export async function commitChatMetadata({ target, chatMetadata }) {
-    // Snapshot before yielding: Tauri re-reads live arguments when its custom protocol falls back to postMessage.
-    const snapshot = JSON.parse(JSON.stringify(chatMetadata));
-    await invokeChatCommit('commit_chat_metadata', { target, chatMetadata: snapshot });
+    return commitChatRecords({
+        target,
+        operation: { kind: 'metadata' },
+        records: [serializeJson(chatMetadata)],
+        commitReason: 'mutation',
+    });
+}
+
+export async function commitChatMetadataExtension({ target, namespace, value }) {
+    return commitChatRecords({
+        target,
+        operation: { kind: 'metadataExtension', namespace },
+        records: [serializeJson(value)],
+        commitReason: 'mutation',
+    });
+}
+
+function serializeJson(value) {
+    const text = JSON.stringify(value);
+    if (text === undefined) throw new Error('Chat commit value must serialize to JSON');
+    return text;
 }
 
 export async function commitChatPayload({ target, payload, force, commitReason }) {
     const records = serializeChatPayload(payload);
     const coldSourceId = coldSourceForPayload(payload);
-    const begin = await invokeChatCommit('begin_chat_commit', { target, force, ...(coldSourceId === undefined ? {} : { coldSourceId }) });
+    return commitChatRecords({
+        target,
+        operation: { kind: 'payload', force, ...(coldSourceId === undefined ? {} : { coldSourceId }) },
+        records,
+        commitReason,
+    });
+}
+
+// Callers capture all payload values as JSON text before this first await.
+async function commitChatRecords({ target, operation, records, commitReason }) {
+    const begin = await invokeChatCommit('begin_chat_commit', { target, operation });
     const sessionId = String(begin?.sessionId || '').trim();
     if (!sessionId) {
         throw new Error('Host chat commit did not return a session id');

@@ -218,15 +218,6 @@ pub trait ChatRepository: Send + Sync {
         integrity: &str,
     ) -> Result<bool, DomainError>;
 
-    /// Set `chat_metadata.extensions[namespace]` for a character chat (header-only rewrite).
-    async fn set_character_chat_metadata_extension(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        namespace: &str,
-        value: Value,
-    ) -> Result<(), DomainError>;
-
     /// Read a JSON value from the character chat extension store.
     async fn get_character_chat_store_json(
         &self,

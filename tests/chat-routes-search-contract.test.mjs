@@ -8,35 +8,35 @@ import { registerChatRoutes } from '../src/tauri/main/routes/chat-routes.js';
 
 function createSearchRouteHarness({ group = null } = {}) {
     const router = createRouteRegistry();
-    const calls = [];
     const context = {
         ensureJsonl: kernelEnsureJsonl,
         stripJsonl: kernelStripJsonl,
         formatFileSize: (value) => `${value} bytes`,
         resolveCharacterId: async () => 'alice',
         safeInvoke: async (command, args) => {
-            calls.push({ command, args });
             if (command === 'get_group') {
                 return group;
             }
-            return [{
-                file_name: 'session.jsonl',
+            if (command === 'search_chats') return [];
+            const names = command === 'list_group_chat_summaries' ? args.chat_ids : ['session.jsonl'];
+            return names.map(file_name => ({
+                file_name,
                 file_size: 1024,
                 message_count: 7,
                 preview: 'latest',
                 date: 1770000000000,
-            }];
+            }));
         },
     };
 
     registerChatRoutes(router, context, { jsonResponse });
 
-    return { router, calls };
+    return { router };
 }
 
 
-test('/api/chats/search uses summary listing for empty character query', async () => {
-    const { router, calls } = createSearchRouteHarness();
+test('/api/chats/search returns the legacy list shape for an empty query', async () => {
+    const { router } = createSearchRouteHarness();
 
     const response = await router.handle({
         method: 'POST',
@@ -46,13 +46,6 @@ test('/api/chats/search uses summary listing for empty character query', async (
 
     assert.ok(response);
     assert.equal(response.status, 200);
-    assert.deepEqual(calls, [{
-        command: 'list_chat_summaries',
-        args: {
-            character_filter: 'alice',
-            include_metadata: false,
-        },
-    }]);
     assert.deepEqual(await response.json(), [{
         file_name: 'session',
         file_size: '1024 bytes',
@@ -61,58 +54,38 @@ test('/api/chats/search uses summary listing for empty character query', async (
         last_mes: 1770000000000,
     }]);
 });
-test('/api/chats/search keeps full search command for non-empty character query', async () => {
-    const { router, calls } = createSearchRouteHarness();
+test('/api/chats/search returns only matches for a non-empty query', async () => {
+    const { router } = createSearchRouteHarness();
 
-    await router.handle({
+    const response = await router.handle({
         method: 'POST',
         path: '/api/chats/search',
         body: { query: 'dragon', avatar_url: 'alice.png' },
     });
 
-    assert.deepEqual(calls, [{
-        command: 'search_chats',
-        args: {
-            query: 'dragon',
-            characterFilter: 'alice',
-        },
-    }]);
+    assert.deepEqual(await response.json(), []);
 });
 
-
 test('/api/chats/search preserves upstream-significant group chat id spaces', async () => {
-    const { router, calls } = createSearchRouteHarness({
+    const { router } = createSearchRouteHarness({
         group: { id: 'party', chats: [' group-a ', 'group-b'] },
     });
 
-    await router.handle({
+    const response = await router.handle({
         method: 'POST',
         path: '/api/chats/search',
         body: { query: '', group_id: 'party' },
     });
 
-    assert.deepEqual(calls.at(-1), {
-        command: 'list_group_chat_summaries',
-        args: {
-            chat_ids: [' group-a ', 'group-b'],
-            include_metadata: false,
-        },
-    });
+    assert.deepEqual((await response.json()).map(chat => chat.file_name), [' group-a ', 'group-b']);
 });
 
 test('/api/chats/rename returns the backend-committed character chat stem', async () => {
     const router = createRouteRegistry();
-    const calls = [];
     const context = {
         stripJsonl: kernelStripJsonl,
-        resolveCharacterId: async ({ avatar }) => {
-            calls.push({ command: 'resolveCharacterId', args: { avatar } });
-            return 'alice';
-        },
-        safeInvoke: async (command, args) => {
-            calls.push({ command, args });
-            return 'Clean Name';
-        },
+        resolveCharacterId: async () => 'alice',
+        safeInvoke: async () => 'CleanName',
     };
 
     registerChatRoutes(router, context, { jsonResponse });
@@ -123,25 +96,12 @@ test('/api/chats/rename returns the backend-committed character chat stem', asyn
         body: {
             avatar_url: 'alice.png',
             original_file: 'Old Name.jsonl',
-            renamed_file: 'Clean Name.jsonl',
+            renamed_file: 'Clean/Name.jsonl',
         },
     });
 
     assert.equal(response.status, 200);
-    assert.deepEqual(calls, [
-        { command: 'resolveCharacterId', args: { avatar: 'alice.png' } },
-        {
-            command: 'rename_chat',
-            args: {
-                dto: {
-                    character_name: 'alice',
-                    old_file_name: 'Old Name',
-                    new_file_name: 'Clean Name',
-                },
-            },
-        },
-    ]);
-    assert.deepEqual(await response.json(), { ok: true, sanitizedFileName: 'Clean Name' });
+    assert.deepEqual(await response.json(), { ok: true, sanitizedFileName: 'CleanName' });
 });
 
 

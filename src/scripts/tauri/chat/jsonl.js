@@ -72,7 +72,6 @@ export function serializeChatPayload(payload) {
     for (let index = 0; index < payload.length; index += 1) {
         const record = JSON.stringify(payload[index]);
         if (record?.[0] !== '{') throw new Error(`Chat payload entry at index ${index} must serialize to an object`);
-        if (index === 0) assertHeader(JSON.parse(record));
         records.push(record);
     }
 
@@ -173,60 +172,36 @@ export async function jsonlStreamToPayload(stream, options) {
     return payload;
 }
 
-function concatChunks(chunks, totalLength) {
-    if (chunks.length === 1) {
-        return chunks[0];
-    }
-
-    const output = new Uint8Array(totalLength);
-    let offset = 0;
-
-    for (const chunk of chunks) {
-        output.set(chunk, offset);
-        offset += chunk.byteLength;
-    }
-
-    return output;
-}
-
 export function* jsonlRecordsToByteChunks(records, { maxChunkBytes = 4 * 1024 * 1024 } = {}) {
-    if (!Number.isSafeInteger(maxChunkBytes) || maxChunkBytes <= 0) {
-        throw new Error('maxChunkBytes must be a positive safe integer');
+    if (!Number.isSafeInteger(maxChunkBytes) || maxChunkBytes < 4) {
+        throw new Error('maxChunkBytes must fit at least one UTF-8 character (4 bytes)');
     }
 
-    const chunks = [];
-    let totalLength = 0;
-    let isFirstLine = true;
-
-    for (const line of records) {
-        const text = isFirstLine ? line : `\n${line}`;
-        isFirstLine = false;
-        const bytes = textEncoder.encode(text);
-
-        if (bytes.byteLength > maxChunkBytes) {
-            if (totalLength > 0) {
-                yield concatChunks(chunks, totalLength);
-                chunks.length = 0;
-                totalLength = 0;
+    // Size small commits by their UTF-8 upper bound: three bytes per UTF-16 code unit.
+    const capacity = Math.min(maxChunkBytes, Math.max(4, records.reduce((size, text) => size + text.length * 3 + 1, 0)));
+    let frame = new Uint8Array(capacity);
+    let used = 0;
+    let first = true;
+    for (const record of records) {
+        // The separator is its own fragment; never concatenate a giant record.
+        for (const text of first ? [record] : ['\n', record]) {
+            let offset = 0;
+            while (offset < text.length) {
+                if (frame.length - used < 4) {
+                    yield frame.subarray(0, used);
+                    frame = new Uint8Array(capacity);
+                    used = 0;
+                }
+                let end = Math.min(offset + frame.length - used, text.length);
+                // A bounded substring must not split a UTF-16 surrogate pair.
+                const last = text.charCodeAt(end - 1);
+                if (end < text.length && last >= 0xD800 && last <= 0xDBFF) end -= 1;
+                const { read, written } = textEncoder.encodeInto(text.slice(offset, end), frame.subarray(used));
+                offset += read;
+                used += written;
             }
-
-            for (let offset = 0; offset < bytes.byteLength; offset += maxChunkBytes) {
-                yield bytes.subarray(offset, offset + maxChunkBytes);
-            }
-            continue;
         }
-
-        if (totalLength > 0 && totalLength + bytes.byteLength > maxChunkBytes) {
-            yield concatChunks(chunks, totalLength);
-            chunks.length = 0;
-            totalLength = 0;
-        }
-
-        chunks.push(bytes);
-        totalLength += bytes.byteLength;
+        first = false;
     }
-
-    if (totalLength > 0) {
-        yield concatChunks(chunks, totalLength);
-    }
+    if (used > 0) yield frame.subarray(0, used);
 }

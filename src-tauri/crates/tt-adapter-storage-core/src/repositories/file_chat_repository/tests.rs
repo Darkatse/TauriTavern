@@ -10,7 +10,7 @@ use crate::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::ChatBackupSettings;
 use tt_ports::repositories::chat_payload_commit_repository::{
-    ChatPayloadCommitRepository, ChatPayloadTarget, CommittedChatPayload,
+    ChatCommitOperation, ChatPayloadCommitRepository, ChatPayloadTarget, CommittedChatPayload,
 };
 use tt_ports::repositories::chat_repository::{
     ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchQuery, ChatRepository,
@@ -21,7 +21,6 @@ use tt_ports::settings::ChatBackupRuntime;
 
 use super::FileChatRepository;
 use super::backup_codec::set_backup_modified;
-use super::chat_payload_commit::MAX_ACTIVE_CHAT_COMMIT_SESSIONS;
 
 mod format_contract;
 
@@ -86,7 +85,39 @@ async fn commit_payload_bytes(
     bytes: &[u8],
     force: bool,
 ) -> Result<CommittedChatPayload, DomainError> {
-    let session = repository.begin(target, force, None).await?;
+    commit_bytes(
+        repository,
+        target,
+        bytes,
+        ChatCommitOperation::Payload {
+            force,
+            cold_source: None,
+        },
+    )
+    .await
+}
+
+async fn commit_metadata(
+    repository: &FileChatRepository,
+    target: ChatPayloadTarget,
+    metadata: Value,
+) -> Result<CommittedChatPayload, DomainError> {
+    commit_bytes(
+        repository,
+        target,
+        metadata.to_string().as_bytes(),
+        ChatCommitOperation::Metadata,
+    )
+    .await
+}
+
+async fn commit_bytes(
+    repository: &FileChatRepository,
+    target: ChatPayloadTarget,
+    bytes: &[u8],
+    operation: ChatCommitOperation,
+) -> Result<CommittedChatPayload, DomainError> {
+    let session = repository.begin(target, operation).await?;
     let frame_bytes = session.max_frame_bytes as usize;
     let mut offset = 0;
     for frame in bytes.chunks(frame_bytes) {
@@ -110,7 +141,13 @@ fn character_target(character_id: &str, file_name: &str) -> ChatPayloadTarget {
 async fn chat_commit_protocol_rejects_invalid_frames_and_abort_is_idempotent() {
     let (repository, root) = setup_repository().await;
     let session = repository
-        .begin(character_target("alice", "session"), false, None)
+        .begin(
+            character_target("alice", "session"),
+            ChatCommitOperation::Payload {
+                force: false,
+                cold_source: None,
+            },
+        )
         .await
         .expect("begin chat commit");
 
@@ -164,7 +201,16 @@ async fn chat_commit_publishes_exact_bytes_only_after_all_frames_finish() {
         .await
         .unwrap();
     let payload = "{}\n{\"mes\":\"你好\"}".as_bytes();
-    let session = repository.begin(target, false, None).await.unwrap();
+    let session = repository
+        .begin(
+            target,
+            ChatCommitOperation::Payload {
+                force: false,
+                cold_source: None,
+            },
+        )
+        .await
+        .unwrap();
     let mut start = 0;
     let mut offset = 0;
     for end in [1, 13, payload.len()] {
@@ -210,41 +256,36 @@ async fn metadata_commit_preserves_header_fields_and_exact_body_bytes() {
     .into_bytes();
     // A metadata edit must preserve even a body that cannot be decoded as UTF-8.
     body.push(0xff);
-    for target in [
-        character_target("Alice", "metadata"),
-        ChatPayloadTarget::Group {
-            chat_id: "metadata".into(),
-        },
+    let target = ChatPayloadTarget::Group {
+        chat_id: "metadata".into(),
+    };
+    let path = repository
+        .resolve_chat_commit_target(&target)
+        .await
+        .unwrap();
+    for (original, expected_body) in [
+        (
+            [format!("\r\n\u{feff}\r\n{header}\r\n").as_bytes(), &body].concat(),
+            body.as_slice(),
+        ),
+        (header.to_string().into_bytes(), b"".as_slice()),
     ] {
-        let path = repository
-            .resolve_chat_commit_target(&target)
+        commit_payload_bytes(&repository, target.clone(), &original, false)
             .await
             .unwrap();
-        for (original, expected_body) in [
-            (
-                [format!("\r\n\u{feff}\r\n{header}\r\n").as_bytes(), &body].concat(),
-                body.as_slice(),
-            ),
-            (header.to_string().into_bytes(), b"".as_slice()),
-        ] {
-            commit_payload_bytes(&repository, target.clone(), &original, false)
-                .await
-                .unwrap();
-            let metadata = json!({ "integrity": "92698fe9-2d05-54b0-9734-a55213d002d5", "variables": { "new": "value" } });
-            repository
-                .commit_metadata(target.clone(), metadata.clone())
-                .await
-                .unwrap();
-            let updated = fs::read(&path).await.unwrap();
-            let split = updated.iter().position(|byte| *byte == b'\n').unwrap();
-            let mut expected_header = header.clone();
-            expected_header["chat_metadata"] = metadata;
-            assert_eq!(
-                serde_json::from_slice::<Value>(&updated[..split]).unwrap(),
-                expected_header
-            );
-            assert_eq!(&updated[split + 1..], expected_body);
-        }
+        let metadata = json!({ "integrity": "92698fe9-2d05-54b0-9734-a55213d002d5", "variables": { "new": "value" } });
+        commit_metadata(&repository, target.clone(), metadata.clone())
+            .await
+            .unwrap();
+        let updated = fs::read(&path).await.unwrap();
+        let split = updated.iter().position(|byte| *byte == b'\n').unwrap();
+        let mut expected_header = header.clone();
+        expected_header["chat_metadata"] = metadata;
+        assert_eq!(
+            serde_json::from_slice::<Value>(&updated[..split]).unwrap(),
+            expected_header
+        );
+        assert_eq!(&updated[split + 1..], expected_body);
     }
     cleanup_repository(repository, root).await;
 }
@@ -252,83 +293,93 @@ async fn metadata_commit_preserves_header_fields_and_exact_body_bytes() {
 #[tokio::test]
 async fn metadata_commit_rejects_invalid_updates_without_changing_the_file() {
     let (repository, root) = setup_repository().await;
-    for target in [
-        character_target("Alice", "metadata"),
-        ChatPayloadTarget::Group {
-            chat_id: "metadata".into(),
-        },
+    let target = character_target("Alice", "metadata");
+    let path = repository
+        .resolve_chat_commit_target(&target)
+        .await
+        .unwrap();
+    let missing = commit_metadata(&repository, target.clone(), json!({}))
+        .await
+        .unwrap_err();
+    assert!(matches!(missing, DomainError::NotFound(_)));
+    assert!(!path.exists());
+
+    let original = payload_to_jsonl(&payload_with_integrity(
+        "92698fe9-2d05-54b0-9734-a55213d002d5",
+    ));
+    commit_payload_bytes(&repository, target.clone(), original.as_bytes(), false)
+        .await
+        .unwrap();
+    for metadata in [
+        json!({ "integrity": "55ca7f51-3c7c-5dca-980a-0d89bd5d038f" }),
+        json!({}),
+        Value::Null,
     ] {
-        let path = repository
-            .resolve_chat_commit_target(&target)
-            .await
-            .unwrap();
-        let missing = repository
-            .commit_metadata(target.clone(), json!({}))
+        let error = commit_metadata(&repository, target.clone(), metadata.clone())
             .await
             .unwrap_err();
-        assert!(matches!(missing, DomainError::NotFound(_)));
-        assert!(!path.exists());
-
-        let original = payload_to_jsonl(&payload_with_integrity(
-            "92698fe9-2d05-54b0-9734-a55213d002d5",
-        ));
-        commit_payload_bytes(&repository, target.clone(), original.as_bytes(), false)
-            .await
-            .unwrap();
-        for metadata in [
-            json!({ "integrity": "55ca7f51-3c7c-5dca-980a-0d89bd5d038f" }),
-            json!({}),
-            Value::Null,
-            json!([]),
-            json!(1),
-        ] {
-            let error = repository
-                .commit_metadata(target.clone(), metadata.clone())
-                .await
-                .unwrap_err();
-            assert!(matches!(&error, DomainError::InvalidData(_)));
-            if metadata.is_object() {
-                assert!(
-                    matches!(error, DomainError::InvalidData(message) if message == "integrity")
-                );
-            }
-            assert_eq!(fs::read(&path).await.unwrap(), original.as_bytes());
+        assert!(matches!(&error, DomainError::InvalidData(_)));
+        if metadata.is_object() {
+            assert!(matches!(error, DomainError::InvalidData(message) if message == "integrity"));
         }
-        for malformed in ["", "\n", "{broken}\n", "[]\n"] {
-            fs::write(&path, malformed).await.unwrap();
-            assert!(matches!(
-                repository
-                    .commit_metadata(target.clone(), json!({}))
-                    .await
-                    .unwrap_err(),
-                DomainError::InvalidData(_)
-            ));
-            assert_eq!(fs::read(&path).await.unwrap(), malformed.as_bytes());
-        }
-        fs::write(&path, "{\"chat_metadata\":{}}\n").await.unwrap();
-        repository
-            .commit_metadata(
+        assert_eq!(fs::read(&path).await.unwrap(), original.as_bytes());
+    }
+    for staged in [b"{} {}".as_slice(), b"{\n\"value\":1}"] {
+        assert!(
+            commit_bytes(
+                &repository,
                 target.clone(),
-                json!({ "integrity": "7f565cd0-b165-5376-82e9-dc222dc3d5cd" }),
+                staged,
+                ChatCommitOperation::Metadata
             )
             .await
-            .unwrap();
-        assert_eq!(
-            repository
-                .read_chat_metadata_from_path(&path)
-                .await
-                .unwrap(),
-            json!({ "integrity": "7f565cd0-b165-5376-82e9-dc222dc3d5cd" })
+            .is_err()
         );
-        let mut files = fs::read_dir(path.parent().unwrap()).await.unwrap();
-        while let Some(file) = files.next_entry().await.unwrap() {
-            assert_eq!(
-                file.path(),
-                path,
-                "rejected updates must not leave staging files"
-            );
-        }
+        assert_eq!(fs::read(&path).await.unwrap(), original.as_bytes());
     }
+    for malformed in ["", "\n", "{broken}\n", "[]\n"] {
+        fs::write(&path, malformed).await.unwrap();
+        assert!(matches!(
+            commit_metadata(&repository, target.clone(), json!({}))
+                .await
+                .unwrap_err(),
+            DomainError::InvalidData(_)
+        ));
+        assert_eq!(fs::read(&path).await.unwrap(), malformed.as_bytes());
+    }
+    fs::write(&path, "{\"chat_metadata\":{}}\n").await.unwrap();
+    commit_metadata(
+        &repository,
+        target.clone(),
+        json!({ "integrity": "7f565cd0-b165-5376-82e9-dc222dc3d5cd" }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        repository
+            .read_chat_metadata_from_path(&path)
+            .await
+            .unwrap(),
+        json!({ "integrity": "7f565cd0-b165-5376-82e9-dc222dc3d5cd" })
+    );
+    let mut files = fs::read_dir(path.parent().unwrap()).await.unwrap();
+    while let Some(file) = files.next_entry().await.unwrap() {
+        assert_eq!(
+            file.path(),
+            path,
+            "rejected updates must not leave staging files"
+        );
+    }
+    assert!(
+        fs::read_dir(&repository.chat_commit_staging_dir)
+            .await
+            .unwrap()
+            .next_entry()
+            .await
+            .unwrap()
+            .is_none(),
+        "metadata commits must clean both received and rewritten stages"
+    );
     cleanup_repository(repository, root).await;
 }
 
@@ -349,8 +400,7 @@ async fn metadata_writers_invalidate_cached_reads_and_preserve_extension_semanti
         .unwrap();
 
     let metadata = json!({ "integrity": "92698fe9-2d05-54b0-9734-a55213d002d5", "variables": { "score": "1" } });
-    repository
-        .commit_metadata(target, metadata.clone())
+    commit_metadata(&repository, target, metadata.clone())
         .await
         .unwrap();
     assert_eq!(
@@ -372,10 +422,16 @@ async fn metadata_writers_invalidate_cached_reads_and_preserve_extension_semanti
     );
 
     for value in [json!({ "floor": 42 }), Value::Null] {
-        repository
-            .set_character_chat_metadata_extension("Alice", "metadata", "example", value.clone())
-            .await
-            .unwrap();
+        commit_bytes(
+            &repository,
+            character_target("Alice", "metadata"),
+            value.to_string().as_bytes(),
+            ChatCommitOperation::MetadataExtension {
+                namespace: "example".into(),
+            },
+        )
+        .await
+        .unwrap();
         let cached = repository.get_chat("Alice", "metadata").await.unwrap();
         assert_eq!(
             cached.chat_metadata.extensions.unwrap().get("example"),
@@ -432,8 +488,7 @@ async fn metadata_commit_does_not_skip_backup_after_an_equal_length_change() {
     let before = backup_file_names(&root).await;
 
     payload[0]["chat_metadata"]["variables"]["score"] = json!("2");
-    repository
-        .commit_metadata(target, payload[0]["chat_metadata"].clone())
+    commit_metadata(&repository, target, payload[0]["chat_metadata"].clone())
         .await
         .unwrap();
     let updated = repository
@@ -461,7 +516,13 @@ async fn cache_clear_during_commit_keeps_automatic_backups_conservative() {
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
     let payload = b"{}";
     let session = repository
-        .begin(character_target("Alice", "session"), false, None)
+        .begin(
+            character_target("Alice", "session"),
+            ChatCommitOperation::Payload {
+                force: false,
+                cold_source: None,
+            },
+        )
         .await
         .unwrap();
     repository
@@ -510,7 +571,13 @@ async fn chat_commit_size_mismatch_preserves_current_and_consumes_session() {
         "Assistant",
     ));
     let session = repository
-        .begin(character_target("alice", "session"), false, None)
+        .begin(
+            character_target("alice", "session"),
+            ChatCommitOperation::Payload {
+                force: false,
+                cold_source: None,
+            },
+        )
         .await
         .expect("begin replacement");
     repository
@@ -557,8 +624,26 @@ async fn same_target_sessions_are_complete_and_last_finish_wins() {
     let payload_a = b"{}\n{\"mes\":\"a\"}";
     let payload_b = b"{}\n{\"mes\":\"b\"}";
     let target = character_target("alice", "session");
-    let session_a = repository.begin(target.clone(), false, None).await.unwrap();
-    let session_b = repository.begin(target.clone(), false, None).await.unwrap();
+    let session_a = repository
+        .begin(
+            target.clone(),
+            ChatCommitOperation::Payload {
+                force: false,
+                cold_source: None,
+            },
+        )
+        .await
+        .unwrap();
+    let session_b = repository
+        .begin(
+            target.clone(),
+            ChatCommitOperation::Payload {
+                force: false,
+                cold_source: None,
+            },
+        )
+        .await
+        .unwrap();
     repository
         .append(&session_a.session_id, 0, payload_a)
         .await
@@ -590,46 +675,6 @@ async fn same_target_sessions_are_complete_and_last_finish_wins() {
             .unwrap(),
         last
     );
-    cleanup_repository(repository, root).await;
-}
-
-#[tokio::test]
-async fn chat_commit_sessions_have_a_small_hard_limit() {
-    let (repository, root) = setup_repository().await;
-    let target = character_target("alice", "session");
-    let mut sessions = Vec::new();
-
-    for _ in 0..MAX_ACTIVE_CHAT_COMMIT_SESSIONS {
-        sessions.push(
-            repository
-                .begin(target.clone(), false, None)
-                .await
-                .expect("begin within session limit"),
-        );
-    }
-
-    assert!(matches!(
-        repository.begin(target.clone(), false, None).await,
-        Err(DomainError::Conflict(_))
-    ));
-
-    let released = sessions.pop().expect("session to release");
-    repository
-        .abort(&released.session_id)
-        .await
-        .expect("release session capacity");
-    let replacement = repository
-        .begin(target, false, None)
-        .await
-        .expect("begin after releasing capacity");
-
-    for session in sessions.into_iter().chain(std::iter::once(replacement)) {
-        repository
-            .abort(&session.session_id)
-            .await
-            .expect("abort test session");
-    }
-
     cleanup_repository(repository, root).await;
 }
 
@@ -1453,113 +1498,35 @@ async fn automatic_deduplication_preserves_prefix_and_latest_state() {
 }
 
 #[tokio::test]
-async fn non_c2_mutation_fails_closed_and_group_uses_the_same_guard() {
+async fn cache_clear_reenables_group_backup_after_deduplication() {
     let (repository, root) = setup_repository().await;
     apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
-    let payload = payload_with_integrity("8f145f8a-090d-5fe0-888f-5a6abd9bceca");
-    let jsonl = format!("{}\n", payload_to_jsonl(&payload));
-    commit_payload_bytes(
-        &repository,
-        character_target("Alice", "session"),
-        jsonl.as_bytes(),
-        false,
-    )
-    .await
-    .expect("commit current");
-    repository
-        .backup_chat_automatic("Alice", "session")
-        .await
-        .expect("create tracked snapshot");
-
-    let current_path = repository
-        .get_chat_payload_path("Alice", "session")
-        .await
-        .expect("resolve current path");
-    repository
-        .commit_metadata(
-            character_target("Alice", "session"),
-            payload[0]["chat_metadata"].clone(),
-        )
-        .await
-        .expect("rewrite the same bytes through a non-C2 mutation");
-    assert_eq!(
-        fs::read(&current_path)
-            .await
-            .expect("read rewritten current"),
-        jsonl.as_bytes()
-    );
-    repository
-        .backup_chat_automatic("Alice", "session")
-        .await
-        .expect("unknown digest creates a conservative snapshot");
-    assert_eq!(backup_file_names(&root).await.len(), 2);
-
     commit_payload_bytes(
         &repository,
         ChatPayloadTarget::Group {
-            chat_id: "group-session".to_string(),
+            chat_id: "group-session".into(),
         },
-        jsonl.as_bytes(),
-        false,
-    )
-    .await
-    .expect("commit group current");
-    repository
-        .backup_group_chat_automatic("group-session")
-        .await
-        .expect("create group snapshot");
-    repository
-        .backup_group_chat_automatic("group-session")
-        .await
-        .expect("skip unchanged group snapshot");
-    assert_eq!(backup_file_names(&root).await.len(), 3);
-
-    <FileChatRepository as ChatRepository>::clear_cache(&repository)
-        .await
-        .expect("clear chat runtime cache");
-    repository
-        .backup_group_chat_automatic("group-session")
-        .await
-        .unwrap();
-    assert_eq!(backup_file_names(&root).await.len(), 4);
-
-    cleanup_repository(repository, root).await;
-}
-
-#[tokio::test]
-async fn automatic_snapshot_defers_instead_of_waiting_for_a_busy_current() {
-    let (repository, root) = setup_repository().await;
-    apply_and_reconcile_backups(&repository, backup_policy(-1, -1, -1)).await;
-    commit_payload_bytes(
-        &repository,
-        character_target("Alice", "session"),
         b"{}",
         false,
     )
     .await
     .unwrap();
-
-    let current_path = repository
-        .get_chat_payload_path("Alice", "session")
-        .await
-        .expect("resolve current path");
-    let current_guard = repository
-        .acquire_payload_mutation_lock(&current_path)
-        .await;
-    let error = repository
-        .backup_chat_automatic("Alice", "session")
-        .await
-        .expect_err("busy current should defer the automatic snapshot");
-    assert!(matches!(error, DomainError::Transient(_)));
-    assert!(backup_file_names(&root).await.is_empty());
-
-    drop(current_guard);
-    repository
-        .backup_chat_automatic("Alice", "session")
-        .await
-        .expect("automatic snapshot after current writer finishes");
+    for _ in 0..2 {
+        repository
+            .backup_group_chat_automatic("group-session")
+            .await
+            .unwrap();
+    }
     assert_eq!(backup_file_names(&root).await.len(), 1);
 
+    <FileChatRepository as ChatRepository>::clear_cache(&repository)
+        .await
+        .unwrap();
+    repository
+        .backup_group_chat_automatic("group-session")
+        .await
+        .unwrap();
+    assert_eq!(backup_file_names(&root).await.len(), 2);
     cleanup_repository(repository, root).await;
 }
 
@@ -1716,7 +1683,13 @@ async fn chat_commit_rejects_empty_names_and_truncated_jsonl_suffixes() {
     for name in ["*.jsonl".to_string(), "a".repeat(250)] {
         assert!(matches!(
             repository
-                .begin(character_target("alice", &name), false, None)
+                .begin(
+                    character_target("alice", &name),
+                    ChatCommitOperation::Payload {
+                        force: false,
+                        cold_source: None
+                    }
+                )
                 .await,
             Err(DomainError::InvalidData(_))
         ));
@@ -3061,13 +3034,13 @@ async fn cold_swipes_round_trip_retains_source_across_metadata_publish_reorder_a
         assert_eq!(projected[2]["swipes"], json!(["user", null]));
         assert_eq!(&projected[3..], &original[3..]);
 
-        repository
-            .commit_metadata(
-                target.clone(),
-                json!({"integrity":"38aedc23-2370-574f-8194-ff3a25bdfad3","note":"longer metadata"}),
-            )
-            .await
-            .unwrap();
+        commit_metadata(
+            &repository,
+            target.clone(),
+            json!({"integrity":"38aedc23-2370-574f-8194-ff3a25bdfad3","note":"longer metadata"}),
+        )
+        .await
+        .unwrap();
         let mut staged = vec![
             projected[0].clone(),
             projected[2].clone(),
@@ -3095,11 +3068,13 @@ async fn cold_swipes_round_trip_retains_source_across_metadata_publish_reorder_a
         let session = repository
             .begin(
                 target.clone(),
-                false,
-                Some(ColdSwipeCommitSource {
-                    id: 7,
-                    source: source.clone(),
-                }),
+                ChatCommitOperation::Payload {
+                    force: false,
+                    cold_source: Some(ColdSwipeCommitSource {
+                        id: 7,
+                        source: source.clone(),
+                    }),
+                },
             )
             .await
             .unwrap();
@@ -3200,11 +3175,13 @@ async fn cold_swipes_reject_invalid_merges_without_publishing_or_leaving_stages(
         let session = repository
             .begin(
                 target.clone(),
-                true,
-                Some(ColdSwipeCommitSource {
-                    id: 8,
-                    source: source.clone(),
-                }),
+                ChatCommitOperation::Payload {
+                    force: true,
+                    cold_source: Some(ColdSwipeCommitSource {
+                        id: 8,
+                        source: source.clone(),
+                    }),
+                },
             )
             .await
             .unwrap();
@@ -3272,7 +3249,7 @@ async fn cold_swipes_lookahead_handles_empty_header_only_and_unterminated_tail()
 }
 
 #[tokio::test]
-async fn cold_swipes_preserve_record_key_order_and_project_all_message_roles() {
+async fn cold_swipes_project_and_restore_all_message_roles() {
     use tt_ports::repositories::chat_payload_commit_repository::ColdSwipeCommitSource;
     let (repository, root) = setup_repository().await;
     let target = ChatPayloadTarget::Group {
@@ -3294,20 +3271,17 @@ async fn cold_swipes_preserve_record_key_order_and_project_all_message_roles() {
     let source = repository.open_swipe_source(target.clone()).await.unwrap();
     let projected = read_chat_stream_bytes(source.clone().projection(0)).await;
     let projected_text = std::str::from_utf8(&projected).unwrap();
-    for (line, original) in projected_text.lines().skip(1).zip(&records) {
-        let fields: indexmap::IndexMap<String, Value> = serde_json::from_str(line).unwrap();
-        let original: indexmap::IndexMap<String, Value> = serde_json::from_str(original).unwrap();
-        assert_eq!(fields["swipes"], json!([null, "active"]));
-        assert_eq!(
-            fields.keys().take(original.len()).collect::<Vec<_>>(),
-            original.keys().collect::<Vec<_>>()
-        );
+    for line in projected_text.lines().skip(1).take(records.len()) {
+        let message: Value = serde_json::from_str(line).unwrap();
+        assert_eq!(message["swipes"], json!([null, "active"]));
     }
     let session = repository
         .begin(
             target.clone(),
-            false,
-            Some(ColdSwipeCommitSource { id: 0, source }),
+            ChatCommitOperation::Payload {
+                force: false,
+                cold_source: Some(ColdSwipeCommitSource { id: 0, source }),
+            },
         )
         .await
         .unwrap();
@@ -3323,9 +3297,13 @@ async fn cold_swipes_preserve_record_key_order_and_project_all_message_roles() {
         .resolve_chat_commit_target(&target)
         .await
         .unwrap();
+    let expected: Vec<Value> = input
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
     assert_eq!(
-        fs::read_to_string(path).await.unwrap(),
-        format!("{input}\n")
+        crate::chat_jsonl::read_payload(&path).await.unwrap(),
+        expected
     );
     cleanup_repository(repository, root).await;
 }

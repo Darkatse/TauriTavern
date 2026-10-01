@@ -81,7 +81,7 @@ pub struct FileChatRepository {
     backups_dir: PathBuf,
     chat_commit_staging_dir: PathBuf,
     chat_commit_sessions:
-        Mutex<HashMap<uuid::Uuid, Arc<Mutex<chat_payload_commit::CommitSession>>>>,
+        Mutex<HashMap<uuid::Uuid, Arc<Mutex<Option<chat_payload_commit::CommitSession>>>>>,
     path_write_locks: Arc<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>>,
     current_content_signatures: Mutex<ContentSignatureState>,
     memory_cache: Arc<Mutex<MemoryCache>>,

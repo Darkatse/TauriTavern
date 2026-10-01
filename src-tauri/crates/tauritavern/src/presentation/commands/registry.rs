@@ -69,7 +69,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_api_commands::get_character_chat_summary,
         super::chat_api_commands::get_character_chat_integrity,
         super::chat_api_commands::get_character_chat_metadata,
-        super::chat_api_commands::set_character_chat_metadata_extension,
         super::chat_api_commands::get_character_chat_store_json,
         super::chat_api_commands::set_character_chat_store_json,
         super::chat_api_commands::update_character_chat_store_json,
@@ -81,7 +80,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         // Group chat API commands
         super::group_chat_api_commands::get_group_chat_summary,
         super::group_chat_api_commands::get_group_chat_metadata,
-        super::group_chat_api_commands::set_group_chat_metadata_extension,
         super::group_chat_api_commands::get_group_chat_store_json,
         super::group_chat_api_commands::set_group_chat_store_json,
         super::group_chat_api_commands::update_group_chat_store_json,
@@ -271,7 +269,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::upload_staging_commands::stage_upload_discard,
         // Chat payload commit commands
         super::chat_payload_commit_commands::begin_chat_commit,
-        super::chat_payload_commit_commands::commit_chat_metadata,
         super::chat_payload_commit_commands::append_chat_commit_chunk,
         super::chat_payload_commit_commands::finish_chat_commit,
         super::chat_payload_commit_commands::abort_chat_commit,
