@@ -85,6 +85,7 @@ export {};
  *   | 'get_character_chats_by_id'
  *   | 'get_character_chat_summary'
  *   | 'get_group_chat_summary'
+ *   | 'get_character_chat_integrity'
  *   | 'get_character_chat_metadata'
  *   | 'get_group_chat_metadata'
  *   | 'get_chat_completions_status'

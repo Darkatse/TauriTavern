@@ -220,18 +220,20 @@ impl ChatService {
             .lock_run_lifecycle()
             .await;
 
-        let summary = self
+        let integrity = self
             .chat_repository
-            .get_character_chat_summary(character_name, file_name, true)
+            .get_character_chat_integrity(character_name, file_name)
             .await?;
-        let target = match summary.chat_metadata.as_ref() {
-            Some(metadata) => AgentWorkspaceLifecycleService::character_target_from_metadata(
-                character_name,
-                file_name,
-                metadata,
-            )?,
-            None => None,
-        };
+        let target = integrity
+            .as_deref()
+            .map(|integrity| {
+                AgentWorkspaceLifecycleService::character_target(
+                    character_name,
+                    file_name,
+                    integrity,
+                )
+            })
+            .transpose()?;
         if let Some(target) = target.as_ref() {
             self.agent_workspace_lifecycle_service
                 .ensure_chat_workspace_inactive(target)
@@ -460,6 +462,17 @@ impl ChatService {
             .get_character_chat_summary(character_name, file_name, include_metadata)
             .await?;
         Ok(ChatSearchResultDto::from(summary))
+    }
+
+    pub async fn get_character_chat_integrity(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Option<String>, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .get_character_chat_integrity(character_name, file_name)
+            .await?)
     }
 
     pub async fn get_character_chat_metadata(

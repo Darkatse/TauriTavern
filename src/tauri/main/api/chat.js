@@ -244,10 +244,12 @@ function createChatHandle({ safeInvoke, ref }) {
             return normalized.chatId;
         }
 
-        const metadata = await getMetadata();
-        const value = metadata?.integrity;
-        if (typeof value !== 'string' || value.length === 0) {
-            throw new Error('Chat metadata integrity must be a non-empty string');
+        const value = await safeInvoke('get_character_chat_integrity', {
+            characterName: normalized.characterId,
+            fileName: normalized.fileName,
+        });
+        if (value === null) {
+            throw new Error('Chat has no stable identity');
         }
         return value;
     }

@@ -67,6 +67,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::group_chat_commands::restore_group_chat_backup,
         // Chat API commands (TauriTavern extension/memory APIs)
         super::chat_api_commands::get_character_chat_summary,
+        super::chat_api_commands::get_character_chat_integrity,
         super::chat_api_commands::get_character_chat_metadata,
         super::chat_api_commands::set_character_chat_metadata_extension,
         super::chat_api_commands::get_character_chat_store_json,

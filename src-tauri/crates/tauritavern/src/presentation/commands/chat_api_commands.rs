@@ -39,6 +39,28 @@ pub async fn get_character_chat_summary(
 }
 
 #[tauri::command]
+pub async fn get_character_chat_integrity(
+    character_name: String,
+    file_name: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Option<String>, CommandError> {
+    log_command(format!(
+        "get_character_chat_integrity {}/{}",
+        character_name, file_name
+    ));
+
+    app_state
+        .services
+        .chat_service
+        .get_character_chat_integrity(&character_name, &file_name)
+        .await
+        .map_err(map_command_error(format!(
+            "Failed to get chat identity {}/{}",
+            character_name, file_name
+        )))
+}
+
+#[tauri::command]
 pub async fn get_character_chat_metadata(
     character_name: String,
     file_name: String,

@@ -5,7 +5,8 @@ use std::path::Path;
 use serde_json::{Map, Value};
 
 use crate::chat_jsonl::{
-    parse_header, read_header_record, read_header_record_async, validate_metadata_integrity,
+    parse_header, parse_header_integrity, read_header_record, read_header_record_async,
+    validate_metadata_integrity,
 };
 use crate::file_system::persist_file_blocking;
 use tt_domain::errors::DomainError;
@@ -16,22 +17,41 @@ use super::integrity::verify_integrity_match;
 use super::windowed_payload_io::{map_open_existing_error, open_existing_payload_file};
 
 impl FileChatRepository {
+    pub(super) async fn read_chat_integrity_from_path(
+        &self,
+        path: &Path,
+    ) -> Result<Option<String>, DomainError> {
+        let Some(header) = read_header_bytes(path).await? else {
+            return Ok(None);
+        };
+        parse_header_integrity(&header).map_err(|error| header_error(path, error))
+    }
+
     pub(super) async fn read_chat_metadata_from_path(
         &self,
         path: &Path,
     ) -> Result<Value, DomainError> {
-        let mut reader = tokio::io::BufReader::new(open_existing_payload_file(path).await?);
-        let (header, _) = read_header_record_async(&mut reader)
+        self.read_optional_chat_metadata_from_path(path)
             .await?
-            .ok_or_else(|| {
-                DomainError::InvalidData("Cannot read metadata from a chat without a header".into())
-            })?;
-        parse_header(&header)?
-            .remove("chat_metadata")
             .filter(Value::is_object)
             .ok_or_else(|| {
-                DomainError::InvalidData("Chat header requires a chat_metadata object".into())
+                DomainError::InvalidData(format!(
+                    "Chat header {} requires a chat_metadata object",
+                    path.display()
+                ))
             })
+    }
+
+    pub(super) async fn read_optional_chat_metadata_from_path(
+        &self,
+        path: &Path,
+    ) -> Result<Option<Value>, DomainError> {
+        let Some(header) = read_header_bytes(path).await? else {
+            return Ok(None);
+        };
+        Ok(parse_header(&header)
+            .map_err(|error| header_error(path, error))?
+            .remove("chat_metadata"))
     }
 
     pub(super) async fn replace_chat_metadata(
@@ -114,16 +134,39 @@ impl FileChatRepository {
     }
 }
 
+async fn read_header_bytes(path: &Path) -> Result<Option<Vec<u8>>, DomainError> {
+    let mut reader = tokio::io::BufReader::new(open_existing_payload_file(path).await?);
+    read_header_record_async(&mut reader)
+        .await
+        .map(|record| record.map(|(bytes, _)| bytes))
+        .map_err(|error| header_error(path, error))
+}
+
+// Attach the file to the underlying message, not to an already formatted error.
+fn header_error(path: &Path, error: DomainError) -> DomainError {
+    match error {
+        DomainError::InvalidData(message) => {
+            DomainError::InvalidData(format!("Chat header {}: {message}", path.display()))
+        }
+        DomainError::InternalError(message) => {
+            DomainError::InternalError(format!("Chat header {}: {message}", path.display()))
+        }
+        other => other,
+    }
+}
+
 fn rewrite_chat_header_file(
     path: &Path,
     edit: impl FnOnce(&mut Map<String, Value>) -> Result<(), DomainError>,
 ) -> Result<(), DomainError> {
     let source = File::open(path).map_err(|error| map_open_existing_error(path, error))?;
     let mut source = BufReader::new(source);
-    let (header_line, _) = read_header_record(&mut source)?.ok_or_else(|| {
-        DomainError::InvalidData("Cannot update metadata in a chat without a header".into())
-    })?;
-    let mut header = parse_header(&header_line)?;
+    let (header_line, _) = read_header_record(&mut source)
+        .map_err(|error| header_error(path, error))?
+        .ok_or_else(|| {
+            DomainError::InvalidData("Cannot update metadata in a chat without a header".into())
+        })?;
+    let mut header = parse_header(&header_line).map_err(|error| header_error(path, error))?;
     edit(&mut header)?;
 
     let temp_path = FileChatRepository::temp_payload_path(path);

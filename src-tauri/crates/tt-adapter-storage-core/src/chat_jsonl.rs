@@ -10,6 +10,9 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use crate::file_system::{persist_file, unique_temp_path};
 use tt_domain::errors::DomainError;
 
+mod metadata;
+pub(crate) use metadata::{HeaderMetadata, HeaderMetadataFields};
+
 const BOM: &[u8] = b"\xef\xbb\xbf";
 
 pub(crate) fn is_whitespace(byte: u8) -> bool {
@@ -84,14 +87,11 @@ pub(crate) fn skip_preamble(reader: &mut impl BufRead) -> Result<u64, DomainErro
     }
 }
 
-fn validate_integrity(value: &Value) -> Result<&str, DomainError> {
+fn validate_integrity(value: &Value) -> Result<&str, &'static str> {
     value
         .as_str()
         .filter(|text| !text.is_empty())
-        .ok_or_else(|| {
-            // Format errors must not trigger the identity-conflict force-save dialog.
-            DomainError::InvalidData("Chat metadata integrity must be a non-empty string".into())
-        })
+        .ok_or("Chat metadata integrity must be a non-empty string")
 }
 
 pub(crate) fn validate_metadata_integrity(metadata: &Value) -> Result<Option<&str>, DomainError> {
@@ -99,6 +99,8 @@ pub(crate) fn validate_metadata_integrity(metadata: &Value) -> Result<Option<&st
         .get("integrity")
         .map(validate_integrity)
         .transpose()
+        // Format errors must not trigger the identity-conflict force-save dialog.
+        .map_err(|message| DomainError::InvalidData(message.into()))
 }
 
 pub(crate) fn parse_header(bytes: &[u8]) -> Result<Map<String, Value>, DomainError> {
@@ -122,15 +124,11 @@ pub(crate) fn parse_header_integrity(bytes: &[u8]) -> Result<Option<String>, Dom
     if let Some(metadata) = fields.get("chat_metadata")
         && metadata.get().starts_with('{')
     {
-        let metadata: HashMap<String, &RawValue> = serde_json::from_str(metadata.get())
+        let metadata: HeaderMetadata = serde_json::from_str(metadata.get())
             .map_err(|error| DomainError::InvalidData(format!("Invalid chat metadata: {error}")))?;
-        if let Some(integrity) = metadata.get("integrity") {
-            let value: Value = serde_json::from_str(integrity.get()).map_err(|error| {
-                DomainError::InvalidData(format!("Invalid chat integrity: {error}"))
-            })?;
-            return Ok(Some(validate_integrity(&value)?.to_owned()));
-        }
+        return Ok(metadata.integrity);
     }
+
     Ok(None)
 }
 

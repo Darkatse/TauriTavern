@@ -531,21 +531,18 @@ impl CharacterService {
         &self,
         character_name: &str,
     ) -> Result<Vec<AgentChatWorkspaceTarget>, ApplicationError> {
-        let summaries = self
+        let identities = self
             .chat_repository
-            .list_chat_summaries(Some(character_name), true)
+            .list_character_chat_identities(character_name)
             .await?;
         let mut targets = Vec::new();
-        for summary in summaries {
-            let Some(metadata) = summary.chat_metadata.as_ref() else {
-                continue;
-            };
-            if let Some(target) = AgentWorkspaceLifecycleService::character_target_from_metadata(
-                character_name,
-                &summary.file_name,
-                metadata,
-            )? {
-                targets.push(target);
+        for identity in identities {
+            if let Some(integrity) = identity.integrity {
+                targets.push(AgentWorkspaceLifecycleService::character_target(
+                    character_name,
+                    &identity.file_name,
+                    &integrity,
+                )?);
             }
         }
         Ok(targets)

@@ -18,6 +18,34 @@ pub(super) use self::index::{SummaryCache, SummaryCacheEntry};
 use self::projection::{FileProjection, MessageText};
 use self::search::SearchFingerprint;
 
+/// Persisted directory projection; complete metadata belongs only to a requested response.
+/// Changes to its fields or meaning must bump [`index::SCHEMA_VERSION`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(super) struct ChatSummary {
+    pub character_name: String,
+    pub file_name: String,
+    pub file_size: u64,
+    pub message_count: usize,
+    pub preview: String,
+    pub date: i64,
+    pub chat_id: Option<String>,
+}
+
+impl From<ChatSummary> for ChatSearchResult {
+    fn from(summary: ChatSummary) -> Self {
+        Self {
+            character_name: summary.character_name,
+            file_name: summary.file_name,
+            file_size: summary.file_size,
+            message_count: summary.message_count,
+            preview: summary.preview,
+            date: summary.date,
+            chat_id: summary.chat_id,
+            chat_metadata: None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(super) struct FileSignature {
     pub size: u64,
@@ -99,25 +127,14 @@ impl FileChatRepository {
             })
             .unwrap_or(fallback_character_name)
             .to_string();
-        let chat_id = header
-            .chat_metadata
-            .as_ref()
-            .and_then(Value::as_object)
-            .and_then(|metadata| metadata.get("chat_id_hash"))
-            .and_then(|value| {
-                value
-                    .as_u64()
-                    .map(|number| number.to_string())
-                    .or_else(|| value.as_i64().map(|number| number.to_string()))
-                    .or_else(|| value.as_str().map(ToString::to_string))
-            });
+        let chat_id = header.chat_id;
         let date = directory_date(tail.send_date.as_ref(), signature.modified_millis);
         let preview_unavailable = matches!(&tail.mes, MessageText::Unavailable);
         let last_message = message_display_text(tail.mes);
 
         let entry = SummaryCacheEntry {
             signature,
-            summary: ChatSearchResult {
+            summary: ChatSummary {
                 character_name,
                 file_name: Self::normalize_jsonl_file_name(fallback_file_name)?,
                 file_size: signature.size,
@@ -128,7 +145,6 @@ impl FileChatRepository {
                     .unwrap_or_default(),
                 date,
                 chat_id,
-                chat_metadata: header.chat_metadata,
             },
             preview_unavailable,
             fingerprint: scan.fingerprint,

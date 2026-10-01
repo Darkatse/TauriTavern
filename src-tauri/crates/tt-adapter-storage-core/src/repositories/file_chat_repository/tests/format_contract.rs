@@ -106,6 +106,65 @@ async fn empty_chat_reads_and_header_only_writes_keep_fields_open() {
     assert_eq!(recent[0].message_count, 0);
     assert!(recent[0].preview.is_empty());
     assert_eq!(recent[0].date, modified);
+
+    // Missing metadata and explicit null are distinct response shapes. The
+    // non-object metadata case above already guards the open container contract.
+    for metadata in [None, Some(Value::Null)] {
+        let mut header = json!({});
+        if let Some(value) = metadata.as_ref() {
+            header["chat_metadata"] = value.clone();
+        }
+        commit_payload_bytes(
+            &repository,
+            character_target("alice", "format"),
+            header.to_string().as_bytes(),
+            true,
+        )
+        .await
+        .unwrap();
+        let full = repository
+            .get_character_chat_summary("alice", "format", true)
+            .await
+            .unwrap();
+        assert_eq!(full.chat_metadata, metadata);
+    }
+    // All readers select the final metadata object before validating identity.
+    // The overwritten null must not make a valid final header unreadable.
+    let duplicate_header = br#"{"chat_metadata":{"integrity":null},"chat_metadata":{"integrity":" final identity ","chat_id_hash":17}}"#;
+    commit_payload_bytes(
+        &repository,
+        character_target("alice", "format"),
+        duplicate_header,
+        true,
+    )
+    .await
+    .unwrap();
+    let full = repository
+        .get_chat_payload("alice", "format")
+        .await
+        .unwrap();
+    let summary = repository
+        .get_character_chat_summary("alice", "format", true)
+        .await
+        .unwrap();
+    assert_eq!(summary.chat_metadata.as_ref(), full[0].get("chat_metadata"));
+    assert_eq!(
+        repository
+            .get_character_chat_integrity("alice", "format")
+            .await
+            .unwrap()
+            .as_deref(),
+        full[0]["chat_metadata"]["integrity"].as_str()
+    );
+    assert_eq!(
+        repository
+            .search_chats("format", Some("alice"))
+            .await
+            .unwrap()[0]
+            .chat_id,
+        summary.chat_id
+    );
+
     cleanup_repository(repository, root).await;
 }
 

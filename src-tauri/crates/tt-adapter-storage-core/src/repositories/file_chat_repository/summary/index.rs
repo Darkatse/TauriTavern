@@ -1,28 +1,29 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
 use tt_domain::errors::DomainError;
-use tt_ports::repositories::chat_repository::ChatSearchResult;
 
-use crate::file_system::persist_file;
+use crate::file_system::write_json_file;
 
 use super::super::FileChatRepository;
 use super::search::SearchFingerprint;
-use super::{FileSignature, summary_cache_key};
+use super::{ChatSummary, FileSignature, summary_cache_key};
 
-const SCHEMA_VERSION: u32 = 4;
+// The file name isolates the old metadata-heavy cache; schema versions invalidate
+// changes to persisted fields OR projection semantics (preview, dates, fingerprints).
+const INDEX_FILE_NAME: &str = "chat_summary_index_v2.json";
+const LEGACY_INDEX_FILE_NAMES: &[&str] = &["chat_summary_index_v1.json"];
+pub(super) const SCHEMA_VERSION: u32 = 1;
+
 const MAX_SEARCH_ENTRIES: usize = 128;
-const SNAPSHOT_READ_BUFFER_BYTES: usize = 64 * 1024;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(in crate::repositories::file_chat_repository) struct SummaryCacheEntry {
     pub(super) signature: FileSignature,
-    pub(in crate::repositories::file_chat_repository) summary: ChatSearchResult,
+    pub(in crate::repositories::file_chat_repository) summary: ChatSummary,
     pub(super) preview_unavailable: bool,
     pub(super) fingerprint: Option<SearchFingerprint>,
 }
@@ -33,157 +34,80 @@ pub(super) struct ChatStatsCacheEntry {
     pub(super) date: i64,
 }
 
-#[derive(Clone)]
-struct SearchCacheEntry {
-    version: u64,
-    results: Vec<ChatSearchResult>,
-}
-
 pub(in crate::repositories::file_chat_repository) struct SummaryCache {
     entries: HashMap<String, SummaryCacheEntry>,
     stats_entries: HashMap<String, ChatStatsCacheEntry>,
-    search_cache: HashMap<String, SearchCacheEntry>,
-    version: u64,
+    search_cache: HashMap<String, Vec<ChatSummary>>,
     index_path: PathBuf,
-    backups_dir: PathBuf,
     loaded: bool,
     dirty: bool,
 }
 
-/// First line of the streamed JSONL snapshot.
+// Cow reads owned maps and writes borrowed maps without cloning the runtime cache.
 #[derive(Serialize, Deserialize)]
-struct SnapshotHeader {
+struct Snapshot<'a> {
     schema_version: u32,
-    version: u64,
-}
-
-#[derive(Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum SnapshotLineKind {
-    Summary,
-    Stats,
-}
-
-/// Discriminator-only probe; serde ignores the remaining line fields.
-#[derive(Deserialize)]
-struct SnapshotLineKindProbe {
-    kind: SnapshotLineKind,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SnapshotEntry {
-    key: String,
-    signature: FileSignature,
-    summary: ChatSearchResult,
-    preview_unavailable: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    fingerprint: Option<SearchFingerprint>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct StatsSnapshotEntry {
-    key: String,
-    signature: FileSignature,
-    date: i64,
-}
-
-/// Borrowing serialization views keep the write path clone-free: large
-/// `chat_metadata` trees are streamed out field by field, never duplicated.
-#[derive(Serialize)]
-struct SnapshotEntryRef<'a> {
-    kind: SnapshotLineKind,
-    key: &'a str,
-    signature: FileSignature,
-    summary: &'a ChatSearchResult,
-    preview_unavailable: bool,
-    fingerprint: &'a Option<SearchFingerprint>,
-}
-
-#[derive(Serialize)]
-struct StatsSnapshotEntryRef<'a> {
-    kind: SnapshotLineKind,
-    key: &'a str,
-    signature: FileSignature,
-    date: i64,
+    entries: Cow<'a, HashMap<String, SummaryCacheEntry>>,
+    stats_entries: Cow<'a, HashMap<String, ChatStatsCacheEntry>>,
 }
 
 impl SummaryCache {
-    pub(in crate::repositories::file_chat_repository) fn new(
-        index_path: PathBuf,
-        backups_dir: PathBuf,
-    ) -> Self {
+    pub(in crate::repositories::file_chat_repository) fn new(cache_dir: PathBuf) -> Self {
         Self {
             entries: HashMap::new(),
             stats_entries: HashMap::new(),
             search_cache: HashMap::new(),
-            version: 0,
-            index_path,
-            backups_dir,
+            index_path: cache_dir.join(INDEX_FILE_NAME),
             loaded: false,
             dirty: false,
         }
     }
 
-    fn bump_version(&mut self) {
-        self.version = self.version.wrapping_add(1);
-        self.search_cache.clear();
-    }
-
-    pub(super) fn ensure_loaded(&mut self) {
+    pub(super) async fn ensure_loaded(&mut self) {
         if self.loaded {
             return;
         }
         self.loaded = true;
-        if !self.index_path.exists() {
-            return;
+        // Obsolete caches are never read. Cleanup is independent of publishing a
+        // new snapshot, and failures must not block a directory query.
+        for name in LEGACY_INDEX_FILE_NAMES {
+            let path = self.index_path.with_file_name(name);
+            if let Err(error) = fs::remove_file(&path).await
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(path = %path.display(), %error, "Failed to remove obsolete chat summary index");
+            }
         }
-
-        let file = match File::open(&self.index_path) {
-            Ok(file) => file,
+        let bytes = match fs::read(&self.index_path).await {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
             Err(error) => {
-                tracing::warn!(path = %self.index_path.display(), %error, "Failed to read chat summary index");
+                tracing::warn!(path = %self.index_path.display(), %error, "Failed to read chat summary index; rebuilding from scans");
                 return;
             }
         };
-        let mut reader = BufReader::with_capacity(SNAPSHOT_READ_BUFFER_BYTES, file);
-        let header = match read_snapshot_header(&mut reader) {
-            Ok(header) => header,
+        let snapshot: Snapshot<'_> = match serde_json::from_slice(&bytes) {
+            Ok(snapshot) => snapshot,
             Err(error) => {
-                tracing::warn!(path = %self.index_path.display(), error = %error, "Failed to parse chat summary index header");
+                tracing::warn!(path = %self.index_path.display(), %error, "Failed to parse chat summary index; rebuilding from scans");
                 return;
             }
         };
-        let Some(header) = header else {
-            return;
-        };
-        if header.schema_version != SCHEMA_VERSION {
+        if snapshot.schema_version != SCHEMA_VERSION {
             tracing::warn!(
-                schema_version = header.schema_version,
+                schema_version = snapshot.schema_version,
                 expected = SCHEMA_VERSION,
-                "Skipping incompatible chat summary index"
+                "Skipping incompatible chat summary index; rebuilding from scans"
             );
-            // Rewrite the stale index in the current schema on the next flush.
-            self.dirty = true;
             return;
         }
-        self.version = header.version;
-
-        let mut entries = HashMap::new();
-        let mut stats_entries = HashMap::new();
-        let mut filtered_backups = false;
-        if let Err(error) = load_snapshot_lines(
-            &mut reader,
-            &self.backups_dir,
-            &mut entries,
-            &mut stats_entries,
-            &mut filtered_backups,
-        ) {
-            tracing::warn!(path = %self.index_path.display(), error = %error, "Failed to load chat summary index; rebuilding from scans");
-            return;
+        self.entries = snapshot.entries.into_owned();
+        self.stats_entries = snapshot.stats_entries.into_owned();
+        for entry in self.entries.values_mut() {
+            if let Some(fingerprint) = entry.fingerprint.as_mut() {
+                fingerprint.normalize_len();
+            }
         }
-        self.dirty = filtered_backups;
-        self.entries = entries;
-        self.stats_entries = stats_entries;
     }
 
     pub(super) fn get(&self, key: &str) -> Option<&SummaryCacheEntry> {
@@ -193,7 +117,7 @@ impl SummaryCache {
     pub(super) fn set(&mut self, key: String, entry: SummaryCacheEntry) {
         self.stats_entries.remove(&key);
         self.entries.insert(key, entry);
-        self.bump_version();
+        self.search_cache.clear();
         self.dirty = true;
     }
 
@@ -225,7 +149,7 @@ impl SummaryCache {
             return;
         }
         self.stats_entries.insert(key, entry);
-        self.bump_version();
+        self.search_cache.clear();
         self.dirty = true;
     }
 
@@ -235,7 +159,7 @@ impl SummaryCache {
         if removed_summary || removed_stats {
             self.dirty = true;
         }
-        self.bump_version();
+        self.search_cache.clear();
     }
 
     pub(super) fn clear(&mut self) {
@@ -244,41 +168,32 @@ impl SummaryCache {
             self.stats_entries.clear();
             self.dirty = true;
         }
-        self.bump_version();
+        self.search_cache.clear();
     }
 
-    pub(super) fn get_search_results(&self, key: &str) -> Option<Vec<ChatSearchResult>> {
-        self.search_cache
-            .get(key)
-            .filter(|entry| entry.version == self.version)
-            .map(|entry| entry.results.clone())
+    pub(super) fn get_search_results(&self, key: &str) -> Option<Vec<ChatSummary>> {
+        self.search_cache.get(key).cloned()
     }
 
-    pub(super) fn set_search_results(&mut self, key: String, results: Vec<ChatSearchResult>) {
+    pub(super) fn set_search_results(&mut self, key: String, results: Vec<ChatSummary>) {
         if self.search_cache.len() >= MAX_SEARCH_ENTRIES {
             self.search_cache.clear();
         }
-        self.search_cache.insert(
-            key,
-            SearchCacheEntry {
-                version: self.version,
-                results,
-            },
-        );
+        self.search_cache.insert(key, results);
     }
 }
 
 impl FileChatRepository {
     pub(in crate::repositories::file_chat_repository) async fn clear_summary_cache(&self) {
         let mut cache = self.summary_cache.lock().await;
-        cache.ensure_loaded();
+        cache.ensure_loaded().await;
         cache.clear();
     }
 
     pub async fn clear_chat_summary_index(&self) {
         {
             let mut cache = self.summary_cache.lock().await;
-            cache.ensure_loaded();
+            cache.ensure_loaded().await;
             cache.clear();
         }
         self.flush_summary_index_best_effort().await;
@@ -289,26 +204,26 @@ impl FileChatRepository {
         path: &Path,
     ) {
         let mut cache = self.summary_cache.lock().await;
-        cache.ensure_loaded();
+        cache.ensure_loaded().await;
         cache.remove(&summary_cache_key(path));
     }
 
     pub(in crate::repositories::file_chat_repository) async fn get_cached_search_results(
         &self,
         key: &str,
-    ) -> Option<Vec<ChatSearchResult>> {
+    ) -> Option<Vec<ChatSummary>> {
         let mut cache = self.summary_cache.lock().await;
-        cache.ensure_loaded();
+        cache.ensure_loaded().await;
         cache.get_search_results(key)
     }
 
     pub(in crate::repositories::file_chat_repository) async fn cache_search_results(
         &self,
         key: String,
-        results: Vec<ChatSearchResult>,
+        results: Vec<ChatSummary>,
     ) {
         let mut cache = self.summary_cache.lock().await;
-        cache.ensure_loaded();
+        cache.ensure_loaded().await;
         cache.set_search_results(key, results);
     }
 
@@ -316,63 +231,22 @@ impl FileChatRepository {
         &self,
     ) -> Result<(), DomainError> {
         let mut cache = self.summary_cache.lock().await;
-        cache.ensure_loaded();
+        cache.ensure_loaded().await;
         if !cache.dirty {
             return Ok(());
         }
+        write_json_file(
+            &cache.index_path,
+            &Snapshot {
+                schema_version: SCHEMA_VERSION,
+                entries: Cow::Borrowed(&cache.entries),
+                stats_entries: Cow::Borrowed(&cache.stats_entries),
+            },
+        )
+        .await?;
+        cache.dirty = false;
 
-        let index_path = cache.index_path.clone();
-        let temp_path = index_path.with_extension("json.tmp");
-        if let Some(parent) = index_path.parent() {
-            fs::create_dir_all(parent).await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to create chat summary index directory {:?}: {error}",
-                    parent
-                ))
-            })?;
-        }
-        // Streaming per-entry serialization: each line is encoded into a bounded
-        // buffer — at most one entry, never a clone of the whole metadata-heavy
-        // cache — then written asynchronously and published with the standard
-        // sync + atomic rename helper.
-        let write_result: Result<(), DomainError> = async {
-            let mut file = fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&temp_path)
-                .await
-                .map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to create staged chat summary index {:?}: {error}",
-                        temp_path
-                    ))
-                })?;
-            let mut chunk = encode_snapshot_header_line(cache.version)?;
-            chunk.push(b'\n');
-            file.write_all(&chunk).await.map_err(snapshot_io_error)?;
-            for (key, entry) in cache.entries.iter() {
-                let chunk = encode_summary_line(key, entry)?;
-                file.write_all(&chunk).await.map_err(snapshot_io_error)?;
-            }
-            for (key, entry) in cache.stats_entries.iter() {
-                let chunk = encode_stats_line(key, entry)?;
-                file.write_all(&chunk).await.map_err(snapshot_io_error)?;
-            }
-            file.flush().await.map_err(snapshot_io_error)?;
-            persist_file(file, &temp_path, &index_path).await
-        }
-        .await;
-        match write_result {
-            Ok(()) => {
-                cache.dirty = false;
-                Ok(())
-            }
-            Err(error) => {
-                let _ = fs::remove_file(&temp_path).await;
-                Err(error)
-            }
-        }
+        Ok(())
     }
 
     pub(in crate::repositories::file_chat_repository) async fn flush_summary_index_best_effort(
@@ -382,136 +256,4 @@ impl FileChatRepository {
             tracing::warn!(%error, "Failed to persist chat summary index");
         }
     }
-}
-
-fn snapshot_json_error(error: serde_json::Error) -> DomainError {
-    DomainError::InternalError(format!("Failed to parse chat summary index line: {error}"))
-}
-
-fn snapshot_serialize_error(error: serde_json::Error) -> DomainError {
-    DomainError::InternalError(format!("Failed to serialize chat summary index: {error}"))
-}
-
-fn snapshot_io_error(error: io::Error) -> DomainError {
-    DomainError::InternalError(format!("Failed to write chat summary index: {error}"))
-}
-
-fn encode_snapshot_header_line(version: u64) -> Result<Vec<u8>, DomainError> {
-    let mut bytes = Vec::new();
-    serde_json::to_writer(
-        &mut bytes,
-        &SnapshotHeader {
-            schema_version: SCHEMA_VERSION,
-            version,
-        },
-    )
-    .map_err(snapshot_serialize_error)?;
-    Ok(bytes)
-}
-
-fn encode_summary_line(key: &str, entry: &SummaryCacheEntry) -> Result<Vec<u8>, DomainError> {
-    let mut bytes = Vec::new();
-    serde_json::to_writer(
-        &mut bytes,
-        &SnapshotEntryRef {
-            kind: SnapshotLineKind::Summary,
-            key,
-            signature: entry.signature,
-            summary: &entry.summary,
-            preview_unavailable: entry.preview_unavailable,
-            fingerprint: &entry.fingerprint,
-        },
-    )
-    .map_err(snapshot_serialize_error)?;
-    bytes.push(b'\n');
-    Ok(bytes)
-}
-
-fn encode_stats_line(key: &str, entry: &ChatStatsCacheEntry) -> Result<Vec<u8>, DomainError> {
-    let mut bytes = Vec::new();
-    serde_json::to_writer(
-        &mut bytes,
-        &StatsSnapshotEntryRef {
-            kind: SnapshotLineKind::Stats,
-            key,
-            signature: entry.signature,
-            date: entry.date,
-        },
-    )
-    .map_err(snapshot_serialize_error)?;
-    bytes.push(b'\n');
-    Ok(bytes)
-}
-
-fn read_snapshot_header(reader: &mut impl BufRead) -> Result<Option<SnapshotHeader>, DomainError> {
-    let mut line = String::new();
-    let bytes_read = reader
-        .read_line(&mut line)
-        .map_err(snapshot_io_error)?;
-    if bytes_read == 0 {
-        return Ok(None);
-    }
-    serde_json::from_str(&line)
-        .map(Some)
-        .map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to parse chat summary index header: {error}"
-            ))
-        })
-}
-
-fn load_snapshot_lines(
-    reader: &mut impl BufRead,
-    backups_dir: &Path,
-    entries: &mut HashMap<String, SummaryCacheEntry>,
-    stats_entries: &mut HashMap<String, ChatStatsCacheEntry>,
-    filtered_backups: &mut bool,
-) -> Result<(), DomainError> {
-    for line in reader.lines() {
-        let line = line.map_err(snapshot_io_error)?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let kind = serde_json::from_str::<SnapshotLineKindProbe>(&line)
-            .map_err(snapshot_json_error)?
-            .kind;
-        match kind {
-            SnapshotLineKind::Summary => {
-                let entry: SnapshotEntry = serde_json::from_str(&line).map_err(snapshot_json_error)?;
-                if Path::new(&entry.key).starts_with(backups_dir) {
-                    *filtered_backups = true;
-                    continue;
-                }
-                let mut fingerprint = entry.fingerprint;
-                if let Some(value) = fingerprint.as_mut() {
-                    value.normalize_len();
-                }
-                entries.insert(
-                    entry.key,
-                    SummaryCacheEntry {
-                        signature: entry.signature,
-                        summary: entry.summary,
-                        preview_unavailable: entry.preview_unavailable,
-                        fingerprint,
-                    },
-                );
-            }
-            SnapshotLineKind::Stats => {
-                let entry: StatsSnapshotEntry =
-                    serde_json::from_str(&line).map_err(snapshot_json_error)?;
-                if Path::new(&entry.key).starts_with(backups_dir) {
-                    *filtered_backups = true;
-                    continue;
-                }
-                stats_entries.insert(
-                    entry.key,
-                    ChatStatsCacheEntry {
-                        signature: entry.signature,
-                        date: entry.date,
-                    },
-                );
-            }
-        }
-    }
-    Ok(())
 }

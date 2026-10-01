@@ -2,12 +2,8 @@ use std::path::Path;
 
 use serde_json::Value;
 use tokio::fs;
-use tokio::io::BufReader;
 
-use crate::chat_jsonl::{
-    parse_header_integrity, read_header_record_async, validate_metadata_integrity,
-};
-use crate::chat_jsonl::{read_payload, write_payload};
+use crate::chat_jsonl::{read_payload, validate_metadata_integrity, write_payload};
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, strip_jsonl_extension};
 
@@ -98,20 +94,14 @@ impl FileChatRepository {
         Ok(objects)
     }
 
-    pub(super) async fn read_integrity_slug_from_existing_file(
+    pub(super) async fn read_chat_integrity_if_exists(
         &self,
         path: &Path,
     ) -> Result<Option<String>, DomainError> {
-        if !path.exists() {
-            return Ok(None);
+        match self.read_chat_integrity_from_path(path).await {
+            Err(DomainError::NotFound(_)) => Ok(None),
+            result => result,
         }
-
-        let mut reader =
-            BufReader::new(super::windowed_payload_io::open_existing_payload_file(path).await?);
-        let Some((line, _)) = read_header_record_async(&mut reader).await? else {
-            return Ok(None);
-        };
-        parse_header_integrity(&line)
     }
 
     /// Read a chat from a file
@@ -166,7 +156,7 @@ impl FileChatRepository {
         {
             let _write_guard = self.acquire_payload_mutation_lock(&path).await;
             if !force {
-                let existing_integrity = self.read_integrity_slug_from_existing_file(&path).await?;
+                let existing_integrity = self.read_chat_integrity_if_exists(&path).await?;
                 verify_integrity_match(existing_integrity.as_deref(), incoming_integrity)?;
             }
             write_payload(&path, &objects).await?;
