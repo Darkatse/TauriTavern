@@ -8,6 +8,9 @@ use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelResponse, AgentModelRole, AgentModelTool,
 };
 use tt_domain::models::tool::{ToolArguments, ToolId, ToolInvocation};
+use tt_ports::repositories::chat_completion_repository::{
+    ChatCompletionStop, ChatCompletionStopKind,
+};
 
 /// Placeholder identity for a call whose name is not advertised in this turn. The runtime
 /// answers it with a recoverable tool error; the model's name stays in `modelAlias`.
@@ -42,6 +45,9 @@ pub(super) fn decode_chat_completion_exchange(
 
     let mut response =
         decode_normalized_chat_completion_response(&exchange.normalized_response, tools)?;
+    if let Some(stop) = exchange.normalization_report.stop() {
+        reject_unusable_stop(stop, &response)?;
+    }
     let provider_metadata = response.provider_metadata.clone();
     response.provider_metadata = json!({
         "id": provider_metadata.get("id"),
@@ -59,7 +65,6 @@ fn decode_normalized_chat_completion_response(
 ) -> Result<AgentModelResponse, ApplicationError> {
     let message = response.assistant_message();
     let raw_response = response.raw();
-    reject_incomplete_response(raw_response)?;
 
     let text = extract_text_from_message(message);
     let tool_calls = extract_tool_calls_from_message(message, tools)?;
@@ -117,34 +122,47 @@ fn decode_normalized_chat_completion_response(
     })
 }
 
-fn reject_incomplete_response(response: &Value) -> Result<(), ApplicationError> {
-    let stop_reason = response
-        .get("stop_reason")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            response
-                .pointer("/choices/0/finish_reason")
-                .and_then(Value::as_str)
-        });
-
-    match stop_reason {
-        Some("refusal") => {
+/// A turn is usable when the provider ended it on its own. A filtered prompt or output, a
+/// malformed or missing tool call and a paused turn may succeed on retry; truncated turns
+/// and refusals fail the same way again and are not retried.
+fn reject_unusable_stop(
+    stop: &ChatCompletionStop,
+    response: &AgentModelResponse,
+) -> Result<(), ApplicationError> {
+    let native = stop.native.as_str();
+    let retryable = |problem: &str| {
+        Err(ApplicationError::Transient(format!(
+            "model.upstream_invalid_response: {problem} ({native})"
+        )))
+    };
+    match stop.kind {
+        ChatCompletionStopKind::Completed | ChatCompletionStopKind::Unknown => Ok(()),
+        ChatCompletionStopKind::ToolCalls if !response.tool_calls.is_empty() => Ok(()),
+        ChatCompletionStopKind::ToolCalls => {
+            retryable("provider stopped for tool calls but sent none")
+        }
+        ChatCompletionStopKind::Filtered => {
+            retryable("provider content filter stopped the response")
+        }
+        ChatCompletionStopKind::MalformedToolCall => {
+            retryable("provider could not produce a valid tool call")
+        }
+        ChatCompletionStopKind::Paused => retryable("provider paused the turn"),
+        ChatCompletionStopKind::Truncated => Err(ApplicationError::ValidationError(format!(
+            "model.output_truncated: provider stopped before completing the Agent turn ({native})"
+        ))),
+        ChatCompletionStopKind::Refused => {
             let explanation = response
+                .raw_response
                 .pointer("/stop_details/explanation")
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .unwrap_or("provider refused to complete the Agent turn");
             Err(ApplicationError::ValidationError(format!(
-                "model.provider_refusal: {explanation}"
+                "model.provider_refusal: {explanation} ({native})"
             )))
         }
-        Some(reason @ ("max_tokens" | "length" | "model_context_window_exceeded")) => {
-            Err(ApplicationError::ValidationError(format!(
-                "model.output_truncated: provider stopped before completing the Agent turn ({reason})"
-            )))
-        }
-        _ => Ok(()),
     }
 }
 
