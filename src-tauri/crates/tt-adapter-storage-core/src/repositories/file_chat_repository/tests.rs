@@ -394,6 +394,23 @@ async fn metadata_writers_invalidate_cached_reads_and_preserve_extension_semanti
         );
     }
 
+    // Reopening must preserve the query result when the directory projection is
+    // persisted separately from metadata. The cache encoding is not a contract.
+    let before = repository
+        .list_chat_summaries(Some("Alice"), true)
+        .await
+        .unwrap();
+    drop(repository);
+    let repository = repository_for_root(&root);
+    let after = repository
+        .list_chat_summaries(Some("Alice"), true)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(after).unwrap(),
+        serde_json::to_value(before).unwrap()
+    );
+
     cleanup_repository(repository, root).await;
 }
 
@@ -2119,7 +2136,7 @@ async fn damaged_directory_queries_refresh_after_repair() {
 }
 
 #[tokio::test]
-async fn finds_remaining_character_chat_with_integrity() {
+async fn identity_lookup_distinguishes_shared_identity_from_legacy_absence() {
     let (repository, root) = setup_repository().await;
     for name in ["first", "second"] {
         commit_payload_bytes(
@@ -2131,6 +2148,17 @@ async fn finds_remaining_character_chat_with_integrity() {
         .await
         .expect("save shared chat");
     }
+
+    // A valid legacy chat without identity must not block the final lookup once
+    // every chat sharing the workspace identity has been deleted.
+    commit_payload_bytes(
+        &repository,
+        character_target("alice", "legacy"),
+        b"{}",
+        false,
+    )
+    .await
+    .unwrap();
 
     repository
         .delete_chat("alice", "first")
@@ -2217,6 +2245,16 @@ async fn aggregate_chat_queries_skip_an_invalid_sibling() {
     )
     .await
     .expect("write invalid sibling chat");
+
+    // Display queries may omit a damaged file; deletion's identity enumeration
+    // must report it rather than treating an unreadable identity as absent.
+    let identity_error = repository
+        .list_character_chat_identities("alice")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(identity_error, DomainError::InvalidData(message) if message.contains("invalid.jsonl"))
+    );
 
     let summaries = repository
         .list_chat_summaries(Some("alice"), false)

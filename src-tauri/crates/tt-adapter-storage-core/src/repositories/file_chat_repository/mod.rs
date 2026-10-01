@@ -157,19 +157,11 @@ impl FileChatRepository {
             100,
             Duration::from_secs(30 * 60),
         )));
-        let summary_index_path = backups_dir
+        let summary_cache_dir = backups_dir
             .parent()
-            .map(|default_user_dir| {
-                default_user_dir
-                    .join("user")
-                    .join("cache")
-                    .join("chat_summary_index_v1.json")
-            })
-            .unwrap_or_else(|| backups_dir.join("chat_summary_index_v1.json"));
-        let summary_cache = Arc::new(Mutex::new(SummaryCache::new(
-            summary_index_path,
-            backups_dir.clone(),
-        )));
+            .map(|user_dir| user_dir.join("user").join("cache"))
+            .unwrap_or_else(|| backups_dir.clone());
+        let summary_cache = Arc::new(Mutex::new(SummaryCache::new(summary_cache_dir)));
         let backup_summary_index_path = backups_dir
             .parent()
             .map(|default_user_dir| {

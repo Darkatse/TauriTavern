@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde_json::Value;
 use tokio::sync::{Mutex, MutexGuard};
 
 use crate::errors::ApplicationError;
@@ -51,27 +50,18 @@ impl AgentWorkspaceLifecycleService {
         self.run_lifecycle_lock.lock().await
     }
 
-    pub fn character_target_from_metadata(
+    pub fn character_target(
         character_id: &str,
         file_name: &str,
-        metadata: &Value,
-    ) -> Result<Option<AgentChatWorkspaceTarget>, ApplicationError> {
-        let Some(value) = metadata.get("integrity") else {
-            return Ok(None);
-        };
-        let Some(stable_chat_id) = value.as_str() else {
-            return Err(ApplicationError::ValidationError(
-                "agent.invalid_chat_integrity: chat_metadata.integrity must be a string"
-                    .to_string(),
-            ));
-        };
-        Ok(Some(AgentChatWorkspaceTarget {
+        stable_chat_id: &str,
+    ) -> Result<AgentChatWorkspaceTarget, ApplicationError> {
+        Ok(AgentChatWorkspaceTarget {
             chat_ref: AgentChatRef::Character {
                 character_id: character_id.to_string(),
                 file_name: file_name.to_string(),
             },
             stable_chat_id: validate_stable_chat_id(stable_chat_id)?,
-        }))
+        })
     }
 
     pub fn group_target(chat_id: &str) -> Result<AgentChatWorkspaceTarget, ApplicationError> {
@@ -248,13 +238,9 @@ mod tests {
             deleted: Mutex::new(Vec::new()),
         });
         let integrity = " stable-a ";
-        let target = AgentWorkspaceLifecycleService::character_target_from_metadata(
-            "Alice",
-            "session",
-            &serde_json::json!({ "integrity": integrity }),
-        )
-        .unwrap()
-        .unwrap();
+        let target =
+            AgentWorkspaceLifecycleService::character_target("Alice", "session", integrity)
+                .unwrap();
         let expected_workspace =
             workspace_id_for_stable_chat_id(&target.chat_ref, integrity).unwrap();
         for active_run_ids in [vec!["run_active".into()], Vec::new()] {

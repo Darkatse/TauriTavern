@@ -386,7 +386,7 @@ impl ChatPayloadCommitRepository for FileChatRepository {
             let _write_guard = self.acquire_payload_mutation_lock(&target_path).await;
             if !force {
                 let existing_integrity = self
-                    .read_integrity_slug_from_existing_file(&target_path)
+                    .read_chat_integrity_if_exists(&target_path)
                     .await?;
                 verify_integrity_match(
                     existing_integrity.as_deref(),

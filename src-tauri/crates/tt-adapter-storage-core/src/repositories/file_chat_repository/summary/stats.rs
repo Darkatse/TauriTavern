@@ -139,7 +139,7 @@ impl FileChatRepository {
 
         {
             let mut cache = summary_cache.lock().await;
-            cache.ensure_loaded();
+            cache.ensure_loaded().await;
             if let Some(entry) = cache.get_stats(&cache_key, signature) {
                 return Ok(entry);
             }

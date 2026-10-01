@@ -87,7 +87,7 @@ test('chat persistence and navigation', async (context) => {
                 handles.set(args.rid, content.subarray(chunk.length));
                 return new window.Uint8Array(chunk);
             }
-            case 'get_character_chat_metadata': return readHeader(args.fileName).chat_metadata;
+            case 'get_character_chat_integrity': return readHeader(args.fileName).chat_metadata?.integrity ?? null;
             case 'prune_agent_chat_persistent_states': onPrune?.(args.dto); return;
             case 'copy_agent_chat_persistent_states': stateCopies.push(args.dto); return;
             case 'commit_chat_metadata': {

@@ -55,6 +55,13 @@ pub struct ChatSearchResult {
     pub chat_metadata: Option<Value>,
 }
 
+/// Current file identity, read independently of rebuildable directory summaries.
+#[derive(Debug, Clone)]
+pub struct CharacterChatIdentity {
+    pub file_name: String,
+    pub integrity: Option<String>,
+}
+
 /// Metadata-only entry for the chat backup catalog.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChatBackupCatalogEntry {

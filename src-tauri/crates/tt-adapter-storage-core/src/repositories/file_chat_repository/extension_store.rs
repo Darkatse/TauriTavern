@@ -3,14 +3,12 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use tokio::fs;
 
-use crate::chat_jsonl::{parse_header_integrity, read_header_record_async};
 use crate::file_system::{move_file_no_replace_with_fallback, persist_json_file};
 use tt_domain::errors::DomainError;
 use tt_domain::json_merge::merge_json_value;
 use tt_domain::models::filename::sanitize_filename;
 
 use super::FileChatRepository;
-use super::windowed_payload_io::open_existing_payload_file;
 
 fn validate_store_component(raw: &str, label: &str) -> Result<String, DomainError> {
     let value = raw.trim();
@@ -108,11 +106,9 @@ impl FileChatRepository {
         let chat_path = self
             .resolve_character_chat_path(character_name, file_name)
             .await?;
-        let mut reader = tokio::io::BufReader::new(open_existing_payload_file(&chat_path).await?);
-        let (header, _) = read_header_record_async(&mut reader)
+        let integrity = self
+            .read_chat_integrity_from_path(&chat_path)
             .await?
-            .ok_or_else(|| DomainError::InvalidData("Chat store requires a chat header".into()))?;
-        let integrity = parse_header_integrity(&header)?
             .ok_or_else(|| DomainError::InvalidData("Chat metadata integrity is missing".into()))?;
         // The identity is used verbatim as a directory name; never sanitize it into another identity.
         if sanitize_filename(&integrity) != integrity {

@@ -178,6 +178,8 @@ const summary = await handle.summary({ includeMetadata: true });
 const id = await handle.stableId();
 ```
 
+`summary()` 默认只返回轻量摘要。`includeMetadata: true` 返回完整 metadata，读取成本随返回数据大小增长。
+
 ---
 
 ### `history.*` — 按需分页读取

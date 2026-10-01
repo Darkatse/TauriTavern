@@ -2,9 +2,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
-use crate::chat_jsonl::{
-    is_whitespace, skip_preamble, trim_whitespace, validate_metadata_integrity,
-};
+use crate::chat_jsonl::{HeaderMetadataFields, is_whitespace, skip_preamble, trim_whitespace};
 use serde::Deserialize;
 use serde::de::{DeserializeOwned, IgnoredAny, MapAccess, Visitor};
 use serde_json::Value;
@@ -14,11 +12,51 @@ use super::super::backup_codec::{BackupFormat, read_zstd_frame_content_size};
 
 const BUFFER_BYTES: usize = 64 * 1024;
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default)]
 pub(super) struct HeaderProjection {
     pub(super) character_name: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_present_json_value")]
-    pub(super) chat_metadata: Option<Value>,
+    pub(super) chat_id: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for HeaderProjection {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(Self::default())
+    }
+}
+
+impl<'de> Visitor<'de> for HeaderProjection {
+    type Value = Self;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a chat header object")
+    }
+
+    fn visit_map<M: MapAccess<'de>>(mut self, mut map: M) -> Result<Self, M::Error> {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            CharacterName,
+            ChatMetadata,
+            #[serde(other)]
+            Other,
+        }
+        let mut metadata = HeaderMetadataFields::default();
+        while let Some(field) = map.next_key()? {
+            match field {
+                Field::CharacterName => self.character_name = map.next_value()?,
+                Field::ChatMetadata => metadata = map.next_value()?,
+                Field::Other => {
+                    map.next_value::<IgnoredAny>()?;
+                }
+            }
+        }
+        self.chat_id = metadata
+            .finish()
+            .map_err(serde::de::Error::custom)?
+            .chat_id()
+            .map_err(serde::de::Error::custom)?;
+        Ok(self)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -99,15 +137,6 @@ struct SpanScan {
     line_count: usize,
     first: Option<RecordSpan>,
     last: Option<RecordSpan>,
-}
-
-fn deserialize_present_json_value<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = Value::deserialize(deserializer)?;
-    validate_metadata_integrity(&value).map_err(serde::de::Error::custom)?;
-    Ok(Some(value))
 }
 
 impl<'de> Deserialize<'de> for MessageText {

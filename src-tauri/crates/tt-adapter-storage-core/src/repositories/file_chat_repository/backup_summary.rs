@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,7 +13,7 @@ use crate::file_system::write_json_file;
 
 use super::FileChatRepository;
 use super::backup_inventory::{BackupEntry, BackupInventory};
-use super::summary::FileSignature;
+use super::summary::{ChatSummary, FileSignature};
 
 const INDEX_SCHEMA_VERSION: u32 = 2;
 
@@ -52,13 +53,13 @@ struct BackupSummaryCacheEntry {
     signature: BackupSummarySignature,
     jsonl_record_count: usize,
     #[serde(skip)]
-    full_summary: Option<ChatSearchResult>,
+    summary: Option<ChatSummary>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct BackupSummaryIndexSnapshot {
+struct BackupSummaryIndexSnapshot<'a> {
     schema_version: u32,
-    entries: HashMap<String, BackupSummaryCacheEntry>,
+    entries: Cow<'a, HashMap<String, BackupSummaryCacheEntry>>,
 }
 
 pub(super) struct BackupSummaryCache {
@@ -116,7 +117,7 @@ impl BackupSummaryCache {
             return;
         }
 
-        self.entries = snapshot.entries;
+        self.entries = snapshot.entries.into_owned();
     }
 
     fn matching_entry(&self, entry: &BackupEntry) -> Option<&BackupSummaryCacheEntry> {
@@ -130,9 +131,9 @@ impl BackupSummaryCache {
             .map(|cached| cached.jsonl_record_count.saturating_sub(1))
     }
 
-    fn summary(&self, entry: &BackupEntry) -> Option<ChatSearchResult> {
+    fn summary(&self, entry: &BackupEntry) -> Option<ChatSummary> {
         self.matching_entry(entry)
-            .and_then(|cached| cached.full_summary.clone())
+            .and_then(|cached| cached.summary.clone())
     }
 
     fn record_count(&mut self, entry: &BackupEntry, jsonl_record_count: usize) {
@@ -141,13 +142,13 @@ impl BackupSummaryCache {
             BackupSummaryCacheEntry {
                 signature: BackupSummarySignature::from_entry(entry),
                 jsonl_record_count,
-                full_summary: None,
+                summary: None,
             },
         );
         self.dirty = true;
     }
 
-    fn record_summary(&mut self, entry: &BackupEntry, summary: ChatSearchResult) {
+    fn record_summary(&mut self, entry: &BackupEntry, summary: ChatSummary) {
         let signature = BackupSummarySignature::from_entry(entry);
         let (jsonl_record_count, persistent_changed) =
             match self.entries.get(&entry.logical_file_name) {
@@ -159,7 +160,7 @@ impl BackupSummaryCache {
             BackupSummaryCacheEntry {
                 signature,
                 jsonl_record_count,
-                full_summary: Some(summary),
+                summary: Some(summary),
             },
         );
         self.dirty |= persistent_changed;
@@ -171,7 +172,7 @@ impl BackupSummaryCache {
         };
 
         cached.signature = BackupSummarySignature::from_entry(entry);
-        if let Some(summary) = cached.full_summary.as_mut() {
+        if let Some(summary) = cached.summary.as_mut() {
             summary.file_name = entry.logical_file_name.clone();
             summary.file_size = entry.byte_len;
         }
@@ -202,10 +203,10 @@ impl BackupSummaryCache {
         self.dirty |= self.entries.len() != before;
     }
 
-    fn snapshot(&self) -> BackupSummaryIndexSnapshot {
+    fn snapshot(&self) -> BackupSummaryIndexSnapshot<'_> {
         BackupSummaryIndexSnapshot {
             schema_version: INDEX_SCHEMA_VERSION,
-            entries: self.entries.clone(),
+            entries: Cow::Borrowed(&self.entries),
         }
     }
 }
@@ -237,7 +238,7 @@ impl FileChatRepository {
             let mut cache = self.backup_summary_cache.lock().await;
             cache.ensure_loaded();
             if let Some(summary) = cache.summary(entry) {
-                return Ok(summary);
+                return Ok(summary.into());
             }
         }
 
@@ -259,7 +260,7 @@ impl FileChatRepository {
         let mut cache = self.backup_summary_cache.lock().await;
         cache.ensure_loaded();
         cache.record_summary(entry, summary.clone());
-        Ok(summary)
+        Ok(summary.into())
     }
 
     pub(super) async fn record_backup_jsonl_count(

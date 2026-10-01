@@ -5,10 +5,11 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage};
 
 pub use super::chat_types::{
-    ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat, ChatMessageReadItem,
-    ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchHit, ChatMessageSearchQuery,
-    ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatSearchResult,
-    FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat, PinnedGroupChat,
+    CharacterChatIdentity, ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat,
+    ChatMessageReadItem, ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchHit,
+    ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor,
+    ChatPayloadTail, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
+    PinnedCharacterChat, PinnedGroupChat,
 };
 
 #[async_trait]
@@ -194,6 +195,23 @@ pub trait ChatRepository: Send + Sync {
         file_name: &str,
     ) -> Result<Value, DomainError>;
 
+    /// Read only the header identity. Missing identity is valid legacy data;
+    /// missing files and unreadable or invalid headers are errors.
+    async fn get_character_chat_integrity(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Option<String>, DomainError>;
+
+    /// Enumerate current identities without reading message bodies. Unlike a
+    /// display catalog, this must fail if any file's identity cannot be established.
+    async fn list_character_chat_identities(
+        &self,
+        character_name: &str,
+    ) -> Result<Vec<CharacterChatIdentity>, DomainError>;
+
+    /// Stop on a confirmed match; errors from inspected headers propagate.
+    /// This does not require a complete identity enumeration.
     async fn has_character_chat_with_integrity(
         &self,
         character_name: &str,

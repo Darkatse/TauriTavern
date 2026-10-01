@@ -162,7 +162,7 @@ impl FileChatRepository {
         let cache_key = summary_cache_key(&descriptor.path);
 
         let mut cache = self.summary_cache.lock().await;
-        cache.ensure_loaded();
+        cache.ensure_loaded().await;
         let entry = cache
             .get(&cache_key)
             .filter(|entry| entry.signature == signature)
@@ -254,9 +254,7 @@ impl FileChatRepository {
                 .set(summary_cache_key(&descriptor.path), entry.clone());
             (entry, text)
         };
-        let mut summary = entry.summary;
-        summary.chat_metadata = None;
-        Ok((summary, text))
+        Ok((entry.summary.into(), text))
     }
 
     pub(in crate::repositories::file_chat_repository) async fn get_chat_summary(
@@ -264,14 +262,17 @@ impl FileChatRepository {
         descriptor: &ChatFileDescriptor,
         include_metadata: bool,
     ) -> Result<ChatSearchResult, DomainError> {
-        let mut summary = self
-            .get_chat_summary_entry(descriptor, false)
-            .await?
-            .summary;
-        if !include_metadata {
-            summary.chat_metadata = None;
+        let mut result = ChatSearchResult::from(
+            self.get_chat_summary_entry(descriptor, false)
+                .await?
+                .summary,
+        );
+        if include_metadata {
+            result.chat_metadata = self
+                .read_optional_chat_metadata_from_path(&descriptor.path)
+                .await?;
         }
-        Ok(summary)
+        Ok(result)
     }
 
     pub(in crate::repositories::file_chat_repository) async fn collect_chat_summaries(

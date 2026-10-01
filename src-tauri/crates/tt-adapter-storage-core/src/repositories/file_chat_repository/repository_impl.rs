@@ -15,10 +15,10 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage, strip_jsonl_extension};
 use tt_ports::repositories::chat_payload_commit_repository::ChatPayloadTarget;
 use tt_ports::repositories::chat_repository::{
-    ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat, ChatMessageSearchHit,
-    ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor,
-    ChatPayloadTail, ChatRepository, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
-    PinnedCharacterChat,
+    CharacterChatIdentity, ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat,
+    ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
+    ChatPayloadCursor, ChatPayloadTail, ChatRepository, ChatSearchResult, FindLastMessageQuery,
+    LocatedChatMessage, PinnedCharacterChat,
 };
 
 use super::FileChatRepository;
@@ -293,7 +293,7 @@ impl ChatRepository for FileChatRepository {
         let search_cache_key =
             Self::character_search_cache_key(&normalized_query, character_filter);
         if let Some(cached) = self.get_cached_search_results(&search_cache_key).await {
-            return Ok(cached);
+            return Ok(cached.into_iter().map(ChatSearchResult::from).collect());
         }
 
         let descriptors = self.list_character_chat_files(character_filter).await?;
@@ -307,7 +307,7 @@ impl ChatRepository for FileChatRepository {
                 .await;
         }
         self.flush_summary_index_best_effort().await;
-        Ok(results)
+        Ok(results.into_iter().map(ChatSearchResult::from).collect())
     }
 
     async fn list_chat_summaries(
@@ -699,17 +699,42 @@ impl ChatRepository for FileChatRepository {
         self.read_chat_metadata_from_path(&path).await
     }
 
+    async fn get_character_chat_integrity(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Option<String>, DomainError> {
+        let path = self
+            .resolve_character_chat_path(character_name, file_name)
+            .await?;
+        self.read_chat_integrity_from_path(&path).await
+    }
+
+    async fn list_character_chat_identities(
+        &self,
+        character_name: &str,
+    ) -> Result<Vec<CharacterChatIdentity>, DomainError> {
+        let mut identities = Vec::new();
+        for chat in self.list_character_chat_files(Some(character_name)).await? {
+            identities.push(CharacterChatIdentity {
+                file_name: chat.file_name,
+                integrity: self.read_chat_integrity_from_path(&chat.path).await?,
+            });
+        }
+        Ok(identities)
+    }
+
     async fn has_character_chat_with_integrity(
         &self,
         character_name: &str,
         integrity: &str,
     ) -> Result<bool, DomainError> {
         for chat in self.list_character_chat_files(Some(character_name)).await? {
-            let metadata = self.read_chat_metadata_from_path(&chat.path).await?;
-            if metadata
-                .get("integrity")
-                .and_then(Value::as_str)
-                .is_some_and(|value| value == integrity)
+            if self
+                .read_chat_integrity_from_path(&chat.path)
+                .await?
+                .as_deref()
+                == Some(integrity)
             {
                 return Ok(true);
             }
