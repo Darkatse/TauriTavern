@@ -35,6 +35,23 @@ Profile 的 `run.stream` 控制当前 Invocation 的默认行为，启动参数 
 
 签名和加密内容不进入预览；工具保留完整 `ToolId`，包括区分同名工具所需的 MCP 身份。预览按 Invocation 与模型尝试隔离，协议与清理规则见 [Agent API](../API/Agent.md#控制与订阅)。OpenAI 兼容格式的流式与完整响应共用推理字段归一化规则；最终完整响应仍走共同存储与工具执行路径。不支持的流式路由直接报错。
 
+## 停止原因
+
+Provider adapter 按线格式把原生停止原因归类（`ChatCompletionNormalizationReport.stop`：`kind` 与 provider 无关，`native` 保留原值），同一格式的流式与完整响应共用一张映射表。SillyTavern 看到的响应体与 `finish_reason` 不变。
+
+Gateway 按分类决定这一轮能否使用：
+
+| 分类 | 处理 |
+|---|---|
+| 正常结束、未知值、完整响应未给出 | 正常使用 |
+| 声称调用工具却没有调用、输入或输出被内容过滤（Gemini `promptFeedback.blockReason`，或 `SAFETY` / `RECITATION` 等）、畸形工具调用、`pause_turn` | 可重试的 `model.upstream_invalid_response` |
+| 截断（含超出上下文 `model_context_window_exceeded`） | `model.output_truncated`，不重试 |
+| 拒答（如 Claude `refusal`）：同一请求重发仍会被拒 | `model.provider_refusal`，不重试 |
+
+错误文字原样带上 provider 给出的原因：Gemini 输出被过滤时附 `finishMessage`，输入被拦截时附完整的 `promptFeedback`；重试用完后 Run 显示最后一次的错误。
+
+流式响应缺少停止原因时按可重试的上游无效响应处理（OpenAI 兼容、Gemini、Claude 一致）。Gemini 输入被拦截的流没有候选，按完整响应同样归类；SillyTavern 流式不读取 `promptFeedback`，因此收到带原始 `promptFeedback` 的错误。OpenAI Responses 的 `incomplete` 在 adapter 内报错，行为不变。
+
 ## 修改入口
 
 - [agent_model_gateway](../../src-tauri/crates/tt-application/src/services/agent_model_gateway)：`encode`、`decode`、工具 schema 与 provider adapter。

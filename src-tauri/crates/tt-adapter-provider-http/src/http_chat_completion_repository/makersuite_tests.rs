@@ -7,7 +7,7 @@ use tokio::sync::{mpsc, watch};
 use tt_adapter_http::HttpClientPool;
 use tt_ports::repositories::chat_completion_repository::{
     AnthropicBetaHeaderMode, ChatCompletionApiConfig, ChatCompletionRepository,
-    ChatCompletionSource,
+    ChatCompletionSource, ChatCompletionStop, ChatCompletionStopKind,
 };
 use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
@@ -175,6 +175,13 @@ async fn custom_gemini_stream_rejects_incomplete_or_error_events_without_native_
             json!({ "error": { "message": "stream rejected" } }),
             "stream rejected",
         ),
+        (
+            json!({ "promptFeedback": {
+                "blockReason": "PROHIBITED_CONTENT",
+                "blockReasonMessage": "The prompt was blocked."
+            } }),
+            r#"promptFeedback: {"blockReason":"PROHIBITED_CONTENT","blockReasonMessage":"The prompt was blocked."}"#,
+        ),
     ] {
         let (base, server) = upstream(vec![format!("data: {event}\n\n")]).await;
         let (repository, config) = repository(base);
@@ -198,6 +205,41 @@ async fn custom_gemini_stream_rejects_incomplete_or_error_events_without_native_
         }
         server.await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn custom_gemini_blocked_prompt_reports_the_same_stop_streamed_or_not() {
+    let blocked = json!({
+        "promptFeedback": { "blockReason": "SAFETY", "safetyRatings": [] },
+        "modelVersion": "gemini-test"
+    });
+    let (base, server) = upstream(vec![blocked.to_string(), format!("data: {blocked}\n\n")]).await;
+    let (repository, config) = repository(base);
+    let payload = json!({ "model": "gemini-test", "contents": [] });
+    let source = ChatCompletionSource::Custom;
+
+    let complete = repository
+        .generate(source, &config, "/generateContent", &payload)
+        .await
+        .unwrap();
+    let streamed = repository
+        .generate_with_deltas(
+            source,
+            &config,
+            "/streamGenerateContent",
+            &payload,
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+
+    let expected = ChatCompletionStop::new(
+        ChatCompletionStopKind::Filtered,
+        blocked["promptFeedback"].to_string(),
+    );
+    assert_eq!(complete.normalization_report.stop(), Some(&expected));
+    assert_eq!(streamed.normalization_report.stop(), Some(&expected));
+    server.await.unwrap();
 }
 
 #[tokio::test]

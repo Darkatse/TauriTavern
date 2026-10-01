@@ -43,9 +43,42 @@ pub type ChatCompletionCancelReceiver = watch::Receiver<bool>;
 pub const CHAT_COMPLETION_PROVIDER_STATE_FIELD: &str = "_tauritavern_provider_state";
 pub const OPENAI_RESPONSES_WEBSOCKET_TRANSPORT: &str = "responses_websocket";
 
+/// Provider-neutral reason the model stopped. Adapters own the mapping from native values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatCompletionStopKind {
+    Completed,
+    /// The native reason itself names tool calls (`tool_calls`, `function_call`, `tool_use`).
+    ToolCalls,
+    Truncated,
+    Refused,
+    Filtered,
+    MalformedToolCall,
+    Paused,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatCompletionStop {
+    pub kind: ChatCompletionStopKind,
+    /// Value as the provider sent it, shown unchanged in errors. Gemini appends its
+    /// `finishMessage`; a blocked Gemini prompt carries the whole `promptFeedback`.
+    pub native: String,
+}
+
+impl ChatCompletionStop {
+    pub fn new(kind: ChatCompletionStopKind, native: impl Into<String>) -> Self {
+        Self {
+            kind,
+            native: native.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ChatCompletionNormalizationReport {
     pub synthetic_tool_call_ids: Vec<String>,
+    /// `None` when the provider reported no stop reason.
+    pub stop: Option<ChatCompletionStop>,
 }
 
 impl ChatCompletionNormalizationReport {
@@ -55,6 +88,14 @@ impl ChatCompletionNormalizationReport {
 
     pub fn record_synthetic_tool_call_id(&mut self, id: impl Into<String>) {
         self.synthetic_tool_call_ids.push(id.into());
+    }
+
+    pub fn stop(&self) -> Option<&ChatCompletionStop> {
+        self.stop.as_ref()
+    }
+
+    pub fn record_stop(&mut self, stop: ChatCompletionStop) {
+        self.stop = Some(stop);
     }
 }
 
