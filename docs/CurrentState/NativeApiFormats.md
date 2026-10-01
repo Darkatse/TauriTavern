@@ -103,6 +103,7 @@ JSON 响应中的明确 error（包括 HTTP 200）在共同读取处转为错误
 
 - 共享 Chat Completions builder 为流式请求设置 `stream_options.include_usage=true`；现有 additional body overrides 仍可覆盖或删除该字段。usage 尾包可以没有 choices，必须消费到正常结束。
 - Claude、Gemini、Responses 与 Interactions 的 normalizer 将缓存读取数保留为 `usage.prompt_tokens_details.cached_tokens`，缺失时不补零；Claude 的 `prompt_tokens` 包含缓存读取、缓存写入和未缓存输入。Responses/Interactions 的现有流式终包携带相同 usage。
+- 缓存命中率是可选统计。前端共用解析入口将缺失或不一致的计数视为未知（`null`），不展示该统计、不猜测数值，也不因此中断流式或非流式回复；后续有效 usage 照常更新。
 - 第一方 UI 的 Reasoning Effort `Auto` 表示不生成 `reasoning_effort`；其他显式值由 Custom payload 原样发送，不按模型名启用、校验或降级。上游不接受时沿现有错误链路返回，用户仍可通过 include/exclude body override 最终覆盖或删除该字段。
 - assistant tool call 的 `extra_content` 是 provider-owned opaque JSON，流式处理中按最新非 null 快照整体替换；Legacy 与 Agent 按原 tool call 位置保存，并在同 API/model 的后续工具请求中原样回放。
 - 前端不解析其中的 provider namespace 或 signature，不按模型名启用，也不生成缺失值。
