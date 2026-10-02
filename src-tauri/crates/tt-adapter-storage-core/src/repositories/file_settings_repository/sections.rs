@@ -6,16 +6,19 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use super::fields::{
-    APPEARANCE_FILE, DYNAMIC_THEME_FILE, LAYOUT_FILE, PERSONA_STATE_FILE, PRESETS_FILE,
+    APPEARANCE_FILE, CORE_FILE, DYNAMIC_THEME_FILE, LAYOUT_FILE, PERSONA_STATE_FILE, PRESETS_FILE,
     UserSettingsSections,
 };
+use tt_domain::models::settings::repair::repair_sillytavern_prompt_manager_settings;
+use tt_domain::models::settings::revision::UserSettingsRevision;
+
 use crate::file_system::persist_json_file_blocking;
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::{DynamicThemeSettings, TauriTavernSettings, UserSettings};
 
 pub(super) fn load_user(root: &Path, defaults: &UserSettings) -> Result<UserSettings, DomainError> {
     let defaults = UserSettingsSections::split(defaults.data.clone());
-    let core_path = root.join("settings.json");
+    let core_path = root.join(CORE_FILE);
     let stored = load_or_default(
         &core_path,
         &UserSettings {
@@ -51,18 +54,34 @@ pub(super) fn load_user(root: &Path, defaults: &UserSettings) -> Result<UserSett
     if migrated {
         persist_json_file_blocking(&core_path, &sections.core)?;
     }
-    Ok(UserSettings {
+    let mut settings = UserSettings {
         data: sections.into_settings(),
-    })
+    };
+    repair_user(&mut settings);
+    Ok(settings)
 }
 
-pub(super) fn save_user(root: &Path, settings: &UserSettings) -> Result<(), DomainError> {
-    let sections = UserSettingsSections::split(settings.data.clone());
+/// All writers normalize once, then publish only changed sections.
+pub(super) fn save_user(
+    root: &Path,
+    mut settings: UserSettings,
+) -> Result<UserSettingsRevision, DomainError> {
+    repair_user(&mut settings);
+    let revision = UserSettingsRevision::from_settings(&settings)?;
+    let sections = UserSettingsSections::split(settings.data);
     persist_changed(&root.join(APPEARANCE_FILE), &sections.appearance)?;
     persist_changed(&root.join(PRESETS_FILE), &sections.presets)?;
     persist_changed(&root.join(LAYOUT_FILE), &sections.layout)?;
     persist_changed(&root.join(PERSONA_STATE_FILE), &sections.persona_state)?;
-    persist_changed(&root.join("settings.json"), &sections.core)
+    persist_changed(&root.join(CORE_FILE), &sections.core)?;
+    Ok(revision)
+}
+
+fn repair_user(settings: &mut UserSettings) {
+    let repair = repair_sillytavern_prompt_manager_settings(settings);
+    if repair.changed() {
+        tracing::warn!("Repaired SillyTavern PromptManager settings: {repair}");
+    }
 }
 
 pub(super) fn load_native(root: &Path) -> Result<TauriTavernSettings, DomainError> {
@@ -113,8 +132,8 @@ fn persist_changed(path: &Path, value: &Value) -> Result<(), DomainError> {
 }
 
 fn read_optional<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, DomainError> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
             return Err(DomainError::InternalError(format!(
@@ -123,9 +142,11 @@ fn read_optional<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, DomainEr
             )));
         }
     };
-    serde_json::from_slice(&bytes).map(Some).map_err(|error| {
-        DomainError::InvalidData(format!("Invalid settings {}: {error}", path.display()))
-    })
+    serde_json::from_reader(std::io::BufReader::new(file))
+        .map(Some)
+        .map_err(|error| {
+            DomainError::InvalidData(format!("Invalid settings {}: {error}", path.display()))
+        })
 }
 
 fn load_or_default<T: DeserializeOwned + Serialize + Clone>(

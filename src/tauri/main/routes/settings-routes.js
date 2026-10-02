@@ -1,3 +1,6 @@
+import { commitBytes } from '../services/files/byte-commit.js';
+import { textFragmentsToByteChunks } from '../kernel/utf8.js';
+
 const PROVIDER_METADATA_SECRET_KEYS = new Set([
     'api_key_openrouter',
     'api_key_nanogpt',
@@ -25,19 +28,38 @@ function invalidateSecretBackedProviderMetadata(context, key) {
 
 export function registerSettingsRoutes(router, context, { jsonResponse }) {
     router.post('/api/settings/get', async () => {
-        const settings = await context.safeInvoke('get_sillytavern_settings');
-        return jsonResponse(settings);
+        const bytes = await context.safeInvoke('get_sillytavern_settings');
+        return new Response(bytes, { headers: { 'Content-Type': 'application/json' } });
     });
 
-    router.post('/api/settings/save', async ({ body }) => {
-        const result = await context.safeInvoke('save_user_settings', { settings: body || {} });
+    router.post('/api/settings/save', async ({ body, input, init }) => {
+        const headers = new Headers(init?.headers ?? input?.headers);
+        const revision = headers.get('X-TauriTavern-Settings-Revision');
+        let expectedRevision = null;
+        if (revision !== null) {
+            try {
+                expectedRevision = JSON.parse(revision);
+                if (expectedRevision === null) throw new Error('Empty revision');
+            } catch {
+                return jsonResponse({ error: 'Invalid settings revision header' }, 400);
+            }
+        }
+        const text = typeof body === 'string' ? body : JSON.stringify(body);
+        if (typeof text !== 'string') {
+            return jsonResponse({ error: 'Settings replacement requires JSON' }, 400);
+        }
+        const result = await commitBytes({
+            begin: () => context.invokeTransport('begin_settings_commit', { expectedRevision }),
+            frames: maxBytes => textFragmentsToByteChunks([text], maxBytes),
+            append: (data, options) => context.invokeTransport('append_settings_commit_chunk', data, options),
+            finish: (sessionId, expectedSize) => context.invokeTransport('finish_settings_commit', {
+                sessionId,
+                expectedSize,
+            }),
+            abort: sessionId => context.invokeTransport('abort_settings_commit', { sessionId }),
+        });
         return jsonResponse(result);
-    });
-
-    router.post('/api/settings/patch', async ({ body }) => {
-        const result = await context.safeInvoke('save_user_settings_patch', { patch: body || {} });
-        return jsonResponse(result || { result: 'ok' });
-    });
+    }, { body: 'text' });
 
     router.post('/api/settings/make-snapshot', async () => {
         await context.safeInvoke('create_settings_snapshot');

@@ -1,24 +1,18 @@
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tt_domain::models::persona::{Personas, insert_personas, take_personas};
 use tt_ports::repositories::avatar_repository::AvatarRepository;
 
-use super::settings_repair::repair_sillytavern_prompt_manager_settings;
 use crate::dto::settings_dto::{
-    SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
+    SettingsJsonDto, SettingsSnapshotDto, SillyTavernSettingsResponseDto, TauriTavernSettingsDto,
     UpdateAgentSettingsDto, UpdateChatBackupSettingsDto, UpdateTauriTavernSettingsDto,
-    UserSettingsDto, UserSettingsPatchDto, UserSettingsPatchOpDto, UserSettingsRevisionDto,
-    UserSettingsSaveResultDto,
+    UserSettingsDto, UserSettingsRevisionDto, UserSettingsSaveResultDto,
 };
 use crate::errors::ApplicationError;
-use crate::services::hashing::hex_lower;
+use tt_contracts::byte_commit::CommitBegin;
 use tt_domain::models::settings::{
     AgentRunRetentionSettings, AgentSettings, ChatBackupSettings, DevLoggingSettings,
     RequestProxySettings, UserSettings,
@@ -26,13 +20,10 @@ use tt_domain::models::settings::{
 use tt_ports::repositories::settings_repository::{SettingsAggregateSignature, SettingsRepository};
 pub use tt_ports::settings::{ChatBackupRuntime, ChatBackupStorageStats, RequestProxyRuntime};
 
-/// Validator for settings fields; Persona cards have an independent save boundary.
-pub const USER_SETTINGS_HASH_ALGORITHM: &str = "tt-user-settings-stable-sha256-v1";
-
 #[derive(Clone)]
 struct SettingsAggregateCacheEntry {
     signature: SettingsAggregateSignature,
-    response: SillyTavernSettingsResponseDto,
+    response: SettingsJsonDto,
 }
 
 pub struct SettingsService {
@@ -40,9 +31,8 @@ pub struct SettingsService {
     settings_repository: Arc<dyn SettingsRepository>,
     request_proxy_runtime: Arc<dyn RequestProxyRuntime>,
     chat_backup_runtime: Arc<dyn ChatBackupRuntime>,
-    pending_user_settings_repair_writeback: Arc<AtomicBool>,
-    sillytavern_settings_cache: Arc<Mutex<Option<SettingsAggregateCacheEntry>>>,
-    user_settings_save_lock: Arc<Mutex<()>>,
+    sillytavern_settings_cache: Mutex<Option<SettingsAggregateCacheEntry>>,
+    user_settings_save_lock: Mutex<()>,
 }
 
 impl SettingsService {
@@ -57,9 +47,8 @@ impl SettingsService {
             settings_repository,
             request_proxy_runtime,
             chat_backup_runtime,
-            pending_user_settings_repair_writeback: Arc::new(AtomicBool::new(false)),
-            sillytavern_settings_cache: Arc::new(Mutex::new(None)),
-            user_settings_save_lock: Arc::new(Mutex::new(())),
+            sillytavern_settings_cache: Mutex::new(None),
+            user_settings_save_lock: Mutex::new(()),
         }
     }
 
@@ -98,61 +87,6 @@ impl SettingsService {
                     );
                 }
             }
-        });
-    }
-
-    fn schedule_delayed_user_settings_repair_writeback(&self) {
-        const DELAY: Duration = Duration::from_secs(20);
-
-        if self
-            .pending_user_settings_repair_writeback
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return;
-        }
-
-        let settings_repository = Arc::clone(&self.settings_repository);
-        let pending = Arc::clone(&self.pending_user_settings_repair_writeback);
-        let settings_cache = Arc::clone(&self.sillytavern_settings_cache);
-        let save_lock = Arc::clone(&self.user_settings_save_lock);
-
-        tokio::spawn(async move {
-            tokio::time::sleep(DELAY).await;
-
-            let result: Result<bool, tt_domain::errors::DomainError> = async {
-                let _guard = save_lock.lock().await;
-                let mut settings = settings_repository.load_user_settings().await?;
-                let repair_report = repair_sillytavern_prompt_manager_settings(&mut settings);
-
-                if !repair_report.changed() {
-                    return Ok(false);
-                }
-
-                tracing::warn!(
-                    "Persisting delayed SillyTavern PromptManager settings repair: {}",
-                    repair_report
-                );
-                settings_repository.save_user_settings(&settings).await?;
-                Ok(true)
-            }
-            .await;
-
-            match result {
-                Ok(true) => {
-                    *settings_cache.lock().await = None;
-                }
-                Ok(false) => {}
-                Err(error) => {
-                    tracing::error!(
-                        target: tt_contracts::observability::USER_VISIBLE_ERROR,
-                        "Failed delayed SillyTavern PromptManager settings repair: {}",
-                        error
-                    );
-                }
-            }
-
-            pending.store(false, Ordering::Release);
         });
     }
 
@@ -421,78 +355,51 @@ impl SettingsService {
         Ok(())
     }
 
-    pub async fn save_user_settings(
+    pub async fn begin_commit(
         &self,
-        settings: UserSettingsDto,
-    ) -> Result<UserSettingsSaveResultDto, ApplicationError> {
-        tracing::info!("Saving user settings");
-
-        let mut user_settings = settings.into();
-        Self::repair_user_settings_before_save(&mut user_settings, "before save");
-        let personas = take_personas(&mut user_settings.data)?.unwrap_or_default();
-        let next_hash = Self::stable_user_settings_hash(&user_settings.data)?;
-        let _guard = self.user_settings_save_lock.lock().await;
-        let current_settings = self.settings_repository.load_user_settings().await?;
-        let changed = current_settings.data != user_settings.data;
-        if changed {
-            self.persist_user_settings(&user_settings).await?;
-        }
-        Ok(Self::user_settings_save_result(
-            if changed || !personas.is_empty() {
-                "full"
-            } else {
-                "full-noop"
-            },
-            next_hash,
-            self.save_personas(&personas).await,
-        ))
+        expected: Option<UserSettingsRevisionDto>,
+    ) -> Result<CommitBegin, ApplicationError> {
+        Ok(self.settings_repository.begin_commit(expected).await?)
     }
 
-    pub async fn save_user_settings_patch(
+    pub async fn append_commit(
         &self,
-        patch: UserSettingsPatchDto,
+        session_id: &str,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<u64, ApplicationError> {
+        Ok(self
+            .settings_repository
+            .append_commit(session_id, offset, bytes)
+            .await?)
+    }
+
+    pub async fn finish_commit(
+        &self,
+        session_id: &str,
+        expected_size: u64,
     ) -> Result<UserSettingsSaveResultDto, ApplicationError> {
-        tracing::info!("Saving user settings patch");
-
-        Self::validate_user_settings_patch(&patch)?;
-
         let _guard = self.user_settings_save_lock.lock().await;
-        let mut current_settings = self.settings_repository.load_user_settings().await?;
-        let current_repaired =
-            Self::repair_user_settings_before_save(&mut current_settings, "before patch save");
+        self.clear_sillytavern_settings_cache().await;
+        let result = self
+            .settings_repository
+            .finish_commit(session_id, expected_size)
+            .await?;
+        let persona_errors = self.save_personas(&result.personas).await;
+        Ok(UserSettingsSaveResultDto {
+            result: if persona_errors.is_empty() {
+                "ok"
+            } else {
+                "partial"
+            }
+            .into(),
+            tauritavern_settings_revision: result.revision,
+            persona_errors,
+        })
+    }
 
-        let current_hash = Self::stable_user_settings_hash(&current_settings.data)?;
-        if current_hash != patch.base_hash {
-            return Err(ApplicationError::Conflict(format!(
-                "Settings changed since patch baseline: expected {}, current {}",
-                patch.base_hash, current_hash
-            )));
-        }
-
-        let mut patched_settings = current_settings;
-        Self::apply_user_settings_patch(&mut patched_settings.data, &patch.ops)?;
-        if take_personas(&mut patched_settings.data)?.is_some() {
-            return Err(ApplicationError::ValidationError(
-                "Persona edits belong in persona_updates, not settings patch operations".into(),
-            ));
-        }
-        let patched_repaired =
-            Self::repair_user_settings_before_save(&mut patched_settings, "after patch save");
-        let patched_hash = Self::stable_user_settings_hash(&patched_settings.data)?;
-
-        let mode = if patched_hash == current_hash && patch.persona_updates.is_empty() {
-            "patch-noop"
-        } else {
-            "patch"
-        };
-        if patched_hash != current_hash || current_repaired || patched_repaired {
-            self.persist_user_settings(&patched_settings).await?;
-        }
-        Ok(Self::user_settings_save_result(
-            mode,
-            patched_hash,
-            self.save_personas(&patch.persona_updates).await,
-        ))
+    pub async fn abort_commit(&self, session_id: &str) -> Result<(), ApplicationError> {
+        Ok(self.settings_repository.abort_commit(session_id).await?)
     }
 
     async fn save_personas(&self, personas: &Personas) -> BTreeMap<String, String> {
@@ -508,189 +415,7 @@ impl SettingsService {
         errors
     }
 
-    async fn persist_user_settings(
-        &self,
-        user_settings: &UserSettings,
-    ) -> Result<(), ApplicationError> {
-        self.settings_repository
-            .save_user_settings(user_settings)
-            .await?;
-        self.clear_sillytavern_settings_cache().await;
-
-        Ok(())
-    }
-
-    fn repair_user_settings_before_save(settings: &mut UserSettings, context: &str) -> bool {
-        let repair_report = repair_sillytavern_prompt_manager_settings(settings);
-        let changed = repair_report.changed();
-        if changed {
-            tracing::warn!(
-                "Repaired SillyTavern PromptManager settings {}: {}",
-                context,
-                repair_report
-            );
-        }
-        changed
-    }
-
-    fn user_settings_save_result(
-        mode: impl Into<String>,
-        settings_hash: String,
-        persona_errors: BTreeMap<String, String>,
-    ) -> UserSettingsSaveResultDto {
-        UserSettingsSaveResultDto {
-            result: if persona_errors.is_empty() {
-                "ok"
-            } else {
-                "partial"
-            }
-            .into(),
-            mode: mode.into(),
-            hash_algorithm: USER_SETTINGS_HASH_ALGORITHM.to_string(),
-            settings_hash,
-            persona_errors,
-        }
-    }
-
-    fn validate_user_settings_patch(patch: &UserSettingsPatchDto) -> Result<(), ApplicationError> {
-        if patch.hash_algorithm != USER_SETTINGS_HASH_ALGORITHM {
-            return Err(ApplicationError::ValidationError(format!(
-                "Unsupported settings hash algorithm: {}",
-                patch.hash_algorithm
-            )));
-        }
-
-        Self::validate_user_settings_hash("base_hash", &patch.base_hash)?;
-
-        Ok(())
-    }
-
-    fn validate_user_settings_hash(label: &str, value: &str) -> Result<(), ApplicationError> {
-        if value.len() == 64
-            && value
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-        {
-            return Ok(());
-        }
-
-        Err(ApplicationError::ValidationError(format!(
-            "Invalid settings {label}"
-        )))
-    }
-
-    fn apply_user_settings_patch(
-        settings: &mut Value,
-        ops: &[UserSettingsPatchOpDto],
-    ) -> Result<(), ApplicationError> {
-        for op in ops {
-            match op {
-                UserSettingsPatchOpDto::Set { path, value } => {
-                    Self::apply_user_settings_patch_set(settings, path, value.clone())?;
-                }
-                UserSettingsPatchOpDto::Delete { path } => {
-                    Self::apply_user_settings_patch_delete(settings, path)?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn apply_user_settings_patch_set(
-        settings: &mut Value,
-        path: &[String],
-        value: Value,
-    ) -> Result<(), ApplicationError> {
-        if path.is_empty() {
-            *settings = value;
-            return Ok(());
-        }
-
-        let mut cursor = settings;
-        for segment in &path[..path.len() - 1] {
-            cursor = cursor
-                .as_object_mut()
-                .and_then(|object| object.get_mut(segment))
-                .ok_or_else(|| {
-                    ApplicationError::ValidationError(format!(
-                        "Invalid settings patch path: {}",
-                        Self::format_patch_path(path)
-                    ))
-                })?;
-        }
-
-        let parent = cursor.as_object_mut().ok_or_else(|| {
-            ApplicationError::ValidationError(format!(
-                "Invalid settings patch parent: {}",
-                Self::format_patch_path(path)
-            ))
-        })?;
-        let last = path.last().expect("non-empty path has last segment");
-        parent.insert(last.clone(), value);
-
-        Ok(())
-    }
-
-    fn apply_user_settings_patch_delete(
-        settings: &mut Value,
-        path: &[String],
-    ) -> Result<(), ApplicationError> {
-        if path.is_empty() {
-            return Err(ApplicationError::ValidationError(
-                "Settings patch cannot delete the root".to_string(),
-            ));
-        }
-
-        let mut cursor = settings;
-        for segment in &path[..path.len() - 1] {
-            cursor = cursor
-                .as_object_mut()
-                .and_then(|object| object.get_mut(segment))
-                .ok_or_else(|| {
-                    ApplicationError::ValidationError(format!(
-                        "Invalid settings patch path: {}",
-                        Self::format_patch_path(path)
-                    ))
-                })?;
-        }
-
-        let parent = cursor.as_object_mut().ok_or_else(|| {
-            ApplicationError::ValidationError(format!(
-                "Invalid settings patch parent: {}",
-                Self::format_patch_path(path)
-            ))
-        })?;
-        let last = path.last().expect("non-empty path has last segment");
-        if parent.remove(last).is_none() {
-            return Err(ApplicationError::ValidationError(format!(
-                "Settings patch delete path does not exist: {}",
-                Self::format_patch_path(path)
-            )));
-        }
-
-        Ok(())
-    }
-
-    fn format_patch_path(path: &[String]) -> String {
-        if path.is_empty() {
-            "$".to_string()
-        } else {
-            format!("$.{}", path.join("."))
-        }
-    }
-
-    fn stable_user_settings_hash(value: &Value) -> Result<String, ApplicationError> {
-        let serialized = serde_json::to_vec(value).map_err(|error| {
-            ApplicationError::InternalError(format!("Failed to serialize settings: {}", error))
-        })?;
-        let digest = Sha256::digest(&serialized);
-        Ok(hex_lower(&digest))
-    }
-
-    pub async fn get_sillytavern_settings(
-        &self,
-    ) -> Result<SillyTavernSettingsResponseDto, ApplicationError> {
+    pub async fn get_sillytavern_settings(&self) -> Result<SettingsJsonDto, ApplicationError> {
         tracing::info!("Getting SillyTavern settings");
 
         let signature = self
@@ -705,7 +430,19 @@ impl SettingsService {
             return Ok(entry.response.clone());
         }
 
+        *cache = None;
         let response = self.build_sillytavern_settings_response().await?;
+        let bytes = tokio::task::spawn_blocking(move || serde_json::to_vec(&response))
+            .await
+            .map_err(|error| ApplicationError::InternalError(error.to_string()))?
+            .map_err(|error| {
+                ApplicationError::InternalError(format!(
+                    "Failed to encode settings response: {error}"
+                ))
+            })?;
+        let response = SettingsJsonDto {
+            bytes: bytes.into(),
+        };
         *cache = Some(SettingsAggregateCacheEntry {
             signature,
             response: response.clone(),
@@ -719,20 +456,7 @@ impl SettingsService {
     ) -> Result<SillyTavernSettingsResponseDto, ApplicationError> {
         let settings_json = async {
             let mut user_settings = self.settings_repository.load_user_settings().await?;
-            let repair_report = repair_sillytavern_prompt_manager_settings(&mut user_settings);
-            let repaired = repair_report.changed();
-            if repaired {
-                tracing::warn!(
-                    "Repaired SillyTavern PromptManager settings while loading: {}",
-                    repair_report
-                );
-                self.schedule_delayed_user_settings_repair_writeback();
-            }
-
-            let revision = UserSettingsRevisionDto {
-                hash_algorithm: USER_SETTINGS_HASH_ALGORITHM.to_string(),
-                settings_hash: Self::stable_user_settings_hash(&user_settings.data)?,
-            };
+            let revision = UserSettingsRevisionDto::from_settings(&user_settings)?;
             insert_personas(&mut user_settings.data, &self.avatars.get_personas().await?);
             let settings_json = serde_json::to_string(&user_settings.data).map_err(|error| {
                 ApplicationError::InternalError(format!("Failed to serialize settings: {}", error))
@@ -849,7 +573,7 @@ impl SettingsService {
 
         let mut settings = self.settings_repository.load_user_settings().await?;
         insert_personas(&mut settings.data, &self.avatars.get_personas().await?);
-        self.settings_repository.create_snapshot(&settings).await?;
+        self.settings_repository.create_snapshot(settings).await?;
 
         Ok(())
     }
@@ -883,7 +607,7 @@ impl SettingsService {
             self.avatars.import_personas(&personas).await?;
         }
         self.settings_repository
-            .save_user_settings(&settings)
+            .save_user_settings(settings)
             .await?;
         self.clear_sillytavern_settings_cache().await;
 
@@ -904,9 +628,8 @@ mod tests {
     use super::*;
     use crate::dto::settings_dto::UpdateAgentRunRetentionSettingsDto;
     use async_trait::async_trait;
-    use serde_json::{Value, json};
     use std::sync::Mutex as StdMutex;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tokio::sync::Mutex;
     use tt_domain::errors::DomainError;
     use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
@@ -1161,190 +884,6 @@ mod tests {
         .expect("background cleanup was scheduled");
     }
 
-    #[test]
-    fn user_settings_hash_is_stable_for_object_key_order() {
-        let left = json!({
-            "b": 1,
-            "a": {
-                "y": 2,
-                "x": [true, null]
-            }
-        });
-        let right = json!({
-            "a": {
-                "x": [true, null],
-                "y": 2
-            },
-            "b": 1
-        });
-
-        let left_hash =
-            SettingsService::stable_user_settings_hash(&left).expect("hash left settings");
-        let right_hash =
-            SettingsService::stable_user_settings_hash(&right).expect("hash right settings");
-
-        assert_eq!(left_hash, right_hash);
-
-        let unicode_key_order = json!({
-            "b": 1,
-            "a": 2,
-            "\u{10000}": 3,
-            "\u{e000}": 4
-        });
-        let unicode_key_order_hash = SettingsService::stable_user_settings_hash(&unicode_key_order)
-            .expect("hash unicode key settings");
-
-        assert_eq!(
-            unicode_key_order_hash,
-            "b80f11d0d2b9f8a24fa66a8d485776a5def012c48b9d3da47d626f42c199569a"
-        );
-    }
-
-    #[tokio::test]
-    async fn save_user_settings_patch_applies_set_and_delete() {
-        let repository = Arc::new(TestSettingsRepository::default());
-        let current = json!({
-            "profile": {
-                "age": 1,
-                "name": "old"
-            },
-            "obsolete": true
-        });
-        let next = json!({
-            "profile": {
-                "age": 1,
-                "name": "new"
-            }
-        });
-        let base_hash =
-            SettingsService::stable_user_settings_hash(&current).expect("hash current settings");
-        let next_hash =
-            SettingsService::stable_user_settings_hash(&next).expect("hash next settings");
-        repository.store_user_settings(current).await;
-        let service = SettingsService::new(
-            Arc::new(TestAvatars),
-            repository.clone(),
-            Arc::new(TestRequestProxyRuntime::default()),
-            Arc::new(TestChatBackupRuntime::default()),
-        );
-
-        let result = service
-            .save_user_settings_patch(UserSettingsPatchDto {
-                persona_updates: Default::default(),
-                hash_algorithm: USER_SETTINGS_HASH_ALGORITHM.to_string(),
-                base_hash,
-                ops: vec![
-                    UserSettingsPatchOpDto::Set {
-                        path: vec!["profile".to_string(), "name".to_string()],
-                        value: json!("new"),
-                    },
-                    UserSettingsPatchOpDto::Delete {
-                        path: vec!["obsolete".to_string()],
-                    },
-                ],
-            })
-            .await
-            .expect("save settings patch");
-
-        assert_eq!(result.mode, "patch");
-        assert_eq!(result.settings_hash, next_hash);
-        assert_eq!(repository.save_user_settings_count().await, 1);
-        assert_eq!(repository.user_settings_data().await, next);
-    }
-
-    #[tokio::test]
-    async fn save_user_settings_patch_rejects_stale_base_hash() {
-        let repository = Arc::new(TestSettingsRepository::default());
-        let baseline = json!({"username": "old"});
-        let current = json!({"username": "current"});
-        let base_hash =
-            SettingsService::stable_user_settings_hash(&baseline).expect("hash baseline");
-        repository.store_user_settings(current).await;
-        let service = SettingsService::new(
-            Arc::new(TestAvatars),
-            repository.clone(),
-            Arc::new(TestRequestProxyRuntime::default()),
-            Arc::new(TestChatBackupRuntime::default()),
-        );
-
-        let error = service
-            .save_user_settings_patch(UserSettingsPatchDto {
-                persona_updates: Default::default(),
-                hash_algorithm: USER_SETTINGS_HASH_ALGORITHM.to_string(),
-                base_hash,
-                ops: vec![UserSettingsPatchOpDto::Set {
-                    path: vec!["username".to_string()],
-                    value: json!("next"),
-                }],
-            })
-            .await
-            .expect_err("stale patch should conflict");
-
-        assert!(matches!(error, ApplicationError::Conflict(_)));
-        assert_eq!(repository.save_user_settings_count().await, 0);
-    }
-
-    #[tokio::test]
-    async fn save_user_settings_patch_persists_repaired_noop() {
-        let repository = Arc::new(TestSettingsRepository::default());
-        let current = json!({
-            "oai_settings": {
-                "prompts": [
-                    { "identifier": "main" },
-                    null
-                ],
-                "prompt_order": [
-                    {
-                        "character_id": 100001,
-                        "order": [
-                            null,
-                            { "identifier": "main", "enabled": true }
-                        ]
-                    }
-                ]
-            }
-        });
-        let repaired = json!({
-            "oai_settings": {
-                "prompts": [
-                    { "identifier": "main" }
-                ],
-                "prompt_order": [
-                    {
-                        "character_id": 100001,
-                        "order": [
-                            { "identifier": "main", "enabled": true }
-                        ]
-                    }
-                ]
-            }
-        });
-        let base_hash =
-            SettingsService::stable_user_settings_hash(&repaired).expect("hash repaired current");
-        repository.store_user_settings(current).await;
-        let service = SettingsService::new(
-            Arc::new(TestAvatars),
-            repository.clone(),
-            Arc::new(TestRequestProxyRuntime::default()),
-            Arc::new(TestChatBackupRuntime::default()),
-        );
-
-        let result = service
-            .save_user_settings_patch(UserSettingsPatchDto {
-                persona_updates: Default::default(),
-                hash_algorithm: USER_SETTINGS_HASH_ALGORITHM.to_string(),
-                base_hash: base_hash.clone(),
-                ops: Vec::new(),
-            })
-            .await
-            .expect("save repaired noop patch");
-
-        assert_eq!(result.mode, "patch-noop");
-        assert_eq!(result.settings_hash, base_hash);
-        assert_eq!(repository.save_user_settings_count().await, 1);
-        assert_eq!(repository.user_settings_data().await, repaired);
-    }
-
     struct TestAvatars;
 
     #[async_trait::async_trait]
@@ -1381,24 +920,6 @@ mod tests {
     #[derive(Default)]
     struct TestSettingsRepository {
         settings: Mutex<TauriTavernSettings>,
-        user_settings: Mutex<UserSettings>,
-        settings_signature: Mutex<SettingsAggregateSignature>,
-        save_user_settings_count: Mutex<u32>,
-        load_user_settings_count: Mutex<u32>,
-    }
-
-    impl TestSettingsRepository {
-        async fn store_user_settings(&self, data: Value) {
-            *self.user_settings.lock().await = UserSettings { data };
-        }
-
-        async fn user_settings_data(&self) -> Value {
-            self.user_settings.lock().await.data.clone()
-        }
-
-        async fn save_user_settings_count(&self) -> u32 {
-            *self.save_user_settings_count.lock().await
-        }
     }
 
     #[async_trait]
@@ -1415,18 +936,36 @@ mod tests {
             Ok(self.settings.lock().await.clone())
         }
 
-        async fn save_user_settings(&self, settings: &UserSettings) -> Result<(), DomainError> {
-            *self.user_settings.lock().await = settings.clone();
-            *self.save_user_settings_count.lock().await += 1;
-            Ok(())
+        async fn save_user_settings(&self, _settings: UserSettings) -> Result<(), DomainError> {
+            unreachable!()
         }
 
         async fn load_user_settings(&self) -> Result<UserSettings, DomainError> {
-            *self.load_user_settings_count.lock().await += 1;
-            Ok(self.user_settings.lock().await.clone())
+            unreachable!()
         }
 
-        async fn create_snapshot(&self, _settings: &UserSettings) -> Result<(), DomainError> {
+        async fn begin_commit(
+            &self,
+            _: Option<tt_domain::models::settings::revision::UserSettingsRevision>,
+        ) -> Result<tt_contracts::byte_commit::CommitBegin, DomainError> {
+            unreachable!()
+        }
+        async fn append_commit(&self, _: &str, _: u64, _: &[u8]) -> Result<u64, DomainError> {
+            unreachable!()
+        }
+        async fn finish_commit(
+            &self,
+            _: &str,
+            _: u64,
+        ) -> Result<tt_ports::repositories::settings_repository::SettingsCommitResult, DomainError>
+        {
+            unreachable!()
+        }
+        async fn abort_commit(&self, _: &str) -> Result<(), DomainError> {
+            unreachable!()
+        }
+
+        async fn create_snapshot(&self, _settings: UserSettings) -> Result<(), DomainError> {
             unimplemented!("not used by these tests")
         }
 
@@ -1441,7 +980,7 @@ mod tests {
         async fn get_sillytavern_settings_signature(
             &self,
         ) -> Result<SettingsAggregateSignature, DomainError> {
-            Ok(self.settings_signature.lock().await.clone())
+            unreachable!()
         }
 
         async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError> {

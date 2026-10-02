@@ -5,10 +5,12 @@ use zip::write::SimpleFileOptions as FileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use crate::zipkit::export_file_options;
+use tt_contracts::settings::{CORE_FILE, USER_SETTINGS_FILES};
 use tt_domain::errors::DomainError;
 use tt_domain::json_merge::merge_json_value;
 use tt_domain::models::persona::{Personas, insert_personas};
 use tt_domain::models::settings::UserSettings;
+use tt_domain::models::settings::repair::repair_sillytavern_prompt_manager_settings;
 
 type ReadPersonas = fn(&Path) -> Result<Personas, DomainError>;
 
@@ -278,21 +280,15 @@ fn write_export_settings(
     read_personas: ReadPersonas,
 ) -> Result<u64, DomainError> {
     let user_root = path.parent().expect("settings file parent");
-    let mut settings = serde_json::json!({});
+    let mut settings = UserSettings {
+        data: serde_json::json!({}),
+    };
     let mut source_bytes = 0;
-    for name in [
-        "settings.json",
-        "settings/appearance.json",
-        "settings/presets.json",
-        "settings/layout.json",
-        "settings/persona-state.json",
-    ] {
+    for &name in USER_SETTINGS_FILES {
         let section_path = user_root.join(name);
         let bytes = match fs::read(&section_path) {
             Ok(bytes) => bytes,
-            Err(error)
-                if error.kind() == std::io::ErrorKind::NotFound && name != "settings.json" =>
-            {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && name != CORE_FILE => {
                 continue;
             }
             Err(error) => {
@@ -303,7 +299,7 @@ fn write_export_settings(
             }
         };
         // Progress uses scanned source sizes; the section files are also archived.
-        if name == "settings.json" {
+        if name == CORE_FILE {
             source_bytes = bytes.len() as u64;
         }
         let section: UserSettings = serde_json::from_slice(&bytes).map_err(|error| {
@@ -312,9 +308,10 @@ fn write_export_settings(
                 section_path.display()
             ))
         })?;
-        merge_json_value(&mut settings, section.data);
+        merge_json_value(&mut settings.data, section.data);
     }
-    insert_personas(&mut settings, &read_personas(user_root)?);
+    repair_sillytavern_prompt_manager_settings(&mut settings);
+    insert_personas(&mut settings.data, &read_personas(user_root)?);
     serde_json::to_writer_pretty(writer, &settings)
         .map_err(|error| internal_error("Failed to write settings to archive", error))?;
     Ok(source_bytes)
@@ -457,6 +454,38 @@ mod tests {
         );
 
         fs::remove_dir_all(root).expect("cleanup temp root");
+    }
+
+    #[test]
+    fn export_settings_repairs_the_projection_without_rewriting_sources() {
+        let root = temp_root("settings-repair");
+        let source_root = root.join("source");
+        let output_path = root.join("export.zip");
+        fs::create_dir_all(source_root.join("settings")).unwrap();
+        fs::write(source_root.join(CORE_FILE), b"{}").unwrap();
+        let presets_path = source_root.join(tt_contracts::settings::PRESETS_FILE);
+        let presets = br#"{"oai_settings":{"prompts":[null,{"identifier":"main"}]}}"#;
+        fs::write(&presets_path, presets).unwrap();
+
+        run_export_user_backup_archive(
+            &source_root,
+            &output_path,
+            false,
+            &mut |_, _, _| {},
+            &|| false,
+            |_| Ok(Personas::new()),
+        )
+        .unwrap();
+        let mut archive = zip::ZipArchive::new(File::open(&output_path).unwrap()).unwrap();
+        let settings: UserSettings =
+            serde_json::from_reader(archive.by_name(CORE_FILE).unwrap()).unwrap();
+        assert_eq!(
+            settings.data["oai_settings"]["prompts"],
+            serde_json::json!([{"identifier": "main"}]),
+        );
+        assert_eq!(fs::read(presets_path).unwrap(), presets);
+        drop(archive);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

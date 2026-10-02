@@ -94,12 +94,10 @@ import {
     pickNativeCharacterCardFiles,
 } from './scripts/tauri/character-card-picker.js';
 import {
-    captureSettingsSaveBaseline,
-    clearSettingsSaveBaseline,
-    isSettingsPatchConflictError,
-    prepareSettingsSavePayload,
-    trySaveSettingsDelta,
-} from './scripts/tauri/setting/settings-delta-save.js';
+    captureSettingsSaveState,
+    isSettingsConflictError,
+    saveSettingsSnapshot,
+} from './scripts/tauri/setting/settings-persistence.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods, autoloadLastChat } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
@@ -406,7 +404,6 @@ import { MessageFormatter } from './scripts/message-formatter.js';
 import { addChatBackupsBrowser } from './scripts/chat-backups.js';
 import { onboardingExperimentalMacroEngine } from './scripts/macros/engine/MacroDiagnostics.js';
 import { createStartupStatusOverlay } from './scripts/tauri/startup/startup-status-overlay.js';
-import { compressRequest, setRequestCompressionConfig } from './scripts/request-compression.js';
 import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
 
 // API OBJECT FOR EXTERNAL WIRING
@@ -9351,7 +9348,7 @@ function reloadLoop() {
 async function applySettingsSnapshot(data, initLoaderHandle = null) {
     if (data.result != 'file not find' && data.settings) {
         settings = JSON.parse(data.settings);
-        captureSettingsSaveBaseline(settings, data.tauritavern_settings_revision);
+        captureSettingsSaveState(settings, data.tauritavern_settings_revision);
         if (settings.username !== undefined && settings.username !== '') {
             name1 = settings.username;
             $('#your_name').text(name1);
@@ -9359,7 +9356,6 @@ async function applySettingsSnapshot(data, initLoaderHandle = null) {
 
         accountStorage.init(settings?.accountStorage);
         await setUserControls(data.enable_accounts);
-        setRequestCompressionConfig(data.request_compression);
 
         // Allow subscribers to mutate settings
         await eventSource.emit(event_types.SETTINGS_LOADED_BEFORE, settings);
@@ -9557,38 +9553,18 @@ async function saveSettingsNow(loopCounter = 0) {
     };
 
     try {
-        const preparedPayload = prepareSettingsSavePayload(payload);
-        const headers = getRequestHeaders();
-        const deltaResult = await trySaveSettingsDelta(preparedPayload, headers);
-
-        if (!deltaResult.saved) {
-            const saveSettingsRequest = await compressRequest({
-                method: 'POST',
-                headers,
-                body: preparedPayload.body,
-                cache: 'no-cache',
-            });
-            const result = await fetch('/api/settings/save', saveSettingsRequest);
-
-            if (!result.ok) {
-                throw new Error(`Failed to save settings: ${result.statusText}`);
-            }
-        }
-
-        if (!deltaResult.saved) {
-            clearSettingsSaveBaseline();
-        }
+        const result = await saveSettingsSnapshot(payload, getRequestHeaders());
         settings = payload;
         await eventSource.emit(event_types.SETTINGS_UPDATED);
-        if (deltaResult.saved && deltaResult.personaErrors) {
-            for (const [id, message] of Object.entries(deltaResult.personaErrors)) {
+        if (result.personaErrors) {
+            for (const [id, message] of Object.entries(result.personaErrors)) {
                 toastr.error(`${id}: ${message}`, t`Persona could not be saved`);
             }
         }
         return true;
     } catch (error) {
         console.error('Error saving settings:', error);
-        if (isSettingsPatchConflictError(error)) {
+        if (isSettingsConflictError(error)) {
             toastr.error(t`Settings changed outside this page. Reload before saving again to prevent data loss.`, t`Settings could not be saved`);
         } else {
             toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Settings could not be saved`);

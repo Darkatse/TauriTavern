@@ -13,6 +13,7 @@ tracing = "0.1"
 typed-path = "0.12"
 uuid = { workspace = true }
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+tt-contracts = { path = "../tt-contracts" }
 tt-domain = { path = "../tt-domain" }
 tt-ports = { path = "../tt-ports" }
 

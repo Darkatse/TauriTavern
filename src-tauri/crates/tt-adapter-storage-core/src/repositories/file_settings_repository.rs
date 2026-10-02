@@ -4,22 +4,28 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 
-use crate::file_system::{list_files_with_extension, persist_json_file, read_json_file};
+use crate::commit_stage::CommitSessions;
+use crate::file_system::{list_files_with_extension, persist_json_file_blocking, read_json_file};
 use crate::preset_file_naming::load_named_preset_files;
 use crate::sillytavern_sorting::{
     sort_paths_by_file_name_js_default, sort_strings_sillytavern_name,
 };
+use tt_contracts::byte_commit::CommitBegin;
+use tt_contracts::settings::USER_SETTINGS_FILES;
 use tt_domain::errors::DomainError;
+use tt_domain::models::settings::revision::UserSettingsRevision;
 use tt_domain::models::settings::{SettingsSnapshot, TauriTavernSettings, UserSettings};
-use tt_ports::repositories::settings_repository::{SettingsAggregateSignature, SettingsRepository};
+use tt_ports::repositories::settings_repository::{
+    SettingsAggregateSignature, SettingsCommitResult, SettingsRepository,
+};
 
+mod commit;
 mod fields;
 mod sections;
 
-use fields::{APPEARANCE_FILE, LAYOUT_FILE, PERSONA_STATE_FILE, PRESETS_FILE};
-
 pub struct FileSettingsRepository {
     base_directory: PathBuf,
+    commit_sessions: CommitSessions<Option<UserSettingsRevision>>,
     /// Bundled `default/content/settings.json`, written whenever no usable
     /// `settings.json` exists.
     default_user_settings: UserSettings,
@@ -57,6 +63,7 @@ pub fn load_tauritavern_settings_blocking(
 impl FileSettingsRepository {
     pub fn new(settings_dir: PathBuf, default_user_settings: UserSettings) -> Self {
         Self {
+            commit_sessions: CommitSessions::new(settings_dir.join(".staging").join("settings")),
             base_directory: settings_dir,
             default_user_settings,
         }
@@ -254,10 +261,9 @@ impl SettingsRepository for FileSettingsRepository {
             .map_err(|error| DomainError::InternalError(error.to_string()))?
     }
 
-    async fn save_user_settings(&self, settings: &UserSettings) -> Result<(), DomainError> {
+    async fn save_user_settings(&self, settings: UserSettings) -> Result<(), DomainError> {
         let root = self.base_directory.clone();
-        let settings = settings.clone();
-        tokio::task::spawn_blocking(move || sections::save_user(&root, &settings))
+        tokio::task::spawn_blocking(move || sections::save_user(&root, settings).map(|_| ()))
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))?
     }
@@ -270,15 +276,57 @@ impl SettingsRepository for FileSettingsRepository {
             .map_err(|error| DomainError::InternalError(error.to_string()))?
     }
 
-    async fn create_snapshot(&self, settings: &UserSettings) -> Result<(), DomainError> {
+    async fn begin_commit(
+        &self,
+        expected: Option<UserSettingsRevision>,
+    ) -> Result<CommitBegin, DomainError> {
+        self.commit_sessions.begin(expected).await
+    }
+
+    async fn append_commit(
+        &self,
+        session_id: &str,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<u64, DomainError> {
+        self.commit_sessions
+            .append(session_id, offset, bytes, |_| {})
+            .await
+    }
+
+    async fn finish_commit(
+        &self,
+        session_id: &str,
+        expected_size: u64,
+    ) -> Result<SettingsCommitResult, DomainError> {
+        self.commit_sessions
+            .finish(session_id, expected_size, |session| async move {
+                let root = self.base_directory.clone();
+                let defaults = self.default_user_settings.clone();
+                let path = session.stage.path.clone();
+                drop(session.stage);
+                tokio::task::spawn_blocking(move || {
+                    commit::publish(&root, &defaults, &path, session.metadata.as_ref())
+                })
+                .await
+                .map_err(|error| DomainError::InternalError(error.to_string()))?
+            })
+            .await
+    }
+
+    async fn abort_commit(&self, session_id: &str) -> Result<(), DomainError> {
+        self.commit_sessions.abort(session_id).await
+    }
+
+    async fn create_snapshot(&self, settings: UserSettings) -> Result<(), DomainError> {
         let snapshots_dir = self.ensure_snapshots_directory_exists().await?;
         let timestamp = self.get_timestamp_ms();
         let snapshot_file = snapshots_dir.join(format!("settings_{}.json", timestamp));
 
         tracing::info!("Creating settings snapshot: {}", snapshot_file.display());
-        persist_json_file(&snapshot_file, &settings).await?;
-
-        Ok(())
+        tokio::task::spawn_blocking(move || persist_json_file_blocking(&snapshot_file, &settings))
+            .await
+            .map_err(|error| DomainError::InternalError(error.to_string()))?
     }
 
     async fn get_snapshots(&self) -> Result<Vec<SettingsSnapshot>, DomainError> {
@@ -343,13 +391,7 @@ impl SettingsRepository for FileSettingsRepository {
     ) -> Result<SettingsAggregateSignature, DomainError> {
         let mut entries = Vec::new();
 
-        for name in [
-            "settings.json",
-            APPEARANCE_FILE,
-            PRESETS_FILE,
-            LAYOUT_FILE,
-            PERSONA_STATE_FILE,
-        ] {
+        for &name in USER_SETTINGS_FILES {
             Self::push_file_signature(
                 &mut entries,
                 name.to_string(),
@@ -477,6 +519,7 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use tt_domain::models::settings::UserSettings;
+    use tt_domain::models::settings::revision::UserSettingsRevision;
     use tt_ports::repositories::settings_repository::SettingsRepository;
 
     struct TestDir {
@@ -547,8 +590,38 @@ mod tests {
                 .set_times(fs::FileTimes::new().set_modified(stamp))
                 .unwrap();
         }
+        let revision = UserSettingsRevision::from_settings(&settings).unwrap();
+        let stale_bytes = serde_json::to_vec(&settings).unwrap();
         settings.data["power_user"]["theme"] = json!("Updated theme");
-        repository.save_user_settings(&settings).await.unwrap();
+        let bytes = serde_json::to_vec(&settings).unwrap();
+        let session = repository
+            .begin_commit(Some(revision.clone()))
+            .await
+            .unwrap();
+        repository
+            .append_commit(&session.session_id, 0, &bytes)
+            .await
+            .unwrap();
+        repository
+            .finish_commit(&session.session_id, bytes.len() as u64)
+            .await
+            .unwrap();
+
+        let stale = repository.begin_commit(Some(revision)).await.unwrap();
+        repository
+            .append_commit(&stale.session_id, 0, &stale_bytes)
+            .await
+            .unwrap();
+        assert!(matches!(
+            repository
+                .finish_commit(&stale.session_id, stale_bytes.len() as u64)
+                .await,
+            Err(tt_domain::errors::DomainError::Conflict(_))
+        ));
+        assert_eq!(
+            repository.load_user_settings().await.unwrap().data,
+            settings.data
+        );
         for name in ["settings.json", PRESETS_FILE, LAYOUT_FILE] {
             assert_eq!(
                 fs::metadata(dir.path().join(name))
@@ -558,7 +631,7 @@ mod tests {
                 stamp
             );
         }
-        repository.create_snapshot(&settings).await.unwrap();
+        repository.create_snapshot(settings.clone()).await.unwrap();
         let snapshot = repository.get_snapshots().await.unwrap().remove(0);
 
         // Incoming core settings carry no appearance, preset or layout fields.
@@ -587,11 +660,74 @@ mod tests {
 
         fs::write(dir.path().join(APPEARANCE_FILE), b"{broken").unwrap();
         let restored = repository.load_snapshot(&snapshot.name).await.unwrap();
-        repository.save_user_settings(&restored).await.unwrap();
+        repository.save_user_settings(restored).await.unwrap();
         assert_eq!(
             repository.load_user_settings().await.unwrap().data,
             settings.data
         );
+    }
+
+    #[tokio::test]
+    async fn normalized_reads_and_saves_agree_without_changing_unrelated_nulls() {
+        let dir = TestDir::new();
+        let repository = new_repository(&dir);
+        let dirty = json!({
+            "prompts": [null, {"identifier": "main"}],
+            "prompt_order": [null, {
+                "order": [null, {"identifier": "main", "enabled": true}],
+                "metadata": null
+            }],
+            "custom_url": null
+        });
+        let clean = json!({
+            "prompts": [{"identifier": "main"}],
+            "prompt_order": [{
+                "order": [{"identifier": "main", "enabled": true}],
+                "metadata": null
+            }],
+            "custom_url": null
+        });
+        let mut expected = UserSettings {
+            data: clean.clone(),
+        };
+        expected.data["oai_settings"] = clean.clone();
+        repository
+            .save_user_settings(expected.clone())
+            .await
+            .unwrap();
+        let core_path = dir.path().join("settings.json");
+        let presets_path = dir.path().join(PRESETS_FILE);
+        let core = serde_json::to_vec(&dirty).unwrap();
+        let presets = serde_json::to_vec(&json!({"oai_settings": dirty})).unwrap();
+        fs::write(&core_path, &core).unwrap();
+        fs::write(&presets_path, &presets).unwrap();
+
+        let loaded = repository.load_user_settings().await.unwrap();
+        assert_eq!(loaded.data, expected.data);
+        assert_eq!(fs::read(&core_path).unwrap(), core);
+        assert_eq!(fs::read(&presets_path).unwrap(), presets);
+        let revision = UserSettingsRevision::from_settings(&loaded).unwrap();
+        let mut incoming = dirty.clone();
+        incoming["oai_settings"] = dirty;
+        let bytes = serde_json::to_vec(&incoming).unwrap();
+        let session = repository
+            .begin_commit(Some(revision.clone()))
+            .await
+            .unwrap();
+        repository
+            .append_commit(&session.session_id, 0, &bytes)
+            .await
+            .unwrap();
+        let saved = repository
+            .finish_commit(&session.session_id, bytes.len() as u64)
+            .await
+            .unwrap();
+        assert_eq!(saved.revision, revision);
+        let core: UserSettings = serde_json::from_slice(&fs::read(core_path).unwrap()).unwrap();
+        let presets: UserSettings =
+            serde_json::from_slice(&fs::read(presets_path).unwrap()).unwrap();
+        assert_eq!(core.data, clean);
+        assert_eq!(presets.data, json!({"oai_settings": clean}));
     }
 
     #[tokio::test]
@@ -658,7 +794,10 @@ mod tests {
             let repository = new_repository(&dir);
             let mut expected = default_user_settings();
             expected.data["power_user"] = json!({"theme": "Keep"});
-            repository.save_user_settings(&expected).await.unwrap();
+            repository
+                .save_user_settings(expected.clone())
+                .await
+                .unwrap();
             fs::write(dir.path().join("settings.json"), corrupt_bytes).unwrap();
 
             assert_eq!(

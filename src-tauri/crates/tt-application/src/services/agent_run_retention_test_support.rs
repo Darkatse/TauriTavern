@@ -47,7 +47,7 @@ impl SettingsRepository for TestSettingsRepository {
         Ok(self.tauritavern_settings.lock().await.clone())
     }
 
-    async fn save_user_settings(&self, _settings: &UserSettings) -> Result<(), DomainError> {
+    async fn save_user_settings(&self, _settings: UserSettings) -> Result<(), DomainError> {
         Err(unused_settings_method("save_user_settings"))
     }
 
@@ -55,7 +55,28 @@ impl SettingsRepository for TestSettingsRepository {
         Err(unused_settings_method("load_user_settings"))
     }
 
-    async fn create_snapshot(&self, _settings: &UserSettings) -> Result<(), DomainError> {
+    async fn begin_commit(
+        &self,
+        _: Option<tt_domain::models::settings::revision::UserSettingsRevision>,
+    ) -> Result<tt_contracts::byte_commit::CommitBegin, DomainError> {
+        unreachable!()
+    }
+    async fn append_commit(&self, _: &str, _: u64, _: &[u8]) -> Result<u64, DomainError> {
+        unreachable!()
+    }
+    async fn finish_commit(
+        &self,
+        _: &str,
+        _: u64,
+    ) -> Result<tt_ports::repositories::settings_repository::SettingsCommitResult, DomainError>
+    {
+        unreachable!()
+    }
+    async fn abort_commit(&self, _: &str) -> Result<(), DomainError> {
+        unreachable!()
+    }
+
+    async fn create_snapshot(&self, _settings: UserSettings) -> Result<(), DomainError> {
         Err(unused_settings_method("create_snapshot"))
     }
 

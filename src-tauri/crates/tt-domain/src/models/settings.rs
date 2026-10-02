@@ -1,3 +1,6 @@
+pub mod repair;
+pub mod revision;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 

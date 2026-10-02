@@ -37,5 +37,5 @@ export async function commitBytes({ begin, frames, append, finish, abort }) {
     }
 
     // Finish consumes the host session on success and failure alike.
-    await finish(sessionId, offset);
+    return await finish(sessionId, offset);
 }

@@ -207,9 +207,8 @@ test('chat persistence and navigation', async (context) => {
             const body = options?.body ? JSON.parse(options.body) : undefined;
             switch (url) {
                 case '/api/settings/get': return window.Response.json({ result: 'file not find' });
-                case '/api/settings/save':
-                case '/api/settings/patch': return window.Response.json({
-                    hash_algorithm: 'tt-user-settings-stable-sha256-v1', settings_hash: '0'.repeat(64),
+                case '/api/settings/save': return window.Response.json({
+                    tauritavern_settings_revision: { token: 'saved' },
                 });
                 case '/api/chats/recent': return window.Response.json([{
                     avatar: entityKind === 'character' ? 'Review.png' : '',
@@ -235,10 +234,8 @@ test('chat persistence and navigation', async (context) => {
             }
         };
         await main.getSettings();
-        // These chat fixtures skip settings bootstrap; establish its normal save baseline.
-        getModule('scripts/tauri/setting/settings-delta-save.js').namespace.captureSettingsSaveBaseline({}, {
-            hash_algorithm: 'tt-user-settings-stable-sha256-v1', settings_hash: '0'.repeat(64),
-        });
+        // These chat fixtures skip settings bootstrap; establish its save revision.
+        getModule('scripts/tauri/setting/settings-persistence.js').namespace.captureSettingsSaveState({}, { token: 'loaded' });
         main.setAnimationDuration(0);
 
         async function reset(kind) {

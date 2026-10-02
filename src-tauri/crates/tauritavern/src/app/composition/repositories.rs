@@ -188,10 +188,11 @@ pub(super) async fn build(
         default_user_dir.join("User Avatars"),
     ));
 
-    let settings_repository: Arc<dyn SettingsRepository> = Arc::new(FileSettingsRepository::new(
+    let settings_repository = Arc::new(FileSettingsRepository::new(
         data_directory.settings().to_path_buf(),
         default_user_settings,
     ));
+    settings_repository.cleanup_orphaned_commit_staging().await;
     // Materialize settings sections before background sync can scan the data directory.
     settings_repository.load_user_settings().await?;
     let persona_root = default_user_dir.clone();

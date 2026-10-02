@@ -60,11 +60,6 @@ function providerMetadataKey(args) {
     return fnv1a32(json);
 }
 
-/** @param {any} _prev @param {any} next */
-function takeLatest(_prev, next) {
-    return next;
-}
-
 /**
  * Centralized invoke policies for the host kernel.
  *
@@ -153,13 +148,6 @@ export function createHostInvokePolicies() {
             timeoutMs: PROVIDER_METADATA_TIMEOUT_MS,
             cacheTtlMs: 30_000,
             cacheLimit: 1,
-        },
-        save_user_settings: {
-            kind: 'writeBehind',
-            delayMs: 300,
-            maxConcurrent: 1,
-            key: () => 'singleton',
-            merge: takeLatest,
         },
     };
 }

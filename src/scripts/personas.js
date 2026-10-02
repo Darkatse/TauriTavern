@@ -1,5 +1,5 @@
 import { isTauri } from '../tauri-bridge.js';
-import { loadPersonaSnapshot } from './tauri/setting/settings-delta-save.js';
+import { loadPersonaSnapshot } from './tauri/setting/settings-persistence.js';
 import {
     buildAvatarList,
     characterToEntity,

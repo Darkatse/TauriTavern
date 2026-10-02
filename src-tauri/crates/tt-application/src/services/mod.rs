@@ -45,7 +45,6 @@ pub mod quick_reply_service;
 pub mod runtime_paths_service;
 pub mod searxng_search_service;
 pub mod secret_service;
-mod settings_repair;
 pub mod settings_service;
 pub mod skill_service;
 pub mod sprite_service;

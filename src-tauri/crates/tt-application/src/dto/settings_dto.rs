@@ -168,35 +168,19 @@ pub struct UserSettingsDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserSettingsPatchDto {
-    pub hash_algorithm: String,
-    pub base_hash: String,
-    pub ops: Vec<UserSettingsPatchOpDto>,
-    #[serde(default)]
-    pub persona_updates: tt_domain::models::persona::Personas,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "op", rename_all = "lowercase")]
-pub enum UserSettingsPatchOpDto {
-    Set { path: Vec<String>, value: Value },
-    Delete { path: Vec<String> },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserSettingsSaveResultDto {
     pub result: String,
-    pub mode: String,
-    pub hash_algorithm: String,
-    pub settings_hash: String,
+    pub tauritavern_settings_revision: UserSettingsRevisionDto,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub persona_errors: std::collections::BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserSettingsRevisionDto {
-    pub hash_algorithm: String,
-    pub settings_hash: String,
+pub use tt_domain::models::settings::revision::UserSettingsRevision as UserSettingsRevisionDto;
+
+/// Already encoded legacy /api/settings/get response. The cache shares these bytes.
+#[derive(Clone)]
+pub struct SettingsJsonDto {
+    pub bytes: std::sync::Arc<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
