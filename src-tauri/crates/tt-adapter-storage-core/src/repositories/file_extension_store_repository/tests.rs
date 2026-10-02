@@ -90,7 +90,13 @@ async fn json_commits_merge_values_and_keep_failed_replacements_private() {
     for operation in [WriteOperation::SetJson, WriteOperation::UpdateJson] {
         let id = stage(repo, "settings", operation, b"{").await;
         let error = repo.finish_commit(&id, 1).await.unwrap_err().to_string();
-        let target = store.root.join("entries/example/kv/main/settings.json");
+        let target = store
+            .root
+            .join("entries")
+            .join("example")
+            .join("kv")
+            .join("main")
+            .join("settings.json");
         assert!(error.contains(&target.display().to_string()), "{error}");
         assert_eq!(read_json(repo, "settings").await, expected);
     }
