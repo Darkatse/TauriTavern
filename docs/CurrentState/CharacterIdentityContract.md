@@ -39,6 +39,14 @@ JS 侧的边界规则：
 - 文件名不能包含路径分隔符、查询/片段语义、控制字符或平台非法字符。
 - 从 `avatar_url` 得到 character stem 时，只移除最后一个 `.png` 扩展名。
 
+`/api/characters/import` 的 `preserved_name` 是导入命名参数，区别于 `avatar_url`：
+
+- 接受精确 storage stem（如 `OZ前端.测试`）或已有的小写 `.png` 头像文件名；末尾 `.png` 优先按扩展名解释，stem 本身以 `.png` 结尾时需传完整的 `.png.png` 文件名。
+- 在共同身份模块中补齐缺少的 `.png` 后缀，再沿用头像文件名校验；不 trim、decode、取 basename，也不移除其它后缀。
+- `replace_character` 接收去掉最后一个 `.png` 的 stem；目标不存在时，`import_character` 接收完整 `.png` 文件名。
+- 空 stem、`.`、`..`、路径分隔符、控制字符及平台非法字符在 staging 前拒绝。省略或空 `preserved_name` 仍使用普通导入命名。
+- 此兼容不放宽其它接口的 `avatar_url` 契约。
+
 核心实现位置：
 
 - `src/tauri/main/services/characters/character-identity.js`

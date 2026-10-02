@@ -52,3 +52,20 @@ export function characterStemFromAvatarFileName(value, fieldName, { required = f
     const fileName = assertCharacterAvatarFileName(value, fieldName, { required });
     return fileName ? fileName.slice(0, -CHARACTER_AVATAR_FILE_EXTENSION.length) : '';
 }
+
+/**
+ * Import preserved_name accepts a storage stem or an exact avatar filename.
+ * Other character APIs still require an exact avatar filename.
+ * @param {string} value Non-empty preserved_name
+ * @returns {string} Exact avatar filename for the import command
+ */
+export function characterAvatarFileNameFromPreservedName(value) {
+    const fileName = value.endsWith(CHARACTER_AVATAR_FILE_EXTENSION)
+        ? value
+        : `${value}${CHARACTER_AVATAR_FILE_EXTENSION}`;
+    const stem = characterStemFromAvatarFileName(fileName, 'preserved_name', { required: true });
+    if (!stem || stem === '.' || stem === '..') {
+        throw new Error('Bad request: invalid preserved_name');
+    }
+    return fileName;
+}
