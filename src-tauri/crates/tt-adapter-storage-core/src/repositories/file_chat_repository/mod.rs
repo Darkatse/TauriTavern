@@ -26,6 +26,7 @@ mod message_read;
 mod message_search;
 mod paths;
 mod payload;
+mod payload_reader;
 mod recent_selection;
 mod repository_impl;
 mod summary;

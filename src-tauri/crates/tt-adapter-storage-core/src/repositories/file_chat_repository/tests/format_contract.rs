@@ -63,6 +63,11 @@ async fn empty_chat_reads_and_header_only_writes_keep_fields_open() {
         .unwrap();
     for empty in ["", " \r\n\u{feff}\n\t"] {
         fs::write(&path, empty).await.unwrap();
+        let reader = repository
+            .open_payload_json(character_target("alice", "format"))
+            .await
+            .unwrap();
+        assert_eq!(read_chat_stream_bytes(reader).await.unwrap(), b"[]");
         assert!(
             repository
                 .get_chat("alice", "format")
@@ -182,6 +187,17 @@ async fn full_commit_leaves_body_validation_to_readers_and_failed_reads_cannot_r
         commit_payload_bytes(&repository, target.clone(), &payload, false)
             .await
             .unwrap();
+        let reader = repository
+            .open_payload_json(character_target("alice", "format"))
+            .await
+            .unwrap();
+        assert_format_error(read_chat_stream_bytes(reader).await.unwrap_err());
+        let cold = repository.open_swipe_source(target.clone()).await.unwrap();
+        assert_format_error(
+            read_chat_stream_bytes(cold.projection(1))
+                .await
+                .unwrap_err(),
+        );
         assert_format_error(
             repository
                 .get_chat_payload("alice", "format")
@@ -206,5 +222,32 @@ async fn full_commit_leaves_body_validation_to_readers_and_failed_reads_cannot_r
             payload
         );
     }
+    cleanup_repository(repository, root).await;
+}
+
+#[tokio::test]
+async fn json_array_reads_preserve_raw_records_and_reject_truncated_sources() {
+    let (repository, root) = setup_repository().await;
+    let header = r#"{ "chat_metadata": {"integrity": "old"}, "future": [true] }"#;
+    let message = r#"{ "mes": "\u4f60", "number": 1.200e1, "swipes": ["旧内容", "当前内容"] }"#;
+    let source = format!("\n\u{feff}\r\n{header}\r\n\n{message}");
+    let target = character_target("alice", "stream");
+    commit_payload_bytes(&repository, target.clone(), source.as_bytes(), false)
+        .await
+        .unwrap();
+    let reader = repository.open_payload_json(target.clone()).await.unwrap();
+    let expected = format!("[{header},{message}]");
+    assert_eq!(
+        read_chat_stream_bytes(reader).await.unwrap(),
+        expected.as_bytes()
+    );
+
+    let reader = repository.open_payload_json(target.clone()).await.unwrap();
+    let path = repository
+        .resolve_chat_commit_target(&target)
+        .await
+        .unwrap();
+    fs::write(path, b"").await.unwrap();
+    assert!(read_chat_stream_bytes(reader).await.is_err());
     cleanup_repository(repository, root).await;
 }

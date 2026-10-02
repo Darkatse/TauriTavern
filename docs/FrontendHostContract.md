@@ -235,7 +235,7 @@
 
 第一方聊天读写直连内部 transport，不产生兼容路由的 Fetch 请求；外部观察应使用既有业务事件。`/api/chats/get`、`/api/chats/group/get`、`/api/chats/save`、`/api/chats/group/save` 仍供扩展调用。保存成功为 `200 { ok: true }`；integrity 冲突按错误码识别，返回 `400 { error: 'integrity' }`。
 
-聊天 get/save 遵循 [ChatPayload §1.1](CurrentState/ChatPayload.md#11-统一格式底线)；无记录 get 返回空数组。
+聊天 get/save 遵循 [ChatPayload §1.1](CurrentState/ChatPayload.md#11-统一格式底线)。兼容 get 返回保留记录原始 JSON 文本的流式数组（含 header 和全部 swipes），无记录返回空数组。正文错误使 `.json()` / `.text()` 或 jQuery 请求失败，即使 HTTP 状态为 200；取消请求或正文读取会停止后续读取。
 
 `saveMetadata()` / `getContext().saveMetadata()` 只替换 `chat_metadata`，正文保持原字节；消息修改须调用完整保存。调度、初始化与错误处理见 [ChatPayload §3.1](CurrentState/ChatPayload.md#31-metadata-保存)。
 

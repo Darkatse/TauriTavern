@@ -2962,21 +2962,23 @@ fn payload_to_jsonl(payload: &[Value]) -> String {
         .join("\n")
 }
 
-async fn read_chat_stream_bytes(mut reader: Box<dyn tt_ports::byte_reader::ByteReader>) -> Vec<u8> {
+async fn read_chat_stream_bytes(
+    mut reader: Box<dyn tt_ports::byte_reader::ByteReader>,
+) -> Result<Vec<u8>, DomainError> {
     let mut bytes = Vec::new();
     let mut buffer = [0; 37];
     loop {
-        let n = reader.read(&mut buffer).await.expect("read chat stream");
+        let n = reader.read(&mut buffer).await?;
         if n == 0 {
             break;
         }
         bytes.extend_from_slice(&buffer[..n]);
     }
-    bytes
+    Ok(bytes)
 }
 
 async fn read_chat_stream(reader: Box<dyn tt_ports::byte_reader::ByteReader>) -> Vec<Value> {
-    String::from_utf8(read_chat_stream_bytes(reader).await)
+    String::from_utf8(read_chat_stream_bytes(reader).await.unwrap())
         .unwrap()
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -3264,7 +3266,9 @@ async fn cold_swipes_project_and_restore_all_message_roles() {
         .await
         .unwrap();
     let source = repository.open_swipe_source(target.clone()).await.unwrap();
-    let projected = read_chat_stream_bytes(source.clone().projection(0)).await;
+    let projected = read_chat_stream_bytes(source.clone().projection(0))
+        .await
+        .unwrap();
     let projected_text = std::str::from_utf8(&projected).unwrap();
     for line in projected_text.lines().skip(1).take(records.len()) {
         let message: Value = serde_json::from_str(line).unwrap();

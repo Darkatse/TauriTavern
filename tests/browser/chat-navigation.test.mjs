@@ -80,8 +80,17 @@ test('chat persistence and navigation', async (context) => {
                 handles.set(rid, new window.TextEncoder().encode(JSON.stringify(record)));
                 return rid;
             }
+            case 'open_chat_payload_json': {
+                const fileName = args.target.fileName ?? args.target.chatId;
+                const rid = nextHandle++;
+                const payload = payloads.get(fileName);
+                handles.set(rid, payload instanceof Error ? payload
+                    : new window.TextEncoder().encode(`[${payload.split('\n').filter(Boolean).join(',')}]`));
+                return rid;
+            }
             case 'read_bytes': {
                 const content = handles.get(args.rid);
+                if (content instanceof Error) throw content;
                 const chunk = content.subarray(0, 64);
                 handles.set(args.rid, content.subarray(chunk.length));
                 return new window.Uint8Array(chunk);
@@ -172,6 +181,9 @@ test('chat persistence and navigation', async (context) => {
     try {
         await startHost();
         await context.test('legacy chat reads work through fetch and jQuery', async () => {
+            const ajax = options => new Promise((resolve, reject) => {
+                window.jQuery.ajax(options).done(resolve).fail((_, status, error) => reject(error));
+            });
             payloads.set('legacy-chat', chatPayload('legacy-chat'));
             for (const [url, body, expected] of [
                 ['/getallchatsofcharacter', { avatar_url: 'Review.png' }, 'legacy-chat.jsonl'],
@@ -185,13 +197,23 @@ test('chat persistence and navigation', async (context) => {
                 assert.equal(response.status, 200, url);
                 const fetched = await response.json();
                 assert.equal(fetched[0].file_name ?? fetched.at(-1).mes, expected);
-                const ajax = await window.jQuery.ajax({ url, type: 'POST', contentType: 'application/json', data });
-                assert.deepEqual(JSON.parse(JSON.stringify(ajax)), JSON.parse(JSON.stringify(fetched)));
+                const viaAjax = await ajax({ url, type: 'POST', contentType: 'application/json', data });
+                assert.deepEqual(JSON.parse(JSON.stringify(viaAjax)), JSON.parse(JSON.stringify(fetched)));
             }
             const invalid = await window.fetch('/getchat', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
             });
             assert.equal(invalid.status, 400);
+            payloads.set('broken', new Error('Invalid JSONL at line 2'));
+            const data = JSON.stringify({ avatar_url: 'Review.png', file_name: 'broken' });
+            const broken = await window.fetch('/getchat', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: data,
+            });
+            assert.equal(broken.status, 200);
+            await assert.rejects(broken.json(), /Invalid JSONL at line 2/);
+            await assert.rejects(ajax({ url: '/getchat', type: 'POST', contentType: 'application/json', data }), /Invalid JSONL at line 2/);
+            payloads.delete('broken');
+            assert.equal(handles.size, 0);
         });
         const main = (await load('script.js')).namespace;
         const groupChats = getModule('scripts/group-chats.js').namespace;

@@ -43,7 +43,6 @@ import {
     getMethodHint,
     jsonResponse,
     readRequestBody,
-    safeJson,
     textResponse,
     toUrl,
 } from './http-utils.js';
@@ -361,7 +360,6 @@ export function bootstrapTauriMain() {
         toUrl,
         routeRequest,
         jsonResponse,
-        safeJson,
     });
     const downloadBridge = createDownloadBridge({
         isNativeMobileDownloadRuntime,

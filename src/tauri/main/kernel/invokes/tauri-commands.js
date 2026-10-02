@@ -157,6 +157,7 @@ export {};
  *   | 'move_skill'
  *   | 'normalize_world_info_name'
  *   | 'open_chat_backup_download'
+ *   | 'open_chat_payload_json'
  *   | 'plan_agent_run_prune'
  *   | 'read_secret_state'
  *   | 'read_secret_settings'

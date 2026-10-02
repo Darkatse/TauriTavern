@@ -47,6 +47,8 @@ export function createBrowserRuntime() {
     // Exercise actual module evaluation without starting chat/settings IO through DOM-ready callbacks.
     window.jQuery.holdReady(true);
     window.structuredClone = structuredClone;
+    // happy-dom's TransformStream is a Node Transform, not the Web Streams constructor.
+    window.TransformStream = TransformStream;
     // happy-dom exposes option elements but omits the browser's Option constructor.
     window.Option = function (text = '', value = text, defaultSelected = false, selected = false) {
         const option = window.document.createElement('option');

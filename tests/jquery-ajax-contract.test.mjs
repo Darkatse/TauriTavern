@@ -1,60 +1,46 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-
 import { installFakeDom } from './helpers/fake-dom.mjs';
+import { createInterceptors } from '../src/tauri/main/interceptors.js';
+import { jsonResponse, textResponse } from '../src/tauri/main/http-utils.js';
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-async function importFresh(modulePath) {
-    const url = `${pathToFileURL(modulePath).href}?t=${Date.now()}-${Math.random()}`;
-    return import(url);
+function installAjax(t, routeRequest, options = { dataType: 'json' }) {
+    const nativeQueueMicrotask = globalThis.queueMicrotask;
+    const dom = installFakeDom();
+    globalThis.queueMicrotask = nativeQueueMicrotask;
+    t.after(() => dom.cleanup());
+    dom.window.eval(readFileSync(new URL('../src/lib/jquery-3.5.1.min.js', import.meta.url), 'utf8'));
+    createInterceptors({
+        isTauri: true,
+        originalFetch: dom.window.fetch.bind(dom.window),
+        canHandleRequest: () => true,
+        toUrl: (input, base) => new URL(String(input), base),
+        routeRequest,
+        jsonResponse,
+    }).patchJQueryAjax(dom.window);
+    return dom.window.jQuery.ajax({ url: '/api/test', ...options });
 }
 
-test('jQuery interceptor materializes JSON responseText only when read', async () => {
-    const { createInterceptors } = await importFresh(
-        path.join(REPO_ROOT, 'src/tauri/main/interceptors.js'),
-    );
-    const dom = installFakeDom();
+function completed(xhr) {
+    return new Promise((resolve, reject) => xhr.done(resolve).fail((_, status, error) => reject(error)));
+}
 
-    try {
-        dom.window.eval(readFileSync(path.join(REPO_ROOT, 'src/lib/jquery-3.5.1.min.js'), 'utf8'));
+test('jQuery abort cancels an active response body', async t => {
+    const reading = Promise.withResolvers();
+    const cancelled = Promise.withResolvers();
+    const xhr = installAjax(t, async () => new Response(new ReadableStream({
+        pull() { reading.resolve(); },
+        cancel() { cancelled.resolve(); },
+    })));
+    const outcome = completed(xhr);
+    await reading.promise;
+    xhr.abort();
+    await assert.rejects(outcome, { name: 'AbortError' });
+    await cancelled.promise;
+});
 
-        let serializationCount = 0;
-        const payload = {
-            value: 'ok',
-            toJSON() {
-                serializationCount += 1;
-                return { value: this.value };
-            },
-        };
-        const interceptors = createInterceptors({
-            isTauri: true,
-            originalFetch: dom.window.fetch.bind(dom.window),
-            canHandleRequest: () => true,
-            toUrl: (input, base) => new URL(String(input), base),
-            routeRequest: async () => new Response('{}'),
-            jsonResponse: (body, status) => new Response(JSON.stringify(body), { status }),
-            safeJson: async () => payload,
-        });
-
-        interceptors.patchJQueryAjax(dom.window);
-
-        const jqXHR = dom.window.jQuery.ajax({ url: '/api/test', dataType: 'json' });
-        const resolvedPayload = await new Promise((resolve, reject) => {
-            jqXHR.done(resolve).fail(reject);
-        });
-
-        assert.strictEqual(resolvedPayload, payload);
-        assert.strictEqual(jqXHR.responseJSON, payload);
-        assert.equal('responseText' in jqXHR, true);
-        assert.equal(serializationCount, 0);
-        assert.equal(jqXHR.responseText, '{"value":"ok"}');
-        assert.equal(jqXHR.responseText, '{"value":"ok"}');
-        assert.equal(serializationCount, 1);
-    } finally {
-        dom.cleanup();
-    }
+test('jQuery accepts text responses when dataType is omitted', async t => {
+    const xhr = installAjax(t, async () => textResponse('OK'), {});
+    assert.equal(await completed(xhr), 'OK');
 });

@@ -19,6 +19,28 @@ use tt_ports::repositories::chat_repository::{
 };
 
 const CHAT_BACKUP_DOWNLOAD_CHUNK_BYTES: usize = 512 * 1024;
+const CHAT_PAYLOAD_READ_CHUNK_BYTES: usize = 4 * 1024 * 1024;
+
+#[tauri::command]
+pub async fn open_chat_payload_json(
+    target: ChatHistoryLocator,
+    allow_not_found: bool,
+    webview: Webview,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Option<ResourceId>, CommandError> {
+    let Some(reader) = app_state
+        .services
+        .chat_commit_service
+        .open_payload_json(target, allow_not_found)
+        .await?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(webview.resources_table().add(ByteResource::new(
+        reader,
+        CHAT_PAYLOAD_READ_CHUNK_BYTES,
+    ))))
+}
 
 #[tauri::command]
 pub async fn get_all_chats(

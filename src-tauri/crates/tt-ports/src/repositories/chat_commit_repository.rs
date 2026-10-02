@@ -56,9 +56,14 @@ pub enum ChatCommitTarget {
     },
 }
 
-/// Atomically publishes full chat payloads or metadata-only updates.
+/// Target-addressed chat file reads and atomic payload or metadata commits.
 #[async_trait]
 pub trait ChatCommitRepository: Send + Sync {
+    async fn open_payload_json(
+        &self,
+        target: ChatCommitTarget,
+    ) -> Result<Box<dyn ByteReader>, DomainError>;
+
     async fn open_swipe_source(
         &self,
         target: ChatCommitTarget,

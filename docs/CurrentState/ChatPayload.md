@@ -47,15 +47,15 @@
 - 角色：`loadCharacterChatPayload()`
 - 群聊：`loadGroupChatPayload()`
 
-transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方，不再经过本地 Fetch 的 `JSON.stringify()` / `Response.json()` 往返。角色和群聊调用方继续负责 `allowNotFound`、stale-selection guard、header 处理和既有事件时序。`POST /api/chats/get` 与 `POST /api/chats/group/get` 仍是扩展和脚本可主动调用的兼容路由，并复用同一 transport。
+transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方。角色和群聊调用方负责 `allowNotFound`、stale-selection guard、header 处理和既有事件时序。
+
+扩展的兼容 get 共用仓储读取器，将 JSONL 按需转换为 JSON 数组字节，由消费者解析；接口与流式错误语义见 [FrontendHostContract §4.3](../FrontendHostContract.md#43-路由表public)。
 
 角色聊天在完整水合后才绑定本次 payload 请求的 character/chat 快照。若角色当前 stem 不存在、但已有聊天列表非空，则沿用 `replaceCurrentChat()` 的最近聊天语义按需修复并写回；列表为空时才允许创建新聊天。恢复只在打开目标角色时发生，不做启动期全库扫描。
 
 显式打开指定聊天（首页 recent、聊天管理器、书签、分支）统一经由 `selectCharacterById(id, { chatFile })` 与 `openGroupById(id, { chatId })`：不预扫聊天列表、不恢复、不新建；角色 `chat` 与群组 `chat_id` 只在目标加载成功后写回。
 
-默认完整加载通过共享的 Tauri FileHandle pull stream 有界读取 JSONL。每次加载始终复用同一个文件 handle，并在 EOF、取消或失败时关闭资源；桌面标准模式、portable 模式及自定义数据目录使用同一个已解析 `data_root` runtime scope。
-
-读取前对已打开的 handle 调用 `fstat`，之后按剩余字节数请求，每次不超过共享 reader 的块上限，读满声明长度即止，不额外发 EOF 空读。正数短读继续读取，提前 EOF 或非法响应长度直接报错并关闭资源；读取和关闭同时失败时保留两个错误。
+第一方默认加载通过共享的 Tauri FileHandle 流读取 JSONL，以同一已打开文件及其初始大小为界；提前 EOF 视为失败，完成、取消或失败时关闭资源。各运行模式共用已解析的 `data_root` scope。
 
 `power_user.chat_truncation` 只限制首次挂载的 DOM 数量，不裁剪 `chat[]`。`Show more messages` 从完整数组中补挂更早楼层，不发起历史 I/O，也不改变数组索引。后续 DOM virtualization 若实施，也只能替换渲染层，不能改变 canonical data contract。
 

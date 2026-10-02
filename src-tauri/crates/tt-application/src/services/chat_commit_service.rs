@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tt_contracts::byte_commit::CommitBegin;
+use tt_ports::byte_reader::ByteReader;
 use tt_ports::repositories::chat_commit_repository::{
     ChatCommitOperation, ChatCommitRepository, ChatCommitTarget, ChatSwipeSource,
 };
@@ -10,7 +11,7 @@ use crate::errors::ApplicationError;
 use crate::services::chat_file_validation::validate_chat_history_locator;
 use crate::services::chat_history_coordinator::ChatHistoryCoordinator;
 
-/// Coordinates full-payload and metadata commits with chat-history scheduling.
+/// Coordinates target-addressed chat file access and commit scheduling.
 pub struct ChatCommitService {
     repository: Arc<dyn ChatCommitRepository>,
     chat_history_coordinator: Arc<ChatHistoryCoordinator>,
@@ -44,6 +45,23 @@ impl ChatCommitService {
             .repository
             .begin(target_from_locator(locator), operation)
             .await?)
+    }
+
+    pub async fn open_payload_json(
+        &self,
+        locator: ChatHistoryLocator,
+        allow_not_found: bool,
+    ) -> Result<Option<Box<dyn ByteReader>>, ApplicationError> {
+        validate_chat_history_locator(&locator)?;
+        match self
+            .repository
+            .open_payload_json(target_from_locator(locator))
+            .await
+        {
+            Ok(reader) => Ok(Some(reader)),
+            Err(tt_domain::errors::DomainError::NotFound(_)) if allow_not_found => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub async fn open_swipe_source(
