@@ -1242,6 +1242,7 @@ type TauriTavernExtensionStoreApi = {
     listTables: (options: { namespace: string }) => Promise<string[]>;
     deleteTable: (options: { namespace: string; table: string }) => Promise<void>;
     getBlob: (options: { namespace: string; key: string; table?: string }) => Promise<Blob>;
+    getBlobStream: (options: { namespace: string; key: string; table?: string }) => Promise<ReadableStream<Uint8Array>>;
     setBlob: (options: {
         namespace: string;
         key: string;

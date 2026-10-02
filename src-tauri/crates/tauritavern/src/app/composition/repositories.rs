@@ -243,9 +243,14 @@ pub(super) async fn build(
             http_client_pool.clone(),
         ));
 
-    let extension_store_repository: Arc<dyn ExtensionStoreRepository> = Arc::new(
-        FileExtensionStoreRepository::new(data_root.join("_tauritavern").join("extension-store")),
-    );
+    let extension_store_repository = Arc::new(FileExtensionStoreRepository::new(
+        data_root.join("_tauritavern").join("extension-store"),
+        data_root.join(".staging").join("extension-store"),
+        page_generation.clone(),
+    ));
+    extension_store_repository
+        .cleanup_orphaned_commit_staging()
+        .await;
 
     let group_repository: Arc<dyn GroupRepository> = Arc::new(FileGroupRepository::new(
         data_directory.groups().to_path_buf(),

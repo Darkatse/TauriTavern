@@ -3,7 +3,7 @@ import { isAndroidRuntime } from '../../../../scripts/util/mobile-runtime.js';
 
 /**
  * Own a bounded byte commit from begin through finish/abort.
- * Callers capture their text snapshot before entering this asynchronous boundary.
+ * Callers capture their immutable snapshot before entering this asynchronous boundary.
  */
 export async function commitBytes({ begin, frames, append, finish, abort }) {
     const session = await begin();
@@ -17,7 +17,7 @@ export async function commitBytes({ begin, frames, append, finish, abort }) {
             throw new Error('Host returned an invalid commit frame limit');
         }
         const android = isAndroidRuntime();
-        for (const frame of frames(maxFrameBytes)) {
+        for await (const frame of frames(maxFrameBytes)) {
             const headers = { 'session-id': sessionId, offset: String(offset) };
             if (android) headers['chunk-encoding'] = 'base64';
             const body = android ? { data: encodeBytesToBase64(frame) } : frame;

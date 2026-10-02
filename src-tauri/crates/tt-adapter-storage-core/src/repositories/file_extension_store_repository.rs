@@ -1,352 +1,214 @@
-use async_trait::async_trait;
-use serde_json::Value;
+mod json;
+#[cfg(test)]
+mod tests;
+
 use std::io;
 use std::path::{Path, PathBuf};
-use tokio::fs;
+use std::sync::Arc;
 
-use crate::file_system::{replace_file, unique_temp_path};
+use async_trait::async_trait;
+use tokio::fs;
+use tokio::io::AsyncReadExt;
+use tokio::sync::Mutex;
+use tt_contracts::byte_commit::CommitBegin;
+use tt_contracts::extension_store::{EntryKind, WriteOperation};
 use tt_domain::errors::DomainError;
-use tt_domain::json_merge::merge_json_value;
+use tt_ports::byte_reader::ByteReader;
 use tt_ports::repositories::extension_store_repository::ExtensionStoreRepository;
+
+use crate::commit_stage::{CommitSession, CommitSessions, PageGeneration};
+use crate::file_system::replace_file_blocking;
 
 pub struct FileExtensionStoreRepository {
     base_dir: PathBuf,
+    commits: CommitSessions<WriteTarget>,
+    // Serialize store mutations; use finer locks only if contention warrants it.
+    mutation: Arc<Mutex<()>>,
+}
+
+struct WriteTarget {
+    path: PathBuf,
+    operation: WriteOperation,
+}
+
+struct EntryReader {
+    file: fs::File,
+    path: PathBuf,
+}
+
+#[async_trait]
+impl ByteReader for EntryReader {
+    async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, DomainError> {
+        self.file
+            .read(buffer)
+            .await
+            .map_err(|error| io_error("read", &self.path, error))
+    }
 }
 
 impl FileExtensionStoreRepository {
-    pub fn new(base_dir: PathBuf) -> Self {
-        Self { base_dir }
+    pub fn new(base_dir: PathBuf, staging_dir: PathBuf, page: Arc<PageGeneration>) -> Self {
+        Self {
+            base_dir,
+            commits: CommitSessions::new(staging_dir, page),
+            mutation: Arc::new(Mutex::new(())),
+        }
+    }
+
+    pub async fn cleanup_orphaned_commit_staging(&self) {
+        self.commits.cleanup_orphans().await;
     }
 
     fn namespace_root(&self, namespace: &str) -> Result<PathBuf, DomainError> {
-        let namespace = validate_component(namespace, "namespace")?;
-        Ok(self.base_dir.join(namespace))
-    }
-
-    fn kv_table_dir(&self, namespace: &str, table: &str) -> Result<PathBuf, DomainError> {
-        let table = validate_component(table, "table")?;
-        Ok(self.namespace_root(namespace)?.join("kv").join(table))
-    }
-
-    fn blob_table_dir(&self, namespace: &str, table: &str) -> Result<PathBuf, DomainError> {
-        let table = validate_component(table, "table")?;
-        Ok(self.namespace_root(namespace)?.join("blobs").join(table))
-    }
-
-    fn json_entry_path(
-        &self,
-        namespace: &str,
-        table: &str,
-        key: &str,
-    ) -> Result<PathBuf, DomainError> {
-        let key = validate_component(key, "key")?;
         Ok(self
-            .kv_table_dir(namespace, table)?
-            .join(format!("{}.json", key)))
+            .base_dir
+            .join(validate_component(namespace, "namespace")?))
     }
 
-    fn blob_entry_path(
+    fn table_dir(
+        &self,
+        namespace: &str,
+        table: &str,
+        kind: EntryKind,
+    ) -> Result<PathBuf, DomainError> {
+        let directory = match kind {
+            EntryKind::Json => "kv",
+            EntryKind::Blob => "blobs",
+        };
+        Ok(self
+            .namespace_root(namespace)?
+            .join(directory)
+            .join(validate_component(table, "table")?))
+    }
+
+    fn entry_path(
         &self,
         namespace: &str,
         table: &str,
         key: &str,
+        kind: EntryKind,
     ) -> Result<PathBuf, DomainError> {
         let key = validate_component(key, "key")?;
-        Ok(self.blob_table_dir(namespace, table)?.join(key))
+        let directory = self.table_dir(namespace, table, kind)?;
+        Ok(match kind {
+            EntryKind::Json => directory.join(format!("{key}.json")),
+            EntryKind::Blob => directory.join(key),
+        })
     }
 }
 
-fn validate_component(raw: &str, label: &str) -> Result<String, DomainError> {
+fn validate_component<'a>(raw: &'a str, label: &str) -> Result<&'a str, DomainError> {
     let value = raw.trim();
-    if value.is_empty() {
-        return Err(DomainError::InvalidData(format!(
-            "Extension store {} cannot be empty",
-            label
-        )));
-    }
-
-    if matches!(value, "." | "..") {
-        return Err(DomainError::InvalidData(format!(
-            "Extension store {} cannot be '.' or '..'",
-            label
-        )));
-    }
-
-    if value.starts_with('.') {
-        return Err(DomainError::InvalidData(format!(
-            "Extension store {} cannot start with '.'",
-            label
-        )));
-    }
-
-    if !value
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
+    if value.is_empty()
+        || value.starts_with('.')
+        || !value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
     {
         return Err(DomainError::InvalidData(format!(
-            "Extension store {} contains illegal characters",
-            label
+            "Invalid extension store {label}: use [A-Za-z0-9_.-], without a leading dot"
         )));
     }
-
-    Ok(value.to_string())
+    Ok(value)
 }
 
-async fn list_json_keys_in_dir(dir: &Path) -> Result<Vec<String>, DomainError> {
-    let mut entries = match fs::read_dir(dir).await {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => {
-            return Err(DomainError::InternalError(format!(
-                "Failed to read extension store directory {}: {}",
-                dir.display(),
-                error
-            )));
-        }
-    };
-
-    let mut keys = Vec::new();
-    while let Some(entry) = entries.next_entry().await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to read extension store directory entry {}: {}",
-            dir.display(),
-            error
+fn io_error(operation: &'static str, path: &Path, source: io::Error) -> DomainError {
+    if source.kind() == io::ErrorKind::NotFound {
+        DomainError::NotFound(format!(
+            "Extension store entry {}: {source}",
+            path.display()
         ))
-    })? {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
+    } else {
+        DomainError::FileIo {
+            operation,
+            path: path.display().to_string(),
+            source,
         }
-        if path.extension().and_then(|value| value.to_str()) != Some("json") {
-            continue;
-        }
-
-        let stem = match path.file_stem().and_then(|value| value.to_str()) {
-            Some(stem) => stem.trim(),
-            None => continue,
-        };
-        if stem.is_empty() {
-            continue;
-        }
-
-        keys.push(stem.to_string());
     }
-
-    keys.sort();
-    Ok(keys)
 }
 
-async fn list_file_names_in_dir(dir: &Path) -> Result<Vec<String>, DomainError> {
-    let mut entries = match fs::read_dir(dir).await {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => {
-            return Err(DomainError::InternalError(format!(
-                "Failed to read extension store directory {}: {}",
-                dir.display(),
-                error
-            )));
+/// The receiving file is private until validation and atomic replacement succeed.
+fn publish(session: CommitSession<WriteTarget>) -> Result<(), DomainError> {
+    let received = session.stage.path().to_path_buf();
+    let merged = session.stage.publish_path();
+    drop(session.stage);
+    let WriteTarget { path, operation } = session.metadata;
+
+    let source = match operation {
+        WriteOperation::SetJson => {
+            json::validate(&received, &path)?;
+            &received
         }
+        WriteOperation::UpdateJson => {
+            json::merge(&path, &received, &merged)?;
+            &merged
+        }
+        WriteOperation::SetBlob => &received,
     };
-
-    let mut keys = Vec::new();
-    while let Some(entry) = entries.next_entry().await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to read extension store directory entry {}: {}",
-            dir.display(),
-            error
-        ))
-    })? {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-
-        let name = match path.file_name().and_then(|value| value.to_str()) {
-            Some(name) => name.trim(),
-            None => continue,
-        };
-        if name.is_empty() {
-            continue;
-        }
-
-        keys.push(name.to_string());
-    }
-
-    keys.sort();
-    Ok(keys)
-}
-
-async fn list_directories(dir: &Path) -> Result<Vec<String>, DomainError> {
-    let mut entries = match fs::read_dir(dir).await {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => {
-            return Err(DomainError::InternalError(format!(
-                "Failed to read extension store directory {}: {}",
-                dir.display(),
-                error
-            )));
-        }
-    };
-
-    let mut dirs = Vec::new();
-    while let Some(entry) = entries.next_entry().await.map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to read extension store directory entry {}: {}",
-            dir.display(),
-            error
-        ))
-    })? {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-
-        let name = match path.file_name().and_then(|value| value.to_str()) {
-            Some(name) => name.trim(),
-            None => continue,
-        };
-        if name.is_empty() {
-            continue;
-        }
-
-        dirs.push(name.to_string());
-    }
-
-    dirs.sort();
-    Ok(dirs)
-}
-
-async fn read_json_entry(path: &Path) -> Result<Option<Value>, DomainError> {
-    let bytes = match fs::read(path).await {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(DomainError::InternalError(format!(
-                "Failed to read extension store JSON entry {}: {}",
-                path.display(),
-                error
-            )));
-        }
-    };
-
-    let value = serde_json::from_slice::<Value>(&bytes).map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Extension store entry contains invalid JSON {}: {}",
-            path.display(),
-            error
-        ))
-    })?;
-
-    Ok(Some(value))
+    let parent = path.parent().expect("entry has a table directory");
+    std::fs::create_dir_all(parent).map_err(|error| io_error("create directory", parent, error))?;
+    replace_file_blocking(source, &path)
 }
 
 #[async_trait]
 impl ExtensionStoreRepository for FileExtensionStoreRepository {
-    async fn get_json(
+    async fn open_entry(
         &self,
         namespace: &str,
         table: &str,
         key: &str,
-    ) -> Result<Value, DomainError> {
-        let path = self.json_entry_path(namespace, table, key)?;
-        read_json_entry(&path).await?.ok_or_else(|| {
-            DomainError::NotFound(format!(
-                "Extension store JSON entry not found: {}",
-                path.display()
-            ))
-        })
+        kind: EntryKind,
+    ) -> Result<Option<Box<dyn ByteReader>>, DomainError> {
+        let path = self.entry_path(namespace, table, key, kind)?;
+        let file = match fs::File::open(&path).await {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(io_error("open", &path, error)),
+        };
+        Ok(Some(Box::new(EntryReader { file, path })))
     }
 
-    async fn try_get_json(
+    async fn begin_commit(
         &self,
         namespace: &str,
         table: &str,
         key: &str,
-    ) -> Result<Option<Value>, DomainError> {
-        let path = self.json_entry_path(namespace, table, key)?;
-        read_json_entry(&path).await
+        operation: WriteOperation,
+    ) -> Result<CommitBegin, DomainError> {
+        let path = self.entry_path(namespace, table, key, operation.kind())?;
+        self.commits.begin(WriteTarget { path, operation }).await
     }
 
-    async fn set_json(
+    async fn append_commit(
         &self,
-        namespace: &str,
-        table: &str,
-        key: &str,
-        value: Value,
-    ) -> Result<(), DomainError> {
-        let path = self.json_entry_path(namespace, table, key)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to create extension store directory {}: {}",
-                    parent.display(),
-                    error
-                ))
-            })?;
-        }
-
-        let bytes = serde_json::to_vec_pretty(&value).map_err(|error| {
-            DomainError::InvalidData(format!(
-                "Failed to serialize extension store JSON: {}",
-                error
-            ))
-        })?;
-
-        let temp = unique_temp_path(&path);
-        fs::write(&temp, &bytes).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to write extension store temp file {}: {}",
-                temp.display(),
-                error
-            ))
-        })?;
-
-        replace_file(&temp, &path).await?;
-        Ok(())
+        session_id: &str,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<u64, DomainError> {
+        self.commits.append(session_id, offset, bytes, |_| {}).await
     }
 
-    async fn update_json(
-        &self,
-        namespace: &str,
-        table: &str,
-        key: &str,
-        value: Value,
-    ) -> Result<(), DomainError> {
-        let path = self.json_entry_path(namespace, table, key)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to create extension store directory {}: {}",
-                    parent.display(),
-                    error
-                ))
-            })?;
-        }
+    async fn finish_commit(&self, session_id: &str, expected_size: u64) -> Result<(), DomainError> {
+        self.commits
+            .finish(session_id, expected_size, |session| async move {
+                let guard = self.mutation.clone().lock_owned().await;
+                tokio::task::spawn_blocking(move || {
+                    // Keep the lock with the IO task even if its awaiting caller disappears.
+                    let _guard = guard;
+                    publish(session)
+                })
+                .await
+                .map_err(|error| {
+                    DomainError::InternalError(format!(
+                        "Extension store commit task failed: {error}"
+                    ))
+                })?
+            })
+            .await
+    }
 
-        let mut current = read_json_entry(&path).await?.unwrap_or(Value::Null);
-
-        merge_json_value(&mut current, value);
-
-        let bytes = serde_json::to_vec_pretty(&current).map_err(|error| {
-            DomainError::InvalidData(format!(
-                "Failed to serialize extension store JSON: {}",
-                error
-            ))
-        })?;
-
-        let temp = unique_temp_path(&path);
-        fs::write(&temp, &bytes).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to write extension store temp file {}: {}",
-                temp.display(),
-                error
-            ))
-        })?;
-
-        replace_file(&temp, &path).await?;
-        Ok(())
+    async fn abort_commit(&self, session_id: &str) -> Result<(), DomainError> {
+        self.commits.abort(session_id).await
     }
 
     async fn rename_json_key(
@@ -356,351 +218,116 @@ impl ExtensionStoreRepository for FileExtensionStoreRepository {
         key: &str,
         new_key: &str,
     ) -> Result<(), DomainError> {
-        let from = self.json_entry_path(namespace, table, key)?;
-        let to = self.json_entry_path(namespace, table, new_key)?;
+        let from = self.entry_path(namespace, table, key, EntryKind::Json)?;
+        let to = self.entry_path(namespace, table, new_key, EntryKind::Json)?;
         if from == to {
             return Ok(());
         }
-
-        if !from.exists() {
-            return Err(DomainError::NotFound(format!(
-                "Extension store JSON entry not found: {}",
-                from.display()
-            )));
-        }
-
-        if to.exists() {
+        let _guard = self.mutation.lock().await;
+        if fs::try_exists(&to)
+            .await
+            .map_err(|error| io_error("stat", &to, error))?
+        {
             return Err(DomainError::InvalidData(format!(
                 "Extension store JSON entry already exists: {}",
                 to.display()
             )));
         }
-
-        fs::rename(&from, &to).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to rename extension store JSON entry {} to {}: {}",
-                from.display(),
-                to.display(),
-                error
-            ))
-        })?;
-
-        Ok(())
+        fs::rename(&from, &to)
+            .await
+            .map_err(|error| io_error("rename", &from, error))
     }
 
-    async fn delete_json(
+    async fn delete_entry(
         &self,
         namespace: &str,
         table: &str,
         key: &str,
+        kind: EntryKind,
     ) -> Result<(), DomainError> {
-        let path = self.json_entry_path(namespace, table, key)?;
-        fs::remove_file(&path).await.map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                return DomainError::NotFound(format!(
-                    "Extension store JSON entry not found: {}",
-                    path.display()
-                ));
-            }
-            DomainError::InternalError(format!(
-                "Failed to delete extension store JSON entry {}: {}",
-                path.display(),
-                error
-            ))
-        })?;
-        Ok(())
+        let path = self.entry_path(namespace, table, key, kind)?;
+        let _guard = self.mutation.lock().await;
+        fs::remove_file(&path)
+            .await
+            .map_err(|error| io_error("delete", &path, error))
     }
 
-    async fn list_json_keys(
+    async fn list_keys(
         &self,
         namespace: &str,
         table: &str,
+        kind: EntryKind,
     ) -> Result<Vec<String>, DomainError> {
-        let dir = self.kv_table_dir(namespace, table)?;
-        list_json_keys_in_dir(&dir).await
+        let directory = self.table_dir(namespace, table, kind)?;
+        let names = list_names(&directory, std::fs::FileType::is_file).await?;
+        Ok(match kind {
+            EntryKind::Json => names
+                .into_iter()
+                .filter_map(|name| name.strip_suffix(".json").map(str::to_owned))
+                .collect(),
+            EntryKind::Blob => names,
+        })
     }
 
     async fn list_tables(&self, namespace: &str) -> Result<Vec<String>, DomainError> {
         let root = self.namespace_root(namespace)?;
-        let kv_tables = list_directories(&root.join("kv")).await?;
-        let blob_tables = list_directories(&root.join("blobs")).await?;
-
-        let mut merged = kv_tables;
-        for table in blob_tables {
-            if !merged.contains(&table) {
-                merged.push(table);
-            }
-        }
-
-        merged.sort();
-        Ok(merged)
+        let mut tables = list_names(&root.join("kv"), std::fs::FileType::is_dir).await?;
+        tables.extend(list_names(&root.join("blobs"), std::fs::FileType::is_dir).await?);
+        tables.sort();
+        tables.dedup();
+        Ok(tables)
     }
 
     async fn delete_table(&self, namespace: &str, table: &str) -> Result<(), DomainError> {
-        let kv_dir = self.kv_table_dir(namespace, table)?;
-        let blob_dir = self.blob_table_dir(namespace, table)?;
-
-        let mut removed_any = false;
-
-        match fs::remove_dir_all(&kv_dir).await {
-            Ok(_) => removed_any = true,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(DomainError::InternalError(format!(
-                    "Failed to delete extension store table {}: {}",
-                    kv_dir.display(),
-                    error
-                )));
+        let json = self.table_dir(namespace, table, EntryKind::Json)?;
+        let blobs = self.table_dir(namespace, table, EntryKind::Blob)?;
+        let _guard = self.mutation.lock().await;
+        let mut removed = false;
+        for directory in [json, blobs] {
+            match fs::remove_dir_all(&directory).await {
+                Ok(()) => removed = true,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(io_error("delete table", &directory, error)),
             }
         }
-
-        match fs::remove_dir_all(&blob_dir).await {
-            Ok(_) => removed_any = true,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(DomainError::InternalError(format!(
-                    "Failed to delete extension store table {}: {}",
-                    blob_dir.display(),
-                    error
-                )));
-            }
-        }
-
-        if !removed_any {
+        if !removed {
             return Err(DomainError::NotFound(format!(
-                "Extension store table not found: {}:{}",
-                namespace, table
+                "Extension store table not found: {namespace}:{table}"
             )));
         }
-
         Ok(())
-    }
-
-    async fn get_blob(
-        &self,
-        namespace: &str,
-        table: &str,
-        key: &str,
-    ) -> Result<Vec<u8>, DomainError> {
-        let path = self.blob_entry_path(namespace, table, key)?;
-        fs::read(&path).await.map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                return DomainError::NotFound(format!(
-                    "Extension store blob not found: {}",
-                    path.display()
-                ));
-            }
-            DomainError::InternalError(format!(
-                "Failed to read extension store blob {}: {}",
-                path.display(),
-                error
-            ))
-        })
-    }
-
-    async fn set_blob(
-        &self,
-        namespace: &str,
-        table: &str,
-        key: &str,
-        bytes: Vec<u8>,
-    ) -> Result<(), DomainError> {
-        let path = self.blob_entry_path(namespace, table, key)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await.map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to create extension store directory {}: {}",
-                    parent.display(),
-                    error
-                ))
-            })?;
-        }
-
-        let temp = unique_temp_path(&path);
-        fs::write(&temp, &bytes).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to write extension store temp file {}: {}",
-                temp.display(),
-                error
-            ))
-        })?;
-
-        replace_file(&temp, &path).await?;
-        Ok(())
-    }
-
-    async fn delete_blob(
-        &self,
-        namespace: &str,
-        table: &str,
-        key: &str,
-    ) -> Result<(), DomainError> {
-        let path = self.blob_entry_path(namespace, table, key)?;
-        fs::remove_file(&path).await.map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                return DomainError::NotFound(format!(
-                    "Extension store blob not found: {}",
-                    path.display()
-                ));
-            }
-            DomainError::InternalError(format!(
-                "Failed to delete extension store blob {}: {}",
-                path.display(),
-                error
-            ))
-        })?;
-        Ok(())
-    }
-
-    async fn list_blob_keys(
-        &self,
-        namespace: &str,
-        table: &str,
-    ) -> Result<Vec<String>, DomainError> {
-        let dir = self.blob_table_dir(namespace, table)?;
-        list_file_names_in_dir(&dir).await
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::FileExtensionStoreRepository;
-    use serde_json::json;
-    use std::path::PathBuf;
-    use tt_ports::repositories::extension_store_repository::ExtensionStoreRepository;
-
-    fn create_temp_dir() -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "tauritavern-extension-store-{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&root).expect("create temp dir");
-        root
-    }
-
-    #[tokio::test]
-    async fn json_round_trip_and_update_merges_objects() {
-        let dir = create_temp_dir();
-        let repo = FileExtensionStoreRepository::new(dir);
-
-        repo.set_json(
-            "my-ext",
-            "main",
-            "index",
-            json!({"a": 1, "nested": {"x": 1}}),
-        )
+async fn list_names(
+    directory: &Path,
+    accept_type: fn(&std::fs::FileType) -> bool,
+) -> Result<Vec<String>, DomainError> {
+    let mut entries = match fs::read_dir(directory).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(io_error("list directory", directory, error)),
+    };
+    let mut names = Vec::new();
+    while let Some(entry) = entries
+        .next_entry()
         .await
-        .unwrap();
-        repo.update_json(
-            "my-ext",
-            "main",
-            "index",
-            json!({"b": 2, "nested": {"y": 2}}),
-        )
-        .await
-        .unwrap();
-
-        let value = repo.get_json("my-ext", "main", "index").await.unwrap();
-        assert_eq!(value, json!({"a": 1, "b": 2, "nested": {"x": 1, "y": 2}}));
-
-        let keys = repo.list_json_keys("my-ext", "main").await.unwrap();
-        assert_eq!(keys, vec![String::from("index")]);
+        .map_err(|error| io_error("list directory", directory, error))?
+    {
+        let file_type = entry
+            .file_type()
+            .await
+            .map_err(|error| io_error("inspect entry", &entry.path(), error))?;
+        if !accept_type(&file_type) {
+            continue;
+        }
+        let name = entry.file_name();
+        if let Some(name) = name.to_str()
+            && validate_component(name, "entry").is_ok_and(|normalized| normalized == name)
+        {
+            names.push(name.to_owned());
+        }
     }
-
-    #[tokio::test]
-    async fn try_get_json_distinguishes_missing_from_null_and_keeps_invalid_json_fatal() {
-        let dir = create_temp_dir();
-        let repo = FileExtensionStoreRepository::new(dir.clone());
-
-        let missing = repo
-            .try_get_json("my-ext", "main", "settings")
-            .await
-            .unwrap();
-        assert_eq!(missing, None);
-
-        repo.set_json("my-ext", "main", "settings", json!(null))
-            .await
-            .unwrap();
-
-        let existing_null = repo
-            .try_get_json("my-ext", "main", "settings")
-            .await
-            .unwrap();
-        assert_eq!(existing_null, Some(json!(null)));
-
-        let invalid_path = dir
-            .join("my-ext")
-            .join("kv")
-            .join("main")
-            .join("invalid.json");
-        std::fs::write(&invalid_path, "{").expect("write invalid json");
-
-        let error = repo
-            .try_get_json("my-ext", "main", "invalid")
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("invalid JSON"));
-    }
-
-    #[tokio::test]
-    async fn rename_and_delete_json_key() {
-        let dir = create_temp_dir();
-        let repo = FileExtensionStoreRepository::new(dir);
-
-        repo.set_json("my-ext", "main", "k1", json!({"ok": true}))
-            .await
-            .unwrap();
-        repo.rename_json_key("my-ext", "main", "k1", "k2")
-            .await
-            .unwrap();
-
-        let keys = repo.list_json_keys("my-ext", "main").await.unwrap();
-        assert_eq!(keys, vec![String::from("k2")]);
-
-        repo.delete_json("my-ext", "main", "k2").await.unwrap();
-        let keys = repo.list_json_keys("my-ext", "main").await.unwrap();
-        assert!(keys.is_empty());
-    }
-
-    #[tokio::test]
-    async fn list_and_delete_tables() {
-        let dir = create_temp_dir();
-        let repo = FileExtensionStoreRepository::new(dir);
-
-        repo.set_json("my-ext", "main", "k1", json!(1))
-            .await
-            .unwrap();
-        repo.set_json("my-ext", "extra", "k2", json!(2))
-            .await
-            .unwrap();
-
-        let tables = repo.list_tables("my-ext").await.unwrap();
-        assert_eq!(tables, vec![String::from("extra"), String::from("main")]);
-
-        repo.delete_table("my-ext", "extra").await.unwrap();
-        let tables = repo.list_tables("my-ext").await.unwrap();
-        assert_eq!(tables, vec![String::from("main")]);
-    }
-
-    #[tokio::test]
-    async fn blob_round_trip() {
-        let dir = create_temp_dir();
-        let repo = FileExtensionStoreRepository::new(dir);
-
-        repo.set_blob("my-ext", "main", "icon.png", vec![1, 2, 3, 4])
-            .await
-            .unwrap();
-
-        let keys = repo.list_blob_keys("my-ext", "main").await.unwrap();
-        assert_eq!(keys, vec![String::from("icon.png")]);
-
-        let bytes = repo.get_blob("my-ext", "main", "icon.png").await.unwrap();
-        assert_eq!(bytes, vec![1, 2, 3, 4]);
-
-        repo.delete_blob("my-ext", "main", "icon.png")
-            .await
-            .unwrap();
-        let keys = repo.list_blob_keys("my-ext", "main").await.unwrap();
-        assert!(keys.is_empty());
-    }
+    names.sort();
+    Ok(names)
 }
