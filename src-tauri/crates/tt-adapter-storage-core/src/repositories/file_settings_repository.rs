@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 use std::cmp::Reverse;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 
-use crate::commit_stage::CommitSessions;
+use crate::commit_stage::{CommitSessions, PageGeneration};
 use crate::file_system::{list_files_with_extension, persist_json_file_blocking, read_json_file};
 use crate::preset_file_naming::load_named_preset_files;
 use crate::sillytavern_sorting::{
@@ -61,9 +62,16 @@ pub fn load_tauritavern_settings_blocking(
 }
 
 impl FileSettingsRepository {
-    pub fn new(settings_dir: PathBuf, default_user_settings: UserSettings) -> Self {
+    pub fn new(
+        settings_dir: PathBuf,
+        default_user_settings: UserSettings,
+        page: Arc<PageGeneration>,
+    ) -> Self {
         Self {
-            commit_sessions: CommitSessions::new(settings_dir.join(".staging").join("settings")),
+            commit_sessions: CommitSessions::new(
+                settings_dir.join(".staging").join("settings"),
+                page,
+            ),
             base_directory: settings_dir,
             default_user_settings,
         }
@@ -518,6 +526,7 @@ mod tests {
     use serde_json::json;
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
     use tt_domain::models::settings::UserSettings;
     use tt_domain::models::settings::revision::UserSettingsRevision;
     use tt_ports::repositories::settings_repository::SettingsRepository;
@@ -556,7 +565,11 @@ mod tests {
     }
 
     fn new_repository(dir: &TestDir) -> FileSettingsRepository {
-        FileSettingsRepository::new(dir.path().to_path_buf(), default_user_settings())
+        FileSettingsRepository::new(
+            dir.path().to_path_buf(),
+            default_user_settings(),
+            Arc::default(),
+        )
     }
 
     #[tokio::test]

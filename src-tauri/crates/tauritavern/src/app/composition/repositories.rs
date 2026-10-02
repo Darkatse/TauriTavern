@@ -20,6 +20,7 @@ use tt_adapter_provider_http::{
     HttpSearxngSearchRepository, HttpStableDiffusionRepository, HttpTranslateRepository,
     HttpTtsRepository,
 };
+use tt_adapter_storage_core::commit_stage::PageGeneration;
 use tt_adapter_storage_core::{
     DataDirectory, FileAssetRepository, FileChatRepository, FileExtensionStoreRepository,
     FileGroupRepository, FileLlmConnectionRepository, FileMcpServerRepository,
@@ -141,6 +142,7 @@ pub(super) async fn build(
     chat_backup_settings: ChatBackupSettings,
 ) -> Result<AppRepositories, DomainError> {
     let http_client_pool = app_handle.state::<Arc<HttpClientPool>>().inner().clone();
+    let page_generation = app_handle.state::<Arc<PageGeneration>>().inner().clone();
     let runtime_paths = app_handle.state::<RuntimePaths>();
     let data_root = data_directory.root().to_path_buf();
     let default_user_dir = data_directory.default_user().to_path_buf();
@@ -153,6 +155,7 @@ pub(super) async fn build(
         data_directory.backups().to_path_buf(),
         chat_aliases.clone(),
         chat_backup_settings,
+        page_generation.clone(),
     ));
     file_chat_repository
         .cleanup_orphaned_chat_commit_staging()
@@ -191,6 +194,7 @@ pub(super) async fn build(
     let settings_repository = Arc::new(FileSettingsRepository::new(
         data_directory.settings().to_path_buf(),
         default_user_settings,
+        page_generation.clone(),
     ));
     settings_repository.cleanup_orphaned_commit_staging().await;
     // Materialize settings sections before background sync can scan the data directory.
@@ -332,6 +336,7 @@ pub(super) async fn build(
 
     let world_info_repository = Arc::new(FileWorldInfoRepository::new(
         data_directory.default_user().join("worlds"),
+        page_generation,
     ));
     world_info_repository
         .cleanup_orphaned_commit_staging()

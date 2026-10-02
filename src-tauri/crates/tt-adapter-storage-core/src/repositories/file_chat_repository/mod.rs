@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use crate::commit_stage::PageGeneration;
 use tokio::sync::{Mutex, RwLock};
 use tt_ports::repositories::chat_repository::ChatMessageRole;
 
@@ -138,6 +139,7 @@ impl FileChatRepository {
             backups_dir,
             chat_aliases,
             tt_domain::models::settings::ChatBackupSettings::default(),
+            Arc::default(),
         )
     }
 
@@ -148,6 +150,7 @@ impl FileChatRepository {
         backups_dir: PathBuf,
         chat_aliases: SharedChatAliasStore,
         backup_settings: tt_domain::models::settings::ChatBackupSettings,
+        page: Arc<PageGeneration>,
     ) -> Self {
         let chat_commit_staging_dir = backups_dir.with_file_name(".staging").join("chat-commits");
         // Create a memory cache with 100 chat capacity and 30 minute TTL
@@ -180,7 +183,10 @@ impl FileChatRepository {
             chats_dir,
             group_chats_dir,
             backups_dir,
-            chat_commit_sessions: crate::commit_stage::CommitSessions::new(chat_commit_staging_dir),
+            chat_commit_sessions: crate::commit_stage::CommitSessions::new(
+                chat_commit_staging_dir,
+                page,
+            ),
             path_write_locks,
             current_content_signatures: Mutex::new(ContentSignatureState::default()),
             memory_cache,

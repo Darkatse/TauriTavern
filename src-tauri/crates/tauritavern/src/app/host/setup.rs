@@ -11,6 +11,7 @@ use crate::infrastructure::agent_extension_tools::AgentExtensionTools;
 use crate::infrastructure::logging::llm_api_logs::LlmApiLogStore;
 use tauri::Manager;
 use tt_adapter_http::HttpClientPool;
+use tt_adapter_storage_core::commit_stage::PageGeneration;
 use tt_domain::errors::DomainError;
 use tt_domain::ios_policy::IosPolicyScope;
 
@@ -25,6 +26,7 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
     // 2. Publish lightweight host services that do not depend on user settings.
     // AppState construction later reuses the same HTTP pool via managed state.
     app.manage(Arc::new(AgentExtensionTools::default()));
+    app.manage(Arc::new(PageGeneration::default()));
     let http_client_pool = Arc::new(HttpClientPool::new(crate::product::USER_AGENT));
     app.manage(http_client_pool.clone());
     super::resources::install_bundled_templates(app, &app_handle);

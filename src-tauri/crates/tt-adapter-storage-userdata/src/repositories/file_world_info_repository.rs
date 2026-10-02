@@ -3,10 +3,11 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde_json::value::RawValue;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::fs;
 
 use crate::png_card_metadata::read_text_chunks_from_png;
-use tt_adapter_storage_core::commit_stage::CommitSessions;
+use tt_adapter_storage_core::commit_stage::{CommitSessions, PageGeneration};
 use tt_adapter_storage_core::file_system::{delete_file, list_files_with_extension};
 use tt_adapter_storage_core::sillytavern_sorting::sort_strings_sillytavern_name;
 use tt_contracts::byte_commit::CommitBegin;
@@ -25,11 +26,11 @@ pub struct FileWorldInfoRepository {
 }
 
 impl FileWorldInfoRepository {
-    pub fn new(worlds_dir: PathBuf) -> Self {
+    pub fn new(worlds_dir: PathBuf, page: Arc<PageGeneration>) -> Self {
         let staging_dir = worlds_dir.with_file_name(".staging").join("world-info");
         Self {
             worlds_dir,
-            commit_sessions: CommitSessions::new(staging_dir),
+            commit_sessions: CommitSessions::new(staging_dir, page),
         }
     }
 
@@ -259,6 +260,7 @@ mod tests {
     use super::FileWorldInfoRepository;
     use serde_json::json;
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
     use tt_ports::repositories::world_info_repository::WorldInfoRepository;
 
     struct TestDir {
@@ -290,7 +292,7 @@ mod tests {
     #[tokio::test]
     async fn save_get_delete_keeps_spaced_world_names_distinct() {
         let dir = TestDir::new();
-        let repository = FileWorldInfoRepository::new(dir.path().to_path_buf());
+        let repository = FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default());
         let plain = json!({ "entries": { "0": { "uid": 0, "content": "plain" } } });
         let leading = json!({ "entries": { "0": { "uid": 0, "content": "leading" } } });
         let trailing = json!({ "entries": { "0": { "uid": 0, "content": "trailing" } } });
@@ -346,7 +348,7 @@ mod tests {
     #[tokio::test]
     async fn import_world_info_preserves_leading_space_from_original_filename() {
         let dir = TestDir::new();
-        let repository = FileWorldInfoRepository::new(dir.path().to_path_buf());
+        let repository = FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default());
         let source = dir.path().join("upload.json");
         let json = r#"{ "z":1,"entries":{},"originalData":{"b":2,"a":3} }"#;
         std::fs::write(&source, json).expect("write import source");
@@ -366,7 +368,7 @@ mod tests {
     #[tokio::test]
     async fn list_world_names_sorts_like_upstream_locale_compare() {
         let dir = TestDir::new();
-        let repository = FileWorldInfoRepository::new(dir.path().to_path_buf());
+        let repository = FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default());
 
         std::fs::write(dir.path().join("😀Book.json"), "{}").expect("write emoji world");
         std::fs::write(dir.path().join("Abook.json"), "{}").expect("write latin world");

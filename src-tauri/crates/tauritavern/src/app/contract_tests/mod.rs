@@ -151,7 +151,10 @@ async fn character_service_with_world_repository(
         chat_repository.clone(),
         group_chat_repository,
     ));
-    let world_repository = Arc::new(FileWorldInfoRepository::new(default_user.join("worlds")));
+    let world_repository = Arc::new(FileWorldInfoRepository::new(
+        default_user.join("worlds"),
+        Arc::default(),
+    ));
     let agent_repository = Arc::new(FileAgentRepository::new(
         root.join("_tauritavern/agent-workspaces"),
     ));
@@ -229,6 +232,7 @@ fn agent_runtime_fixture_with_shell(
         Arc::new(FileSettingsRepository::new(
             default_user.clone(),
             UserSettings::default(),
+            Arc::default(),
         )),
     ));
     let prompt_assembly_service = Arc::new(PromptAssemblyService::new(
