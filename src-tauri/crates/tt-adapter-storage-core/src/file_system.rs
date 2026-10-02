@@ -464,26 +464,18 @@ pub fn persist_file_blocking(
     replace_file_blocking(temp_path, target_path)
 }
 
-/// Write and sync a JSON file during startup, before async services exist.
+/// Stream JSON into a staging file, sync it, then publish by atomic replacement.
 pub fn persist_json_file_blocking<T: Serialize + ?Sized>(
     path: &Path,
     data: &T,
 ) -> Result<(), DomainError> {
-    use std::io::Write;
-
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| {
             DomainError::InternalError(format!("Failed to create {}: {error}", parent.display()))
         })?;
     }
-    let json = serde_json::to_vec_pretty(data).map_err(|error| {
-        DomainError::InvalidData(format!(
-            "Failed to serialize JSON for {}: {error}",
-            path.display()
-        ))
-    })?;
     let temp_path = unique_temp_path(path);
-    let mut file = std::fs::OpenOptions::new()
+    let file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&temp_path)
@@ -491,8 +483,12 @@ pub fn persist_json_file_blocking<T: Serialize + ?Sized>(
             DomainError::InternalError(format!("Failed to create {}: {error}", temp_path.display()))
         })?;
     let result = (|| {
-        file.write_all(&json).map_err(|error| {
-            DomainError::InternalError(format!("Failed to write {}: {error}", temp_path.display()))
+        let mut writer = std::io::BufWriter::new(file);
+        serde_json::to_writer_pretty(&mut writer, data).map_err(|error| {
+            DomainError::InvalidData(format!("Failed to serialize {}: {error}", path.display()))
+        })?;
+        let file = writer.into_inner().map_err(|error| {
+            DomainError::InternalError(format!("Failed to finish {}: {error}", temp_path.display()))
         })?;
         persist_file_blocking(file, &temp_path, path)
     })();
