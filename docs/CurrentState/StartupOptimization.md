@@ -14,7 +14,7 @@
 
 - **Shell 先到**：`#preloader` 在 `firstLoadInit()` 的 Shell 阶段就移除，主页可以尽早可见可点。
 - **Host Ready 显式等待**：在首次 `/api/*` 访问前等待 `__TAURITAVERN_MAIN_READY__`，确保拦截器/路由已安装，且 Tauri 后端已进入可接收 `AppState` 命令的 readiness 状态。
-- **bootstrap 快照**：用一次 `/api/bootstrap` 拉齐启动关键数据，并在前端以“prime snapshot”方式避免重复请求（settings/characters/groups/avatars/secret_state）。
+- **启动并发读取**：设置与启动元数据并行读取、按顺序应用，并复用本次结果。
 - **扩展启动分层**：扩展发现可提前后台启动；系统扩展仍在 Full 阶段完成，local/global third-party 扩展延后到 `APP_READY` 后串行激活，从启动关键路径移出。
 - **lib.bundle 拆分为 core/optional**：`highlight.js` 通过 `lib.js` 的 async helper 按需加载；上游同步 `/lib.js` ABI 保留在 core bundle。
 - **重任务后移**：`initTokenizers()`、`initScrapers()` 在 `APP_READY` 后、两次 paint 之后后台启动。
@@ -61,15 +61,11 @@
     - 初始化纯前端 UI/DOM handler、基础 patch（不会做 `/api/*`）
   - **Core 阶段**
     - `await waitForTauriMainReady({ failFast: true })`：保证 Host 拦截器与 Rust backend readiness 就绪
-    - `/csrf-token` + 并发启动 `fetch('/api/bootstrap')`
+    - `/csrf-token` + 并发启动 `/api/bootstrap` 与 `/api/settings/get`
     - `initSecrets()` + `primeSecretStateSnapshot(...)` + `readSecretState()`
     - `initLocales()`、默认 slash commands、模型/设置等核心模块初始化
   - **Full 阶段**
-    - 应用 settings/角色/群组/头像快照：
-      - `applySettingsSnapshot(bootstrap.settings)`
-      - `applyCharactersSnapshot(bootstrap.characters)`
-      - `applyGroupsSnapshot(bootstrap.groups)`
-      - `primeUserAvatarsSnapshot(bootstrap.avatars)` + `getUserAvatars(...)`
+    - 按设置、角色、群组、头像的顺序应用读取结果。
     - 扩展（如果启用）：
       - 后台：`startOfflineExtensionsDiscovery()`（可在 Core 阶段提前启动）
       - Full：`activateStartupSystemExtensions({ parallelism })` 只激活系统扩展，并在需要时提前完成 Extras auto-connect
@@ -102,31 +98,13 @@
 
 ---
 
-## 4. bootstrap 快照（/api/bootstrap）现状
+## 4. 设置与 bootstrap 元数据读取
 
-### 4.1 前端消费
+`/api/settings/get` 独立读取设置；`/api/bootstrap` 提供角色、群组、头像和密钥状态等启动元数据。前端并发获取，再按既有顺序应用；本次启动复用读取结果，避免重复请求。
 
-- `src/script.js`：`fetch('/api/bootstrap', { method: 'POST' })`
-- 负载（当前使用字段）：
-  - `settings`：直接喂给 `applySettingsSnapshot(...)`
-  - `characters`：直接喂给 `applyCharactersSnapshot(...)`
-  - `groups`：直接喂给 `applyGroupsSnapshot(...)`
-  - `avatars`：喂给 `primeUserAvatarsSnapshot(...)`
-  - `secret_state`：喂给 `primeSecretStateSnapshot(...)`
+设置与角色是启动必需数据，失败会阻止启动；群组、头像或密钥状态失败时保留可见错误并仅禁用对应能力，不阻止 `APP_READY`。
 
-### 4.2 Tauri 主进程路由
-
-- `src/tauri/main/routes/bootstrap-routes.js`
-  - `router.post('/api/bootstrap', ...)`
-  - `context.safeInvoke('get_bootstrap_snapshot')`
-  - 角色做一次 `context.normalizeCharacter(...)` 后返回 JSON
-
-### 4.3 Rust 命令（并发采样）
-
-- `src-tauri/crates/tauritavern/src/presentation/commands/bootstrap_commands.rs:get_bootstrap_snapshot`
-  - 使用 `tokio::join!` 并发获取：settings / characters / groups / avatars / secret_state
-  - settings 与 characters 是启动关键数据；groups、avatars、secret_state 失败时保留用户可见错误并仅禁用对应局部能力，不阻止 `APP_READY`
-  - 目的：减少启动关键路径的串行 I/O 等待。
+后端采样入口见 [bootstrap_commands.rs](../../src-tauri/crates/tauritavern/src/presentation/commands/bootstrap_commands.rs)。
 
 ---
 
