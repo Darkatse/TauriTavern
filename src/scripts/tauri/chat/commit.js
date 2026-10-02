@@ -1,6 +1,5 @@
 import { invoke } from '../../../tauri-bridge.js';
-import { encodeBytesToBase64 } from '../../../tauri/main/binary-utils.js';
-import { isAndroidRuntime } from '../../util/mobile-runtime.js';
+import { commitBytes } from '../../../tauri/main/services/files/byte-commit.js';
 import { jsonlRecordsToByteChunks, serializeChatPayload } from './jsonl.js';
 import { coldSourceForPayload } from './cold-swipes.js';
 
@@ -25,14 +24,6 @@ function invokeChatCommit(...args) {
     return invoke(...args).catch((error) => {
         throw toChatCommitError(error);
     });
-}
-
-function positiveSafeInteger(value, label) {
-    const number = Number(value);
-    if (!Number.isSafeInteger(number) || number <= 0) {
-        throw new Error(`${label} must be a positive safe integer`);
-    }
-    return number;
 }
 
 export async function commitChatMetadata({ target, chatMetadata }) {
@@ -72,51 +63,15 @@ export async function commitChatPayload({ target, payload, force, commitReason }
 
 // Callers capture all payload values as JSON text before this first await.
 async function commitChatRecords({ target, operation, records, commitReason }) {
-    const begin = await invokeChatCommit('begin_chat_commit', { target, operation });
-    const sessionId = String(begin?.sessionId || '').trim();
-    if (!sessionId) {
-        throw new Error('Host chat commit did not return a session id');
-    }
-
-    let offset = 0;
-    try {
-        const maxFrameBytes = positiveSafeInteger(begin?.maxFrameBytes, 'Host chat commit frame limit');
-        const android = isAndroidRuntime();
-
-        for (const frame of jsonlRecordsToByteChunks(records, { maxChunkBytes: maxFrameBytes })) {
-            const headers = {
-                'session-id': sessionId,
-                offset: String(offset),
-            };
-            const nextOffset = Number(await (android
-                ? invokeChatCommit('append_chat_commit_chunk', { data: encodeBytesToBase64(frame) }, {
-                    headers: {
-                        ...headers,
-                        'chunk-encoding': 'base64',
-                    },
-                })
-                : invokeChatCommit('append_chat_commit_chunk', frame, { headers })));
-            if (nextOffset !== offset + frame.byteLength) {
-                throw new Error(`Host chat commit returned unexpected offset ${nextOffset}`);
-            }
-            offset = nextOffset;
-        }
-    } catch (error) {
-        try {
-            await invokeChatCommit('abort_chat_commit', { sessionId });
-        } catch (abortError) {
-            throw new AggregateError([error, abortError], error.message);
-        }
-        throw error;
-    }
-
-    // finish consumes the session on the host whether it succeeds or fails; nothing is left to abort.
-    const finished = await invokeChatCommit('finish_chat_commit', {
-        sessionId,
-        expectedSize: offset,
-        commitReason,
+    await commitBytes({
+        begin: () => invokeChatCommit('begin_chat_commit', { target, operation }),
+        frames: maxChunkBytes => jsonlRecordsToByteChunks(records, { maxChunkBytes }),
+        append: (body, options) => invokeChatCommit('append_chat_commit_chunk', body, options),
+        finish: (sessionId, expectedSize) => invokeChatCommit('finish_chat_commit', {
+            sessionId,
+            expectedSize,
+            commitReason,
+        }),
+        abort: sessionId => invokeChatCommit('abort_chat_commit', { sessionId }),
     });
-    if (Number(finished?.acceptedSize) !== offset) {
-        throw new Error(`Host chat commit returned unexpected accepted size ${finished?.acceptedSize}`);
-    }
 }

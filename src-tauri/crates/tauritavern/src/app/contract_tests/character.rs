@@ -535,7 +535,7 @@ async fn character_service_lorebook_conflict_resolution_uses_current_or_embedded
     );
     assert!(embedded_result.world_written);
     let overwritten = world_repository
-        .get_world_info("EmbeddedLore", false)
+        .get_world_info("EmbeddedLore")
         .await
         .expect("read overwritten world")
         .expect("world exists");
@@ -594,7 +594,7 @@ async fn character_service_embedded_resolution_overwrites_the_linked_world() {
     );
     assert_eq!(
         world_repository
-            .get_world_info("CurrentLore", false)
+            .get_world_info("CurrentLore")
             .await
             .expect("read current world")
             .expect("current world exists")
@@ -603,7 +603,7 @@ async fn character_service_embedded_resolution_overwrites_the_linked_world() {
     );
     assert!(
         world_repository
-            .get_world_info("UpdatedLore", false)
+            .get_world_info("UpdatedLore")
             .await
             .expect("check unlinked embedded world")
             .is_none()
@@ -650,7 +650,7 @@ async fn character_service_rejects_stale_lorebook_resolution() {
         .expect_err("stale choice must not overwrite the newer local world");
     assert!(matches!(error, ApplicationError::Conflict(_)));
     let current = world_repository
-        .get_world_info("Lore", false)
+        .get_world_info("Lore")
         .await
         .expect("read current world")
         .expect("current world exists");
@@ -703,7 +703,7 @@ async fn character_service_import_auto_links_embedded_lorebook_without_dropping_
         Some(&json!("kept"))
     );
     let world = world_repository
-        .get_world_info("Embedded Lore", false)
+        .get_world_info("Embedded Lore")
         .await
         .expect("read world info")
         .expect("world info imported");
@@ -734,7 +734,7 @@ async fn character_service_import_auto_links_embedded_lorebook_without_dropping_
     );
     assert!(
         world_repository
-            .get_world_info("Embedded Lore (1)", false)
+            .get_world_info("Embedded Lore (1)")
             .await
             .expect("read named import world info")
             .is_some()
@@ -886,7 +886,7 @@ async fn character_service_replace_and_copy_preserve_local_lorebook_binding() {
     );
 
     let current_world = world_repository
-        .get_world_info("Old Lore", false)
+        .get_world_info("Old Lore")
         .await
         .expect("read current world info")
         .expect("current world info exists");
@@ -896,7 +896,7 @@ async fn character_service_replace_and_copy_preserve_local_lorebook_binding() {
     );
     assert!(
         world_repository
-            .get_world_info("Old Lore (1)", false)
+            .get_world_info("Old Lore (1)")
             .await
             .expect("check implicit lorebook copy")
             .is_none()
@@ -922,7 +922,7 @@ async fn character_service_replace_and_copy_preserve_local_lorebook_binding() {
     assert_eq!(resolved.world, "Old Lore");
     assert_eq!(resolved.affected_world.as_deref(), Some("Old Lore (1)"));
     let copy = world_repository
-        .get_world_info("Old Lore (1)", false)
+        .get_world_info("Old Lore (1)")
         .await
         .expect("read copied world")
         .expect("copy exists");
@@ -932,7 +932,7 @@ async fn character_service_replace_and_copy_preserve_local_lorebook_binding() {
     );
     assert_eq!(
         world_repository
-            .get_world_info("Old Lore", false)
+            .get_world_info("Old Lore")
             .await
             .expect("read original world"),
         Some(current_world)
@@ -1008,14 +1008,14 @@ async fn character_delete_removes_only_string_linked_lorebooks() {
 
     assert!(
         world_repository
-            .get_world_info("Lore", false)
+            .get_world_info("Lore")
             .await
             .expect("read linked world")
             .is_none()
     );
     assert!(
         world_repository
-            .get_world_info("42", false)
+            .get_world_info("42")
             .await
             .expect("read numeric world")
             .is_some()

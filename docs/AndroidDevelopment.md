@@ -484,17 +484,15 @@ Android WebView 可能暴露 `navigator.clipboard.writeText()`，却在调用时
 
 ## 11. Android 大型 byte ingress
 
-Tauri 2.11.5 在 Android 上仍不支持 `InvokeBody::Raw`。业务 payload 进入完整 invoke envelope 后，nested `Uint8Array` 会被 JSON serializer 展开为 `number[]`；大型 payload 会因此产生不可接受的逐 byte 对象化内存开销。
+Tauri Android 当前不支持 raw byte invoke；嵌套 `Uint8Array` 会被编码为数字数组，放大内存占用。
 
-聊天完整保存与 metadata 写入共用[聊天提交会话](CurrentState/ChatPayload.md#3-统一聊天提交)。Android 传输遵循：
+聊天与世界书使用[共享提交会话](CurrentState/ChatPayload.md#3-统一聊天提交)：
 
-- Android 的大型 JS -> Rust bytes 不得以 raw/numeric-array payload 穿过 Tauri invoke。
-- base64 只能按 host 返回的 frame cap 逐帧生成和发送，不得先物化完整文件的 base64 表示。
-- 每次只有一帧在途，按原始字节数校验 ACK 与接收总量；失败不得回退 plugin-fs raw 路径。
-- renderer 只持有 opaque session ID，不接收 staging/target host path。
-- generic `stage_upload_*` 继续服务 avatar、import 与普通 Blob 物化，不参与聊天提交。
+- 按 host 帧上限仅编码当前帧的 base64，收到 ACK 后再发送下一帧；失败不回退 raw 传输。
+- 前端只持有会话 ID，暂存与目标路径由 Rust 管理。
+- 普通文件上传仍使用 `stage_upload_*`，不承担文档发布。
 
-Tauri 版本升级后也必须重新验证运行时 envelope，不能仅凭 API 表面接受 `Uint8Array` 就假定 Android Raw IPC 已可用。
+升级 Tauri 后需在真机验证传输支持，不能仅依据 API 类型判断。
 
 ## 12. LAN Sync 多播发现
 

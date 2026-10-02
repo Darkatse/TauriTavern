@@ -942,7 +942,7 @@ impl CharacterService {
         let embedded_canonical = Self::canonical_character_book_for_compare(embedded_book)?;
         let Some(world_info) = self
             .world_info_repository
-            .get_world_info(&world_name, false)
+            .get_world_info(&world_name)
             .await?
         else {
             return Ok(CharacterLorebookConflictDto {
@@ -1107,7 +1107,7 @@ impl CharacterService {
         let current_available = !world_name.is_empty()
             && self
                 .world_info_repository
-                .get_world_info(&world_name, false)
+                .get_world_info(&world_name)
                 .await?
                 .is_some();
         let linked_world = if current_available {
@@ -1175,11 +1175,7 @@ impl CharacterService {
             return;
         };
 
-        let materialized = match self
-            .world_info_repository
-            .get_world_info(world_name, false)
-            .await
-        {
+        let materialized = match self.world_info_repository.get_world_info(world_name).await {
             Ok(Some(world_info)) => {
                 Self::apply_materialized_lorebook(character, world_name, &world_info)
             }
@@ -1293,7 +1289,7 @@ impl CharacterService {
 
         let existing = self
             .world_info_repository
-            .get_world_info(&base_name, false)
+            .get_world_info(&base_name)
             .await?;
 
         if let Some(existing_payload) = existing {
@@ -1352,7 +1348,7 @@ impl CharacterService {
             let candidate = Self::indexed_world_name(base_name, suffix)?;
             match self
                 .world_info_repository
-                .get_world_info(&candidate, false)
+                .get_world_info(&candidate)
                 .await?
             {
                 Some(candidate_payload)
@@ -1456,7 +1452,7 @@ impl CharacterService {
 
         let world_info = self
             .world_info_repository
-            .get_world_info(world_name, false)
+            .get_world_info(world_name)
             .await?
             .ok_or_else(|| {
                 DomainError::NotFound(format!("World info file {} doesn't exist", world_name))

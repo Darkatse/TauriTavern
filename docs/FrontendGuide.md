@@ -382,7 +382,7 @@ TauriTavern 自有的状态型 UI 作为 SillyTavern first-party extension 挂�
 
 用于快速定位移动端/低端机型的主线程卡顿、DOM 膨胀、以及 invoke 热点。
 
-- 默认关闭：未启用时不会加载 HUD 模块，也不会包裹 `context.safeInvoke`（prod 默认近似零成本）。
+- 默认关闭。
 - 启用（需 reload 才能抓启动打点）：
   - 控制台：`localStorage.setItem('tt:perf','1'); location.reload();`
   - 或 URL：`?ttPerf=1`

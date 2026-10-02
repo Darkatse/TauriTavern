@@ -1,46 +1,30 @@
-use serde_json::Value;
 use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
+use crate::presentation::commands::chunk_body::{chunk_bytes_from_request, commit_headers};
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::world_info_dto::{
-    DeleteWorldInfoDto, GetWorldInfoDto, GetWorldInfosBatchDto, GetWorldInfosBatchResponseDto,
-    ImportWorldInfoDto, ImportWorldInfoResponseDto, NormalizeWorldInfoNameDto,
-    NormalizeWorldInfoNameResponseDto, SaveWorldInfoDto,
+    DeleteWorldInfoDto, GetWorldInfoDto, ImportWorldInfoDto, ImportWorldInfoResponseDto,
+    NormalizeWorldInfoNameDto, NormalizeWorldInfoNameResponseDto,
 };
+use tt_contracts::byte_commit::CommitBegin;
 
 #[tauri::command]
 pub async fn get_world_info(
     dto: GetWorldInfoDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<Value, CommandError> {
+) -> Result<tauri::ipc::Response, CommandError> {
     log_command(format!("get_world_info, name: {}", dto.name));
 
-    app_state
+    let result = app_state
         .services
         .world_info_service
         .get_world_info(&dto.name)
         .await
-        .map_err(map_command_error("Failed to get world info"))
-}
-
-#[tauri::command]
-pub async fn get_world_infos_batch(
-    dto: GetWorldInfosBatchDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<GetWorldInfosBatchResponseDto, CommandError> {
-    log_command(format!("get_world_infos_batch, count: {}", dto.names.len()));
-
-    let items = app_state
-        .services
-        .world_info_service
-        .get_world_infos_batch(dto.names)
-        .await
-        .map_err(map_command_error("Failed to get world infos batch"))?;
-
-    Ok(GetWorldInfosBatchResponseDto { items })
+        .map_err(map_command_error("Failed to get world info"))?;
+    Ok(tauri::ipc::Response::new(result.bytes))
 }
 
 #[tauri::command]
@@ -63,18 +47,57 @@ pub async fn normalize_world_info_name(
 }
 
 #[tauri::command]
-pub async fn save_world_info(
-    dto: SaveWorldInfoDto,
+pub async fn begin_world_info_commit(
     app_state: State<'_, Arc<AppState>>,
-) -> Result<(), CommandError> {
-    log_command(format!("save_world_info, name: {}", dto.name));
-
+) -> Result<CommitBegin, CommandError> {
     app_state
         .services
         .world_info_service
-        .save_world_info(&dto.name, dto.data)
+        .begin_commit()
         .await
-        .map_err(map_command_error("Failed to save world info"))
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn append_world_info_commit_chunk(
+    request: tauri::ipc::Request<'_>,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<u64, CommandError> {
+    let (session_id, offset) = commit_headers(&request)?;
+    let bytes = chunk_bytes_from_request(&request)?;
+    app_state
+        .services
+        .world_info_service
+        .append_commit(session_id, offset, &bytes)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn finish_world_info_commit(
+    session_id: String,
+    expected_size: u64,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    app_state
+        .services
+        .world_info_service
+        .finish_commit(&session_id, expected_size)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn abort_world_info_commit(
+    session_id: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<(), CommandError> {
+    app_state
+        .services
+        .world_info_service
+        .abort_commit(&session_id)
+        .await
+        .map_err(Into::into)
 }
 
 #[tauri::command]

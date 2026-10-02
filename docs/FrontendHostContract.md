@@ -231,15 +231,17 @@
 
 ### 4.3 路由表（Public）
 
-路由定义集中在 `src/tauri/main/routes/*`，其路径本身属于 Public Contract（上游/插件会直接请求）。
+路由位于 `src/tauri/main/routes/*`；公共契约覆盖上游兼容及生态实际依赖的接口。
 
-第一方聊天完整加载与保存直接调用内部 payload transport；兼容 `/api/chats/get`、`/api/chats/group/get`、`/api/chats/save`、`/api/chats/group/save` 仍可由扩展主动调用。第一方操作不再产生这些 Fetch 请求，不能依赖 monkeypatch Fetch 观察它们；公开保存入口及既有业务事件不变。兼容保存成功仍为 `200 { ok: true }`，明确的 integrity 冲突仍为 `400 { error: 'integrity' }`，其他提交或清理失败不得仅因文案包含 integrity 而返回该冲突响应。
+第一方聊天读写直连内部 transport，不产生兼容路由的 Fetch 请求；外部观察应使用既有业务事件。`/api/chats/get`、`/api/chats/group/get`、`/api/chats/save`、`/api/chats/group/save` 仍供扩展调用。保存成功为 `200 { ok: true }`；integrity 冲突按错误码识别，返回 `400 { error: 'integrity' }`。
 
 聊天 get/save 遵循 [ChatPayload §1.1](CurrentState/ChatPayload.md#11-统一格式底线)；无记录 get 返回空数组。
 
-`saveMetadata()` / `getContext().saveMetadata()` 只替换 header 内的整个 `chat_metadata`，正文保持原字节。与 SillyTavern 1.18.0 不同，消息修改必须显式调用完整保存。metadata 的 debounce 保持 1000 ms，不取消待执行的完整保存；integrity 确认后强制完整保存，拒绝则 reload，普通失败不回退。新群聊的首次问候事件可以立即保存 metadata，后续初始化不得覆盖事件修改。职责与成本见 [ChatPayload §3.1](CurrentState/ChatPayload.md#31-metadata-保存)。
+`saveMetadata()` / `getContext().saveMetadata()` 只替换 `chat_metadata`，正文保持原字节；消息修改须调用完整保存。调度、初始化与错误处理见 [ChatPayload §3.1](CurrentState/ChatPayload.md#31-metadata-保存)。
 
 启用[历史滑动按需加载](CurrentState/ChatPayload.md#21-历史滑动按需加载)时，`getContext().chat` 的历史候选槽位允许为 null；兼容 get、导出与保存文件保持完整。
+
+世界书 get/edit 直接读写磁盘，保留未知字段和键顺序，不合并编辑缓存；get 缺失文件返回空 `entries`。`WORLDINFO_UPDATED` 仅在保存成功后发送；读取或保存失败阻止依赖该世界书的生成。
 
 最关键的启动依赖：
 
@@ -309,11 +311,7 @@ header 名也可从 `window.__TAURITAVERN__?.traceHeader` 获取（用于避免�
 
 ### 5.1 Perf HUD（Project，作为验收工具）
 
-- 开关：
-  - `localStorage.setItem('tt:perf','1')` 后 reload
-  - 或 URL 参数 `?ttPerf=1`
-- 全局对象：
-  - `window.__TAURITAVERN_PERF__`（见 `src/tauri/main/perf/perf-hud.js`）
+`window.__TAURITAVERN_PERF__` 是性能观测入口；启用与报告导出见 [FrontendGuide §10.1](FrontendGuide.md#101-轻量性能仪表perf-hud)。
 
 ### 5.2 移动端运行时兼容（Public in practice）
 

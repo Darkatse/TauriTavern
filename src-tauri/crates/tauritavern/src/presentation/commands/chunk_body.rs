@@ -8,6 +8,28 @@ use crate::presentation::errors::CommandError;
 const CHUNK_ENCODING_BASE64: &str = "base64";
 const HEADER_CHUNK_ENCODING: &str = "chunk-encoding";
 
+pub(super) fn commit_headers<'a>(
+    request: &'a tauri::ipc::Request<'_>,
+) -> Result<(&'a str, u64), CommandError> {
+    let session_id = required_header(request, "session-id")?;
+    let offset = required_header(request, "offset")?
+        .parse::<u64>()
+        .map_err(|_| CommandError::BadRequest("Commit offset is invalid".into()))?;
+    Ok((session_id, offset))
+}
+
+fn required_header<'a>(
+    request: &'a tauri::ipc::Request<'_>,
+    name: &str,
+) -> Result<&'a str, CommandError> {
+    request
+        .headers()
+        .get(name)
+        .ok_or_else(|| CommandError::BadRequest(format!("Missing commit header: {name}")))?
+        .to_str()
+        .map_err(|_| CommandError::BadRequest(format!("Invalid commit header: {name}")))
+}
+
 pub(super) fn chunk_bytes_from_request<'a>(
     request: &'a tauri::ipc::Request<'_>,
 ) -> Result<Cow<'a, [u8]>, CommandError> {

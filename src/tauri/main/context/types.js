@@ -47,7 +47,7 @@ export {};
  *   flushInvokes: (command: TauriInvokeCommand) => Promise<void>;
  *   flushAllInvokes: () => Promise<void>;
  *   invokeBroker: any;
- *   invokeTransport: (command: TauriInvokeCommand, args?: any) => Promise<any>;
+ *   invokeTransport: TauriInvokeFn;
  *   normalizeCharacter: (character: any) => any;
  *   normalizeExtensions: (extensions: any) => any;
  *   getAllCharacters: (options?: { shallow?: boolean; forceRefresh?: boolean }) => Promise<any[]>;

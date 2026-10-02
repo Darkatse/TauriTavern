@@ -1,4 +1,13 @@
 import { Fuse } from '../lib.js';
+import {
+    flushWorldInfoSaves,
+    deleteWorldInfoDocument,
+    loadWorldInfo,
+    prefetchWorldInfos,
+    saveWorldInfo,
+    worldInfoCache,
+} from './world-info-persistence.js';
+
 import { isInlineDrawerOpen } from './drawers.js';
 
 import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, getExtensionPromptByName, saveMetadata, getCurrentChatId, create_save, createOrEditCharacter, name1, getOneCharacter, select_selected_character } from '../script.js';
@@ -20,16 +29,16 @@ import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandE
 import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { SlashCommandClosure } from './slash-commands/SlashCommandClosure.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
-import { StructuredCloneMap } from './util/StructuredCloneMap.js';
 import { renderTemplateAsync } from './templates.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
 import { normalizeWorldInfoActivationBatch } from './tauritavern/agent/world-info-activation.js';
-import { registerLifecycleFlushHandler } from '../tauri/main/services/lifecycle/lifecycle-flush-service.js';
 import { canPrefetchWorldInfoTokenCount, getWorldInfoTokenPrefetchBatch } from './world-info-token-prefetch.js';
 import { prepareWorldInfoEntries } from './world-info-entry-prepare.js';
 import { getMountedCodeMirrorEditor, mountCodeMirrorEditor } from './tauri/codemirror-editor.js';
+
+export { flushWorldInfoSaves, loadWorldInfo, saveWorldInfo, worldInfoCache };
 
 export const world_info_insertion_strategy = {
     evenly: 0,
@@ -89,76 +98,6 @@ export let world_info_use_group_scoring = false;
 export let world_info_character_strategy = world_info_insertion_strategy.character_first;
 export let world_info_budget_cap = 0;
 export let world_info_max_recursion_steps = 0;
-/** @type {Map<string, { data: any; revision: number }>} */
-const dirtyWorldInfos = new Map();
-let worldInfoDirtyRevision = 0;
-/** @type {Promise<void>} */
-let worldInfoFlushChain = Promise.resolve();
-
-/**
- * Flushes pending debounced lorebook saves to disk.
- *
- * This is required for correctness because some extensions/scripts run inside
- * isolated iframes (e.g. JSR/MVU) and therefore read lorebooks via /api (disk),
- * while the editor uses debounced persistence.
- *
- * @param {string} [reason]
- */
-export function flushWorldInfoSaves(reason = 'worldinfo_flush') {
-    const task = worldInfoFlushChain.then(async () => {
-        if (dirtyWorldInfos.size === 0) {
-            return;
-        }
-
-        const pending = Array.from(dirtyWorldInfos.keys());
-        for (const name of pending) {
-            const latest = dirtyWorldInfos.get(name);
-            if (!latest?.data) {
-                continue;
-            }
-
-            await _save(name, latest.data, latest.revision);
-        }
-    });
-
-    worldInfoFlushChain = task.catch(() => undefined);
-    return task;
-}
-
-const saveWorldDebounced = debounce(() => {
-    flushWorldInfoSaves('worldinfo_debounced_save').catch((error) => console.error(error));
-}, debounce_timeout.relaxed);
-
-let worldInfoFlushHooksInstalled = false;
-function installWorldInfoFlushHooks() {
-    if (worldInfoFlushHooksInstalled) {
-        return;
-    }
-    worldInfoFlushHooksInstalled = true;
-
-    /** @param {string} event */
-    const flushBefore = (event) => {
-        eventSource.makeFirst(event, async () => {
-            await flushWorldInfoSaves(`event:${event}`);
-        });
-    };
-
-    flushBefore(event_types.CHAT_CHANGED);
-    flushBefore(event_types.CHAT_LOADED);
-    flushBefore(event_types.GENERATION_STARTED);
-    flushBefore(event_types.GENERATE_BEFORE_COMBINE_PROMPTS);
-
-    /** @param {string} reason */
-    const flushSoon = (reason) => {
-        if (dirtyWorldInfos.size === 0) {
-            return Promise.resolve();
-        }
-        return flushWorldInfoSaves(reason).catch((error) => console.error(error));
-    };
-
-    registerLifecycleFlushHandler('world-info', flushSoon);
-}
-installWorldInfoFlushHooks();
 let worldInfoSettingsSavePending = false;
 const scheduleWorldInfoSettingsSave = debounce(() => {
     worldInfoSettingsSavePending = false;
@@ -965,20 +904,6 @@ export const wi_anchor_position = {
     before: 0,
     after: 1,
 };
-
-/**
- * The cache of all world info data that was loaded from the backend.
- *
- * Calling `loadWorldInfo` will fill this cache and utilize this cache, so should be the preferred way to load any world info data.
- * Only use the cache directly if you need synchronous access.
- *
- * This will return a deep clone of the data, so no way to modify the data without actually saving it.
- * Should generally be only used for readonly access.
- *
- * @type {StructuredCloneMap<string,object>}
- * */
-export const worldInfoCache = new StructuredCloneMap({ cloneOnGet: true, cloneOnSet: false });
-const worldInfoInFlight = new Map();
 
 /**
  * Gets the world info based on chat messages.
@@ -2176,109 +2101,6 @@ export async function showWorldEditor(name) {
 
     const wiData = await loadWorldInfo(name);
     await displayWorldEntries(name, wiData);
-}
-
-async function prefetchWorldInfos(names) {
-    const missing = [];
-    const seen = new Set();
-
-    for (const rawName of names) {
-        const name = typeof rawName === 'string' ? rawName : '';
-        if (name === '' || seen.has(name) || worldInfoCache.has(name)) {
-            continue;
-        }
-
-        seen.add(name);
-        missing.push(name);
-    }
-
-    if (!missing.length) {
-        return;
-    }
-
-    try {
-        const response = await fetch('/api/worldinfo/get-batch', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ names: missing }),
-            cache: 'no-cache',
-        });
-
-        if (response.ok) {
-            const payload = await response.json();
-            const items = Array.isArray(payload?.items) ? payload.items : [];
-            for (const item of items) {
-                const name = typeof item?.name === 'string' ? item.name : '';
-                if (name === '') {
-                    continue;
-                }
-
-                const data = item?.data;
-                if (!data || typeof data !== 'object' || Array.isArray(data)) {
-                    continue;
-                }
-
-                worldInfoCache.set(name, data);
-            }
-        } else {
-            console.warn(`[WI] World info get-batch failed: ${response.status}`);
-        }
-    } catch (error) {
-        console.warn('[WI] World info get-batch failed:', error);
-    }
-
-    const stillMissing = missing.filter((name) => !worldInfoCache.has(name));
-    if (stillMissing.length) {
-        await Promise.allSettled(stillMissing.map((name) => loadWorldInfo(name)));
-    }
-}
-
-/**
- * Loads world info from the backend.
- *
- * This function will return from `worldInfoCache` if it has already been loaded before.
- *
- * @param {string} name - The name of the world to load
- * @return {Promise<Object|null>} A promise that resolves to the loaded world information, or null if the request fails.
- */
-export async function loadWorldInfo(name) {
-    name = String(name ?? '');
-    if (name === '') return;
-
-    if (worldInfoCache.has(name)) {
-        return worldInfoCache.get(name);
-    }
-
-    const inFlight = worldInfoInFlight.get(name);
-    if (inFlight) {
-        return inFlight;
-    }
-
-    const task = (async () => {
-        const response = await fetch('/api/worldinfo/get', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ name: name }),
-            cache: 'no-cache',
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            worldInfoCache.set(name, data);
-            return data;
-        }
-
-        return null;
-    })();
-
-    worldInfoInFlight.set(name, task);
-    task.finally(() => {
-        if (worldInfoInFlight.get(name) === task) {
-            worldInfoInFlight.delete(name);
-        }
-    });
-
-    return task;
 }
 
 export async function updateWorldInfoList() {
@@ -4383,77 +4205,6 @@ export function createWorldInfoEntry(_name, data) {
     return newEntry;
 }
 
-async function _save(name, data, revision = 0) {
-    // Prevent double saving if both immediate and debounced save are called
-    cancelDebounce(saveWorldDebounced);
-
-    const response = await fetch('/api/worldinfo/edit', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ name: name, data: data }),
-    });
-    if (!response.ok) {
-        let message = response.statusText || 'Unknown error';
-        try {
-            const payload = await response.json();
-            message = payload?.error || payload?.message || message;
-        } catch {
-            try {
-                const text = await response.text();
-                if (text && text.trim()) {
-                    message = text.trim();
-                }
-            } catch {
-                // Preserve previous error message.
-            }
-        }
-
-        const error = new Error(`World info save failed (${response.status}) for "${name}": ${message}`);
-        toastr.error(error.message);
-        throw error;
-    }
-
-    await eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
-    if (revision > 0) {
-        const latest = dirtyWorldInfos.get(name);
-        if (latest?.revision === revision) {
-            dirtyWorldInfos.delete(name);
-        }
-    }
-}
-
-
-/**
- * Saves the world info
- *
- * This will also refresh the `worldInfoCache`.
- * Note, for performance reasons the saved cache will not make a deep clone of the data.
- * It is your responsibility to not modify the saved data object after calling this function, or there will be data inconsistencies.
- * Call `loadWorldInfoData` or query directly from cache if you need the object again.
- *
- * @param {string} name - The name of the world info
- * @param {any} data - The data to be saved
- * @param {boolean} [immediately=false] - Whether to save immediately or use debouncing
- * @return {Promise<void>} A promise that resolves when the world info is saved
- */
-export async function saveWorldInfo(name, data, immediately = false) {
-    name = String(name ?? '');
-    if (name === '' || !data) {
-        return;
-    }
-
-    // Update cache immediately, so any future call can pull from this
-    worldInfoCache.set(name, data);
-    const revision = (worldInfoDirtyRevision += 1);
-    dirtyWorldInfos.set(name, { data, revision });
-
-    if (immediately) {
-        return await _save(name, data, revision);
-    }
-
-    saveWorldDebounced();
-}
-
 async function renameWorldInfo(name, data) {
     const oldName = name;
     let newName = await Popup.show.input('Rename World Info', 'Enter a new name:', oldName);
@@ -4621,23 +4372,12 @@ async function updateWorldInfoLinks(oldName, newName) {
  */
 export async function deleteWorldInfo(worldInfoName, { saveLinkedCharacter = true } = {}) {
     worldInfoName = String(worldInfoName ?? '');
-    dirtyWorldInfos.delete(worldInfoName);
     if (!world_names.includes(worldInfoName)) {
         return false;
     }
 
-    const response = await fetch('/api/worldinfo/delete', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ name: worldInfoName }),
-    });
-
-    if (!response.ok) {
+    if (!await deleteWorldInfoDocument(worldInfoName)) {
         return false;
-    }
-
-    if (worldInfoCache.has(worldInfoName)) {
-        worldInfoCache.delete(worldInfoName);
     }
 
     const existingWorldIndex = selected_world_info.findIndex((e) => e === worldInfoName);
@@ -4917,6 +4657,8 @@ async function collectWorldInfoEntries() {
         worldsToPrefetch.add(personaWorld);
     }
 
+    // Event listeners isolate failures; enforce this dependency at the actual read boundary.
+    await flushWorldInfoSaves('worldinfo_read', worldsToPrefetch);
     await prefetchWorldInfos(worldsToPrefetch);
 
     const [
@@ -4975,8 +4717,8 @@ export async function getSortedEntries() {
         return structuredClone(entries);
     }
     catch (e) {
-        console.error(e);
-        return [];
+        toastr.error(e.message, t`World Info could not be loaded`);
+        throw e;
     }
 }
 

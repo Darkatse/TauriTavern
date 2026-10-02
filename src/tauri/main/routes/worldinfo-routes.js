@@ -1,7 +1,13 @@
-import { createWorldInfoBroker } from '../brokers/world-info-broker.js';
+import { commitBytes } from '../services/files/byte-commit.js';
+import { textFragmentsToByteChunks } from '../kernel/utf8.js';
 
 export function registerWorldInfoRoutes(router, context, { jsonResponse }) {
-    const worldInfoBroker = createWorldInfoBroker({ context });
+    function jsonBytes(bytes) {
+        if (!(bytes instanceof ArrayBuffer) && !ArrayBuffer.isView(bytes)) {
+            throw new Error('Host returned a non-binary world info response');
+        }
+        return new Response(bytes, { headers: { 'Content-Type': 'application/json' } });
+    }
 
     router.post('/api/worldinfo/get', async ({ body }) => {
         const name = typeof body?.name === 'string' ? body.name : '';
@@ -9,43 +15,8 @@ export function registerWorldInfoRoutes(router, context, { jsonResponse }) {
             return jsonResponse({ error: 'World file must have a name' }, 400);
         }
 
-        const worldInfo = await worldInfoBroker.get(name);
-
-        return jsonResponse(worldInfo || { entries: {} });
-    });
-
-    router.post('/api/worldinfo/get-batch', async ({ body }) => {
-        const names = body?.names;
-        if (!Array.isArray(names)) {
-            return jsonResponse({ error: 'World info get-batch requires a names array' }, 400);
-        }
-
-        const seen = new Set();
-        const requestedNames = [];
-
-        for (const rawName of names) {
-            if (typeof rawName !== 'string') {
-                continue;
-            }
-
-            const name = rawName;
-            if (name === '' || seen.has(name)) {
-                continue;
-            }
-
-            seen.add(name);
-            requestedNames.push(name);
-        }
-
-        if (!requestedNames.length) {
-            return jsonResponse({ items: [] });
-        }
-
-        const result = await context.safeInvoke('get_world_infos_batch', {
-            dto: { names: requestedNames },
-        });
-
-        return jsonResponse(result || { items: [] });
+        const bytes = await context.safeInvoke('get_world_info', { dto: { name } });
+        return jsonBytes(bytes);
     });
 
     router.post('/api/worldinfo/sanitize-name', async ({ body }) => {
@@ -65,26 +36,23 @@ export function registerWorldInfoRoutes(router, context, { jsonResponse }) {
     });
 
     router.post('/api/worldinfo/edit', async ({ body }) => {
-        const name = typeof body?.name === 'string' ? body.name : '';
-        const data = body?.data;
-
-        if (name === '') {
-            return jsonResponse({ error: 'World file must have a name' }, 400);
+        // Fetch already supplies a JSON snapshot; jQuery may supply an object instead.
+        const text = typeof body === 'string' ? body : JSON.stringify(body);
+        if (typeof text !== 'string') {
+            return jsonResponse({ error: 'World info replacement requires JSON' }, 400);
         }
-
-        if (!data || typeof data !== 'object' || Array.isArray(data)) {
-            return jsonResponse({ error: 'Is not a valid world info file' }, 400);
-        }
-
-        await context.safeInvoke('save_world_info', {
-            dto: {
-                name,
-                data,
-            },
+        await commitBytes({
+            begin: () => context.invokeTransport('begin_world_info_commit'),
+            frames: maxBytes => textFragmentsToByteChunks([text], maxBytes),
+            append: (data, options) => context.invokeTransport('append_world_info_commit_chunk', data, options),
+            finish: (sessionId, expectedSize) => context.invokeTransport('finish_world_info_commit', {
+                sessionId,
+                expectedSize,
+            }),
+            abort: sessionId => context.invokeTransport('abort_world_info_commit', { sessionId }),
         });
-
         return jsonResponse({ ok: true });
-    });
+    }, { body: 'text' });
 
     router.post('/api/worldinfo/delete', async ({ body }) => {
         const name = typeof body?.name === 'string' ? body.name : '';

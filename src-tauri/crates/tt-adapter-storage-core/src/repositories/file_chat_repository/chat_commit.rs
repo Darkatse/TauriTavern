@@ -1,5 +1,5 @@
 use crate::chat_jsonl::{parse_header_integrity, read_header_record_async};
-use std::io;
+use crate::commit_stage::{CommitSession, CommitStage};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -7,23 +7,15 @@ use crate::file_system::persist_file;
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
+use tt_contracts::byte_commit::CommitBegin;
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_commit_repository::{
-    ChatCommitBegin, ChatCommitOperation, ChatCommitRepository, ChatCommitResult, ChatCommitTarget,
-    ChatSwipeSource, ColdSwipeCommitSource,
+    ChatCommitOperation, ChatCommitRepository, ChatCommitTarget, ChatSwipeSource,
+    ColdSwipeCommitSource,
 };
-use uuid::Uuid;
 
 use super::integrity::verify_integrity_match;
 use super::{ContentSignature, FileChatRepository};
-
-// Smaller frames shorten Android's synchronous string IPC calls.
-const ANDROID_MAX_FRAME_BYTES: u64 = 256 * 1024;
-const IOS_MAX_FRAME_BYTES: u64 = 1024 * 1024;
-const DESKTOP_MAX_FRAME_BYTES: u64 = 4 * 1024 * 1024;
-const MAX_ACTIVE_CHAT_COMMIT_SESSIONS: usize = 8;
 
 // Keep digest semantics deterministic in unit tests; production only hashes on hardware backends.
 #[cfg(test)]
@@ -57,76 +49,16 @@ fn new_content_hasher() -> Option<Sha256> {
     None
 }
 
-pub(super) struct CommitSession {
+pub(super) struct CommitMetadata {
     target: ChatCommitTarget,
     target_path: PathBuf,
     operation: ChatCommitOperation,
-    stage: CommitStage,
-}
-
-/// The received bytes and their original writing handle, owned by one commit session.
-struct CommitStage {
-    path: PathBuf,
-    file: fs::File,
     content_hasher: Option<(u64, Sha256)>,
-    accepted_offset: u64,
-}
-
-impl CommitStage {
-    async fn validate_size(&mut self, expected_size: u64) -> Result<(), DomainError> {
-        self.file.flush().await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to flush chat commit stage {}: {error}",
-                self.path.display()
-            ))
-        })?;
-        let actual_size = self
-            .file
-            .metadata()
-            .await
-            .map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to stat chat commit stage {}: {error}",
-                    self.path.display()
-                ))
-            })?
-            .len();
-        if expected_size != self.accepted_offset || actual_size != self.accepted_offset {
-            return Err(DomainError::InvalidData(format!(
-                "Chat commit size mismatch: expected {}, accepted {}, staged {}",
-                expected_size, self.accepted_offset, actual_size,
-            )));
-        }
-        Ok(())
-    }
 }
 
 impl FileChatRepository {
-    pub async fn cleanup_orphaned_chat_commit_staging(&self) -> Result<(), DomainError> {
-        match fs::remove_dir_all(&self.chat_commit_staging_dir).await {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(DomainError::InternalError(format!(
-                "Failed to clean chat commit staging directory {}: {}",
-                self.chat_commit_staging_dir.display(),
-                error
-            ))),
-        }
-    }
-
-    fn chat_commit_max_frame_bytes() -> u64 {
-        if cfg!(target_os = "android") {
-            ANDROID_MAX_FRAME_BYTES
-        } else if cfg!(target_os = "ios") {
-            IOS_MAX_FRAME_BYTES
-        } else {
-            DESKTOP_MAX_FRAME_BYTES
-        }
-    }
-
-    fn parse_chat_commit_session_id(session_id: &str) -> Result<Uuid, DomainError> {
-        Uuid::parse_str(session_id)
-            .map_err(|_| DomainError::InvalidData("Invalid chat commit session id".to_string()))
+    pub async fn cleanup_orphaned_chat_commit_staging(&self) {
+        self.chat_commit_sessions.cleanup_orphans().await;
     }
 
     pub(super) async fn resolve_chat_commit_target(
@@ -170,11 +102,11 @@ impl FileChatRepository {
         publish_path: &Path,
         force: bool,
         cold_source: Option<ColdSwipeCommitSource>,
-    ) -> Result<u64, DomainError> {
+        content_hasher: Option<(u64, Sha256)>,
+    ) -> Result<(), DomainError> {
         let CommitStage {
             path,
             file,
-            content_hasher,
             accepted_offset,
         } = stage;
         // Only the header is interpreted here; body validation belongs to readers.
@@ -236,19 +168,7 @@ impl FileChatRepository {
             self.record_current_content_signature(target_path, epoch, signature)
                 .await;
         }
-        Ok(size)
-    }
-
-    async fn remove_chat_commit_stage(&self, stage_path: &Path) {
-        match fs::remove_file(stage_path).await {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => tracing::error!(
-                path = %stage_path.display(),
-                error = %error,
-                "Failed to remove chat commit stage",
-            ),
-        }
+        Ok(())
     }
 }
 
@@ -266,7 +186,7 @@ impl ChatCommitRepository for FileChatRepository {
         &self,
         target: ChatCommitTarget,
         operation: ChatCommitOperation,
-    ) -> Result<ChatCommitBegin, DomainError> {
+    ) -> Result<CommitBegin, DomainError> {
         let target_path = self.resolve_chat_commit_target(&target).await?;
         if let Some(parent) = target_path.parent() {
             fs::create_dir_all(parent).await.map_err(|error| {
@@ -277,33 +197,6 @@ impl ChatCommitRepository for FileChatRepository {
                 ))
             })?;
         }
-        fs::create_dir_all(&self.chat_commit_staging_dir)
-            .await
-            .map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to create chat commit staging directory {}: {}",
-                    self.chat_commit_staging_dir.display(),
-                    error
-                ))
-            })?;
-
-        let session_id = Uuid::new_v4();
-        let stage_path = self
-            .chat_commit_staging_dir
-            .join(format!("{session_id}.partial"));
-        let file = fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&stage_path)
-            .await
-            .map_err(|error| {
-                DomainError::InternalError(format!(
-                    "Failed to create chat commit stage {}: {}",
-                    stage_path.display(),
-                    error
-                ))
-            })?;
-        let max_frame_bytes = Self::chat_commit_max_frame_bytes();
         let should_hash = self
             .backup_policy
             .try_read()
@@ -317,34 +210,14 @@ impl ChatCommitRepository for FileChatRepository {
             } else {
                 None
             };
-        let session = Arc::new(Mutex::new(Some(CommitSession {
-            target,
-            target_path,
-            operation,
-            stage: CommitStage {
-                path: stage_path.clone(),
-                file,
+        self.chat_commit_sessions
+            .begin(CommitMetadata {
+                target,
+                target_path,
+                operation,
                 content_hasher,
-                accepted_offset: 0,
-            },
-        })));
-
-        let mut sessions = self.chat_commit_sessions.lock().await;
-        if sessions.len() >= MAX_ACTIVE_CHAT_COMMIT_SESSIONS {
-            drop(sessions);
-            drop(session);
-            self.remove_chat_commit_stage(&stage_path).await;
-            return Err(DomainError::Conflict(
-                "Too many active chat commit sessions".to_string(),
-            ));
-        }
-        sessions.insert(session_id, session);
-        drop(sessions);
-
-        Ok(ChatCommitBegin {
-            session_id: session_id.to_string(),
-            max_frame_bytes,
-        })
+            })
+            .await
     }
 
     async fn append(
@@ -353,157 +226,73 @@ impl ChatCommitRepository for FileChatRepository {
         offset: u64,
         bytes: &[u8],
     ) -> Result<u64, DomainError> {
-        let parsed_session_id = Self::parse_chat_commit_session_id(session_id)?;
-        let session = self
-            .chat_commit_sessions
-            .lock()
+        self.chat_commit_sessions
+            .append(session_id, offset, bytes, |metadata| {
+                if matches!(
+                    metadata.operation,
+                    ChatCommitOperation::Payload {
+                        cold_source: None,
+                        ..
+                    }
+                ) && let Some((_, hasher)) = metadata.content_hasher.as_mut()
+                {
+                    hasher.update(bytes);
+                }
+            })
             .await
-            .get(&parsed_session_id)
-            .cloned()
-            .ok_or_else(|| {
-                DomainError::NotFound(format!("Chat commit session not found: {session_id}"))
-            })?;
-        let mut active = session.lock().await;
-        let session = active.as_mut().ok_or_else(|| {
-            DomainError::Conflict(format!(
-                "Chat commit session no longer accepts chunks: {session_id}"
-            ))
-        })?;
-
-        if bytes.is_empty() {
-            return Err(DomainError::InvalidData(
-                "Chat commit frame cannot be empty".to_string(),
-            ));
-        }
-        let max_frame_bytes = Self::chat_commit_max_frame_bytes();
-        if bytes.len() as u64 > max_frame_bytes {
-            return Err(DomainError::InvalidData(format!(
-                "Chat commit frame exceeds {} bytes",
-                max_frame_bytes
-            )));
-        }
-        if offset != session.stage.accepted_offset {
-            return Err(DomainError::InvalidData(format!(
-                "Chat commit offset mismatch: expected {}, got {}",
-                session.stage.accepted_offset, offset
-            )));
-        }
-
-        session.stage.file.write_all(bytes).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to append chat commit session {session_id}: {error}"
-            ))
-        })?;
-        if matches!(
-            session.operation,
-            ChatCommitOperation::Payload {
-                cold_source: None,
-                ..
-            }
-        ) && let Some((_, content_hasher)) = session.stage.content_hasher.as_mut()
-        {
-            content_hasher.update(bytes);
-        }
-        session.stage.accepted_offset += bytes.len() as u64;
-        Ok(session.stage.accepted_offset)
     }
 
     async fn finish(
         &self,
         session_id: &str,
         expected_size: u64,
-    ) -> Result<ChatCommitResult, DomainError> {
-        let parsed_session_id = Self::parse_chat_commit_session_id(session_id)?;
-        let session = self
-            .chat_commit_sessions
-            .lock()
+    ) -> Result<ChatCommitTarget, DomainError> {
+        self.chat_commit_sessions
+            .finish(session_id, expected_size, |session| async move {
+                let CommitSession { stage, metadata } = session;
+                let CommitMetadata {
+                    target,
+                    target_path,
+                    operation,
+                    content_hasher,
+                } = metadata;
+                let stage_path = stage.path.clone();
+                let publish_path = stage.publish_path();
+                match operation {
+                    ChatCommitOperation::Payload { force, cold_source } => {
+                        self.commit_payload_stage(
+                            &target_path,
+                            stage,
+                            &publish_path,
+                            force,
+                            cold_source,
+                            content_hasher,
+                        )
+                        .await?
+                    }
+                    ChatCommitOperation::Metadata => {
+                        drop(stage.file);
+                        self.commit_metadata_stage(&target_path, &stage_path, &publish_path, None)
+                            .await?
+                    }
+                    ChatCommitOperation::MetadataExtension { namespace } => {
+                        drop(stage.file);
+                        self.commit_metadata_stage(
+                            &target_path,
+                            &stage_path,
+                            &publish_path,
+                            Some(namespace),
+                        )
+                        .await?
+                    }
+                };
+                self.invalidate_chat_caches(&target, &target_path).await?;
+                Ok(target)
+            })
             .await
-            .remove(&parsed_session_id)
-            .ok_or_else(|| {
-                DomainError::NotFound(format!("Chat commit session not found: {session_id}"))
-            })?;
-        let CommitSession {
-            target,
-            target_path,
-            operation,
-            mut stage,
-        } = session
-            .lock()
-            .await
-            .take()
-            .expect("claimed chat commit session must be active");
-        let stage_path = stage.path.clone();
-        let publish_path = stage_path.with_extension("publish");
-        let accepted_size = stage.accepted_offset;
-
-        let result = async {
-            stage.validate_size(expected_size).await?;
-            match operation {
-                ChatCommitOperation::Payload { force, cold_source } => {
-                    self.commit_payload_stage(
-                        &target_path,
-                        stage,
-                        &publish_path,
-                        force,
-                        cold_source,
-                    )
-                    .await
-                }
-                ChatCommitOperation::Metadata => {
-                    drop(stage.file);
-                    self.commit_metadata_stage(&target_path, &stage_path, &publish_path, None)
-                        .await
-                }
-                ChatCommitOperation::MetadataExtension { namespace } => {
-                    drop(stage.file);
-                    self.commit_metadata_stage(
-                        &target_path,
-                        &stage_path,
-                        &publish_path,
-                        Some(namespace),
-                    )
-                    .await
-                }
-            }
-        }
-        .await;
-
-        // A published stage has already been renamed; cleanup also accepts absent paths.
-        self.remove_chat_commit_stage(&stage_path).await;
-        self.remove_chat_commit_stage(&publish_path).await;
-        let size = result?;
-        self.invalidate_chat_caches(&target, &target_path).await?;
-        Ok(ChatCommitResult {
-            target,
-            accepted_size,
-            size,
-        })
     }
 
     async fn abort(&self, session_id: &str) -> Result<(), DomainError> {
-        let parsed_session_id = Self::parse_chat_commit_session_id(session_id)?;
-        let Some(session) = self
-            .chat_commit_sessions
-            .lock()
-            .await
-            .remove(&parsed_session_id)
-        else {
-            return Ok(());
-        };
-        let session = session
-            .lock()
-            .await
-            .take()
-            .expect("claimed chat commit session must be active");
-        let stage_path = session.stage.path;
-        drop(session.stage.file);
-
-        match fs::remove_file(&stage_path).await {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(DomainError::InternalError(format!(
-                "Failed to abort chat commit session {session_id}: {error}"
-            ))),
-        }
+        self.chat_commit_sessions.abort(session_id).await
     }
 }

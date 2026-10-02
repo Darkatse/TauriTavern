@@ -73,16 +73,17 @@ impl FileChatRepository {
     }
 
     async fn create_restore_staging_path(&self) -> Result<std::path::PathBuf, DomainError> {
-        fs::create_dir_all(&self.chat_commit_staging_dir)
+        fs::create_dir_all(self.chat_commit_sessions.directory())
             .await
             .map_err(|error| {
                 DomainError::InternalError(format!(
                     "Failed to create chat restore staging directory {}: {error}",
-                    self.chat_commit_staging_dir.display()
+                    self.chat_commit_sessions.directory().display()
                 ))
             })?;
         Ok(self
-            .chat_commit_staging_dir
+            .chat_commit_sessions
+            .directory()
             .join(restore_staging_file_name()))
     }
 }

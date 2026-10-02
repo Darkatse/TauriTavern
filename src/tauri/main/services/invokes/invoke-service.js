@@ -21,7 +21,8 @@ import {
 export function createInvokeService({ invoke, policies }) {
     /** @param {Record<string, any> | null | undefined} args */
     function withTauriArgumentAliases(args) {
-        if (!args || typeof args !== 'object' || Array.isArray(args)) {
+        if (!args || typeof args !== 'object' || Array.isArray(args)
+            || ArrayBuffer.isView(args) || args instanceof ArrayBuffer) {
             return args;
         }
 
@@ -172,12 +173,13 @@ export function createInvokeService({ invoke, policies }) {
     /**
      * @param {TauriInvokeCommand} command
      * @param {any} args
+     * @param {{ headers?: HeadersInit }} [options]
      */
-    async function invokeTransport(command, args = {}) {
+    async function invokeTransport(command, args = {}, options) {
         const invokeArgs = withTauriArgumentAliases(args);
 
         try {
-            return await invoke(command, invokeArgs);
+            return await invoke(command, invokeArgs, options);
         } catch (error) {
             const message = normalizeInvokeErrorMessage(error, `Command failed: ${command}`);
             const details = findUpstreamFailureDetails(error);

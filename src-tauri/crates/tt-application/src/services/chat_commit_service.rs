@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use tt_contracts::byte_commit::CommitBegin;
 use tt_ports::repositories::chat_commit_repository::{
-    ChatCommitBegin, ChatCommitOperation, ChatCommitRepository, ChatCommitResult, ChatCommitTarget,
-    ChatSwipeSource,
+    ChatCommitOperation, ChatCommitRepository, ChatCommitTarget, ChatSwipeSource,
 };
 
 use crate::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
@@ -31,7 +31,7 @@ impl ChatCommitService {
         &self,
         locator: ChatHistoryLocator,
         operation: ChatCommitOperation,
-    ) -> Result<ChatCommitBegin, ApplicationError> {
+    ) -> Result<CommitBegin, ApplicationError> {
         validate_chat_history_locator(&locator)?;
         if let ChatCommitOperation::MetadataExtension { namespace } = &operation
             && namespace.trim().is_empty()
@@ -77,12 +77,12 @@ impl ChatCommitService {
         session_id: &str,
         expected_size: u64,
         commit_reason: CurrentCommitReason,
-    ) -> Result<ChatCommitResult, ApplicationError> {
-        let committed = self.repository.finish(session_id, expected_size).await?;
+    ) -> Result<(), ApplicationError> {
+        let target = self.repository.finish(session_id, expected_size).await?;
         self.chat_history_coordinator
-            .note_current_committed(committed.target.clone().into(), commit_reason)
+            .note_current_committed(target.into(), commit_reason)
             .await;
-        Ok(committed)
+        Ok(())
     }
 
     pub async fn abort(&self, session_id: &str) -> Result<(), ApplicationError> {

@@ -5525,8 +5525,16 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         creatorNotes: creatorNotes,
         trigger: GENERATION_TYPE_TRIGGERS.includes(type) ? type : 'normal',
     };
-    const { worldInfoString, worldInfoBefore, worldInfoAfter, worldInfoExamples, worldInfoDepth, outletEntries, worldInfoActivation } = await getWorldInfoPrompt(chatForWI, this_max_context, dryRun, globalScanData);
-    setExtensionPrompt(inject_ids.QUIET_PROMPT, '', extension_prompt_types.IN_PROMPT, 0, true);
+    let worldInfo;
+    try {
+        worldInfo = await getWorldInfoPrompt(chatForWI, this_max_context, dryRun, globalScanData);
+    } finally {
+        setExtensionPrompt(inject_ids.QUIET_PROMPT, '', extension_prompt_types.IN_PROMPT, 0, true);
+    }
+    const {
+        worldInfoString, worldInfoBefore, worldInfoAfter, worldInfoExamples,
+        worldInfoDepth, outletEntries, worldInfoActivation,
+    } = worldInfo;
     const includeActivatedWorldInfo = !agentMode || resolvedAgentContextPolicy.includeActivatedWorldInfo;
     const promptWorldInfoBefore = includeActivatedWorldInfo ? worldInfoBefore : '';
     const promptWorldInfoAfter = includeActivatedWorldInfo ? worldInfoAfter : '';

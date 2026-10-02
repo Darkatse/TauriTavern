@@ -42,8 +42,6 @@ function installRuntime(userAgent, invoke) {
 function createCommitHost({
     maxFrameBytes = 4,
     onAppend,
-    finishSizeDelta = 0,
-    publishedSizeDelta = 0,
     expectedColdSourceId,
     finishError,
     abortError,
@@ -81,7 +79,7 @@ function createCommitHost({
                 if (finishError) {
                     throw finishError;
                 }
-                return { acceptedSize: args.expectedSize + finishSizeDelta, size: args.expectedSize + publishedSizeDelta };
+                return undefined;
             }
 
             if (command === 'abort_chat_commit') {
@@ -224,17 +222,6 @@ test('chat payload commit surfaces abort failure with the original error', async
     }
 });
 
-test('chat payload commit rejects an inconsistent accepted size', async () => {
-    const host = createCommitHost({ finishSizeDelta: 1 });
-    const restore = installRuntime('Mozilla/5.0 (Macintosh)', host.invoke);
-
-    try {
-        await assert.rejects(() => commit([{ mes: 'finished' }]), /unexpected accepted size/i);
-    } finally {
-        restore();
-    }
-});
-
 for (const route of [
     {
         path: '/api/chats/save',
@@ -287,9 +274,9 @@ for (const route of [
     });
 }
 
-test('cold commit preserves the captured marker and accepts an expanded published size', async () => {
+test('cold commit captures source references before asynchronous transport', async () => {
     const payload = [{ chat_metadata:{}, tt_swipe_cold:{opaque_header_field:true} }, {mes:'active',swipe_id:1,swipes:[null,'active'],swipe_info:[null,{}],tt_swipe_cold:{sourceId:7,record:3}}];
-    const host = createCommitHost({ expectedColdSourceId:7, publishedSizeDelta:500 });
+    const host = createCommitHost({ expectedColdSourceId:7 });
     const restore = installRuntime('Desktop', host.invoke);
     try {
         const pending = commit(payload);

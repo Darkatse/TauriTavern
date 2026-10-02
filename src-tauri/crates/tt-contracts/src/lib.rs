@@ -1,5 +1,6 @@
 pub mod agent_profile_storage;
 pub mod agent_run_record;
+pub mod byte_commit;
 pub mod character;
 pub mod chat;
 pub mod client_asset_paths;

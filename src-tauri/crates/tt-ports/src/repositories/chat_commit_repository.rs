@@ -2,6 +2,7 @@ use super::chat_repository::ChatByteReader;
 use async_trait::async_trait;
 use std::path::Path;
 use std::sync::Arc;
+use tt_contracts::byte_commit::CommitBegin;
 use tt_domain::errors::DomainError;
 
 /// An opened chat file retained by the current page, independent of later path replacements.
@@ -56,19 +57,6 @@ pub enum ChatCommitTarget {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ChatCommitBegin {
-    pub session_id: String,
-    pub max_frame_bytes: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ChatCommitResult {
-    pub target: ChatCommitTarget,
-    pub accepted_size: u64,
-    pub size: u64,
-}
-
 /// Atomically publishes full chat payloads or metadata-only updates.
 #[async_trait]
 pub trait ChatCommitRepository: Send + Sync {
@@ -80,7 +68,7 @@ pub trait ChatCommitRepository: Send + Sync {
         &self,
         target: ChatCommitTarget,
         operation: ChatCommitOperation,
-    ) -> Result<ChatCommitBegin, DomainError>;
+    ) -> Result<CommitBegin, DomainError>;
 
     async fn append(&self, session_id: &str, offset: u64, bytes: &[u8])
     -> Result<u64, DomainError>;
@@ -89,7 +77,7 @@ pub trait ChatCommitRepository: Send + Sync {
         &self,
         session_id: &str,
         expected_size: u64,
-    ) -> Result<ChatCommitResult, DomainError>;
+    ) -> Result<ChatCommitTarget, DomainError>;
 
     /// Aborting an absent or already-consumed session is a successful no-op.
     async fn abort(&self, session_id: &str) -> Result<(), DomainError>;

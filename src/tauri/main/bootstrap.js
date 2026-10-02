@@ -317,7 +317,7 @@ export function bootstrapTauriMain() {
         let method = 'GET';
         try {
             method = await getMethod(input, init);
-            const body = await readRequestBody(input, init);
+            const body = await readRequestBody(input, init, router.bodyMode(method, url.pathname));
             const response = await router.handle({
                 url,
                 path: url.pathname,

@@ -71,15 +71,15 @@ transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方
 
 ## 3. 统一聊天提交
 
-角色、群聊及分支、检查点等写入复用 `chat-payload-transport.js`。当前聊天业务入口（包括 `getContext().saveChat()`）由 `enqueueChatSave()` 串行调度；transport 本身不入队。兼容保存路由也复用 transport，其响应与 Fetch 可观察性见 [FrontendHostContract §4.3](../FrontendHostContract.md#43-路由表public)。
+第一方聊天保存经由 `chat-payload-transport.js`；当前聊天由 `enqueueChatSave()` 串行调度，transport 不重复入队。兼容路由与事件契约见 [FrontendHostContract §4.3](../FrontendHostContract.md#43-路由表public)。
 
-提交在首次异步让出前逐记录捕获 JSON 文本快照；当前聊天的快照在队列任务执行时捕获，后续消息或嵌套 metadata 修改不会混入本次提交。快照空间随提交量增长；分帧只约束编码和传输的额外空间，不代表整个保存过程恒定内存。
+提交在首次异步让出前捕获 JSON 文本快照，当前聊天在队列任务开始时捕获；后续修改不混入本次保存。分帧限制传输开销，快照仍随内容规模增长。
 
-完整保存、metadata 整体替换与 namespace 修改共用 `begin → append → finish / abort` 会话。storage-core 统一定义平台帧预算，前端按 begin 返回的预算逐帧发送并校验 ACK，每次只有一帧在途。Android 使用 base64，桌面和 iOS 使用 raw bytes；平台限制见 [AndroidDevelopment §11](../AndroidDevelopment.md#11-android-大型-byte-ingress)。`acceptedSize` 是接收字节数，`size` 是最终文件大小；局部修改或冷内容恢复后两者可能不同。
+聊天与世界书共用 storage-core 的提交会话、帧上限和暂存生命周期，各仓储负责内容校验与发布。host 确认数据完整后才发布；平台传输限制见 [AndroidDevelopment §11](../AndroidDevelopment.md#11-android-大型-byte-ingress)。
 
-Rust 会话独占目标卷 `.staging/chat-commits` 内的输入及改写产物。finish 校验大小、格式与 integrity 后原子发布，无论成败都消费会话并清理临时文件；此前失败由前端 abort。启动时清理该目录中的遗留文件。错误和清理失败必须传播，不静默切换写入路径；integrity 冲突按明确的错误 code 识别，不猜测文案。
+提交和取消错误向调用方传播；收尾及启动清理失败只记告警，不改写提交结果。integrity 冲突按明确错误码识别。
 
-完整提交、导入、metadata 更新和备份共用 storage-core 的发布 helper：完成缓冲写入后，用原写入句柄同步文件内容，再关闭并严格 rename，不以 copy 降级。此保证覆盖运行时原子替换，不包含 rename 后父目录项的断电持久化。
+聊天发布先同步暂存文件，再原子替换目标；失败不回退为覆盖复制。此保证不包含 rename 后父目录项的断电持久化。
 
 ### 3.1 Metadata 保存
 

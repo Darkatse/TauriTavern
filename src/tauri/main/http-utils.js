@@ -98,7 +98,8 @@ export async function getMethod(input, init) {
     return getMethodHint(input, init);
 }
 
-export async function readRequestBody(input, init) {
+export async function readRequestBody(input, init, mode = 'json') {
+    const decode = text => mode === 'text' ? text : parseMaybeJson(text);
     let rawBody;
 
     if (init && Object.prototype.hasOwnProperty.call(init, 'body')) {
@@ -117,7 +118,7 @@ export async function readRequestBody(input, init) {
     }
 
     if (typeof rawBody === 'string') {
-        return parseMaybeJson(rawBody);
+        return decode(rawBody);
     }
 
     if (isUrlSearchParamsLike(rawBody)) {
@@ -126,13 +127,15 @@ export async function readRequestBody(input, init) {
 
     if (isBlobLike(rawBody)) {
         const text = await rawBody.text();
-        return parseMaybeJson(text);
+        return decode(text);
     }
 
     if (ArrayBuffer.isView(rawBody) || isArrayBufferLike(rawBody)) {
-        const bytes = isArrayBufferLike(rawBody) ? new Uint8Array(rawBody) : new Uint8Array(rawBody.buffer);
-        const text = new TextDecoder().decode(bytes);
-        return parseMaybeJson(text);
+        const bytes = isArrayBufferLike(rawBody)
+            ? new Uint8Array(rawBody)
+            : new Uint8Array(rawBody.buffer, rawBody.byteOffset, rawBody.byteLength);
+        const text = new TextDecoder('utf-8', { fatal: mode === 'text' }).decode(bytes);
+        return decode(text);
     }
 
     return rawBody;

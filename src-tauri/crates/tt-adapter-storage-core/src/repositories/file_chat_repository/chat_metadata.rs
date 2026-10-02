@@ -62,7 +62,7 @@ impl FileChatRepository {
         stage_path: &Path,
         publish_path: &Path,
         namespace: Option<String>,
-    ) -> Result<u64, DomainError> {
+    ) -> Result<(), DomainError> {
         let write_guard = self.acquire_payload_mutation_lock(path).await;
         let path = path.to_owned();
         let stage_path = stage_path.to_owned();
@@ -196,7 +196,7 @@ fn rewrite_chat_header_file(
     stage_path: &Path,
     publish_path: &Path,
     namespace: Option<&str>,
-) -> Result<u64, DomainError> {
+) -> Result<(), DomainError> {
     let source = File::open(path).map_err(|error| map_open_existing_error(path, error))?;
     let mut source = BufReader::new(source);
     let (header_line, _) = read_header_record(&mut source)
@@ -244,9 +244,7 @@ fn rewrite_chat_header_file(
     let out = out
         .into_inner()
         .map_err(|error| io_error(error.into_error()))?;
-    let size = out.metadata().map_err(io_error)?.len();
-    persist_file_blocking(out, publish_path, path)?;
-    Ok(size)
+    persist_file_blocking(out, publish_path, path)
 }
 
 fn io_error(error: io::Error) -> DomainError {

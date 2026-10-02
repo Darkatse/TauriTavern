@@ -114,7 +114,7 @@ test('chat persistence and navigation', async (context) => {
                     const newline = original.indexOf('\n');
                     jsonl = JSON.stringify(header) + '\n' + (newline < 0 ? '' : original.slice(newline + 1));
                     payloads.set(fileName, jsonl);
-                    return { acceptedSize: args.expectedSize, size: Buffer.byteLength(jsonl) };
+                    return;
                 }
                 if (fullSaveError) throw fullSaveError;
 
@@ -133,7 +133,7 @@ test('chat persistence and navigation', async (context) => {
                 }
                 checkIntegrity(fileName, JSON.parse(jsonl.split('\n')[0]).chat_metadata, session.operation.force);
                 payloads.set(fileName, jsonl);
-                return { acceptedSize: args.expectedSize, size: Buffer.byteLength(jsonl) };
+                return;
             }
             case 'abort_chat_commit': sessions.delete(args.sessionId); return;
             case 'get_chat_payload_path':

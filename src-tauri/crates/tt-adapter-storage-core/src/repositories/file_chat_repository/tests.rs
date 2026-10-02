@@ -10,7 +10,7 @@ use crate::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::ChatBackupSettings;
 use tt_ports::repositories::chat_commit_repository::{
-    ChatCommitOperation, ChatCommitRepository, ChatCommitResult, ChatCommitTarget,
+    ChatCommitOperation, ChatCommitRepository, ChatCommitTarget,
 };
 use tt_ports::repositories::chat_repository::{
     ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchQuery, ChatRepository,
@@ -84,7 +84,7 @@ async fn commit_payload_bytes(
     target: ChatCommitTarget,
     bytes: &[u8],
     force: bool,
-) -> Result<ChatCommitResult, DomainError> {
+) -> Result<(), DomainError> {
     commit_bytes(
         repository,
         target,
@@ -101,7 +101,7 @@ async fn commit_metadata(
     repository: &FileChatRepository,
     target: ChatCommitTarget,
     metadata: Value,
-) -> Result<ChatCommitResult, DomainError> {
+) -> Result<(), DomainError> {
     commit_bytes(
         repository,
         target,
@@ -116,7 +116,7 @@ async fn commit_bytes(
     target: ChatCommitTarget,
     bytes: &[u8],
     operation: ChatCommitOperation,
-) -> Result<ChatCommitResult, DomainError> {
+) -> Result<(), DomainError> {
     let session = repository.begin(target, operation).await?;
     let frame_bytes = session.max_frame_bytes as usize;
     let mut offset = 0;
@@ -127,7 +127,8 @@ async fn commit_bytes(
     }
     repository
         .finish(&session.session_id, bytes.len() as u64)
-        .await
+        .await?;
+    Ok(())
 }
 
 fn character_target(character_id: &str, file_name: &str) -> ChatCommitTarget {
@@ -371,7 +372,7 @@ async fn metadata_commit_rejects_invalid_updates_without_changing_the_file() {
         );
     }
     assert!(
-        fs::read_dir(&repository.chat_commit_staging_dir)
+        fs::read_dir(repository.chat_commit_sessions.directory())
             .await
             .unwrap()
             .next_entry()
@@ -604,7 +605,7 @@ async fn chat_commit_size_mismatch_preserves_current_and_consumes_session() {
             .await,
         Err(DomainError::NotFound(_))
     ));
-    let mut staging_entries = fs::read_dir(&repository.chat_commit_staging_dir)
+    let mut staging_entries = fs::read_dir(repository.chat_commit_sessions.directory())
         .await
         .expect("read staging directory");
     assert!(
@@ -682,14 +683,17 @@ async fn same_target_sessions_are_complete_and_last_finish_wins() {
 async fn startup_cleanup_removes_only_chat_commit_staging() {
     let (repository, root) = setup_repository().await;
     let unrelated = root.join(".staging").join("other-state");
-    fs::create_dir_all(&repository.chat_commit_staging_dir)
+    fs::create_dir_all(repository.chat_commit_sessions.directory())
         .await
         .expect("create commit staging");
     fs::create_dir_all(&unrelated)
         .await
         .expect("create unrelated staging");
     fs::write(
-        repository.chat_commit_staging_dir.join("orphan.partial"),
+        repository
+            .chat_commit_sessions
+            .directory()
+            .join("orphan.partial"),
         b"partial",
     )
     .await
@@ -698,12 +702,9 @@ async fn startup_cleanup_removes_only_chat_commit_staging() {
         .await
         .expect("write unrelated file");
 
-    repository
-        .cleanup_orphaned_chat_commit_staging()
-        .await
-        .expect("clean orphan staging");
+    repository.cleanup_orphaned_chat_commit_staging().await;
 
-    assert!(!repository.chat_commit_staging_dir.exists());
+    assert!(!repository.chat_commit_sessions.directory().exists());
     assert!(unrelated.join("keep").exists());
     cleanup_repository(repository, root).await;
 }
@@ -951,7 +952,7 @@ async fn raw_and_zstd_backups_download_restore_and_delete_by_logical_name() {
             .expect("stream backup");
         assert_eq!(downloaded, payload.as_bytes());
         assert_eq!(backup_file_names(&root).await, files_before);
-        assert!(!repository.chat_commit_staging_dir.exists());
+        assert!(!repository.chat_commit_sessions.directory().exists());
 
         let restored_character = repository
             .restore_character_chat_backup(&descriptor.logical_file_name, "alice", "Alice")
@@ -987,7 +988,7 @@ async fn raw_and_zstd_backups_download_restore_and_delete_by_logical_name() {
             .await
             .expect("delete backup by logical name");
         assert!(!root.join("backups").join(&descriptor.file_name).exists());
-        let mut staging_entries = fs::read_dir(&repository.chat_commit_staging_dir)
+        let mut staging_entries = fs::read_dir(repository.chat_commit_sessions.directory())
             .await
             .expect("read chat staging directory");
         assert!(
@@ -1165,7 +1166,7 @@ async fn truncated_zstd_backup_does_not_poison_healthy_inventory_entries() {
             .await
             .is_err()
     );
-    let mut staging_entries = fs::read_dir(&repository.chat_commit_staging_dir)
+    let mut staging_entries = fs::read_dir(repository.chat_commit_sessions.directory())
         .await
         .expect("read chat staging directory");
     assert!(
@@ -3085,18 +3086,16 @@ async fn cold_swipes_round_trip_retains_source_across_metadata_publish_reorder_a
             .append(&session.session_id, 0, &bytes)
             .await
             .unwrap();
-        let committed = repository
+        repository
             .finish(&session.session_id, bytes.len() as u64)
             .await
             .unwrap();
-        assert_eq!(committed.accepted_size, bytes.len() as u64);
         assert_eq!(read_chat_stream(record).await, vec![original[1].clone()]);
         let path = repository
             .resolve_chat_commit_target(&target)
             .await
             .unwrap();
         let saved = fs::read(&path).await.unwrap();
-        assert_eq!(committed.size, saved.len() as u64);
         let restored: Vec<Value> = std::str::from_utf8(&saved)
             .unwrap()
             .lines()
@@ -3201,7 +3200,7 @@ async fn cold_swipes_reject_invalid_merges_without_publishing_or_leaving_stages(
             .unwrap();
         assert_eq!(fs::read(&path).await.unwrap(), original.as_bytes());
         assert!(
-            fs::read_dir(&repository.chat_commit_staging_dir)
+            fs::read_dir(repository.chat_commit_sessions.directory())
                 .await
                 .unwrap()
                 .next_entry()
