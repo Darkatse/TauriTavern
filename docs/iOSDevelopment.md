@@ -202,6 +202,7 @@ Skill 导入使用独立命令 `ios_pick_skill_import_archives`：
 - 最低部署版本是 `15.0`，规范值写在 `tauri.conf.json` 的 `bundle.iOS.minimumSystemVersion`。
 - `gen/apple/project.yml`、`Podfile` 与已提交 `.xcodeproj` 必须保持同值；Xcode pre-build script 会将真实 `IPHONEOS_DEPLOYMENT_TARGET` 与 Tauri 配置比较，不一致时直接失败。
 - 当前 `project.yml` 未覆盖已提交 Apple host 的全部自定义 Info.plist、scheme 与签名状态。不要直接运行 XcodeGen 或 `tauri ios init` 覆盖工程；修改后只审查必要 diff，否则可能删除高刷、后台模式与文件类型声明。
+- iOS 签名启用 `Increased Memory Limit`，发布 profile 需包含对应能力。
 
 ## 5. iOS 分发 Policy（当前状态）
 
