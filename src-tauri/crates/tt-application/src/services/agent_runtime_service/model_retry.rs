@@ -5,9 +5,17 @@ use serde_json::json;
 use super::model_stream_projection::ModelStreamProjector;
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::errors::ApplicationError;
-use crate::services::agent_model_gateway::AgentModelExchange;
+use crate::services::agent_model_gateway::{AgentModelExchange, AgentModelStreamDelta};
+use crate::services::agent_tools::WORKSPACE_WRITE_FILE;
 use tt_domain::models::agent::profile::AgentModelRetryPolicy;
 use tt_domain::models::agent::{AgentInvocation, AgentModelRequest, AgentRunEventLevel};
+
+/// A round's model exchange, and whether any of its attempts streamed a `write_file` call,
+/// which the host may have previewed in the chat message.
+pub(super) struct ModelRoundExchange {
+    pub(super) exchange: AgentModelExchange,
+    pub(super) streamed_write_file: bool,
+}
 
 impl AgentRuntimeService {
     pub(super) async fn generate_model_with_retry(
@@ -18,11 +26,12 @@ impl AgentRuntimeService {
         retry: &AgentModelRetryPolicy,
         stream: bool,
         cancel: &mut AgentCancelReceiver,
-    ) -> Result<AgentModelExchange, ApplicationError> {
+    ) -> Result<ModelRoundExchange, ApplicationError> {
         let run_id = invocation.run_id.as_str();
         let invocation_id = invocation.id.as_str();
         let active_run = self.active_run_handle(run_id).await?;
         let mut attempt = 1_usize;
+        let mut streamed_write_file = false;
 
         loop {
             self.event(
@@ -49,7 +58,14 @@ impl AgentRuntimeService {
             });
             let result = match projector.as_mut() {
                 Some(projector) => {
-                    let mut observe = |delta| projector.observe(delta);
+                    let mut observe = |delta: AgentModelStreamDelta| {
+                        streamed_write_file |= matches!(
+                            &delta,
+                            AgentModelStreamDelta::ToolCall { tool_id, .. }
+                                if tool_id.is_builtin() && tool_id.native_name() == WORKSPACE_WRITE_FILE
+                        );
+                        projector.observe(delta)
+                    };
                     self.model_gateway
                         .generate_with_cancel(request, Some(&mut observe), cancel.clone())
                         .await
@@ -62,7 +78,12 @@ impl AgentRuntimeService {
             };
 
             match result {
-                Ok(exchange) => return Ok(exchange),
+                Ok(exchange) => {
+                    return Ok(ModelRoundExchange {
+                        exchange,
+                        streamed_write_file,
+                    });
+                }
                 Err(error) => {
                     if let Some(projector) = projector {
                         projector.clear();

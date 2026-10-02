@@ -25,7 +25,8 @@ flowchart LR
     tools --> files[读写工作区]
     files --> tools
     tools --> commit[提交文件到聊天]
-    tools --> finish[结束运行]
+    commit --> finish[结束运行]
+    model --> finish
 ```
 
 Profile 指定模型、提示词、可用工具和工作区范围。Chat 中模型通过 `workspace.commit` 提交聊天内容，最后一次提交带 `finish: true` 即完成运行；后台写作运行可以只产生文件，模型不再调用工具时结束。

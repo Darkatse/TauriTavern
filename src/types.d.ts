@@ -186,6 +186,8 @@ type TauriTavernAgentRunHandle = {
     generationType: string;
     status: TauriTavernAgentRunStatus;
     afterSeq?: number;
+    /** The run's message body file, which a foreground host previews and keeps. Handles from start and resume carry it; cancel and list results do not. */
+    messageBodyPath?: string;
 };
 
 type TauriTavernAgentModelMessage = {

@@ -10,10 +10,13 @@ use super::{
     MAX_LIST_ENTRIES,
 };
 use crate::errors::ApplicationError;
+use crate::services::agent_profile_service::workspace_roots_from_profile;
 use crate::services::agent_workspace_scope::ScopedWorkspaceFs;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
-use tt_domain::models::agent::{AgentToolResult, WorkspacePath};
+use tt_domain::models::agent::{
+    AgentRunTarget, AgentToolResult, WorkspacePath, WorkspaceRootLifecycle,
+};
 use tt_domain::models::tool::ToolInvocation;
 use tt_ports::workspace_fs::{WorkspaceEntryKind, WorkspaceFs};
 
@@ -126,15 +129,18 @@ pub(in crate::services::agent_tools) async fn list_files(
 }
 
 /// The workspace index at the top of the invocation's agent system prompt: the chat
-/// files, which roots are work files, files already written to them, and the first
-/// level of persistent state, so the model does not spend a round listing the workspace.
-/// It sits at the head of the cached prompt prefix, so it must not carry anything that
-/// changes every floor (floor numbers, times); for a Chat Run only adding or removing a
-/// top-level `persist/` entry changes it. Skill packages and tool results have their own
-/// entry points (the Skill catalog and the result that names them).
-pub(crate) async fn render_workspace_inventory(
+/// files, which roots are work files, files earlier stages of this Run wrote, and the
+/// first level of persistent state, so the model does not spend a round listing the
+/// workspace. It sits at the head of the cached prompt prefix, so it lists only what holds
+/// while that prefix is reused: nothing that changes every floor (floor numbers, times),
+/// and no files in roots that outlive the Run. A Chat Run's index changes only when a
+/// top-level `persist/` entry is added or removed; a Session's does not change. Skill
+/// packages and tool results have their own entry points (the Skill catalog and the
+/// result that names them).
+pub(crate) async fn render_workspace_index(
     workspace: &ScopedWorkspaceFs,
     profile: &ResolvedAgentProfile,
+    target: &AgentRunTarget,
 ) -> Result<String, ApplicationError> {
     let roots = &profile.workspace;
     let writable = |root: &str| roots.writable_roots.iter().any(|writable| writable == root);
@@ -158,24 +164,48 @@ pub(crate) async fn render_workspace_inventory(
             .collect::<Vec<_>>()
             .join(" ")
     };
+    // Roots that end with the Run are marked `this run` and list their files; a Session
+    // keeps its roots across runs.
+    let specs = workspace_roots_from_profile(profile, target);
+    let ends_with_run = |root: &str| {
+        specs
+            .iter()
+            .any(|spec| spec.path == root && spec.lifecycle == WorkspaceRootLifecycle::Run)
+    };
+    let this_run = work
+        .iter()
+        .chain(&read_only)
+        .all(|root| ends_with_run(root));
+    let note = |read_only: bool| match (read_only, this_run) {
+        (false, false) => "",
+        (false, true) => " (this run)",
+        (true, false) => " (read-only)",
+        (true, true) => " (read-only, this run)",
+    };
     match (work.is_empty(), read_only.is_empty()) {
-        (false, true) => lines.push(format!("Work: {} (this run)", dirs(&work))),
+        (false, true) => lines.push(format!("Work: {}{}", dirs(&work), note(false))),
         (false, false) => lines.push(format!(
-            "Work: {} (this run); read-only: {}",
+            "Work: {}{}; read-only: {}",
             dirs(&work),
+            note(false),
             dirs(&read_only)
         )),
-        (true, false) => lines.push(format!("Work: {} (read-only, this run)", dirs(&read_only))),
+        (true, false) => lines.push(format!("Work: {}{}", dirs(&read_only), note(true))),
         (true, true) => {}
     }
 
     // A Chat Run starts with empty work roots, so this line stays out of its cached
     // prefix. Handoff targets and subagents start after earlier writes in the same Run
-    // and should see the ones their own roots allow.
+    // and should see the ones their own roots allow. Files in roots that outlive the Run
+    // change between runs, so they are not listed.
     let workspace_files: &dyn WorkspaceFs = workspace;
     let mut existing = Vec::new();
     let mut truncated = false;
-    for root in work.iter().chain(&read_only) {
+    for root in work
+        .iter()
+        .chain(&read_only)
+        .filter(|root| ends_with_run(root))
+    {
         let list = match workspace_files
             .list_files(
                 Some(&WorkspacePath::parse(root)?),

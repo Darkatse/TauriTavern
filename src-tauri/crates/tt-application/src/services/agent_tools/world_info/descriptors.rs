@@ -24,12 +24,12 @@ pub(in crate::services::agent_tools) fn worldinfo_read_activated_descriptor() ->
                                 "type": "string",
                                 "description": "Active World Info ref returned by the no-argument index call."
                             },
-                            "start_line": {
+                            "offset": {
                                 "type": "integer",
                                 "minimum": 1,
                                 "description": "Optional 1-based starting line inside the entry content."
                             },
-                            "line_count": {
+                            "limit": {
                                 "type": "integer",
                                 "minimum": 1,
                                 "description": "Optional number of lines to read. Omit to read through the end; oversized results return a shorter preview."

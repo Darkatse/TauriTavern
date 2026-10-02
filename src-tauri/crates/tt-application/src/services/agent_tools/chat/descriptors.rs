@@ -8,40 +8,41 @@ pub(in crate::services::agent_tools) fn chat_read_messages_descriptor() -> ToolD
         id: ToolId::builtin(CHAT_READ_MESSAGES).expect("builtin tool name must be valid"),
         title: Some("Chat Read Messages".to_string()),
         description: Some(
-            "Read chat messages by 0-based index, optionally a line range of each.".to_string(),
+            "Read several chat floors at once by floor number, the NNNNNN in floors/NNNNNN."
+                .to_string(),
         ),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
-                "messages": {
+                "floors": {
                     "type": "array",
-                    "description": "Messages to read.",
+                    "description": "Floors to read.",
                     "items": {
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
-                            "index": {
+                            "floor": {
                                 "type": "integer",
-                                "description": "0-based message index."
+                                "description": "Floor number, from 0."
                             },
-                            "start_line": {
+                            "offset": {
                                 "type": "integer",
                                 "minimum": 1,
                                 "description": "1-based first line. Defaults to 1."
                             },
-                            "line_count": {
+                            "limit": {
                                 "type": "integer",
                                 "minimum": 1,
-                                "description": "Lines to return. Defaults to the rest."
+                                "description": "Lines to return. Defaults to the rest of the floor."
                             }
                         },
-                        "required": ["index"]
+                        "required": ["floor"]
                     },
                     "minItems": 1
                 }
             },
-            "required": ["messages"]
+            "required": ["floors"]
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true, "sourceKind": "chat" }),
@@ -53,7 +54,7 @@ pub(in crate::services::agent_tools) fn chat_search_descriptor() -> ToolDescript
         id: ToolId::builtin(CHAT_SEARCH).expect("builtin tool name must be valid"),
         title: Some("Chat Search".to_string()),
         description: Some(
-            "Search this chat's messages by words; any matching word counts and the best matches come first. Returns floor files (floors/NNNNNN/message.md) with snippets.".to_string(),
+            "Search this chat's floors by words; any matching word counts and the best matches come first. Floors are the chat's messages, numbered from 0 as in floors/NNNNNN. Returns floor files (floors/NNNNNN/message.md) with snippets.".to_string(),
         ),
         input_schema: json!({
             "type": "object",
@@ -69,20 +70,24 @@ pub(in crate::services::agent_tools) fn chat_search_descriptor() -> ToolDescript
                 },
                 "role": {
                     "type": "string",
-                    "enum": ["user", "assistant", "system", "tool"],
-                    "description": "Only messages from this role."
+                    "enum": ["user", "assistant", "tool"],
+                    "description": "Only floors with this role."
                 },
-                "start_message": {
-                    "type": "integer",
-                    "description": "First 0-based message index to search."
+                "hidden": {
+                    "type": "boolean",
+                    "description": "true: only hidden floors; false: only floors that are not hidden."
                 },
-                "end_message": {
+                "start_floor": {
                     "type": "integer",
-                    "description": "Last 0-based message index to search."
+                    "description": "First floor index to search."
+                },
+                "end_floor": {
+                    "type": "integer",
+                    "description": "Last floor index to search."
                 },
                 "scan_limit": {
                     "type": "integer",
-                    "description": "Only scan this many recent messages."
+                    "description": "Only scan this many recent floors."
                 }
             },
             "required": ["query"]

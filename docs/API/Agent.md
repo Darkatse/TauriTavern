@@ -25,9 +25,21 @@ const unsubscribe = agent.subscribe(run.runId, event => {
 
 共同选项有 `profileId`、`generationType`、`stableChatId`、`presentation` 和 `options.stream`。稳定聊天 ID 省略时由 Host API 解析。`options.stream` 省略时使用各 Invocation 的 Profile 设置，显式值覆盖整次 Run。
 
-两种 Chat 方法返回 `{ runId, status, workspaceId, stableChatId, generationType, messageBodyPath? }`；`messageBodyPath` 是本次运行的正文文件，前台宿主只预览与自动保存这个文件（续接返回的 handle 同样携带）。Snapshot 使用 `{ contextPolicy, messages, generationParameters }`，消息为 `AgentModelMessage[]`；旧 `chatCompletionPayload` 在入口适配，Chat 输入不能注入外部工具回合。冻结输入与组装规则见 [Prompt assembly](../Agent/PromptAssembly.md)。
+两种 Chat 方法返回 `{ runId, status, workspaceId, stableChatId, generationType, messageBodyPath? }`；`messageBodyPath` 是本次运行的正文文件，前台宿主只预览与自动保存这个文件（续接返回的 handle 同样携带，取消与列表返回的 handle 不带）。Snapshot 使用 `{ contextPolicy, messages, generationParameters }`，消息为 `AgentModelMessage[]`；旧 `chatCompletionPayload` 在入口适配，Chat 输入不能注入外部工具回合。冻结输入与组装规则见 [Prompt assembly](../Agent/PromptAssembly.md)。
 
 canonical snapshot 的指令消息以 Text part 保存正文，并携带 `providerMetadata.promptComponent: "agentSystemPrompt"`，供 runtime 追加目录。旧 Chat 输入仍接受字符串 `content` 与 `_tauritavern_prompt_component: "agentSystemPrompt"`。共同 PromptManager 自动提供标记，标记不会发送给模型。
+
+### 工作区索引 `{{workspace}}`
+
+`{{workspace}}` 是 TauriTavern 长期保留的占位符，只在 `agentSystemPrompt` 正文中生效：准备 Invocation 时，runtime 把它替换为开局工作区索引（可见目录、本次 Run 里之前写好的文件、`persist/` 第一层条目，以及读聊天的 Profile 在角色聊天中的聊天挂载），模型因此不必先列目录。它不是 SillyTavern 宏，前端组装时原样保留；请勿注册名为 `workspace` 的宏，否则占位符会在前端被替换，索引随之消失。
+
+- 默认指令在 Profile 启用工作区工具时以 `{{workspace}}` 结尾，`profiles.resolveSystemPrompt` 返回的正文也带着它；自组 snapshot 时保留它才会得到索引。
+- 自定义指令自行决定放在哪里；不写就没有索引。
+- Profile 没有工作区工具或索引为空时，占位符连同前面的空行一起去掉。
+- Chat 与 Session 使用同一个渲染器。Chat 的索引只在 `persist/` 第一层条目增删时改变；Session 的 `work/`、`tmp/` 跨轮保留，只列目录、不列其中的文件，索引在会话内不变。
+- 索引在 Invocation 准备时生成一次，后续轮次、续接与修订沿用。
+
+各行的格式与限额见 [Prompt assembly](../Agent/PromptAssembly.md#开局工作区索引)。
 
 ## 持续 Session
 
@@ -150,7 +162,7 @@ Profile 的用法见 [配置指南](../Agent/ProfilesAndPreset.md)。`tools.list
 
 `profiles.retargetPresetRefs` 返回 `{ updated, profileIds, sessionProfileUpdated }`；总数 `updated` 包含共享配置，`profileIds` 只列普通 Profile。
 
-`profiles.resolveSystemPrompt` 返回 Profile 指令正文；运行时目录的追加规则见 [Prompt assembly](../Agent/PromptAssembly.md#skill-与-agent-目录)。
+`profiles.resolveSystemPrompt` 返回 Profile 指令正文，其中的 `{{workspace}}` 见[工作区索引](#工作区索引-workspace)；运行时目录的追加规则见 [Prompt assembly](../Agent/PromptAssembly.md#skill-与-agent-目录)。
 
 ## 注册扩展工具
 

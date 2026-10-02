@@ -114,13 +114,14 @@ impl PromptAssemblyService {
         profile: ResolvedAgentProfile,
         visible_tools: &[AgentModelTool],
         context: AgentInvocationPromptAssemblyContext,
+        exit_policy: AgentInvocationExitPolicy,
     ) -> Result<AgentPreparePromptAssemblyResultDto, ApplicationError> {
         self.prepare_frontend_prompt_assembly_with_context(
             dto,
             profile,
             visible_tools,
             Some(context),
-            AgentInvocationExitPolicy::TaskReturnRequired,
+            exit_policy,
         )
         .await
     }

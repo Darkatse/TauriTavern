@@ -153,7 +153,7 @@ pub(in crate::services::agent_tools) fn workspace_shell_descriptor() -> ToolDesc
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_SHELL).expect("builtin tool name must be valid"),
         title: Some("Workspace Shell".to_string()),
-        description: Some("Run commands in the workspace: ls/find to list, mv/rm to move or delete, jq, python and js for batch processing. Run `js --help` for the workspace JS API. Each call starts a fresh session; files persist.".to_string()),
+        description: Some("Run commands in the workspace: ls/find to list, mv/rm to move or delete, jq, a Python subset (python/python3) and js for batch processing. Run `js --help` for the workspace JS API. Each call starts a fresh session; files persist.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,

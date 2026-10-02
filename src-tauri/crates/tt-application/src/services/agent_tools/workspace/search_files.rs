@@ -10,8 +10,8 @@ use super::args::{
 use super::{MAX_SEARCH_DEPTH, MAX_SEARCH_FILES};
 use crate::errors::ApplicationError;
 use crate::services::agent_workspace_scope::{
-    AGENT_TOOL_RESULTS_ROOT, ChatText, SKILLS_ROOT, ScopedWorkspaceFs, WorkspaceAccessPolicy,
-    is_chat_mount_path,
+    AGENT_TOOL_RESULTS_ROOT, ChatText, HIDDEN_MARK, SKILLS_ROOT, ScopedWorkspaceFs,
+    WorkspaceAccessPolicy, is_chat_mount_path,
 };
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{AgentToolResult, WorkspacePath};
@@ -25,7 +25,6 @@ use super::super::structured::structured_value;
 const MAX_MATCHES: usize = 100;
 /// Characters kept from a long line, around its first match.
 const MAX_LINE_CHARS: usize = 300;
-/// Compiled size allowed for a pattern; larger patterns are rejected as invalid.
 /// Roots with their own entry points, searched only when `path` names them.
 const EXPLICIT_ONLY_ROOTS: [&str; 2] = [AGENT_TOOL_RESULTS_ROOT, SKILLS_ROOT];
 
@@ -133,9 +132,17 @@ pub(in crate::services::agent_tools) async fn search_files(
     let mut matches = Vec::new();
     let mut total = 0;
     let mut skipped_files = 0;
+    let mut skipped_floors = 0;
     for source in &sources {
         let (text, hidden) = match source {
-            Source::Chat(chat) => (Cow::Borrowed(chat.text), chat.hidden),
+            Source::Chat(chat) => match chat.text {
+                Some(text) => (Cow::Borrowed(text), chat.hidden),
+                // Reading the floor's message.md says why it has no text.
+                None => {
+                    skipped_floors += 1;
+                    continue;
+                }
+            },
             Source::File(path) => match workspace_files.read_file(path, usize::MAX).await {
                 Ok(bytes) => match String::from_utf8(bytes) {
                     Ok(text) => (Cow::Owned(text), false),
@@ -172,10 +179,14 @@ pub(in crate::services::agent_tools) async fn search_files(
                 let mut content = render_content(pattern, &matches, total, traversal_truncated);
                 if skipped_files > 0 {
                     content.push_str(&format!(
-                        "
-
-Skipped {skipped_files} file{} that could not be read as text.",
+                        "\n\nSkipped {skipped_files} file{} that could not be read as text.",
                         if skipped_files == 1 { "" } else { "s" }
+                    ));
+                }
+                if skipped_floors > 0 {
+                    content.push_str(&format!(
+                        "\n\nSkipped {skipped_floors} floor{} without message text; reading its message.md gives the cause.",
+                        if skipped_floors == 1 { "" } else { "s" }
                     ));
                 }
                 content
@@ -293,7 +304,7 @@ fn render_content(
             content.push_str(&format!(
                 "\n\n{}{}",
                 found.path,
-                if found.hidden { " [hidden]" } else { "" }
+                if found.hidden { HIDDEN_MARK } else { "" }
             ));
         }
         content.push_str(&format!("\nLine {}: {}", found.line, found.text));

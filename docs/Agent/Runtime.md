@@ -33,17 +33,19 @@ Session 在 assistant 无工具调用时结束本轮，消息由后端连续保�
 
 Run 有两种结束方式：带 `finish: true` 的 `workspace.commit`，或只回文字的一轮满足结束策略。
 
-带 `finish: true` 的提交在宿主确认后结束 Run，提交被拒绝则不结束。它与 `agent.handoff`、`task.return` 一样须是本轮最后一个调用。同一轮中较早的调用返回错误时，提交照常完成，但 Run 不结束，结果里带 `agent.finish_after_failed_call`，使模型先看到该错误。能交接的阶段不直接结束 Run，使用 `finish: true` 时返回可恢复错误；其他阶段都能结束。启动时，前台 Chat 运行要求 `workspace.commit`，后台运行可以不写聊天。文件发布和持久版本的关系见 [Workspace](Workspace.md)。
+带 `finish: true` 的提交在宿主确认后结束 Run，提交被拒绝则不结束。它与 `agent.handoff`、`task.return` 一样须是本轮最后一个调用。同一轮中较早的调用返回错误时，提交照常完成，但 Run 不结束，结果里带 `agent.finish_after_failed_call`，使模型先看到该错误。能交接的阶段不直接结束 Run，使用 `finish: true` 时返回可恢复错误；其他阶段都能结束。前台 Chat 中能结束 Run 的阶段须有 `workspace.commit`，交接接收方也按此检查；后台运行可以不写聊天。文件发布和持久版本的关系见 [Workspace](Workspace.md)。
 
-结束策略决定只回文字的一轮怎么处理，默认值集中在 `FinishPolicy::for_stage`：
+结束策略决定只回文字的一轮怎么处理，是结束规则的唯一来源：runtime 的判断、提示词、续行与委派提示、工具结果文字和上面的 Chat 准入都从 `FinishPolicy`（`agent_tools/finish_policy.rs`）推出。它按 Run 的 presentation 取值，交接接收方沿用 Run 的 presentation，不看自身 Profile 保存的值。默认值在 `FinishPolicy::for_stage`：
 
 | 阶段 | 策略 |
 |---|---|
-| 前台 Chat 中能结束 Run 的阶段 | 有条件 `[committed]`：本次 Run 已发布过（显式提交或自动提交都算）就结束，否则提醒 |
+| 前台 Chat 中能结束 Run 的阶段 | 有条件 `[committed]`：楼层显示的是宿主确认的发布就结束，否则提醒模型提交。本次 Run 的显式提交或自动提交都算；修订从已完成的回复开始，算作已确认。之后被流式预览覆盖或有提交被拒，就不再算，见 [Workspace](Workspace.md#提交到聊天) |
 | 后台 Chat 中能结束 Run 的阶段 | 有条件 `[]`：模型停下就结束 |
 | return-mode 子 Agent、能交接的阶段 | 提醒，行为不变 |
 
-按策略结束时记录 `agent_loop_finished`（`endedBy: "text_turn"`）；文字留在 transcript 里，不发布到聊天。条件目前只有 `committed`，计划完成（`plan_complete`）留待以后加入。
+按策略结束时记录 `agent_loop_finished`（`endedBy: "text_turn"`）；文字留在 transcript 里，不发布到聊天。条件目前只有 `committed`，计划完成（`plan_complete`）留待以后加入。前台阶段的说明文字引导模型以带 `finish: true` 的提交结束，纯文字结束只作兜底。
+
+已知限制：根 Invocation 的提示词由前端在 Run 创建前准备，只能按 Profile 保存的 presentation 写结束说明。启动时传入不同的 `presentation`（例如聊天入口固定为前台）时，提示词与 runtime 的判断可能不一致；计划在后续 PR 让准备阶段接收启动时的 presentation。
 
 return-mode 子 Agent 使用 `task.return` 结束，把结果交给调用方。`agent.handoff` 则使当前 Invocation 进入 `transferred`，executor 准备下一个 Invocation，继续使用本次 Run 的提交记录。任务机制见 [多 Agent 协作](SubAgent.md)。
 

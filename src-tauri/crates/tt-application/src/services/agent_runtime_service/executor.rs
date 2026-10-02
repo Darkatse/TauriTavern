@@ -18,7 +18,7 @@ use super::tool_snapshot::tool_snapshot_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::ensure_profile_model_configured;
-use crate::services::agent_workspace_scope::ChatMount;
+use crate::services::agent_workspace_scope::ChatSnapshot;
 use tt_domain::models::agent::profile::{AgentModelBindingMode, ResolvedAgentProfile};
 use tt_domain::models::agent::{
     AgentInvocationStatus, AgentRunEventLevel, AgentRunStatus, WorkspacePath,
@@ -366,19 +366,19 @@ impl AgentRuntimeService {
             .agent_catalog(&resolved_profile, &visible_tools)
             .await?;
         super::prompt_snapshot::append_runtime_catalogs(&mut request, &effective_skills, &agents)?;
-        if matches!(
-            run.target,
-            tt_domain::models::agent::AgentRunTarget::Chat(_)
-        ) {
-            super::prompt_snapshot::append_workspace_inventory(
-                &mut request,
-                self.workspace_files(run_id).await?,
-                ChatMount::for_run(&run, self.chat_repository.clone())?,
-                &resolved_profile,
-                &visible_tools,
-            )
-            .await?;
-        }
+        super::prompt_snapshot::expand_workspace_index(
+            &mut request,
+            self.workspace_files(run_id).await?,
+            ChatSnapshot::for_run(
+                &run,
+                self.chat_repository.clone(),
+                self.group_chat_repository.clone(),
+            ),
+            &run.target,
+            &resolved_profile,
+            &visible_tools,
+        )
+        .await?;
         let request = prepare_agent_tool_request(
             request,
             &visible_tools,
@@ -438,20 +438,19 @@ impl AgentRuntimeService {
                     "agent.continuation_missing: run has no foreground invocation".to_string(),
                 )
             })?;
-            let exit = self
+            let Some(exit) = self
                 .run_tool_loop(frame, &mut state.commits, cancel)
                 .await?
-                .ok_or_else(|| {
-                    ApplicationError::ValidationError(format!(
-                        "agent.max_tool_rounds_exceeded: {} was not completed within {} rounds",
-                        super::loop_runner::completion_tool_name(
-                            frame.prepared.invocation.exit_policy,
-                            &frame.prepared.tool_turn,
-                            &frame.prepared.request.tools,
-                        ),
-                        frame.progress.max_rounds
-                    ))
-                })?;
+            else {
+                let active_run = self
+                    .active_run_handle(frame.prepared.invocation.run_id.as_str())
+                    .await?;
+                return Err(ApplicationError::ValidationError(format!(
+                    "agent.max_tool_rounds_exceeded: {} was not completed within {} rounds",
+                    frame.prepared.completion_tool_name(&active_run.target),
+                    frame.progress.max_rounds
+                )));
+            };
             match exit {
                 AgentLoopExit::Replied => return Ok(()),
                 AgentLoopExit::Finished => {

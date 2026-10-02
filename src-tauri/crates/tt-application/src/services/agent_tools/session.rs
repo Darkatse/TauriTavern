@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, hash_map::Entry};
 
-use crate::services::agent_workspace_scope::ChatMount;
+use crate::services::agent_workspace_scope::ChatSnapshot;
 use tt_domain::models::skill::SkillIndexEntry;
 use tt_ports::workspace_fs::WorkspaceFile;
 
@@ -48,7 +48,7 @@ pub struct AgentToolSession {
     /// Resolved on the first builtin tool call and kept with its chat snapshot for this
     /// invocation. Not checkpointed: a resumed run reads the chat again.
     #[serde(skip)]
-    pub(crate) chat_mount: tokio::sync::OnceCell<Option<std::sync::Arc<ChatMount>>>,
+    pub(crate) chat: tokio::sync::OnceCell<Option<std::sync::Arc<ChatSnapshot>>>,
 }
 
 impl AgentToolSession {

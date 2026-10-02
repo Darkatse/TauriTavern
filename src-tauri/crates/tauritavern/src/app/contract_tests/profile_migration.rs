@@ -26,6 +26,7 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
         profile.delegation.can_delegate = false;
         profile.tools.allow = [
             "workspace.read_file",
+            "workspace.search_files",
             "workspace.write_file",
             "workspace.commit",
         ]
@@ -52,6 +53,12 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
         // Overrides written for the former parameter name move to the current one.
         legacy["tools"]["toolDescriptions"]["builtin:workspace.read_file"]["properties"] =
             json!({"path": "  Keep this parameter guidance.  "});
+        // Search changed from ranked words to a regex, so an override naming its old
+        // parameters describes another tool and is dropped whole.
+        legacy["tools"]["toolDescriptions"]["builtin:workspace.search_files"] = json!({
+            "description": "Search by words; this is not a regex.",
+            "properties": {"query": "Words to look for.", "limit": "Hits to return."}
+        });
         legacy["tools"]["mcpResultInlineCharLimit"] = legacy["tools"]
             .as_object_mut()
             .unwrap()

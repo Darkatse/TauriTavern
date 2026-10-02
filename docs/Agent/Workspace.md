@@ -1,6 +1,6 @@
 # 工作区
 
-工作区保存 Agent 可以反复处理的文件。Chat 的工作文件属于 Run，Session 的工作文件由同一会话的历次 Run 共用，各自按 Profile 获得读写范围；`skills/` 按当前 Invocation 的有效 Skill 绑定提供只读文件视图，`chat.json` 与 `floors/` 提供当前角色聊天的只读楼层视图。
+工作区保存 Agent 可以反复处理的文件。Chat 的工作文件属于 Run，Session 的工作文件由同一会话的历次 Run 共用，各自按 Profile 获得读写范围；`skills/` 按当前 Invocation 的有效 Skill 绑定提供只读文件视图，`chat.json` 与 `floors/` 在 Profile 开了聊天工具时提供当前角色聊天的只读楼层视图。
 
 ## 文件放在哪里
 
@@ -15,13 +15,13 @@
 | `persist/` | 本次运行的持久内容工作副本 |
 | `tool-results/` | 工具结果及较长结果的可读版本，只读 |
 | `skills/` | 当前 Invocation 的有效 Skill 安装包，只读；无绑定时为空目录 |
-| `chat.json`、`floors/` | 当前角色聊天的概况与楼层，只读，仅 Chat Run，见[聊天挂载](#聊天挂载) |
+| `chat.json`、`floors/` | 当前角色聊天的概况与楼层，只读，仅 Chat Run 且 Profile 开了聊天工具，见[聊天挂载](#聊天挂载) |
 
-Chat Invocation 的 Agent 系统提示词附有开局工作区索引，见 [Prompt assembly](PromptAssembly.md#开局工作区索引)。模型用 `chat.search`、`workspace.search_files`、`read_file`（及 Profile 开启的 `list_files`）寻找和读取材料，用 `write_file`、`apply_patch` 修改文本，或用 `workspace.shell` 列目录和批量处理文件。路径相对于工作区，例如 `output/main.md`；Shell 中的 `/output/main.md` 指向同一文件。
+Agent 指令中的 `{{workspace}}` 展开为开局工作区索引，Chat 与 Session 都是如此，见 [Prompt assembly](PromptAssembly.md#开局工作区索引)。模型用 `chat_search`、`chat_read`、`grep`、`read`（及 Profile 开启的 `list`）寻找和读取材料，用 `write`、`edit` 修改文本，或用 `shell` 列目录和批量处理文件；这里写的是模型看到的工具名，与工具 ID 的对应见[工具](ToolSystem.md#身份与调用名称)。路径相对于工作区，例如 `output/main.md`；Shell 中的 `/output/main.md` 指向同一文件。
 
 文本工具替换已有文件和应用补丁时，使用读取记录和内容 SHA 检查冲突。Shell 不建立此读取记录；Shell 修改文件后，替换文件或应用补丁前需重新读取。
 
-普通 Run 文件读取返回原文，脚本可用 `macros.render()` 展开模板；Skill 文件的宏规则见 [Skill](Skill.md)。聊天楼层可经只读挂载读取原文：按问题找旧剧情用 `chat_search`，它给出楼层文件路径；精确的词或正则用 `grep`；再用 `read floors/NNNNNN/message.md` 读取。世界书通过专用工具读取。
+普通 Run 文件读取返回原文，脚本可用 `macros.render()` 展开模板；Skill 文件的宏规则见 [Skill](Skill.md)。聊天楼层可经只读挂载读取原文：按问题找用 `chat_search`，它给出楼层文件路径；一次读多楼用 `chat_read`；精确的词或正则用 `grep`；单个楼层也可用 `read floors/NNNNNN/message.md` 读取。世界书通过专用工具读取。
 
 ## 统一文件链路
 
@@ -38,13 +38,16 @@ Run 工作文件允许并行读取，按单次操作串行修改；CAS 的条件
 ```text
 chat.json                  title（聊天文件名去扩展名）、stableChatId、character、floorCount
 floors/000000/message.md   该楼 `mes` 原文，不展开宏，不经过正则
-floors/000000/meta.json    index、name、role、is_system、send_date、swipe_id、swipe_count；有 extra.type 时加 type
+floors/000000/meta.json    index、name、role、hidden、send_date、swipe_id、swipe_count；有 extra.type 时加 type
 ```
 
-- 楼号从 0 开始，6 位补零，与 SillyTavern 的 `#mesid` 一致。只包含本次输入冻结前的楼层（`input_message_count` 之前）；隐藏楼层保留，`is_system: true`。
-- `role`：原 `role` 为 `tool` 时是 tool，`is_user` 时是 user，`extra.type` 为 `narrator` 时是 system，其余是 assistant。
-- 读取、列目录、搜索和 Shell 都能访问；写入、编辑、改名和删除返回只读错误，与 `skills/` 相同。`grep` 搜楼层（不带 `path` 或指向楼层目录）时只匹配 `message.md`，`meta.json` 与 `chat.json` 需直接指定文件；直接扫描快照而非逐文件遍历，结果与 Run 文件一起按路径排列，隐藏楼层标 `[hidden]`。
-- 每个 Invocation 首次访问时读取整份聊天并在内存中复用，不写入 checkpoint。恢复运行会重新读取；本期不校验恢复前后已有楼层是否一致，期间被编辑的楼层会直接反映在读取结果里。
+- 读聊天的权限跟随 Profile：只有允许 `chat.search` 或 `chat.read_messages` 的 Profile 才挂载（`WorkspaceAccessPolicy::from_profile` 调用 `profile_reads_chat`）。没有挂载时这些文件不存在，读取返回 not found，开局索引没有 `Chat` 行，`grep` 也不覆盖楼层。
+- 楼号从 0 开始，6 位补零，与 SillyTavern 的 `#mesid` 一致。只包含本次输入冻结前的楼层（`input_message_count` 之前）；隐藏楼层保留。
+- `role` 与 `hidden` 由同一个规则（`FloorRole`）得出，`meta.json`、`grep` 与聊天工具都用它：原 `role` 为 `tool` 时是 tool，`is_user` 时是 user，其余是 assistant（旁白也是 assistant，由 `type: narrator` 区分）。`hidden` 表示用户把该楼从提示词里隐藏（`is_system`），不改变 role；Tool 楼层的 `is_system` 只为兼容旧扩展，不算隐藏。`grep` 在路径后标 `[hidden]`，`chat_search`、`chat_read` 显示为「role [hidden]」，structured 带 `hidden: true`。群聊的聊天工具按同一规则显示。`chat_search` 按显示的值过滤：`role` 取 user、assistant 或 tool，隐藏楼层用 `hidden: true` 选出。公开 Chat API 仍以 role `system` 表示隐藏，Agent 工具不使用这个归类；续跑的旧 Run 传 `role: "system"` 时返回可恢复错误，提示改用 `hidden`。
+- 某楼的记录缺少字符串 `mes` 时，只有这一楼没有 `message.md`：读取它返回 not found，并写明楼号和原因；列目录照常列出这一楼（只有 `meta.json`）；`grep` 跳过它，并在结果里写明跳过了几楼；`chat_search` 不会命中它，`chat_read` 读它返回 `chat.message_not_found` 并写明原因。其余楼层不受影响。
+- 读取、列目录、搜索和 Shell 都能访问；写入、编辑、改名和删除返回只读错误，与 `skills/` 相同。`grep` 搜楼层（不带 `path` 或指向楼层目录）时只匹配 `message.md`，`meta.json` 与 `chat.json` 需直接指定文件；直接扫描快照而非逐文件遍历，结果与 Run 文件一起按路径排列。
+- 聊天工具只读聊天快照（`ChatSnapshot`）：角色聊天与群聊都从聊天文件构建同样的楼层（原文、role、hidden、楼层范围和缺 `mes` 的处理）；挂载（`ChatMount`）只是把角色聊天的快照另外呈现为上面的文件。`chat_search` 在楼层原文上按词打分（与聊天搜索 API 共用 `RankedTextSearch`），`chat_read` 按楼号读取，文本、楼层范围与 role 都和楼层文件、`grep` 一致。群聊不挂载，`chat_search` 的命中不带楼层文件路径，改用 `chat_read` 按楼号读取。
+- 每个 Invocation 首次访问时（楼层文件、`grep` 或聊天工具）读取整份聊天并在内存中复用，不写入 checkpoint。恢复运行会重新读取；本期不校验恢复前后已有楼层是否一致，期间被编辑的楼层会直接反映在读取结果里。
 - Session 与群聊没有此挂载。
 
 ## JavaScript
@@ -101,7 +104,9 @@ agent-workspaces/
 
 模型调用 `workspace.commit` 时，runtime 读取指定的可访问 Run 工作文件并请求前端宿主保存。默认操作是替换本次输出楼层的正文；`append` 则将文件内容追加到本次输出。Host bridge 沿用 SillyTavern 的输出处理与保存流程，成功后把结果交回 runtime。
 
-首次显式提交前，前台运行还会展示写作进度：流式写入正文文件时形成实时正文，正文文件的修改会自动提交为进度记录。正文文件是输出策略中 `messageBody` 目标的文件（Default Writer 为 `output/main.md`）；`persist/`、`scratch/` 等其他文件是工作笔记，不会自动进入聊天。首次显式提交成功后，后续聊天发布由显式 `workspace.commit` 控制。此后 `replace` 提交的文件与内容若和上一次确认的提交完全相同，runtime 不再请求宿主写楼，以免重复触发 `MESSAGE_RECEIVED` 等消息事件；调用照常成功并说明未重新发布，带 `finish: true` 时照常结束 Run。提交被拒绝后，以及续跑或修订后的首次提交，总会重新发布。
+首次显式提交前，前台运行还会展示写作进度：流式写入正文文件时形成实时正文，正文文件的修改会自动提交为进度记录。正文文件是输出策略中 `messageBody` 目标的文件（Default Writer 为 `output/main.md`）；`persist/`、`scratch/` 等其他文件是工作笔记，不会自动进入聊天。首次显式提交成功后，后续聊天发布由显式 `workspace.commit` 控制。宿主每确认一次发布（显式或自动，宿主发布前会核对内容 SHA），runtime 就记下楼层显示的内容：`replace` 记下文件与内容 SHA，`append` 只记下楼层显示的是确认的发布，不对应单个文件。`replace` 提交（显式或自动）与这条记录完全相同时，runtime 不再请求宿主写楼，以免重复触发 `MESSAGE_RECEIVED` 等消息事件；显式提交照常成功并说明未重新发布，带 `finish: true` 时照常结束 Run。宿主没有收到这次提交，所以它不算首次显式提交，写作进度照常展示。提交被拒绝、模型流式输出过 `write`（宿主可能已把预览写进楼层）之后，以及续跑或修订后的首次提交，总会重新发布。
+
+结束策略的 `committed` 条件读同一条记录：本次 Run 发布过，且楼层显示的仍是宿主确认的发布（之后没有被流式预览覆盖，也没有提交被拒）时，只回文字的一轮才结束 Run；否则提醒模型提交。修订从已完成的回复开始，楼层显示的回复（可能经用户手工修改）算作确认的发布，只回文字即可保留它；续跑后须先有一次新的发布。
 
 Shell 与文本工具共用自动提交规则：每轮最多发布一次正文文件，提交时读取当前内容；同一轮之后写入的其他文件不会取代它。Shell 非零退出、取消或超时会清除本轮待提交候选。
 

@@ -49,7 +49,7 @@ Skill 目录与文件视图使用同一份有效绑定；Agent 目录由实际�
 
 ## 开局工作区索引
 
-Chat Invocation 准备阶段，runtime 把 `agentSystemPrompt` 正文中的 `{{workspace}}` 替换成工作区索引，省去先列目录的一轮。默认指令在启用工作区工具（读、写、编辑、搜索、列目录或 Shell 之一）时以 `{{workspace}}` 结尾；自定义指令自行决定位置，没写就没有索引。没有工作区工具或索引为空时，占位符连同前面的空行一起去掉。`{{workspace}}` 不是 SillyTavern 宏，前端组装时原样保留，由 runtime 展开。
+Invocation 准备阶段，runtime 把 `agentSystemPrompt` 正文中的 `{{workspace}}` 替换成工作区索引，省去先列目录的一轮；Chat 与 Session 使用同一个渲染器。Chat 与 Session 的默认指令在启用工作区工具（读、写、编辑、搜索、列目录或 Shell 之一）时都以 `{{workspace}}` 结尾；自定义指令自行决定位置，没写就没有索引。没有工作区工具或索引为空时，占位符连同前面的空行一起去掉。`{{workspace}}` 不是 SillyTavern 宏，前端组装时原样保留，由 runtime 展开。
 
 ```text
 # Workspace
@@ -59,8 +59,8 @@ Existing: output/main.md, summaries/review.md
 State: persist/{a.md,b.md} (writable, kept per floor)
 ```
 
-- 各行按 Profile 的目录策略生成。`Chat` 列出[聊天挂载](Workspace.md#聊天挂载)的文件，没有挂载时省略；`Work` 列出 `persist/` 以外的可见目录，只读目录单独标注；`Existing` 列出这些目录里开局时已有的文件（按路径排序，深度 4，最多 20 个，超出以 `…` 结尾），没有文件时省略，因此普通 Chat Run 不输出，接手的 Agent 和子 Agent 能看到本次 Run 里之前写好、自己可见的文件；`State` 只列 `persist/` 第一层条目，按名字排序，最多 12 个，超出以 `…` 结尾，为空时写明 empty。`skills/` 与 `tool-results/` 不列入，分别由 Skill 目录和工具结果给出入口。
-- `agentSystemPrompt` 默认位于整份请求最前面，索引因此不含楼号、时间等每楼变化的内容，楼数写在 `chat.json` 的 `floorCount`；只有 `persist/` 第一层条目的增删会改变缓存前缀，改写文件内容不影响。
+- 各行按 Profile 的目录策略生成。`Chat` 列出[聊天挂载](Workspace.md#聊天挂载)的文件，没有挂载时省略；`Work` 列出 `persist/` 以外的可见目录，只读目录单独标注，随 Run 结束的目录标注 `this run`（按目录生命周期判断，Session 的 `work/`、`tmp/` 跨轮保留，不标注）；`Existing` 只列随 Run 结束的目录里开局时已有的文件（与 `this run` 同一判断；按路径排序，深度 4，最多 20 个，超出以 `…` 结尾），没有文件时省略，因此普通 Chat Run 不输出，接手的 Agent 和子 Agent 能看到本次 Run 里之前写好、自己可见的文件；跨 Run 保留的目录（`persist/` 与 Session 的 `work/`、`tmp/`）不列文件；`State` 只列 `persist/` 第一层条目，按名字排序，最多 12 个，超出以 `…` 结尾，为空时写明 empty。`skills/` 与 `tool-results/` 不列入，分别由 Skill 目录和工具结果给出入口。
+- `agentSystemPrompt` 默认位于整份请求最前面，索引因此只写缓存前缀复用期间不变的事实：不含楼号、时间等每楼变化的内容（楼数写在 `chat.json` 的 `floorCount`），也不列跨 Run 保留目录里的文件。Chat Run 的索引只在 `persist/` 第一层条目增删时改变，改写文件内容不影响；Session 的索引在会话内不变。
 - 末尾消息属于预设（历史后指令、预填式格式开头），runtime 不改动。索引只生成一次，后续轮次、恢复和修订沿用已准备请求，不随运行刷新。
 
 ## 预设与连接各管什么

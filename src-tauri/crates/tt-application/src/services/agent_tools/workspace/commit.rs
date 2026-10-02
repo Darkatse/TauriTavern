@@ -95,7 +95,7 @@ pub(in crate::services::agent_tools) async fn commit(
         AgentToolEffect::ChatCommitRequested {
             path,
             mode,
-            reason: Some(reason),
+            reason,
             finish,
         },
     ))

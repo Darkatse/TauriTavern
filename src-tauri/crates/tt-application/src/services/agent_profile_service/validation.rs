@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::errors::ApplicationError;
+use crate::services::agent_tools::{RENAMED_TOOL_PARAMETERS, TOOLS_WITH_CHANGED_MEANING};
 use tt_domain::models::agent::AgentRunPresentation;
 use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
 use tt_domain::models::agent::profile::{
@@ -65,11 +66,13 @@ pub(super) fn migrate_profile_schema(
 
 /// File tools use the conventional parameter names (`file_path`, `offset`, `limit`, grep's
 /// `pattern`); description overrides written for the old names move to the new ones and
-/// overrides for removed parameters are dropped, so saved Profiles still load. Returns
-/// whether anything changed.
+/// overrides for removed parameters are dropped, so saved Profiles still load. An override
+/// that names an old parameter of a tool whose meaning changed was written for the former
+/// tool: that parameter text and the tool description are dropped rather than moved, and
+/// an override left empty is removed. Returns whether anything changed.
 fn migrate_renamed_tool_parameters(policy: &mut AgentToolPolicy) -> bool {
     let mut changed = false;
-    for (tool_id, old, new) in crate::services::agent_tools::RENAMED_TOOL_PARAMETERS {
+    for (tool_id, old, new) in RENAMED_TOOL_PARAMETERS {
         let Some(override_) = policy.tool_descriptions.get_mut(tool_id) else {
             continue;
         };
@@ -77,11 +80,16 @@ fn migrate_renamed_tool_parameters(policy: &mut AgentToolPolicy) -> bool {
             continue;
         };
         changed = true;
-        if let Some(new) = new {
+        if TOOLS_WITH_CHANGED_MEANING.contains(&tool_id) {
+            override_.description = None;
+        } else if let Some(new) = new {
             override_
                 .properties
                 .entry(new.to_string())
                 .or_insert(description);
+        }
+        if override_.is_empty() {
+            policy.tool_descriptions.remove(tool_id);
         }
     }
     changed

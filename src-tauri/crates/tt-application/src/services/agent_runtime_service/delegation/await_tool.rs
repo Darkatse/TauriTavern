@@ -74,7 +74,6 @@ impl AgentRuntimeService {
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let run_id = prepared.invocation.run_id.as_str();
         let invocation_id = prepared.invocation.id.as_str();
-        let profile = &prepared.profile;
         let parent_tools = &prepared.request.tools;
         let started = Instant::now();
         let args = match serde_json::from_value::<AgentAwaitArgs>(Value::Object(args.clone())) {
@@ -187,7 +186,7 @@ impl AgentRuntimeService {
         });
         let continuation_hint = DelegatedResultContinuationHint::from_parent_tools(
             parent_tools,
-            profile.run.presentation,
+            prepared.finish_policy(&self.active_run_handle(run_id).await?.target),
             committed_count,
         );
         let content = render_await_content(&structured, Some(&continuation_hint));
@@ -294,7 +293,6 @@ impl AgentRuntimeService {
     ) -> Result<Option<String>, ApplicationError> {
         let run_id = prepared.invocation.run_id.as_str();
         let invocation_id = prepared.invocation.id.as_str();
-        let profile = &prepared.profile;
         let parent_tools = &prepared.request.tools;
         let tasks = self
             .invocation_repository
@@ -319,7 +317,7 @@ impl AgentRuntimeService {
         });
         let continuation_hint = DelegatedResultContinuationHint::from_parent_tools(
             parent_tools,
-            profile.run.presentation,
+            prepared.finish_policy(&self.active_run_handle(run_id).await?.target),
             committed_count,
         );
         Ok(Some(format!(

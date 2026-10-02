@@ -21,7 +21,7 @@ pub(super) use self::descriptors::{
     workspace_write_file_descriptor,
 };
 pub(super) use self::list_files::list_files;
-pub(crate) use self::list_files::render_workspace_inventory;
+pub(crate) use self::list_files::render_workspace_index;
 pub(super) use self::read_file::read_file;
 pub(super) use self::search_files::search_files;
 pub(super) use self::shell::shell;
@@ -34,6 +34,16 @@ pub(crate) const WORKSPACE_WRITE_FILE: &str = "workspace.write_file";
 pub(crate) const WORKSPACE_APPLY_PATCH: &str = "workspace.apply_patch";
 pub(crate) const WORKSPACE_SHELL: &str = "workspace.shell";
 pub(super) const WORKSPACE_COMMIT: &str = "workspace.commit";
+/// The workspace tools that reach files, i.e. all but commit. Only with one of them does
+/// the prompt describe the workspace directories.
+pub(crate) const WORKSPACE_FILE_TOOLS: [&str; 6] = [
+    WORKSPACE_LIST_FILES,
+    WORKSPACE_READ_FILE,
+    WORKSPACE_SEARCH_FILES,
+    WORKSPACE_WRITE_FILE,
+    WORKSPACE_APPLY_PATCH,
+    WORKSPACE_SHELL,
+];
 
 const DEFAULT_LIST_DEPTH: usize = 2;
 const MAX_LIST_DEPTH: usize = 4;

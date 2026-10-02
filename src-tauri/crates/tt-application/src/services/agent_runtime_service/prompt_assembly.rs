@@ -13,16 +13,16 @@ use crate::dto::agent_dto::{
 use crate::errors::ApplicationError;
 use crate::services::prompt_assembly_service::AgentInvocationPromptAssemblyContext;
 use tt_domain::models::agent::profile::{AgentPresetBindingMode, ResolvedAgentProfile};
-use tt_domain::models::agent::{AgentModelTool, AgentRunEventLevel, WorkspacePath};
+use tt_domain::models::agent::{
+    AgentInvocationExitPolicy, AgentModelTool, AgentRunEventLevel, WorkspacePath,
+};
 
 impl AgentRuntimeService {
     pub async fn prepare_session_run(
         &self,
         dto: crate::dto::agent_dto::AgentPrepareSessionRunDto,
     ) -> Result<crate::dto::agent_dto::AgentPrepareSessionRunResultDto, ApplicationError> {
-        use tt_domain::models::agent::{
-            AgentInvocationExitPolicy, AgentModelContentPart, AgentModelMessage, AgentModelRole,
-        };
+        use tt_domain::models::agent::{AgentModelContentPart, AgentModelMessage, AgentModelRole};
         use tt_ports::repositories::agent_session_repository::AgentSessionMessageReadQuery;
 
         self.session_repository
@@ -181,12 +181,13 @@ impl AgentRuntimeService {
 
     #[expect(
         clippy::too_many_arguments,
-        reason = "prompt assembly boundary keeps profile, tools, snapshot, scope, and cancellation explicit"
+        reason = "prompt assembly boundary keeps profile, tools, exit policy, snapshot, scope, and cancellation explicit"
     )]
     pub(super) async fn assemble_invocation_prompt_snapshot(
         &self,
         profile: &ResolvedAgentProfile,
         visible_tools: &[AgentModelTool],
+        exit_policy: AgentInvocationExitPolicy,
         generation_type: &str,
         frozen_run_input_snapshot: Value,
         scope: &AgentPromptAssemblyScopeDto,
@@ -219,6 +220,7 @@ impl AgentRuntimeService {
                         "agentTask".to_string(),
                     ],
                 },
+                exit_policy,
             )
             .await?;
         if matches!(

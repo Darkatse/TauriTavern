@@ -1,28 +1,19 @@
-use std::sync::Arc;
-
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use super::{
-    DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, MAX_SEARCH_SCAN_LIMIT, chat_unavailable_message,
-    parse_role, raw_total_messages, role_as_str, visible_total_messages,
-};
+use super::{DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, MAX_SEARCH_SCAN_LIMIT, chat_read_error};
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::common::{
-    optional_usize_arg, required_trimmed_string_arg, tool_error,
+    optional_bool_arg, optional_usize_arg, required_trimmed_string_arg, tool_error,
 };
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
-use crate::services::agent_workspace_scope::floor_message_path;
-use tt_domain::errors::DomainError;
-use tt_domain::frozen_macros::FrozenMacros;
-use tt_domain::models::agent::{AgentChatRef, AgentToolResult};
+use crate::services::agent_workspace_scope::{
+    ChatFloor, ChatSnapshot, FloorRole, floor_message_path,
+};
+use tt_domain::models::agent::AgentToolResult;
 use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
-use tt_ports::repositories::agent_run_repository::AgentRunRepository;
-use tt_ports::repositories::chat_repository::{
-    ChatMessageSearchFilters, ChatMessageSearchHit, ChatMessageSearchQuery, ChatRepository,
-};
-use tt_ports::repositories::group_chat_repository::GroupChatRepository;
+use tt_domain::text_search::{RankedHit, RankedTextSearch};
 
 use super::super::structured::{TextMetricsPayload, structured_value};
 
@@ -37,26 +28,23 @@ struct ChatSearchStructured<'a> {
 #[serde(rename_all = "camelCase")]
 struct ChatSearchHitStructured<'a> {
     index: usize,
-    role: &'static str,
+    #[serde(flatten)]
+    role: FloorRole,
     score: f32,
     snippet: &'a str,
     #[serde(flatten)]
     metrics: TextMetricsPayload,
     #[serde(rename = "ref")]
     ref_id: String,
-    /// The floor file in the chat mount; group chats have no mount.
+    /// The floor file in the chat mount; a group chat is not mounted.
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
 }
 
 pub(in crate::services::agent_tools) async fn search(
-    run_repository: &dyn AgentRunRepository,
-    chat_repository: &dyn ChatRepository,
-    group_chat_repository: &dyn GroupChatRepository,
-    run_id: &str,
+    chat: &ChatSnapshot,
     call: &ToolInvocation,
     args: &Map<String, Value>,
-    macros: &Arc<FrozenMacros>,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let query = match required_trimmed_string_arg(args, "query") {
         Some(query) => query.to_string(),
@@ -67,7 +55,7 @@ pub(in crate::services::agent_tools) async fn search(
             ));
         }
     };
-    let mut search_query = match parse_search_query(args, query.clone()) {
+    let search_query = match parse_search(args, query) {
         Ok(query) => query,
         Err(message) => {
             return Ok((
@@ -77,58 +65,11 @@ pub(in crate::services::agent_tools) async fn search(
         }
     };
 
-    search_query.frozen_macros = Some(macros.clone());
-    let run = run_repository.load_run(run_id).await?;
-    if run.chat_target()?.input_message_count.is_some() {
-        let raw_total = match raw_total_messages(
-            chat_repository,
-            group_chat_repository,
-            &run.chat_target()?.chat_ref,
-        )
-        .await
-        {
-            Ok(total) => total,
-            Err(DomainError::NotFound(message)) => {
-                return Ok((
-                    tool_error(call, "chat.not_found", &chat_unavailable_message(&message)),
-                    AgentToolEffect::None,
-                ));
-            }
-            Err(error) => return Err(error.into()),
-        };
-        let visible_total = visible_total_messages(&run, raw_total)?;
-        let Some(bounded_query) = constrain_search_query(search_query, raw_total, visible_total)
-        else {
-            return Ok(empty_result(call, &query));
-        };
-        search_query = bounded_query;
-    }
-    // Character chats are mounted as floor files, so hits point at the file to read.
-    let floor_files = matches!(run.chat_target()?.chat_ref, AgentChatRef::Character { .. });
-    let hits = match &run.chat_target()?.chat_ref {
-        AgentChatRef::Character {
-            character_id,
-            file_name,
-        } => {
-            chat_repository
-                .search_character_chat_messages(character_id, file_name, search_query.clone())
-                .await
-        }
-        AgentChatRef::Group { chat_id } => {
-            group_chat_repository
-                .search_group_chat_messages(chat_id, search_query.clone())
-                .await
-        }
-    };
-    let hits = match hits {
-        Ok(hits) => hits,
-        Err(DomainError::NotFound(message)) => {
-            return Ok((
-                tool_error(call, "chat.not_found", &chat_unavailable_message(&message)),
-                AgentToolEffect::None,
-            ));
-        }
-        Err(error) => return Err(error.into()),
+    // A mounted chat has floor files, so hits point at the file to read.
+    let floor_files = chat.is_mounted();
+    let hits = match chat.floors().await {
+        Ok(floors) => search_floors(floors, &search_query),
+        Err(error) => return chat_read_error(call, error),
     };
 
     let content = render_content(&search_query.query, &hits, floor_files);
@@ -163,67 +104,51 @@ pub(in crate::services::agent_tools) async fn search(
     ))
 }
 
-fn constrain_search_query(
-    mut query: ChatMessageSearchQuery,
-    raw_total: usize,
-    visible_total: usize,
-) -> Option<ChatMessageSearchQuery> {
-    if visible_total == 0 {
-        return None;
-    }
-
-    let excluded_tail = raw_total.saturating_sub(visible_total);
-    let mut filters = query.filters.take().unwrap_or(ChatMessageSearchFilters {
-        role: None,
-        start_index: None,
-        end_index: None,
-        scan_limit: None,
-    });
-    if filters
-        .start_index
-        .is_some_and(|start| start >= visible_total)
-    {
-        return None;
-    }
-    let visible_end = visible_total - 1;
-    filters.end_index = Some(
-        filters
-            .end_index
-            .map(|end| end.min(visible_end))
-            .unwrap_or(visible_end),
-    );
-    if matches!((filters.start_index, filters.end_index), (Some(start), Some(end)) if start > end) {
-        return None;
-    }
-    if let Some(scan_limit) = filters.scan_limit {
-        filters.scan_limit = Some(scan_limit.min(visible_total).saturating_add(excluded_tail));
-    }
-    query.filters = Some(filters);
-    Some(query)
-}
-
-fn empty_result(call: &ToolInvocation, query: &str) -> (AgentToolResult, AgentToolEffect) {
-    (
-        AgentToolResult {
-            call_id: call.call_id.clone(),
-            tool_id: call.tool_id.clone(),
-            content: render_content(query, &[], false),
-            structured: structured_value(ChatSearchStructured {
-                query,
-                hits: Vec::new(),
-            }),
-            is_error: false,
-            error_code: None,
-            resource_refs: Vec::new(),
-        },
-        AgentToolEffect::None,
-    )
-}
-
-fn parse_search_query(
-    args: &Map<String, Value>,
+/// A search over the run's floors, as the model asked for it.
+struct FloorSearch {
     query: String,
-) -> Result<ChatMessageSearchQuery, String> {
+    limit: usize,
+    /// A [`FloorRole::role`], filtered as the floors show it.
+    role: Option<&'static str>,
+    /// Keeps only hidden floors (`true`) or only floors in the prompt (`false`).
+    hidden: Option<bool>,
+    start_floor: Option<usize>,
+    end_floor: Option<usize>,
+    scan_limit: Option<usize>,
+}
+
+/// Ranks the run's floors as the chat search API ranks a chat file: within the floor
+/// range and the `scan_limit` most recent floors, of the chosen role and visibility as
+/// the floors show them. A floor without text has no words to match.
+fn search_floors<'a>(
+    floors: &'a [ChatFloor],
+    search: &FloorSearch,
+) -> Vec<RankedHit<'a, FloorRole>> {
+    let total = floors.len();
+    let scanned = search.scan_limit.unwrap_or(total).min(total);
+    let start = search.start_floor.unwrap_or(0).max(total - scanned);
+    let end = search
+        .end_floor
+        .map_or(total, |end| end.saturating_add(1))
+        .min(total);
+
+    let mut ranked = RankedTextSearch::new(&search.query, search.limit);
+    for (index, floor) in floors.iter().enumerate().take(end).skip(start) {
+        if search.role.is_some_and(|role| role != floor.role.role)
+            || search
+                .hidden
+                .is_some_and(|hidden| hidden != floor.role.hidden)
+        {
+            continue;
+        }
+        if let Some(text) = floor.message.as_deref() {
+            ranked.offer(index, text, floor.role);
+        }
+    }
+    ranked.finish()
+}
+
+fn parse_search(args: &Map<String, Value>, query: String) -> Result<FloorSearch, String> {
     let limit = optional_usize_arg(args, "limit")?.unwrap_or(DEFAULT_SEARCH_LIMIT);
     if limit == 0 {
         return Err("limit must be >= 1".to_string());
@@ -233,17 +158,15 @@ fn parse_search_query(
     }
 
     let role = match args.get("role") {
-        Some(Value::String(value)) => Some(
-            parse_role(value)
-                .ok_or_else(|| "role must be user, assistant, system, or tool".to_string())?,
-        ),
+        Some(Value::String(value)) => Some(parse_floor_role(value)?),
         Some(_) => return Err("role must be a string".to_string()),
         None => None,
     };
-    let start_index = optional_usize_arg(args, "start_message")?;
-    let end_index = optional_usize_arg(args, "end_message")?;
-    if matches!((start_index, end_index), (Some(start), Some(end)) if start > end) {
-        return Err("start_message must be <= end_message".to_string());
+    let hidden = optional_bool_arg(args, "hidden")?;
+    let start_floor = optional_usize_arg(args, "start_floor")?;
+    let end_floor = optional_usize_arg(args, "end_floor")?;
+    if matches!((start_floor, end_floor), (Some(start), Some(end)) if start > end) {
+        return Err("start_floor must be <= end_floor".to_string());
     }
     let scan_limit = optional_usize_arg(args, "scan_limit")?;
     if scan_limit == Some(0) {
@@ -253,39 +176,45 @@ fn parse_search_query(
         return Err(format!("scan_limit must be <= {MAX_SEARCH_SCAN_LIMIT}"));
     }
 
-    let filters =
-        if role.is_some() || start_index.is_some() || end_index.is_some() || scan_limit.is_some() {
-            Some(ChatMessageSearchFilters {
-                role,
-                start_index,
-                end_index,
-                scan_limit,
-            })
-        } else {
-            None
-        };
-
-    Ok(ChatMessageSearchQuery {
-        frozen_macros: None,
+    Ok(FloorSearch {
         query,
         limit,
-        filters,
+        role,
+        hidden,
+        start_floor,
+        end_floor,
+        scan_limit,
     })
 }
 
-fn render_content(query: &str, hits: &[ChatMessageSearchHit], floor_files: bool) -> String {
+/// A role as the floors show it. `system` is how the chat search API lists hidden floors;
+/// a run frozen with that schema is told how to select them now.
+fn parse_floor_role(value: &str) -> Result<&'static str, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "user" => Ok("user"),
+        "assistant" => Ok("assistant"),
+        "tool" => Ok("tool"),
+        "system" => Err(
+            "role system is not a floor role; hidden floors keep their role, so select them with hidden: true."
+                .to_string(),
+        ),
+        _ => Err("role must be user, assistant, or tool".to_string()),
+    }
+}
+
+fn render_content(query: &str, hits: &[RankedHit<'_, FloorRole>], floor_files: bool) -> String {
     if hits.is_empty() {
-        return format!("No messages matched `{query}` in the current chat.");
+        return format!("No floors matched `{query}` in the current chat.");
     }
 
     let mut content = format!(
-        "Search `{query}` matched {} message{} in the current chat. {}",
+        "Search `{query}` matched {} floor{} in the current chat. {}",
         hits.len(),
         if hits.len() == 1 { "" } else { "s" },
         if floor_files {
             "Read the floor file for the exact text."
         } else {
-            "Use chat_read_messages with the message index to read exact text."
+            "Read these floors by index for the exact text."
         }
     );
     for hit in hits {
@@ -295,21 +224,21 @@ fn render_content(query: &str, hits: &[ChatMessageSearchHit], floor_files: bool)
             format!("ref chat:current#{}", hit.index)
         };
         content.push_str(&format!(
-            "\n\nmessage {} {} score {:.3} {location}\n{}",
-            hit.index,
-            role_as_str(hit.role),
-            hit.score,
-            hit.snippet
+            "\n\nfloor {} {} score {:.3} {location}\n{}",
+            hit.index, hit.item, hit.score, hit.snippet
         ));
     }
     content
 }
 
-fn structured_hit(hit: &ChatMessageSearchHit, floor_files: bool) -> ChatSearchHitStructured<'_> {
+fn structured_hit<'a>(
+    hit: &'a RankedHit<'_, FloorRole>,
+    floor_files: bool,
+) -> ChatSearchHitStructured<'a> {
     let metrics = TextMetrics::from_text(&hit.snippet);
     ChatSearchHitStructured {
         index: hit.index,
-        role: role_as_str(hit.role),
+        role: hit.item,
         score: hit.score,
         snippet: hit.snippet.as_str(),
         metrics: metrics.into(),

@@ -2314,7 +2314,6 @@ async fn search_character_chat_messages_returns_scored_hits_and_respects_role_fi
             "alice",
             "session",
             ChatMessageSearchQuery {
-                frozen_macros: None,
                 query: "北京烤鸭".to_string(),
                 limit: 2,
                 filters: None,
@@ -2334,7 +2333,6 @@ async fn search_character_chat_messages_returns_scored_hits_and_respects_role_fi
             "alice",
             "session",
             ChatMessageSearchQuery {
-                frozen_macros: None,
                 query: "北京烤鸭".to_string(),
                 limit: 10,
                 filters: Some(ChatMessageSearchFilters {
@@ -2351,77 +2349,6 @@ async fn search_character_chat_messages_returns_scored_hits_and_respects_role_fi
     assert_eq!(user_hits.len(), 1);
     assert_eq!(user_hits[0].index, 0);
     assert_eq!(user_hits[0].role, ChatMessageRole::User);
-
-    cleanup_repository(repository, root).await;
-}
-
-#[tokio::test]
-async fn read_character_chat_messages_returns_selected_messages_and_total_count() {
-    let (repository, root) = setup_repository().await;
-
-    let payload = [
-        json!({
-            "chat_metadata": {
-                "integrity": "695e7861-f59b-519d-8712-4a40f8bef7a5",
-            },
-            "user_name": "unused",
-            "character_name": "unused",
-        }),
-        json!({
-            "name": "User",
-            "is_user": true,
-            "is_system": false,
-            "send_date": "2026-01-01T00:00:00.000Z",
-            "mes": "first message",
-            "extra": {},
-        }),
-        json!({
-            "name": "Alice",
-            "is_user": false,
-            "is_system": false,
-            "send_date": "2026-01-01T00:00:01.000Z",
-            "mes": "second message",
-            "extra": {},
-        }),
-        json!({
-            "name": "System",
-            "is_user": false,
-            "is_system": true,
-            "send_date": "2026-01-01T00:00:02.000Z",
-            "mes": "system message",
-            "extra": {},
-        }),
-    ];
-
-    let raw = format!(
-        "\r\n\u{feff}\r\n{}",
-        payload
-            .iter()
-            .map(Value::to_string)
-            .collect::<Vec<_>>()
-            .join("\r\n\r\n")
-    );
-    commit_payload_bytes(
-        &repository,
-        character_target("alice", "session"),
-        raw.as_bytes(),
-        false,
-    )
-    .await
-    .unwrap();
-
-    let result = repository
-        .read_character_chat_messages("alice", "session", &[2, 0])
-        .await
-        .expect("read messages");
-
-    assert_eq!(result.total_messages, 3);
-    assert_eq!(result.messages.len(), 2);
-    assert_eq!(result.messages[0].index, 0);
-    assert_eq!(result.messages[0].role, ChatMessageRole::User);
-    assert_eq!(result.messages[0].text, "first message");
-    assert_eq!(result.messages[1].index, 2);
-    assert_eq!(result.messages[1].role, ChatMessageRole::System);
 
     cleanup_repository(repository, root).await;
 }
@@ -2499,18 +2426,11 @@ async fn tool_role_roundtrips_and_is_distinct_from_system() {
     assert_eq!(rewritten[2]["tool_call_id"], json!("call_weather"));
     assert_eq!(rewritten[1]["tool_calls"][0]["id"], json!("call_weather"));
 
-    let read = repository
-        .read_character_chat_messages("alice", "session", &[1])
-        .await
-        .expect("read tool message");
-    assert_eq!(read.messages[0].role, ChatMessageRole::Tool);
-
     let tool_hits = repository
         .search_character_chat_messages(
             "alice",
             "session",
             ChatMessageSearchQuery {
-                frozen_macros: None,
                 query: "weather result".to_string(),
                 limit: 10,
                 filters: Some(ChatMessageSearchFilters {
@@ -2532,7 +2452,6 @@ async fn tool_role_roundtrips_and_is_distinct_from_system() {
             "alice",
             "session",
             ChatMessageSearchQuery {
-                frozen_macros: None,
                 query: "weather result".to_string(),
                 limit: 10,
                 filters: Some(ChatMessageSearchFilters {
@@ -2626,7 +2545,6 @@ async fn search_group_chat_messages_respects_scan_limit() {
         .search_group_chat_messages(
             "group-one",
             ChatMessageSearchQuery {
-                frozen_macros: None,
                 query: "dragon".to_string(),
                 limit: 10,
                 filters: Some(ChatMessageSearchFilters {
@@ -2646,7 +2564,6 @@ async fn search_group_chat_messages_respects_scan_limit() {
         .search_group_chat_messages(
             "group-one",
             ChatMessageSearchQuery {
-                frozen_macros: None,
                 query: "dragon".to_string(),
                 limit: 10,
                 filters: Some(ChatMessageSearchFilters {

@@ -1,9 +1,8 @@
-use crate::services::agent_tools::stage_can_finish_run;
-use crate::services::agent_workspace_scope::{
-    format_model_visible_workspace_roots, format_model_workspace_roots,
+use crate::services::agent_tools::{
+    FinishPolicy, TextTurn, WORKSPACE_FILE_TOOLS, stage_can_finish_run, visible_builtin_alias,
 };
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
-use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool, AgentRunPresentation};
+use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool};
 
 use super::constants::{
     AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, TASK_RETURN_TOOL,
@@ -14,15 +13,9 @@ use super::constants::{
 /// its place, and without it they get no index.
 pub(crate) const WORKSPACE_INDEX_PLACEHOLDER: &str = "{{workspace}}";
 
-const WORKSPACE_TOOLS: [&str; 6] = [
-    "workspace.list_files",
-    "workspace.read_file",
-    "workspace.search_files",
-    "workspace.write_file",
-    "workspace.apply_patch",
-    "workspace.shell",
-];
-
+/// How the stage ends comes from its finish policy. `profile` is the invocation's, whose
+/// presentation is the Run's once the invocation is prepared; root prompts are prepared
+/// before the Run exists and use the Profile's default presentation.
 pub fn materialize_agent_system_prompt(
     tools: &[AgentModelTool],
     profile: &ResolvedAgentProfile,
@@ -32,48 +25,47 @@ pub fn materialize_agent_system_prompt(
         return prompt.clone();
     }
 
+    let has = |name: &str| visible_builtin_alias(tools, name).is_some();
+    let alias = |name: &str| {
+        visible_builtin_alias(tools, name).expect("prompt references only visible builtin tools")
+    };
     if exit_policy == AgentInvocationExitPolicy::ReplyAllowed {
         let mut lines = vec![
             "Assist the user with their request. Use tools when needed and reply directly when finished."
                 .to_string(),
         ];
-        if WORKSPACE_TOOLS.iter().any(|name| has_tool(tools, name)) {
-            lines.extend([
-                format!(
-                    "Readable workspace directories: {}.",
-                    format_model_visible_workspace_roots(&profile.workspace.visible_roots),
-                ),
-                format!(
-                    "Writable workspace directories: {}.",
-                    format_model_workspace_roots(&profile.workspace.writable_roots),
-                ),
+        let uses_workspace = WORKSPACE_FILE_TOOLS.iter().any(|name| has(name));
+        if uses_workspace {
+            lines.push(
                 "Use work/ for lasting work and tmp/ for temporary files. Both persist across turns and restarts. Remove temporary files when no longer needed."
                     .to_string(),
-            ]);
+            );
         }
-        if has_tool(tools, "workspace.shell") {
+        if has("workspace.shell") {
             lines.push("Shell /work and /tmp map to work/ and tmp/ in this workspace.".to_string());
-            if has_tool(tools, "workspace.read_file")
-                && (has_tool(tools, "workspace.write_file")
-                    || has_tool(tools, "workspace.apply_patch"))
+            if has("workspace.read_file")
+                && (has("workspace.write_file") || has("workspace.apply_patch"))
             {
                 lines.push(format!(
                     "After editing with {}, use {} before replacing or patching the file with text tools.",
-                    model_alias(tools, "workspace.shell"),
-                    model_alias(tools, "workspace.read_file"),
+                    alias("workspace.shell"),
+                    alias("workspace.read_file"),
                 ));
             }
+        }
+        if uses_workspace {
+            lines.extend([String::new(), WORKSPACE_INDEX_PLACEHOLDER.to_string()]);
         }
         return lines.join("\n");
     }
 
-    let has = |name: &str| has_tool(tools, name);
-    let alias = |name: &'static str| model_alias(tools, name);
-    let can_finish_run =
-        exit_policy == AgentInvocationExitPolicy::RunFinishAllowed && stage_can_finish_run(has);
-    let foreground = profile.run.presentation == AgentRunPresentation::Foreground;
-    // Background runs end when the model stops calling tools (the stage's finish policy).
-    let text_ends_run = can_finish_run && !foreground;
+    let text_turn = FinishPolicy::for_stage(
+        exit_policy,
+        profile.run.presentation,
+        stage_can_finish_run(has),
+    )
+    .text_turn();
+    let ends_run = text_turn != TextTurn::Continues;
 
     let mut lines = vec!["---".to_string(), "tools:".to_string()];
     lines.extend(
@@ -89,17 +81,17 @@ pub fn materialize_agent_system_prompt(
             .to_string(),
     ]);
     lines.push(
-        match (has("workspace.commit"), text_ends_run) {
-            (true, false) => "- Only committed text reaches the chat; a plain-text reply is never shown to the user. Every turn must call a tool.",
-            (false, false) => "- Every turn must call a tool; plain text alone does not complete this stage.",
-            (true, true) => "- Only committed text reaches the chat. When the run's work is complete, reply without calling a tool to end the run.",
-            (false, true) => "- When the run's work is complete, reply without calling a tool to end the run.",
+        match (has("workspace.commit"), text_turn) {
+            (true, TextTurn::EndsRun) => "- Only committed text reaches the chat. When the run's work is complete, reply without calling a tool to end the run.",
+            (false, TextTurn::EndsRun) => "- When the run's work is complete, reply without calling a tool to end the run.",
+            (true, _) => "- Only committed text reaches the chat; a plain-text reply is never shown to the user. Every turn must call a tool.",
+            (false, _) => "- Every turn must call a tool; plain text alone does not complete this stage.",
         }
         .to_string(),
     );
 
     let mut completion_tools = Vec::new();
-    if can_finish_run && has("workspace.commit") {
+    if ends_run && has("workspace.commit") {
         completion_tools.push(format!("{} with finish: true", alias("workspace.commit")));
     }
     for name in [TASK_RETURN_TOOL, AGENT_HANDOFF_TOOL] {
@@ -120,37 +112,30 @@ pub fn materialize_agent_system_prompt(
         );
     }
 
-    match (has("chat.search"), has("chat.read_messages")) {
-        (true, true) => lines.push(format!(
-            "- For earlier chat details, find messages with {} and read them by index with {}.",
-            alias("chat.search"),
-            alias("chat.read_messages")
-        )),
-        (true, false) => {
-            let mut hint = format!(
-                "- To find earlier plot by topic, use {}",
-                alias("chat.search")
-            );
-            if has("workspace.search_files") {
-                hint.push_str(&format!(
-                    "; for exact words or a regex, use {}",
-                    alias("workspace.search_files")
-                ));
-            }
-            if has("workspace.read_file") {
-                hint.push_str(&format!(
-                    "; read the original with {} floors/NNNNNN/message.md",
-                    alias("workspace.read_file")
-                ));
-            }
-            hint.push('.');
-            lines.push(hint);
+    if has("chat.search") || has("chat.read_messages") {
+        let mut ways = Vec::new();
+        if has("chat.search") {
+            ways.push(format!("find plot by topic with {}", alias("chat.search")));
         }
-        (false, true) => lines.push(format!(
-            "- Use {} to read earlier chat messages by index.",
-            alias("chat.read_messages")
-        )),
-        (false, false) => {}
+        if has("chat.read_messages") {
+            ways.push(format!(
+                "read several floors at once with {}",
+                alias("chat.read_messages")
+            ));
+        }
+        if has("workspace.search_files") {
+            ways.push(format!(
+                "find exact words or a regex with {}",
+                alias("workspace.search_files")
+            ));
+        }
+        if !has("chat.read_messages") && has("workspace.read_file") {
+            ways.push(format!(
+                "read the original with {} floors/NNNNNN/message.md",
+                alias("workspace.read_file")
+            ));
+        }
+        lines.push(format!("- For earlier chat floors: {}.", ways.join("; ")));
     }
     if has("worldinfo.read_activated") {
         lines.push(format!(
@@ -198,7 +183,8 @@ pub fn materialize_agent_system_prompt(
     if persist_writable {
         lines.push("- Use persist/ for concise information that should carry into later turns of this chat: plot facts, unresolved threads, relationship states, user style preferences. Do not copy chat history, replies, tool results, or reasoning into it.".to_string());
     }
-    // Readable and writable roots are named by the workspace index the runtime appends.
+    // Readable and writable roots are named by the workspace index that `{{workspace}}`
+    // below expands to.
 
     if has(TASK_RETURN_TOOL) {
         lines.push(
@@ -209,7 +195,7 @@ pub fn materialize_agent_system_prompt(
             "# **Important**: Return your result only by calling {} with a concise result for the requesting Agent, referencing any workspace paths you wrote.",
             alias(TASK_RETURN_TOOL)
         ));
-    } else if !can_finish_run {
+    } else if !ends_run {
         // Only a stage that can hand off cannot finish the run itself.
         lines.push(format!(
             "# **Important**: You cannot finish the run directly. When your part is complete, call {}.",
@@ -217,8 +203,7 @@ pub fn materialize_agent_system_prompt(
         ));
     }
 
-    if foreground
-        && can_finish_run
+    if text_turn == TextTurn::EndsRunOnceCommitted
         && has("workspace.commit")
         && let Some(output) = &profile.output
     {
@@ -240,26 +225,14 @@ pub fn materialize_agent_system_prompt(
                 alias("workspace.commit")
             ),
         ]);
-        lines.push(String::new());
     }
-    lines.push("Anyway: TOOLS&SKILLS IS ALL YOU NEED".to_string());
-    if WORKSPACE_TOOLS.iter().any(|name| has(name)) {
+    lines.extend([
+        String::new(),
+        "Anyway: TOOLS&SKILLS IS ALL YOU NEED".to_string(),
+    ]);
+    if WORKSPACE_FILE_TOOLS.iter().any(|name| has(name)) {
         lines.extend([String::new(), WORKSPACE_INDEX_PLACEHOLDER.to_string()]);
     }
 
     lines.join("\n")
-}
-
-fn has_tool(tools: &[AgentModelTool], name: &str) -> bool {
-    tools
-        .iter()
-        .any(|tool| tool.tool_id.is_builtin() && tool.tool_id.native_name() == name)
-}
-
-fn model_alias<'a>(tools: &'a [AgentModelTool], name: &'a str) -> &'a str {
-    tools
-        .iter()
-        .find(|tool| tool.tool_id.is_builtin() && tool.tool_id.native_name() == name)
-        .map(|tool| tool.model_alias.as_str())
-        .expect("prompt references only visible builtin tools")
 }

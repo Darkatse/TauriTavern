@@ -80,7 +80,7 @@
     "agent_system.importSkillDirectories": "匯入 Skill 資料夾",
     "agent_system.includeActivatedWorldInfo": "注入啟用世界書",
     "agent_system.initialChatHistoryMessages": "初始聊天歷史樓數",
-    "agent_system.initialChatHistoryMessagesHint": "只控制首次送給 Agent 的聊天樓數；正數保留最近 N 樓，0 不送出初始聊天歷史，-1 停用裁剪。更早的樓層仍可查到：Agent 用 chat_search 依問題查找舊劇情，用 grep 查精確的詞或正規表示式，再用 read 讀取 floors/NNNNNN/message.md 原文。",
+    "agent_system.initialChatHistoryMessagesHint": "只控制首次送給 Agent 的聊天樓數；正數保留最近 N 樓，0 不送出初始聊天歷史，-1 停用裁剪。更早的樓層仍可查到：Agent 用 chat_search 依問題查找舊劇情，用 chat_read 一次讀取多樓，用 grep 查精確的詞或正規表示式。",
     "agent_system.initialContext": "初始上下文",
     "agent_system.install": "安裝",
     "agent_system.invalidSkillFilePath": "SKILLS檔案路徑無效：{path}",

@@ -2,7 +2,9 @@ use super::agent::{
     agent_await_descriptor, agent_delegate_descriptor, agent_handoff_descriptor,
     task_return_descriptor,
 };
-use super::chat::{chat_read_messages_descriptor, chat_search_descriptor};
+use super::chat::{
+    CHAT_READ_MESSAGES, CHAT_SEARCH, chat_read_messages_descriptor, chat_search_descriptor,
+};
 use super::dice::dice_roll_descriptor;
 use super::policy::stage_can_finish_run;
 use super::workspace::{
@@ -68,28 +70,16 @@ impl BuiltinAgentToolRegistry {
         Ok(descriptor)
     }
 
-    pub(crate) fn apply_return_mode_context(
-        &self,
-        descriptor: &mut ToolDescriptor,
-        profile: &ResolvedAgentProfile,
-    ) -> Result<(), ApplicationError> {
-        apply_return_mode_context(descriptor, profile)
+    /// Delegated tasks share the caller's workspace paths; the task brief names the files.
+    pub(crate) fn apply_return_mode_context(&self, descriptor: &mut ToolDescriptor) {
+        if descriptor.id.native_name() == WORKSPACE_WRITE_FILE {
+            descriptor
+                .description
+                .as_mut()
+                .expect("workspace.write_file has a description")
+                .push_str(" Use the path requested in the task brief when one is provided.");
+        }
     }
-}
-
-fn apply_return_mode_context(
-    descriptor: &mut ToolDescriptor,
-    _profile: &ResolvedAgentProfile,
-) -> Result<(), ApplicationError> {
-    // Delegated tasks share the caller's workspace paths; the task brief names the files.
-    if descriptor.id.native_name() == WORKSPACE_WRITE_FILE {
-        descriptor
-            .description
-            .as_mut()
-            .expect("workspace.write_file has a description")
-            .push_str(" Use the path requested in the task brief when one is provided.");
-    }
-    Ok(())
 }
 
 fn apply_profile_context(
@@ -148,11 +138,21 @@ fn hide_unavailable_properties(descriptor: &mut ToolDescriptor, profile: &Resolv
     }
 }
 
-fn profile_can_finish_run(profile: &ResolvedAgentProfile) -> bool {
+/// [`stage_can_finish_run`] over the builtin tools the profile enables.
+pub(crate) fn profile_can_finish_run(profile: &ResolvedAgentProfile) -> bool {
     stage_can_finish_run(|name| profile_tool_visible(profile, name))
 }
 
-fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
+/// Only a profile with a chat tool reads the chat: it alone gets the chat mount, so the
+/// chat files, the index's Chat line and grep over floors all follow this.
+pub(crate) fn profile_reads_chat(profile: &ResolvedAgentProfile) -> bool {
+    [CHAT_SEARCH, CHAT_READ_MESSAGES]
+        .into_iter()
+        .any(|name| profile_tool_visible(profile, name))
+}
+
+/// Whether the profile enables builtin `name`: allowed and not denied.
+pub(crate) fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
     let id = ToolId::builtin(name).expect("builtin Agent tool names form valid ToolIds");
     profile.tools.allow.iter().any(|allowed| allowed == &id)
         && !profile.tools.deny.iter().any(|denied| denied == &id)

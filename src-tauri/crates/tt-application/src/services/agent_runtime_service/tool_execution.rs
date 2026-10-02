@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::commit_ledger::RunCommitLedger;
-use super::loop_runner::{builtin_alias, completion_tool_name, turn_can_finish_run};
+use super::loop_runner::turn_can_finish_run;
 use super::model_stream_projection::remove_live_tool_call;
 use super::tool_results::{mcp_known_response_result, tool_call_audit_file_stem};
 use super::{AgentRuntimeService, PreparedInvocation};
@@ -13,7 +13,8 @@ use crate::services::tool_request_gate::{ToolRequestGate, ToolRequestGateError};
 
 use crate::services::agent_tools::{
     AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AgentToolDispatchOutcome, AgentToolEffect,
-    AgentToolSession, TASK_RETURN, WORKSPACE_SHELL, unsupported_builtin_argument,
+    AgentToolSession, TASK_RETURN, TextTurn, WORKSPACE_SHELL, unsupported_builtin_argument,
+    visible_builtin_alias,
 };
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelRole, AgentModelTool, AgentRunEventLevel, AgentRunStatus,
@@ -175,7 +176,7 @@ impl AgentRuntimeService {
                     unsupported_builtin_argument(
                         descriptor,
                         args,
-                        builtin_alias(&prepared.request.tools, tool_name),
+                        visible_builtin_alias(&prepared.request.tools, tool_name).unwrap_or(tool_name),
                     )
                 })
             {
@@ -318,7 +319,8 @@ impl AgentRuntimeService {
                             call,
                             &format!(
                                 "{} with finish: true",
-                                builtin_alias(&prepared.request.tools, "workspace.commit")
+                                visible_builtin_alias(&prepared.request.tools, "workspace.commit")
+                                    .unwrap_or("workspace.commit")
                             ),
                             outcome.elapsed_ms,
                         ),
@@ -330,11 +332,7 @@ impl AgentRuntimeService {
                                 "agent.finish_unavailable",
                                 &format!(
                                     "This Agent stage cannot finish the run; commit without finish, then continue with {}.",
-                                    completion_tool_name(
-                                        exit_policy,
-                                        &prepared.tool_turn,
-                                        &prepared.request.tools,
-                                    )
+                                    prepared.completion_tool_name(&active_run.target)
                                 ),
                                 outcome.elapsed_ms,
                             )
@@ -362,14 +360,17 @@ impl AgentRuntimeService {
                             // A rejected commit leaves the run open; the model sees the commit error.
                             if !committed.result.is_error {
                                 let next_step = if !finish {
-                                    format!(
-                                        "Continue editing and commit again if needed; when the reply is final, call {}. Do not use plain text as the final answer.",
-                                        completion_tool_name(
-                                            exit_policy,
-                                            &prepared.tool_turn,
-                                            &prepared.request.tools,
-                                        )
-                                    )
+                                    let mut next_step = format!(
+                                        "Continue editing and commit again if needed; when the reply is final, call {}.",
+                                        prepared.completion_tool_name(&active_run.target)
+                                    );
+                                    if prepared.finish_policy(&active_run.target).text_turn()
+                                        != TextTurn::EndsRun
+                                    {
+                                        next_step
+                                            .push_str(" Do not use plain text as the final answer.");
+                                    }
+                                    next_step
                                 } else {
                                     match self.admit_run_finish(prepared).await? {
                                         None => {

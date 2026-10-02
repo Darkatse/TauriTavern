@@ -4,12 +4,15 @@ use std::sync::Arc;
 
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::WORKSPACE_INDEX_PLACEHOLDER;
-use crate::services::agent_tools::render_workspace_inventory;
-use crate::services::agent_workspace_scope::{ChatMount, ScopedWorkspaceFs, WorkspaceAccessPolicy};
+use crate::services::agent_tools::{WORKSPACE_FILE_TOOLS, render_workspace_index};
+use crate::services::agent_workspace_scope::{
+    ChatSnapshot, ScopedWorkspaceFs, WorkspaceAccessPolicy,
+};
 use crate::services::chat_completion_service::OPENCODE_STABLE_CHAT_ID_FIELD;
 use tt_domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile};
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentModelTool,
+    AgentRunTarget,
 };
 use tt_domain::models::skill::SkillIndexEntry;
 use tt_domain::models::tool::ToolChoice;
@@ -49,14 +52,16 @@ pub(super) fn append_runtime_catalogs(
 }
 
 /// Expands `{{workspace}}` in the agent system prompt into the workspace index, so the
-/// model can act without first listing the workspace; text without it gets no index. The
-/// trailing messages belong to the preset (post-history instructions, prefill-style format
-/// openers) and must stay untouched. The index is rendered once while preparing the
-/// invocation; later rounds, resume, and revision reuse the prepared request unchanged.
-pub(super) async fn append_workspace_inventory(
+/// model can act without first listing the workspace; text without it gets no index. Chat
+/// and Session runs expand it alike. The trailing messages belong to the preset
+/// (post-history instructions, prefill-style format openers) and must stay untouched. The
+/// index is rendered once while preparing the invocation; later rounds, resume, and
+/// revision reuse the prepared request unchanged.
+pub(super) async fn expand_workspace_index(
     request: &mut AgentPromptRequest,
     files: Arc<dyn WorkspaceFs>,
-    chat: Option<Arc<ChatMount>>,
+    chat: Option<Arc<ChatSnapshot>>,
+    target: &AgentRunTarget,
     profile: &ResolvedAgentProfile,
     tools: &[AgentModelTool],
 ) -> Result<(), ApplicationError> {
@@ -64,26 +69,17 @@ pub(super) async fn append_workspace_inventory(
         return Ok(());
     }
     let uses_workspace = tools.iter().any(|tool| {
-        tool.tool_id.is_builtin()
-            && matches!(
-                tool.tool_id.native_name(),
-                "workspace.list_files"
-                    | "workspace.read_file"
-                    | "workspace.search_files"
-                    | "workspace.write_file"
-                    | "workspace.apply_patch"
-                    | "workspace.shell"
-            )
+        tool.tool_id.is_builtin() && WORKSPACE_FILE_TOOLS.contains(&tool.tool_id.native_name())
     });
     // Without workspace tools the index has nothing to point at.
-    let inventory = if uses_workspace {
+    let index = if uses_workspace {
         let workspace = ScopedWorkspaceFs::new(files, WorkspaceAccessPolicy::from_profile(profile))
             .with_chat(chat);
-        render_workspace_inventory(&workspace, profile).await?
+        render_workspace_index(&workspace, profile, target).await?
     } else {
         String::new()
     };
-    expand_workspace_placeholder(agent_system_prompt_text(request)?, &inventory);
+    expand_workspace_placeholder(agent_system_prompt_text(request)?, &index);
     Ok(())
 }
 
@@ -731,8 +727,7 @@ mod tests {
             "tools": {
                 "allow": [
                     "builtin:workspace.write_file",
-                    "builtin:workspace.commit",
-                    "builtin:workspace.finish"
+                    "builtin:workspace.commit"
                 ],
                 "deny": [],
                 "toolDescriptions": {},
