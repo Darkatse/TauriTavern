@@ -2962,9 +2962,7 @@ fn payload_to_jsonl(payload: &[Value]) -> String {
         .join("\n")
 }
 
-async fn read_chat_stream_bytes(
-    mut reader: Box<dyn tt_ports::repositories::chat_repository::ChatByteReader>,
-) -> Vec<u8> {
+async fn read_chat_stream_bytes(mut reader: Box<dyn tt_ports::byte_reader::ByteReader>) -> Vec<u8> {
     let mut bytes = Vec::new();
     let mut buffer = [0; 37];
     loop {
@@ -2977,9 +2975,7 @@ async fn read_chat_stream_bytes(
     bytes
 }
 
-async fn read_chat_stream(
-    reader: Box<dyn tt_ports::repositories::chat_repository::ChatByteReader>,
-) -> Vec<Value> {
+async fn read_chat_stream(reader: Box<dyn tt_ports::byte_reader::ByteReader>) -> Vec<Value> {
     String::from_utf8(read_chat_stream_bytes(reader).await)
         .unwrap()
         .lines()

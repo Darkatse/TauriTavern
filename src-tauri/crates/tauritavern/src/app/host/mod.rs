@@ -37,6 +37,9 @@ pub(crate) fn run() {
                         .state::<Arc<AgentExtensionTools>>()
                         .clear_page(webview.label());
                 }
+                crate::presentation::commands::byte_reader_commands::close_page_byte_readers(
+                    webview,
+                );
                 crate::presentation::commands::chat_swipe_commands::close_page_chat_resources(
                     webview,
                 );

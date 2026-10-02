@@ -1,3 +1,4 @@
+use crate::byte_reader::ByteReader;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -11,11 +12,6 @@ pub use super::chat_types::{
     ChatPayloadTail, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
     PinnedCharacterChat, PinnedGroupChat,
 };
-
-#[async_trait]
-pub trait ChatByteReader: Send {
-    async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, DomainError>;
-}
 
 /// Repository interface for chat management
 #[async_trait]
@@ -119,7 +115,7 @@ pub trait ChatRepository: Send + Sync {
     async fn open_chat_backup_download(
         &self,
         backup_file_name: &str,
-    ) -> Result<Box<dyn ChatByteReader>, DomainError>;
+    ) -> Result<Box<dyn ByteReader>, DomainError>;
 
     /// Restore a character chat directly from a logical backup name.
     async fn restore_character_chat_backup(

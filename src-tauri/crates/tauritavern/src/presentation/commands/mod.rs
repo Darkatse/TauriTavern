@@ -8,6 +8,7 @@ pub mod avatar_commands;
 pub mod background_commands;
 pub mod bootstrap_commands;
 pub mod bridge;
+pub mod byte_reader_commands;
 pub mod character_commands;
 pub mod chat_api_commands;
 pub mod chat_commands;

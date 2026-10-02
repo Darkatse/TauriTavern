@@ -2,11 +2,10 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::{Manager, Resource, ResourceId, State, Webview};
-use tokio::sync::Mutex;
 use tt_application::dto::chat_history_dto::ChatHistoryLocator;
 use tt_ports::repositories::chat_commit_repository::{ChatSwipeSource, ColdSwipeCommitSource};
 
-use super::chat_commands::ChatByteResource;
+use super::byte_reader_commands::ByteResource;
 use crate::app::AppState;
 use crate::presentation::errors::CommandError;
 
@@ -57,10 +56,9 @@ pub async fn open_cold_chat(
         .resources_table()
         .add(SwipeSourceResource(source.clone()));
     let reader = source.projection(source_id);
-    let reader_id = webview.resources_table().add(ChatByteResource {
-        reader: Mutex::new(reader),
-        chunk_bytes: CHUNK_BYTES,
-    });
+    let reader_id = webview
+        .resources_table()
+        .add(ByteResource::new(reader, CHUNK_BYTES));
     Ok(Some(OpenColdChatResult {
         source_id,
         reader_id,
@@ -79,10 +77,9 @@ pub async fn open_cold_swipe_record(
         .record(record)
         .await
         .map_err(tt_application::errors::ApplicationError::from)?;
-    Ok(webview.resources_table().add(ChatByteResource {
-        reader: Mutex::new(reader),
-        chunk_bytes: CHUNK_BYTES,
-    }))
+    Ok(webview
+        .resources_table()
+        .add(ByteResource::new(reader, CHUNK_BYTES)))
 }
 
 /// A page reload cannot await JS cleanup. In-flight operations retain their own Arc.
@@ -91,10 +88,7 @@ pub(crate) fn close_page_chat_resources(webview: &Webview) {
     let ids: Vec<_> = table
         .names()
         .map(|(rid, _)| rid)
-        .filter(|rid| {
-            table.get::<SwipeSourceResource>(*rid).is_ok()
-                || table.get::<ChatByteResource>(*rid).is_ok()
-        })
+        .filter(|rid| table.get::<SwipeSourceResource>(*rid).is_ok())
         .collect();
     for rid in ids {
         let _ = table.close(rid);

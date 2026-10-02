@@ -1,4 +1,5 @@
 pub mod bundled_template;
+pub mod byte_reader;
 pub mod data_archive;
 pub mod database;
 pub mod extension_tools;

@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
+use tt_ports::byte_reader::ByteReader;
 
 use serde_json::Value;
 
@@ -23,7 +24,7 @@ use tt_ports::repositories::agent_workspace_lifecycle_repository::{
 };
 use tt_ports::repositories::character_repository::CharacterRepository;
 use tt_ports::repositories::chat_repository::{
-    ChatBackupCatalogEntry, ChatByteReader, ChatExportFormat, ChatImportFormat, ChatRepository,
+    ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat, ChatRepository,
 };
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
@@ -397,7 +398,7 @@ impl ChatService {
     pub async fn open_chat_backup_download(
         &self,
         backup_file_name: &str,
-    ) -> Result<Box<dyn ChatByteReader>, ApplicationError> {
+    ) -> Result<Box<dyn ByteReader>, ApplicationError> {
         if backup_file_name.trim().is_empty() {
             return Err(ApplicationError::ValidationError(
                 "Backup file name cannot be empty".to_string(),

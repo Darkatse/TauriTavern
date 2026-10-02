@@ -42,7 +42,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_commands::list_chat_backup_catalog,
         super::chat_commands::list_chat_backups,
         super::chat_commands::open_chat_backup_download,
-        super::chat_commands::read_chat_bytes,
+        super::byte_reader_commands::read_bytes,
         super::chat_swipe_commands::open_cold_chat,
         super::chat_swipe_commands::open_cold_swipe_record,
         super::chat_commands::restore_character_chat_backup,

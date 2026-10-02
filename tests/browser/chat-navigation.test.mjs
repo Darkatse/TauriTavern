@@ -80,7 +80,7 @@ test('chat persistence and navigation', async (context) => {
                 handles.set(rid, new window.TextEncoder().encode(JSON.stringify(record)));
                 return rid;
             }
-            case 'read_chat_bytes': {
+            case 'read_bytes': {
                 const content = handles.get(args.rid);
                 const chunk = content.subarray(0, 64);
                 handles.set(args.rid, content.subarray(chunk.length));

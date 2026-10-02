@@ -1,7 +1,7 @@
+use super::byte_reader_commands::ByteResource;
 use std::sync::Arc;
 
-use tauri::{Manager, Resource, ResourceId, State, Webview};
-use tokio::sync::Mutex;
+use tauri::{Manager, ResourceId, State, Webview};
 
 use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
@@ -15,17 +15,10 @@ use tt_application::dto::chat_history_dto::ChatHistoryLocator;
 use tt_application::errors::ApplicationError;
 use tt_contracts::chat::ChatBackupCatalogEntry;
 use tt_ports::repositories::chat_repository::{
-    ChatByteReader, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
+    ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail,
 };
 
 const CHAT_BACKUP_DOWNLOAD_CHUNK_BYTES: usize = 512 * 1024;
-
-pub(super) struct ChatByteResource {
-    pub(super) reader: Mutex<Box<dyn ChatByteReader>>,
-    pub(super) chunk_bytes: usize,
-}
-
-impl Resource for ChatByteResource {}
 
 #[tauri::command]
 pub async fn get_all_chats(
@@ -332,32 +325,9 @@ pub async fn open_chat_backup_download(
         .await
         .map_err(map_command_error("Failed to open chat backup download"))?;
 
-    Ok(webview.resources_table().add(ChatByteResource {
-        reader: Mutex::new(reader),
-        chunk_bytes: CHAT_BACKUP_DOWNLOAD_CHUNK_BYTES,
-    }))
-}
-
-#[tauri::command]
-pub async fn read_chat_bytes(
-    rid: ResourceId,
-    webview: Webview,
-) -> Result<tauri::ipc::Response, CommandError> {
-    let resource = webview
+    Ok(webview
         .resources_table()
-        .get::<ChatByteResource>(rid)
-        .map_err(map_command_error("Failed to access chat byte reader"))?;
-    let mut buffer = vec![0; resource.chunk_bytes];
-    let bytes_read = resource
-        .reader
-        .lock()
-        .await
-        .read(&mut buffer)
-        .await
-        .map_err(map_command_error("Failed to read chat bytes"))?;
-    buffer.truncate(bytes_read);
-
-    Ok(tauri::ipc::Response::new(buffer))
+        .add(ByteResource::new(reader, CHAT_BACKUP_DOWNLOAD_CHUNK_BYTES)))
 }
 
 #[tauri::command]

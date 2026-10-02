@@ -1,4 +1,4 @@
-use super::chat_repository::ChatByteReader;
+use crate::byte_reader::ByteReader;
 use async_trait::async_trait;
 use std::path::Path;
 use std::sync::Arc;
@@ -8,9 +8,8 @@ use tt_domain::errors::DomainError;
 /// An opened chat file retained by the current page, independent of later path replacements.
 #[async_trait]
 pub trait ChatSwipeSource: Send + Sync {
-    fn projection(self: Arc<Self>, source_id: u32) -> Box<dyn ChatByteReader>;
-    async fn record(self: Arc<Self>, record: usize)
-    -> Result<Box<dyn ChatByteReader>, DomainError>;
+    fn projection(self: Arc<Self>, source_id: u32) -> Box<dyn ByteReader>;
+    async fn record(self: Arc<Self>, record: usize) -> Result<Box<dyn ByteReader>, DomainError>;
     /// Adapter-internal expansion of a staged payload; application services do not call this
     /// operation or handle its file paths.
     async fn restore_payload(

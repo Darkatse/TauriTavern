@@ -2,7 +2,7 @@ import { invoke } from '../../../tauri-bridge.js';
 import { createReadableFileStreamService } from '../../../tauri/main/services/files/readable-file-stream-service.js';
 import { jsonlStreamToPayload } from './jsonl.js';
 
-const { createChatByteStream } = createReadableFileStreamService({ invoke });
+const { createByteStream } = createReadableFileStreamService({ invoke });
 const pendingSources = new WeakMap();
 let currentSource;
 let enabled = false;
@@ -47,7 +47,7 @@ export async function loadColdChatPayload(target, allowNotFound) {
     const opened = await invoke('open_cold_chat', { target, allowNotFound });
     if (!opened) return [];
     try {
-        const payload = await jsonlStreamToPayload(createChatByteStream(opened.readerId));
+        const payload = await jsonlStreamToPayload(createByteStream(opened.readerId));
         if (payload.some((record, index) => index > 0 && record.tt_swipe_cold)) {
             pendingSources.set(payload, opened.sourceId);
         } else {
@@ -62,7 +62,7 @@ export async function loadColdChatPayload(target, allowNotFound) {
 
 export async function readColdSwipeRecord(reference) {
     const rid = await invoke('open_cold_swipe_record', reference);
-    const records = await jsonlStreamToPayload(createChatByteStream(rid), { hasHeader: false });
+    const records = await jsonlStreamToPayload(createByteStream(rid), { hasHeader: false });
     if (records.length !== 1) throw new Error('Cold swipe source did not return one message');
     return records[0];
 }

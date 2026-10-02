@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 use tt_domain::errors::DomainError;
+use tt_ports::byte_reader::ByteReader;
 use tt_ports::repositories::chat_commit_repository::{ChatSwipeSource, RestoredChatPayload};
-use tt_ports::repositories::chat_repository::ChatByteReader;
 
 const COLD: &str = "tt_swipe_cold";
 type Fields<'a> = IndexMap<String, &'a RawValue>;
@@ -124,7 +124,7 @@ impl Read for SourceRange {
 struct BlockingReader<R>(Arc<Mutex<R>>);
 
 #[async_trait]
-impl<R: Read + Send + 'static> ChatByteReader for BlockingReader<R> {
+impl<R: Read + Send + 'static> ByteReader for BlockingReader<R> {
     async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, DomainError> {
         let reader = self.0.clone();
         let len = buffer.len();
@@ -142,7 +142,7 @@ impl<R: Read + Send + 'static> ChatByteReader for BlockingReader<R> {
     }
 }
 
-fn byte_reader(reader: impl Read + Send + 'static) -> Box<dyn ChatByteReader> {
+fn byte_reader(reader: impl Read + Send + 'static) -> Box<dyn ByteReader> {
     Box::new(BlockingReader(Arc::new(Mutex::new(reader))))
 }
 
@@ -364,7 +364,7 @@ impl Write for Output {
 
 #[async_trait]
 impl ChatSwipeSource for FileSwipeSource {
-    fn projection(self: Arc<Self>, source_id: u32) -> Box<dyn ChatByteReader> {
+    fn projection(self: Arc<Self>, source_id: u32) -> Box<dyn ByteReader> {
         let records = Records::new(self.range(RecordSpan {
             start: 0,
             end: self.size,
@@ -381,10 +381,7 @@ impl ChatSwipeSource for FileSwipeSource {
         })
     }
 
-    async fn record(
-        self: Arc<Self>,
-        record: usize,
-    ) -> Result<Box<dyn ChatByteReader>, DomainError> {
+    async fn record(self: Arc<Self>, record: usize) -> Result<Box<dyn ByteReader>, DomainError> {
         tokio::task::spawn_blocking(move || {
             self.check_file().map_err(failure)?;
             let span = self.record_span(record).map_err(failure)?;

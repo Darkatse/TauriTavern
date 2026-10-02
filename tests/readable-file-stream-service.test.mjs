@@ -191,7 +191,7 @@ test('chat backup stream retains host-owned chunking without fs stat', async () 
     const chunks = [Uint8Array.of(1, 2), Uint8Array.of(3), new Uint8Array(0)];
     const { service, calls } = mockFileService({
         'open_chat_backup_download': () => 8,
-        'read_chat_bytes': () => chunks.shift(),
+        'read_bytes': () => chunks.shift(),
     });
     const stream = await service.createChatBackupDownloadStream('chat_alice.jsonl');
 

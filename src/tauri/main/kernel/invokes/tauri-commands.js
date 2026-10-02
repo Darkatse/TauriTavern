@@ -162,7 +162,7 @@ export {};
  *   | 'read_secret_settings'
  *   | 'read_agent_run_events'
  *   | 'read_chat_completion_stream'
- *   | 'read_chat_bytes'
+ *   | 'read_bytes'
  *   | 'open_cold_chat'
  *   | 'open_cold_swipe_record'
  *   | 'read_agent_workspace_file'
