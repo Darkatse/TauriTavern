@@ -1084,16 +1084,29 @@ export async function pingServer() {
     }
 }
 
-async function fetchBootstrapSnapshot() {
+async function fetchBootstrapMetadata() {
     const response = await fetch('/api/bootstrap', {
         method: 'POST',
         headers: getRequestHeaders({ omitContentType: true }),
     });
 
     if (!response.ok) {
-        throw new Error(`Bootstrap snapshot request failed with status ${response.status}`);
+        throw new Error(`Bootstrap metadata request failed with status ${response.status}`);
     }
 
+    return response.json();
+}
+
+async function fetchSettingsSnapshot() {
+    const response = await fetch('/api/settings/get', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({}),
+        cache: 'no-cache',
+    });
+    if (!response.ok) {
+        throw new Error(`Settings request failed with status ${response.status}`);
+    }
     return response.json();
 }
 
@@ -1147,26 +1160,29 @@ async function firstLoadInit() {
         }
         token = tokenData.token;
 
-        const bootstrapPromise = fetchBootstrapSnapshot();
+        const startupDataPromise = Promise.all([
+            fetchBootstrapMetadata(),
+            fetchSettingsSnapshot(),
+        ]);
 
         setStage('core', '启动中：加载核心数据…');
         const clientVersionPromise = getClientVersion();
         await initSecrets();
-        const bootstrapSnapshot = await bootstrapPromise;
-        if (bootstrapSnapshot?.ios_policy?.scope === 'ios') {
+        const [bootstrapMetadata, settingsSnapshot] = await startupDataPromise;
+        if (bootstrapMetadata?.ios_policy?.scope === 'ios') {
             if (!window.__TAURITAVERN__ || typeof window.__TAURITAVERN__ !== 'object') {
                 throw new Error('[TauriTavern][iOSPolicy] Host ABI is unavailable (window.__TAURITAVERN__).');
             }
-            window.__TAURITAVERN__.iosPolicy = bootstrapSnapshot.ios_policy;
+            window.__TAURITAVERN__.iosPolicy = bootstrapMetadata.ios_policy;
         } else if (window.__TAURITAVERN__ && typeof window.__TAURITAVERN__ === 'object') {
-            window.__TAURITAVERN__.iosPolicy = bootstrapSnapshot.ios_policy;
+            window.__TAURITAVERN__.iosPolicy = bootstrapMetadata.ios_policy;
         }
         applyIosPolicyUiProjection();
-        const extensionsEnabled = Boolean(bootstrapSnapshot.settings?.enable_extensions)
-            && bootstrapSnapshot.settings?.result != 'file not find'
-            && Boolean(bootstrapSnapshot.settings?.settings);
+        const extensionsEnabled = Boolean(settingsSnapshot?.enable_extensions)
+            && settingsSnapshot?.result != 'file not find'
+            && Boolean(settingsSnapshot?.settings);
         const extensionsDiscoveryPromise = extensionsEnabled ? startOfflineExtensionsDiscovery() : null;
-        primeSecretStateSnapshot(bootstrapSnapshot.secret_state);
+        primeSecretStateSnapshot(bootstrapMetadata.secret_state);
         await readSecretState();
         await clientVersionPromise;
         await initLocales();
@@ -1185,7 +1201,7 @@ async function firstLoadInit() {
         ToolManager.initToolSlashCommands();
         await initPresetManager();
         await initSystemMessages();
-        await applySettingsSnapshot(bootstrapSnapshot.settings);
+        await applySettingsSnapshot(settingsSnapshot);
         void prefetchBackgrounds();
         await checkOpenRouterAuth();
         syncMobileImmersiveFullscreenUi();
@@ -1194,13 +1210,13 @@ async function firstLoadInit() {
         initDynamicStyles();
         initTags();
         initBookmarks();
-        primeUserAvatarsSnapshot(bootstrapSnapshot.avatars);
+        primeUserAvatarsSnapshot(bootstrapMetadata.avatars);
         await getUserAvatars(true, user_avatar);
-        const appliedCharacters = await applyCharactersSnapshot(bootstrapSnapshot.characters);
+        const appliedCharacters = await applyCharactersSnapshot(bootstrapMetadata.characters);
         if (!appliedCharacters) {
             return;
         }
-        applyGroupsSnapshot(bootstrapSnapshot.groups);
+        applyGroupsSnapshot(bootstrapMetadata.groups);
         await printCharacters(true);
         await getBackgrounds();
         initBackgrounds();
@@ -1230,7 +1246,7 @@ async function firstLoadInit() {
         let deferThirdPartyExtensions = false;
         if (extensionsEnabled) {
             await extensionsDiscoveryPromise;
-            const enableAutoUpdate = Boolean(bootstrapSnapshot.settings?.enable_extensions_auto_update);
+            const enableAutoUpdate = Boolean(settingsSnapshot?.enable_extensions_auto_update);
             const isVersionChanged = settings.currentVersion !== currentVersion;
 
             const isAndroid = /android/i.test(navigator.userAgent || '');
@@ -9463,20 +9479,11 @@ async function applySettingsSnapshot(data, initLoaderHandle = null) {
 //MARK: getSettings()
 ///////////////////////////////////////////
 export async function getSettings(initLoaderHandle = null) {
-    const response = await fetch('/api/settings/get', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({}),
-        cache: 'no-cache',
-    });
-
-    if (!response.ok) {
+    const data = await fetchSettingsSnapshot().catch(error => {
         reloadLoop();
         toastr.error(t`Settings could not be loaded after multiple attempts. Please try again later.`);
-        throw new Error('Error getting settings');
-    }
-
-    const data = await response.json();
+        throw error;
+    });
     await applySettingsSnapshot(data, initLoaderHandle);
 }
 

@@ -92,7 +92,7 @@ export {};
  *   | 'get_chat_payload_before'
  *   | 'get_chat_payload_before_pages'
  *   | 'get_chat_backup_storage_stats'
- *   | 'get_bootstrap_snapshot'
+ *   | 'get_bootstrap_metadata'
  *   | 'get_client_version'
  *   | 'get_data_archive_job_status'
  *   | 'get_extension_branches'

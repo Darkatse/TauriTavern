@@ -74,7 +74,7 @@ function takeLatest(_prev, next) {
  */
 export function createHostInvokePolicies() {
     return {
-        get_bootstrap_snapshot: {
+        get_bootstrap_metadata: {
             kind: 'dedupe',
             key: () => 'singleton',
         },
