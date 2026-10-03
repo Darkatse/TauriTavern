@@ -5,9 +5,8 @@ use std::path::{Path, PathBuf};
 use tt_domain::errors::DomainError;
 
 use super::chat_types::{
-    ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
-    ChatPayloadCursor, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
-    PinnedGroupChat,
+    ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
+    ChatPayloadTail, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage, PinnedGroupChat,
 };
 
 /// Repository interface for group chat (JSONL payload) management.
@@ -145,13 +144,6 @@ pub trait GroupChatRepository: Send + Sync {
         chat_id: &str,
         query: FindLastMessageQuery,
     ) -> Result<Option<LocatedChatMessage>, DomainError>;
-
-    /// Read selected messages by absolute 0-based message index.
-    async fn read_group_chat_messages(
-        &self,
-        chat_id: &str,
-        indices: &[usize],
-    ) -> Result<ChatMessagesReadResult, DomainError>;
 
     /// Search messages inside a group chat payload.
     async fn search_group_chat_messages(

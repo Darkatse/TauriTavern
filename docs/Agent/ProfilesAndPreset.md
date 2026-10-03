@@ -4,7 +4,7 @@ Profile 描述一个 Agent 如何工作：使用什么提示词和模型，能�
 
 ## 从默认配置开始
 
-Agent System 的 Profile 面板可以复制和编辑配置。`Default Writer` 使用当前聊天的预设与模型，以 `output/main.md` 作为正文，支持工作区工具和 Skill；委派、激活世界书读取、文件列表与 `workspace.finish` 可在复制的 Profile 中开启。内置默认配置和新建 Profile 默认开启流式传输；已保存配置继续使用原有设置。先用它完成一次运行，再按任务需要修改配置。
+Agent System 的 Profile 面板可以复制和编辑配置。`Default Writer` 使用当前聊天的预设与模型，以 `output/main.md` 作为正文，支持工作区工具和 Skill，默认工具与查找旧剧情的分工见[工具](ToolSystem.md#身份与调用名称)；委派、激活世界书读取、文件列表与 `workspace.finish` 可在复制的 Profile 中开启。内置默认配置和新建 Profile 默认开启流式传输；已保存配置继续使用原有设置。先用它完成一次运行，再按任务需要修改配置。
 
 扩展也可以读取默认配置后另存一份：
 
@@ -61,7 +61,7 @@ Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点�
 
 | 字段 | 用途 |
 | --- | --- |
-| `instructions.agentSystemPrompt` | Agent 的工作指令；省略时使用默认指令 |
+| `instructions.agentSystemPrompt` | Agent 的工作指令；省略时使用默认指令。写入 `{{workspace}}` 的位置会展开为[开局工作区索引](PromptAssembly.md#开局工作区索引)，不写则没有索引 |
 | `context.initialChatHistoryMessages` | 初始历史楼数：`-1` 不主动裁剪，`0` 不注入，正数取最近 N 楼；仍受模型上下文预算限制 |
 | `context.includeActivatedWorldInfo` | 是否在初始提示词中包含已激活世界书 |
 | `tools.allow` / `deny` | 可用工具，deny 优先 |

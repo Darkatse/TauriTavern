@@ -10,7 +10,9 @@ use super::session::AgentToolSession;
 use super::workspace;
 use super::world_info;
 use crate::errors::ApplicationError;
-use crate::services::agent_workspace_scope::{ScopedWorkspaceFs, WorkspaceAccessPolicy};
+use crate::services::agent_workspace_scope::{
+    ChatSnapshot, ScopedWorkspaceFs, WorkspaceAccessPolicy,
+};
 use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
@@ -108,6 +110,27 @@ impl AgentToolDispatcher {
         auto_commit_candidate: Option<WorkspacePath>,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
+        let chat = session
+            .chat
+            .get_or_try_init(|| async {
+                self.run_repository.load_run(run_id).await.map(|run| {
+                    ChatSnapshot::for_run(
+                        &run,
+                        self.chat_repository.clone(),
+                        self.group_chat_repository.clone(),
+                    )
+                })
+            })
+            .await?
+            .clone();
+        // Chat tools are offered only in Chat runs, which always have a chat.
+        let run_chat = || {
+            chat.as_deref().ok_or_else(|| {
+                ApplicationError::InternalError(
+                    "agent.chat_missing: chat tools read the chat of a Chat run".to_string(),
+                )
+            })
+        };
         let workspace = ScopedWorkspaceFs::new(
             raw_files.clone(),
             WorkspaceAccessPolicy::from_profile(profile),
@@ -116,32 +139,11 @@ impl AgentToolDispatcher {
             self.skill_service.file_repository(),
             session.effective_skills.clone(),
             session.runtime_context.frozen_macros.clone(),
-        );
+        )
+        .with_chat(chat.clone());
         let outcome = match builtin_tool_name(&call.tool_id)? {
-            chat::CHAT_SEARCH => {
-                chat::search(
-                    self.run_repository.as_ref(),
-                    self.chat_repository.as_ref(),
-                    self.group_chat_repository.as_ref(),
-                    run_id,
-                    call,
-                    args,
-                    &session.runtime_context.frozen_macros,
-                )
-                .await?
-            }
-            chat::CHAT_READ_MESSAGES => {
-                chat::read_messages(
-                    self.run_repository.as_ref(),
-                    self.chat_repository.as_ref(),
-                    self.group_chat_repository.as_ref(),
-                    run_id,
-                    call,
-                    args,
-                    &session.runtime_context.frozen_macros,
-                )
-                .await?
-            }
+            chat::CHAT_SEARCH => chat::search(run_chat()?, call, args).await?,
+            chat::CHAT_READ_MESSAGES => chat::read_messages(run_chat()?, call, args).await?,
             world_info::WORLDINFO_READ_ACTIVATED => {
                 // WorldInfo activation is a hidden run input fact, not a model-visible
                 // workspace file; invocation workspace policy must not gate this read.

@@ -275,8 +275,8 @@ async fn agent_runtime_returns_missing_chat_reads_to_the_agent() {
                 ),
                 model_tool_call(
                     "call_read_missing_chat",
-                    "chat_read_messages",
-                    json!({ "messages": [{ "index": 0 }] }),
+                    "chat_read",
+                    json!({ "floors": [{ "floor": 0 }] }),
                 ),
             ]),
             model_tool_response(vec![
@@ -391,6 +391,10 @@ async fn agent_runtime_normalizes_empty_arguments_and_recovers_from_invalid_argu
         .max_calls_per_tool
         .insert(ToolId::builtin("workspace.list_files").unwrap(), 2);
     let run = contract_run("run_arguments", AgentRunPresentation::Background, &profile);
+    // Listing the workspace root reads the chat mounted beside the Run roots.
+    let mut chat = Chat::new("User", "Alice");
+    chat.file_name = Some("Alice.png".into());
+    fixture.chat_repository.save(&chat).await.unwrap();
     fixture.agent_repository.create_run(&run).await.unwrap();
     let request = chat_request("list files and write an output");
     let prompt_snapshot = json!({ "chatCompletionPayload": request.payload.clone() });
@@ -1086,6 +1090,11 @@ async fn agent_runtime_answers_calls_shaped_for_old_names_and_continues() {
                     json!({ "file_path": "output/draft.md", "content": "revised" }),
                 ),
                 model_tool_call(
+                    "call_old_read",
+                    "chat_read",
+                    json!({ "floors": [{ "floor": 0 }, { "index": 1 }] }),
+                ),
+                model_tool_call(
                     "call_old_commit",
                     "commit",
                     json!({ "reason": "Deliver the reply.", "path": "output/draft.md", "finish": true }),
@@ -1140,6 +1149,19 @@ async fn agent_runtime_answers_calls_shaped_for_old_names_and_continues() {
             .as_str()
             .unwrap()
             .contains("use `file_path`")
+    );
+    let nested = events
+        .iter()
+        .find(|event| {
+            event.event_type == "tool_call_failed" && event.payload["callId"] == "call_old_read"
+        })
+        .expect("a renamed key inside an array item is rejected");
+    assert_eq!(nested.payload["errorCode"], "tool.invalid_arguments");
+    assert!(
+        nested.payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("`floors[1].index` is not a parameter of chat_read; use `floors[1].floor`")
     );
     let explicit_commits = events
         .iter()
@@ -1542,13 +1564,13 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
                 ),
                 model_tool_call(
                     "skill_search",
-                    "workspace_search_files",
-                    json!({ "path": "skills/macro-demo/references", "query": "lantern" }),
+                    "grep",
+                    json!({ "path": "skills/macro-demo/references", "pattern": "lantern" }),
                 ),
                 model_tool_call(
                     "chat_read",
-                    "chat_read_messages",
-                    json!({ "messages": [{ "index": 0, "start_line": 3, "line_count": 1 }] }),
+                    "chat_read",
+                    json!({ "floors": [{ "floor": 0, "offset": 3, "limit": 1 }] }),
                 ),
                 model_tool_call("chat_search", "chat_search", json!({ "query": "lantern" })),
                 model_tool_call(
@@ -1558,8 +1580,8 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
                 ),
                 model_tool_call(
                     "file_search",
-                    "workspace_search_files",
-                    json!({ "path": "output", "query": "lantern" }),
+                    "grep",
+                    json!({ "path": "output", "pattern": "lantern" }),
                 ),
                 model_tool_call(
                     "script",
@@ -1692,21 +1714,28 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
     assert_eq!(requests[0].messages[0], requests[1].messages[0]);
     assert!(results["skill_read"].content.contains("3 | blue lantern"));
     assert_eq!(results["skill_read"].structured["totalLines"], 6);
+    // Chat tools read the raw floor text, as the floor files and grep do.
     assert_eq!(
         results["chat_read"].structured["messages"][0]["text"],
-        "blue lantern"
+        "{{char}}"
     );
-    for id in ["skill_search", "chat_search"] {
-        assert_eq!(
-            results[id].structured["hits"].as_array().unwrap().len(),
-            1,
-            "{id}"
-        );
-    }
-    assert_eq!(results["skill_search"].structured["skippedFiles"], 1);
-    assert_eq!(results["skill_search"].structured["searchedFiles"], 1);
+    let snippet = results["chat_search"].structured["hits"][0]["snippet"]
+        .as_str()
+        .unwrap();
     assert!(
-        results["file_search"].structured["hits"]
+        snippet.contains("{{description}}") && !snippet.contains("blue lantern"),
+        "{snippet}"
+    );
+    // The Skill file is matched as rendered; the binary file beside it is skipped.
+    assert_eq!(
+        results["skill_search"].structured["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        results["file_search"].structured["matches"]
             .as_array()
             .unwrap()
             .is_empty()

@@ -45,8 +45,10 @@ pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, Applica
             agent_system_prompt: None,
         },
         delegation: AgentDelegationPolicy::default(),
-        // The prompt already carries activated World Info and the full budgeted history, and
-        // a final commit ends the run; the other builtins stay available to custom Profiles.
+        // The prompt already carries activated World Info and the full budgeted history, and a
+        // final commit ends the run. Earlier floors are files in the chat mount: chat.search
+        // finds them by topic, chat.read_messages reads several at once, and grep finds exact
+        // words. The other builtins stay available to custom Profiles.
         tools: AgentToolPolicy {
             allow: [
                 "chat.search",

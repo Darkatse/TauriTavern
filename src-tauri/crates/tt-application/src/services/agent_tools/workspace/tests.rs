@@ -294,6 +294,7 @@ impl TestWorkspaceFs {
             WorkspaceAccessPolicy {
                 visible_roots: vec!["output".to_string()],
                 writable_roots: vec!["output".to_string()],
+                reads_chat: false,
             },
         )
     }

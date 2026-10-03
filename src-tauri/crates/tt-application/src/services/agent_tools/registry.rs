@@ -2,7 +2,9 @@ use super::agent::{
     agent_await_descriptor, agent_delegate_descriptor, agent_handoff_descriptor,
     task_return_descriptor,
 };
-use super::chat::{chat_read_messages_descriptor, chat_search_descriptor};
+use super::chat::{
+    CHAT_READ_MESSAGES, CHAT_SEARCH, chat_read_messages_descriptor, chat_search_descriptor,
+};
 use super::dice::dice_roll_descriptor;
 use super::policy::stage_can_finish_run;
 use super::workspace::{
@@ -140,6 +142,14 @@ fn hide_unavailable_properties(descriptor: &mut ToolDescriptor, profile: &Resolv
 
 fn profile_can_finish_run(profile: &ResolvedAgentProfile) -> bool {
     stage_can_finish_run(|name| profile_tool_visible(profile, name))
+}
+
+/// Only a profile with a chat tool reads the chat: it alone gets the chat mount, so the
+/// chat files, the index's Chat line and grep over floors all follow this.
+pub(crate) fn profile_reads_chat(profile: &ResolvedAgentProfile) -> bool {
+    [CHAT_SEARCH, CHAT_READ_MESSAGES]
+        .into_iter()
+        .any(|name| profile_tool_visible(profile, name))
 }
 
 fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {

@@ -32,6 +32,7 @@ async fn session_keeps_files_and_canonical_history_across_runs_and_restart() {
         ],
     );
     let mut profile = configure_session_profile(&fixture, &root).await;
+    profile.instructions.agent_system_prompt = Some("Work in the Session.\n\n{{workspace}}".into());
     fixture
         .service
         .save_session_profile(AgentSaveProfileDto {
@@ -153,6 +154,11 @@ async fn session_keeps_files_and_canonical_history_across_runs_and_restart() {
     );
     let requests = fixture.model_gateway.requests().await;
     assert_eq!(requests[0].payload["model"], "later-model");
+    // Files kept from earlier runs are not listed, so the index stays the same.
+    assert_eq!(
+        message_text_for_role(&requests[0], AgentModelRole::System),
+        "Work in the Session.\n\n# Workspace\nWork: work/ tmp/"
+    );
     assert_eq!(
         &requests[0].messages[1..1 + previous_messages.len()],
         previous_messages.as_slice()

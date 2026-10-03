@@ -185,6 +185,11 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
                     json!({ "reason": "Deliver the reply." }),
                 ),
                 model_tool_call(
+                    "call_private_note",
+                    "write",
+                    json!({ "file_path": "scratch/private.md", "content": "Root-only note." }),
+                ),
+                model_tool_call(
                     "call_handoff",
                     "agent_handoff",
                     json!({
@@ -341,6 +346,9 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
     );
     let target_system = message_text_for_role(&requests[1], AgentModelRole::System);
     assert!(!target_system.contains("Available agents:"));
+    // The target starts with the files its own roots can see, written earlier in this Run.
+    assert!(target_system.contains("output/main.md"));
+    assert!(!target_system.contains("scratch/private.md"));
     assert_eq!(
         requests[1].provider_state["invocationId"],
         task.child_invocation_id
