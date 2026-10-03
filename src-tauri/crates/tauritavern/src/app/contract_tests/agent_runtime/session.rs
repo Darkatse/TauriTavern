@@ -70,7 +70,7 @@ async fn session_keeps_files_and_canonical_history_across_runs_and_restart() {
     assert_eq!(requests[0].payload["model"], "test-model");
     assert!(requests[0].tools.iter().all(|tool| !matches!(
         tool.tool_id.native_name(),
-        "chat.search" | "worldinfo.read_activated" | "workspace.commit" | "workspace.finish"
+        "chat.search" | "worldinfo.read_activated" | "workspace.commit"
     )));
     let history = fixture
         .service
@@ -452,7 +452,6 @@ pub(super) async fn configure_session_profile(
         "workspace.write_file",
         "workspace.shell",
         "workspace.commit",
-        "workspace.finish",
         "chat.search",
         "worldinfo.read_activated",
     ]

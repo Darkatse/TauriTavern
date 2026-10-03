@@ -9,17 +9,17 @@ use super::continuation::{AutoCommitFile, InvocationFrame, InvocationStep, Pendi
 use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
 use super::tool_execution::recoverable_tool_error;
-use super::{AgentCancelReceiver, AgentRuntimeService};
+use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::{
-    AGENT_AWAIT, AGENT_HANDOFF, AgentToolEffect, TASK_RETURN, stage_can_finish_run,
-    visible_builtin_alias,
+    AGENT_AWAIT, AGENT_HANDOFF, AgentToolEffect, FinishPolicy, TASK_RETURN, TextTurn,
+    stage_can_finish_run, visible_builtin_alias,
 };
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart, AgentModelMessage,
-    AgentModelResponse, AgentModelRole, AgentModelTool, AgentRunEventLevel, AgentRunPresentation,
-    AgentRunStatus, AgentToolResult, WorkspacePath,
+    AgentModelResponse, AgentModelRole, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
+    AgentRunTarget, AgentToolResult, WorkspacePath,
 };
 use tt_domain::models::tool::ToolTurnContract;
 use tt_domain::text_metrics::TextMetrics;
@@ -101,7 +101,7 @@ impl AgentRuntimeService {
                         }),
                     )
                     .await?;
-                    let exchange = self
+                    let generated = self
                         .generate_model_with_retry(
                             &prepared.invocation,
                             round,
@@ -111,6 +111,11 @@ impl AgentRuntimeService {
                             cancel,
                         )
                         .await?;
+                    // The host may have previewed the streamed `write_file` in the chat message.
+                    if generated.streamed_write_file {
+                        commit_ledger.mark_unconfirmed();
+                    }
+                    let exchange = generated.exchange;
                     let response = exchange.response;
                     let model_response_path = self
                         .store_model_response(run_id, invocation_id, round, &response)
@@ -176,7 +181,10 @@ impl AgentRuntimeService {
                     .await?;
 
                     let has_tools = !response.tool_calls.is_empty();
-                    let direct_output_path = if has_tools || replied {
+                    let finish_policy = prepared.finish_policy(&active_run.target);
+                    let text_ends_run = !has_tools
+                        && finish_policy.ends_run(commit_ledger.shows_confirmed_publication());
+                    let direct_output_path = if has_tools || replied || text_ends_run {
                         None
                     } else {
                         self.capture_direct_output(
@@ -193,15 +201,29 @@ impl AgentRuntimeService {
                     prepared.request.messages.push(response.message);
                     if replied {
                         return Ok(Some(AgentLoopExit::Replied));
+                    } else if text_ends_run {
+                        progress.step = InvocationStep::Exited(AgentLoopExit::Finished);
+                        self.event(
+                            run_id,
+                            AgentRunEventLevel::Info,
+                            "agent_loop_finished",
+                            json!({
+                                "commitCount": commit_ledger.len(),
+                                "round": round,
+                                "invocationId": invocation_id,
+                                "endedBy": "text_turn",
+                                "finishPolicy": finish_policy,
+                            }),
+                        )
+                        .await?;
+                        self.ensure_not_cancelled(cancel)?;
                     } else if !has_tools {
                         progress.drift_attempts += 1;
                         let nudge = build_drift_recovery_nudge(
-                            commit_ledger.explicit_count(),
+                            prepared,
+                            finish_policy,
                             progress.drift_attempts,
                             direct_output_path.as_ref(),
-                            exit_policy,
-                            &prepared.tool_turn,
-                            &prepared.request.tools,
                         );
                         prepared.request.messages.push(AgentModelMessage {
                             role: AgentModelRole::User,
@@ -226,11 +248,7 @@ impl AgentRuntimeService {
                         if !can_recover {
                             return Err(ApplicationError::ValidationError(format!(
                                 "model.tool_call_required: model must use Agent tools and complete through {}",
-                                completion_tool_name(
-                                    exit_policy,
-                                    &prepared.tool_turn,
-                                    &prepared.request.tools,
-                                )
+                                prepared.completion_tool_name(&active_run.target)
                             )));
                         }
                     } else {
@@ -556,27 +574,43 @@ fn remember_seen_child_results_from_await(
     }
 }
 
-/// The call that completes this stage, named with the aliases the model sees in this turn.
-pub(super) fn completion_tool_name(
-    exit_policy: AgentInvocationExitPolicy,
-    turn: &ToolTurnContract,
-    tools: &[AgentModelTool],
-) -> String {
-    let alias = |name: &'static str| visible_builtin_alias(tools, name).unwrap_or(name);
-    match exit_policy {
-        AgentInvocationExitPolicy::RunFinishAllowed => {
-            if turn_can_finish_run(turn) && turn_has_builtin(turn, "workspace.commit") {
-                format!("{} with finish: true", alias("workspace.commit"))
-            } else if turn_can_finish_run(turn) {
-                alias("workspace.finish").to_string()
-            } else if turn_has_builtin(turn, AGENT_HANDOFF) {
+impl PreparedInvocation {
+    /// How this stage ends in the Run it belongs to, `target`.
+    pub(super) fn finish_policy(&self, target: &AgentRunTarget) -> FinishPolicy {
+        let presentation = match target {
+            AgentRunTarget::Chat(chat) => chat.presentation,
+            // Session invocations reply (`ReplyAllowed`), which no finish policy ends.
+            AgentRunTarget::Session { .. } => return FinishPolicy::Correct,
+        };
+        FinishPolicy::for_stage(
+            self.invocation.exit_policy,
+            presentation,
+            turn_can_finish_run(&self.tool_turn),
+        )
+    }
+
+    /// The call that completes this stage, named with the aliases the model sees in this turn.
+    pub(super) fn completion_tool_name(&self, target: &AgentRunTarget) -> String {
+        let alias =
+            |name: &'static str| visible_builtin_alias(&self.request.tools, name).unwrap_or(name);
+        match (
+            self.invocation.exit_policy,
+            self.finish_policy(target).text_turn(),
+            turn_has_builtin(&self.tool_turn, "workspace.commit"),
+        ) {
+            (AgentInvocationExitPolicy::ReplyAllowed, ..) => "an assistant reply".to_string(),
+            (AgentInvocationExitPolicy::TaskReturnRequired, ..) => alias(TASK_RETURN).to_string(),
+            (AgentInvocationExitPolicy::RunFinishAllowed, TextTurn::Continues, _) => {
                 alias(AGENT_HANDOFF).to_string()
-            } else {
-                "an available Agent control tool".to_string()
+            }
+            (AgentInvocationExitPolicy::RunFinishAllowed, _, true) => {
+                format!("{} with finish: true", alias("workspace.commit"))
+            }
+            // Readiness gives every stage that must publish the commit tool.
+            (AgentInvocationExitPolicy::RunFinishAllowed, _, false) => {
+                "a final reply without tool calls".to_string()
             }
         }
-        AgentInvocationExitPolicy::TaskReturnRequired => alias(TASK_RETURN).to_string(),
-        AgentInvocationExitPolicy::ReplyAllowed => "an assistant reply".to_string(),
     }
 }
 
@@ -595,97 +629,63 @@ fn drift_recovery_attempt_limit(max_rounds: usize) -> usize {
 }
 
 /// Build the corrective `user` message we inject when the model returns a
-/// turn with zero tool calls. The phrasing covers the common drift modes:
+/// turn with zero tool calls and the stage's finish policy does not end the run.
+/// The phrasing follows the stage's finish policy:
 ///
-/// * **Post-commit drift** (committed_count > 0): the chat already shows the
-///   committed reply; the model only needs to end the stage.
-/// * **No-commit drift** (committed_count == 0): model bypassed the tool
-///   workflow entirely. We point it at the saved direct text and ask for a
-///   commit with `finish: true`, so recovery costs a single round.
+/// * **Stages that can end the run** get here only while the chat message does not show a
+///   confirmed publication; otherwise a text-only turn ends them. We point the model at the
+///   saved direct text and ask for a commit with `finish: true`, so recovery costs a single
+///   round.
 /// * **Handoff-only stages** continue with the handoff tool.
 /// * **Child drift** (TaskReturnRequired): return-mode subagents cannot
 ///   commit or finish the run, so we direct them back to `task_return`.
 fn build_drift_recovery_nudge(
-    committed_count: usize,
+    prepared: &PreparedInvocation,
+    finish_policy: FinishPolicy,
     attempt: usize,
     direct_output_path: Option<&WorkspacePath>,
-    exit_policy: AgentInvocationExitPolicy,
-    turn: &ToolTurnContract,
-    tools: &[AgentModelTool],
 ) -> String {
     let prefix = format!("[system reminder, direct output recovery attempt {attempt}]");
-    let alias = |name: &'static str| visible_builtin_alias(tools, name).unwrap_or(name);
-    match exit_policy {
+    let alias =
+        |name: &'static str| visible_builtin_alias(&prepared.request.tools, name).unwrap_or(name);
+    match prepared.invocation.exit_policy {
+        AgentInvocationExitPolicy::RunFinishAllowed
+            if finish_policy.text_turn() == TextTurn::Continues =>
+        {
+            let handoff = alias(AGENT_HANDOFF);
+            let direct_output_hint = direct_output_path
+                .map(|path| {
+                    format!(
+                        " I saved your direct text to {}. If it is useful, mention that path in the handoff brief.",
+                        path.as_str()
+                    )
+                })
+                .unwrap_or_default();
+            format!(
+                "{prefix} You replied with plain text, but this Agent stage cannot finish the run \
+                 directly. Continue by calling {handoff} with a clear objective, context summary, \
+                 workspace references, and preservation constraints for the next Agent.\
+                 {direct_output_hint} Do NOT answer directly in plain text."
+            )
+        }
         AgentInvocationExitPolicy::RunFinishAllowed => {
-            let commit =
-                turn_has_builtin(turn, "workspace.commit").then(|| alias("workspace.commit"));
-            let finish =
-                turn_has_builtin(turn, "workspace.finish").then(|| alias("workspace.finish"));
-            if turn_can_finish_run(turn) {
-                let next_step = match (commit, finish, committed_count) {
-                    (Some(commit), Some(finish), 1..) => format!(
-                        "You have committed {committed_count} message(s) to the chat; call {finish} now. \
-                         If the committed content needs changes, edit the file, then call {commit} with \
-                         finish: true."
-                    ),
-                    (Some(commit), None, 1..) => format!(
-                        "The chat already shows your committed reply. If it needs changes, edit the file \
-                         first; then call {commit} with finish: true to end the run."
-                    ),
-                    (Some(commit), _, 0) => {
-                        let write = alias("workspace.write_file");
-                        match direct_output_path {
-                            Some(path) => format!(
-                                "I saved your text to {path}. If it is the intended reply, call {commit} \
-                                 with file_path \"{path}\" and finish: true. Otherwise write the reply with \
-                                 {write}, then call {commit} with finish: true.",
-                                path = path.as_str()
-                            ),
-                            None => format!(
-                                "Write the reply with {write}, then call {commit} with finish: true."
-                            ),
-                        }
-                    }
-                    (None, Some(finish), _) => {
-                        format!("Call {finish} when the run's work is complete.")
-                    }
-                    (None, None, _) => unreachable!("a stage that can finish has commit or finish"),
-                };
-                format!(
-                    "{prefix} You replied with plain text, but only committed text reaches the chat. \
-                     {next_step} Do NOT answer directly in plain text."
-                )
-            } else if turn_has_builtin(turn, AGENT_HANDOFF) {
-                let handoff = alias(AGENT_HANDOFF);
-                let direct_output_hint = direct_output_path
-                    .map(|path| {
-                        format!(
-                            " I saved your direct text to {}. If it is useful, mention that path in the handoff brief.",
-                            path.as_str()
-                        )
-                    })
-                    .unwrap_or_default();
-                format!(
-                    "{prefix} You replied with plain text, but this Agent stage cannot finish the run \
-                     directly. Continue by calling {handoff} with a clear objective, context summary, \
-                     workspace references, and preservation constraints for the next Agent.\
-                     {direct_output_hint} Do NOT answer directly in plain text."
-                )
-            } else {
-                let direct_output_hint = direct_output_path
-                    .map(|path| {
-                        format!(
-                            " I saved your direct text to {}. If it is useful, reference that path when continuing.",
-                            path.as_str()
-                        )
-                    })
-                    .unwrap_or_default();
-                format!(
-                    "{prefix} You replied with plain text, but this run must continue through Agent \
-                     tools. Use an available Agent control tool to continue or complete the stage.\
-                     {direct_output_hint} Do NOT answer directly in plain text."
-                )
-            }
+            let commit = alias("workspace.commit");
+            let write = alias("workspace.write_file");
+            let next_step = match direct_output_path {
+                Some(path) => format!(
+                    "I saved your text to {path}. If it is the intended reply, call {commit} \
+                     with file_path \"{path}\" and finish: true. Otherwise write the reply with \
+                     {write}, then call {commit} with finish: true.",
+                    path = path.as_str()
+                ),
+                None => {
+                    format!("Write the reply with {write}, then call {commit} with finish: true.")
+                }
+            };
+            format!(
+                "{prefix} You replied with plain text, but only committed text reaches the chat. \
+                 {next_step} Do NOT answer directly in plain text."
+            )
         }
         AgentInvocationExitPolicy::TaskReturnRequired => {
             let task_return = alias(TASK_RETURN);

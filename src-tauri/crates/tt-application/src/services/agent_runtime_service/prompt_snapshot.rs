@@ -725,8 +725,7 @@ mod tests {
             "tools": {
                 "allow": [
                     "builtin:workspace.write_file",
-                    "builtin:workspace.commit",
-                    "builtin:workspace.finish"
+                    "builtin:workspace.commit"
                 ],
                 "deny": [],
                 "toolDescriptions": {},

@@ -58,9 +58,11 @@ impl AgentOperation {
                 AgentInvocationExitPolicy::TaskReturnRequired,
                 AgentRunPresentation::Background,
             ),
+            // A handoff target joins the source's Run; the source invocation's profile
+            // carries that Run's presentation.
             Self::Handoff => (
                 AgentInvocationExitPolicy::RunFinishAllowed,
-                target.run.presentation,
+                source.run.presentation,
             ),
         };
         validate_chat_profile(target, exit_policy, presentation)

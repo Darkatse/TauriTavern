@@ -20,17 +20,15 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
                     "limit": 100
                 }),
             )]),
-            model_tool_response(vec![
-                model_tool_call(
-                    "call_write",
-                    "write",
-                    json!({ "file_path": "output/main.md", "content": "MCP complete" }),
-                ),
-                model_tool_call("call_finish", "workspace_finish", json!({})),
-            ]),
+            model_tool_response(vec![model_tool_call(
+                "call_write",
+                "write",
+                json!({ "file_path": "output/main.md", "content": "MCP complete" }),
+            )]),
+            model_text_response("Done."),
         ],
     );
-    let (profile, mcp_tool_id) = configure_mcp_profile(&fixture, "mcp-writer", 3, 10_000).await;
+    let (profile, mcp_tool_id) = configure_mcp_profile(&fixture, "mcp-writer", 4, 10_000).await;
     let mcp_tool = tt_domain::models::tool::ToolId::parse(&mcp_tool_id).unwrap();
     let registration_id =
         tt_domain::models::mcp::McpRegistrationId::from_provider_id(mcp_tool.provider_id())

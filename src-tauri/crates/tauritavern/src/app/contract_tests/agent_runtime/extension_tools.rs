@@ -55,14 +55,12 @@ async fn chat_routes_colliding_extension_names_without_replacing_builtin_tools()
                     json!({"query":"extension state"}),
                 ),
             ]),
-            model_tool_response(vec![
-                model_tool_call(
-                    "write",
-                    "write",
-                    json!({"file_path":"output/main.md","content":"Theme inspected"}),
-                ),
-                model_tool_call("finish", "workspace_finish", json!({})),
-            ]),
+            model_tool_response(vec![model_tool_call(
+                "write",
+                "write",
+                json!({"file_path":"output/main.md","content":"Theme inspected"}),
+            )]),
+            model_text_response("Done."),
         ],
     );
     let (tool_id, mut events) = register_tool(

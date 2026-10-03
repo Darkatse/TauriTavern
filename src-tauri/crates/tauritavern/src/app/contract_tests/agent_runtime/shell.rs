@@ -116,14 +116,11 @@ JS
                     json!({"command": "cat scratch/finalized/final.md"}),
                 ),
             ]),
-            model_tool_response(vec![
-                model_tool_call(
-                    "commit",
-                    "commit",
-                    json!({ "reason": "Deliver the reply.", "file_path": "scratch/finalized/final.md"}),
-                ),
-                model_tool_call("finish", "workspace_finish", json!({})),
-            ]),
+            model_tool_response(vec![model_tool_call(
+                "commit",
+                "commit",
+                json!({ "reason": "Deliver the reply.", "file_path": "scratch/finalized/final.md", "finish": true }),
+            )]),
         ],
     );
     let profile = resolve_contract_profile(&fixture).await;
@@ -261,14 +258,11 @@ async fn failed_shell_keeps_its_writes_without_publishing_an_earlier_candidate()
                     json!({"command": r#"js -e 'import {workspace} from "@tauritavern/runtime"; workspace.writeText("output/main.md", "saved despite failure"); console.error("draft incomplete"); process.exitCode = 7'"#}),
                 ),
             ]),
-            model_tool_response(vec![
-                model_tool_call(
-                    "commit",
-                    "commit",
-                    json!({ "reason": "Deliver the reply." }),
-                ),
-                model_tool_call("finish", "workspace_finish", json!({})),
-            ]),
+            model_tool_response(vec![model_tool_call(
+                "commit",
+                "commit",
+                json!({ "reason": "Deliver the reply.", "finish": true }),
+            )]),
         ],
     );
     let mut profile = resolve_contract_profile(&fixture).await;
@@ -402,14 +396,9 @@ async fn cancelled_shell_records_its_result_and_resumes_after_the_confirmed_call
                         "file_path": "output/main.md", "content": " + resumed", "mode": "append",
                     }),
                 ),
-                model_tool_call("finish", "workspace_finish", json!({})),
             ])),
             // The cancelled shell result reaches the model before the run can finish.
-            Ok(model_tool_response(vec![model_tool_call(
-                "finish_after_cancel",
-                "workspace_finish",
-                json!({}),
-            )])),
+            Ok(model_text_response("Done.")),
         ],
         shell.clone(),
     );

@@ -20,13 +20,13 @@ const RUN_FAILURE_PRESENTATIONS = Object.freeze({
         summaryKey: 'agent.error.model_tool_call_required.summary',
     }),
     'agent.tool_after_finish': Object.freeze({
-        message: 'The model requested more tools after workspace.finish, which breaks the Agent contract. No Agent output was committed; any streamed partial text remains in chat. Try regenerating; if this persists, lower the temperature or pick a model that obeys workspace.finish.',
+        message: 'The model requested more tools after finishing the run, which breaks the Agent contract. No Agent output was committed; any streamed partial text remains in chat. Try regenerating; if this persists, lower the temperature or pick a model that follows the Agent tool flow.',
         messageKey: 'agent.error.tool_after_finish.message',
-        summary: 'Model kept calling tools after workspace.finish; no output was committed, but any streamed partial text was kept.',
+        summary: 'Model kept calling tools after finishing the run; no output was committed, but any streamed partial text was kept.',
         summaryKey: 'agent.error.tool_after_finish.summary',
     }),
     'agent.max_tool_rounds_exceeded': Object.freeze({
-        message: 'The Agent loop exceeded the configured maximum tool rounds before calling workspace.finish. No Agent output was committed; any streamed partial text remains in chat. Try regenerating with a tighter prompt, or raise the round budget in the profile.',
+        message: 'The Agent loop exceeded the configured maximum tool rounds before finishing the run. No Agent output was committed; any streamed partial text remains in chat. Try regenerating with a tighter prompt, or raise the round budget in the profile.',
         messageKey: 'agent.error.max_tool_rounds_exceeded.message',
         summary: 'Tool round budget exhausted; no output was committed, but any streamed partial text was kept.',
         summaryKey: 'agent.error.max_tool_rounds_exceeded.summary',

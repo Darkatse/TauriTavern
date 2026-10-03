@@ -114,7 +114,7 @@ export const TOOL_GROUPS: readonly AgentToolGroup[] = Object.freeze([
         id: 'control',
         labelKey: 'controlTools',
         icon: 'fa-flag-checkered',
-        tools: ['builtin:workspace.commit', 'builtin:workspace.finish'],
+        tools: ['builtin:workspace.commit'],
     },
     {
         id: 'other',

@@ -131,7 +131,10 @@ mod tests {
     fn partial_success_payload_preserves_commits_but_disables_retry_flags() {
         let mut ledger = RunCommitLedger::default();
         ledger.record(
-            &tt_domain::models::agent::WorkspacePath::parse("output/main.md").unwrap(),
+            &tt_ports::workspace_fs::WorkspaceFile::from_text(
+                tt_domain::models::agent::WorkspacePath::parse("output/main.md").unwrap(),
+                "reply".to_string(),
+            ),
             tt_domain::models::agent::AgentChatCommitMode::Replace,
             Some("42".to_string()),
             3,

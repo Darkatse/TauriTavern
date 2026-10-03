@@ -17,6 +17,7 @@ use tt_domain::models::agent::{
     ArtifactTarget, WorkspacePath,
 };
 use tt_domain::models::skill::SkillScope;
+use tt_ports::workspace_fs::WorkspaceFile;
 
 #[test]
 fn workspace_id_uses_stable_chat_id_not_character_chat_file_name() {
@@ -111,10 +112,13 @@ fn resolve_run_skill_scope_refs_rejects_mismatched_character() {
 #[test]
 fn run_commit_ledger_preserves_commit_payloads() {
     let mut ledger = RunCommitLedger::default();
-    let path = WorkspacePath::parse("output/main.md").unwrap();
+    let file = WorkspaceFile::from_text(
+        WorkspacePath::parse("output/main.md").unwrap(),
+        "reply".to_string(),
+    );
 
     ledger.record(
-        &path,
+        &file,
         AgentChatCommitMode::Replace,
         Some("msg_1".to_string()),
         1,

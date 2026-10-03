@@ -59,7 +59,7 @@ runtime 保存结构化结果，并生成 `summaries/<workspace-key>-result.md` 
 }
 ```
 
-`handoff.objective` 必填，其余内容按任务需要填写。交接前先收齐当前 Agent 的委派任务。交接成功后，当前 Invocation 标记为 `transferred`，executor 在同一 Run 中启动接收方；接收方沿用已有文件和提交记录，以带 `finish: true` 的 `workspace.commit` 完成工作（或按其 Profile 使用 `workspace.finish`）。
+`handoff.objective` 必填，其余内容按任务需要填写。交接前先收齐当前 Agent 的委派任务。交接成功后，当前 Invocation 标记为 `transferred`，executor 在同一 Run 中启动接收方；接收方沿用已有文件和提交记录，以带 `finish: true` 的 `workspace.commit` 完成工作，或按[结束策略](Runtime.md#结束与交接)以只回文字的一轮结束。
 
 ## 接收方看到什么
 

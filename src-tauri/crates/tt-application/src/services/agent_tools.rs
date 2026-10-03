@@ -3,6 +3,7 @@ mod chat;
 mod common;
 mod dice;
 mod dispatcher;
+mod finish_policy;
 mod policy;
 mod registry;
 mod runtime_context;
@@ -12,9 +13,10 @@ mod workspace;
 mod world_info;
 
 pub use registry::BuiltinAgentToolRegistry;
-pub(crate) use registry::profile_reads_chat;
+pub(crate) use registry::{profile_can_finish_run, profile_reads_chat, profile_tool_visible};
 
 pub(crate) use dispatcher::{AgentToolDispatchOutcome, AgentToolDispatcher, AgentToolEffect};
+pub(crate) use finish_policy::{FinishPolicy, TextTurn};
 pub(crate) use runtime_context::build_script_context_json;
 pub(crate) use session::AgentToolSession;
 
@@ -28,6 +30,6 @@ pub(crate) use policy::{
     unsupported_builtin_argument, visible_builtin_alias,
 };
 pub(crate) use workspace::{
-    WORKSPACE_APPLY_PATCH, WORKSPACE_FINISH, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE,
-    classify_workspace_io_error, offers_workspace_files, render_workspace_index,
+    WORKSPACE_APPLY_PATCH, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE, classify_workspace_io_error,
+    offers_workspace_files, render_workspace_index,
 };

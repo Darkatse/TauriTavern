@@ -69,6 +69,7 @@ use tt_domain::models::mcp::{
 };
 use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
 use tt_domain::models::settings::UserSettings;
+use tt_domain::models::tool::ToolArguments;
 use tt_ports::mcp::{
     McpCallIssue, McpCallOutcome, McpDiscoveredTool, McpDiscoveryResult, McpGateway,
     McpKnownResponse, McpTextContent, McpToolCallResult,
@@ -297,23 +298,13 @@ fn default_agent_responses() -> Vec<Value> {
                 }
             }]
         }),
-        json!({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": null,
-                    "tool_calls": [{
-                        "id": "call_finish",
-                        "type": "function",
-                        "function": {
-                            "name": "workspace_finish",
-                            "arguments": "{}"
-                        }
-                    }]
-                }
-            }]
-        }),
+        model_text_response("Done."),
     ]
+}
+
+/// A text-only turn; it ends the run once the stage's finish policy is met.
+fn model_text_response(content: &str) -> Value {
+    json!({ "choices": [{ "message": { "role": "assistant", "content": content } }] })
 }
 
 /// The contract suite exercises every builtin the runtime supports, so its base profile
@@ -341,7 +332,6 @@ async fn contract_writer_definition(
         "workspace.apply_patch",
         "workspace.shell",
         "workspace.commit",
-        "workspace.finish",
     ]
     .into_iter()
     .map(|name| {
@@ -1029,6 +1019,22 @@ impl AgentModelGateway for MockAgentModelGateway {
             )
         })??;
         let response = decode_chat_completion_response(response, &request.tools)?;
+        // A streamed request receives each tool call's arguments as one fragment.
+        if let Some(on_delta) = on_delta {
+            for (tool_call_index, call) in response.tool_calls.iter().enumerate() {
+                let arguments_fragment = match &call.arguments {
+                    ToolArguments::Object(arguments) => {
+                        serde_json::to_string(arguments).expect("serialize tool arguments")
+                    }
+                    ToolArguments::Invalid(raw) => raw.clone(),
+                };
+                on_delta(AgentModelStreamDelta::ToolCall {
+                    tool_call_index,
+                    tool_id: call.tool_id.clone(),
+                    arguments_fragment,
+                });
+            }
+        }
         Ok(AgentModelExchange {
             response,
             provider_state: request.provider_state.clone(),

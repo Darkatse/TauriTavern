@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use super::{
-    WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
-    WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE,
+    WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_LIST_FILES, WORKSPACE_READ_FILE,
+    WORKSPACE_SEARCH_FILES, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE,
 };
 use tt_domain::models::tool::{ToolDescriptor, ToolId};
 
@@ -171,26 +171,6 @@ pub(in crate::services::agent_tools) fn workspace_shell_descriptor() -> ToolDesc
         }),
         output_schema: None,
         annotations: json!({ "mutating": true }),
-    }
-}
-
-pub(in crate::services::agent_tools) fn workspace_finish_descriptor() -> ToolDescriptor {
-    ToolDescriptor {
-        id: ToolId::builtin(WORKSPACE_FINISH).expect("builtin tool name must be valid"),
-        title: Some("Workspace Finish".to_string()),
-        description: Some("End the run without publishing a new chat message.".to_string()),
-        input_schema: json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "reason": {
-                    "type": "string",
-                    "description": "Short completion reason."
-                }
-            }
-        }),
-        output_schema: None,
-        annotations: json!({ "control": true }),
     }
 }
 

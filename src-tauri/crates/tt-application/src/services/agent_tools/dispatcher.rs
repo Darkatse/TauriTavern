@@ -54,7 +54,7 @@ pub(crate) enum AgentToolEffect {
         path: WorkspacePath,
         mode: AgentChatCommitMode,
         reason: String,
-        /// The run ends once this commit is confirmed, as if `workspace.finish` followed it.
+        /// The run ends once this commit is confirmed.
         finish: bool,
     },
     TaskReturned {
@@ -66,6 +66,7 @@ pub(crate) enum AgentToolEffect {
         task_id: String,
         new_invocation_id: String,
     },
+    /// Set by the runtime on a confirmed commit with `finish: true`; no tool returns it.
     Finish,
 }
 
@@ -187,7 +188,6 @@ impl AgentToolDispatcher {
             workspace::WORKSPACE_COMMIT => {
                 workspace::commit(&workspace, call, args, profile).await?
             }
-            workspace::WORKSPACE_FINISH => workspace::finish(call, args)?,
             other => {
                 return Err(ApplicationError::InternalError(format!(
                     "tool.dispatch_handler_missing: admitted builtin tool `builtin:{other}` has no execution handler"
@@ -237,7 +237,7 @@ mod tests {
     fn builtin_dispatch_does_not_accept_external_tools_with_the_same_native_name() {
         let external = ToolId::new(
             &ToolProviderId::parse("mcp/registration-1").unwrap(),
-            "workspace.finish",
+            "workspace.commit",
         )
         .unwrap();
 

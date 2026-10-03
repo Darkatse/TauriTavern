@@ -23,7 +23,7 @@ Runtime 创建 Run，初始化工作区，保存输入和解析后的 Profile，
 
 同一轮中后面的调用可以依赖前面调用的效果。Chat 的典型回复：写入正文，需要时更新 `persist/`，再以 `workspace.commit`（`finish: true`）提交并结束；合并提交与结束省去单独结束的一轮。
 
-委派结果也在轮次之间进入调用方上下文。工具参数等可由模型修正的问题作为 tool result 返回；模型请求、存储或运行状态错误交给 Run 收尾处理。Chat 模型若直接输出正文，runtime 会把正文保存为文件，并在剩余轮数内提示它以 `finish: true` 提交该文件（或改写后提交）；runtime 不代为提交，`persist/` 的更新仍由模型决定。
+委派结果也在轮次之间进入调用方上下文。工具参数等可由模型修正的问题作为 tool result 返回；模型请求、存储或运行状态错误交给 Run 收尾处理。模型某一轮没有工具调用、只回了文字时，按[结束策略](#结束与交接)处理：条件满足就结束 Run，否则提醒模型。提醒时，Chat runtime 会把正文保存为文件，并在剩余轮数内提示它以 `finish: true` 提交该文件（或改写后提交）；runtime 不代为提交，`persist/` 的更新仍由模型决定。
 
 Session 在 assistant 无工具调用时结束本轮，消息由后端连续保存。取消保留已写入的消息和工作文件。
 
@@ -31,7 +31,21 @@ Session 在 assistant 无工具调用时结束本轮，消息由后端连续保�
 
 ## 结束与交接
 
-前台 Agent 通过 `workspace.commit` 将文件交给宿主保存；最后一次提交带 `finish: true` 时，提交确认后结束 Run，提交被拒绝则不结束。`workspace.finish` 在不发布新消息时结束 Run，后台运行必须启用它；前台使用时要求已经完成显式提交，同一轮中位于它之前的提交也算数。阶段能否结束 Run 由同一条规则判断：有 `workspace.finish`，或有 `workspace.commit` 且不是只能交接的阶段（启用交接但没有 `workspace.finish`）。不能结束的阶段使用 `finish: true` 时返回可恢复错误。启动时，前台 Chat 运行要求 `workspace.commit`，后台运行要求 `workspace.finish`。完成类调用（`finish`、带 `finish: true` 的提交、`agent.handoff`、`task.return`）须是本轮最后一个调用。同一轮中较早的调用返回错误时不结束 Run，使模型先看到该错误：`workspace.finish` 返回可恢复错误 `agent.finish_after_failed_call`；带 `finish: true` 的提交照常完成并返回提交信息，同时说明 Run 仍未结束。后台运行可以不写聊天。文件发布和持久版本的关系见 [Workspace](Workspace.md)。
+Run 有两种结束方式：带 `finish: true` 的 `workspace.commit`，或只回文字的一轮满足结束策略。
+
+带 `finish: true` 的提交在宿主确认后结束 Run，提交被拒绝则不结束。它与 `agent.handoff`、`task.return` 一样须是本轮最后一个调用。同一轮中较早的调用返回错误时，提交照常完成，但 Run 不结束，结果里带 `agent.finish_after_failed_call`，使模型先看到该错误。这项检查只用于 `workspace.commit` 的 `finish: true`，`agent.handoff` 与 `task.return` 没有，较早的调用失败时仍照常交接或返回。能交接的阶段不直接结束 Run，使用 `finish: true` 时返回可恢复错误；其他阶段都能结束。前台 Chat 中能结束 Run 的阶段须有 `workspace.commit`，交接接收方也按此检查；后台运行可以不写聊天。文件发布和持久版本的关系见 [Workspace](Workspace.md)。
+
+结束策略决定只回文字的一轮怎么处理，是结束规则的唯一来源：runtime 的判断、提示词、续行与委派提示、工具结果文字和上面的 Chat 准入都从 `FinishPolicy`（`agent_tools/finish_policy.rs`）推出。它按 Run 的 presentation 取值，交接接收方沿用 Run 的 presentation，不看自身 Profile 保存的值。默认值在 `FinishPolicy::for_stage`：
+
+| 阶段 | 策略 |
+|---|---|
+| 前台 Chat 中能结束 Run 的阶段 | 有条件 `[committed]`：楼层显示的是宿主确认的发布就结束，否则提醒模型提交。本次 Run 的显式提交或自动提交都算；修订从已完成的回复开始，算作已确认。之后被流式预览覆盖或有提交被拒，就不再算，见 [Workspace](Workspace.md#提交到聊天) |
+| 后台 Chat 中能结束 Run 的阶段 | 有条件 `[]`：模型停下就结束 |
+| return-mode 子 Agent、能交接的阶段 | 提醒，行为不变 |
+
+按策略结束时记录 `agent_loop_finished`（`endedBy: "text_turn"`）；文字留在 transcript 里，不发布到聊天。条件目前只有 `committed`，计划完成（`plan_complete`）留待以后加入。前台阶段的说明文字引导模型以带 `finish: true` 的提交结束，纯文字结束只作兜底。
+
+已知限制：根 Invocation 的提示词由前端在 Run 创建前准备，只能按 Profile 保存的 presentation 写结束说明。启动时传入不同的 `presentation`（例如聊天入口固定为前台）时，提示词与 runtime 的判断可能不一致；计划在后续 PR 让准备阶段接收启动时的 presentation。
 
 return-mode 子 Agent 使用 `task.return` 结束，把结果交给调用方。`agent.handoff` 则使当前 Invocation 进入 `transferred`，executor 准备下一个 Invocation，继续使用本次 Run 的提交记录。任务机制见 [多 Agent 协作](SubAgent.md)。
 

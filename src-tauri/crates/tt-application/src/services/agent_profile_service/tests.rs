@@ -34,7 +34,7 @@ fn materialized_agent_system_prompt_uses_profile_override_exactly() {
     );
 
     let prompt = materialize_agent_system_prompt(
-        &[tool("workspace.finish", "finish_alias")],
+        &[tool("workspace.commit", "commit_alias")],
         &profile,
         AgentInvocationExitPolicy::RunFinishAllowed,
     );
@@ -184,24 +184,30 @@ fn context_policy_normalizes_negative_history_window_to_full_history() {
 }
 
 #[test]
-fn chat_finish_requirement_depends_on_invocation_exit_policy() {
+fn chat_commit_requirement_applies_to_foreground_runs_only() {
     let mut profile = test_profile(None, "background");
     profile.run.direct_runnable = true;
     profile.tools = test_tool_policy(&["workspace.write_file"]);
     let error = super::validate_chat_profile(
         &profile,
         AgentInvocationExitPolicy::RunFinishAllowed,
-        profile.run.presentation,
+        AgentRunPresentation::Foreground,
     )
-    .expect_err("direct Chat profile without finish should fail");
+    .expect_err("a direct foreground Chat profile without commit should fail");
 
-    assert!(error.to_string().contains("agent.profile_finish_required"));
+    assert!(error.to_string().contains("agent.profile_commit_required"));
+    super::validate_chat_profile(
+        &profile,
+        AgentInvocationExitPolicy::RunFinishAllowed,
+        AgentRunPresentation::Background,
+    )
+    .expect("a background run ends when the model stops calling tools");
     super::validate_chat_profile(
         &profile,
         AgentInvocationExitPolicy::TaskReturnRequired,
-        profile.run.presentation,
+        AgentRunPresentation::Foreground,
     )
-    .expect("a child invocation returns to its parent without workspace.finish");
+    .expect("a child invocation returns to its parent without committing");
 }
 
 #[test]

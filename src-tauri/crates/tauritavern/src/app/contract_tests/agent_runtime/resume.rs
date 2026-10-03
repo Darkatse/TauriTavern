@@ -94,47 +94,39 @@ async fn agent_runtime_checkpoint_publishes_terminal_state_after_host_presentati
 
 #[tokio::test]
 async fn agent_runtime_resume_retries_metadata_without_republishing_or_calling_model() {
-    // Both ways of ending the run: a separate finish call, and a commit that finishes.
+    // Both ways of ending the run: a text turn after the commit, and a commit that finishes.
+    let write_and_commit = |finish: bool| {
+        model_tool_response(vec![
+            model_tool_call(
+                "write",
+                "write",
+                json!({ "file_path": "output/main.md", "content": "keep this reply" }),
+            ),
+            model_tool_call(
+                "commit",
+                "commit",
+                json!({ "reason": "Deliver the reply.", "file_path": "output/main.md", "finish": finish }),
+            ),
+        ])
+    };
     let endings = [
         (
-            "finish-call",
-            vec![
-                model_tool_call(
-                    "commit",
-                    "commit",
-                    json!({ "reason": "Deliver the reply.", "file_path": "output/main.md" }),
-                ),
-                model_tool_call("finish", "workspace_finish", json!({})),
-            ],
+            "text-turn",
+            vec![write_and_commit(false), model_text_response("Done.")],
         ),
-        (
-            "commit-finish",
-            vec![model_tool_call(
-                "commit",
-                "commit",
-                json!({ "reason": "Deliver the reply.", "file_path": "output/main.md", "finish": true }),
-            )],
-        ),
+        ("commit-finish", vec![write_and_commit(true)]),
     ];
-    for (label, ending) in endings {
-        resume_retries_metadata_without_republishing_or_calling_model(label, ending).await;
+    for (label, responses) in endings {
+        resume_retries_metadata_without_republishing_or_calling_model(label, responses).await;
     }
 }
 
 async fn resume_retries_metadata_without_republishing_or_calling_model(
     label: &str,
-    ending: Vec<Value>,
+    responses: Vec<Value>,
 ) {
     let root = temp_root(&format!("agent-resume-metadata-{label}"));
-    let mut calls = vec![model_tool_call(
-        "write",
-        "write",
-        json!({
-            "file_path": "output/main.md", "content": "keep this reply"
-        }),
-    )];
-    calls.extend(ending);
-    let fixture = agent_runtime_fixture_with_responses(&root, vec![model_tool_response(calls)]);
+    let fixture = agent_runtime_fixture_with_responses(&root, responses);
     let profile = resolve_contract_profile(&fixture).await;
     let handle = start_contract_agent_run(
         &fixture,
@@ -224,21 +216,14 @@ async fn agent_runtime_resumes_after_tool_bookkeeping_failure_without_replaying_
         let fixture = agent_runtime_fixture_with_responses(
             &root,
             vec![
-                model_tool_response(vec![
-                    model_tool_call(
-                        "append_once",
-                        "write",
-                        json!({
-                            "file_path": "output/main.md", "mode": "append", "content": "once"
-                        }),
-                    ),
-                    model_tool_call("finish", "workspace_finish", json!({})),
-                ]),
                 model_tool_response(vec![model_tool_call(
-                    "finish_after_not_started",
-                    "workspace_finish",
-                    json!({}),
+                    "append_once",
+                    "write",
+                    json!({
+                        "file_path": "output/main.md", "mode": "append", "content": "once"
+                    }),
                 )]),
+                model_text_response("Done."),
             ],
         );
         let profile = resolve_contract_profile(&fixture).await;
@@ -298,15 +283,9 @@ async fn agent_runtime_resumes_after_tool_bookkeeping_failure_without_replaying_
         resume_checkpoint(&fixture, &stopped, 0).await;
         let completed = wait_for_checkpoint(&fixture, &run.id).await;
         assert_eq!(completed.run.status, AgentRunStatus::Completed);
-        // A call that never started is an error result; the model sees it before finishing.
-        assert_eq!(
-            fixture.model_gateway.requests().await.len(),
-            if blocked_directory == "tool-results" {
-                1
-            } else {
-                2
-            }
-        );
+        // Either way the model sees the call's result before finishing, and the call is not
+        // replayed: a call that never started is an error result.
+        assert_eq!(fixture.model_gateway.requests().await.len(), 2);
         assert_eq!(
             read_output(&fixture, &run.id).await,
             if blocked_directory == "tool-results" {
@@ -367,11 +346,10 @@ async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_public
             if provider == "openai_responses" && *value == native["openai_responses"])
             })
     );
-    let final_message = request.messages.last().expect("final tool response");
-    assert_eq!(final_message.role, AgentModelRole::Tool);
+    let final_message = request.messages.last().expect("final text turn");
+    assert_eq!(final_message.role, AgentModelRole::Assistant);
     assert!(
-        matches!(&final_message.parts[0], AgentModelContentPart::ToolResult { result }
-        if result.call_id == "call_finish" && !result.is_error)
+        matches!(&final_message.parts[0], AgentModelContentPart::Text { text } if text == "Done.")
     );
     let published_state_id = checkpoint["state"]["publishedState"]["stateId"]
         .as_str()
@@ -483,7 +461,7 @@ async fn agent_runtime_resume_after_restart_preserves_history_and_successful_too
             )),
         ],
     );
-    let profile = configure_resume_profile(&fixture, 2, None).await;
+    let profile = configure_resume_profile(&fixture, 3, None).await;
     let handle = start_contract_agent_run(
         &fixture,
         &profile,
@@ -501,14 +479,14 @@ async fn agent_runtime_resume_after_restart_preserves_history_and_successful_too
 
     let fixture = agent_runtime_fixture_with_responses(
         &root,
-        vec![model_tool_response(vec![
-            model_tool_call(
+        vec![
+            model_tool_response(vec![model_tool_call(
                 "call_append_second",
                 "write",
                 json!({ "file_path": "output/main.md", "mode": "append", "content": " second" }),
-            ),
-            model_tool_call("call_finish", "workspace_finish", json!({})),
-        ])],
+            )]),
+            model_text_response("Done."),
+        ],
     );
     resume_checkpoint(&fixture, &stopped, 0).await;
     let completed = wait_for_checkpoint(&fixture, &handle.run_id).await;
@@ -538,7 +516,6 @@ async fn agent_runtime_resume_keeps_partial_turn_cursor_after_confirmed_tool() {
                 "write",
                 json!({ "file_path": "output/main.md", "content": "continued original turn" }),
             ),
-            model_tool_call("call_finish", "workspace_finish", json!({})),
         ])],
     );
     fixture
@@ -572,11 +549,23 @@ async fn agent_runtime_resume_keeps_partial_turn_cursor_after_confirmed_tool() {
     assert_eq!(fixture.mcp_gateway.calls.lock().await.len(), 1);
     drop(fixture);
 
-    let fixture = agent_runtime_fixture_with_responses(&root, Vec::new());
-    resume_checkpoint(&fixture, &stopped, 0).await;
+    let fixture = agent_runtime_fixture_with_responses(&root, vec![model_text_response("Done.")]);
+    resume_checkpoint(&fixture, &stopped, 1).await;
     let completed = wait_for_checkpoint(&fixture, &handle.run_id).await;
     assert_eq!(completed.run.status, AgentRunStatus::Completed);
-    assert!(fixture.model_gateway.requests().await.is_empty());
+    // The model is asked only after the interrupted turn finished its remaining calls.
+    let requests = fixture.model_gateway.requests().await;
+    assert_eq!(requests.len(), 1);
+    assert!(
+        requests[0]
+            .messages
+            .iter()
+            .flat_map(|message| &message.parts)
+            .any(
+                |part| matches!(part, AgentModelContentPart::ToolResult { result }
+                if result.call_id == "call_write_after_mcp" && !result.is_error)
+            )
+    );
     assert!(fixture.mcp_gateway.calls.lock().await.is_empty());
     assert_eq!(
         read_output(&fixture, &handle.run_id).await,
@@ -619,11 +608,7 @@ async fn agent_runtime_resume_adds_rounds_without_resetting_tool_budget() {
                 "write",
                 json!({ "file_path": "output/main.md", "mode": "append", "content": " duplicated" }),
             )]),
-            model_tool_response(vec![model_tool_call(
-                "call_finish",
-                "workspace_finish",
-                json!({}),
-            )]),
+            model_text_response("Done."),
         ],
     );
     resume_checkpoint(&fixture, &stopped, 2).await;
@@ -752,11 +737,7 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
         let fixture = agent_runtime_fixture_with_responses(
             &root,
             if during_preparation {
-                vec![model_tool_response(vec![model_tool_call(
-                    "call_finish",
-                    "workspace_finish",
-                    json!({}),
-                )])]
+                vec![model_text_response("Done.")]
             } else {
                 vec![
                     model_tool_response(vec![model_tool_call(
@@ -764,11 +745,7 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
                         "agent_await",
                         json!({ "mode": "allCompleted" }),
                     )]),
-                    model_tool_response(vec![model_tool_call(
-                        "call_finish",
-                        "workspace_finish",
-                        json!({}),
-                    )]),
+                    model_text_response("Done."),
                 ]
             },
         );
@@ -854,9 +831,8 @@ async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_wo
             model_tool_call(
                 "commit",
                 "commit",
-                json!({ "reason": "Deliver the reply." }),
+                json!({ "reason": "Deliver the reply.", "finish": true }),
             ),
-            model_tool_call("finish", "workspace_finish", json!({})),
         ])],
     );
     let profile = configure_resume_profile(&fixture, 2, Some(1)).await;
@@ -902,7 +878,7 @@ async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_wo
     assert_eq!(stopped.run.status, AgentRunStatus::Cancelled);
     let request = fixture.model_gateway.requests().await.pop().unwrap();
     assert!(request.messages.iter().flat_map(|message| &message.parts).any(|part| {
-        matches!(part, AgentModelContentPart::ToolResult { result } if result.call_id == "finish" && !result.is_error)
+        matches!(part, AgentModelContentPart::ToolResult { result } if result.call_id == "commit" && !result.is_error)
     }), "the original completed tool turn remains in context");
     assert!(request.messages.iter().flat_map(|message| &message.parts).any(|part| {
         matches!(part, AgentModelContentPart::Text { text } if text.contains("Make the ending quieter."))
@@ -942,9 +918,8 @@ async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_wo
             model_tool_call(
                 "commit",
                 "commit",
-                json!({ "reason": "Deliver the reply.", "file_path": "output/revised.md" }),
+                json!({ "reason": "Deliver the reply.", "file_path": "output/revised.md", "finish": true }),
             ),
-            model_tool_call("finish", "workspace_finish", json!({})),
         ])],
     );
     resume_checkpoint(&fixture, &stopped, 0).await;
@@ -971,11 +946,7 @@ async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_wo
         .responses
         .lock()
         .await
-        .push_back(Ok(model_tool_response(vec![model_tool_call(
-            "finish",
-            "workspace_finish",
-            json!({}),
-        )])));
+        .push_back(Ok(model_text_response("Keep it as it is.")));
     revise_checkpoint(
         &fixture,
         &revised,

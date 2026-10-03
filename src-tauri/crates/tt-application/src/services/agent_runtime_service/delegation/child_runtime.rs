@@ -234,6 +234,9 @@ impl AgentRuntimeService {
         let invocation_id = invocation.id.as_str();
         let mut profile = self.resolve_task_profile(task).await?;
         ensure_profile_model_configured(&profile)?;
+        let run = self.run_repository.load_run(run_id).await?;
+        // The invocation's profile carries the presentation it runs in: a handoff target
+        // joins the Run as it was started, a return-mode child never publishes.
         let (invocation_kind, exit_policy_label, task_prompt) = match task.continuation {
             AgentDelegationContinuation::ReturnToParent => {
                 profile.run.presentation = AgentRunPresentation::Background;
@@ -243,11 +246,14 @@ impl AgentRuntimeService {
                     render_child_task_prompt(task),
                 )
             }
-            AgentDelegationContinuation::TransferControl => (
-                "handoff",
-                "runFinishAllowed",
-                render_handoff_task_prompt(task),
-            ),
+            AgentDelegationContinuation::TransferControl => {
+                profile.run.presentation = run.chat_target()?.presentation;
+                (
+                    "handoff",
+                    "runFinishAllowed",
+                    render_handoff_task_prompt(task),
+                )
+            }
         };
         validate_chat_profile(&profile, invocation.exit_policy, profile.run.presentation)?;
         let prompt_snapshot = self
@@ -260,7 +266,6 @@ impl AgentRuntimeService {
                 "agent.invalid_prompt_snapshot: input/prompt_snapshot.json is invalid JSON: {error}"
             ))
         })?;
-        let run = self.run_repository.load_run(run_id).await?;
         let prepared_tools = self
             .prepare_invocation_tools(
                 &profile,
@@ -286,6 +291,7 @@ impl AgentRuntimeService {
             self.assemble_invocation_prompt_snapshot(
                 &profile,
                 &visible_tools,
+                invocation.exit_policy,
                 run.chat_target()?.generation_type.as_str(),
                 frozen_run_input_snapshot_from_prompt_snapshot(&prompt_snapshot)?,
                 &scope,

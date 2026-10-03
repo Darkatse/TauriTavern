@@ -1,8 +1,8 @@
 use crate::services::agent_tools::{
-    offers_workspace_files, stage_can_finish_run, visible_builtin_alias,
+    FinishPolicy, TextTurn, offers_workspace_files, stage_can_finish_run, visible_builtin_alias,
 };
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
-use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool, AgentRunPresentation};
+use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool};
 
 use super::constants::{
     AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, TASK_RETURN_TOOL,
@@ -13,6 +13,9 @@ use super::constants::{
 /// its place, and without it they get no index.
 pub(crate) const WORKSPACE_INDEX_PLACEHOLDER: &str = "{{workspace}}";
 
+/// How the stage ends comes from its finish policy. `profile` is the invocation's, whose
+/// presentation is the Run's once the invocation is prepared; root prompts are prepared
+/// before the Run exists and use the Profile's default presentation.
 pub fn materialize_agent_system_prompt(
     tools: &[AgentModelTool],
     profile: &ResolvedAgentProfile,
@@ -56,9 +59,13 @@ pub fn materialize_agent_system_prompt(
         return lines.join("\n");
     }
 
-    let can_finish_run =
-        exit_policy == AgentInvocationExitPolicy::RunFinishAllowed && stage_can_finish_run(has);
-    let foreground = profile.run.presentation == AgentRunPresentation::Foreground;
+    let text_turn = FinishPolicy::for_stage(
+        exit_policy,
+        profile.run.presentation,
+        stage_can_finish_run(has),
+    )
+    .text_turn();
+    let ends_run = text_turn != TextTurn::Continues;
 
     let mut lines = vec!["---".to_string(), "tools:".to_string()];
     lines.extend(
@@ -73,17 +80,21 @@ pub fn materialize_agent_system_prompt(
         "- Work with the agent tools. Tool results are working context, not chat messages."
             .to_string(),
     ]);
-    lines.push(if has("workspace.commit") {
-        "- Only committed text reaches the chat; a plain-text reply is never shown to the user. Every turn must call a tool.".to_string()
-    } else {
-        "- Every turn must call a tool; plain text alone does not complete this stage.".to_string()
-    });
+    lines.push(
+        match (has("workspace.commit"), text_turn) {
+            (true, TextTurn::EndsRun) => "- Only committed text reaches the chat. When the run's work is complete, reply without calling a tool to end the run.",
+            (false, TextTurn::EndsRun) => "- When the run's work is complete, reply without calling a tool to end the run.",
+            (true, _) => "- Only committed text reaches the chat; a plain-text reply is never shown to the user. Every turn must call a tool.",
+            (false, _) => "- Every turn must call a tool; plain text alone does not complete this stage.",
+        }
+        .to_string(),
+    );
 
     let mut completion_tools = Vec::new();
-    if can_finish_run && has("workspace.commit") {
+    if ends_run && has("workspace.commit") {
         completion_tools.push(format!("{} with finish: true", alias("workspace.commit")));
     }
-    for name in ["workspace.finish", TASK_RETURN_TOOL, AGENT_HANDOFF_TOOL] {
+    for name in [TASK_RETURN_TOOL, AGENT_HANDOFF_TOOL] {
         if has(name) {
             completion_tools.push(alias(name).to_string());
         }
@@ -184,25 +195,15 @@ pub fn materialize_agent_system_prompt(
             "# **Important**: Return your result only by calling {} with a concise result for the requesting Agent, referencing any workspace paths you wrote.",
             alias(TASK_RETURN_TOOL)
         ));
-    } else if !can_finish_run && has(AGENT_HANDOFF_TOOL) {
+    } else if !ends_run {
+        // Only a stage that can hand off cannot finish the run itself.
         lines.push(format!(
             "# **Important**: You cannot finish the run directly. When your part is complete, call {}.",
             alias(AGENT_HANDOFF_TOOL)
         ));
-    } else if !can_finish_run {
-        lines.push(
-            "# **Important**: You cannot finish the run or hand off. Use another available Agent tool to move the work forward."
-                .to_string(),
-        );
-    } else if !foreground && has("workspace.finish") {
-        lines.push(format!(
-            "- Background runs may call {} without committing a chat message.",
-            alias("workspace.finish")
-        ));
     }
 
-    if foreground
-        && can_finish_run
+    if text_turn == TextTurn::EndsRunOnceCommitted
         && has("workspace.commit")
         && let Some(output) = &profile.output
     {
@@ -224,15 +225,11 @@ pub fn materialize_agent_system_prompt(
                 alias("workspace.commit")
             ),
         ]);
-        if has("workspace.finish") {
-            lines.push(format!(
-                "- Call {} only to end the run without a new commit.",
-                alias("workspace.finish")
-            ));
-        }
-        lines.push(String::new());
     }
-    lines.push("Anyway: TOOLS&SKILLS IS ALL YOU NEED".to_string());
+    lines.extend([
+        String::new(),
+        "Anyway: TOOLS&SKILLS IS ALL YOU NEED".to_string(),
+    ]);
     if offers_workspace_files(tools) {
         lines.extend([String::new(), WORKSPACE_INDEX_PLACEHOLDER.to_string()]);
     }

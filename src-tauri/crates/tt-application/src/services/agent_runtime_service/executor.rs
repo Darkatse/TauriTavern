@@ -438,20 +438,19 @@ impl AgentRuntimeService {
                     "agent.continuation_missing: run has no foreground invocation".to_string(),
                 )
             })?;
-            let exit = self
+            let Some(exit) = self
                 .run_tool_loop(frame, &mut state.commits, cancel)
                 .await?
-                .ok_or_else(|| {
-                    ApplicationError::ValidationError(format!(
-                        "agent.max_tool_rounds_exceeded: {} was not completed within {} rounds",
-                        super::loop_runner::completion_tool_name(
-                            frame.prepared.invocation.exit_policy,
-                            &frame.prepared.tool_turn,
-                            &frame.prepared.request.tools,
-                        ),
-                        frame.progress.max_rounds
-                    ))
-                })?;
+            else {
+                let active_run = self
+                    .active_run_handle(frame.prepared.invocation.run_id.as_str())
+                    .await?;
+                return Err(ApplicationError::ValidationError(format!(
+                    "agent.max_tool_rounds_exceeded: {} was not completed within {} rounds",
+                    frame.prepared.completion_tool_name(&active_run.target),
+                    frame.progress.max_rounds
+                )));
+            };
             match exit {
                 AgentLoopExit::Replied => return Ok(()),
                 AgentLoopExit::Finished => {

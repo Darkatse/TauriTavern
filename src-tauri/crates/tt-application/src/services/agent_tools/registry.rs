@@ -9,9 +9,8 @@ use super::dice::dice_roll_descriptor;
 use super::policy::stage_can_finish_run;
 use super::workspace::{
     WORKSPACE_COMMIT, WORKSPACE_WRITE_FILE, workspace_apply_patch_descriptor,
-    workspace_commit_descriptor, workspace_finish_descriptor, workspace_list_files_descriptor,
-    workspace_read_file_descriptor, workspace_search_files_descriptor, workspace_shell_descriptor,
-    workspace_write_file_descriptor,
+    workspace_commit_descriptor, workspace_list_files_descriptor, workspace_read_file_descriptor,
+    workspace_search_files_descriptor, workspace_shell_descriptor, workspace_write_file_descriptor,
 };
 use super::world_info::worldinfo_read_activated_descriptor;
 use crate::errors::ApplicationError;
@@ -41,7 +40,6 @@ impl BuiltinAgentToolRegistry {
             workspace_apply_patch_descriptor(),
             workspace_shell_descriptor(),
             workspace_commit_descriptor(),
-            workspace_finish_descriptor(),
         ];
         let catalog = ToolCatalog::try_from_descriptors(descriptors)
             .expect("builtin Agent tool descriptors must form a valid catalog");
@@ -140,7 +138,8 @@ fn hide_unavailable_properties(descriptor: &mut ToolDescriptor, profile: &Resolv
     }
 }
 
-fn profile_can_finish_run(profile: &ResolvedAgentProfile) -> bool {
+/// [`stage_can_finish_run`] over the builtin tools the profile enables.
+pub(crate) fn profile_can_finish_run(profile: &ResolvedAgentProfile) -> bool {
     stage_can_finish_run(|name| profile_tool_visible(profile, name))
 }
 
@@ -152,7 +151,8 @@ pub(crate) fn profile_reads_chat(profile: &ResolvedAgentProfile) -> bool {
         .any(|name| profile_tool_visible(profile, name))
 }
 
-fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
+/// Whether the profile enables builtin `name`: allowed and not denied.
+pub(crate) fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
     let id = ToolId::builtin(name).expect("builtin Agent tool names form valid ToolIds");
     profile.tools.allow.iter().any(|allowed| allowed == &id)
         && !profile.tools.deny.iter().any(|denied| denied == &id)
@@ -164,9 +164,7 @@ mod tests {
 
     use super::super::agent::{AGENT_DELEGATE, AGENT_HANDOFF, TASK_RETURN};
     use super::super::policy::{compile_invocation_tool_snapshot, prepare_tool_bindings};
-    use super::super::workspace::{
-        WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES,
-    };
+    use super::super::workspace::{WORKSPACE_COMMIT, WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES};
     use super::*;
     use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
     use tt_domain::models::agent::profile::{
@@ -188,7 +186,7 @@ mod tests {
         profile.tools.allow = vec![
             ToolId::builtin(WORKSPACE_READ_FILE).unwrap(),
             ToolId::builtin(WORKSPACE_SEARCH_FILES).unwrap(),
-            ToolId::builtin(WORKSPACE_FINISH).unwrap(),
+            ToolId::builtin(WORKSPACE_COMMIT).unwrap(),
             ToolId::builtin(AGENT_DELEGATE).unwrap(),
         ];
         profile.tools.deny = vec![ToolId::builtin(WORKSPACE_SEARCH_FILES).unwrap()];
@@ -210,7 +208,7 @@ mod tests {
                 .iter()
                 .map(|binding| binding.tool_id().native_name())
                 .collect::<Vec<_>>(),
-            vec![WORKSPACE_READ_FILE, WORKSPACE_FINISH, AGENT_DELEGATE]
+            vec![WORKSPACE_READ_FILE, WORKSPACE_COMMIT, AGENT_DELEGATE]
         );
         assert_eq!(root.bindings()[0].max_calls(), Some(2));
 
@@ -235,7 +233,7 @@ mod tests {
             vec![
                 ToolId::builtin(WORKSPACE_READ_FILE).unwrap(),
                 ToolId::builtin(WORKSPACE_SEARCH_FILES).unwrap(),
-                ToolId::builtin(WORKSPACE_FINISH).unwrap(),
+                ToolId::builtin(WORKSPACE_COMMIT).unwrap(),
                 ToolId::builtin(AGENT_DELEGATE).unwrap(),
             ]
         );
@@ -264,13 +262,8 @@ mod tests {
                 .cloned()
         };
 
-        // A handoff stage without finish passes the run on instead of ending it.
+        // A stage that can hand off passes the run on instead of ending it.
         assert_eq!(finish_property(&profile), None);
-        profile
-            .tools
-            .allow
-            .push(ToolId::builtin(WORKSPACE_FINISH).unwrap());
-        assert_eq!(finish_property(&profile), Some("End it.".into()));
         profile.tools.allow = vec![commit.clone()];
         assert_eq!(finish_property(&profile), Some("End it.".into()));
     }
