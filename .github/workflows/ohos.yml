@@ -49,6 +49,7 @@ jobs:
           source scripts/ohos/env.sh
           export TAURITAVERN_SKIP_WEB_BUILD=1
           export PATH="$HARMONY_TOOLS_DIR/command-line-tools/tool/node/bin:$HARMONY_TOOLS_DIR/command-line-tools/bin:$PATH"
+          python3 scripts/ohos/select-target.py
           python3 scripts/ohos/sync-version.py
           ohos_plugins_dir="$(cat src-tauri/crates/tauritavern/gen/ohos-plugins-source)"
           python3 "$ohos_plugins_dir/shared/ohos/install.py" src-tauri/crates/tauritavern --sources-only
@@ -57,6 +58,12 @@ jobs:
             config_args+=(--config "$(jq -cn --arg version "$PACKAGE_VERSION" '{version: $version}')")
           fi
           node scripts/tauri-app.mjs ohos build --ci --target "${{ matrix.arch }}" --ignore-version-mismatches "${config_args[@]}" -- --lib
+      - name: Validate HAP native architecture
+        run: |
+          shopt -s nullglob
+          haps=(src-tauri/crates/tauritavern/gen/ohos/entry/build/default/outputs/default/*.hap)
+          test "${#haps[@]}" -eq 1
+          python3 scripts/ohos/validate-hap.py --target "$TARGET_TRIPLE" "${haps[0]}"
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: TauriTavern-${{ inputs.asset_time || github.run_number }}-canary-ohos-${{ matrix.arch }}-hap
