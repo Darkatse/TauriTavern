@@ -43,6 +43,9 @@ removes desktop bundle resource copies through a configuration overlay.
 `embedded_resources` selects built-in resources for Android and OHOS; portable
 desktop builds retain their disk-first behavior with an embedded fallback.
 Release optimization settings remain in the common Cargo release profile.
+The checked-in module enables `compressNativeLibs`: HAP packaging ZIP-compresses
+native libraries and installation extracts them intact. ELF library contents and
+section tables are preserved; this does not use UPX on shared libraries.
 
 ## Build
 
@@ -109,6 +112,6 @@ No phone or emulator is attached to the build environment. The following are
 The upstream maintainer owns TT's host identity consolidation and file import /
 export routing. The two provisional user-agent regex additions were removed; the
 PR must be rebased after that work lands. Background generation, LAN sync,
-notifications, scanning and package-size optimization are outside this acceptance
+notifications and scanning are outside this acceptance
 baseline. Previous validation was build and archive inspection only, with no
 successful phone launch claimed.
