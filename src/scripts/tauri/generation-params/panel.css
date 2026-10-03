@@ -7,9 +7,11 @@
 
 .tt-gp-title {
     margin-bottom: 4px;
-    font-size: calc(var(--mainFontSize) * 0.85);
-    font-weight: 600;
-    opacity: 0.75;
+}
+
+/* Folded: only the title row stays; the parameter blocks are hidden by sync(). */
+.tt-gp-collapsed > :not(.tt-gp-title) {
+    display: none !important;
 }
 
 .tt-gp-actions {
@@ -137,10 +139,11 @@
     flex-wrap: wrap;
 }
 
+/* Long labels wrap instead of pushing the number box out of a narrow panel. */
 .tt-gp-compact > .range-block-title {
     flex: 1 1 auto;
+    min-width: 0;
     text-align: left;
-    white-space: nowrap;
 }
 
 .tt-gp-compact > .range-block-range-and-counter {
@@ -156,9 +159,20 @@
     margin: 0;
 }
 
-.tt-gp-compact .range-block-counter input {
+.tt-gp-compact .range-block-counter input,
+.tt-gp-compact > .wide100p > input {
     width: 5.5em;
     text-align: right;
+}
+
+/* Plain number blocks (max response length): the box keeps its own width. */
+.tt-gp-compact > .wide100p {
+    flex: 0 0 auto;
+    width: auto;
+}
+
+.tt-gp-compact > .wide100p > input {
+    margin: 0;
 }
 
 /* Sits inline after the block's own label, so it never covers controls. */
@@ -179,4 +193,57 @@
 .tt-gp-block:hover .tt-gp-remove,
 .tt-gp-remove:focus-visible {
     opacity: 0.9;
+}
+
+/* One-line help next to a label; hover shows it, a tap repeats it as a toast. */
+.tt-gp-hint {
+    margin-left: 4px;
+    padding: 0 2px;
+    border: 0;
+    background: transparent;
+    color: var(--SmartThemeBodyColor);
+    font-size: calc(var(--mainFontSize) * 0.85);
+    line-height: 1;
+    vertical-align: middle;
+    cursor: help;
+    opacity: 0.45;
+}
+
+.tt-gp-hint:hover,
+.tt-gp-hint:focus-visible {
+    opacity: 0.9;
+}
+
+/* Under the pinned Reasoning Effort select: why a stored value is sent as Auto here. */
+.tt-gp-effort-note {
+    flex-basis: 100%;
+    text-align: start;
+    font-size: calc(var(--mainFontSize) * 0.85);
+    opacity: 0.7;
+}
+
+/* Drawer headers spread their items apart; keep hint and × beside the title, chevron at the end. */
+.tt-gp-block > .inline-drawer-header {
+    justify-content: flex-start;
+}
+
+.tt-gp-block > .inline-drawer-header > .inline-drawer-icon {
+    margin-left: auto;
+}
+
+/* Touch: "?" and × get finger-sized targets and room between them; desktop keeps its density. */
+@media (pointer: coarse) {
+    .tt-gp-hint,
+    .tt-gp-remove {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 32px;
+        min-height: 32px;
+        padding: 0;
+    }
+
+    .tt-gp-remove {
+        margin-left: 8px;
+    }
 }

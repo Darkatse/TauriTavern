@@ -12,6 +12,7 @@ use super::content_parts::{
     InputPart, MediaPart, MediaSource, parse_openai_chat_content,
     reject_media_for_text_only_content,
 };
+use super::OMITTED_MAX_TOKENS;
 use super::shared::message_content_to_text;
 use super::tool_calls::{
     OpenAiToolCall, extract_openai_tool_calls, fallback_tool_name, message_tool_call_id,
@@ -884,7 +885,7 @@ fn inject_google_thinking_config(
     let max_output_tokens = generation_config
         .get("maxOutputTokens")
         .and_then(value_to_i64)
-        .unwrap_or(0);
+        .unwrap_or(OMITTED_MAX_TOKENS);
 
     let mut thinking_config = Map::new();
     let mut include_thoughts = include_reasoning;
@@ -1065,6 +1066,26 @@ mod tests {
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
         );
+    }
+
+    #[test]
+    fn makersuite_25_flash_budgets_omitted_reply_limit_as_reserve() {
+        let payload = json!({
+            "model": "gemini-2.5-flash",
+            "messages": [{"role": "user", "content": "hello"}],
+            "reasoning_effort": "medium"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload must be object");
+
+        let (_, upstream) = build(payload).expect("build should succeed");
+        let config = upstream["generationConfig"]
+            .as_object()
+            .expect("generationConfig must be object");
+
+        assert!(config.get("maxOutputTokens").is_none());
+        assert_eq!(config["thinkingConfig"]["thinkingBudget"].as_i64(), Some(6250));
     }
 
     #[test]

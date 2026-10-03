@@ -1,5 +1,6 @@
 import { DiffMatchPatch, DOMPurify, localforage } from '../lib.js';
 import { chat, event_types, eventSource, getCurrentChatId, reloadCurrentChat } from '../script.js';
+import { getEffectiveGenerationSettings } from './tauri/generation-params/omission.js';
 import { t } from './i18n.js';
 import { oai_settings } from './openai.js';
 import { Popup, POPUP_TYPE } from './popup.js';
@@ -536,7 +537,7 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
             params.beforeScenarioAnchorTokens +
             params.afterScenarioAnchorTokens;
         // Max context size - max completion tokens
-        params.thisPrompt_max_context = (oai_settings.openai_max_context - oai_settings.openai_max_tokens);
+        params.thisPrompt_max_context = (oai_settings.openai_max_context - getEffectiveGenerationSettings(oai_settings).openai_max_tokens);
 
         //console.log('-- applying % on OAI tokens');
         params.oaiStartTokensPercentage = ((params.oaiStartTokens / (params.finalPromptTokens)) * 100).toFixed(2);

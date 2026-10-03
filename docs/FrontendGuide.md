@@ -174,8 +174,40 @@ src/
 
 - 移除请求参数表示本次生成不启用该参数，保留原值；移除开关表示关闭；隐藏本地区块不改变其内容或行为。旧预设缺少 Fast Mode 字段时明确关闭。
 - 请求参数的移除状态保存在预设 `extensions.tauritavern.omit_params`，本地区块显隐仅保存在设备上。旧预设保持原行为，移除范围限于可选参数，不能删除 `messages`、`model` 等结构字段。
+- 最大回复长度是请求参数：移除后不发送 `max_tokens` / `max_completion_tokens`，本地按 25k 预留回复（`OMITTED_MAX_TOKENS_BUDGET`）；Claude Messages（原生、Vertex、Bedrock、Custom 共用同一 builder）与 Bedrock 自定义模板要求该字段，由后端补 25k；输出上限低于 25k 的旧模型（如 Claude 3 的 4096 / 8192）会拒绝该请求，使用时需保留回复上限。Gemini 2.5 的思考预算按回复上限的比例计算，省略时同样以 25k 为基数。单次请求显式指定的回复长度（`/gen length=`、quiet prompt 的 `responseLength`）照常发送：`TempResponseLength` 在该次生成期间撤销省略，结束后恢复。Chat Completion 的 Prompt 预算读生效设置，世界书预算与 `{{maxResponse}}` / `{{maxPrompt}}` 经 `getMaxResponseTokens()`，Prompt Manager 的超限提示与 itemized prompt 视图经所读设置的 `getEffectiveGenerationSettings()`，读到同一预留值。上下文长度只用于本地预算，不发送，移除即恢复默认 1,000,000 并隐藏，值不等于默认时自动显示。上下文上限不再按模型锁定（旧设置与预设中的 `max_context_unlocked` 迁移为 true）。
+- 流式传输与推理强度（`PINNED_PRESET_KEYS`）固定在「请求参数管理」上方，折叠区块不影响它们，也不能移除：流式传输保留自身勾选框；推理强度以「自动」表示不发送，旧预设移除过的推理强度按「自动」处理。
+- 其余开关显示即开启、× 即关闭，勾选框隐藏，点击标签不切换。
+- 推理强度选项随当前来源与 API 格式变化，映射规则见 [NativeApiFormats](CurrentState/NativeApiFormats.md)。选择器显示实际发送的值；已存值映射后仍无法发送时，选择器显示「自动」，下方加一行说明，已存值保留。
+- 每个参数旁的问号给出一句说明（`PARAM_HINTS`），点击时以 toast 重复，供触屏使用。上游已有 tooltip 的设置不再添加，只链接文档的上游问号由它替代。有说明的区块隐藏自身的长描述，嵌套子设置的描述保留。`pointer: coarse` 下问号与 × 的点击区域至少 32px。
+- 滑杆（以及没有描述的数字框）收成一行数字框。Chat Completion 模式下隐藏上游的「点击滑杆数字手动输入」提示（`#clickSlidersTips`），其他 API 照常显示。
+- 点击「请求参数管理」标题可折叠整个区块，折叠状态仅保存在设备上。
 - Prompt 组装和生成判断使用本次生效设置，`createGenerationParameters()` 出口统一省略字段；用户显式配置的 Additional Parameters 仍拥有最终覆盖权。
 - JSON 视图只编辑当前格式可用的参数，非法输入整体不应用；它不是最终请求预览，后续仍遵循渠道与模型的转换规则。
+
+## 6.5 紧凑选择行
+
+`src/scripts/tauri/compact-rows/` 提供「标签 | 下拉框 | 常用按钮 | ⋯」紧凑行的样式与 ⋯ 菜单。AI 响应配置面板顶部的「预设」行由 `preset-row.js` 安装。原按钮只加 `.tt-hidden` 隐藏，id 与事件处理不变，菜单项直接触发它们。
+
+- 「预设」行顺序为：标签、下拉框、💾 保存、第三方按钮、⋯。⋯ 中依次是另存为、重命名、导入、导出预设、导出预设与配置、扩展移入的按钮、「预设绑定连接」与删除。两个导出项对应上游导出弹窗的「是否导出连接数据」两个选项（`exportOpenAIPreset({ includeConnection })`），文件格式与上游相同：「导出预设」去掉全部连接字段（上游的敏感字段都属于连接字段，因此不再询问）；「导出预设与配置」保留预设存储的连接字段，仍按上游询问是否移除敏感字段。直接点击上游 `#export_oai_preset` 仍走原来的两步弹窗。标题栏只隐藏上游已知的元素（标题文字与绑定开关）；其中没有其他可见内容时，才通过 `:has()` 整体收起，扩展加在标题栏的按钮仍然可用。
+- ⋯ 菜单挂在 `body` 上并用 Popper 定位（声明 `SURFACE.None`，移动端几何防火墙不再改写其位置；菜单内的 `mousedown` / `touchstart` 不冒泡，上游「按下抽屉外即关闭抽屉」不会因此收起所在面板；Android 返回键合成的 `mousedown` 同样关闭菜单），点击开关，同一时间只开一个。外部按下、Esc、Tab、焦点移出菜单、选中菜单项、按钮所在的滚动容器或窗口滚动、窗口 resize 都会关闭菜单；其他区域的滚动（例如流式输出中的聊天区）不关闭。触屏与鼠标行为一致。`pointer: coarse` 下控件至少 36px、菜单项 40px。
+
+### 6.5.1 扩展按钮移入 ⋯（`data-tt-overflow`）
+
+扩展加到 Chat Completion 预设行（`#settings_preset_openai` 所在行，含其按钮栏）的按钮默认保持可见，排在 💾 之后、⋯ 之前。按钮带上 `data-tt-overflow` 属性，就改为列进该行的 ⋯ 菜单（`adoptOverflowButtons`）。Agent 资源按钮就是这样移入的。
+
+```js
+button.dataset.ttOverflow = '';
+button.setAttribute('aria-label', '我的操作'); // 或 title
+document.querySelector('#update_oai_preset').parentElement.append(button);
+```
+
+- 按钮由 CSS 隐藏，晚于安装注入的按钮同样生效；菜单每次打开时重新读取，按文档顺序排在两个导出项之后。
+- 菜单项文字取 `aria-label`，没有时取 `title`；两者都没有的按钮不列出，并输出 `console.error`。
+- 图标复制按钮内第一个 `<i>`、`<svg>` 或 `<img>`（去掉 id），都没有时用拼图图标。
+- 选中菜单项即调用 `button.click()`；处于 `:disabled` 状态的按钮不列出。
+- 属性只在紧凑行内生效；预设标题栏和其他位置的按钮不受影响。
+
+「预设绑定连接」菜单项反映 `#bind_preset_to_connection` 的勾选状态。
 
 ## 7. 插件系统前端适配
 

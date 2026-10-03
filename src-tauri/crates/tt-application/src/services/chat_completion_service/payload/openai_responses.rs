@@ -7,13 +7,30 @@ use tt_domain::models::tool::ToolArguments;
 use tt_ports::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
 
 use super::content_parts::{InputPart, MediaPart, MediaSource, parse_openai_chat_content};
+use super::openai_reasoning::normalize_openai_reasoning_effort;
 use super::shared::message_content_to_text;
 use super::tool_calls::message_tool_call_id;
 
 const REASONING_ENCRYPTED_CONTENT: &str = "reasoning.encrypted_content";
 
+/// Custom / OpenCode Responses: the model is an alias and effort is already a
+/// Responses word chosen from the format's own UI list, so it is sent verbatim.
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
-    let request = build_openai_responses_payload(&payload)?;
+    build_with_effort_policy(payload, false)
+}
+
+/// Native OpenAI Responses: effort is normalized against the known model family.
+pub(super) fn build_native_openai(
+    payload: Map<String, Value>,
+) -> Result<(String, Value), ApplicationError> {
+    build_with_effort_policy(payload, true)
+}
+
+fn build_with_effort_policy(
+    payload: Map<String, Value>,
+    native_openai: bool,
+) -> Result<(String, Value), ApplicationError> {
+    let request = build_openai_responses_payload(&payload, native_openai)?;
 
     let mut upstream_payload = Value::Object(request);
     copy_internal_provider_state(&payload, &mut upstream_payload)?;
@@ -23,6 +40,7 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
 
 fn build_openai_responses_payload(
     payload: &Map<String, Value>,
+    native_openai: bool,
 ) -> Result<Map<String, Value>, ApplicationError> {
     let model = payload
         .get("model")
@@ -84,11 +102,30 @@ fn build_openai_responses_payload(
         );
     }
 
-    if let Some(reasoning_effort) = payload.get("reasoning_effort") {
-        request.insert(
-            "reasoning".to_string(),
-            json!({ "effort": reasoning_effort }),
-        );
+    let mut reasoning = Map::new();
+    if let Some(value) = payload.get("reasoning_effort") {
+        let reasoning_effort = if native_openai {
+            value
+                .as_str()
+                .and_then(|value| normalize_openai_reasoning_effort(value, model))
+                .map(Value::from)
+        } else {
+            Some(value.clone())
+        };
+        if let Some(reasoning_effort) = reasoning_effort {
+            reasoning.insert("effort".to_string(), reasoning_effort);
+        }
+    }
+    // Custom / OpenCode only: an explicit `reasoning.summary` opt-in, sent verbatim.
+    if !native_openai
+        && let Some(summary) = payload
+            .get("reasoning_summary")
+            .filter(|value| !value.is_null())
+    {
+        reasoning.insert("summary".to_string(), summary.clone());
+    }
+    if !reasoning.is_empty() {
+        request.insert("reasoning".to_string(), Value::Object(reasoning));
     }
 
     if let Some(verbosity) = payload

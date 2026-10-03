@@ -141,6 +141,22 @@ export function modelTargetSource(target) {
 }
 
 /**
+ * The source and API format a target runs on, as chat-completion settings fields.
+ * @param {AgentModelTarget} target
+ * @returns {{ chat_completion_source: string; custom_api_format?: string; opencode_api_format?: string }}
+ */
+export function modelTargetApiSettings(target) {
+    const source = modelTargetSource(target);
+    if (source === 'custom') {
+        return { chat_completion_source: source, custom_api_format: normalizeCustomApiFormat(target) };
+    }
+    if (source === 'opencode') {
+        return { chat_completion_source: source, opencode_api_format: normalizeCustomApiFormat(target) || 'openai_compat' };
+    }
+    return { chat_completion_source: source };
+}
+
+/**
  * @param {AgentModelTarget} target
  * @returns {TauriTavernLlmConnectionDefinition}
  */
