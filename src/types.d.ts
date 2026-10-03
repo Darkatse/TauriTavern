@@ -852,6 +852,8 @@ type TauriTavernLlmConnectionDefinition = {
     id: string;
     displayName: string;
     description?: string;
+    /** Set on connections saved from a model; bindings use it instead of their own modelId. */
+    modelId?: string;
     provider: {
         chatCompletionSource: string;
         customApiFormat?: string;
@@ -895,6 +897,31 @@ type TauriTavernLlmConnectionsApi = {
     }>;
     save: (input: TauriTavernLlmConnectionDefinition | { connection: TauriTavernLlmConnectionDefinition }) => Promise<void>;
     delete: (input: string | { connectionId: string } | { connection_id: string }) => Promise<void>;
+};
+
+type TauriTavernModelRef = { kind: 'tauritavern.modelTarget'; id: string };
+
+/** A saved model from Connection Manager's "Model" list, without secrets. */
+type TauriTavernModelSummary = {
+    ref: TauriTavernModelRef;
+    /** Id for `ConnectionManagerRequestService` (`modelTarget:<id>`). */
+    requestId: string;
+    /** Agent Profile `connectionRef`; null for text-completion models. */
+    connectionRef: string | null;
+    name: string;
+    mode: 'cc' | 'tc';
+    /** Chat-completion source as the model's Agent LLM connection uses it; the API name for text completion. */
+    source: string;
+    /** Custom / OpenCode API format; null for other sources. */
+    apiFormat: string | null;
+    model: string;
+    selected: boolean;
+};
+
+type TauriTavernModelsApi = {
+    list: () => Promise<{ models: TauriTavernModelSummary[] }>;
+    get: (ref: TauriTavernModelRef | string) => Promise<TauriTavernModelSummary | null>;
+    subscribe: (listener: (state: { models: TauriTavernModelSummary[] }) => void) => () => void;
 };
 
 type TauriTavernMcpServerState = 'active' | 'paused';
@@ -1384,6 +1411,7 @@ type TauriTavernHostApi = {
     characterCards?: TauriTavernCharacterCardsApi;
     agent?: TauriTavernAgentApi;
     llmConnections?: TauriTavernLlmConnectionsApi;
+    models?: TauriTavernModelsApi;
     mcp?: TauriTavernMcpApi;
     skill?: TauriTavernSkillApi;
     layout?: TauriTavernLayoutApi;

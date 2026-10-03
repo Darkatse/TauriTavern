@@ -270,7 +270,7 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
                             }} />
                         <div className="ttia-composer-footer">
                             <div className="ttia-composer-tools">
-                                <ModelMenu models={models} choice={choice} open={menu === 'model'} disabled={choicesDisabled}
+                                <ModelMenu models={models} unsupported={actions.models.getUnsupported()} choice={choice} open={menu === 'model'} disabled={choicesDisabled}
                                     onOpenChange={open => setMenu(open ? 'model' : null)} onSelect={target => { void chooseModel(target); }} onManage={() => actions.openConnections()} />
                                 {effortChoosable && <EffortMenu effort={snapshot.profile.preset.reasoningEffort} options={effortOptions} resolve={resolveEffort} preset={presetName}
                                     presetEffort={actions.presetReasoningEffort(presetName)} open={menu === 'effort'} disabled={choicesDisabled} onOpenChange={open => setMenu(open ? 'effort' : null)}

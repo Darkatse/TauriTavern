@@ -26,6 +26,7 @@ export function ensureCompactRowsStyle() {
  * @property {boolean} [danger] Destructive action, drawn in the warning color
  * @property {boolean} [separatorBefore] Draws a rule above the item
  * @property {() => boolean} [checked] Makes the item a checkbox reflecting this state
+ * @property {() => string | null} [disabledReason] Disables the item and explains why; a disabled checkbox shows no state
  * @property {string} [hint] Tooltip with a longer explanation
  */
 
@@ -135,7 +136,9 @@ function open(button, items) {
             rule.setAttribute('role', 'separator');
             menu.append(rule);
         }
-        const checked = item.checked ? item.checked() : null;
+        const reason = item.disabledReason?.() ?? null;
+        // A toggle the user cannot change has no state worth showing; ☑ next to "disabled" reads as a contradiction.
+        const checked = item.checked && !reason ? item.checked() : null;
         const entry = document.createElement('div');
         entry.className = 'list-group-item tt-overflow-item';
         entry.tabIndex = -1;
@@ -143,11 +146,21 @@ function open(button, items) {
         entry.setAttribute('role', checked === null ? 'menuitem' : 'menuitemcheckbox');
         if (checked !== null) entry.setAttribute('aria-checked', String(checked));
         if (item.hint) entry.title = item.hint;
+        if (reason) {
+            entry.setAttribute('aria-disabled', 'true');
+            entry.title = reason;
+        }
         const text = document.createElement('span');
         text.textContent = item.label;
         entry.append(renderIcon(checked === null ? item.icon : checked ? 'square-check' : 'square'), text);
+        if (reason) {
+            const detail = document.createElement('small');
+            detail.textContent = reason;
+            entry.append(detail);
+        }
         entry.addEventListener('click', (event) => {
             event.stopPropagation();
+            if (reason) return;
             close();
             item.onSelect();
         });
@@ -166,7 +179,7 @@ function open(button, items) {
         strategy: 'fixed',
         modifiers: [{ name: 'flip', options: { fallbackPlacements: ['top-end'] } }],
     });
-    const entries = () => /** @type {HTMLElement[]} */ ([...menu.querySelectorAll('.tt-overflow-item')]);
+    const entries = () => /** @type {HTMLElement[]} */ ([...menu.querySelectorAll('.tt-overflow-item:not([aria-disabled="true"])')]);
     /** @type {(Element | Window)[]} */
     const scrollTargets = [...scrollAncestorsOf(button), window];
 

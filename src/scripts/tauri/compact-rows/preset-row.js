@@ -49,7 +49,7 @@ export function installCompactPresetRow() {
 
     block.classList.add('tt-compact-presets');
     row.classList.add('tt-sel-row');
-    // One gap for label, select and buttons.
+    // One gap for label, select and buttons, the same as in the model row above.
     row.classList.remove('flexNoGap');
     const label = document.createElement('span');
     label.className = 'tt-sel-label';
@@ -88,9 +88,13 @@ export function installCompactPresetRow() {
             ...extensionItems(),
             {
                 label: translate('Bind preset to connection'),
+                hint: translate('Bind presets to API connections'),
                 icon: 'link',
                 separatorBefore: true,
                 checked: () => bind.checked,
+                // The Connection Manager disables the checkbox, with the reason as its title,
+                // while the selected model owns the connection.
+                disabledReason: () => (bind.disabled ? bind.title || translate('A selected model decides the connection') : null),
                 onSelect: () => {
                     bind.checked = !bind.checked;
                     bind.dispatchEvent(new Event('input', { bubbles: true }));

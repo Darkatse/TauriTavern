@@ -65,7 +65,7 @@
     "in_app_agent.chooseModelHint": "選擇模型後即可開始",
     "in_app_agent.modelUnavailable": "無法使用",
     "in_app_agent.noModels": "還沒有已儲存的模型",
-    "in_app_agent.noModelsNote": "請在連線設定中建立連線設定檔，並選擇「僅儲存模型」。",
+    "in_app_agent.noModelsNote": "在連線設定的「模型」中點擊「新增」（+），並選擇「儲存模型」。",
     "in_app_agent.connections": "開啟連線設定",
     "in_app_agent.reasoningEffort": "推理強度",
     "in_app_agent.effortMenu": "推理強度：{name}",
@@ -159,5 +159,6 @@
     "in_app_agent.returnHint": "助理執行時，你可以繼續操作應用程式。",
     "in_app_agent.sendHint": "Enter 傳送 · Shift+Enter 換行",
     "in_app_agent.newlineHint": "Enter 換行",
-    "in_app_agent.draftHint": "可以先撰寫下一則訊息，待本次執行結束後傳送。"
+    "in_app_agent.draftHint": "可以先撰寫下一則訊息，待本次執行結束後傳送。",
+    "in_app_agent.textCompletionModel": "文字補全，無法使用"
 }

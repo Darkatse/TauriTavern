@@ -224,6 +224,8 @@ export type AgentSystemPanelSnapshot = {
     selectedToolId: string;
     presetOptions: string[];
     modelTargets: AgentModelTarget[];
+    /** Saved text-completion models: listed as unavailable, never selectable. */
+    textCompletionModelTargets: AgentModelTarget[];
 };
 
 export type AgentSystemPanelControllerDeps = {
@@ -240,6 +242,7 @@ export type AgentSystemPanelControllerDeps = {
     }>;
     listPresetOptions: () => string[];
     listModelTargets: () => AgentModelTarget[];
+    listTextCompletionModelTargets: () => AgentModelTarget[];
     saveModelTargetConnection: (target: AgentModelTarget) => Promise<unknown>;
     subscribeProfilesChanged: (listener: () => void) => () => void;
     subscribeModelTargetsChanged: (listener: () => void) => () => void;
@@ -289,5 +292,6 @@ export function createInitialPanelSnapshot(): AgentSystemPanelSnapshot {
         selectedToolId: FIRST_KNOWN_TOOL_ID,
         presetOptions: [],
         modelTargets: [],
+        textCompletionModelTargets: [],
     };
 }

@@ -186,9 +186,12 @@ src/
 
 ## 6.5 紧凑选择行
 
-`src/scripts/tauri/compact-rows/` 提供「标签 | 下拉框 | 常用按钮 | ⋯」紧凑行的样式与 ⋯ 菜单。AI 响应配置面板顶部的「预设」行由 `preset-row.js` 安装。原按钮只加 `.tt-hidden` 隐藏，id 与事件处理不变，菜单项直接触发它们。
+`src/scripts/tauri/compact-rows/` 提供「标签 | 下拉框 | 常用按钮 | ⋯」紧凑行的样式与 ⋯ 菜单。AI 响应配置面板顶部的「预设」行由 `preset-row.js` 安装；其上的「模型」行和 API 面板的模型行由 Connection Manager 安装（`sidebar-select.js`、`index.js`）。原按钮只加 `.tt-hidden` 隐藏，id 与事件处理不变，菜单项直接触发它们。
 
 - 「预设」行顺序为：标签、下拉框、💾 保存、第三方按钮、⋯。⋯ 中依次是另存为、重命名、导入、导出预设、导出预设与配置、扩展移入的按钮、「预设绑定连接」与删除。两个导出项对应上游导出弹窗的「是否导出连接数据」两个选项（`exportOpenAIPreset({ includeConnection })`），文件格式与上游相同：「导出预设」去掉全部连接字段（上游的敏感字段都属于连接字段，因此不再询问）；「导出预设与配置」保留预设存储的连接字段，仍按上游询问是否移除敏感字段。直接点击上游 `#export_oai_preset` 仍走原来的两步弹窗。标题栏只隐藏上游已知的元素（标题文字与绑定开关）；其中没有其他可见内容时，才通过 `:has()` 整体收起，扩展加在标题栏的按钮仍然可用。
+- 「模型」行是 `#connection_profiles` 的镜像，选择转交给原下拉框，应用、事件与斜杠命令只走一条路径。实时设置偏离选中项时，行内出现 ↻ 重新应用。还没有保存任何模型或 Connection Profile 时，列表末尾显示一条不可选的引导项「在 API 连接面板中保存模型」。
+- API 面板的模型行常驻三个按钮：💾 保存（用当前设置覆盖选中项，偏离时高亮）、另存为（按选中项的类型另存一份新项）、+ 新建（选择「保存模型」或「保存模型+预设」）。↻ 重新应用在 ⋯ 中，实时设置偏离选中项时另在行内显示；⋯ 中还有显示/隐藏详情、重命名和删除。
+- `#connection_profiles` 的选项文字就是名称，不加后缀，扩展按上游习惯把选项文字当作名称读取。「无」选项的值仍为 `''`，显示为「（当前 API 设置）」。`/profile` 与 `/profile-get` 也覆盖模型。分组与连接归属见 [LLM Connection API](API/LlmConnections.md#connection-manager)。
 - ⋯ 菜单挂在 `body` 上并用 Popper 定位（声明 `SURFACE.None`，移动端几何防火墙不再改写其位置；菜单内的 `mousedown` / `touchstart` 不冒泡，上游「按下抽屉外即关闭抽屉」不会因此收起所在面板；Android 返回键合成的 `mousedown` 同样关闭菜单），点击开关，同一时间只开一个。外部按下、Esc、Tab、焦点移出菜单、选中菜单项、按钮所在的滚动容器或窗口滚动、窗口 resize 都会关闭菜单；其他区域的滚动（例如流式输出中的聊天区）不关闭。触屏与鼠标行为一致。`pointer: coarse` 下控件至少 36px、菜单项 40px。
 
 ### 6.5.1 扩展按钮移入 ⋯（`data-tt-overflow`）
@@ -207,7 +210,7 @@ document.querySelector('#update_oai_preset').parentElement.append(button);
 - 选中菜单项即调用 `button.click()`；处于 `:disabled` 状态的按钮不列出。
 - 属性只在紧凑行内生效；预设标题栏和其他位置的按钮不受影响。
 
-「预设绑定连接」菜单项反映 `#bind_preset_to_connection` 的勾选状态。
+「预设绑定连接」菜单项反映 `#bind_preset_to_connection`：勾选状态随复选框变化。Connection Manager 的选中项决定连接时，会给复选框设置 `disabled` 和说明原因的 `title`；菜单项随之禁用、不显示勾选状态，并以该 `title` 作为说明。
 
 ## 7. 插件系统前端适配
 

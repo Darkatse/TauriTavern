@@ -24,6 +24,13 @@
  */
 
 export const MODEL_TARGET_KIND = 'tauritavern.modelTarget';
+/** Connection Manager's `selectedItem.kind` while a saved model is selected. */
+export const MODEL_TARGET_SELECTION_KIND = 'modelTarget';
+/**
+ * Request id prefix of a saved model: `modelTarget:<id>`. It is also the Connection
+ * Manager option value and what `ConnectionManagerRequestService` accepts as a profile id.
+ */
+export const MODEL_TARGET_ID_PREFIX = `${MODEL_TARGET_SELECTION_KIND}:`;
 
 const LLM_CONNECTION_KIND = 'tauritavern.llmConnection';
 const LLM_CONNECTION_SCHEMA_VERSION = 1;
@@ -68,10 +75,15 @@ const SOURCE_SPECIFIC_API_URL_KEYS = Object.freeze({
 });
 
 /**
+ * Saved models (copies), sorted by name. `mode` keeps only chat-completion (`cc`) or
+ * text-completion (`tc`) models; Connection Manager records one of the two on every
+ * model it saves. Agents run on chat completion only, so their pickers list `tc` models
+ * as unavailable instead of leaving them out silently.
  * @param {unknown} [context]
+ * @param {{ mode?: 'cc' | 'tc' }} [options]
  * @returns {AgentModelTarget[]}
  */
-export function listSavedModelTargets(context = requireSillyTavernContext()) {
+export function listModelTargets(context = requireSillyTavernContext(), { mode } = {}) {
     const host = /** @type {{ extensionSettings?: { connectionManager?: { modelTargets?: unknown } } }} */ (context);
     const targets = host.extensionSettings?.connectionManager?.modelTargets;
     if (!Array.isArray(targets)) {
@@ -79,7 +91,7 @@ export function listSavedModelTargets(context = requireSillyTavernContext()) {
     }
 
     return targets
-        .filter((target) => target?.kind === MODEL_TARGET_KIND && target.mode === 'cc')
+        .filter((target) => target?.kind === MODEL_TARGET_KIND && (mode === undefined || target.mode === mode))
         .map((target) => structuredClone(target))
         .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
 }
@@ -208,6 +220,8 @@ export function buildLlmConnectionFromModelTarget(target) {
         routing: proxy && proxy !== NO_PROXY_PRESET
             ? { reverseProxy: { preset: proxy } }
             : {},
+        // Profiles bound to this connection follow the saved model when it changes.
+        modelId: String(target.model).trim(),
         adapterHints: structuredClone(target.adapterHints || {}),
         capabilities: {},
     };
@@ -228,11 +242,8 @@ export function findModelTargetForBinding(modelTargets, model) {
         return null;
     }
 
-    const target = findModelTargetForConnectionRef(modelTargets, connectionRef);
-    if (!target || target.model !== model.modelId) {
-        return null;
-    }
-    return target;
+    // Bindings follow the saved model: its connection carries the current model id.
+    return findModelTargetForConnectionRef(modelTargets, connectionRef);
 }
 
 /**
@@ -276,7 +287,7 @@ export async function ensureModelTargetLlmConnectionForProfile(profile, deps = {
 
     const modelTargets = Array.isArray(deps.modelTargets)
         ? deps.modelTargets
-        : listSavedModelTargets(deps.context || requireSillyTavernContext());
+        : listModelTargets(deps.context || requireSillyTavernContext(), { mode: 'cc' });
     const target = findModelTargetForConnectionRef(modelTargets, model.connectionRef);
     if (!target) {
         throw new Error(`agent.model_target_binding_missing: Model Target binding '${model.connectionRef}' for model '${model.modelId}' was not found`);

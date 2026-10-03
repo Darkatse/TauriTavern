@@ -126,6 +126,7 @@ function createPanelWorld(selectedProfile = defaultProfile()) {
         listTools: () => Promise.resolve({ tools: [], diagnostics: [] }),
         listPresetOptions: () => state.presetOptions,
         listModelTargets: () => [],
+        listTextCompletionModelTargets: () => [],
         saveModelTargetConnection: () => Promise.resolve(),
         subscribeProfilesChanged: (listener) => {
             state.subscribers.profiles += 1;

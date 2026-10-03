@@ -38,6 +38,7 @@ export const event_types = {
     OAI_PRESET_CHANGED_AFTER: 'oai_preset_changed_after',
     OAI_PRESET_EXPORT_READY: 'oai_preset_export_ready',
     OAI_PRESET_IMPORT_READY: 'oai_preset_import_ready',
+    OAI_PRESET_SAVE_BEFORE: 'oai_preset_save_before',
     WORLDINFO_SETTINGS_UPDATED: 'worldinfo_settings_updated',
     WORLDINFO_UPDATED: 'worldinfo_updated',
     CHARACTER_EDITOR_OPENED: 'character_editor_opened',

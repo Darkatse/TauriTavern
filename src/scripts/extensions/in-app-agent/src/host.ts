@@ -1,6 +1,6 @@
-import { listSavedModelTargets, modelTargetApiSettings, modelTargetSource } from '../../../tauritavern/agent/model-target-llm-connection.js';
-import { getEffectiveReasoningEffort, getReasoningEffortOptions } from '../../../tauri/generation-params/reasoning-effort-options.js';
+import { listModelTargets, modelTargetApiSettings, modelTargetSource } from '../../../tauritavern/agent/model-target-llm-connection.js';
 import { getOmittedParams } from '../../../tauri/generation-params/omission.js';
+import { getEffectiveReasoningEffort, getReasoningEffortOptions } from '../../../tauri/generation-params/reasoning-effort-options.js';
 import type { createInAppAgentController } from './controller';
 import { tr } from './i18n';
 
@@ -22,7 +22,7 @@ export const assistantSelection = {
 };
 
 export type AssistantController = ReturnType<typeof createInAppAgentController>;
-export type ModelTarget = ReturnType<typeof listSavedModelTargets>[number];
+export type ModelTarget = ReturnType<typeof listModelTargets>[number];
 export type SettingsOptions = {
     presets: string[];
     tools: TauriTavernAgentToolCatalogItem[];
@@ -61,16 +61,23 @@ export function requireContext(): AssistantContext {
 
 function createModelTargets(context: AssistantContext) {
     const listeners = new Set<() => void>();
-    let targets = listSavedModelTargets(context);
+    let targets = listModelTargets(context, { mode: 'cc' });
+    // Text-completion models are shown as unavailable; refreshed together with `targets`.
+    let unsupported = listModelTargets(context, { mode: 'tc' });
+    const refresh = () => {
+        targets = listModelTargets(context, { mode: 'cc' });
+        unsupported = listModelTargets(context, { mode: 'tc' });
+    };
     const update = () => {
-        targets = listSavedModelTargets(context);
+        refresh();
         listeners.forEach(listener => listener());
     };
     return {
         getSnapshot: () => targets,
+        getUnsupported: () => unsupported,
         subscribe: (listener: () => void) => {
             if (listeners.size === 0) {
-                targets = listSavedModelTargets(context);
+                refresh();
                 MODEL_TARGET_EVENTS.forEach(name => context.eventSource.on(context.eventTypes[name], update));
             }
             listeners.add(listener);

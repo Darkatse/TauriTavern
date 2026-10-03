@@ -6517,6 +6517,13 @@ export function getChatCompletionPreset(settings = oai_settings) {
  */
 async function saveOpenAIPreset(name, settings, triggerUi = true) {
     const presetBody = getChatCompletionPreset(settings);
+    // Subscribers may reshape the body; `previous` is the stored preset being overwritten, if any.
+    const previousIndex = openai_setting_names[name];
+    await eventSource.emit(event_types.OAI_PRESET_SAVE_BEFORE, {
+        name,
+        preset: presetBody,
+        previous: previousIndex === undefined ? null : openai_settings[previousIndex],
+    });
     const savePresetSettings = await fetch('/api/presets/save', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -6970,20 +6977,25 @@ function onSettingsPresetChange() {
     const updateInput = (selector, value) => $(selector).val(value).trigger('input', { source: 'preset' });
     const updateCheckbox = (selector, value) => $(selector).prop('checked', value).trigger('input', { source: 'preset' });
 
-    // Allow subscribers to alter the preset before applying deltas
-    presetApplicationPromise = eventSource.emit(event_types.OAI_PRESET_CHANGED_BEFORE, {
+    // Allow subscribers to alter the preset before applying deltas. A subscriber that owns
+    // the connection (Connection Manager with a selected model) sets `bindConnection` to false
+    // for this change only; left unset, the binding toggle decides, read after subscribers.
+    const presetEvent = {
         preset: preset,
         presetName: presetName,
         settingsToUpdate: settingsToUpdate,
         settings: oai_settings,
         savePreset: saveOpenAIPreset,
         presetNameBefore: presetNameBefore,
-    }).finally(async () => {
+        bindConnection: /** @type {boolean | undefined} */ (undefined),
+    };
+    presetApplicationPromise = eventSource.emit(event_types.OAI_PRESET_CHANGED_BEFORE, presetEvent).finally(async () => {
         if (oai_settings.preset_settings_openai !== presetName) return;
+        const bindConnection = presetEvent.bindConnection ?? oai_settings.bind_preset_to_connection;
 
         // Custom formats self-heal through the source selector; an OpenCode format has no such
         // fallback, so a preset that would apply an unknown one is rejected before any field is.
-        if (oai_settings.bind_preset_to_connection && preset.opencode_api_format !== undefined
+        if (bindConnection && preset.opencode_api_format !== undefined
             && !Object.values(OPENCODE_API_FORMAT).includes(preset.opencode_api_format)) {
             oai_settings.preset_settings_openai = presetNameBefore;
             $('#settings_preset_openai').val(openai_setting_names[presetNameBefore]);
@@ -6992,12 +7004,12 @@ function onSettingsPresetChange() {
             throw new Error(message);
         }
 
-        if (oai_settings.bind_preset_to_connection) {
+        if (bindConnection) {
             $('.model_custom_select').empty();
         }
 
         for (const [key, [selector, setting, isCheckbox, isConnection]] of Object.entries(settingsToUpdate)) {
-            if (isConnection && !oai_settings.bind_preset_to_connection) {
+            if (isConnection && !bindConnection) {
                 continue;
             }
 
@@ -7018,7 +7030,7 @@ function onSettingsPresetChange() {
         }
 
         // These cannot be changed via preset if unbound to connection
-        if (oai_settings.bind_preset_to_connection) {
+        if (bindConnection) {
             syncChatCompletionSourceSelector();
             applyCustomModelOptionsToAllSources();
             $('#chat_completion_source').trigger('change');

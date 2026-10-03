@@ -43,7 +43,7 @@ function harness() {
     };
     const actions: AssistantActions = {
         skill: {} as TauriTavernSkillApi,
-        models: { getSnapshot: () => models, subscribe: () => () => {} },
+        models: { getSnapshot: () => models, getUnsupported: () => [], subscribe: () => () => {} },
         supportsReasoningEffort: () => true, reasoningEffortOptions: () => ['auto', 'min', 'low', 'medium', 'high', 'xhigh', 'max'], resolveReasoningEffort: (_target, value) => value, presetReasoningEffort: () => 'auto',
         contentWidthPercent: 100, saveContentWidth: () => Promise.resolve(),
         copy: () => Promise.resolve(), openLink: () => Promise.resolve(), markdown: text => text,

@@ -37,6 +37,12 @@
     margin: 0;
 }
 
+/* Upstream's `.hidden` only makes an element invisible; in a row it must not keep its width
+   either (the model row's spinner), or the rows' right edges drift apart. */
+.tt-sel-row > .hidden {
+    display: none;
+}
+
 /* The preset row: upstream's button bar joins the row, so one gap spaces everything and the
    order holds whatever extensions add: label, select, save, extension buttons, ⋯. */
 .tt-compact-presets .tt-sel-row > .flex-container {
@@ -90,6 +96,12 @@
     outline: none;
 }
 
+.tt-overflow-menu .tt-overflow-item[aria-disabled="true"] {
+    flex-wrap: wrap;
+    cursor: default;
+    opacity: 0.45;
+}
+
 /* Font Awesome glyphs and icons copied from extension buttons share one fixed-width slot. */
 .tt-overflow-icon {
     display: inline-flex;
@@ -103,6 +115,11 @@
 .tt-overflow-icon > img {
     width: 1em;
     height: 1em;
+}
+
+.tt-overflow-menu .tt-overflow-item small {
+    flex-basis: 100%;
+    padding-left: calc(1.25em + 10px);
 }
 
 .tt-overflow-menu .tt-overflow-danger {
