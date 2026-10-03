@@ -152,6 +152,7 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
     }
     async function chooseModel(target: ModelTarget) {
         const model = modelBindingFromTarget(target);
+        // The effort override is kept; prompt assembly and the menu ignore it where the target does not offer it.
         if (await saveChoice(profile => ({ ...profile, model }))) setSweep(count => count + 1);
     }
     function submit() {
@@ -190,6 +191,8 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
     }, [drawer, view]);
     const choice = modelChoice(models, snapshot.profile.model);
     const effortChoosable = snapshot.profileSaved && choice.state === 'ready' && actions.supportsReasoningEffort(choice.target);
+    const effortOptions = choice.state === 'ready' ? actions.reasoningEffortOptions(choice.target) : [];
+    const resolveEffort = (value: string) => choice.state === 'ready' ? actions.resolveReasoningEffort(choice.target, value) : 'auto';
     const presetName = snapshot.profile.preset.ref?.name ?? '';
     const choicesDisabled = !snapshot.initialized || snapshot.busy || operation !== null;
     // Leaving the chat view closes the menu instead of restoring it later.
@@ -269,7 +272,7 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
                             <div className="ttia-composer-tools">
                                 <ModelMenu models={models} choice={choice} open={menu === 'model'} disabled={choicesDisabled}
                                     onOpenChange={open => setMenu(open ? 'model' : null)} onSelect={target => { void chooseModel(target); }} onManage={() => actions.openConnections()} />
-                                {effortChoosable && <EffortMenu effort={snapshot.profile.preset.reasoningEffort} preset={presetName}
+                                {effortChoosable && <EffortMenu effort={snapshot.profile.preset.reasoningEffort} options={effortOptions} resolve={resolveEffort} preset={presetName}
                                     presetEffort={actions.presetReasoningEffort(presetName)} open={menu === 'effort'} disabled={choicesDisabled} onOpenChange={open => setMenu(open ? 'effort' : null)}
                                     onSelect={effort => { void saveChoice(profile => withReasoningEffort(profile, effort)); }} />}
                             </div>

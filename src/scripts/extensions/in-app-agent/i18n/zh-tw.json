@@ -74,6 +74,8 @@
     "in_app_agent.effortPresetNote": "使用預設「{preset}」中的推理強度",
     "in_app_agent.effortAuto": "模型預設值",
     "in_app_agent.effortAutoNote": "不指定推理強度，由模型使用預設值",
+    "in_app_agent.effortNone": "無",
+    "in_app_agent.effortMinimal": "極少",
     "in_app_agent.effortMin": "最低",
     "in_app_agent.effortLow": "低",
     "in_app_agent.effortMedium": "中",

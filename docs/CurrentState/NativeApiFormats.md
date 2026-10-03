@@ -104,7 +104,14 @@ JSON 响应中的明确 error（包括 HTTP 200）在共同读取处转为错误
 - 共享 Chat Completions builder 为流式请求设置 `stream_options.include_usage=true`；现有 additional body overrides 仍可覆盖或删除该字段。usage 尾包可以没有 choices，必须消费到正常结束。
 - Claude、Gemini、Responses 与 Interactions 的 normalizer 将缓存读取数保留为 `usage.prompt_tokens_details.cached_tokens`，缺失时不补零；Claude 的 `prompt_tokens` 包含缓存读取、缓存写入和未缓存输入。Responses/Interactions 的现有流式终包携带相同 usage。
 - 缓存命中率是可选统计。前端共用解析入口将缺失或不一致的计数视为未知（`null`），不展示该统计、不猜测数值，也不因此中断流式或非流式回复；后续有效 usage 照常更新。
-- 第一方 UI 的 Reasoning Effort `Auto` 表示不生成 `reasoning_effort`；其他显式值由 Custom payload 原样发送，不按模型名启用、校验或降级。上游不接受时沿现有错误链路返回，用户仍可通过 include/exclude body override 最终覆盖或删除该字段。
+- 第一方 UI 的 Reasoning Effort `Auto` 表示不生成 `reasoning_effort`；其他显式值（经下文按格式词表映射后）由 Custom / OpenCode payload 原样发送，不按模型名启用、校验或降级。上游不接受时沿现有错误链路返回，Custom 用户仍可通过 include/exclude body override 最终覆盖或删除该字段。
+- Custom / OpenCode 的 Reasoning Effort 选项按所选格式自身的词表提供（`src/scripts/tauri/generation-params/reasoning-effort-options.js`）：OpenAI-compatible 与 Responses 为 `none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`，Claude Messages 为 `low`…`max`，Gemini 为 `minimal`/`low`/`medium`/`high`。所有来源在发送时统一经 `getEffectiveReasoningEffort`，以请求实际连接（含 Connection Manager 覆盖的 source / format、Agent 解析出的连接）的词表为准：
+  - 已存值在词表内时原样使用。
+  - 否则，格式缺少的项目档位按 `PROJECT_LEVEL_FALLBACKS` 映射：`min`→`low`、`max`→`high`、`xhigh`→`high`；只在格式本身没有该值时映射（例如 Gemini 格式没有 `xhigh` / `max`，各格式都没有 `min`）。SillyTavern 对 Custom 也做同样的 `min` / `max` 映射。
+  - 映射后仍不在词表内时按 Auto 处理、不发送。
+  - 已存值从不改写，随预设保存/导出保留，切回可用的来源或格式后恢复生效。界面选择器显示映射后的值，无法发送时显示 Auto 并附一行说明。
+  - Agent Profile 与 App assistant 的档位覆盖（`agent-prompt-assembly.js`、in-app-agent `EffortMenu.tsx`）使用同一映射；映射后仍无法发送的覆盖被忽略但保留，沿用预设值。App assistant 的菜单只列出目标格式词表内的档位。
+  - Custom / OpenCode 下选择的 `none` / `minimal` / `xhigh` 会随预设导出；上游 SillyTavern 的下拉框没有这些值，读到的是 `null`，按该值发送可能被接口拒绝。与上游共用的预设宜避开这些档位，或导入后重新选择。
 - assistant tool call 的 `extra_content` 是 provider-owned opaque JSON，流式处理中按最新非 null 快照整体替换；Legacy 与 Agent 按原 tool call 位置保存，并在同 API/model 的后续工具请求中原样回放。
 - 前端不解析其中的 provider namespace 或 signature，不按模型名启用，也不生成缺失值。
 - Rust OpenAI-compatible payload builder 继续整体转发 `messages`，不增加 provider-specific validation；上游不接受该字段时，其错误按现有链路返回用户。
@@ -123,7 +130,8 @@ JSON 响应中的明确 error（包括 HTTP 200）在共同读取处转为错误
 - `store` 默认 `false`；`include` 会保证包含 `reasoning.encrypted_content`，用于 reasoning/native continuation
 - Preset `enable_web_search=true` 会加入 `{ "type": "web_search" }` hosted tool；它可与本地 function tools 共存，不会进入 Agent 本地工具注册表
 - `previous_response_id`、`max_tokens` / `max_completion_tokens`→`max_output_tokens`、`verbosity`→`text.verbosity`、`metadata`、`parallel_tool_calls` 等字段按当前 payload builder 映射
-- `reasoning_effort` 仅做 `reasoning.effort` 的结构转换，显式值不按模型名启用、校验或降级。
+- Custom / OpenCode 的 `reasoning_effort` 仅做 `reasoning.effort` 的结构转换，显式值不按模型名启用、校验或降级；原生 OpenAI 走 Responses 时与 Chat Completions 共用按模型族的档位规范化。
+- Custom Responses 预设可选开启 `reasoning.summary: auto`（`custom_responses_reasoning_summary`，默认关）：前端发送 `reasoning_summary: "auto"`，builder 并入 `reasoning` 对象（与 `effort` 同存；effort 为 Auto 时仅 `{ "summary": "auto" }`）；原生 OpenAI 路径忽略该字段。
 
 传输侧（repository）：
 - 普通 Custom `/responses` 非流式请求走 HTTP，流式请求走 SSE
@@ -181,6 +189,7 @@ signature / native blocks（关键契约）：
 reasoning effort：
 - `reasoning_effort` 仅做 `output_config.effort` 的结构转换，显式值不按模型名启用、校验或降级
 - builder 不根据模型猜测或生成 `thinking`
+- 预设可选开启 `thinking: adaptive`（`custom_claude_adaptive_thinking`，默认关，仅 Custom）：前端发送 `thinking: { type: "adaptive", display }`，`display` 随“请求模型推理”为 `summarized` / `omitted`；passthrough builder 原样转发，原生 Claude / Bedrock / Vertex 仍由模型契约决定 thinking。关闭时不发送，沿用上游默认。
 
 hosted web search：
 - Preset `enable_web_search=true` 在 direct Claude 与 Custom Claude Messages 中加入 `{ "type": "web_search_20250305", "name": "web_search" }`。

@@ -171,12 +171,16 @@ pub struct AgentPresetBinding {
     pub reasoning_effort: Option<AgentReasoningEffort>,
 }
 
-/// SillyTavern's chat-completion vocabulary; prompt assembly maps it per source and model.
+/// Union of the project vocabulary (`min`, mapped per source and model) and the
+/// Custom / OpenCode format words (`none`, `minimal`, sent verbatim). Prompt assembly
+/// ignores a value the resolved connection's source or API format does not offer.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentReasoningEffort {
     Auto,
+    None,
     Min,
+    Minimal,
     Low,
     Medium,
     High,

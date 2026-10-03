@@ -3,6 +3,7 @@
 import { DOMPurify } from '../lib.js';
 
 import { event_types, eventSource, is_send_press, main_api, substituteParams } from '../script.js';
+import { getEffectiveGenerationSettings } from './tauri/generation-params/omission.js';
 import { is_group_generating } from './group-chats.js';
 import { Message, MessageCollection, TokenHandler } from './openai.js';
 import { power_user } from './power-user.js';
@@ -1960,7 +1961,7 @@ class PromptManager {
             let warningClass = '';
             let warningTitle = '';
 
-            const tokenBudget = this.serviceSettings.openai_max_context - this.serviceSettings.openai_max_tokens;
+            const tokenBudget = this.serviceSettings.openai_max_context - getEffectiveGenerationSettings(this.serviceSettings).openai_max_tokens;
             if (!previewPending && this.tokenUsage > tokenBudget * 0.8 &&
                 'chatHistory' === prompt.identifier) {
                 const warningThreshold = this.configuration.warningTokenThreshold;

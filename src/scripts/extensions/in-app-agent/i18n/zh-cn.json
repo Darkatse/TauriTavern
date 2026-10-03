@@ -74,6 +74,8 @@
     "in_app_agent.effortPresetNote": "使用预设“{preset}”中的推理强度",
     "in_app_agent.effortAuto": "模型默认",
     "in_app_agent.effortAutoNote": "不指定推理强度，由模型按默认方式处理",
+    "in_app_agent.effortNone": "无",
+    "in_app_agent.effortMinimal": "极少",
     "in_app_agent.effortMin": "极低",
     "in_app_agent.effortLow": "低",
     "in_app_agent.effortMedium": "中",

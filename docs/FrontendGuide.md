@@ -174,6 +174,13 @@ src/
 
 - 移除请求参数表示本次生成不启用该参数，保留原值；移除开关表示关闭；隐藏本地区块不改变其内容或行为。旧预设缺少 Fast Mode 字段时明确关闭。
 - 请求参数的移除状态保存在预设 `extensions.tauritavern.omit_params`，本地区块显隐仅保存在设备上。旧预设保持原行为，移除范围限于可选参数，不能删除 `messages`、`model` 等结构字段。
+- 最大回复长度是请求参数：移除后不发送 `max_tokens` / `max_completion_tokens`，本地按 25k 预留回复（`OMITTED_MAX_TOKENS_BUDGET`）；Claude Messages（原生、Vertex、Bedrock、Custom 共用同一 builder）与 Bedrock 自定义模板要求该字段，由后端补 25k；输出上限低于 25k 的旧模型（如 Claude 3 的 4096 / 8192）会拒绝该请求，使用时需保留回复上限。Gemini 2.5 的思考预算按回复上限的比例计算，省略时同样以 25k 为基数。单次请求显式指定的回复长度（`/gen length=`、quiet prompt 的 `responseLength`）照常发送：`TempResponseLength` 在该次生成期间撤销省略，结束后恢复。Chat Completion 的 Prompt 预算读生效设置，世界书预算与 `{{maxResponse}}` / `{{maxPrompt}}` 经 `getMaxResponseTokens()`，Prompt Manager 的超限提示与 itemized prompt 视图经所读设置的 `getEffectiveGenerationSettings()`，读到同一预留值。上下文长度只用于本地预算，不发送，移除即恢复默认 1,000,000 并隐藏，值不等于默认时自动显示。上下文上限不再按模型锁定（旧设置与预设中的 `max_context_unlocked` 迁移为 true）。
+- 流式传输与推理强度（`PINNED_PRESET_KEYS`）固定在「请求参数管理」上方，折叠区块不影响它们，也不能移除：流式传输保留自身勾选框；推理强度以「自动」表示不发送，旧预设移除过的推理强度按「自动」处理。
+- 其余开关显示即开启、× 即关闭，勾选框隐藏，点击标签不切换。
+- 推理强度选项随当前来源与 API 格式变化，映射规则见 [NativeApiFormats](CurrentState/NativeApiFormats.md)。选择器显示实际发送的值；已存值映射后仍无法发送时，选择器显示「自动」，下方加一行说明，已存值保留。
+- 每个参数旁的问号给出一句说明（`PARAM_HINTS`），点击时以 toast 重复，供触屏使用。上游已有 tooltip 的设置不再添加，只链接文档的上游问号由它替代。有说明的区块隐藏自身的长描述，嵌套子设置的描述保留。`pointer: coarse` 下问号与 × 的点击区域至少 32px。
+- 滑杆（以及没有描述的数字框）收成一行数字框。Chat Completion 模式下隐藏上游的「点击滑杆数字手动输入」提示（`#clickSlidersTips`），其他 API 照常显示。
+- 点击「请求参数管理」标题可折叠整个区块，折叠状态仅保存在设备上。
 - Prompt 组装和生成判断使用本次生效设置，`createGenerationParameters()` 出口统一省略字段；用户显式配置的 Additional Parameters 仍拥有最终覆盖权。
 - JSON 视图只编辑当前格式可用的参数，非法输入整体不应用；它不是最终请求预览，后续仍遵循渠道与模型的转换规则。
 
