@@ -1,8 +1,11 @@
+const IMAGE_EXTENSIONS = { jpeg: 'jpg', 'svg+xml': 'svg' };
+
 export function createDownloadBridge({
     isNativeMobileDownloadRuntime,
     downloadBlobWithRuntime,
     notifyDownloadResult,
     notifyDownloadError,
+    confirmImageDownload = null,
     fallbackName = 'download.bin',
 }) {
     const patchStateByWindow = new WeakMap();
@@ -24,6 +27,7 @@ export function createDownloadBridge({
         const nextState = {
             currentDocument: null,
             documentListener: null,
+            contextMenuListener: null,
             patchedCreateObjectURL: null,
             patchedRevokeObjectURL: null,
             patchedAnchorClick: null,
@@ -36,6 +40,20 @@ export function createDownloadBridge({
         const attributeValue = anchorElement.getAttribute('download');
         const rawName = attributeValue ?? anchorElement.download ?? '';
         return String(rawName || '').trim() || fallbackName;
+    }
+
+    function getImageDownloadFileName(src, mimeType) {
+        const url = new URL(src);
+        if (url.protocol === 'http:' || url.protocol === 'https:') {
+            const name = decodeURIComponent(url.pathname.split('/').pop() || '');
+            if (/\.[a-z0-9]+$/i.test(name)) {
+                return name;
+            }
+        }
+
+        const subtype = /^image\/([^;\s]+)/i.exec(mimeType)?.[1].toLowerCase();
+        const extension = subtype ? (IMAGE_EXTENSIONS[subtype] ?? subtype) : '';
+        return extension ? `image-${Date.now()}.${extension}` : `image-${Date.now()}`;
     }
 
     function resolveDownloadAnchor(targetWindow, eventTarget) {
@@ -62,6 +80,11 @@ export function createDownloadBridge({
         }
 
         return response.blob();
+    }
+
+    function readDownloadBlob(targetWindow, href) {
+        const trackedBlob = href.startsWith('blob:') ? trackedBlobUrls.get(href) : null;
+        return trackedBlob ? Promise.resolve(trackedBlob) : readHrefAsBlob(targetWindow, href);
     }
 
     function resolveSameOriginDownloadUrl(targetWindow, href) {
@@ -91,36 +114,21 @@ export function createDownloadBridge({
             return null;
         }
 
-        const fileName = getDownloadFileName(anchorElement);
-
-        if (href.startsWith('blob:')) {
-            const blob = trackedBlobUrls.get(href);
-            return {
-                fileName,
-                blobPromise: blob ? Promise.resolve(blob) : readHrefAsBlob(targetWindow, href),
-            };
-        }
-
-        if (href.startsWith('data:')) {
-            return {
-                fileName,
-                blobPromise: readHrefAsBlob(targetWindow, href),
-            };
-        }
-
-        const sameOriginUrl = resolveSameOriginDownloadUrl(targetWindow, href);
-        if (!sameOriginUrl) {
+        const downloadUrl = href.startsWith('blob:') || href.startsWith('data:')
+            ? href
+            : resolveSameOriginDownloadUrl(targetWindow, href);
+        if (!downloadUrl) {
             return null;
         }
 
         return {
-            fileName,
-            blobPromise: readHrefAsBlob(targetWindow, sameOriginUrl),
+            fileName: getDownloadFileName(anchorElement),
+            blobPromise: readDownloadBlob(targetWindow, downloadUrl),
         };
     }
 
-    async function handleDownloadRequest(request) {
-        const result = await downloadBlobWithRuntime(await request.blobPromise, request.fileName, {
+    async function exportBlob(blob, fileName) {
+        const result = await downloadBlobWithRuntime(blob, fileName, {
             fallbackName,
         });
 
@@ -154,11 +162,48 @@ export function createDownloadBridge({
         }
 
         event?.preventDefault();
-        void handleDownloadRequest(request).catch((error) => {
-            console.error('Failed to bridge native mobile download:', error);
-            notifyDownloadFailure(error);
-        });
+        void request.blobPromise
+            .then((blob) => exportBlob(blob, request.fileName))
+            .catch((error) => {
+                console.error('Failed to bridge native mobile download:', error);
+                notifyDownloadFailure(error);
+            });
         return true;
+    }
+
+    function handleImageContextMenu(targetWindow, event) {
+        const image = event.target;
+        if (!(image instanceof targetWindow.HTMLImageElement)) {
+            return;
+        }
+
+        // The image menu is contextmenu's default action, so only preventDefault() cancels it.
+        // Page listeners run after this capture listener and microtasks run between listeners,
+        // so read the outcome from a task queued after dispatch.
+        targetWindow.setTimeout(() => {
+            if (!event.defaultPrevented) {
+                void offerImageDownload(targetWindow, image);
+            }
+        }, 0);
+    }
+
+    async function offerImageDownload(targetWindow, image) {
+        // Read the source once, so the confirmation shows exactly what will be saved.
+        const source = { src: image.currentSrc || image.src, alt: image.alt };
+        if (!source.src) {
+            return;
+        }
+
+        try {
+            if (!await confirmImageDownload(source)) {
+                return;
+            }
+            const blob = await readDownloadBlob(targetWindow, source.src);
+            await exportBlob(blob, getImageDownloadFileName(source.src, blob.type));
+        } catch (error) {
+            console.error('Failed to download image:', error);
+            notifyDownloadFailure(error);
+        }
     }
 
     function patchWindow(targetWindow = window) {
@@ -245,6 +290,9 @@ export function createDownloadBridge({
         if (state.currentDocument && typeof state.documentListener === 'function') {
             try {
                 state.currentDocument.removeEventListener('click', state.documentListener, true);
+                if (state.contextMenuListener) {
+                    state.currentDocument.removeEventListener('contextmenu', state.contextMenuListener, true);
+                }
             } catch {
                 // Ignore detached documents.
             }
@@ -260,6 +308,10 @@ export function createDownloadBridge({
         };
 
         targetDocument.addEventListener('click', documentListener, true);
+        if (confirmImageDownload) {
+            state.contextMenuListener = (event) => handleImageContextMenu(targetWindow, event);
+            targetDocument.addEventListener('contextmenu', state.contextMenuListener, true);
+        }
         state.currentDocument = targetDocument;
         state.documentListener = documentListener;
     }

@@ -62,23 +62,13 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
       launchExportArchivePicker = { suggestedName -> launchExportArchivePicker(suggestedName) },
     )
   }
-  private val exportStagingRoot: File by lazy {
-    File(cacheDir, AndroidPublicDownloadJsBridge.EXPORT_STAGING_ROOT_NAME)
-  }
   private val publicDownloadJsBridge: AndroidPublicDownloadJsBridge by lazy {
     AndroidPublicDownloadJsBridge(
       contentResolver = contentResolver,
-      exportStagingRoot = exportStagingRoot,
+      exportStagingRoot = File(cacheDir, AndroidPublicDownloadJsBridge.EXPORT_STAGING_ROOT_NAME),
       launchCreateDocumentPicker = { suggestedName, mimeType ->
         launchPublicDownloadDocumentPicker(suggestedName, mimeType)
       },
-    )
-  }
-  private val imageContextMenuInstaller: AndroidImageContextMenuInstaller by lazy {
-    AndroidImageContextMenuInstaller(
-      context = applicationContext,
-      publicDownloads = publicDownloadJsBridge,
-      stagingRoot = exportStagingRoot,
     )
   }
 
@@ -151,7 +141,6 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
       publicDownloadJsBridge,
       AndroidPublicDownloadJsBridge.INTERFACE_NAME,
     )
-    imageContextMenuInstaller.install(webView)
     insetsBridge.onWebViewAvailable()
     sharePayloadDispatcher.requestDispatch()
   }
