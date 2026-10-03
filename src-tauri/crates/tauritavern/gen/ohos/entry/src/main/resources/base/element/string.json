@@ -2,15 +2,15 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "module description"
+      "value": "TauriTavern"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "description"
+      "value": "TauriTavern"
     },
     {
       "name": "EntryAbility_label",
-      "value": "label"
+      "value": "TauriTavern"
     },
     {
       "name": "tauri_camera_reason",
