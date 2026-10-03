@@ -28,8 +28,13 @@ pending the host export API; this port does not grant general external writes.
 
 [`gen/ohos`](../src-tauri/crates/tauritavern/gen/ohos) owns the application ID,
 icons, unsigned profile, supported ABIs, disabled cloud backup, native plugin
-startup and back-navigation bridge. Hvigor selects the Rust architecture from
-`TARGET_TRIPLE` and always uses release mode for the build callback.
+startup and back-navigation bridge. `select-target.py` persists `TARGET_TRIPLE` as
+one ABI in `entry/build-profile.json5` before building and clears staged libraries.
+Hvigor reads this same ABI for its release Rust callback. It must not read the
+parent environment: Tauri's process launcher filters `TARGET_TRIPLE`, which
+previously made x86_64 builds silently package an ARM64 application library.
+`validate-hap.py` rejects missing libraries, mixed ABIs and wrong ELF machines
+before CI uploads a package.
 `sync-version.py` only synchronizes the version from `PACKAGE_VERSION` or
 `package.json`; do not regenerate the project with `ohos init`.
 
@@ -50,6 +55,7 @@ python3 scripts/ohos/prepare.py
 export TARGET_TRIPLE=x86_64-unknown-linux-ohos # or aarch64-unknown-linux-ohos
 source scripts/ohos/env.sh
 export PATH="$HARMONY_TOOLS_DIR/command-line-tools/tool/node/bin:$HARMONY_TOOLS_DIR/command-line-tools/bin:$PATH"
+python3 scripts/ohos/select-target.py
 python3 scripts/ohos/sync-version.py
 python3 "$(cat src-tauri/crates/tauritavern/gen/ohos-plugins-source)/shared/ohos/install.py" src-tauri/crates/tauritavern --sources-only
 pnpm run web:build
