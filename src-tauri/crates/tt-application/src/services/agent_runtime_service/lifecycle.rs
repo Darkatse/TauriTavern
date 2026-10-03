@@ -198,6 +198,11 @@ impl AgentRuntimeService {
             .await
             .insert(run_id.clone(), active_handle);
 
+        // The path of the run manifest's message body artifact, which is written later.
+        let message_body_path = resolved_profile
+            .output
+            .as_ref()
+            .map(|output| output.message_body_path.clone());
         let service = self.clone();
         let background_run_id = run_id.clone();
         tokio::spawn(async move {
@@ -220,6 +225,7 @@ impl AgentRuntimeService {
             generation_type,
             status: AgentRunStatus::Created,
             after_seq: None,
+            message_body_path,
         })
     }
 
@@ -422,6 +428,7 @@ fn cancel_run_handle(run: AgentRun) -> AgentCancelRunResultDto {
             generation_type: chat.generation_type,
             status: run.status,
             after_seq: None,
+            message_body_path: None,
         }),
         AgentRunTarget::Session { session_id } => {
             AgentCancelRunResultDto::Session(AgentSessionRunHandleDto {

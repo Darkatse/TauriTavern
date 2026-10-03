@@ -6,7 +6,7 @@ use tt_ports::workspace_shell::{
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shell_edits_share_cas_and_publish_the_last_text_file_each_round() {
+async fn shell_edits_share_cas_and_publish_only_the_message_body() {
     let root = temp_root("agent-shell-writing");
     let fixture = agent_runtime_fixture_with_responses(
         &root,
@@ -217,8 +217,8 @@ JS
             ))
             .collect::<Vec<_>>(),
         [
-            ("prepare", "output/Moved.MD", false),
-            ("move_final", "scratch/finalized/final.md", false),
+            ("prepare", "output/main.md", false),
+            ("fresh_patch", "output/main.md", false),
             ("commit", "scratch/finalized/final.md", true),
         ],
     );
