@@ -78,7 +78,7 @@ src-tauri/
 | `tt-ports` | repository / gateway / runtime trait、Host Resource opened-source port |
 | `tt-application` | 用例服务、业务编排、任务协调、policy 执行 |
 | `tt-adapter-http` | 共享 HTTP client pool/profile/helper |
-| `tt-adapter-mcp` | RMCP client、Streamable HTTP lifecycle、bounded response、tools/list pagination 与 tool validation |
+| `tt-adapter-mcp` | RMCP client、协议版本策略与 Streamable HTTP lifecycle、tools/list pagination 与 tool validation |
 | `tt-adapter-provider-http` | LLM、SearXNG、SD、Translate、TTS、embedding、provider metadata 的 HTTP repository |
 | `tt-adapter-triviumdb` | 按命名空间管理 TriviumDB、阻塞执行、原生查询与持久化 |
 | `tt-adapter-vector` | Vector 的 ACID 本地索引与本地 embedding runtime；不承载 provider HTTP |

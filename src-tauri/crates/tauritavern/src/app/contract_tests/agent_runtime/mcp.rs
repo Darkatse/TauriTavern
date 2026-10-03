@@ -202,8 +202,8 @@ async fn agent_runtime_stops_after_unknown_mcp_call_outcome() {
         .lock()
         .await
         .push_back(McpCallOutcome::OutcomeUnknown(McpCallIssue {
-            code: "mcp.response_too_large".to_string(),
-            message: "response exceeded the wire limit".to_string(),
+            code: "mcp.call_response_failed".to_string(),
+            message: "connection closed before a tool response arrived".to_string(),
         }));
     let (profile, _) = configure_mcp_profile(&fixture, "mcp-unknown-writer", 1, 50_000).await;
 

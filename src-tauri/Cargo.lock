@@ -7011,9 +7011,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "3.1.3"
+version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f17072af977b0f86f714dbd64b3d37d0715bb63064f9d13483f0a1775813374"
+checksum = "fae7019994ae0fe4ada40b732f798f3ff26f0f04facb1477f1bf37eb4f18a2d3"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -9356,13 +9356,11 @@ name = "tt-adapter-mcp"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "futures-util",
  "http",
  "jsonschema",
  "reqwest",
  "rmcp",
  "serde_json",
- "sse-stream",
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",

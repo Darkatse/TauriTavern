@@ -39,7 +39,7 @@ TauriTavern 将 SillyTavern 前端移植到 Tauri v2 原生应用中，当前已
 | `tt-ports` | repository / gateway / runtime trait |
 | `tt-application` | use case、service、job coordinator、policy 编排 |
 | `tt-adapter-http` | 共享 HTTP client pool/profile/helper |
-| `tt-adapter-mcp` | RMCP Streamable HTTP discovery、响应边界、分页与 schema validation |
+| `tt-adapter-mcp` | RMCP Streamable HTTP discovery、协议版本策略、分页与 schema validation |
 | `tt-adapter-provider-http` | LLM、SD、Translate、TTS、provider metadata 的 HTTP repository |
 | `tt-adapter-tokenization` | tokenizer concrete repository |
 | `tt-adapter-storage-core` | `DataDirectory`、基础文件系统 helper、chat/settings/user/theme/secret 等基础存储 |

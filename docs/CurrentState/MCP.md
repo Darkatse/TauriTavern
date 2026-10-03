@@ -13,7 +13,7 @@ First-party MCP extension (React / strict TSX)
   -> tt-application::McpService
      -> McpServerRepository -> tt-adapter-storage-core
      -> McpGateway          -> tt-adapter-mcp -> shared HttpClientPool
-  -> complete ToolCatalog / bounded test-call outcome
+  -> complete ToolCatalog / test-call outcome
 
 Agent Profile v3
   -> AgentRuntimeService invocation preparation
@@ -38,7 +38,7 @@ crate 责任：
 - `tt-ports::mcp` / `repositories::mcp_server_repository`：Tauri-free、RMCP-free 的 outbound ports 与 MCP call outcome。
 - `tt-application::McpService`：intent CRUD、permission、persistent catalog policy、discovery、test-call Active/JSON gate，以及 Agent/Legacy 共用的 cached model-tool resolution 与发送前 permission/arguments gate。
 - `tt-adapter-storage-core`：registration 与 endpoint-bound catalog snapshot 的严格 v1 单文件存储。
-- `tt-adapter-mcp`：RMCP Auto/固定版本 lifecycle、一次受限的同版本 legacy lifecycle 尝试、bounded/cancellable Streamable HTTP、手动全分页、discovery validation 与单次 `tools/call` 结果投影。
+- `tt-adapter-mcp`：协议版本偏好到 RMCP lifecycle 的映射与协商结果校验、Auto 下一次受限的 legacy initialize 重试、基于 RMCP 内置 reqwest backend 的 Streamable HTTP、手动全分页、discovery validation 与单次 `tools/call` 结果投影。
 - `tt-adapter-http`：无 redirect、无 retry 的 MCP client profile；MCP adapter 每次 discovery/call 从共享 pool 取得当前 proxy/TLS/UA 配置。
 - `tauritavern`：composition、commands 与 Manager Host ABI。
 
@@ -71,22 +71,32 @@ snapshot 没有 TTL/LRU、后台 refresh、自动 retry、source/age DTO 或 mig
 
 模型工具准备是严格 cached-only：共享 resolver 只处理 Active 且至少保存一个 Ask/Allow 的 registration，按 memory→disk 读取 snapshot，不调用 gateway、不做 cold discovery；没有 permission 的 registration 不触碰 catalog。resolver 复制 raw descriptor 后应用 registration description override；无效 property override 形成 diagnostic，不回退 raw descriptor。单 registration cache miss、读取/校验失败或非 object-root function schema 只形成 diagnostic，健康 server 继续。Agent 再按 Profile 选择收窄并应用更高优先级的 Profile override；Legacy 每个实际 root generation 读取一次全量 permitted descriptors，并在工具递归中复用。用户在 Manager 显式 refresh 或修改 override 后，下一次 Agent invocation 或 Legacy root 才看到变化。
 
-每次 test call 也使用新的短生命周期 Peer。协商到 `2026-07-28` 时，RMCP 3.1.2 构造 SEP-2243 `Mcp-Param-*` 需要同一 transport worker 的 tool schema cache，因此 call 前在同一 Peer 分页 `tools/list`，找到目标工具后立即停止；目标始终未出现时才遍历完整目录。该步骤只 hydration transport metadata：不做 arguments schema validation/coercion，也不持久化 catalog；目标未出现在 SDK 可见列表时，明确 NotSent。2025 协议不做这次额外 list。
+每次 test call 也使用新的短生命周期 Peer。协商到 `2026-07-28` 时，SEP-2243 要求把带 `x-mcp-header` 注解的参数镜像为 `Mcp-Param-*` header，缺失时 server 必须以 `HeaderMismatch` 拒绝；RMCP 只从同一 transport 上的 `tools/list` 响应缓存 tool schema，未命中时静默省略这些 header，且没有从外部预填缓存的 API。因此 call 前在同一 Peer 分页 `tools/list`，找到目标工具后立即停止；目标始终未出现时才遍历完整目录。该步骤只 hydration transport metadata：不做 arguments schema validation/coercion，也不持久化 catalog；目标未出现在 SDK 可见列表时，明确 NotSent。2025 协议不做这次额外 list。
 
 ## 当前固定边界
 
-- HTTP JSON response：4 MiB；POST SSE discovery response：4 MiB 总量；GET SSE：4 MiB/event。
-- test-call arguments JSON：256 KiB，且必须为 object；完整 call response wire 上限：4 MiB。
+- adapter 不设自有 HTTP 响应体上限：直接使用 RMCP 内置 reqwest backend，SSE 单事件沿用 RMCP 默认上限，JSON 响应体与 LLM provider 响应一样只受操作超时约束。结果大小由消费方决定：Agent 共用长结果外置，Legacy 与本地工具一致不另设上限。
+- test-call arguments JSON：256 KiB，且必须为 object。
 - Agent MCP arguments 同样最多 256 KiB 且必须为 object；可广告 schema 的 root 必须显式为 `type: "object"`。
-- Legacy MCP arguments 同样最多 256 KiB 且必须为 object；结果以现有 bounded MCP outcome JSON 内联到 Tool message，不复用 Agent workspace externalization。
+- Legacy MCP arguments 同样最多 256 KiB 且必须为 object；结果以 MCP outcome JSON 内联到 Tool message，不复用 Agent workspace externalization。
 - Agent MCP 结果转为模型可读内容，共用 Agent 的长结果处理；边界见 [Agent 消费契约](../API/MCP.md#7-agent-消费契约)。
 - transport 接受任意带 host 的 HTTP(S) endpoint，包括公网 HTTP、userinfo 与 query。Manager 激活 HTTP registration 时会明确提示流量未加密。
-- custom headers 不设 reserved-name、数量或总量限制；名称和值原样保存，无法被 HTTP transport 接受时在发送前返回 NotSent。endpoint credentials 与认证 headers 明文保存在 registration 中。
+- custom headers 不设 reserved-name、数量或总量限制；名称和值原样保存。transport 无法接受的配置（非法 header，或 RMCP 保留的 `Accept`、`Mcp-Session-Id`、`Last-Event-Id`）会让启动请求失败，因此在 `tools/call` 发送前返回 NotSent。endpoint credentials 与认证 headers 明文保存在 registration 中。
 - 单 tool wire representation：256 KiB；完整 catalog：8 MiB。
 - 每个 server：最多 32 页、512 tools。
-- HTTP connect timeout 为 30s；lifecycle 与分页各有 120s operation timeout，已发送 tool call 的响应等待为 60s。共享 client 不再叠加第二个 request timeout。
+- HTTP connect timeout 为 30s；lifecycle 与分页各有 120s operation timeout，已发送 tool call 的响应等待为 60s。共享 client 不叠加 request timeout。取消或超时让调用方立即返回；启动请求（`server/discover` 或 `initialize`）若仍挂起，RMCP 目前不会中止这条 HTTP 请求，残留连接由 server 或网络关闭。
 - redirect、SSE reconnect、expired-session reinitialize 与 application retry 均关闭。
-- Auto 优先尝试 `2026-07-28`、`2025-11-25`、`2025-06-18`、`2025-03-26`；固定版本只允许所选版本。仅当启动返回 implementation-defined `-32000`，或 discovery 响应通道在 SDK 完成错误分类前关闭时，才在同一 lifecycle timeout 内用新 Peer 尝试一次相同配置的 initialize；其他 transport、auth、timeout 与 list 错误不触发该路径。
+- 协议版本由偏好决定 lifecycle 与接受集合：
+
+  | 偏好 | lifecycle | 接受的协商版本 |
+  | --- | --- | --- |
+  | `auto` | 以 `2026-07-28` 发起 `server/discover`；server 以非 modern JSON-RPC error 或无 session 的 4xx（401/403 除外）拒绝时，RMCP 在同一 transport 上回退到 `2025-11-25` 的 `initialize` | `2026-07-28`、`2025-11-25`、`2025-06-18`、`2025-03-26` |
+  | `2026-07-28` | 只走 `server/discover`，不回退 legacy | `2026-07-28` |
+  | `2025-*` | 直接以所选版本 `initialize`，不发 discover 探测 | 所选版本 |
+
+  启动完成后 adapter 校验协商版本；不在接受集合内时关闭连接并作为启动失败返回。
+- RMCP 目前把启动阶段 SSE 响应中的 JSON-RPC error 当作连接关闭。仅当 `auto` 启动以 `ConnectionClosed` 失败时，才在同一 lifecycle timeout 内用新 Peer 尝试一次 `2025-11-25` initialize，两次失败的原因都保留在错误中；其他错误与固定版本不触发该路径。
+- 协商到 `2026-07-28` 时，RMCP 会从 `tools/list` 结果中移除 `x-mcp-header` 注解无效的工具；这类工具不进入 catalog，也没有 diagnostic。
 
 协议版本候选集合由代码限定；其余边界不是 per-server 设置。超限不会静默截断：单 tool 超限产生 discovery diagnostic，无法确认完整分页或 catalog 总量超限则本次 server discovery 失败；test call 在找到目标前的 metadata 分页超限为 NotSent，server 已响应后无法显示的内容保留 KnownResponse 并产生 diagnostic。无效的可选 output schema 只移除该字段并产生 diagnostic，不隔离仍可调用的工具。
 

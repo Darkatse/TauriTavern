@@ -3,7 +3,7 @@ use std::future::Future;
 use rmcp::{
     model::{
         CallToolRequest, CallToolRequestParams, ClientRequest, ContentBlock, ProtocolVersion,
-        ResourceContents, ServerResult,
+        ResourceContents, ServerPeerInfo, ServerResult,
     },
     service::{PeerRequestOptions, ServiceError},
 };
@@ -12,7 +12,6 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tt_adapter_http::MCP_REQUEST_TIMEOUT;
 
-use tt_domain::errors::DomainError;
 use tt_ports::mcp::{
     McpCallDiagnostic, McpCallIssue, McpCallOutcome, McpKnownResponse, McpServerError,
     McpTextContent, McpToolCallResult, McpUnsupportedResponse,
@@ -22,65 +21,63 @@ use super::{DISCOVERY_TIMEOUT, client::McpClient, discovery::list_tools};
 
 pub(super) async fn call_tool_with_client(
     client: &McpClient,
+    peer_info: &ServerPeerInfo,
     native_name: &str,
     arguments: Map<String, Value>,
     cancel: &CancellationToken,
-) -> Result<McpCallOutcome, DomainError> {
-    let peer_info = client.peer().peer_info().ok_or_else(|| {
-        DomainError::InternalError(
-            "mcp.call_peer_info_missing: lifecycle completed without peer info".to_string(),
-        )
-    })?;
+) -> McpCallOutcome {
     if peer_info.capabilities.tools.is_none() {
-        return Ok(not_sent(
+        return not_sent(
             "mcp.call_tools_capability_missing",
             "The MCP server did not declare the tools capability",
-        ));
+        );
     }
 
     if peer_info.protocol_version >= ProtocolVersion::STANDARD_HEADERS {
+        // RMCP learns header annotations only from this transport's tools/list responses.
+        // Without them it omits Mcp-Param-* headers, which the server must reject.
         let tools = tokio::select! {
             biased;
             _ = cancel.cancelled() => {
-                return Ok(not_sent(
+                return not_sent(
                     "mcp.call_cancelled_before_send",
                     "The tool request was cancelled while preparing transport metadata",
-                ));
+                );
             }
             result = timeout(DISCOVERY_TIMEOUT, list_tools(client.peer(), Some(native_name))) => {
                 match result {
                     Err(_) => {
                         cancel.cancel();
-                        return Ok(not_sent(
+                        return not_sent(
                             "mcp.call_metadata_timeout",
                             "Timed out loading the current tool metadata before the tool request was sent",
-                        ));
+                        );
                     }
                     Ok(Err(error)) => {
-                        return Ok(not_sent(
+                        return not_sent(
                             "mcp.call_metadata_failed",
                             format!("Failed to load current tool metadata: {error}"),
-                        ));
+                        );
                     }
                     Ok(Ok(tools)) => tools,
                 }
             }
         };
         if !tools.iter().any(|tool| tool.name.as_ref() == native_name) {
-            return Ok(not_sent(
+            return not_sent(
                 "mcp.call_tool_unavailable",
                 format!(
                     "Tool `{native_name}` was not advertised or was rejected by the transport in this session"
                 ),
-            ));
+            );
         }
     }
 
     if cancel.is_cancelled() {
-        return Ok(not_sent(
+        return not_sent(
             "mcp.call_cancelled_before_send",
             "The tool request was cancelled before it was queued",
-        ));
+        );
     }
 
     let params = CallToolRequestParams::new(native_name.to_string()).with_arguments(arguments);
@@ -91,22 +88,22 @@ pub(super) async fn call_tool_with_client(
             match result {
                 Ok(handle) => handle,
                 Err(error) => {
-                    return Ok(not_sent(
+                    return not_sent(
                         "mcp.call_not_queued",
                         format!("The tool request could not be queued: {error}"),
-                    ));
+                    );
                 }
             }
         }
         _ = cancel.cancelled() => {
-            return Ok(not_sent(
+            return not_sent(
                 "mcp.call_cancelled_before_send",
                 "The tool request was cancelled before it was queued",
-            ));
+            );
         }
     };
 
-    Ok(await_call_response(handle.await_response(), cancel).await)
+    await_call_response(handle.await_response(), cancel).await
 }
 
 pub(super) async fn await_call_response(
@@ -188,7 +185,7 @@ fn map_call_response(result: Result<ServerResult, ServiceError>) -> McpCallOutco
     }
 }
 
-pub(super) fn project_tool_result(result: rmcp::model::CallToolResult) -> McpToolCallResult {
+fn project_tool_result(result: rmcp::model::CallToolResult) -> McpToolCallResult {
     let mut text = Vec::new();
     let mut diagnostics = Vec::new();
     for (index, content) in result.content.into_iter().enumerate() {
