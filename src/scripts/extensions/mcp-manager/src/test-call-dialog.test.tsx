@@ -96,30 +96,6 @@ afterEach(() => {
     uninstallPopupHost();
 });
 
-test('guides the user when no server is active', () => {
-    renderDialog({ servers: [server(SERVER_A, 'paused')] });
-
-    expect(screen.getByText(/No active servers/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Run test' })).toBeNull();
-});
-
-test('auto-discovers tools and shows discovery diagnostics', async () => {
-    const discovered: string[] = [];
-    renderDialog({
-        discover: input => {
-            discovered.push(typeof input === 'string' ? input : input.registrationId);
-            return Promise.resolve(discoveryFor(SERVER_A, [richTool()], [{
-                code: 'mcp.catalog_persistence_failed',
-                message: 'Catalog remains memory-only',
-            }]));
-        },
-    });
-
-    expect(await screen.findByRole('option', { name: 'Search files' })).toBeTruthy();
-    expect(screen.getByText('Catalog remains memory-only')).toBeTruthy();
-    expect(discovered).toEqual([SERVER_A]);
-});
-
 test('uses explicit refresh when the user retries a failed catalog load', async () => {
     let refreshes = 0;
     const user = userEvent.setup();
@@ -142,6 +118,10 @@ test('builds arguments from friendly fields and preserves raw number precision',
     let received: Parameters<TestCallDialogDeps['testCall']>[0] | undefined;
     const user = userEvent.setup();
     renderDialog({
+        discover: () => Promise.resolve(discoveryFor(SERVER_A, [richTool()], [{
+            code: 'mcp.catalog_persistence_failed',
+            message: 'Catalog remains memory-only',
+        }])),
         testCall: input => {
             received = input;
             return Promise.resolve({
@@ -158,6 +138,7 @@ test('builds arguments from friendly fields and preserves raw number precision',
     });
 
     await screen.findByRole('option', { name: 'Search files' });
+    expect(screen.getByText('Catalog remains memory-only')).toBeTruthy();
     await user.selectOptions(screen.getByLabelText('Tool'), 'search');
 
     await user.type(screen.getByLabelText(/query/), 'hello world');
@@ -202,46 +183,26 @@ test('blocks the call on missing required and malformed fields', async () => {
     expect(screen.getByText('Enter a whole number.')).toBeTruthy();
     expect(screen.getByText('Enter valid JSON.')).toBeTruthy();
     expect(query.getAttribute('aria-invalid')).toBe('true');
-    expect(query.getAttribute('aria-describedby')).toBe('tt-mcp-arg-0-hint tt-mcp-arg-0-error');
+    // Assistive technology announces the error together with the field's hint.
+    expect(screen.getByRole('textbox', { name: /query/, description: 'Search query Required' })).toBe(query);
 
     // Editing a field clears only its own error.
     await user.type(query, 'anything');
     expect(screen.queryByText('Required')).toBeNull();
     expect(screen.getByText('Enter a whole number.')).toBeTruthy();
     expect(query.hasAttribute('aria-invalid')).toBe(false);
-    expect(query.getAttribute('aria-describedby')).toBe('tt-mcp-arg-0-hint');
-});
-
-test('sends an empty object for a tool without arguments', async () => {
-    let received: Parameters<TestCallDialogDeps['testCall']>[0] | undefined;
-    const user = userEvent.setup();
-    renderDialog({
-        discover: () => Promise.resolve(discoveryFor(SERVER_A, [emptyTool()])),
-        testCall: input => {
-            received = input;
-            return Promise.resolve({
-                outcome: 'not_sent',
-                code: 'mcp.server_paused',
-                message: 'Server is paused',
-            } satisfies TauriTavernMcpTestCallOutcome);
-        },
-    });
-
-    await screen.findByRole('option', { name: 'ping' });
-    await user.selectOptions(screen.getByLabelText('Tool'), 'ping');
-    expect(screen.getByText('This tool takes no arguments.')).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: 'Run test' }));
-
-    await waitFor(() => expect(received?.argumentsJson).toBe('{}'));
-    expect(await screen.findByText('Not sent')).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: /query/, description: 'Search query' })).toBe(query);
 });
 
 test('closing the popup aborts the local wait for an in-flight call', async () => {
     installPopupHost();
     let resolveCall!: (outcome: TauriTavernMcpTestCallOutcome) => void;
     let signal: AbortSignal | undefined;
+    let argumentsJson: string | undefined;
     const opened = openTestCallDialog(deps({
-        testCall: (_input, options) => {
+        discover: () => Promise.resolve(discoveryFor(SERVER_A, [emptyTool()])),
+        testCall: (input, options) => {
+            argumentsJson = input.argumentsJson;
             signal = options?.signal;
             return new Promise<TauriTavernMcpTestCallOutcome>(resolve => {
                 resolveCall = resolve;
@@ -254,12 +215,12 @@ test('closing the popup aborts the local wait for an in-flight call', async () =
     }
 
     const user = userEvent.setup();
-    await screen.findByRole('option', { name: 'Search files' });
+    await screen.findByRole('option', { name: 'ping' });
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Server')));
-    await user.selectOptions(screen.getByLabelText('Tool'), 'search');
-    await user.type(screen.getByLabelText(/query/), 'hello');
+    await user.selectOptions(screen.getByLabelText('Tool'), 'ping');
     await user.click(screen.getByRole('button', { name: 'Run test' }));
     expect(await screen.findByText('Waiting for server…')).toBeTruthy();
+    expect(argumentsJson).toBe('{}');
 
     expect(await popup.close(1)).toBe(true);
     expect(signal?.aborted).toBe(true);

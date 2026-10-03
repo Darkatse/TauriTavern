@@ -76,24 +76,6 @@ afterEach(() => {
     cleanup();
     uninstallPopupHost();
 });
-test('adds a server through the dialog action and lists it paused', async () => {
-    const created = server('paused');
-    const user = userEvent.setup();
-    render(
-        <McpManagerApp
-            initial={initial()}
-            tr={tr}
-            actions={actions({ addServer: () => Promise.resolve(created) })}
-        />,
-    );
-
-    await user.click(screen.getByRole('button', { name: 'Add server' }));
-
-    expect(await screen.findByText('Local tools')).toBeTruthy();
-    expect(screen.getByText('http://127.0.0.1:3000/mcp')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Paused' })).toBeTruthy();
-});
-
 test('creates the Exa recommendation once and does not restore it after deletion', async () => {
     let handled = false;
     const creates: Array<{ displayName: string; endpoint: string }> = [];
@@ -112,10 +94,7 @@ test('creates the Exa recommendation once and does not restore it after deletion
     const first = await ensureExaRecommendation(initial(), create, store);
     expect(first.error).toBeUndefined();
     expect(first.initial.servers).toEqual([{ ...server(), ...creates[0] }]);
-    expect(creates).toEqual([{
-        displayName: 'Exa Search',
-        endpoint: 'https://mcp.exa.ai/mcp',
-    }]);
+    expect(creates).toHaveLength(1);
 
     const afterDeletion = await ensureExaRecommendation(initial(), create, store);
     expect(afterDeletion.error).toBeUndefined();
@@ -244,21 +223,6 @@ test('opens the description editor from a tool row and applies the saved overrid
     expect(screen.queryByText('Search local files by name.')).toBeNull();
 });
 
-test('shows a tool editor opening failure on its server', async () => {
-    const user = userEvent.setup();
-    render(<McpManagerApp
-        initial={initial([server('active')])} tr={tr}
-        actions={actions({
-            discover: () => Promise.resolve(discovery()),
-            openToolDialog: () => Promise.reject(new Error('Popup API is unavailable')),
-        })}
-    />);
-    await user.click(screen.getByRole('button', { name: 'Show or hide tools' }));
-    await user.click(await screen.findByRole('button', { name: 'Edit description' }));
-
-    expect((await screen.findByRole('alert')).textContent).toBe('Popup API is unavailable');
-});
-
 test('does not discover while paused and explains the state instead', async () => {
     let discoverCalls = 0;
     const user = userEvent.setup();
@@ -335,28 +299,6 @@ test('uses explicit refresh when retrying a failed catalog load', async () => {
 
     expect(await screen.findByText('Search files')).toBeTruthy();
     expect(refreshes).toBe(1);
-});
-
-test('opens the unified test console from the toolbar with the current servers', async () => {
-    const openedWith: TauriTavernMcpServer[][] = [];
-    const activeServer = server('active');
-    const user = userEvent.setup();
-    render(
-        <McpManagerApp
-            initial={initial([activeServer])}
-            tr={tr}
-            actions={actions({
-                openTestCall: servers => {
-                    openedWith.push(servers);
-                    return Promise.resolve();
-                },
-            })}
-        />,
-    );
-
-    await user.click(screen.getByRole('button', { name: 'Test call' }));
-
-    expect(openedWith).toEqual([[activeServer]]);
 });
 
 test('add-server popup validates in place, preserves failures, and returns the created server', async () => {

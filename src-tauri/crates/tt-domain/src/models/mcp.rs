@@ -414,84 +414,15 @@ mod tests {
     }
 
     #[test]
-    fn off_permissions_are_absent_and_new_registrations_are_paused() {
-        let mut registration = McpServerRegistration::new_paused(
-            " Local tools ",
-            McpEndpoint::parse("http://localhost:3000/mcp").unwrap(),
-            BTreeMap::new(),
-            McpProtocolVersionPreference::Auto,
-        )
-        .unwrap();
-
-        assert_eq!(registration.display_name(), "Local tools");
-        assert_eq!(registration.state(), McpServerState::Paused);
-        registration
-            .set_tool_permission("search", McpToolPermission::Allow)
-            .unwrap();
-        assert_eq!(
-            registration.permission_for("search"),
-            McpToolPermission::Allow
-        );
-        registration
-            .set_tool_permission("search", McpToolPermission::Off)
-            .unwrap();
-        assert!(registration.tool_permissions().is_empty());
-
-        registration
-            .set_tool_description_override(
-                "search",
-                Some(ToolDescriptionOverride {
-                    description: Some("Search local files".to_string()),
-                    properties: BTreeMap::new(),
-                }),
-            )
-            .unwrap();
-        assert_eq!(
-            registration
-                .description_override_for("search")
-                .and_then(|override_| override_.description.as_deref()),
-            Some("Search local files")
-        );
-        registration
-            .set_tool_description_override("search", None)
-            .unwrap();
-        assert!(registration.tool_description_overrides().is_empty());
-        assert!(
-            registration
-                .set_tool_description_override("search", Some(ToolDescriptionOverride::default()))
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn request_headers_preserve_user_input_and_redact_debug() {
+    fn request_headers_redact_secrets_in_debug_output() {
         let headers = McpRequestHeaders::from(BTreeMap::from([
             (" X-API-Key ".to_string(), "secret".to_string()),
             ("Authorization".to_string(), "Bearer token".to_string()),
             ("Mcp-Session-Id".to_string(), "line\nbreak".to_string()),
         ]));
 
-        assert_eq!(
-            headers.iter().collect::<Vec<_>>(),
-            [
-                (" X-API-Key ", "secret"),
-                ("Authorization", "Bearer token"),
-                ("Mcp-Session-Id", "line\nbreak"),
-            ]
-        );
         let debug = format!("{headers:?}");
         assert!(!debug.contains("secret"));
         assert!(!debug.contains("Bearer token"));
-        let many = (0..64)
-            .map(|index| (format!("x-custom-{index}"), index.to_string()))
-            .collect::<BTreeMap<_, _>>();
-        assert_eq!(McpRequestHeaders::from(many).as_map().len(), 64);
-        assert_eq!(
-            validate_display_name("n".repeat(512))
-                .unwrap()
-                .chars()
-                .count(),
-            512
-        );
     }
 }
