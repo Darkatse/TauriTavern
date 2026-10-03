@@ -55,7 +55,7 @@ function sampleTarget(overrides: Partial<AgentModelTarget> = {}): AgentModelTarg
     };
 }
 
-function installHost(targets: AgentModelTarget[]): {
+function installHost(targets: AgentModelTarget[], storedConnectionIds: string[] = []): {
     eventSource: TestEventSource;
     savedConnections: TauriTavernLlmConnectionDefinition[];
     deletedConnections: string[];
@@ -69,6 +69,7 @@ function installHost(targets: AgentModelTarget[]): {
     const savedConnections: TauriTavernLlmConnectionDefinition[] = [];
     const deletedConnections: string[] = [];
     const errors: string[] = [];
+    const stored = new Set(storedConnectionIds);
 
     Object.defineProperty(window, 'SillyTavern', {
         configurable: true,
@@ -85,12 +86,17 @@ function installHost(targets: AgentModelTarget[]): {
         value: {
             api: {
                 llmConnections: {
+                    list: () => Promise.resolve({
+                        connections: [...stored].map(id => ({ id, displayName: id, chatCompletionSource: 'custom' })),
+                    }),
                     save: ({ connection }: { connection: TauriTavernLlmConnectionDefinition }) => {
                         savedConnections.push(structuredClone(connection));
+                        stored.add(connection.id);
                         return Promise.resolve();
                     },
                     delete: ({ connectionId }: { connectionId: string }) => {
                         deletedConnections.push(connectionId);
+                        stored.delete(connectionId);
                         return Promise.resolve();
                     },
                 },
@@ -139,7 +145,7 @@ test('Model Target sync and UI changes use the context-owned event source', asyn
 
         await host.eventSource.emit(EVENT_TYPES.MODEL_TARGET_DELETED, updatedTarget);
         expect(observedChanges.at(-1)?.type).toBe('deleted');
-        expect(host.deletedConnections).toEqual([]);
+        expect(host.deletedConnections).toEqual(['model-target-writer-target']);
         expect(host.errors).toEqual([]);
     } finally {
         unsubscribeChanges();
@@ -157,6 +163,18 @@ test('startup sync invalidates a stale connection when materialization fails', a
         expect(host.deletedConnections).toEqual(['model-target-writer-target']);
     } finally {
         warn.mockRestore();
+        host.restore();
+    }
+});
+
+test('startup sync removes the connection of a model deleted while it was not listening', async () => {
+    const host = installHost([sampleTarget()], ['model-target-deleted-model', 'user-connection']);
+    try {
+        await syncSavedModelTargetLlmConnections();
+        expect(host.savedConnections.map(connection => connection.id)).toEqual(['model-target-writer-target']);
+        expect(host.deletedConnections).toEqual(['model-target-deleted-model']);
+        expect(host.errors).toEqual([]);
+    } finally {
         host.restore();
     }
 });

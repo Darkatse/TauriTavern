@@ -6,6 +6,7 @@ import { SECRET_KEYS, secret_state } from '../secrets.js';
 import { textgen_types, textgenerationwebui_settings } from '../textgen-settings.js';
 import { getTokenCountAsync } from '../tokenizers.js';
 import { createThumbnail, isValidUrl } from '../utils.js';
+import { MODEL_TARGET_ID_PREFIX, MODEL_TARGET_SELECTION_KIND } from '../tauritavern/agent/model-target-llm-connection.js';
 
 export const NATIVE_CAPTION_UNAVAILABLE_MESSAGE = 'Image captioning is not implemented in the TauriTavern native backend.';
 
@@ -422,6 +423,73 @@ export async function getWebLlmContextSize() {
 }
 
 /**
+ * Request id of the item selected in Connection Manager: a profile id, a saved-model
+ * id, or null.
+ * @returns {string|null}
+ */
+export function getSelectedConnectionItemId() {
+    const { selectedItem, selectedProfile } = SillyTavern.getContext().extensionSettings.connectionManager;
+    if (selectedItem?.kind === MODEL_TARGET_SELECTION_KIND) {
+        return `${MODEL_TARGET_ID_PREFIX}${selectedItem.id}`;
+    }
+    return selectedProfile ?? null;
+}
+
+/**
+ * Adapter hints a saved model carries → request fields (see Connection Manager).
+ * @type {Readonly<Record<string, string>>}
+ */
+const MODEL_TARGET_REQUEST_FIELDS = Object.freeze({
+    customIncludeHeaders: 'custom_include_headers',
+    customIncludeBody: 'custom_include_body',
+    customExcludeBody: 'custom_exclude_body',
+});
+
+/**
+ * A saved model seen as a read-only profile, so every profile-based caller (requests,
+ * validation, icons, dropdowns) handles it without a second code path. It has no preset.
+ * @param {import('./connection-manager/index.js').LlmModelTarget} target Saved model
+ * @returns {import('./connection-manager/index.js').ConnectionProfile & { kind: string, adapterHints: Record<string, string> }}
+ */
+export function modelTargetAsProfile(target) {
+    return Object.freeze({
+        id: `${MODEL_TARGET_ID_PREFIX}${target.id}`,
+        kind: target.kind,
+        name: target.name,
+        mode: target.mode,
+        api: target.api,
+        model: target.model,
+        proxy: target.proxy,
+        'api-url': target['api-url'],
+        'custom-api-format': target['custom-api-format'],
+        'secret-id': target.secretRef?.id,
+        'prompt-post-processing': target.adapterHints?.promptPostProcessing,
+        adapterHints: structuredClone(target.adapterHints ?? {}),
+    });
+}
+
+/**
+ * Request fields a saved model adds beyond the profile fields.
+ * @param {{ adapterHints?: Record<string, string> }} profile Profile or saved-model view
+ * @returns {Record<string, unknown>}
+ */
+function getModelTargetRequestFields(profile) {
+    const hints = profile.adapterHints;
+    if (!hints) {
+        return {};
+    }
+    const fields = {};
+    for (const [hint, field] of Object.entries(MODEL_TARGET_REQUEST_FIELDS)) {
+        if (Object.hasOwn(hints, hint)) {
+            fields[field] = hints[hint];
+        }
+    }
+    fields.custom_claude_prompt_caching = hints.claudePromptCaching === 'enabled';
+    fields.custom_openai_responses_websocket = hints.openaiResponsesMode === 'websocket';
+    return fields;
+}
+
+/**
  * It uses the profiles to send a generate request to the API.
  */
 export class ConnectionManagerRequestService {
@@ -496,6 +564,7 @@ export class ConnectionManagerRequestService {
                         reverse_proxy: proxyPreset?.url,
                         proxy_password: proxyPreset?.password,
                         custom_prompt_post_processing: profile['prompt-post-processing'],
+                        ...getModelTargetRequestFields(profile),
                         ...overridePayload,
                     }, {
                         presetName: includePreset ? profile.preset : undefined,
@@ -567,26 +636,45 @@ export class ConnectionManagerRequestService {
 
     /**
      * Respects allowed types.
+     * @param {object} [options]
+     * @param {boolean} [options.includeModelTargets=false] Also return saved models, as read-only profile views
      * @returns {import('./connection-manager/index.js').ConnectionProfile[]}
      */
-    static getSupportedProfiles() {
+    static getSupportedProfiles({ includeModelTargets = false } = {}) {
         const context = SillyTavern.getContext();
         if (context.extensionSettings.disabledExtensions.includes('connection-manager')) {
             throw new Error('Connection Manager is not available');
         }
 
-        const profiles = context.extensionSettings.connectionManager.profiles;
-        return profiles.filter((p) => this.isProfileSupported(p));
+        const { profiles, modelTargets } = context.extensionSettings.connectionManager;
+        const items = includeModelTargets ? [...profiles, ...modelTargets.map(modelTargetAsProfile)] : profiles;
+        return items.filter((p) => this.isProfileSupported(p));
     }
 
     /**
-     * Return profile data given the profile ID
+     * Profile data for a profile ID or a saved-model ID (`modelTarget:<id>`), or null.
+     * @param {string} profileId
+     * @returns {import('./connection-manager/index.js').ConnectionProfile|null}
+     */
+    static findProfile(profileId) {
+        const { profiles, modelTargets } = SillyTavern.getContext().extensionSettings.connectionManager;
+        if (typeof profileId === 'string' && profileId.startsWith(MODEL_TARGET_ID_PREFIX)) {
+            const targetId = profileId.slice(MODEL_TARGET_ID_PREFIX.length);
+            const target = modelTargets.find((t) => t.id === targetId);
+            return target ? modelTargetAsProfile(target) : null;
+        }
+        return profiles.find((p) => p.id === profileId) ?? null;
+    }
+
+    /**
+     * Return profile data given the profile ID. Saved models (`modelTarget:<id>`) resolve
+     * to a read-only profile view without a preset.
      * @param {string} profileId
      * @returns {import('./connection-manager/index.js').ConnectionProfile?} [profile]
      * @throws {Error}
      */
     static getProfile(profileId) {
-        const profile = SillyTavern.getContext().extensionSettings.connectionManager.profiles.find((p) => p.id === profileId);
+        const profile = this.findProfile(profileId);
         if (!profile) throw new Error(`Profile not found (ID: ${profileId})`);
         return profile;
     }
@@ -602,7 +690,7 @@ export class ConnectionManagerRequestService {
             return null;
         }
 
-        const id = profileId ?? (SillyTavern.getContext()).extensionSettings.connectionManager.selectedProfile;
+        const id = profileId ?? getSelectedConnectionItemId();
         if (!id) return null;
 
         try {
@@ -672,6 +760,9 @@ export class ConnectionManagerRequestService {
      * @param {(profile: import('./connection-manager/index.js').ConnectionProfile) => Promise<void> | void} onCreate
      * @param {(oldProfile: import('./connection-manager/index.js').ConnectionProfile, newProfile: import('./connection-manager/index.js').ConnectionProfile) => Promise<void> | void} unUpdate
      * @param {(profile: import('./connection-manager/index.js').ConnectionProfile) => Promise<void> | void} onDelete
+     * @param {object} [options]
+     * @param {boolean} [options.includeModelTargets=false] Also list saved models (ids `modelTarget:<id>`).
+     *   Off by default: callers written for upstream may look stored ids up in the profile list.
      */
     static handleDropdown(
         selector,
@@ -680,6 +771,7 @@ export class ConnectionManagerRequestService {
         onCreate = () => { },
         unUpdate = () => { },
         onDelete = () => { },
+        { includeModelTargets = false } = {},
     ) {
         const context = SillyTavern.getContext();
         if (context.extensionSettings.disabledExtensions.includes('connection-manager')) {
@@ -749,7 +841,13 @@ export class ConnectionManagerRequestService {
             }
         }
 
-        const selectedProfile = profiles.find((p) => p.id === initialSelectedProfileId);
+        if (includeModelTargets) {
+            this.#mirrorModelTargets(dropdown, defaultOption, { onCreate, onUpdate: unUpdate, onDelete });
+        }
+
+        const selectedProfile = includeModelTargets
+            ? this.findProfile(initialSelectedProfileId)
+            : profiles.find((p) => p.id === initialSelectedProfileId);
         if (selectedProfile) {
             dropdown.val(selectedProfile.id);
         }
@@ -822,9 +920,90 @@ export class ConnectionManagerRequestService {
         });
 
         dropdown.on('change', async () => {
-            const profileId = dropdown.val();
-            const profile = context.extensionSettings.connectionManager.profiles.find((p) => p.id === profileId);
+            const profileId = String(dropdown.val() ?? '');
+            const profile = this.findProfile(profileId) ?? undefined;
             await onChange(profile);
+        });
+    }
+
+    /**
+     * Keeps a "Models" group in an extension's profile dropdown, right after the
+     * placeholder, in step with the saved models. Models go through the same callbacks
+     * as profiles, as read-only profile views: `onCreate` / `onUpdate` / `onDelete` for
+     * each supported model, and a selected model that is updated or deleted re-notifies
+     * `onChange` (with no profile once deleted).
+     * @param {JQuery<HTMLSelectElement>} dropdown Extension dropdown
+     * @param {HTMLOptionElement} placeholder The leading "Select…" option
+     * @param {object} callbacks The dropdown's profile callbacks
+     * @param {(profile: import('./connection-manager/index.js').ConnectionProfile) => Promise<void> | void} callbacks.onCreate
+     * @param {(oldProfile: import('./connection-manager/index.js').ConnectionProfile, newProfile: import('./connection-manager/index.js').ConnectionProfile) => Promise<void> | void} callbacks.onUpdate
+     * @param {(profile: import('./connection-manager/index.js').ConnectionProfile) => Promise<void> | void} callbacks.onDelete
+     */
+    static #mirrorModelTargets(dropdown, placeholder, { onCreate, onUpdate, onDelete }) {
+        const context = SillyTavern.getContext();
+        const group = document.createElement('optgroup');
+        group.label = t`Models`;
+        /** @param {string} value */
+        const hasOption = (value) => Array.from(dropdown.find('option')).some((option) => option.value === value);
+
+        const render = () => {
+            // Rebuilding the group drops its selected option; keep a selection that still exists.
+            const selected = String(dropdown.val() ?? '');
+            const targets = context.extensionSettings.connectionManager.modelTargets
+                .map(modelTargetAsProfile)
+                .filter((target) => this.isProfileSupported(target))
+                .sort((a, b) => a.name.localeCompare(b.name));
+            group.replaceChildren(...targets.map((target) => {
+                const option = document.createElement('option');
+                option.value = target.id;
+                option.textContent = target.name;
+                return option;
+            }));
+            // Removed rather than hidden: iOS WebKit ignores `hidden` on <optgroup>.
+            if (targets.length === 0) {
+                group.remove();
+            } else if (!group.isConnected) {
+                placeholder.after(group);
+            }
+            if (selected && hasOption(selected)) {
+                dropdown.val(selected);
+            }
+        };
+        render();
+
+        context.eventSource.on(context.eventTypes.MODEL_TARGET_CREATED, async (target) => {
+            render();
+            const profile = modelTargetAsProfile(target);
+            if (this.isProfileSupported(profile)) {
+                await onCreate(profile);
+            }
+        });
+
+        context.eventSource.on(context.eventTypes.MODEL_TARGET_UPDATED, async (oldTarget, newTarget) => {
+            const oldProfile = modelTargetAsProfile(oldTarget);
+            const newProfile = modelTargetAsProfile(newTarget);
+            const isSelected = String(dropdown.val() ?? '') === oldProfile.id;
+            await onUpdate(oldProfile, newProfile);
+            render();
+            if (isSelected) {
+                // An update that made the model unsupported unselects it, as for profiles.
+                dropdown.val(hasOption(newProfile.id) ? newProfile.id : '');
+                dropdown.trigger('change');
+            }
+        });
+
+        context.eventSource.on(context.eventTypes.MODEL_TARGET_DELETED, async (target) => {
+            const profile = modelTargetAsProfile(target);
+            const isSelected = String(dropdown.val() ?? '') === profile.id;
+            render();
+            if (!this.isProfileSupported(profile)) {
+                return;
+            }
+            if (isSelected) {
+                dropdown.val('');
+                dropdown.trigger('change');
+            }
+            await onDelete(profile);
         });
     }
 }

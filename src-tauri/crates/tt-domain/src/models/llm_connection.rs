@@ -76,6 +76,10 @@ pub struct LlmConnectionDefinition {
     pub display_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Set on connections saved from a Connection Manager model: bindings to such a
+    /// connection use this model, so changing the model there reaches every Profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
     pub provider: LlmConnectionProvider,
     #[serde(default)]
     pub endpoint: LlmConnectionEndpoint,

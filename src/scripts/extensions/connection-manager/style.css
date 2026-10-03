@@ -9,3 +9,9 @@
 #connection_profile_spinner {
     margin-left: 5px;
 }
+
+/* "Reapply" / "overwrite" show up (API panel and sidebar row) once the live settings
+   drifted from the selected item. */
+.tt-cm-dirty {
+    color: var(--SmartThemeQuoteColor);
+}

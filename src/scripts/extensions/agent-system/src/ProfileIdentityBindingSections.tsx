@@ -60,7 +60,7 @@ export function ProfileIdentitySection({ snapshot, controller, tr }: ProfileSect
 }
 
 export function ProfileBindingSection({ snapshot, controller, tr }: ProfileSectionProps) {
-    const { draft, presetOptions, modelTargets } = snapshot;
+    const { draft, presetOptions, modelTargets, textCompletionModelTargets } = snapshot;
     const builtin = isBuiltinProfile(draft);
     const presetOptionsWithSelected = availablePresetOptions(presetOptions, draft);
     const selectedTarget = selectedModelTarget(modelTargets, draft);
@@ -145,6 +145,11 @@ export function ProfileBindingSection({ snapshot, controller, tr }: ProfileSecti
                             {externalModelBinding && <option value="">{modelSummaryLabel(draft, modelTargets, tr)}</option>}
                             {modelTargets.map((target) => (
                                 <option key={target.id} value={target.id}>{target.name || target.model}</option>
+                            ))}
+                            {textCompletionModelTargets.map((target) => (
+                                <option key={target.id} value={target.id} disabled>
+                                    {`${target.name || target.model} (${tr('textCompletionModel')})`}
+                                </option>
                             ))}
                         </select>
                     </label>

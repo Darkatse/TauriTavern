@@ -214,7 +214,7 @@ export function createAgentSystemPanelController(deps: AgentSystemPanelControlle
     }
 
     function refreshModelTargets(): void {
-        patch({ modelTargets: deps.listModelTargets() });
+        patch({ modelTargets: deps.listModelTargets(), textCompletionModelTargets: deps.listTextCompletionModelTargets() });
     }
 
     async function loadSupplemental(operation: () => void | Promise<void>): Promise<void> {

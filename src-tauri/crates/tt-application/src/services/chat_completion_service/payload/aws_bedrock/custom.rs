@@ -13,7 +13,7 @@
 //!   array produced by flattening OpenAI-style content blocks.
 //! - `{{system}}` — JSON-encoded string with the concatenated system prompt
 //!   (empty string when no system message is present).
-//! - `{{max_tokens}}` — JSON number (defaults to `1024` when unset).
+//! - `{{max_tokens}}` — JSON number (defaults to `25000` when unset).
 //! - `{{temperature}}` — JSON number (defaults to `0.7` when unset).
 //! - `{{model}}` — JSON-encoded model id string.
 //!
@@ -24,16 +24,13 @@
 
 use serde_json::{Map, Value, json};
 
+use super::super::OMITTED_MAX_TOKENS;
 use super::super::shared::message_content_to_text;
 use super::shared::{
     BEDROCK_INVOKE_SUFFIX, FlatMessage, flatten_openai_messages, value_to_positive_i64,
 };
 use crate::errors::ApplicationError;
 
-/// Default `max_tokens` baked into the template when the request omits one.
-/// Mirrors the application-layer baseline used by the Anthropic builder so
-/// the custom path doesn't surprise users with a different cap.
-const DEFAULT_MAX_TOKENS: i64 = 1024;
 /// Default `temperature` baked into the template when the request omits one.
 /// Matches the OpenAI / Bedrock default so the placeholder never resolves
 /// to `null`.
@@ -136,7 +133,8 @@ fn render_system(messages: Option<&Value>) -> String {
 }
 
 fn render_max_tokens(value: Option<&Value>) -> String {
-    let resolved = value_to_positive_i64(value).unwrap_or(DEFAULT_MAX_TOKENS);
+    // The same fallback as the Anthropic builder, so the custom path has no cap of its own.
+    let resolved = value_to_positive_i64(value).unwrap_or(OMITTED_MAX_TOKENS);
     resolved.to_string()
 }
 

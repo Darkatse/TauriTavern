@@ -73,6 +73,8 @@ function mountPresetEmbedButtons(): void {
             title: tr('openAgentAssets'),
         });
         button.dataset.ttasPresetApi = apiId;
+        // Opt-in: a compact preset row lists the button in its ⋯ menu instead of the row.
+        button.dataset.ttOverflow = '';
         button.addEventListener('click', (event) => {
             event.preventDefault();
             try {

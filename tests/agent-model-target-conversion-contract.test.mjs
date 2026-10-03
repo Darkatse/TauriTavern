@@ -83,6 +83,7 @@ test('Agent model target conversion materializes LLM connection and profile bind
             chatCompletionSource: 'custom',
             customApiFormat: 'claude_messages',
         },
+        modelId: 'claude-3-7-sonnet',
         endpoint: {
             baseUrl: 'https://example.test/v1',
             sourceSpecific: {},
@@ -102,6 +103,12 @@ test('Agent model target conversion materializes LLM connection and profile bind
         mode: 'connectionRef',
         connectionRef: 'model-target-writer-target',
         modelId: 'claude-3-7-sonnet',
+    }), target);
+    // A binding made before the target's model changed still resolves: bindings follow the target.
+    assert.equal(findModelTargetForBinding([target], {
+        mode: 'connectionRef',
+        connectionRef: 'model-target-writer-target',
+        modelId: 'an-older-model',
     }), target);
 });
 
@@ -155,7 +162,7 @@ test('Vertex AI targets preserve credential type and region', async () => {
 
 
 
-test('Agent run model target ensure refreshes by connection ref without adopting target model changes', async () => {
+test('Agent run model target ensure refreshes by connection ref and carries the target model', async () => {
     const currentTarget = sampleTarget({
         model: 'claude-4-sonnet',
         secretRef: {
@@ -177,9 +184,11 @@ test('Agent run model target ensure refreshes by connection ref without adopting
 
     await ensureModelTargetLlmConnectionForProfile(profile);
 
+    // The profile keeps its selection-time id; the connection carries the model it now follows.
     assert.equal(profile.model.modelId, 'claude-3-7-sonnet');
     assert.equal(savedConnections.length, 1);
     assert.equal(savedConnections[0].auth.secretRef.id, 'secret-current');
+    assert.equal(savedConnections[0].modelId, 'claude-4-sonnet');
 });
 
 

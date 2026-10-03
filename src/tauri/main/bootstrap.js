@@ -34,6 +34,7 @@ import { installExtensionStoreApi } from './api/extension-store.js';
 import { installDbApi } from './api/db.js';
 import { installLayoutApi } from './api/layout.js';
 import { installLlmConnectionsApi } from './api/llm-connection.js';
+import { installModelsApi } from './api/models.js';
 import { installMcpApi } from './api/mcp.js';
 import { installSkillApi } from './api/skill.js';
 import { installWorldInfoApi } from './api/world-info.js';
@@ -284,7 +285,7 @@ export function bootstrapTauriMain() {
     installNativeShareBridge();
 
     const context = createTauriMainContext({ invoke });
-    installHostAbi(context); installLayoutApi(context); installChatApi(context); installChatSurfaceApi(); installCharacterCardsApi(context); installAgentApi(context); installLlmConnectionsApi(context); installMcpApi(context); installSkillApi(context); installDevApi(context); installExtensionStoreApi(context); installDbApi(context); installWorldInfoApi();
+    installHostAbi(context); installLayoutApi(context); installChatApi(context); installChatSurfaceApi(); installCharacterCardsApi(context); installAgentApi(context); installLlmConnectionsApi(context); installModelsApi(); installMcpApi(context); installSkillApi(context); installDevApi(context); installExtensionStoreApi(context); installDbApi(context); installWorldInfoApi();
     installMainApiOptionParking();
     installWorldInfoGlobalSelectorSelect2Enforcer();
     if (perfEnabled) {
@@ -413,6 +414,9 @@ export function bootstrapTauriMain() {
         void import('../../scripts/tauri/generation-params/panel.js')
             .then(({ installGenerationParamsPanel }) => installGenerationParamsPanel())
             .catch((error) => { console.error('TauriTavern: Failed to install generation parameter panel:', error); });
+        void import('../../scripts/tauri/compact-rows/preset-row.js')
+            .then(({ installCompactPresetRow }) => installCompactPresetRow())
+            .catch((error) => { console.error('TauriTavern: Failed to install compact preset row:', error); });
     });
     runAfterTauriReady(() => import('./services/dynamic-theme/install.js')
         .then(({ installDynamicTheme }) => installDynamicTheme()));
