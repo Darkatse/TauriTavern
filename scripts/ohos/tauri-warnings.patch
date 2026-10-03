@@ -35,29 +35,17 @@
  use serialize_to_javascript::{default_template, DefaultTemplate, Template};
 --- a/crates/tauri/src/plugin/mobile.rs
 +++ b/crates/tauri/src/plugin/mobile.rs
-@@ -11,7 +11,7 @@
-   sealed::{ManagerBase, RuntimeOrDispatch},
+@@ -12,7 +12,9 @@
  };
 
--#[cfg(mobile)]
+ #[cfg(mobile)]
+-use std::sync::atomic::{AtomicI32, Ordering};
++use std::sync::atomic::AtomicI32;
 +#[cfg(any(target_os = "android", target_os = "ios"))]
- use std::sync::atomic::{AtomicI32, Ordering};
++use std::sync::atomic::Ordering;
  #[cfg(mobile)]
  use tokio::sync::oneshot;
-@@ -26,10 +26,12 @@
 
- type PluginResponse = Result<serde_json::Value, serde_json::Value>;
-
-+#[cfg(any(target_os = "android", target_os = "ios"))]
- type PendingPluginCallHandler = Box<dyn FnOnce(PluginResponse) + Send + 'static>;
-
--#[cfg(mobile)]
-+#[cfg(any(target_os = "android", target_os = "ios"))]
- static PENDING_PLUGIN_CALLS_ID: AtomicI32 = AtomicI32::new(0);
-+#[cfg(any(target_os = "android", target_os = "ios"))]
- static PENDING_PLUGIN_CALLS: OnceLock<Mutex<HashMap<i32, PendingPluginCallHandler>>> =
-   OnceLock::new();
- static CHANNELS: OnceLock<Mutex<HashMap<u32, Channel<serde_json::Value>>>> = OnceLock::new();
 --- a/crates/tauri/src/app.rs
 +++ b/crates/tauri/src/app.rs
 @@ -1162,6 +1162,7 @@
