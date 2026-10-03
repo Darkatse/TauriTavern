@@ -177,6 +177,31 @@ src/
 - Prompt 组装和生成判断使用本次生效设置，`createGenerationParameters()` 出口统一省略字段；用户显式配置的 Additional Parameters 仍拥有最终覆盖权。
 - JSON 视图只编辑当前格式可用的参数，非法输入整体不应用；它不是最终请求预览，后续仍遵循渠道与模型的转换规则。
 
+## 6.5 紧凑选择行
+
+`src/scripts/tauri/compact-rows/` 提供「标签 | 下拉框 | 常用按钮 | ⋯」紧凑行的样式与 ⋯ 菜单。AI 响应配置面板顶部的「预设」行由 `preset-row.js` 安装。原按钮只加 `.tt-hidden` 隐藏，id 与事件处理不变，菜单项直接触发它们。
+
+- 「预设」行顺序为：标签、下拉框、💾 保存、第三方按钮、⋯。⋯ 中依次是另存为、重命名、导入、导出预设、导出预设与配置、扩展移入的按钮、「预设绑定连接」与删除。两个导出项对应上游导出弹窗的「是否导出连接数据」两个选项（`exportOpenAIPreset({ includeConnection })`），文件格式与上游相同：「导出预设」去掉全部连接字段（上游的敏感字段都属于连接字段，因此不再询问）；「导出预设与配置」保留预设存储的连接字段，仍按上游询问是否移除敏感字段。直接点击上游 `#export_oai_preset` 仍走原来的两步弹窗。标题栏只隐藏上游已知的元素（标题文字与绑定开关）；其中没有其他可见内容时，才通过 `:has()` 整体收起，扩展加在标题栏的按钮仍然可用。
+- ⋯ 菜单挂在 `body` 上并用 Popper 定位（声明 `SURFACE.None`，移动端几何防火墙不再改写其位置；菜单内的 `mousedown` / `touchstart` 不冒泡，上游「按下抽屉外即关闭抽屉」不会因此收起所在面板；Android 返回键合成的 `mousedown` 同样关闭菜单），点击开关，同一时间只开一个。外部按下、Esc、Tab、焦点移出菜单、选中菜单项、按钮所在的滚动容器或窗口滚动、窗口 resize 都会关闭菜单；其他区域的滚动（例如流式输出中的聊天区）不关闭。触屏与鼠标行为一致。`pointer: coarse` 下控件至少 36px、菜单项 40px。
+
+### 6.5.1 扩展按钮移入 ⋯（`data-tt-overflow`）
+
+扩展加到 Chat Completion 预设行（`#settings_preset_openai` 所在行，含其按钮栏）的按钮默认保持可见，排在 💾 之后、⋯ 之前。按钮带上 `data-tt-overflow` 属性，就改为列进该行的 ⋯ 菜单（`adoptOverflowButtons`）。Agent 资源按钮就是这样移入的。
+
+```js
+button.dataset.ttOverflow = '';
+button.setAttribute('aria-label', '我的操作'); // 或 title
+document.querySelector('#update_oai_preset').parentElement.append(button);
+```
+
+- 按钮由 CSS 隐藏，晚于安装注入的按钮同样生效；菜单每次打开时重新读取，按文档顺序排在两个导出项之后。
+- 菜单项文字取 `aria-label`，没有时取 `title`；两者都没有的按钮不列出，并输出 `console.error`。
+- 图标复制按钮内第一个 `<i>`、`<svg>` 或 `<img>`（去掉 id），都没有时用拼图图标。
+- 选中菜单项即调用 `button.click()`；处于 `:disabled` 状态的按钮不列出。
+- 属性只在紧凑行内生效；预设标题栏和其他位置的按钮不受影响。
+
+「预设绑定连接」菜单项反映 `#bind_preset_to_connection` 的勾选状态。
+
 ## 7. 插件系统前端适配
 
 ### 7.1 设计目标
