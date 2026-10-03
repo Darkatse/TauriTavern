@@ -10,7 +10,9 @@ use tt_domain::models::agent::profile::{
     AgentPresetRef, AgentProfileDefinition, AgentProfileId, ResolvedAgentProfile,
 };
 use tt_domain::models::agent::session::{AgentSession, AgentSessionMessage};
-use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelMessage, AgentModelTool};
+use tt_domain::models::agent::{
+    AgentInvocationExitPolicy, AgentModelMessage, AgentModelTool, AgentRunPresentation,
+};
 use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
 use tt_domain::models::tool::ToolId;
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
@@ -32,12 +34,101 @@ fn materialized_agent_system_prompt_uses_profile_override_exactly() {
     );
 
     let prompt = materialize_agent_system_prompt(
-        &[tool("workspace.finish", "finish_alias")],
+        &[tool("workspace.commit", "commit_alias")],
         &profile,
         AgentInvocationExitPolicy::RunFinishAllowed,
     );
 
     assert_eq!(prompt, "Custom Agent System Prompt.\nKeep this exact.");
+}
+
+/// The default instructions name a tool only when the model is offered it, for every
+/// enabled set of the builtins they mention and every way a stage ends.
+#[test]
+fn materialized_agent_system_prompt_names_only_enabled_tools() {
+    use super::constants::{AGENT_HANDOFF_TOOL, TASK_RETURN_TOOL};
+    use crate::services::agent_tools::builtin_model_alias;
+
+    const BASE_TOOLS: [&str; 9] = [
+        "chat.search",
+        "chat.read_messages",
+        "workspace.search_files",
+        "workspace.read_file",
+        "workspace.write_file",
+        "workspace.apply_patch",
+        "workspace.shell",
+        "workspace.commit",
+        "worldinfo.read_activated",
+    ];
+    // The runtime adds task.return to, and removes the handoff from, exactly the
+    // return-mode stages; a stage that can hand off ends the same way in either presentation.
+    let stages = [
+        (
+            AgentInvocationExitPolicy::RunFinishAllowed,
+            AgentRunPresentation::Foreground,
+            None,
+        ),
+        (
+            AgentInvocationExitPolicy::RunFinishAllowed,
+            AgentRunPresentation::Background,
+            None,
+        ),
+        (
+            AgentInvocationExitPolicy::RunFinishAllowed,
+            AgentRunPresentation::Foreground,
+            Some(AGENT_HANDOFF_TOOL),
+        ),
+        (
+            AgentInvocationExitPolicy::TaskReturnRequired,
+            AgentRunPresentation::Foreground,
+            Some(TASK_RETURN_TOOL),
+        ),
+        (
+            AgentInvocationExitPolicy::ReplyAllowed,
+            AgentRunPresentation::Foreground,
+            None,
+        ),
+    ];
+    // `read`, `write` and `list` are also plain words the instructions use.
+    let mentions = BASE_TOOLS
+        .into_iter()
+        .chain([AGENT_HANDOFF_TOOL, TASK_RETURN_TOOL])
+        .map(|name| (name, builtin_model_alias(name)))
+        .filter(|(_, alias)| !matches!(alias.as_str(), "read" | "write" | "list"))
+        .map(|(name, alias)| {
+            let pattern = regex::Regex::new(&format!(r"\b{}\b", regex::escape(&alias))).unwrap();
+            (name, pattern)
+        })
+        .collect::<Vec<_>>();
+
+    for (exit_policy, presentation, completion_tool) in stages {
+        let mut profile = test_profile(None, "foreground");
+        profile.run.presentation = presentation;
+        for mask in 0..1_u32 << BASE_TOOLS.len() {
+            let enabled = BASE_TOOLS
+                .iter()
+                .enumerate()
+                .filter(|(bit, _)| mask & (1 << bit) != 0)
+                .map(|(_, name)| *name)
+                .chain(completion_tool)
+                .collect::<Vec<_>>();
+            let tools = enabled
+                .iter()
+                .map(|name| tool(name, &builtin_model_alias(name)))
+                .collect::<Vec<_>>();
+            let case = format!("{exit_policy:?} {presentation:?} {enabled:?}");
+            let prompt = std::panic::catch_unwind(|| {
+                materialize_agent_system_prompt(&tools, &profile, exit_policy)
+            })
+            .unwrap_or_else(|_| panic!("materializing panicked for {case}"));
+            for (name, pattern) in &mentions {
+                assert!(
+                    enabled.contains(name) || !pattern.is_match(&prompt),
+                    "{case} names disabled {name}:\n{prompt}"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -93,24 +184,30 @@ fn context_policy_normalizes_negative_history_window_to_full_history() {
 }
 
 #[test]
-fn chat_finish_requirement_depends_on_invocation_exit_policy() {
+fn chat_commit_requirement_applies_to_foreground_runs_only() {
     let mut profile = test_profile(None, "background");
     profile.run.direct_runnable = true;
     profile.tools = test_tool_policy(&["workspace.write_file"]);
     let error = super::validate_chat_profile(
         &profile,
         AgentInvocationExitPolicy::RunFinishAllowed,
-        profile.run.presentation,
+        AgentRunPresentation::Foreground,
     )
-    .expect_err("direct Chat profile without finish should fail");
+    .expect_err("a direct foreground Chat profile without commit should fail");
 
-    assert!(error.to_string().contains("agent.profile_finish_required"));
+    assert!(error.to_string().contains("agent.profile_commit_required"));
+    super::validate_chat_profile(
+        &profile,
+        AgentInvocationExitPolicy::RunFinishAllowed,
+        AgentRunPresentation::Background,
+    )
+    .expect("a background run ends when the model stops calling tools");
     super::validate_chat_profile(
         &profile,
         AgentInvocationExitPolicy::TaskReturnRequired,
-        profile.run.presentation,
+        AgentRunPresentation::Foreground,
     )
-    .expect("a child invocation returns to its parent without workspace.finish");
+    .expect("a child invocation returns to its parent without committing");
 }
 
 #[test]

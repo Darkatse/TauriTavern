@@ -11,9 +11,8 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::chat::strip_jsonl_extension;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::chat_types::{
-    ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
-    ChatPayloadCursor, ChatPayloadTail, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
-    PinnedGroupChat,
+    ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
+    ChatPayloadTail, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage, PinnedGroupChat,
 };
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
 
@@ -302,15 +301,6 @@ impl GroupChatRepository for FileChatRepository {
         query: FindLastMessageQuery,
     ) -> Result<Option<LocatedChatMessage>, DomainError> {
         self.find_last_group_chat_message_internal(chat_id, query)
-            .await
-    }
-
-    async fn read_group_chat_messages(
-        &self,
-        chat_id: &str,
-        indices: &[usize],
-    ) -> Result<ChatMessagesReadResult, DomainError> {
-        self.read_group_chat_messages_internal(chat_id, indices)
             .await
     }
 

@@ -69,6 +69,7 @@ use tt_domain::models::mcp::{
 };
 use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
 use tt_domain::models::settings::UserSettings;
+use tt_domain::models::tool::ToolArguments;
 use tt_ports::mcp::{
     McpCallIssue, McpCallOutcome, McpDiscoveredTool, McpDiscoveryResult, McpGateway,
     McpKnownResponse, McpTextContent, McpToolCallResult,
@@ -290,30 +291,70 @@ fn default_agent_responses() -> Vec<Value> {
                         "id": "call_write",
                         "type": "function",
                         "function": {
-                            "name": "workspace_write_file",
-                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"hello from real repo\"}"
+                            "name": "write",
+                            "arguments": "{\"file_path\":\"output/main.md\",\"content\":\"hello from real repo\"}"
                         }
                     }]
                 }
             }]
         }),
-        json!({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": null,
-                    "tool_calls": [{
-                        "id": "call_finish",
-                        "type": "function",
-                        "function": {
-                            "name": "workspace_finish",
-                            "arguments": "{}"
-                        }
-                    }]
-                }
-            }]
-        }),
+        model_text_response("Done."),
     ]
+}
+
+/// A text-only turn; it ends the run once the stage's finish policy is met.
+fn model_text_response(content: &str) -> Value {
+    json!({ "choices": [{ "message": { "role": "assistant", "content": content } }] })
+}
+
+/// The contract suite exercises every builtin the runtime supports, so its base profile
+/// (saved over the default id in the fixture store) also enables the tools the Default
+/// Writer leaves to custom Profiles.
+async fn contract_writer_definition(
+    profile_service: &AgentProfileService,
+) -> tt_domain::models::agent::profile::AgentProfileDefinition {
+    let mut definition = profile_service
+        .load_profile(DEFAULT_AGENT_PROFILE_ID)
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    definition.delegation.can_delegate = true;
+    definition.tools.allow = [
+        "agent.delegate",
+        "agent.await",
+        "chat.search",
+        "chat.read_messages",
+        "worldinfo.read_activated",
+        "workspace.list_files",
+        "workspace.search_files",
+        "workspace.read_file",
+        "workspace.write_file",
+        "workspace.apply_patch",
+        "workspace.shell",
+        "workspace.commit",
+    ]
+    .into_iter()
+    .map(|name| {
+        tt_domain::models::tool::ToolId::builtin(name)
+            .unwrap()
+            .to_string()
+    })
+    .collect();
+    definition
+}
+
+/// Resolves the default id as the test already saved it.
+async fn resolve_saved_default_profile(
+    fixture: &AgentRuntimeFixture,
+) -> tt_domain::models::agent::profile::ResolvedAgentProfile {
+    fixture
+        .profile_service
+        .resolve_profile(AgentProfileResolveInput {
+            profile_id: Some(DEFAULT_AGENT_PROFILE_ID),
+            tool_catalog: BuiltinAgentToolRegistry::all().catalog(),
+        })
+        .await
+        .expect("resolve saved default profile")
 }
 
 async fn resolve_contract_profile(
@@ -322,12 +363,20 @@ async fn resolve_contract_profile(
     let registry = BuiltinAgentToolRegistry::all();
     fixture
         .profile_service
+        .save_profile(
+            contract_writer_definition(&fixture.profile_service).await,
+            registry.catalog(),
+        )
+        .await
+        .expect("save contract writer profile");
+    fixture
+        .profile_service
         .resolve_profile(AgentProfileResolveInput {
-            profile_id: None,
+            profile_id: Some(DEFAULT_AGENT_PROFILE_ID),
             tool_catalog: registry.catalog(),
         })
         .await
-        .expect("resolve default profile")
+        .expect("resolve contract writer profile")
 }
 
 async fn start_contract_agent_run(
@@ -970,6 +1019,22 @@ impl AgentModelGateway for MockAgentModelGateway {
             )
         })??;
         let response = decode_chat_completion_response(response, &request.tools)?;
+        // A streamed request receives each tool call's arguments as one fragment.
+        if let Some(on_delta) = on_delta {
+            for (tool_call_index, call) in response.tool_calls.iter().enumerate() {
+                let arguments_fragment = match &call.arguments {
+                    ToolArguments::Object(arguments) => {
+                        serde_json::to_string(arguments).expect("serialize tool arguments")
+                    }
+                    ToolArguments::Invalid(raw) => raw.clone(),
+                };
+                on_delta(AgentModelStreamDelta::ToolCall {
+                    tool_call_index,
+                    tool_id: call.tool_id.clone(),
+                    arguments_fragment,
+                });
+            }
+        }
         Ok(AgentModelExchange {
             response,
             provider_state: request.provider_state.clone(),

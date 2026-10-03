@@ -1,11 +1,7 @@
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashSet};
-
 use serde::Deserialize;
 
 use tt_domain::errors::DomainError;
-use tt_domain::frozen_macros::{FrozenMacros, MAX_EXPANDED_TEXT_BYTES};
-use tt_domain::text_search::normalize_search_query;
+use tt_domain::text_search::RankedTextSearch;
 use tt_ports::repositories::chat_repository::{
     ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchHit, ChatMessageSearchQuery,
 };
@@ -13,11 +9,7 @@ use tt_ports::repositories::chat_repository::{
 use super::{FileChatRepository, classify_message_role};
 use crate::chat_jsonl::trim_whitespace;
 
-const MAX_QUERY_TOKENS: usize = 64;
-const MAX_BIGRAM_TOKENS_PER_SEGMENT: usize = 32;
 const SEARCH_PAGE_SIZE: usize = 1000;
-const SNIPPET_MAX_CHARS: usize = 200;
-const SNIPPET_CONTEXT_BEFORE: usize = 40;
 
 #[derive(Debug, Deserialize)]
 struct SearchableChatMessage {
@@ -35,231 +27,10 @@ fn role_from_message(message: &SearchableChatMessage) -> ChatMessageRole {
     classify_message_role(message.role.as_deref(), message.is_user, message.is_system)
 }
 
-fn bigram_tokens(value: &str, limit: usize) -> Vec<String> {
-    let chars: Vec<char> = value.chars().collect();
-    if chars.is_empty() {
-        return Vec::new();
-    }
-    if chars.len() == 1 {
-        return vec![value.to_string()];
-    }
-
-    let total = chars.len() - 1;
-    let step = total.div_ceil(limit);
-    let mut seen = HashSet::new();
-    let mut tokens = Vec::new();
-
-    for index in (0..total).step_by(step) {
-        let token = format!("{}{}", chars[index], chars[index + 1]);
-        if seen.insert(token.clone()) {
-            tokens.push(token);
-        }
-    }
-
-    tokens
-}
-
-fn has_word_chars(value: &str) -> bool {
-    value.chars().any(|ch| ch.is_alphanumeric() || ch == '_')
-}
-
-fn expand_query_tokens(tokens: Vec<String>) -> Vec<String> {
-    if tokens.is_empty() {
-        return Vec::new();
-    }
-
-    if tokens.len() == 1 {
-        let token = &tokens[0];
-        let char_count = token.chars().count();
-        if char_count <= 2 || !has_word_chars(token) {
-            return tokens;
-        }
-
-        let mut expanded = bigram_tokens(token, MAX_BIGRAM_TOKENS_PER_SEGMENT);
-        if char_count <= 8 && expanded.len() < MAX_BIGRAM_TOKENS_PER_SEGMENT {
-            expanded.insert(0, token.clone());
-        }
-        return expanded;
-    }
-
-    let mut expanded = Vec::new();
-    for token in tokens {
-        let char_count = token.chars().count();
-        let is_ascii_word = token.chars().any(|ch| ch.is_ascii_alphanumeric());
-        if has_word_chars(&token) && !is_ascii_word && char_count >= 8 {
-            expanded.extend(bigram_tokens(&token, 8));
-        } else {
-            expanded.push(token);
-        }
-    }
-
-    expanded
-}
-
-fn dedup_and_limit_tokens(tokens: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut unique = Vec::new();
-    for token in tokens {
-        if token.is_empty() {
-            continue;
-        }
-        if seen.insert(token.clone()) {
-            unique.push(token);
-        }
-    }
-
-    if unique.len() <= MAX_QUERY_TOKENS {
-        return unique;
-    }
-
-    let step = unique.len().div_ceil(MAX_QUERY_TOKENS);
-    unique
-        .into_iter()
-        .step_by(step)
-        .take(MAX_QUERY_TOKENS)
-        .collect()
-}
-
-fn build_query_tokens(query: &str) -> Vec<String> {
-    let normalized = normalize_search_query(query);
-    if normalized.is_empty() {
-        return Vec::new();
-    }
-
-    let base = normalized
-        .split_whitespace()
-        .filter(|token| !token.is_empty())
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    let expanded = expand_query_tokens(base);
-    dedup_and_limit_tokens(expanded)
-}
-
-fn token_weight(token: &str) -> usize {
-    token.chars().count().clamp(1, 8)
-}
-
-fn needs_ascii_lowercase(tokens: &[String]) -> bool {
-    tokens
-        .iter()
-        .any(|token| token.chars().any(|ch| ch.is_ascii_alphabetic()))
-}
-
-fn score_text(text: &str, tokens: &[String], needs_lowercase: bool) -> (f32, Option<usize>) {
-    if text.trim().is_empty() || tokens.is_empty() {
-        return (0.0, None);
-    }
-
-    let search_text;
-    let haystack: &str = if needs_lowercase {
-        search_text = text.to_lowercase();
-        &search_text
-    } else {
-        text
-    };
-
-    let mut total_weight: usize = 0;
-    let mut matched_weight: usize = 0;
-    let mut first_match: Option<usize> = None;
-
-    for token in tokens {
-        let weight = token_weight(token);
-        total_weight += weight;
-
-        if let Some(pos) = haystack.find(token) {
-            matched_weight += weight;
-            first_match = match first_match {
-                Some(existing) => Some(existing.min(pos)),
-                None => Some(pos),
-            };
-        }
-    }
-
-    if total_weight == 0 || matched_weight == 0 {
-        return (0.0, first_match);
-    }
-
-    let score = (matched_weight as f32) / (total_weight as f32);
-    (score, first_match)
-}
-
-fn snippet_from_text(text: &str, match_byte: Option<usize>) -> String {
-    let total_chars = text.chars().count();
-    if total_chars <= SNIPPET_MAX_CHARS {
-        return text.to_string();
-    }
-
-    if let Some(byte_index) = match_byte {
-        let prefix_chars = text.get(..byte_index).unwrap_or_default().chars().count();
-        let start = prefix_chars.saturating_sub(SNIPPET_CONTEXT_BEFORE);
-        let end = (start + SNIPPET_MAX_CHARS).min(total_chars);
-        let snippet: String = text
-            .chars()
-            .skip(start)
-            .take(end.saturating_sub(start))
-            .collect();
-
-        let mut output = String::new();
-        if start > 0 {
-            output.push_str("...");
-        }
-        output.push_str(&snippet);
-        if end < total_chars {
-            output.push_str("...");
-        }
-        return output;
-    }
-
-    let tail: String = text
-        .chars()
-        .rev()
-        .take(SNIPPET_MAX_CHARS)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect();
-    format!("...{}", tail)
-}
-
-#[derive(Debug)]
-struct Candidate {
-    index: usize,
-    score: f32,
-    role: ChatMessageRole,
-    text: String,
-    match_byte: Option<usize>,
-}
-
 struct CandidateSearchPlan {
-    frozen_macros: Option<std::sync::Arc<FrozenMacros>>,
     min_index: usize,
     max_index: usize,
     role_filter: Option<ChatMessageRole>,
-    tokens: Vec<String>,
-    needs_lowercase: bool,
-    limit: usize,
-}
-
-impl PartialEq for Candidate {
-    fn eq(&self, other: &Self) -> bool {
-        self.score.to_bits() == other.score.to_bits() && self.index == other.index
-    }
-}
-
-impl Eq for Candidate {}
-
-impl PartialOrd for Candidate {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Candidate {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.score
-            .total_cmp(&other.score)
-            .then_with(|| self.index.cmp(&other.index))
-    }
 }
 
 fn resolve_effective_range(
@@ -315,11 +86,10 @@ impl FileChatRepository {
             return Ok(Vec::new());
         }
 
-        let tokens = build_query_tokens(query_text);
-        if tokens.is_empty() {
+        let mut search = RankedTextSearch::new(query_text, query.limit);
+        if search.is_empty() {
             return Ok(Vec::new());
         }
-        let needs_lowercase = needs_ascii_lowercase(&tokens);
 
         let filters = query.filters.as_ref();
         let role_filter = filters.and_then(|value| value.role);
@@ -330,16 +100,10 @@ impl FileChatRepository {
 
         let mut remaining_scan = resolve_scan_limit(total_count, filters)?;
         let plan = CandidateSearchPlan {
-            frozen_macros: query.frozen_macros,
             min_index: start_index,
             max_index: end_index,
             role_filter,
-            tokens,
-            needs_lowercase,
-            limit: query.limit,
         };
-
-        let mut heap: BinaryHeap<Reverse<Candidate>> = BinaryHeap::new();
 
         let page_size = SEARCH_PAGE_SIZE.min(remaining_scan);
         let tail = self
@@ -348,7 +112,7 @@ impl FileChatRepository {
 
         let mut window_start_index = total_count.saturating_sub(tail.lines.len());
 
-        collect_candidates_from_lines(&tail.lines, window_start_index, &plan, &mut heap)?;
+        collect_candidates_from_lines(&tail.lines, window_start_index, &plan, &mut search)?;
 
         remaining_scan = remaining_scan.saturating_sub(tail.lines.len());
 
@@ -372,12 +136,12 @@ impl FileChatRepository {
                 break;
             }
 
-            collect_candidates_from_lines(&chunk.lines, window_start_index, &plan, &mut heap)?;
+            collect_candidates_from_lines(&chunk.lines, window_start_index, &plan, &mut search)?;
 
             remaining_scan = remaining_scan.saturating_sub(chunk.lines.len());
         }
 
-        Ok(finalize_candidates(heap))
+        Ok(finalize_candidates(search))
     }
 
     pub(super) async fn search_group_chat_messages_internal(
@@ -403,11 +167,10 @@ impl FileChatRepository {
             return Ok(Vec::new());
         }
 
-        let tokens = build_query_tokens(query_text);
-        if tokens.is_empty() {
+        let mut search = RankedTextSearch::new(query_text, query.limit);
+        if search.is_empty() {
             return Ok(Vec::new());
         }
-        let needs_lowercase = needs_ascii_lowercase(&tokens);
 
         let filters = query.filters.as_ref();
         let role_filter = filters.and_then(|value| value.role);
@@ -418,16 +181,10 @@ impl FileChatRepository {
 
         let mut remaining_scan = resolve_scan_limit(total_count, filters)?;
         let plan = CandidateSearchPlan {
-            frozen_macros: query.frozen_macros,
             min_index: start_index,
             max_index: end_index,
             role_filter,
-            tokens,
-            needs_lowercase,
-            limit: query.limit,
         };
-
-        let mut heap: BinaryHeap<Reverse<Candidate>> = BinaryHeap::new();
 
         let page_size = SEARCH_PAGE_SIZE.min(remaining_scan);
         let tail = self
@@ -436,7 +193,7 @@ impl FileChatRepository {
 
         let mut window_start_index = total_count.saturating_sub(tail.lines.len());
 
-        collect_candidates_from_lines(&tail.lines, window_start_index, &plan, &mut heap)?;
+        collect_candidates_from_lines(&tail.lines, window_start_index, &plan, &mut search)?;
 
         remaining_scan = remaining_scan.saturating_sub(tail.lines.len());
 
@@ -460,12 +217,12 @@ impl FileChatRepository {
                 break;
             }
 
-            collect_candidates_from_lines(&chunk.lines, window_start_index, &plan, &mut heap)?;
+            collect_candidates_from_lines(&chunk.lines, window_start_index, &plan, &mut search)?;
 
             remaining_scan = remaining_scan.saturating_sub(chunk.lines.len());
         }
 
-        Ok(finalize_candidates(heap))
+        Ok(finalize_candidates(search))
     }
 }
 
@@ -473,7 +230,7 @@ fn collect_candidates_from_lines(
     lines: &[String],
     start_abs_index: usize,
     plan: &CandidateSearchPlan,
-    heap: &mut BinaryHeap<Reverse<Candidate>>,
+    search: &mut RankedTextSearch<'static, ChatMessageRole>,
 ) -> Result<(), DomainError> {
     for (offset, line) in lines.iter().enumerate() {
         let index = start_abs_index.saturating_add(offset);
@@ -486,7 +243,7 @@ fn collect_candidates_from_lines(
                 "Chat message {index} must be a JSON object"
             )));
         }
-        let mut message: SearchableChatMessage = serde_json::from_str(line).map_err(|error| {
+        let message: SearchableChatMessage = serde_json::from_str(line).map_err(|error| {
             DomainError::InvalidData(format!("Failed to parse chat message JSON: {}", error))
         })?;
 
@@ -496,71 +253,24 @@ fn collect_candidates_from_lines(
         {
             continue;
         }
-
-        if let Some(macros) = &plan.frozen_macros
-            && let std::borrow::Cow::Owned(text) =
-                macros.render(&message.mes, MAX_EXPANDED_TEXT_BYTES)?
-        {
-            message.mes = text;
-        }
-        let (score, match_byte) = score_text(&message.mes, &plan.tokens, plan.needs_lowercase);
-        if score <= 0.0 {
-            continue;
-        }
-
-        let candidate = Candidate {
-            index,
-            score,
-            role,
-            text: message.mes,
-            match_byte,
-        };
-
-        if heap.len() < plan.limit {
-            heap.push(Reverse(candidate));
-            continue;
-        }
-
-        let should_insert = heap.peek().map(|entry| candidate > entry.0).unwrap_or(true);
-        if should_insert {
-            heap.pop();
-            heap.push(Reverse(candidate));
-        }
+        search.offer(index, message.mes, role);
     }
 
     Ok(())
 }
 
-fn finalize_candidates(heap: BinaryHeap<Reverse<Candidate>>) -> Vec<ChatMessageSearchHit> {
-    let mut candidates = heap.into_iter().map(|entry| entry.0).collect::<Vec<_>>();
-    candidates.sort_by(|a, b| b.cmp(a));
-    candidates
+fn finalize_candidates(
+    search: RankedTextSearch<'static, ChatMessageRole>,
+) -> Vec<ChatMessageSearchHit> {
+    search
+        .finish()
         .into_iter()
-        .map(|candidate| ChatMessageSearchHit {
-            index: candidate.index,
-            score: candidate.score,
-            snippet: snippet_from_text(&candidate.text, candidate.match_byte),
-            role: candidate.role,
-            text: candidate.text,
+        .map(|hit| ChatMessageSearchHit {
+            index: hit.index,
+            score: hit.score,
+            snippet: hit.snippet,
+            role: hit.item,
+            text: hit.text.into_owned(),
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{build_query_tokens, score_text};
-
-    #[test]
-    fn punctuation_and_symbol_only_queries_match_literally() {
-        for (query, text) in [
-            ("——", "pause——continue"),
-            ("❤️", "status: ❤️"),
-            ("👨‍👩‍👧", "family: 👨‍👩‍👧"),
-        ] {
-            let tokens = build_query_tokens(query);
-
-            assert_eq!(tokens, vec![query]);
-            assert_eq!(score_text(text, &tokens, false), (1.0, text.find(query)));
-        }
-    }
 }

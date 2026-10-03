@@ -3,6 +3,7 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use super::commit_ledger::RunCommitLedger;
+use super::tool_execution::recoverable_tool_error;
 use super::{
     AgentCancelReceiver, AgentRuntimeService, HostChatCommitResult, PendingHostChatCommit,
     PendingPersistentStateMetadataUpdate,
@@ -14,11 +15,10 @@ use crate::errors::ApplicationError;
 use crate::services::agent_tools::{
     AgentToolDispatchOutcome, AgentToolEffect, classify_workspace_io_error,
 };
-use crate::services::agent_workspace_scope::is_auto_commit_text_path;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{
     AgentChatCommitMode, AgentRun, AgentRunEventLevel, AgentRunStatus, AgentToolResult,
-    ArtifactTarget, WorkspacePath, WorkspacePersistentChangeSet,
+    ArtifactSpec, ArtifactTarget, WorkspacePath, WorkspacePersistentChangeSet,
 };
 use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
@@ -27,7 +27,10 @@ use tt_ports::workspace_fs::WorkspaceFile;
 enum HostChatCommitOutcome {
     Committed {
         message_id: Option<String>,
-        message_index: Option<usize>,
+    },
+    /// The chat message already shows this publication, so the host was not asked again.
+    AlreadyShown {
+        message_id: Option<String>,
     },
     Rejected(String),
 }
@@ -37,6 +40,7 @@ struct HostChatCommit<'a> {
     file: &'a WorkspaceFile,
     is_explicit: bool,
     mode: AgentChatCommitMode,
+    /// The model's reason for an explicit commit; an automatic commit has none.
     reason: Option<String>,
     round: usize,
     invocation_id: &'a str,
@@ -136,7 +140,7 @@ impl AgentRuntimeService {
         call: &ToolInvocation,
         path: WorkspacePath,
         mode: AgentChatCommitMode,
-        reason: Option<String>,
+        reason: String,
         elapsed_ms: u128,
         round: usize,
         invocation_id: &str,
@@ -166,7 +170,7 @@ impl AgentRuntimeService {
         }
 
         let file_metrics = TextMetrics::from_text(&file.text);
-        let (message_id, message_index) = match self
+        let (summary, message_id) = match self
             .perform_host_chat_commit(
                 run_id,
                 HostChatCommit {
@@ -174,7 +178,7 @@ impl AgentRuntimeService {
                     file: &file,
                     is_explicit: true,
                     mode,
-                    reason,
+                    reason: Some(reason),
                     round,
                     invocation_id,
                 },
@@ -183,10 +187,21 @@ impl AgentRuntimeService {
             )
             .await?
         {
-            HostChatCommitOutcome::Committed {
+            HostChatCommitOutcome::Committed { message_id } => (
+                format!(
+                    "Committed {} to the current chat message with mode {:?}.",
+                    path.as_str(),
+                    mode
+                ),
                 message_id,
-                message_index,
-            } => (message_id, message_index),
+            ),
+            HostChatCommitOutcome::AlreadyShown { message_id } => (
+                format!(
+                    "{} is unchanged since the last commit; the chat message was not republished.",
+                    path.as_str()
+                ),
+                message_id,
+            ),
             HostChatCommitOutcome::Rejected(message) => {
                 return Ok(recoverable_tool_error(
                     call,
@@ -196,20 +211,14 @@ impl AgentRuntimeService {
                 ));
             }
         };
+        let message_index = message_index_from_message_id(message_id.as_deref());
 
         Ok(AgentToolDispatchOutcome {
             result: AgentToolResult {
                 call_id: call.call_id.clone(),
                 tool_id: call.tool_id.clone(),
-                content: format!(
-                    "Committed {} to the current chat message with mode {:?}. \
-                     You may continue editing and commit again if needed. When all intended \
-                     commits are complete, call workspace_finish to end the run. Do not use \
-                     plain text as the final answer; the run must finish through \
-                     workspace_finish.",
-                    path.as_str(),
-                    mode
-                ),
+                // The caller appends the next step, which depends on the finish admission.
+                content: summary,
                 structured: json!({
                     "path": path.as_str(),
                     "mode": mode,
@@ -241,7 +250,7 @@ impl AgentRuntimeService {
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
-        if commit_ledger.has_explicit_commit() || !is_auto_commit_text_path(path) {
+        if commit_ledger.has_explicit_commit() {
             return Ok(());
         }
         let files = &self.active_run_handle(run_id).await?.files;
@@ -277,6 +286,15 @@ impl AgentRuntimeService {
         Ok(())
     }
 
+    /// The run's message body file, the only file published without an explicit commit.
+    pub(super) async fn run_message_body_path(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<WorkspacePath>, ApplicationError> {
+        let manifest = self.workspace_repository.read_manifest(run_id).await?;
+        message_body_path(&manifest.artifacts)
+    }
+
     async fn required_artifact_is_empty(
         &self,
         run_id: &str,
@@ -291,6 +309,7 @@ impl AgentRuntimeService {
             }))
     }
 
+    /// Publishes `file` to the run's chat message; explicit and automatic commits share it.
     async fn perform_host_chat_commit(
         &self,
         run_id: &str,
@@ -307,6 +326,13 @@ impl AgentRuntimeService {
             round,
             invocation_id,
         } = commit;
+        // Publishing again would replay the host's message events (e.g. MESSAGE_RECEIVED),
+        // so extensions would settle an unchanged reply twice.
+        if commit_ledger.already_shows(file, mode) {
+            return Ok(HostChatCommitOutcome::AlreadyShown {
+                message_id: commit_ledger.latest_message_id().map(str::to_string),
+            });
+        }
         let run = self.run_repository.load_run(run_id).await?;
         let commit_id = format!("commit_{}", Uuid::new_v4().simple());
 
@@ -371,13 +397,7 @@ impl AgentRuntimeService {
         match host_result {
             Ok(result) => {
                 let message_index = message_index_from_message_id(result.message_id.as_deref());
-                commit_ledger.record(
-                    &file.path,
-                    mode,
-                    result.message_id.clone(),
-                    round,
-                    is_explicit,
-                );
+                commit_ledger.record(file, mode, result.message_id.clone(), round, is_explicit);
                 self.transition_status(run_id, AgentRunStatus::DispatchingTool)
                     .await?;
                 self.event(
@@ -412,10 +432,11 @@ impl AgentRuntimeService {
 
                 Ok(HostChatCommitOutcome::Committed {
                     message_id: result.message_id,
-                    message_index,
                 })
             }
             Err(message) => {
+                // A rejected commit may have left the message half-updated.
+                commit_ledger.mark_unconfirmed();
                 self.transition_status(run_id, AgentRunStatus::DispatchingTool)
                     .await?;
                 self.event(
@@ -641,28 +662,13 @@ fn message_index_from_message_id(message_id: Option<&str>) -> Option<usize> {
     message_id?.trim().parse::<usize>().ok()
 }
 
-fn recoverable_tool_error(
-    call: &ToolInvocation,
-    code: &str,
-    message: &str,
-    elapsed_ms: u128,
-) -> AgentToolDispatchOutcome {
-    AgentToolDispatchOutcome {
-        result: AgentToolResult {
-            call_id: call.call_id.clone(),
-            tool_id: call.tool_id.clone(),
-            content: message.to_string(),
-            structured: json!({
-                "error": {
-                    "code": code,
-                    "message": message,
-                }
-            }),
-            is_error: true,
-            error_code: Some(code.to_string()),
-            resource_refs: Vec::new(),
-        },
-        effect: AgentToolEffect::None,
-        elapsed_ms,
-    }
+pub(super) fn message_body_path(
+    artifacts: &[ArtifactSpec],
+) -> Result<Option<WorkspacePath>, ApplicationError> {
+    artifacts
+        .iter()
+        .find(|artifact| matches!(artifact.target, ArtifactTarget::MessageBody))
+        .map(|artifact| WorkspacePath::parse(&artifact.path))
+        .transpose()
+        .map_err(ApplicationError::from)
 }

@@ -26,9 +26,9 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
         profile.delegation.can_delegate = false;
         profile.tools.allow = [
             "workspace.read_file",
+            "workspace.search_files",
             "workspace.write_file",
             "workspace.commit",
-            "workspace.finish",
         ]
         .map(|name| format!("builtin:{name}"))
         .to_vec();
@@ -38,7 +38,7 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
             "builtin:workspace.read_file".into(),
             serde_json::from_value(json!({
                 "description": "  Read the supplied file.  ",
-                "properties": {"path": "  Keep this parameter guidance.  "}
+                "properties": {"file_path": "  Keep this parameter guidance.  "}
             }))
             .unwrap(),
         );
@@ -50,6 +50,15 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
             .insert("builtin:workspace.read_file".into(), 7);
         let expected = serde_json::to_value(&profile).unwrap();
         let mut legacy = expected.clone();
+        // Overrides written for the former parameter name move to the current one.
+        legacy["tools"]["toolDescriptions"]["builtin:workspace.read_file"]["properties"] =
+            json!({"path": "  Keep this parameter guidance.  "});
+        // Search changed from ranked words to a regex, so an override naming its old
+        // parameters describes another tool and is dropped whole.
+        legacy["tools"]["toolDescriptions"]["builtin:workspace.search_files"] = json!({
+            "description": "Search by words; this is not a regex.",
+            "properties": {"query": "Words to look for.", "limit": "Hits to return."}
+        });
         legacy["tools"]["mcpResultInlineCharLimit"] = legacy["tools"]
             .as_object_mut()
             .unwrap()
@@ -62,6 +71,7 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
             json!("builtin:skill.read"),
             json!("builtin:skill.run_script"),
             json!("builtin:agent.list"),
+            json!("builtin:workspace.finish"),
         ]);
         legacy["tools"]["deny"]
             .as_array_mut()
@@ -121,5 +131,32 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
                 .is_err()
         );
     }
+
+    // A current-schema Profile that still lists the removed finish tool loads without it.
+    let mut profile = service
+        .load_profile(DEFAULT_AGENT_PROFILE_ID)
+        .await
+        .unwrap()
+        .unwrap();
+    profile.id = AgentProfileId::parse("current-with-finish").unwrap();
+    let expected = serde_json::to_value(&profile).unwrap();
+    let mut stored = expected.clone();
+    stored["tools"]["allow"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("builtin:workspace.finish"));
+    stored["tools"]["maxCallsPerTool"]["builtin:workspace.finish"] = json!(1);
+    let path = root.join("profiles").join("current-with-finish.json");
+    fs::write(&path, serde_json::to_vec(&stored).unwrap())
+        .await
+        .unwrap();
+    let loaded = service
+        .load_profile("current-with-finish")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(serde_json::to_value(&loaded).unwrap(), expected);
+    let saved: Value = serde_json::from_slice(&fs::read(&path).await.unwrap()).unwrap();
+    assert_eq!(saved, expected);
     fs::remove_dir_all(root).await.unwrap();
 }

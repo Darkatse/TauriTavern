@@ -41,12 +41,8 @@ async fn completed_legacy_revision_preserves_work_and_translates_only_affected_t
     }];
     checkpoint["state"]["foreground"]["prepared"]["request"]["messages"] =
         serde_json::to_value(&original.messages).unwrap();
-    let mut target = fixture
-        .profile_service
-        .load_profile(DEFAULT_AGENT_PROFILE_ID)
-        .await
-        .unwrap()
-        .unwrap();
+    let mut target =
+        crate::app::contract_tests::contract_writer_definition(&fixture.profile_service).await;
     target.id = AgentProfileId::parse("revision-editor").unwrap();
     target.tools.allow.retain(|name| {
         !matches!(
@@ -339,14 +335,17 @@ async fn completed_legacy_revision_preserves_work_and_translates_only_affected_t
         .responses
         .lock()
         .await
-        .push_back(Ok(model_tool_response(vec![
-            model_tool_call(
-                "revision_read",
-                "workspace_read_file",
-                json!({ "path": "skills/style/SKILL.md" }),
-            ),
-            model_tool_call("revision_finish", "workspace_finish", json!({})),
-        ])));
+        .push_back(Ok(model_tool_response(vec![model_tool_call(
+            "revision_read",
+            "read",
+            json!({ "file_path": "skills/style/SKILL.md" }),
+        )])));
+    fixture
+        .model_gateway
+        .responses
+        .lock()
+        .await
+        .push_back(Ok(model_text_response("Done.")));
     revise_checkpoint(
         &fixture,
         &completed,
@@ -507,11 +506,7 @@ async fn completed_legacy_revision_preserves_work_and_translates_only_affected_t
         .responses
         .lock()
         .await
-        .push_back(Ok(model_tool_response(vec![model_tool_call(
-            "second_finish",
-            "workspace_finish",
-            json!({}),
-        )])));
+        .push_back(Ok(model_text_response("Done.")));
     revise_checkpoint(
         &fixture,
         &revised,
@@ -527,7 +522,7 @@ async fn completed_legacy_revision_preserves_work_and_translates_only_affected_t
         AgentRunStatus::Completed
     );
     let requests = fixture.model_gateway.requests().await;
-    let second_texts = user_texts(&requests[3]);
+    let second_texts = user_texts(&requests[4]);
     assert_eq!(
         second_texts
             .iter()

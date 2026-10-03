@@ -138,7 +138,7 @@ fn openai_compatible_replays_opaque_continuation() {
                         "id": "call_1",
                         "type": "function",
                         "function": {
-                            "name": "workspace_finish",
+                            "name": "workspace_commit",
                             "arguments": "{}"
                         },
                         "extra_content": {
@@ -183,7 +183,7 @@ fn openai_compatible_replays_opaque_continuation() {
 }
 
 #[test]
-fn rejects_tool_names_outside_the_current_turn_aliases() {
+fn keeps_tool_names_outside_the_current_turn_as_unknown_calls() {
     let registry = BuiltinAgentToolRegistry::all();
     let write = model_tool(&registry, "workspace.write_file");
 
@@ -203,8 +203,13 @@ fn rejects_tool_names_outside_the_current_turn_aliases() {
             }]
         });
 
-        let error = decode_chat_completion_response(response, &tools).unwrap_err();
-        assert!(error.to_string().contains("model.unknown_tool_call"));
+        let decoded = decode_chat_completion_response(response, &tools).unwrap();
+        let call = &decoded.tool_calls[0];
+        assert_eq!(
+            call.tool_id.native_name(),
+            super::decode::UNKNOWN_MODEL_TOOL
+        );
+        assert_eq!(call.provider_metadata["modelAlias"], raw_name);
     }
 }
 
@@ -216,7 +221,7 @@ fn rejects_tool_call_without_id() {
             "message": {
                 "tool_calls": [{
                     "type": "function",
-                    "function": { "name": "workspace_finish", "arguments": "{}" }
+                    "function": { "name": "workspace_commit", "arguments": "{}" }
                 }]
             }
         }]
@@ -235,7 +240,7 @@ fn rejects_normalizer_synthetic_tool_call_id() {
                 "tool_calls": [{
                     "id": "tool_call_0",
                     "type": "function",
-                    "function": { "name": "workspace_finish", "arguments": "{}" }
+                    "function": { "name": "workspace_commit", "arguments": "{}" }
                 }]
             }
         }]
@@ -260,23 +265,23 @@ fn rejects_normalizer_synthetic_tool_call_id() {
 #[test]
 fn encodes_typed_tool_choice_against_advertised_tools() {
     let registry = BuiltinAgentToolRegistry::all();
-    let finish = model_tool(&registry, "workspace.finish");
+    let commit = model_tool(&registry, "workspace.commit");
     let cases = [
         (ToolChoice::None, json!("none")),
         (ToolChoice::Auto, json!("auto")),
         (ToolChoice::Required, json!("required")),
         (
-            ToolChoice::Specific(ToolId::builtin("workspace.finish").unwrap()),
+            ToolChoice::Specific(ToolId::builtin("workspace.commit").unwrap()),
             json!({
                 "type": "function",
-                "function": { "name": finish.model_alias }
+                "function": { "name": commit.model_alias }
             }),
         ),
     ];
 
     for (tool_choice, expected) in cases {
         let mut request = basic_request("openai", None, Vec::new());
-        request.tools = vec![finish.clone()];
+        request.tools = vec![commit.clone()];
         request.tool_choice = tool_choice;
 
         let dto = encode_chat_completion_request(&request, false).expect("choice should encode");
@@ -288,7 +293,7 @@ fn encodes_typed_tool_choice_against_advertised_tools() {
 fn rejects_tool_choice_outside_the_advertised_set() {
     let registry = BuiltinAgentToolRegistry::all();
     let mut request = basic_request("openai", None, Vec::new());
-    request.tools = vec![model_tool(&registry, "workspace.finish")];
+    request.tools = vec![model_tool(&registry, "workspace.commit")];
 
     request.tool_choice = ToolChoice::Specific(ToolId::builtin("workspace.write_file").unwrap());
     let error = encode_chat_completion_request(&request, false)

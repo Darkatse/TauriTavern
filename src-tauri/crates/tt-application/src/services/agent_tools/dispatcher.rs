@@ -10,7 +10,9 @@ use super::session::AgentToolSession;
 use super::workspace;
 use super::world_info;
 use crate::errors::ApplicationError;
-use crate::services::agent_workspace_scope::{ScopedWorkspaceFs, WorkspaceAccessPolicy};
+use crate::services::agent_workspace_scope::{
+    ChatSnapshot, ScopedWorkspaceFs, WorkspaceAccessPolicy,
+};
 use crate::services::skill_service::SkillService;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
@@ -51,7 +53,9 @@ pub(crate) enum AgentToolEffect {
     ChatCommitRequested {
         path: WorkspacePath,
         mode: AgentChatCommitMode,
-        reason: Option<String>,
+        reason: String,
+        /// The run ends once this commit is confirmed.
+        finish: bool,
     },
     TaskReturned {
         status: tt_domain::models::agent::AgentTaskStatus,
@@ -62,6 +66,7 @@ pub(crate) enum AgentToolEffect {
         task_id: String,
         new_invocation_id: String,
     },
+    /// Set by the runtime on a confirmed commit with `finish: true`; no tool returns it.
     Finish,
 }
 
@@ -106,6 +111,27 @@ impl AgentToolDispatcher {
         auto_commit_candidate: Option<WorkspacePath>,
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
+        let chat = session
+            .chat
+            .get_or_try_init(|| async {
+                self.run_repository.load_run(run_id).await.map(|run| {
+                    ChatSnapshot::for_run(
+                        &run,
+                        self.chat_repository.clone(),
+                        self.group_chat_repository.clone(),
+                    )
+                })
+            })
+            .await?
+            .clone();
+        // Chat tools are offered only in Chat runs, which always have a chat.
+        let run_chat = || {
+            chat.as_deref().ok_or_else(|| {
+                ApplicationError::InternalError(
+                    "agent.chat_missing: chat tools read the chat of a Chat run".to_string(),
+                )
+            })
+        };
         let workspace = ScopedWorkspaceFs::new(
             raw_files.clone(),
             WorkspaceAccessPolicy::from_profile(profile),
@@ -114,32 +140,11 @@ impl AgentToolDispatcher {
             self.skill_service.file_repository(),
             session.effective_skills.clone(),
             session.runtime_context.frozen_macros.clone(),
-        );
+        )
+        .with_chat(chat.clone());
         let outcome = match builtin_tool_name(&call.tool_id)? {
-            chat::CHAT_SEARCH => {
-                chat::search(
-                    self.run_repository.as_ref(),
-                    self.chat_repository.as_ref(),
-                    self.group_chat_repository.as_ref(),
-                    run_id,
-                    call,
-                    args,
-                    &session.runtime_context.frozen_macros,
-                )
-                .await?
-            }
-            chat::CHAT_READ_MESSAGES => {
-                chat::read_messages(
-                    self.run_repository.as_ref(),
-                    self.chat_repository.as_ref(),
-                    self.group_chat_repository.as_ref(),
-                    run_id,
-                    call,
-                    args,
-                    &session.runtime_context.frozen_macros,
-                )
-                .await?
-            }
+            chat::CHAT_SEARCH => chat::search(run_chat()?, call, args).await?,
+            chat::CHAT_READ_MESSAGES => chat::read_messages(run_chat()?, call, args).await?,
             world_info::WORLDINFO_READ_ACTIVATED => {
                 // WorldInfo activation is a hidden run input fact, not a model-visible
                 // workspace file; invocation workspace policy must not gate this read.
@@ -163,9 +168,16 @@ impl AgentToolDispatcher {
                 workspace::apply_patch(&workspace, call, args, session).await?
             }
             workspace::WORKSPACE_SHELL => {
+                let workspace = match &profile.output {
+                    Some(output) => workspace.track_text_mutations(
+                        WorkspacePath::parse(&output.message_body_path)?,
+                        auto_commit_candidate,
+                    ),
+                    None => workspace,
+                };
                 workspace::shell(
                     self.workspace_shell.as_ref(),
-                    Arc::new(workspace.track_text_mutations(auto_commit_candidate)),
+                    Arc::new(workspace),
                     session.runtime_context.clone(),
                     call,
                     args,
@@ -176,7 +188,6 @@ impl AgentToolDispatcher {
             workspace::WORKSPACE_COMMIT => {
                 workspace::commit(&workspace, call, args, profile).await?
             }
-            workspace::WORKSPACE_FINISH => workspace::finish(call, args)?,
             other => {
                 return Err(ApplicationError::InternalError(format!(
                     "tool.dispatch_handler_missing: admitted builtin tool `builtin:{other}` has no execution handler"
@@ -226,7 +237,7 @@ mod tests {
     fn builtin_dispatch_does_not_accept_external_tools_with_the_same_native_name() {
         let external = ToolId::new(
             &ToolProviderId::parse("mcp/registration-1").unwrap(),
-            "workspace.finish",
+            "workspace.commit",
         )
         .unwrap();
 

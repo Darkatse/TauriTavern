@@ -22,7 +22,6 @@ mod group_chat_repository_impl;
 mod importing;
 mod integrity;
 mod locate;
-mod message_read;
 mod message_search;
 mod paths;
 mod payload;

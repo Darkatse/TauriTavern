@@ -1,4 +1,5 @@
 use crate::errors::ApplicationError;
+use crate::services::agent_tools::{FinishPolicy, profile_can_finish_run, profile_tool_visible};
 use tt_domain::models::agent::profile::{
     AgentModelBindingMode, AgentPresetBindingMode, ResolvedAgentProfile,
 };
@@ -8,6 +9,7 @@ use super::constants::{CHAT_WORKSPACE_ROOTS, SESSION_WORKSPACE_ROOTS};
 use super::require_output;
 
 /// Writing requirements belong to a Chat execution, not the Profile file format.
+/// `presentation` is the Run's: a handoff target is checked for the Run it joins.
 pub fn validate_chat_profile(
     profile: &ResolvedAgentProfile,
     exit_policy: AgentInvocationExitPolicy,
@@ -20,11 +22,10 @@ pub fn validate_chat_profile(
         "workspace.write_file",
         "agent.profile_output_writer_required",
     )?;
-    if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed && profile.run.direct_runnable {
-        require_tool(profile, "workspace.finish", "agent.profile_finish_required")?;
-        if presentation == AgentRunPresentation::Foreground {
-            require_tool(profile, "workspace.commit", "agent.profile_commit_required")?;
-        }
+    if FinishPolicy::for_stage(exit_policy, presentation, profile_can_finish_run(profile))
+        .requires_commit()
+    {
+        require_tool(profile, "workspace.commit", "agent.profile_commit_required")?;
     }
     Ok(())
 }
@@ -80,11 +81,7 @@ fn require_tool(
     name: &str,
     code: &str,
 ) -> Result<(), ApplicationError> {
-    let visible =
-        profile.tools.allow.iter().any(|id| {
-            id.is_builtin() && id.native_name() == name && !profile.tools.deny.contains(id)
-        });
-    if !visible {
+    if !profile_tool_visible(profile, name) {
         return Err(ApplicationError::ValidationError(format!(
             "{code}: Chat execution requires {name}"
         )));
