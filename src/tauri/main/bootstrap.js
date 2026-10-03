@@ -8,6 +8,7 @@ import { installBackNavigationBridge } from './back-navigation.js';
 import { installNativeShareBridge } from './share-target-bridge.js';
 import { downloadBlobWithRuntime, isNativeMobileDownloadRuntime } from '../../scripts/file-export.js';
 import { showExportFailureToast, showExportSuccessToast } from '../../scripts/download-feedback.js';
+import { isAndroidRuntime } from '../../scripts/util/mobile-runtime.js';
 import { installAndroidImeLayoutHost } from './compat/mobile/android-ime-layout-host.js';
 import { installMobileGeometryFirewall } from './compat/mobile/mobile-geometry-firewall.js';
 import { installMobileIframeViewportContractBridge } from './compat/mobile/mobile-iframe-viewport-contract-bridge.js';
@@ -21,6 +22,7 @@ import { extractErrorText, resolveHostErrorResponse } from './kernel/host-error-
 import { isAbortError } from './kernel/abort-error.js';
 import { installMainApiOptionParking } from './adapters/st/main-api-selector-option-parking.js';
 import { installWorldInfoGlobalSelectorSelect2Enforcer } from './adapters/st/world-info-global-selector-select2-enforcer.js';
+import { confirmImageDownload } from './adapters/st/image-download-popup.js';
 import {
     installDesktopFullscreenShortcut,
     leaveDesktopFullscreenForShutdown,
@@ -366,6 +368,8 @@ export function bootstrapTauriMain() {
         downloadBlobWithRuntime,
         notifyDownloadResult: showExportSuccessToast,
         notifyDownloadError: showExportFailureToast,
+        // Android WebView has no image context menu, so the bridge supplies that default action.
+        confirmImageDownload: isAndroidRuntime() ? confirmImageDownload : null,
     });
 
     interceptors.patchFetch();

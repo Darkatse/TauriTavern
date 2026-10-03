@@ -368,6 +368,13 @@ TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板�
 - 文件格式校验、导入提示和持久化继续由原有前端/后端导入流程负责；普通文件选择器入口不变。
 - 移动端与独立 popup WebView 的拖放策略不变；主页面内的 HTML 弹窗仍由各自的 DOM 拖放处理器负责。
 
+### 5.7 Android 图片长按保存（Public in practice）
+
+- Android WebView 没有图片上下文菜单。宿主在主文档与同源 iframe 中补上 `<img>` 的 `contextmenu` 默认行为：用户确认后，把当前显示的图片保存到公共 Downloads；Android 8–9 由用户选择保存位置。
+- 与浏览器一致，只有 `preventDefault()` 会取消这一默认行为，`stopPropagation()` 不影响。自行处理图片长按的扩展应在 `contextmenu` 上调用 `preventDefault()`。
+- 图片在其所在窗口按 `currentSrc` 读取，遵循同源与 CORS 规则；读取失败直接提示，不改走其他路径。保存的是原始字节，不重新编码。
+- 宿主不注册原生长按菜单，长按产生的 `contextmenu` 始终先交给页面处理。
+
 ## 6. Smoke Tests（Public 回归用例）
 
 这些用例是“最小但真实”的兼容回归集（来源：你提供的 `.cache` 样本）：
@@ -385,6 +392,9 @@ TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板�
    - `/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*` 作为子资源可直接加载
    - `/scripts/extensions/third-party/*` 的 ESM/CSS/图片/字体均可加载，未命中返回 `404`；无秘密 fixture 的 `.git/HEAD` / `.git/config` 采用同一文件级路径语义
    - 媒体 Range 契约：`/backgrounds/<file>.mp4` 的 `Range: bytes=0-1` 返回 `206` 且包含 `Content-Range`
+5. **Android 图片长按保存**
+   - 长按聊天图片出现保存确认，确认后文件写入 Downloads（Android 8–9 为用户选择的位置）。
+   - 页面对该次 `contextmenu` 调用 `preventDefault()` 时，不出现确认框。
 
 任何涉及第 3/4 节契约的改动，都必须至少跑通以上 smoke tests。
 
