@@ -8,13 +8,7 @@ import re
 import subprocess
 
 root = Path(__file__).resolve().parents[2]
-source = Path(os.environ['OHOS_TAURI_SOURCES']).resolve()
 pins = json.loads((root / 'scripts/ohos/tauri-pins.json').read_text())
-for name, pin in pins.items():
-    revision = subprocess.check_output(['git', '-C', str(source / name), 'rev-parse', 'HEAD'], text=True).strip()
-    if revision != pin['revision']:
-        raise ValueError(f'Unexpected image {name} revision: {revision}')
-
 pin = json.loads((root / 'scripts/ohos/plugins-pin.json').read_text())
 external = Path(os.environ.get('RUNNER_TEMP', '/tmp')) / 'tauritavern-ohos-sources'
 external.mkdir(parents=True, exist_ok=True)
@@ -25,31 +19,10 @@ subprocess.run(['git', '-C', str(plugins), 'checkout', '--detach', 'FETCH_HEAD']
 spec = importlib.util.spec_from_file_location('ohos_plugin_sources', plugins / 'shared/ohos/prepare.py')
 helper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helper)
-patches = helper.prepare_sources(external / 'core')
-# The plugin bridge uses a separate Tauri checkout, not the image's Tauri source.
-for name, directory in (
-    ('tao', source / 'tao'),
-    ('tauri', patches['tauri'].parents[1]),
-    ('plugins', plugins),
-):
-    patch = root / f'scripts/ohos/{name}-warnings.patch'
-    subprocess.run(['git', '-C', str(directory), 'apply', '--check', str(patch)], check=True)
-    subprocess.run(['git', '-C', str(directory), 'apply', str(patch)], check=True)
-# CLI/bundler/schema tools are preinstalled and absent from the application graph.
-runtime_crates = {
-    'tauri', 'tauri-build', 'tauri-codegen', 'tauri-macros', 'tauri-plugin',
-    'tauri-runtime', 'tauri-runtime-wry', 'tauri-utils', 'wry', 'tao',
-}
-patches = {name: path for name, path in patches.items()
-           if name in runtime_crates or name.startswith('tauri-plugin-')}
-
+patches = helper.prepare_sources(external / 'runtime', pins)
 host = root / 'src-tauri/crates/tauritavern'
 manifest = host / 'Cargo.toml'
 text = manifest.read_text()
-# HAPs load only the cdylib; emitting an rlib alongside it prevents library LTO.
-text = text.replace('crate-type = ["staticlib", "cdylib", "rlib"]', 'crate-type = ["cdylib"]')
-# ohrs' first build does not forward --lib, so exclude src/main.rs as well.
-text = text.replace('[package]\n', '[package]\nautobins = false\n', 1)
 # Desktop-only dependencies still participate in Cargo resolution. Keep them out
 # of this experimental checkout without changing any normal-platform manifest.
 for name in ('tauri-plugin-single-instance', 'tauri-plugin-window-state', 'tauri-plugin-pilot'):
@@ -65,17 +38,5 @@ for name in ('mobile-barcode-scanner', 'system-file-picker'):
     data = json.loads(path.read_text())
     data['platforms'].append('openHarmony')
     path.write_text(json.dumps(data, indent=2)+'\n')
-path = host / 'capabilities/default.json'
-data = json.loads(path.read_text())
-for index, permission in enumerate(data['permissions']):
-    if isinstance(permission, dict) and permission.get('identifier') == 'fs:allow-write-file':
-        # External writes use only picker-authorized URIs. Standard sandbox paths
-        # retain the runtime data scope and app-cache/temp scopes installed by TT.
-        data['permissions'][index] = 'fs:allow-write-file'
-path.write_text(json.dumps(data, indent=2)+'\n')
-config = host / 'tauri.conf.json'
-data = json.loads(config.read_text())
-data['bundle']['resources'] = {}
-config.write_text(json.dumps(data, indent=2)+'\n')
 (host / 'gen').mkdir(exist_ok=True)
 (host / 'gen/ohos-plugins-source').write_text(str(plugins)+'\n')

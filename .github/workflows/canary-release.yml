@@ -60,6 +60,13 @@ jobs:
             echo "rpm_release=2.canary.${GITHUB_RUN_NUMBER}.g${GITHUB_SHA:0:12}"
           } >> "$GITHUB_OUTPUT"
 
+  ohos:
+    needs: prepare
+    uses: ./.github/workflows/ohos.yml
+    with:
+      package_version: ${{ needs.prepare.outputs.stable_version }}
+      asset_time: ${{ needs.prepare.outputs.asset_time }}
+
   desktop:
     needs: prepare
     strategy:
@@ -522,7 +529,7 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: [prepare, desktop, mobile, notes]
+    needs: [prepare, desktop, mobile, ohos, notes]
     runs-on: ubuntu-latest
     permissions:
       actions: read
