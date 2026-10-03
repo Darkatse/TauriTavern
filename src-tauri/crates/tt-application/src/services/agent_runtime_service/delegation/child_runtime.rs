@@ -24,6 +24,7 @@ use crate::services::agent_runtime_service::tool_snapshot::tool_snapshot_summary
 use crate::services::agent_runtime_service::{
     AgentCancelReceiver, AgentRuntimeService, PreparedInvocation,
 };
+use crate::services::agent_workspace_scope::ChatSnapshot;
 use tt_domain::models::agent::profile::{AgentPresetBindingMode, ResolvedAgentProfile};
 use tt_domain::models::agent::{
     AgentDelegationContinuation, AgentInvocation, AgentInvocationStatus, AgentRunEventLevel,
@@ -330,6 +331,19 @@ impl AgentRuntimeService {
             &effective_skills,
             &agents,
         )?;
+        super::super::prompt_snapshot::expand_workspace_index(
+            &mut request,
+            self.workspace_files(run_id).await?,
+            ChatSnapshot::for_run(
+                &run,
+                self.chat_repository.clone(),
+                self.group_chat_repository.clone(),
+            ),
+            &run.target,
+            &profile,
+            &visible_tools,
+        )
+        .await?;
         let request = prepare_agent_tool_request(
             request,
             &visible_tools,

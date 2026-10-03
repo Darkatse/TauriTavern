@@ -18,6 +18,7 @@ use super::tool_snapshot::tool_snapshot_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::ensure_profile_model_configured;
+use crate::services::agent_workspace_scope::ChatSnapshot;
 use tt_domain::models::agent::profile::{AgentModelBindingMode, ResolvedAgentProfile};
 use tt_domain::models::agent::{
     AgentInvocationStatus, AgentRunEventLevel, AgentRunStatus, WorkspacePath,
@@ -365,6 +366,19 @@ impl AgentRuntimeService {
             .agent_catalog(&resolved_profile, &visible_tools)
             .await?;
         super::prompt_snapshot::append_runtime_catalogs(&mut request, &effective_skills, &agents)?;
+        super::prompt_snapshot::expand_workspace_index(
+            &mut request,
+            self.workspace_files(run_id).await?,
+            ChatSnapshot::for_run(
+                &run,
+                self.chat_repository.clone(),
+                self.group_chat_repository.clone(),
+            ),
+            &run.target,
+            &resolved_profile,
+            &visible_tools,
+        )
+        .await?;
         let request = prepare_agent_tool_request(
             request,
             &visible_tools,
@@ -432,7 +446,8 @@ impl AgentRuntimeService {
                         "agent.max_tool_rounds_exceeded: {} was not completed within {} rounds",
                         super::loop_runner::completion_tool_name(
                             frame.prepared.invocation.exit_policy,
-                            &frame.prepared.tool_turn
+                            &frame.prepared.tool_turn,
+                            &frame.prepared.request.tools,
                         ),
                         frame.progress.max_rounds
                     ))

@@ -13,7 +13,7 @@ use tt_domain::models::agent::profile::{
 };
 use tt_domain::models::tool::ToolId;
 
-use super::constants::{AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, CHAT_WORKSPACE_ROOTS};
+use super::constants::CHAT_WORKSPACE_ROOTS;
 
 pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, ApplicationError> {
     Ok(AgentProfileDefinition {
@@ -44,25 +44,21 @@ pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, Applica
         instructions: AgentProfileInstructions {
             agent_system_prompt: None,
         },
-        delegation: AgentDelegationPolicy {
-            can_delegate: true,
-            ..Default::default()
-        },
+        delegation: AgentDelegationPolicy::default(),
+        // The prompt already carries activated World Info and the full budgeted history, and a
+        // final commit ends the run. Earlier floors are files in the chat mount: chat.search
+        // finds them by topic, chat.read_messages reads several at once, and grep finds exact
+        // words. The other builtins stay available to custom Profiles.
         tools: AgentToolPolicy {
             allow: [
-                AGENT_DELEGATE_TOOL,
-                AGENT_AWAIT_TOOL,
                 "chat.search",
                 "chat.read_messages",
-                "worldinfo.read_activated",
-                "workspace.list_files",
                 "workspace.search_files",
                 "workspace.read_file",
                 "workspace.write_file",
                 "workspace.apply_patch",
                 "workspace.shell",
                 "workspace.commit",
-                "workspace.finish",
             ]
             .into_iter()
             .map(|name| {

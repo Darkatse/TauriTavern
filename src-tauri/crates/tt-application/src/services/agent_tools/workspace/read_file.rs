@@ -2,8 +2,8 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::args::{
-    classify_workspace_io_error, ensure_only_args, ensure_visible_workspace_path,
-    optional_usize_arg, parse_workspace_path, required_trimmed_string_arg, tool_error,
+    classify_workspace_io_error, ensure_visible_workspace_path, optional_usize_arg,
+    parse_workspace_path, required_trimmed_string_arg, tool_error,
 };
 use super::{MAX_READ_BYTES, MAX_READ_CHARS, MAX_READ_LINES};
 use crate::errors::ApplicationError;
@@ -36,15 +36,9 @@ pub(in crate::services::agent_tools) async fn read_file(
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let policy = &workspace.policy;
     let workspace_files: &dyn WorkspaceFs = workspace;
-    if let Err(message) = ensure_only_args(args, &["path", "start_line", "line_count"]) {
+    let Some(path) = required_trimmed_string_arg(args, "file_path") else {
         return Ok((
-            tool_error(call, "tool.invalid_arguments", &message),
-            AgentToolEffect::None,
-        ));
-    }
-    let Some(path) = required_trimmed_string_arg(args, "path") else {
-        return Ok((
-            tool_error(call, "tool.invalid_arguments", "path is required"),
+            tool_error(call, "tool.invalid_arguments", "file_path is required"),
             AgentToolEffect::None,
         ));
     };
@@ -56,7 +50,7 @@ pub(in crate::services::agent_tools) async fn read_file(
         return Ok((error.into_tool_result(call), AgentToolEffect::None));
     }
 
-    let start_line = match optional_usize_arg(args, "start_line") {
+    let start_line = match optional_usize_arg(args, "offset") {
         Ok(value) => value.unwrap_or(1),
         Err(message) => {
             return Ok((
@@ -65,7 +59,7 @@ pub(in crate::services::agent_tools) async fn read_file(
             ));
         }
     };
-    let line_count = match optional_usize_arg(args, "line_count") {
+    let line_count = match optional_usize_arg(args, "limit") {
         Ok(value) => value,
         Err(message) => {
             return Ok((
@@ -139,7 +133,7 @@ pub(in crate::services::agent_tools) async fn read_file(
     }
     if let Some(next_start_line) = selection.next_start_line() {
         content.push_str(&format!(
-            "\n\nPreview ended before the file. Continue with start_line={next_start_line} and line_count={}.",
+            "\n\nPreview ended before the file. Continue with offset={next_start_line} and limit={}.",
             selection.returned_line_count()
         ));
     }

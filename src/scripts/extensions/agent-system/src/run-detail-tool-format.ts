@@ -71,8 +71,11 @@ export function formatToolResultSection(
 
     addToolResultSummaryFields(fields, result, structured);
     const hits = Array.isArray(structured.hits) ? structured.hits : [];
+    const matches = Array.isArray(structured.matches) ? structured.matches : [];
     if (hits.length > 0) {
         addBlock(blocks, 'timelineMatches', renderHits(hits), NESTED_TEXT_LIMIT);
+    } else if (matches.length > 0) {
+        addBlock(blocks, 'timelineMatches', renderLineMatches(matches), NESTED_TEXT_LIMIT);
     } else if (typeof result.content === 'string' && result.content.trim()) {
         addBlock(blocks, 'timelineResultText', toolContentForDisplay(result.content, name));
     }
@@ -114,6 +117,8 @@ function addToolResultSummaryFields(
     if (range) fields.push(field(tr('timelineDetailFieldRange'), range));
     if (Array.isArray(structured.hits)) {
         fields.push(field(tr('timelineDetailFieldMatches'), structured.hits.length));
+    } else if (Array.isArray(structured.matches)) {
+        fields.push(field(tr('timelineDetailFieldMatches'), structured.matches.length));
     }
     const metrics = textMetricsSummary(structured);
     if (metrics) fields.push(field(tr('timelineDetailFieldTextMetrics'), metrics));
@@ -166,6 +171,19 @@ function renderHits(hits: unknown[]): string {
             ? `\n${indentLines(hit.snippet.trim())}`
             : '';
         return `${index + 1}. ${path}${range}${score}${metric}${snippet}`;
+    }).join('\n\n');
+}
+
+/** Workspace grep lines: `{ path, line, text, hidden? }`. */
+function renderLineMatches(matches: unknown[]): string {
+    return matches.map((matchValue, index) => {
+        const match = plainObject(matchValue) ? matchValue : {};
+        const path = firstString(match.path) || 'result';
+        const line = positiveNumber(match.line);
+        const location = line ? `${path}:${line}` : path;
+        const hidden = match.hidden === true ? ' [hidden]' : '';
+        const text = typeof match.text === 'string' ? `\n${indentLines(match.text)}` : '';
+        return `${index + 1}. ${location}${hidden}${text}`;
     }).join('\n\n');
 }
 

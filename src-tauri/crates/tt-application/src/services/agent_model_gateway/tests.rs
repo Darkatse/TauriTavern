@@ -183,7 +183,7 @@ fn openai_compatible_replays_opaque_continuation() {
 }
 
 #[test]
-fn rejects_tool_names_outside_the_current_turn_aliases() {
+fn keeps_tool_names_outside_the_current_turn_as_unknown_calls() {
     let registry = BuiltinAgentToolRegistry::all();
     let write = model_tool(&registry, "workspace.write_file");
 
@@ -203,8 +203,13 @@ fn rejects_tool_names_outside_the_current_turn_aliases() {
             }]
         });
 
-        let error = decode_chat_completion_response(response, &tools).unwrap_err();
-        assert!(error.to_string().contains("model.unknown_tool_call"));
+        let decoded = decode_chat_completion_response(response, &tools).unwrap();
+        let call = &decoded.tool_calls[0];
+        assert_eq!(
+            call.tool_id.native_name(),
+            super::decode::UNKNOWN_MODEL_TOOL
+        );
+        assert_eq!(call.provider_metadata["modelAlias"], raw_name);
     }
 }
 

@@ -77,6 +77,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
             loadScript,
             presentation,
             chatLength,
+            messageBodyPath: handle.messageBodyPath ?? null,
             finishPresentation: async dto => {
                 await safeInvoke('finish_agent_run_presentation', { dto });
                 commitBridges.delete(handle.runId);

@@ -15,9 +15,9 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage, strip_jsonl_extension};
 use tt_ports::repositories::chat_repository::{
     CharacterChatIdentity, ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat,
-    ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
-    ChatPayloadCursor, ChatPayloadTail, ChatRepository, ChatSearchResult, FindLastMessageQuery,
-    LocatedChatMessage, PinnedCharacterChat,
+    ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
+    ChatPayloadTail, ChatRepository, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
+    PinnedCharacterChat,
 };
 
 use super::FileChatRepository;
@@ -828,16 +828,6 @@ impl ChatRepository for FileChatRepository {
         query: FindLastMessageQuery,
     ) -> Result<Option<LocatedChatMessage>, DomainError> {
         self.find_last_character_chat_message_internal(character_name, file_name, query)
-            .await
-    }
-
-    async fn read_character_chat_messages(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        indices: &[usize],
-    ) -> Result<ChatMessagesReadResult, DomainError> {
-        self.read_character_chat_messages_internal(character_name, file_name, indices)
             .await
     }
 
