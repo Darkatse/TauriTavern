@@ -1,0 +1,10 @@
+{
+  "app": {
+    "bundleName": "com.tauritavern.client",
+    "vendor": "TauriTavern",
+    "versionCode": 2003000,
+    "versionName": "2.3.0",
+    "icon": "$media:layered_image",
+    "label": "$string:app_name"
+  }
+}

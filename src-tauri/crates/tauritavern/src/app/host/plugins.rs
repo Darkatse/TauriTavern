@@ -4,7 +4,7 @@
 //! the app shell. Downstream code should consume those capabilities through
 //! commands, bridges, or managed state instead of installing plugins itself.
 
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+#[cfg(desktop)]
 use crate::presentation::main_window_presenter::present_main_window_from_app;
 #[cfg(any(dev, debug_assertions))]
 use crate::presentation::web_resources::dev_protocol_endpoint::{
@@ -12,7 +12,7 @@ use crate::presentation::web_resources::dev_protocol_endpoint::{
 };
 
 pub(super) fn install<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
         if let Err(error) = present_main_window_from_app(app) {
             tracing::warn!("Failed to present main window for secondary instance: {error}");
@@ -35,10 +35,7 @@ pub(super) fn install<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::B
         .plugin(crate::platform::lan_discovery::plugin())
         .plugin(crate::platform::speech_synthesis::plugin());
 
-    #[cfg(all(
-        feature = "devtools-pilot",
-        any(target_os = "macos", windows, target_os = "linux")
-    ))]
+    #[cfg(all(feature = "devtools-pilot", desktop))]
     let builder = builder.plugin(tauri_plugin_pilot::init());
 
     #[cfg(mobile)]

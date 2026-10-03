@@ -16,6 +16,6 @@ pub mod macos_webview;
 pub mod paths;
 pub mod persistence;
 pub mod repositories;
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+#[cfg(desktop)]
 pub mod runtime_paths_config_store;
 pub mod zipkit;

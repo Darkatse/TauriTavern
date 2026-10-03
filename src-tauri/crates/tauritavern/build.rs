@@ -4,7 +4,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
-    let needs_embedded_resources = needs_embedded_resources();
+    let embedded_resources = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android")
+        || std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("ohos");
+    let needs_embedded_resources = embedded_resources
+        || std::env::var_os("CARGO_FEATURE_PORTABLE").is_some();
+    println!("cargo:rustc-check-cfg=cfg(embedded_resources)");
+    if embedded_resources {
+        println!("cargo:rustc-cfg=embedded_resources");
+    }
 
     // These are the frontend/resource directories that feed generated Rust artifacts.
     println!("cargo:rerun-if-changed=../../../default/content");
@@ -28,11 +35,6 @@ fn main() {
         tauri_build::InlinedPlugin::new().commands(&["initialize", "speak", "cancel"]),
     ))
     .expect("Failed to build Tauri application")
-}
-
-fn needs_embedded_resources() -> bool {
-    std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android")
-        || std::env::var_os("CARGO_FEATURE_PORTABLE").is_some()
 }
 
 fn emit_git_build_metadata() {

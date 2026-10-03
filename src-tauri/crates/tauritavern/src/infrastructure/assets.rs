@@ -2,11 +2,11 @@ use serde::de::DeserializeOwned;
 use std::path::Path;
 use std::sync::OnceLock;
 use tauri::AppHandle;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(embedded_resources))]
 use tauri::Manager;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(embedded_resources))]
 use tauri::path::BaseDirectory;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(embedded_resources))]
 use tauri_plugin_fs::FsExt;
 use tokio::fs;
 
@@ -14,7 +14,7 @@ use tt_domain::errors::DomainError;
 
 static DEFAULT_CONTENT_MANIFEST: OnceLock<Vec<String>> = OnceLock::new();
 
-#[cfg(any(target_os = "android", feature = "portable"))]
+#[cfg(any(embedded_resources, feature = "portable"))]
 mod embedded_resources {
     include!(concat!(env!("OUT_DIR"), "/embedded_resources.rs"));
 }
@@ -39,7 +39,7 @@ pub fn read_resource_bytes(
 ) -> Result<Vec<u8>, DomainError> {
     let normalized = normalize_resource_relative_path(relative_path)?;
 
-    #[cfg(target_os = "android")]
+    #[cfg(embedded_resources)]
     {
         let _ = app_handle;
         if let Some(bytes) = embedded_resources::get_embedded_resource(&normalized) {
@@ -52,7 +52,7 @@ pub fn read_resource_bytes(
         )))
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(embedded_resources))]
     {
         let path = resolve_resource_path(app_handle, &normalized)?;
         match app_handle.fs().read(&path) {
@@ -158,7 +158,7 @@ fn load_default_content_manifest() -> Vec<String> {
     }
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(embedded_resources))]
 fn resolve_resource_path(
     app_handle: &AppHandle,
     relative_path: &str,
@@ -186,7 +186,7 @@ fn normalize_resource_relative_path(relative_path: &str) -> Result<String, Domai
     Ok(normalized)
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(embedded_resources))]
 fn map_resource_error(relative_path: &str, error: std::io::Error) -> DomainError {
     if error.kind() == std::io::ErrorKind::NotFound {
         DomainError::NotFound(format!("Resource not found: {}", relative_path))

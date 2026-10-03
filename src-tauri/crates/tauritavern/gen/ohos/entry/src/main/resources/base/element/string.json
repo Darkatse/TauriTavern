@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "TauriTavern"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "TauriTavern"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "TauriTavern"
+    },
+    {
+      "name": "tauri_camera_reason",
+      "value": "Scan QR codes and barcodes"
+    },
+    {
+      "name": "tauri_clipboard_reason",
+      "value": "Read text you choose to paste into the application"
+    }
+  ]
+}

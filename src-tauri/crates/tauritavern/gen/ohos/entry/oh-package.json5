@@ -1,0 +1,13 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "Please describe the basic information.",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "libentry.so": "file:./src/main/cpp/types/libentry",
+    "@ohos-rs/ability": "file:../vendor/ability.har",
+    "libtauritavern_lib.so": "file:./src/main/cpp/types/tauri-plugins-native"
+  }
+}
