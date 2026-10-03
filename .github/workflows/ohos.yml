@@ -26,8 +26,8 @@ jobs:
         shell: bash
     env:
       TARGET_TRIPLE: aarch64-unknown-linux-ohos
-      CARGO_PROFILE_RELEASE_LTO: thin
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '8'
+      CARGO_PROFILE_RELEASE_LTO: fat
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '1'
     steps:
       - uses: actions/checkout@v7.0.1
       - run: git config --global --add safe.directory "$PWD"

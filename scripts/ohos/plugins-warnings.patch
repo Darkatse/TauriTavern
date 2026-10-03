@@ -1,0 +1,20 @@
+--- a/plugins/fs/src/commands.rs
++++ b/plugins/fs/src/commands.rs
+@@ -1508,7 +1508,7 @@
+ }
+
+ pub fn resolve_path<R: Runtime>(
+-    permission: &str,
++    _permission: &str,
+     webview: &Webview<R>,
+     global_scope: &GlobalScope<Entry>,
+     command_scope: &CommandScope<Entry>,
+@@ -1609,7 +1609,7 @@
+         #[cfg(debug_assertions)]
+         Err(
+             anyhow::anyhow!(
+-                "forbidden path: {}, maybe it is not allowed on the scope for `allow-{permission}` permission in your capability file",
++                "forbidden path: {}, maybe it is not allowed on the scope for `allow-{_permission}` permission in your capability file",
+                 resolved_path.display()
+             )
+         )

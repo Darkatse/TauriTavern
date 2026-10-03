@@ -26,10 +26,30 @@ spec = importlib.util.spec_from_file_location('ohos_plugin_sources', plugins / '
 helper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helper)
 patches = helper.prepare_sources(external / 'core')
+# The plugin bridge uses a separate Tauri checkout, not the image's Tauri source.
+for name, directory in (
+    ('tao', source / 'tao'),
+    ('tauri', patches['tauri'].parents[1]),
+    ('plugins', plugins),
+):
+    patch = root / f'scripts/ohos/{name}-warnings.patch'
+    subprocess.run(['git', '-C', str(directory), 'apply', '--check', str(patch)], check=True)
+    subprocess.run(['git', '-C', str(directory), 'apply', str(patch)], check=True)
+# CLI/bundler/schema tools are preinstalled and absent from the application graph.
+runtime_crates = {
+    'tauri', 'tauri-build', 'tauri-codegen', 'tauri-macros', 'tauri-plugin',
+    'tauri-runtime', 'tauri-runtime-wry', 'tauri-utils', 'wry', 'tao',
+}
+patches = {name: path for name, path in patches.items()
+           if name in runtime_crates or name.startswith('tauri-plugin-')}
 
 host = root / 'src-tauri/crates/tauritavern'
 manifest = host / 'Cargo.toml'
 text = manifest.read_text()
+# HAPs load only the cdylib; emitting an rlib alongside it prevents library LTO.
+text = text.replace('crate-type = ["staticlib", "cdylib", "rlib"]', 'crate-type = ["cdylib"]')
+# ohrs' first build does not forward --lib, so exclude src/main.rs as well.
+text = text.replace('[package]\n', '[package]\nautobins = false\n', 1)
 # Desktop-only dependencies still participate in Cargo resolution. Keep them out
 # of this experimental checkout without changing any normal-platform manifest.
 for name in ('tauri-plugin-single-instance', 'tauri-plugin-window-state', 'tauri-plugin-pilot'):

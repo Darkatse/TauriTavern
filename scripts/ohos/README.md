@@ -16,6 +16,9 @@ SDK and experimental Tauri installation are maintained in that independent repos
 `prepare.py` checks the image sources against `tauri-pins.json`, then loads the
 [pinned native plugin fork](plugins-pin.json) and its pinned OHOS core bridge.
 Their source stays outside the application workspace; the overlay is disposable.
+The overlay applies compiler-warning fixes to the actual core/plugin sources and
+includes only application runtime/build dependencies. HAP builds emit only a
+`cdylib`, disable the desktop executable, and use fat LTO with one codegen unit.
 
 To use the same image manually, run these commands from a disposable checkout mounted
 inside the container (see the image repository for Docker usage):
@@ -24,6 +27,7 @@ inside the container (see the image repository for Docker usage):
 pnpm install --frozen-lockfile
 python3 scripts/ohos/prepare.py
 export TARGET_TRIPLE=aarch64-unknown-linux-ohos
+export CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 source scripts/ohos/env.sh
 pnpm run web:build
 export TAURITAVERN_SKIP_WEB_BUILD=1

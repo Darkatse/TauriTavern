@@ -1,0 +1,70 @@
+--- a/crates/tauri-runtime-wry/src/lib.rs
++++ b/crates/tauri-runtime-wry/src/lib.rs
+@@ -2988,7 +2988,7 @@
+   }
+
+   #[cfg(target_env = "ohos")]
+-  fn new_any_thread(args: RuntimeInitArgs) -> Result<Self> {
++  fn new_any_thread(_args: RuntimeInitArgs) -> Result<Self> {
+     unimplemented!()
+   }
+
+@@ -4006,6 +4006,8 @@
+             }
+           },
+           WebviewMessage::WithWebview(f) => {
++            #[cfg(target_env = "ohos")]
++            let _ = f;
+             #[cfg(all(
+               any(
+                 target_os = "linux",
+--- a/crates/tauri/src/manager/webview.rs
++++ b/crates/tauri/src/manager/webview.rs
+@@ -6,9 +6,11 @@
+   borrow::Cow,
+   collections::{HashMap, HashSet},
+   fmt,
+-  fs::create_dir_all,
+   sync::{Arc, Mutex, MutexGuard},
+ };
++
++#[cfg(not(any(target_os = "android", target_env = "ohos")))]
++use std::fs::create_dir_all;
+
+ use serde::Serialize;
+ use serialize_to_javascript::{default_template, DefaultTemplate, Template};
+--- a/crates/tauri/src/plugin/mobile.rs
++++ b/crates/tauri/src/plugin/mobile.rs
+@@ -11,7 +11,7 @@
+   sealed::{ManagerBase, RuntimeOrDispatch},
+ };
+
+-#[cfg(mobile)]
++#[cfg(any(target_os = "android", target_os = "ios"))]
+ use std::sync::atomic::{AtomicI32, Ordering};
+ #[cfg(mobile)]
+ use tokio::sync::oneshot;
+@@ -26,10 +26,12 @@
+
+ type PluginResponse = Result<serde_json::Value, serde_json::Value>;
+
++#[cfg(any(target_os = "android", target_os = "ios"))]
+ type PendingPluginCallHandler = Box<dyn FnOnce(PluginResponse) + Send + 'static>;
+
+-#[cfg(mobile)]
++#[cfg(any(target_os = "android", target_os = "ios"))]
+ static PENDING_PLUGIN_CALLS_ID: AtomicI32 = AtomicI32::new(0);
++#[cfg(any(target_os = "android", target_os = "ios"))]
+ static PENDING_PLUGIN_CALLS: OnceLock<Mutex<HashMap<i32, PendingPluginCallHandler>>> =
+   OnceLock::new();
+ static CHANNELS: OnceLock<Mutex<HashMap<u32, Channel<serde_json::Value>>>> = OnceLock::new();
+--- a/crates/tauri/src/app.rs
++++ b/crates/tauri/src/app.rs
+@@ -1162,6 +1162,7 @@
+         rx.recv().unwrap_or(false)
+       }
+
++      /// Returns whether this platform supports multiple windows.
+       #[cfg(target_env = "ohos")]
+       pub fn supports_multiple_windows(&self) -> bool {
+         false
