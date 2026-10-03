@@ -8,6 +8,8 @@ import { pathToFileURL } from 'node:url';
 // tauri-action exposes platform-specific artifact tokens. Keep that vocabulary
 // at the CI boundary and publish a stable, project-owned naming contract.
 const RELEASE_ASSETS = new Map([
+    ['ohos-aarch64-hap', ['ohos-arm64-unsigned.hap', '.hap']],
+    ['ohos-x86_64-hap', ['ohos-x86_64-unsigned.hap', '.hap']],
     ['android-arm-apk', ['android-armeabi-v7a.apk', '.apk']],
     ['android-arm64-apk', ['android-arm64-v8a.apk', '.apk']],
     ['darwin-aarch64-dmg', ['macos-arm64.dmg', '.dmg']],
@@ -122,7 +124,7 @@ export async function collectReleaseAssets({
     }
 
     const missing = [...RELEASE_ASSETS.keys()]
-        .filter((suffix) => !found.has(suffix) && (requireDebug || !DEBUG_ARTIFACTS.has(suffix)));
+        .filter((suffix) => !suffix.startsWith('ohos-') && !found.has(suffix) && (requireDebug || !DEBUG_ARTIFACTS.has(suffix)));
     if (missing.length > 0) {
         throw new Error(`Missing workflow artifacts: ${missing.map((suffix) => artifactPrefix + suffix).join(', ')}`);
     }

@@ -200,8 +200,7 @@ fn get_notification_permission_state_inner(
     Ok(normalize_notification_permission_state(current_state))
 }
 
-#[cfg_attr(target_env = "ohos", tauri::command(async))]
-#[cfg_attr(not(target_env = "ohos"), tauri::command)]
+#[tauri::command(async)]
 pub fn get_notification_permission_state(
     app: tauri::AppHandle,
 ) -> Result<NotificationPermissionStateDto, CommandError> {
@@ -209,8 +208,7 @@ pub fn get_notification_permission_state(
     get_notification_permission_state_inner(&app)
 }
 
-#[cfg_attr(target_env = "ohos", tauri::command(async))]
-#[cfg_attr(not(target_env = "ohos"), tauri::command)]
+#[tauri::command(async)]
 pub fn request_notification_permission(
     app: tauri::AppHandle,
 ) -> Result<NotificationPermissionStateDto, CommandError> {
@@ -233,8 +231,7 @@ pub fn request_notification_permission(
     Ok(normalize_notification_permission_state(requested_state))
 }
 
-#[cfg_attr(target_env = "ohos", tauri::command(async))]
-#[cfg_attr(not(target_env = "ohos"), tauri::command)]
+#[tauri::command(async)]
 pub fn show_system_notification(
     app: tauri::AppHandle,
     dto: ShowSystemNotificationDto,
