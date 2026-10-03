@@ -12,11 +12,7 @@ async fn agent_runtime_parent_and_child_read_their_own_skill_binding() {
         &root,
         vec![
             model_tool_response(vec![
-                model_tool_call(
-                    "parent_read",
-                    "workspace_read_file",
-                    json!({ "path": path }),
-                ),
+                model_tool_call("parent_read", "read", json!({ "file_path": path })),
                 model_tool_call(
                     "delegate",
                     "agent_delegate",
@@ -32,7 +28,7 @@ async fn agent_runtime_parent_and_child_read_their_own_skill_binding() {
                 ),
             ]),
             model_tool_response(vec![
-                model_tool_call("child_read", "workspace_read_file", json!({ "path": path })),
+                model_tool_call("child_read", "read", json!({ "file_path": path })),
                 model_tool_call(
                     "child_return",
                     "task_return",

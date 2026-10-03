@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use super::workspace::{WORKSPACE_COMMIT, WORKSPACE_FINISH};
+use super::workspace::{
+    WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
+    WORKSPACE_READ_FILE, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE,
+};
 use super::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, BuiltinAgentToolRegistry, TASK_RETURN};
 use crate::errors::ApplicationError;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
@@ -110,14 +113,14 @@ pub(crate) fn compile_invocation_tool_snapshot(
         for binding in &mut bindings {
             if binding.tool_id().is_builtin() {
                 let mut descriptor = binding.descriptor().clone();
-                registry.apply_return_mode_context(&mut descriptor, profile)?;
+                registry.apply_return_mode_context(&mut descriptor);
                 *binding =
                     ToolBinding::new(descriptor, binding.model_alias(), binding.max_calls())?;
             }
         }
         let id = ToolId::builtin(TASK_RETURN)?;
         let mut descriptor = registry.materialize_profile_descriptor(&id, profile)?;
-        registry.apply_return_mode_context(&mut descriptor, profile)?;
+        registry.apply_return_mode_context(&mut descriptor);
         bindings.push(ToolBinding::new(
             descriptor,
             builtin_model_alias(TASK_RETURN),
@@ -128,8 +131,92 @@ pub(crate) fn compile_invocation_tool_snapshot(
         .map_err(Into::into)
 }
 
+/// Workspace tools use the short names models know from coding harnesses; other
+/// builtins keep their namespace so they stay distinct from MCP and extension tools.
 pub(super) fn builtin_model_alias(name: &str) -> String {
-    name.replace('.', "_")
+    match name {
+        WORKSPACE_READ_FILE => "read",
+        WORKSPACE_WRITE_FILE => "write",
+        WORKSPACE_APPLY_PATCH => "edit",
+        WORKSPACE_LIST_FILES => "list",
+        WORKSPACE_SHELL => "shell",
+        WORKSPACE_COMMIT => "commit",
+        _ => return name.replace('.', "_"),
+    }
+    .to_string()
+}
+
+/// Parameters renamed when the model-facing names were aligned with common harness
+/// conventions; `None` marks a removed parameter. Profile migration moves saved
+/// description overrides along, and argument validation names the current parameter.
+pub(crate) const RENAMED_TOOL_PARAMETERS: [(&str, &str, Option<&str>); 6] = [
+    ("builtin:workspace.read_file", "path", Some("file_path")),
+    ("builtin:workspace.read_file", "start_line", Some("offset")),
+    ("builtin:workspace.read_file", "line_count", Some("limit")),
+    ("builtin:workspace.write_file", "path", Some("file_path")),
+    ("builtin:workspace.apply_patch", "path", Some("file_path")),
+    ("builtin:workspace.commit", "path", Some("file_path")),
+];
+
+/// Builtin schemas are closed (`additionalProperties: false`). The runtime enforces this
+/// against the current descriptor rather than the invocation's frozen copy, so a call
+/// shaped for an older schema fails visibly instead of running with defaults.
+pub(crate) fn unsupported_builtin_argument(
+    descriptor: &ToolDescriptor,
+    args: &serde_json::Map<String, serde_json::Value>,
+    tool_alias: &str,
+) -> Option<String> {
+    let schema = &descriptor.input_schema;
+    if schema.get("additionalProperties") != Some(&serde_json::Value::Bool(false)) {
+        return None;
+    }
+    let properties = schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object);
+    let key = args
+        .keys()
+        .find(|key| !properties.is_some_and(|properties| properties.contains_key(*key)))?;
+    let renamed = RENAMED_TOOL_PARAMETERS
+        .iter()
+        .find(|(tool_id, old, _)| *tool_id == descriptor.id.as_str() && old == key);
+    Some(match renamed {
+        Some((_, _, Some(new))) => {
+            format!("`{key}` is not a parameter of {tool_alias}; use `{new}`.")
+        }
+        Some((_, _, None)) => format!("`{key}` is no longer a parameter of {tool_alias}."),
+        None => {
+            let names = properties
+                .map(|properties| properties.keys().map(String::as_str).collect::<Vec<_>>())
+                .unwrap_or_default();
+            if names.is_empty() {
+                format!("{tool_alias} takes no arguments; `{key}` is not supported.")
+            } else {
+                format!(
+                    "`{key}` is not a parameter of {tool_alias}. Parameters: {}.",
+                    names.join(", ")
+                )
+            }
+        }
+    })
+}
+
+/// Whether a stage with these builtin tools may end the run: with `workspace.finish`,
+/// or with a final `workspace.commit` unless the stage hands off instead of finishing.
+pub(crate) fn stage_can_finish_run(has_builtin: impl Fn(&str) -> bool) -> bool {
+    has_builtin(WORKSPACE_FINISH) || (has_builtin(WORKSPACE_COMMIT) && !has_builtin(AGENT_HANDOFF))
+}
+
+/// The alias under which the model sees builtin `native_name` among `tools`, or `None`
+/// when it is not offered. Resumed runs keep the aliases they were frozen with, so text
+/// that names a tool must take the alias from the tools the model actually sees.
+pub(crate) fn visible_builtin_alias<'a>(
+    tools: &'a [AgentModelTool],
+    native_name: &str,
+) -> Option<&'a str> {
+    tools
+        .iter()
+        .find(|tool| tool.tool_id.is_builtin() && tool.tool_id.native_name() == native_name)
+        .map(|tool| tool.model_alias.as_str())
 }
 
 const MAX_MODEL_ALIAS_BYTES: usize = 64;

@@ -432,7 +432,8 @@ impl AgentRuntimeService {
                         "agent.max_tool_rounds_exceeded: {} was not completed within {} rounds",
                         super::loop_runner::completion_tool_name(
                             frame.prepared.invocation.exit_policy,
-                            &frame.prepared.tool_turn
+                            &frame.prepared.tool_turn,
+                            &frame.prepared.request.tools,
                         ),
                         frame.progress.max_rounds
                     ))

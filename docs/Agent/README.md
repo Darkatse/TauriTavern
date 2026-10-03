@@ -28,7 +28,7 @@ flowchart LR
     tools --> finish[结束运行]
 ```
 
-Profile 指定模型、提示词、可用工具和工作区范围。Chat 中模型通过 `workspace.commit` 提交聊天内容，通过 `workspace.finish` 完成运行；后台写作运行可以只产生文件。
+Profile 指定模型、提示词、可用工具和工作区范围。Chat 中模型通过 `workspace.commit` 提交聊天内容，最后一次提交带 `finish: true` 即完成运行；后台写作运行可以只产生文件，以 `workspace.finish` 结束。
 
 Session 独立于角色聊天，使用指定预设、共享的专用 Profile 和持续工作区。入口为 `api.agent.sessions`，见 [Agent API](../API/Agent.md#持续-session)；运行与存储规则分别见 [Runtime](Runtime.md) 和 [Workspace](Workspace.md#session-的持续工作区)。
 

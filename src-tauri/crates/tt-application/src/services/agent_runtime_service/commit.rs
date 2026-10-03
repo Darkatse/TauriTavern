@@ -36,6 +36,7 @@ struct HostChatCommit<'a> {
     file: &'a WorkspaceFile,
     is_explicit: bool,
     mode: AgentChatCommitMode,
+    /// The model's reason for an explicit commit; an automatic commit has none.
     reason: Option<String>,
     round: usize,
     invocation_id: &'a str,
@@ -135,7 +136,7 @@ impl AgentRuntimeService {
         call: &ToolInvocation,
         path: WorkspacePath,
         mode: AgentChatCommitMode,
-        reason: Option<String>,
+        reason: String,
         elapsed_ms: u128,
         round: usize,
         invocation_id: &str,
@@ -173,7 +174,7 @@ impl AgentRuntimeService {
                     file: &file,
                     is_explicit: true,
                     mode,
-                    reason,
+                    reason: Some(reason),
                     round,
                     invocation_id,
                 },
@@ -201,11 +202,8 @@ impl AgentRuntimeService {
                 call_id: call.call_id.clone(),
                 tool_id: call.tool_id.clone(),
                 content: format!(
-                    "Committed {} to the current chat message with mode {:?}. \
-                     You may continue editing and commit again if needed. When all intended \
-                     commits are complete, call workspace_finish to end the run. Do not use \
-                     plain text as the final answer; the run must finish through \
-                     workspace_finish.",
+                    // The caller appends the next step, which depends on the finish admission.
+                    "Committed {} to the current chat message with mode {:?}.",
                     path.as_str(),
                     mode
                 ),

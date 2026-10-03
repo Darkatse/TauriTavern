@@ -51,7 +51,9 @@ pub(crate) enum AgentToolEffect {
     ChatCommitRequested {
         path: WorkspacePath,
         mode: AgentChatCommitMode,
-        reason: Option<String>,
+        reason: String,
+        /// The run ends once this commit is confirmed, as if `workspace.finish` followed it.
+        finish: bool,
     },
     TaskReturned {
         status: tt_domain::models::agent::AgentTaskStatus,

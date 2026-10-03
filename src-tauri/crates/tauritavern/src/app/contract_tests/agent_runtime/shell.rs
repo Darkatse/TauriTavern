@@ -14,22 +14,22 @@ async fn shell_edits_share_cas_and_publish_only_the_message_body() {
             model_tool_response(vec![
                 model_tool_call(
                     "hidden_read",
-                    "workspace_shell",
+                    "shell",
                     json!({"command": r#"js -e 'import {workspace} from "@tauritavern/runtime"; if (workspace.exists("input/prompt_snapshot.json")) throw new Error("unexpected visibility"); workspace.readText("input/prompt_snapshot.json")'"#}),
                 ),
                 model_tool_call(
                     "readonly_write",
-                    "workspace_shell",
+                    "shell",
                     json!({"command": r#"js -e 'import {workspace} from "@tauritavern/runtime"; workspace.writeText("tool-results/forbidden.txt", "forbidden")'"#}),
                 ),
                 model_tool_call(
                     "missing_context",
-                    "workspace_shell",
+                    "shell",
                     json!({"command": r#"js -e 'import {context} from "@tauritavern/runtime"; console.log(context.worldInfo)'"#}),
                 ),
                 model_tool_call(
                     "prepare",
-                    "workspace_shell",
+                    "shell",
                     json!({
                         "command": concat!(
                             "mkdir -p scratch/review\n",
@@ -59,19 +59,19 @@ JS
                 ),
                 model_tool_call(
                     "write_metadata",
-                    "workspace_write_file",
-                    json!({"path": "scratch/metadata.json", "content": "{}"}),
+                    "write",
+                    json!({"file_path": "scratch/metadata.json", "content": "{}"}),
                 ),
             ]),
             model_tool_response(vec![
                 model_tool_call(
                     "read_before_shell",
-                    "workspace_read_file",
-                    json!({"path": "output/main.md"}),
+                    "read",
+                    json!({"file_path": "output/main.md"}),
                 ),
                 model_tool_call(
                     "append",
-                    "workspace_shell",
+                    "shell",
                     json!({
                         "command": "js ../scratch/revise.js output/main.md",
                         "workdir": "/output",
@@ -79,48 +79,48 @@ JS
                 ),
                 model_tool_call(
                     "stale_patch",
-                    "workspace_apply_patch",
+                    "edit",
                     json!({
-                        "path": "output/main.md",
+                        "file_path": "output/main.md",
                         "old_string": "shell draft",
                         "new_string": "stale replacement",
                     }),
                 ),
                 model_tool_call(
                     "read_after_shell",
-                    "workspace_read_file",
-                    json!({"path": "output/main.md"}),
+                    "read",
+                    json!({"file_path": "output/main.md"}),
                 ),
                 model_tool_call(
                     "fresh_patch",
-                    "workspace_apply_patch",
+                    "edit",
                     json!({
-                        "path": "output/main.md",
+                        "file_path": "output/main.md",
                         "old_string": "shell draft",
                         "new_string": "final draft",
                     }),
                 ),
                 model_tool_call(
                     "copy_final",
-                    "workspace_shell",
+                    "shell",
                     json!({"command": r#"python3 -c 'from pathlib import Path; Path("scratch/review/final.md").write_text(Path("output/main.md").read_text())'"#}),
                 ),
                 model_tool_call(
                     "move_final",
-                    "workspace_shell",
+                    "shell",
                     json!({"command": "mv scratch/review scratch/finalized"}),
                 ),
                 model_tool_call(
                     "inspect_final",
-                    "workspace_shell",
+                    "shell",
                     json!({"command": "cat scratch/finalized/final.md"}),
                 ),
             ]),
             model_tool_response(vec![
                 model_tool_call(
                     "commit",
-                    "workspace_commit",
-                    json!({"path": "scratch/finalized/final.md"}),
+                    "commit",
+                    json!({ "reason": "Deliver the reply.", "file_path": "scratch/finalized/final.md"}),
                 ),
                 model_tool_call("finish", "workspace_finish", json!({})),
             ]),
@@ -248,17 +248,21 @@ async fn failed_shell_keeps_its_writes_without_publishing_an_earlier_candidate()
             model_tool_response(vec![
                 model_tool_call(
                     "initial_text",
-                    "workspace_write_file",
-                    json!({"path": "output/main.md", "content": "old candidate"}),
+                    "write",
+                    json!({"file_path": "output/main.md", "content": "old candidate"}),
                 ),
                 model_tool_call(
                     "failed_shell",
-                    "workspace_shell",
+                    "shell",
                     json!({"command": r#"js -e 'import {workspace} from "@tauritavern/runtime"; workspace.writeText("output/main.md", "saved despite failure"); console.error("draft incomplete"); process.exitCode = 7'"#}),
                 ),
             ]),
             model_tool_response(vec![
-                model_tool_call("commit", "workspace_commit", json!({})),
+                model_tool_call(
+                    "commit",
+                    "commit",
+                    json!({ "reason": "Deliver the reply." }),
+                ),
                 model_tool_call("finish", "workspace_finish", json!({})),
             ]),
         ],
@@ -380,21 +384,29 @@ async fn cancelled_shell_records_its_result_and_resumes_after_the_confirmed_call
     });
     let fixture = agent_runtime_fixture_with_shell(
         &root,
-        vec![Ok(model_tool_response(vec![
-            model_tool_call(
-                "cancel_shell",
-                "workspace_shell",
-                json!({"command": "write then wait"}),
-            ),
-            model_tool_call(
-                "after_shell",
-                "workspace_write_file",
-                json!({
-                    "path": "output/main.md", "content": " + resumed", "mode": "append",
-                }),
-            ),
-            model_tool_call("finish", "workspace_finish", json!({})),
-        ]))],
+        vec![
+            Ok(model_tool_response(vec![
+                model_tool_call(
+                    "cancel_shell",
+                    "shell",
+                    json!({"command": "write then wait"}),
+                ),
+                model_tool_call(
+                    "after_shell",
+                    "write",
+                    json!({
+                        "file_path": "output/main.md", "content": " + resumed", "mode": "append",
+                    }),
+                ),
+                model_tool_call("finish", "workspace_finish", json!({})),
+            ])),
+            // The cancelled shell result reaches the model before the run can finish.
+            Ok(model_tool_response(vec![model_tool_call(
+                "finish_after_cancel",
+                "workspace_finish",
+                json!({}),
+            )])),
+        ],
         shell.clone(),
     );
     let profile = resolve_contract_profile(&fixture).await;
@@ -463,7 +475,7 @@ async fn cancelled_shell_records_its_result_and_resumes_after_the_confirmed_call
         1,
         "resume must not replay the cancelled shell"
     );
-    assert_eq!(fixture.model_gateway.requests().await.len(), 1);
+    assert_eq!(fixture.model_gateway.requests().await.len(), 2);
     let files = fixture
         .agent_repository
         .open_filesystem(&handle.run_id)
