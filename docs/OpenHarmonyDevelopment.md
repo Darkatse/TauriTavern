@@ -81,6 +81,13 @@ postMessage takes its frame URL synchronously from ArkWeb. Custom protocols use
 ArkWeb frame metadata and preserve rejection of opaque origins. The native body
 reader retains asynchronous buffers and collects chunks through EOF.
 
+ArkWeb's `javaScriptOnDocumentStart` executes separate script items in
+lexicographical order, not insertion order. Wry therefore submits one combined
+item, retaining each script's main-frame guard. Splitting the Tauri bootstrap
+into separate items caused `Object.defineProperty called on non-object` and a
+missing `__TAURI_INTERNALS__.invoke`, preventing TT's frontend router from loading.
+The combined script restores the internals/invoke/plugin initialization order.
+
 Native browser callbacks cover file inputs, alert/confirm/prompt, external HTTP(S)
 windows and fullscreen. Keyboard handling resizes the visual viewport. The HAP
 uses the system safe-area layout. The native back bridge calls TT's existing
