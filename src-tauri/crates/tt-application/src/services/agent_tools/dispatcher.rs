@@ -51,7 +51,9 @@ pub(crate) enum AgentToolEffect {
     ChatCommitRequested {
         path: WorkspacePath,
         mode: AgentChatCommitMode,
-        reason: Option<String>,
+        reason: String,
+        /// The run ends once this commit is confirmed, as if `workspace.finish` followed it.
+        finish: bool,
     },
     TaskReturned {
         status: tt_domain::models::agent::AgentTaskStatus,
@@ -163,9 +165,16 @@ impl AgentToolDispatcher {
                 workspace::apply_patch(&workspace, call, args, session).await?
             }
             workspace::WORKSPACE_SHELL => {
+                let workspace = match &profile.output {
+                    Some(output) => workspace.track_text_mutations(
+                        WorkspacePath::parse(&output.message_body_path)?,
+                        auto_commit_candidate,
+                    ),
+                    None => workspace,
+                };
                 workspace::shell(
                     self.workspace_shell.as_ref(),
-                    Arc::new(workspace.track_text_mutations(auto_commit_candidate)),
+                    Arc::new(workspace),
                     session.runtime_context.clone(),
                     call,
                     args,

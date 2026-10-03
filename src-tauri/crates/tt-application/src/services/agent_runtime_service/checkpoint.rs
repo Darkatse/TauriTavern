@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use tokio::sync::watch;
 
 use super::AgentRuntimeService;
+use super::commit::message_body_path;
 use super::continuation::{InvocationFrame, InvocationStep, RunExecutionState};
 use super::guidance::AgentGuidanceItem;
 use super::loop_runner::AgentLoopExit;
@@ -272,7 +273,7 @@ impl AgentRuntimeService {
         }
         // Rehydrate the original frozen context once. Revision migration uses saved
         // bindings too; the caller's Profile and prompt are not resolved again.
-        self.workspace_repository.read_manifest(&dto.run_id).await?;
+        let manifest = self.workspace_repository.read_manifest(&dto.run_id).await?;
         let snapshot = self
             .workspace_files(&dto.run_id)
             .await?
@@ -389,7 +390,9 @@ impl AgentRuntimeService {
             .write()
             .await
             .insert(dto.run_id.clone(), Arc::new(handle));
-        let result = run_handle(&checkpoint.run, Some(resumed.seq - 1))?;
+        let mut result = run_handle(&checkpoint.run, Some(resumed.seq - 1))?;
+        result.message_body_path =
+            message_body_path(&manifest.artifacts)?.map(|path| path.as_str().to_string());
         let service = Arc::clone(self);
         tokio::spawn(async move {
             service
@@ -486,6 +489,7 @@ fn run_handle(
         generation_type: chat.generation_type.clone(),
         status: run.status,
         after_seq,
+        message_body_path: None,
     })
 }
 

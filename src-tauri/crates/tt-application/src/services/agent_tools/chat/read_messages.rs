@@ -9,7 +9,7 @@ use super::{
     chat_unavailable_message, role_as_str, visible_total_messages,
 };
 use crate::errors::ApplicationError;
-use crate::services::agent_tools::common::{ensure_only_args, tool_error};
+use crate::services::agent_tools::common::tool_error;
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
 use tt_domain::errors::DomainError;
 use tt_domain::frozen_macros::{FrozenMacros, MAX_EXPANDED_TEXT_BYTES};
@@ -71,12 +71,6 @@ pub(in crate::services::agent_tools) async fn read_messages(
     args: &Map<String, Value>,
     macros: &FrozenMacros,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    if let Err(message) = ensure_only_args(args, &["messages"]) {
-        return Ok((
-            tool_error(call, "tool.invalid_arguments", &message),
-            AgentToolEffect::None,
-        ));
-    }
     let requests = match parse_message_requests(args) {
         Ok(requests) => requests,
         Err(message) => {
