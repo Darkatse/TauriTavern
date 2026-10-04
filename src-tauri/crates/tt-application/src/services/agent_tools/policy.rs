@@ -1,6 +1,12 @@
 use std::collections::HashSet;
 
-use super::workspace::{WORKSPACE_COMMIT, WORKSPACE_FINISH};
+use serde_json::{Map, Value};
+
+use super::chat::CHAT_READ_MESSAGES;
+use super::workspace::{
+    WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_LIST_FILES, WORKSPACE_READ_FILE,
+    WORKSPACE_SEARCH_FILES, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE,
+};
 use super::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, BuiltinAgentToolRegistry, TASK_RETURN};
 use crate::errors::ApplicationError;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
@@ -10,20 +16,14 @@ use tt_domain::models::tool::{
     ToolTurnContract,
 };
 
-const RETURN_MODE_DENIED_TOOLS: [&str; 5] = [
-    WORKSPACE_COMMIT,
-    WORKSPACE_FINISH,
-    AGENT_DELEGATE,
-    AGENT_HANDOFF,
-    AGENT_AWAIT,
-];
+const RETURN_MODE_DENIED_TOOLS: [&str; 4] =
+    [WORKSPACE_COMMIT, AGENT_DELEGATE, AGENT_HANDOFF, AGENT_AWAIT];
 
-const SESSION_DENIED_TOOLS: [&str; 9] = [
+const SESSION_DENIED_TOOLS: [&str; 8] = [
     "chat.search",
     "chat.read_messages",
     "worldinfo.read_activated",
     WORKSPACE_COMMIT,
-    WORKSPACE_FINISH,
     AGENT_DELEGATE,
     AGENT_HANDOFF,
     AGENT_AWAIT,
@@ -110,14 +110,14 @@ pub(crate) fn compile_invocation_tool_snapshot(
         for binding in &mut bindings {
             if binding.tool_id().is_builtin() {
                 let mut descriptor = binding.descriptor().clone();
-                registry.apply_return_mode_context(&mut descriptor, profile)?;
+                registry.apply_return_mode_context(&mut descriptor);
                 *binding =
                     ToolBinding::new(descriptor, binding.model_alias(), binding.max_calls())?;
             }
         }
         let id = ToolId::builtin(TASK_RETURN)?;
         let mut descriptor = registry.materialize_profile_descriptor(&id, profile)?;
-        registry.apply_return_mode_context(&mut descriptor, profile)?;
+        registry.apply_return_mode_context(&mut descriptor);
         bindings.push(ToolBinding::new(
             descriptor,
             builtin_model_alias(TASK_RETURN),
@@ -128,8 +128,205 @@ pub(crate) fn compile_invocation_tool_snapshot(
         .map_err(Into::into)
 }
 
-pub(super) fn builtin_model_alias(name: &str) -> String {
-    name.replace('.', "_")
+/// Workspace tools use the short names models know from coding harnesses; other
+/// builtins keep their namespace so they stay distinct from MCP and extension tools,
+/// and `chat.read_messages` reads as `chat_read` beside `chat_search`.
+pub(crate) fn builtin_model_alias(name: &str) -> String {
+    match name {
+        CHAT_READ_MESSAGES => "chat_read",
+        WORKSPACE_READ_FILE => "read",
+        WORKSPACE_WRITE_FILE => "write",
+        WORKSPACE_APPLY_PATCH => "edit",
+        WORKSPACE_SEARCH_FILES => "grep",
+        WORKSPACE_LIST_FILES => "list",
+        WORKSPACE_SHELL => "shell",
+        WORKSPACE_COMMIT => "commit",
+        _ => return name.replace('.', "_"),
+    }
+    .to_string()
+}
+
+/// Parameters renamed when the model-facing names were aligned with common harness
+/// conventions, and when the chat tools came to name chat messages floors as their files
+/// do; `None` marks a removed parameter. The second field is the parameter's path, where
+/// `floors[].index` is the `index` key of each object in the `floors` array, and a new name
+/// stays in the same place. Profile migration moves saved description overrides along
+/// (overrides describe top-level parameters, so nested paths have none to move), and
+/// argument validation names the current parameter.
+pub(crate) const RENAMED_TOOL_PARAMETERS: [(&str, &str, Option<&str>); 17] = [
+    ("builtin:workspace.read_file", "path", Some("file_path")),
+    ("builtin:workspace.read_file", "start_line", Some("offset")),
+    ("builtin:workspace.read_file", "line_count", Some("limit")),
+    ("builtin:workspace.write_file", "path", Some("file_path")),
+    ("builtin:workspace.apply_patch", "path", Some("file_path")),
+    ("builtin:workspace.commit", "path", Some("file_path")),
+    ("builtin:workspace.search_files", "query", Some("pattern")),
+    ("builtin:workspace.search_files", "limit", None),
+    ("builtin:workspace.search_files", "context_lines", None),
+    ("builtin:chat.search", "start_message", Some("start_floor")),
+    ("builtin:chat.search", "end_message", Some("end_floor")),
+    ("builtin:chat.read_messages", "messages", Some("floors")),
+    (
+        "builtin:chat.read_messages",
+        "floors[].index",
+        Some("floor"),
+    ),
+    (
+        "builtin:chat.read_messages",
+        "floors[].start_line",
+        Some("offset"),
+    ),
+    (
+        "builtin:chat.read_messages",
+        "floors[].line_count",
+        Some("limit"),
+    ),
+    (
+        "builtin:worldinfo.read_activated",
+        "entries[].start_line",
+        Some("offset"),
+    ),
+    (
+        "builtin:worldinfo.read_activated",
+        "entries[].line_count",
+        Some("limit"),
+    ),
+];
+
+/// Tools in [`RENAMED_TOOL_PARAMETERS`] whose behavior changed with their parameters, so a
+/// saved description override that names an old parameter was written for the former tool.
+/// Search changed from a ranked word search to a regex grep.
+pub(crate) const TOOLS_WITH_CHANGED_MEANING: [&str; 1] = ["builtin:workspace.search_files"];
+
+/// Builtin schemas are closed (`additionalProperties: false`), and so are the objects in
+/// their arrays. The runtime enforces this against the current descriptor rather than the
+/// invocation's frozen copy, so a call shaped for an older schema fails visibly instead of
+/// running with defaults.
+pub(crate) fn unsupported_builtin_argument(
+    descriptor: &ToolDescriptor,
+    args: &Map<String, Value>,
+    tool_alias: &str,
+) -> Option<String> {
+    let UnsupportedKey {
+        path,
+        parent,
+        accepted,
+    } = find_unsupported_key(&descriptor.input_schema, args, &ArgumentPath::default())?;
+    let key = &path.location;
+    let renamed = RENAMED_TOOL_PARAMETERS
+        .iter()
+        .find(|(tool_id, old, _)| *tool_id == descriptor.id.as_str() && *old == path.pattern);
+    Some(match renamed {
+        Some((_, _, Some(new))) => format!(
+            "`{key}` is not a parameter of {tool_alias}; use `{}`.",
+            parent.key(new).location
+        ),
+        Some((_, _, None)) => format!("`{key}` is no longer a parameter of {tool_alias}."),
+        None if parent.location.is_empty() && accepted.is_empty() => {
+            format!("{tool_alias} takes no arguments; `{key}` is not supported.")
+        }
+        None if parent.location.is_empty() => format!(
+            "`{key}` is not a parameter of {tool_alias}. Parameters: {}.",
+            accepted.join(", ")
+        ),
+        None => format!(
+            "`{key}` is not a parameter of {tool_alias}. Parameters of {}: {}.",
+            parent.location,
+            accepted.join(", ")
+        ),
+    })
+}
+
+/// Where a key sits in a call's arguments: `pattern` names it as the renamed-parameter
+/// table does (`floors[].index`), `location` as the call wrote it (`floors[2].index`).
+#[derive(Clone, Default)]
+struct ArgumentPath {
+    pattern: String,
+    location: String,
+}
+
+impl ArgumentPath {
+    fn key(&self, key: &str) -> Self {
+        let join = |prefix: &str| {
+            if prefix.is_empty() {
+                key.to_string()
+            } else {
+                format!("{prefix}.{key}")
+            }
+        };
+        Self {
+            pattern: join(&self.pattern),
+            location: join(&self.location),
+        }
+    }
+
+    fn item(&self, index: usize) -> Self {
+        Self {
+            pattern: format!("{}[]", self.pattern),
+            location: format!("{}[{index}]", self.location),
+        }
+    }
+}
+
+struct UnsupportedKey<'a> {
+    path: ArgumentPath,
+    /// The object holding the key; empty for a top-level parameter.
+    parent: ArgumentPath,
+    /// The keys that object accepts.
+    accepted: Vec<&'a str>,
+}
+
+/// The first key that a closed object schema in `schema` does not accept, looking into
+/// nested objects and array items.
+fn find_unsupported_key<'a>(
+    schema: &'a Value,
+    object: &Map<String, Value>,
+    at: &ArgumentPath,
+) -> Option<UnsupportedKey<'a>> {
+    let properties = schema.get("properties").and_then(Value::as_object);
+    let closed = schema.get("additionalProperties") == Some(&Value::Bool(false));
+    object.iter().find_map(|(key, value)| {
+        let path = at.key(key);
+        let Some(property) = properties.and_then(|properties| properties.get(key)) else {
+            return closed.then(|| UnsupportedKey {
+                path,
+                parent: at.clone(),
+                accepted: properties
+                    .map(|properties| properties.keys().map(String::as_str).collect())
+                    .unwrap_or_default(),
+            });
+        };
+        match value {
+            Value::Object(object) => find_unsupported_key(property, object, &path),
+            Value::Array(items) => {
+                let item_schema = property.get("items")?;
+                items.iter().enumerate().find_map(|(index, item)| {
+                    find_unsupported_key(item_schema, item.as_object()?, &path.item(index))
+                })
+            }
+            _ => None,
+        }
+    })
+}
+
+/// Whether a stage with these builtin tools may end the run. A stage that can hand off
+/// passes the run on instead; any other stage ends it by a final commit or as its finish
+/// policy allows.
+pub(crate) fn stage_can_finish_run(has_builtin: impl Fn(&str) -> bool) -> bool {
+    !has_builtin(AGENT_HANDOFF)
+}
+
+/// The alias under which the model sees builtin `native_name` among `tools`, or `None`
+/// when it is not offered. Resumed runs keep the aliases they were frozen with, so text
+/// that names a tool must take the alias from the tools the model actually sees.
+pub(crate) fn visible_builtin_alias<'a>(
+    tools: &'a [AgentModelTool],
+    native_name: &str,
+) -> Option<&'a str> {
+    tools
+        .iter()
+        .find(|tool| tool.tool_id.is_builtin() && tool.tool_id.native_name() == native_name)
+        .map(|tool| tool.model_alias.as_str())
 }
 
 const MAX_MODEL_ALIAS_BYTES: usize = 64;

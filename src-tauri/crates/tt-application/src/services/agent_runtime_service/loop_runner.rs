@@ -9,15 +9,17 @@ use super::continuation::{AutoCommitFile, InvocationFrame, InvocationStep, Pendi
 use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
 use super::tool_execution::recoverable_tool_error;
-use super::{AgentCancelReceiver, AgentRuntimeService};
+use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
-use crate::services::agent_tools::{AGENT_AWAIT, AGENT_HANDOFF, AgentToolEffect};
-use crate::services::agent_workspace_scope::is_auto_commit_text_path;
+use crate::services::agent_tools::{
+    AGENT_AWAIT, AGENT_HANDOFF, AgentToolEffect, FinishPolicy, TASK_RETURN, TextTurn,
+    stage_can_finish_run, visible_builtin_alias,
+};
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart, AgentModelMessage,
     AgentModelResponse, AgentModelRole, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
-    AgentToolResult, WorkspacePath,
+    AgentRunTarget, AgentToolResult, WorkspacePath,
 };
 use tt_domain::models::tool::ToolTurnContract;
 use tt_domain::text_metrics::TextMetrics;
@@ -54,6 +56,14 @@ impl AgentRuntimeService {
         let auto_commit_text_mutations = updates_run_status
             && matches!(&active_run.target, tt_domain::models::agent::AgentRunTarget::Chat(chat)
                 if chat.presentation == AgentRunPresentation::Foreground);
+        // Only the run's message body is published without an explicit commit; persist/
+        // and other working notes never reach the chat.
+        let message_body = if auto_commit_text_mutations {
+            self.run_message_body_path(run_id).await?
+        } else {
+            None
+        };
+        let is_message_body = |path: &WorkspacePath| message_body.as_ref() == Some(path);
         let stream = self
             .active_run_handle(run_id)
             .await?
@@ -91,7 +101,7 @@ impl AgentRuntimeService {
                         }),
                     )
                     .await?;
-                    let exchange = self
+                    let generated = self
                         .generate_model_with_retry(
                             &prepared.invocation,
                             round,
@@ -101,6 +111,11 @@ impl AgentRuntimeService {
                             cancel,
                         )
                         .await?;
+                    // The host may have previewed the streamed `write_file` in the chat message.
+                    if generated.streamed_write_file {
+                        commit_ledger.mark_unconfirmed();
+                    }
+                    let exchange = generated.exchange;
                     let response = exchange.response;
                     let model_response_path = self
                         .store_model_response(run_id, invocation_id, round, &response)
@@ -166,7 +181,10 @@ impl AgentRuntimeService {
                     .await?;
 
                     let has_tools = !response.tool_calls.is_empty();
-                    let direct_output_path = if has_tools || replied {
+                    let finish_policy = prepared.finish_policy(&active_run.target);
+                    let text_ends_run = !has_tools
+                        && finish_policy.ends_run(commit_ledger.shows_confirmed_publication());
+                    let direct_output_path = if has_tools || replied || text_ends_run {
                         None
                     } else {
                         self.capture_direct_output(
@@ -183,14 +201,29 @@ impl AgentRuntimeService {
                     prepared.request.messages.push(response.message);
                     if replied {
                         return Ok(Some(AgentLoopExit::Replied));
+                    } else if text_ends_run {
+                        progress.step = InvocationStep::Exited(AgentLoopExit::Finished);
+                        self.event(
+                            run_id,
+                            AgentRunEventLevel::Info,
+                            "agent_loop_finished",
+                            json!({
+                                "commitCount": commit_ledger.len(),
+                                "round": round,
+                                "invocationId": invocation_id,
+                                "endedBy": "text_turn",
+                                "finishPolicy": finish_policy,
+                            }),
+                        )
+                        .await?;
+                        self.ensure_not_cancelled(cancel)?;
                     } else if !has_tools {
                         progress.drift_attempts += 1;
                         let nudge = build_drift_recovery_nudge(
-                            commit_ledger.explicit_count(),
+                            prepared,
+                            finish_policy,
                             progress.drift_attempts,
                             direct_output_path.as_ref(),
-                            exit_policy,
-                            &prepared.tool_turn,
                         );
                         prepared.request.messages.push(AgentModelMessage {
                             role: AgentModelRole::User,
@@ -215,7 +248,7 @@ impl AgentRuntimeService {
                         if !can_recover {
                             return Err(ApplicationError::ValidationError(format!(
                                 "model.tool_call_required: model must use Agent tools and complete through {}",
-                                completion_tool_name(exit_policy, &prepared.tool_turn)
+                                prepared.completion_tool_name(&active_run.target)
                             )));
                         }
                     } else {
@@ -288,7 +321,8 @@ impl AgentRuntimeService {
                         // have changed an earlier candidate, so they cancel this round's publish.
                         let candidate = match &outcome.effect {
                             AgentToolEffect::WorkspaceFileWritten { file, .. } => {
-                                if stream && is_auto_commit_text_path(&file.path) {
+                                if stream && is_message_body(&file.path) {
+                                    // The host previews streamed body writes and keeps them.
                                     turn.auto_commit = None;
                                     None
                                 } else {
@@ -303,8 +337,7 @@ impl AgentRuntimeService {
                             _ => None,
                         };
                         if !result.is_error
-                            && let Some(path) =
-                                candidate.filter(|path| is_auto_commit_text_path(path))
+                            && let Some(path) = candidate.filter(|path| is_message_body(path))
                         {
                             turn.auto_commit =
                                 Some((call.call_id.clone(), AutoCommitFile { path: path.clone() }));
@@ -412,7 +445,9 @@ impl AgentRuntimeService {
                         self.ensure_not_cancelled(cancel)?;
                         continue;
                     }
-                    if auto_commit_text_mutations && let Some((call_id, file)) = &turn.auto_commit {
+                    if let Some((call_id, file)) = &turn.auto_commit
+                        && is_message_body(&file.path)
+                    {
                         progress.blocked_reason =
                             Some("The automatic chat commit has no confirmed result.".to_string());
                         self.auto_commit_text_file_if_eligible(
@@ -539,29 +574,54 @@ fn remember_seen_child_results_from_await(
     }
 }
 
-pub(super) fn completion_tool_name(
-    exit_policy: AgentInvocationExitPolicy,
-    turn: &ToolTurnContract,
-) -> &'static str {
-    match exit_policy {
-        AgentInvocationExitPolicy::RunFinishAllowed => {
-            if turn_has_builtin(turn, "workspace.finish") {
-                "workspace_finish"
-            } else if turn_has_builtin(turn, AGENT_HANDOFF) {
-                "agent_handoff"
-            } else {
-                "an available Agent control tool"
+impl PreparedInvocation {
+    /// How this stage ends in the Run it belongs to, `target`.
+    pub(super) fn finish_policy(&self, target: &AgentRunTarget) -> FinishPolicy {
+        let presentation = match target {
+            AgentRunTarget::Chat(chat) => chat.presentation,
+            // Session invocations reply (`ReplyAllowed`), which no finish policy ends.
+            AgentRunTarget::Session { .. } => return FinishPolicy::Correct,
+        };
+        FinishPolicy::for_stage(
+            self.invocation.exit_policy,
+            presentation,
+            turn_can_finish_run(&self.tool_turn),
+        )
+    }
+
+    /// The call that completes this stage, named with the aliases the model sees in this turn.
+    pub(super) fn completion_tool_name(&self, target: &AgentRunTarget) -> String {
+        let alias =
+            |name: &'static str| visible_builtin_alias(&self.request.tools, name).unwrap_or(name);
+        match (
+            self.invocation.exit_policy,
+            self.finish_policy(target).text_turn(),
+            turn_has_builtin(&self.tool_turn, "workspace.commit"),
+        ) {
+            (AgentInvocationExitPolicy::ReplyAllowed, ..) => "an assistant reply".to_string(),
+            (AgentInvocationExitPolicy::TaskReturnRequired, ..) => alias(TASK_RETURN).to_string(),
+            (AgentInvocationExitPolicy::RunFinishAllowed, TextTurn::Continues, _) => {
+                alias(AGENT_HANDOFF).to_string()
+            }
+            (AgentInvocationExitPolicy::RunFinishAllowed, _, true) => {
+                format!("{} with finish: true", alias("workspace.commit"))
+            }
+            // Readiness gives every stage that must publish the commit tool.
+            (AgentInvocationExitPolicy::RunFinishAllowed, _, false) => {
+                "a final reply without tool calls".to_string()
             }
         }
-        AgentInvocationExitPolicy::TaskReturnRequired => "task_return",
-        AgentInvocationExitPolicy::ReplyAllowed => "an assistant reply",
     }
 }
 
-fn turn_has_builtin(turn: &ToolTurnContract, native_name: &str) -> bool {
+pub(super) fn turn_has_builtin(turn: &ToolTurnContract, native_name: &str) -> bool {
     turn.tools()
         .iter()
         .any(|tool_id| tool_id.is_builtin() && tool_id.native_name() == native_name)
+}
+
+pub(super) fn turn_can_finish_run(turn: &ToolTurnContract) -> bool {
+    stage_can_finish_run(|name| turn_has_builtin(turn, name))
 }
 
 fn drift_recovery_attempt_limit(max_rounds: usize) -> usize {
@@ -569,106 +629,79 @@ fn drift_recovery_attempt_limit(max_rounds: usize) -> usize {
 }
 
 /// Build the corrective `user` message we inject when the model returns a
-/// turn with zero tool calls. The phrasing covers the common drift modes:
+/// turn with zero tool calls and the stage's finish policy does not end the run.
+/// The phrasing follows the stage's finish policy:
 ///
-/// * **Post-commit drift** (committed_count > 0): model committed a chat
-///   message but then replied with plain text instead of using the current
-///   stage completion tool. We tell it to complete with `workspace_finish`
-///   when available, or continue with `agent_handoff` for handoff-only stages.
-/// * **No-commit drift** (committed_count == 0): model bypassed the tool
-///   workflow entirely. We tell it that every turn must use a tool until
-///   the stage is finished or transferred.
+/// * **Stages that can end the run** get here only while the chat message does not show a
+///   confirmed publication; otherwise a text-only turn ends them. We point the model at the
+///   saved direct text and ask for a commit with `finish: true`, so recovery costs a single
+///   round.
+/// * **Handoff-only stages** continue with the handoff tool.
 /// * **Child drift** (TaskReturnRequired): return-mode subagents cannot
 ///   commit or finish the run, so we direct them back to `task_return`.
-///
 fn build_drift_recovery_nudge(
-    committed_count: usize,
+    prepared: &PreparedInvocation,
+    finish_policy: FinishPolicy,
     attempt: usize,
     direct_output_path: Option<&WorkspacePath>,
-    exit_policy: AgentInvocationExitPolicy,
-    turn: &ToolTurnContract,
 ) -> String {
-    match exit_policy {
-        AgentInvocationExitPolicy::RunFinishAllowed => {
-            if turn_has_builtin(turn, "workspace.finish") {
-                let direct_output_hint = direct_output_path
-                    .map(|path| {
-                        format!(
-                            " I saved your direct text to {}. If that text is the intended reply, call workspace_commit with path \"{}\" before workspace_finish.",
-                            path.as_str(),
-                            path.as_str()
-                        )
-                    })
-                    .unwrap_or_default();
-
-                if committed_count > 0 {
-                    format!(
-                        "[system reminder, direct output recovery attempt {attempt}] You replied with \
-                         plain text but the run is still open. You have committed {committed_count} \
-                         message(s) to the chat via workspace_commit; complete cleanly by calling \
-                         workspace_finish. If you need to revise the committed content, update the workspace file with \
-                         workspace_apply_patch or workspace_write_file, then call workspace_commit again \
-                         before workspace_finish.{direct_output_hint} Do NOT repeat the content in plain text; \
-                         continue through Agent tools."
-                    )
-                } else {
-                    format!(
-                        "[system reminder, direct output recovery attempt {attempt}] You replied with \
-                         plain text, but this run must continue through Agent tools until workspace_finish. \
-                         Inspect the workspace if needed, produce the answer through workspace_write_file \
-                         and workspace_commit, then call workspace_finish.{direct_output_hint} \
-                         Do NOT answer directly in plain text."
-                    )
-                }
-            } else if turn_has_builtin(turn, AGENT_HANDOFF) {
-                let direct_output_hint = direct_output_path
-                    .map(|path| {
-                        format!(
-                            " I saved your direct text to {}. If it is useful, mention that path in the handoff brief.",
-                            path.as_str()
-                        )
-                    })
-                    .unwrap_or_default();
-
-                format!(
-                    "[system reminder, direct output recovery attempt {attempt}] You replied with \
-                     plain text, but this Agent stage cannot finish the run directly. Continue by \
-                     calling agent_handoff with a clear objective, context summary, workspace references, \
-                     and preservation constraints for the next Agent.{direct_output_hint} Do NOT answer \
-                     directly in plain text."
-                )
-            } else {
-                let direct_output_hint = direct_output_path
-                    .map(|path| {
-                        format!(
-                            " I saved your direct text to {}. If it is useful, reference that path when continuing.",
-                            path.as_str()
-                        )
-                    })
-                    .unwrap_or_default();
-                format!(
-                    "[system reminder, direct output recovery attempt {attempt}] You replied with \
-                     plain text, but this run must continue through Agent tools. Use an available \
-                     Agent control tool to continue or complete the stage.{direct_output_hint} Do NOT \
-                     answer directly in plain text."
-                )
-            }
-        }
-        AgentInvocationExitPolicy::TaskReturnRequired => {
+    let prefix = format!("[system reminder, direct output recovery attempt {attempt}]");
+    let alias =
+        |name: &'static str| visible_builtin_alias(&prepared.request.tools, name).unwrap_or(name);
+    match prepared.invocation.exit_policy {
+        AgentInvocationExitPolicy::RunFinishAllowed
+            if finish_policy.text_turn() == TextTurn::Continues =>
+        {
+            let handoff = alias(AGENT_HANDOFF);
             let direct_output_hint = direct_output_path
                 .map(|path| {
                     format!(
-                        " I saved your direct text to {}. If it is useful, summarize it or reference that path in task_return.artifacts.",
+                        " I saved your direct text to {}. If it is useful, mention that path in the handoff brief.",
                         path.as_str()
                     )
                 })
                 .unwrap_or_default();
             format!(
-                "[system reminder, direct output recovery attempt {attempt}] You replied with \
-                 plain text, but this delegated task must end through task_return. \
-                 Call task_return with a concise summary, status, and any useful findings, warnings, \
-                 questions, next actions, or artifact paths.{direct_output_hint} Do NOT answer directly \
-                 in plain text."
+                "{prefix} You replied with plain text, but this Agent stage cannot finish the run \
+                 directly. Continue by calling {handoff} with a clear objective, context summary, \
+                 workspace references, and preservation constraints for the next Agent.\
+                 {direct_output_hint} Do NOT answer directly in plain text."
+            )
+        }
+        AgentInvocationExitPolicy::RunFinishAllowed => {
+            let commit = alias("workspace.commit");
+            let write = alias("workspace.write_file");
+            let next_step = match direct_output_path {
+                Some(path) => format!(
+                    "I saved your text to {path}. If it is the intended reply, call {commit} \
+                     with file_path \"{path}\" and finish: true. Otherwise write the reply with \
+                     {write}, then call {commit} with finish: true.",
+                    path = path.as_str()
+                ),
+                None => {
+                    format!("Write the reply with {write}, then call {commit} with finish: true.")
+                }
+            };
+            format!(
+                "{prefix} You replied with plain text, but only committed text reaches the chat. \
+                 {next_step} Do NOT answer directly in plain text."
+            )
+        }
+        AgentInvocationExitPolicy::TaskReturnRequired => {
+            let task_return = alias(TASK_RETURN);
+            let direct_output_hint = direct_output_path
+                .map(|path| {
+                    format!(
+                        " I saved your direct text to {}. If it is useful, summarize it or reference that path in {task_return}.artifacts.",
+                        path.as_str()
+                    )
+                })
+                .unwrap_or_default();
+            format!(
+                "{prefix} You replied with plain text, but this delegated task must end through \
+                 {task_return}. Call {task_return} with a concise summary, status, and any useful \
+                 findings, warnings, questions, next actions, or artifact paths.{direct_output_hint} \
+                 Do NOT answer directly in plain text."
             )
         }
         AgentInvocationExitPolicy::ReplyAllowed => {

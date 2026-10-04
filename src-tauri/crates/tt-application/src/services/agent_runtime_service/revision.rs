@@ -49,6 +49,7 @@ impl RunExecutionState {
         });
         self.foreground = Some(InvocationFrame::new(prepared));
         self.children.clear();
+        self.commits.record_revision_start();
         self.previous_published_state_id = self.published_state.take().map(|state| state.state_id);
         Ok(())
     }

@@ -9572,6 +9572,7 @@ dependencies = [
  "mime_guess",
  "percent-encoding",
  "rand 0.10.3",
+ "regex",
  "serde",
  "serde_json",
  "sha2 0.11.0",

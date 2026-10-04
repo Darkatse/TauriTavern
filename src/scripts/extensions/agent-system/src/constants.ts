@@ -31,7 +31,6 @@ export const KNOWN_TOOLS = Object.freeze([
     'builtin:workspace.apply_patch',
     'builtin:workspace.shell',
     'builtin:workspace.commit',
-    'builtin:workspace.finish',
 ]);
 
 export const WORKSPACE_ROOTS = Object.freeze(['output', 'scratch', 'plan', 'summaries', 'persist']);

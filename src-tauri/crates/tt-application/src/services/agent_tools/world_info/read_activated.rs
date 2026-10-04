@@ -73,8 +73,8 @@ enum ReadActivatedRequest {
 #[derive(Debug)]
 struct EntryContentRequest {
     ref_id: String,
-    start_line: Option<usize>,
-    line_count: Option<usize>,
+    offset: Option<usize>,
+    limit: Option<usize>,
 }
 
 struct ActivatedEntry {
@@ -153,14 +153,6 @@ fn parse_request(args: &Map<String, Value>) -> Result<ReadActivatedRequest, Stri
         return Ok(ReadActivatedRequest::Index);
     }
 
-    for key in args.keys() {
-        if key != "entries" {
-            return Err(format!(
-                "{key} is not supported; omit arguments to list active World Info entries, or pass entries to read selected content"
-            ));
-        }
-    }
-
     let values = args
         .get("entries")
         .and_then(Value::as_array)
@@ -186,12 +178,6 @@ fn parse_entry_request(position: usize, value: &Value) -> Result<EntryContentReq
     let object = value
         .as_object()
         .ok_or_else(|| format!("entries[{position}] must be an object"))?;
-    for key in object.keys() {
-        if key != "ref" && key != "start_line" && key != "line_count" {
-            return Err(format!("entries[{position}].{key} is not supported"));
-        }
-    }
-
     let ref_id = object
         .get("ref")
         .and_then(Value::as_str)
@@ -202,8 +188,8 @@ fn parse_entry_request(position: usize, value: &Value) -> Result<EntryContentReq
 
     Ok(EntryContentRequest {
         ref_id,
-        start_line: optional_entry_usize(object, "start_line", position)?,
-        line_count: optional_entry_usize(object, "line_count", position)?,
+        offset: optional_entry_usize(object, "offset", position)?,
+        limit: optional_entry_usize(object, "limit", position)?,
     })
 }
 
@@ -379,8 +365,8 @@ fn render_entry(
 ) -> Result<RenderedEntry, String> {
     let selection = TextLineSelection::select(
         &entry.content,
-        request.start_line.unwrap_or(1),
-        request.line_count,
+        request.offset.unwrap_or(1),
+        request.limit,
         MAX_WORLDINFO_ENTRY_READ_LINES,
         max_chars,
     )
@@ -466,7 +452,7 @@ fn render_content_entries(entries: &[RenderedEntry]) -> String {
         }
         if let Some(next_start_line) = entry.selection.next_start_line() {
             content.push_str(&format!(
-                "\nContinue {} with start_line={next_start_line} and line_count={}.",
+                "\nContinue {} with offset={next_start_line} and limit={}.",
                 entry.ref_id,
                 entry.selection.returned_line_count()
             ));
@@ -539,12 +525,10 @@ fn invalid_activation_snapshot(message: impl Into<String>) -> ApplicationError {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
     use tt_domain::text_metrics::TextMetrics;
 
     use super::{
-        ActivatedEntry, EntryContentRequest, MAX_WORLDINFO_ENTRY_READ_CHARS, parse_entry_request,
-        render_entry,
+        ActivatedEntry, EntryContentRequest, MAX_WORLDINFO_ENTRY_READ_CHARS, render_entry,
     };
 
     #[test]
@@ -565,8 +549,8 @@ mod tests {
             &entry,
             &EntryContentRequest {
                 ref_id: entry.ref_id.clone(),
-                start_line: None,
-                line_count: None,
+                offset: None,
+                limit: None,
             },
             MAX_WORLDINFO_ENTRY_READ_CHARS,
         )
@@ -575,12 +559,5 @@ mod tests {
         assert_eq!(rendered.selection.end_line, 1);
         assert_eq!(rendered.selection.next_start_line(), Some(2));
         assert!(rendered.selection.truncated());
-    }
-
-    #[test]
-    fn character_ranges_are_not_accepted() {
-        let error = parse_entry_request(0, &json!({ "ref": "worldinfo:world#1", "max_chars": 10 }))
-            .unwrap_err();
-        assert!(error.contains("max_chars is not supported"));
     }
 }

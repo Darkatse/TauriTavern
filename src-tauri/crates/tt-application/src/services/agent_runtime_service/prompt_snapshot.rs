@@ -1,14 +1,23 @@
 use serde_json::{Map, Value, json};
 
+use std::sync::Arc;
+
 use crate::errors::ApplicationError;
+use crate::services::agent_profile_service::WORKSPACE_INDEX_PLACEHOLDER;
+use crate::services::agent_tools::{offers_workspace_files, render_workspace_index};
+use crate::services::agent_workspace_scope::{
+    ChatSnapshot, ScopedWorkspaceFs, WorkspaceAccessPolicy,
+};
 use crate::services::chat_completion_service::OPENCODE_STABLE_CHAT_ID_FIELD;
 use tt_domain::models::agent::profile::{AgentContextPolicy, ResolvedAgentProfile};
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentModelTool,
+    AgentRunTarget,
 };
 use tt_domain::models::skill::SkillIndexEntry;
 use tt_domain::models::tool::ToolChoice;
 use tt_ports::repositories::chat_completion_repository::OPENAI_RESPONSES_WEBSOCKET_TRANSPORT;
+use tt_ports::workspace_fs::WorkspaceFs;
 
 use super::invocation::model_session_id;
 
@@ -21,7 +30,9 @@ pub(super) struct AgentPromptRequest {
 }
 
 /// PromptManager supplies the component identity; its position and role belong
-/// to the preset. Append the invocation's available skills and agents together.
+/// to the preset. Append the invocation's available skills and agents together, at the
+/// end of the text or, when it places the workspace index, right before the index and the
+/// blank lines leading to it, so the runtime sections keep one order.
 pub(super) fn append_runtime_catalogs(
     request: &mut AgentPromptRequest,
     skills: &[SkillIndexEntry],
@@ -30,6 +41,65 @@ pub(super) fn append_runtime_catalogs(
     if skills.is_empty() && agents.is_empty() {
         return Ok(());
     }
+    let text = agent_system_prompt_text(request)?;
+    let at = text
+        .find(WORKSPACE_INDEX_PLACEHOLDER)
+        .map_or(text.len(), |at| text[..at].trim_end().len());
+    let mut catalogs = String::new();
+    append_runtime_catalogs_text(&mut catalogs, skills, agents);
+    text.insert_str(at, &catalogs);
+    Ok(())
+}
+
+/// Expands `{{workspace}}` in the agent system prompt into the workspace index, so the
+/// model can act without first listing the workspace; text without it gets no index. Chat
+/// and Session runs expand it alike. The trailing messages belong to the preset
+/// (post-history instructions, prefill-style format openers) and must stay untouched. The
+/// index is rendered once while preparing the invocation; later rounds, resume, and
+/// revision reuse the prepared request unchanged.
+pub(super) async fn expand_workspace_index(
+    request: &mut AgentPromptRequest,
+    files: Arc<dyn WorkspaceFs>,
+    chat: Option<Arc<ChatSnapshot>>,
+    target: &AgentRunTarget,
+    profile: &ResolvedAgentProfile,
+    tools: &[AgentModelTool],
+) -> Result<(), ApplicationError> {
+    if !agent_system_prompt_text(request)?.contains(WORKSPACE_INDEX_PLACEHOLDER) {
+        return Ok(());
+    }
+    let uses_workspace = offers_workspace_files(tools);
+    // Without workspace tools the index has nothing to point at.
+    let index = if uses_workspace {
+        let workspace = ScopedWorkspaceFs::new(files, WorkspaceAccessPolicy::from_profile(profile))
+            .with_chat(chat);
+        render_workspace_index(&workspace, profile, target).await?
+    } else {
+        String::new()
+    };
+    expand_workspace_placeholder(agent_system_prompt_text(request)?, &index);
+    Ok(())
+}
+
+/// Replaces each placeholder with `index`. An empty index also drops the blank lines
+/// before the placeholder, leaving the text as if it had never been there.
+fn expand_workspace_placeholder(text: &mut String, index: &str) {
+    let mut from = 0;
+    while let Some(found) = text[from..].find(WORKSPACE_INDEX_PLACEHOLDER) {
+        let at = from + found;
+        let start = if index.is_empty() {
+            text[..at].trim_end().len()
+        } else {
+            at
+        };
+        text.replace_range(start..at + WORKSPACE_INDEX_PLACEHOLDER.len(), index);
+        from = start + index.len();
+    }
+}
+
+fn agent_system_prompt_text(
+    request: &mut AgentPromptRequest,
+) -> Result<&mut String, ApplicationError> {
     let component = request.messages.iter_mut().find(|message| {
         message.provider_metadata.get("promptComponent").and_then(Value::as_str) == Some("agentSystemPrompt")
     }).ok_or_else(|| ApplicationError::ValidationError(
@@ -40,8 +110,7 @@ pub(super) fn append_runtime_catalogs(
             "agent.system_prompt_invalid: agentSystemPrompt content must be text".into(),
         ));
     };
-    append_runtime_catalogs_text(content, skills, agents);
-    Ok(())
+    Ok(content)
 }
 
 pub(super) fn append_runtime_catalogs_text(
@@ -656,8 +725,7 @@ mod tests {
             "tools": {
                 "allow": [
                     "builtin:workspace.write_file",
-                    "builtin:workspace.commit",
-                    "builtin:workspace.finish"
+                    "builtin:workspace.commit"
                 ],
                 "deny": [],
                 "toolDescriptions": {},

@@ -2,21 +2,18 @@ use super::agent::{
     agent_await_descriptor, agent_delegate_descriptor, agent_handoff_descriptor,
     task_return_descriptor,
 };
-use super::chat::{chat_read_messages_descriptor, chat_search_descriptor};
+use super::chat::{
+    CHAT_READ_MESSAGES, CHAT_SEARCH, chat_read_messages_descriptor, chat_search_descriptor,
+};
 use super::dice::dice_roll_descriptor;
-use super::policy::builtin_model_alias;
+use super::policy::stage_can_finish_run;
 use super::workspace::{
-    WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
-    WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE,
-    workspace_apply_patch_descriptor, workspace_commit_descriptor, workspace_finish_descriptor,
-    workspace_list_files_descriptor, workspace_read_file_descriptor,
+    WORKSPACE_COMMIT, WORKSPACE_WRITE_FILE, workspace_apply_patch_descriptor,
+    workspace_commit_descriptor, workspace_list_files_descriptor, workspace_read_file_descriptor,
     workspace_search_files_descriptor, workspace_shell_descriptor, workspace_write_file_descriptor,
 };
 use super::world_info::worldinfo_read_activated_descriptor;
 use crate::errors::ApplicationError;
-use crate::services::agent_workspace_scope::{
-    format_model_visible_workspace_roots, format_model_workspace_roots,
-};
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::tool::{ToolCatalog, ToolDescriptor, ToolId};
 
@@ -43,7 +40,6 @@ impl BuiltinAgentToolRegistry {
             workspace_apply_patch_descriptor(),
             workspace_shell_descriptor(),
             workspace_commit_descriptor(),
-            workspace_finish_descriptor(),
         ];
         let catalog = ToolCatalog::try_from_descriptors(descriptors)
             .expect("builtin Agent tool descriptors must form a valid catalog");
@@ -70,195 +66,57 @@ impl BuiltinAgentToolRegistry {
         if let Some(override_) = profile.tools.tool_descriptions.get(tool_id) {
             descriptor.apply_description_override(override_)?;
         }
+        hide_unavailable_properties(&mut descriptor, profile);
         Ok(descriptor)
     }
 
-    pub(crate) fn apply_return_mode_context(
-        &self,
-        descriptor: &mut ToolDescriptor,
-        profile: &ResolvedAgentProfile,
-    ) -> Result<(), ApplicationError> {
-        apply_return_mode_context(descriptor, profile)
+    /// Delegated tasks share the caller's workspace paths; the task brief names the files.
+    pub(crate) fn apply_return_mode_context(&self, descriptor: &mut ToolDescriptor) {
+        if descriptor.id.native_name() == WORKSPACE_WRITE_FILE {
+            descriptor
+                .description
+                .as_mut()
+                .expect("workspace.write_file has a description")
+                .push_str(" Use the path requested in the task brief when one is provided.");
+        }
     }
-}
-
-fn apply_return_mode_context(
-    descriptor: &mut ToolDescriptor,
-    profile: &ResolvedAgentProfile,
-) -> Result<(), ApplicationError> {
-    let visible_roots = format_model_visible_workspace_roots(&profile.workspace.visible_roots);
-    let writable_roots = format_model_workspace_roots(&profile.workspace.writable_roots);
-    match descriptor.id.native_name() {
-        WORKSPACE_LIST_FILES => {
-            descriptor.description = Some(format!(
-                "List files visible to this delegated task under {visible_roots}. This is the same logical workspace used by the requesting Agent; use the paths named in the task brief."
-            ));
-            descriptor.set_property_description(
-                "path",
-                &format!(
-                    "Optional task workspace path under {visible_roots}. Omit to list visible roots."
-                ),
-            )?;
-        }
-        WORKSPACE_READ_FILE => {
-            descriptor.description = Some(format!(
-                "Read a visible UTF-8 task workspace file with line numbers. Omit start_line and line_count to read the full file; oversized files return a bounded preview with the next line to read. Visible roots are {visible_roots}. Use ordinary workspace paths exactly as they appear in the task brief or file list."
-            ));
-            descriptor.set_property_description(
-                "path",
-                &format!("Visible task workspace file path under {visible_roots}."),
-            )?;
-        }
-        WORKSPACE_SEARCH_FILES => {
-            descriptor.description = Some(format!(
-                "Search visible UTF-8 task workspace files under {visible_roots}. Use this before reading exact ranges."
-            ));
-            descriptor.set_property_description(
-                "path",
-                "Optional visible task workspace file or directory path. Omit to search all visible task paths.",
-            )?;
-        }
-        WORKSPACE_WRITE_FILE => {
-            descriptor.description = Some(format!(
-                "Write UTF-8 text to a writable workspace file for this delegated task. mode replace writes the complete file; mode append adds content exactly to the end and creates the file when missing. Writable prefixes are {writable_roots}. Use the path requested in the task brief when one is provided."
-            ));
-            descriptor.set_property_description(
-                "path",
-                &format!(
-                    "Writable task path under {writable_roots}. Use the path requested in the task when one is provided."
-                ),
-            )?;
-        }
-        WORKSPACE_APPLY_PATCH => {
-            descriptor.description = Some(format!(
-                "Apply a precise single-file string replacement to a writable delegated-task workspace file. Writable prefixes are {writable_roots}. Fully read an existing file before editing it; if the tool reports that it changed, read it again and retry."
-            ));
-            descriptor.set_property_description(
-                "path",
-                &format!(
-                    "Writable task path under {writable_roots}. Use the path requested in the task when one is provided."
-                ),
-            )?;
-        }
-        WORKSPACE_COMMIT | WORKSPACE_FINISH => {}
-        _ => {}
-    }
-    Ok(())
 }
 
 fn apply_profile_context(
     descriptor: &mut ToolDescriptor,
     profile: &ResolvedAgentProfile,
 ) -> Result<(), ApplicationError> {
-    let visible_roots = format_model_visible_workspace_roots(&profile.workspace.visible_roots);
-    let writable_roots = format_model_workspace_roots(&profile.workspace.writable_roots);
-
+    // Readable and writable roots are listed once in the system prompt, and access rules are
+    // enforced (and explained) by tool errors, so descriptions only add profile facts here.
     match descriptor.id.native_name() {
-        WORKSPACE_LIST_FILES => {
-            descriptor.description = Some(format!(
-                "List visible Agent workspace files under {visible_roots}. Use this before reading when you need to inspect available artifacts."
-            ));
-            descriptor.set_property_description(
-                "path",
-                &format!(
-                    "Optional relative workspace directory or file path under {visible_roots}. Omit to list the visible workspace roots."
-                ),
-            )?;
-        }
-        WORKSPACE_READ_FILE => {
-            let patch_hint = if profile_tool_visible(profile, WORKSPACE_APPLY_PATCH) {
-                " Read the exact text you want to replace before using workspace_apply_patch; if a patch fails, fully read the file before retrying."
-            } else {
-                " Partial reads are only for inspection."
-            };
-            descriptor.description = Some(format!(
-                "Read a visible UTF-8 Agent workspace file with line numbers. Omit start_line and line_count to read the full file; oversized files return a bounded preview with the next line to read.{patch_hint}"
-            ));
-            descriptor.set_property_description(
-                "path",
-                &format!("Relative workspace file path under {visible_roots}."),
-            )?;
-        }
-        WORKSPACE_SEARCH_FILES => {
-            descriptor.description = Some(format!(
-                "Search visible UTF-8 Agent workspace files under {visible_roots}. Results return snippets and refs; use workspace_read_file to read exact ranges."
-            ));
-            descriptor.set_property_description(
-                "path",
-                &format!(
-                    "Optional visible workspace file or directory path under {visible_roots}. Omit to search all visible roots."
-                ),
-            )?;
-        }
         WORKSPACE_WRITE_FILE => {
-            let output_hint = profile
-                .output
-                .as_ref()
-                .map(|output| {
-                    format!(
-                        " Use {} for the default chat message body.",
-                        output.message_body_path
-                    )
-                })
-                .unwrap_or_default();
-            descriptor.description = Some(format!(
-                "Write UTF-8 text to a writable Agent workspace file. mode replace writes the complete file; mode append adds content exactly to the end and creates the file when missing.{output_hint}"
-            ));
-            descriptor.set_property_description(
-                "path",
-                &format!("Relative workspace path. Writable prefixes are {writable_roots}."),
-            )?;
-        }
-        WORKSPACE_APPLY_PATCH => {
-            descriptor.description = Some("Apply a precise single-file string replacement. old_string must come from text you already read with workspace_read_file or from a file you created/replaced in this run. old_string must match exactly and uniquely unless replace_all is true. If a patch fails, fully read the file before retrying.".to_string());
-            descriptor.set_property_description(
-                "path",
-                &format!("Relative writable workspace file path under {writable_roots}."),
-            )?;
-        }
-        WORKSPACE_SHELL => {
-            let preferred_tools = [
-                (
-                    WORKSPACE_READ_FILE,
-                    "straightforward single-file text reads",
-                ),
-                (
-                    WORKSPACE_WRITE_FILE,
-                    "straightforward single-file text writes",
-                ),
-                (WORKSPACE_APPLY_PATCH, "precise edits"),
-            ]
-            .into_iter()
-            .filter(|(name, _)| profile_tool_visible(profile, name))
-            .map(|(name, purpose)| format!("{} for {purpose}", builtin_model_alias(name)))
-            .collect::<Vec<_>>();
-            if !preferred_tools.is_empty() {
+            if let Some(output) = profile.output.as_ref() {
                 descriptor
                     .description
                     .as_mut()
-                    .expect("workspace.shell has a description")
-                    .push_str(&format!(" Prefer {}.", preferred_tools.join(", ")));
+                    .expect("workspace.write_file has a description")
+                    .push_str(&format!(
+                        " The chat reply goes in {}.",
+                        output.message_body_path
+                    ));
             }
         }
         WORKSPACE_COMMIT => {
             let final_path = crate::services::agent_profile_service::require_output(profile)?
                 .message_body_path
                 .as_str();
+            let finish_hint = if profile_can_finish_run(profile) {
+                " Set finish: true on the final commit to end the run."
+            } else {
+                ""
+            };
             descriptor.description = Some(format!(
-                "Commit a workspace text file to this run's single chat message. With no arguments, replace the current run message with {final_path}. mode append appends the file text to the same message, creating it when this run has not committed yet."
+                "Publish a workspace file as this run's chat message. Only committed text reaches the chat; plain-text replies are never shown.{finish_hint}"
             ));
             descriptor.set_property_description(
-                "path",
-                &format!(
-                    "Relative visible workspace file path to publish. Defaults to {final_path}."
-                ),
+                "file_path",
+                &format!("File to publish. Defaults to {final_path}."),
             )?;
-        }
-        WORKSPACE_FINISH => {
-            descriptor.description = Some(
-                "Finish the Agent run after required chat commits and workspace changes are complete."
-                    .to_string(),
-            );
         }
         _ => {}
     }
@@ -266,7 +124,35 @@ fn apply_profile_context(
     Ok(())
 }
 
-fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
+/// Runs after description overrides: overrides are validated against the catalog schema,
+/// so one written for a property this profile cannot use is simply not shown.
+fn hide_unavailable_properties(descriptor: &mut ToolDescriptor, profile: &ResolvedAgentProfile) {
+    if descriptor.id.native_name() == WORKSPACE_COMMIT
+        && !profile_can_finish_run(profile)
+        && let Some(properties) = descriptor
+            .input_schema
+            .get_mut("properties")
+            .and_then(serde_json::Value::as_object_mut)
+    {
+        properties.remove("finish");
+    }
+}
+
+/// [`stage_can_finish_run`] over the builtin tools the profile enables.
+pub(crate) fn profile_can_finish_run(profile: &ResolvedAgentProfile) -> bool {
+    stage_can_finish_run(|name| profile_tool_visible(profile, name))
+}
+
+/// Only a profile with a chat tool reads the chat: it alone gets the chat mount, so the
+/// chat files, the index's Chat line and grep over floors all follow this.
+pub(crate) fn profile_reads_chat(profile: &ResolvedAgentProfile) -> bool {
+    [CHAT_SEARCH, CHAT_READ_MESSAGES]
+        .into_iter()
+        .any(|name| profile_tool_visible(profile, name))
+}
+
+/// Whether the profile enables builtin `name`: allowed and not denied.
+pub(crate) fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
     let id = ToolId::builtin(name).expect("builtin Agent tool names form valid ToolIds");
     profile.tools.allow.iter().any(|allowed| allowed == &id)
         && !profile.tools.deny.iter().any(|denied| denied == &id)
@@ -276,9 +162,9 @@ fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::super::agent::{AGENT_DELEGATE, TASK_RETURN};
+    use super::super::agent::{AGENT_DELEGATE, AGENT_HANDOFF, TASK_RETURN};
     use super::super::policy::{compile_invocation_tool_snapshot, prepare_tool_bindings};
-    use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES};
+    use super::super::workspace::{WORKSPACE_COMMIT, WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES};
     use super::*;
     use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
     use tt_domain::models::agent::profile::{
@@ -300,7 +186,7 @@ mod tests {
         profile.tools.allow = vec![
             ToolId::builtin(WORKSPACE_READ_FILE).unwrap(),
             ToolId::builtin(WORKSPACE_SEARCH_FILES).unwrap(),
-            ToolId::builtin(WORKSPACE_FINISH).unwrap(),
+            ToolId::builtin(WORKSPACE_COMMIT).unwrap(),
             ToolId::builtin(AGENT_DELEGATE).unwrap(),
         ];
         profile.tools.deny = vec![ToolId::builtin(WORKSPACE_SEARCH_FILES).unwrap()];
@@ -322,7 +208,7 @@ mod tests {
                 .iter()
                 .map(|binding| binding.tool_id().native_name())
                 .collect::<Vec<_>>(),
-            vec![WORKSPACE_READ_FILE, WORKSPACE_FINISH, AGENT_DELEGATE]
+            vec![WORKSPACE_READ_FILE, WORKSPACE_COMMIT, AGENT_DELEGATE]
         );
         assert_eq!(root.bindings()[0].max_calls(), Some(2));
 
@@ -347,10 +233,39 @@ mod tests {
             vec![
                 ToolId::builtin(WORKSPACE_READ_FILE).unwrap(),
                 ToolId::builtin(WORKSPACE_SEARCH_FILES).unwrap(),
-                ToolId::builtin(WORKSPACE_FINISH).unwrap(),
+                ToolId::builtin(WORKSPACE_COMMIT).unwrap(),
                 ToolId::builtin(AGENT_DELEGATE).unwrap(),
             ]
         );
+    }
+
+    #[test]
+    fn commit_finish_property_follows_whether_the_stage_can_finish() {
+        let registry = BuiltinAgentToolRegistry::all();
+        let commit = ToolId::builtin(WORKSPACE_COMMIT).unwrap();
+        let handoff = ToolId::builtin(AGENT_HANDOFF).unwrap();
+        let mut profile = test_profile();
+        profile.tools.allow = vec![commit.clone(), handoff.clone()];
+        profile.tools.tool_descriptions.insert(
+            commit.clone(),
+            tt_domain::models::tool::ToolDescriptionOverride {
+                description: None,
+                properties: BTreeMap::from([("finish".to_string(), "End it.".to_string())]),
+            },
+        );
+        let finish_property = |profile: &ResolvedAgentProfile| {
+            registry
+                .materialize_profile_descriptor(&commit, profile)
+                .unwrap()
+                .input_schema
+                .pointer("/properties/finish/description")
+                .cloned()
+        };
+
+        // A stage that can hand off passes the run on instead of ending it.
+        assert_eq!(finish_property(&profile), None);
+        profile.tools.allow = vec![commit.clone()];
+        assert_eq!(finish_property(&profile), Some("End it.".into()));
     }
 
     fn test_profile() -> ResolvedAgentProfile {

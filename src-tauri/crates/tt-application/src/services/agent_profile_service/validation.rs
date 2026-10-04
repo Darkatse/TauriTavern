@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::errors::ApplicationError;
+use crate::services::agent_tools::{RENAMED_TOOL_PARAMETERS, TOOLS_WITH_CHANGED_MEANING};
 use tt_domain::models::agent::AgentRunPresentation;
 use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
 use tt_domain::models::agent::profile::{
@@ -47,30 +48,85 @@ pub(super) fn migrate_profile_schema(
             if profile.schema_version < 3 {
                 migrate_tool_policy_to_canonical_ids(&mut profile.tools)?;
             }
-            let keep = |id: &str| !is_retired_agent_tool(id);
-            profile.tools.allow.retain(|id| keep(id));
-            profile.tools.deny.retain(|id| keep(id));
-            profile.tools.tool_descriptions.retain(|id, _| keep(id));
-            profile.tools.max_calls_per_tool.retain(|id, _| keep(id));
+            drop_retired_tools(&mut profile.tools);
+            migrate_renamed_tool_parameters(&mut profile.tools);
             profile.schema_version = AGENT_PROFILE_SCHEMA_VERSION;
             Ok(true)
         }
-        AGENT_PROFILE_SCHEMA_VERSION => Ok(false),
+        AGENT_PROFILE_SCHEMA_VERSION => {
+            let dropped = drop_retired_tools(&mut profile.tools);
+            let renamed = migrate_renamed_tool_parameters(&mut profile.tools);
+            Ok(dropped || renamed)
+        }
         version => Err(ApplicationError::ValidationError(format!(
             "agent.profile_schema_unsupported: schemaVersion {version} is unsupported"
         ))),
     }
 }
 
+/// File tools use the conventional parameter names (`file_path`, `offset`, `limit`, grep's
+/// `pattern`); description overrides written for the old names move to the new ones and
+/// overrides for removed parameters are dropped, so saved Profiles still load. An override
+/// that names an old parameter of a tool whose meaning changed was written for the former
+/// tool: that parameter text and the tool description are dropped rather than moved, and
+/// an override left empty is removed. Returns whether anything changed.
+fn migrate_renamed_tool_parameters(policy: &mut AgentToolPolicy) -> bool {
+    let mut changed = false;
+    for (tool_id, old, new) in RENAMED_TOOL_PARAMETERS {
+        let Some(override_) = policy.tool_descriptions.get_mut(tool_id) else {
+            continue;
+        };
+        let Some(description) = override_.properties.remove(old) else {
+            continue;
+        };
+        changed = true;
+        if TOOLS_WITH_CHANGED_MEANING.contains(&tool_id) {
+            override_.description = None;
+        } else if let Some(new) = new {
+            override_
+                .properties
+                .entry(new.to_string())
+                .or_insert(description);
+        }
+        if override_.is_empty() {
+            policy.tool_descriptions.remove(tool_id);
+        }
+    }
+    changed
+}
+
+/// Builtin tools that no longer exist. Saved Profiles drop them from every tool setting so
+/// they still load; a resumed run that calls one gets the unknown-tool answer.
+const RETIRED_AGENT_TOOLS: [&str; 6] = [
+    "builtin:skill.list",
+    "builtin:skill.read",
+    "builtin:skill.search",
+    "builtin:skill.run_script",
+    "builtin:agent.list",
+    "builtin:workspace.finish",
+];
+
 pub(crate) fn is_retired_agent_tool(id: &str) -> bool {
-    matches!(
-        id,
-        "builtin:skill.list"
-            | "builtin:skill.read"
-            | "builtin:skill.search"
-            | "builtin:skill.run_script"
-            | "builtin:agent.list"
-    )
+    RETIRED_AGENT_TOOLS.contains(&id)
+}
+
+/// Removes retired tools from the policy. Returns whether anything changed.
+fn drop_retired_tools(policy: &mut AgentToolPolicy) -> bool {
+    let sizes = |policy: &AgentToolPolicy| {
+        [
+            policy.allow.len(),
+            policy.deny.len(),
+            policy.tool_descriptions.len(),
+            policy.max_calls_per_tool.len(),
+        ]
+    };
+    let before = sizes(policy);
+    let keep = |id: &str| !is_retired_agent_tool(id);
+    policy.allow.retain(|id| keep(id));
+    policy.deny.retain(|id| keep(id));
+    policy.tool_descriptions.retain(|id, _| keep(id));
+    policy.max_calls_per_tool.retain(|id, _| keep(id));
+    sizes(policy) != before
 }
 
 fn migrate_tool_policy_to_canonical_ids(
