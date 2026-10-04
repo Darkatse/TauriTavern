@@ -19,7 +19,10 @@ use tt_ports::workspace_fs::{
 async fn workspace_read_invalid_path_returns_canonical_tool_error() {
     let repository = TestWorkspaceFs::with_file("output/main.md", "existing");
     let mut session = AgentToolSession::default();
-    let call = workspace_call("workspace.read_file", json!({ "path": "../secrets.json" }));
+    let call = workspace_call(
+        "workspace.read_file",
+        json!({ "file_path": "../secrets.json" }),
+    );
 
     let (result, effect) = read_file(&repository, &call, call_args(&call), &mut session)
         .await
@@ -37,7 +40,7 @@ async fn workspace_read_hidden_path_returns_recoverable_tool_error() {
     let mut session = AgentToolSession::default();
     let call = workspace_call(
         "workspace.read_file",
-        json!({ "path": "input/prompt_snapshot.json" }),
+        json!({ "file_path": "input/prompt_snapshot.json" }),
     );
 
     let (result, effect) = read_file(&repository, &call, call_args(&call), &mut session)
@@ -60,7 +63,10 @@ async fn workspace_read_defaults_to_a_preview_for_oversized_files() {
         .join("\n");
     let repository = TestWorkspaceFs::with_file("output/large.md", &text);
     let mut session = AgentToolSession::default();
-    let call = workspace_call("workspace.read_file", json!({ "path": "output/large.md" }));
+    let call = workspace_call(
+        "workspace.read_file",
+        json!({ "file_path": "output/large.md" }),
+    );
 
     let (result, _) = read_file(&repository, &call, call_args(&call), &mut session)
         .await
@@ -71,7 +77,7 @@ async fn workspace_read_defaults_to_a_preview_for_oversized_files() {
     assert_eq!(result.structured["endLine"], MAX_READ_LINES);
     assert_eq!(result.structured["nextStartLine"], MAX_READ_LINES + 1);
     assert_eq!(result.structured["truncated"], true);
-    assert!(result.content.contains("Continue with start_line="));
+    assert!(result.content.contains("Continue with offset="));
 }
 
 #[tokio::test]
@@ -79,7 +85,10 @@ async fn workspace_read_keeps_a_large_single_line_out_of_the_next_model_request(
     let text = "x".repeat(MAX_READ_CHARS + 1);
     let repository = TestWorkspaceFs::with_file("output/large.txt", &text);
     let mut session = AgentToolSession::default();
-    let call = workspace_call("workspace.read_file", json!({ "path": "output/large.txt" }));
+    let call = workspace_call(
+        "workspace.read_file",
+        json!({ "file_path": "output/large.txt" }),
+    );
 
     let (result, _) = read_file(&repository, &call, call_args(&call), &mut session)
         .await
@@ -98,7 +107,7 @@ async fn workspace_write_root_returns_recoverable_tool_error() {
     let call = workspace_call(
         "workspace.write_file",
         json!({
-            "path": "output",
+            "file_path": "output",
             "content": "replacement",
         }),
     );
@@ -123,7 +132,7 @@ async fn workspace_write_existing_file_requires_prior_read() {
     let write_call = workspace_call(
         "workspace.write_file",
         json!({
-            "path": "output/main.md",
+            "file_path": "output/main.md",
             "content": "new text",
         }),
     );
@@ -150,7 +159,10 @@ async fn workspace_write_existing_file_requires_prior_read() {
         "old text"
     );
 
-    let read_call = workspace_call("workspace.read_file", json!({ "path": "output/main.md" }));
+    let read_call = workspace_call(
+        "workspace.read_file",
+        json!({ "file_path": "output/main.md" }),
+    );
     read_file(&repository, &read_call, call_args(&read_call), &mut session)
         .await
         .expect("read file");
@@ -181,16 +193,19 @@ async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
     let partial_read = workspace_call(
         "workspace.read_file",
         json!({
-            "path": "output/main.md",
-            "start_line": 1,
-            "line_count": 1
+            "file_path": "output/main.md",
+            "offset": 1,
+            "limit": 1
         }),
     );
-    let full_read = workspace_call("workspace.read_file", json!({ "path": "output/main.md" }));
+    let full_read = workspace_call(
+        "workspace.read_file",
+        json!({ "file_path": "output/main.md" }),
+    );
     let missing_patch = workspace_call(
         "workspace.apply_patch",
         json!({
-            "path": "output/main.md",
+            "file_path": "output/main.md",
             "old_string": "delta",
             "new_string": "omega"
         }),
@@ -198,7 +213,7 @@ async fn workspace_patch_partial_failure_requires_full_read_before_retry() {
     let patch = workspace_call(
         "workspace.apply_patch",
         json!({
-            "path": "output/main.md",
+            "file_path": "output/main.md",
             "old_string": "alpha",
             "new_string": "omega"
         }),
@@ -279,6 +294,7 @@ impl TestWorkspaceFs {
             WorkspaceAccessPolicy {
                 visible_roots: vec!["output".to_string()],
                 writable_roots: vec!["output".to_string()],
+                reads_chat: false,
             },
         )
     }
@@ -409,14 +425,14 @@ async fn workspace_write_recreates_a_removed_file_despite_old_read_state() {
     let workspace = TestWorkspaceFs::with_file("output/main.md", "old");
     let path = WorkspacePath::parse("output/main.md").unwrap();
     let mut session = AgentToolSession::default();
-    let read = workspace_call("workspace.read_file", json!({"path": path.as_str()}));
+    let read = workspace_call("workspace.read_file", json!({"file_path": path.as_str()}));
     read_file(&workspace, &read, call_args(&read), &mut session)
         .await
         .unwrap();
     workspace.remove(&path, false).await.unwrap();
     let write = workspace_call(
         "workspace.write_file",
-        json!({"path": path.as_str(), "content": "new"}),
+        json!({"file_path": path.as_str(), "content": "new"}),
     );
     let (result, _) = write_file(&workspace, &write, call_args(&write), &mut session)
         .await

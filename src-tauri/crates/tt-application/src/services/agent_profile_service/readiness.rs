@@ -21,9 +21,15 @@ pub fn validate_chat_profile(
         "agent.profile_output_writer_required",
     )?;
     if exit_policy == AgentInvocationExitPolicy::RunFinishAllowed && profile.run.direct_runnable {
-        require_tool(profile, "workspace.finish", "agent.profile_finish_required")?;
-        if presentation == AgentRunPresentation::Foreground {
-            require_tool(profile, "workspace.commit", "agent.profile_commit_required")?;
+        // Foreground runs end with a final commit; background runs have no chat message to
+        // commit, so only workspace.finish can end them.
+        match presentation {
+            AgentRunPresentation::Foreground => {
+                require_tool(profile, "workspace.commit", "agent.profile_commit_required")?
+            }
+            AgentRunPresentation::Background => {
+                require_tool(profile, "workspace.finish", "agent.profile_finish_required")?
+            }
         }
     }
     Ok(())

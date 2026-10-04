@@ -12,17 +12,22 @@ mod workspace;
 mod world_info;
 
 pub use registry::BuiltinAgentToolRegistry;
+pub(crate) use registry::profile_reads_chat;
 
 pub(crate) use dispatcher::{AgentToolDispatchOutcome, AgentToolDispatcher, AgentToolEffect};
 pub(crate) use runtime_context::build_script_context_json;
 pub(crate) use session::AgentToolSession;
 
 pub(crate) use agent::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, TASK_RETURN};
+#[cfg(test)]
+pub(crate) use policy::builtin_model_alias;
 pub(crate) use policy::{
-    ExternalAgentTool, builtin_available_in_scope, compile_invocation_tool_snapshot,
-    mcp_model_name, prepare_tool_bindings, project_agent_model_tools,
+    ExternalAgentTool, RENAMED_TOOL_PARAMETERS, TOOLS_WITH_CHANGED_MEANING,
+    builtin_available_in_scope, compile_invocation_tool_snapshot, mcp_model_name,
+    prepare_tool_bindings, project_agent_model_tools, stage_can_finish_run,
+    unsupported_builtin_argument, visible_builtin_alias,
 };
 pub(crate) use workspace::{
     WORKSPACE_APPLY_PATCH, WORKSPACE_FINISH, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE,
-    classify_workspace_io_error,
+    classify_workspace_io_error, offers_workspace_files, render_workspace_index,
 };

@@ -27,12 +27,19 @@ impl ToolRequestGate {
             });
         }
 
-        let binding = snapshot.binding(&invocation.tool_id).ok_or_else(|| {
-            ToolRequestGateError::ToolNotInSnapshot {
+        let max_calls = snapshot.max_calls_per_invocation();
+        let Some(binding) = snapshot.binding(&invocation.tool_id) else {
+            // Unknown calls are answered with a recoverable error, so they still spend the
+            // invocation budget; otherwise a model could retry them for free.
+            if self.total_calls >= max_calls {
+                return Err(ToolRequestGateError::InvocationBudgetExhausted { max_calls });
+            }
+            self.total_calls += 1;
+            return Err(ToolRequestGateError::ToolNotInSnapshot {
                 tool_id: invocation.tool_id.clone(),
                 snapshot_id: snapshot.id().clone(),
-            }
-        })?;
+            });
+        };
 
         match turn.choice() {
             ToolChoice::None => {
@@ -49,7 +56,6 @@ impl ToolRequestGate {
             ToolChoice::Auto | ToolChoice::Required | ToolChoice::Specific(_) => {}
         }
 
-        let max_calls = snapshot.max_calls_per_invocation();
         if self.total_calls >= max_calls {
             return Err(ToolRequestGateError::InvocationBudgetExhausted { max_calls });
         }
@@ -193,14 +199,6 @@ mod tests {
             gate.authorize_and_reserve(&snapshot, &specific_turn, &invocation("specific", second)),
             Err(ToolRequestGateError::ToolChoiceSpecific { .. })
         ));
-        assert!(matches!(
-            gate.authorize_and_reserve(
-                &snapshot,
-                &allowed_turn,
-                &invocation("unknown", ToolId::builtin("unknown").unwrap())
-            ),
-            Err(ToolRequestGateError::ToolNotInSnapshot { .. })
-        ));
         gate.authorize_and_reserve(
             &snapshot,
             &allowed_turn,
@@ -209,6 +207,32 @@ mod tests {
         .unwrap();
         assert!(matches!(
             gate.authorize_and_reserve(&snapshot, &allowed_turn, &invocation("over", first)),
+            Err(ToolRequestGateError::InvocationBudgetExhausted { max_calls: 1 })
+        ));
+    }
+
+    #[test]
+    fn gate_charges_unknown_calls_to_the_invocation_budget() {
+        let known = ToolId::builtin("known").unwrap();
+        let snapshot = InvocationToolSnapshot::try_new(
+            ToolSnapshotId::parse("invocation").unwrap(),
+            vec![binding(known.clone(), None)],
+            1,
+        )
+        .unwrap();
+        let turn = ToolTurnContract::all(&snapshot, ToolChoice::Auto).unwrap();
+        let mut gate = ToolRequestGate::default();
+
+        assert!(matches!(
+            gate.authorize_and_reserve(
+                &snapshot,
+                &turn,
+                &invocation("unknown", ToolId::builtin("unknown").unwrap())
+            ),
+            Err(ToolRequestGateError::ToolNotInSnapshot { .. })
+        ));
+        assert!(matches!(
+            gate.authorize_and_reserve(&snapshot, &turn, &invocation("known", known)),
             Err(ToolRequestGateError::InvocationBudgetExhausted { max_calls: 1 })
         ));
     }

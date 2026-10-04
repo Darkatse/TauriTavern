@@ -7,7 +7,11 @@ use crate::services::chat_completion_service::exchange::{
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelResponse, AgentModelRole, AgentModelTool,
 };
-use tt_domain::models::tool::{ToolArguments, ToolInvocation};
+use tt_domain::models::tool::{ToolArguments, ToolId, ToolInvocation};
+
+/// Placeholder identity for a call whose name is not advertised in this turn. The runtime
+/// answers it with a recoverable tool error; the model's name stays in `modelAlias`.
+pub(super) const UNKNOWN_MODEL_TOOL: &str = "model.unknown_tool";
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn decode_chat_completion_response(
@@ -195,17 +199,16 @@ fn parse_tool_call(
                 "model.invalid_tool_call: tool_call_id is required".to_string(),
             )
         })?;
-    let tool = model_tool_for_alias(tools, raw_name).ok_or_else(|| {
-        ApplicationError::ValidationError(format!(
-            "model.unknown_tool_call: model returned unadvertised tool alias `{raw_name}`"
-        ))
-    })?;
+    let tool_id = match model_tool_for_alias(tools, raw_name) {
+        Some(tool) => tool.tool_id.clone(),
+        None => ToolId::builtin(UNKNOWN_MODEL_TOOL).expect("placeholder tool id is valid"),
+    };
     let arguments =
         ToolArguments::decode(function.get("arguments").or_else(|| function.get("args")));
 
     Ok(ToolInvocation {
         call_id: id.to_string(),
-        tool_id: tool.tool_id.clone(),
+        tool_id,
         arguments,
         provider_metadata: json!({
             "modelAlias": raw_name,
