@@ -7,6 +7,7 @@ import test from 'node:test';
 import { collectReleaseAssets } from '../scripts/ci/collect-release-assets.mjs';
 
 const ARTIFACTS = new Map([
+    ['ohos-aarch64-hap', 'entry-default-unsigned.hap'],
     ['android-arm-apk', 'app-armeabi-v7a-release.apk'],
     ['android-arm64-apk', 'app-arm64-v8a-release.apk'],
     ['darwin-aarch64-app', 'TauriTavern.app/Contents/MacOS/TauriTavern'],
@@ -33,6 +34,7 @@ const ARTIFACTS = new Map([
 ]);
 
 const EXPECTED_RELEASE_ASSETS = [
+    'TauriTavern-2.2.0-ohos-arm64-v8a.hap',
     'TauriTavern-2.2.0-android-arm64-v8a.apk',
     'TauriTavern-2.2.0-android-armeabi-v7a.apk',
     'TauriTavern-2.2.0-ios-arm64.ipa',
@@ -66,7 +68,7 @@ async function createArtifacts(root, prefix, omittedSuffixes = []) {
     }
 }
 
-test('collectReleaseAssets publishes the complete Stable naming contract', async (t) => {
+test('collectReleaseAssets publishes the complete naming contract', async (t) => {
     const root = await mkdtemp(join(tmpdir(), 'tauritavern-release-assets-'));
     t.after(() => rm(root, { recursive: true, force: true }));
 

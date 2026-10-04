@@ -106,9 +106,11 @@ Flatpak 构建配方位于 `packaging/flatpak/`，软件源发布工具位于
 - `ci/verify-release-version.mjs`
   校验 Stable Release tag 与前端、Cargo、Tauri、Cargo lock 和 Nix 包版本一致。
 - `ci/collect-release-assets.mjs`
-  校验完整的跨平台构建产物，并按 Stable 与 Canary 共用的用户可见命名契约收集 Release 资产。
+  校验必需的跨平台构建产物，并按 Stable 与 Canary 共用的用户可见命名契约收集 Release 资产。实验性的鸿蒙 HAP 是可选产物，存在时才收集。
 - `ci/distribute-testflight.mjs`
   等待 App Store Connect 处理指定 iOS 构建，写入 `What to Test`，关联公开外测组，并按当前状态提交 Beta App Review。
+- `ohos/`
+  鸿蒙实验构建：`prepare.py` 在一次性 checkout 中准备钉住的框架栈，`env.sh` 设置交叉编译环境，`validate-hap.py` 校验 HAP。流程见 `docs/OpenHarmonyDevelopment.md` §3。
 - `guardrails/frontend-lines-baseline.json`
   `check-frontend-guardrails.mjs` 使用的基线数据文件，文件行数硬性限制指标。
 

@@ -15,7 +15,7 @@ TauriTavern 保留 SillyTavern 的前端体验与扩展生态，用 Tauri 和 Ru
 | 编写扩展 | [扩展 API](API/README.md) |
 | 理解或修改 Agent | [Agent](Agent/README.md) |
 | 查找某个模块的实现 | [模块文档](CurrentState/README.md) |
-| Android / iOS 开发 | [Android](AndroidDevelopment.md)、[iOS](iOSDevelopment.md) |
+| Android / iOS / OpenHarmony 开发 | [Android](AndroidDevelopment.md)、[iOS](iOSDevelopment.md)、[OpenHarmony](OpenHarmonyDevelopment.md) |
 
 Agent 文档从文件、工作区、循环和日志讲起，再说明多 Agent 如何通过任务与结果协作。配置、工具、脚本和 API 可按需要继续查阅。
 
