@@ -51,7 +51,8 @@ jobs:
       - name: Build unsigned HAP
         run: |
           source scripts/ohos/env.sh
-          export PATH="$HARMONY_TOOLS_DIR/command-line-tools/tool/node/bin:$HARMONY_TOOLS_DIR/command-line-tools/bin:$PATH"
+          # Keep the image's Node on PATH for pnpm and the frontend build.
+          export PATH="$HARMONY_TOOLS_DIR/command-line-tools/bin:$PATH"
           config_args=(--config src-tauri/crates/tauritavern/tauri.ohos.conf.json)
           if [ -n "$PACKAGE_VERSION" ]; then
             config_args+=(--config "$(jq -cn --arg version "$PACKAGE_VERSION" '{version: $version}')")

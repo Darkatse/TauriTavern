@@ -34,7 +34,7 @@ pnpm install --frozen-lockfile
 python3 scripts/ohos/prepare.py
 export TARGET_TRIPLE=aarch64-unknown-linux-ohos # x86 主机上的模拟器用 x86_64-unknown-linux-ohos
 source scripts/ohos/env.sh
-export PATH="$HARMONY_TOOLS_DIR/command-line-tools/tool/node/bin:$HARMONY_TOOLS_DIR/command-line-tools/bin:$PATH"
+export PATH="$HARMONY_TOOLS_DIR/command-line-tools/bin:$PATH"
 pnpm ohos build --ci --target "${TARGET_TRIPLE%%-*}" \
   --config src-tauri/crates/tauritavern/tauri.ohos.conf.json -- --lib
 python3 scripts/ohos/validate-hap.py --target "$TARGET_TRIPLE" \
@@ -50,6 +50,7 @@ python3 scripts/ohos/validate-hap.py --target "$TARGET_TRIPLE" \
   - 运行插件 fork 的 `install.py --sources-only`：从同一份 Ability 源码打包 HAR（`gen/ohos/vendor/ability.har`），并复制插件的 ArkTS 源码与类型声明。
 - [`env.sh`](../scripts/ohos/env.sh)：按 `TARGET_TRIPLE` 设置交叉编译器、linker 和 bindgen 参数。
 - `pnpm ohos`：先构建前端，再调用镜像里的 `cargo tauri`。npm 版 CLI 没有 ohos 子命令。
+- pnpm 和前端构建使用镜像里的 Node；不要把鸿蒙工具链自带的旧版 Node 前置到 `PATH`。
 - `--target`：由 `TARGET_TRIPLE` 派生，一次构建只有这一个目标来源。
 - `--config tauri.ohos.conf.json`：必须显式传入。fork CLI 在 `ohos build` 中按 Android 目标解析配置，不会自动合并这个文件。它把 `bundle.resources` 置空：鸿蒙读取嵌入资源，不需要再把资源复制进 HAP。
 - [`validate-hap.py`](../scripts/ohos/validate-hap.py)：确认应用库存在，所有原生库都属于目标 ABI 且 ELF 架构正确，ArkTS 字节码与模块清单存在，ZIP 完整。
