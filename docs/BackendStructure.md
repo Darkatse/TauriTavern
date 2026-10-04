@@ -183,7 +183,7 @@ src-tauri/crates/tauritavern/src/
 │   └── startup_profile.rs # 启动期 settings / policy snapshot
 ├── presentation/          # Tauri commands、CommandError、web resource adapter
 ├── infrastructure/        # Tauri-bound infrastructure
-└── platform/              # iOS/UIKit、macOS/WebView、native UI glue
+└── platform/              # 宿主身份、iOS/UIKit、macOS/WebView、native UI glue
 ```
 
 ### 6.1 Host shell
@@ -224,6 +224,15 @@ src-tauri/crates/tauritavern/src/
 
 新的 Tauri-free repository 不应再放回 host infrastructure。
 
+### 6.4 平台事实
+
+编译目标只在 host crate 读取：`platform/identity.rs` 的 `HOST_IDENTITY`（`HostPlatform` + `HostKind`，类型在 `tt-contracts::host`）是唯一来源，同时注入前端（见 `docs/FrontendHostContract.md` §2.2）。
+
+- `HostKind` 取 Tauri 的 `desktop` / `mobile` 编译别名，与命令和插件的门控一致。OpenHarmony 的 `target_os` 是 `linux`，以 `target_env = "ohos"` 区分。
+- host 内外壳类别用 `cfg(desktop)` / `cfg(mobile)`，系统 API 用 `target_os` / `target_env`。`Cargo.toml` 的 target 依赖表看不到这两个别名，是唯一需要写完整平台组合的地方。
+- 非 host crate 不读平台（`desktop` / `mobile` 在那里恒为假），cfg 只用于依赖或系统 API 能否编译；行为差异由 composition root 注入事实（如 `HostKind`）或数值（如 IPC 帧预算）。
+- 为每个平台选择实现时，`match` 列出全部平台、不写通配；某个平台独有的处理用正向条件。
+
 ## 7. Adapter 边界
 
 adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 adapter crate 应当对应一个清晰的 bounded context 或一组稳定变化原因。
@@ -263,6 +272,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 | 新 Tauri command | `tauritavern/src/presentation/commands` | 调 service，不直接操作仓储细节 |
 | 新 service/adapter 装配 | `tauritavern/src/app/composition` | 显式构造，避免 DI 容器或自动注册魔法 |
 | 需要 AppHandle/WebView/plugin/platform API | `tauritavern/src/app`、`infrastructure` 或 `platform` | 不下沉到 adapter |
+| 按平台区分的行为 | `tauritavern/src/app/composition` 注入 | 非 host crate 不读平台，见 §6.4 |
 | data root/default-user 的基础文件仓储 | `tt-adapter-storage-core` | chat/settings/user/theme/secret 等基础存储 |
 | 角色卡、世界书、Agent workspace/profile、Skill package | `tt-adapter-storage-userdata` | skill 是 local package store，不是普通 JSON repo |
 | 第三方扩展安装、更新、发现 | `tt-adapter-extension` | 不归入 storage-userdata |

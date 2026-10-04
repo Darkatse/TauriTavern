@@ -1,3 +1,5 @@
+import { hostPlatform, isMobileHost } from './util/host-identity.js';
+
 const CHAT_INPUT_SELECTOR = '#send_textarea';
 const RETAIN_RESTORE_SELECTOR = [
     '#options_button',
@@ -17,9 +19,6 @@ const RESTORE_TRIGGER_SELECTOR = [
     '#mes_continue',
     '#mes_impersonate',
 ].join(', ');
-
-const ANDROID_USER_AGENT_PATTERN = /android/i;
-const MOBILE_USER_AGENT_PATTERN = /android|iphone|ipad|ipod/i;
 
 let focusKeeperInstalled = false;
 
@@ -43,7 +42,7 @@ export function isChatInputFocused() {
 }
 
 export function shouldFocusChatInput(intent) {
-    if (!isMobileChatInputEnvironment()) {
+    if (!isMobileHost()) {
         return true;
     }
 
@@ -86,7 +85,7 @@ export function installChatInputFocusKeeper() {
     textarea.addEventListener('click', rememberChatInputFocus);
 
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState !== 'hidden' || !shouldBlurChatInputOnDocumentHidden()) {
+        if (document.visibilityState !== 'hidden' || hostPlatform() !== 'android') {
             return;
         }
 
@@ -117,26 +116,4 @@ export function installChatInputFocusKeeper() {
             shouldRestoreFocus = false;
         }
     });
-}
-
-function isMobileChatInputEnvironment() {
-    if (typeof navigator === 'undefined') {
-        return false;
-    }
-
-    const userAgent = typeof navigator.userAgent === 'string' ? navigator.userAgent : '';
-    if (MOBILE_USER_AGENT_PATTERN.test(userAgent)) {
-        return true;
-    }
-
-    return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
-}
-
-function shouldBlurChatInputOnDocumentHidden() {
-    if (globalThis.__TAURI_RUNNING__ !== true || typeof navigator === 'undefined') {
-        return false;
-    }
-
-    const userAgent = typeof navigator.userAgent === 'string' ? navigator.userAgent : '';
-    return ANDROID_USER_AGENT_PATTERN.test(userAgent);
 }

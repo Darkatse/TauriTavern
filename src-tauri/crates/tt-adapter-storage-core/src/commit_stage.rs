@@ -43,15 +43,17 @@ struct ActiveSession<M> {
 
 pub struct CommitSessions<M> {
     directory: PathBuf,
+    max_frame_bytes: u64,
     page: Arc<PageGeneration>,
     capacity: Arc<Semaphore>,
     active: Mutex<HashMap<Uuid, ActiveSession<M>>>,
 }
 
 impl<M> CommitSessions<M> {
-    pub fn new(directory: PathBuf, page: Arc<PageGeneration>) -> Self {
+    pub fn new(directory: PathBuf, page: Arc<PageGeneration>, max_frame_bytes: u64) -> Self {
         Self {
             directory,
+            max_frame_bytes,
             page,
             capacity: Arc::new(Semaphore::new(MAX_ACTIVE_SESSIONS)),
             active: Mutex::new(HashMap::new()),
@@ -99,7 +101,7 @@ impl<M> CommitSessions<M> {
         );
         Ok(CommitBegin {
             session_id: id.to_string(),
-            max_frame_bytes: max_frame_bytes(),
+            max_frame_bytes: self.max_frame_bytes,
         })
     }
 
@@ -145,6 +147,12 @@ impl<M> CommitSessions<M> {
             .ok_or_else(|| missing_session(id))?;
         let mut active = session.lock().await;
         let session = active.as_mut().ok_or_else(|| missing_session(id))?;
+        if bytes.is_empty() || bytes.len() as u64 > self.max_frame_bytes {
+            return Err(DomainError::InvalidData(format!(
+                "Commit frame must contain 1..={} bytes",
+                self.max_frame_bytes
+            )));
+        }
         let accepted = session.stage.append(offset, bytes).await?;
         on_accepted(&mut session.metadata);
         Ok(accepted)
@@ -224,16 +232,6 @@ fn expired_page() -> DomainError {
     DomainError::Cancelled("Commit belongs to a previous page".into())
 }
 
-fn max_frame_bytes() -> u64 {
-    if cfg!(target_os = "android") {
-        256 * 1024
-    } else if cfg!(target_os = "ios") {
-        1024 * 1024
-    } else {
-        4 * 1024 * 1024
-    }
-}
-
 pub struct CommitStage {
     pub(crate) path: PathBuf,
     pub(crate) file: File,
@@ -264,12 +262,6 @@ impl CommitStage {
     }
 
     async fn append(&mut self, offset: u64, bytes: &[u8]) -> Result<u64, DomainError> {
-        if bytes.is_empty() || bytes.len() as u64 > max_frame_bytes() {
-            return Err(DomainError::InvalidData(format!(
-                "Commit frame must contain 1..={} bytes",
-                max_frame_bytes()
-            )));
-        }
         if offset != self.accepted_offset {
             return Err(DomainError::InvalidData(format!(
                 "Commit offset mismatch: expected {}, got {offset}",
@@ -317,10 +309,34 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn advertised_frame_budget_is_enforced_without_consuming_rejected_bytes() {
+        let root = std::env::temp_dir().join(format!("commit-budget-{}", Uuid::new_v4()));
+        let sessions = CommitSessions::new(root.clone(), Arc::default(), 4);
+        let begin = sessions.begin(()).await.unwrap();
+        assert!(
+            sessions
+                .append(&begin.session_id, 0, b"large", |()| {})
+                .await
+                .is_err()
+        );
+        let accepted = sessions
+            .append(&begin.session_id, 0, b"fits", |()| {})
+            .await
+            .unwrap();
+        assert_eq!(accepted, begin.max_frame_bytes);
+        sessions.abort(&begin.session_id).await.unwrap();
+        fs::remove_dir_all(root).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn page_reload_reclaims_receivers_without_cancelling_publication() {
         let root = std::env::temp_dir().join(format!("commit-page-{}", Uuid::new_v4()));
         let page = Arc::new(PageGeneration::default());
-        let sessions = Arc::new(CommitSessions::new(root.join("staging"), page.clone()));
+        let sessions = Arc::new(CommitSessions::new(
+            root.join("staging"),
+            page.clone(),
+            4 * 1024 * 1024,
+        ));
         let publishing = sessions.begin(()).await.unwrap().session_id;
         sessions
             .append(&publishing, 0, b"saved", |()| {})
@@ -383,7 +399,11 @@ mod tests {
     #[tokio::test]
     async fn concurrent_commits_above_capacity_all_publish() {
         let root = std::env::temp_dir().join(format!("commit-capacity-{}", Uuid::new_v4()));
-        let sessions = Arc::new(CommitSessions::new(root.join("staging"), Arc::default()));
+        let sessions = Arc::new(CommitSessions::new(
+            root.join("staging"),
+            Arc::default(),
+            4 * 1024 * 1024,
+        ));
         let count = MAX_ACTIVE_SESSIONS + 1;
         let start = Arc::new(tokio::sync::Barrier::new(count));
         let mut tasks = tokio::task::JoinSet::new();
@@ -416,7 +436,7 @@ mod tests {
     #[tokio::test]
     async fn commit_cleanup_failure_keeps_published_result() {
         let root = std::env::temp_dir().join(format!("commit-cleanup-{}", Uuid::new_v4()));
-        let sessions = CommitSessions::new(root.join("staging"), Arc::default());
+        let sessions = CommitSessions::new(root.join("staging"), Arc::default(), 4 * 1024 * 1024);
         let target = root.join("published");
         let id = sessions.begin(()).await.unwrap().session_id;
         sessions.append(&id, 0, b"saved", |()| {}).await.unwrap();

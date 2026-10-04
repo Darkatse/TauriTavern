@@ -1,10 +1,12 @@
 pub mod generation_background;
+pub mod identity;
 #[cfg(target_os = "ios")]
 pub mod ios_document_picker;
 #[cfg(target_os = "ios")]
 pub mod ios_share_sheet;
 #[cfg(target_os = "ios")]
 pub mod ios_ui;
+pub mod ipc;
 pub mod lan_discovery;
 #[cfg(target_os = "android")]
 pub mod speech_synthesis;

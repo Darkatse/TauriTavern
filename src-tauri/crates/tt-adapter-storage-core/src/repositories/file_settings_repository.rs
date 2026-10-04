@@ -30,6 +30,7 @@ pub struct FileSettingsRepository {
     /// Bundled `default/content/settings.json`, written whenever no usable
     /// `settings.json` exists.
     default_user_settings: UserSettings,
+    initial_settings: TauriTavernSettings,
 }
 
 const SILLYTAVERN_SETTINGS_AGGREGATE_DIRECTORIES: &[&str] = &[
@@ -57,23 +58,28 @@ struct SettingsAggregateSignatureEntry {
 /// Load native settings and their appearance section before async services exist.
 pub fn load_tauritavern_settings_blocking(
     settings_dir: &Path,
+    initial_settings: &TauriTavernSettings,
 ) -> Result<TauriTavernSettings, DomainError> {
-    sections::load_native(settings_dir)
+    sections::load_native(settings_dir, initial_settings)
 }
 
 impl FileSettingsRepository {
     pub fn new(
         settings_dir: PathBuf,
         default_user_settings: UserSettings,
+        initial_settings: TauriTavernSettings,
         page: Arc<PageGeneration>,
+        max_frame_bytes: u64,
     ) -> Self {
         Self {
             commit_sessions: CommitSessions::new(
                 settings_dir.join(".staging").join("settings"),
                 page,
+                max_frame_bytes,
             ),
             base_directory: settings_dir,
             default_user_settings,
+            initial_settings,
         }
     }
 
@@ -237,16 +243,6 @@ impl FileSettingsRepository {
 
         SettingsAggregateSignature::new(signature)
     }
-
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    fn enforce_mobile_theme_chat_width(theme: &mut UserSettings) {
-        if let Some(theme_obj) = theme.data.as_object_mut() {
-            theme_obj.insert("chat_width".to_string(), serde_json::Value::from(100));
-        }
-    }
-
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    fn enforce_mobile_theme_chat_width(_theme: &mut UserSettings) {}
 }
 
 #[async_trait]
@@ -264,7 +260,8 @@ impl SettingsRepository for FileSettingsRepository {
 
     async fn load_tauritavern_settings(&self) -> Result<TauriTavernSettings, DomainError> {
         let root = self.base_directory.clone();
-        tokio::task::spawn_blocking(move || sections::load_native(&root))
+        let initial_settings = self.initial_settings.clone();
+        tokio::task::spawn_blocking(move || sections::load_native(&root, &initial_settings))
             .await
             .map_err(|error| DomainError::InternalError(error.to_string()))?
     }
@@ -446,13 +443,7 @@ impl SettingsRepository for FileSettingsRepository {
     }
 
     async fn get_themes(&self) -> Result<Vec<UserSettings>, DomainError> {
-        let mut themes = self.read_presets_from_directory("themes").await?;
-
-        for theme in &mut themes {
-            Self::enforce_mobile_theme_chat_width(theme);
-        }
-
-        Ok(themes)
+        self.read_presets_from_directory("themes").await
     }
 
     async fn get_moving_ui_presets(&self) -> Result<Vec<UserSettings>, DomainError> {
@@ -520,15 +511,15 @@ impl SettingsRepository for FileSettingsRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::FileSettingsRepository;
     use super::fields::{APPEARANCE_FILE, DYNAMIC_THEME_FILE, LAYOUT_FILE, PRESETS_FILE};
+    use super::{FileSettingsRepository, load_tauritavern_settings_blocking};
     use rand::random;
     use serde_json::json;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
-    use tt_domain::models::settings::UserSettings;
     use tt_domain::models::settings::revision::UserSettingsRevision;
+    use tt_domain::models::settings::{TauriTavernSettings, UserSettings};
     use tt_ports::repositories::settings_repository::SettingsRepository;
 
     struct TestDir {
@@ -568,7 +559,9 @@ mod tests {
         FileSettingsRepository::new(
             dir.path().to_path_buf(),
             default_user_settings(),
+            Default::default(),
             Arc::default(),
+            4 * 1024 * 1024,
         )
     }
 
@@ -744,6 +737,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn native_settings_share_initial_values_without_overwriting_stored_policy() {
+        let dir = TestDir::new();
+        let initial = TauriTavernSettings {
+            ios_policy: Some(json!({"version": 1, "profile": "ios_external_beta"})),
+            ..Default::default()
+        };
+        let repository = FileSettingsRepository::new(
+            dir.path().to_path_buf(),
+            default_user_settings(),
+            initial.clone(),
+            Arc::default(),
+            1024,
+        );
+        let first = load_tauritavern_settings_blocking(dir.path(), &initial).unwrap();
+        assert_eq!(
+            first.ios_policy,
+            repository
+                .load_tauritavern_settings()
+                .await
+                .unwrap()
+                .ios_policy
+        );
+        let mut changed = first;
+        changed.ios_policy = Some(json!({"version": 1, "profile": "full"}));
+        repository
+            .save_tauritavern_settings(&changed)
+            .await
+            .unwrap();
+        assert_eq!(
+            load_tauritavern_settings_blocking(dir.path(), &initial)
+                .unwrap()
+                .ios_policy,
+            changed.ios_policy
+        );
+    }
+
+    #[tokio::test]
     async fn dynamic_theme_migrates_and_preserves_existing_section() {
         let dir = TestDir::new();
         let repository = new_repository(&dir);
@@ -751,7 +781,8 @@ mod tests {
         let mut original = tt_domain::models::settings::TauriTavernSettings::default();
         original.dynamic_theme.night_theme = "Night".to_string();
         fs::write(&core_path, serde_json::to_vec(&original).unwrap()).unwrap();
-        let loaded = super::load_tauritavern_settings_blocking(dir.path()).unwrap();
+        let loaded =
+            super::load_tauritavern_settings_blocking(dir.path(), &Default::default()).unwrap();
         assert_eq!(loaded.dynamic_theme.night_theme, "Night");
 
         let mut core: serde_json::Value =

@@ -2,7 +2,6 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { downloadBlobWithRuntime } from '../../../../file-export.js';
-import { isAndroidRuntime, isIosRuntime } from '../../../../util/mobile-runtime.js';
 import { subscribeAgentProfilesChanged } from '../../../../tauritavern/agent/agent-profile-events.js';
 import { confirmAction, errorText, requireAgentApi, requireSillyTavernContext, requireSkillApi } from '../host-api';
 import { translateAgentSystem as tr, translateSkillInstallAction } from '../i18n';
@@ -64,7 +63,7 @@ function createDeps(): SkillManagerDeps {
         syncMovePortability: syncSkillMovePortability,
         syncWritePortability: syncSkillWritePortability,
         syncDeletePortability: syncSkillDeletePortability,
-        supportsDirectoryImport: !isAndroidRuntime() && !isIosRuntime(),
+        supportsDirectoryImport: requireSkillApi().isDirectoryImportAvailable(),
         errorText,
         reportError,
         logError: (message, error) => console.error(`[AgentSystem:SkillManager] ${message}:`, error),

@@ -6,9 +6,9 @@ import { createInterceptors } from './interceptors.js';
 import { createRouteRegistry } from './router.js';
 import { installBackNavigationBridge } from './back-navigation.js';
 import { installNativeShareBridge } from './share-target-bridge.js';
-import { downloadBlobWithRuntime, isNativeMobileDownloadRuntime } from '../../scripts/file-export.js';
+import { downloadBlobWithRuntime } from '../../scripts/file-export.js';
 import { showExportFailureToast, showExportSuccessToast } from '../../scripts/download-feedback.js';
-import { isAndroidRuntime } from '../../scripts/util/mobile-runtime.js';
+import { hostPlatform, isDesktopHost, isMobileHost } from '../../scripts/util/host-identity.js';
 import { installAndroidImeLayoutHost } from './compat/mobile/android-ime-layout-host.js';
 import { installMobileGeometryFirewall } from './compat/mobile/mobile-geometry-firewall.js';
 import { installMobileIframeViewportContractBridge } from './compat/mobile/mobile-iframe-viewport-contract-bridge.js';
@@ -100,22 +100,6 @@ function safePerfMeasure(name, startMark, endMark) {
     } catch {
         // Ignore unsupported measure calls.
     }
-}
-
-function isMobileUserAgent() {
-    // NOTE: Intentionally self-contained UA check.
-    // This runs in the Tauri bootstrap composition root; importing a shared helper here risks
-    // pulling in higher-level app modules (and potential side effects / cycles) too early.
-    if (typeof navigator === 'undefined') {
-        return false;
-    }
-
-    const userAgent = typeof navigator.userAgent === 'string' ? navigator.userAgent : '';
-    if (/android|iphone|ipad|ipod/i.test(userAgent)) {
-        return true;
-    }
-
-    return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
 }
 
 function installTauriMobileCompat() {
@@ -273,11 +257,12 @@ export function bootstrapTauriMain() {
     if (perfEnabled) {
         safePerfMark('tt:tauri:bootstrap:start');
     }
-    const isMobile = isMobileUserAgent(); if (isMobile) installTauriMobileCompat();
+    const isMobile = isMobileHost();
+    if (isMobile) installTauriMobileCompat();
 
     installFrontendLogCapture();
     installDialogPolyfillCoverage();
-    if (!isMobile) {
+    if (isDesktopHost()) {
         installDesktopFullscreenShortcut();
         registerLifecycleFlushHandler('desktop-fullscreen', leaveDesktopFullscreenForShutdown);
     }
@@ -364,12 +349,12 @@ export function bootstrapTauriMain() {
         jsonResponse,
     });
     const downloadBridge = createDownloadBridge({
-        isNativeMobileDownloadRuntime,
+        isMobileHost,
         downloadBlobWithRuntime,
         notifyDownloadResult: showExportSuccessToast,
         notifyDownloadError: showExportFailureToast,
         // Android WebView has no image context menu, so the bridge supplies that default action.
-        confirmImageDownload: isAndroidRuntime() ? confirmImageDownload : null,
+        confirmImageDownload: hostPlatform() === 'android' ? confirmImageDownload : null,
     });
 
     interceptors.patchFetch();
@@ -387,7 +372,8 @@ export function bootstrapTauriMain() {
         iframeContractBridge: isMobile ? installMobileIframeViewportContractBridge() : null,
         runtimeCompat,
     });
-    if (isMobile) installMobileWindowOpenCompat(); preinstallPanelRuntime();
+    if (isMobile) installMobileWindowOpenCompat();
+    preinstallPanelRuntime();
     const readyPromise = initializeTauriIntegration(
         context,
         interceptors,

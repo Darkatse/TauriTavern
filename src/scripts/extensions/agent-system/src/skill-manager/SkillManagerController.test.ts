@@ -26,25 +26,30 @@ function preview(name: string): TauriTavernSkillImportPreview {
     return { skill: skill(name), files: [], conflict: { kind: 'new' }, warnings: [], source: null };
 }
 
-function createSkillApi(overrides: Partial<TauriTavernSkillApi> = {}): TauriTavernSkillApi {
-    const read: TauriTavernSkillReadResult = {
-        name: 'SKILL.md', path: 'SKILL.md', content: 'body', chars: 4, words: 1,
-        totalChars: 4, totalWords: 1, totalLines: 1, startLine: 1, endLine: 1,
-        lineTruncated: false, bytes: 4, sha256: 'sha', truncated: false, resourceRef: 'skill://file',
-    };
+function readResult(path: string, sha256: string, content = path): TauriTavernSkillReadResult {
     return {
-        acquireImport: () => () => Promise.resolve(), list: () => Promise.resolve([]),
+        name: path, path, content, chars: content.length, words: 1, totalChars: content.length,
+        totalWords: 1, totalLines: 1, startLine: 1, endLine: 1, lineTruncated: false,
+        bytes: content.length, sha256, truncated: false, resourceRef: `skill://${path}`,
+    };
+}
+
+function createSkillApi(overrides: Partial<TauriTavernSkillApi> = {}): TauriTavernSkillApi {
+    return {
+        acquireImport: () => () => Promise.resolve(),
+        list: () => Promise.resolve([]),
         listFiles: () => Promise.resolve([]),
         pickImportArchive: () => Promise.resolve(null),
         pickImportArchives: () => Promise.resolve(null),
         pickImportDirectories: () => Promise.resolve(null),
+        isDirectoryImportAvailable: () => true,
         discardPickedImport: () => Promise.resolve(),
         discoverImports: ({ input }) => Promise.resolve([input]),
         downloadImport: () => Promise.reject(new Error('not configured')),
         previewImport: () => Promise.reject(new Error('not configured')),
         installImport: () => Promise.reject(new Error('not configured')),
-        readFile: () => Promise.resolve(read),
-        writeFile: () => Promise.resolve(read),
+        readFile: () => Promise.resolve(readResult('SKILL.md', 'sha', 'body')),
+        writeFile: () => Promise.resolve(readResult('SKILL.md', 'sha', 'body')),
         export: () => Promise.resolve({ fileName: 'skill.zip', contentBase64: '', sha256: 'sha' }),
         delete: () => Promise.resolve(),
         move: request => Promise.resolve({ scope: request.toScope, name: request.name, action: 'installed' }),
@@ -383,11 +388,6 @@ test('rejects stale preview/file loads and saves with optimistic sha before port
     const writes: Parameters<TauriTavernSkillApi['writeFile']>[0][] = [];
     const events: string[] = [];
     let writeFailure = '';
-    const readResult = (path: string, sha256: string, content = path): TauriTavernSkillReadResult => ({
-        name: path, path, content, chars: content.length, words: 1, totalChars: content.length,
-        totalWords: 1, totalLines: 1, startLine: 1, endLine: 1, lineTruncated: false,
-        bytes: content.length, sha256, truncated: false, resourceRef: `skill://${path}`,
-    });
     const api = createSkillApi({
         list: ({ scope } = {}) => Promise.resolve(scope?.kind === 'global' ? [skill('alpha'), skill('beta')] : []),
         listFiles: () => {

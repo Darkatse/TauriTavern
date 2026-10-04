@@ -1,4 +1,5 @@
 import { Window } from 'happy-dom';
+import { HOSTS, installHostIdentity } from './host-identity.mjs';
 
 export function installFakeDom({
     innerWidth = 800,
@@ -6,7 +7,9 @@ export function installFakeDom({
     userAgent = 'node',
     platform = 'node',
     maxTouchPoints = 0,
+    hostIdentity = HOSTS.windows,
 } = {}) {
+    const restoreHostIdentity = installHostIdentity(hostIdentity);
     const previousGlobals = new Map();
     const patchGlobal = (name, value) => {
         previousGlobals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
@@ -266,6 +269,7 @@ export function installFakeDom({
             nowMs = Number(value) || 0;
         },
         cleanup() {
+            restoreHostIdentity();
             void window.happyDOM.abort();
             for (const [name, descriptor] of previousGlobals) {
                 if (descriptor) {

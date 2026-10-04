@@ -1,5 +1,6 @@
 import { listSavedModelTargets, modelTargetSource } from '../../../tauritavern/agent/model-target-llm-connection.js';
 import { getOmittedParams } from '../../../tauri/generation-params/omission.js';
+import { isMobileHost } from '../../../util/host-identity.js';
 import type { createInAppAgentController } from './controller';
 import { tr } from './i18n';
 
@@ -122,6 +123,7 @@ export async function createAssistantActions(api: TauriTavernHostApi, context: A
         contentWidthPercent,
         saveContentWidth: (value: number) => store.setJson({ ...CONTENT_WIDTH, value }),
         isMobile: context.isMobile,
+        isMobileHost,
         shouldSendOnEnter: context.shouldSendOnEnter,
         copy: bridge.writeClipboardText,
         openLink: bridge.openExternalUrl,

@@ -1,5 +1,4 @@
 import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
-import { isMobile } from '../../../RossAscends-mods.js';
 import { t, translate } from '../../../i18n.js';
 import { scanQrCodeWithBackCancellation } from '../../../../tauri/main/services/barcode-scanner/barcode-scanner-service.js';
 import { writeClipboardText } from '../../../../tauri-bridge.js';
@@ -563,7 +562,7 @@ function createSyncActions(client) {
 }
 
 function canScanPairUri() {
-    return isMobile() && Boolean(window.__TAURI__?.barcodeScanner?.scan);
+    return typeof window.__TAURI__?.barcodeScanner?.scan === 'function';
 }
 
 export async function openSyncPopup() {

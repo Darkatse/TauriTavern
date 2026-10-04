@@ -1,25 +1,19 @@
+import { installHostIdentity, HOSTS } from './helpers/host-identity.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+test.beforeEach(t => t.after(installHostIdentity()));
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-async function withNavigatorUserAgent(userAgent, callback) {
-    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
-    Object.defineProperty(globalThis, 'navigator', {
-        value: { userAgent },
-        configurable: true,
-    });
-
+async function withHostIdentity(identity, callback) {
+    const restore = installHostIdentity(identity);
     try {
         return await callback();
     } finally {
-        if (descriptor) {
-            Object.defineProperty(globalThis, 'navigator', descriptor);
-        } else {
-            delete globalThis.navigator;
-        }
+        restore();
     }
 }
 
@@ -113,7 +107,7 @@ test('api.characterCards fails fast for unsupported native picker file types', a
 });
 
 test('api.characterCards stages iOS picked files through the native command', async () => {
-    await withNavigatorUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', async () => {
+    await withHostIdentity(HOSTS.ios, async () => {
         const calls = [];
         const cleanups = [];
 
@@ -143,7 +137,7 @@ test('api.characterCards stages iOS picked files through the native command', as
 });
 
 test('api.characterCards does not fail iOS picked files when staging cleanup fails', async () => {
-    await withNavigatorUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', async () => {
+    await withHostIdentity(HOSTS.ios, async () => {
         const warnings = [];
         const originalWarn = console.warn;
         console.warn = (...args) => warnings.push(args);
@@ -173,7 +167,7 @@ test('api.characterCards does not fail iOS picked files when staging cleanup fai
 });
 
 test('api.characterCards leaves Android on the WebView file input path', async () => {
-    await withNavigatorUserAgent('Mozilla/5.0 (Linux; Android 15)', async () => {
+    await withHostIdentity(HOSTS.android, async () => {
         const calls = [];
         const { characterCards } = await installHarness({
             safeInvoke: async (command, args) => {

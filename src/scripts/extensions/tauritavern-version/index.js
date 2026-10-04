@@ -14,7 +14,7 @@ import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
 import { stripCommandErrorPrefixes } from '../../util/command-error-utils.js';
 import { isGitHubRateLimitMessage } from '../../util/github-rate-limit.js';
 import { githubRateLimitStopper } from '../../util/github-rate-limit-stopper.js';
-import { isIosRuntime } from '../../util/mobile-runtime.js';
+import { hostPlatform } from '../../util/host-identity.js';
 import { extractErrorText, toUserFacingErrorText } from '../../util/user-facing-error.js';
 import { getActiveIosPolicyCapabilities } from '../../tauritavern/ios-policy.js';
 
@@ -159,7 +159,7 @@ async function onExportDebugBundleClick() {
 
         const savedPath = await devApi.exportBundle();
 
-        if (isIosRuntime()) {
+        if (hostPlatform() === 'ios') {
             const shareResult = await invoke('ios_share_file', { filePath: savedPath });
             if (shareResult?.completed === true) {
                 globalThis.toastr?.success?.(localize('ttv_version.export_success', 'Export completed.'));

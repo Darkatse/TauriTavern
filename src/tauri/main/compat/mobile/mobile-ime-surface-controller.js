@@ -1,4 +1,4 @@
-import { isAndroidRuntime } from '../../../../scripts/util/mobile-runtime.js';
+import { hostPlatform } from '../../../../scripts/util/host-identity.js';
 
 const SURFACE_ATTR = 'data-tt-ime-surface';
 const ACTIVE_ATTR = 'data-tt-ime-active';
@@ -171,7 +171,7 @@ function setActiveSurface(previous, next, kind) {
 }
 
 export function installMobileImeSurfaceController() {
-    if (!isAndroidRuntime()) {
+    if (hostPlatform() !== 'android') {
         return null;
     }
 

@@ -11,7 +11,7 @@ test('only preventDefault cancels the image download default action', async (t) 
             const confirmations = [];
             const downloads = [];
             const bridge = createDownloadBridge({
-                isNativeMobileDownloadRuntime: () => true,
+                isMobileHost: () => true,
                 downloadBlobWithRuntime: async (blob, fileName) => {
                     downloads.push({ blob, fileName });
                 },

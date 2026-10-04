@@ -42,12 +42,13 @@ function harness() {
         cancel: () => Promise.resolve(), refresh: () => Promise.resolve(), loadOlder: () => Promise.resolve(), dispose: () => {},
     };
     const actions: AssistantActions = {
-        skill: {} as TauriTavernSkillApi,
+        skill: { isDirectoryImportAvailable: () => true } as TauriTavernSkillApi,
         models: { getSnapshot: () => models, subscribe: () => () => {} },
         supportsReasoningEffort: () => true, presetReasoningEffort: () => 'auto',
         contentWidthPercent: 100, saveContentWidth: () => Promise.resolve(),
         copy: () => Promise.resolve(), openLink: () => Promise.resolve(), markdown: text => text,
         isMobile: () => true, shouldSendOnEnter: () => true,
+        isMobileHost: () => false,
         loadOptions: () => Promise.resolve({ presets: ['Default'], tools: [], diagnostics: [], skills: [] }),
         readResult: () => Promise.reject(new Error('No external result')), openConnections: () => {},
         confirmDeleteSession: () => Promise.resolve(true),
@@ -232,12 +233,12 @@ test('cancelling settings releases an unconfirmed Skill import and saving waits 
             tags: [], installedHash: 'hash', fileCount: 1, totalBytes: 12, hasScripts: false, hasBinary: false, installedAt: '' },
         files: [], conflict: { kind: 'new' }, warnings: [], source: null,
     };
-    h.actions.skill = { acquireImport: () => {
+    h.actions.skill = { ...h.actions.skill, acquireImport: () => {
         if (importing) throw new Error('skill.import_busy');
         importing = true;
         return () => { importing = false; return Promise.resolve(); };
     }, pickImportArchives: () => Promise.resolve([input]),
-        discoverImports: () => Promise.resolve([input]), previewImport: () => Promise.resolve(preview) } as unknown as TauriTavernSkillApi;
+        discoverImports: () => Promise.resolve([input]), previewImport: () => Promise.resolve(preview) };
     const view = render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
     const editStreaming = () => {
         fireEvent.click(screen.getByRole('button', { name: 'Advanced settings' }));

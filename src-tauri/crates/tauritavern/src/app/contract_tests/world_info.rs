@@ -8,6 +8,7 @@ async fn world_info_document_replacement_preserves_text_and_rejects_invalid_upda
     let service = WorldInfoService::new(Arc::new(FileWorldInfoRepository::new(
         user.join("worlds"),
         Arc::default(),
+        4 * 1024 * 1024,
     )));
     let json = r#"{ "z":9007199254740993,"entries":{},"originalData":{"b":"你好 👋","a":1,"opaque":"\ud800"} }"#;
     let request = format!(

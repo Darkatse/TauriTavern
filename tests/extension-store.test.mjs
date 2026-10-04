@@ -1,7 +1,10 @@
+import { installHostIdentity } from './helpers/host-identity.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { installExtensionStoreApi } from '../src/tauri/main/api/extension-store.js';
+
+test.beforeEach(t => t.after(installHostIdentity()));
 
 const target = { namespace: 'example', key: 'entry' };
 

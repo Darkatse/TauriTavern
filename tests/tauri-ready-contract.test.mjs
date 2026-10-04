@@ -1,7 +1,10 @@
+import { installHostIdentity } from './helpers/host-identity.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+test.beforeEach(t => t.after(installHostIdentity()));
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const READY_PATH = path.join(REPO_ROOT, 'src/scripts/extensions/runtime/tauri-ready.js');

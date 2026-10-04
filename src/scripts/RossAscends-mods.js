@@ -1,3 +1,4 @@
+import { isMobileHost } from './util/host-identity.js';
 import { DOMPurify, Bowser } from '../lib.js';
 import { ChatInputFocusIntent, focusChatInput } from './chat-input-focus.js';
 import { installChatInputFullscreenEditor } from './chat-input-fullscreen-editor.js';
@@ -916,7 +917,7 @@ export function initRossMods() {
         sendTextArea,
         sendMessage: sendTextareaMessage,
         canSubmitGuidance: canSubmitAgentGuidance,
-        isMobile,
+        isMobileHost,
     });
 
     restoreUserInput();

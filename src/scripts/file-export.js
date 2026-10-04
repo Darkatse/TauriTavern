@@ -1,3 +1,5 @@
+import { hostPlatform } from './util/host-identity.js';
+
 const INVALID_FILENAME_CHARS = /[\\/:*?"<>|]+/g;
 const TRAILING_DOTS_OR_SPACES = /[. ]+$/g;
 const DEFAULT_FALLBACK_FILE_NAME = 'download.bin';
@@ -11,10 +13,6 @@ const NATIVE_EXPORT_STAGING_ROOT_NAME = IOS_EXPORT_STAGING_ROOT_NAME;
 const NATIVE_EXPORT_STAGING_PREFIX = IOS_EXPORT_STAGING_PREFIX;
 const ANDROID_PUBLIC_DOWNLOAD_BRIDGE_NAME = 'TauriTavernAndroidPublicDownloadBridge';
 const ANDROID_PUBLIC_DOWNLOAD_PICKER_RECEIVER = '__TAURITAVERN_PUBLIC_DOWNLOAD_PICKER__';
-const BASE_DIRECTORY_IDS = Object.freeze({
-    Document: 6,
-    Download: 7,
-});
 
 let androidPublicDownloadPickerPending = null;
 
@@ -44,27 +42,8 @@ function getInvokeApi() {
     return invokeApi;
 }
 
-function toUint8Array(value) {
-    if (value instanceof Uint8Array) {
-        return value;
-    }
-
-    if (value instanceof ArrayBuffer) {
-        return new Uint8Array(value);
-    }
-
-    if (ArrayBuffer.isView(value)) {
-        return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-    }
-
-    throw new Error('Unsupported binary chunk type');
-}
-
-async function fsWriteFileChunk(invokeApi, path, bytes, { append, baseDir }) {
+async function fsWriteFileChunk(invokeApi, path, bytes, { append }) {
     const writeOptions = { append, create: true };
-    if (typeof baseDir === 'number') {
-        writeOptions.baseDir = baseDir;
-    }
 
     await invokeApi('plugin:fs|write_file', bytes, {
         headers: {
@@ -74,51 +53,13 @@ async function fsWriteFileChunk(invokeApi, path, bytes, { append, baseDir }) {
     });
 }
 
-async function writeReadableStreamToPath(invokeApi, path, stream, { baseDir } = {}) {
-    if (!stream || typeof stream.getReader !== 'function') {
-        throw new Error('Readable stream is required');
-    }
-
-    const reader = stream.getReader();
-    let append = false;
-    let hasWritten = false;
-
-    try {
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-                break;
-            }
-
-            const bytes = toUint8Array(value);
-            if (bytes.byteLength === 0) {
-                continue;
-            }
-
-            await fsWriteFileChunk(invokeApi, path, bytes, { append, baseDir });
-            append = true;
-            hasWritten = true;
-        }
-    } finally {
-        try {
-            reader.releaseLock();
-        } catch {
-            // noop
-        }
-    }
-
-    if (!hasWritten) {
-        await fsWriteFileChunk(invokeApi, path, new Uint8Array(0), { append: false, baseDir });
-    }
-}
-
-async function writeBlobToPath(invokeApi, path, blob, { baseDir } = {}) {
+async function writeBlobToPath(invokeApi, path, blob) {
     if (!(blob instanceof Blob)) {
         throw new Error('Blob payload is required');
     }
 
     if (blob.size === 0) {
-        await fsWriteFileChunk(invokeApi, path, new Uint8Array(0), { append: false, baseDir });
+        await fsWriteFileChunk(invokeApi, path, new Uint8Array(0), { append: false });
         return;
     }
 
@@ -129,114 +70,14 @@ async function writeBlobToPath(invokeApi, path, blob, { baseDir } = {}) {
         const end = Math.min(offset + FS_WRITE_CHUNK_BYTES, blob.size);
         const chunk = blob.slice(offset, end);
         const bytes = new Uint8Array(await chunk.arrayBuffer());
-        await fsWriteFileChunk(invokeApi, path, bytes, { append, baseDir });
+        await fsWriteFileChunk(invokeApi, path, bytes, { append });
         append = true;
         offset = end;
     }
 }
 
-function resolveBaseDirectoryId(pathApi, key, fallbackValue) {
-    const baseDirectory = pathApi?.BaseDirectory;
-    const value = baseDirectory?.[key];
-    return Number.isInteger(value) ? value : fallbackValue;
-}
-
-function isAndroidRuntime() {
-    if (typeof navigator === 'undefined' || typeof navigator.userAgent !== 'string') {
-        return false;
-    }
-
-    return /android/i.test(navigator.userAgent);
-}
-
-function isIosRuntime() {
-    if (typeof navigator === 'undefined') {
-        return false;
-    }
-
-    const userAgent = typeof navigator.userAgent === 'string' ? navigator.userAgent : '';
-    if (/iphone|ipad|ipod/i.test(userAgent)) {
-        return true;
-    }
-
-    const touchPoints = Number(navigator.maxTouchPoints || 0);
-    if (touchPoints <= 1) {
-        return false;
-    }
-
-    const platform = typeof navigator.platform === 'string' ? navigator.platform : '';
-    return platform === 'MacIntel' || /macintosh/i.test(userAgent);
-}
-
-async function resolveDownloadDirectory(pathApi) {
-    const candidates = [
-        typeof pathApi.downloadDir === 'function'
-            ? {
-                resolver: () => pathApi.downloadDir(),
-                baseDir: resolveBaseDirectoryId(pathApi, 'Download', BASE_DIRECTORY_IDS.Download),
-            }
-            : null,
-        typeof pathApi.documentDir === 'function'
-            ? {
-                resolver: () => pathApi.documentDir(),
-                baseDir: resolveBaseDirectoryId(pathApi, 'Document', BASE_DIRECTORY_IDS.Document),
-            }
-            : null,
-    ].filter(Boolean);
-
-    let lastError = null;
-    for (const candidate of candidates) {
-        try {
-            const directory = await candidate.resolver();
-            if (typeof directory === 'string' && directory.trim()) {
-                return {
-                    directory,
-                    baseDir: candidate.baseDir,
-                };
-            }
-        } catch (error) {
-            lastError = error;
-        }
-    }
-
-    if (lastError) {
-        throw lastError;
-    }
-
-    throw new Error('Unable to resolve a writable download directory');
-}
-
-async function buildDownloadTarget(pathApi, fileName, fallbackName, { directory, baseDir }) {
-    const normalizedName = sanitizeDownloadFileName(fileName, fallbackName);
-    const absolutePath = typeof baseDir === 'number'
-        ? pathApi.join(directory, normalizedName)
-        : directory.replace(/[\\/]+$/, '') + '/' + normalizedName;
-
-    return {
-        absolutePath: await absolutePath,
-        relativePath: typeof baseDir === 'number' ? normalizedName : absolutePath,
-        baseDir,
-    };
-}
-
-async function resolveMobileDownloadTarget(pathApi, fileName, fallbackName) {
-    const directory = await resolveDownloadDirectory(pathApi);
-    return buildDownloadTarget(pathApi, fileName, fallbackName, directory);
-}
-
 function isTauriRuntime() {
     return typeof getTauriObject()?.core?.invoke === 'function';
-}
-
-function isMobileRuntime() {
-    // NOTE: Intentionally self-contained UA check.
-    // `file-export` is used from multiple entry points (web + Tauri). Keeping this local avoids
-    // cross-module dependencies/cycles for a small, runtime-only decision.
-    return isAndroidRuntime() || isIosRuntime();
-}
-
-export function isNativeMobileDownloadRuntime() {
-    return isTauriRuntime() && isMobileRuntime();
 }
 
 function sanitizeDownloadFileName(value, fallback = DEFAULT_FALLBACK_FILE_NAME) {
@@ -248,26 +89,6 @@ function sanitizeDownloadFileName(value, fallback = DEFAULT_FALLBACK_FILE_NAME) 
         .trim();
 
     return candidate || fallbackName;
-}
-
-export async function writeReadableStreamToMobileDownloadFolder(stream, fileName, options = {}) {
-    if (!stream) {
-        throw new Error('Readable stream is required');
-    }
-
-    if (isAndroidRuntime()) {
-        throw new Error('Android stream exports must use the public download bridge');
-    }
-
-    const pathApi = getPathApi();
-    const invokeApi = getInvokeApi();
-    const target = await resolveMobileDownloadTarget(pathApi, fileName, options.fallbackName);
-
-    await writeReadableStreamToPath(invokeApi, target.relativePath, stream, {
-        baseDir: target.baseDir,
-    });
-
-    return target.absolutePath;
 }
 
 function createNativeExportStagingDirectoryName() {
@@ -594,12 +415,21 @@ export async function downloadBlobWithRuntime(
 ) {
     const payload = blob instanceof Blob ? blob : new Blob([blob ?? '']);
 
-    if (isTauriRuntime() && isIosRuntime()) {
-        return shareBlobWithIosRuntime(payload, fileName, { fallbackName });
-    }
-
-    if (isTauriRuntime() && isAndroidRuntime()) {
-        return saveBlobWithAndroidPublicDownloadRuntime(payload, fileName, { fallbackName });
+    if (isTauriRuntime()) {
+        switch (hostPlatform()) {
+            case 'ios':
+                return shareBlobWithIosRuntime(payload, fileName, { fallbackName });
+            case 'android':
+                return saveBlobWithAndroidPublicDownloadRuntime(payload, fileName, { fallbackName });
+            case 'windows':
+            case 'macos':
+            case 'linux':
+                break;
+            case 'ohos':
+                throw new Error('File export is not implemented for OpenHarmony yet');
+            default:
+                throw new Error(`Unsupported file export platform: ${hostPlatform()}`);
+        }
     }
 
     triggerBrowserDownload(payload, fileName, { fallbackName });

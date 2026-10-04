@@ -1,12 +1,15 @@
 declare module 'droll';
 declare module '@iconfu/svg-inject';
 
+declare var __TAURITAVERN_HOST__: Readonly<import('./scripts/util/host-identity.js').HostIdentity> | undefined;
+
 // Global variables
 interface Window {
     // Tauri globals
     __TAURI__?: any;
     __TAURI_INTERNALS__?: any;
     __TAURI_RUNNING__?: boolean;
+    __TAURITAVERN_HOST__?: Readonly<import('./scripts/util/host-identity.js').HostIdentity>;
 
     __TAURITAVERN_MAIN_READY__?: Promise<void>;
 
@@ -1147,6 +1150,7 @@ type TauriTavernSkillApi = {
     pickImportArchive: () => Promise<TauriTavernSkillImportInput | null>;
     pickImportArchives: () => Promise<TauriTavernSkillImportInput[] | null>;
     pickImportDirectories: () => Promise<TauriTavernSkillImportInput[] | null>;
+    isDirectoryImportAvailable: () => boolean;
     discoverImports: (options: { input: TauriTavernSkillImportInput }) => Promise<TauriTavernSkillImportInput[]>;
     discardPickedImport: (input?: TauriTavernSkillImportInput | null) => Promise<void>;
     downloadImport: (options: { url: string }) => Promise<TauriTavernSkillImportInput>;

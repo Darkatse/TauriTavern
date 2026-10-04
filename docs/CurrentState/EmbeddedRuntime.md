@@ -9,7 +9,7 @@ Embedded Runtime（ER）按可见性和资源预算管理静态聊天中的 ifra
 | 值 | 行为 |
 | --- | --- |
 | `off` | 关闭 ER，由扩展管理 iframe |
-| `auto` | 桌面使用 `compat`，移动设备使用 `mobile-safe` |
+| `auto` | 桌面宿主使用 `compat`，移动宿主使用 `mobile-safe` |
 | `compat` | 使用较宽松的驻留预算 |
 | `mobile-safe` | 使用较小的驻留预算，并扩大视口附近的预加载范围 |
 

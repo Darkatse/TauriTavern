@@ -1,5 +1,4 @@
-import { encodeBytesToBase64 } from '../../binary-utils.js';
-import { isAndroidRuntime } from '../../../../scripts/util/mobile-runtime.js';
+import { encodeIpcByteBody } from './ipc-byte-body.js';
 
 /**
  * Own a bounded byte commit from begin through finish/abort.
@@ -16,11 +15,9 @@ export async function commitBytes({ begin, frames, append, finish, abort }) {
         if (!Number.isSafeInteger(maxFrameBytes) || maxFrameBytes < 4) {
             throw new Error('Host returned an invalid commit frame limit');
         }
-        const android = isAndroidRuntime();
         for await (const frame of frames(maxFrameBytes)) {
-            const headers = { 'session-id': sessionId, offset: String(offset) };
-            if (android) headers['chunk-encoding'] = 'base64';
-            const body = android ? { data: encodeBytesToBase64(frame) } : frame;
+            const { body, headers: encodingHeaders } = encodeIpcByteBody(frame);
+            const headers = { ...encodingHeaders, 'session-id': sessionId, offset: String(offset) };
             const accepted = Number(await append(body, { headers }));
             if (accepted !== offset + frame.byteLength) {
                 throw new Error(`Host commit returned unexpected offset ${accepted}`);

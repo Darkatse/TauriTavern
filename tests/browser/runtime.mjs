@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import vm from 'node:vm';
 import { Window } from 'happy-dom';
+import { installHostIdentity, HOSTS } from '../helpers/host-identity.mjs';
 
 const root = fileURLToPath(new URL('../../src/', import.meta.url));
 
@@ -47,6 +48,7 @@ export function createBrowserRuntime() {
     // Exercise actual module evaluation without starting chat/settings IO through DOM-ready callbacks.
     window.jQuery.holdReady(true);
     window.structuredClone = structuredClone;
+    installHostIdentity(HOSTS.windows, window);
     // happy-dom's TransformStream is a Node Transform, not the Web Streams constructor.
     window.TransformStream = TransformStream;
     // happy-dom exposes option elements but omits the browser's Option constructor.

@@ -1,8 +1,11 @@
+import { installHostIdentity } from './helpers/host-identity.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { jsonResponse } from '../src/tauri/main/http-utils.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerSettingsRoutes } from '../src/tauri/main/routes/settings-routes.js';
+
+test.beforeEach(t => t.after(installHostIdentity()));
 
 const revision = { token: 'loaded' };
 

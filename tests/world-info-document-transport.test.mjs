@@ -1,3 +1,4 @@
+import { installHostIdentity } from './helpers/host-identity.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -5,6 +6,8 @@ import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { readRequestBody, jsonResponse } from '../src/tauri/main/http-utils.js';
 import { registerWorldInfoRoutes } from '../src/tauri/main/routes/worldinfo-routes.js';
 import { createInvokeService } from '../src/tauri/main/services/invokes/invoke-service.js';
+
+test.beforeEach(t => t.after(installHostIdentity()));
 
 test('world info routes carry JSON text unchanged in both directions', async () => {
     const document = '{ "z":9007199254740993,"entries":{},"originalData":{"b":"你好 👋","a":1} }';

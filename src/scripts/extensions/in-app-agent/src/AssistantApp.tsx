@@ -104,7 +104,7 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
         drawer.setActivity(current.wasActive ? 'working' : current.unread ? 'unread' : '');
     }, [drawer, snapshot.activeRun, visible]);
     useEffect(() => {
-        if (visible && view === 'chat' && snapshot.initialized && !actions.isMobile()) input.current?.focus({ preventScroll: true });
+        if (visible && view === 'chat' && snapshot.initialized && !actions.isMobileHost()) input.current?.focus({ preventScroll: true });
     }, [visible, view, snapshot.initialized, snapshot.sessionId, actions]);
     useLayoutEffect(() => {
         const element = input.current;
@@ -138,7 +138,7 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
     }
     // Keep an unsaved Settings draft from overwriting the composer's saved choices.
     async function saveChoice(change: (profile: TauriTavernAgentProfileDefinition) => TauriTavernAgentProfileDefinition) {
-        if (!actions.isMobile()) input.current?.focus({ preventScroll: true });
+        if (!actions.isMobileHost()) input.current?.focus({ preventScroll: true });
         const current = controller.getSnapshot().profile;
         const next = change(current);
         if (JSON.stringify(next) === JSON.stringify(current)) return false;

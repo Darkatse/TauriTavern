@@ -1,3 +1,4 @@
+import { installHostIdentity, HOSTS } from './helpers/host-identity.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -14,27 +15,16 @@ const TARGET = Object.freeze({
     fileName: 'Story',
 });
 
-function installRuntime(userAgent, invoke) {
+function installRuntime(identity, invoke) {
     const previousWindow = globalThis.window;
-    const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
-
+    const restoreIdentity = installHostIdentity(identity);
     globalThis.window = { __TAURI__: { core: { invoke } } };
-    Object.defineProperty(globalThis, 'navigator', {
-        value: { userAgent },
-        configurable: true,
-    });
-
     return () => {
+        restoreIdentity();
         if (previousWindow === undefined) {
             delete globalThis.window;
         } else {
             globalThis.window = previousWindow;
-        }
-
-        if (previousNavigator) {
-            Object.defineProperty(globalThis, 'navigator', previousNavigator);
-        } else {
-            delete globalThis.navigator;
         }
     };
 }
@@ -107,7 +97,7 @@ function commit(payload) {
 test('metadata saves capture nested values before asynchronous transport', async () => {
     const release = Promise.withResolvers();
     const host = createCommitHost();
-    const restore = installRuntime('Desktop', async (...args) => {
+    const restore = installRuntime(HOSTS.windows, async (...args) => {
         await release.promise;
         return host.invoke(...args);
     });
@@ -127,9 +117,9 @@ test('metadata saves capture nested values before asynchronous transport', async
 
 test('chat transport preserves UTF-8 across bounded native and Android frames', async () => {
     const payload = [{ chat_metadata: {} }, { mes: '你好 👋\nnext line'.repeat(20) }, {}];
-    for (const userAgent of ['Desktop', 'Android']) {
+    for (const identity of [HOSTS.windows, HOSTS.android]) {
         const host = createCommitHost({ maxFrameBytes: 7 });
-        const restore = installRuntime(userAgent, host.invoke);
+        const restore = installRuntime(identity, host.invoke);
         try {
             await commit(payload);
             assert.ok(host.frames.every(frame => frame.bytes.byteLength <= 7));
@@ -139,7 +129,7 @@ test('chat transport preserves UTF-8 across bounded native and Android frames', 
                 offset += frame.bytes.byteLength;
             }
             const appends = host.calls.filter(call => call.command === 'append_chat_commit_chunk');
-            assert.ok(appends.every(call => userAgent === 'Android'
+            assert.ok(appends.every(call => identity.platform === 'android'
                 ? typeof call.args.data === 'string'
                 : call.args instanceof Uint8Array));
             assert.equal(Buffer.concat(host.frames.map(frame => frame.bytes)).toString(), payload.map(JSON.stringify).join('\n'));
@@ -161,7 +151,7 @@ test('chat save snapshots nested values and keeps one frame in flight', async ()
             })
             : offset + bytes.byteLength,
     });
-    const restore = installRuntime('Mozilla/5.0 (Linux; Android 14)', host.invoke);
+    const restore = installRuntime(HOSTS.android, host.invoke);
     const payload = [
         { chat_metadata: { integrity: '10000000-0000-4000-8000-000000000002', variables: { score: 1 } } },
         { mes: 'first message', extra: { extension: { enabled: true } } },
@@ -193,7 +183,7 @@ test('chat payload commit aborts ACK failures', async () => {
     const host = createCommitHost({
         onAppend: ({ offset, bytes }) => offset + bytes.byteLength + 1,
     });
-    const restore = installRuntime('Mozilla/5.0 (Macintosh)', host.invoke);
+    const restore = installRuntime(HOSTS.macos, host.invoke);
 
     try {
         await assert.rejects(() => commit([{ mes: '012345' }]), /unexpected offset/i);
@@ -208,7 +198,7 @@ test('chat payload commit surfaces abort failure with the original error', async
         onAppend: () => { throw new Error('append failed'); },
         abortError: new Error('abort failed'),
     });
-    const restore = installRuntime('Mozilla/5.0 (Macintosh)', host.invoke);
+    const restore = installRuntime(HOSTS.macos, host.invoke);
 
     try {
         await assert.rejects(
@@ -257,7 +247,7 @@ for (const route of [
             },
         ]) {
             const host = createCommitHost({ finishError: scenario.finishError, expectedTarget: route.target });
-            const restore = installRuntime('Mozilla/5.0 (Macintosh)', host.invoke);
+            const restore = installRuntime(HOSTS.macos, host.invoke);
 
             try {
                 const response = await router.handle({
@@ -277,7 +267,7 @@ for (const route of [
 test('cold commit captures source references before asynchronous transport', async () => {
     const payload = [{ chat_metadata:{}, tt_swipe_cold:{opaque_header_field:true} }, {mes:'active',swipe_id:1,swipes:[null,'active'],swipe_info:[null,{}],tt_swipe_cold:{sourceId:7,record:3}}];
     const host = createCommitHost({ expectedColdSourceId:7 });
-    const restore = installRuntime('Desktop', host.invoke);
+    const restore = installRuntime(HOSTS.windows, host.invoke);
     try {
         const pending = commit(payload);
         payload[1].tt_swipe_cold.sourceId = 99;

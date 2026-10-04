@@ -1,3 +1,4 @@
+import { installHostIdentity, HOSTS } from './helpers/host-identity.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Window } from 'happy-dom';
@@ -32,16 +33,7 @@ async function createHarness({ android = true } = {}) {
         HTMLTextAreaElement: window.HTMLTextAreaElement,
         getComputedStyle: window.getComputedStyle.bind(window),
     });
-    Object.defineProperty(globalThis, 'navigator', {
-        configurable: true,
-        value: {
-            userAgent: android
-                ? 'Mozilla/5.0 (Linux; Android 14) TauriTavern'
-                : 'Mozilla/5.0 (X11; Linux x86_64)',
-            maxTouchPoints: android ? 5 : 0,
-            platform: android ? 'Android' : 'Linux',
-        },
-    });
+    installHostIdentity(android ? HOSTS.android : HOSTS.linux);
 
     const module = await import(new URL(
         `../src/tauri/main/compat/mobile/mobile-ime-surface-controller.js?test=${++importId}`,

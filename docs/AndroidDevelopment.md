@@ -94,9 +94,8 @@ https://v2.tauri.app/develop/resources/#android
 
 `src-tauri/crates/tauritavern/build.rs` 现在会：
 
-- 扫描 `../default/content` 和 `../src/scripts/templates`；
-- 生成 `default_content_manifest.json`（默认内容清单）；
-- 生成 `embedded_resources.rs`（虚拟路径 -> `include_bytes!` 映射）。
+- 扫描 `../default/content`，生成 `default_content_manifest.json`（默认内容清单）；
+- 需要内嵌资源时，把前端模板与内置扩展的 HTML 模板写入 `embedded_resources.rs`（虚拟路径 -> `include_bytes!` 映射）。
 
 #### B. 运行时统一资源访问入口
 
@@ -110,8 +109,8 @@ https://v2.tauri.app/develop/resources/#android
 
 平台策略：
 
-- Android：优先走构建期嵌入资源映射；
-- 非 Android：走 `BaseDirectory::Resource` + fs 访问。
+- Android 与 OpenHarmony：`build.rs` 发出 `embedded_resources`，只读嵌入映射；
+- 其他平台：走 `BaseDirectory::Resource` + fs 访问；portable 构建在磁盘未命中时回退到嵌入映射。
 
 #### C. 前后端模板读取解耦
 
@@ -119,6 +118,7 @@ https://v2.tauri.app/develop/resources/#android
   文件：`src-tauri/crates/tauritavern/src/presentation/commands/bridge.rs`
 - 前端模板加载改为 Tauri 环境下优先 invoke：  
   文件：`src/scripts/templates.js`
+- 内置扩展模板只在嵌入映射中，桌面 bundle 不含，所以 `templates.js` 仅在 Android 上用 `read_frontend_extension_template` 读取，其他宿主走 fetch。
 
 #### D. 默认内容初始化改为“资源 -> 真实文件”复制流程
 
@@ -283,8 +283,8 @@ Android AI 生成使用任务级 `dataSync` Foreground Service。Rust `ChatCompl
 
 - 在 Tauri mobile 启动期安装运行时兼容层：
   - 实现：`src/tauri/main/compat/mobile/mobile-runtime-compat.js`
-  - 入口：`src/tauri/main/bootstrap.js`（仅 Android/iOS UA）
-  - 行为：基础 API 仅在缺失时补齐，且只执行一次；桌面端/移动端 Web 不启用。
+  - 入口：`src/tauri/main/bootstrap.js`（仅移动宿主）
+  - 行为：基础 API 仅在缺失时补齐，且只执行一次；桌面宿主不启用。
 
 #### Web Clipboard 写入被拒绝
 
@@ -333,7 +333,7 @@ Android WebView 可能暴露 `navigator.clipboard.writeText()`，却在调用时
     - 分类/契约输出：`src/tauri/main/compat/mobile/mobile-overlay-surface-admission.js`
     - 观察与有界 settle window：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
     - 同源 iframe bridge：`src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`
-    - 入口：`src/tauri/main/bootstrap.js`（仅 Android/iOS UA）
+    - 入口：`src/tauri/main/bootstrap.js`（仅移动宿主）
     - 策略：观察 `document.body` 直系子节点增删，并对 `script_id` portal root 扫描其子树；对已跟踪候选仅监听自身生命周期属性（`class/style/hidden/open/aria-hidden`）以撤销/恢复 host-admitted contract，属性重算按 animation frame 合并；稳定的 `free-window` 只响应 inline lifecycle style（`display/visibility/position/pointer-events/cursor/touch-action`）变化，几何类 style 写入保持在拖动热路径之外；对命中元素分类并输出：
       - `data-tt-mobile-surface="backdrop|viewport-host|fullscreen-window|free-window|edge-window"`
       - `data-tt-mobile-surface-admitted="1"`（host-private sentinel）

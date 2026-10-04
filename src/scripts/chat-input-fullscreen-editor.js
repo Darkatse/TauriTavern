@@ -149,17 +149,17 @@ function createEditorDialog(sourceTextarea) {
  * @param {HTMLTextAreaElement} deps.sendTextArea
  * @param {() => Promise<void>|void} deps.sendMessage
  * @param {(text: string) => boolean} deps.canSubmitGuidance
- * @param {() => boolean} deps.isMobile
+ * @param {() => boolean} deps.isMobileHost
  */
-export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, canSubmitGuidance, isMobile }) {
+export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, canSubmitGuidance, isMobileHost }) {
     if (!(sendTextArea instanceof HTMLTextAreaElement)) {
         throw new Error('sendTextArea must be an HTMLTextAreaElement');
     }
     if (typeof sendMessage !== 'function') {
         throw new Error('sendMessage must be a function');
     }
-    if (typeof isMobile !== 'function') {
-        throw new Error('isMobile must be a function');
+    if (typeof isMobileHost !== 'function') {
+        throw new Error('isMobileHost must be a function');
     }
 
     const inputHost = requireInputHost(sendTextArea);
@@ -261,7 +261,7 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, ca
     });
 
     collapseButton.addEventListener('click', () => {
-        closeEditor({ focusSource: !isMobile(), reason: 'collapse' });
+        closeEditor({ focusSource: !isMobileHost(), reason: 'collapse' });
     });
 
     sendButton.addEventListener('click', () => {
@@ -282,13 +282,13 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, ca
         event.stopPropagation();
         if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing) {
             event.preventDefault();
-            closeEditor({ focusSource: !isMobile(), reason: 'cancel' });
+            closeEditor({ focusSource: !isMobileHost(), reason: 'cancel' });
         }
     });
 
     dialog.addEventListener('cancel', (event) => {
         event.preventDefault();
-        closeEditor({ focusSource: !isMobile(), reason: 'cancel' });
+        closeEditor({ focusSource: !isMobileHost(), reason: 'cancel' });
     });
 
     dialog.addEventListener('close', () => {

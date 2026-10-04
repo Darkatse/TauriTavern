@@ -28,6 +28,7 @@ pub type HostResourceResponse = Response<Vec<u8>>;
 pub struct HostResourceDeliveryCapabilities {
     supports_not_modified: bool,
     webview_reapplies_range_semantics: bool,
+    max_third_party_asset_bytes: Option<u64>,
 }
 
 impl HostResourceDeliveryCapabilities {
@@ -35,7 +36,13 @@ impl HostResourceDeliveryCapabilities {
         Self {
             supports_not_modified,
             webview_reapplies_range_semantics,
+            max_third_party_asset_bytes: None,
         }
+    }
+
+    pub const fn with_max_third_party_asset_bytes(mut self, bytes: u64) -> Self {
+        self.max_third_party_asset_bytes = Some(bytes);
+        self
     }
 
     const fn supports_not_modified(self) -> bool {

@@ -6,18 +6,18 @@ use tauri::{AppHandle, Manager};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
+use crate::platform::identity::HOST_IDENTITY;
+use crate::platform::ipc::{SMALL_ASSET_UPLOAD_CHUNK_BYTES, UPLOAD_CHUNK_BYTES};
 use crate::presentation::commands::chunk_body::chunk_bytes_from_request;
 use crate::presentation::commands::helpers::log_command;
 use crate::presentation::errors::CommandError;
+use tt_contracts::host::HostKind;
 
 const STAGING_ROOT_NAME: &str = "tauritavern-upload-staging";
 const DEFAULT_KIND: &str = "generic";
 const DATA_ARCHIVE_KIND: &str = "data-archive";
 const HEADER_FILE_PATH: &str = "file-path";
 const HEADER_OFFSET: &str = "offset";
-const MOBILE_SMALL_ASSET_CHUNK_BYTES: u64 = 512 * 1024;
-const MOBILE_DEFAULT_CHUNK_BYTES: u64 = 1024 * 1024;
-const DESKTOP_DEFAULT_CHUNK_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct StageUploadBeginDto {
@@ -75,17 +75,6 @@ fn normalize_extension(value: Option<&str>) -> Result<String, CommandError> {
     Ok(extension)
 }
 
-fn chunk_size_for_kind(kind: &str) -> u64 {
-    if cfg!(any(target_os = "android", target_os = "ios")) {
-        return match kind {
-            "avatar" | "user-avatar" | "worldinfo-import" => MOBILE_SMALL_ASSET_CHUNK_BYTES,
-            _ => MOBILE_DEFAULT_CHUNK_BYTES,
-        };
-    }
-
-    DESKTOP_DEFAULT_CHUNK_BYTES
-}
-
 fn staging_root(app: &AppHandle, kind: &str) -> Result<PathBuf, CommandError> {
     let path_resolver = app.path();
     let base = path_resolver
@@ -102,7 +91,7 @@ fn staging_root(app: &AppHandle, kind: &str) -> Result<PathBuf, CommandError> {
 }
 
 fn ensure_mobile_archive_uses_native_picker(kind: &str) -> Result<(), CommandError> {
-    if cfg!(any(target_os = "android", target_os = "ios")) && kind == DATA_ARCHIVE_KIND {
+    if HOST_IDENTITY.kind == HostKind::Mobile && kind == DATA_ARCHIVE_KIND {
         return Err(CommandError::BadRequest(
             "Mobile data archive imports must use the native archive picker".to_string(),
         ));
@@ -254,7 +243,10 @@ pub async fn stage_upload_begin(
 
     Ok(StageUploadBeginResult {
         file_path: file_path.to_string_lossy().to_string(),
-        chunk_size: chunk_size_for_kind(&kind),
+        chunk_size: match kind.as_str() {
+            "avatar" | "user-avatar" | "worldinfo-import" => SMALL_ASSET_UPLOAD_CHUNK_BYTES,
+            _ => UPLOAD_CHUNK_BYTES,
+        },
     })
 }
 

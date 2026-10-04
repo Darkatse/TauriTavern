@@ -39,7 +39,7 @@ pub mod provider_metadata_commands;
 pub mod quick_reply_commands;
 pub mod registry;
 pub mod resource_bridge_commands;
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+#[cfg(desktop)]
 pub mod runtime_paths_commands;
 pub mod searxng_search_commands;
 pub mod secret_commands;

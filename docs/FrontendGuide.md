@@ -15,7 +15,7 @@
 
 ## 2. 启动链路
 
-当前前端启动顺序如下：
+当前前端启动顺序如下（宿主身份在页面脚本运行前已写入，见 2.1）：
 
 1. `src/init.js` 动态导入：`lib.js` -> `tauri-main.js` -> `script.js`
 2. `src/lib.js` 静态导入 `src/dist/lib.core.bundle.js`，统一提供 ESM 导出；`highlight.js` 通过 `getHljs()` 按需加载
@@ -29,6 +29,25 @@
    - 安装 Tauri mobile 兼容层（runtime polyfills + geometry firewall + surface classifier，仅移动端）
    - 为宿主接管的路由响应注入追踪 header：`x-tauritavern-trace-id`
    - 初始化 bridge 与目录信息
+
+### 2.1 宿主身份
+
+宿主身份 `{ platform, kind }` 由 Rust 按编译目标生成（契约见 `docs/FrontendHostContract.md` §2.2）。前端只通过 `src/scripts/util/host-identity.js` 读取：`hostPlatform()` 返回平台，`isMobileHost()` / `isDesktopHost()` 返回宿主类别。测试用 `tests/helpers/host-identity.mjs` 安装身份。
+
+与平台有关的判断，先分清在问什么：
+
+| 问题 | 依据 | 例子 |
+| --- | --- | --- |
+| 宿主属于哪一类外壳 | `isMobileHost()` / `isDesktopHost()` | 移动端兼容层、F11 全屏、数据目录选择、软键盘相关的自动聚焦 |
+| 选用哪个平台的实现，或某个平台独有的问题 | `hostPlatform()` | 导出交付、文件选择器、Windows 托盘、Android WebView 的剪贴板与 IME |
+| 可选能力是否存在 | 插件、原生桥或 DOM API 本身 | 扫码插件、Android 原生桥 |
+| 屏幕与交互形态 | 上游 Bowser `isMobile()`、CSS 媒体查询 | select2、MovingUI、`{{isMobile}}` |
+
+约束：
+
+- 不用 UA、`navigator.platform` 或 `maxTouchPoints` 推断宿主：iPadOS 报告为 Macintosh，OpenHarmony 的 UA 不含 Android。
+- 用正向条件表达类别，不用 `!android && !ios` 代表桌面。为每个平台选择实现时，`switch` 列出全部平台，`default` 抛错；某个平台独有的处理用正向判断即可。
+- 上游 Bowser `isMobile()` 与 CSS 媒体查询属于上游布局语义，保持不变。规则同时取决于宿主类别与视口形态时（如聊天宽度），显式组合 `isMobileHost()` 与媒体查询。
 
 ## 3. 目录结构（前端集成相关）
 

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
 
+use crate::app::startup_profile::initial_tauritavern_settings;
 use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepository;
 use crate::infrastructure::assets::read_resource_json;
 use crate::infrastructure::logging::llm_api_logs::{
@@ -156,6 +157,7 @@ pub(super) async fn build(
         chat_aliases.clone(),
         chat_backup_settings,
         page_generation.clone(),
+        crate::platform::ipc::COMMIT_FRAME_BYTES,
     ));
     file_chat_repository
         .cleanup_orphaned_chat_commit_staging()
@@ -194,7 +196,9 @@ pub(super) async fn build(
     let settings_repository = Arc::new(FileSettingsRepository::new(
         data_directory.settings().to_path_buf(),
         default_user_settings,
+        initial_tauritavern_settings(),
         page_generation.clone(),
+        crate::platform::ipc::COMMIT_FRAME_BYTES,
     ));
     settings_repository.cleanup_orphaned_commit_staging().await;
     // Materialize settings sections before background sync can scan the data directory.
@@ -247,6 +251,7 @@ pub(super) async fn build(
         data_root.join("_tauritavern").join("extension-store"),
         data_root.join(".staging").join("extension-store"),
         page_generation.clone(),
+        crate::platform::ipc::COMMIT_FRAME_BYTES,
     ));
     extension_store_repository
         .cleanup_orphaned_commit_staging()
@@ -342,6 +347,7 @@ pub(super) async fn build(
     let world_info_repository = Arc::new(FileWorldInfoRepository::new(
         data_directory.default_user().join("worlds"),
         page_generation,
+        crate::platform::ipc::COMMIT_FRAME_BYTES,
     ));
     world_info_repository
         .cleanup_orphaned_commit_staging()

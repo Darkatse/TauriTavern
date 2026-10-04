@@ -67,7 +67,7 @@
 
 实现位置：
 
-- `IosPolicyScope::for_current_platform()`：`src-tauri/crates/tt-domain/src/ios_policy.rs`
+- 适用范围：host 按宿主身份决定（iOS 为 `Ios`，其他为 `Ignored`）：`src-tauri/crates/tauritavern/src/app/startup_profile.rs`
 - 解析入口：`resolve_ios_policy_activation_report()`：`src-tauri/crates/tt-domain/src/ios_policy.rs`
 
 ---
@@ -78,7 +78,7 @@
 
 当前实现为“启动期一次性解析并缓存”，变更需要重启生效：
 
-1. `tauritavern-settings.json` 不存在时写入 `TauriTavernSettings::default()`（iOS 会注入默认 profile，见 2.2）
+1. `tauritavern-settings.json` 不存在时写入 host 组装的初始设置（iOS 构建带出厂 profile 的 seed，见 2.2）
 2. iOS 上解析 `ios_policy` → `IosPolicyActivationReport`
 3. 将 `IosPolicyActivationReport` 缓存到 `AppState.ios_policy`
 4. `/api/bootstrap` 返回 `ios_policy` 快照，前端启动期读取并投影 UI
@@ -94,15 +94,15 @@
 
 ### 2.2 “出厂默认 profile”（仅默认值，不是硬限制）
 
-iOS 构建可通过 `TAURITAVERN_IOS_POLICY_PROFILE` 注入默认 profile，用于首启生成默认 `tauritavern-settings.json`：
+iOS 构建可通过 `TAURITAVERN_IOS_POLICY_PROFILE` 注入出厂 profile（`full` / `ios_internal_full` / `ios_external_beta`，其他值在构建期失败）；非 iOS 构建忽略该变量。
 
-- iOS target：允许 `full` / `ios_internal_full` / `ios_external_beta`
-- 非 iOS target：强制注入为空字符串（默认不 seed `ios_policy`）
+首次生成 `tauritavern-settings.json` 时，出厂 profile 作为 `ios_policy` seed 写入。解析优先级：settings 中的 `ios_policy` → 本地缓存 → 出厂 profile → `full`。
 
 实现位置：
 
-- build-time 注入：`src-tauri/crates/tt-domain/build.rs`
-- default seed：`src-tauri/crates/tt-domain/src/models/settings.rs`（`default_ios_policy_seed()`）
+- 构建期校验：`src-tauri/crates/tauritavern/build.rs`
+- 出厂 profile、适用范围与初始设置：`src-tauri/crates/tauritavern/src/app/startup_profile.rs`
+- seed 形状与解析：`src-tauri/crates/tt-domain/src/ios_policy.rs`
 
 > 这只是“首次生成默认 settings”的默认值：用户导入 settings 后可覆盖 profile/overrides，且不会被系统偷偷改回去。
 
@@ -259,3 +259,4 @@ Stable 与 Canary 的普通自签 IPA 保持原有构建默认值；只有额外
 1. 新增/调整能力时，先改 `src-tauri/crates/tt-domain/src/ios_policy.rs`（capability key + baseline + overrides），再落裁决点与 UI 投影；禁止直接在 UI 到处加 `if (profile === ...)`。
 2. iOS 上拒绝 silent fallback：策略非法/能力禁用必须“明确失败或明确拒绝”，避免后续难排查。
 3. 非 iOS 平台必须继续 **忽略** `ios_policy`，防止跨平台 settings 导入把桌面端拖死。
+4. `tt-domain` 不读取编译目标；适用范围与出厂 profile 由 host 传入。

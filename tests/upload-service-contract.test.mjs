@@ -1,16 +1,12 @@
+import { installHostIdentity, HOSTS } from './helpers/host-identity.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createUploadService } from '../src/tauri/main/services/uploads/upload-service.js';
 
-function installRuntimeGlobals({ userAgent, platform = '', maxTouchPoints = 0 }) {
+function installRuntimeGlobals(identity) {
     const previousWindow = globalThis.window;
-    const previousNavigator = globalThis.navigator;
-
-    Object.defineProperty(globalThis, 'navigator', {
-        value: { userAgent, platform, maxTouchPoints },
-        configurable: true,
-    });
+    const restoreIdentity = installHostIdentity(identity);
     globalThis.window = {
         __TAURI__: {
             core: {
@@ -20,44 +16,14 @@ function installRuntimeGlobals({ userAgent, platform = '', maxTouchPoints = 0 })
             },
         },
     };
-
     return () => {
-        if (previousNavigator === undefined) {
-            delete globalThis.navigator;
-        } else {
-            Object.defineProperty(globalThis, 'navigator', {
-                value: previousNavigator,
-                configurable: true,
-            });
-        }
-
+        restoreIdentity();
         if (previousWindow === undefined) {
             delete globalThis.window;
         } else {
             globalThis.window = previousWindow;
         }
     };
-}
-
-function installAndroidRuntimeGlobals() {
-    return installRuntimeGlobals({
-        userAgent: 'Mozilla/5.0 (Linux; Android 14)',
-    });
-}
-
-function installIosRuntimeGlobals() {
-    return installRuntimeGlobals({
-        userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)',
-        platform: 'iPhone',
-        maxTouchPoints: 5,
-    });
-}
-
-function installDesktopRuntimeGlobals() {
-    return installRuntimeGlobals({
-        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)',
-        platform: 'MacIntel',
-    });
 }
 
 function createBlobWithPath(parts, type, path) {
@@ -135,7 +101,7 @@ function createHostStagingService({
 }
 
 test('Android upload materialization uses host staging chunks instead of raw fs writes', async () => {
-    const restore = installAndroidRuntimeGlobals();
+    const restore = installRuntimeGlobals(HOSTS.android);
     const calls = [];
     const service = createHostStagingService({
         calls,
@@ -170,7 +136,7 @@ test('Android upload materialization uses host staging chunks instead of raw fs 
 });
 
 test('iOS upload materialization uses host staging even when a scoped path is present', async () => {
-    const restore = installIosRuntimeGlobals();
+    const restore = installRuntimeGlobals(HOSTS.ios);
     const calls = [];
     const service = createHostStagingService({
         calls,
@@ -211,7 +177,7 @@ test('iOS upload materialization uses host staging even when a scoped path is pr
 
 
 test('Desktop upload materialization keeps real file paths without staging copy', async () => {
-    const restore = installDesktopRuntimeGlobals();
+    const restore = installRuntimeGlobals(HOSTS.macos);
     const calls = [];
     const service = createUploadService({
         safeInvoke: async (command, args) => {
@@ -238,7 +204,7 @@ test('Desktop upload materialization keeps real file paths without staging copy'
 
 
 test('Android data archive materialization rejects the generic Blob upload path', async () => {
-    const restore = installAndroidRuntimeGlobals();
+    const restore = installRuntimeGlobals(HOSTS.android);
     const calls = [];
     const service = createUploadService({
         safeInvoke: async (command, args) => {
@@ -255,7 +221,7 @@ test('Android data archive materialization rejects the generic Blob upload path'
 
         assert.deepEqual(fileInfo, {
             filePath: '',
-            error: 'Android data archive imports must use the native archive picker',
+            error: 'Mobile data archive imports must use the native archive picker',
             isTemporary: false,
         });
         assert.deepEqual(calls, []);
@@ -265,7 +231,7 @@ test('Android data archive materialization rejects the generic Blob upload path'
 });
 
 test('Android host staging failure discards the partial staged file', async () => {
-    const restore = installAndroidRuntimeGlobals();
+    const restore = installRuntimeGlobals(HOSTS.android);
     const originalWarn = console.warn;
     const calls = [];
     const service = createHostStagingService({

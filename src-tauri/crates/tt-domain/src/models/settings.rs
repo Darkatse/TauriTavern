@@ -2,25 +2,9 @@ pub mod repair;
 pub mod revision;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 use crate::models::update::UpdateChannel;
-
-fn default_ios_policy_seed() -> Option<Value> {
-    if !cfg!(target_os = "ios") {
-        return None;
-    }
-
-    let profile = env!("TAURITAVERN_IOS_POLICY_PROFILE").trim();
-    if profile.is_empty() {
-        return None;
-    }
-
-    Some(json!({
-        "version": crate::ios_policy::IOS_POLICY_VERSION,
-        "profile": profile,
-    }))
-}
 
 fn default_perf_profile() -> String {
     "auto".to_string()
@@ -114,7 +98,7 @@ pub struct DynamicThemeSettings {
 }
 
 fn default_close_to_tray_on_close() -> bool {
-    cfg!(target_os = "windows")
+    true
 }
 
 fn default_request_proxy_bypass() -> Vec<String> {
@@ -392,7 +376,7 @@ impl Default for TauriTavernSettings {
             dynamic_theme: DynamicThemeSettings::default(),
             models: default_model_settings(),
             agent: AgentSettings::default(),
-            ios_policy: default_ios_policy_seed(),
+            ios_policy: None,
         }
     }
 }

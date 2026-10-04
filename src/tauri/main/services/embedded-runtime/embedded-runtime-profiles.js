@@ -1,5 +1,7 @@
 // @ts-check
 
+import { isMobileHost } from '../../../../scripts/util/host-identity.js';
+
 import {
     EMBEDDED_RUNTIME_PROFILE_AUTO,
     EMBEDDED_RUNTIME_PROFILE_COMPAT,
@@ -12,15 +14,6 @@ import { EmbeddedRuntimeKind } from './runtime-kinds.js';
 /**
  * @typedef {import('./types.js').EmbeddedRuntimeProfile} EmbeddedRuntimeProfile
  */
-
-function isMobileUserAgent() {
-    const userAgent = typeof navigator?.userAgent === 'string' ? navigator.userAgent : '';
-    if (/android|iphone|ipad|ipod/i.test(userAgent)) {
-        return true;
-    }
-
-    return navigator?.platform === 'MacIntel' && navigator?.maxTouchPoints > 1;
-}
 
 /** @type {EmbeddedRuntimeProfile} */
 const COMPAT_PROFILE = Object.freeze({
@@ -78,7 +71,7 @@ export function resolveEmbeddedRuntimeProfile(profileName) {
         throw new Error(`Unsupported embedded runtime profile: ${normalized}`);
     }
 
-    if (isMobileUserAgent()) {
+    if (isMobileHost()) {
         return MOBILE_SAFE_PROFILE;
     }
 

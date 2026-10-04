@@ -105,7 +105,7 @@ Android 说明：
 - 观察与有界 settle window：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
 - 同源 iframe contract bridge：`src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`
 
-安装入口：`src/tauri/main/bootstrap.js`（仅 Tauri mobile UA）
+安装入口：`src/tauri/main/bootstrap.js`（仅移动宿主）
 
 当前策略：
 
@@ -145,7 +145,7 @@ Android 说明：
 当前策略：
 
 - `#send_textarea` 的程序化聚焦按意图分为 `navigation` / `restoration` / `editing`。
-- 移动端会拒绝 `navigation` 与 `restoration`，因此切角色、读历史聊天、welcome screen 创建临时聊天、按钮回焦都不会自动把键盘弹起。
+- 移动宿主（`isMobileHost()`）会拒绝 `navigation` 与 `restoration`，因此切角色、读历史聊天、welcome screen 创建临时聊天、按钮回焦都不会自动把键盘弹起。
 - 显式编辑流仍允许聚焦，例如消息编辑收尾、Quick Reply 把内容注入聊天输入框后继续编辑。
 - Tauri Android 在文档进入 `hidden` 时，若 `#send_textarea` 仍持有焦点，会主动 `blur()` 并清空 restoration 状态；因此从系统后台返回时不会因为旧焦点被恢复而自动弹出键盘。
 - 该策略完全留在前端共享模块，不依赖 native/WebView 对 `focus()` 做拦截。
@@ -172,6 +172,14 @@ Android 说明：
 备注：
 
 - iOS 主要依赖 viewport resize；`--tt-ime-bottom` 可能始终为 `0`，但上述策略不应破坏布局。
+
+### 3.7 聊天宽度
+
+实现：`src/scripts/power-user.js`（`getEffectiveChatWidth()`）
+
+- 移动宿主且视口为竖屏时，聊天宽度固定为 100%，滑块禁用；其他情况使用用户的 `chat_width`。竖屏按 CSS `(orientation: portrait)` 判断，iPad 分屏的窄高窗口也算竖屏。
+- 有效宽度只在渲染时写入 `--sheldWidth`，不改写设置或主题。
+- 视口宽度不超过 1000px 时，上游 `mobile-styles.css` 已把 `#sheld` 固定为全宽，所以手机横屏的主栏仍显示为全宽。
 
 ## 4. 沉浸模式开关（Android）
 
@@ -211,6 +219,7 @@ native 侧实现：`src-tauri/crates/tauritavern/gen/android/app/src/main/java/c
 1. Android（刘海机型）+ 沉浸模式：第一方顶部 UI 与第三方脚本浮层允许进入刘海/状态栏区域。
 2. 键盘弹出/收起：`#sheld` 高度与输入框不被遮挡。
 3. 旋转屏幕：safe‑area 与布局重新校验无抖动回归。
+4. 手机与 iPad 横竖屏、分屏切换时，聊天宽度符合 §3.7。
 
 快速调试点：
 

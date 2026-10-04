@@ -31,7 +31,7 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
     app.manage(http_client_pool.clone());
     super::resources::install_bundled_templates(app, &app_handle);
 
-    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    #[cfg(desktop)]
     // Desktop window-state needs the resolved data root and must be installed
     // before the main window exists. The main window restores state manually.
     super::window::install_window_state_plugin(&app_handle, &runtime_paths.data_root)?;
@@ -39,7 +39,7 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
     // 3. Bring up observability before emitting user-visible startup diagnostics.
     let observability = super::observability::install(app, &app_handle, &runtime_paths)?;
 
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(desktop)]
     super::observability::emit_pending_runtime_migration_error(&runtime_paths);
 
     tracing::debug!("Starting TauriTavern application");
@@ -70,7 +70,7 @@ pub(super) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
     )?;
     let _main_window = super::window::create_main_window(app, host_resource_service)?;
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(all(desktop, not(windows)))]
     super::shutdown::install_window_close_handler(&_main_window);
 
     #[cfg(target_os = "windows")]

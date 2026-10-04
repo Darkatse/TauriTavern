@@ -154,6 +154,7 @@ async fn character_service_with_world_repository(
     let world_repository = Arc::new(FileWorldInfoRepository::new(
         default_user.join("worlds"),
         Arc::default(),
+        4 * 1024 * 1024,
     ));
     let agent_repository = Arc::new(FileAgentRepository::new(
         root.join("_tauritavern/agent-workspaces"),
@@ -232,7 +233,9 @@ fn agent_runtime_fixture_with_shell(
         Arc::new(FileSettingsRepository::new(
             default_user.clone(),
             UserSettings::default(),
+            Default::default(),
             Arc::default(),
+            4 * 1024 * 1024,
         )),
     ));
     let prompt_assembly_service = Arc::new(PromptAssemblyService::new(

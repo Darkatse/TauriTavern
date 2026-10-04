@@ -8,7 +8,6 @@ use tt_ports::host_resource::{
 };
 
 const THIRD_PARTY_ALLOWED_METHODS: &str = "GET, HEAD, OPTIONS";
-const MAX_MOBILE_INLINE_THIRD_PARTY_ASSET_BYTES: u64 = 32 * 1024 * 1024;
 const THIRD_PARTY_LAYER_COMPAT_QUERY: &str = "ttCompat=layer";
 const THIRD_PARTY_LAYER_COMPAT_REVISION: &[u8] = b"tt-compat-layer-v1";
 
@@ -46,17 +45,19 @@ pub(super) fn serve_third_party_asset(
         }
         Err(error) => return store_error_response(error),
     };
-    if cfg!(mobile) && opened.metadata.content_length > MAX_MOBILE_INLINE_THIRD_PARTY_ASSET_BYTES {
+    if let Some(limit) = delivery.max_third_party_asset_bytes
+        && opened.metadata.content_length > limit
+    {
         tracing::warn!(
             "Rejected large third-party asset ({} bytes > {} bytes): {}/{}",
             opened.metadata.content_length,
-            MAX_MOBILE_INLINE_THIRD_PARTY_ASSET_BYTES,
+            limit,
             parsed.extension_folder,
             parsed.relative_path_display
         );
         return response::error(
             StatusCode::PAYLOAD_TOO_LARGE,
-            "Third-party asset is too large to load on mobile.",
+            "Third-party asset exceeds the host resource size limit.",
         );
     }
 
@@ -146,6 +147,30 @@ mod tests {
                 Arc::clone(&self.reads),
             ))
         }
+    }
+
+    #[test]
+    fn size_limit_precedes_head_and_conditional_delivery_without_reading_body() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let store = Store {
+            reads: reads.clone(),
+        };
+        let delivery = HostResourceDeliveryCapabilities::new(true, false);
+        let path = "/scripts/extensions/third-party/mobile/style.css";
+        let head =
+            serve_third_party_asset(&store, &test_support::request(Method::HEAD, path), delivery);
+        let limit = delivery.with_max_third_party_asset_bytes(22);
+        for method in [Method::GET, Method::HEAD] {
+            let mut request = test_support::request(method, path);
+            request
+                .headers_mut()
+                .insert(http::header::IF_NONE_MATCH, head.headers()[ETAG].clone());
+            assert_eq!(
+                serve_third_party_asset(&store, &request, limit).status(),
+                StatusCode::PAYLOAD_TOO_LARGE
+            );
+        }
+        assert_eq!(reads.load(Ordering::Relaxed), 0);
     }
 
     #[test]

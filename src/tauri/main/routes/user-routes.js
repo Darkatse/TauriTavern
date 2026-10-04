@@ -1,4 +1,4 @@
-import { isAndroidRuntime, isIosRuntime } from '../../../scripts/util/mobile-runtime.js';
+import { hostPlatform } from '../../../scripts/util/host-identity.js';
 import { sanitizeAttachmentFileName } from '../binary-utils.js';
 import { extractErrorText, resolveHostErrorResponse } from '../kernel/host-error-response.js';
 
@@ -106,59 +106,67 @@ export function registerUserRoutes(router, context, { jsonResponse }) {
                 return response;
             }
 
-            if (isAndroidRuntime()) {
-                let cleanupError = null;
-                try {
-                    const saved = await context.saveAndroidExportArchive(archivePath, fileName);
-                    cleanupError = await cleanupUserBackupArchive(context, archivePath);
-                    archivePath = '';
+            switch (hostPlatform()) {
+                case 'android': {
+                    let cleanupError = null;
+                    try {
+                        const saved = await context.saveAndroidExportArchive(archivePath, fileName);
+                        cleanupError = await cleanupUserBackupArchive(context, archivePath);
+                        archivePath = '';
+                        return jsonResponse({
+                            ok: true,
+                            mode: 'mobile-native',
+                            file_name: fileName,
+                            saved_target: String(saved?.savedTarget || ''),
+                            includes_secrets: includeSecrets,
+                            cleanup_error: cleanupError,
+                        });
+                    } catch (error) {
+                        cleanupError = await cleanupUserBackupArchive(context, archivePath);
+                        archivePath = '';
+                        if (cleanupError) {
+                            console.warn('Failed to cleanup user backup archive after Android save error:', cleanupError);
+                        }
+                        throw error;
+                    }
+                }
+                case 'ios': {
+                    const result = await context.safeInvoke('ios_share_file', {
+                        file_path: archivePath,
+                    });
+                    const cleanupError = await cleanupUserBackupArchive(context, archivePath);
+
                     return jsonResponse({
                         ok: true,
-                        mode: 'mobile-native',
+                        mode: 'ios-native-share',
                         file_name: fileName,
-                        saved_target: String(saved?.savedTarget || ''),
+                        completed: Boolean(result?.completed),
+                        activity: result?.activity ? String(result.activity) : null,
                         includes_secrets: includeSecrets,
                         cleanup_error: cleanupError,
                     });
-                } catch (error) {
-                    cleanupError = await cleanupUserBackupArchive(context, archivePath);
-                    archivePath = '';
-                    if (cleanupError) {
-                        console.warn('Failed to cleanup user backup archive after Android save error:', cleanupError);
-                    }
-                    throw error;
                 }
+                case 'windows':
+                case 'macos':
+                case 'linux': {
+                    const savedTarget = await context.safeInvoke('save_user_backup_archive', {
+                        archive_path: archivePath,
+                        file_name: fileName,
+                    });
+
+                    return jsonResponse({
+                        ok: true,
+                        mode: 'desktop-native',
+                        file_name: fileName,
+                        saved_target: String(savedTarget || ''),
+                        includes_secrets: includeSecrets,
+                    });
+                }
+                case 'ohos':
+                    throw new Error('Backup export is not implemented for OpenHarmony yet');
+                default:
+                    throw new Error(`Unsupported backup export platform: ${hostPlatform()}`);
             }
-
-            if (isIosRuntime()) {
-                const result = await context.safeInvoke('ios_share_file', {
-                    file_path: archivePath,
-                });
-                const cleanupError = await cleanupUserBackupArchive(context, archivePath);
-
-                return jsonResponse({
-                    ok: true,
-                    mode: 'ios-native-share',
-                    file_name: fileName,
-                    completed: Boolean(result?.completed),
-                    activity: result?.activity ? String(result.activity) : null,
-                    includes_secrets: includeSecrets,
-                    cleanup_error: cleanupError,
-                });
-            }
-
-            const savedTarget = await context.safeInvoke('save_user_backup_archive', {
-                archive_path: archivePath,
-                file_name: fileName,
-            });
-
-            return jsonResponse({
-                ok: true,
-                mode: 'desktop-native',
-                file_name: fileName,
-                saved_target: String(savedTarget || ''),
-                includes_secrets: includeSecrets,
-            });
         } catch (error) {
             const cleanupError = await cleanupUserBackupArchive(context, archivePath);
             if (cleanupError) {

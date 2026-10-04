@@ -84,9 +84,12 @@ fn repair_user(settings: &mut UserSettings) {
     }
 }
 
-pub(super) fn load_native(root: &Path) -> Result<TauriTavernSettings, DomainError> {
+pub(super) fn load_native(
+    root: &Path,
+    initial_settings: &TauriTavernSettings,
+) -> Result<TauriTavernSettings, DomainError> {
     let path = root.join("tauritavern-settings.json");
-    let mut defaults = serde_json::to_value(TauriTavernSettings::default()).map_err(json_error)?;
+    let mut defaults = serde_json::to_value(initial_settings).map_err(json_error)?;
     defaults
         .as_object_mut()
         .expect("settings object")

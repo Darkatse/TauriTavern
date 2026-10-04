@@ -33,7 +33,8 @@ const installed = await skill.list();
 | `acquireImport()` | 同步取得本页导入准入，返回 `release(): Promise<void>`；占用时抛出 `skill.import_busy` |
 | `pickImportArchive()` | 单个归档输入，取消时为 `null` |
 | `pickImportArchives()` | 选择一个或多个归档来源，取消时为 `null` |
-| `pickImportDirectories()` | 桌面端选择一个或多个目录来源，取消时为 `null` |
+| `isDirectoryImportAvailable()` | 当前宿主能否选择目录来源（目前仅桌面） |
+| `pickImportDirectories()` | 选择一个或多个目录来源，取消时为 `null`；不可用时抛错 |
 | `discoverImports({ input })` | 递归展开目录或归档中的 Skill；其他输入返回单个候选 |
 | `downloadImport({ url })` | 下载 HTTPS raw `SKILL.md`，返回单文件导入输入 |
 | `discardPickedImport(input?)` | 释放指定来源的临时资源；无参数时释放整批来源 |

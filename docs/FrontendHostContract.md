@@ -25,6 +25,8 @@
 
 当前启动链路（见 `docs/FrontendGuide.md`）：
 
+页面脚本运行前，宿主已写入 `window.__TAURITAVERN_HOST__`（见 2.2）。
+
 开发态 HTTP 入口会先由 `scripts/tauri-dev-server.mjs` 注入 `src/dev-sw-bootstrap.js`，仅负责让持久 Service Worker registration 与当前 WebView 会话重新绑定，不参与应用模块初始化。
 
 1. `src/init.js`：负责最早期的环境标记、可选 perf 开关与动态 import。
@@ -43,6 +45,10 @@
   - 由 `src/init.js` 在动态 import 前写入；`bootstrap` 会优先读取它（避免重复计算/时序差异）。
 - `window.__TAURI_RUNNING__ : true`
   - 由 `src/init.js` 写入；用于桥接层尽早判断 Tauri 环境（避免移动端注入时序 race）。
+- `window.__TAURITAVERN_HOST__ : { platform, kind }`（Project）
+  - 宿主身份：Rust 按编译目标生成，在页面脚本之前写入主 WebView 的顶层 frame，对象冻结。
+  - `platform`：`'windows' | 'macos' | 'linux' | 'android' | 'ios' | 'ohos'`；`kind`：`'desktop' | 'mobile'`，与 Rust 的 `desktop` / `mobile` 编译条件同源。
+  - 第一方代码只通过 `src/scripts/util/host-identity.js` 读取，见 `docs/FrontendGuide.md` §2.1。
 
 ---
 
@@ -108,18 +114,20 @@
 
 为避免未来继续扩散 `window.__TAURITAVERN_*` 零散符号，宿主层额外提供一个**统一出口**：
 
-- `window.__TAURITAVERN__ : { abiVersion, traceHeader, ready, invoke, assets, api }`
+- `window.__TAURITAVERN__ : { abiVersion, traceHeader, ready, invoke, assets, api, iosPolicy }`
   - `abiVersion: 1`：ABI 版本号（已发布扩展契约发生语义化破坏改动时递增）。
   - `traceHeader: string`：请求追踪 header 名（见 4.4）。
   - `ready: Promise<void> | null`：与 `__TAURITAVERN_MAIN_READY__` 语义一致。
   - `invoke.safeInvoke(...)` / `invoke.flushAll()`：对 `context` invoke 能力的稳定包装。
   - `assets.thumbnailUrl` / `assets.backgroundPath`：对 3.1 中稳定 Host Resource URL helper 的统一引用。
+  - `iosPolicy`（Project）：iOS 分发策略的启动快照，见 `docs/CurrentState/iOSPolicy.md`。
   - `api.layout`：布局契约 API（safe-area / viewport / Android IME），并配合 `data-tt-mobile-surface` taxonomy 让扩展以几行 opt-in 完成移动端适配。
     - 详细签名与示例见：`docs/API/Layout.md`。
   - `api.chat`：TauriTavern 独有的聊天/记忆类扩展 API（聊天摘要、元数据、历史分页、稳定存储、后端定位、纯文本检索）。
     - 详细签名与示例见：`docs/API/Chat.md`。
-  - `api.characterCards`：角色卡文件选择宿主 API。用于在 Tauri desktop/iOS 上以 native picker 选择本地角色卡文件，并返回标准 `File[]` 给上游导入/替换流程继续处理。
+  - `api.characterCards`：角色卡文件选择宿主 API。用于以 native picker 选择本地角色卡文件，并返回标准 `File[]` 给上游导入/替换流程继续处理。
     - 当前已落地 Host ABI：`isNativePickerAvailable()`、`pickFiles(options?: { multiple?: boolean; title?: string }) -> Promise<File[] | null>`。
+    - Android 使用 WebView 文件输入，`isNativePickerAvailable()` 为 `false`；iOS 使用系统文档选择器（暂不支持多选）；其他宿主使用 dialog 插件，选择结果经 fs 插件读取为 `File`。
     - 当前 native picker 仅暴露 Rust 角色导入器真实支持的 `json/png` 角色卡格式；上游 `processDroppedFiles` 的格式判断保持不变。
     - 语义：只补齐平台文件选择能力，不导入、不覆盖、不改变 `/api/characters/import`、`preserved_name`、角色 avatar identity 或上游 toast/tag/刷新收尾语义。
     - 取消选择返回 `null`；picker/staging/read 失败必须抛错，不得静默回退到 WebView file input。

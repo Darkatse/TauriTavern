@@ -91,7 +91,10 @@ impl DevObservabilityHub {
         let backend_tail = self.tail_backend_logs(800);
         let meta = DevLogBundleMeta {
             exported_at: chrono::Utc::now().to_rfc3339(),
-            os: std::env::consts::OS.to_string(),
+            os: crate::platform::identity::HOST_IDENTITY
+                .platform
+                .as_str()
+                .to_string(),
             arch: std::env::consts::ARCH.to_string(),
             runtime_paths: DevLogBundleRuntimePaths {
                 data_root: self.runtime_paths.data_root.to_string_lossy().to_string(),

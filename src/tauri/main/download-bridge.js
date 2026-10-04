@@ -1,7 +1,7 @@
 const IMAGE_EXTENSIONS = { jpeg: 'jpg', 'svg+xml': 'svg' };
 
 export function createDownloadBridge({
-    isNativeMobileDownloadRuntime,
+    isMobileHost,
     downloadBlobWithRuntime,
     notifyDownloadResult,
     notifyDownloadError,
@@ -207,7 +207,7 @@ export function createDownloadBridge({
     }
 
     function patchWindow(targetWindow = window) {
-        if (!targetWindow || !isNativeMobileDownloadRuntime()) {
+        if (!targetWindow || !isMobileHost()) {
             return;
         }
 

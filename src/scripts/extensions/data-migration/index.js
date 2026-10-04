@@ -1,7 +1,7 @@
 import { renderExtensionTemplateAsync } from '../../extensions.js';
 import { t, translate } from '../../i18n.js';
 import { Popup } from '../../popup.js';
-import { isAndroidRuntime, isIosRuntime } from '../../util/mobile-runtime.js';
+import { hostPlatform, isDesktopHost } from '../../util/host-identity.js';
 import { getActiveIosPolicyActivationReport } from '../../tauritavern/ios-policy.js';
 import { openDialog } from '../../../tauri-bridge.js';
 import { flushLifecycleState } from '../../../tauri/main/services/lifecycle/lifecycle-flush-service.js';
@@ -148,64 +148,72 @@ async function startImportJobFromIosPicker() {
 }
 
 async function saveExportArchive(jobId) {
-    if (isAndroidRuntime()) {
-        const response = await fetch('/api/extensions/data-migration/export/android/save', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ job_id: jobId }),
-        });
-        if (!response.ok) {
-            throw new Error(await readFailureMessage(response));
+    switch (hostPlatform()) {
+        case 'android': {
+            const response = await fetch('/api/extensions/data-migration/export/android/save', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ job_id: jobId }),
+            });
+            if (!response.ok) {
+                throw new Error(await readFailureMessage(response));
+            }
+
+            const payload = await response.json();
+            return {
+                mode: 'mobile-native',
+                cancelled: Boolean(payload?.cancelled),
+                savedPath: String(payload?.saved_target || ''),
+                cleanupError: payload?.cleanup_error ? String(payload.cleanup_error) : null,
+            };
         }
+        case 'ios': {
+            const response = await fetch('/api/extensions/data-migration/export/ios/share', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ job_id: jobId }),
+            });
+            if (!response.ok) {
+                throw new Error(await readFailureMessage(response));
+            }
 
-        const payload = await response.json();
-        return {
-            mode: 'mobile-native',
-            cancelled: Boolean(payload?.cancelled),
-            savedPath: String(payload?.saved_target || ''),
-            cleanupError: payload?.cleanup_error ? String(payload.cleanup_error) : null,
-        };
-    }
-
-    if (isIosRuntime()) {
-        const response = await fetch('/api/extensions/data-migration/export/ios/share', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ job_id: jobId }),
-        });
-        if (!response.ok) {
-            throw new Error(await readFailureMessage(response));
+            const payload = await response.json();
+            return {
+                mode: 'ios-native-share',
+                completed: Boolean(payload?.completed),
+                activity: payload?.activity ? String(payload.activity) : null,
+                cleanupError: payload?.cleanup_error ? String(payload.cleanup_error) : null,
+            };
         }
+        case 'windows':
+        case 'macos':
+        case 'linux': {
+            const response = await fetch('/api/extensions/data-migration/export/save', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ job_id: jobId }),
+            });
+            if (!response.ok) {
+                throw new Error(await readFailureMessage(response));
+            }
 
-        const payload = await response.json();
-        return {
-            mode: 'ios-native-share',
-            completed: Boolean(payload?.completed),
-            activity: payload?.activity ? String(payload.activity) : null,
-            cleanupError: payload?.cleanup_error ? String(payload.cleanup_error) : null,
-        };
+            const payload = await response.json();
+            return {
+                mode: 'desktop-native',
+                savedPath: String(payload?.saved_target || ''),
+            };
+        }
+        case 'ohos':
+            throw new Error('Data archive export is not implemented for OpenHarmony yet');
+        default:
+            throw new Error(`Unsupported archive export platform: ${hostPlatform()}`);
     }
-
-    const response = await fetch('/api/extensions/data-migration/export/save', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ job_id: jobId }),
-    });
-    if (!response.ok) {
-        throw new Error(await readFailureMessage(response));
-    }
-
-    const payload = await response.json();
-    return {
-        mode: 'desktop-native',
-        savedPath: String(payload?.saved_target || ''),
-    };
 }
 
 function hasActiveJob() {
@@ -223,7 +231,7 @@ function refreshExportActions() {
     }
 
     const savedPath = String(jobState.lastExportSavedPath || '').trim();
-    const visible = Boolean(savedPath) && !isAndroidRuntime() && !isIosRuntime();
+    const visible = Boolean(savedPath) && isDesktopHost();
     actions.toggle(visible);
 
     $('#data_migration_reveal_export_button').prop('disabled', !visible);
@@ -298,17 +306,23 @@ async function onImportButtonClick() {
             return;
         }
 
-        if (isAndroidRuntime()) {
-            await onAndroidImportButtonClick();
-            return;
+        switch (hostPlatform()) {
+            case 'android':
+                await onAndroidImportButtonClick();
+                break;
+            case 'ios':
+                await onIosImportButtonClick();
+                break;
+            case 'windows':
+            case 'macos':
+            case 'linux':
+                await runConfirmedImport(startImportJobFromDesktopPicker);
+                break;
+            case 'ohos':
+                throw new Error('Data archive import is not implemented for OpenHarmony yet');
+            default:
+                throw new Error(`Unsupported archive import platform: ${hostPlatform()}`);
         }
-
-        if (isIosRuntime()) {
-            await onIosImportButtonClick();
-            return;
-        }
-
-        await runConfirmedImport(startImportJobFromDesktopPicker);
     } catch (error) {
         const failureMessage = normalizeCaughtError(error);
         toastr.error(failureMessage, t`Data import failed`);
@@ -553,7 +567,7 @@ async function onIosImportButtonClick() {
 
 async function runConfirmedImport(startJob) {
     const prompt = t`Importing will merge into the current local data directory (same-path files will be overwritten). Continue?`;
-    const confirmed = isIosRuntime()
+    const confirmed = hostPlatform() === 'ios'
         ? await Popup.show.confirm(t`Confirm data import`, prompt)
         : window.confirm(prompt);
     if (!confirmed) {

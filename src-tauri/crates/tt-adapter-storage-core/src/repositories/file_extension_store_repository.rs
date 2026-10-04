@@ -47,10 +47,15 @@ impl ByteReader for EntryReader {
 }
 
 impl FileExtensionStoreRepository {
-    pub fn new(base_dir: PathBuf, staging_dir: PathBuf, page: Arc<PageGeneration>) -> Self {
+    pub fn new(
+        base_dir: PathBuf,
+        staging_dir: PathBuf,
+        page: Arc<PageGeneration>,
+        max_frame_bytes: u64,
+    ) -> Self {
         Self {
             base_dir,
-            commits: CommitSessions::new(staging_dir, page),
+            commits: CommitSessions::new(staging_dir, page, max_frame_bytes),
             mutation: Arc::new(Mutex::new(())),
         }
     }

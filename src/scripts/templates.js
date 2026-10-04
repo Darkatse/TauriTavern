@@ -1,3 +1,4 @@
+import { hostPlatform } from './util/host-identity.js';
 import { DOMPurify, Handlebars } from '../lib.js';
 import { applyLocale } from './i18n.js';
 import { isTauriEnv, invoke } from '../tauri-bridge.js';
@@ -78,19 +79,6 @@ function parseExtensionTemplatePath(templatePath) {
 }
 
 /**
- * Returns true when running inside a Tauri Android WebView.
- * Extension template bridge reads are only required on Android assets.
- * @returns {boolean}
- */
-function isAndroidTauriRuntime() {
-    if (!isTauriEnv || typeof navigator === 'undefined') {
-        return false;
-    }
-
-    return /android/i.test(navigator.userAgent || '');
-}
-
-/**
  * Loads a template content, using Tauri resource reading on Tauri environments
  * and fetch on regular web environments.
  * @param {string} templateId Template ID (e.g., 'emptyBlock')
@@ -106,7 +94,7 @@ async function getTemplateContent(templateId, fullPath) {
         }
 
         const extensionTemplate = parseExtensionTemplatePath(templateId);
-        if (extensionTemplate && isAndroidTauriRuntime()) {
+        if (extensionTemplate && hostPlatform() === 'android') {
             try {
                 return await invoke('read_frontend_extension_template', extensionTemplate);
             } catch (error) {

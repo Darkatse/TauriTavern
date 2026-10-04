@@ -1,5 +1,8 @@
 // @ts-check
 
+import { isMobileHost } from '../../../../scripts/util/host-identity.js';
+import { encodeIpcByteBody } from '../files/ipc-byte-body.js';
+
 /**
  * @typedef {import('../../context/types.js').MaterializedFileInfo} MaterializedFileInfo
  * @typedef {(command: import('../../context/types.js').TauriInvokeCommand, args?: any) => Promise<any>} SafeInvokeFn
@@ -50,37 +53,6 @@ export function createUploadService({ safeInvoke, invoke } = {}) {
         );
     }
 
-    function isAndroidRuntime() {
-        if (typeof navigator === 'undefined' || typeof navigator.userAgent !== 'string') {
-            return false;
-        }
-
-        return /android/i.test(navigator.userAgent);
-    }
-
-    function isIosRuntime() {
-        if (typeof navigator === 'undefined') {
-            return false;
-        }
-
-        const userAgent = typeof navigator.userAgent === 'string' ? navigator.userAgent : '';
-        if (/iphone|ipad|ipod/i.test(userAgent)) {
-            return true;
-        }
-
-        const touchPoints = Number(navigator.maxTouchPoints || 0);
-        if (touchPoints <= 1) {
-            return false;
-        }
-
-        const platform = typeof navigator.platform === 'string' ? navigator.platform : '';
-        return platform === 'MacIntel' || /macintosh/i.test(userAgent);
-    }
-
-    function isMobileUploadRuntime() {
-        return isAndroidRuntime() || isIosRuntime();
-    }
-
     /** @param {any} value */
     function normalizeUploadKind(value) {
         const kind = String(value || DEFAULT_UPLOAD_KIND).trim() || DEFAULT_UPLOAD_KIND;
@@ -95,45 +67,6 @@ export function createUploadService({ safeInvoke, invoke } = {}) {
         await new Promise(resolve => setTimeout(resolve, 0));
     }
 
-    /** @param {Uint8Array} bytes */
-    function bytesToBase64(bytes) {
-        if (typeof btoa !== 'function') {
-            throw new Error('Base64 encoder is unavailable');
-        }
-
-        let binary = '';
-        const stride = 0x8000;
-        for (let offset = 0; offset < bytes.byteLength; offset += stride) {
-            const chunk = bytes.subarray(offset, offset + stride);
-            binary += String.fromCharCode(...chunk);
-        }
-
-        return btoa(binary);
-    }
-
-    /** @param {Blob} blob */
-    async function blobToBase64(blob) {
-        if (typeof FileReader === 'function') {
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onerror = () => reject(reader.error || new Error('Failed to read upload chunk'));
-                reader.onload = () => {
-                    const result = typeof reader.result === 'string' ? reader.result : '';
-                    const separator = result.indexOf(',');
-                    if (separator < 0) {
-                        reject(new Error('Upload chunk data URL is invalid'));
-                        return;
-                    }
-
-                    resolve(result.slice(separator + 1));
-                };
-                reader.readAsDataURL(blob);
-            });
-        }
-
-        return bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
-    }
-
     /** @param {string | null} filePath */
     function shouldUseDirectUploadPath(filePath) {
         if (!isLikelyFileSystemPath(filePath)) {
@@ -142,7 +75,7 @@ export function createUploadService({ safeInvoke, invoke } = {}) {
 
         // Mobile file pickers often expose scoped paths that are not directly readable by Rust.
         // Materializing into app storage keeps behavior consistent and permission-safe.
-        if (isMobileUploadRuntime()) {
+        if (isMobileHost()) {
             return false;
         }
 
@@ -184,19 +117,11 @@ export function createUploadService({ safeInvoke, invoke } = {}) {
             throw new Error('Tauri invoke API is unavailable');
         }
 
-        if (isAndroidRuntime()) {
-            return invokeApi('stage_upload_chunk', { data: await blobToBase64(chunk) }, {
-                headers: {
-                    'chunk-encoding': 'base64',
-                    'file-path': encodeURIComponent(filePath),
-                    offset: String(offset),
-                },
-            });
-        }
-
         const bytes = new Uint8Array(await chunk.arrayBuffer());
-        return invokeApi('stage_upload_chunk', bytes, {
+        const { body, headers } = encodeIpcByteBody(bytes);
+        return invokeApi('stage_upload_chunk', body, {
             headers: {
+                ...headers,
                 'file-path': encodeURIComponent(filePath),
                 offset: String(offset),
             },
@@ -210,11 +135,6 @@ export function createUploadService({ safeInvoke, invoke } = {}) {
             throw new Error('Host upload service returned an invalid chunk size');
         }
         return chunkSize;
-    }
-
-    /** @param {string} platform */
-    function nativeArchivePickerError(platform) {
-        return `${platform} data archive imports must use the native archive picker`;
     }
 
     /**
@@ -336,22 +256,12 @@ export function createUploadService({ safeInvoke, invoke } = {}) {
         }
 
         const uploadKind = normalizeUploadKind(kind);
-        if (uploadKind === DATA_ARCHIVE_KIND) {
-            if (isAndroidRuntime()) {
-                return {
-                    filePath: '',
-                    error: nativeArchivePickerError('Android'),
-                    isTemporary: false,
-                };
-            }
-
-            if (isIosRuntime()) {
-                return {
-                    filePath: '',
-                    error: nativeArchivePickerError('iOS'),
-                    isTemporary: false,
-                };
-            }
+        if (uploadKind === DATA_ARCHIVE_KIND && isMobileHost()) {
+            return {
+                filePath: '',
+                error: 'Mobile data archive imports must use the native archive picker',
+                isTemporary: false,
+            };
         }
 
         const directPath = extractNativeFilePath(file);
@@ -382,7 +292,5 @@ export function createUploadService({ safeInvoke, invoke } = {}) {
     return {
         materializeUploadFile,
         removeTempUploadFile,
-        isAndroidRuntime,
-        isIosRuntime,
     };
 }

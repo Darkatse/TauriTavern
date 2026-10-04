@@ -26,11 +26,11 @@ pub struct FileWorldInfoRepository {
 }
 
 impl FileWorldInfoRepository {
-    pub fn new(worlds_dir: PathBuf, page: Arc<PageGeneration>) -> Self {
+    pub fn new(worlds_dir: PathBuf, page: Arc<PageGeneration>, max_frame_bytes: u64) -> Self {
         let staging_dir = worlds_dir.with_file_name(".staging").join("world-info");
         Self {
             worlds_dir,
-            commit_sessions: CommitSessions::new(staging_dir, page),
+            commit_sessions: CommitSessions::new(staging_dir, page, max_frame_bytes),
         }
     }
 
@@ -292,7 +292,8 @@ mod tests {
     #[tokio::test]
     async fn save_get_delete_keeps_spaced_world_names_distinct() {
         let dir = TestDir::new();
-        let repository = FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default());
+        let repository =
+            FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default(), 4 * 1024 * 1024);
         let plain = json!({ "entries": { "0": { "uid": 0, "content": "plain" } } });
         let leading = json!({ "entries": { "0": { "uid": 0, "content": "leading" } } });
         let trailing = json!({ "entries": { "0": { "uid": 0, "content": "trailing" } } });
@@ -348,7 +349,8 @@ mod tests {
     #[tokio::test]
     async fn import_world_info_preserves_leading_space_from_original_filename() {
         let dir = TestDir::new();
-        let repository = FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default());
+        let repository =
+            FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default(), 4 * 1024 * 1024);
         let source = dir.path().join("upload.json");
         let json = r#"{ "z":1,"entries":{},"originalData":{"b":2,"a":3} }"#;
         std::fs::write(&source, json).expect("write import source");
@@ -368,7 +370,8 @@ mod tests {
     #[tokio::test]
     async fn list_world_names_sorts_like_upstream_locale_compare() {
         let dir = TestDir::new();
-        let repository = FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default());
+        let repository =
+            FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default(), 4 * 1024 * 1024);
 
         std::fs::write(dir.path().join("😀Book.json"), "{}").expect("write emoji world");
         std::fs::write(dir.path().join("Abook.json"), "{}").expect("write latin world");

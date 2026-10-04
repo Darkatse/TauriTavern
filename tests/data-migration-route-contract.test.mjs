@@ -11,31 +11,6 @@ function createExtensionRouter(context) {
     return router;
 }
 
-function withTemporaryNavigator(value, callback) {
-    const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
-    Object.defineProperty(globalThis, 'navigator', {
-        value,
-        configurable: true,
-    });
-    try {
-        return callback();
-    } finally {
-        if (original) {
-            Object.defineProperty(globalThis, 'navigator', original);
-        } else {
-            delete globalThis.navigator;
-        }
-    }
-}
-
-function createIosExtensionRouter(context) {
-    return withTemporaryNavigator({
-        userAgent: 'iPhone',
-        maxTouchPoints: 5,
-        platform: 'iPhone',
-    }, () => createExtensionRouter(context));
-}
-
 function completedExportStatus(result = {}) {
     return {
         kind: 'export',

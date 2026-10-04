@@ -1,4 +1,4 @@
-import { isAndroidRuntime } from '../../../../scripts/util/mobile-runtime.js';
+import { hostPlatform } from '../../../../scripts/util/host-identity.js';
 
 const CONTROLLER_KEY = '__TAURITAVERN_ANDROID_IME_LAYOUT_HOST__';
 const HOST_ATTR = 'data-tt-android-ime-host';
@@ -27,7 +27,7 @@ function moveNodeIntoLiftRoot(node, liftRoot) {
 }
 
 export function installAndroidImeLayoutHost() {
-    if (!isAndroidRuntime()) {
+    if (hostPlatform() !== 'android') {
         return null;
     }
 

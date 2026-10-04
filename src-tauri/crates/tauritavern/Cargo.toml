@@ -73,7 +73,8 @@ ttsync-core = { workspace = true }
 tt-application = { path = "../tt-application", features = ["test-support"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
-[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+# Cargo dependency selection cannot see tauri-build's desktop/mobile cfg aliases.
+[target.'cfg(any(target_os = "macos", windows, all(target_os = "linux", not(target_env = "ohos"))))'.dependencies]
 tauri-plugin-pilot = { version = "0.7.3", optional = true }
 tauri-plugin-single-instance = "2.4.5"
 tauri-plugin-window-state = "2.4.1"

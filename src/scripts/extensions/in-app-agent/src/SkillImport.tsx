@@ -87,7 +87,7 @@ export function SkillImport({ actions, profileId, onInstalled, onPendingChange }
                 {busy === 'installing' ? tr('installing') : tr('install')}</button></div>
         </div> : <div className="ttia-actions">
             <button type="button" disabled={busy !== null} onClick={() => { void pick(false); }}><Icon name="plus" />{busy ? tr('importing') : tr('importZip')}</button>
-            {!actions.isMobile() && <button type="button" disabled={busy !== null} onClick={() => { void pick(true); }}>{tr('importFolder')}</button>}
+            {actions.skill.isDirectoryImportAvailable() && <button type="button" disabled={busy !== null} onClick={() => { void pick(true); }}>{tr('importFolder')}</button>}
         </div>}
         {notice && <p className="ttia-muted" role="status">{notice}</p>}
         {error != null && <ErrorNotice error={error} />}

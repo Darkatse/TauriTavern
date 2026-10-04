@@ -9,7 +9,9 @@ async fn agent_model_binding_uses_the_named_proxy_without_copying_credentials() 
     let settings = Arc::new(FileSettingsRepository::new(
         root.join("default-user"),
         UserSettings::default(),
+        Default::default(),
         Arc::default(),
+        4 * 1024 * 1024,
     ));
     let service = LlmConnectionService::new(
         Arc::new(FileLlmConnectionRepository::new(

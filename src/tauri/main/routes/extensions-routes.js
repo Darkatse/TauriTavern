@@ -1,5 +1,3 @@
-import { isIosRuntime } from '../../../scripts/util/mobile-runtime.js';
-
 function parseJobId(value) {
     const jobId = String(value || '').trim();
     return jobId || '';
@@ -14,7 +12,6 @@ function isAndroidExportDestinationSelectionCancelled(error) {
 }
 
 export function registerExtensionRoutes(router, context, { jsonResponse }) {
-    const iosRuntime = isIosRuntime();
     const activeAndroidExportSaves = new Set();
 
     async function startImportJobFromFileInfo(fileInfo) {
@@ -219,18 +216,16 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
         });
     });
 
-    if (iosRuntime) {
-        router.post('/api/extensions/data-migration/import/ios', async () => {
-            const result = await context.safeInvoke('ios_import_data_archive_from_picker');
+    router.post('/api/extensions/data-migration/import/ios', async () => {
+        const result = await context.safeInvoke('ios_import_data_archive_from_picker');
 
-            return jsonResponse({
-                ok: true,
-                cancelled: Boolean(result?.cancelled),
-                job_id: result?.job_id ? String(result.job_id) : '',
-                file_name: result?.file_name ? String(result.file_name) : '',
-            });
+        return jsonResponse({
+            ok: true,
+            cancelled: Boolean(result?.cancelled),
+            job_id: result?.job_id ? String(result.job_id) : '',
+            file_name: result?.file_name ? String(result.file_name) : '',
         });
-    }
+    });
 
     router.post('/api/extensions/data-migration/export', async () => {
         const jobId = parseJobId(await context.safeInvoke('start_export_data_archive'));
@@ -316,30 +311,28 @@ export function registerExtensionRoutes(router, context, { jsonResponse }) {
         });
     });
 
-    if (iosRuntime) {
-        router.post('/api/extensions/data-migration/export/ios/share', async ({ body }) => {
-            const jobId = parseJobId(body?.job_id);
-            if (!jobId) {
-                return jsonResponse({ error: 'Missing job id' }, 400);
-            }
+    router.post('/api/extensions/data-migration/export/ios/share', async ({ body }) => {
+        const jobId = parseJobId(body?.job_id);
+        if (!jobId) {
+            return jsonResponse({ error: 'Missing job id' }, 400);
+        }
 
-            const { error } = await loadCompletedExportJobStatus(jobId);
-            if (error) {
-                return error;
-            }
+        const { error } = await loadCompletedExportJobStatus(jobId);
+        if (error) {
+            return error;
+        }
 
-            const result = await context.safeInvoke('ios_share_export_data_archive', {
-                job_id: jobId,
-            });
-
-            return jsonResponse({
-                ok: true,
-                completed: Boolean(result?.completed),
-                activity: result?.activity ? String(result.activity) : null,
-                cleanup_error: result?.cleanup_error ? String(result.cleanup_error) : null,
-            });
+        const result = await context.safeInvoke('ios_share_export_data_archive', {
+            job_id: jobId,
         });
-    }
+
+        return jsonResponse({
+            ok: true,
+            completed: Boolean(result?.completed),
+            activity: result?.activity ? String(result.activity) : null,
+            cleanup_error: result?.cleanup_error ? String(result.cleanup_error) : null,
+        });
+    });
 
     router.get('/api/extensions/data-migration/job', async ({ url }) => {
         const jobId = parseJobId(url?.searchParams?.get('id'));

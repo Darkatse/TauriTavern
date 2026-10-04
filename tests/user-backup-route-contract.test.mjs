@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { installHostIdentity } from './helpers/host-identity.mjs';
+
 
 import { jsonResponse } from '../src/tauri/main/http-utils.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerUserRoutes } from '../src/tauri/main/routes/user-routes.js';
+
+test.beforeEach(t => t.after(installHostIdentity()));
 
 function createUserRouter(context) {
     const router = createRouteRegistry();

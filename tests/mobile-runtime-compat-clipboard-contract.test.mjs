@@ -1,3 +1,4 @@
+import { installHostIdentity, HOSTS } from './helpers/host-identity.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -25,9 +26,9 @@ const compatPath = path.join(
 );
 const { installMobileRuntimeCompat } = await import(pathToFileURL(compatPath).href);
 
-function createTargetWindow(userAgent, clipboard) {
+function createTargetWindow(clipboard) {
     return {
-        navigator: { userAgent, clipboard },
+        navigator: { clipboard },
         Array,
         String,
         Object,
@@ -36,18 +37,11 @@ function createTargetWindow(userAgent, clipboard) {
     };
 }
 
-function setRuntimeUserAgent(userAgent) {
-    Object.defineProperty(globalThis, 'navigator', {
-        value: { userAgent },
-        configurable: true,
-    });
-}
-
 test('Android Web Clipboard writes through the native writer without replacing other methods', async () => {
-    setRuntimeUserAgent('Mozilla/5.0 (Linux; Android 15)');
+    installHostIdentity(HOSTS.android);
     const readText = async () => 'existing';
     const clipboard = { readText, writeText: async () => assert.fail('used Web Clipboard') };
-    const targetWindow = createTargetWindow('Mozilla/5.0 (Linux; Android 15)', clipboard);
+    const targetWindow = createTargetWindow(clipboard);
 
     installMobileRuntimeCompat(targetWindow);
     await targetWindow.navigator.clipboard.writeText(42);
@@ -58,9 +52,9 @@ test('Android Web Clipboard writes through the native writer without replacing o
 });
 
 test('non-Android Web Clipboard is left unchanged', () => {
-    setRuntimeUserAgent('Mozilla/5.0 (iPhone)');
+    installHostIdentity(HOSTS.ios);
     const writeText = async () => {};
-    const targetWindow = createTargetWindow('Mozilla/5.0 (iPhone)', { writeText });
+    const targetWindow = createTargetWindow({ writeText });
 
     installMobileRuntimeCompat(targetWindow);
 

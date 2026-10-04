@@ -1,3 +1,4 @@
+import { hostPlatform, isMobileHost } from './scripts/util/host-identity.js';
 import {
     showdown,
     moment,
@@ -1246,7 +1247,7 @@ async function firstLoadInit() {
             const enableAutoUpdate = Boolean(settingsSnapshot?.enable_extensions_auto_update);
             const isVersionChanged = settings.currentVersion !== currentVersion;
 
-            const isAndroid = /android/i.test(navigator.userAgent || '');
+            const isAndroid = hostPlatform() === 'android';
             const startupExtensionParallelism = isAndroid ? 1 : 2;
 
             deferThirdPartyExtensions = await activateStartupSystemExtensions({
@@ -10078,8 +10079,8 @@ export async function displayPastChats(hightlightNames = []) {
         debouncedDisplay(searchQuery);
     });
 
-    // On mobile, let the user choose when to open the keyboard.
-    if (!isMobile()) {
+    // On mobile hosts, let the user choose when to open the keyboard.
+    if (!isMobileHost()) {
         setTimeout(function () {
             const textSearchElement = $('#select_chat_search');
             textSearchElement.trigger('click').trigger('focus').trigger('select');

@@ -1,6 +1,6 @@
 // @ts-check
 
-import { isAndroidRuntime, isIosRuntime } from '../../../scripts/util/mobile-runtime.js';
+import { hostPlatform, isDesktopHost } from '../../../scripts/util/host-identity.js';
 import {
     normalizeOptionalNonNegativeInteger,
     normalizeSkillImportInput,
@@ -175,28 +175,34 @@ function createSkillApi({
     async function pickImportArchiveInputs(multiple) {
         await discardPickedImport();
 
-        let inputs;
-        if (isAndroidRuntime()) {
-            inputs = await pickAndroidSkillImportArchives(multiple);
-        } else if (isIosRuntime()) {
-            inputs = await pickIosSkillImportArchives(multiple);
-        } else {
-            const paths = normalizePickedImportPaths(await safeInvoke('plugin:dialog|open', {
-                options: {
-                    title: multiple ? 'Import Agent Skill Archives' : 'Import Agent Skill',
-                    multiple,
-                    directory: false,
-                    filters: [
-                        {
-                            name: 'Agent Skill Archive',
-                            extensions: ['zip', 'ttskill'],
-                        },
-                    ],
-                },
-            }));
-            inputs = paths?.map((path) => rememberPickedImport({ kind: 'archiveFile', path }, null)) ?? null;
+        switch (hostPlatform()) {
+            case 'android':
+                return pickAndroidSkillImportArchives(multiple);
+            case 'ios':
+                return pickIosSkillImportArchives(multiple);
+            case 'windows':
+            case 'macos':
+            case 'linux': {
+                const paths = normalizePickedImportPaths(await safeInvoke('plugin:dialog|open', {
+                    options: {
+                        title: multiple ? 'Import Agent Skill Archives' : 'Import Agent Skill',
+                        multiple,
+                        directory: false,
+                        filters: [
+                            {
+                                name: 'Agent Skill Archive',
+                                extensions: ['zip', 'ttskill'],
+                            },
+                        ],
+                    },
+                }));
+                return paths?.map((path) => rememberPickedImport({ kind: 'archiveFile', path }, null)) ?? null;
+            }
+            case 'ohos':
+                throw new Error('Skill archive import is not implemented for OpenHarmony yet');
+            default:
+                throw new Error(`Unsupported Skill import platform: ${hostPlatform()}`);
         }
-        return inputs;
     }
 
     async function list(options = {}) {
@@ -223,8 +229,12 @@ function createSkillApi({
         return pickImportArchiveInputs(true);
     }
 
+    function isDirectoryImportAvailable() {
+        return isDesktopHost();
+    }
+
     async function pickImportDirectories() {
-        if (isAndroidRuntime() || isIosRuntime()) {
+        if (!isDirectoryImportAvailable()) {
             throw new Error('Skill directory import is only available on desktop');
         }
         await discardPickedImport();
@@ -331,6 +341,7 @@ function createSkillApi({
         pickImportArchive,
         pickImportArchives,
         pickImportDirectories,
+        isDirectoryImportAvailable,
         discardPickedImport,
         discoverImports,
         downloadImport,

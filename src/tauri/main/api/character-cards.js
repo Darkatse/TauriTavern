@@ -1,6 +1,6 @@
 // @ts-check
 
-import { isAndroidRuntime, isIosRuntime } from '../../../scripts/util/mobile-runtime.js';
+import { hostPlatform } from '../../../scripts/util/host-identity.js';
 
 const CHARACTER_CARD_EXTENSIONS = ['json', 'png'];
 const CHARACTER_CARD_EXTENSION_SET = new Set(CHARACTER_CARD_EXTENSIONS);
@@ -86,8 +86,16 @@ function createCharacterCardsApi({
         return new File(chunks, fileName, { type });
     }
 
-    function isNativePickerAvailable() {
-        return !isAndroidRuntime();
+    function nativePicker() {
+        switch (hostPlatform()) {
+            case 'android': return null;
+            case 'ios': return pickIosFile;
+            case 'windows':
+            case 'macos':
+            case 'linux':
+            case 'ohos': return pickDialogPluginFiles;
+            default: throw new Error(`Unsupported character picker platform: ${hostPlatform()}`);
+        }
     }
 
     async function cleanupIosPickedFile(filePath) {
@@ -98,7 +106,10 @@ function createCharacterCardsApi({
         }
     }
 
-    async function pickIosFile() {
+    async function pickIosFile({ multiple = false } = {}) {
+        if (multiple) {
+            throw new Error('iOS character card picker does not support multiple selection yet');
+        }
         if (typeof removeTemporaryFile !== 'function') {
             throw new Error('iOS character card picker cleanup is unavailable');
         }
@@ -117,7 +128,7 @@ function createCharacterCardsApi({
         }
     }
 
-    async function pickDesktopFiles({ multiple = false, title = 'Import Character Card' } = {}) {
+    async function pickDialogPluginFiles({ multiple = false, title = 'Import Character Card' } = {}) {
         const selectedPaths = normalizeDialogSelection(await safeInvoke('plugin:dialog|open', {
             options: {
                 title,
@@ -140,22 +151,12 @@ function createCharacterCardsApi({
     }
 
     async function pickFiles(options = {}) {
-        if (!isNativePickerAvailable()) {
-            return null;
-        }
-
-        if (isIosRuntime()) {
-            if (options?.multiple) {
-                throw new Error('iOS character card picker does not support multiple selection yet');
-            }
-            return pickIosFile();
-        }
-
-        return pickDesktopFiles(options);
+        const picker = nativePicker();
+        return picker ? picker(options) : null;
     }
 
     return {
-        isNativePickerAvailable,
+        isNativePickerAvailable: () => nativePicker() !== null,
         pickFiles,
     };
 }

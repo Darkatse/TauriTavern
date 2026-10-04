@@ -41,7 +41,6 @@ pub mod preset_service;
 pub mod prompt_assembly_service;
 pub mod provider_metadata_service;
 pub mod quick_reply_service;
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 pub mod runtime_paths_service;
 pub mod searxng_search_service;
 pub mod secret_service;

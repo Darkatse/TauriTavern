@@ -1,7 +1,10 @@
+import { installHostIdentity, HOSTS } from './helpers/host-identity.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+test.beforeEach(t => t.after(installHostIdentity()));
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -50,21 +53,12 @@ async function installHarness(overrides = {}) {
     };
 }
 
-async function withNavigatorUserAgent(userAgent, callback) {
-    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
-    Object.defineProperty(globalThis, 'navigator', {
-        value: { userAgent },
-        configurable: true,
-    });
-
+async function withHostIdentity(identity, callback) {
+    const restore = installHostIdentity(identity);
     try {
         return await callback();
     } finally {
-        if (descriptor) {
-            Object.defineProperty(globalThis, 'navigator', descriptor);
-        } else {
-            delete globalThis.navigator;
-        }
+        restore();
     }
 }
 
@@ -124,7 +118,7 @@ test('api.skill rejects non-string file writes', async () => {
 
 
 test('api.skill cleans staged Android archives when a later selection cannot be staged', async () => {
-    await withNavigatorUserAgent('Mozilla/5.0 (Linux; Android 15)', async () => {
+    await withHostIdentity(HOSTS.android, async () => {
         const cleanups = [];
         const { skill } = await installHarness({
             safeInvoke: async () => ['content://one', 'content://broken'],
@@ -146,7 +140,7 @@ test('api.skill cleans staged Android archives when a later selection cannot be 
 
 
 test('api.skill imports shared iOS candidates and releases all sources at batch end', async () => {
-    await withNavigatorUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', async () => {
+    await withHostIdentity(HOSTS.ios, async () => {
         const released = [];
         const cleanups = [];
         const { skill } = await installHarness({

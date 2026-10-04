@@ -103,6 +103,7 @@ install/update/switch/delete/move 与 LAN/TT Sync 的本地写操作共享一个
 1. 校验请求方法，只接受 `GET` / `HEAD` / `OPTIONS`
 2. 通过 `src-tauri/crates/tt-contracts/src/client_asset_paths.rs` 解析并校验路径，再由 `src-tauri/crates/tt-application/src/services/host_resource_service/route_classifier.rs` 分类到具体资源处理器
 3. 通过 `src-tauri/crates/tt-adapter-media/src/host_resources.rs` 一次完成 local/global 选源、打开文件和 metadata/revision 构造
+   - 第三方资源不支持 Range，会整体读入内存；移动宿主上源文件超过 32 MiB 时返回 `413`（`GET`、`HEAD` 与条件请求一致）
 4. 返回真实 bytes、正确 `Content-Type`、`Cache-Control: private, no-cache`、weak ETag 和 Last-Modified；条件命中时按 transport capability 返回 304 或完整 200（见 `docs/CurrentState/HostResourceCaching.md`）
    - 对用户静态资源端点（如 `/backgrounds/*`）若请求携带 `Range`，支持单范围并返回 `206 + Content-Range`（见 `docs/CurrentState/MediaAssetContract.md`）
 5. 未命中时返回真正 `404`，不回退到 `index.html`

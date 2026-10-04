@@ -13,6 +13,7 @@ impl Store {
             root.join("entries"),
             root.join(".staging"),
             Arc::default(),
+            4 * 1024 * 1024,
         );
         Self { root, repository }
     }

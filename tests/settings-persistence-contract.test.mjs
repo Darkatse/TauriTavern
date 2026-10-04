@@ -1,3 +1,4 @@
+import { installHostIdentity } from './helpers/host-identity.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -5,6 +6,8 @@ import {
     captureSettingsSaveState,
     saveSettingsSnapshot,
 } from '../src/scripts/tauri/setting/settings-persistence.js';
+
+test.beforeEach(t => t.after(installHostIdentity()));
 
 const revision = { token: 'loaded' };
 const originalFetch = globalThis.fetch;

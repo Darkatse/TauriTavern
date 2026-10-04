@@ -95,11 +95,10 @@ pub struct FileChatRepository {
 impl FileChatRepository {
     const CHAT_BACKUP_PREFIX: &'static str = "chat_";
 
-    /// Create an isolated chat repository.
+    /// Create an isolated chat repository for tests and standalone tools.
     ///
-    /// This is a convenience wrapper for single-repository use. Runtime
-    /// bootstrap constructs character and chat repositories together and must
-    /// inject a shared `FileChatRepository` into the character repository.
+    /// Runtime composition must use `with_chat_aliases_and_backup_settings`
+    /// and inject the resulting repository into the character repository.
     #[allow(dead_code)]
     pub fn new(
         characters_dir: PathBuf,
@@ -121,11 +120,11 @@ impl FileChatRepository {
         )
     }
 
-    /// Create a repository with the shared character/chat alias store.
+    /// Create a repository with a shared alias store for tests and standalone tools.
     ///
-    /// Character and chat repositories must share this store in production so
-    /// lazy legacy-dir aliases are serialized through one cache. Prefer this
-    /// constructor whenever both repositories are created for the same runtime.
+    /// Uses isolated page state, default backup settings and a fixed 4 MiB frame
+    /// budget. Runtime composition must inject these values through
+    /// `with_chat_aliases_and_backup_settings`.
     pub fn with_chat_aliases(
         characters_dir: PathBuf,
         chats_dir: PathBuf,
@@ -141,9 +140,11 @@ impl FileChatRepository {
             chat_aliases,
             tt_domain::models::settings::ChatBackupSettings::default(),
             Arc::default(),
+            4 * 1024 * 1024,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn with_chat_aliases_and_backup_settings(
         characters_dir: PathBuf,
         chats_dir: PathBuf,
@@ -152,6 +153,7 @@ impl FileChatRepository {
         chat_aliases: SharedChatAliasStore,
         backup_settings: tt_domain::models::settings::ChatBackupSettings,
         page: Arc<PageGeneration>,
+        max_frame_bytes: u64,
     ) -> Self {
         let chat_commit_staging_dir = backups_dir.with_file_name(".staging").join("chat-commits");
         // Create a memory cache with 100 chat capacity and 30 minute TTL
@@ -187,6 +189,7 @@ impl FileChatRepository {
             chat_commit_sessions: crate::commit_stage::CommitSessions::new(
                 chat_commit_staging_dir,
                 page,
+                max_frame_bytes,
             ),
             path_write_locks,
             current_content_signatures: Mutex::new(ContentSignatureState::default()),

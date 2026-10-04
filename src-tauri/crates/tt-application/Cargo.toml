@@ -31,6 +31,3 @@ ttsync-contract = { workspace = true }
 ttsync-core = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(mobile)'] }

@@ -1,3 +1,4 @@
+import { isMobileHost } from './util/host-identity.js';
 import { Fuse, Handlebars } from '../lib.js';
 
 import {
@@ -1135,7 +1136,7 @@ function applyToastrPosition() {
 }
 
 function isMobilePortraitViewport() {
-    return isMobile() && window.matchMedia('(orientation: portrait)').matches;
+    return isMobileHost() && window.matchMedia('(orientation: portrait)').matches;
 }
 
 function getEffectiveChatWidth() {
@@ -3486,6 +3487,8 @@ jQuery(() => {
     var coreTruthWinWidth = window.innerWidth;
     var coreTruthWinHeight = window.innerHeight;
 
+    window.matchMedia('(orientation: portrait)').addEventListener('change', () => applyChatWidth('forced'));
+
     $(window).on('resize', async () => {
         const nextWidth = window.innerWidth;
         const nextHeight = window.innerHeight;
@@ -3500,10 +3503,6 @@ jQuery(() => {
         }
 
         if (isMobileResize) {
-            if (hasWidthChange) {
-                applyChatWidth('forced');
-            }
-
             coreTruthWinWidth = nextWidth;
             coreTruthWinHeight = nextHeight;
             return;

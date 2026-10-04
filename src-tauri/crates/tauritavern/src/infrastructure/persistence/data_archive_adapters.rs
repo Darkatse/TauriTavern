@@ -8,9 +8,9 @@ use tauri::Manager;
 use uuid::Uuid;
 
 use crate::infrastructure::paths::RuntimePaths;
+use crate::platform::identity::HOST_IDENTITY;
 use tt_adapter_storage_core::file_system::DataDirectory;
-#[cfg(target_os = "ios")]
-use tt_contracts::host::IOS_EXPORT_STAGING_ROOT_NAME;
+use tt_contracts::host::{HostPlatform, IOS_EXPORT_STAGING_ROOT_NAME};
 use tt_domain::errors::DomainError;
 use tt_ports::data_archive::{
     DataArchiveFileGateway, DataRootInitializer, ExportArchiveExecutionRequest,
@@ -201,7 +201,7 @@ fn save_staged_archive_to_downloads(
     source_path: &Path,
     file_name: &str,
 ) -> Result<PathBuf, DomainError> {
-    if cfg!(target_os = "android") {
+    if HOST_IDENTITY.platform == HostPlatform::Android {
         return Err(DomainError::InternalError(
             "Android archive exports must use the native document save bridge".to_string(),
         ));
@@ -287,45 +287,45 @@ fn validate_archive_file_name(file_name: &str) -> Result<String, DomainError> {
     Ok(file_name.to_string())
 }
 
-#[cfg(target_os = "ios")]
 fn candidate_user_backup_export_roots(
     app_handle: &AppHandle,
-    _runtime_paths: &RuntimePaths,
-) -> Result<Vec<PathBuf>, DomainError> {
-    let path_resolver = app_handle.path();
-    let mut roots = Vec::new();
-
-    if let Ok(cache_dir) = path_resolver.app_cache_dir() {
-        roots.push(
-            cache_dir
-                .join(IOS_EXPORT_STAGING_ROOT_NAME)
-                .join("user-backups"),
-        );
-    }
-
-    if let Ok(temp_dir) = path_resolver.temp_dir() {
-        roots.push(
-            temp_dir
-                .join(IOS_EXPORT_STAGING_ROOT_NAME)
-                .join("user-backups"),
-        );
-    }
-
-    if roots.is_empty() {
-        return Err(DomainError::InternalError(
-            "No writable iOS user backup staging directory is available".to_string(),
-        ));
-    }
-
-    Ok(roots)
-}
-
-#[cfg(not(target_os = "ios"))]
-fn candidate_user_backup_export_roots(
-    _app_handle: &AppHandle,
     runtime_paths: &RuntimePaths,
 ) -> Result<Vec<PathBuf>, DomainError> {
-    Ok(vec![runtime_paths.archive_exports_root.clone()])
+    match HOST_IDENTITY.platform {
+        HostPlatform::Ios => {
+            let path_resolver = app_handle.path();
+            let mut roots = Vec::new();
+
+            if let Ok(cache_dir) = path_resolver.app_cache_dir() {
+                roots.push(
+                    cache_dir
+                        .join(IOS_EXPORT_STAGING_ROOT_NAME)
+                        .join("user-backups"),
+                );
+            }
+
+            if let Ok(temp_dir) = path_resolver.temp_dir() {
+                roots.push(
+                    temp_dir
+                        .join(IOS_EXPORT_STAGING_ROOT_NAME)
+                        .join("user-backups"),
+                );
+            }
+
+            if roots.is_empty() {
+                return Err(DomainError::InternalError(
+                    "No writable iOS user backup staging directory is available".to_string(),
+                ));
+            }
+
+            Ok(roots)
+        }
+        HostPlatform::Windows
+        | HostPlatform::Macos
+        | HostPlatform::Linux
+        | HostPlatform::Android
+        | HostPlatform::Ohos => Ok(vec![runtime_paths.archive_exports_root.clone()]),
+    }
 }
 
 fn resolve_user_backup_export_root(
