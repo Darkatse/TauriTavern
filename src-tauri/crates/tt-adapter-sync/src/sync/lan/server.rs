@@ -746,7 +746,7 @@ mod tests {
             tokio::pin!(request);
             tokio::select! {
                 started = starts.recv() => started.expect("inbound pairing started"),
-                _ = &mut request => panic!("pairing finished before the inbound handler completed"),
+                result = &mut request => panic!("pairing finished before the inbound handler completed: {result:?}"),
             }
             assert_eq!(events.pairings.load(Ordering::SeqCst), 0);
             finish.send(Ok(())).expect("complete inbound pairing");
@@ -795,7 +795,7 @@ mod tests {
                     )
                     .await
                     .expect_err("reject wrong device identity before pairing");
-                assert!(matches!(error, DomainError::AuthenticationError(_)));
+                assert!(matches!(error, DomainError::AuthenticationError(_)), "{error:?}");
             } => {}
         }
         assert_eq!(inbound.requests.lock().unwrap().len(), 1);
