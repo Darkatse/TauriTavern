@@ -23,7 +23,7 @@
 
 openharmony-ability 的 Rust crate 与 ArkTS HAR 出自同一份源码。
 
-**版本差。** 鸿蒙端编译的是 fork 的 tauri 与插件，版本与 TT 锁定的版本并不相同：既有补丁版本的差异，插件也可能是不同的 minor 版本。实际版本以 pin 指向的源码和准备阶段生成的 lockfile 为准。准备脚本替换依赖时会去掉 TT 声明的版本约束，所以鸿蒙上出现的问题，未必能在其他平台复现。
+**版本约束。** 当前 fork 的 tauri 已对齐 TT 声明的 2.11.6。准备脚本保留应用的版本约束、features 和 workspace 继承；pin 不满足声明时由 Cargo 报错。插件仍可能解析到声明允许的较新 minor 版本，实际结果以 pin 和生成的 lockfile 为准。
 
 ## 3. 构建
 
@@ -68,7 +68,7 @@ CI：Canary 调用 `ohos.yml` 构建 aarch64，手动触发用于构建模拟器
 - Ability 入口：插件桥初始化与返回键桥。
 - ArkUI 页面入口 `pages/Main`：挂载 HAR 的 `DefaultXComponent`，模块名由 `RustAbility` 写入的 `AppStorage` 提供。
 
-**页面入口。** 不使用 HAR 的默认页面：它通过命名路由加载 HAR 内的页面，模块没有页面声明时会加载失败，而 HAR 吞掉了这个错误，结果是白屏。模块本来就需要一个页面声明，所以由 TT 的 `pages/Main` 承担：`EntryAbility` 把 `defaultPage` 设为 `false`，用 `loadContent('pages/Main')` 加载，失败会直接抛出。
+**页面入口。** 不使用 HAR 的默认页面：它通过命名路由加载 HAR 内的页面，模块没有页面声明时会加载失败，旧 HAR 吞掉了这个错误，结果是白屏；当前 pin 已改为传播加载错误。模块本来就需要一个页面声明，所以由 TT 的 `pages/Main` 承担：`EntryAbility` 把 `defaultPage` 设为 `false`，用 `loadContent('pages/Main')` 加载，失败会直接抛出。
 
 插件源码、Ability HAR、原生库、CLI 写入的配置和构建输出都是派生内容，由 `gen/ohos/.gitignore` 忽略。
 
@@ -105,7 +105,7 @@ CI：Canary 调用 `ohos.yml` 构建 aarch64，手动触发用于构建模拟器
 
 **现象。** 早期 HAR 没有开启 `domStorageAccess`，运行时 `localStorage` 为 `null`，`i18n.js` 在模块初始化时出错，前端白屏。
 
-**方案。** HAR 开启 `domStorageAccess` 与 `databaseAccess`，数据在进程重启后保留。
+**方案。** Wry 显式设置可选的 `domStorageAccess(true)`，HAR 保留 `databaseAccess`，数据在进程重启后保留。
 
 **维护。** 升级 Ability 时确认两者仍然开启。上游已经把 DOM Storage 做成可选配置，ArkWeb 默认是关闭的。
 
@@ -113,9 +113,7 @@ CI：Canary 调用 `ohos.yml` 构建 aarch64，手动触发用于构建模拟器
 
 ArkWeb 的 `javaScriptOnDocumentStart` 按字典序执行多个脚本条目，不按数组顺序。如果拆成多个条目，Tauri 的引导脚本可能在 `__TAURI_INTERNALS__` 建立之前就运行（报错 `Object.defineProperty called on non-object`）。
 
-所以当前 Wry 把所有初始化脚本合并成一段，主 frame 专用的脚本包在 `window === window.top` 判断里。代价是：前面任何一段脚本抛出异常，后面的脚本都不会执行。TT 的宿主身份脚本排在最后，一旦缺失，前端无法启动。
-
-fork 改用 `runJavaScriptOnDocumentStart`（API 15+，按数组顺序执行）分段注入之后，这项限制即可解除。
+当前 fork 改用 `runJavaScriptOnDocumentStart`（API 15+），按数组顺序独立注入每段脚本。前一段抛错不会阻止后续的 TT 宿主身份脚本执行；主 frame 专用脚本仍包在 `window === window.top` 判断里。
 
 ### 6.3 frame 授权
 
@@ -125,12 +123,9 @@ fork 改用 `runJavaScriptOnDocumentStart`（API 15+，按数组顺序执行）�
 
 ### 6.4 弹窗
 
-- ArkWeb 原生的 `alert`/`confirm`/`prompt` 由 HAR 的 WebHost 处理，按钮文字目前是英文。
-- **已知问题：** dialog 插件的初始化脚本在主页面覆盖了 `window.alert` 和 `window.confirm`。
-  - `alert` 调用的 `plugin:dialog|message` 没有被授权，不会显示；
-  - `confirm` 变成异步函数，调用一个已经不存在的命令，返回的 Promise 总被当作真值。
-- 桌面端和 iOS 存在同样的问题，修复放在插件层。
-- `prompt` 和 iframe 内的弹窗不受影响。
+- ArkWeb 原生的 `alert`/`confirm`/`prompt` 由 HAR 的 WebHost 处理，按钮资源包含英文、简体中文和繁体中文。
+- OHOS 不再注入 dialog 插件的 `init-iife.js`，保留原生 `alert` 和同步返回布尔值的 `confirm`，包括扩展直接调用的场景。
+- 桌面端和 iOS 的 dialog 插件注入行为由各自平台处理。
 
 ### 6.5 返回键
 
