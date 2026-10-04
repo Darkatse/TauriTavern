@@ -22,7 +22,7 @@ import {
 } from './model-target-connection';
 import { openAgentRunTimelineDialog } from './run-timeline-panel';
 import { loadSettings, patchSettings } from './settings-store';
-import { downloadBlobWithRuntime } from '../../../file-export.js';
+import { deliverBlob } from '../../../file-export.js';
 import { subscribeAgentProfilesChanged } from '../../../tauritavern/agent/agent-profile-events.js';
 import { subscribeLlmConnectionsChanged } from '../../../tauritavern/agent/llm-connection-events.js';
 import { resumeAgentRun } from '../../../tauritavern/agent/agent-run-retry.js';
@@ -153,9 +153,7 @@ export function openAgentSystemPanel(): void {
         subscribeModelTargetsChanged: subscribeModelTargetChanges,
         subscribeLlmConnectionsChanged,
         confirmAction,
-        downloadBlob: (blob, fileName) => downloadBlobWithRuntime(blob, fileName, {
-            fallbackName: 'agent-profile.json',
-        }),
+        downloadBlob: (blob, fileName) => deliverBlob(blob, fileName),
         notifyError: reportAgentSystemError,
         notifyWarning: (message) => window.toastr?.warning?.(message),
         notifySuccess: (message) => window.toastr?.success?.(message),

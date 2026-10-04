@@ -7,9 +7,8 @@ use crate::app::AppState;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::chat_dto::{
-    AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
-    ImportCharacterChatsDto, ImportChatDto, PinnedCharacterChatDto, RenameChatDto,
-    RestoreCharacterChatBackupDto,
+    AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ImportCharacterChatsDto,
+    ImportChatDto, PinnedCharacterChatDto, RenameChatDto, RestoreCharacterChatBackupDto,
 };
 use tt_application::dto::chat_history_dto::ChatHistoryLocator;
 use tt_application::errors::ApplicationError;
@@ -265,24 +264,6 @@ pub async fn import_chat(
         .import_chat(dto)
         .await
         .map_err(map_command_error("Failed to import chat"))
-}
-
-#[tauri::command]
-pub async fn export_chat(
-    dto: ExportChatDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<(), CommandError> {
-    log_command(format!(
-        "export_chat {}/{} to {}",
-        dto.character_name, dto.file_name, dto.target_path
-    ));
-
-    app_state
-        .services
-        .chat_service
-        .export_chat(dto)
-        .await
-        .map_err(map_command_error("Failed to export chat"))
 }
 
 #[tauri::command]

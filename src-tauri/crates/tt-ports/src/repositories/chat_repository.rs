@@ -6,11 +6,10 @@ use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage};
 
 pub use super::chat_types::{
-    CharacterChatIdentity, ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat,
-    ChatMessageReadItem, ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchHit,
-    ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor,
-    ChatPayloadTail, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
-    PinnedCharacterChat, PinnedGroupChat,
+    CharacterChatIdentity, ChatBackupCatalogEntry, ChatImportFormat, ChatMessageReadItem,
+    ChatMessageRole, ChatMessageSearchFilters, ChatMessageSearchHit, ChatMessageSearchQuery,
+    ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor, ChatPayloadTail, ChatSearchResult,
+    FindLastMessageQuery, LocatedChatMessage, PinnedCharacterChat, PinnedGroupChat,
 };
 
 /// Repository interface for chat management
@@ -82,15 +81,6 @@ pub trait ChatRepository: Send + Sync {
         file_path: &Path,
         format: ChatImportFormat,
     ) -> Result<Chat, DomainError>;
-
-    /// Export a chat to a file
-    async fn export_chat(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        target_path: &Path,
-        format: ChatExportFormat,
-    ) -> Result<(), DomainError>;
 
     /// Backup a chat
     async fn backup_chat(&self, character_name: &str, file_name: &str) -> Result<(), DomainError>;

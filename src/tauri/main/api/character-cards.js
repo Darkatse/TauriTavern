@@ -1,6 +1,6 @@
 // @ts-check
 
-import { hostPlatform } from '../../../scripts/util/host-identity.js';
+import { createFileStagingService } from '../services/files/file-staging-service.js';
 
 const CHARACTER_CARD_EXTENSIONS = ['json', 'png'];
 const CHARACTER_CARD_EXTENSION_SET = new Set(CHARACTER_CARD_EXTENSIONS);
@@ -26,33 +26,15 @@ function characterCardExtension(fileName) {
     return extension;
 }
 
-function fileNameFromPath(filePath) {
-    const value = requireNonEmptyString(filePath, 'character card file path');
-    const path = value.startsWith('file://') ? decodeURIComponent(new URL(value).pathname) : value;
-    const name = path.replace(/\\/g, '/').split('/').filter(Boolean).pop();
-    return requireNonEmptyString(name, 'character card file name');
-}
-
-function normalizeDialogSelection(value) {
-    if (value === null || value === undefined) {
-        return null;
-    }
-
-    const values = Array.isArray(value) ? value : [value];
-    return values.map(path => requireNonEmptyString(path, 'selected character card path'));
-}
-
 /**
  * @param {{
  *   safeInvoke: (command: string, args?: any) => Promise<any>;
  *   createReadableFileStream: (filePath: string) => ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;
- *   removeTemporaryFile?: (filePath: string) => Promise<void>;
  * }} deps
  */
 function createCharacterCardsApi({
     safeInvoke,
     createReadableFileStream,
-    removeTemporaryFile,
 }) {
     if (typeof safeInvoke !== 'function') {
         throw new Error('Tauri main context safeInvoke is missing');
@@ -61,8 +43,10 @@ function createCharacterCardsApi({
         throw new Error('Tauri readable file stream service is missing');
     }
 
-    async function fileFromPath(filePath, preferredName = '') {
-        const fileName = preferredName ? requireNonEmptyString(preferredName, 'character card file name') : fileNameFromPath(filePath);
+    const staging = createFileStagingService({ safeInvoke });
+
+    async function fileFromPath(filePath, preferredName) {
+        const fileName = requireNonEmptyString(preferredName, 'character card file name');
         const extension = characterCardExtension(fileName);
         const type = CHARACTER_CARD_MIME_BY_EXTENSION.get(extension) || 'application/octet-stream';
         const stream = await createReadableFileStream(filePath);
@@ -86,77 +70,20 @@ function createCharacterCardsApi({
         return new File(chunks, fileName, { type });
     }
 
-    function nativePicker() {
-        switch (hostPlatform()) {
-            case 'android': return null;
-            case 'ios': return pickIosFile;
-            case 'windows':
-            case 'macos':
-            case 'linux':
-            case 'ohos': return pickDialogPluginFiles;
-            default: throw new Error(`Unsupported character picker platform: ${hostPlatform()}`);
-        }
-    }
-
-    async function cleanupIosPickedFile(filePath) {
+    async function pickFiles({ multiple = false } = {}) {
+        const selected = await safeInvoke('pick_import_files', { kind: 'character-card', multiple });
+        if (selected === null) return null;
         try {
-            await removeTemporaryFile(filePath);
-        } catch (error) {
-            console.warn('Failed to cleanup iOS character card staging file:', error);
-        }
-    }
-
-    async function pickIosFile({ multiple = false } = {}) {
-        if (multiple) {
-            throw new Error('iOS character card picker does not support multiple selection yet');
-        }
-        if (typeof removeTemporaryFile !== 'function') {
-            throw new Error('iOS character card picker cleanup is unavailable');
-        }
-
-        const result = await safeInvoke('ios_pick_character_card');
-        if (result?.cancelled) {
-            return null;
-        }
-
-        const filePath = requireNonEmptyString(result?.filePath ?? result?.file_path, 'iOS character card file path');
-        const fileName = requireNonEmptyString(result?.fileName ?? result?.file_name, 'iOS character card file name');
-        try {
-            return [await fileFromPath(filePath, fileName)];
+            const files = [];
+            for (const { path, name } of selected) files.push(await fileFromPath(path, name));
+            return files;
         } finally {
-            await cleanupIosPickedFile(filePath);
+            for (const { path } of selected) await staging.discardFile(path);
         }
-    }
-
-    async function pickDialogPluginFiles({ multiple = false, title = 'Import Character Card' } = {}) {
-        const selectedPaths = normalizeDialogSelection(await safeInvoke('plugin:dialog|open', {
-            options: {
-                title,
-                multiple: Boolean(multiple),
-                directory: false,
-                filters: [
-                    {
-                        name: 'Character Card',
-                        extensions: CHARACTER_CARD_EXTENSIONS,
-                    },
-                ],
-            },
-        }));
-
-        if (!selectedPaths) {
-            return null;
-        }
-
-        return Promise.all(selectedPaths.map(path => fileFromPath(path)));
-    }
-
-    async function pickFiles(options = {}) {
-        const picker = nativePicker();
-        return picker ? picker(options) : null;
     }
 
     return {
-        isNativePickerAvailable: () => nativePicker() !== null,
+        isNativePickerAvailable: () => true,
         pickFiles,
     };
 }
@@ -178,6 +105,5 @@ export function installCharacterCardsApi(context) {
     hostAbi.api.characterCards = createCharacterCardsApi({
         safeInvoke: context?.safeInvoke,
         createReadableFileStream: context?.createReadableFileStream,
-        removeTemporaryFile: context?.removeTemporaryFile,
     });
 }

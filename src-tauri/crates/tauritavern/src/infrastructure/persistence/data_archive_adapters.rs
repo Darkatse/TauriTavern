@@ -8,9 +8,7 @@ use tauri::Manager;
 use uuid::Uuid;
 
 use crate::infrastructure::paths::RuntimePaths;
-use crate::platform::identity::HOST_IDENTITY;
 use tt_adapter_storage_core::file_system::DataDirectory;
-use tt_contracts::host::{HostPlatform, IOS_EXPORT_STAGING_ROOT_NAME};
 use tt_domain::errors::DomainError;
 use tt_ports::data_archive::{
     DataArchiveFileGateway, DataRootInitializer, ExportArchiveExecutionRequest,
@@ -120,7 +118,7 @@ impl DataArchiveFileGateway for TauriDataArchiveFileGateway {
         protected_paths: &[PathBuf],
     ) -> Result<UserBackupArchiveTarget, DomainError> {
         let runtime_paths = self.app_handle.state::<RuntimePaths>();
-        let export_root = resolve_user_backup_export_root(&self.app_handle, &runtime_paths)?;
+        let export_root = runtime_paths.archive_exports_root.clone();
         fs::create_dir_all(&export_root).map_err(|error| {
             DomainError::InternalError(format!("Failed to create export directory: {}", error))
         })?;
@@ -164,25 +162,6 @@ impl DataArchiveFileGateway for TauriDataArchiveFileGateway {
             }
         })
     }
-
-    fn save_export(&self, archive_path: &Path, file_name: &str) -> Result<PathBuf, DomainError> {
-        save_staged_archive_to_downloads(&self.app_handle, archive_path, file_name)
-    }
-
-    fn save_user_backup(
-        &self,
-        archive_path: &str,
-        file_name: &str,
-    ) -> Result<PathBuf, DomainError> {
-        let source_path = resolve_staged_user_backup_archive_path(&self.app_handle, archive_path)?;
-        save_staged_archive_to_downloads(&self.app_handle, &source_path, file_name)
-    }
-
-    fn cleanup_user_backup(&self, archive_path: &str) -> Result<(), DomainError> {
-        let source_path = resolve_staged_user_backup_archive_path(&self.app_handle, archive_path)?;
-        remove_file_if_exists(&source_path, "cleanup user backup archive");
-        Ok(())
-    }
 }
 
 pub(crate) struct DataDirectoryDataRootInitializer;
@@ -194,211 +173,6 @@ impl DataRootInitializer for DataDirectoryDataRootInitializer {
             .initialize()
             .await
     }
-}
-
-fn save_staged_archive_to_downloads(
-    app_handle: &AppHandle,
-    source_path: &Path,
-    file_name: &str,
-) -> Result<PathBuf, DomainError> {
-    if HOST_IDENTITY.platform == HostPlatform::Android {
-        return Err(DomainError::InternalError(
-            "Android archive exports must use the native document save bridge".to_string(),
-        ));
-    }
-
-    if !source_path.is_file() {
-        return Err(DomainError::NotFound(format!(
-            "Export archive file not found: {}",
-            source_path.display()
-        )));
-    }
-
-    let file_name = validate_archive_file_name(file_name)?;
-    let download_dir = app_handle.path().download_dir().map_err(|error| {
-        DomainError::InternalError(format!("Failed to resolve downloads directory: {}", error))
-    })?;
-    fs::create_dir_all(&download_dir).map_err(|error| {
-        DomainError::InternalError(format!(
-            "Failed to create downloads directory {}: {}",
-            download_dir.display(),
-            error
-        ))
-    })?;
-
-    let target_path = download_dir.join(&file_name);
-    if target_path.exists() {
-        return Err(DomainError::InvalidData(format!(
-            "Export target already exists: {}",
-            target_path.display()
-        )));
-    }
-
-    if fs::rename(source_path, &target_path).is_ok() {
-        return Ok(target_path);
-    }
-
-    if let Err(error) = fs::copy(source_path, &target_path) {
-        remove_file_if_exists(&target_path, "cleanup partial export save");
-        return Err(DomainError::InternalError(format!(
-            "Failed to save export archive {} to {}: {}",
-            source_path.display(),
-            target_path.display(),
-            error
-        )));
-    }
-
-    if let Err(error) = fs::remove_file(source_path) {
-        remove_file_if_exists(&target_path, "cleanup partial export save");
-        return Err(DomainError::InternalError(format!(
-            "Failed to remove staged export archive {}: {}",
-            source_path.display(),
-            error
-        )));
-    }
-
-    Ok(target_path)
-}
-
-fn validate_archive_file_name(file_name: &str) -> Result<String, DomainError> {
-    let file_name = file_name.trim();
-    if file_name.is_empty() {
-        return Err(DomainError::InvalidData(
-            "Export archive filename is required".to_string(),
-        ));
-    }
-
-    if file_name.contains('/') || file_name.contains('\\') {
-        return Err(DomainError::InvalidData(format!(
-            "Invalid export archive filename: {}",
-            file_name
-        )));
-    }
-
-    let mut components = Path::new(file_name).components();
-    let component = components.next();
-    if !matches!(component, Some(Component::Normal(_))) || components.next().is_some() {
-        return Err(DomainError::InvalidData(format!(
-            "Invalid export archive filename: {}",
-            file_name
-        )));
-    }
-
-    Ok(file_name.to_string())
-}
-
-fn candidate_user_backup_export_roots(
-    app_handle: &AppHandle,
-    runtime_paths: &RuntimePaths,
-) -> Result<Vec<PathBuf>, DomainError> {
-    match HOST_IDENTITY.platform {
-        HostPlatform::Ios => {
-            let path_resolver = app_handle.path();
-            let mut roots = Vec::new();
-
-            if let Ok(cache_dir) = path_resolver.app_cache_dir() {
-                roots.push(
-                    cache_dir
-                        .join(IOS_EXPORT_STAGING_ROOT_NAME)
-                        .join("user-backups"),
-                );
-            }
-
-            if let Ok(temp_dir) = path_resolver.temp_dir() {
-                roots.push(
-                    temp_dir
-                        .join(IOS_EXPORT_STAGING_ROOT_NAME)
-                        .join("user-backups"),
-                );
-            }
-
-            if roots.is_empty() {
-                return Err(DomainError::InternalError(
-                    "No writable iOS user backup staging directory is available".to_string(),
-                ));
-            }
-
-            Ok(roots)
-        }
-        HostPlatform::Windows
-        | HostPlatform::Macos
-        | HostPlatform::Linux
-        | HostPlatform::Android
-        | HostPlatform::Ohos => Ok(vec![runtime_paths.archive_exports_root.clone()]),
-    }
-}
-
-fn resolve_user_backup_export_root(
-    app_handle: &AppHandle,
-    runtime_paths: &RuntimePaths,
-) -> Result<PathBuf, DomainError> {
-    let roots = candidate_user_backup_export_roots(app_handle, runtime_paths)?;
-    roots.into_iter().next().ok_or_else(|| {
-        DomainError::InternalError(
-            "No writable user backup staging directory is available".to_string(),
-        )
-    })
-}
-
-fn resolve_staged_user_backup_archive_path(
-    app_handle: &AppHandle,
-    archive_path: &str,
-) -> Result<PathBuf, DomainError> {
-    let archive_path = archive_path.trim();
-    if archive_path.is_empty() {
-        return Err(DomainError::InvalidData(
-            "User backup archive path is required".to_string(),
-        ));
-    }
-
-    let requested_path = PathBuf::from(archive_path);
-    if !requested_path.is_absolute() {
-        return Err(DomainError::InvalidData(
-            "User backup archive path must be absolute".to_string(),
-        ));
-    }
-
-    let canonical_path = fs::canonicalize(&requested_path).map_err(|_| {
-        DomainError::NotFound(format!(
-            "User backup archive file not found: {}",
-            requested_path.display()
-        ))
-    })?;
-    if !canonical_path.is_file() {
-        return Err(DomainError::NotFound(format!(
-            "User backup archive file not found: {}",
-            canonical_path.display()
-        )));
-    }
-
-    let runtime_paths = app_handle.state::<RuntimePaths>();
-    let roots = candidate_user_backup_export_roots(app_handle, &runtime_paths)?;
-    let mut canonical_roots = Vec::new();
-    for root in roots {
-        match fs::canonicalize(&root) {
-            Ok(root) => canonical_roots.push(root),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(DomainError::InternalError(format!(
-                    "Failed to resolve user backup staging directory {}: {}",
-                    root.display(),
-                    error
-                )));
-            }
-        }
-    }
-
-    if canonical_roots
-        .iter()
-        .any(|root| canonical_path.starts_with(root))
-    {
-        return Ok(canonical_path);
-    }
-
-    Err(DomainError::InvalidData(format!(
-        "User backup archive path is outside the staging directory: {}",
-        requested_path.display()
-    )))
 }
 
 fn resolve_user_backup_root(
@@ -493,14 +267,6 @@ fn cleanup_directory(path: &Path) {
         && error.kind() != std::io::ErrorKind::NotFound
     {
         tracing::warn!("Failed to cleanup directory {}: {}", path.display(), error);
-    }
-}
-
-fn remove_file_if_exists(path: &Path, operation: &str) {
-    if let Err(error) = fs::remove_file(path)
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
-        tracing::warn!("Failed to {} {}: {}", operation, path.display(), error);
     }
 }
 

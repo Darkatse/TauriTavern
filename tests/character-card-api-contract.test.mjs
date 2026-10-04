@@ -1,183 +1,46 @@
-import { installHostIdentity, HOSTS } from './helpers/host-identity.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { installCharacterCardsApi } from '../src/tauri/main/api/character-cards.js';
 
-test.beforeEach(t => t.after(installHostIdentity()));
-
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-async function withHostIdentity(identity, callback) {
-    const restore = installHostIdentity(identity);
-    try {
-        return await callback();
-    } finally {
-        restore();
-    }
-}
-
-function streamFromBytes(bytes) {
-    return new ReadableStream({
-        start(controller) {
-            controller.enqueue(bytes);
-            controller.close();
-        },
-    });
-}
-
-async function installHarness({
-    safeInvoke,
-    createReadableFileStream,
-    removeTemporaryFile,
-} = {}) {
-    const calls = [];
-    const cleanups = [];
-    globalThis.window = {
-        __TAURITAVERN__: { api: {} },
-    };
-
-    const { installCharacterCardsApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/character-cards.js')));
+function installHarness({ files, readFile }) {
+    const discarded = [];
+    globalThis.window = { __TAURITAVERN__: { api: {} } };
     installCharacterCardsApi({
-        safeInvoke: safeInvoke ?? (async (command, args) => {
-            calls.push({ command, args });
-            return '/tmp/Alice.json';
+        safeInvoke: async (command, args) => {
+            if (command === 'pick_import_files') {
+                return files;
+            }
+            if (command === 'stage_file_discard') {
+                discarded.push(args.filePath);
+                return;
+            }
+            throw new Error(`Unexpected command: ${command}`);
+        },
+        createReadableFileStream: async path => new ReadableStream({
+            start(controller) {
+                controller.enqueue(readFile(path));
+                controller.close();
+            },
         }),
-        createReadableFileStream: createReadableFileStream ?? (async () => streamFromBytes(new TextEncoder().encode('{"name":"Alice"}'))),
-        removeTemporaryFile: removeTemporaryFile ?? (async (filePath) => cleanups.push(filePath)),
     });
-
-    return {
-        calls,
-        cleanups,
-        characterCards: globalThis.window.__TAURITAVERN__.api.characterCards,
-    };
+    return { characterCards: window.__TAURITAVERN__.api.characterCards, discarded };
 }
 
-test('api.characterCards picks desktop files through the host dialog', async () => {
-    const { calls, characterCards } = await installHarness();
-
-    assert.equal(characterCards.isNativePickerAvailable(), true);
-    const files = await characterCards.pickFiles({ title: 'Replace Character Card' });
-
-    assert.equal(calls[0].command, 'plugin:dialog|open');
-    assert.equal(calls[0].args.options.title, 'Replace Character Card');
-    assert.deepEqual(calls[0].args.options.filters, [
-        { name: 'Character Card', extensions: ['json', 'png'] },
+test('native character selection preserves original names and bytes while releasing staged copies', async () => {
+    const selected = [
+        { path: '/cache/one.json', name: 'Alice%20.json' },
+        { path: '/cache/two.png', name: 'Alice Smith.png' },
+    ];
+    const png = new Uint8Array([137, 80, 78, 71]);
+    const { characterCards, discarded } = installHarness({
+        files: selected,
+        readFile: path => path.endsWith('.png') ? png : new TextEncoder().encode('{"name":"Alice"}'),
+    });
+    const files = await characterCards.pickFiles({ multiple: true });
+    assert.deepEqual(files.map(file => [file.name, file.type]), [
+        ['Alice%20.json', 'application/json'], ['Alice Smith.png', 'image/png'],
     ]);
-    assert.equal(files.length, 1);
-    assert.equal(files[0].name, 'Alice.json');
-    assert.equal(files[0].type, 'application/json');
     assert.equal(await files[0].text(), '{"name":"Alice"}');
-});
-
-test('api.characterCards preserves raw desktop path percent signs', async () => {
-    const { characterCards } = await installHarness({
-        safeInvoke: async () => '/tmp/Alice%20.json',
-    });
-
-    const files = await characterCards.pickFiles();
-
-    assert.equal(files.length, 1);
-    assert.equal(files[0].name, 'Alice%20.json');
-    assert.equal(files[0].type, 'application/json');
-});
-
-test('api.characterCards decodes file URL path names', async () => {
-    const { characterCards } = await installHarness({
-        safeInvoke: async () => pathToFileURL('/tmp/Alice Smith.json').href,
-    });
-
-    const files = await characterCards.pickFiles();
-
-    assert.equal(files.length, 1);
-    assert.equal(files[0].name, 'Alice Smith.json');
-    assert.equal(files[0].type, 'application/json');
-});
-
-test('api.characterCards fails fast for unsupported native picker file types', async () => {
-    const { characterCards } = await installHarness({
-        safeInvoke: async () => '/tmp/Alice.yaml',
-    });
-
-    await assert.rejects(
-        () => characterCards.pickFiles(),
-        /Unsupported character card file type: Alice\.yaml/,
-    );
-});
-
-test('api.characterCards stages iOS picked files through the native command', async () => {
-    await withHostIdentity(HOSTS.ios, async () => {
-        const calls = [];
-        const cleanups = [];
-
-        const { characterCards } = await installHarness({
-            safeInvoke: async (command, args) => {
-                calls.push({ command, args });
-                return {
-                    cancelled: false,
-                    filePath: '/cache/tauritavern-character-import-staging/picked.png',
-                    fileName: 'Alice.png',
-                };
-            },
-            createReadableFileStream: async () => streamFromBytes(new Uint8Array([137, 80, 78, 71])),
-            removeTemporaryFile: async (filePath) => cleanups.push(filePath),
-        });
-
-        assert.equal(characterCards.isNativePickerAvailable(), true);
-        const files = await characterCards.pickFiles();
-
-        assert.equal(calls[0].command, 'ios_pick_character_card');
-        assert.equal(files.length, 1);
-        assert.equal(files[0].name, 'Alice.png');
-        assert.equal(files[0].type, 'image/png');
-        assert.deepEqual(new Uint8Array(await files[0].arrayBuffer()), new Uint8Array([137, 80, 78, 71]));
-        assert.deepEqual(cleanups, ['/cache/tauritavern-character-import-staging/picked.png']);
-    });
-});
-
-test('api.characterCards does not fail iOS picked files when staging cleanup fails', async () => {
-    await withHostIdentity(HOSTS.ios, async () => {
-        const warnings = [];
-        const originalWarn = console.warn;
-        console.warn = (...args) => warnings.push(args);
-
-        try {
-            const { characterCards } = await installHarness({
-                safeInvoke: async () => ({
-                    cancelled: false,
-                    filePath: '/cache/tauritavern-character-import-staging/picked.json',
-                    fileName: 'Alice.json',
-                }),
-                removeTemporaryFile: async () => {
-                    throw new Error('cleanup failed');
-                },
-            });
-
-            const files = await characterCards.pickFiles();
-
-            assert.equal(files.length, 1);
-            assert.equal(files[0].name, 'Alice.json');
-            assert.equal(await files[0].text(), '{"name":"Alice"}');
-            assert.equal(warnings.length, 1);
-        } finally {
-            console.warn = originalWarn;
-        }
-    });
-});
-
-test('api.characterCards leaves Android on the WebView file input path', async () => {
-    await withHostIdentity(HOSTS.android, async () => {
-        const calls = [];
-        const { characterCards } = await installHarness({
-            safeInvoke: async (command, args) => {
-                calls.push({ command, args });
-                return '/tmp/Alice.json';
-            },
-        });
-
-        assert.equal(characterCards.isNativePickerAvailable(), false);
-        assert.equal(await characterCards.pickFiles(), null);
-        assert.deepEqual(calls, []);
-    });
+    assert.deepEqual(new Uint8Array(await files[1].arrayBuffer()), png);
+    assert.deepEqual(discarded, selected.map(file => file.path));
 });

@@ -11,9 +11,8 @@ use tt_application::dto::character_dto::{
     BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataResultDto, CharacterChatDto,
     CharacterDto, CharacterLorebookConflictDto, CheckCharacterLorebookConflictDto,
     CreateCharacterDto, CreateCharacterWithAvatarResultDto, CreateWithAvatarDto,
-    DeleteCharacterDto, DuplicateCharacterDto, ExportCharacterContentDto,
-    ExportCharacterContentResultDto, ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto,
-    MergeCharacterCardDataDto, RenameCharacterDto, ReplaceCharacterDto,
+    DeleteCharacterDto, DuplicateCharacterDto, ExportCharacterContentDto, GetCharacterChatsDto,
+    ImportCharacterDto, MergeCharacterCardDataDto, RenameCharacterDto, ReplaceCharacterDto,
     ResolveCharacterLorebookConflictDto, ResolveCharacterLorebookConflictResultDto,
     UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
 };
@@ -317,28 +316,10 @@ pub async fn replace_character(
 }
 
 #[tauri::command]
-pub async fn export_character(
-    dto: ExportCharacterDto,
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<(), CommandError> {
-    log_command(format!(
-        "export_character {} to {}",
-        dto.name, dto.target_path
-    ));
-
-    app_state
-        .services
-        .character_service
-        .export_character(dto)
-        .await
-        .map_err(map_command_error("Failed to export character"))
-}
-
-#[tauri::command]
 pub async fn export_character_content(
     dto: ExportCharacterContentDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<ExportCharacterContentResultDto, CommandError> {
+) -> Result<tauri::ipc::Response, CommandError> {
     log_command(format!(
         "export_character_content {} format {}",
         dto.name, dto.format
@@ -349,6 +330,7 @@ pub async fn export_character_content(
         .character_service
         .export_character_content(dto)
         .await
+        .map(|exported| tauri::ipc::Response::new(exported.data))
         .map_err(map_command_error("Failed to export character content"))
 }
 

@@ -4,7 +4,6 @@ import {
     checkForUpdate,
     getClientVersion as getBridgeClientVersion,
     getTauriTavernSettings,
-    invoke,
     openExternalUrl,
     updateTauriTavernSettings,
 } from '../../../tauri-bridge.js';
@@ -14,7 +13,6 @@ import { POPUP_RESULT, POPUP_TYPE, Popup } from '../../popup.js';
 import { stripCommandErrorPrefixes } from '../../util/command-error-utils.js';
 import { isGitHubRateLimitMessage } from '../../util/github-rate-limit.js';
 import { githubRateLimitStopper } from '../../util/github-rate-limit-stopper.js';
-import { hostPlatform } from '../../util/host-identity.js';
 import { extractErrorText, toUserFacingErrorText } from '../../util/user-facing-error.js';
 import { getActiveIosPolicyCapabilities } from '../../tauritavern/ios-policy.js';
 
@@ -157,23 +155,9 @@ async function onExportDebugBundleClick() {
             throw new Error('TauriTavern host dev API exportBundle is unavailable');
         }
 
-        const savedPath = await devApi.exportBundle();
-
-        if (hostPlatform() === 'ios') {
-            const shareResult = await invoke('ios_share_file', { filePath: savedPath });
-            if (shareResult?.completed === true) {
-                globalThis.toastr?.success?.(localize('ttv_version.export_success', 'Export completed.'));
-            }
-            return;
+        if (await devApi.exportBundle()) {
+            globalThis.toastr?.success?.(localize('ttv_version.export_success', 'Export completed.'));
         }
-
-        globalThis.toastr?.success?.(localize('ttv_version.export_success', 'Export completed.'));
-        await new Popup(savedPath, POPUP_TYPE.TEXT, localize('ttv_version.export_debug_bundle', 'Export Debug Bundle'), {
-            okButton: localize('ttv_version.ok', 'OK'),
-            allowVerticalScrolling: true,
-            wide: true,
-            large: false,
-        }).show();
     } catch (error) {
         console.error('TauriTavern debug bundle export failed:', error);
         globalThis.toastr?.error?.(

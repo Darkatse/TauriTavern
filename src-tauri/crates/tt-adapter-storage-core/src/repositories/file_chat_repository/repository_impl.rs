@@ -6,18 +6,16 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::fs;
 
-use crate::chat_format_importers::{
-    export_payload_to_plain_text, import_chat_jsonl_bytes, import_chat_payloads_from_json,
-};
+use crate::chat_format_importers::{import_chat_jsonl_bytes, import_chat_payloads_from_json};
 use crate::chat_jsonl::{read_payload, write_payload, write_payload_bytes};
 use crate::file_system::{list_files_with_extension, move_file_no_replace_with_fallback};
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{Chat, ChatMessage, strip_jsonl_extension};
 use tt_ports::repositories::chat_repository::{
-    CharacterChatIdentity, ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat,
-    ChatMessageSearchHit, ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk,
-    ChatPayloadCursor, ChatPayloadTail, ChatRepository, ChatSearchResult, FindLastMessageQuery,
-    LocatedChatMessage, PinnedCharacterChat,
+    CharacterChatIdentity, ChatBackupCatalogEntry, ChatImportFormat, ChatMessageSearchHit,
+    ChatMessageSearchQuery, ChatMessagesReadResult, ChatPayloadChunk, ChatPayloadCursor,
+    ChatPayloadTail, ChatRepository, ChatSearchResult, FindLastMessageQuery, LocatedChatMessage,
+    PinnedCharacterChat,
 };
 
 use super::FileChatRepository;
@@ -390,53 +388,6 @@ impl ChatRepository for FileChatRepository {
 
         self.get_chat(character_name, strip_jsonl_extension(first))
             .await
-    }
-
-    async fn export_chat(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        target_path: &Path,
-        format: ChatExportFormat,
-    ) -> Result<(), DomainError> {
-        tracing::debug!(
-            "Exporting chat: {}/{} to {:?}",
-            character_name,
-            file_name,
-            target_path
-        );
-
-        match format {
-            ChatExportFormat::JSONL => {
-                let candidate_path = self
-                    .resolve_character_chat_path(character_name, file_name)
-                    .await?;
-                let chat_path = if candidate_path.exists() {
-                    candidate_path
-                } else {
-                    self.chats_dir
-                        .join(Self::normalize_jsonl_file_name(file_name)?)
-                };
-
-                // Copy the file
-                fs::copy(&chat_path, target_path).await.map_err(|e| {
-                    tracing::error!("Failed to export chat: {}", e);
-                    DomainError::InternalError(format!("Failed to export chat: {}", e))
-                })?;
-            }
-            ChatExportFormat::PlainText => {
-                let payload = self.get_chat_payload(character_name, file_name).await?;
-                let text = export_payload_to_plain_text(&payload);
-
-                // Write the file
-                fs::write(target_path, text).await.map_err(|e| {
-                    tracing::error!("Failed to write export file: {}", e);
-                    DomainError::InternalError(format!("Failed to write export file: {}", e))
-                })?;
-            }
-        }
-
-        Ok(())
     }
 
     async fn backup_chat(&self, character_name: &str, file_name: &str) -> Result<(), DomainError> {

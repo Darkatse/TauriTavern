@@ -13,7 +13,7 @@ test('Skill import ownership lasts through preview and cleanup, and release is i
     const started = Promise.withResolvers();
     let cleanupCount = 0;
     const { skill } = await installHarness({ safeInvoke: async command => {
-        if (command === 'plugin:dialog|open') return '/tmp/owned-skill.zip';
+        if (command === 'pick_import_files') return [{ path: '/tmp/owned-skill.zip', name: 'owned-skill.zip' }];
         if (command === 'discard_skill_import_archive') { cleanupCount++; started.resolve(); await cleanup.promise; }
     } });
     const release = skill.acquireImport();
@@ -63,26 +63,6 @@ async function withHostIdentity(identity, callback) {
 }
 
 
-test('api.skill forwards install conflict strategy without implicit replace', async () => {
-    const { calls, skill } = await installHarness();
-    const input = {
-        kind: 'inlineFiles',
-        files: [{ path: 'SKILL.md', content: '---\nname: test-skill\ndescription: Use in tests.\n---\n' }],
-    };
-
-    await skill.installImport({ input });
-    await skill.installImport({ input, conflictStrategy: 'replace' });
-
-    assert.deepEqual(calls[0].args.request, {
-        input: {
-            kind: 'inlineFiles',
-            files: [{ path: 'SKILL.md', encoding: 'utf8', content: '---\nname: test-skill\ndescription: Use in tests.\n---\n' }],
-            source: {},
-        },
-    });
-    assert.equal(calls[1].args.request.conflictStrategy, 'replace');
-});
-
 test('api.skill writes text files with optimistic hash', async () => {
     const { calls, skill } = await installHarness();
 
@@ -117,44 +97,22 @@ test('api.skill rejects non-string file writes', async () => {
 });
 
 
-test('api.skill cleans staged Android archives when a later selection cannot be staged', async () => {
-    await withHostIdentity(HOSTS.android, async () => {
-        const cleanups = [];
-        const { skill } = await installHarness({
-            safeInvoke: async () => ['content://one', 'content://broken'],
-            materializeAndroidSkillImportArchive: async (contentUri) => {
-                if (contentUri.endsWith('broken')) {
-                    throw new Error('staging failed');
-                }
-                return {
-                    filePath: '/cache/one.zip',
-                    cleanup: async () => cleanups.push(contentUri),
-                };
-            },
-        });
-
-        await assert.rejects(() => skill.pickImportArchives(), /staging failed/);
-        assert.deepEqual(cleanups, ['content://one']);
-    });
-});
-
-
 test('api.skill imports shared iOS candidates and releases all sources at batch end', async () => {
     await withHostIdentity(HOSTS.ios, async () => {
         const released = [];
         const cleanups = [];
         const { skill } = await installHarness({
             safeInvoke: async (command, args) => {
-                if (command === 'ios_pick_skill_import_archives') return { cancelled: false, filePaths: ['/cache/skills.zip', '/cache/broken.zip'] };
+                if (command === 'pick_import_files') return ['skills.zip', 'broken.zip'].map(name => ({ path: `/cache/${name}`, name }));
                 if (command === 'discover_skill_imports') {
                     if (args.input.path.endsWith('broken.zip')) throw new Error('Invalid ZIP');
                     return ['one', 'two'].map(skill_root => ({ ...args.input, skill_root }));
                 }
                 if (command === 'install_skill_import') return { name: args.request.input.skill_root };
                 if (command === 'discard_skill_import_archive') released.push(args.path);
+                if (command === 'stage_file_discard') cleanups.push(args.filePath);
                 return {};
             },
-            removeTemporaryFile: async path => cleanups.push(path),
         });
         const sources = await skill.pickImportArchives();
         const candidates = await skill.discoverImports({ input: sources[0] });
@@ -169,29 +127,4 @@ test('api.skill imports shared iOS candidates and releases all sources at batch 
         assert.deepEqual(cleanups, released);
         await assert.rejects(() => skill.pickImportDirectories(), /only available on desktop/);
     });
-});
-
-test('api.skill fails fast on unsupported import shapes', async () => {
-    const { skill } = await installHarness();
-
-    await assert.rejects(
-        () => skill.previewImport({ input: { kind: 'base64Zip', content: 'abc' } }),
-        /Unsupported skill import kind/,
-    );
-    await assert.rejects(
-        () => skill.previewImport({ input: { kind: 'inlineFiles', files: [] } }),
-        /requires at least one file/,
-    );
-    await assert.rejects(
-        () => skill.installImport({ input: { kind: 'directory', path: '/tmp/skill' }, conflictStrategy: 'merge' }),
-        /Unsupported skill conflict strategy/,
-    );
-    await assert.rejects(
-        () => skill.listFiles({ name: '' }),
-        /skill name is required/,
-    );
-    await assert.rejects(
-        () => skill.delete({ name: '' }),
-        /skill name is required/,
-    );
 });

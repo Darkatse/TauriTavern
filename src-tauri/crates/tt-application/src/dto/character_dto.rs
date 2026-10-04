@@ -220,13 +220,6 @@ pub struct ReplaceCharacterDto {
     pub name: String,
 }
 
-/// Character export DTO
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExportCharacterDto {
-    pub name: String,
-    pub target_path: String,
-}
-
 /// Character export content DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportCharacterContentDto {
@@ -238,7 +231,6 @@ pub struct ExportCharacterContentDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportCharacterContentResultDto {
     pub data: Vec<u8>,
-    pub mime_type: String,
 }
 
 /// Character avatar update DTO

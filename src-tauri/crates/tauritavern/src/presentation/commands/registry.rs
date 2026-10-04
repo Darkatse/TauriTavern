@@ -18,7 +18,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::character_commands::duplicate_character,
         super::character_commands::import_character,
         super::character_commands::replace_character,
-        super::character_commands::export_character,
         super::character_commands::export_character_content,
         super::character_commands::update_avatar,
         super::character_commands::get_character_chats_by_id,
@@ -37,7 +36,6 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::chat_commands::list_chat_summaries,
         super::chat_commands::list_recent_chat_summaries,
         super::chat_commands::import_chat,
-        super::chat_commands::export_chat,
         super::chat_commands::backup_chat,
         super::chat_commands::list_chat_backup_catalog,
         super::chat_commands::list_chat_backups,
@@ -204,28 +202,13 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::sprite_commands::upload_sprite_pack,
         super::sprite_commands::delete_sprite,
         // Data archive commands
-        super::data_archive_commands::start_import_data_archive,
+        super::data_archive_commands::import_data_archive_from_picker,
         super::data_archive_commands::start_export_data_archive,
-        super::data_archive_commands::prepare_data_archive_import_target_path,
         super::data_archive_commands::get_data_archive_job_status,
         super::data_archive_commands::cancel_data_archive_job,
         super::data_archive_commands::save_export_data_archive,
-        super::data_archive_commands::cleanup_export_data_archive,
-        super::data_archive_commands::finalize_export_data_archive_delivery,
         super::data_archive_commands::export_user_backup_archive,
-        super::data_archive_commands::save_user_backup_archive,
-        super::data_archive_commands::cleanup_user_backup_archive,
         // iOS file bridge commands
-        #[cfg(target_os = "ios")]
-        super::ios_file_bridge_commands::ios_import_data_archive_from_picker,
-        #[cfg(target_os = "ios")]
-        super::ios_file_bridge_commands::ios_pick_skill_import_archives,
-        #[cfg(target_os = "ios")]
-        super::ios_file_bridge_commands::ios_pick_character_card,
-        #[cfg(target_os = "ios")]
-        super::ios_file_bridge_commands::ios_share_file,
-        #[cfg(target_os = "ios")]
-        super::ios_file_bridge_commands::ios_share_export_data_archive,
         // Extension commands
         super::extension_commands::get_extensions,
         super::extension_commands::install_extension,
@@ -265,10 +248,12 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::tt_sync_commands::tt_sync_pull,
         super::tt_sync_commands::tt_sync_push,
         // Upload staging commands
-        super::upload_staging_commands::stage_upload_begin,
-        super::upload_staging_commands::stage_upload_chunk,
-        super::upload_staging_commands::stage_upload_finish,
-        super::upload_staging_commands::stage_upload_discard,
+        super::file_transfer_commands::pick_import_files,
+        super::file_transfer_commands::deliver_staged_file,
+        super::file_staging_commands::stage_file_begin,
+        super::file_staging_commands::stage_file_chunk,
+        super::file_staging_commands::stage_file_finish,
+        super::file_staging_commands::stage_file_discard,
         // Chat payload commit commands
         super::chat_commit_commands::begin_chat_commit,
         super::chat_commit_commands::append_chat_commit_chunk,

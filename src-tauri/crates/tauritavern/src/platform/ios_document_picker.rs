@@ -1,50 +1,25 @@
 #![cfg(target_os = "ios")]
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 
 use objc2::ffi::{OBJC_ASSOCIATION_RETAIN_NONATOMIC, objc_setAssociatedObject};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
-use objc2_foundation::{
-    NSArray, NSError, NSFileManager, NSObject, NSObjectProtocol, NSString, NSURL,
-};
+use objc2_foundation::{NSArray, NSObject, NSObjectProtocol, NSString, NSURL};
 use objc2_ui_kit::{UIDocumentPickerDelegate, UIDocumentPickerViewController};
 use objc2_uniform_type_identifiers::UTType;
 use tauri::WebviewWindow;
 use tokio::sync::oneshot;
 
+use crate::platform::file_transfer::{PickedFile, PickedSource};
 use crate::platform::ios_ui::resolve_presenting_view_controller;
 use tt_domain::errors::DomainError;
 
-const DATA_ARCHIVE_CONTENT_TYPES: &[&str] = &[
-    "public.zip-archive",
-    "com.pkware.zip-archive",
-    "public.tar-archive",
-    "org.gnu.gnu-zip-archive",
-    "com.tauritavern.client.tar-archive",
-    "com.tauritavern.client.gzip-archive",
-];
-const SKILL_IMPORT_CONTENT_TYPES: &[&str] = &[
-    "public.zip-archive",
-    "com.pkware.zip-archive",
-    "public.data",
-];
-const CHARACTER_CARD_CONTENT_TYPES: &[&str] = &["public.json", "public.png"];
-
-pub struct PickedUrl {
-    pub url: Retained<NSURL>,
-    pub file_name: String,
-}
-
-pub enum PickDocumentResult {
-    Cancelled,
-    Picked(Vec<PickedUrl>),
-}
-
 enum PickOutcome {
     Cancelled,
-    Picked(Vec<PickedUrl>),
+    Picked(Vec<PickedFile>),
     Failed(String),
 }
 
@@ -135,7 +110,7 @@ impl DocumentPickerDelegate {
         PickOutcome::Picked(picked)
     }
 
-    fn picked_url(url: &NSURL) -> Result<PickedUrl, String> {
+    fn picked_url(url: &NSURL) -> Result<PickedFile, String> {
         if !url.isFileURL() {
             return Err("Picked document URL is not a file URL".to_string());
         }
@@ -145,9 +120,12 @@ impl DocumentPickerDelegate {
             .map(|value| value.to_string())
             .unwrap_or_default();
 
-        Ok(PickedUrl {
-            url: Retained::from(url),
-            file_name,
+        let path = url
+            .path()
+            .ok_or_else(|| "Picked document URL has no path".to_string())?;
+        Ok(PickedFile {
+            name: file_name,
+            source: PickedSource::AppCopy(PathBuf::from(path.to_string())),
         })
     }
 }
@@ -187,11 +165,11 @@ fn resolve_content_types(identifiers: &[&str]) -> Result<Retained<NSArray<UTType
     Ok(NSArray::from_retained_slice(&content_types))
 }
 
-async fn pick_document_with_content_types(
+pub async fn pick_documents(
     window: &WebviewWindow,
     identifiers: &'static [&'static str],
     allows_multiple_selection: bool,
-) -> Result<PickDocumentResult, DomainError> {
+) -> Result<Option<Vec<PickedFile>>, DomainError> {
     let (sender, receiver) = oneshot::channel::<PickOutcome>();
 
     window
@@ -264,83 +242,8 @@ async fn pick_document_with_content_types(
     })?;
 
     match outcome {
-        PickOutcome::Cancelled => Ok(PickDocumentResult::Cancelled),
-        PickOutcome::Picked(picked) => Ok(PickDocumentResult::Picked(picked)),
+        PickOutcome::Cancelled => Ok(None),
+        PickOutcome::Picked(picked) => Ok(Some(picked)),
         PickOutcome::Failed(message) => Err(DomainError::InternalError(message)),
     }
-}
-
-pub async fn pick_data_archive(window: &WebviewWindow) -> Result<PickDocumentResult, DomainError> {
-    pick_document_with_content_types(window, DATA_ARCHIVE_CONTENT_TYPES, false).await
-}
-
-pub async fn pick_skill_import_archives(
-    window: &WebviewWindow,
-    allows_multiple_selection: bool,
-) -> Result<PickDocumentResult, DomainError> {
-    pick_document_with_content_types(
-        window,
-        SKILL_IMPORT_CONTENT_TYPES,
-        allows_multiple_selection,
-    )
-    .await
-}
-
-pub async fn pick_character_card(
-    window: &WebviewWindow,
-) -> Result<PickDocumentResult, DomainError> {
-    pick_document_with_content_types(window, CHARACTER_CARD_CONTENT_TYPES, false).await
-}
-
-struct SecurityScopedAccess<'a> {
-    url: &'a NSURL,
-    active: bool,
-}
-
-impl<'a> SecurityScopedAccess<'a> {
-    fn start(url: &'a NSURL) -> Self {
-        let active = unsafe { url.startAccessingSecurityScopedResource() };
-        Self { url, active }
-    }
-}
-
-impl Drop for SecurityScopedAccess<'_> {
-    fn drop(&mut self) {
-        if self.active {
-            unsafe { self.url.stopAccessingSecurityScopedResource() };
-        }
-    }
-}
-
-pub fn copy_picked_url_to_path(
-    source_url: &NSURL,
-    target_path: &std::path::Path,
-) -> Result<(), DomainError> {
-    if !source_url.isFileURL() {
-        return Err(DomainError::InvalidData(format!(
-            "Picked URL is not a file URL: {}",
-            source_url
-                .absoluteString()
-                .map(|value| value.to_string())
-                .unwrap_or_default()
-        )));
-    }
-
-    let _security_scope = SecurityScopedAccess::start(source_url);
-
-    let target_path_string = target_path.to_string_lossy().to_string();
-    let ns_target_path = NSString::from_str(&target_path_string);
-    let target_url = NSURL::fileURLWithPath(&ns_target_path);
-
-    let file_manager = NSFileManager::defaultManager();
-    file_manager
-        .copyItemAtURL_toURL_error(source_url, &target_url)
-        .map_err(|error: Retained<NSError>| {
-            DomainError::InternalError(format!(
-                "Failed to copy selected document to staging directory: {}",
-                error.localizedDescription()
-            ))
-        })?;
-
-    Ok(())
 }

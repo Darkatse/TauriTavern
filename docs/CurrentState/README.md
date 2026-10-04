@@ -14,6 +14,7 @@
 | [媒体资源](MediaAssetContract.md) | 浏览器资源与 Range 请求 |
 | [系统 TTS](TTS.md) | Android Web Speech 接入与当前边界 |
 | [同步](Sync.md) | LAN Sync 与 TT-Sync |
+| [文件传输](FileTransfer.md) | 原生选取、交付与暂存 |
 | [数据目录](DataDirectorySelection.md) | 桌面目录选择与迁移 |
 | [原生模型 API](NativeApiFormats.md) | Responses、Claude、Gemini 等格式 |
 | [iOS 策略](iOSPolicy.md) | 平台能力与分发设置 |

@@ -25,7 +25,7 @@
    - 注册前端路由（`router + routes/*`）
    - 安装请求拦截器（`fetch` 与 `jQuery.ajax`）
    - 安装平台 ABI：`window.__TAURITAVERN__`（小而稳定的宿主对外接口）
-   - 安装同源窗口下载桥（移动端浏览器式导出 -> 原生落盘）
+   - 安装同源窗口下载桥（所有宿主的浏览器式导出 → 原生交付）
    - 安装 Tauri mobile 兼容层（runtime polyfills + geometry firewall + surface classifier，仅移动端）
    - 为宿主接管的路由响应注入追踪 header：`x-tauritavern-trace-id`
    - 初始化 bridge 与目录信息
@@ -39,7 +39,7 @@
 | 问题 | 依据 | 例子 |
 | --- | --- | --- |
 | 宿主属于哪一类外壳 | `isMobileHost()` / `isDesktopHost()` | 移动端兼容层、F11 全屏、数据目录选择、软键盘相关的自动聚焦 |
-| 选用哪个平台的实现，或某个平台独有的问题 | `hostPlatform()` | 导出交付、文件选择器、Windows 托盘、Android WebView 的剪贴板与 IME |
+| 选用哪个平台的实现，或某个平台独有的问题 | `hostPlatform()` | Windows 托盘、Android WebView 的剪贴板与 IME |
 | 可选能力是否存在 | 插件、原生桥或 DOM API 本身 | 扫码插件、Android 原生桥 |
 | 屏幕与交互形态 | 上游 Bowser `isMobile()`、CSS 媒体查询 | select2、MovingUI、`{{isMobile}}` |
 
@@ -113,9 +113,9 @@ src/
 
 ### 4.4 `download-bridge.js`
 
-- 只处理移动端同源窗口中的浏览器式下载（如 `blob:` / `data:` / 同源 URL + `a[download]`）。
+- 处理所有宿主同源窗口中的浏览器式下载（如 `blob:` / `data:` / 同源 URL + `a[download]`）。
 - Android 上为同源窗口中的 `<img>` 补上 `contextmenu` 默认行为（保存图片）：用户确认后，图片进入同一条导出链路。
-- 将命中的导出转接到现有原生文件导出链路。
+- 将命中的导出交给 `deliverBlob()`，暂存后由宿主交付；见[文件传输](CurrentState/FileTransfer.md)。
 - 不参与 API 路由判断，避免与请求拦截职责混合。
 
 ### 4.5 `router.js` + `routes/*`

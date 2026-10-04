@@ -1,3 +1,4 @@
+pub mod file_transfer;
 pub mod generation_background;
 pub mod identity;
 #[cfg(target_os = "ios")]

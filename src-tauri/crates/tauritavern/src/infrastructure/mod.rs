@@ -18,4 +18,5 @@ pub mod persistence;
 pub mod repositories;
 #[cfg(desktop)]
 pub mod runtime_paths_config_store;
+pub mod staging;
 pub mod zipkit;

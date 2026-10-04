@@ -14,6 +14,7 @@ TauriTavern 保留 SillyTavern 的前端体验与扩展生态，用 Tauri 和 Ru
 | 前端和扩展可观察的宿主行为 | [宿主契约](FrontendHostContract.md) |
 | 编写扩展 | [扩展 API](API/README.md) |
 | 理解或修改 Agent | [Agent](Agent/README.md) |
+| 文件导入、导出与暂存 | [文件传输](CurrentState/FileTransfer.md) |
 | 查找某个模块的实现 | [模块文档](CurrentState/README.md) |
 | Android / iOS / OpenHarmony 开发 | [Android](AndroidDevelopment.md)、[iOS](iOSDevelopment.md)、[OpenHarmony](OpenHarmonyDevelopment.md) |
 

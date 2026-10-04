@@ -5,8 +5,8 @@ use tt_ports::byte_reader::ByteReader;
 use serde_json::Value;
 
 use crate::dto::chat_dto::{
-    AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
-    ImportCharacterChatsDto, ImportChatDto, RenameChatDto, RestoreCharacterChatBackupDto,
+    AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ImportCharacterChatsDto,
+    ImportChatDto, RenameChatDto, RestoreCharacterChatBackupDto,
 };
 use crate::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
 use crate::errors::ApplicationError;
@@ -24,7 +24,7 @@ use tt_ports::repositories::agent_workspace_lifecycle_repository::{
 };
 use tt_ports::repositories::character_repository::CharacterRepository;
 use tt_ports::repositories::chat_repository::{
-    ChatBackupCatalogEntry, ChatExportFormat, ChatImportFormat, ChatRepository,
+    ChatBackupCatalogEntry, ChatImportFormat, ChatRepository,
 };
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
@@ -335,31 +335,6 @@ impl ChatService {
             .await?;
 
         Ok(ChatDto::from(chat))
-    }
-
-    /// Export a chat
-    pub async fn export_chat(&self, dto: ExportChatDto) -> Result<(), ApplicationError> {
-        tracing::info!(
-            "Exporting chat: {}/{} to {}",
-            dto.character_name,
-            dto.file_name,
-            dto.target_path
-        );
-
-        // Convert the format string to enum
-        let format = ChatExportFormat::from(dto.format);
-
-        // Export the chat
-        self.chat_repository
-            .export_chat(
-                &dto.character_name,
-                &dto.file_name,
-                Path::new(&dto.target_path),
-                format,
-            )
-            .await?;
-
-        Ok(())
     }
 
     /// Backup a chat

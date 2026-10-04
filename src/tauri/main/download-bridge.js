@@ -1,8 +1,7 @@
 const IMAGE_EXTENSIONS = { jpeg: 'jpg', 'svg+xml': 'svg' };
 
 export function createDownloadBridge({
-    isMobileHost,
-    downloadBlobWithRuntime,
+    deliverBlob,
     notifyDownloadResult,
     notifyDownloadError,
     confirmImageDownload = null,
@@ -128,9 +127,7 @@ export function createDownloadBridge({
     }
 
     async function exportBlob(blob, fileName) {
-        const result = await downloadBlobWithRuntime(blob, fileName, {
-            fallbackName,
-        });
+        const result = await deliverBlob(blob, fileName);
 
         if (typeof notifyDownloadResult !== 'function') {
             return;
@@ -165,7 +162,7 @@ export function createDownloadBridge({
         void request.blobPromise
             .then((blob) => exportBlob(blob, request.fileName))
             .catch((error) => {
-                console.error('Failed to bridge native mobile download:', error);
+                console.error('Failed to bridge native download:', error);
                 notifyDownloadFailure(error);
             });
         return true;
@@ -207,7 +204,7 @@ export function createDownloadBridge({
     }
 
     function patchWindow(targetWindow = window) {
-        if (!targetWindow || !isMobileHost()) {
+        if (!targetWindow) {
             return;
         }
 

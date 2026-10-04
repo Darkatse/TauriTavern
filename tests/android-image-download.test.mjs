@@ -11,9 +11,9 @@ test('only preventDefault cancels the image download default action', async (t) 
             const confirmations = [];
             const downloads = [];
             const bridge = createDownloadBridge({
-                isMobileHost: () => true,
-                downloadBlobWithRuntime: async (blob, fileName) => {
+                deliverBlob: async (blob, fileName) => {
                     downloads.push({ blob, fileName });
+                    return { delivered: true };
                 },
                 confirmImageDownload: async (source) => {
                     confirmations.push(source);

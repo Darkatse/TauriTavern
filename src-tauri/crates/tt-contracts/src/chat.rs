@@ -25,22 +25,6 @@ impl From<String> for ChatImportFormat {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[allow(clippy::upper_case_acronyms)]
-pub enum ChatExportFormat {
-    JSONL,
-    PlainText,
-}
-
-impl From<String> for ChatExportFormat {
-    fn from(s: String) -> Self {
-        match s.to_lowercase().as_str() {
-            "plaintext" => ChatExportFormat::PlainText,
-            _ => ChatExportFormat::JSONL,
-        }
-    }
-}
-
 /// Chat search result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatSearchResult {

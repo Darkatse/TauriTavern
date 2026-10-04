@@ -1,45 +1,6 @@
 use super::*;
 
 #[tokio::test]
-async fn character_service_exports_real_png_card_metadata() {
-    let root = temp_root("character-png");
-    let service = character_service(&root).await;
-    let card = character_card("Alice", json!({ "custom": "kept" }));
-
-    service
-        .create_character(create_character("Alice", Some(card)))
-        .await
-        .expect("create character");
-
-    let stored_png = fs::read(root.join("default-user/characters/Alice.png"))
-        .await
-        .expect("read stored character png");
-    assert!(stored_png.starts_with(b"\x89PNG\r\n\x1a\n"));
-    let stored_card = read_card_json(&stored_png);
-    assert_eq!(stored_card.pointer("/unknownTop/kept"), Some(&json!(true)));
-    assert_eq!(
-        stored_card.pointer("/data/extensions/custom"),
-        Some(&json!("kept"))
-    );
-
-    let exported = service
-        .export_character_content(ExportCharacterContentDto {
-            name: "Alice".to_string(),
-            format: "png".to_string(),
-        })
-        .await
-        .expect("export png content");
-    let exported_card = read_card_json(&exported.data);
-    assert_eq!(exported.mime_type, "image/png");
-    assert_eq!(
-        exported_card.pointer("/data/extensions/custom"),
-        Some(&json!("kept"))
-    );
-
-    let _ = fs::remove_dir_all(root).await;
-}
-
-#[tokio::test]
 async fn character_service_returns_raw_json_and_v2_data_metadata_from_real_png() {
     let root = temp_root("character-raw-json");
     let service = character_service(&root).await;
@@ -269,6 +230,7 @@ async fn character_service_export_sanitizes_private_fields_and_materializes_curr
         "Alice",
         json!({
             "world": "Lore",
+            "custom": "kept",
             "fav": true,
             "tauritavern": {
                 "agentProfiles": {
@@ -305,6 +267,14 @@ async fn character_service_export_sanitizes_private_fields_and_materializes_curr
         .await
         .expect("export png");
     let exported_card = read_card_json(&exported.data);
+    assert_eq!(
+        exported_card.pointer("/unknownTop/kept"),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        exported_card.pointer("/data/extensions/custom"),
+        Some(&json!("kept"))
+    );
     assert_eq!(exported_card.get("fav"), Some(&json!(false)));
     assert!(exported_card.get("chat").is_none());
     assert_eq!(
@@ -320,17 +290,15 @@ async fn character_service_export_sanitizes_private_fields_and_materializes_curr
         Some(&json!({ "mode": "requiresConfiguration" }))
     );
 
-    let export_path = root.join("exported.json");
-    service
-        .export_character(ExportCharacterDto {
+    let exported_json = service
+        .export_character_content(ExportCharacterContentDto {
             name: "Alice".to_string(),
-            target_path: export_path.to_string_lossy().to_string(),
+            format: "json".to_string(),
         })
         .await
-        .expect("export file");
+        .expect("export json");
     let exported_file: Value =
-        serde_json::from_slice(&fs::read(export_path).await.expect("read exported file"))
-            .expect("parse exported file");
+        serde_json::from_slice(&exported_json.data).expect("parse exported json");
     assert_eq!(
         exported_file.pointer("/data/character_book/entries/0/content"),
         Some(&json!("current lore"))

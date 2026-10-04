@@ -12,40 +12,6 @@ async function importPortableProfile() {
     )));
 }
 
-test('portable Agent profile export strips local model connection bindings', async () => {
-    const { sanitizePortableAgentProfile } = await importPortableProfile();
-    const profile = {
-        schemaVersion: 2,
-        kind: 'tauritavern.agentProfile',
-        id: 'writer',
-        model: {
-            mode: 'connectionRef',
-            connectionRef: 'model-target-private-main',
-            modelId: 'provider/private-model',
-        },
-    };
-
-    const portable = sanitizePortableAgentProfile(profile);
-
-    assert.deepEqual(portable.model, {
-        mode: 'requiresConfiguration',
-    });
-    assert.equal(profile.model.mode, 'connectionRef');
-});
-
-test('portable Agent profile export preserves non-local model modes', async () => {
-    const { sanitizePortableAgentProfile } = await importPortableProfile();
-
-    assert.deepEqual(sanitizePortableAgentProfile({
-        id: 'ambient',
-        model: { mode: 'currentPromptSnapshot' },
-    }).model, { mode: 'currentPromptSnapshot' });
-    assert.deepEqual(sanitizePortableAgentProfile({
-        id: 'already-portable',
-        model: { mode: 'requiresConfiguration' },
-    }).model, { mode: 'requiresConfiguration' });
-});
-
 test('portable embedded Agent profile package strips local model connection bindings', async () => {
     const { sanitizePortableAgentProfilePackage } = await importPortableProfile();
     const packageValue = {
@@ -62,6 +28,8 @@ test('portable embedded Agent profile package strips local model connection bind
                     },
                 },
             },
+            { profile: { id: 'ambient', model: { mode: 'currentPromptSnapshot' } } },
+            { profile: { id: 'portable', model: { mode: 'requiresConfiguration' } } },
         ],
     };
 
@@ -75,6 +43,7 @@ test('portable embedded Agent profile package strips local model connection bind
         },
     });
     assert.equal(packageValue.items[0].profile.model.mode, 'connectionRef');
+    assert.deepEqual(portable.items.slice(1), packageValue.items.slice(1));
 });
 
 test('portable embedded Agent profile package fails fast on malformed items', async () => {

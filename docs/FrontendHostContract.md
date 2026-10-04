@@ -76,15 +76,6 @@
 - 失败时的返回值语义保持一致（例如 `null` vs 抛错 vs fallback string）；
 - 不得引入同步阻塞（第三方会在渲染路径高频调用）。
 
-### 3.2 Android 导入/导出 Picker（Public）
-
-由 `createTauriMainContext()` 安装（用于 Android Content URI 的回调接收）：
-
-- `window.__TAURITAVERN_IMPORT_ARCHIVE_PICKER__`（对象：用于接收 Android 侧回调并 resolve/reject pending promise）
-- `window.__TAURITAVERN_EXPORT_ARCHIVE_PICKER__`（同上）
-
-> 这两者属于“跨语言桥接回调点”，命名与行为应视为 Public Contract。
-
 ### 3.3 返回键处理（Public）
 
 由 `src/tauri/main/back-navigation.js` 安装：
@@ -125,12 +116,9 @@
     - 详细签名与示例见：`docs/API/Layout.md`。
   - `api.chat`：TauriTavern 独有的聊天/记忆类扩展 API（聊天摘要、元数据、历史分页、稳定存储、后端定位、纯文本检索）。
     - 详细签名与示例见：`docs/API/Chat.md`。
-  - `api.characterCards`：角色卡文件选择宿主 API。用于以 native picker 选择本地角色卡文件，并返回标准 `File[]` 给上游导入/替换流程继续处理。
-    - 当前已落地 Host ABI：`isNativePickerAvailable()`、`pickFiles(options?: { multiple?: boolean; title?: string }) -> Promise<File[] | null>`。
-    - Android 使用 WebView 文件输入，`isNativePickerAvailable()` 为 `false`；iOS 使用系统文档选择器（暂不支持多选）；其他宿主使用 dialog 插件，选择结果经 fs 插件读取为 `File`。
-    - 当前 native picker 仅暴露 Rust 角色导入器真实支持的 `json/png` 角色卡格式；上游 `processDroppedFiles` 的格式判断保持不变。
-    - 语义：只补齐平台文件选择能力，不导入、不覆盖、不改变 `/api/characters/import`、`preserved_name`、角色 avatar identity 或上游 toast/tag/刷新收尾语义。
-    - 取消选择返回 `null`；picker/staging/read 失败必须抛错，不得静默回退到 WebView file input。
+  - `api.characterCards`：用原生选择器选择本地角色卡（`json/png`），返回标准 `File[]`，交给上游的导入或替换流程。
+    - `isNativePickerAvailable()`：所有宿主都为 `true`。
+    - `pickFiles(options?: { multiple?: boolean }) -> Promise<File[] | null>`：支持多选；取消返回 `null`，失败抛错。
   - `api.extension.store`：扩展级**全局持久化**（不绑定 chat），提供 KV JSON + Blob，支持多 table 与 Blob 流式读取。
     - 签名、读写边界与示例见 [Extension Store API](API/Extension.md)。
   - `api.db`：本地向量、JSON、文本索引、图和 TQL 数据库。`open` 异步等待可用；NodeId 为整数；签名、索引恢复边界与共享关闭语义见 [Database API](API/Database.md)。
@@ -153,7 +141,7 @@
       - `getKeep() -> Promise<number>`
       - `setKeep(value: number) -> Promise<void>`
       - 语义：宿主统一负责历史索引、实时索引流与 keep 设置持久化；调用方不应直接操作 `devlog_*` 命令。
-    - `api.dev.exportBundle() -> Promise<string>`：导出 debug bundle（zip）并返回保存路径，详见 `docs/API/Dev.md`。
+    - `api.dev.exportBundle() -> Promise<boolean>`：生成并交付 debug bundle（zip），返回是否已交付，详见 `docs/API/Dev.md`。
 
 `api.dev.*` 的长期契约要求：
 
@@ -271,6 +259,8 @@
   - `/backgrounds/*`、`/assets/*`
   - `/user/images/*`、`/user/files/*`
 
+`/api/users/backup` 与上游不同：由宿主生成并交付备份，返回 `{ ok, delivered, includes_secrets }`。
+
 ### 4.4 浏览器资源契约（Public）
 
 这些路径必须能被浏览器**原生子资源加载**（`<img src>` / `<link href>` / `<script src>` / `CSS url()`），且 dev/prod 语义一致：
@@ -378,7 +368,7 @@ TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板�
 
 ### 5.7 Android 图片长按保存（Public in practice）
 
-- Android WebView 没有图片上下文菜单。宿主在主文档与同源 iframe 中补上 `<img>` 的 `contextmenu` 默认行为：用户确认后，把当前显示的图片保存到公共 Downloads；Android 8–9 由用户选择保存位置。
+- Android WebView 没有图片上下文菜单。宿主在主文档与同源 iframe 中补上 `<img>` 的 `contextmenu` 默认行为：用户确认后，把当前显示的图片交给系统保存面板，由用户选择保存位置。
 - 与浏览器一致，只有 `preventDefault()` 会取消这一默认行为，`stopPropagation()` 不影响。自行处理图片长按的扩展应在 `contextmenu` 上调用 `preventDefault()`。
 - 图片在其所在窗口按 `currentSrc` 读取，遵循同源与 CORS 规则；读取失败直接提示，不改走其他路径。保存的是原始字节，不重新编码。
 - 宿主不注册原生长按菜单，长按产生的 `contextmenu` 始终先交给页面处理。

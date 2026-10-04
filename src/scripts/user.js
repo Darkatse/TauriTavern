@@ -268,27 +268,9 @@ function isTauriRuntime() {
 }
 
 function showNativeBackupResult(payload) {
-    const cleanupError = String(payload?.cleanup_error || '').trim();
-    if (cleanupError) {
-        toastr.warning(cleanupError, 'Backup cleanup failed');
+    if (payload.delivered) {
+        toastr.success('User backup exported.', 'Backup Complete');
     }
-
-    if (payload?.mode === 'ios-native-share') {
-        if (payload?.completed === true) {
-            toastr.success('User backup is ready to share or save.', 'Backup Complete', { timeOut: 8000 });
-        } else {
-            toastr.info('Sharing cancelled.', 'Backup Cancelled');
-        }
-        return;
-    }
-
-    const savedPath = String(payload?.saved_target || '').trim();
-    if (savedPath) {
-        toastr.success(`User backup saved: ${savedPath}`, 'Backup Complete', { timeOut: 8000 });
-        return;
-    }
-
-    toastr.success('User backup saved.', 'Backup Complete');
 }
 
 function showBackupSecretsWarning() {

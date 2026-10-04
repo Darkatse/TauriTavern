@@ -1,9 +1,7 @@
 import { renderExtensionTemplateAsync } from '../../extensions.js';
 import { t, translate } from '../../i18n.js';
 import { Popup } from '../../popup.js';
-import { hostPlatform, isDesktopHost } from '../../util/host-identity.js';
 import { getActiveIosPolicyActivationReport } from '../../tauritavern/ios-policy.js';
-import { openDialog } from '../../../tauri-bridge.js';
 import { flushLifecycleState } from '../../../tauri/main/services/lifecycle/lifecycle-flush-service.js';
 
 const MODULE_NAME = 'data-migration';
@@ -17,7 +15,6 @@ const jobState = {
     jobId: '',
     starting: false,
     cancelRequested: false,
-    lastExportSavedPath: '',
 };
 
 function extractErrorMessage(text) {
@@ -61,159 +58,21 @@ function requireJobId(payload, errorMessage) {
     return payload.job_id.trim();
 }
 
-async function requestImportJob(url, init) {
-    const response = await fetch(url, init);
-    if (!response.ok) {
-        throw new Error(await readFailureMessage(response));
-    }
-
+async function startImportJob() {
+    const response = await fetch('/api/extensions/data-migration/import', { method: 'POST' });
+    if (!response.ok) throw new Error(await readFailureMessage(response));
     const payload = await response.json();
-    return requireJobId(payload, t`Import job id is missing`);
-}
-
-async function startImportJobFromDesktopPicker() {
-    const picked = await openDialog({
-        title: t`Select Data Archive`,
-        multiple: false,
-        directory: false,
-        filters: [
-            {
-                name: t`Data Archive`,
-                extensions: ['zip', 'tar', 'gz', 'tgz'],
-            },
-        ],
-    });
-    const archivePath = Array.isArray(picked) ? picked[0] : picked;
-    if (typeof archivePath !== 'string' || archivePath.trim() === '') {
-        return null;
-    }
-
-    return requestImportJob('/api/extensions/data-migration/import', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ archive_path: archivePath }),
-    });
-}
-
-async function startImportJobFromAndroidContentUri(contentUri) {
-    return requestImportJob('/api/extensions/data-migration/import/android', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            content_uri: contentUri,
-        }),
-    });
-}
-
-async function pickAndroidImportArchive() {
-    const response = await fetch('/api/extensions/data-migration/import/android/pick', {
-        method: 'POST',
-    });
-    if (!response.ok) {
-        throw new Error(await readFailureMessage(response));
-    }
-
-    const payload = await response.json();
-    const contentUri = String(payload?.content_uri || '').trim();
-    if (!contentUri) {
-        throw new Error(t`Android import picker did not return a content URI`);
-    }
-
-    return contentUri;
-}
-
-async function startImportJobFromIosPicker() {
-    const response = await fetch('/api/extensions/data-migration/import/ios', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({}),
-    });
-
-    if (!response.ok) {
-        throw new Error(await readFailureMessage(response));
-    }
-
-    const payload = await response.json();
-    if (payload?.cancelled) {
-        return null;
-    }
-
-    return requireJobId(payload, t`Import job id is missing`);
+    return payload.cancelled ? null : requireJobId(payload, t`Import job id is missing`);
 }
 
 async function saveExportArchive(jobId) {
-    switch (hostPlatform()) {
-        case 'android': {
-            const response = await fetch('/api/extensions/data-migration/export/android/save', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ job_id: jobId }),
-            });
-            if (!response.ok) {
-                throw new Error(await readFailureMessage(response));
-            }
-
-            const payload = await response.json();
-            return {
-                mode: 'mobile-native',
-                cancelled: Boolean(payload?.cancelled),
-                savedPath: String(payload?.saved_target || ''),
-                cleanupError: payload?.cleanup_error ? String(payload.cleanup_error) : null,
-            };
-        }
-        case 'ios': {
-            const response = await fetch('/api/extensions/data-migration/export/ios/share', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ job_id: jobId }),
-            });
-            if (!response.ok) {
-                throw new Error(await readFailureMessage(response));
-            }
-
-            const payload = await response.json();
-            return {
-                mode: 'ios-native-share',
-                completed: Boolean(payload?.completed),
-                activity: payload?.activity ? String(payload.activity) : null,
-                cleanupError: payload?.cleanup_error ? String(payload.cleanup_error) : null,
-            };
-        }
-        case 'windows':
-        case 'macos':
-        case 'linux': {
-            const response = await fetch('/api/extensions/data-migration/export/save', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ job_id: jobId }),
-            });
-            if (!response.ok) {
-                throw new Error(await readFailureMessage(response));
-            }
-
-            const payload = await response.json();
-            return {
-                mode: 'desktop-native',
-                savedPath: String(payload?.saved_target || ''),
-            };
-        }
-        case 'ohos':
-            throw new Error('Data archive export is not implemented for OpenHarmony yet');
-        default:
-            throw new Error(`Unsupported archive export platform: ${hostPlatform()}`);
-    }
+    const response = await fetch('/api/extensions/data-migration/export/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: jobId }),
+    });
+    if (!response.ok) throw new Error(await readFailureMessage(response));
+    return response.json();
 }
 
 function hasActiveJob() {
@@ -224,28 +83,10 @@ function setStatusText(message) {
     $('#data_migration_status').text(String(message || ''));
 }
 
-function refreshExportActions() {
-    const actions = $('#data_migration_export_actions');
-    if (!actions.length) {
-        return;
-    }
-
-    const savedPath = String(jobState.lastExportSavedPath || '').trim();
-    const visible = Boolean(savedPath) && isDesktopHost();
-    actions.toggle(visible);
-
-    $('#data_migration_reveal_export_button').prop('disabled', !visible);
-}
-
 function refreshControls() {
     const busy = hasActiveJob();
     $('#data_migration_import_button').prop('disabled', busy);
     $('#data_migration_export_button').prop('disabled', busy);
-    if (busy) {
-        $('#data_migration_reveal_export_button').prop('disabled', true);
-    } else {
-        refreshExportActions();
-    }
 
     const cancelButton = $('#data_migration_cancel_button');
     if (jobState.jobId) {
@@ -279,26 +120,6 @@ function stopJobTracking() {
     refreshControls();
 }
 
-async function onRevealExportClick() {
-    const savedPath = String(jobState.lastExportSavedPath || '').trim();
-    if (!savedPath) {
-        return;
-    }
-
-    try {
-        const invoke = window.__TAURI__?.core?.invoke;
-        if (typeof invoke !== 'function') {
-            throw new Error('Tauri opener is unavailable');
-        }
-
-        await invoke('plugin:opener|reveal_item_in_dir', {
-            paths: [savedPath],
-        });
-    } catch (error) {
-        toastr.error(normalizeCaughtError(error), t`Unable to open folder`);
-    }
-}
-
 async function onImportButtonClick() {
     try {
         if (hasActiveJob()) {
@@ -306,23 +127,7 @@ async function onImportButtonClick() {
             return;
         }
 
-        switch (hostPlatform()) {
-            case 'android':
-                await onAndroidImportButtonClick();
-                break;
-            case 'ios':
-                await onIosImportButtonClick();
-                break;
-            case 'windows':
-            case 'macos':
-            case 'linux':
-                await runConfirmedImport(startImportJobFromDesktopPicker);
-                break;
-            case 'ohos':
-                throw new Error('Data archive import is not implemented for OpenHarmony yet');
-            default:
-                throw new Error(`Unsupported archive import platform: ${hostPlatform()}`);
-        }
+        await runConfirmedImport();
     } catch (error) {
         const failureMessage = normalizeCaughtError(error);
         toastr.error(failureMessage, t`Data import failed`);
@@ -408,7 +213,7 @@ function reloadSoon() {
 }
 
 async function requestCancelActiveJob() {
-    if (!hasRunningJob() || jobState.cancelRequested) {
+    if (!jobState.jobId || jobState.cancelRequested) {
         return;
     }
 
@@ -481,42 +286,11 @@ async function runMigrationJob(kind, startJob) {
                 reloadSoon();
             } else {
                 const saveResult = await saveExportArchive(jobId);
-                if (saveResult.mode === 'ios-native-share') {
-                    if (saveResult.cleanupError) {
-                        toastr.warning(saveResult.cleanupError, t`Export cleanup failed`);
-                    }
-
-                    if (saveResult.completed) {
-                        toastr.success(t`Data archive is ready to share/save`, t`Export completed`, { timeOut: 8000 });
-                        setStatusText(t`Export completed`);
-                    } else {
-                        toastr.info(t`Sharing cancelled`, t`Export cancelled`);
-                        setStatusText(t`Export cancelled`);
-                    }
-
-                    return;
-                }
-
-                if (saveResult.mode === 'mobile-native') {
-                    if (saveResult.cleanupError) {
-                        toastr.warning(saveResult.cleanupError, t`Export cleanup failed`);
-                    }
-                    if (saveResult.cancelled) {
-                        toastr.info(t`Export cancelled`);
-                        setStatusText(t`Export cancelled`);
-                        return;
-                    }
-                }
-
-                const savedPath = saveResult.savedPath;
-                if (savedPath) {
-                    jobState.lastExportSavedPath = savedPath;
-                    refreshExportActions();
-                    toastr.success(t`Data archive saved: ${savedPath}`, t`Export completed`, { timeOut: 8000 });
-                    setStatusText(t`Export completed | ${savedPath}`);
-                } else {
-                    toastr.success(t`Data archive saved`, t`Export completed`);
+                if (saveResult.delivered) {
+                    toastr.success(t`Data archive exported`, t`Export completed`);
                     setStatusText(t`Export completed`);
+                } else {
+                    setStatusText(t`Export cancelled`);
                 }
             }
             return;
@@ -554,28 +328,11 @@ async function runMigrationJob(kind, startJob) {
     }
 }
 
-async function onAndroidImportButtonClick() {
-    await runConfirmedImport(async () => {
-        const contentUri = await pickAndroidImportArchive();
-        return startImportJobFromAndroidContentUri(contentUri);
-    });
-}
-
-async function onIosImportButtonClick() {
-    await runConfirmedImport(() => startImportJobFromIosPicker());
-}
-
-async function runConfirmedImport(startJob) {
+async function runConfirmedImport() {
     const prompt = t`Importing will merge into the current local data directory (same-path files will be overwritten). Continue?`;
-    const confirmed = hostPlatform() === 'ios'
-        ? await Popup.show.confirm(t`Confirm data import`, prompt)
-        : window.confirm(prompt);
-    if (!confirmed) {
-        return;
-    }
-
+    if (!await Popup.show.confirm(t`Confirm data import`, prompt)) return;
     toastr.info(t`Importing data archive...`);
-    await runMigrationJob('import', startJob);
+    await runMigrationJob('import', startImportJob);
 }
 
 async function onExportClick() {
@@ -612,5 +369,4 @@ jQuery(async () => {
     $('#data_migration_import_button').on('click', onImportButtonClick);
     $('#data_migration_export_button').on('click', onExportClick);
     $('#data_migration_cancel_button').on('click', requestCancelActiveJob);
-    $('#data_migration_reveal_export_button').on('click', onRevealExportClick);
 });

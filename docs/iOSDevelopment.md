@@ -62,54 +62,16 @@ WKWebView 内部是 `UIScrollView` 承载 Web 内容；在默认行为下，iOS 
 - `screen.height - window.innerHeight` 接近 0（允许 1px 内的 rounding）
 - `--tt-inset-bottom` 仍保持合理的 safe-area 值（如 `34px`），且输入框/按钮不被 home indicator 遮挡
 
-## 2. data-migration：iOS 原生 Document Picker / Share Sheet 桥接
+## 2. 文件导入与导出
 
-### 2.1 现象
+iOS 是[文件传输](CurrentState/FileTransfer.md)的一个平台实现：
 
-- **导出**：UI 虽提示完成，但仅得到 iOS 沙盒内路径（对普通用户不可达），无法“拿到文件”。
-- **导入**：能弹出文件选择器，但选择 zip 后无反馈/不启动导入。
+- 选取：Document Picker 以 `asCopy` 生成副本，宿主把副本移动进暂存；
+- 交付：使用 Share Sheet，建议文件名由 `NSItemProvider` 提供。
 
-### 2.2 根因（第一性原理）
+UIKit 界面在主线程上展示；在 iPad 上，popover 必须指定 sourceView/sourceRect。实现见 `platform/ios_document_picker.rs` 与 `platform/ios_share_sheet.rs`。
 
-iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
-
-- WebView 无法向用户暴露可操作的沙盒路径（即使文件写入成功，用户也无法访问）。
-- `<input type="file">` 在 WKWebView 上对 zip 的行为差异较大，不适合作为 data-migration 的唯一入口。
-- 若宿主未安装 `WKUIDelegate` 的 JS dialog bridge，`window.alert/confirm/prompt` 可能不弹出或阻塞；当前已在 Host policy 层补齐（见 `docs/WkWebViewJsDialogBridgePlan.md`）。
-
-### 2.3 已落地方案（当前状态：已稳定可用）
-
-仅在 iOS 平台启用原生桥接：
-
-1) **Import（Document Picker）**
-   - 使用 `UIDocumentPickerViewController` 选择数据归档（当前后端支持 zip / tar / tar.gz / tgz；导出仍保持 zip）。
-   - 将选中的 `file://` URL 复制到 app 内部 `archive_imports_root/incoming` staging，再启动现有 import job（job/轮询语义不变）。
-
-2) **Export（Share Sheet）**
-   - export job 生成 zip 后，不再尝试“保存到 Downloads 并展示路径”。
-   - 直接使用 `UIActivityViewController` 打开 Share Sheet，让用户保存到 Files / AirDrop / 其它 App。
-
-3) **UI 线程与呈现约束**
-   - 所有 UIKit present 均通过 `WebviewWindow::run_on_main_thread` 执行，并通过 `UIApplication.windows` 解析 top-most presenting VC。
-   - iPad 走 popoverPresentationController 绑定 sourceView/sourceRect，避免崩溃。
-
-4) **确认弹窗**
-   - iOS 导入确认使用 `Popup.show.confirm`（保持与 SillyTavern 交互契约一致；不依赖同步阻塞式 dialog）。
-   - 其他平台保持原语义不变。
-
-### 2.4 重要实现位置（便于维护与回归）
-
-- 前端扩展入口：`src/scripts/extensions/data-migration/index.js`
-- Host Kernel 路由：`src/tauri/main/routes/extensions-routes.js`
-- iOS-only Tauri commands：`src-tauri/crates/tauritavern/src/presentation/commands/ios_file_bridge_commands.rs`
-- iOS UIKit / picker / share host adapter：
-  - `src-tauri/crates/tauritavern/src/platform/ios_ui.rs`
-  - `src-tauri/crates/tauritavern/src/platform/ios_document_picker.rs`
-  - `src-tauri/crates/tauritavern/src/platform/ios_share_sheet.rs`
-- Data Archive import staging 只暴露 `prepare_data_archive_import_target_path`；不要恢复旧的 `get_data_archive_imports_root`，避免把 staging root 交给前端自行拼路径。
-- 角色卡替换的文件选择同样走 iOS Document Picker + app cache/temp staging；宿主只返回 staged path/原文件名，前端会读成标准 `File` 后继续复用上游 `/api/characters/import` 与 `preserved_name` 语义。当前 native picker 只暴露 Rust 角色导入器真实支持的 `json/png`。
-
-### 2.5 macOS 元数据导致的“布局歧义”问题
+## 3. macOS 元数据导致的“布局歧义”问题
 
 部分 zip（尤其是从 macOS Finder 打包/转发）会携带 `__MACOSX/**` 资源分叉条目；它会在布局探测阶段制造“存在多个候选根”的假象，触发错误：
 
@@ -119,59 +81,6 @@ iOS 上“文件选择 / 文件导出”必须交给系统级能力完成：
 
 - `src-tauri/crates/tt-adapter-archive/src/data_archive/import/layout.rs`
 - `src-tauri/crates/tt-adapter-archive/src/data_archive/import/extract.rs`
-
-## 3. 通用 iOS 导出桥（聊天 / WorldInfo / 角色卡等）
-
-### 3.1 现象
-
-- 聊天导出、WorldInfo 导出、角色卡导出等“浏览器式下载”在 iOS 上可能无响应，或只写进沙盒内不可达路径。
-- 同源导出端点即使返回了正确的二进制，WKWebView 的默认下载语义也不能保证用户真正拿到文件。
-
-### 3.2 根因（第一性原理）
-
-- iOS 上真正可交付给用户的文件出口是系统 Share Sheet，而不是 WebView 默认下载目录。
-- 上游 SillyTavern 的导出语义是“下载一个文件”，不是“调用某个 iOS 业务 API”；因此平台差异必须集中在导出基础设施层吸收。
-- 用全局 monkey-patch `HTMLAnchorElement.prototype.click()` 虽然能扩大覆盖面，但会把浏览器基本语义变成宿主隐式契约，长期不利于维护、调试与兼容升级。
-
-### 3.3 当前契约（已落地）
-
-1. 前端统一导出主链仍是 `download()` / `downloadBlobWithRuntime()`。
-2. iOS 分支会把 `Blob` staging 到临时目录后调用 `ios_share_file`，再弹出 Share Sheet。
-3. `download-bridge.js` 只负责同源窗口中的浏览器式下载桥接：
-   - 支持 `blob:` / `data:` / 同源 `http(s)` 或相对 URL；
-   - 仅接管带 `download` 属性的 anchor；
-   - 只保留 document capture 监听，不再 monkey-patch `HTMLAnchorElement.prototype.click()`。
-4. Rust 命令 `ios_share_file` 只接受 app `tempDir` / `appCacheDir` 下专用 staging root `tauritavern-export-staging` 内的绝对路径，避免前端获得“任意本地文件分享”能力。
-
-### 3.4 失败与清理语义
-
-- 分享弹窗展示失败、文件不存在、路径越界等错误必须直接失败并向用户可见。
-- 用户主动取消 Share Sheet 不算错误，返回 `completed: false`，不显示成功 toast。
-- staging 清理属于 best-effort：
-  - 如果分享阶段已经结束，cleanup 失败只记录告警，不反向污染分享结果；
-  - 如果 staging 尚未完成就失败，前端会立即尝试回收临时目录，避免残留堆积。
-
-### 3.5 维护约束
-
-- 业务代码如果需要程序化导出，优先走共享 `download()` / `downloadBlobWithRuntime()`，不要重新发明 iOS 特判。
-- 如果未来需要扩大 `ios_share_file` 能力边界，应先重新设计 staging contract，而不是放宽到任意沙盒路径。
-- 如果未来出现大文件同源下载需求，应优先考虑 stream-to-file，而不是继续 `fetch -> blob -> share` 扩容。
-
-实现位置：
-
-- 前端导出基础设施：`src/scripts/file-export.js`
-- 下载桥：`src/tauri/main/download-bridge.js`
-- 导出反馈：`src/scripts/download-feedback.js`
-- iOS share 命令：`src-tauri/crates/tauritavern/src/presentation/commands/ios_file_bridge_commands.rs`
-
-### 3.6 iOS Skill 导入
-
-Skill 导入使用独立命令 `ios_pick_skill_import_archives`：
-
-- `UIDocumentPickerViewController` 允许选择一个或多个 zip / 普通 data 文件，保证默认 `.zip` Skill 归档与历史 `.ttskill` 归档都可被选中；
-- Rust 命令逐个把选中的安全作用域文件复制到 app cache/temp 下的 `tauritavern-skill-import-staging`；任一复制失败时清理本次命令已经 staged 的文件并返回错误；
-- 前端仍只收到一个或多个 `{ kind: 'archiveFile', path }`，后续预览与安装继续逐项走 Skill repository 的真实路径契约；
-- 用户放弃某个输入时由 `api.skill.discardPickedImport(input)` 清理；放弃整个批次时调用无参数的 `discardPickedImport()`。安装完成或失败后由 `installImport()` 自动清理对应输入。
 
 ## 4. WKWebView Element Fullscreen（iOS 16+ 启用）
 

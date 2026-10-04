@@ -24,5 +24,8 @@ pub(super) async fn build_services(
     data_directory: &DataDirectory,
     startup_profile: &StartupProfile,
 ) -> Result<AppServices, DomainError> {
+    if let Err(error) = crate::infrastructure::staging::clear_staging_root(app_handle).await {
+        tracing::warn!(%error, "Failed to clear files left by the previous session");
+    }
     services::build(app_handle, data_directory, startup_profile).await
 }

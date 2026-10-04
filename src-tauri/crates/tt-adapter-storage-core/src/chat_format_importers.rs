@@ -367,65 +367,6 @@ pub fn validate_import_header(bytes: &[u8]) -> Result<(), DomainError> {
     Ok(())
 }
 
-/// Export a JSONL chat payload to plain text.
-pub fn export_payload_to_plain_text(payload: &[Value]) -> String {
-    if payload.is_empty() {
-        return String::new();
-    }
-
-    let header = payload.first().and_then(Value::as_object);
-    let header_user_name = header
-        .and_then(|entry| entry.get("user_name"))
-        .and_then(Value::as_str)
-        .unwrap_or("User");
-    let header_character_name = header
-        .and_then(|entry| entry.get("character_name"))
-        .and_then(Value::as_str)
-        .unwrap_or("Character");
-
-    let mut output = String::new();
-    for message in payload.iter().skip(1) {
-        if message
-            .get("is_system")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            continue;
-        }
-
-        let Some(raw_text) = message
-            .get("extra")
-            .and_then(Value::as_object)
-            .and_then(|extra| extra.get("display_text"))
-            .and_then(Value::as_str)
-            .or_else(|| message.get("mes").and_then(Value::as_str))
-        else {
-            continue;
-        };
-
-        let is_user = message
-            .get("is_user")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let name = message
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or(if is_user {
-                header_user_name
-            } else {
-                header_character_name
-            });
-
-        let normalized = raw_text.replace("\r\n", "\n").replace('\r', "\n");
-        output.push_str(name);
-        output.push_str(": ");
-        output.push_str(&normalized);
-        output.push_str("\n\n");
-    }
-
-    output
-}
-
 #[cfg(test)]
 mod tests {
     use super::import_chat_payloads_from_json;

@@ -153,39 +153,6 @@ https://v2.tauri.app/develop/resources/#android
 - 平台差异被收敛到一个模块，不向业务层扩散；
 - 未来若 iOS 出现类似目录异常，可在同一模块增加 `cfg(target_os = "ios")` 分支，不需要修改各仓储。
 
-### 3.4 公共 Downloads 导出不是应用数据目录问题
-
-角色卡、Preset、WorldInfo 等前端普通导出遵循浏览器下载语义：用户点击导出后，文件应出现在 Android 公共下载目录（通常显示为 `/storage/emulated/0/Download`），而不是 app-scoped 外部目录。
-
-需要特别区分：
-
-- `appDataDir/localDataDir` 问题处理的是应用数据根目录；
-- Tauri Android 的 `downloadDir()` 可能解析到 `/storage/emulated/0/Android/data/<package>/files/Download`，这对应用私有文件是合理位置，但不是用户导出文件的成功目标；
-- Tauri fs capability 只表达 Tauri 插件 allowlist，不等价于 Android scoped storage 的系统级公共目录写入授权。
-
-当前方案：
-
-- 普通 Blob 下载主链仍收口在前端 `download()` / `downloadBlobWithRuntime()`，保持 SillyTavern 上游调用语义；
-- 前端先把 Blob 分块写入 app cache 下的 `tauritavern-export-staging`，native bridge 只接受该 staging 根下的 canonical file；
-- Android 10+ 使用 native `MediaStore.Downloads` 写入公共 Downloads；
-- Android 8-9 无可靠的无权限公共 Downloads 裸路径写入语义，回退到 SAF `ACTION_CREATE_DOCUMENT`，由用户选择保存目标；
-- 不再把 app-scoped `Download` 作为普通导出的 fallback；公共下载写入失败必须向前端暴露错误。
-
-图片长按保存：
-
-- 浏览器中的“保存图片”菜单是 `contextmenu` 在 `<img>` 上的默认行为。Android WebView 没有实现这一项，只有默认关闭的 Chromium 开关 `kWebViewHyperlinkContextMenu` 会创建该菜单。
-- 这个菜单不能在原生层补。Chromium 会先把长按交给 WebView 的 `performLongClick()`；原生菜单只要有菜单项，就会消费这次长按，页面收不到 `contextmenu`，扩展调用 `preventDefault()` 也不再起作用。上游角色列表的长按批量编辑、智绘姬的长按编辑都依赖页面先收到这次长按。
-- 当前由前端 `download-bridge.js` 补上这一默认行为：主文档或同源 iframe 中的 `<img>` 收到 `contextmenu`，且事件没有被 `preventDefault()` 时，先弹出确认框，再在图片所在窗口读取原始字节，交给 `downloadBlobWithRuntime()`。保存位置、Android 版本分支与结果提示都与普通导出一致。
-- 跨源图片的读取遵循 CORS；服务器不允许读取时直接提示失败。
-
-维护原则：
-
-- 不要通过修改 `infrastructure/paths.rs` 或强行拼接 `/storage/emulated/0/Download` 来实现普通导出；
-- 不要给普通导出引入 `MANAGE_EXTERNAL_STORAGE` 或宽泛存储权限；
-- 如需新增 Android 用户可见文件导出，优先复用 native public download bridge，而不是直接使用 Tauri `downloadDir()`；
-- 不要在 WebView 上注册 `OnCreateContextMenuListener` 或 `OnLongClickListener`，它们会先于页面处理长按；
-- 如果 Chromium 将来默认启用 WebView 自带的图片菜单，应删除前端补上的这一默认行为，避免同一次长按出现两个菜单。
-
 ---
 
 ## 4. 与上述问题相关的关键架构调整
@@ -467,29 +434,11 @@ Android WebView 可能暴露 `navigator.clipboard.writeText()`，却在调用时
 
 ---
 
-## 10. Android Skill 导入文件选择
+## 10. Android 文件导入与导出
 
-现象：
+Android 是[文件传输](CurrentState/FileTransfer.md)的一个平台实现，与鸿蒙共用 URI 复制代码。`ContentUriPlugin` 负责查询原文件名。升级 Tauri 或 dialog/fs 插件后，要用 release 构建验收两点：Rust 调用原生插件是否正常；从云盘 provider 选取时，文件名与内容是否正确。
 
-- 桌面端 Agent System 的 Skill 导入会弹出系统文件选择器；
-- Android 端不能依赖桌面 `dialog.open` 返回普通文件路径，系统选择器返回的是 `content://` URI。
-
-当前契约：
-
-- `api.skill.pickImportArchive()` 与 `pickImportArchives()` 统一使用 Tauri dialog 的 Android 文件选择能力，分别取得一个或多个 `content://` URI；
-- 该能力由 `capabilities/system-file-picker.json` 授予 android 平台的 `dialog:allow-open`；
-- 前端 `android-archive-service.js` 逐个把 URI 物化到 app cache/temp 下的 `tauritavern-skill-import-staging`；
-- Host API 对 UI 只返回一个或多个 `{ kind: 'archiveFile', path }`，保持 Skill 后端只消费普通文件路径；
-- 如果用户放弃某个输入，UI 调用 `api.skill.discardPickedImport(input)`；放弃整个批次时调用无参数的 `discardPickedImport()`。`installImport()` 完成后会自动清理对应输入。
-
-维护原则：
-
-- 新增平台分支调用 `plugin:*|*` 时，必须同步扩展对应 capability 的 `platforms`。`removeUnusedCommands` 会把未授权平台的命令直接裁掉，缺口只会在实机上以 ACL 错误暴露。
-- 不把 `content://` 透传到 Rust Skill repository；仓储层只处理真实路径与归档内容。
-- 导入不把完整文件整体 base64 物化，避免把内存占用集中到 JS heap 与单个 IPC payload。
-- 选择器取消不是错误；staging、预览、安装、清理失败都应直接暴露，避免静默遗留坏状态。
-
----
+图片长按保存：Android WebView 没有图片上下文菜单，由 `download-bridge.js` 在页面层补上 `<img>` 的 `contextmenu` 默认行为，契约见 [FrontendHostContract §5.7](FrontendHostContract.md)。之所以放在页面层，是因为原生长按菜单会先消费长按，页面和扩展就收不到 `contextmenu`。Chromium 将来如果默认提供图片菜单，这一补充即可删除。
 
 ## 11. Android 大型 byte ingress
 
@@ -499,7 +448,7 @@ Tauri Android 当前不支持 raw byte invoke；嵌套 `Uint8Array` 会被编码
 
 - 按 host 帧上限仅编码当前帧的 base64，收到 ACK 后再发送下一帧；失败不回退 raw 传输。
 - 前端只持有会话 ID，暂存与目标路径由 Rust 管理。
-- 普通文件上传仍使用 `stage_upload_*`，不承担文档发布。
+- 普通文件上传与 Blob 导出使用 `stage_file_*`，不承担文档发布。
 
 升级 Tauri 后需在真机验证传输支持，不能仅依据 API 类型判断。
 

@@ -29,7 +29,7 @@ manifest.write_text(text)
 helper.patch_application(root / 'src-tauri', host, patches)
 
 # Stable Tauri does not know this platform enum, so extend capabilities only here.
-for name in ('mobile-barcode-scanner', 'system-file-picker'):
+for name in ('mobile-barcode-scanner',):
     path = host / 'capabilities' / f'{name}.json'
     data = json.loads(path.read_text())
     data['platforms'].append('openHarmony')

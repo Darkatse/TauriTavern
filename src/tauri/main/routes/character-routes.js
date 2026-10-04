@@ -374,14 +374,12 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
             },
         });
 
-        const payload = normalizeBinaryPayload(exported?.data);
+        const payload = normalizeBinaryPayload(exported);
         if (normalizedFormat === 'png' && payload.byteLength === 0) {
             return jsonResponse({ error: 'Character export payload is empty' }, 500);
         }
 
-        const contentType = String(
-            exported?.mime_type || (normalizedFormat === 'png' ? 'image/png' : 'application/json'),
-        );
+        const contentType = normalizedFormat === 'png' ? 'image/png' : 'application/json';
         const fallbackName = `${characterId}.${normalizedFormat}`;
         const rawDownloadName = String(avatar || fallbackName).replace(/\.png$/i, `.${normalizedFormat}`);
         const downloadName = sanitizeAttachmentFileName(rawDownloadName, fallbackName);

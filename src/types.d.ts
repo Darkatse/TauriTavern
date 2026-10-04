@@ -1221,7 +1221,7 @@ type TauriTavernLlmApiLogsApi = {
 type TauriTavernDevApi = {
     frontendLogs: TauriTavernFrontendLogsApi;
     backendLogs: TauriTavernBackendLogsApi;
-    exportBundle: () => Promise<string>;
+    exportBundle: () => Promise<boolean>;
     llmApiLogs: TauriTavernLlmApiLogsApi;
 };
 
@@ -1305,7 +1305,6 @@ type TauriTavernLayoutApi = {
 
 type TauriTavernCharacterCardsPickOptions = {
     multiple?: boolean;
-    title?: string;
 };
 
 type TauriTavernCharacterCardsApi = {

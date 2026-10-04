@@ -6,7 +6,7 @@ use crate::dto::character_dto::{
     CharacterDto, CharacterLorebookConflictDto, CharacterLorebookConflictResolution,
     CheckCharacterLorebookConflictDto, CreateCharacterDto, CreateCharacterWithAvatarResultDto,
     CreateWithAvatarDto, DeleteCharacterDto, DuplicateCharacterDto, ExportCharacterContentDto,
-    ExportCharacterContentResultDto, ExportCharacterDto, GetCharacterChatsDto, ImportCharacterDto,
+    ExportCharacterContentResultDto, GetCharacterChatsDto, ImportCharacterDto,
     MergeCharacterCardDataDto, RenameCharacterDto, ReplaceCharacterDto,
     ResolveCharacterLorebookConflictDto, ResolveCharacterLorebookConflictResultDto,
     UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
@@ -663,23 +663,6 @@ impl CharacterService {
         Ok(CharacterDto::from(character))
     }
 
-    /// Export a character
-    pub async fn export_character(&self, dto: ExportCharacterDto) -> Result<(), ApplicationError> {
-        tracing::debug!("Exporting character: {} to {}", dto.name, dto.target_path);
-        let export_value = self.build_export_card_value(&dto.name).await?;
-        let export_json = serde_json::to_string_pretty(&export_value).map_err(|error| {
-            ApplicationError::InternalError(format!(
-                "Failed to serialize exported character JSON: {}",
-                error
-            ))
-        })?;
-
-        self.repository
-            .export_character(&dto.name, Path::new(&dto.target_path), &export_json)
-            .await?;
-        Ok(())
-    }
-
     /// Export character as downloadable content (PNG/JSON)
     pub async fn export_character_content(
         &self,
@@ -705,7 +688,6 @@ impl CharacterService {
 
             return Ok(ExportCharacterContentResultDto {
                 data: pretty_json.into_bytes(),
-                mime_type: "application/json".to_string(),
             });
         }
 
@@ -721,10 +703,7 @@ impl CharacterService {
             .export_character_png_bytes(&dto.name, &card_json)
             .await?;
 
-        Ok(ExportCharacterContentResultDto {
-            data: png_bytes,
-            mime_type: "image/png".to_string(),
-        })
+        Ok(ExportCharacterContentResultDto { data: png_bytes })
     }
 
     /// Update a character's avatar

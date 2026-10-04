@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{State, WebviewWindow};
 
 use crate::app::dev_observability::DevObservabilityHub;
+use crate::platform::file_transfer;
 use crate::presentation::commands::bridge::{VersionInfo, get_client_version};
+use crate::presentation::commands::file_transfer_commands::DeliveryResult;
 use crate::presentation::commands::helpers::log_command;
 use crate::presentation::errors::CommandError;
 use tt_application::dto::dev_observability_dto::{
@@ -104,9 +106,10 @@ pub async fn devlog_get_llm_api_log_raw(
 
 #[tauri::command]
 pub async fn devlog_export_bundle(
+    window: WebviewWindow,
     frontend_entries: Vec<FrontendLogEntrySnapshotDto>,
     observability: State<'_, Arc<DevObservabilityHub>>,
-) -> Result<String, CommandError> {
+) -> Result<DeliveryResult, CommandError> {
     log_command("devlog_export_bundle");
 
     let output_path = observability
@@ -116,7 +119,13 @@ pub async fn devlog_export_bundle(
         )
         .await?;
 
-    Ok(output_path.to_string_lossy().to_string())
+    let file_name = format!(
+        "tauritavern-dev-bundle-{}.zip",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
+    Ok(file_transfer::deliver(&window, output_path, &file_name)
+        .await?
+        .into())
 }
 
 fn dev_bundle_version_dto(version: VersionInfo) -> DevBundleVersionDto {

@@ -627,51 +627,6 @@ impl CharacterRepository for FileCharacterRepository {
         Ok(character)
     }
 
-    async fn export_character(
-        &self,
-        name: &str,
-        target_path: &Path,
-        character_card_json: &str,
-    ) -> Result<(), DomainError> {
-        let extension = target_path
-            .extension()
-            .and_then(|value| value.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-
-        match extension.as_str() {
-            "png" => {
-                let png_bytes = self
-                    .export_character_png_bytes(name, character_card_json)
-                    .await?;
-                fs::write(target_path, png_bytes).await.map_err(|error| {
-                    tracing::error!("Failed to write exported character PNG: {}", error);
-                    DomainError::InternalError(format!(
-                        "Failed to write exported character PNG: {}",
-                        error
-                    ))
-                })?;
-                Ok(())
-            }
-            "json" => {
-                fs::write(target_path, character_card_json.as_bytes())
-                    .await
-                    .map_err(|error| {
-                        tracing::error!("Failed to write exported character JSON: {}", error);
-                        DomainError::InternalError(format!(
-                            "Failed to write exported character JSON: {}",
-                            error
-                        ))
-                    })?;
-                Ok(())
-            }
-            _ => Err(DomainError::InvalidData(format!(
-                "Unsupported file format: {}",
-                extension
-            ))),
-        }
-    }
-
     async fn read_character_card_json(&self, name: &str) -> Result<String, DomainError> {
         let file_path = self.get_character_path(name);
         if !file_path.exists() {

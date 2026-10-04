@@ -1,6 +1,4 @@
-use serde_json::json;
-
-use super::{CharacterService, card_contract};
+use super::CharacterService;
 
 #[test]
 fn indexed_world_name_reserves_suffix_bytes() {
@@ -20,45 +18,6 @@ fn indexed_world_copy_continues_existing_suffix_sequence() {
     assert_eq!(
         CharacterService::strip_trailing_index_suffix("Lore (2)"),
         "Lore"
-    );
-}
-
-#[test]
-fn export_contract_removes_private_fields_and_connection_refs() {
-    let mut value = json!({
-        "name": "Alice",
-        "chat": "private-chat",
-        "fav": true,
-        "data": {
-            "extensions": {
-                "fav": true,
-                "tauritavern": {
-                    "agentProfiles": {
-                        "version": 1,
-                        "items": [{
-                            "profile": {
-                                "model": {
-                                    "mode": "connectionRef",
-                                    "connectionRef": "secret",
-                                    "modelId": "private-model"
-                                }
-                            }
-                        }]
-                    }
-                }
-            }
-        }
-    });
-
-    card_contract::unset_private_fields(&mut value).unwrap();
-    card_contract::sanitize_agent_profiles_for_export(&mut value);
-
-    assert_eq!(value.get("chat"), None);
-    assert_eq!(value.get("fav"), Some(&json!(false)));
-    assert_eq!(value.pointer("/data/extensions/fav"), Some(&json!(false)));
-    assert_eq!(
-        value.pointer("/data/extensions/tauritavern/agentProfiles/items/0/profile/model"),
-        Some(&json!({ "mode": "requiresConfiguration" }))
     );
 }
 

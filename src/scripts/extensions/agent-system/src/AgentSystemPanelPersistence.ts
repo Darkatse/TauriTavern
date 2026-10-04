@@ -230,7 +230,7 @@ export function createAgentSystemPanelPersistence(
         const portableProfile = sanitizePortableAgentProfile(profile);
         const blob = new Blob([`${prettyJson(portableProfile)}\n`], { type: PROFILE_EXPORT_CONTENT_TYPE });
         const downloadResult = await deps.downloadBlob(blob, `${profile.id}.agent-profile.json`);
-        if (downloadResult?.mode !== 'ios-native-share' || downloadResult.completed === true) {
+        if (downloadResult.delivered) {
             deps.notifySuccess(deps.tr('exportedProfile', { id: profile.id }));
         }
     }

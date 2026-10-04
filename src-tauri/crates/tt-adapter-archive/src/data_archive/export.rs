@@ -377,7 +377,7 @@ fn is_transient_entry(relative_path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     use super::*;
 
@@ -390,43 +390,59 @@ mod tests {
     }
 
     #[test]
-    fn user_backup_filter_excludes_secret_files_when_secret_export_is_disabled() {
-        assert!(!should_include_user_backup_entry(
-            Path::new("secrets.json"),
-            false
-        ));
-        assert!(!should_include_user_backup_entry(
-            Path::new("backups/secrets_migration_123.json"),
-            false
-        ));
-    }
+    fn archives_exclude_staging_files_and_apply_the_user_backup_secrets_policy() {
+        let root = temp_root("export-contents");
+        let data_root = root.join("source");
+        let user_root = data_root.join("default-user");
+        fs::create_dir_all(user_root.join("backups")).unwrap();
+        let staging = format!("backups/.tmp-chat-backup-{}", uuid::Uuid::nil().simple());
+        let kept = "backups/.tmp-chat-backup-not-a-uuid";
+        for path in [
+            "secrets.json",
+            "backups/secrets_migration_123.json",
+            &staging,
+            kept,
+        ] {
+            fs::write(user_root.join(path), b"{}").unwrap();
+        }
 
-    #[test]
-    fn user_backup_filter_keeps_secret_files_when_secret_export_is_enabled() {
-        assert!(should_include_user_backup_entry(
-            Path::new("secrets.json"),
-            true
-        ));
-        assert!(should_include_user_backup_entry(
-            Path::new("backups/secrets_migration_123.json"),
-            true
-        ));
-    }
+        for (index, include_secrets) in [None, Some(false), Some(true)].into_iter().enumerate() {
+            let output_path = root.join(format!("export-{index}.zip"));
+            let prefix = if let Some(include_secrets) = include_secrets {
+                run_export_user_backup_archive(
+                    &user_root,
+                    &output_path,
+                    include_secrets,
+                    &mut |_, _, _| {},
+                    &|| false,
+                    |_| Ok(Personas::new()),
+                )
+                .unwrap();
+                ""
+            } else {
+                run_export_data_archive(
+                    &data_root,
+                    &output_path,
+                    &mut |_, _, _| {},
+                    &|| false,
+                    |_| Ok(Personas::new()),
+                )
+                .unwrap();
+                "data/default-user/"
+            };
+            let archive = zip::ZipArchive::new(File::open(output_path).unwrap()).unwrap();
+            let names = archive.file_names().collect::<Vec<_>>();
+            for secret in ["secrets.json", "backups/secrets_migration_123.json"] {
+                assert_eq!(
+                    names.contains(&format!("{prefix}{secret}").as_str()),
+                    include_secrets != Some(false)
+                );
+            }
+            assert!(!names.contains(&format!("{prefix}{staging}").as_str()));
+            assert!(names.contains(&format!("{prefix}{kept}").as_str()));
+        }
 
-    #[test]
-    fn archive_filters_chat_backup_staging_files_in_full_and_user_paths() {
-        let staging = format!(".tmp-chat-backup-{}", uuid::Uuid::nil().simple());
-
-        assert!(is_chat_backup_staging_entry(Path::new(&format!(
-            "default-user/backups/{staging}"
-        ))));
-        assert!(!should_include_user_backup_entry(
-            Path::new(&format!("backups/{staging}")),
-            true
-        ));
-        assert!(!is_chat_backup_staging_entry(Path::new(
-            "default-user/backups/.tmp-chat-backup-not-a-uuid"
-        )));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

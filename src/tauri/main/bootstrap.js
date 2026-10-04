@@ -6,7 +6,7 @@ import { createInterceptors } from './interceptors.js';
 import { createRouteRegistry } from './router.js';
 import { installBackNavigationBridge } from './back-navigation.js';
 import { installNativeShareBridge } from './share-target-bridge.js';
-import { downloadBlobWithRuntime } from '../../scripts/file-export.js';
+import { deliverBlob } from '../../scripts/file-export.js';
 import { showExportFailureToast, showExportSuccessToast } from '../../scripts/download-feedback.js';
 import { hostPlatform, isDesktopHost, isMobileHost } from '../../scripts/util/host-identity.js';
 import { installAndroidImeLayoutHost } from './compat/mobile/android-ime-layout-host.js';
@@ -349,8 +349,7 @@ export function bootstrapTauriMain() {
         jsonResponse,
     });
     const downloadBridge = createDownloadBridge({
-        isMobileHost,
-        downloadBlobWithRuntime,
+        deliverBlob,
         notifyDownloadResult: showExportSuccessToast,
         notifyDownloadError: showExportFailureToast,
         // Android WebView has no image context menu, so the bridge supplies that default action.

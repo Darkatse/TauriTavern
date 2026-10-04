@@ -76,46 +76,6 @@ test('/api/backups/chat/get uses the metadata-only catalog only when requested',
     }]);
 });
 
-
-test('/api/backups/chat/download maps resource open failures before sending the response', async () => {
-    const router = createBackupsRouter({
-        createChatBackupDownloadStream: async () => {
-            throw new Error('Chat backup not found');
-        },
-    });
-
-    const response = await router.handle({
-        method: 'POST',
-        path: '/api/backups/chat/download',
-        body: { name: 'missing.jsonl' },
-    });
-
-    assert.equal(response.status, 404);
-});
-
-test('/api/chats/import restores a character backup without an upload Blob', async () => {
-    const router = createRouteRegistry();
-    registerChatRoutes(router, {
-        resolveCharacterId: async () => {
-            return 'alice-id';
-        },
-        safeInvoke: async () => {
-            return ['Restored Chat.jsonl'];
-        },
-    }, { jsonResponse });
-
-    const body = new FormData();
-    body.set('backup_name', 'chat_alice_20260722-120000.jsonl');
-    body.set('avatar_url', 'alice.png');
-
-    const response = await router.handle({ method: 'POST', path: '/api/chats/import', body });
-
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { res: true, fileNames: ['Restored Chat.jsonl'] });
-
-});
-
-
 test('/api/chats/import keeps the upload contract when a Blob also carries backup_name', async () => {
     let cleaned = false;
     const router = createRouteRegistry();

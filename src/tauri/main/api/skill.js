@@ -1,6 +1,7 @@
 // @ts-check
 
-import { hostPlatform, isDesktopHost } from '../../../scripts/util/host-identity.js';
+import { isDesktopHost } from '../../../scripts/util/host-identity.js';
+import { createFileStagingService } from '../services/files/file-staging-service.js';
 import {
     normalizeOptionalNonNegativeInteger,
     normalizeSkillImportInput,
@@ -30,15 +31,13 @@ function normalizePickedImportPaths(value) {
 /**
  * @param {{
  *   safeInvoke: (command: string, args?: any) => Promise<any>;
- *   materializeAndroidSkillImportArchive?: (contentUri: string) => Promise<any>;
- *   removeTemporaryFile?: (filePath: string) => Promise<void>;
  * }} deps
  */
 function createSkillApi({
     safeInvoke,
-    materializeAndroidSkillImportArchive,
-    removeTemporaryFile,
 }) {
+    const staging = createFileStagingService({ safeInvoke });
+
     // Pickers and cleanup share one batch. First-party views hold this lease
     // through preview and installation, including in-flight cleanup.
     let importAcquired = false;
@@ -97,112 +96,13 @@ function createSkillApi({
         return discovered.map(normalizeSkillImportInput);
     }
 
-    async function stageAndroidSkillImportArchive(contentUri) {
-        if (typeof materializeAndroidSkillImportArchive !== 'function') {
-            throw new Error('Android Skill import staging is unavailable');
-        }
-
-        const fileInfo = await materializeAndroidSkillImportArchive(contentUri);
-        if (!fileInfo?.filePath) {
-            const reason = fileInfo?.error ? `: ${fileInfo.error}` : '';
-            throw new Error(`Unable to stage Android Skill import archive${reason}`);
-        }
-        if (typeof fileInfo.cleanup !== 'function') {
-            throw new Error('Android Skill import cleanup is unavailable');
-        }
-
-        return rememberPickedImport(
-            { kind: 'archiveFile', path: fileInfo.filePath },
-            async () => {
-                await fileInfo.cleanup();
-            },
-        );
-    }
-
-    async function pickAndroidSkillImportArchives(multiple) {
-        const contentUris = normalizePickedImportPaths(await safeInvoke('plugin:dialog|open', {
-            options: {
-                multiple,
-                directory: false,
-                filters: [
-                    {
-                        name: 'Agent Skill Archive',
-                        extensions: ['application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
-                    },
-                ],
-            },
-        }));
-        if (!contentUris) {
-            return null;
-        }
-
-        try {
-            const inputs = [];
-            for (const contentUri of contentUris) {
-                inputs.push(await stageAndroidSkillImportArchive(contentUri));
-            }
-            return inputs;
-        } catch (error) {
-            await discardPickedImport();
-            throw error;
-        }
-    }
-
-    async function pickIosSkillImportArchives(multiple) {
-        if (typeof removeTemporaryFile !== 'function') {
-            throw new Error('iOS Skill import cleanup is unavailable');
-        }
-
-        const result = await safeInvoke('ios_pick_skill_import_archives', { multiple });
-        if (result?.cancelled) {
-            return null;
-        }
-
-        if (!Array.isArray(result?.filePaths) || result.filePaths.length === 0) {
-            throw new Error('iOS Skill import picker returned no files');
-        }
-        return result.filePaths.map((filePath) => {
-            const path = requireNonEmptyString(filePath, 'iOS Skill import file path');
-            return rememberPickedImport(
-                { kind: 'archiveFile', path },
-                async () => {
-                    await removeTemporaryFile(path);
-                },
-            );
-        });
-    }
-
     async function pickImportArchiveInputs(multiple) {
         await discardPickedImport();
-
-        switch (hostPlatform()) {
-            case 'android':
-                return pickAndroidSkillImportArchives(multiple);
-            case 'ios':
-                return pickIosSkillImportArchives(multiple);
-            case 'windows':
-            case 'macos':
-            case 'linux': {
-                const paths = normalizePickedImportPaths(await safeInvoke('plugin:dialog|open', {
-                    options: {
-                        title: multiple ? 'Import Agent Skill Archives' : 'Import Agent Skill',
-                        multiple,
-                        directory: false,
-                        filters: [
-                            {
-                                name: 'Agent Skill Archive',
-                                extensions: ['zip', 'ttskill'],
-                            },
-                        ],
-                    },
-                }));
-                return paths?.map((path) => rememberPickedImport({ kind: 'archiveFile', path }, null)) ?? null;
-            }
-            case 'ohos':
-                throw new Error('Skill archive import is not implemented for OpenHarmony yet');
-            default:
-                throw new Error(`Unsupported Skill import platform: ${hostPlatform()}`);
-        }
+        const files = await safeInvoke('pick_import_files', { kind: 'skill-archive', multiple });
+        return files?.map(({ path }) => rememberPickedImport(
+            { kind: 'archiveFile', path },
+            () => staging.discardFile(path),
+        )) ?? null;
     }
 
     async function list(options = {}) {
@@ -377,7 +277,5 @@ export function installSkillApi(context) {
 
     hostAbi.api.skill = createSkillApi({
         safeInvoke,
-        materializeAndroidSkillImportArchive: context.materializeAndroidSkillImportArchive,
-        removeTemporaryFile: context.removeTemporaryFile,
     });
 }

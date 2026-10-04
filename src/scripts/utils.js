@@ -18,7 +18,7 @@ import { getTagsList } from './tags.js';
 import { groups, selected_group } from './group-chats.js';
 import { getCurrentLocale, t } from './i18n.js';
 import { importWorldInfo } from './world-info.js';
-import { downloadBlobWithRuntime } from './file-export.js';
+import { deliverBlob } from './file-export.js';
 import { showExportFailureToast, showExportSuccessToast } from './download-feedback.js';
 
 export const shiftUpByOne = (e, i, a) => a[i] = e + 1;
@@ -412,9 +412,7 @@ export async function download(content, fileName, contentType, options = {}) {
         : new Blob([content], { type: contentType });
 
     try {
-        const result = await downloadBlobWithRuntime(file, fileName, {
-            fallbackName: 'download.bin',
-        });
+        const result = await deliverBlob(file, fileName);
         showExportSuccessToast(result);
         return result;
     } catch (error) {
@@ -425,10 +423,7 @@ export async function download(content, fileName, contentType, options = {}) {
 
         showExportFailureToast(error);
 
-        return {
-            mode: 'failed',
-            savedPath: '',
-        };
+        return { delivered: false };
     }
 }
 
