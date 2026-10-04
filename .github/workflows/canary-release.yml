@@ -64,6 +64,7 @@ jobs:
     needs: prepare
     uses: ./.github/workflows/ohos.yml
     with:
+      architectures: '["aarch64"]'
       package_version: ${{ needs.prepare.outputs.stable_version }}
       asset_time: ${{ needs.prepare.outputs.asset_time }}
 
@@ -367,6 +368,7 @@ jobs:
 
   testflight:
     needs: [prepare, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
     permissions:
       actions: read
       contents: write
@@ -490,7 +492,7 @@ jobs:
 
   notes:
     needs: [prepare, notes-context, notes-ai]
-    if: ${{ always() && needs.prepare.result == 'success' && needs.notes-context.result == 'success' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.notes-context.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -530,6 +532,8 @@ jobs:
 
   publish:
     needs: [prepare, desktop, mobile, ohos, notes]
+    # Wait for experimental HAPs, but publish the other platforms if OHOS fails.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.desktop.result == 'success' && needs.mobile.result == 'success' && needs.notes.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -630,6 +634,7 @@ jobs:
 
   publish-package-repositories:
     needs: [prepare, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
     continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
@@ -703,6 +708,7 @@ jobs:
 
   publish-nix-cache:
     needs: [prepare, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
     continue-on-error: true
     strategy:
       fail-fast: false

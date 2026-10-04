@@ -48,6 +48,7 @@ if (args[0] === "--prepare-frontend") {
     env.TAURITAVERN_SKIP_WEB_BUILD = "1";
 }
 
+// OpenHarmony uses the toolchain's cargo-tauri; the npm CLI has no ohos command.
 const result = spawnSync(args[0] === "ohos" ? "cargo" : process.execPath,
     args[0] === "ohos" ? ["tauri", ...args] : [tauriCli, ...args], {
     cwd: repoRoot,

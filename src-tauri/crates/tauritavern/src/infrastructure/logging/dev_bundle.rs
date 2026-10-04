@@ -181,6 +181,9 @@ pub fn export_dev_log_bundle(
 
 fn resolve_bundle_output_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, DomainError> {
     match HOST_IDENTITY.platform {
+        HostPlatform::Ohos => Err(DomainError::InternalError(
+            "Dev log bundle export is not implemented for OpenHarmony yet".to_string(),
+        )),
         HostPlatform::Ios => {
             let path_resolver = app_handle.path();
 
@@ -200,8 +203,7 @@ fn resolve_bundle_output_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, D
         HostPlatform::Windows
         | HostPlatform::Macos
         | HostPlatform::Linux
-        | HostPlatform::Android
-        | HostPlatform::Ohos => {
+        | HostPlatform::Android => {
             if let Ok(download_dir) = app_handle.path().download_dir() {
                 return Ok(download_dir);
             }

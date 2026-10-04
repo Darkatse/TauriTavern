@@ -8,8 +8,7 @@ import { pathToFileURL } from 'node:url';
 // tauri-action exposes platform-specific artifact tokens. Keep that vocabulary
 // at the CI boundary and publish a stable, project-owned naming contract.
 const RELEASE_ASSETS = new Map([
-    ['ohos-aarch64-hap', ['ohos-arm64-unsigned.hap', '.hap']],
-    ['ohos-x86_64-hap', ['ohos-x86_64-unsigned.hap', '.hap']],
+    ['ohos-aarch64-hap', ['ohos-arm64-v8a.hap', '.hap']],
     ['android-arm-apk', ['android-armeabi-v7a.apk', '.apk']],
     ['android-arm64-apk', ['android-arm64-v8a.apk', '.apk']],
     ['darwin-aarch64-dmg', ['macos-arm64.dmg', '.dmg']],
@@ -42,6 +41,10 @@ const DEBUG_ARTIFACTS = new Set([
     'debug-darwin-aarch64-dmg',
     'debug-darwin-x64-dmg',
     'debug-windows-x64-nsis',
+]);
+
+const OPTIONAL_ARTIFACTS = new Set([
+    'ohos-aarch64-hap',
 ]);
 
 async function listFiles(directory) {
@@ -124,7 +127,9 @@ export async function collectReleaseAssets({
     }
 
     const missing = [...RELEASE_ASSETS.keys()]
-        .filter((suffix) => !suffix.startsWith('ohos-') && !found.has(suffix) && (requireDebug || !DEBUG_ARTIFACTS.has(suffix)));
+        .filter((suffix) => !OPTIONAL_ARTIFACTS.has(suffix)
+            && !found.has(suffix)
+            && (requireDebug || !DEBUG_ARTIFACTS.has(suffix)));
     if (missing.length > 0) {
         throw new Error(`Missing workflow artifacts: ${missing.map((suffix) => artifactPrefix + suffix).join(', ')}`);
     }

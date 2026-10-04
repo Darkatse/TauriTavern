@@ -1,8 +1,17 @@
 name: Experimental OpenHarmony HAP
 on:
   workflow_dispatch:
+    inputs:
+      architectures:
+        description: 'JSON array: x86_64 for an x86 simulator, aarch64 for devices'
+        type: string
+        required: true
+        default: '["x86_64"]'
   workflow_call:
     inputs:
+      architectures:
+        type: string
+        required: true
       package_version:
         type: string
         required: true
@@ -11,9 +20,6 @@ on:
         required: true
 permissions:
   contents: read
-concurrency:
-  group: ohos-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
   hap:
     runs-on: ubuntu-latest
@@ -21,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [aarch64, x86_64]
+        arch: ${{ fromJSON(inputs.architectures) }}
     container:
       image: ghcr.io/leenhawk/tauri-harmony@sha256:01cfb6a9fa7fa35f1cf756fb89d4333d272820b66fe8dcf032375911eebddfdd
     defaults:
@@ -33,39 +39,39 @@ jobs:
       TAURITAVERN_BUILD_BRANCH: ${{ github.ref_name }}
       TAURITAVERN_BUILD_REVISION: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v4
       - run: git config --global --add safe.directory "$PWD"
       - run: pnpm install --frozen-lockfile
-      - run: node scripts/check-rust-crate-boundaries.mjs
       - run: python3 scripts/ohos/prepare.py
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
           shared-key: ohos-hap-${{ matrix.arch }}
           cache-on-failure: true
-      - run: pnpm run web:build
       - name: Build unsigned HAP
         run: |
           source scripts/ohos/env.sh
-          export TAURITAVERN_SKIP_WEB_BUILD=1
           export PATH="$HARMONY_TOOLS_DIR/command-line-tools/tool/node/bin:$HARMONY_TOOLS_DIR/command-line-tools/bin:$PATH"
-          python3 scripts/ohos/select-target.py
-          python3 scripts/ohos/sync-version.py
-          ohos_plugins_dir="$(cat src-tauri/crates/tauritavern/gen/ohos-plugins-source)"
-          python3 "$ohos_plugins_dir/shared/ohos/install.py" src-tauri/crates/tauritavern --sources-only
           config_args=(--config src-tauri/crates/tauritavern/tauri.ohos.conf.json)
           if [ -n "$PACKAGE_VERSION" ]; then
             config_args+=(--config "$(jq -cn --arg version "$PACKAGE_VERSION" '{version: $version}')")
           fi
-          node scripts/tauri-app.mjs ohos build --ci --target "${{ matrix.arch }}" --ignore-version-mismatches "${config_args[@]}" -- --lib
-      - name: Validate HAP native architecture
+          pnpm ohos build --ci --target "${TARGET_TRIPLE%%-*}" "${config_args[@]}" -- --lib
+      - name: Validate HAP and application project
         run: |
           shopt -s nullglob
           haps=(src-tauri/crates/tauritavern/gen/ohos/entry/build/default/outputs/default/*.hap)
           test "${#haps[@]}" -eq 1
           python3 scripts/ohos/validate-hap.py --target "$TARGET_TRIPLE" "${haps[0]}"
-      - uses: actions/upload-artifact@v7.0.1
+          project=src-tauri/crates/tauritavern/gen/ohos
+          changes=$(git status --porcelain -- "$project")
+          if [ -n "$changes" ]; then
+            printf '%s\n' "$changes"
+            git diff -- "$project"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
         with:
-          name: TauriTavern-${{ inputs.asset_time || github.run_number }}-canary-ohos-${{ matrix.arch }}-hap
+          name: ${{ inputs.asset_time && format('TauriTavern-{0}-canary-ohos-{1}-hap', inputs.asset_time, matrix.arch) || format('TauriTavern-ohos-{0}-run{1}-hap', matrix.arch, github.run_number) }}
           path: src-tauri/crates/tauritavern/gen/ohos/entry/build/default/outputs/default/*.hap
           if-no-files-found: error

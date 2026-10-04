@@ -354,7 +354,7 @@ TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板�
   - 若 `features` 指定了 `size/position`（典型 OAuth popup），宿主会在 App 内创建新 WebView 窗口，保持 `window.opener` / `postMessage` 回调语义可用。
   - 其余外链（`http/https/mailto/tel`）默认使用系统浏览器打开（避免在 App 内打开文档/升级链接）。
 
-移动端（Android/iOS）：
+移动宿主（`kind: 'mobile'`）：
 
 - `window.open()` 不创建应用内新窗口；对外链（`http/https/mailto/tel`）通过系统浏览器打开，并返回 `null`（等价“弹窗被阻止”的可观察语义）。
 

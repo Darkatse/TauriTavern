@@ -4,7 +4,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 
 root = Path(__file__).resolve().parents[2]
@@ -23,11 +22,8 @@ patches = helper.prepare_sources(external / 'runtime', pins)
 host = root / 'src-tauri/crates/tauritavern'
 manifest = host / 'Cargo.toml'
 text = manifest.read_text()
-# Desktop-only dependencies still participate in Cargo resolution. Keep them out
-# of this experimental checkout without changing any normal-platform manifest.
-for name in ('tauri-plugin-single-instance', 'tauri-plugin-window-state', 'tauri-plugin-pilot'):
-    text = re.sub(rf'^{name} = .*\n', '', text, flags=re.MULTILINE)
-text = text.replace('devtools-pilot = ["dep:tauri-plugin-pilot"]', 'devtools-pilot = []')
+# The fork's mobile_entry_point and Ability macros expand these crate paths in
+# the application. Keep their versions aligned with the pinned Tauri fork.
 text += '\n[target.\'cfg(target_env = "ohos")\'.dependencies]\nnapi-ohos = "=1.2.0"\nnapi-derive-ohos = "=1.2.0"\n'
 manifest.write_text(text)
 helper.patch_application(root / 'src-tauri', host, patches)
@@ -38,5 +34,4 @@ for name in ('mobile-barcode-scanner', 'system-file-picker'):
     data = json.loads(path.read_text())
     data['platforms'].append('openHarmony')
     path.write_text(json.dumps(data, indent=2)+'\n')
-(host / 'gen').mkdir(exist_ok=True)
-(host / 'gen/ohos-plugins-source').write_text(str(plugins)+'\n')
+subprocess.run(['python3', str(plugins / 'shared/ohos/install.py'), str(host), '--sources-only'], check=True)
