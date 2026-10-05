@@ -176,7 +176,9 @@ Stable 与 Canary 的普通自签 IPA 保持原有构建默认值；只有额外
   - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/extension_commands.rs:get_extensions`
   - 行为：发现阶段过滤（system 仅 allowlist；local/global third-party 受 `third_party_execution` 控制）
 - `content.external_import`
-  - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/content_commands.rs:download_external_import_url`
+  - Rust commands：
+    - `src-tauri/crates/tauritavern/src/presentation/commands/content_commands.rs:download_external_import_url`
+    - `src-tauri/crates/tauritavern/src/presentation/commands/file_staging_commands.rs:stage_file_from_url`
 - `updates.manual_check`
   - Rust commands：`src-tauri/crates/tauritavern/src/presentation/commands/update_commands.rs:check_for_update`
 - `llm.chat_completion_sources.allowlist`

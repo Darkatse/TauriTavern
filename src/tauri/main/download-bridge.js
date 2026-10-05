@@ -2,6 +2,7 @@ const IMAGE_EXTENSIONS = { jpeg: 'jpg', 'svg+xml': 'svg' };
 
 export function createDownloadBridge({
     deliverBlob,
+    deliverRemoteFile,
     notifyDownloadResult,
     notifyDownloadError,
     confirmImageDownload = null,
@@ -42,9 +43,9 @@ export function createDownloadBridge({
     }
 
     function getImageDownloadFileName(src, mimeType) {
-        const url = new URL(src);
-        if (url.protocol === 'http:' || url.protocol === 'https:') {
-            const name = decodeURIComponent(url.pathname.split('/').pop() || '');
+        if (isHttpSource(src)) {
+            const url = new URL(src);
+            const name = decodePathSegment(url.pathname.split('/').pop() || '');
             if (/\.[a-z0-9]+$/i.test(name)) {
                 return name;
             }
@@ -53,6 +54,15 @@ export function createDownloadBridge({
         const subtype = /^image\/([^;\s]+)/i.exec(mimeType)?.[1].toLowerCase();
         const extension = subtype ? (IMAGE_EXTENSIONS[subtype] ?? subtype) : '';
         return extension ? `image-${Date.now()}.${extension}` : `image-${Date.now()}`;
+    }
+
+    function decodePathSegment(segment) {
+        // An invalid escape in a suggested filename must not prevent saving the image.
+        try {
+            return decodeURIComponent(segment);
+        } catch {
+            return segment;
+        }
     }
 
     function resolveDownloadAnchor(targetWindow, eventTarget) {
@@ -88,8 +98,8 @@ export function createDownloadBridge({
 
     function resolveSameOriginDownloadUrl(targetWindow, href) {
         try {
-            const url = new targetWindow.URL(href, targetWindow.location.href);
-            if (url.origin !== targetWindow.location.origin) {
+            const url = new targetWindow.URL(href);
+            if (!isSameOrigin(targetWindow, url)) {
                 return null;
             }
 
@@ -101,6 +111,22 @@ export function createDownloadBridge({
         } catch {
             return null;
         }
+    }
+
+    function isSameOrigin(targetWindow, url) {
+        // srcdoc/about:blank have location.origin === 'null' but inherit their window origin.
+        return url.origin === targetWindow.origin;
+    }
+
+    function isHttpSource(src) {
+        // DOM image sources have normalized schemes; avoid parsing large data URL payloads.
+        return src.startsWith('http:') || src.startsWith('https:');
+    }
+
+    function isRemoteImageSource(targetWindow, src) {
+        // Like a browser's "Save image", the host fetches remote images outside the page's CORS rules.
+        // Same-origin URLs are served inside the WebView, so only the page can read them.
+        return isHttpSource(src) && !isSameOrigin(targetWindow, new targetWindow.URL(src));
     }
 
     function createDownloadRequest(targetWindow, anchorElement) {
@@ -126,9 +152,7 @@ export function createDownloadBridge({
         };
     }
 
-    async function exportBlob(blob, fileName) {
-        const result = await deliverBlob(blob, fileName);
-
+    function notifyDownloadSuccess(result) {
         if (typeof notifyDownloadResult !== 'function') {
             return;
         }
@@ -160,7 +184,8 @@ export function createDownloadBridge({
 
         event?.preventDefault();
         void request.blobPromise
-            .then((blob) => exportBlob(blob, request.fileName))
+            .then((blob) => deliverBlob(blob, request.fileName))
+            .then(notifyDownloadSuccess)
             .catch((error) => {
                 console.error('Failed to bridge native download:', error);
                 notifyDownloadFailure(error);
@@ -192,15 +217,22 @@ export function createDownloadBridge({
         }
 
         try {
-            if (!await confirmImageDownload(source)) {
-                return;
+            if (await confirmImageDownload(source)) {
+                notifyDownloadSuccess(await saveImage(targetWindow, source.src));
             }
-            const blob = await readDownloadBlob(targetWindow, source.src);
-            await exportBlob(blob, getImageDownloadFileName(source.src, blob.type));
         } catch (error) {
             console.error('Failed to download image:', error);
             notifyDownloadFailure(error);
         }
+    }
+
+    async function saveImage(targetWindow, src) {
+        if (isRemoteImageSource(targetWindow, src)) {
+            return deliverRemoteFile(src, (mimeType) => getImageDownloadFileName(src, mimeType));
+        }
+
+        const blob = await readDownloadBlob(targetWindow, src);
+        return deliverBlob(blob, getImageDownloadFileName(src, blob.type));
     }
 
     function patchWindow(targetWindow = window) {

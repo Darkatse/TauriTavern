@@ -115,7 +115,7 @@ src/
 
 - 处理所有宿主同源窗口中的浏览器式下载（如 `blob:` / `data:` / 同源 URL + `a[download]`）。
 - Android 上为同源窗口中的 `<img>` 补上 `contextmenu` 默认行为（保存图片）：用户确认后，图片进入同一条导出链路。
-- 将命中的导出交给 `deliverBlob()`，暂存后由宿主交付；见[文件传输](CurrentState/FileTransfer.md)。
+- 页面可读的内容交给 `deliverBlob()`；远程图片交给 `deliverRemoteFile()`，由宿主下载。两者都先暂存再交付，见[文件传输](CurrentState/FileTransfer.md)。
 - 不参与 API 路由判断，避免与请求拦截职责混合。
 
 ### 4.5 `router.js` + `routes/*`
