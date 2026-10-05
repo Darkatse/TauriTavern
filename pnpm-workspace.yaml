@@ -1,3 +1,6 @@
+# Explicit root scope prevents pnpm's dependency checks from repeatedly triggering installs.
+packages:
+  - '.'
 allowBuilds:
   '@parcel/watcher': true
   protobufjs: true
