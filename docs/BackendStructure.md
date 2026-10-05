@@ -233,6 +233,8 @@ src-tauri/crates/tauritavern/src/
 - 非 host crate 不读平台（`desktop` / `mobile` 在那里恒为假），cfg 只用于依赖或系统 API 能否编译；行为差异由 composition root 注入事实（如 `HostKind`）或数值（如 IPC 帧预算）。
 - 为每个平台选择实现时，`match` 列出全部平台、不写通配；某个平台独有的处理用正向条件。
 
+`pnpm run check:platform` 检查各 crate 源码是否遵守以上约束，报错指向本节。
+
 ## 7. Adapter 边界
 
 adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 adapter crate 应当对应一个清晰的 bounded context 或一组稳定变化原因。

@@ -50,6 +50,8 @@
 - 用正向条件表达类别，不用 `!android && !ios` 代表桌面。为每个平台选择实现时，`switch` 列出全部平台，`default` 抛错；某个平台独有的处理用正向判断即可。
 - 上游 Bowser `isMobile()` 与 CSS 媒体查询属于上游布局语义，保持不变。规则同时取决于宿主类别与窗口方向时（如聊天宽度），组合 `isMobileHost()` 与 `util/window-layout.js` 的 `isWindowPortrait()`。
 
+`pnpm run check:platform`（已接入 `pnpm run check`）检查以上约束，报错指向本节。
+
 ## 3. 目录结构（前端集成相关）
 
 ```text
