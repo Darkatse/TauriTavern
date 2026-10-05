@@ -38,6 +38,8 @@ targets:
     info:
       path: tauritavern_iOS/Info.plist
       properties:
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
         LSRequiresIPhoneOS: true
         NSBonjourServices: ["_tauritavern._tcp"]
         UILaunchStoryboardName: LaunchScreen

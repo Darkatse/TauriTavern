@@ -49,5 +49,11 @@ pub(crate) fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(shutdown::handle_run_event);
+        .run(|app, event| {
+            #[cfg(target_os = "ios")]
+            if let tauri::RunEvent::SceneRequested { scene, .. } = &event {
+                crate::platform::ios_ui::close_extra_scene(scene);
+            }
+            shutdown::handle_run_event(app, event);
+        });
 }

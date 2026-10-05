@@ -21,6 +21,10 @@
 
 排查灰带或双重缩小时，对照 WKWebView frame、`innerHeight`/`visualViewport` 与键盘边界：窗口与内容视口的差值应恰好等于安全区与停靠键盘。
 
+### 1.1 UIScene 生命周期
+
+iOS 27 SDK 要求 UIScene 生命周期。Tao 0.35.3 只在 `UIApplicationSupportsMultipleScenes = true` 时启用它，因此 `gen/apple/project.yml` 与生成的 `Info.plist` 声明为 true。应用只有一个主窗口：系统额外请求的 scene 经 `RunEvent::SceneRequested` 交给 `platform::ios_ui::close_extra_scene()` 销毁。Tao 把 scene 生命周期与多窗口拆开后，改为 false 并删除这段处理。
+
 ## 2. 文件导入与导出
 
 iOS 是[文件传输](CurrentState/FileTransfer.md)的一个平台实现：

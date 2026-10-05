@@ -9,6 +9,24 @@ use tt_domain::errors::DomainError;
 
 use objc2_ui_kit::{UIViewController, UIWindow};
 
+/// Tao currently couples the scene lifecycle required by iOS 27 to multiple-scene support.
+/// The app owns one main window; close extra system-requested scenes until Tao separates them.
+pub fn close_extra_scene(scene: &objc2_ui_kit::UIScene) {
+    use objc2::MainThreadOnly;
+
+    let on_error = block2::RcBlock::new(|error: std::ptr::NonNull<objc2_foundation::NSError>| {
+        tracing::error!("Failed to close additional iOS scene: {:?}", unsafe {
+            error.as_ref()
+        });
+    });
+    objc2_ui_kit::UIApplication::sharedApplication(scene.mtm())
+        .requestSceneSessionDestruction_options_errorHandler(
+            &scene.session(),
+            None,
+            Some(&on_error),
+        );
+}
+
 /// Resolve the top-most view controller for presenting modal UI.
 ///
 /// Must be called on the main thread.
