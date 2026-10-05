@@ -10,6 +10,18 @@
     z-index: -1;
 }
 
+/* Wallpaper belongs to the native window, independent of keyboard resizing. */
+#bg1.tt-window-background {
+    position: fixed;
+    left: var(--tt-window-x);
+    top: var(--tt-window-y);
+    width: var(--tt-window-width);
+    height: var(--tt-window-height);
+    background-attachment: scroll;
+    /* Both renderers consume one settled appearance, not an intermediate cross-fade. */
+    transition: none;
+}
+
 /* Fitting options */
 #background_fitting {
     max-width: 8em;

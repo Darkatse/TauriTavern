@@ -43,10 +43,6 @@ interface Window {
         subscribe: (handler: (payload: any) => void) => () => void;
     };
     __TAURITAVERN_MOBILE_RUNTIME_COMPAT__?: boolean;
-    __TAURITAVERN_MOBILE_OVERLAY_COMPAT__?: {
-        dispose: () => void;
-        revalidate: () => void;
-    };
     __TAURITAVERN_MOBILE_WINDOW_OPEN_COMPAT__?: boolean;
 
     __TAURITAVERN_EMBEDDED_RUNTIME__?: {
@@ -1277,11 +1273,7 @@ type TauriTavernLayoutFrame = {
     bottom: number;
 };
 
-type TauriTavernLayoutImeKind = 'composer' | 'fixed-shell' | 'dialog';
-
 type TauriTavernLayoutImeSnapshot = {
-    activeSurface: Element | null;
-    kind: TauriTavernLayoutImeKind;
     bottom: number;
     viewportBottomInset: number;
     keyboardOffset: number;
@@ -1393,7 +1385,7 @@ type TauriTavernHostApi = {
 };
 
 type TauriTavernHostAbi = {
-    abiVersion: 1;
+    abiVersion: 2;
     traceHeader: string;
     ready: Promise<void> | null;
     invoke: TauriTavernHostInvokeApi;

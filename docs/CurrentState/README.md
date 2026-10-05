@@ -5,7 +5,7 @@
 | 模块 | 文档内容 |
 | --- | --- |
 | [第三方扩展](ThirdPartyExtensions.md) | 加载、发现与资源访问 |
-| [移动端样式](MobileStyleAdaptation.md) | WebView、safe area 与浮层适配 |
+| [移动端视口](MobileStyleAdaptation.md) | 原生内容视口、窗口背景与第一方移动端行为 |
 | [消息内嵌运行时](EmbeddedRuntime.md) | iframe 的生命周期与渲染 |
 | [启动流程](StartupOptimization.md) | Shell、Core、Full 阶段 |
 | [Bootstrap](BootstrapOptimization.md) | 启动输入与内存开销 |

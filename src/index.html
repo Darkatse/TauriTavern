@@ -8515,16 +8515,6 @@
     <script type="module" src="scripts/i18n.js"></script>
     <!-- Application Initialization -->
     <script type="module" src="init.js"></script>
-    <script>
-        window.addEventListener('load', (event) => {
-            const documentHeight = () => {
-                const doc = document.documentElement;
-                doc.style.setProperty('--doc-height', `${window.innerHeight}px`);
-            }
-            window.addEventListener('resize', documentHeight);
-            documentHeight();
-        });
-    </script>
 </body>
 
 </html>

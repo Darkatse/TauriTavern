@@ -1,5 +1,7 @@
 pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        super::window_layout_commands::get_window_snapshot,
+        super::window_layout_commands::set_window_backdrop,
         // TriviumDB commands
         super::database_commands::database_handle,
         // Character commands

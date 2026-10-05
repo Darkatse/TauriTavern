@@ -89,7 +89,6 @@ function createEditorDialog(sourceTextarea) {
     const dialog = document.createElement('dialog');
     dialog.id = EDITOR_DIALOG_ID;
     dialog.className = 'tt-chat-input-editor';
-    dialog.setAttribute('data-tt-mobile-surface', 'fullscreen-window');
     dialog.setAttribute('aria-labelledby', EDITOR_TITLE_ID);
 
     const surface = document.createElement('div');

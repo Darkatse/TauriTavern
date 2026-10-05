@@ -386,3 +386,7 @@ pnpm run test:contracts
 - 不要把 Tauri command 名当作扩展公共 API。
 - 不要用 IPC/base64 替代浏览器原生子资源语义。
 - 不要静默降级上游契约。字段无法保真、provider metadata 无法表达、目录状态不可恢复时，应显式失败。
+
+### 移动窗口背景边界
+
+`tt-contracts::window_layout` 定义窗口快照与背景请求。主 WebView 布局、系统栏政策、条带显示与过期结果的丢弃属于 `tauritavern::platform` 的 shell glue。`tt-adapter-media::window_backdrop` 负责 Tauri-free 的资源读取、解码与条带裁切，复用 Host Resource Store。流程见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md)。

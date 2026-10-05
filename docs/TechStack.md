@@ -170,8 +170,8 @@ pnpm run check:rust:dev
 
 移动端：
 
-- Android：Tauri Android 工程与 WebView/Insets 适配，见 `docs/AndroidDevelopment.md`
-- iOS：WKWebView、safe area、policy 与 native glue，见 `docs/iOSDevelopment.md`
+- Android：Tauri Android 工程与原生内容视口，见 `docs/AndroidDevelopment.md`
+- iOS：WKWebView 内容视口、policy 与 native glue，见 `docs/iOSDevelopment.md`
 
 便携模式通过 `TAURITAVERN_RUNTIME_MODE=portable` 或 `portable.flag` 启用。
 

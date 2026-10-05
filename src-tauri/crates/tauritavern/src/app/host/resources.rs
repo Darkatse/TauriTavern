@@ -65,9 +65,13 @@ pub(super) fn install_runtime_resources(
         startup_profile
             .tauritavern_settings
             .avatar_persona_original_images_enabled,
-        host_resource_store,
+        host_resource_store.clone(),
     ));
     app.manage(host_resource_service.clone());
+    #[cfg(all(mobile, not(target_env = "ohos")))]
+    app.manage(Arc::new(
+        tt_adapter_media::window_backdrop::WindowBackdropRenderer::new(host_resource_store),
+    ));
 
     // User media is a separate command-facing service, but it shares the same
     // runtime data root and should be published with the rest of resource state.

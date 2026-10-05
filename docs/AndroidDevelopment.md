@@ -4,76 +4,11 @@
 
 当前支持 Android 8.0（API 26）及以上，并要求系统 WebView/Chrome 已更新到能执行 ES2020 的版本。
 
-## 1. Android WebView 安全区注入时机竞态
+## 1. 原生内容视口与窗口背景
 
-### 1.1 现象
+`AndroidWindowLayout` 拥有主 WebView 的矩形：系统栏、刘海和停靠键盘在原生层消费，网页按普通视口排版。`WindowLayoutPlugin` 供 Rust 读取窗口快照、提交背景条带。职责、提交时机与背景链路见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md)。
 
-- `#top-settings-holder` 偶发沉入状态栏。
-- 现象不稳定：同一版本在不同启动时机下表现不同。
-- 简单删除延时重试后，问题明显回归。
-
-### 1.2 根因
-
-根因不是 inset 数值计算本身，而是 **注入时机竞态**：
-
-- Android WebView 启动阶段常经历 `about:blank -> tauri.localhost` 的页面切换。
-- 若在 `about:blank` 或前端根容器（`#sheld`）尚未出现时注入 CSS 变量，后续导航/重置会丢失变量。
-- 表层看是“safe area 失效”，本质是“注入到了错误上下文或过早上下文”。
-
-参考问题：  
-https://github.com/tauri-apps/tauri/issues/14240
-
-### 1.3 当前实现
-
-核心入口仍是 `src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/MainActivity.kt`，但职责已拆分为：
-
-- `AndroidInsetsBridge.kt`：系统栏/IME inset 监听与 CSS 变量注入；
-- `WebViewReadinessPoller.kt`：页面就绪轮询；
-- `ShareIntentParser.kt`：分享 Intent 解析与导入文件持久化；
-- `SharePayloadDispatcher.kt`：分享 payload 队列与前端 bridge 分发；
-- `MainActivity.kt`：仅保留生命周期编排与模块协作。
-
-- 保留 edge-to-edge 与透明系统栏配置（沉浸基础）；
-- 监听系统栏与 IME inset；
-- 在 native 侧消费 IME 语义并把底部避让作为 CSS 变量注入；不再让 descendant WebView 将 IME 继续解释为 viewport resize；
-- Android native 注入的 CSS 变量（provider 层）：
-  - `--tt-inset-top/right/left/bottom`（布局应避开的有效 inset：system bars + cutout 等，沉浸模式下为 0）
-  - `--tt-ime-bottom`（输入法可见时的底部 inset）
-  - `--tt-base-viewport-height`（无 IME 时的基准 viewport 高度）
-- 前端布局消费的 CSS 变量（contract 层）：
-  - `--tt-inset-top/right/left/bottom`（有效避让 inset；iOS 由 `env()` 提供，Android 由 native 注入覆盖）
-  - `--tt-viewport-bottom-inset`（前端通过 `max()` 合成有效底部 inset）
-
-Android 语义说明（以 contract 层为准）：
-
-- `--tt-inset-*` 表示**当前布局应避开的有效 inset**；
-- 非沉浸模式下，它反映 system bars + `displayCutout`（刘海/打孔）的可见/稳定 inset；
-- 沉浸模式下，它会回落为 `0`，允许应用顶部 UI 与第三方 fixed 浮层以 full-bleed 方式沉入状态栏区域。
-- `--tt-ime-bottom` 是 Android 上唯一的键盘布局信号；WebView 本身不应再把 IME 当作页面 viewport 缩放来源。
-
-注入时序约束：
-
-- 注入前先检查页面就绪：
-  - `location.href !== 'about:blank'`
-  - `Boolean(document.getElementById('sheld'))`
-  - 未满足时进行有限次短重试。
-
-说明：
-
-- 这里**不以 `readyState` 作为硬门槛**：SillyTavern 启动阶段可能在 `readyState=loading` 时就触发 popup/onboarding 的 focus 流；IME ownership 路由依赖早期 bridge 可用，因此以“`#sheld` 已挂载”作为最小可靠前置条件更稳。
-
-前端消费变量在：
-
-- `src/style.css`（变量定义与 fallback）
-- `src/css/mobile-styles.css`（顶部栏与容器定位使用 contract 变量）
-
-### 1.4 维护原则
-
-- 不要把“就绪态判断”误删为一次性注入。
-- 不要把此问题误判为纯 CSS 问题；先验证变量是否被注入到正确页面上下文。
-- 若后续 Tauri 官方修复 WebView safe-area 注入时序，可再评估收敛逻辑。
-
----
+清单中的 `adjustResize` 只供 androidx 在 API 26-29 上推导键盘 inset；布局不依赖系统缩放窗口。
 
 ## 2. Android 资源访问语义差异（APK assets）
 
@@ -176,7 +111,7 @@ https://v2.tauri.app/develop/resources/#android
 ### 4.4 前端接入点
 
 - `src/scripts/templates.js`：模板读取在 Tauri 环境下走 `invoke('read_frontend_template')`
-- `src/css/mobile-styles.css` + `src/style.css`：通过 `--tt-inset-*` 消费布局契约
+- `src/css/mobile-styles.css` + `src/style.css`：按已经避让的浏览器视口排版，`--doc-height` 为静态 CSS 别名
 
 ---
 
@@ -185,10 +120,7 @@ https://v2.tauri.app/develop/resources/#android
 1. **Tauri 官方修复目录 API 后**  
    `infrastructure/paths.rs` 会自动优先使用修复后的 `app_data_dir`，无需在仓储层做分散修补。
 
-2. **Tauri 官方修复 WebView safe-area 注入后**  
-   可评估简化 `MainActivity` 的“页面就绪后注入”逻辑，但必须先验证不会回归 `about:blank` 时序竞态。
-
-3. **新增移动端特性时**  
+2. **新增移动端特性时**
    优先复用现有单点抽象（`assets.rs` / `paths.rs` / `MainActivity.kt`），避免再次把平台差异扩散到业务代码。
 
 ---
@@ -282,39 +214,9 @@ Android WebView 可能暴露 `navigator.clipboard.writeText()`，却在调用时
 - 不再在前端预取/Blob 注入，避免低端设备 CSS AST 处理导致的卡顿与超时。
 
 
-### 6.3 JS-Slash-Runner 脚本弹窗贴顶（关闭按钮落入状态栏）
+### 6.3 第三方面板可达性
 
-现象：
-
-- 某些脚本运行后弹窗顶部被状态栏遮挡，关闭按钮不可点击。
-
-根因：
-
-- 脚本运行时直接向主文档注入 `<style>`；
-- 规则常见为 `position: fixed` + `top: 0`，绕过了扩展 CSS 资源链路中的现有修正。
-
-已落地方案：
-
-- 在 Tauri mobile 安装第三方 surface classifier + CSS contract：
-  - JS classifier（admission-time）：
-    - 分类/契约输出：`src/tauri/main/compat/mobile/mobile-overlay-surface-admission.js`
-    - 观察与有界 settle window：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
-    - 同源 iframe bridge：`src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`
-    - 入口：`src/tauri/main/bootstrap.js`（仅移动宿主）
-    - 策略：观察 `document.body` 直系子节点增删，并对 `script_id` portal root 扫描其子树；对已跟踪候选仅监听自身生命周期属性（`class/style/hidden/open/aria-hidden`）以撤销/恢复 host-admitted contract，属性重算按 animation frame 合并；稳定的 `free-window` 只响应 inline lifecycle style（`display/visibility/position/pointer-events/cursor/touch-action`）变化，几何类 style 写入保持在拖动热路径之外；对命中元素分类并输出：
-      - `data-tt-mobile-surface="backdrop|viewport-host|fullscreen-window|free-window|edge-window"`
-      - `data-tt-mobile-surface-admitted="1"`（host-private sentinel）
-      - `--tt-original-top=<px>`（仅 edge-window）
-    - 显式 opt-in：若节点已带 `data-tt-mobile-surface`，将尊重并不再改写。
-  - CSS contract：由 `src/tauri/main/compat/mobile/mobile-geometry-firewall.js` 提供 `[data-tt-mobile-surface="..."]` 的几何规则，统一执行 safe-area 约束（backdrop 保持 full-bleed）。
-  - 依赖：`--tt-inset-* / --tt-viewport-bottom-inset` 表示当前布局策略；非沉浸模式下会提供 safe-area 避让，沉浸模式下回落为 `0`，因此 contract 会自然退化为 full-bleed。
-
-设计约束：
-
-- 仅 Tauri mobile 生效；
-- 仅作用于第三方顶层浮层/窗口 surface，不改写全局 `<style>` 文本与静态主样式文件；
-- 明确排除 `body/#sheld/#chat` 等应用核心容器，避免牵连应用本体布局；
-- 不侵入第三方扩展资源加载链路（与 `third-party-runtime.js` 解耦）。
+脚本、portal、iframe 与 `<dialog>` 的 `top: 0` 就是内容视口顶部，`100vh` 随停靠键盘收缩。只有某个面板越界时，检查它自己的硬编码尺寸、负坐标或滚动裁剪；所有内容一起偏移时，检查原生 WebView 矩形。
 
 ---
 
@@ -365,7 +267,7 @@ Android WebView 可能暴露 `navigator.clipboard.writeText()`，却在调用时
 
 - 新增 `AndroidWebFullscreenController.kt`，负责：
   - 将 WebView 请求的 custom view 挂到 Activity 内容根节点；
-  - 全屏期间强制开启 immersive system bars，退出时恢复先前状态；
+  - 全屏期间隐藏系统栏；这是独立的展示状态，不改变用户沉浸偏好与主 WebView 矩形；
   - 暴露 `hide()`，让 Android 返回键优先退出网页全屏。
 - `MainActivity.kt` 实现 `AndroidWebFullscreenHost`，只做生命周期编排与 controller 委托。
 - `AndroidBackNavigationController.kt` 新增 native back 优先消费点，先尝试退出网页全屏，再决定是否把返回键交给前端/退出应用。

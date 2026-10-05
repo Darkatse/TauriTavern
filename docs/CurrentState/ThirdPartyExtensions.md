@@ -82,11 +82,8 @@ install/update/switch/delete/move 与 LAN/TT Sync 的本地写操作共享一个
 
 - `src/lib.js` 会把部分上游常用库挂到 `window`；其中 `window._`（lodash）是正式兼容 ABI，因为 JS-Slash-Runner、ST-Prompt-Template、MagVarUpdate 等生态扩展会在模块求值阶段直接访问 `_`
 - `src/tauri/main/compat/mobile/mobile-runtime-compat.js` 负责旧 WebView 缺失 JS API 的 polyfills（仅 Tauri mobile）
-- 第三方浮层/窗口 mobile surface compat（仅 Tauri mobile）：
-  - 分类/契约输出：`src/tauri/main/compat/mobile/mobile-overlay-surface-admission.js`
-  - 观察与有界 settle window：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
-  - 同源 iframe contract bridge：`src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`
-- `src/scripts/browser-fixes.js` 保持与上游同步（不再承载 Tauri mobile compat）
+- Android/iOS 原生内容视口避让系统栏和停靠键盘，第三方面板与 iframe 按普通视口排版，见 [MobileStyleAdaptation.md](MobileStyleAdaptation.md)。
+- `src/scripts/browser-fixes.js` 跟随上游，只删除了 iOS resize 时把根元素设为 fixed 的补偿（见 MobileStyleAdaptation.md 的本地差异）。
 
 ### 2.4 后端资源提供
 

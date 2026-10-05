@@ -203,21 +203,14 @@
         left: 0 !important;
         margin: 0 auto;
         resize: none !important;
-        top: calc(var(--topBarBlockSize) + max(var(--tt-inset-top), 0px));
-        max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px));
+        top: var(--topBarBlockSize);
+        max-height: calc(var(--doc-height) - var(--topBarBlockSize));
         border: 1px solid var(--SmartThemeBorderColor);
     }
 
     .drawer-content .floating_panel_maximize,
     .drawer-content .inline-drawer-maximize {
         display: none;
-    }
-
-    #select_chat_popup {
-        align-items: start;
-        height: min-content;
-        align-content: start;
-        max-width: unset;
     }
 
     #wiActivationSettings,
@@ -228,21 +221,12 @@
     #top-settings-holder,
     #top-bar {
         position: fixed;
-        top: max(var(--tt-inset-top), 0px);
         width: 100vw;
         width: 100dvw;
-        padding-right: max(var(--tt-inset-right), 0px);
-        padding-left: max(var(--tt-inset-left), 0px);
     }
 
-    #bg1,
-    #bg_custom {
-        height: 100vh !important;
-        height: 100dvh !important;
-        width: 100vw !important;
-        width: 100dvw !important;
+    #bg1 {
         background-position: center;
-
     }
 
 
@@ -255,14 +239,12 @@
         max-width: 100dvw;
         left: 0 !important;
         resize: none !important;
-        top: calc(var(--topBarBlockSize) + max(var(--tt-inset-top), 0px));
+        top: var(--topBarBlockSize);
     }
 
     #sheld {
-        height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px));
-        height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px));
-        max-height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px));
-        max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px));
+        height: calc(var(--doc-height) - var(--topBarBlockSize));
+        max-height: calc(var(--doc-height) - var(--topBarBlockSize));
         overflow-y: hidden;
     }
 
@@ -300,9 +282,6 @@
     #form_sheld {
         position: relative;
         z-index: 31;
-        padding-right: max(var(--tt-inset-right), 0px) !important;
-        padding-left: max(var(--tt-inset-left), 0px) !important;
-        padding-bottom: max(var(--tt-inset-bottom), 0px) !important;
     }
 
     #chat {
@@ -316,26 +295,6 @@
         overflow-y: auto;
         overflow-x: hidden;
         overscroll-behavior-y: contain;
-    }
-
-    /* Enforce mobile safe-area + IME layout even when themes override core containers. */
-    body #sheld {
-        top: calc(var(--topBarBlockSize) + max(var(--tt-inset-top), 0px)) !important;
-        height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
-        height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
-        min-height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
-        min-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
-        max-height: calc(100vh - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
-        max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px)) !important;
-    }
-
-    body #form_sheld {
-        position: relative !important;
-    }
-
-    body #chat {
-        min-height: 0 !important;
-        max-height: none !important;
     }
 
     .mes_buttons {
@@ -359,8 +318,8 @@
     #cfgConfig,
     #logprobsViewer,
     #movingDivs>div {
-        height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px));
-        max-height: calc(var(--tt-base-viewport-height, var(--doc-height)) - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px));
+        height: calc(var(--doc-height) - var(--topBarBlockSize));
+        max-height: calc(var(--doc-height) - var(--topBarBlockSize));
         min-width: 100vw !important;
         min-width: 100dvw !important;
         width: 100vw !important;
@@ -372,7 +331,7 @@
         border-right: 1px solid var(--SmartThemeBorderColor);
         border-bottom: 1px solid var(--SmartThemeBorderColor);
         border-radius: 0 0 20px 20px;
-        top: calc(var(--topBarBlockSize) + max(var(--tt-inset-top), 0px)) !important;
+        top: var(--topBarBlockSize) !important;
         left: 0 !important;
         backdrop-filter: blur(calc(var(--SmartThemeBlurStrength) * 2));
 
@@ -415,7 +374,7 @@
         width: 100%;
         border-radius: 0 0 20px 20px;
         margin-top: 0px;
-        height: calc(100% - var(--topBarBlockSize) - max(var(--tt-inset-top), 0px));
+        height: calc(100% - var(--topBarBlockSize));
     }
 
     .drawer25pWidth {
@@ -557,5 +516,45 @@
         width: 1.15em;
         flex-wrap: wrap;
         height: unset;
+    }
+}
+
+/* The chat list owns scrolling inside its viewport-sized shell. */
+@media screen and (max-width: 1000px) {
+    #shadow_select_chat_popup {
+        position: fixed;
+        inset: 0;
+        overflow: hidden;
+    }
+
+    /* The parent ID overrides body.safari #select_chat_popup's content-based height. */
+    #shadow_select_chat_popup #select_chat_popup {
+        position: absolute;
+        inset: 0;
+        width: auto;
+        height: auto;
+        max-height: none;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        max-width: unset;
+        overflow: hidden;
+    }
+
+    #select_chat_popup > [name="selectChatPopupHeader"] {
+        flex: 0 0 auto;
+    }
+
+    #select_chat_popup > .chatBackupsList {
+        flex: 0 1 auto;
+        min-height: 0;
+    }
+
+    #select_chat_popup > #select_chat_div {
+        flex: 1 1 auto;
+        min-height: 0;
+        height: auto;
+        overflow-y: auto;
+        overscroll-behavior-y: contain;
     }
 }

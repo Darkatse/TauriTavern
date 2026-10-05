@@ -26,9 +26,10 @@
    - 安装请求拦截器（`fetch` 与 `jQuery.ajax`）
    - 安装平台 ABI：`window.__TAURITAVERN__`（小而稳定的宿主对外接口）
    - 安装同源窗口下载桥（所有宿主的浏览器式导出 → 原生交付）
-   - 安装 Tauri mobile 兼容层（runtime polyfills + geometry firewall + surface classifier，仅移动端）
+   - 安装 Tauri mobile 兼容层（runtime polyfills，仅移动端）
    - 为宿主接管的路由响应注入追踪 header：`x-tauritavern-trace-id`
    - 初始化 bridge 与目录信息
+   - Tauri 就绪后安装窗口快照与窗口背景发布（仅 Android/iOS）
 
 ### 2.1 宿主身份
 
@@ -47,7 +48,7 @@
 
 - 不用 UA、`navigator.platform` 或 `maxTouchPoints` 推断宿主：iPadOS 报告为 Macintosh，OpenHarmony 的 UA 不含 Android。
 - 用正向条件表达类别，不用 `!android && !ios` 代表桌面。为每个平台选择实现时，`switch` 列出全部平台，`default` 抛错；某个平台独有的处理用正向判断即可。
-- 上游 Bowser `isMobile()` 与 CSS 媒体查询属于上游布局语义，保持不变。规则同时取决于宿主类别与视口形态时（如聊天宽度），显式组合 `isMobileHost()` 与媒体查询。
+- 上游 Bowser `isMobile()` 与 CSS 媒体查询属于上游布局语义，保持不变。规则同时取决于宿主类别与窗口方向时（如聊天宽度），组合 `isMobileHost()` 与 `util/window-layout.js` 的 `isWindowPortrait()`。
 
 ## 3. 目录结构（前端集成相关）
 
@@ -210,9 +211,7 @@ src/
 - `src/scripts/extensions.js`：插件激活编排层（发现、排序、依赖/版本检查、触发加载）。
 - `src/scripts/browser-fixes.js`：上游浏览器补丁（保持与 SillyTavern 同步）。
 - `src/tauri/main/compat/mobile/mobile-runtime-compat.js`：Tauri mobile 运行时 polyfills（补齐旧 WebView 缺失 JS API）。
-- `src/tauri/main/compat/mobile/mobile-overlay-surface-admission.js`：Tauri mobile 第三方 fixed overlay admission（分类 + 契约输出）。
-- `src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`：Tauri mobile overlay compat controller（观察 + 有界 settle window，暴露 `window.__TAURITAVERN_MOBILE_OVERLAY_COMPAT__`）。
-- `src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`：Same-origin iframe 的 viewport/inset contract bridge（`viewport-host` 边界变量同步）。
+- `src/scripts/util/window-layout.js`：Android/iOS 原生窗口快照；`src/scripts/window-backdrop.js`：第一方背景唯一写入与条带发布入口。
 - `src/scripts/extensions/runtime/resource-paths.js`：扩展资源路径规范化与 third-party 判定。
 - `src/scripts/extensions/runtime/tauri-ready.js`：等待 `__TAURITAVERN_MAIN_READY__`，避免 bridge 未就绪时提前加载。
 - `src/scripts/extensions/runtime/third-party-runtime.js`：第三方扩展样式兼容层（legacy WebView 下为样式 URL 附加 `ttCompat=layer`，触发 Rust 端点做 `@layer` 展平；不再走前端预取/Blob 注入）。
@@ -304,24 +303,11 @@ TauriTavern 自有的状态型 UI 作为 SillyTavern first-party extension 挂�
 
 该策略用于修复移动端插件面板（如 `TH-custom-tailwind`）样式大面积失效导致的布局错乱。
 
-#### 7.7.3 浮层 safe-area 修正（移动端）
+#### 7.7.3 原生内容视口与窗口背景
 
-- 实现位置：
-  - 分类/契约输出：`src/tauri/main/compat/mobile/mobile-overlay-surface-admission.js`
-  - 观察与有界 settle window：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
-  - 同源 iframe bridge：`src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`
-- 入口：`src/tauri/main/bootstrap.js` 中安装（仅 Tauri mobile）。
-- 触发条件：只处理“第三方顶层 surface”候选（通常为 `position: fixed` 且顶边贴近 0 的窗口/遮罩）。
-- 处理策略（两段式）：
-  - JS classifier：观察 `document.body` 直系子节点增删，并对 `script_id` portal root 扫描其子树；对已跟踪候选仅监听自身生命周期属性（`class/style/hidden/open/aria-hidden`）以撤销/恢复 host-admitted contract，属性重算按 animation frame 合并；稳定的 `free-window` 只响应 inline lifecycle style（`display/visibility/position/pointer-events/cursor/touch-action`）变化，几何类 style 写入保持在拖动热路径之外；对命中元素分类并输出：
-    - `data-tt-mobile-surface="backdrop|viewport-host|fullscreen-window|free-window|edge-window"`
-    - `data-tt-mobile-surface-admitted="1"`（host-private sentinel）
-    - `--tt-original-top=<px>`（仅 edge-window）
-  - CSS contract：由 `mobile-geometry-firewall.js` 提供 `[data-tt-mobile-surface="..."]` 的几何规则，统一执行 safe-area 约束（backdrop 保持 full-bleed）。
-- 显式 opt-in：若节点已带 `data-tt-mobile-surface`，classifier 将尊重并不再改写（便于第三方脚本作者自我修复）。
-- Android 变量语义：`--tt-inset-top` 表示当前布局应避开的有效 inset；非沉浸模式下反映顶部 safe area，沉浸模式下回落为 `0`，因此对应的 contract 会自然退化为 full-bleed。
+原生宿主拥有主 WebView 的矩形，系统栏、刘海和停靠键盘在原生层消费一次，网页按普通视口排版。前端只做两件事：`util/window-layout.js` 接收窗口快照并设置 `#bg1` 的窗口矩形；`window-backdrop.js` 的 `applyWindowBackdrop()` 是第一方背景的唯一写入点，新增背景来源接入它。只有高度变化的 resize 不触发与宽度相关的工作。
 
-该策略用于修复 JS-Slash-Runner 等脚本在运行时注入固定定位弹窗样式时，关闭按钮落入状态栏导致不可点击的问题。
+细节见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md)，扩展可见的契约见 [API/Layout.md](API/Layout.md)。
 
 #### 7.7.4 调试建议
 
@@ -333,8 +319,8 @@ TauriTavern 自有的状态型 UI 作为 SillyTavern first-party extension 挂�
   - 优先检查是否命中 `@layer` 降级分支；
   - 关注 `resolveStylesheetUrl()` 是否返回带 `ttCompat=layer` 的 URL。
 - 若脚本弹窗贴顶到状态栏：
-  - 检查脚本是否通过 `<style>` 或行内 `style` 设置了固定定位顶边；
-  - 检查 `window.__TAURITAVERN_MOBILE_OVERLAY_COMPAT__` 是否已安装。
+  - 所有内容一起偏移时，检查原生 WebView 矩形是否与政策避让一致；
+  - 只有某个面板溢出时，检查其硬编码尺寸、负坐标或内部滚动边界。
 
 ### 7.8 嵌入式运行时（Embedded Runtime，消息内 iframe）
 

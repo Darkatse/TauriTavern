@@ -38,7 +38,6 @@ export function openAgentRunTimelineDialog(run: TauriTavernAgentRunSummary): voi
     const dialog = document.createElement('dialog');
     if (typeof dialog.showModal !== 'function') throw new Error(tr('runHistoryDialogUnsupported'));
     dialog.className = 'ttas-dialog ttas-run-history-dialog';
-    dialog.dataset.ttMobileSurface = 'fullscreen-window';
     const mount = document.createElement('div');
     mount.className = 'ttas-run-history-dialog-mount';
     dialog.append(mount);

@@ -1,3 +1,5 @@
+import { applyWindowBackdrop } from './window-backdrop.js';
+import { isWindowPortrait, subscribeWindowOrientation } from './util/window-layout.js';
 import { isMobileHost } from './util/host-identity.js';
 import { Fuse, Handlebars } from '../lib.js';
 
@@ -1136,7 +1138,7 @@ function applyToastrPosition() {
 }
 
 function isMobilePortraitViewport() {
-    return isMobileHost() && window.matchMedia('(orientation: portrait)').matches;
+    return isMobileHost() && isWindowPortrait();
 }
 
 function getEffectiveChatWidth() {
@@ -1220,6 +1222,7 @@ function applyThemeColor(type) {
         let metaThemeColor = document.querySelector('meta[name=theme-color]');
         document.documentElement.style.setProperty('--SmartThemeBlurTintColor', power_user.blur_tint_color);
         metaThemeColor.setAttribute('content', power_user.blur_tint_color);
+        applyWindowBackdrop();
     }
     if (type === 'chatTint') {
         document.documentElement.style.setProperty('--SmartThemeChatTintColor', power_user.chat_tint_color);
@@ -1249,6 +1252,7 @@ function applyCustomCSS() {
         document.head.appendChild(style);
     }
     style.innerHTML = power_user.custom_css;
+    applyWindowBackdrop();
     notifyChatLayoutChanged();
 }
 
@@ -3487,12 +3491,12 @@ jQuery(() => {
     var coreTruthWinWidth = window.innerWidth;
     var coreTruthWinHeight = window.innerHeight;
 
-    window.matchMedia('(orientation: portrait)').addEventListener('change', () => applyChatWidth('forced'));
+    subscribeWindowOrientation(() => applyChatWidth('forced'));
 
     $(window).on('resize', async () => {
         const nextWidth = window.innerWidth;
         const nextHeight = window.innerHeight;
-        const isMobileResize = isMobile();
+        const isMobileResize = isMobileHost();
         const hasWidthChange = nextWidth !== coreTruthWinWidth;
 
         // IME open/close is height-only on mobile; keep resize side effects for

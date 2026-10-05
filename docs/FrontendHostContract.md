@@ -106,14 +106,13 @@
 为避免未来继续扩散 `window.__TAURITAVERN_*` 零散符号，宿主层额外提供一个**统一出口**：
 
 - `window.__TAURITAVERN__ : { abiVersion, traceHeader, ready, invoke, assets, api, iosPolicy }`
-  - `abiVersion: 1`：ABI 版本号（已发布扩展契约发生语义化破坏改动时递增）。
+  - `abiVersion: 2`：已发布扩展契约发生破坏性语义变化时递增。
   - `traceHeader: string`：请求追踪 header 名（见 4.4）。
   - `ready: Promise<void> | null`：与 `__TAURITAVERN_MAIN_READY__` 语义一致。
   - `invoke.safeInvoke(...)` / `invoke.flushAll()`：对 `context` invoke 能力的稳定包装。
   - `assets.thumbnailUrl` / `assets.backgroundPath`：对 3.1 中稳定 Host Resource URL helper 的统一引用。
   - `iosPolicy`（Project）：iOS 分发策略的启动快照，见 `docs/CurrentState/iOSPolicy.md`。
-  - `api.layout`：布局契约 API（safe-area / viewport / Android IME），并配合 `data-tt-mobile-surface` taxonomy 让扩展以几行 opt-in 完成移动端适配。
-    - 详细签名与示例见：`docs/API/Layout.md`。
+  - `api.layout`：读取与订阅已排除原生遮挡的内容视口，见 [API/Layout.md](API/Layout.md)。
   - `api.chat`：TauriTavern 独有的聊天/记忆类扩展 API（聊天摘要、元数据、历史分页、稳定存储、后端定位、纯文本检索）。
     - 详细签名与示例见：`docs/API/Chat.md`。
   - `api.characterCards`：用原生选择器选择本地角色卡（`json/png`），返回标准 `File[]`，交给上游的导入或替换流程。
@@ -268,7 +267,7 @@
 - `/scripts/extensions/third-party/*`
   - `.git` 是 SillyTavern 迁移兼容所需的普通路径组件；显式文件请求不得仅因任一组件名为 `.git` 而被拒绝。`.`、`..`、编码路径分隔符与路径逃逸仍必须拒绝。
 - `/css/user.css`
-- `/scripts/tauritavern/layout-kit.js`（ESM；扩展可选 DX 糖衣）
+- `/scripts/tauritavern/layout-kit.js`（ESM；`api.layout` 的辅助入口，见 [API/Layout.md](API/Layout.md)）
 - `/thumbnail?type={bg|avatar|persona}&file=...`
 - `/characters/*`、`/User Avatars/*`
 - `/backgrounds/*`、`/assets/*`
@@ -315,14 +314,23 @@ header 名也可从 `window.__TAURITAVERN__?.traceHeader` 获取（用于避免�
 
 ### 5.2 移动端运行时兼容（Public in practice）
 
-移动端旧 WebView 的 polyfills 与第三方浮层/窗口 surface classifier（配合 geometry firewall 的 safe-area contract）属于“运行环境的一部分”，第三方会依赖其存在：
+移动端旧 WebView 的 polyfills 属于运行环境兼容能力：
 
 - `window.__TAURITAVERN_MOBILE_RUNTIME_COMPAT__`
   - 覆盖移动端旧 WebView 的基础 polyfills（例如 `requestIdleCallback` / `cancelIdleCallback`）。
   - Android 的 `navigator.clipboard.writeText()` 映射到宿主原生写入器，same-origin iframe 同样适用；Clipboard 对象上的其他方法保持不变。
-- `window.__TAURITAVERN_MOBILE_OVERLAY_COMPAT__`
-- `window.__TAURITAVERN_MOBILE_IFRAME_VIEWPORT_CONTRACT_BRIDGE__`：same-origin iframe 的 viewport/inset contract bridge（用于 `viewport-host` boundary；主要用于 debug/幂等安装）
 - `window.__TAURITAVERN_MOBILE_WINDOW_OPEN_COMPAT__`：移动端外链 `window.open()` 通过系统浏览器打开（不创建应用内新窗口）
+
+移动布局：Android/iOS 原生宿主消费系统栏、刘海与停靠键盘，网页侧契约见 [API/Layout.md](API/Layout.md)。相关名称的当前状态：
+
+| 名称 | 状态 |
+| --- | --- |
+| `--doc-height` | 静态别名：`100dvh`，不支持时 `100vh` |
+| `--tt-inset-*` | `env(safe-area-inset-*, 0px)` 的别名 |
+| `--tt-viewport-bottom-inset` | `--tt-inset-bottom` 的别名 |
+| `--tt-window-x/-y/-width/-height` | Project：只写在 `#bg1` 上，供第一方窗口背景使用 |
+| `data-tt-mobile-surface`；`layout-kit.js` 的 `SURFACE`/`applySurface()` | 保留，无布局作用 |
+| `--tt-ime-bottom`、`--tt-base-viewport-height`、`__TAURITAVERN_INSETS__`、`__TAURITAVERN_MOBILE_OVERLAY_COMPAT__`、`__TAURITAVERN_MOBILE_IFRAME_VIEWPORT_CONTRACT_BRIDGE__`、`__TAURITAVERN_ANDROID_IME_LAYOUT_HOST__` | 已移除 |
 
 TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板写入器。该契约只授予 `clipboard-manager:allow-write-text`，不包含读取/清空/图片等权限；写入失败必须向调用方传播。
 

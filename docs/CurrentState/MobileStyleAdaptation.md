@@ -1,232 +1,75 @@
-# 移动端样式适配现状（Edge‑to‑Edge / Safe‑Area / 沉浸模式）
+# 移动端内容视口与窗口背景
 
-本文档描述 **已经落地** 的移动端（Android / iOS）样式与布局适配现状，重点覆盖：
+移动端的系统栏、刘海和停靠键盘由原生宿主在主 WebView 的实际矩形上消费一次。网页内没有系统栏或键盘适配机制：第一方与扩展都按普通浏览器规则排版。
 
-- Edge‑to‑edge（透明系统栏、刘海区域扩展）
-- Safe‑area / IME inset 的注入与消费（CSS 变量契约）
-- 沉浸模式（隐藏 system bars）下的 full-bleed 布局策略
-- 第三方脚本注入浮层的 safe‑area top 兜底（元素级补丁）
+## 两份几何事实
 
-## 1. 范围与结论
+| 事实 | 内容 | 变化时机 | 消费者 |
+| --- | --- | --- | --- |
+| 窗口快照 | 窗口物理像素尺寸、政策避让、scale、revision | 旋转、窗口尺寸、显示政策变化 | `#bg1` 窗口矩形、原生背景条带、第一方竖屏判断 |
+| 内容视口 | 窗口减去政策避让与停靠键盘 | 上述变化，以及键盘出现、消失、高度变化 | 浏览器布局引擎 |
 
-结论（当前实现的核心要点）：
+窗口快照不含键盘。键盘只改变主 WebView 的底边，顶部固定；键盘过渡不产生 JS 背景发布、`:root` 变量写入或图片工作。浮动与分离键盘不报告 inset，不缩小视口。
 
-1. **Insets 是“宿主提供的布局契约”**：前端布局只消费 `--tt-inset-*`；Android 由 native 监听 `WindowInsets` 并直接注入当前布局应避开的 inset（`--tt-inset-*`），iOS 以 CSS `env(safe-area-inset-*)` 提供 `--tt-inset-*`。
-2. **Android 的 IME 是宿主语义，不再透传为 WebView viewport resize**：native 读取 IME inset 后只以 `--tt-ime-bottom` / `--tt-base-viewport-height` 提供给前端，避免一份键盘语义在 WebView 内再被解释一次。
-3. **沉浸模式是 full-bleed 策略开关**：Android 沉浸（system bars 隐藏）时，`--tt-inset-*` 回落为 `0`，因此第一方顶部 UI 与第三方 fixed 浮层都允许沉入状态栏/刘海区域。
-4. **第三方浮层通过 surface classifier 进入 CSS contract**：不重写 `<style>` 文本，不做全局 subtree observer；仅对“可能是顶层 fixed surface”的节点打上 `data-tt-mobile-surface`（并在 edge-window 场景写入 `--tt-original-top`），几何修正由 geometry firewall 的 CSS 规则完成。
-5. **iOS 禁用 WKWebView 的自动 content inset 调整**：将 `scrollView.contentInsetAdjustmentBehavior = .never` 并清空 `contentInset/scrollIndicatorInsets`，确保 `window.innerHeight` 真正覆盖到全屏；safe-area 只通过 `env(safe-area-inset-*)` 交给前端消费。
+## Android
 
-本目录记录“现状快照”，更完整的问题推导与历史路径见：
+入口 `AndroidWindowLayout.kt`，由 `MainActivity` 编排生命周期，`WindowLayoutPlugin` 供 Rust 调用。
 
-- `docs/AndroidDevelopment.md`
-- `docs/iOSDevelopment.md`
-- `docs/MobileDynamicStyleSafeAreaPatch.md`（历史链路）
+- edge-to-edge 只由 `WindowCompat.enableEdgeToEdge(window)` 配置。
+- 政策避让：非沉浸为稳定的 systemBars ∪ displayCutout，沉浸为零。用户偏好 `power_user.mobile_immersive_fullscreen`（默认开启）经 `mobile-system-ui.js` 与 `AndroidSystemUiJsBridge` 传给原生。
+- 主 WebView 矩形由一个函数计算：四边取政策避让，底边取政策避让与 IME 底部 inset 的较大值；相同矩形不重复提交。
+- 提交时机：`onApplyWindowInsets` 更新目标，没有动画时直接提交；IME 动画期间 `onProgress` 提交当前高度，`onEnd` 按实际终态收敛。
+- 内容根节点把原始 insets 传给子视图。主 WebView 自己的监听器把系统栏、刘海与 IME 清零：API 31+ 交给 WebView 的 `onApplyWindowInsets`；API 28–30 上它替换了 Chromium 构造时安装的监听器，引擎不接收 inset。
+- IME 动画在 `onStart` 登记；`onPrepare` 只暂缓紧随其后的一轮布局，因为 API 30 上开始前被取消的动画不会再有 `onEnd`。
+- 元素全屏是独立的展示状态：隐藏系统栏，由兄弟容器覆盖主页面，不改变用户偏好、窗口快照或 WebView 矩形。临时滑出的系统栏同样不改变政策。
+- 旋转等由 `configChanges` 原位处理。Activity 重建（如切换开发者刘海选项）后 Tauri 插件仍持有旧 Activity，窗口插件拒绝请求，需重启应用。
+- 窗口背景画在 decorView 的背景上：底色加条带。状态栏图标明暗由 `AndroidStatusBarAppearance` 对实际窗口像素取样。
 
-## 2. 端到端链路（Android）
+## iOS
 
-### 2.1 Edge‑to‑edge 与系统栏编排（native）
+入口 `infrastructure/ios_webview.rs`，安装 `platform/ios_window_layout.rs` 的窗口宿主 UIView。
 
-入口：`src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/AndroidInsetsBridge.kt`
+- WKWebView 上、左、右约束到 `safeAreaLayoutGuide`，底边约束到 `keyboardLayoutGuide.topAnchor`。键盘收起时 guide 停在底部安全区。
+- iOS 没有沉浸模式，政策避让始终是安全区。
+- 内部 UIScrollView 保持 `contentInsetAdjustmentBehavior = .never` 与零 inset；WebKit 自己的焦点、选区与键盘处理照常运行。
+- 宿主在 `layoutSubviews` 按值去重发布窗口快照。底色设在宿主视图上，条带是插在 WKWebView 之下的 UIImageView。
+- 元素全屏时 WebKit 会把 WKWebView 移出宿主；归还时宿主重新激活同一组约束。
 
-已落地行为：
+## 鸿蒙
 
-- `WindowCompat.setDecorFitsSystemWindows(window, false)`：启用 edge‑to‑edge。
-- 状态栏/导航栏透明；允许内容延伸到系统栏区域。
-- 状态栏图标由 `AndroidStatusBarAppearance` 按实际背景亮度调整：前台可见时随重绘取样，每秒最多一次，不依赖前端主题事件。
-- `layoutInDisplayCutoutMode = SHORT_EDGES`：允许在刘海区域布局；是否避让由 `--tt-inset-*` 的当前策略决定。
-- system bars behavior 使用 `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`。
+`EntryAbility` 设置 `setWindowLayoutFullScreen(false)`，系统让窗口留在安全区内，系统栏后不显示壁纸。键盘由 ArkWeb 处理。鸿蒙没有窗口快照，`util/window-layout.js` 中的第一方竖屏判断与订阅仍用 `matchMedia('(orientation: portrait)')`。
 
-沉浸模式：
+## 窗口背景
 
-- `power_user.mobile_immersive_fullscreen`（默认 `true`）通过 JS bridge 控制 native 是否 `hide()` system bars（见 §4）。
+`src/scripts/window-backdrop.js` 的 `applyWindowBackdrop()` 是第一方背景的唯一写入点：全局背景、聊天锁定背景、聊天自定义与生成图片、填充方式、主题底色、自定义 CSS 与 OLED 开关都经过它。新增第一方背景来源也接入它。
 
-### 2.2 Inset 注入契约（native → WebView）
+`src/scripts/util/window-layout.js` 把窗口快照写成 `#bg1` 上的 `--tt-window-x/-y/-width/-height`。`#bg1` 固定为窗口矩形并使用 `background-attachment: scroll`，键盘不改变壁纸坐标。移动端壁纸切换不做渐变，两个渲染者始终呈现同一外观。
 
-负责监听/计算的模块：
+`set_window_backdrop` 的顺序：
 
-- `AndroidInsetsBridge`：监听 system bars + display cutout + IME。
-- `WebViewReadinessPoller`：避免在 `about:blank` 时注入导致变量丢失；以 `#sheld` 存在作为“可注入”的最小前置条件（不依赖 `readyState`，避免启动早期 focus 竞态）。
-- `WebViewInsetsStyleApplier`：向 WebView 注入 helper，并把 insets 写入 CSS 变量。
+1. JS 按帧合并，壁纸输入与底色分别去重；只改底色时不发送壁纸。`#bg1` 不可见（如 OLED）时清除壁纸。
+2. 原生核对窗口 revision 后立即更新底色。壁纸变化时生成新令牌并清除旧条带，返回自己的窗口快照与令牌。这一步不等待解码，新选择立即使旧渲染失效。
+3. `tt-adapter-media::window_backdrop` 一次只解码一张图：经 Host Resource Store 读取，取首帧并应用 EXIF 方向，按 `background-size`/`background-position` 映射到窗口，按预乘 alpha 采样，输出透明条带。
+4. 原生在窗口 revision 与令牌都匹配时整体替换条带，过期结果直接丢弃。
 
-CSS 变量（对前端的稳定契约）：
+系统栏条带不呈现：视频壁纸（含第一方 mp4）、渐变与外部 URL（只画底色并记录诊断）、弹窗遮罩、主题滤镜与第三方背景层。动画图片取首帧。条带不做磁盘缓存。
 
-- `--tt-inset-top/right/left/bottom`：布局消费的有效避让 inset（px）。
-- `--tt-ime-bottom`：输入法可见时的底部 inset（px），注入在 **active imeTarget root**（默认回退 `#sheld`；避免把键盘动画扩散为 `:root` 级全局样式失效）。
-- `--tt-base-viewport-height`：记录“无 IME 时”的基准 viewport 高度（用于稳定高度计算）。
+## 第一方行为
 
-关键语义（沉浸模式 + 刘海）：
+- `--doc-height` 是静态别名：支持时 `100dvh`，否则 `100vh`。
+- 只有高度变化的 resize（键盘）不触发与宽度相关的工作：上游 resize 处理器在移动宿主上早退，聊天虚拟化度量按宽度门控，Quick Reply 编辑器只在宽度变化时 blur/focus。movingUI 缩放按宿主身份 `isMobileHost()` 判断。
+- 聊天宽度：移动宿主且窗口竖屏时固定为 100%，滑块禁用；竖屏读窗口快照，不读视口。
+- 输入框聚焦（`src/scripts/chat-input-focus.js`）：移动宿主拒绝导航与恢复类聚焦，只在编辑意图下弹出键盘；Android 进入后台时让输入框失焦。
+- 第一方弹窗用自身类名的普通 CSS 管理尺寸；聊天列表自己负责滚动。
+- 主题 CSS 按普通层叠生效，宿主不改写主题对第一方容器的几何。
 
-- Android 非沉浸模式下，`--tt-inset-*` 反映当前布局应避开的可见/稳定 safe area；
-- Android 沉浸模式下，`--tt-inset-*` 回落为 `0`，应用以 full-bleed 方式覆盖到状态栏/刘海区域。
-- Android IME 不再向 descendant WebView 继续透传为 viewport resize；页面内键盘位移只由 active surface 上的 `--tt-ime-bottom` 驱动。
+## 与上游的本地差异
 
-## 3. 前端消费（CSS / JS）
+同步上游时保留这些删除：
 
-### 3.1 CSS 变量默认值与跨平台兜底
+- `src/index.html` 中写入 `--doc-height` 像素值的 resize 脚本。
+- `src/style.css` 中 `html` 上的 transform 与 perspective：它们让 `html` 成为 fixed 元素的包含块，根文档滚动时 `#bg1` 会随之移动。
+- `src/css/mobile-styles.css` 中 `#bg1` 的 `100dvw`/`100dvh !important` 尺寸：它会压过 `#bg1` 的窗口矩形。
+- `src/scripts/browser-fixes.js` 中 iOS resize 时把根元素临时设为 `position: fixed` 的补偿。
 
-`src/style.css` 提供默认值（iOS/浏览器主要依赖）：
-
-- `--tt-inset-* = env(safe-area-inset-*, 0px)`（iOS）
-- `--tt-viewport-bottom-inset = max(var(--tt-inset-bottom), var(--tt-ime-bottom))`
-- 注：Android 下 `--tt-ime-bottom` 为 surface-local（见 §3.6），因此 `--tt-viewport-bottom-inset` 只在 active surface subtree 才会随键盘变化（避免 1 万+ DOM 的全局样式失效与大范围重排）。
-
-补充兜底：
-
-- `src/index.html` 在 `load`/`resize` 更新 `--doc-height = window.innerHeight`，供移动端高度计算 fallback 使用。
-
-Android 说明：
-
-- Android WebView 可能返回 `env(safe-area-*) = 0`，因此 **以 native 注入为准**（覆盖 root style 变量）。
-
-### 3.2 主界面移动端布局（核心容器）
-
-`src/css/mobile-styles.css` 消费上述变量，主要约束点：
-
-- 顶部容器（如 `#top-settings-holder/#top-bar`）使用 `top: max(var(--tt-inset-top), 0px)` 并加入左右 padding。
-- 为避免主题 `custom_css` 直接覆盖移动端核心几何，宿主会注入一个 **host-last geometry firewall**（永远位于 `#custom-style` 之后）：
-  - 实现：`src/tauri/main/compat/mobile/mobile-geometry-firewall.js`
-  - 产物：`<style id="tt-mobile-geometry-firewall">`（keep-last，确保始终为 `<head>` 最后一个 element）
-  - 覆盖范围：只收回核心几何属性（`#top-settings-holder/#top-bar/#top-settings-holder > .drawer > .drawer-content:not(.fillLeft):not(.fillRight)/#sheld/#form_sheld`），其中 `#sheld` 的 `height/min-height/max-height` 必须同源计算，避免主题用 `min-height` 绕过 safe-area/viewport contract；不干预主题 skin
-- 第一方顶部设置面板（`#top-settings-holder` 下的非侧栏 drawer）不再依赖运行时测量与 inline 回写：
-  - 由 geometry firewall 以 CSS contract 直接约束几何（holder-anchored），避免出现第二/第三套几何系统
-- 主容器 `#sheld` 以 `inset-top + topBarBlockSize` 定位，并用 `--tt-base-viewport-height`/`--doc-height` 统一计算 `height/min-height/max-height`。
-- Android 的键盘抬升不再直接绑定在主题可覆写的 `#form_sheld` 上；宿主使用 host-private DOM + contract 承载：
-  - `src/tauri/main/compat/mobile/android-ime-layout-host.js` 在 `#form_sheld` 内安装 lift/spacer 节点（仅 composer）。
-  - fixed-shell 等非 composer surface 由 geometry firewall 直接消费 `--tt-ime-bottom`（见 §3.6）。
-
-这些规则的目标是：在非沉浸模式下避开顶部/底部安全区与键盘，在沉浸模式下保持 full-bleed。
-
-### 3.3 第三方脚本浮层：surface classifier + safe‑area contract（移动端）
-
-实现：
-
-- 分类/契约输出：`src/tauri/main/compat/mobile/mobile-overlay-surface-admission.js`
-- 观察与有界 settle window：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
-- 同源 iframe contract bridge：`src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`
-
-安装入口：`src/tauri/main/bootstrap.js`（仅移动宿主）
-
-当前策略：
-
-- **Admission**：仅观察 `document.body` 的直系子节点新增/移除（`subtree: false`），并对带 `script_id` 的 portal root 进一步扫描其子树（JS-Slash-Runner 常见挂载形态）。
-- **生命周期**：对已经进入跟踪集的候选 surface，只监听其自身 `class/style/hidden/open/aria-hidden` 属性变化，用于撤销/恢复 host-admitted contract；属性重算按 animation frame 合并。稳定 surface 只响应 inline lifecycle style（`display/visibility/position/pointer-events/cursor/touch-action`）变化，几何类 style 写入与宿主 contract 变量写入不会重新进入分类；仍不做全局 subtree/style observer。
-- **判定**：对符合条件且当前可见的 `position: fixed` 节点进行 surface 分类（backdrop / viewport-host / fullscreen-window / free-window / edge-window）。
-- **输出**：不再直接写入 `top`；改为输出契约属性：
-  - `data-tt-mobile-surface="backdrop|viewport-host|fullscreen-window|free-window|edge-window"`
-  - `data-tt-mobile-surface-admitted="1"`（host-private sentinel，用于区分 host-admitted 与显式 opt-in；非 ABI）
-  - `--tt-original-top=<px>`（仅 edge-window，用于在 safe-area top 之上保持原始 top 偏移）
-- **落地**：几何修正主要由 geometry firewall 的 CSS contract 执行（`free-window` 例外：仅 admission-time 允许一次性 nudge 初始 top，之后不再接管）：
-  - `[data-tt-mobile-surface="edge-window"]`：只修正 top
-  - `[data-tt-mobile-surface="fullscreen-window"]`：修正四边并把 width/height 改成 auto（避免 `100vh` 把底部顶出屏幕）
-  - `[data-tt-mobile-surface="viewport-host"]`：outer host 强制 full-bleed（不做 safe-area 收缩；safe-area contract 进入 document boundary 处理）
-  - `[data-tt-mobile-surface="free-window"]`：不接管 `top/left`（仅在 surface 准入转换时允许一次性把初始位置从 safe-area 顶部挪开）
-  - `[data-tt-mobile-surface="backdrop"]`：保持 full-bleed（不做 inset）
-  - 备注：firewall 的 surface selector 会刻意重复 attribute 以获得足够 specificity（覆盖常见框架 scoped CSS + `!important`）
-- **排除**：明确跳过 `body/#sheld/#chat` 等核心容器（避免影响主界面）。
-- **显式 opt-in**：若节点已带 `data-tt-mobile-surface`，该控制器将尊重并不再改写（便于第三方脚本作者自我修复）。
-- **Revalidate**：停止自动高频重分类（不监听 `visualViewport`/`resize`/`orientationchange` 噪声）；除候选 surface 自身的生命周期属性外，仅在节点新增/移除时对新增子树做 admission。`controller.revalidate()` 保留为手动兜底（debug 用）。
-
-补充：portal host 常见为全屏容器（有时 `pointer-events: none`），实际交互面板通过 portal/render 落到其内部；classifier 会优先准入真实可交互 surface（避免 host 被误当作唯一 surface）。
-
-该控制器的边界是：只负责发现与分类“可能需要 safe-area 约束的第三方顶层 surface”，并输出最小属性契约，不承担全局样式重写职责；在沉浸模式下由于 `--tt-inset-top = 0`，对应的 geometry contract 会自然退化为 full-bleed。
-
-### 3.4 旧 WebView JS 能力补齐（移动端）
-
-实现：`src/tauri/main/compat/mobile/mobile-runtime-compat.js`
-
-- 只在 Tauri mobile 安装，补齐少量缺失的标准 API（如 `Array.prototype.at` 等）。
-- 通过 `window.__TAURITAVERN_MOBILE_RUNTIME_COMPAT__` sentinel 保证只执行一次。
-
-### 3.5 聊天输入框焦点策略（移动端）
-
-实现：`src/scripts/chat-input-focus.js`
-
-当前策略：
-
-- `#send_textarea` 的程序化聚焦按意图分为 `navigation` / `restoration` / `editing`。
-- 移动宿主（`isMobileHost()`）会拒绝 `navigation` 与 `restoration`，因此切角色、读历史聊天、welcome screen 创建临时聊天、按钮回焦都不会自动把键盘弹起。
-- 显式编辑流仍允许聚焦，例如消息编辑收尾、Quick Reply 把内容注入聊天输入框后继续编辑。
-- Tauri Android 在文档进入 `hidden` 时，若 `#send_textarea` 仍持有焦点，会主动 `blur()` 并清空 restoration 状态；因此从系统后台返回时不会因为旧焦点被恢复而自动弹出键盘。
-- 该策略完全留在前端共享模块，不依赖 native/WebView 对 `focus()` 做拦截。
-
-### 3.6 Android IME ownership 路由（surface-local contract）
-
-实现：
-
-- JS focus 路由：`src/tauri/main/compat/mobile/mobile-ime-surface-controller.js`
-- bridge target：`src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/WebViewInsetsStyleApplier.kt`
-- fixed-shell 消费：`src/tauri/main/compat/mobile/mobile-geometry-firewall.js`
-
-当前策略（Android）：
-
-- 监听 `focusin/focusout`（capture），解析“当前正在输入的 surface root”，并写入 host-private attributes：
-  - `data-tt-ime-active`
-  - `data-tt-ime-surface="composer|fixed-shell|dialog"`
-- 调用 `window.__TAURITAVERN_INSETS__.setImeTarget(rootOrNull)` 将 `--tt-ime-bottom` 注入到 active root（`#sheld` 使用默认回退，因此传 `null`）。
-- composer（`#sheld/#form_sheld`）继续由 `android-ime-layout-host` 的 lift/spacer 消费键盘偏移（不扩散到其它界面）。
-- fixed-shell（角色编辑、world/editor drawer、Prompt Manager 等）由 geometry firewall 通过 `height/max-height/bottom + scroll-padding-bottom` 消费 `--tt-ime-bottom`，避免输入被键盘遮挡。
-- 为避免 `height: 100%` + `flex: 1` 全高表单出现“减高但不增滚动”的体感，firewall 还会对常见 scroll container 注入 `::after` spacer，其高度使用 `--tt-viewport-bottom-inset`（safe-area + IME）提供 reachability slack。
-- dialog（`dialog.popup[open]` / `#dialogue_popup`）走 `dialog` 分支：firewall 调整 `top/max-height` 并设置 `scroll-padding-bottom`，避免输入被键盘遮挡。
-
-备注：
-
-- iOS 主要依赖 viewport resize；`--tt-ime-bottom` 可能始终为 `0`，但上述策略不应破坏布局。
-
-### 3.7 聊天宽度
-
-实现：`src/scripts/power-user.js`（`getEffectiveChatWidth()`）
-
-- 移动宿主且视口为竖屏时，聊天宽度固定为 100%，滑块禁用；其他情况使用用户的 `chat_width`。竖屏按 CSS `(orientation: portrait)` 判断，iPad 分屏的窄高窗口也算竖屏。
-- 有效宽度只在渲染时写入 `--sheldWidth`，不改写设置或主题。
-- 视口宽度不超过 1000px 时，上游 `mobile-styles.css` 已把 `#sheld` 固定为全宽，所以手机横屏的主栏仍显示为全宽。
-
-## 4. 沉浸模式开关（Android）
-
-前端入口：`src/scripts/mobile-system-ui.js`
-
-- 通过 JS bridge `window.TauriTavernAndroidSystemUiBridge` 调用 native：
-  - `setImmersiveFullscreenEnabled(boolean)`
-  - `isImmersiveFullscreenEnabled()`
-
-native 侧实现：`src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/AndroidSystemUiJsBridge.kt`
-
-重要约束：
-
-- **沉浸模式不仅影响 system bars 的显示，也切换布局策略**；启用后顶部 safe-area 归零，允许 full-bleed 布局。
-
-## 5. 已支持 / 明确不支持
-
-已支持：
-
-- Android edge‑to‑edge + inset 契约变量（包含 IME）。
-- Android 沉浸模式下以 full-bleed 策略运行，顶部 inset 不再额外避让刘海/状态栏。
-- iOS `viewport-fit=cover` + `env(safe-area-inset-*)` 提供 `--tt-inset-*`。
-- 第三方脚本 fixed 浮层的 inset top 元素级修正（移动端）。
-- Android：IME ownership 路由（composer + fixed-shell），避免把键盘动画扩散为全局 `:root` 变量更新。
-- 聊天导航类场景不再自动聚焦 `#send_textarea`，Tauri Android 从系统后台恢复时也不会恢复聊天输入焦点；移动端键盘只在真正进入输入/编辑意图时弹出。
-
-明确不支持 / 不承诺：
-
-- 不做第三方 `<style>` 文本 rewrite（风险高、成本高、回归面大）。
-- overlay compat 不保证覆盖“非 body 直系子节点插入”的浮层（若未来出现真实样本，再数据驱动扩展观察点）。
-- overlay compat 只处理 **top safe‑area**，不做通用的 left/right/bottom 兜底。
-
-## 6. 最小回归与调试
-
-建议最小回归：
-
-1. Android（刘海机型）+ 沉浸模式：第一方顶部 UI 与第三方脚本浮层允许进入刘海/状态栏区域。
-2. 键盘弹出/收起：`#sheld` 高度与输入框不被遮挡。
-3. 旋转屏幕：safe‑area 与布局重新校验无抖动回归。
-4. 手机与 iPad 横竖屏、分屏切换时，聊天宽度符合 §3.7。
-
-快速调试点：
-
-- `getComputedStyle(document.documentElement).getPropertyValue('--tt-inset-top')`
-  - 沉浸模式期望接近 `0px`
-  - 非沉浸模式期望反映当前顶部 safe area
-- `window.__TAURITAVERN_MOBILE_OVERLAY_COMPAT__` 是否已安装
-- `window.__TAURITAVERN_MOBILE_RUNTIME_COMPAT__ === true`（旧 WebView）
-- `window.__TAURITAVERN_INSETS__` 是否存在（`apply/setImeTarget/reapply`）
-- 当前 active surface 是否正确打标：`[data-tt-ime-active][data-tt-ime-surface]`
+公开布局 API 与旧变量的状态见 [API/Layout.md](../API/Layout.md)。

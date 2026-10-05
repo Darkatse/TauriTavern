@@ -15,3 +15,4 @@ pub mod range;
 pub mod settings;
 pub mod sync;
 pub mod sync_automation;
+pub mod window_layout;

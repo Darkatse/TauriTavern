@@ -1,5 +1,5 @@
 // Local override of Wry's generated RustWebViewClient.
-// Baseline: wry 0.55.1. Local deltas: main-frame listener, intercept failure response,
+// Baseline: wry 0.55.1. Local deltas: intercept failure response,
 // and preserving an explicit host Cache-Control policy.
 
 @file:Suppress("RedundantOverride")
@@ -28,10 +28,6 @@ class RustWebViewClient(
   var currentUrl: String = "about:blank"
   private var lastInterceptedUrl: Uri? = null
   private var pendingUrlRedirect: String? = null
-
-  interface MainFrameNavigationListener {
-    fun onMainFramePageStarted(view: WebView, url: String)
-  }
 
   private val assetLoader =
     WebViewAssetLoader
@@ -83,7 +79,6 @@ class RustWebViewClient(
     favicon: Bitmap?,
   ) {
     currentUrl = url
-    mainFrameNavigationListener?.onMainFramePageStarted(view, url)
     if (interceptedState[url] == false) {
       val webView = view as RustWebView
       for (script in webView.initScripts) {
@@ -119,9 +114,6 @@ class RustWebViewClient(
 
   companion object {
     private const val LOG_TAG = "TauriTavern/WebView"
-
-    @Volatile
-    var mainFrameNavigationListener: MainFrameNavigationListener? = null
 
     private fun logInterceptFailure(url: String, throwable: Throwable) {
       try {

@@ -14,11 +14,10 @@ interface AndroidWebFullscreenHost {
 
 class AndroidWebFullscreenController(
   private val contentRootProvider: () -> ViewGroup?,
-  private val insetsBridge: AndroidInsetsBridge,
+  private val windowLayout: AndroidWindowLayout,
 ) {
   private var fullscreenContainer: FrameLayout? = null
   private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
-  private var immersiveFullscreenBeforeShow: Boolean? = null
 
   fun show(view: View, callback: WebChromeClient.CustomViewCallback): Boolean {
     hide()
@@ -42,8 +41,7 @@ class AndroidWebFullscreenController(
         )
       }
 
-    immersiveFullscreenBeforeShow = insetsBridge.isImmersiveFullscreenEnabled()
-    insetsBridge.setImmersiveFullscreenEnabled(true)
+    windowLayout.setElementFullscreen(true)
 
     contentRoot.addView(container)
     container.bringToFront()
@@ -63,8 +61,7 @@ class AndroidWebFullscreenController(
     val callback = fullscreenCallback
     fullscreenCallback = null
 
-    immersiveFullscreenBeforeShow?.let { insetsBridge.setImmersiveFullscreenEnabled(it) }
-    immersiveFullscreenBeforeShow = null
+    windowLayout.setElementFullscreen(false)
 
     callback?.onCustomViewHidden()
     return true

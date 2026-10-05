@@ -10,3 +10,4 @@ pub use repositories::{
     FileAvatarRepository, FileBackgroundRepository, FileImageMetadataRepository,
 };
 pub use user_media_store::FilesystemUserMediaStore;
+pub mod window_backdrop;

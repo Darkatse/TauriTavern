@@ -92,7 +92,6 @@ export function openAgentSystemPanel(): void {
         throw new Error(tr('agentSystemDialogUnsupported'));
     }
     dialog.className = 'ttas-dialog';
-    dialog.setAttribute('data-tt-mobile-surface', 'fullscreen-window');
     const mount = document.createElement('div');
     mount.className = 'ttas-popup-mount';
     dialog.appendChild(mount);

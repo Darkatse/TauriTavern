@@ -1,6 +1,6 @@
 # TauriTavern iOS 端开发说明
 
-本文档记录当前 iOS 端开发中已经踩过的关键问题、根因分析、已落地方案，以及对应的架构改动。目标是避免重复踩坑，并确保移动端样式契约（`--tt-inset-*`）在 iOS 上可预测、可维护。
+本文档记录 iOS 端已经踩过的关键问题、根因与已落地方案。
 
 补充：iOS/iPadOS 的 **分发 Policy（profile + capabilities snapshot）** 属于“合规裁剪/能力分级”问题域，其当前实现快照与维护约束已收敛到 `docs/CurrentState/iOSPolicy.md`，本文件仍聚焦 WKWebView 行为差异与 iOS-only 桥接。
 
@@ -15,52 +15,11 @@
 
 `src/index.html` 已在 `init.js` 前加载 SillyTavern 1.18.0 的 `lib/structured-clone/monkey-patch.js`。它只在全局能力缺失时安装，15.4+ 不替换 WebKit 原生函数。
 
-## 1. WKWebView safe-area 自动 inset 导致底部死区
+## 1. WKWebView 内容视口
 
-### 1.1 现象
+`infrastructure/ios_webview.rs::configure_main_wkwebview()` 在主窗口 build 后安装 `platform/ios_window_layout.rs` 的窗口宿主。WKWebView 的上、左、右约束到 safeAreaLayoutGuide，底边约束到 keyboardLayoutGuide.topAnchor；内部 UIScrollView 保持 `.never` 与零 inset，避免同一份遮挡再扣一次。iOS 没有沉浸模式。职责与背景链路见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md)。
 
-- 页面底部出现一块灰色、不可交互的区域。
-- 前端根节点（如 `#sheld`）看似已撑满 `window.innerHeight`，但依然无法覆盖到屏幕底边。
-
-### 1.2 关键定位信号
-
-当出现如下特征时，优先判断为 **iOS native 侧对 WebView 做了 safe-area 自动 inset 调整**，而不是纯前端 CSS 高度问题：
-
-- `screen.height - window.innerHeight` 显著大于 0（例如 `96px`）
-- 同时 `env(safe-area-inset-bottom)`（或 `--tt-inset-bottom`）仍为非 0（例如 `34px`）
-
-这通常意味着：**Web 内容的 viewport 被系统按 safe-area 扣掉了（顶部 + 底部）**，因此 DOM 只能布局在“安全区内的可视内容区域”，无法触达屏幕真实底边。
-
-### 1.3 根因
-
-WKWebView 内部是 `UIScrollView` 承载 Web 内容；在默认行为下，iOS 可能对该 scroll view 启用自动的内容 inset 调整（safe-area / scroll indicator insets），导致：
-
-- Web 内容 viewport 变小（`window.innerHeight` 被扣减）
-- 产生“看得见但不可交互”的底部空白区域（它不是 DOM 的一部分）
-
-这会与当前的移动端布局契约冲突：iOS 侧 safe-area 应由前端通过 `env(safe-area-inset-*)` → `--tt-inset-*` 统一消费，而不是由 native 再额外“帮你扣一遍”。
-
-### 1.4 已落地方案（fail-fast）
-
-在 iOS 端创建主窗口后，对 WKWebView 的 `scrollView` 做一次性配置：
-
-- `scrollView.contentInsetAdjustmentBehavior = .never`
-- 清空 `contentInset` 与 `scrollIndicatorInsets`
-- 关闭 `automaticallyAdjustsScrollIndicatorInsets`
-
-该策略的目标是：让 `window.innerHeight` 覆盖到 full-bleed viewport；safe-area 的避让完全交给 CSS contract（`--tt-inset-*`）控制。
-
-实现位置：
-
-- iOS 配置入口：`src-tauri/crates/tauritavern/src/infrastructure/ios_webview.rs` 的 `configure_main_wkwebview()`
-- 调用时机：`src-tauri/crates/tauritavern/src/app/host/window.rs`（主窗口 build 后立刻调用）
-
-### 1.5 验收建议
-
-修复后应满足：
-
-- `screen.height - window.innerHeight` 接近 0（允许 1px 内的 rounding）
-- `--tt-inset-bottom` 仍保持合理的 safe-area 值（如 `34px`），且输入框/按钮不被 home indicator 遮挡
+排查灰带或双重缩小时，对照 WKWebView frame、`innerHeight`/`visualViewport` 与键盘边界：窗口与内容视口的差值应恰好等于安全区与停靠键盘。
 
 ## 2. 文件导入与导出
 
@@ -95,7 +54,8 @@ UIKit 界面在主线程上展示；在 iPad 上，popover 必须指定 sourceVi
 
 ### 4.3 已落地方案
 
-- 继续复用 `src-tauri/crates/tauritavern/src/infrastructure/ios_webview.rs` 的主 WebView 配置入口，在 `configure_main_wkwebview()` 内统一完成两类 native 配置：
+- 继续复用 `src-tauri/crates/tauritavern/src/infrastructure/ios_webview.rs` 的主 WebView 配置入口，在 `configure_main_wkwebview()` 内统一完成 native 配置：
+  - 安装安全区/键盘内容视口与窗口背景宿主；
   - 关闭 `scrollView` 的 safe-area 自动 inset 调整；
   - 仅在 iOS 16.0+ 开启 `WKPreferences.setElementFullscreenEnabled(true)`。
 - 这样角色卡、JS-Slash-Runner、同源 iframe 的 fullscreen 事件、退出语义和上游契约保持一致，宿主只补齐平台能力，不改前端行为。

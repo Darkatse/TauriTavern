@@ -9,7 +9,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
 import android.webkit.WebChromeClient
-import androidx.activity.enableEdgeToEdge
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -36,27 +35,25 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
     AndroidAiGenerationJsBridge(mainHandler, aiGenerationNotifier)
   }
   private val systemUiJsBridge: AndroidSystemUiJsBridge by lazy {
-    AndroidSystemUiJsBridge(mainHandler, insetsBridge)
+    AndroidSystemUiJsBridge(mainHandler, windowLayout)
   }
   private val readinessPoller: WebViewReadinessPoller by lazy {
     WebViewReadinessPoller(webViewProvider = { webView }, isDestroyed = { isActivityDestroyed })
   }
 
-  private val insetsBridge: AndroidInsetsBridge by lazy {
-    AndroidInsetsBridge(
+  val windowLayout: AndroidWindowLayout by lazy {
+    AndroidWindowLayout(
       window = window,
       resources = resources,
       contentRootProvider = { window.decorView.findViewById(android.R.id.content) },
       webViewProvider = { webView },
-      isDestroyed = { isActivityDestroyed },
       mainHandler = mainHandler,
-      readinessPoller = readinessPoller,
     )
   }
   private val webFullscreenController: AndroidWebFullscreenController by lazy {
     AndroidWebFullscreenController(
       contentRootProvider = { window.decorView.findViewById<ViewGroup>(android.R.id.content) },
-      insetsBridge = insetsBridge,
+      windowLayout = windowLayout,
     )
   }
 
@@ -74,12 +71,10 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
-    enableEdgeToEdge()
     super.onCreate(savedInstanceState)
-    installWebViewNavigationHooks()
     backNavigationController.register(onBackPressedDispatcher, this)
     aiGenerationNotifier.acknowledgeCompletionNotification()
-    insetsBridge.onCreate()
+    windowLayout.onCreate()
     captureShareIntent(intent)
   }
 
@@ -92,14 +87,14 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
 
   override fun onConfigurationChanged(newConfig: Configuration) {
     super.onConfigurationChanged(newConfig)
-    insetsBridge.onConfigurationChanged()
+    windowLayout.onConfigurationChanged()
   }
 
   override fun onWebViewCreate(webView: WebView) {
     this.webView = webView
     webView.addJavascriptInterface(aiGenerationJsBridge, AndroidAiGenerationJsBridge.INTERFACE_NAME)
     webView.addJavascriptInterface(systemUiJsBridge, AndroidSystemUiJsBridge.INTERFACE_NAME)
-    insetsBridge.onWebViewAvailable()
+    windowLayout.onWebViewAvailable()
     sharePayloadDispatcher.requestDispatch()
   }
 
@@ -108,12 +103,12 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
     acknowledgeCompletionNotificationIfForeground(
       AndroidAppPresence.setActivityResumed(true),
     )
-    insetsBridge.onResume()
+    windowLayout.onResume()
     sharePayloadDispatcher.requestDispatch()
   }
 
   override fun onPause() {
-    insetsBridge.onPause()
+    windowLayout.onPause()
     AndroidAppPresence.setActivityResumed(false)
     super.onPause()
   }
@@ -136,21 +131,7 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
     isActivityDestroyed = true
     mainHandler.removeCallbacksAndMessages(null)
     backgroundExecutor.shutdownNow()
-    RustWebViewClient.mainFrameNavigationListener = null
     super.onDestroy()
-  }
-
-  private fun installWebViewNavigationHooks() {
-    RustWebViewClient.mainFrameNavigationListener =
-      object : RustWebViewClient.MainFrameNavigationListener {
-        override fun onMainFramePageStarted(view: WebView, url: String) {
-          val activeWebView = webView ?: return
-          if (view !== activeWebView) {
-            return
-          }
-          insetsBridge.onMainFrameNavigationStarted()
-        }
-      }
   }
 
   private fun acknowledgeCompletionNotificationIfForeground(enteredForegroundInteractive: Boolean) {

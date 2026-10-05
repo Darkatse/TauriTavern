@@ -10,6 +10,8 @@ export {};
  * kernel (`src/tauri/main/**`).
  *
  * @typedef {(
+ *   | 'get_window_snapshot'
+ *   | 'set_window_backdrop'
  *   | 'database_handle'
  *   | 'apply_agent_run_prune'
  *   | 'build_openai_logit_bias'

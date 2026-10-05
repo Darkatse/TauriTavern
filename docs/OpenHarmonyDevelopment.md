@@ -143,7 +143,7 @@ ArkWeb 的 `javaScriptOnDocumentStart` 按字典序执行多个脚本条目，�
 - `window.open`：按移动宿主的规则处理，见 [FrontendHostContract](FrontendHostContract.md) §5.4；
 - 网页全屏可以进入和退出；
 - 软键盘弹出时 visual viewport 缩小，输入框保持可见；
-- 安全区：`EntryAbility` 设置 `setWindowLayoutFullScreen(false)`，由系统避让，`--tt-inset-*` 回落到 `env()`。
+- 安全区：`EntryAbility` 设置 `setWindowLayoutFullScreen(false)`，由系统让窗口留在安全区内；系统栏后不显示壁纸。
 
 ## 7. 文件导入与导出
 

@@ -19,7 +19,7 @@
 
 :root {
     interpolate-size: allow-keywords;
-    --doc-height: 100%;
+    --doc-height: 100vh;
     --transparent: rgba(0, 0, 0, 0);
 
     --black30a: rgba(0, 0, 0, 0.3);
@@ -114,13 +114,12 @@
     --topBarBlockPadding: calc(var(--mainFontSize) / 3);
     --top-settings-holder-max-z-index: 4005;
 
-    /* Layout contract: Android is native-injected, iOS uses env(safe-area-inset-*). */
+    /* Deprecated aliases of the browser residual safe area. */
     --tt-inset-top: env(safe-area-inset-top, 0px);
     --tt-inset-right: env(safe-area-inset-right, 0px);
     --tt-inset-left: env(safe-area-inset-left, 0px);
     --tt-inset-bottom: env(safe-area-inset-bottom, 0px);
-    --tt-ime-bottom: 0px;
-    --tt-viewport-bottom-inset: max(var(--tt-inset-bottom), var(--tt-ime-bottom));
+    --tt-viewport-bottom-inset: var(--tt-inset-bottom);
 
     /*styles for the color picker*/
     --tool-cool-color-picker-btn-bg: transparent;
@@ -149,22 +148,22 @@
     text-shadow: 0px 0px calc(var(--shadowWidth) * 1px) var(--SmartThemeShadowColor);
 }
 
+@supports (height: 100dvh) {
+    :root { --doc-height: 100dvh; }
+}
+
 html {
-    /*fix for chrome flickering on blurred divs*/
-    -webkit-transform: translateZ(0);
+    /* transform/perspective would make html the fixed containing block,
+       causing #bg1 to move with root-document scrolling. */
     -webkit-backface-visibility: hidden;
-    -webkit-perspective: 1000;
 }
 
 body {
     margin: 0;
     padding: 0;
     width: 100%;
-    /*fallback for JS load*/
     height: 100vh;
     height: 100dvh;
-    /*defaults as 100%, then reassigned via JS as pixels, will work on PC and Android*/
-    /*height: calc(var(--doc-height) - 1px);*/
     background-color: var(--SmartThemeBlurTintColor);
     background-repeat: no-repeat;
     background-attachment: fixed;
@@ -1775,22 +1774,16 @@ button {
 }
 
 .tt-chat-input-editor {
-    --tt-chat-input-editor-safe-top: max(var(--tt-inset-top, 0px), 0px);
-    --tt-chat-input-editor-safe-right: max(var(--tt-inset-right, 0px), 0px);
-    --tt-chat-input-editor-safe-bottom: max(var(--tt-viewport-bottom-inset, var(--tt-inset-bottom, 0px)), 0px);
-    --tt-chat-input-editor-safe-left: max(var(--tt-inset-left, 0px), 0px);
     --tt-chat-input-editor-margin: 16px;
-    --tt-chat-input-editor-width: calc(100vw - var(--tt-chat-input-editor-safe-left) - var(--tt-chat-input-editor-safe-right) - var(--tt-chat-input-editor-margin) * 2);
-    --tt-chat-input-editor-height: calc(var(--tt-base-viewport-height, 100vh) - var(--tt-chat-input-editor-safe-top) - var(--tt-chat-input-editor-safe-bottom) - var(--tt-chat-input-editor-margin) * 2);
+    --tt-chat-input-editor-width: calc(100vw - var(--tt-chat-input-editor-margin) * 2);
+    --tt-chat-input-editor-height: calc(var(--doc-height) - var(--tt-chat-input-editor-margin) * 2);
 
     width: min(920px, var(--tt-chat-input-editor-width));
-    width: min(920px, calc(100dvw - var(--tt-chat-input-editor-safe-left) - var(--tt-chat-input-editor-safe-right) - var(--tt-chat-input-editor-margin) * 2));
+    width: min(920px, calc(100dvw - var(--tt-chat-input-editor-margin) * 2));
     height: min(720px, var(--tt-chat-input-editor-height));
-    height: min(720px, calc(var(--tt-base-viewport-height, 100dvh) - var(--tt-chat-input-editor-safe-top) - var(--tt-chat-input-editor-safe-bottom) - var(--tt-chat-input-editor-margin) * 2));
     max-width: min(920px, var(--tt-chat-input-editor-width));
-    max-width: min(920px, calc(100dvw - var(--tt-chat-input-editor-safe-left) - var(--tt-chat-input-editor-safe-right) - var(--tt-chat-input-editor-margin) * 2));
+    max-width: min(920px, calc(100dvw - var(--tt-chat-input-editor-margin) * 2));
     max-height: min(720px, var(--tt-chat-input-editor-height));
-    max-height: min(720px, calc(var(--tt-base-viewport-height, 100dvh) - var(--tt-chat-input-editor-safe-top) - var(--tt-chat-input-editor-safe-bottom) - var(--tt-chat-input-editor-margin) * 2));
     min-width: min(560px, var(--tt-chat-input-editor-width));
     min-height: min(320px, var(--tt-chat-input-editor-height));
     margin: auto;
@@ -1899,7 +1892,6 @@ button {
 
     .tt-chat-input-editor .tt-chat-input-editor__textarea {
         padding: 10px;
-        scroll-padding-bottom: max(var(--tt-viewport-bottom-inset, var(--tt-inset-bottom, 0px)), 0px);
     }
 }
 

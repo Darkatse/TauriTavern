@@ -59,4 +59,5 @@ pub mod user_commands;
 pub mod user_directory_commands;
 mod user_endpoint_access;
 pub mod vector_commands;
+pub mod window_layout_commands;
 pub mod world_info_commands;
