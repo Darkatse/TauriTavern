@@ -151,6 +151,7 @@ export {};
  *   | 'open_chat_backup_download'
  *   | 'open_chat_payload_json'
  *   | 'plan_agent_run_prune'
+ *   | 'plugin_proxy_request'
  *   | 'read_secret_state'
  *   | 'read_secret_settings'
  *   | 'read_agent_run_events'

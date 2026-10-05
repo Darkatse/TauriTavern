@@ -37,6 +37,7 @@ pub mod mcp_commands;
 pub mod preset_commands;
 pub mod provider_metadata_commands;
 pub mod quick_reply_commands;
+pub mod plugin_proxy_commands;
 pub mod registry;
 pub mod resource_bridge_commands;
 #[cfg(desktop)]

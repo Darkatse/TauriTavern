@@ -24,6 +24,7 @@ import {
     ToggleSwitch,
 } from './SettingsComponents';
 import { createSettingsController, type SettingsController } from './SettingsController';
+import { SettingsBridgeSection } from './SettingsBridgeSection';
 import { SettingsSystemSection } from './SettingsSystemSection';
 import { translateOptions, zstdCompressionHint } from './SettingsText';
 
@@ -383,6 +384,8 @@ function SettingsApp({
                     </div>
                 </SettingsSection>
             )}
+
+            <SettingsBridgeSection tr={tr} />
         </div>
     );
 }

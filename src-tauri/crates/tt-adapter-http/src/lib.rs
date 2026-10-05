@@ -3,4 +3,5 @@ pub mod github;
 mod pool;
 mod restricted_endpoint;
 
+pub use client::build_http_client;
 pub use pool::{HttpClientPool, HttpClientProfile, MCP_REQUEST_TIMEOUT};

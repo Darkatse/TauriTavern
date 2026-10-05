@@ -20,7 +20,7 @@ fn apply_android_tls(builder: ClientBuilder) -> ClientBuilder {
     builder.use_preconfigured_tls(android_tls_config())
 }
 
-pub(crate) fn build_http_client(
+pub fn build_http_client(
     builder: ClientBuilder,
     product_user_agent: &str,
 ) -> Result<Client, Error> {
