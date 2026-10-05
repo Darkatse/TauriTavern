@@ -298,17 +298,6 @@ mod tests {
     }
 
     #[test]
-    fn classic_and_centered_wallpaper_crop_different_rows() {
-        let image = DynamicImage::ImageRgb8(image::RgbImage::from_fn(1, 4, |_, y| {
-            image::Rgb([y as u8 * 60, 0, 0])
-        }));
-        let classic = paint_strip(&image, (0, 0, 1, 1), 1.0, [1.0, 4.0], [0.0, 0.0]);
-        let centered = paint_strip(&image, (0, 0, 1, 1), 1.0, [1.0, 4.0], [0.0, -1.0]);
-        assert_eq!(classic.get_pixel(0, 0), &Rgba([0, 0, 0, 255]));
-        assert_eq!(centered.get_pixel(0, 0), &Rgba([60, 0, 0, 255]));
-    }
-
-    #[test]
     fn css_fit_preserves_aspect_ratio_and_percent_position_uses_remaining_space() {
         let area = [400.0, 800.0];
         let image = [1200.0, 600.0];

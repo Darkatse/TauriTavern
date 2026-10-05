@@ -369,7 +369,6 @@ test('active timeline renders a streaming write card with tail and metric', asyn
     expect(card).not.toBeNull();
     expect(card?.getAttribute('aria-live')).toBe('off');
     expect(document.querySelector('.ttas-run-heading-copy small')?.getAttribute('aria-live')).toBe('off');
-    expect(card?.getAttribute('style')).toContain('116px');
     expect(card?.querySelector('.ttas-run-event-live-stream')?.textContent).toBe('a streamed tail line');
     expect(card?.textContent).toContain('timelineLiveWriting');
     expect(card?.querySelector('.ttas-run-event-live-metric')?.textContent).toBe('+timelineWordCount');

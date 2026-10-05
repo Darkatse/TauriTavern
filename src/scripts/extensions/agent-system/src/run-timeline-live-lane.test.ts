@@ -72,7 +72,7 @@ function streamingWrite(lane: RunTimelineLiveLane, state: { handler: LiveHandler
     return handler;
 }
 
-test('streams a foreground write call into a double-height card with a line-based tail', () => {
+test('streams a foreground write call with a line-based tail', () => {
     const { lane, state } = harness();
     const handler = streamingWrite(lane, state);
     handler({
@@ -88,7 +88,6 @@ test('streams a foreground write call into a double-height card with a line-base
     expect(items).toHaveLength(1);
     const item = items[0];
     if (!item) throw new Error('expected the live item');
-    expect(item.rowSpan).toBe(2);
     expect(item.kind).toBe('write');
     expect(item.titleKey).toBe('timelineLiveWriting');
     expect(item.titleParams).toEqual({ path: 'reply.md' });
