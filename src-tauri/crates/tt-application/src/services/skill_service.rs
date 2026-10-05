@@ -290,7 +290,11 @@ impl ExternalImportDownloader for UnavailableExternalImportDownloader {
         ))
     }
 
-    async fn fetch_to_file(&self, _url: Url, _path: &std::path::Path) -> Result<(), DomainError> {
+    async fn fetch_to_file(
+        &self,
+        _url: Url,
+        _path: &std::path::Path,
+    ) -> Result<crate::services::external_import_service::DownloadedFile, DomainError> {
         Err(DomainError::InternalError(
             "Skill remote import downloader is not configured".to_string(),
         ))
@@ -307,7 +311,7 @@ mod tests {
     use chrono::Utc;
 
     use super::*;
-    use crate::services::external_import_service::DownloadedBytes;
+    use crate::services::external_import_service::{DownloadedBytes, DownloadedFile};
     use tt_domain::errors::DomainError;
     use tt_domain::models::agent::profile::AgentSkillPolicy;
     use tt_domain::models::skill::{
@@ -525,7 +529,11 @@ mod tests {
             })
         }
 
-        async fn fetch_to_file(&self, _url: Url, _path: &Path) -> Result<(), DomainError> {
+        async fn fetch_to_file(
+            &self,
+            _url: Url,
+            _path: &Path,
+        ) -> Result<DownloadedFile, DomainError> {
             unimplemented!("not used by these tests")
         }
     }

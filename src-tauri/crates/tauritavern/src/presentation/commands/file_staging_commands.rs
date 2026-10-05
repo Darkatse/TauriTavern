@@ -1,15 +1,17 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use tauri::{AppHandle, State};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
+use crate::app::AppState;
 use crate::infrastructure::staging::{create_staged_file, discard_file, validate_staged_path};
 use crate::platform::ipc::{SMALL_ASSET_UPLOAD_CHUNK_BYTES, UPLOAD_CHUNK_BYTES};
 use crate::presentation::commands::chunk_body::chunk_bytes_from_request;
-use crate::presentation::commands::helpers::log_command;
+use crate::presentation::commands::helpers::{ensure_ios_policy_allows, log_command};
 use crate::presentation::errors::CommandError;
 
 const DEFAULT_KIND: &str = "generic";
@@ -33,6 +35,12 @@ pub struct StageFileBeginResult {
 pub struct StageFileFinishResult {
     pub file_path: String,
     pub size: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StageFileFromUrlResult {
+    pub file_path: String,
+    pub mime_type: Option<String>,
 }
 
 fn required_header(request: &tauri::ipc::Request<'_>, name: &str) -> Result<String, CommandError> {
@@ -166,6 +174,39 @@ pub async fn stage_file_finish(
         file_path: path.to_string_lossy().to_string(),
         size,
     })
+}
+
+/// Stages a remote file the page cannot read; the frontend then delivers it like any staged file.
+#[tauri::command]
+pub async fn stage_file_from_url(
+    app: AppHandle,
+    url: String,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<StageFileFromUrlResult, CommandError> {
+    log_command("stage_file_from_url");
+    ensure_ios_policy_allows(
+        &app_state.ios_policy,
+        app_state.ios_policy.capabilities.content.external_import,
+        "content.external_import",
+    )?;
+    let path = create_staged_file(&app, "remote", "bin").await?;
+    match app_state
+        .services
+        .content_service
+        .download_external_file(&url, &path)
+        .await
+    {
+        Ok(file) => Ok(StageFileFromUrlResult {
+            file_path: path.to_string_lossy().into_owned(),
+            mime_type: file.content_type,
+        }),
+        Err(error) => {
+            if let Err(cleanup_error) = discard_file(&path).await {
+                tracing::warn!(%cleanup_error, "Failed to discard incomplete remote download");
+            }
+            Err(error.into())
+        }
+    }
 }
 
 #[tauri::command]

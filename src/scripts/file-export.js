@@ -16,7 +16,20 @@ export async function deliverBlob(blob, fileName) {
         return { delivered: true };
     }
 
-    const staging = createFileStagingService({ invoke });
+    const { safeInvoke } = window.__TAURITAVERN__.invoke;
+    const staging = createFileStagingService({ safeInvoke, invoke });
     const path = await staging.stageBlob(payload, { kind: 'export', preferredName: fileName });
-    return invoke('deliver_staged_file', { path, fileName });
+    return safeInvoke('deliver_staged_file', { path, fileName });
+}
+
+/**
+ * Stages remote bytes in the host, then names the file using the response type.
+ * @param {string} url
+ * @param {(mimeType: string) => string} fileNameFor
+ * @returns {Promise<{ delivered: boolean }>}
+ */
+export async function deliverRemoteFile(url, fileNameFor) {
+    const { safeInvoke } = window.__TAURITAVERN__.invoke;
+    const { path, mimeType } = await createFileStagingService({ safeInvoke }).stageUrl(url);
+    return safeInvoke('deliver_staged_file', { path, fileName: fileNameFor(mimeType) });
 }

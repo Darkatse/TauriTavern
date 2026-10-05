@@ -368,9 +368,9 @@ TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板�
 
 ### 5.7 Android 图片长按保存（Public in practice）
 
-- Android WebView 没有图片上下文菜单。宿主在主文档与同源 iframe 中补上 `<img>` 的 `contextmenu` 默认行为：用户确认后，把当前显示的图片交给系统保存面板，由用户选择保存位置。
+- Android WebView 没有图片上下文菜单。宿主在主文档与同源 iframe 中补上 `<img>` 的 `contextmenu` 默认行为：用户确认后，把这张图片交给系统保存面板，由用户选择保存位置。
 - 与浏览器一致，只有 `preventDefault()` 会取消这一默认行为，`stopPropagation()` 不影响。自行处理图片长按的扩展应在 `contextmenu` 上调用 `preventDefault()`。
-- 图片在其所在窗口按 `currentSrc` 读取，遵循同源与 CORS 规则；读取失败直接提示，不改走其他路径。保存的是原始字节，不重新编码。
+- 图片按 `currentSrc` 取得原始字节，不重新编码，失败直接提示。`blob:`、`data:` 与同源图片在其所在窗口读取；其他 http(s) 图片与浏览器的“保存图片”一样不受页面 CORS 限制，由宿主重新请求该地址，不带页面的 Cookie 与 Referer。
 - 宿主不注册原生长按菜单，长按产生的 `contextmenu` 始终先交给页面处理。
 
 ## 6. Smoke Tests（Public 回归用例）
@@ -391,7 +391,9 @@ TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板�
    - `/scripts/extensions/third-party/*` 的 ESM/CSS/图片/字体均可加载，未命中返回 `404`；无秘密 fixture 的 `.git/HEAD` / `.git/config` 采用同一文件级路径语义
    - 媒体 Range 契约：`/backgrounds/<file>.mp4` 的 `Range: bytes=0-1` 返回 `206` 且包含 `Content-Range`
 5. **Android 图片长按保存**
-   - 长按聊天图片出现保存确认，确认后文件写入 Downloads（Android 8–9 为用户选择的位置）。
+   - 长按聊天图片出现保存确认，确认后出现系统保存面板。
+   - 没有 CORS 的跨域图片也能保存；地址没有扩展名时，按响应类型补上扩展名。
+   - 同源 iframe（包括 srcdoc）中的图片和 `a[download]` 都能保存。
    - 页面对该次 `contextmenu` 调用 `preventDefault()` 时，不出现确认框。
 
 任何涉及第 3/4 节契约的改动，都必须至少跑通以上 smoke tests。
