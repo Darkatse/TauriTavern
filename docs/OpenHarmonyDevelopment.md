@@ -65,7 +65,9 @@ CI：Canary 调用 `ohos.yml` 构建 aarch64，手动触发用于构建模拟器
 
 - 包名 `com.tauritavern.client`；
 - 图标、权限、设备类型、未签名配置；
+- 屏幕方向：随传感器旋转，受系统旋转开关控制（`auto_rotation_restricted`）；
 - Ability 入口：插件桥初始化与返回键桥。
+- `WindowLayout.ets`：窗口快照与系统栏背景，作为应用插件接入原生插件桥。
 - ArkUI 页面入口 `pages/Main`：挂载 HAR 的 `DefaultXComponent`，模块名由 `RustAbility` 写入的 `AppStorage` 提供。
 
 **页面入口。** 不使用 HAR 的默认页面：它通过命名路由加载 HAR 内的页面，模块没有页面声明时会加载失败，旧 HAR 吞掉了这个错误，结果是白屏；当前 pin 已改为传播加载错误。模块本来就需要一个页面声明，所以由 TT 的 `pages/Main` 承担：`EntryAbility` 把 `defaultPage` 设为 `false`，用 `loadContent('pages/Main')` 加载，失败会直接抛出。
@@ -142,8 +144,7 @@ ArkWeb 的 `javaScriptOnDocumentStart` 按字典序执行多个脚本条目，�
 - `<input type="file">`：由 HAR 的文件选择回调处理；
 - `window.open`：按移动宿主的规则处理，见 [FrontendHostContract](FrontendHostContract.md) §5.4；
 - 网页全屏可以进入和退出；
-- 软键盘弹出时 visual viewport 缩小，输入框保持可见；
-- 安全区：`EntryAbility` 设置 `setWindowLayoutFullScreen(false)`，由系统让窗口留在安全区内；系统栏后不显示壁纸。
+- 安全区、软键盘与系统栏背景：见[移动端内容视口与窗口背景](CurrentState/MobileStyleAdaptation.md#鸿蒙)。
 
 ## 7. 文件导入与导出
 
@@ -165,6 +166,7 @@ ArkWeb 的 `javaScriptOnDocumentStart` 按字典序执行多个脚本条目，�
 
 - **后台生成：** 鸿蒙没有对应的后台执行保护（`generation_background` 返回空），应用退到后台后，生成可能被系统挂起。
 - **局域网同步：** 已在 x86_64 模拟器验证；真机上的 Wi-Fi、热点、VPN 与跨设备互通尚未验证。
+- **移动布局：** 已在 x86_64 模拟器验证；真机的刘海、三键导航尚未验证。状态栏图标直接叠在壁纸上，明暗不随壁纸调整。
 - **系统通知、扫码、语音合成：** 尚未验证。
 
 ## 11. 设备验收清单
@@ -177,4 +179,6 @@ ArkWeb 的 `javaScriptOnDocumentStart` 按字典序执行多个脚本条目，�
 - 同步面板（含 TT-Sync）可打开，接收服务能启动；与其他设备互相发现、配对并双向同步。
 - Wi-Fi 与移动数据同时在线时，配对链接使用 Wi-Fi 地址；组网地址出现在可用地址中，可通过手动地址配对与同步。
 - TT 设置页能打开；返回键逐层关闭弹窗和抽屉，最后退到后台。
-- 复制、粘贴与 `/clipboard-get` 正常；外链、全屏、媒体 Range、键盘和安全区表现正常。
+- 复制、粘贴与 `/clipboard-get` 正常；外链、全屏、媒体 Range 表现正常。
+- 键盘弹出时布局视口收缩，第一方输入栏与第三方 fixed 面板贴住键盘顶部；窗口 revision 与背景矩形不变。
+- 系统栏条带与网页壁纸在各填充方式下对齐；旋转、切换壁纸后不残留旧条带。

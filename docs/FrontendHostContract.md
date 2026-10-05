@@ -321,7 +321,7 @@ header 名也可从 `window.__TAURITAVERN__?.traceHeader` 获取（用于避免�
   - Android 的 `navigator.clipboard.writeText()` 映射到宿主原生写入器，same-origin iframe 同样适用；Clipboard 对象上的其他方法保持不变。
 - `window.__TAURITAVERN_MOBILE_WINDOW_OPEN_COMPAT__`：移动端外链 `window.open()` 通过系统浏览器打开（不创建应用内新窗口）
 
-移动布局：Android/iOS 原生宿主消费系统栏、刘海与停靠键盘，网页侧契约见 [API/Layout.md](API/Layout.md)。相关名称的当前状态：
+移动布局：移动端原生宿主消费系统栏、刘海与停靠键盘，网页侧契约见 [API/Layout.md](API/Layout.md)。相关名称的当前状态：
 
 | 名称 | 状态 |
 | --- | --- |

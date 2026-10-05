@@ -1,9 +1,10 @@
 import native from 'libtauritavern_lib.so';
 import { TauriPlugins } from '../tauri-plugins/TauriPlugins';
-import { NativeModule } from '../tauri-plugins/NativePlugin';
+import { NativeModule, NativePlugin } from '../tauri-plugins/NativePlugin';
+import { WindowLayout } from '../WindowLayout';
 import { RustAbility, WebHost } from '@ohos-rs/ability';
 import Want from '@ohos.app.ability.Want';
-import { AbilityConstant } from '@kit.AbilityKit';
+import { AbilityConstant, Configuration } from '@kit.AbilityKit';
 import window from '@ohos.window';
 
 class TauriNativeModule implements NativeModule {
@@ -18,6 +19,7 @@ class TauriNativeModule implements NativeModule {
 
 export default class EntryAbility extends RustAbility {
   private tauriPlugins?: TauriPlugins;
+  private windowLayout: WindowLayout = new WindowLayout();
   // Must match the Cargo library name.
   public moduleName: string = 'tauritavern_lib';
   public defaultPage: boolean = false;
@@ -28,7 +30,9 @@ export default class EntryAbility extends RustAbility {
       "(() => { const fn = window.__TAURITAVERN_HANDLE_BACK__; return Boolean(typeof fn === 'function' && fn()); })()",
       () => { this.context.moveAbilityToBackground(); },
     );
-    this.tauriPlugins = new TauriPlugins(this.context, new TauriNativeModule());
+    const plugins = new Map<string, NativePlugin>();
+    plugins.set('window-layout', this.windowLayout);
+    this.tauriPlugins = new TauriPlugins(this.context, new TauriNativeModule(), plugins);
     await super.onCreate(want, launchParam);
   }
 
@@ -36,12 +40,21 @@ export default class EntryAbility extends RustAbility {
     const mainWindow = windowStage.getMainWindowSync();
     await mainWindow.setWindowLayoutFullScreen(false);
     await super.onWindowStageCreate(windowStage);
+    AppStorage.setOrCreate('ttWindowLayout', this.windowLayout);
     await windowStage.loadContent('pages/Main');
+    // UIContext belongs to the loaded page; only then read its pixel scale and subscribe.
+    this.windowLayout.attach(mainWindow);
+  }
+
+  onConfigurationUpdate(config: Configuration): void {
+    super.onConfigurationUpdate(config);
+    this.windowLayout.refresh();
   }
 
   onDestroy(): void {
     WebHost.configureBackNavigation("");
     this.tauriPlugins?.close();
+    AppStorage.delete('ttWindowLayout');
     super.onDestroy();
   }
 }

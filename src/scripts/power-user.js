@@ -1,5 +1,5 @@
 import { applyWindowBackdrop } from './window-backdrop.js';
-import { isWindowPortrait, subscribeWindowOrientation } from './util/window-layout.js';
+import { isWindowPortrait, subscribeWindowSnapshot } from './util/window-layout.js';
 import { isMobileHost } from './util/host-identity.js';
 import { Fuse, Handlebars } from '../lib.js';
 
@@ -3491,7 +3491,7 @@ jQuery(() => {
     var coreTruthWinWidth = window.innerWidth;
     var coreTruthWinHeight = window.innerHeight;
 
-    subscribeWindowOrientation(() => applyChatWidth('forced'));
+    subscribeWindowSnapshot(() => applyChatWidth('forced'));
 
     $(window).on('resize', async () => {
         const nextWidth = window.innerWidth;

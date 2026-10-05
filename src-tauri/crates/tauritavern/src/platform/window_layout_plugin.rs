@@ -1,4 +1,4 @@
-//! Android plugin transport for the native window owner.
+//! Plugin transport shared by Android and OpenHarmony window owners.
 use base64::Engine;
 use tauri::{AppHandle, Manager};
 use tt_adapter_media::window_backdrop::BackdropStrip;
@@ -12,10 +12,12 @@ struct WindowLayoutPlugin<R: tauri::Runtime>(tauri::plugin::PluginHandle<R>);
 pub fn plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri::plugin::Builder::new("window-layout")
         .setup(|app, api| {
-            app.manage(WindowLayoutPlugin(api.register_android_plugin(
-                "com.tauritavern.client",
-                "WindowLayoutPlugin",
-            )?));
+            #[cfg(target_os = "android")]
+            let handle =
+                api.register_android_plugin("com.tauritavern.client", "WindowLayoutPlugin")?;
+            #[cfg(target_env = "ohos")]
+            let handle = api.register_ohos_plugin()?;
+            app.manage(WindowLayoutPlugin(handle));
             Ok(())
         })
         .build()

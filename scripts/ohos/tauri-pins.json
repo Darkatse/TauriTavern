@@ -8,8 +8,8 @@
     "revision": "9feaf086c3bd02ca14a8a1492f87e7a7714ea2fb"
   },
   "ability": {
-    "repository": "LeenHawk/openharmony-ability",
-    "revision": "c5f0a450f7bbfedc52160f2fbeaa04886e0eb34b"
+    "repository": "Darkatse/openharmony-ability",
+    "revision": "72bf94655645a0e86ddabe5c9396388f1e533ca6"
   },
   "tao": {
     "repository": "tauri-apps/tao",

@@ -1,5 +1,3 @@
-#[cfg(target_os = "android")]
-mod android_window_layout;
 pub mod file_transfer;
 pub mod generation_background;
 pub mod identity;
@@ -16,3 +14,5 @@ pub mod lan_discovery;
 #[cfg(target_os = "android")]
 pub mod speech_synthesis;
 pub mod window_layout;
+#[cfg(any(target_os = "android", target_env = "ohos"))]
+mod window_layout_plugin;

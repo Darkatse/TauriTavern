@@ -1,6 +1,6 @@
 # 移动端内容视口与窗口背景
 
-移动端的系统栏、刘海和停靠键盘由原生宿主在主 WebView 的实际矩形上消费一次。网页内没有系统栏或键盘适配机制：第一方与扩展都按普通浏览器规则排版。
+移动端的系统栏、刘海和停靠键盘由原生宿主在内容视口层消费一次。网页内没有系统栏或键盘适配机制：第一方与扩展都按普通浏览器规则排版。
 
 ## 两份几何事实
 
@@ -9,11 +9,11 @@
 | 窗口快照 | 窗口物理像素尺寸、政策避让、scale、revision | 旋转、窗口尺寸、显示政策变化 | `#bg1` 窗口矩形、原生背景条带、第一方竖屏判断 |
 | 内容视口 | 窗口减去政策避让与停靠键盘 | 上述变化，以及键盘出现、消失、高度变化 | 浏览器布局引擎 |
 
-窗口快照不含键盘。键盘只改变主 WebView 的底边，顶部固定；键盘过渡不产生 JS 背景发布、`:root` 变量写入或图片工作。浮动与分离键盘不报告 inset，不缩小视口。
+窗口快照不含键盘。键盘只改变内容视口的底边，顶部固定；键盘过渡不产生 JS 背景发布、`:root` 变量写入或图片工作。浮动与分离键盘不报告 inset，不缩小视口。
 
 ## Android
 
-入口 `AndroidWindowLayout.kt`，由 `MainActivity` 编排生命周期，`WindowLayoutPlugin` 供 Rust 调用。
+入口 `AndroidWindowLayout.kt`，由 `MainActivity` 编排生命周期，`WindowLayoutPlugin` 供 Rust 调用。Rust 的 `platform/window_layout_plugin.rs` 与鸿蒙共用请求、应答和条带传输，只在插件注册时选择平台入口。
 
 - edge-to-edge 只由 `WindowCompat.enableEdgeToEdge(window)` 配置。
 - 政策避让：非沉浸为稳定的 systemBars ∪ displayCutout，沉浸为零。用户偏好 `power_user.mobile_immersive_fullscreen`（默认开启）经 `mobile-system-ui.js` 与 `AndroidSystemUiJsBridge` 传给原生。
@@ -37,7 +37,13 @@
 
 ## 鸿蒙
 
-`EntryAbility` 设置 `setWindowLayoutFullScreen(false)`，系统让窗口留在安全区内，系统栏后不显示壁纸。键盘由 ArkWeb 处理。鸿蒙没有窗口快照，`util/window-layout.js` 中的第一方竖屏判断与订阅仍用 `matchMedia('(orientation: portrait)')`。
+入口 `gen/ohos/entry/src/main/ets/WindowLayout.ets`，由 `EntryAbility` 持有，作为应用自有的 `window-layout` 插件接入原生插件桥。
+
+- ArkUI 负责安全区布局：`setWindowLayoutFullScreen(false)` 加 `module.json5` 的 `avoid_cutout`，覆盖系统栏、导航指示条和刘海。鸿蒙没有沉浸模式，政策避让始终是安全区。
+- Ability HAR 的 Web 组件使用 `RESIZE_CONTENT`：ArkWeb 按键盘与 Web 的重叠缩小布局视口，Web 外框不变。
+- 快照由窗口尺寸、上述三类避让区和 UIContext 像素比例组成，不含键盘，按值去重。页面请求过初始快照后，变化经 `WebHost.runJavaScript` 发布。
+- 背景层是 `pages/Main` 中 Web 的兄弟节点，以 `LayoutPolicy.matchParent` 加 `ignoreLayoutSafeArea()` 铺满窗口。PNG 解码是异步的，解码完成后才核对 revision 与令牌；没有采用的 PixelMap 都释放。
+- 网页全屏沿用 HAR 的临时全屏布局，系统栏仍然可见。
 
 ## 窗口背景
 

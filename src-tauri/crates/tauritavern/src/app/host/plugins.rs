@@ -29,9 +29,11 @@ pub(super) fn install<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::B
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init());
 
+    #[cfg(any(target_os = "android", target_env = "ohos"))]
+    let builder = builder.plugin(crate::platform::window_layout::plugin());
+
     #[cfg(target_os = "android")]
     let builder = builder
-        .plugin(crate::platform::window_layout::plugin())
         .plugin(crate::platform::generation_background::plugin())
         .plugin(crate::platform::lan_discovery::plugin())
         .plugin(crate::platform::file_transfer::plugin())
