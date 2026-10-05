@@ -41,7 +41,7 @@ jobs:
           test -n "$tag"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ steps.tag.outputs.tag }}
           fetch-depth: 0
@@ -126,7 +126,7 @@ jobs:
       TAURITAVERN_BUILD_BRANCH: main
       TAURITAVERN_BUILD_REVISION: ${{ needs.prepare.outputs.commit }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
@@ -189,7 +189,7 @@ jobs:
 
       - name: Upload portable binary
         if: matrix.portable
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: TauriTavern-${{ needs.prepare.outputs.version }}-${{ matrix.portable_name }}-portable
           path: portable/*
@@ -204,7 +204,7 @@ jobs:
       TAURITAVERN_BUILD_REVISION: ${{ needs.prepare.outputs.commit }}
       TAURITAVERN_FLATPAK_USER: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
@@ -219,7 +219,7 @@ jobs:
             https://dl.flathub.org/repo/flathub.flatpakrepo
 
       - name: Cache Flatpak SDK and build inputs
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.local/share/flatpak
@@ -236,7 +236,7 @@ jobs:
         run: tar --zstd --create --file flatpak-build.tar.zst .flatpak-build
 
       - name: Upload Flatpak build tree
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: flatpak-build-${{ needs.prepare.outputs.version }}-x86_64
           path: flatpak-build.tar.zst
@@ -264,7 +264,7 @@ jobs:
       TAURITAVERN_BUILD_BRANCH: main
       TAURITAVERN_BUILD_REVISION: ${{ needs.prepare.outputs.commit }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
@@ -456,16 +456,16 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
           path: source
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-*'
           path: dist
@@ -513,11 +513,11 @@ jobs:
       LINUX_REPOSITORY_SIGNING_FPR: D609D0B174E0073BB3980A1BEDC6CEF924B6C529
       RELEASE_ASSETS_DIR: dist
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-*'
           path: dist
@@ -591,11 +591,11 @@ jobs:
       LINUX_REPOSITORY_KEY_FPR: C75284E78972F19A0DDD88C487F5B8530682A857
       LINUX_REPOSITORY_SIGNING_FPR: D609D0B174E0073BB3980A1BEDC6CEF924B6C529
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: flatpak-build-${{ needs.prepare.outputs.version }}-x86_64
           path: flatpak-artifact
@@ -712,7 +712,7 @@ jobs:
       NIX_CACHE_URL: https://nix-cache.tauritavern.com
       NIX_CACHE_PUBLIC_KEY: nix-cache.tauritavern.com-1:mOl/sCsfndubNIhnLODjA7GPqk1qw5iknbayZLRn92U=
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 

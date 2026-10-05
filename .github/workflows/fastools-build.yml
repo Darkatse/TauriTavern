@@ -22,7 +22,7 @@ jobs:
     steps:
       - name: Check whether FasTools has relevant new commits to build
         id: check
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           WORKFLOW_REF: ${{ github.workflow_ref }}
         with:
@@ -128,7 +128,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain (default target)
         if: matrix.target == ''
@@ -161,7 +161,7 @@ jobs:
           cp "$BIN_PATH" "../dist-fastools/${{ matrix.name }}/${{ matrix.out_name }}"
 
       - name: Upload FasTools artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fastools-${{ matrix.name }}
           path: dist-fastools/${{ matrix.name }}/${{ matrix.out_name }}

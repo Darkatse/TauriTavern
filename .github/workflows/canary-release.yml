@@ -27,7 +27,7 @@ jobs:
       deb_version: ${{ steps.metadata.outputs.deb_version }}
       rpm_release: ${{ steps.metadata.outputs.rpm_release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -112,7 +112,7 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Linux dependencies
         if: startsWith(matrix.platform, 'ubuntu-22.04')
@@ -190,7 +190,7 @@ jobs:
 
       - name: Upload portable binary
         if: matrix.portable
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: TauriTavern-${{ needs.prepare.outputs.asset_time }}-canary-${{ matrix.portable_name }}-portable
           path: portable/*
@@ -214,7 +214,7 @@ jobs:
       cancel-in-progress: false
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Android host dependencies
         if: matrix.mobile == 'android'
@@ -397,7 +397,7 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -437,7 +437,7 @@ jobs:
             echo "[Full comparison](https://github.com/${GITHUB_REPOSITORY}/compare/${PREVIOUS_SHA}...${GITHUB_SHA})"
           } > fallback.md
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: canary-release-context
           path: |
@@ -454,12 +454,12 @@ jobs:
     outputs:
       final_message: ${{ steps.codex.outputs.final-message }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: canary-release-context
           path: .canary-notes
@@ -495,7 +495,7 @@ jobs:
     if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.notes-context.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: canary-release-context
           path: context
@@ -523,7 +523,7 @@ jobs:
             cp context/fallback.md release-notes.md
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: canary-release-notes
           path: release-notes.md
@@ -546,20 +546,20 @@ jobs:
       RPM_RELEASE: ${{ needs.prepare.outputs.rpm_release }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: source
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: 'TauriTavern-*-canary-*'
           path: dist
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: canary-release-notes
           path: notes
@@ -623,7 +623,7 @@ jobs:
               --jq '.assets[] | [.id, .name] | @tsv'
           )
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: canary-linux-repository-packages
           path: |
@@ -656,9 +656,9 @@ jobs:
       LINUX_REPOSITORY_SIGNING_FPR: D609D0B174E0073BB3980A1BEDC6CEF924B6C529
       RELEASE_ASSETS_DIR: dist
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: canary-linux-repository-packages
           path: dist
@@ -731,7 +731,7 @@ jobs:
       NIX_CACHE_URL: https://nix-cache.tauritavern.com
       NIX_CACHE_PUBLIC_KEY: nix-cache.tauritavern.com-1:mOl/sCsfndubNIhnLODjA7GPqk1qw5iknbayZLRn92U=
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
 

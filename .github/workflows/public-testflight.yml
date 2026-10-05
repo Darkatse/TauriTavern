@@ -57,7 +57,7 @@ jobs:
   notes:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_ref }}
           fetch-depth: 0
@@ -148,7 +148,7 @@ jobs:
             cp .testflight-notes/fallback.txt what-to-test.txt
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: testflight-${{ inputs.channel }}-notes
           path: what-to-test.txt
@@ -162,17 +162,17 @@ jobs:
       actions: read
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_ref }}
           persist-credentials: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.ipa_artifact }}
           path: package
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: testflight-${{ inputs.channel }}-notes
           path: notes

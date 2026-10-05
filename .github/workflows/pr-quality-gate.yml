@@ -31,7 +31,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -90,7 +90,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install latest stable Rust target
         uses: dtolnay/rust-toolchain@stable

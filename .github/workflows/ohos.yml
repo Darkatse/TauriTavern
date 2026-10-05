@@ -39,7 +39,7 @@ jobs:
       TAURITAVERN_BUILD_BRANCH: ${{ github.ref_name }}
       TAURITAVERN_BUILD_REVISION: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: git config --global --add safe.directory "$PWD"
       - run: pnpm install --frozen-lockfile
       - run: python3 scripts/ohos/prepare.py
@@ -71,7 +71,7 @@ jobs:
             git diff -- "$project"
             exit 1
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.asset_time && format('TauriTavern-{0}-canary-ohos-{1}-hap', inputs.asset_time, matrix.arch) || format('TauriTavern-ohos-{0}-run{1}-hap', matrix.arch, github.run_number) }}
           path: src-tauri/crates/tauritavern/gen/ohos/entry/build/default/outputs/default/*.hap
