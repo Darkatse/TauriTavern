@@ -1,4 +1,4 @@
 interface:
   display_name: "认知一致性与维护成本"
-  short_description: "从共同语义出发统一 TauriTavern 的架构，减少零散规则与维护者的认知负担"
-  default_prompt: "请使用 $maintain-conceptual-integrity，从整体需求出发思考共同机制与数据路径，通过清晰一致的架构降低长期维护成本，并完成本次请求。"
+  short_description: "同一种事情只走一条路：在源头统一 TauriTavern 的架构，减少补丁堆积、无用测试与维护者的认知负担"
+  default_prompt: "请使用 $maintain-conceptual-integrity，从整体需求出发思考共同机制与数据路径，在源头收敛，做完迁移并删除旧路径，完成本次请求。"
