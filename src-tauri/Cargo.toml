@@ -48,6 +48,28 @@ incremental = true
 [profile.dev.package."*"]
 debug = false
 
+# Swift-rs selects Swift optimization from DEBUG. Xcode 27 strips its runtime
+# exports in optimized builds until https://github.com/Brendonovich/swift-rs/pull/79.
+# Plugins that ship a Swift package must build it in the same mode as Tauri's
+# runtime, or registerPlugin aborts with swift_deletedMethodError on device.
+[profile.dev.package.tauri]
+debug = "line-tables-only"
+
+[profile.dev.package.tauri-plugin-opener]
+debug = "line-tables-only"
+
+[profile.dev.package.tauri-plugin-notification]
+debug = "line-tables-only"
+
+[profile.dev.package.tauri-plugin-dialog]
+debug = "line-tables-only"
+
+[profile.dev.package.tauri-plugin-clipboard-manager]
+debug = "line-tables-only"
+
+[profile.dev.package.tauri-plugin-barcode-scanner]
+debug = "line-tables-only"
+
 # Optimize gemm-f16 until https://github.com/sarah-quinones/gemm/issues/31 is fixed.
 [profile.dev.package.gemm-f16]
 opt-level = 1
