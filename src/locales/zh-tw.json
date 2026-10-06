@@ -5196,5 +5196,11 @@
     "Select message": "選取訊息",
     "Previous reply": "上一則回覆",
     "Next reply": "下一則回覆",
-    "Failed to copy message": "複製訊息失敗"
+    "Failed to copy message": "複製訊息失敗",
+    "Starting: rendering the interface… (extensions load later)": "啟動中：渲染介面…（擴充功能稍後載入）",
+    "Starting: connecting to the backend…": "啟動中：連接後端…",
+    "Starting: loading core data…": "啟動中：載入核心資料…",
+    "Starting: loading extensions and optional modules…": "啟動中：載入擴充功能與選用模組…",
+    "Guide the Agent?": "是否引導Agent行為？",
+    "This text will be inserted as user guidance into the next Agent model request. It will not be saved as a regular chat message.": "這則內容會作為使用者指引插入下一次 Agent 模型請求，不會作為一般聊天訊息儲存。"
 }

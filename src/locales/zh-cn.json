@@ -4679,5 +4679,11 @@
     "Select message": "选择消息",
     "Previous reply": "上一条回复",
     "Next reply": "下一条回复",
-    "Failed to copy message": "复制消息失败"
+    "Failed to copy message": "复制消息失败",
+    "Starting: rendering the interface… (extensions load later)": "启动中：渲染界面…（扩展稍后加载）",
+    "Starting: connecting to the backend…": "启动中：连接后端…",
+    "Starting: loading core data…": "启动中：加载核心数据…",
+    "Starting: loading extensions and optional modules…": "启动中：加载扩展与可选模块…",
+    "Guide the Agent?": "是否引导Agent行为？",
+    "This text will be inserted as user guidance into the next Agent model request. It will not be saved as a regular chat message.": "这条内容会作为用户指引插入下一次 Agent 模型请求，不会作为普通聊天消息保存。"
 }

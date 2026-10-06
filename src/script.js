@@ -1127,7 +1127,8 @@ async function firstLoadInit() {
     perfMark('tt:startup:start');
 
     try {
-        setStage('shell', '启动中：渲染界面…（扩展稍后加载）');
+        await initLocales();
+        setStage('shell', t`Starting: rendering the interface… (extensions load later)`);
         removePreloader();
         await nextPaint();
 
@@ -1141,7 +1142,7 @@ async function firstLoadInit() {
         applyBrowserFixes();
 
         // Ensure bridge/interceptors are installed before first /api/* calls.
-        setStage('core', '启动中：连接后端…');
+        setStage('core', t`Starting: connecting to the backend…`);
         await hostReadyPromise;
         const tauriTavernSettings = await getTauriTavernSettings();
         initializeChatVirtualization(tauriTavernSettings);
@@ -1163,7 +1164,7 @@ async function firstLoadInit() {
             fetchSettingsSnapshot(),
         ]);
 
-        setStage('core', '启动中：加载核心数据…');
+        setStage('core', t`Starting: loading core data…`);
         const clientVersionPromise = getClientVersion();
         await initSecrets();
         const [bootstrapMetadata, settingsSnapshot] = await startupDataPromise;
@@ -1183,7 +1184,6 @@ async function firstLoadInit() {
         primeSecretStateSnapshot(bootstrapMetadata.secret_state);
         await readSecretState();
         await clientVersionPromise;
-        await initLocales();
         initChatUtilities();
         initDefaultSlashCommands();
         initTextGenModels();
@@ -1193,7 +1193,7 @@ async function firstLoadInit() {
         initNovelAISettings();
         initSystemPrompts();
 
-        setStage('full', '启动中：加载扩展与可选模块…');
+        setStage('full', t`Starting: loading extensions and optional modules…`);
         initExtensions();
         initExtensionSlashCommands();
         ToolManager.initToolSlashCommands();
@@ -2440,11 +2440,11 @@ async function maybeSubmitAgentGuidanceFromComposer() {
 
     const text = getAgentGuidanceComposerText();
     const result = await Popup.show.confirm(
-        '是否引导Agent行为？',
-        '<p>这条内容会作为用户指引插入下一次 Agent 模型请求，不会作为普通聊天消息保存。</p>',
+        t`Guide the Agent?`,
+        `<p>${t`This text will be inserted as user guidance into the next Agent model request. It will not be saved as a regular chat message.`}</p>`,
         {
-            okButton: '是',
-            cancelButton: '否',
+            okButton: t`Yes`,
+            cancelButton: t`No`,
         },
     );
     if (result !== POPUP_RESULT.AFFIRMATIVE) {

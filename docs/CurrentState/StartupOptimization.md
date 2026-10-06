@@ -57,13 +57,14 @@
 
 - `src/script.js:firstLoadInit()`
   - **Shell 阶段**
+    - `initLocales()` 先于任何可见界面：语言数据是静态资源，不依赖 Host 就绪；首帧界面与启动状态文案都已是用户语言
     - `removePreloader()`（`src/scripts/loader.js`）：移除 `#preloader`
     - 初始化纯前端 UI/DOM handler、基础 patch（不会做 `/api/*`）
   - **Core 阶段**
     - `await waitForTauriMainReady({ failFast: true })`：保证 Host 拦截器与 Rust backend readiness 就绪
     - `/csrf-token` + 并发启动 `/api/bootstrap` 与 `/api/settings/get`
     - `initSecrets()` + `primeSecretStateSnapshot(...)` + `readSecretState()`
-    - `initLocales()`、默认 slash commands、模型/设置等核心模块初始化
+    - 默认 slash commands、模型/设置等核心模块初始化
   - **Full 阶段**
     - 按设置、角色、群组、头像的顺序应用读取结果。
     - 扩展（如果启用）：
