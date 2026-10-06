@@ -24,6 +24,8 @@ class BackdropBeginArgs {
 class BackdropStripArgs {
   var x: Int = 0
   var y: Int = 0
+  lateinit var edge: String
+  lateinit var average: FloatArray
   lateinit var png: String
 }
 
@@ -72,7 +74,7 @@ class WindowLayoutPlugin(private val activity: Activity) : Plugin(activity) {
         }
         // Rust already rendered physical window pixels; Canvas must not rescale them.
         bitmap.density = Bitmap.DENSITY_NONE
-        WindowBackdropStrip(it.x, it.y, bitmap)
+        WindowBackdropStrip(it.x, it.y, bitmap, it.edge, it.average)
       }
       onUi(invoke) {
         layout.applyBackdrop(args.windowRevision, args.wallpaperToken, strips)

@@ -1,7 +1,7 @@
 //! Plugin transport shared by Android and OpenHarmony window owners.
 use base64::Engine;
 use tauri::{AppHandle, Manager};
-use tt_adapter_media::window_backdrop::BackdropStrip;
+use tt_adapter_media::window_backdrop::{BackdropStrip, StripEdge};
 use tt_contracts::window_layout::{WindowBackdropRequest, WindowSnapshot};
 use tt_domain::errors::DomainError;
 
@@ -68,7 +68,14 @@ pub(super) async fn apply_backdrop(
     let strips: Vec<_> = strips
         .into_iter()
         .map(|strip| {
+            let edge = match strip.edge {
+                StripEdge::Top => "top",
+                StripEdge::Bottom => "bottom",
+                StripEdge::Left => "left",
+                StripEdge::Right => "right",
+            };
             serde_json::json!({
+                "edge": edge, "average": strip.average,
                 "x": strip.x, "y": strip.y,
                 "png": base64::engine::general_purpose::STANDARD.encode(strip.png),
             })

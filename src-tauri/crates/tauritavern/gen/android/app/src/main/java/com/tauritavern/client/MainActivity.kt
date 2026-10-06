@@ -47,7 +47,6 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
       resources = resources,
       contentRootProvider = { window.decorView.findViewById(android.R.id.content) },
       webViewProvider = { webView },
-      mainHandler = mainHandler,
     )
   }
   private val webFullscreenController: AndroidWebFullscreenController by lazy {
@@ -108,7 +107,6 @@ class MainActivity : TauriActivity(), AndroidWebFullscreenHost {
   }
 
   override fun onPause() {
-    windowLayout.onPause()
     AndroidAppPresence.setActivityResumed(false)
     super.onPause()
   }

@@ -2,11 +2,14 @@
 use std::cell::{Cell, RefCell};
 
 use objc2::rc::Retained;
-use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send};
+use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
+use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_foundation::{NSArray, NSData, NSObjectProtocol, NSPoint, NSRect, NSSize};
-use objc2_ui_kit::{NSLayoutConstraint, UIColor, UIImage, UIImageView, UIView, UIViewAutoresizing};
+use objc2_ui_kit::{
+    NSLayoutConstraint, UIColor, UIImage, UIImageView, UIStatusBarStyle, UIView, UIViewAutoresizing,
+};
 use tauri::{AppHandle, WebviewWindow};
-use tt_adapter_media::window_backdrop::BackdropStrip;
+use tt_adapter_media::window_backdrop::{BackdropStrip, StripEdge};
 use tt_contracts::window_layout::{WindowBackdropRequest, WindowInsets, WindowSnapshot};
 
 use super::window_layout::WallpaperRenderTarget;
@@ -18,7 +21,15 @@ struct WindowHostIvars {
     content_constraints: RefCell<Vec<Retained<NSLayoutConstraint>>>,
     snapshot: RefCell<Option<WindowSnapshot>>,
     wallpaper_token: Cell<u64>,
-    strips: RefCell<Vec<Retained<UIImageView>>>,
+    color: Cell<[u8; 3]>,
+    status_bar_style: Cell<UIStatusBarStyle>,
+    strips: RefCell<Vec<VisibleStrip>>,
+}
+
+struct VisibleStrip {
+    view: Retained<UIImageView>,
+    edge: StripEdge,
+    average: [f32; 4],
 }
 
 define_class!(
@@ -57,9 +68,51 @@ thread_local! {
 }
 
 impl WindowHost {
+    fn set_color(&self, color: [u8; 3]) {
+        self.ivars().color.set(color);
+        self.setBackgroundColor(Some(&UIColor::colorWithRed_green_blue_alpha(
+            f64::from(color[0]) / 255.0,
+            f64::from(color[1]) / 255.0,
+            f64::from(color[2]) / 255.0,
+            1.0,
+        )));
+    }
+
+    fn update_status_bar_style(&self) {
+        let average = self
+            .ivars()
+            .strips
+            .borrow()
+            .iter()
+            .find(|strip| strip.edge == StripEdge::Top)
+            .map(|strip| strip.average)
+            .unwrap_or([0.0; 4]);
+        let color = self.ivars().color.get();
+        let linear: [f64; 3] = std::array::from_fn(|index| {
+            let srgb = f64::from(average[index])
+                + (1.0 - f64::from(average[3])) * f64::from(color[index]) / 255.0;
+            if srgb <= 0.04045 {
+                srgb / 12.92
+            } else {
+                ((srgb + 0.055) / 1.055).powf(2.4)
+            }
+        });
+        let style = if 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2] > 0.179 {
+            UIStatusBarStyle::DarkContent
+        } else {
+            UIStatusBarStyle::LightContent
+        };
+        if self.ivars().status_bar_style.replace(style) == style {
+            return;
+        }
+        if let Some(controller) = self.window().and_then(|window| window.rootViewController()) {
+            controller.setNeedsStatusBarAppearanceUpdate();
+        }
+    }
+
     fn clear_strips(&self) {
         for strip in self.ivars().strips.borrow_mut().drain(..) {
-            strip.removeFromSuperview();
+            strip.view.removeFromSuperview();
         }
     }
 
@@ -95,6 +148,7 @@ impl WindowHost {
         *current = Some(next.clone());
         drop(current);
         self.clear_strips();
+        self.update_status_bar_style();
         let json = serde_json::to_string(&next).expect("finite window geometry");
         if let Err(error) = self.ivars().window.eval(format!(
             "window.dispatchEvent(new CustomEvent('tt-window-changed',{{detail:{json}}}));"
@@ -104,8 +158,44 @@ impl WindowHost {
     }
 }
 
+extern "C-unwind" fn preferred_status_bar_style(_: &AnyObject, _: Sel) -> UIStatusBarStyle {
+    MAIN_HOST.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|host| host.ivars().status_bar_style.get())
+            .unwrap_or(UIStatusBarStyle::Default)
+    })
+}
+
+/// Tao owns the root controller but does not yet expose its status bar style.
+unsafe fn install_status_bar_style() {
+    let class =
+        AnyClass::get(c"TaoUIViewController").expect("TaoUIViewController is not installed");
+    // UIStatusBarStyle is NSInteger, a 64-bit integer on supported iOS targets.
+    let implementation = unsafe {
+        std::mem::transmute::<extern "C-unwind" fn(&AnyObject, Sel) -> UIStatusBarStyle, Imp>(
+            preferred_status_bar_style,
+        )
+    };
+    let added = unsafe {
+        objc2::ffi::class_addMethod(
+            class as *const AnyClass as *mut AnyClass,
+            sel!(preferredStatusBarStyle),
+            implementation,
+            c"q@:".as_ptr(),
+        )
+    };
+    assert!(
+        added.as_bool(),
+        "TaoUIViewController already defines preferredStatusBarStyle; integrate its implementation instead"
+    );
+}
+
 /// Called once after Wry has installed its WKWebView, on the UIKit main thread.
 pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
+    unsafe {
+        install_status_bar_style();
+    }
     let parent = webview.superview().expect("WKWebView must have a parent");
     let allocated = WindowHost::alloc(webview.mtm()).set_ivars(WindowHostIvars {
         window,
@@ -113,10 +203,13 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
         content_constraints: RefCell::new(Vec::new()),
         snapshot: RefCell::new(None),
         wallpaper_token: Cell::new(0),
+        color: Cell::new([0; 3]),
+        status_bar_style: Cell::new(UIStatusBarStyle::Default),
         strips: RefCell::new(Vec::new()),
     });
     let host: Retained<WindowHost> =
         unsafe { msg_send![super(allocated), initWithFrame: parent.bounds()] };
+    host.set_color([0; 3]);
     host.setAutoresizingMask(
         UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight,
     );
@@ -143,6 +236,7 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
     ];
     host.addSubview(webview);
     MAIN_HOST.with(|slot| *slot.borrow_mut() = Some(host.clone()));
+    host.update_status_bar_style();
     host.setNeedsLayout();
 }
 
@@ -192,18 +286,14 @@ pub(super) async fn begin_backdrop(
         let Some(window) = window.filter(|window| window.revision == window_revision) else {
             return Ok(None);
         };
-        host.setBackgroundColor(Some(&UIColor::colorWithRed_green_blue_alpha(
-            color[0] as f64 / 255.0,
-            color[1] as f64 / 255.0,
-            color[2] as f64 / 255.0,
-            1.0,
-        )));
+        host.set_color(color);
         if replace_wallpaper {
             host.ivars()
                 .wallpaper_token
                 .set(host.ivars().wallpaper_token.get() + 1);
             host.clear_strips();
         }
+        host.update_status_bar_style();
         Ok(Some(WallpaperRenderTarget {
             window,
             token: host.ivars().wallpaper_token.get(),
@@ -230,7 +320,7 @@ pub(super) async fn apply_backdrop(
         }
         let scale = snapshot.scale;
         drop(current);
-        let mut views = Vec::new();
+        let mut visible = Vec::new();
         for strip in strips {
             let image = UIImage::imageWithData_scale(&NSData::with_bytes(&strip.png), scale)
                 .ok_or_else(|| failure("invalid backdrop PNG"))?;
@@ -239,14 +329,19 @@ pub(super) async fn apply_backdrop(
                 NSPoint::new(strip.x as f64 / scale, strip.y as f64 / scale),
                 NSSize::new(strip.width as f64 / scale, strip.height as f64 / scale),
             ));
-            views.push(view);
+            visible.push(VisibleStrip {
+                view,
+                edge: strip.edge,
+                average: strip.average,
+            });
         }
         // Decode every strip before replacing the visible set; failures leave no partial views.
         host.clear_strips();
-        for view in &views {
-            host.insertSubview_atIndex(view, 0);
+        for strip in &visible {
+            host.insertSubview_atIndex(&strip.view, 0);
         }
-        *host.ivars().strips.borrow_mut() = views;
+        *host.ivars().strips.borrow_mut() = visible;
+        host.update_status_bar_style();
         Ok(())
     })
     .await

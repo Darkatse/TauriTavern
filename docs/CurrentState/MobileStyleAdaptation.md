@@ -16,14 +16,14 @@
 入口 `AndroidWindowLayout.kt`，由 `MainActivity` 编排生命周期，`WindowLayoutPlugin` 供 Rust 调用。Rust 的 `platform/window_layout_plugin.rs` 与鸿蒙共用请求、应答和条带传输，只在插件注册时选择平台入口。
 
 - edge-to-edge 只由 `WindowCompat.enableEdgeToEdge(window)` 配置。
-- 政策避让：非沉浸为稳定的 systemBars ∪ displayCutout，沉浸为零。用户偏好 `power_user.mobile_immersive_fullscreen`（默认开启）经 `mobile-system-ui.js` 与 `AndroidSystemUiJsBridge` 传给原生。
+- 政策避让：非沉浸为稳定的 systemBars ∪ displayCutout，沉浸为零。用户偏好 `power_user.mobile_immersive_fullscreen` 经 `mobile-system-ui.js` 与 `AndroidSystemUiJsBridge` 传给原生。新安装及缺少该字段的设置默认非沉浸，已保存的选择保持不变。
 - 主 WebView 矩形由一个函数计算：四边取政策避让，底边取政策避让与 IME 底部 inset 的较大值；相同矩形不重复提交。
 - 提交时机：`onApplyWindowInsets` 更新目标，没有动画时直接提交；IME 动画期间 `onProgress` 提交当前高度，`onEnd` 按实际终态收敛。
 - 内容根节点把原始 insets 传给子视图。主 WebView 自己的监听器把系统栏、刘海与 IME 清零：API 31+ 交给 WebView 的 `onApplyWindowInsets`；API 28–30 上它替换了 Chromium 构造时安装的监听器，引擎不接收 inset。
 - IME 动画在 `onStart` 登记；`onPrepare` 只暂缓紧随其后的一轮布局，因为 API 30 上开始前被取消的动画不会再有 `onEnd`。
 - 元素全屏是独立的展示状态：隐藏系统栏，由兄弟容器覆盖主页面，不改变用户偏好、窗口快照或 WebView 矩形。临时滑出的系统栏同样不改变政策。
 - 旋转等由 `configChanges` 原位处理。Activity 重建（如切换开发者刘海选项）后 Tauri 插件仍持有旧 Activity，窗口插件拒绝请求，需重启应用。
-- 窗口背景画在 decorView 的背景上：底色加条带。状态栏图标明暗由 `AndroidStatusBarAppearance` 对实际窗口像素取样。
+- 窗口背景画在 decorView 的背景上：底色加条带。状态栏与导航栏图标经 `WindowInsetsControllerCompat` 设置；导航栏按 navigationBars inset 所在的边取底边或侧边条带。
 
 ## iOS
 
@@ -33,6 +33,7 @@
 - iOS 没有沉浸模式，政策避让始终是安全区。
 - 内部 UIScrollView 保持 `contentInsetAdjustmentBehavior = .never` 与零 inset；WebKit 自己的焦点、选区与键盘处理照常运行。
 - 宿主在 `layoutSubviews` 按值去重发布窗口快照。底色设在宿主视图上，条带是插在 WKWebView 之下的 UIImageView。
+- 状态栏样式经根控制器的 `preferredStatusBarStyle` 生效。tao 没有提供这个入口，宿主安装时把它加到 `TaoUIViewController` 上；tao 自带同名方法时安装报错，改用 tao 的实现。home indicator 由系统自适应。
 - 元素全屏时 WebKit 会把 WKWebView 移出宿主；归还时宿主重新激活同一组约束。
 
 ## 鸿蒙
@@ -43,6 +44,7 @@
 - Ability HAR 的 Web 组件使用 `RESIZE_CONTENT`：ArkWeb 按键盘与 Web 的重叠缩小布局视口，Web 外框不变。
 - 快照由窗口尺寸、上述三类避让区和 UIContext 像素比例组成，不含键盘，按值去重。页面请求过初始快照后，变化经 `WebHost.runJavaScript` 发布。
 - 背景层是 `pages/Main` 中 Web 的兄弟节点，以 `LayoutPolicy.matchParent` 加 `ignoreLayoutSafeArea()` 铺满窗口。PNG 解码是异步的，解码完成后才核对 revision 与令牌；没有采用的 PixelMap 都释放。
+- 状态栏与三键导航栏的内容色由一次 `setWindowSystemBarProperties` 局部更新设置。手势导航指示条没有公开的设色接口，由系统控制。
 - 网页全屏沿用 HAR 的临时全屏布局，系统栏仍然可见。
 
 ## 窗口背景
@@ -55,8 +57,12 @@
 
 1. JS 按帧合并，壁纸输入与底色分别去重；只改底色时不发送壁纸。`#bg1` 不可见（如 OLED）时清除壁纸。
 2. 原生核对窗口 revision 后立即更新底色。壁纸变化时生成新令牌并清除旧条带，返回自己的窗口快照与令牌。这一步不等待解码，新选择立即使旧渲染失效。
-3. `tt-adapter-media::window_backdrop` 一次只解码一张图：经 Host Resource Store 读取，取首帧并应用 EXIF 方向，按 `background-size`/`background-position` 映射到窗口，按预乘 alpha 采样，输出透明条带。
+3. `tt-adapter-media::window_backdrop` 一次只解码一张图：经 Host Resource Store 读取，取首帧并应用 EXIF 方向，按 `background-size`/`background-position` 映射到窗口，按预乘 alpha 采样，输出透明条带。每条条带带有所在的边和平均色（预乘 RGB 与 alpha，均为 0..1，透明像素计入）。
 4. 原生在窗口 revision 与令牌都匹配时整体替换条带，过期结果直接丢弃。
+
+系统栏图标三端同一规则：取该边条带的平均色，加上 `(1 − 平均 alpha) × 底色`，没有条带时取底色；按 sRGB 线性化与 Rec. 709 权重计算相对亮度，大于 0.179 时用深色图标。底色变化、条带替换或清空时重新计算，结果变化才设置。平均色属于条带记录，随条带一起接受与清除，所以只换底色不需要重新解码。
+
+这是近似：换壁纸时图标可能先按底色、再按新条带切换一次；系统栏覆盖网页或视频时（Android 沉浸模式滑出、元素全屏），仍按宿主背景判断。
 
 系统栏条带不呈现：视频壁纸（含第一方 mp4）、渐变与外部 URL（只画底色并记录诊断）、弹窗遮罩、主题滤镜与第三方背景层。动画图片取首帧。条带不做磁盘缓存。
 

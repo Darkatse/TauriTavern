@@ -196,7 +196,7 @@ export const power_user = {
 
     waifuMode: false,
     movingUI: false,
-    mobile_immersive_fullscreen: true,
+    mobile_immersive_fullscreen: false,
     movingUIState: {},
     movingUIPreset: '',
     noShadows: false,
@@ -1932,7 +1932,7 @@ export async function loadPowerUserSettings(settings, data) {
     }
 
     if (typeof power_user.mobile_immersive_fullscreen !== 'boolean') {
-        power_user.mobile_immersive_fullscreen = true;
+        power_user.mobile_immersive_fullscreen = false;
     }
 
     if (typeof power_user.chat_width !== 'number') {

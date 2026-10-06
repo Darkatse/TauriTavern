@@ -34,7 +34,11 @@ interface BackdropAcceptance {
   target: RenderTarget | null;
 }
 
+type StripEdge = 'top' | 'bottom' | 'left' | 'right';
+
 interface EncodedStrip {
+  edge: StripEdge;
+  average: number[];
   x: number;
   y: number;
   png: string;
@@ -47,6 +51,8 @@ interface ApplyBackdropArgs {
 }
 
 interface BackdropStrip {
+  edge: StripEdge;
+  average: number[];
   key: string;
   x: number;
   y: number;
@@ -70,12 +76,13 @@ function geometryKey(snapshot: WindowSnapshot): string {
 /** Owns window snapshots and backdrops. ArkUI handles safe areas; ArkWeb handles IME. */
 @Observed
 export class WindowLayout implements NativePlugin {
-  color: string = '#000000';
+  color: number = 0xFF000000;
   strips: BackdropStrip[] = [];
   private mainWindow?: window.Window;
   private currentSnapshot?: WindowSnapshot;
   private wallpaperToken: number = 0;
   private pageReady: boolean = false;
+  private requestedBarColors?: window.SystemBarProperties;
   private windowChanged = (): void => this.refresh();
   private avoidAreaChanged = (options: window.AvoidAreaOptions): void => {
     if (POLICY_AREAS.includes(options.type)) this.refresh();
@@ -113,6 +120,7 @@ export class WindowLayout implements NativePlugin {
     if (previous && geometryKey(previous) === geometryKey(next)) return;
     this.currentSnapshot = next;
     this.replaceStrips([]);
+    this.updateSystemBarIcons();
     if (this.pageReady) {
       WebHost.runJavaScript(`window.dispatchEvent(new CustomEvent('tt-window-changed',{detail:${JSON.stringify(next)}}));`)
         .catch((error: Error) => console.error(`Window layout publication: ${error.message}`));
@@ -141,11 +149,12 @@ export class WindowLayout implements NativePlugin {
   private beginBackdrop(args: BeginBackdropArgs): RenderTarget | null {
     const snapshot = this.currentSnapshot;
     if (!snapshot || snapshot.revision !== args.windowRevision) return null;
-    this.color = '#' + args.color.map((channel: number): string => channel.toString(16).padStart(2, '0')).join('');
+    this.color = (0xFF000000 | (args.color[0] << 16) | (args.color[1] << 8) | args.color[2]) >>> 0;
     if (args.replaceWallpaper) {
       this.wallpaperToken++;
       this.replaceStrips([]);
     }
+    this.updateSystemBarIcons();
     return { window: snapshot, token: this.wallpaperToken };
   }
 
@@ -161,6 +170,7 @@ export class WindowLayout implements NativePlugin {
           const pixelMap = await source.createPixelMap();
           const size = pixelMap.getImageInfoSync().size;
           decoded.push({
+            edge: strip.edge, average: strip.average,
             key: `${args.windowRevision}:${args.wallpaperToken}:${i}`,
             x: strip.x, y: strip.y, width: size.width, height: size.height, pixelMap,
           });
@@ -172,6 +182,7 @@ export class WindowLayout implements NativePlugin {
       if (this.currentSnapshot?.revision !== args.windowRevision || this.wallpaperToken !== args.wallpaperToken) return;
       this.replaceStrips(decoded);
       decoded = [];
+      this.updateSystemBarIcons();
     } finally {
       this.releaseStrips(decoded);
     }
@@ -189,12 +200,42 @@ export class WindowLayout implements NativePlugin {
     }
   }
 
+  private useDarkIcons(edge: StripEdge): boolean {
+    const average = this.strips.find((strip: BackdropStrip): boolean => strip.edge === edge)?.average ?? [0, 0, 0, 0];
+    const base = [(this.color >>> 16) & 255, (this.color >>> 8) & 255, this.color & 255];
+    const linear = base.map((channel: number, index: number): number => {
+      const srgb = average[index] + (1 - average[3]) * channel / 255;
+      return srgb <= 0.04045 ? srgb / 12.92 : Math.pow((srgb + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2] > 0.179;
+  }
+
+  private async updateSystemBarIcons(): Promise<void> {
+    const mainWindow = this.mainWindow;
+    if (!mainWindow) return;
+    const colors: window.SystemBarProperties = {
+      statusBarContentColor: this.useDarkIcons('top') ? '#E5000000' : '#E5FFFFFF',
+      navigationBarContentColor: this.useDarkIcons('bottom') ? '#E5000000' : '#E5FFFFFF',
+    };
+    if (colors.statusBarContentColor === this.requestedBarColors?.statusBarContentColor &&
+      colors.navigationBarContentColor === this.requestedBarColors?.navigationBarContentColor) return;
+    // Deduplicate submissions, including those whose native promise has not settled yet.
+    this.requestedBarColors = colors;
+    try {
+      await mainWindow.setWindowSystemBarProperties(colors);
+    } catch (error) {
+      if (this.requestedBarColors === colors) this.requestedBarColors = undefined;
+      console.error(`Window system bar icons: ${(error as Error).message}`);
+    }
+  }
+
   close(): void {
     this.mainWindow?.off('windowSizeChange', this.windowChanged);
     this.mainWindow?.off('avoidAreaChange', this.avoidAreaChanged);
     this.mainWindow = undefined;
     this.currentSnapshot = undefined;
     this.pageReady = false;
+    this.requestedBarColors = undefined;
     this.replaceStrips([]);
   }
 }

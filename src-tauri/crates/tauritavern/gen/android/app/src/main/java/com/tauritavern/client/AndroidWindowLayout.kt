@@ -1,6 +1,5 @@
 package com.tauritavern.client
 
-import android.content.res.Configuration
 import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -9,7 +8,6 @@ import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
-import android.os.Handler
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
@@ -23,6 +21,7 @@ import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import org.json.JSONObject
+import kotlin.math.pow
 
 /** Owns the browser's content rectangle. IME geometry never crosses into JavaScript. */
 class AndroidWindowLayout(
@@ -30,9 +29,8 @@ class AndroidWindowLayout(
   private val resources: Resources,
   private val contentRootProvider: () -> ViewGroup?,
   private val webViewProvider: () -> WebView?,
-  mainHandler: Handler,
 ) {
-  private var immersiveFullscreenEnabled = true
+  private var immersiveFullscreenEnabled = false
   private var elementFullscreen = false
   private var attachedRoot: ViewGroup? = null
   private var targetInsets: WindowInsetsCompat? = null
@@ -41,7 +39,8 @@ class AndroidWindowLayout(
   private var snapshot: WindowSnapshot? = null
   private var wallpaperToken = 0L
   private val backdrop = WindowBackdrop()
-  private val statusBarAppearance = AndroidStatusBarAppearance(window, mainHandler)
+  private var darkStatusBarIcons = false
+  private var darkNavigationBarIcons = false
 
   fun onCreate() {
     WindowCompat.enableEdgeToEdge(window)
@@ -57,12 +56,7 @@ class AndroidWindowLayout(
 
   fun onResume() {
     configureSystemBars()
-    statusBarAppearance.start()
     refresh()
-  }
-
-  fun onPause() {
-    statusBarAppearance.stop()
   }
 
   fun onWebViewAvailable() {
@@ -111,6 +105,7 @@ class AndroidWindowLayout(
       backdrop.strips = emptyList()
     }
     backdrop.invalidateSelf()
+    updateSystemBarIcons()
     return JSONObject().put("window", getSnapshot()).put("token", wallpaperToken)
   }
 
@@ -119,14 +114,30 @@ class AndroidWindowLayout(
     if (windowRevision != snapshot?.revision || token != wallpaperToken) return
     backdrop.strips = strips
     backdrop.invalidateSelf()
+    updateSystemBarIcons()
+  }
+
+  private fun updateSystemBarIcons() {
+    val navigation = targetInsets?.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.navigationBars())
+    val navigationEdge = when {
+      navigation == null -> null
+      navigation.left > 0 -> "left"
+      navigation.right > 0 -> "right"
+      navigation.bottom > 0 -> "bottom"
+      else -> null
+    }
+    val status = backdrop.useDarkIcons("top")
+    val navigationIcons = backdrop.useDarkIcons(navigationEdge)
+    if (status == darkStatusBarIcons && navigationIcons == darkNavigationBarIcons) return
+    darkStatusBarIcons = status
+    darkNavigationBarIcons = navigationIcons
+    configureSystemBars()
   }
 
   private fun configureSystemBars() {
-    val dark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-      Configuration.UI_MODE_NIGHT_YES
     WindowInsetsControllerCompat(window, window.decorView).apply {
-      isAppearanceLightStatusBars = statusBarAppearance.useDarkIcons ?: !dark
-      isAppearanceLightNavigationBars = !dark
+      isAppearanceLightStatusBars = darkStatusBarIcons
+      isAppearanceLightNavigationBars = darkNavigationBarIcons
       systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
       if (immersiveFullscreenEnabled || elementFullscreen) hide(WindowInsetsCompat.Type.systemBars())
       else show(WindowInsetsCompat.Type.systemBars())
@@ -217,6 +228,7 @@ class AndroidWindowLayout(
     snapshot = next.copy(revision = previousRevision + 1)
     backdrop.strips = emptyList()
     backdrop.invalidateSelf()
+    updateSystemBarIcons()
     webViewProvider()?.evaluateJavascript(
       "window.dispatchEvent(new CustomEvent('tt-window-changed',{detail:${getSnapshot()}}));", null)
   }
@@ -250,12 +262,32 @@ class AndroidWindowLayout(
   }
 }
 
-data class WindowBackdropStrip(val x: Int, val y: Int, val bitmap: Bitmap)
+data class WindowBackdropStrip(
+  val x: Int,
+  val y: Int,
+  val bitmap: Bitmap,
+  val edge: String,
+  val average: FloatArray,
+)
 
 private class WindowBackdrop : Drawable() {
   var color = Color.BLACK
   var strips: List<WindowBackdropStrip> = emptyList()
   private val paint = Paint()
+
+  fun useDarkIcons(edge: String?): Boolean {
+    val average = strips.find { it.edge == edge }?.average
+    val alpha = average?.get(3)?.toDouble() ?: 0.0
+    fun linear(channel: Int, base: Int): Double {
+      val srgb = (average?.get(channel)?.toDouble() ?: 0.0) + (1.0 - alpha) * base / 255.0
+      return if (srgb <= 0.04045) srgb / 12.92 else ((srgb + 0.055) / 1.055).pow(2.4)
+    }
+    val luminance = 0.2126 * linear(0, Color.red(color)) +
+      0.7152 * linear(1, Color.green(color)) + 0.0722 * linear(2, Color.blue(color))
+    // Black and white have equal contrast at relative luminance sqrt(0.05 * 1.05) - 0.05.
+    return luminance > 0.179
+  }
+
   override fun draw(canvas: Canvas) {
     canvas.drawColor(color)
     for (strip in strips) canvas.drawBitmap(strip.bitmap, strip.x.toFloat(), strip.y.toFloat(), paint)

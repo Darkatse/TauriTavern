@@ -19,11 +19,22 @@ pub struct WindowBackdropRenderer {
 }
 
 pub struct BackdropStrip {
+    pub edge: StripEdge,
+    /// Mean premultiplied sRGB and alpha, all in 0..1, including transparent pixels.
+    pub average: [f32; 4],
     pub x: u32,
     pub y: u32,
     pub width: u32,
     pub height: u32,
     pub png: Vec<u8>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum StripEdge {
+    Top,
+    Bottom,
+    Left,
+    Right,
 }
 
 impl WindowBackdropRenderer {
@@ -73,15 +84,23 @@ fn render(
         return Err(failure("invalid window geometry"));
     }
     let rects = [
-        (0, 0, window.width, inset.top),
-        (0, window.height - inset.bottom, window.width, inset.bottom),
+        (StripEdge::Top, 0, 0, window.width, inset.top),
         (
+            StripEdge::Bottom,
+            0,
+            window.height - inset.bottom,
+            window.width,
+            inset.bottom,
+        ),
+        (
+            StripEdge::Left,
             0,
             inset.top,
             inset.left,
             window.height - inset.top - inset.bottom,
         ),
         (
+            StripEdge::Right,
             window.width - inset.right,
             inset.top,
             inset.right,
@@ -93,7 +112,7 @@ fn render(
     };
     if rects
         .iter()
-        .all(|(_, _, width, height)| *width == 0 || *height == 0)
+        .all(|(_, _, _, width, height)| *width == 0 || *height == 0)
     {
         return Ok(Vec::new());
     }
@@ -134,16 +153,19 @@ fn render(
         length(position[1], area[1] - size[1])?,
     ];
     let mut strips = Vec::new();
-    for (x, y, width, height) in rects {
+    for (edge, x, y, width, height) in rects {
         if width == 0 || height == 0 {
             continue;
         }
-        let strip = paint_strip(&image, (x, y, width, height), window.scale, size, origin);
+        let (strip, average) =
+            paint_strip(&image, (x, y, width, height), window.scale, size, origin);
         let mut png = Cursor::new(Vec::new());
         strip
             .write_to(&mut png, ImageFormat::Png)
             .map_err(|error| internal(format!("encode strip PNG: {error}")))?;
         strips.push(BackdropStrip {
+            edge,
+            average,
             x,
             y,
             width,
@@ -187,11 +209,12 @@ fn paint_strip(
     scale: f64,
     size: [f64; 2],
     origin: [f64; 2],
-) -> RgbaImage {
+) -> (RgbaImage, [f32; 4]) {
     let (x, y, width, height) = rect;
     let intrinsic = [image.width() as f64, image.height() as f64];
     let samples = PremultipliedImage(image);
     let mut strip = RgbaImage::from_pixel(width, height, Rgba([0, 0, 0, 0]));
+    let mut sum = [0.0_f64; 4];
     for (px, py, output) in strip.enumerate_pixels_mut() {
         // Map physical pixel centers into the CSS background rectangle.
         let local = [
@@ -206,6 +229,9 @@ fn paint_strip(
         let Rgba([r, g, b, alpha]) =
             image::imageops::interpolate_bilinear(&samples, sx as f32, sy as f32)
                 .expect("sample is inside the decoded image");
+        for (total, value) in sum.iter_mut().zip([r, g, b, alpha]) {
+            *total += f64::from(value);
+        }
         if alpha > 0.0 {
             *output = Rgba([
                 (r / alpha).round() as u8,
@@ -215,7 +241,12 @@ fn paint_strip(
             ]);
         }
     }
-    strip
+    for channel in &mut sum[..3] {
+        *channel /= 255.0;
+    }
+    // Unpainted pixels contribute zero, but still occupy part of the strip.
+    let count = f64::from(width) * f64::from(height);
+    (strip, sum.map(|value| (value / count) as f32))
 }
 
 fn length(value: &str, reference: f64) -> Result<f64, DomainError> {
@@ -278,13 +309,22 @@ mod tests {
                 Rgba([0, 80, 0, 255])
             }
         }));
-        let strip = paint_strip(&image, (0, 0, 5, 1), 1.0, [2.0, 1.0], [1.0, 0.0]);
+        let (strip, average) = paint_strip(&image, (0, 0, 5, 1), 1.0, [2.0, 1.0], [1.0, 0.0]);
         assert_eq!(
             strip.into_raw(),
             [
                 0, 0, 0, 0, 80, 0, 0, 128, 0, 80, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0,
             ]
         );
+        let expected = [
+            80.0 / 255.0 * 128.0 / 255.0,
+            80.0 / 255.0,
+            0.0,
+            128.0 / 255.0 + 1.0,
+        ];
+        for (actual, total) in average.into_iter().zip(expected) {
+            assert!((actual - total / 5.0).abs() < 1e-6);
+        }
 
         let edge = DynamicImage::ImageRgba8(RgbaImage::from_fn(2, 1, |x, _| {
             if x == 0 {
@@ -293,7 +333,7 @@ mod tests {
                 Rgba([0, 255, 0, 0])
             }
         }));
-        let middle = paint_strip(&edge, (1, 0, 1, 1), 1.0, [3.0, 1.0], [0.0, 0.0]);
+        let (middle, _) = paint_strip(&edge, (1, 0, 1, 1), 1.0, [3.0, 1.0], [0.0, 0.0]);
         assert_eq!(middle.get_pixel(0, 0), &Rgba([255, 0, 0, 128]));
     }
 
