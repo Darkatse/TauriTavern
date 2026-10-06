@@ -11,6 +11,8 @@
 
 窗口快照不含键盘。键盘只改变内容视口的底边，顶部固定；键盘过渡不产生 JS 背景发布、`:root` 变量写入或图片工作。浮动与分离键盘不报告 inset，不缩小视口。
 
+一次键盘过渡只让内容视口变化一次：宿主取键盘的目标几何，在过渡开始时提交（iOS 的交互拖动在松手时提交），键盘在已就位的页面上方滑入或滑出，露出的区域显示宿主底色。逐帧跟随会让浏览器引擎逐帧重排。
+
 ## Android
 
 入口 `AndroidWindowLayout.kt`，由 `MainActivity` 编排生命周期，`WindowLayoutPlugin` 供 Rust 调用。Rust 的 `platform/window_layout_plugin.rs` 与鸿蒙共用请求、应答和条带传输，只在插件注册时选择平台入口。
@@ -18,9 +20,8 @@
 - edge-to-edge 只由 `WindowCompat.enableEdgeToEdge(window)` 配置。
 - 政策避让：非沉浸为稳定的 systemBars ∪ displayCutout，沉浸为零。用户偏好 `power_user.mobile_immersive_fullscreen` 经 `mobile-system-ui.js` 与 `AndroidSystemUiJsBridge` 传给原生。新安装及缺少该字段的设置默认非沉浸，已保存的选择保持不变。
 - 主 WebView 矩形由一个函数计算：四边取政策避让，底边取政策避让与 IME 底部 inset 的较大值；相同矩形不重复提交。
-- 提交时机：`onApplyWindowInsets` 更新目标，没有动画时直接提交；IME 动画期间 `onProgress` 提交当前高度，`onEnd` 按实际终态收敛。
+- 提交时机：只跟随 `onApplyWindowInsets`。键盘动画开始时系统已按终态下发 insets；宿主不注册 insets 动画回调，否则平台改在主线程逐帧驱动键盘动画，Android 16 的预测性返回也会在拖动中逐帧改布局。预测性返回收键盘在松手确认时提交一次，取消时不变。
 - 内容根节点把原始 insets 传给子视图。主 WebView 自己的监听器把系统栏、刘海与 IME 清零：API 31+ 交给 WebView 的 `onApplyWindowInsets`；API 28–30 上它替换了 Chromium 构造时安装的监听器，引擎不接收 inset。
-- IME 动画在 `onStart` 登记；`onPrepare` 只暂缓紧随其后的一轮布局，因为 API 30 上开始前被取消的动画不会再有 `onEnd`。
 - 元素全屏是独立的展示状态：隐藏系统栏，由兄弟容器覆盖主页面，不改变用户偏好、窗口快照或 WebView 矩形。临时滑出的系统栏同样不改变政策。
 - 旋转等由 `configChanges` 原位处理。Activity 重建（如切换开发者刘海选项）后 Tauri 插件仍持有旧 Activity，窗口插件拒绝请求，需重启应用。
 - 窗口背景画在 decorView 的背景上：底色加条带。状态栏与导航栏图标经 `WindowInsetsControllerCompat` 设置；导航栏按 navigationBars inset 所在的边取底边或侧边条带。
@@ -33,7 +34,7 @@
 - iOS 没有沉浸模式，政策避让始终是安全区。
 - 内部 UIScrollView 保持 `contentInsetAdjustmentBehavior = .never` 与零 inset；WebKit 自己的焦点、选区与键盘处理照常运行。
 - 主窗口隐藏 WebKit 表单附属栏（`disableInputAccessoryView`）。收键盘手势由宿主内的全窗口 `KeyboardScrollView` 提供：UIKit `.interactive`，与网页内部滚动视图的 pan 同时识别，不取消内容触摸，网页控件操作与键盘跟手可以同时发生。容器没有滚动内容，`setContentOffset:` 固定为零，`alwaysBounceVertical` 只用来让 pan 能够开始。
-- WKWebView 是容器的子视图，约束对象仍是宿主的 guide。容器的 pan 活动期间 WebView 高度保持不变，松手后恢复跟随 guide、页面一次重排：iOS WebKit 把每次 WebView 尺寸变化当作样式表环境变化整文档重建样式，Safari 也只在键盘设定后改一次布局尺寸，拖动期间键盘下方露出宿主底色。
+- WKWebView 是容器的子视图，约束对象仍是宿主的 guide。UIKit 在键盘动画块里一次设定 guide；交互拖动不同，guide 跟手变化，所以容器的 pan 活动期间 WebView 高度保持不变，松手后恢复跟随。iOS WebKit 把每次 WebView 尺寸变化当作样式表环境变化整文档重建样式，逐帧跟随的代价尤其高。
 - 宿主在 `layoutSubviews` 按值去重发布窗口快照。底色设在宿主视图上，条带是插在 WKWebView 之下的 UIImageView。
 - 状态栏样式经根控制器的 `preferredStatusBarStyle` 生效。tao 没有提供这个入口，宿主安装时把它加到 `TaoUIViewController` 上；tao 自带同名方法时安装报错，改用 tao 的实现。home indicator 由系统自适应。
 - 元素全屏时 WebKit 会把 WKWebView 移出容器；归还时容器停用保持约束并重新激活同一组边约束。全屏期间手势不由容器提供；普通 CSS 全屏面板、dialog 和嵌入的 iframe 仍在覆盖范围内。
@@ -43,7 +44,7 @@
 入口 `gen/ohos/entry/src/main/ets/WindowLayout.ets`，由 `EntryAbility` 持有，作为应用自有的 `window-layout` 插件接入原生插件桥。
 
 - ArkUI 负责安全区布局：`setWindowLayoutFullScreen(false)` 加 `module.json5` 的 `avoid_cutout`，覆盖系统栏、导航指示条和刘海。鸿蒙没有沉浸模式，政策避让始终是安全区。
-- Ability HAR 的 Web 组件使用 `RESIZE_CONTENT`：ArkWeb 按键盘与 Web 的重叠缩小布局视口，Web 外框不变。
+- Ability HAR 的 Web 组件使用 `RESIZE_CONTENT`：ArkWeb 按键盘与 Web 的重叠缩小布局视口，Web 外框不变。窗口管理器每次停靠键盘过渡只下发一次终态占用区，ArkWeb 再把 20 ms 内的重复上报合并为一次，所以布局视口同样一次到位，宿主不另做键盘处理。
 - 快照由窗口尺寸、上述三类避让区和 UIContext 像素比例组成，不含键盘，按值去重。页面请求过初始快照后，变化经 `WebHost.runJavaScript` 发布。
 - 背景层是 `pages/Main` 中 Web 的兄弟节点，以 `LayoutPolicy.matchParent` 加 `ignoreLayoutSafeArea()` 铺满窗口。PNG 解码是异步的，解码完成后才核对 revision 与令牌；没有采用的 PixelMap 都释放。
 - 状态栏与三键导航栏的内容色由一次 `setWindowSystemBarProperties` 局部更新设置。手势导航指示条没有公开的设色接口，由系统控制。

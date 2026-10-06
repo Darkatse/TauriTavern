@@ -13,17 +13,21 @@ import android.view.ViewGroup
 import android.view.Window
 import android.webkit.WebView
 import androidx.core.graphics.Insets
-import androidx.core.view.OneShotPreDrawListener
 import androidx.core.view.ViewCompat
 import androidx.core.view.ViewGroupCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import org.json.JSONObject
 import kotlin.math.pow
 
-/** Owns the browser's content rectangle. IME geometry never crosses into JavaScript. */
+/**
+ * Owns the browser's content rectangle. IME geometry never crosses into JavaScript.
+ *
+ * Insets arrive with the keyboard's target state when its animation starts. The
+ * WebView takes that rectangle once and the keyboard slides over a settled page;
+ * following the animation frame by frame would relayout the page on every frame.
+ */
 class AndroidWindowLayout(
   private val window: Window,
   private val resources: Resources,
@@ -34,8 +38,6 @@ class AndroidWindowLayout(
   private var elementFullscreen = false
   private var attachedRoot: ViewGroup? = null
   private var targetInsets: WindowInsetsCompat? = null
-  private val animations = mutableSetOf<WindowInsetsAnimationCompat>()
-  private var preparedIme: WindowInsetsAnimationCompat? = null
   private var snapshot: WindowSnapshot? = null
   private var wallpaperToken = 0L
   private val backdrop = WindowBackdrop()
@@ -154,7 +156,7 @@ class AndroidWindowLayout(
   private fun acceptInsets(insets: WindowInsetsCompat) {
     targetInsets = insets
     updateSnapshot(insets)
-    if (preparedIme == null && animations.isEmpty()) layoutContent(insets)
+    layoutContent(insets)
   }
 
   private fun installInsetsCallbacks(root: ViewGroup) {
@@ -165,47 +167,6 @@ class AndroidWindowLayout(
       // Siblings (including element fullscreen) keep the original facts.
       insets
     }
-    ViewCompat.setWindowInsetsAnimationCallback(root, object : WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
-      override fun onPrepare(animation: WindowInsetsAnimationCompat) {
-        if (animation.typeMask and WindowInsetsCompat.Type.ime() == 0) return
-        preparedIme = animation
-        // API 30 sends no onEnd when cancellation precedes onStart. Preparation
-        // lasts one layout pass, never the lifetime of an unstarted animation.
-        OneShotPreDrawListener.add(root) {
-          root.post {
-            if (preparedIme === animation) {
-              preparedIme = null
-              (ViewCompat.getRootWindowInsets(root) ?: targetInsets)?.let(::acceptInsets)
-            }
-          }
-        }
-      }
-      override fun onStart(
-        animation: WindowInsetsAnimationCompat,
-        bounds: WindowInsetsAnimationCompat.BoundsCompat,
-      ): WindowInsetsAnimationCompat.BoundsCompat {
-        if (animation.typeMask and WindowInsetsCompat.Type.ime() != 0) {
-          animations.add(animation)
-          if (preparedIme === animation) preparedIme = null
-        }
-        return bounds
-      }
-      override fun onProgress(
-        insets: WindowInsetsCompat,
-        runningAnimations: MutableList<WindowInsetsAnimationCompat>,
-      ): WindowInsetsCompat {
-        if (runningAnimations.any { it.typeMask and WindowInsetsCompat.Type.ime() != 0 }) {
-          layoutContent(insets)
-        }
-        return insets
-      }
-      override fun onEnd(animation: WindowInsetsAnimationCompat) {
-        if (animation.typeMask and WindowInsetsCompat.Type.ime() == 0) return
-        if (preparedIme === animation) preparedIme = null
-        animations.remove(animation)
-        (ViewCompat.getRootWindowInsets(root) ?: targetInsets)?.let(::acceptInsets)
-      }
-    })
     // Rotation and window resizing update the snapshot even when insets stay unchanged.
     root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
       targetInsets?.let(::acceptInsets)
