@@ -2448,6 +2448,9 @@ export async function prepareOpenAIMessages({
     // Without a character selected, there is no way to accurately calculate tokens
     if (!activePromptManager.activeCharacter && dryRun) return [null, false];
 
+    // Errors belong to the current assembly, not to its UI refresh.
+    activePromptManager.error = null;
+
     const chatCompletion = new ChatCompletion();
     if (power_user.console_log_prompts) chatCompletion.enableLogging();
 
