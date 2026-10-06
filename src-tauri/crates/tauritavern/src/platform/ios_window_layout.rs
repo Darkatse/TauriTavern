@@ -1,12 +1,16 @@
 //! UIKit owns safe-area and keyboard geometry; WKWebView is an ordinary content view.
+//! A host scroll view supplies UIKit's interactive keyboard-dismissal gesture.
 use std::cell::{Cell, RefCell};
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
-use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
+use objc2::{ClassType, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_foundation::{NSArray, NSData, NSObjectProtocol, NSPoint, NSRect, NSSize};
 use objc2_ui_kit::{
-    NSLayoutConstraint, UIColor, UIImage, UIImageView, UIStatusBarStyle, UIView, UIViewAutoresizing,
+    NSLayoutConstraint, UIColor, UIGestureRecognizer, UIGestureRecognizerDelegate,
+    UIGestureRecognizerState, UIImage, UIImageView, UIPanGestureRecognizer, UIScrollView,
+    UIScrollViewContentInsetAdjustmentBehavior, UIScrollViewKeyboardDismissMode,
+    UIStatusBarStyle, UIView, UIViewAutoresizing,
 };
 use tauri::{AppHandle, WebviewWindow};
 use tt_adapter_media::window_backdrop::{BackdropStrip, StripEdge};
@@ -17,8 +21,6 @@ use tt_domain::errors::DomainError;
 
 struct WindowHostIvars {
     window: WebviewWindow,
-    webview: Retained<UIView>,
-    content_constraints: RefCell<Vec<Retained<NSLayoutConstraint>>>,
     snapshot: RefCell<Option<WindowSnapshot>>,
     wallpaper_token: Cell<u64>,
     color: Cell<[u8; 3]>,
@@ -41,20 +43,6 @@ define_class!(
     unsafe impl NSObjectProtocol for WindowHost {}
 
     impl WindowHost {
-        #[unsafe(method(didAddSubview:))]
-        fn did_add_subview(&self, subview: &UIView) {
-            unsafe { let _: () = msg_send![super(self), didAddSubview: subview]; }
-            if std::ptr::eq(subview, &*self.ivars().webview) {
-                // Element fullscreen reparents WKWebView, which deactivates its constraints.
-                // Initial installation and fullscreen return both activate this same content policy.
-                NSLayoutConstraint::activateConstraints(
-                    &NSArray::from_retained_slice(&self.ivars().content_constraints.borrow()),
-                    self.mtm(),
-                );
-                self.setNeedsLayout();
-            }
-        }
-
         #[unsafe(method(layoutSubviews))]
         fn layout_subviews(&self) {
             unsafe { let _: () = msg_send![super(self), layoutSubviews]; }
@@ -62,6 +50,118 @@ define_class!(
         }
     }
 );
+
+struct KeyboardScrollViewIvars {
+    webview: Retained<UIView>,
+    /// Edge constraints to the window host's guides; includes `keyboard_constraint`.
+    content_constraints: Vec<Retained<NSLayoutConstraint>>,
+    /// Bottom edge follows the keyboard guide.
+    keyboard_constraint: Retained<NSLayoutConstraint>,
+    /// While the host pan is active the content height is held constant. WebKit treats every
+    /// view-height change as a stylesheet-environment change (full style rebuild), and Safari
+    /// likewise relayouts only when the keyboard settles, not while the finger drags it.
+    held_height: RefCell<Option<Retained<NSLayoutConstraint>>>,
+}
+
+define_class!(
+    #[unsafe(super(UIScrollView))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = KeyboardScrollViewIvars]
+    struct KeyboardScrollView;
+
+    unsafe impl NSObjectProtocol for KeyboardScrollView {}
+
+    unsafe impl UIGestureRecognizerDelegate for KeyboardScrollView {
+        #[unsafe(method(gestureRecognizer:shouldRecognizeSimultaneouslyWithGestureRecognizer:))]
+        fn recognize_with_scroll_view(
+            &self,
+            gesture: &UIGestureRecognizer,
+            other: &UIGestureRecognizer,
+        ) -> bool {
+            let pan: &UIGestureRecognizer = &self.panGestureRecognizer();
+            let selector = sel!(gestureRecognizer:shouldRecognizeSimultaneouslyWithGestureRecognizer:);
+            // WebKit's overflow regions and text editors own their own pans.
+            // Scrolling those regions must also allow UIKit to dismiss the keyboard.
+            if gesture == pan && other.view().is_some_and(|view| {
+                view.downcast_ref::<UIScrollView>().is_some_and(|scroll| {
+                    let other_pan: &UIGestureRecognizer = &scroll.panGestureRecognizer();
+                    other == other_pan
+                })
+            }) {
+                true
+            } else if UIScrollView::class().instance_method(selector).is_some() {
+                // Preserve UIKit's own rules where it implements this optional method.
+                unsafe {
+                    msg_send![super(self), gestureRecognizer: gesture,
+                        shouldRecognizeSimultaneouslyWithGestureRecognizer: other]
+                }
+            } else {
+                false
+            }
+        }
+    }
+
+    impl KeyboardScrollView {
+        // This view owns a pan, not scrollable content. `alwaysBounceVertical`
+        // only lets the pan begin; UIKit's interactive dismissal follows the pan
+        // independently of the content offset, and an empty bounce would make
+        // WebKit recompute visible geometry and styles every frame. If UIKit ever
+        // bypasses this setter, the bounce and its cost return; nothing breaks.
+        #[unsafe(method(setContentOffset:))]
+        fn set_content_offset(&self, _offset: NSPoint) {}
+
+        #[unsafe(method(hostPanChanged:))]
+        fn host_pan_changed(&self, pan: &UIPanGestureRecognizer) {
+            match pan.state() {
+                UIGestureRecognizerState::Began => self.hold_content_height(),
+                UIGestureRecognizerState::Ended | UIGestureRecognizerState::Cancelled => {
+                    self.follow_keyboard()
+                }
+                _ => {}
+            }
+        }
+
+        #[unsafe(method(didAddSubview:))]
+        fn did_add_subview(&self, subview: &UIView) {
+            unsafe { let _: () = msg_send![super(self), didAddSubview: subview]; }
+            if std::ptr::eq(subview, &*self.ivars().webview) {
+                // Element fullscreen reparents WKWebView, which deactivates its edge constraints.
+                // Initial installation and fullscreen return both activate this same content policy.
+                // A height held for a pan is the view's own constraint and survives reparenting.
+                if let Some(held) = self.ivars().held_height.borrow_mut().take() {
+                    held.setActive(false);
+                }
+                NSLayoutConstraint::activateConstraints(
+                    &NSArray::from_retained_slice(&self.ivars().content_constraints),
+                    self.mtm(),
+                );
+                self.setNeedsLayout();
+            }
+        }
+    }
+);
+
+impl KeyboardScrollView {
+    fn hold_content_height(&self) {
+        let mut held = self.ivars().held_height.borrow_mut();
+        if held.is_some() {
+            return;
+        }
+        let height = self.ivars().webview.bounds().size.height;
+        let constraint = self.ivars().webview.heightAnchor().constraintEqualToConstant(height);
+        self.ivars().keyboard_constraint.setActive(false);
+        constraint.setActive(true);
+        *held = Some(constraint);
+    }
+
+    fn follow_keyboard(&self) {
+        let Some(constraint) = self.ivars().held_height.borrow_mut().take() else {
+            return;
+        };
+        constraint.setActive(false);
+        self.ivars().keyboard_constraint.setActive(true);
+    }
+}
 
 thread_local! {
     static MAIN_HOST: RefCell<Option<Retained<WindowHost>>> = const { RefCell::new(None) };
@@ -199,8 +299,6 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
     let parent = webview.superview().expect("WKWebView must have a parent");
     let allocated = WindowHost::alloc(webview.mtm()).set_ivars(WindowHostIvars {
         window,
-        webview: webview.retain(),
-        content_constraints: RefCell::new(Vec::new()),
         snapshot: RefCell::new(None),
         wallpaper_token: Cell::new(0),
         color: Cell::new([0; 3]),
@@ -220,7 +318,10 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
     // The guide rests at the bottom safe area when a docked keyboard is absent.
     // Floating/undocked keyboards do not reserve the entire viewport.
     let keyboard = host.keyboardLayoutGuide();
-    *host.ivars().content_constraints.borrow_mut() = vec![
+    let keyboard_constraint = webview
+        .bottomAnchor()
+        .constraintEqualToAnchor(&keyboard.topAnchor());
+    let content_constraints = vec![
         webview
             .topAnchor()
             .constraintEqualToAnchor(&safe.topAnchor()),
@@ -230,11 +331,38 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
         webview
             .trailingAnchor()
             .constraintEqualToAnchor(&safe.trailingAnchor()),
-        webview
-            .bottomAnchor()
-            .constraintEqualToAnchor(&keyboard.topAnchor()),
+        keyboard_constraint.clone(),
     ];
-    host.addSubview(webview);
+    let allocated = KeyboardScrollView::alloc(webview.mtm()).set_ivars(KeyboardScrollViewIvars {
+        webview: webview.retain(),
+        content_constraints,
+        keyboard_constraint,
+        held_height: RefCell::new(None),
+    });
+    let keyboard_scroll: Retained<KeyboardScrollView> =
+        unsafe { msg_send![super(allocated), initWithFrame: host.bounds()] };
+    keyboard_scroll.setAutoresizingMask(
+        UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight,
+    );
+    keyboard_scroll
+        .setContentInsetAdjustmentBehavior(UIScrollViewContentInsetAdjustmentBehavior::Never);
+    keyboard_scroll.setAlwaysBounceVertical(true);
+    keyboard_scroll.setShowsVerticalScrollIndicator(false);
+    keyboard_scroll.setShowsHorizontalScrollIndicator(false);
+    keyboard_scroll.setScrollsToTop(false);
+    keyboard_scroll.setDelaysContentTouches(false);
+    keyboard_scroll
+        .panGestureRecognizer()
+        .setCancelsTouchesInView(false);
+    keyboard_scroll.setKeyboardDismissMode(UIScrollViewKeyboardDismissMode::Interactive);
+    unsafe {
+        keyboard_scroll
+            .panGestureRecognizer()
+            .addTarget_action(&keyboard_scroll, sel!(hostPanChanged:));
+    }
+    // The pan stays full-window; only the host's guides size the content viewport.
+    host.addSubview(&keyboard_scroll);
+    keyboard_scroll.addSubview(webview);
     MAIN_HOST.with(|slot| *slot.borrow_mut() = Some(host.clone()));
     host.update_status_bar_style();
     host.setNeedsLayout();

@@ -29,6 +29,7 @@
         "minHeight": 600,
         "resizable": true,
         "fullscreen": false,
+        "disableInputAccessoryView": true,
         "center": true
       }
     ],

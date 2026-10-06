@@ -32,9 +32,11 @@
 - WKWebView 上、左、右约束到 `safeAreaLayoutGuide`，底边约束到 `keyboardLayoutGuide.topAnchor`。键盘收起时 guide 停在底部安全区。
 - iOS 没有沉浸模式，政策避让始终是安全区。
 - 内部 UIScrollView 保持 `contentInsetAdjustmentBehavior = .never` 与零 inset；WebKit 自己的焦点、选区与键盘处理照常运行。
+- 主窗口隐藏 WebKit 表单附属栏（`disableInputAccessoryView`）。收键盘手势由宿主内的全窗口 `KeyboardScrollView` 提供：UIKit `.interactive`，与网页内部滚动视图的 pan 同时识别，不取消内容触摸，网页控件操作与键盘跟手可以同时发生。容器没有滚动内容，`setContentOffset:` 固定为零，`alwaysBounceVertical` 只用来让 pan 能够开始。
+- WKWebView 是容器的子视图，约束对象仍是宿主的 guide。容器的 pan 活动期间 WebView 高度保持不变，松手后恢复跟随 guide、页面一次重排：iOS WebKit 把每次 WebView 尺寸变化当作样式表环境变化整文档重建样式，Safari 也只在键盘设定后改一次布局尺寸，拖动期间键盘下方露出宿主底色。
 - 宿主在 `layoutSubviews` 按值去重发布窗口快照。底色设在宿主视图上，条带是插在 WKWebView 之下的 UIImageView。
 - 状态栏样式经根控制器的 `preferredStatusBarStyle` 生效。tao 没有提供这个入口，宿主安装时把它加到 `TaoUIViewController` 上；tao 自带同名方法时安装报错，改用 tao 的实现。home indicator 由系统自适应。
-- 元素全屏时 WebKit 会把 WKWebView 移出宿主；归还时宿主重新激活同一组约束。
+- 元素全屏时 WebKit 会把 WKWebView 移出容器；归还时容器停用保持约束并重新激活同一组边约束。全屏期间手势不由容器提供；普通 CSS 全屏面板、dialog 和嵌入的 iframe 仍在覆盖范围内。
 
 ## 鸿蒙
 
