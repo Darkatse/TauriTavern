@@ -37,7 +37,6 @@ mdns-sd = "0.21.3"
 
 [dev-dependencies]
 base64 = "0.23"
-socket2 = { version = "0.6", features = ["all"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 mdns-sd = "0.21.3"

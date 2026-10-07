@@ -38,6 +38,8 @@ export function createBrowserRuntime() {
             return nodeName.get.call(this);
         },
     });
+    // Elements must stringify as in browsers, or Popper serializes the document during startup.
+    delete window.Element.prototype.toString;
     window.document.write(readFileSync(path.join(root, 'index.html'), 'utf8')
         .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, ''));
     for (const file of ['jquery-3.5.1.min.js', 'jquery-ui.min.js', 'jquery.transit.min.js',

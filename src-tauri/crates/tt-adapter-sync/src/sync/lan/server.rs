@@ -397,7 +397,6 @@ mod tests {
     use async_trait::async_trait;
     use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use socket2::{Domain, Protocol, Socket, Type};
     use tokio::sync::{Mutex, mpsc};
     use tt_contracts::lan_discovery::LanDiscoveryAnnouncement;
     use tt_ports::lan_sync::LanPairingClient;
@@ -700,17 +699,12 @@ mod tests {
             completions: Mutex::new(completions),
         });
         let events = recording_events();
-        // Reserve a non-listening port so the stale candidate fails without a timing race.
-        let unavailable = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
-            .expect("reserve stale address");
-        unavailable
-            .bind(&"127.0.0.1:0".parse::<SocketAddr>().unwrap().into())
+        // The stale candidate must fail at once while keeping its port reserved.
+        let stale = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
             .expect("bind stale address");
-        let stale_address = unavailable
-            .local_addr()
-            .expect("stale address")
-            .as_socket()
-            .unwrap();
+        let stale_address = stale.local_addr().expect("stale address");
+        tokio::spawn(async move { while stale.accept().await.is_ok() {} });
         let handle = spawn_lan_sync_server(
             "127.0.0.1:0".parse().unwrap(),
             default_user_dir.clone(),
