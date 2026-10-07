@@ -10,6 +10,9 @@ import { setting_names as TGsamplerNames, showTGSamplerControls, textgenerationw
 import { renderTemplateAsync } from './templates.js';
 import { Popup, POPUP_TYPE } from './popup.js';
 import { localforage } from '../lib.js';
+import { t, translate } from './i18n.js';
+import { escapeHtml } from './utils.js';
+import { getControlLabel } from './dom-handlers.js';
 
 const forcedOnColoring = 'color: #89db35;';
 const forcedOffColoring = 'color: #e84f62;';
@@ -34,7 +37,7 @@ async function showSamplerSelectPopup() {
     listContainer.append(APISamplers.toString());
     html.append(listContainer);
 
-    const showPromise = new Popup(html, POPUP_TYPE.TEXT, null, { wide: true, large: true, allowVerticalScrolling: true }).show();
+    const showPromise = new Popup(html, POPUP_TYPE.TEXT, null, { label: html.find('h3')[0], wide: true, large: true, allowVerticalScrolling: true }).show();
 
     setSamplerListListeners();
 
@@ -42,7 +45,6 @@ async function showSamplerSelectPopup() {
         console.log('saw sampler select reset click');
 
         if (main_api === 'textgenerationwebui') {
-            $('#prioritizeManuallySelectedSamplers').toggleClass('toggleEnabled', false);
             await resetApiSelectedSamplers(null, true);
         }
 
@@ -51,13 +53,9 @@ async function showSamplerSelectPopup() {
 
     if (main_api === 'textgenerationwebui') {
         $('#prioritizeManuallySelectedSamplers').show();
-        $('#prioritizeManuallySelectedSamplers').toggleClass('toggleEnabled', isSamplerManualPriorityEnabled());
+        updateSamplerManualPriorityButton();
         $('#prioritizeManuallySelectedSamplers').off('click').on('click', function () {
-            $(this).toggleClass('toggleEnabled');
-
-            const isActive = $(this).hasClass('toggleEnabled');
-
-            toggleSamplerManualPriority(isActive);
+            toggleSamplerManualPriority(!isSamplerManualPriorityEnabled());
         });
     } else {
         $('#prioritizeManuallySelectedSamplers').hide();
@@ -160,6 +158,12 @@ function getRelatedDOMElement(samplerName) {
     return { relatedDOMElement, targetDisplayType, displayname };
 }
 
+function samplerVisibilityText(state) {
+    if (state === SELECT_SAMPLER.SHOWN) return t`Forced shown`;
+    if (state === SELECT_SAMPLER.HIDDEN) return t`Forced hidden`;
+    return t`Automatic`;
+}
+
 function setSamplerListListeners() {
     // Goal 2: hide unchecked samplers from DOM
     let listContainer = $('#apiSamplersList');
@@ -194,6 +198,7 @@ function setSamplerListListeners() {
             }
         }
 
+        $(this).parent().find('.sampler-state').text(samplerVisibilityText(relatedDOMElement.data(SELECT_SAMPLER.DATA)));
         await saveSettingsDebounced();
 
         const shouldDisplay = isChecked ? targetDisplayType : 'none';
@@ -256,13 +261,21 @@ async function listSamplers(main_api, arrayOnly = false) {
 
         console.log(sampler, relatedDOMElement.prop('id'), isInDefaultState, shouldBeChecked());
 
-        if (displayname === undefined) displayname = sampler;
+        if (displayname === undefined) {
+            const control = document.getElementById(`${sampler}_${main_api}`);
+            const label = control && getControlLabel(control);
+            displayname = label?.textContent.trim() || sampler;
+        } else {
+            displayname = translate(displayname);
+        }
+        displayname = escapeHtml(displayname);
         if (main_api === 'textgenerationwebui') setApiSamplersState(sampler, shouldBeChecked());
 
         return html + `
         <label class="sampler_view_list_item wide50p flex-container">
-            <input type="checkbox" name="${sampler}_checkbox" ${shouldBeChecked() ? 'checked' : ''}>
-            <small class="sampler_name" style="${customColor}">${displayname}</small>
+            <input type="checkbox" id="sampler_view_${sampler}" name="${sampler}_checkbox" aria-labelledby="sampler_view_${sampler}_label" aria-describedby="sampler_view_${sampler}_description" ${shouldBeChecked() ? 'checked' : ''}>
+            <small class="sampler_name" style="${customColor || ''}"><span id="sampler_view_${sampler}_label">${displayname}</span></small>
+            <small id="sampler_view_${sampler}_description" class="sampler-state">${samplerVisibilityText(displayModified)}</small>
         </label>`;
     }, '');
 
@@ -350,6 +363,7 @@ export async function resetApiSelectedSamplers(tcApiType = '', silent = false) {
 
         console.debug('Text Completions: resetting selected samplers');
         delete selectedSamplers[tcApiType];
+        updateSamplerManualPriorityButton();
         await saveApiSelectedSamplers();
         if (!silent) toastr.success('Selected samplers cleared.');
     } catch (error) {
@@ -420,6 +434,12 @@ export function toggleSamplerManualPriority(state = false, tcApiType = '') {
 
     const presetSamplers = selectedSamplers[tcApiType];
     presetSamplers.st_manual_priority = String(state) === 'true';
+    updateSamplerManualPriorityButton();
+}
+
+function updateSamplerManualPriorityButton() {
+    const enabled = isSamplerManualPriorityEnabled();
+    $('#prioritizeManuallySelectedSamplers').toggleClass('toggleEnabled', enabled).attr('aria-pressed', String(enabled));
 }
 
 /**
@@ -429,7 +449,6 @@ export function toggleSamplerManualPriority(state = false, tcApiType = '') {
 export function isSamplerManualPriorityEnabled(tcApiType = '') {
     if (!textgenerationwebui_settings?.type && !tcApiType) return false;
     if (!tcApiType) tcApiType = textgenerationwebui_settings.type;
-    if (!selectedSamplers[tcApiType]) selectedSamplers[tcApiType] = {};
 
     return selectedSamplers[tcApiType]?.st_manual_priority ?? false;
 }

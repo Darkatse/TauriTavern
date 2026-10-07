@@ -160,6 +160,10 @@ test('snapshots preserve control state while bounding text and omitting sensitiv
     document.body.innerHTML = `
         <button role="menuitemradio">Model A</button>
         <input data-tt-sensitive value="secret-should-not-appear">
+        <span id="public-key-label">API key</span>
+        <input data-tt-sensitive aria-labelledby="public-key-label" value="secret-should-not-appear">
+        <input id="self-key" data-tt-sensitive aria-labelledby="self-key" value="secret-should-not-appear">
+        <button data-tt-sensitive>secret-should-not-appear</button>
         <div class="ttia-history-area">assistant-history-should-not-appear</div>
         <label><input type="checkbox">Show <span id="secret-label" data-tt-sensitive>secret-label-should-not-appear</span></label>
         <button aria-labelledby="secret-label"></button>
@@ -192,6 +196,7 @@ test('snapshots preserve control state while bounding text and omitting sensitiv
     expect(snapshot.tree).toContain('valueTruncated=true');
     expect(snapshot.tree).toContain('descriptionTruncated=true');
     expect(snapshot.tree).toContain('"Public action"');
+    expect(snapshot.tree).toContain('"API key"');
     expect(snapshot.tree).not.toContain('secret-should-not-appear');
     expect(snapshot.tree).not.toContain('assistant-history-should-not-appear');
     expect(snapshot.tree).not.toContain('secret-label-should-not-appear');

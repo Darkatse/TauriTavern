@@ -1,3 +1,7 @@
+import { restoreNumericInput, showNumericAdjustments } from './dom-handlers.js';
+import { initSortableList } from './sortable-list.js';
+import { t } from './i18n.js';
+import { toUserFacingErrorText } from './util/user-facing-error.js';
 import {
     abortStatusCheck,
     event_types,
@@ -11,16 +15,15 @@ import {
     setOnlineStatus,
     startStatusLoading,
 } from '../script.js';
-import { MAX_CONTEXT_DEFAULT, MAX_RESPONSE_DEFAULT, power_user } from './power-user.js';
+import { power_user } from './power-user.js';
 import { getTextTokens, tokenizers } from './tokenizers.js';
 import { getEventSourceStream } from './sse-stream.js';
 import {
-    getSortableDelay,
     getStringHash,
     onlyUnique,
 } from './utils.js';
 import { BIAS_CACHE, createNewLogitBiasEntry, displayLogitBias, getLogitBiasListResult } from './logit-bias.js';
-import { SECRET_KEYS, secret_state, writeSecret } from './secrets.js';
+import { SECRET_KEYS, readSecretState, secret_state, writeSecret } from './secrets.js';
 
 const default_preamble = '[ Style: chat, complex, sensory, visceral ]';
 const default_order = [1, 5, 0, 2, 3, 4];
@@ -46,6 +49,8 @@ export const nai_settings = {
     top_p: 0.75,
     top_a: 0.08,
     typical_p: 0.975,
+    mirostat_lr: 0.2,
+    mirostat_tau: 4,
     min_p: 0,
     math1_temp: 1,
     math1_quad: 0,
@@ -55,12 +60,17 @@ export const nai_settings = {
     preset_settings_novel: 'Talker-Chat-Clio',
     streaming_novel: false,
     preamble: default_preamble,
-    prefix: '',
+    prefix: 'vanilla',
+    phrase_rep_pen: 'off',
     banned_tokens: '',
     order: default_order,
     logit_bias: [],
     extensions: {},
 };
+
+const defaultValues = Object.freeze(structuredClone(nai_settings));
+const presetSettingNames = Object.keys(defaultValues).filter(name =>
+    !['model_novel', 'preset_settings_novel', 'streaming_novel'].includes(name));
 
 const nai_tiers = {
     0: 'Paper',
@@ -176,44 +186,15 @@ export async function loadNovelSubscriptionData() {
 }
 
 export function loadNovelPreset(preset) {
-    if (preset.genamt === undefined) {
-        const needsUnlock = preset.max_context > MAX_CONTEXT_DEFAULT || preset.max_length > MAX_RESPONSE_DEFAULT;
-        $('#amount_gen').val(preset.max_length).trigger('input');
-        $('#max_context_unlocked').prop('checked', needsUnlock).trigger('change');
-        $('#max_context').val(preset.max_context).trigger('input');
-    } else {
-        setGenerationParamsFromPreset(preset);
-    }
-
-    nai_settings.temperature = preset.temperature;
-    nai_settings.repetition_penalty = preset.repetition_penalty;
-    nai_settings.repetition_penalty_range = preset.repetition_penalty_range;
-    nai_settings.repetition_penalty_slope = preset.repetition_penalty_slope;
-    nai_settings.repetition_penalty_frequency = preset.repetition_penalty_frequency;
-    nai_settings.repetition_penalty_presence = preset.repetition_penalty_presence;
-    nai_settings.tail_free_sampling = preset.tail_free_sampling;
-    nai_settings.top_k = preset.top_k;
-    nai_settings.top_p = preset.top_p;
-    nai_settings.top_a = preset.top_a;
-    nai_settings.typical_p = preset.typical_p;
-    nai_settings.min_length = preset.min_length;
-    nai_settings.phrase_rep_pen = preset.phrase_rep_pen;
-    nai_settings.mirostat_lr = preset.mirostat_lr;
-    nai_settings.mirostat_tau = preset.mirostat_tau;
-    nai_settings.prefix = preset.prefix;
-    nai_settings.banned_tokens = preset.banned_tokens || '';
-    nai_settings.order = preset.order || default_order;
-    nai_settings.logit_bias = preset.logit_bias || [];
-    nai_settings.preamble = preset.preamble || default_preamble;
-    nai_settings.min_p = preset.min_p || 0;
-    nai_settings.math1_temp = preset.math1_temp ?? 1;
-    nai_settings.math1_quad = preset.math1_quad || 0;
-    nai_settings.math1_quad_entropy_scale = preset.math1_quad_entropy_scale || 0;
-    nai_settings.extensions = preset.extensions || {};
-    loadNovelSettingsUi(nai_settings);
+    const adjustments = [];
+    setGenerationParamsFromPreset(preset.genamt === undefined
+        ? { genamt: preset.max_length, max_length: preset.max_context }
+        : preset, adjustments);
+    loadNovelPresetSettings(preset, adjustments);
+    showNumericAdjustments(adjustments);
 }
 
-export function loadNovelSettings(data, settings) {
+export function loadNovelSettings(data, settings, adjustments = []) {
     novelai_setting_names = data.novelai_setting_names;
     novelai_settings = data.novelai_settings;
     novelai_settings.forEach(function (item, i, arr) {
@@ -228,86 +209,40 @@ export function loadNovelSettings(data, settings) {
     });
     novelai_setting_names = presetNames;
 
-    //load the rest of the Novel settings without any checks
-    nai_settings.model_novel = settings.model_novel;
+    nai_settings.model_novel = settings.model_novel ?? defaultValues.model_novel;
     $('#model_novel_select').val(nai_settings.model_novel);
     $(`#model_novel_select option[value=${nai_settings.model_novel}]`).prop('selected', true);
 
     if (settings.nai_preamble !== undefined) {
-        nai_settings.preamble = settings.nai_preamble;
+        settings.preamble ??= settings.nai_preamble;
         delete settings.nai_preamble;
     }
-    nai_settings.preset_settings_novel = settings.preset_settings_novel;
-    nai_settings.temperature = settings.temperature;
-    nai_settings.repetition_penalty = settings.repetition_penalty;
-    nai_settings.repetition_penalty_range = settings.repetition_penalty_range;
-    nai_settings.repetition_penalty_slope = settings.repetition_penalty_slope;
-    nai_settings.repetition_penalty_frequency = settings.repetition_penalty_frequency;
-    nai_settings.repetition_penalty_presence = settings.repetition_penalty_presence;
-    nai_settings.tail_free_sampling = settings.tail_free_sampling;
-    nai_settings.top_k = settings.top_k;
-    nai_settings.top_p = settings.top_p;
-    nai_settings.top_a = settings.top_a;
-    nai_settings.typical_p = settings.typical_p;
-    nai_settings.min_length = settings.min_length;
-    nai_settings.phrase_rep_pen = settings.phrase_rep_pen;
-    nai_settings.mirostat_lr = settings.mirostat_lr;
-    nai_settings.mirostat_tau = settings.mirostat_tau;
-    nai_settings.streaming_novel = !!settings.streaming_novel;
-    nai_settings.preamble = settings.preamble || default_preamble;
-    nai_settings.prefix = settings.prefix;
-    nai_settings.banned_tokens = settings.banned_tokens || '';
-    nai_settings.order = settings.order || default_order;
-    nai_settings.logit_bias = settings.logit_bias || [];
-    nai_settings.min_p = settings.min_p || 0;
-    nai_settings.math1_temp = settings.math1_temp ?? 1;
-    nai_settings.math1_quad = settings.math1_quad || 0;
-    nai_settings.math1_quad_entropy_scale = settings.math1_quad_entropy_scale || 0;
-    nai_settings.extensions = settings.extensions || {};
-    loadNovelSettingsUi(nai_settings);
+    nai_settings.preset_settings_novel = settings.preset_settings_novel ?? defaultValues.preset_settings_novel;
+    nai_settings.streaming_novel = Boolean(settings.streaming_novel ?? defaultValues.streaming_novel);
+    loadNovelPresetSettings(settings, adjustments);
 }
 
-function loadNovelSettingsUi(ui_settings) {
-    $('#temp_novel').val(ui_settings.temperature);
-    $('#temp_counter_novel').val(Number(ui_settings.temperature).toFixed(2)).trigger('input');
-    $('#rep_pen_novel').val(ui_settings.repetition_penalty);
-    $('#rep_pen_counter_novel').val(Number(ui_settings.repetition_penalty).toFixed(3)).trigger('input');
-    $('#rep_pen_size_novel').val(ui_settings.repetition_penalty_range);
-    $('#rep_pen_size_counter_novel').val(Number(ui_settings.repetition_penalty_range).toFixed(0)).trigger('input');
-    $('#rep_pen_slope_novel').val(ui_settings.repetition_penalty_slope);
-    $('#rep_pen_slope_counter_novel').val(Number(`${ui_settings.repetition_penalty_slope}`).toFixed(2)).trigger('input');
-    $('#rep_pen_freq_novel').val(ui_settings.repetition_penalty_frequency);
-    $('#rep_pen_freq_counter_novel').val(Number(ui_settings.repetition_penalty_frequency).toFixed(3)).trigger('input');
-    $('#rep_pen_presence_novel').val(ui_settings.repetition_penalty_presence);
-    $('#rep_pen_presence_counter_novel').val(Number(ui_settings.repetition_penalty_presence).toFixed(3)).trigger('input');
-    $('#tail_free_sampling_novel').val(ui_settings.tail_free_sampling);
-    $('#tail_free_sampling_counter_novel').val(Number(ui_settings.tail_free_sampling).toFixed(3)).trigger('input');
-    $('#top_k_novel').val(ui_settings.top_k);
-    $('#top_k_counter_novel').val(Number(ui_settings.top_k).toFixed(0)).trigger('input');
-    $('#top_p_novel').val(ui_settings.top_p);
-    $('#top_p_counter_novel').val(Number(ui_settings.top_p).toFixed(3)).trigger('input');
-    $('#top_a_novel').val(ui_settings.top_a);
-    $('#top_a_counter_novel').val(Number(ui_settings.top_a).toFixed(3)).trigger('input');
-    $('#typical_p_novel').val(ui_settings.typical_p);
-    $('#typical_p_counter_novel').val(Number(ui_settings.typical_p).toFixed(3)).trigger('input');
-    $('#phrase_rep_pen_novel').val(ui_settings.phrase_rep_pen || 'off');
-    $('#mirostat_lr_novel').val(ui_settings.mirostat_lr);
-    $('#mirostat_lr_counter_novel').val(Number(ui_settings.mirostat_lr).toFixed(2)).trigger('input');
-    $('#mirostat_tau_novel').val(ui_settings.mirostat_tau);
-    $('#mirostat_tau_counter_novel').val(Number(ui_settings.mirostat_tau).toFixed(2)).trigger('input');
-    $('#min_length_novel').val(ui_settings.min_length);
-    $('#min_length_counter_novel').val(Number(ui_settings.min_length).toFixed(0)).trigger('input');
+function loadNovelPresetSettings(preset, adjustments) {
+    for (const name of presetSettingNames) {
+        nai_settings[name] = structuredClone(preset[name] ?? defaultValues[name]);
+    }
+    // These selectors/text fields have always treated an empty value as unset.
+    for (const name of ['preamble', 'prefix', 'phrase_rep_pen']) {
+        nai_settings[name] ||= defaultValues[name];
+    }
+    loadNovelSettingsUi(nai_settings, adjustments);
+}
+
+function loadNovelSettingsUi(ui_settings, adjustments) {
+    for (const slider of sliders) {
+        const control = $(slider.sliderId);
+        const value = ui_settings[slider.name];
+        if (control.is('input[type=range], input[type=number]')) restoreNumericInput(control[0], value, adjustments, t`NovelAI`);
+        else control.val(value).trigger('input');
+    }
+    $('#phrase_rep_pen_novel').val(ui_settings.phrase_rep_pen);
     $('#nai_preamble_textarea').val(ui_settings.preamble);
-    $('#nai_prefix').val(ui_settings.prefix || 'vanilla');
-    $('#nai_banned_tokens').val(ui_settings.banned_tokens || '');
-    $('#min_p_novel').val(ui_settings.min_p);
-    $('#min_p_counter_novel').val(Number(ui_settings.min_p).toFixed(3)).trigger('input');
-    $('#math1_temp_novel').val(ui_settings.math1_temp);
-    $('#math1_temp_counter_novel').val(Number(ui_settings.math1_temp).toFixed(2)).trigger('input');
-    $('#math1_quad_novel').val(ui_settings.math1_quad);
-    $('#math1_quad_counter_novel').val(Number(ui_settings.math1_quad).toFixed(2)).trigger('input');
-    $('#math1_quad_entropy_scale_novel').val(ui_settings.math1_quad_entropy_scale);
-    $('#math1_quad_entropy_scale_counter_novel').val(Number(ui_settings.math1_quad_entropy_scale).toFixed(2)).trigger('input');
+    $('#nai_prefix').val(ui_settings.prefix);
     $(`#settings_preset_novel option[value=${novelai_setting_names[nai_settings.preset_settings_novel]}]`).prop('selected', true);
 
     $('#streaming_novel').prop('checked', ui_settings.streaming_novel);
@@ -320,115 +255,115 @@ const sliders = [
         sliderId: '#temp_novel',
         counterId: '#temp_counter_novel',
         format: (val) => Number(val).toFixed(2),
-        setValue: (val) => { nai_settings.temperature = Number(val); },
+        name: 'temperature',
     },
     {
         sliderId: '#rep_pen_novel',
         counterId: '#rep_pen_counter_novel',
         format: (val) => Number(val).toFixed(3),
-        setValue: (val) => { nai_settings.repetition_penalty = Number(val); },
+        name: 'repetition_penalty',
     },
     {
         sliderId: '#rep_pen_size_novel',
         counterId: '#rep_pen_size_counter_novel',
         format: (val) => `${val}`,
-        setValue: (val) => { nai_settings.repetition_penalty_range = Number(val); },
+        name: 'repetition_penalty_range',
     },
     {
         sliderId: '#rep_pen_slope_novel',
         counterId: '#rep_pen_slope_counter_novel',
         format: (val) => `${val}`,
-        setValue: (val) => { nai_settings.repetition_penalty_slope = Number(val); },
+        name: 'repetition_penalty_slope',
     },
     {
         sliderId: '#rep_pen_freq_novel',
         counterId: '#rep_pen_freq_counter_novel',
         format: (val) => Number(val).toFixed(2),
-        setValue: (val) => { nai_settings.repetition_penalty_frequency = Number(val); },
+        name: 'repetition_penalty_frequency',
     },
     {
         sliderId: '#rep_pen_presence_novel',
         counterId: '#rep_pen_presence_counter_novel',
         format: (val) => `${val}`,
-        setValue: (val) => { nai_settings.repetition_penalty_presence = Number(val); },
+        name: 'repetition_penalty_presence',
     },
     {
         sliderId: '#tail_free_sampling_novel',
         counterId: '#tail_free_sampling_counter_novel',
         format: (val) => `${val}`,
-        setValue: (val) => { nai_settings.tail_free_sampling = Number(val); },
+        name: 'tail_free_sampling',
     },
     {
         sliderId: '#top_k_novel',
         counterId: '#top_k_counter_novel',
         format: (val) => `${val}`,
-        setValue: (val) => { nai_settings.top_k = Number(val); },
+        name: 'top_k',
     },
     {
         sliderId: '#top_p_novel',
         counterId: '#top_p_counter_novel',
         format: (val) => Number(val).toFixed(3),
-        setValue: (val) => { nai_settings.top_p = Number(val); },
+        name: 'top_p',
     },
     {
         sliderId: '#top_a_novel',
         counterId: '#top_a_counter_novel',
         format: (val) => Number(val).toFixed(2),
-        setValue: (val) => { nai_settings.top_a = Number(val); },
+        name: 'top_a',
     },
     {
         sliderId: '#typical_p_novel',
         counterId: '#typical_p_counter_novel',
         format: (val) => Number(val).toFixed(3),
-        setValue: (val) => { nai_settings.typical_p = Number(val); },
+        name: 'typical_p',
     },
     {
         sliderId: '#mirostat_tau_novel',
         counterId: '#mirostat_tau_counter_novel',
         format: (val) => Number(val).toFixed(2),
-        setValue: (val) => { nai_settings.mirostat_tau = Number(val); },
+        name: 'mirostat_tau',
     },
     {
         sliderId: '#mirostat_lr_novel',
         counterId: '#mirostat_lr_counter_novel',
         format: (val) => Number(val).toFixed(2),
-        setValue: (val) => { nai_settings.mirostat_lr = Number(val); },
+        name: 'mirostat_lr',
     },
     {
         sliderId: '#min_length_novel',
         counterId: '#min_length_counter_novel',
         format: (val) => `${val}`,
-        setValue: (val) => { nai_settings.min_length = Number(val); },
+        name: 'min_length',
     },
     {
         sliderId: '#nai_banned_tokens',
         counterId: '#nai_banned_tokens_counter',
         format: (val) => val,
-        setValue: (val) => { nai_settings.banned_tokens = val; },
+        name: 'banned_tokens',
     },
     {
         sliderId: '#min_p_novel',
         counterId: '#min_p_counter_novel',
         format: (val) => Number(val).toFixed(3),
-        setValue: (val) => { nai_settings.min_p = Number(val); },
+        name: 'min_p',
     },
     {
         sliderId: '#math1_temp_novel',
         counterId: '#math1_temp_counter_novel',
         format: (val) => Number(val).toFixed(2),
-        setValue: (val) => { nai_settings.math1_temp = Number(val); },
+        name: 'math1_temp',
     },
     {
         sliderId: '#math1_quad_novel',
         counterId: '#math1_quad_counter_novel',
         format: (val) => Number(val).toFixed(2),
-        setValue: (val) => { nai_settings.math1_quad = Number(val); },
+        name: 'math1_quad',
     },
     {
         sliderId: '#math1_quad_entropy_scale_novel',
         counterId: '#math1_quad_entropy_scale_counter_novel',
         format: (val) => Number(val).toFixed(2),
-        setValue: (val) => { nai_settings.math1_quad_entropy_scale = Number(val); },
+        name: 'math1_quad_entropy_scale',
     },
 ];
 
@@ -513,7 +448,7 @@ function getBadWordPermutations(text) {
     return result.filter(onlyUnique);
 }
 
-export function getNovelGenerationData(finalPrompt, settings, maxLength, isImpersonate, isContinue, _cfgValues, type) {
+export function getNovelGenerationData(finalPrompt, _settings, maxLength, isImpersonate, isContinue, _cfgValues, type) {
     console.debug('NovelAI generation data for', type);
     const isKayra = nai_settings.model_novel.includes('kayra');
     const isErato = nai_settings.model_novel.includes('erato');
@@ -602,7 +537,7 @@ export function getNovelGenerationData(finalPrompt, settings, maxLength, isImper
         'use_cache': false,
         'return_full_text': false,
         'prefix': prefix,
-        'order': nai_settings.order || settings.order || default_order,
+        'order': nai_settings.order,
         'num_logprobs': power_user.request_token_probabilities ? 10 : undefined,
     };
 }
@@ -653,7 +588,7 @@ function sortItemsByOrder(orderArray) {
     // Update the disabled class for each sampler
     $draggableItems.children().each(function () {
         const isEnabled = orderArray.includes(parseInt($(this).data('id')));
-        $(this).toggleClass('disabled', !isEnabled);
+        setSamplerEnabled(this, isEnabled);
 
         // If the sampler is disabled, move it to the bottom of the list
         if (!isEnabled) {
@@ -661,6 +596,10 @@ function sortItemsByOrder(orderArray) {
             $draggableItems.append(item);
         }
     });
+}
+
+function setSamplerEnabled(item, enabled) {
+    $(item).toggleClass('disabled', !enabled).find('.toggle_button').attr('aria-pressed', String(enabled));
 }
 
 function saveSamplingOrder() {
@@ -864,7 +803,7 @@ export function initNovelAISettings() {
         $(document).on('input', slider.sliderId, function () {
             const value = $(this).val();
             const formattedValue = slider.format(value);
-            slider.setValue(value);
+            nai_settings[slider.name] = this.type === 'range' ? Number(value) : value;
             $(slider.counterId).val(formattedValue);
             saveSettingsDebounced();
         });
@@ -872,24 +811,27 @@ export function initNovelAISettings() {
 
     $('#api_button_novel').on('click', async function (e) {
         e.stopPropagation();
+        if (isConnectionValidationSuspended()) return;
 
-        if (isConnectionValidationSuspended()) {
-            return;
+        try {
+            await readSecretState();
+            const api_key_novel = String($('#api_key_novel').val()).trim();
+
+            if (api_key_novel.length) {
+                await writeSecret(SECRET_KEYS.NOVEL, api_key_novel);
+            }
+
+            if (!secret_state[SECRET_KEYS.NOVEL]) {
+                toastr.error(t`Please enter an API key or select a saved key.`);
+                return;
+            }
+
+            startStatusLoading();
+            await getStatusNovel();
+        } catch (error) {
+            toastr.error(toUserFacingErrorText(error));
+            resultCheckStatus();
         }
-
-        const api_key_novel = String($('#api_key_novel').val()).trim();
-
-        if (api_key_novel.length) {
-            await writeSecret(SECRET_KEYS.NOVEL, api_key_novel);
-        }
-
-        if (!secret_state[SECRET_KEYS.NOVEL]) {
-            console.log('No secret key saved for NovelAI');
-            return;
-        }
-
-        startStatusLoading();
-        await getStatusNovel();
     });
 
     $('#settings_preset_novel').on('change', async function () {
@@ -927,16 +869,16 @@ export function initNovelAISettings() {
         saveSettingsDebounced();
     });
 
-    $('#novel_order').sortable({
-        delay: getSortableDelay(),
-        stop: saveSamplingOrder,
+    initSortableList(document.getElementById('novel_order'), saveSamplingOrder);
+    $('#novel_order').children().each((_, item) => {
+        item.querySelector('.toggle_button').setAttribute('aria-labelledby', item.querySelector(':scope > span').id);
+        setSamplerEnabled(item, !item.classList.contains('disabled'));
     });
 
     $('#novel_order .toggle_button').on('click', function () {
         const $item = $(this).closest('[data-id]');
         const isEnabled = !$item.hasClass('disabled');
-        $item.toggleClass('disabled', isEnabled);
-        console.log('Sampler toggled:', $item.data('id'), !isEnabled);
+        setSamplerEnabled($item[0], !isEnabled);
         saveSamplingOrder();
     });
 

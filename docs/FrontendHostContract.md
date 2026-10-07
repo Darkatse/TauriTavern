@@ -101,6 +101,8 @@
 
 该 ABI 属于 SillyTavern 兼容层，不放入 `window.__TAURITAVERN__.api`。新 TauriTavern 代码仍应从 `src/lib.js` 显式 import `lodash`。
 
+ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`、`rotateSecret`、`renameSecret` 在请求或随后的状态刷新失败时拒绝 Promise，本身不弹通知，由调用者处理并通知。`writeSecret` 写入成功而刷新失败时密钥已经保存，不应因此重写；未指定 `allowEmpty` 时传入空值等同删除。
+
 ### 3.6 平台 ABI（Public，新）
 
 为避免未来继续扩散 `window.__TAURITAVERN_*` 零散符号，宿主层额外提供一个**统一出口**：

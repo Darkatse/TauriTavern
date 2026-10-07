@@ -54,7 +54,7 @@ import {
 } from './prompt-injections.js';
 
 import { forceCharacterEditorTokenize, getCustomStoppingStrings, persona_description_positions, power_user } from './power-user.js';
-import { resolveSecretKey, SECRET_KEYS, secret_state, writeSecret } from './secrets.js';
+import { readSecretState, resolveSecretKey, SECRET_KEYS, secret_state, writeSecret } from './secrets.js';
 
 import { getEventSourceStream } from './sse-stream.js';
 import { getCustomEndpointPreview } from './tauritavern/custom-endpoint.js';
@@ -6611,6 +6611,7 @@ function createLogitBiasListItem(entry) {
             preset.splice(index, 1);
         }
         onLogitBiasPresetChange();
+        $('#openai_logit_bias_new_entry').trigger('focus');
     });
     $('.openai_logit_bias_list').prepend(template);
 }
@@ -8044,80 +8045,85 @@ function onReverseProxyInput() {
 
 async function onConnectButtonClick(e) {
     e.stopPropagation();
+    if (isConnectionValidationSuspended()) return;
 
-    if (isConnectionValidationSuspended()) {
-        return;
-    }
+    try {
+        await readSecretState();
 
-    /** @type {Object.<string, {key: string, selector: string, proxy?: boolean, keyless?: boolean}>} */
-    const apiSourceConfig = {
-        [chat_completion_sources.OPENROUTER]: { key: SECRET_KEYS.OPENROUTER, selector: '#api_key_openrouter', proxy: false },
-        [chat_completion_sources.MAKERSUITE]: { key: SECRET_KEYS.MAKERSUITE, selector: '#api_key_makersuite', proxy: true },
-        [chat_completion_sources.CLAUDE]: { key: SECRET_KEYS.CLAUDE, selector: '#api_key_claude', proxy: true },
-        [chat_completion_sources.OPENAI]: { key: SECRET_KEYS.OPENAI, selector: '#api_key_openai', proxy: true },
-        [chat_completion_sources.OPENCODE]: { key: SECRET_KEYS.OPENCODE, selector: '#api_key_opencode', proxy: false },
-        [chat_completion_sources.AI21]: { key: SECRET_KEYS.AI21, selector: '#api_key_ai21', proxy: false },
-        [chat_completion_sources.MISTRALAI]: { key: SECRET_KEYS.MISTRALAI, selector: '#api_key_mistralai', proxy: true },
-        [chat_completion_sources.CUSTOM]: { key: SECRET_KEYS.CUSTOM, selector: '#api_key_custom', proxy: false, keyless: true },
-        [chat_completion_sources.COHERE]: { key: SECRET_KEYS.COHERE, selector: '#api_key_cohere', proxy: false },
-        [chat_completion_sources.PERPLEXITY]: { key: SECRET_KEYS.PERPLEXITY, selector: '#api_key_perplexity', proxy: false },
-        [chat_completion_sources.GROQ]: { key: SECRET_KEYS.GROQ, selector: '#api_key_groq', proxy: false },
-        [chat_completion_sources.SILICONFLOW]: { key: SECRET_KEYS.SILICONFLOW, selector: '#api_key_siliconflow', proxy: false },
-        [chat_completion_sources.ELECTRONHUB]: { key: SECRET_KEYS.ELECTRONHUB, selector: '#api_key_electronhub', proxy: false },
-        [chat_completion_sources.NANOGPT]: { key: SECRET_KEYS.NANOGPT, selector: '#api_key_nanogpt', proxy: false },
-        [chat_completion_sources.DEEPSEEK]: { key: SECRET_KEYS.DEEPSEEK, selector: '#api_key_deepseek', proxy: true },
-        [chat_completion_sources.XAI]: { key: SECRET_KEYS.XAI, selector: '#api_key_xai', proxy: true },
-        [chat_completion_sources.AIMLAPI]: { key: SECRET_KEYS.AIMLAPI, selector: '#api_key_aimlapi', proxy: false },
-        [chat_completion_sources.MOONSHOT]: { key: SECRET_KEYS.MOONSHOT, selector: '#api_key_moonshot', proxy: true },
-        [chat_completion_sources.FIREWORKS]: { key: SECRET_KEYS.FIREWORKS, selector: '#api_key_fireworks', proxy: false },
-        [chat_completion_sources.COMETAPI]: { key: SECRET_KEYS.COMETAPI, selector: '#api_key_cometapi', proxy: false },
-        [chat_completion_sources.AZURE_OPENAI]: { key: SECRET_KEYS.AZURE_OPENAI, selector: '#api_key_azure_openai', proxy: false },
-        [chat_completion_sources.ZAI]: { key: SECRET_KEYS.ZAI, selector: '#api_key_zai', proxy: true },
-        [chat_completion_sources.CHUTES]: { key: SECRET_KEYS.CHUTES, selector: '#api_key_chutes', proxy: false },
-        [chat_completion_sources.POLLINATIONS]: { key: SECRET_KEYS.POLLINATIONS, selector: '#api_key_pollinations', proxy: false, keyless: oai_settings.pollinations_endpoint === POLLINATIONS_ENDPOINT.ANONYMOUS },
-        [chat_completion_sources.WORKERS_AI]: { key: SECRET_KEYS.WORKERS_AI, selector: '#api_key_workers_ai', proxy: false },
-        [chat_completion_sources.MINIMAX]: { key: SECRET_KEYS.MINIMAX, selector: '#api_key_minimax', proxy: false },
-        [chat_completion_sources.AWS_BEDROCK]: { key: SECRET_KEYS.AWS_BEDROCK, selector: '#api_key_aws_bedrock', proxy: false },
-    };
+        /** @type {Object.<string, {key: string, selector: string, proxy?: boolean, keyless?: boolean}>} */
+        const apiSourceConfig = {
+            [chat_completion_sources.OPENROUTER]: { key: SECRET_KEYS.OPENROUTER, selector: '#api_key_openrouter', proxy: false },
+            [chat_completion_sources.MAKERSUITE]: { key: SECRET_KEYS.MAKERSUITE, selector: '#api_key_makersuite', proxy: true },
+            [chat_completion_sources.CLAUDE]: { key: SECRET_KEYS.CLAUDE, selector: '#api_key_claude', proxy: true },
+            [chat_completion_sources.OPENAI]: { key: SECRET_KEYS.OPENAI, selector: '#api_key_openai', proxy: true },
+            [chat_completion_sources.OPENCODE]: { key: SECRET_KEYS.OPENCODE, selector: '#api_key_opencode', proxy: false },
+            [chat_completion_sources.AI21]: { key: SECRET_KEYS.AI21, selector: '#api_key_ai21', proxy: false },
+            [chat_completion_sources.MISTRALAI]: { key: SECRET_KEYS.MISTRALAI, selector: '#api_key_mistralai', proxy: true },
+            [chat_completion_sources.CUSTOM]: { key: SECRET_KEYS.CUSTOM, selector: '#api_key_custom', proxy: false, keyless: true },
+            [chat_completion_sources.COHERE]: { key: SECRET_KEYS.COHERE, selector: '#api_key_cohere', proxy: false },
+            [chat_completion_sources.PERPLEXITY]: { key: SECRET_KEYS.PERPLEXITY, selector: '#api_key_perplexity', proxy: false },
+            [chat_completion_sources.GROQ]: { key: SECRET_KEYS.GROQ, selector: '#api_key_groq', proxy: false },
+            [chat_completion_sources.SILICONFLOW]: { key: SECRET_KEYS.SILICONFLOW, selector: '#api_key_siliconflow', proxy: false },
+            [chat_completion_sources.ELECTRONHUB]: { key: SECRET_KEYS.ELECTRONHUB, selector: '#api_key_electronhub', proxy: false },
+            [chat_completion_sources.NANOGPT]: { key: SECRET_KEYS.NANOGPT, selector: '#api_key_nanogpt', proxy: false },
+            [chat_completion_sources.DEEPSEEK]: { key: SECRET_KEYS.DEEPSEEK, selector: '#api_key_deepseek', proxy: true },
+            [chat_completion_sources.XAI]: { key: SECRET_KEYS.XAI, selector: '#api_key_xai', proxy: true },
+            [chat_completion_sources.AIMLAPI]: { key: SECRET_KEYS.AIMLAPI, selector: '#api_key_aimlapi', proxy: false },
+            [chat_completion_sources.MOONSHOT]: { key: SECRET_KEYS.MOONSHOT, selector: '#api_key_moonshot', proxy: true },
+            [chat_completion_sources.FIREWORKS]: { key: SECRET_KEYS.FIREWORKS, selector: '#api_key_fireworks', proxy: false },
+            [chat_completion_sources.COMETAPI]: { key: SECRET_KEYS.COMETAPI, selector: '#api_key_cometapi', proxy: false },
+            [chat_completion_sources.AZURE_OPENAI]: { key: SECRET_KEYS.AZURE_OPENAI, selector: '#api_key_azure_openai', proxy: false },
+            [chat_completion_sources.ZAI]: { key: SECRET_KEYS.ZAI, selector: '#api_key_zai', proxy: true },
+            [chat_completion_sources.CHUTES]: { key: SECRET_KEYS.CHUTES, selector: '#api_key_chutes', proxy: false },
+            [chat_completion_sources.POLLINATIONS]: { key: SECRET_KEYS.POLLINATIONS, selector: '#api_key_pollinations', proxy: false, keyless: oai_settings.pollinations_endpoint === POLLINATIONS_ENDPOINT.ANONYMOUS },
+            [chat_completion_sources.WORKERS_AI]: { key: SECRET_KEYS.WORKERS_AI, selector: '#api_key_workers_ai', proxy: false },
+            [chat_completion_sources.MINIMAX]: { key: SECRET_KEYS.MINIMAX, selector: '#api_key_minimax', proxy: false },
+            [chat_completion_sources.AWS_BEDROCK]: { key: SECRET_KEYS.AWS_BEDROCK, selector: '#api_key_aws_bedrock', proxy: false },
+        };
 
-    // Vertex AI Express version - use API key
-    if (oai_settings.vertexai_auth_mode === 'express') {
-        apiSourceConfig[chat_completion_sources.VERTEXAI] = { key: SECRET_KEYS.VERTEXAI, selector: '#api_key_vertexai', proxy: true };
-    }
+        // Vertex AI Express version - use API key
+        if (oai_settings.vertexai_auth_mode === 'express') {
+            apiSourceConfig[chat_completion_sources.VERTEXAI] = { key: SECRET_KEYS.VERTEXAI, selector: '#api_key_vertexai', proxy: true };
+        }
 
-    if (oai_settings.chat_completion_source === chat_completion_sources.VERTEXAI
-        && oai_settings.vertexai_auth_mode === 'express'
-        && isVertexAiClaudeModelId()
-        && !oai_settings.reverse_proxy) {
-        toastr.error(t`Claude on Vertex AI requires Full mode service account authentication or a reverse proxy.`);
-        return;
-    }
-
-    // Vertex AI Full version - use service account
-    if (oai_settings.chat_completion_source === chat_completion_sources.VERTEXAI && oai_settings.vertexai_auth_mode === 'full') {
-        if (!secret_state[SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT]) {
-            toastr.error(t`Service Account JSON is required for Vertex AI full version. Please validate and save your Service Account JSON.`);
+        if (oai_settings.chat_completion_source === chat_completion_sources.VERTEXAI
+            && oai_settings.vertexai_auth_mode === 'express'
+            && isVertexAiClaudeModelId()
+            && !oai_settings.reverse_proxy) {
+            toastr.error(t`Claude on Vertex AI requires Full mode service account authentication or a reverse proxy.`);
             return;
         }
-    }
 
-    // Other generic configs
-    const config = apiSourceConfig[oai_settings.chat_completion_source];
-    if (config) {
-        const apiKey = String($(config.selector).val()).trim();
-        if (apiKey.length) {
-            await writeSecret(config.key, apiKey);
+        // Vertex AI Full version - use service account
+        if (oai_settings.chat_completion_source === chat_completion_sources.VERTEXAI && oai_settings.vertexai_auth_mode === 'full') {
+            if (!secret_state[SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT]) {
+                toastr.error(t`Service Account JSON is required for Vertex AI full version. Please validate and save your Service Account JSON.`);
+                return;
+            }
         }
 
-        if (!secret_state[config.key] && (!config.proxy || !oai_settings.reverse_proxy) && !config.keyless) {
-            console.log(`No secret key saved for ${oai_settings.chat_completion_source}`);
-            return;
+        // Other generic configs
+        const config = apiSourceConfig[oai_settings.chat_completion_source];
+        if (config) {
+            const apiKey = String($(config.selector).val()).trim();
+            if (apiKey.length) {
+                await writeSecret(config.key, apiKey);
+            }
+
+            if (!secret_state[config.key] && (!config.proxy || !oai_settings.reverse_proxy) && !config.keyless) {
+                toastr.error(t`Please enter an API key or select a saved key.`);
+                return;
+            }
         }
+
+        startStatusLoading();
+        saveSettingsDebounced();
+        await getStatusOpen();
+    } catch (error) {
+        toastr.error(toUserFacingErrorText(error));
+        resultCheckStatus();
     }
 
-    startStatusLoading();
-    saveSettingsDebounced();
-    await getStatusOpen();
 }
 
 function toggleChatCompletionForms() {
@@ -8730,8 +8736,15 @@ async function onVertexAIValidateServiceAccount() {
         return;
     }
 
+    let serviceAccount;
     try {
-        const serviceAccount = JSON.parse(jsonContent);
+        serviceAccount = JSON.parse(jsonContent);
+    } catch {
+        toastr.error(t`Invalid JSON format`);
+        updateVertexAIServiceAccountStatus(false, t`Invalid JSON format`);
+        return;
+    }
+    try {
         const requiredFields = ['type', 'project_id', 'private_key', 'client_email', 'client_id'];
         const missingFields = requiredFields.filter(field => !serviceAccount[field]);
 
@@ -8757,9 +8770,7 @@ async function onVertexAIValidateServiceAccount() {
         toastr.success(t`Service Account JSON is valid and saved securely`);
         saveSettingsDebounced();
     } catch (error) {
-        console.error('JSON validation error:', error);
-        toastr.error(t`Invalid JSON format`);
-        updateVertexAIServiceAccountStatus(false, t`Invalid JSON format`);
+        toastr.error(toUserFacingErrorText(error));
     }
 }
 
@@ -8767,14 +8778,18 @@ async function onVertexAIValidateServiceAccount() {
  * Clear Vertex AI service account JSON
  */
 async function onVertexAIClearServiceAccount() {
-    $('#vertexai_service_account_json').val('');
+    try {
+        // Clear the editor only after the stored key was deleted.
+        await writeSecret(SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT, '');
+        $('#vertexai_service_account_json').val('');
 
-    // Clear from backend secret storage
-    await writeSecret(SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT, '');
+        updateVertexAIServiceAccountStatus(false);
+        toastr.info(t`Service Account JSON cleared`);
+        saveSettingsDebounced();
+    } catch (error) {
+        toastr.error(toUserFacingErrorText(error));
+    }
 
-    updateVertexAIServiceAccountStatus(false);
-    toastr.info(t`Service Account JSON cleared`);
-    saveSettingsDebounced();
 }
 
 /**

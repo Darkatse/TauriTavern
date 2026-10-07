@@ -35,6 +35,10 @@ export const localizePagination = function (container) {
     container.find('[title="Previous page"]').attr('title', t`Previous page`);
     container.find('[title="First page"]').attr('title', t`First page`);
     container.find('[title="Last page"]').attr('title', t`Last page`);
+    container.find('.paginationjs-page a').removeAttr('aria-current');
+    container.find('.paginationjs-page.active a').attr('aria-current', 'page');
+    container.find('.paginationjs-prev a').attr('aria-label', t`Previous page`);
+    container.find('.paginationjs-next a').attr('aria-label', t`Next page`);
 };
 
 /**

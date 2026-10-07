@@ -3070,12 +3070,6 @@ input[type="file"] {
     text-align: start;
 }
 
-#rm_button_panel_pin,
-#lm_button_panel_pin,
-#WI_panel_pin {
-    display: none;
-}
-
 #rm_button_panel_pin:checked+label,
 #lm_button_panel_pin:checked+label,
 #WI_panel_pin:checked+label {
@@ -6514,6 +6508,8 @@ body:not(.movingUI) .drawer-content.maximized {
 
 /* Main structure for the model cards */
 .model-card {
+    font: inherit;
+    text-align: start;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -6713,4 +6709,27 @@ body:not(.movingUI) .drawer-content.maximized {
 .info-block.error {
     border-color: var(--error-color, #e87f7f);
     background-color: rgba(241, 163, 163, 0.2);
+}
+
+/* Sampler order uses the existing compact ST row and action appearance. */
+.tt-sortable-list > [role="listitem"] > span { flex: 1; }
+.tt-sortable-list > [role="listitem"] > .right_menu_button {
+    background: none;
+    border: 0;
+    padding: 0;
+    font-size: inherit;
+    color: inherit;
+}
+.tt-sortable-list > :first-child > .tt-sortable-list-up,
+.tt-sortable-list > :last-child > .tt-sortable-list-down { opacity: 0.35; }
+@media (pointer: coarse) {
+    .tt-sortable-list > [role="listitem"] > .right_menu_button { padding: 5px; min-width: 24px; min-height: 24px; }
+}
+
+.sampler-state { margin-left: auto; opacity: 0.75; }
+
+.tt-icon-checkbox:has(> input.sr-only:focus-visible) {
+    outline: 1px solid var(--interactable-outline-color);
+    outline-offset: 2px;
+    border-radius: 5px;
 }

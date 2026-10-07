@@ -1,3 +1,6 @@
+import { restoreNumericInput, showNumericAdjustments } from './dom-handlers.js';
+import { initSortableList } from './sortable-list.js';
+import { toUserFacingErrorText } from './util/user-facing-error.js';
 import {
     abortStatusCheck,
     eventSource,
@@ -22,12 +25,12 @@ import { BIAS_CACHE, createNewLogitBiasEntry, displayLogitBias, getLogitBiasList
 
 import { power_user, registerDebugFunction } from './power-user.js';
 import { getActiveManualApiSamplers, loadApiSelectedSamplers, isSamplerManualPriorityEnabled } from './samplerSelect.js';
-import { SECRET_KEYS, writeSecret } from './secrets.js';
+import { SECRET_KEYS, readSecretState, writeSecret } from './secrets.js';
 import { getEventSourceStream } from './sse-stream.js';
 import { getCurrentDreamGenModelTokenizer, getCurrentOpenRouterModelTokenizer, loadAphroditeModels, loadDreamGenModels, loadFeatherlessModels, loadGenericModels, loadInfermaticAIModels, loadLlamaCppModels, loadMancerModels, loadOllamaModels, loadOpenRouterModels, loadTabbyModels, loadTogetherAIModels, loadVllmModels, updateOpenRouterProvidersWarning } from './textgen-models.js';
 import { ENCODE_TOKENIZERS, TEXTGEN_TOKENIZERS, TOKENIZER_SUPPORTED_KEY, getTextTokens, getTokenizerBestMatch, tokenizers } from './tokenizers.js';
 import { AbortReason } from './util/AbortReason.js';
-import { getSortableDelay, onlyUnique, arraysEqual, isObject } from './utils.js';
+import { onlyUnique, arraysEqual, isObject } from './utils.js';
 
 export const textgen_types = {
     OOBA: 'ooba',
@@ -376,11 +379,13 @@ async function selectPreset(name) {
     }
 
     textgenerationwebui_settings.preset = name;
+    const adjustments = [];
+    setGenerationParamsFromPreset(preset, adjustments);
     for (const name of setting_names) {
         const value = preset[name];
-        setSettingByName(name, value, true);
+        setSettingByName(name, value, adjustments);
     }
-    setGenerationParamsFromPreset(preset);
+    showNumericAdjustments(adjustments);
     BIAS_CACHE.delete(BIAS_KEY);
     displayLogitBias(preset.logit_bias, BIAS_KEY);
     saveSettingsDebounced();
@@ -549,7 +554,7 @@ function calculateLogitBias(settings = null) {
     return result;
 }
 
-export async function loadTextGenSettings(data, loadedSettings) {
+export async function loadTextGenSettings(data, loadedSettings, adjustments = []) {
     await loadApiSelectedSamplers();
     textgenerationwebui_presets = convertPresets(data.textgenerationwebui_presets);
     textgenerationwebui_preset_names = data.textgenerationwebui_preset_names ?? [];
@@ -587,7 +592,7 @@ export async function loadTextGenSettings(data, loadedSettings) {
 
     for (const i of setting_names) {
         const value = textgenerationwebui_settings[i];
-        setSettingByName(i, value);
+        setSettingByName(i, value, adjustments);
     }
 
     $('#textgen_type').val(textgenerationwebui_settings.type);
@@ -770,12 +775,17 @@ async function getStatusTextgen() {
                         const backend_max_context = data.default_generation_settings.n_ctx;
                         if (backend_max_context && typeof backend_max_context === 'number') {
                             const old_value = max_context;
+                            const adjustments = [];
                             if (max_context !== backend_max_context) {
-                                setGenerationParamsFromPreset({ max_length: backend_max_context });
+                                setGenerationParamsFromPreset({ max_length: backend_max_context }, adjustments);
                             }
                             if (old_value !== max_context) {
-                                console.log(`Auto-switched max context from ${old_value} to ${max_context}`);
-                                toastr.info(`${old_value} ⇒ ${max_context}`, 'Context Size Changed');
+                                if (adjustments.length) {
+                                    showNumericAdjustments(adjustments);
+                                } else {
+                                    console.log(`Auto-switched max context from ${old_value} to ${max_context}`);
+                                    toastr.info(`${old_value} ⇒ ${max_context}`, 'Context Size Changed');
+                                }
                             }
                         }
                     }
@@ -820,18 +830,7 @@ export function initTextGenSettings() {
                 : t`Banned tokens/strings are NOT being sent in the request.`);
     });
 
-    $('#koboldcpp_order').sortable({
-        delay: getSortableDelay(),
-        stop: function () {
-            const order = [];
-            $('#koboldcpp_order').children().each(function () {
-                order.push($(this).data('id'));
-            });
-            textgenerationwebui_settings.sampler_order = order;
-            console.log('Samplers reordered:', textgenerationwebui_settings.sampler_order);
-            saveSettingsDebounced();
-        },
-    });
+    initSortableList(document.getElementById('koboldcpp_order'), saveKoboldSamplingOrder);
 
     $('#koboldcpp_default_order').on('click', function () {
         textgenerationwebui_settings.sampler_order = KOBOLDCPP_ORDER;
@@ -839,18 +838,7 @@ export function initTextGenSettings() {
         saveSettingsDebounced();
     });
 
-    $('#llamacpp_samplers_sortable').sortable({
-        delay: getSortableDelay(),
-        stop: function () {
-            const order = [];
-            $('#llamacpp_samplers_sortable').children().each(function () {
-                order.push($(this).data('name'));
-            });
-            textgenerationwebui_settings.samplers = order;
-            console.log('Samplers reordered:', textgenerationwebui_settings.samplers);
-            saveSettingsDebounced();
-        },
-    });
+    initSortableList(document.getElementById('llamacpp_samplers_sortable'), saveLlamacppSamplingOrder);
 
     $('#llamacpp_samplers_default_order').on('click', function () {
         sortLlamacppItemsByOrder(LLAMACPP_DEFAULT_ORDER);
@@ -859,31 +847,9 @@ export function initTextGenSettings() {
         saveSettingsDebounced();
     });
 
-    $('#sampler_priority_container').sortable({
-        delay: getSortableDelay(),
-        stop: function () {
-            const order = [];
-            $('#sampler_priority_container').children().each(function () {
-                order.push($(this).data('name'));
-            });
-            textgenerationwebui_settings.sampler_priority = order;
-            console.log('Samplers reordered:', textgenerationwebui_settings.sampler_priority);
-            saveSettingsDebounced();
-        },
-    });
+    initSortableList(document.getElementById('sampler_priority_container'), saveOobaSamplingOrder);
 
-    $('#sampler_priority_container_aphrodite').sortable({
-        delay: getSortableDelay(),
-        stop: function () {
-            const order = [];
-            $('#sampler_priority_container_aphrodite').children().each(function () {
-                order.push($(this).data('name'));
-            });
-            textgenerationwebui_settings.samplers_priorities = order;
-            console.log('Samplers reordered:', textgenerationwebui_settings.samplers_priorities);
-            saveSettingsDebounced();
-        },
-    });
+    initSortableList(document.getElementById('sampler_priority_container_aphrodite'), saveAphroditeSamplingOrder);
 
     $('#tabby_json_schema').on('input', function () {
         const json_schema_string = String($(this).val());
@@ -1017,16 +983,6 @@ export function initTextGenSettings() {
                 inputElement.val(valueToSet).trigger('input');
             } else {
                 inputElement.val(valueToSet).trigger('input');
-                if (power_user.enableZenSliders) {
-                    let masterElementID = inputElement.prop('id');
-                    console.log(masterElementID);
-                    let zenSlider = $(`#${masterElementID}_zenslider`).slider();
-                    zenSlider.slider('option', 'value', value);
-                    zenSlider.slider('option', 'slide')
-                        .call(zenSlider, null, {
-                            handle: $('.ui-slider-handle', zenSlider), value: value,
-                        });
-                }
             }
         }
     });
@@ -1094,38 +1050,42 @@ export function initTextGenSettings() {
     });
 
     $('#api_button_textgenerationwebui').on('click', async function (e) {
-        if (isConnectionValidationSuspended()) {
-            return;
-        }
+        if (isConnectionValidationSuspended()) return;
 
-        const keys = [
-            { id: 'api_key_mancer', secret: SECRET_KEYS.MANCER },
-            { id: 'api_key_vllm', secret: SECRET_KEYS.VLLM },
-            { id: 'api_key_aphrodite', secret: SECRET_KEYS.APHRODITE },
-            { id: 'api_key_tabby', secret: SECRET_KEYS.TABBY },
-            { id: 'api_key_togetherai', secret: SECRET_KEYS.TOGETHERAI },
-            { id: 'api_key_ooba', secret: SECRET_KEYS.OOBA },
-            { id: 'api_key_infermaticai', secret: SECRET_KEYS.INFERMATICAI },
-            { id: 'api_key_dreamgen', secret: SECRET_KEYS.DREAMGEN },
-            { id: 'api_key_openrouter-tg', secret: SECRET_KEYS.OPENROUTER },
-            { id: 'api_key_koboldcpp', secret: SECRET_KEYS.KOBOLDCPP },
-            { id: 'api_key_llamacpp', secret: SECRET_KEYS.LLAMACPP },
-            { id: 'api_key_featherless', secret: SECRET_KEYS.FEATHERLESS },
-            { id: 'api_key_huggingface', secret: SECRET_KEYS.HUGGINGFACE },
-            { id: 'api_key_generic', secret: SECRET_KEYS.GENERIC },
-        ];
+        try {
+            await readSecretState();
+            const keys = [
+                { id: 'api_key_mancer', secret: SECRET_KEYS.MANCER },
+                { id: 'api_key_vllm', secret: SECRET_KEYS.VLLM },
+                { id: 'api_key_aphrodite', secret: SECRET_KEYS.APHRODITE },
+                { id: 'api_key_tabby', secret: SECRET_KEYS.TABBY },
+                { id: 'api_key_togetherai', secret: SECRET_KEYS.TOGETHERAI },
+                { id: 'api_key_ooba', secret: SECRET_KEYS.OOBA },
+                { id: 'api_key_infermaticai', secret: SECRET_KEYS.INFERMATICAI },
+                { id: 'api_key_dreamgen', secret: SECRET_KEYS.DREAMGEN },
+                { id: 'api_key_openrouter-tg', secret: SECRET_KEYS.OPENROUTER },
+                { id: 'api_key_koboldcpp', secret: SECRET_KEYS.KOBOLDCPP },
+                { id: 'api_key_llamacpp', secret: SECRET_KEYS.LLAMACPP },
+                { id: 'api_key_featherless', secret: SECRET_KEYS.FEATHERLESS },
+                { id: 'api_key_huggingface', secret: SECRET_KEYS.HUGGINGFACE },
+                { id: 'api_key_generic', secret: SECRET_KEYS.GENERIC },
+            ];
 
-        for (const key of keys) {
-            const keyValue = String($(`#${key.id}`).val()).trim();
-            if (keyValue.length) {
-                await writeSecret(key.secret, keyValue);
+            for (const key of keys) {
+                const keyValue = String($(`#${key.id}`).val()).trim();
+                if (keyValue.length) {
+                    await writeSecret(key.secret, keyValue);
+                }
             }
-        }
 
-        validateTextGenUrl();
-        startStatusLoading();
-        saveSettingsDebounced();
-        getStatusTextgen();
+            validateTextGenUrl();
+            startStatusLoading();
+            saveSettingsDebounced();
+            await getStatusTextgen();
+        } catch (error) {
+            toastr.error(toUserFacingErrorText(error));
+            resultCheckStatus();
+        }
     });
 }
 
@@ -1202,7 +1162,7 @@ function insertMissingArrayItems(source, target) {
     }
 }
 
-function setSettingByName(setting, value, trigger) {
+function setSettingByName(setting, value, adjustments) {
     if ('extensions' === setting) {
         value = value || {};
         textgenerationwebui_settings.extensions = value;
@@ -1269,22 +1229,11 @@ function setSettingByName(setting, value, trigger) {
         $(`#${setting}_textgenerationwebui`).val(value);
     }
     else {
-        const val = parseFloat(value);
-        $(`#${setting}_textgenerationwebui`).val(val);
-        $(`#${setting}_counter_textgenerationwebui`).val(val);
-        if (power_user.enableZenSliders) {
-            let zenSlider = $(`#${setting}_textgenerationwebui_zenslider`).slider();
-            zenSlider.slider('option', 'value', val);
-            zenSlider.slider('option', 'slide')
-                .call(zenSlider, null, {
-                    handle: $('.ui-slider-handle', zenSlider), value: val,
-                });
-        }
+        restoreNumericInput(document.getElementById(`${setting}_textgenerationwebui`), value, adjustments, t`Text Completion`);
+        return;
     }
 
-    if (trigger) {
-        $(`#${setting}_textgenerationwebui`).trigger('input');
-    }
+    $(`#${setting}_textgenerationwebui`).trigger('input');
 }
 
 /**
@@ -1852,4 +1801,24 @@ export async function getTextGenGenerationData(finalPrompt, maxTokens, isImperso
     const params = createTextGenGenerationData(textgenerationwebui_settings, model, finalPrompt, maxTokens, isImpersonate, isContinue, cfgValues, type);
     await eventSource.emit(event_types.TEXT_COMPLETION_SETTINGS_READY, params);
     return params;
+}
+
+function saveKoboldSamplingOrder() {
+    textgenerationwebui_settings.sampler_order = $('#koboldcpp_order').children().map((_, item) => $(item).data('id')).get();
+    saveSettingsDebounced();
+}
+
+function saveLlamacppSamplingOrder() {
+    textgenerationwebui_settings.samplers = $('#llamacpp_samplers_sortable').children().map((_, item) => $(item).data('name')).get();
+    saveSettingsDebounced();
+}
+
+function saveOobaSamplingOrder() {
+    textgenerationwebui_settings.sampler_priority = $('#sampler_priority_container').children().map((_, item) => $(item).data('name')).get();
+    saveSettingsDebounced();
+}
+
+function saveAphroditeSamplingOrder() {
+    textgenerationwebui_settings.samplers_priorities = $('#sampler_priority_container_aphrodite').children().map((_, item) => $(item).data('name')).get();
+    saveSettingsDebounced();
 }

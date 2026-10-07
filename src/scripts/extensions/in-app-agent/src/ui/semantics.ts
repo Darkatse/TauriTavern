@@ -46,18 +46,27 @@ export function isCheckableInput(element: Element): element is HTMLInputElement 
 
 function hasSensitiveTextSource(element: Element, reference: 'aria-labelledby' | 'aria-describedby'): boolean {
     // Accessible text can follow external labels and owned nodes, including cycles.
-    const sources = new Set([element]);
-    for (const source of sources) {
-        if (isSensitive(source)) return true;
-        for (const child of source.children) sources.add(child);
+    const valueContainer = isHtmlTag(element, 'textarea') || isHtmlTag(element, 'select')
+        || (isHtmlTag(element, 'input') && !['button', 'submit', 'reset', 'image'].includes(element.type));
+    const sources = [element];
+    const visited = new Set<Element>();
+    for (const [index, source] of sources.entries()) {
+        // Only the initial value container is exempt; references back to it are text sources.
+        if ((index !== 0 || !valueContainer) && isSensitive(source)) return true;
+        if (visited.has(source)) continue;
+        visited.add(source);
+        // A field's value and a region's contents are not the text of its explicit label.
+        if (index !== 0 || (reference === 'aria-labelledby' && !valueContainer && !source.hasAttribute('aria-labelledby'))) {
+            sources.push(...source.children);
+        }
         if (isHtmlTag(source, 'input') || isHtmlTag(source, 'textarea')
             || isHtmlTag(source, 'select') || isHtmlTag(source, 'button')) {
-            for (const label of source.labels ?? []) sources.add(label);
+            sources.push(...source.labels ?? []);
         }
         for (const attribute of [reference, 'aria-labelledby', 'aria-owns']) {
             for (const id of (source.getAttribute(attribute) ?? '').split(/\s+/)) {
                 const related = source.ownerDocument.getElementById(id);
-                if (related) sources.add(related);
+                if (related) sources.push(related);
             }
         }
     }

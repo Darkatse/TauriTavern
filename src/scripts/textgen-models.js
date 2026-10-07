@@ -7,6 +7,7 @@ import { renderTemplateAsync } from './templates.js';
 import { POPUP_TYPE, callGenericPopup } from './popup.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
+import { showNumericAdjustments } from './dom-handlers.js';
 import { localizePagination, PAGINATION_TEMPLATE, textValueMatcher } from './utils.js';
 
 let mancerModels = [];
@@ -618,7 +619,9 @@ export async function loadFeatherlessModels(data) {
                 modelCardBlock.innerHTML = '';
 
                 modelsOnPage.forEach(model => {
-                    const card = document.createElement('div');
+                    const card = document.createElement('button');
+                    card.type = 'button';
+                    card.setAttribute('aria-pressed', String(model.id === textgen_settings.featherless_model));
                     card.classList.add('model-card');
 
                     const modelNameContainer = document.createElement('div');
@@ -658,7 +661,11 @@ export async function loadFeatherlessModels(data) {
                     }
 
                     card.addEventListener('click', function () {
-                        document.querySelectorAll('.model-card').forEach(c => c.classList.remove('selected'));
+                        modelCardBlock.querySelectorAll('.model-card').forEach(c => {
+                            c.classList.remove('selected');
+                            c.setAttribute('aria-pressed', 'false');
+                        });
+                        card.setAttribute('aria-pressed', 'true');
                         card.classList.add('selected');
                         onFeatherlessModelSelect(model.id);
                     });
@@ -797,12 +804,18 @@ async function fetchFeatherlessNew() {
     return data.items;
 }
 
+function applyModelContextLength(max_length) {
+    const adjustments = [];
+    setGenerationParamsFromPreset({ max_length }, adjustments);
+    showNumericAdjustments(adjustments);
+}
+
 function onFeatherlessModelSelect(modelId) {
     const model = featherlessModels.find(x => x.id === modelId);
     textgen_settings.featherless_model = modelId;
     $('#featherless_model').val(modelId);
     reconnectTextGenIfValidationAllowed();
-    setGenerationParamsFromPreset({ max_length: model.context_length });
+    applyModelContextLength(model.context_length);
 }
 
 let featherlessIsGridView = false;  // Default state set to grid view
@@ -813,19 +826,19 @@ document.addEventListener('DOMContentLoaded', function () {
     modelCardBlock.classList.add('list-view');
 
     const toggleButton = document.getElementById('featherless_model_grid_toggle');
+    toggleButton.setAttribute('aria-pressed', String(featherlessIsGridView));
     toggleButton.addEventListener('click', function () {
         // Toggle between grid and list view
         if (featherlessIsGridView) {
             modelCardBlock.classList.remove('grid-view');
             modelCardBlock.classList.add('list-view');
-            this.title = 'Toggle to grid view';
         } else {
             modelCardBlock.classList.remove('list-view');
             modelCardBlock.classList.add('grid-view');
-            this.title = 'Toggle to list view';
         }
 
         featherlessIsGridView = !featherlessIsGridView;
+        this.setAttribute('aria-pressed', String(featherlessIsGridView));
     });
 });
 function onMancerModelSelect() {
@@ -834,7 +847,7 @@ function onMancerModelSelect() {
     reconnectTextGenIfValidationAllowed();
 
     const limits = mancerModels.find(x => x.id === modelId)?.limits;
-    setGenerationParamsFromPreset({ max_length: limits.context });
+    applyModelContextLength(limits.context);
 }
 
 function onTogetherModelSelect() {
@@ -842,7 +855,7 @@ function onTogetherModelSelect() {
     textgen_settings.togetherai_model = modelName;
     reconnectTextGenIfValidationAllowed();
     const model = togetherModels.find(x => x.id === modelName);
-    setGenerationParamsFromPreset({ max_length: model.context_length });
+    applyModelContextLength(model.context_length);
 }
 
 function onInfermaticAIModelSelect() {
@@ -850,7 +863,7 @@ function onInfermaticAIModelSelect() {
     textgen_settings.infermaticai_model = modelName;
     reconnectTextGenIfValidationAllowed();
     const model = infermaticAIModels.find(x => x.id === modelName);
-    setGenerationParamsFromPreset({ max_length: model.context_length });
+    applyModelContextLength(model.context_length);
 }
 
 function onDreamGenModelSelect() {
@@ -884,7 +897,7 @@ function onOpenRouterModelSelect() {
     reconnectTextGenIfValidationAllowed();
     const model = openRouterModels.find(x => x.id === modelId);
     syncOpenRouterProvidersForModel(modelId, '#openrouter_providers_text');
-    setGenerationParamsFromPreset({ max_length: model.context_length });
+    applyModelContextLength(model.context_length);
 }
 
 function onVllmModelSelect() {

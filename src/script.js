@@ -190,6 +190,7 @@ import {
     resetMovableStyles,
     forceCharacterEditorTokenize,
     applyPowerUserSettings,
+    prepareGenerationControls,
     generatedTextFiltered,
     applyStylePins,
 } from './scripts/power-user.js';
@@ -393,7 +394,8 @@ import { captureItemizedPromptsSaveSnapshot, clearItemizedPrompts, deleteItemize
 import { getSystemMessageByType, initSystemMessages, SAFETY_CHAT, sendSystemMessage, system_message_types, system_messages } from './scripts/system-messages.js';
 import { event_types, eventSource } from './scripts/events.js';
 import { initAccessibility } from './scripts/a11y.js';
-import { initDomHandlers } from './scripts/dom-handlers.js';
+import { initDomHandlers, restoreNumericInput, showNumericAdjustments } from './scripts/dom-handlers.js';
+import { makeKeyboardInteractable } from './scripts/legacy-controls.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
 import { initPopupMenu } from './scripts/popup-menu.js';
 import { createGenerationIdleGate } from './scripts/util/generation-idle-gate.js';
@@ -1398,13 +1400,21 @@ export function setActiveGroup(entityOrKey) {
 }
 
 export function startStatusLoading() {
-    $('.api_loading').show();
-    $('.api_button').addClass('disabled');
+    const connect = document.activeElement.closest('.api_button');
+    $('.api_loading').removeClass('displayNone');
+    $('.api_button').addClass('disabled').attr({ 'aria-disabled': 'true', 'aria-busy': 'true' });
+    if (connect) connect.parentElement.querySelector('.api_loading')?.focus();
 }
 
 export function stopStatusLoading() {
-    $('.api_loading').hide();
-    $('.api_button').removeClass('disabled');
+    const cancel = document.activeElement.closest('.api_loading');
+    const connect = cancel?.parentElement.querySelector('.api_button');
+    $('.api_loading').addClass('displayNone');
+    $('.api_button').removeClass('disabled').attr('aria-disabled', 'false').removeAttr('aria-busy');
+    if (connect) {
+        makeKeyboardInteractable(connect);
+        connect.focus();
+    }
 }
 
 export function resultCheckStatus() {
@@ -9347,6 +9357,7 @@ function reloadLoop() {
 }
 
 async function applySettingsSnapshot(data, initLoaderHandle = null) {
+    const adjustments = [];
     if (data.result != 'file not find' && data.settings) {
         settings = JSON.parse(data.settings);
         captureSettingsSaveState(settings, data.tauritavern_settings_revision);
@@ -9370,14 +9381,18 @@ async function applySettingsSnapshot(data, initLoaderHandle = null) {
         $('#swipes-checkbox').prop('checked', swipes); /// swipecode
         refreshSwipeButtons();
 
+        prepareGenerationControls(settings.power_user);
+        restoreNumericInput(document.getElementById('max_context'), max_context, adjustments, t`General`);
+        restoreNumericInput(document.getElementById('amount_gen'), amount_gen, adjustments, t`General`);
+
         // Kobold
-        loadKoboldSettings(data, settings.kai_settings ?? settings, settings);
+        loadKoboldSettings(data, settings.kai_settings ?? settings, settings, adjustments);
 
         // Novel
-        loadNovelSettings(data, settings.nai_settings ?? settings);
+        loadNovelSettings(data, settings.nai_settings ?? settings, adjustments);
 
         // TextGen
-        await loadTextGenSettings(data, settings);
+        await loadTextGenSettings(data, settings, adjustments);
 
         // OpenAI
         loadOpenAISettings(data, settings.oai_settings ?? settings);
@@ -9402,10 +9417,6 @@ async function applySettingsSnapshot(data, initLoaderHandle = null) {
 
         // Allow subscribers to mutate settings
         await eventSource.emit(event_types.SETTINGS_LOADED_AFTER, settings);
-
-        // Set context size after loading power user (may override the max value)
-        $('#max_context').val(max_context).trigger('input');
-        $('#amount_gen').val(amount_gen).trigger('input');
 
         //Load which API we are using
         if (settings.main_api == undefined) {
@@ -9471,6 +9482,7 @@ async function applySettingsSnapshot(data, initLoaderHandle = null) {
     await validateDisabledSamplers();
     settingsReady = true;
     await eventSource.emit(event_types.SETTINGS_LOADED);
+    showNumericAdjustments(adjustments);
 }
 
 //MARK: getSettings()
@@ -9577,21 +9589,20 @@ async function saveSettingsNow(loopCounter = 0) {
 /**
  * Sets the generation parameters from a preset object.
  * @param {{ genamt?: number, max_length?: number }} preset Preset object
+ * @param {import('./scripts/dom-handlers.js').NumericAdjustment[]} adjustments Changes collected by this operation.
  */
-export function setGenerationParamsFromPreset(preset) {
+export function setGenerationParamsFromPreset(preset, adjustments) {
     const needsUnlock = (preset.max_length ?? max_context) > MAX_CONTEXT_DEFAULT || (preset.genamt ?? amount_gen) > MAX_RESPONSE_DEFAULT;
     $('#max_context_unlocked').prop('checked', needsUnlock).trigger('change');
 
     if (preset.genamt !== undefined) {
         amount_gen = preset.genamt;
-        $('#amount_gen').val(amount_gen);
-        $('#amount_gen_counter').val(amount_gen).trigger('input');
+        restoreNumericInput(document.getElementById('amount_gen'), amount_gen, adjustments, t`General`);
     }
 
     if (preset.max_length !== undefined) {
         max_context = preset.max_length;
-        $('#max_context').val(max_context);
-        $('#max_context_counter').val(max_context).trigger('input');
+        restoreNumericInput(document.getElementById('max_context'), max_context, adjustments, t`General`);
     }
 }
 
