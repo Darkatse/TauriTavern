@@ -5910,10 +5910,6 @@ body:not(.caption) .mes_img_caption {
     overflow-y: auto;
     clip-path: inset(0);
 
-    @supports selector(::-webkit-scrollbar-thumb) {
-        animation: hide-scroll var(--animation-duration-2x) backwards;
-    }
-
     @starting-style {
         clip-path: inset(0 0 100% 0);
     }
