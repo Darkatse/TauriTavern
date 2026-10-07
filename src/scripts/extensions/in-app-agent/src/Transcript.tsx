@@ -259,7 +259,7 @@ export function Transcript({ snapshot, controller, actions, visible }: {
     }, [snapshot.messages, snapshot.responses, visible]);
     async function loadOlder() {
         const root = scroller.current;
-        // Clipped descendants keep their layout boxes; exclude them from paging anchors.
+        // Collapsed content keeps its boxes until the collapse finishes; exclude it from paging anchors.
         const first = root && [...root.querySelectorAll<HTMLElement>('[data-message-seq]')]
             .find(item => !item.closest('[aria-hidden="true"]')
                 && item.getBoundingClientRect().bottom > root.getBoundingClientRect().top && item.getBoundingClientRect().height > 0);

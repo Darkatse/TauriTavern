@@ -111,7 +111,8 @@
 .ttia-run { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .ttia-run-work { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--ttia-d-med) var(--ttia-ease), opacity var(--ttia-d-fast); }
 .ttia-run-work.is-open { grid-template-rows: 1fr; opacity: 1; }
-.ttia-run-work > div { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 12px; }
+.ttia-run-work > div { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 12px; transition: display var(--ttia-d-med) allow-discrete; }
+.ttia-run-work:not(.is-open) > div { display: none; }
 .ttia-root .ttia-run-bar {
     width: 100%; min-height: 28px; padding: 3px 4px; gap: 8px; justify-content: flex-start;
     font-size: .78em; color: var(--ttia-muted); border-radius: 7px;
@@ -165,7 +166,8 @@
 .ttia-fold.is-open > .ttia-fold-toggle > i:first-child { transform: rotate(90deg); }
 .ttia-fold-body { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--ttia-d-med) var(--ttia-ease), opacity var(--ttia-d-fast); }
 .ttia-fold.is-open > .ttia-fold-body { grid-template-rows: 1fr; opacity: 1; }
-.ttia-fold-body > div { min-height: 0; overflow: hidden; }
+.ttia-fold-body > div { min-height: 0; overflow: hidden; transition: display var(--ttia-d-med) allow-discrete; }
+.ttia-fold:not(.is-open) > .ttia-fold-body > div { display: none; }
 .ttia-reasoning .ttia-markdown { color: var(--ttia-muted); font-size: .9em; border-left: 1px solid var(--ttia-line); margin: 7px 0 12px 10px; padding: 0 0 0 16px; }
 .ttia-shimmer {
     background: linear-gradient(100deg, var(--ttia-muted) 38%, var(--ttia-ink) 50%, var(--ttia-muted) 62%);
