@@ -105,6 +105,8 @@
 
 设置与角色是启动必需数据，失败会阻止启动；群组、头像或密钥状态失败时保留可见错误并仅禁用对应能力，不阻止 `APP_READY`。
 
+启动失败只有两个出口：`src/init.js` 加载应用模块失败，或 `firstLoadInit()` 抛错。两处都调用 `showStartupFailure(error)` 显示不可关闭的模态失败对话框（错误、阶段与调用栈，可复制或重新加载），并继续抛出原错误，日志照常记录。展示不能替换原错误：`init.js` 的失败可能来自模块加载本身，所以对话框模块在错误路径之外加载，加载失败时作为第二个错误上报。对话框在 Shadow DOM 中渲染，不受主题与自定义 CSS 影响。
+
 后端采样入口见 [bootstrap_commands.rs](../../src-tauri/crates/tauritavern/src/presentation/commands/bootstrap_commands.rs)。
 
 ---
@@ -176,8 +178,8 @@ Panel Runtime 会在 `APP_READY` 后安装，用于在抽屉关闭时把部分�
   - `src/tauri/main/bootstrap.js`：`tt:tauri:*`
   - `src/script.js`：`tt:startup:shell/core/full` + `tt:startup:ready`
 - 运行时提示：
-  - `src/scripts/tauri/startup/startup-status-overlay.js`：右下角非阻塞启动状态 overlay（`APP_READY` 后移除）
-- `pnpm run test:browser` 构建 vendor bundle 并运行 `tests/browser/*.test.mjs`。其中 `startup-order.test.mjs` 验证 Host-ready 模块先加载时主应用仍能正常初始化、早到的事件等待应用就绪后呈现。该测试组包含在 `pnpm test` 和 `pnpm run check` 中。
+  - `src/scripts/tauri/startup/startup-status-overlay.js`：右下角非阻塞启动状态 overlay（`APP_READY` 后移除）与启动失败对话框（见 §4）
+- `pnpm run test:browser` 构建 vendor bundle 并运行 `tests/browser/*.test.mjs`。其中 `startup-order.test.mjs` 验证 Host-ready 模块先加载时主应用仍能正常初始化、早到的事件等待应用就绪后呈现，以及启动失败时对话框显示错误且错误继续上报。该测试组包含在 `pnpm test` 和 `pnpm run check` 中。
 
 ---
 

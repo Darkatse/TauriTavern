@@ -19,6 +19,15 @@ try {
     await earlyToast;
     assert.deepEqual(toasts, ['Early sync event'], 'An event received before APP_READY must still be presented');
     console.log('PASS: main application initializes and early host events wait for APP_READY');
+
+    // The runtime rejects every network request, so startup stops while loading locales.
+    const failure = new Promise(resolve => window.addEventListener('error', resolve, { once: true }));
+    window.jQuery.holdReady(false);
+    const { error } = await failure;
+    const dialog = window.document.getElementById('tt-startup-failure').shadowRoot.querySelector('dialog');
+    assert.equal(dialog.open, true, 'A failed startup must stay visible');
+    assert.ok(dialog.querySelector('pre').textContent.includes(error.message), 'The dialog must show the startup error');
+    console.log('PASS: a failed startup shows its error and still reports it');
 } finally {
     await window.happyDOM.close();
 }

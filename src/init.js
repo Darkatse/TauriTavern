@@ -304,7 +304,10 @@ async function initializeApplication() {
             safePerfMeasure('tt:init:import:app', 'tt:init:import:app:start', 'tt:init:import:app:end');
         }
     } catch (error) {
-        console.error('TauriTavern: Failed to initialize application:', error);
+        // Loading the dialog must not delay or replace the startup error.
+        void importWithRetry('./scripts/tauri/startup/startup-status-overlay.js')
+            .then(({ showStartupFailure }) => showStartupFailure(error));
+        throw error;
     } finally {
         if (PERF_ENABLED) {
             safePerfMark('tt:init:end');

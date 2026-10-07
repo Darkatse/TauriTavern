@@ -406,7 +406,7 @@ import { MacroEnvBuilder } from './scripts/macros/engine/MacroEnvBuilder.js';
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { addChatBackupsBrowser } from './scripts/chat-backups.js';
 import { onboardingExperimentalMacroEngine } from './scripts/macros/engine/MacroDiagnostics.js';
-import { createStartupStatusOverlay } from './scripts/tauri/startup/startup-status-overlay.js';
+import { createStartupStatusOverlay, showStartupFailure } from './scripts/tauri/startup/startup-status-overlay.js';
 import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
 
 // API OBJECT FOR EXTERNAL WIRING
@@ -1310,6 +1310,9 @@ async function firstLoadInit() {
             }
         })();
 
+    } catch (error) {
+        showStartupFailure(error);
+        throw error;
     } finally {
         startupStatus.remove();
     }
