@@ -1,7 +1,8 @@
 #AdvancedFormatting[data-tt-assistant="assistant"] > :not(#tt-assistant) { display: none !important; }
-#AdvancedFormatting[data-tt-assistant="assistant"] { padding: 0; }
-/* Keep the host's toolbar and mobile insets; desktop assistants cover the chat composer. */
-#AdvancedFormatting[data-tt-assistant="assistant"].openDrawer { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+/* Keep the host's toolbar and mobile insets; desktop assistants cover the chat composer. The size
+   holds while the drawer is closing, so only display depends on the open state. */
+#AdvancedFormatting[data-tt-assistant="assistant"] { padding: 0; flex-direction: column; height: 100dvh; overflow: hidden; }
+#AdvancedFormatting[data-tt-assistant="assistant"].openDrawer { display: flex; }
 #tt-assistant { min-height: 0; min-width: 0; flex: 1 1 auto; }
 
 .ttia-root {
@@ -441,7 +442,7 @@
 @keyframes ttia-emblem-in { from { opacity: 0; transform: scale(.86); } to { opacity: 1; transform: none; } }
 
 @media (min-width: 1001px) {
-    #AdvancedFormatting[data-tt-assistant="assistant"].openDrawer:has(.ttia-root[data-mobile="false"]) { max-height: calc(100dvh - var(--topBarBlockSize)); }
+    #AdvancedFormatting[data-tt-assistant="assistant"]:has(.ttia-root[data-mobile="false"]) { max-height: calc(100dvh - var(--topBarBlockSize)); }
     .ttia-root[data-mobile="false"] .ttia-assistant { width: var(--ttia-content-width); min-width: min(100%, 28rem); }
 }
 @media (max-width: 1000px) {

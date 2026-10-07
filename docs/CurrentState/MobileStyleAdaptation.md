@@ -86,5 +86,6 @@
 - `src/style.css` 中 `html` 上的 transform 与 perspective：它们让 `html` 成为 fixed 元素的包含块，根文档滚动时 `#bg1` 会随之移动。
 - `src/css/mobile-styles.css` 中 `#bg1` 的 `100dvw`/`100dvh !important` 尺寸：它会压过 `#bg1` 的窗口矩形。
 - `src/scripts/browser-fixes.js` 中 iOS resize 时把根元素临时设为 `position: fixed` 的补偿。
+- 顶层抽屉（带 `openDrawer`/`closedDrawer`）开合时的高度动画：`src/style.css` 中 `.drawer-content` 的 `height: 0`、打开时的 `calc-size(auto, size)` 与 `.fillLeft`/`.fillRight` 的高度过渡，以及 `src/css/mobile-styles.css` 中左右面板关闭时的 `height: 0`。WebKit 不支持 `calc-size()`，高度在过渡一半时跳变；抽屉改为按最终尺寸排版一次，用 `clip-path` 揭开。浮动面板仍沿用上游的高度过渡。
 
 公开布局 API 与旧变量的状态见 [API/Layout.md](../API/Layout.md)。

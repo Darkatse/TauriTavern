@@ -340,11 +340,6 @@
         }
     }
 
-    #left-nav-panel:not(.openDrawer),
-    #right-nav-panel:not(.openDrawer) {
-        height: 0;
-    }
-
     /*
     #right-nav-panel {
         padding-right: 15px;
