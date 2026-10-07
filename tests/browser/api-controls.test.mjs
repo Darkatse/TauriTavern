@@ -45,6 +45,14 @@ test('API presets, Select2 activation and key failures preserve their public beh
             assert.match($('.toast-warning').text(), /2 → 1/);
         });
 
+        await context.test('NovelAI settings saved before SillyTavern 1.13.2 restore their numeric strings as numbers', () => {
+            const nai = getModule('scripts/nai-settings.js').namespace;
+            nai.loadNovelSettings({ novelai_setting_names: [], novelai_settings: [] },
+                { ...nai.nai_settings, top_k: '25', banned_tokens: '123' });
+            assert.equal(nai.nai_settings.top_k, 25);
+            assert.equal(nai.nai_settings.banned_tokens, '123');
+        });
+
         await context.test('Select2 keeps the field name and accepts native, generic and jQuery activation', () => {
             const source = $('#model_openrouter_select').empty().append('<option value="a">A</option><option value="b">B</option>');
             const name = computeAccessibleName(source[0], { hidden: true });

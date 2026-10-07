@@ -224,7 +224,9 @@ export function loadNovelSettings(data, settings, adjustments = []) {
 
 function loadNovelPresetSettings(preset, adjustments) {
     for (const name of presetSettingNames) {
-        nai_settings[name] = structuredClone(preset[name] ?? defaultValues[name]);
+        const value = preset[name] ?? defaultValues[name];
+        // SillyTavern before 1.13.2 saved NovelAI sliders with toFixed(), so numeric fields may hold strings.
+        nai_settings[name] = typeof defaultValues[name] === 'number' ? Number(value) : structuredClone(value);
     }
     // These selectors/text fields have always treated an empty value as unset.
     for (const name of ['preamble', 'prefix', 'phrase_rep_pen']) {
