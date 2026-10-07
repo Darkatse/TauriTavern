@@ -37,6 +37,7 @@ import { agentMessageProjection, prepareAgentHistory } from './tauritavern/agent
 import { projectToolTurns } from './tauritavern/tool-turn-projection.js';
 import { canReplayProviderMetadata, getChatCompletionRequestContext } from './tauritavern/provider-replay.js';
 import { applyParamOmissions, getEffectiveGenerationSettings } from './tauri/generation-params/omission.js';
+import { getEffectiveReasoningEffort, getReasoningEffortOptions } from './tauri/generation-params/reasoning-effort-options.js';
 
 import {
     chatCompletionDefaultPrompts,
@@ -482,7 +483,6 @@ export const settingsToUpdate = {
     top_a: ['#top_a_openai', 'top_a_openai', false, false],
     min_p: ['#min_p_openai', 'min_p_openai', false, false],
     repetition_penalty: ['#repetition_penalty_openai', 'repetition_penalty_openai', false, false],
-    max_context_unlocked: ['#oai_max_context_unlocked', 'max_context_unlocked', true, false],
     openai_model: ['#model_openai_select', 'openai_model', false, true],
     claude_model: ['#model_claude_select', 'claude_model', false, true],
     openrouter_model: ['#model_openrouter_select', 'openrouter_model', false, true],
@@ -567,6 +567,8 @@ export const settingsToUpdate = {
     assistant_impersonation: ['#claude_assistant_impersonation', 'assistant_impersonation', false, false],
     use_sysprompt: ['#use_sysprompt', 'use_sysprompt', true, false],
     claude_fast_mode: ['#claude_fast_mode', 'claude_fast_mode', true, false],
+    custom_claude_adaptive_thinking: ['#custom_claude_adaptive_thinking', 'custom_claude_adaptive_thinking', true, false],
+    custom_responses_reasoning_summary: ['#custom_responses_reasoning_summary', 'custom_responses_reasoning_summary', true, false],
     vertexai_auth_mode: ['#vertexai_auth_mode', 'vertexai_auth_mode', false, true],
     vertexai_region: ['#vertexai_region', 'vertexai_region', false, true],
     vertexai_express_project_id: ['#vertexai_express_project_id', 'vertexai_express_project_id', false, true],
@@ -606,8 +608,8 @@ const default_settings = {
     top_a_openai: 0,
     repetition_penalty_openai: 1,
     stream_openai: false,
-    openai_max_context: max_4k,
-    openai_max_tokens: 300,
+    openai_max_context: max_1mil,
+    openai_max_tokens: 25_000,
     ...chatCompletionDefaultPrompts,
     ...promptManagerDefaultPromptOrders,
     send_if_empty: '',
@@ -691,13 +693,16 @@ const default_settings = {
     tool_reasoning_mode: tool_reasoning_modes.DISABLED,
     reverse_proxy: '',
     chat_completion_source: chat_completion_sources.OPENAI,
-    max_context_unlocked: false,
+    // Always on: context size is the user's own budget, not capped per model.
+    max_context_unlocked: true,
     show_external_models: false,
     proxy_password: '',
     assistant_prefill: '',
     assistant_impersonation: '',
     use_sysprompt: false,
     claude_fast_mode: false,
+    custom_claude_adaptive_thinking: false,
+    custom_responses_reasoning_summary: false,
     vertexai_auth_mode: 'express',
     vertexai_region: 'us-central1',
     vertexai_express_project_id: '',
@@ -2454,8 +2459,8 @@ export async function prepareOpenAIMessages({
     const chatCompletion = new ChatCompletion();
     if (power_user.console_log_prompts) chatCompletion.enableLogging();
 
-    const userSettings = activePromptManager.serviceSettings;
-    chatCompletion.setTokenBudget(userSettings.openai_max_context, userSettings.openai_max_tokens);
+    // Effective settings: an omitted max_tokens still reserves its fallback share of the budget.
+    chatCompletion.setTokenBudget(settings.openai_max_context, settings.openai_max_tokens);
     let chatSourceCount = 0;
     let toolData = null;
 
@@ -4089,14 +4094,27 @@ function supportsOpenAiXHighReasoningEffort(model) {
     return gptMajorMatch ? Number(gptMajorMatch[1]) > 5 : false;
 }
 
+/**
+ * Lowest effort word per OpenAI family: o-series only accepts low..high,
+ * original gpt-5 snapshots accept `minimal` but not `none`, gpt-5.1+ accept `none`.
+ * Mirrors `openai_lowest_reasoning_effort` in the Rust payload builder.
+ */
+function getOpenAiLowestReasoningEffort(model) {
+    const normalizedModel = String(model ?? '').trim().toLowerCase();
+    if (/^o[134](?:$|-)/.test(normalizedModel)) {
+        return reasoning_effort_types.low;
+    }
+    return /^gpt-5(?:$|-)/.test(normalizedModel) ? 'minimal' : 'none';
+}
+
 function normalizeOpenAiReasoningEffort(effort, model) {
     switch (effort) {
         case reasoning_effort_types.auto:
             return undefined;
         case reasoning_effort_types.min:
-            return 'none';
+            return getOpenAiLowestReasoningEffort(model);
         case reasoning_effort_types.xhigh:
-            return supportsOpenAiMaxReasoningEffort(model) ? reasoning_effort_types.xhigh : reasoning_effort_types.high;
+            return supportsOpenAiXHighReasoningEffort(model) ? reasoning_effort_types.xhigh : reasoning_effort_types.high;
         case reasoning_effort_types.max:
             if (supportsOpenAiMaxReasoningEffort(model)) {
                 return reasoning_effort_types.max;
@@ -4116,9 +4134,19 @@ function normalizeOpenAiReasoningEffort(effort, model) {
 function getReasoningEffort(settings = null, model = null) {
     settings = settings ?? oai_settings;
     model = model ?? getChatCompletionModel(settings);
+    // One rule for every source: the stored value in this connection's vocabulary (a project
+    // level mapped into a Custom / OpenCode format), or Auto when it has none.
+    settings = { ...settings, reasoning_effort: getEffectiveReasoningEffort(settings) };
 
     if (settings.chat_completion_source === chat_completion_sources.ZAI) {
         return getZaiReasoningEffort(settings, model);
+    }
+
+    // Custom / OpenCode send the format's own word, already resolved above.
+    if ([chat_completion_sources.CUSTOM, chat_completion_sources.OPENCODE].includes(settings.chat_completion_source)) {
+        return settings.reasoning_effort === reasoning_effort_types.auto
+            ? undefined
+            : settings.reasoning_effort;
     }
 
     if (usesClaudeMessagesSemantics(settings, model)) {
@@ -4126,12 +4154,6 @@ function getReasoningEffort(settings = null, model = null) {
             return undefined;
         }
         return settings.reasoning_effort;
-    }
-
-    if ([chat_completion_sources.CUSTOM, chat_completion_sources.OPENCODE].includes(settings.chat_completion_source)) {
-        return settings.reasoning_effort === reasoning_effort_types.auto
-            ? undefined
-            : settings.reasoning_effort;
     }
 
     // These sources expect the effort as string.
@@ -4475,6 +4497,13 @@ export async function createGenerationParameters(settings, model, type, messages
         generate_data.custom_openai_responses_websocket =
             settings.custom_api_format === custom_api_formats.OPENAI_RESPONSES
             && Boolean(settings.custom_openai_responses_websocket);
+        // Opt-in request fields; unset leaves the provider default.
+        if (settings.custom_api_format === custom_api_formats.CLAUDE_MESSAGES && settings.custom_claude_adaptive_thinking) {
+            generate_data.thinking = { type: 'adaptive', display: settings.show_thoughts ? 'summarized' : 'omitted' };
+        }
+        if (settings.custom_api_format === custom_api_formats.OPENAI_RESPONSES && settings.custom_responses_reasoning_summary) {
+            generate_data.reasoning_summary = 'auto';
+        }
     }
 
     if (settings.chat_completion_source === chat_completion_sources.OPENCODE) {
@@ -5934,7 +5963,12 @@ export class ChatCompletion {
  */
 function migrateChatCompletionSettings(settings) {
     let changed = false;
-    for (const key of ['strip_old_tool_calls', 'claude_fast_mode']) {
+    // The unlock toggle is gone; older settings and presets may still carry false.
+    if (settings.max_context_unlocked !== true) {
+        settings.max_context_unlocked = true;
+        changed = true;
+    }
+    for (const key of ['strip_old_tool_calls', 'claude_fast_mode', 'custom_claude_adaptive_thinking', 'custom_responses_reasoning_summary']) {
         if (settings[key] === undefined) {
             settings[key] = false;
             changed = true;
@@ -6746,7 +6780,13 @@ async function onPresetImportFileChange(e) {
     }
 }
 
-async function onExportPresetClick() {
+/**
+ * Downloads the selected preset as a SillyTavern preset file.
+ * @param {object} [options]
+ * @param {boolean} [options.includeConnection] Keep the API connection fields (source, server URL,
+ *   model, proxy …) stored in the preset. Asked, as upstream does, when omitted.
+ */
+export async function exportOpenAIPreset({ includeConnection } = {}) {
     if (!oai_settings.preset_settings_openai) {
         toastr.error(t`No preset selected`);
         return;
@@ -6754,7 +6794,8 @@ async function onExportPresetClick() {
 
     const preset = structuredClone(openai_settings[openai_setting_names[oai_settings.preset_settings_openai]]);
 
-    const fieldValues = sensitiveFields
+    // Every sensitive field is a connection field, so there is nothing to ask when they all go.
+    const fieldValues = includeConnection === false ? [] : sensitiveFields
         .filter(field => hasSensitiveFieldValue(preset[field]))
         .map(field => `<b>${field}</b>: <code>${formatSensitiveFieldValue(preset[field])}</code>`);
     if (fieldValues.length > 0) {
@@ -6774,11 +6815,12 @@ async function onExportPresetClick() {
         }
     }
 
-    const exportConnectionTemplate = $(await renderTemplateAsync('exportPreset'));
-    await new Popup(exportConnectionTemplate, POPUP_TYPE.TEXT).show();
-
-    const removeConnectionData = exportConnectionTemplate.find('input[name="export_connection_data"]:checked').val() === 'false';
-    if (removeConnectionData) {
+    if (includeConnection === undefined) {
+        const exportConnectionTemplate = $(await renderTemplateAsync('exportPreset'));
+        await new Popup(exportConnectionTemplate, POPUP_TYPE.TEXT).show();
+        includeConnection = exportConnectionTemplate.find('input[name="export_connection_data"]:checked').val() !== 'false';
+    }
+    if (!includeConnection) {
         for (const [, [, settingName, , isConnection]] of Object.entries(settingsToUpdate)) {
             if (isConnection) {
                 delete preset[settingName];
@@ -6942,6 +6984,17 @@ function onSettingsPresetChange() {
     }).finally(async () => {
         if (oai_settings.preset_settings_openai !== presetName) return;
 
+        // Custom formats self-heal through the source selector; an OpenCode format has no such
+        // fallback, so a preset that would apply an unknown one is rejected before any field is.
+        if (oai_settings.bind_preset_to_connection && preset.opencode_api_format !== undefined
+            && !Object.values(OPENCODE_API_FORMAT).includes(preset.opencode_api_format)) {
+            oai_settings.preset_settings_openai = presetNameBefore;
+            $('#settings_preset_openai').val(openai_setting_names[presetNameBefore]);
+            const message = t`Preset "${presetName}" uses an unknown OpenCode API format: ${preset.opencode_api_format}`;
+            toastr.error(message);
+            throw new Error(message);
+        }
+
         if (oai_settings.bind_preset_to_connection) {
             $('.model_custom_select').empty();
         }
@@ -6978,6 +7031,7 @@ function onSettingsPresetChange() {
         }
 
         $('#openai_logit_bias_preset').trigger('change');
+        syncReasoningEffortOptions();
 
         saveSettingsDebounced();
         await eventSource.emit(event_types.OAI_PRESET_CHANGED_AFTER);
@@ -8228,6 +8282,37 @@ function toggleChatCompletionForms() {
     });
 
     setToolReasoningControls();
+    syncReasoningEffortOptions();
+}
+
+/** @type {Map<string, HTMLOptionElement> | null} The translated options declared in the markup, by value. */
+let reasoningEffortMarkupOptions = null;
+
+/**
+ * Offers the Reasoning Effort values of the current source / API format. Values shared
+ * with the project levels keep their translated markup options; API-format words without
+ * one get their own label. The select shows the effective value; the stored value is
+ * kept until the user picks another option.
+ */
+function syncReasoningEffortOptions() {
+    const select = document.getElementById('openai_reasoning_effort');
+    if (!(select instanceof HTMLSelectElement)) {
+        throw new Error('Reasoning Effort selector not found');
+    }
+    reasoningEffortMarkupOptions ??= new Map(Array.from(select.options, option => [option.value, option]));
+    /** @type {Record<string, string>} */
+    const apiFormatLabels = { none: t`None`, minimal: t`Minimal` };
+    select.replaceChildren(...getReasoningEffortOptions(oai_settings).map((value) => {
+        const option = reasoningEffortMarkupOptions.get(value);
+        if (option) {
+            return option;
+        }
+        if (!Object.hasOwn(apiFormatLabels, value)) {
+            throw new Error(`Reasoning Effort value has no label: ${value}`);
+        }
+        return new Option(apiFormatLabels[value], value);
+    }));
+    select.value = getEffectiveReasoningEffort(oai_settings);
 }
 
 async function testApiConnection() {
@@ -8956,6 +9041,16 @@ export function initOpenAI() {
         saveSettingsDebounced();
     });
 
+    $('#custom_claude_adaptive_thinking').on('input change', function () {
+        oai_settings.custom_claude_adaptive_thinking = !!$('#custom_claude_adaptive_thinking').prop('checked');
+        saveSettingsDebounced();
+    });
+
+    $('#custom_responses_reasoning_summary').on('input change', function () {
+        oai_settings.custom_responses_reasoning_summary = !!$('#custom_responses_reasoning_summary').prop('checked');
+        saveSettingsDebounced();
+    });
+
     $('#send_if_empty_textarea').on('input', function () {
         oai_settings.send_if_empty = String($('#send_if_empty_textarea').val());
         saveSettingsDebounced();
@@ -9088,14 +9183,6 @@ export function initOpenAI() {
         forceCharacterEditorTokenize();
         updateFeatureSupportFlags();
         eventSource.emit(event_types.CHATCOMPLETION_SOURCE_CHANGED, oai_settings.chat_completion_source);
-    });
-
-    $('#oai_max_context_unlocked').on('input', function (_e, data) {
-        oai_settings.max_context_unlocked = !!$(this).prop('checked');
-        if (data?.source !== 'preset') {
-            $('#chat_completion_source').trigger('change');
-        }
-        saveSettingsDebounced();
     });
 
     $('#openai_show_external_models').on('input', function () {
@@ -9333,7 +9420,10 @@ export function initOpenAI() {
     });
 
     $('#openai_reasoning_effort').on('input', function () {
-        oai_settings.reasoning_effort = String($(this).val());
+        const value = $(this).val();
+        // A preset value outside this source's options can't be selected; keep it stored.
+        if (value === null) return;
+        oai_settings.reasoning_effort = String(value);
         saveSettingsDebounced();
     });
 
@@ -9487,6 +9577,7 @@ export function initOpenAI() {
     });
     $('#opencode_api_format').on('input', function () {
         oai_settings.opencode_api_format = String($(this).val());
+        syncReasoningEffortOptions();
         saveSettingsDebounced();
     });
     $('#siliconflow_endpoint').on('input', function () {
@@ -9572,7 +9663,7 @@ export function initOpenAI() {
     $('#openai_logit_bias_new_entry').on('click', createNewLogitBiasEntry);
     $('#openai_logit_bias_import_file').on('input', onLogitBiasPresetImportFileChange);
     $('#openai_preset_import_file').on('input', onPresetImportFileChange);
-    $('#export_oai_preset').on('click', onExportPresetClick);
+    $('#export_oai_preset').on('click', () => exportOpenAIPreset());
     $('#openai_logit_bias_import_preset').on('click', onLogitBiasPresetImportClick);
     $('#openai_logit_bias_export_preset').on('click', onLogitBiasPresetExportClick);
     $('#openai_logit_bias_delete_preset').on('click', onLogitBiasPresetDeleteClick);

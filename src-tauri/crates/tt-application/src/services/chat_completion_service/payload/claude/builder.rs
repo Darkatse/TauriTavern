@@ -5,6 +5,7 @@ use crate::errors::ApplicationError;
 use super::super::super::model_capabilities::{
     RequestedReasoningEffort, parse_known_reasoning_effort, unsupported_reasoning_effort,
 };
+use super::super::OMITTED_MAX_TOKENS;
 use super::super::shared::insert_if_present;
 use super::contract::{ClaudeModelContract, ClaudeThinkingMode};
 use super::messages::{
@@ -117,7 +118,8 @@ fn build_claude_payload_inner(
         .get("max_tokens")
         .or_else(|| payload.get("max_completion_tokens"))
         .and_then(value_to_i64)
-        .unwrap_or(CLAUDE_THINKING_MIN_TOKENS);
+        // Messages requires `max_tokens`.
+        .unwrap_or(OMITTED_MAX_TOKENS);
     max_tokens = max_tokens.max(1);
     let stream = payload
         .get("stream")
@@ -274,8 +276,13 @@ fn build_claude_payload_inner(
                 }
             }
         }
-    } else if let Some(reasoning_effort) = payload.get("reasoning_effort") {
-        output_config.insert("effort".to_string(), reasoning_effort.clone());
+    } else {
+        if let Some(reasoning_effort) = payload.get("reasoning_effort") {
+            output_config.insert("effort".to_string(), reasoning_effort.clone());
+        }
+        // Passthrough (Custom) sends the user's explicit `thinking` object verbatim;
+        // native Claude derives thinking from its model contract instead.
+        insert_if_present(&mut request, payload, "thinking");
     }
 
     if !output_config.is_empty() {

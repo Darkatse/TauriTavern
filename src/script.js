@@ -30,6 +30,7 @@ import {
 import { initDrawers, getTopLevelDrawerPanel, isTopLevelDrawerOpen, setTopLevelDrawerOpen, toggleInlineDrawer } from './scripts/drawers.js';
 import { initializeCodeMirrorEditor } from './scripts/tauri/codemirror-editor.js';
 import { getStreamingRenderInterval, normalizeStreamingFps, shouldCommitStreamingMessage } from './scripts/tauri/perf/streaming-render-policy.js';
+import { getEffectiveGenerationSettings, getOmittedParams, setParamOmitted } from './scripts/tauri/generation-params/omission.js';
 import {
     CHAT_COMMIT_REASON,
     initializeColdSwipes,
@@ -4912,6 +4913,8 @@ class TempResponseLength {
     static #restorePromise = Promise.resolve();
     /** @type {(() => void) | null} */
     static #resolveRestore = null;
+    /** Whether saving lifted the preset's "reply limit not sent" for this request. */
+    static #liftedMaxTokensOmission = false;
 
     static isCustomized() {
         return this.#originalResponseLength > -1;
@@ -4933,6 +4936,11 @@ class TempResponseLength {
         if (api === 'openai') {
             this.#originalResponseLength = oai_settings.openai_max_tokens;
             oai_settings.openai_max_tokens = responseLength;
+            // An explicit per-request length is sent even when the reply limit is removed.
+            this.#liftedMaxTokensOmission = getOmittedParams(oai_settings).includes('max_tokens');
+            if (this.#liftedMaxTokensOmission) {
+                setParamOmitted(oai_settings, 'max_tokens', false);
+            }
         } else {
             this.#originalResponseLength = amount_gen;
             amount_gen = responseLength;
@@ -4956,6 +4964,10 @@ class TempResponseLength {
         }
         if (api === 'openai') {
             oai_settings.openai_max_tokens = this.#originalResponseLength;
+            if (this.#liftedMaxTokensOmission) {
+                setParamOmitted(oai_settings, 'max_tokens', true);
+            }
+            this.#liftedMaxTokensOmission = false;
         } else {
             amount_gen = this.#originalResponseLength;
         }
@@ -7303,7 +7315,8 @@ export function getMaxResponseTokens() {
         return amount_gen;
     }
     if (main_api == 'openai') {
-        return oai_settings.openai_max_tokens;
+        // An omitted reply limit reserves its fallback share, as the chat-completion budget does.
+        return getEffectiveGenerationSettings(oai_settings).openai_max_tokens;
     }
     return 0;
 }

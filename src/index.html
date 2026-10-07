@@ -630,20 +630,6 @@
                             </div>
                             <div id="range_block_openai">
                                 <div class="range-block">
-                                    <label class="checkbox_label">
-                                        <input id="oai_max_context_unlocked" type="checkbox" />
-                                        <span data-i18n="Unlocked Context Size">
-                                            Unlocked Context Size
-                                        </span>
-                                    </label>
-                                    <div class="toggle-description justifyLeft">
-                                        <span data-i18n="Unrestricted maximum value for the context slider">
-                                            Unrestricted maximum value for the context size slider. Enable only if you know
-                                            what you're doing.
-                                        </span>
-                                    </div>
-                                </div>
-                                <div class="range-block">
                                     <div class="range-block-title" data-i18n="Context Size (tokens)">
                                         Context Size (tokens)
                                     </div>
@@ -2012,6 +1998,18 @@
                                                 Request fast mode at premium pricing. Some models may use standard speed and pricing instead.
                                             </span>
                                         </div>
+                                    </div>
+                                    <div class="range-block" data-source="custom" data-custom-api-format="claude_messages">
+                                        <label for="custom_claude_adaptive_thinking" class="checkbox_label widthFreeExpand">
+                                            <input id="custom_claude_adaptive_thinking" type="checkbox" />
+                                            <span>thinking: adaptive</span>
+                                        </label>
+                                    </div>
+                                    <div class="range-block" data-source="custom" data-custom-api-format="openai_responses">
+                                        <label for="custom_responses_reasoning_summary" class="checkbox_label widthFreeExpand">
+                                            <input id="custom_responses_reasoning_summary" type="checkbox" />
+                                            <span>reasoning.summary: auto</span>
+                                        </label>
                                     </div>
                                     <div class="range-block" data-source="makersuite,vertexai,aimlapi,openrouter,claude,electronhub,chutes,nanogpt,custom" data-custom-api-format="claude_messages,openai_responses,gemini_generate_content">
                                         <label for="openai_enable_web_search" class="checkbox_label flexWrap widthFreeExpand">

@@ -11,6 +11,7 @@ import {
 import { createMacroContextFromSnapshot, normalizeFrozenRunInputSnapshot } from '../../../scripts/tauritavern/agent/frozen-run-input-snapshot.js';
 import { createAgentPromptSnapshot } from '../../../scripts/tauritavern/agent/agent-model-messages.js';
 import { setParamOmitted } from '../../../scripts/tauri/generation-params/omission.js';
+import { getEffectiveReasoningEffort } from '../../../scripts/tauri/generation-params/reasoning-effort-options.js';
 
 const PROMPT_ASSEMBLY_SOURCE = 'frontend-prompt-assembly-broker';
 
@@ -43,8 +44,11 @@ export async function buildPromptAssemblyPayload(input = {}) {
         throw new Error('prompt_assembly.model_required: chat-completion settings did not resolve a model');
     }
     const settings = openai.normalizeChatCompletionSettingsForPromptAssembly(request.settings);
-    if (request.reasoningEffort) {
-        settings.reasoning_effort = request.reasoningEffort;
+    // An override the resolved connection can't send (even after mapping project levels to its
+    // format) is ignored; the preset value applies.
+    const override = request.reasoningEffort;
+    if (override && (override === 'auto' || getEffectiveReasoningEffort({ ...settings, reasoning_effort: override }) !== 'auto')) {
+        settings.reasoning_effort = override;
         setParamOmitted(settings, 'reasoning_effort', false);
     }
 

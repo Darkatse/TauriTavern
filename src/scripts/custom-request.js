@@ -578,8 +578,14 @@ export class ChatCompletionService {
             throw new Error('Invalid preset: must be an object');
         }
 
-        // Fast mode requires an explicit preset opt-in, including for old presets.
-        preset = { claude_fast_mode: false, ...preset, ...overridePreset };
+        // Opt-in request fields require an explicit preset opt-in, including for old presets.
+        preset = {
+            claude_fast_mode: false,
+            custom_claude_adaptive_thinking: false,
+            custom_responses_reasoning_summary: false,
+            ...preset,
+            ...overridePreset,
+        };
 
         // Fix any fields before converting to settings
         preset.bias_preset_selected = preset.bias_presets !== undefined ? preset.bias_preset_selected : undefined;  // presets might have bias_preset_selected but not bias_presets, but settings need both or neither.
@@ -590,6 +596,13 @@ export class ChatCompletionService {
             const settingToUpdate = settingsToUpdate[key];
             if (!settingToUpdate) continue;
             settings[settingToUpdate[1]] = value;
+        }
+        // The request goes to the payload's connection, so source-dependent fields
+        // (e.g. which Reasoning Effort values are sent) follow it, not the preset's.
+        for (const key of ['chat_completion_source', 'custom_api_format', 'opencode_api_format']) {
+            if (overridePayload[key] !== undefined) {
+                settings[key] = overridePayload[key];
+            }
         }
 
         // Ensure api-url is properly applied for all sources that accept it

@@ -1,4 +1,5 @@
-import { listSavedModelTargets, modelTargetSource } from '../../../tauritavern/agent/model-target-llm-connection.js';
+import { listSavedModelTargets, modelTargetApiSettings, modelTargetSource } from '../../../tauritavern/agent/model-target-llm-connection.js';
+import { getEffectiveReasoningEffort, getReasoningEffortOptions } from '../../../tauri/generation-params/reasoning-effort-options.js';
 import { getOmittedParams } from '../../../tauri/generation-params/omission.js';
 import { isMobileHost } from '../../../util/host-identity.js';
 import type { createInAppAgentController } from './controller';
@@ -113,6 +114,11 @@ export async function createAssistantActions(api: TauriTavernHostApi, context: A
         skill,
         models: createModelTargets(context),
         supportsReasoningEffort: (target: ModelTarget) => effortSources.includes(modelTargetSource(target)),
+        // The values the target's source / API format accepts.
+        reasoningEffortOptions: (target: ModelTarget): readonly string[] => getReasoningEffortOptions(modelTargetApiSettings(target)),
+        // The value actually sent for a stored one: mapped to the target's format, or 'auto' when it can't be sent.
+        resolveReasoningEffort: (target: ModelTarget, value: string): string =>
+            getEffectiveReasoningEffort({ ...modelTargetApiSettings(target), reasoning_effort: value }),
         presetReasoningEffort(name: string): string | null {
             const manager = context.getPresetManager('openai');
             // Checked first because SillyTavern logs an error for unknown names.
