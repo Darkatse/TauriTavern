@@ -154,13 +154,8 @@ export function parseMaybeJson(value) {
     }
 }
 
-export function jsonResponse(data, status = 200) {
-    return new Response(JSON.stringify(data), {
-        status,
-        headers: {
-            'Content-Type': 'application/json',
-        },
-    });
+export function jsonResponse(data, status = 200, statusText) {
+    return new Response(JSON.stringify(data), responseInit(status, 'application/json', statusText));
 }
 
 export function safeResponseStatusText(value) {
@@ -169,10 +164,14 @@ export function safeResponseStatusText(value) {
 }
 
 export function textResponse(text, status = 200, statusText) {
+    return new Response(String(text), responseInit(status, 'text/plain; charset=utf-8', statusText));
+}
+
+function responseInit(status, contentType, statusText) {
     const init = {
         status,
         headers: {
-            'Content-Type': 'text/plain; charset=utf-8',
+            'Content-Type': contentType,
         },
     };
     const safeStatusText = safeResponseStatusText(statusText);
@@ -181,7 +180,5 @@ export function textResponse(text, status = 200, statusText) {
         init.statusText = safeStatusText;
     }
 
-    return new Response(String(text), {
-        ...init,
-    });
+    return init;
 }

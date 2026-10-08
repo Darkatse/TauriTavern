@@ -112,7 +112,7 @@ src/
 
 - 代理 `window.fetch`。
 - 代理 `$.ajax` 并保持 Deferred/jqXHR 行为兼容。
-- 只拦截本地 API 请求，其余请求透传原生实现。
+- 接管整个 `/api/*` 命名空间与其他已注册路由，其余请求透传原生实现（见 `FrontendHostContract.md` §4.2）。
 
 ### 4.4 `download-bridge.js`
 

@@ -6,7 +6,6 @@ export function createInterceptors({
     canHandleRequest,
     toUrl,
     routeRequest,
-    jsonResponse,
 }) {
     const fetchPatchState = new WeakMap();
     const ajaxPatchState = new WeakMap();
@@ -58,8 +57,7 @@ export function createInterceptors({
         const abortRace = createAbortRace(signal);
         try {
             const pending = Promise.resolve(routeRequest(requestUrl, input, init, targetWindow))
-                .then((response) => {
-                    const result = response || jsonResponse({ error: `Unsupported endpoint: ${requestUrl.pathname}` }, 404);
+                .then((result) => {
                     if (signal?.aborted) {
                         // Opening may finish after the caller has already aborted.
                         void result.body?.cancel().catch(error => console.warn('Failed to close aborted response', error));

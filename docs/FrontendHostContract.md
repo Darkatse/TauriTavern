@@ -220,11 +220,10 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 
 ### 4.2 未命中行为（Public）
 
-- `fetch`：未命中路由直接透传原生 fetch。
-- `ajax`：未命中路由直接透传原始 `$.ajax`。
-- 命中但无 handler：返回 `404` JSON（`{ error: "Unsupported endpoint: ..." }`）。
+- `/api/*` 整个命名空间由宿主接管：未实现的端点（任意 method）与未返回响应的 handler 都返回 `404` JSON（`{ error: "Unsupported endpoint: <path>" }`，`statusText` 同为该文本）。开发态与生产态一致。
+- 其余未命中路由的请求：`fetch` 透传原生 fetch，`ajax` 透传原始 `$.ajax`。
 
-> 这类行为会被上游与第三方依赖：不要改成 silent fail/空响应。
+> 这类行为会被上游与第三方依赖：不要改成 silent fail/空响应。生产资产协议会把缺失路径回退为 `200 index.html`，因此 `/api/*` 不得透传。
 
 ### 4.3 路由表（Public）
 

@@ -298,7 +298,8 @@ export function bootstrapTauriMain() {
                 traceId,
             });
 
-            const finalResponse = response || jsonResponse({ error: `Unsupported endpoint: ${url.pathname}` }, 404);
+            const unsupported = `Unsupported endpoint: ${url.pathname}`;
+            const finalResponse = response || jsonResponse({ error: unsupported }, 404, unsupported);
             finalResponse.headers.set(DEFAULT_TRACE_HEADER, traceId);
             const durationMs = (globalThis.performance?.now?.() ?? Date.now()) - startedAt;
             return finalResponse;
@@ -330,7 +331,6 @@ export function bootstrapTauriMain() {
         canHandleRequest,
         toUrl,
         routeRequest,
-        jsonResponse,
     });
     const downloadBridge = createDownloadBridge({
         deliverBlob,

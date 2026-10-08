@@ -39,7 +39,6 @@ test('fetch interceptor rejects immediately when AbortSignal is already aborted'
             routedCalls += 1;
             return new Response('routed');
         },
-        jsonResponse: (body, status) => new Response(JSON.stringify(body), { status }),
     });
 
     interceptors.patchFetch(dom.window);
@@ -92,7 +91,6 @@ test('fetch interceptor rejects when AbortSignal is aborted while routed request
             routedCalls += 1;
             return routePromise;
         },
-        jsonResponse: (body, status) => new Response(JSON.stringify(body), { status }),
     });
 
     interceptors.patchFetch(dom.window);
@@ -133,7 +131,6 @@ test('fetch abort remains active after headers while a consumer reads the body',
                 pull() { reading.resolve(); },
                 cancel() { cancelled.resolve(); },
             })),
-            jsonResponse: (body, status) => new Response(JSON.stringify(body), { status }),
         }).patchFetch(dom.window);
         const controller = new AbortController();
         const response = await dom.window.fetch('/api/chats/get', { signal: controller.signal });
