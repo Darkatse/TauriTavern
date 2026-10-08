@@ -77,7 +77,7 @@ impl HostResourceService {
         request: &Request<Vec<u8>>,
         delivery: HostResourceDeliveryCapabilities,
     ) -> Option<HostResourceResponse> {
-        let response = match classify_host_resource_route(request)? {
+        let response = match classify_host_resource_route(request.uri())? {
             HostResourceRoute::UserCss => Some(user_css::serve_user_css(
                 self.store.as_ref(),
                 request,
@@ -108,6 +108,13 @@ impl HostResourceService {
     pub fn set_avatar_persona_original_images_enabled(&self, enabled: bool) {
         self.avatar_persona_original_images_enabled
             .store(enabled, Ordering::Relaxed);
+    }
+
+    /// Reports whether the service owns the route of `uri` without touching
+    /// storage. Route facts stay here so callers (e.g. native download
+    /// routing) cannot drift from what `try_serve` actually serves.
+    pub fn serves_route(&self, uri: &http::Uri) -> bool {
+        classify_host_resource_route(uri).is_some()
     }
 
     pub fn serve(
