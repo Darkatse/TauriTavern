@@ -584,6 +584,7 @@ fn claude_adaptive_reasoning_uses_adaptive_thinking_and_effort() {
         "claude-fable-5",
         "claude-mythos-5",
         "claude-sonnet-5",
+        "claude-haiku-5-5",
         "claude-opus-4-7",
         "claude-opus-4-8",
     ] {
@@ -638,6 +639,7 @@ fn claude_default_thinking_only_requests_visible_summary() {
         "claude-fable-5",
         "claude-mythos-5",
         "claude-sonnet-5",
+        "claude-haiku-5-5",
     ] {
         let mut visible_payload = claude_payload(model);
         visible_payload.insert("include_reasoning".to_string(), json!(true));

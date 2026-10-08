@@ -4017,7 +4017,7 @@ function isClaudeOneMillionContextModel(modelId) {
         .trim()
         .toLowerCase()
         .replace(/^(?:(?:us|eu|jp|au|apac|global|us-gov)\.)?anthropic\./, '');
-    return /^claude-(?:fable-5|mythos-5|opus-5|sonnet-5|sonnet-4-(?:5|6)|opus-4-(?:6|7|8))(?:\b|-)/.test(value);
+    return /^claude-(?:fable-5|mythos-5|opus-5|sonnet-5|haiku-5|sonnet-4-(?:5|6)|opus-4-(?:6|7|8))(?:\b|-)/.test(value);
 }
 
 function getVertexAiClaudeMaxContext(modelId, unlocked = false) {
@@ -8325,6 +8325,7 @@ export function isImageInliningSupported(settings = oai_settings) {
         'claude-mythos-5',
         'claude-opus-5',
         'claude-sonnet-5',
+        'claude-haiku-5',
         'claude-3',
         'claude-opus-4',
         'claude-sonnet-4',
