@@ -6747,7 +6747,13 @@ async function onPresetImportFileChange(e) {
     }
 }
 
-async function onExportPresetClick() {
+/**
+ * Downloads the selected preset as a SillyTavern preset file.
+ * @param {object} [options]
+ * @param {boolean} [options.includeConnection] Keep the API connection fields (source, server URL,
+ *   model, proxy …) stored in the preset. Asked, as upstream does, when omitted.
+ */
+export async function exportOpenAIPreset({ includeConnection } = {}) {
     if (!oai_settings.preset_settings_openai) {
         toastr.error(t`No preset selected`);
         return;
@@ -6755,7 +6761,8 @@ async function onExportPresetClick() {
 
     const preset = structuredClone(openai_settings[openai_setting_names[oai_settings.preset_settings_openai]]);
 
-    const fieldValues = sensitiveFields
+    // Every sensitive field is a connection field, so there is nothing to ask when they all go.
+    const fieldValues = includeConnection === false ? [] : sensitiveFields
         .filter(field => hasSensitiveFieldValue(preset[field]))
         .map(field => `<b>${field}</b>: <code>${formatSensitiveFieldValue(preset[field])}</code>`);
     if (fieldValues.length > 0) {
@@ -6775,11 +6782,12 @@ async function onExportPresetClick() {
         }
     }
 
-    const exportConnectionTemplate = $(await renderTemplateAsync('exportPreset'));
-    await new Popup(exportConnectionTemplate, POPUP_TYPE.TEXT).show();
-
-    const removeConnectionData = exportConnectionTemplate.find('input[name="export_connection_data"]:checked').val() === 'false';
-    if (removeConnectionData) {
+    if (includeConnection === undefined) {
+        const exportConnectionTemplate = $(await renderTemplateAsync('exportPreset'));
+        await new Popup(exportConnectionTemplate, POPUP_TYPE.TEXT).show();
+        includeConnection = exportConnectionTemplate.find('input[name="export_connection_data"]:checked').val() !== 'false';
+    }
+    if (!includeConnection) {
         for (const [, [, settingName, , isConnection]] of Object.entries(settingsToUpdate)) {
             if (isConnection) {
                 delete preset[settingName];
@@ -9588,7 +9596,7 @@ export function initOpenAI() {
     $('#openai_logit_bias_new_entry').on('click', createNewLogitBiasEntry);
     $('#openai_logit_bias_import_file').on('input', onLogitBiasPresetImportFileChange);
     $('#openai_preset_import_file').on('input', onPresetImportFileChange);
-    $('#export_oai_preset').on('click', onExportPresetClick);
+    $('#export_oai_preset').on('click', () => exportOpenAIPreset());
     $('#openai_logit_bias_import_preset').on('click', onLogitBiasPresetImportClick);
     $('#openai_logit_bias_export_preset').on('click', onLogitBiasPresetExportClick);
     $('#openai_logit_bias_delete_preset').on('click', onLogitBiasPresetDeleteClick);
