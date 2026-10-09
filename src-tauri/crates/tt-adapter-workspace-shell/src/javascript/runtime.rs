@@ -10,6 +10,7 @@ use tt_domain::frozen_macros::MAX_EXPANDED_TEXT_BYTES;
 use tt_ports::workspace_shell::WorkspaceShellContext;
 
 use super::files::{Files, workspace_path};
+use super::shell::{Nesting, shell_object};
 
 pub(super) const RUNTIME_MODULE: &str = "@tauritavern/runtime";
 pub(super) const MAX_OUTPUT_BYTES: usize = crate::engine::MAX_OUTPUT_BYTES;
@@ -41,6 +42,7 @@ pub(super) struct RuntimeState {
     pub files: Files,
     pub context: Arc<WorkspaceShellContext>,
     pub output: Rc<RefCell<Output>>,
+    pub nesting: Arc<Nesting>,
 }
 
 // Host-owned data only; no QuickJS references whose lifetime needs changing.
@@ -52,14 +54,14 @@ pub(super) struct RuntimeModule;
 
 impl ModuleDef for RuntimeModule {
     fn declare(exports: &Declarations<'_>) -> Result<()> {
-        for name in ["workspace", "context", "macros", "log"] {
+        for name in ["workspace", "shell", "context", "macros", "log"] {
             exports.declare(name)?;
         }
         Ok(())
     }
 
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
-        let (files, context, output) = {
+        let (files, context, output, nesting) = {
             let state = ctx.userdata::<RuntimeState>().ok_or_else(|| {
                 Exception::throw_message(ctx, "JavaScript runtime context is missing")
             })?;
@@ -67,6 +69,7 @@ impl ModuleDef for RuntimeModule {
                 state.files.clone(),
                 state.context.clone(),
                 state.output.clone(),
+                state.nesting.clone(),
             )
         };
         let workspace = Object::new(ctx.clone())?;
@@ -100,6 +103,7 @@ impl ModuleDef for RuntimeModule {
                     .map_err(|message| Exception::throw_message(&ctx, &message))
             })?,
         )?;
+        let list = files.clone();
         workspace.set(
             "listFiles",
             Function::new(ctx.clone(), move |ctx: Ctx<'_>, path: Opt<String>| {
@@ -107,11 +111,12 @@ impl ModuleDef for RuntimeModule {
                     .as_deref()
                     .map(workspace_path)
                     .transpose()
-                    .and_then(|path| files.list(path.as_deref()))
+                    .and_then(|path| list.list(path.as_deref()))
                     .map_err(|message| Exception::throw_message(&ctx, &message))
             })?,
         )?;
         exports.export("workspace", workspace)?;
+        exports.export("shell", shell_object(ctx, files.clone(), nesting)?)?;
 
         let host: Value = match &context.host {
             Ok(value) => ctx.json_parse(value.to_string())?,

@@ -68,11 +68,13 @@ Skill 脚本遵循统一的 [JavaScript 工作区契约](Workspace.md#javascript
 
 ### 可用能力
 
-脚本在 QuickJS 中执行，支持 ES 模块和 `async` / `await`，不提供 Node/Deno 标准库、DOM、网络、子进程或定时器。宿主能力从统一模块导入：
+脚本在 QuickJS 中执行，支持 ES 模块和 `async` / `await`，不提供 Node/Deno 标准库、DOM、网络或定时器。宿主能力从统一模块导入：
 
 ```js
-import { workspace, context, macros, log } from '@tauritavern/runtime';
+import { workspace, shell, context, macros, log } from '@tauritavern/runtime';
 ```
+
+脚本不能直接创建宿主进程；工作区命令通过 `shell.exec` 交给宿主执行，见 [JavaScript 工作区契约](Workspace.md#调用工作区命令)。
 
 | 接口 | 用途 |
 | --- | --- |
@@ -80,6 +82,7 @@ import { workspace, context, macros, log } from '@tauritavern/runtime';
 | `workspace.writeText(path, text)` | 创建或替换文件，自动创建父目录 |
 | `workspace.listFiles(path?)` | 无参数时列出工作区根目录；指定目录时递归列出文件，返回相对于该目录的路径 |
 | `workspace.exists(path)` | 检查可访问路径是否存在 |
+| `shell.exec(command, options?)` | 执行工作区命令，返回 `{ stdout, stderr, code }`；选项含 `stdin`、`cwd`、`env` |
 | `context.worldInfo.entries` | Run 启动时激活的世界书 |
 | `context.variables.local` / `global` | 保留原始 JSON 类型的 SillyTavern 变量 |
 | `context.macro` | 冻结的名称、角色和聊天位置等宏数据 |
