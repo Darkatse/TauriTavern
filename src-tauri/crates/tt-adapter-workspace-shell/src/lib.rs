@@ -1,5 +1,6 @@
 //! Shell and JavaScript execution over the caller's scoped workspace filesystem.
 
+mod builtin_tools;
 mod engine;
 mod filesystem;
 mod javascript;

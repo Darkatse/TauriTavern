@@ -22,7 +22,7 @@
 | 读取激活世界书 | `worldinfo.read_activated` |
 | 读取工作文件与 Skill | `workspace.list_files`、`workspace.search_files`、`workspace.read_file` |
 | 修改文件 | `workspace.write_file`、`workspace.apply_patch` |
-| Shell 与数据处理 | `workspace.shell`，内含 jq、Python 与 JavaScript |
+| Shell 与数据处理 | `workspace.shell`，内含 jq、Python、JavaScript 与 `builtin.` 命令 |
 | 发布与结束 | `workspace.commit`、`workspace.finish` |
 | 委派与交接 | `agent.delegate`、`agent.await`、`agent.handoff`、`task.return` |
 | 掷骰 | `dice.roll` |
@@ -42,6 +42,43 @@
 ## Shell
 
 `workspace.shell` 提供 Bashkit 内置命令、jq、Python 子集与 JavaScript。参数为 `command` 与可选 `workdir`（默认 `/`）。每次调用创建新环境，共享工作区文件保留；不执行宿主外部程序。退出状态与输出沿普通工具结果返回，执行与文件契约见 [Workspace](Workspace.md)。
+
+Shell 内可用 `builtin.<工具名>` 调用当前 Invocation 可见的内置工具，参数为单个 JSON 对象：
+
+```sh
+builtin.chat.search '{"query":"lantern","limit":10}'
+builtin.dice.roll '{"formula":"2d6"}'
+```
+
+命令集合在 Invocation 编译时确定，等于该次调用的可见工具集减去下表所列的排除项；未注册的名字即普通 `command not found`。成功时工具文本写入 stdout 并以 0 退出，失败时错误信息写入 stderr 并以非零退出，因此 `&&`、`||`、`if` 可直接使用。命令名带 `builtin.` 前缀，避免与 Bashkit 内置命令重名。
+
+**当前内置工具里可以这样调用的有六个**（Profile 未收窄时的全集）：
+
+| 命令 | 用途 |
+| --- | --- |
+| `builtin.chat.search` | 搜索当前聊天消息 |
+| `builtin.chat.read_messages` | 按索引或范围读取聊天消息 |
+| `builtin.worldinfo.read_activated` | 读取本次运行激活的世界书 |
+| `builtin.dice.roll` | 掷骰 |
+| `builtin.workspace.list_files` | 列出可见工作区文件 |
+| `builtin.workspace.search_files` | 搜索可见工作区文件 |
+
+**不注册的有十个**，因此它们在 Shell 里不存在：
+
+| 命令 | 不注册的理由 |
+| --- | --- |
+| `builtin.workspace.shell` | 自我递归 |
+| `builtin.workspace.read_file` | 需要模型回合的 CAS 读取记录 |
+| `builtin.workspace.write_file` | 同上 |
+| `builtin.workspace.apply_patch` | 同上 |
+| `builtin.workspace.commit` | 控制流，会破坏 Run 状态机 |
+| `builtin.workspace.finish` | 同上 |
+| `builtin.agent.delegate` | 委派协议 |
+| `builtin.agent.await` | 同上 |
+| `builtin.agent.handoff` | 同上 |
+| `builtin.task.return` | 同上 |
+
+被 Profile 的 `tools.allow`/`tools.deny` 收窄的工具同样不会注册，与模型侧可见性一致。
 
 ## 结果如何进入下一轮
 

@@ -20,6 +20,11 @@ pub struct WorkspaceShellRequest {
 pub struct WorkspaceShellContext {
     pub frozen_macros: Arc<FrozenMacros>,
     pub host: Result<serde_json::Value, String>,
+    /// Builtin Agent tools this invocation may reach from inside the shell.
+    ///
+    /// Absent for shells that have no invocation behind them, such as the
+    /// JavaScript probe harness.
+    pub tools: Option<Arc<dyn WorkspaceShellTools>>,
 }
 
 impl Default for WorkspaceShellContext {
@@ -29,8 +34,24 @@ impl Default for WorkspaceShellContext {
             host: Err(
                 "This run has no JavaScript host context. Workspace files remain available.".into(),
             ),
+            tools: None,
         }
     }
+}
+
+/// One invocation's builtin Agent tools, reachable as shell commands.
+///
+/// The visible set is fixed when the invocation is compiled, so a command that
+/// is absent here does not exist inside the shell either.
+#[async_trait]
+pub trait WorkspaceShellTools: std::fmt::Debug + Send + Sync {
+    /// Call one visible tool by native name, such as `chat.search`.
+    ///
+    /// Returns the text the tool produced for the model.
+    async fn call(&self, name: &str, args: serde_json::Value) -> Result<String, DomainError>;
+
+    /// Native names of the tools this invocation exposes to the shell.
+    fn visible(&self) -> &[String];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

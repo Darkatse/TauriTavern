@@ -385,8 +385,17 @@ impl AgentRuntimeService {
         )
         .await?;
 
+        let runtime_context = self
+            .shell_ready_context(
+                runtime_context_from_snapshot(&prompt_snapshot)?,
+                &profile,
+                run_id,
+                &tool_snapshot,
+                effective_skills.clone().into(),
+            )
+            .await?;
         Ok(PreparedInvocation {
-            runtime_context: runtime_context_from_snapshot(&prompt_snapshot)?,
+            runtime_context,
             invocation,
             delegation_task_id: Some(task.id.clone()),
             profile,
