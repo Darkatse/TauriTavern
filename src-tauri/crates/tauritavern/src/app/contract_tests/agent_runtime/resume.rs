@@ -1150,6 +1150,13 @@ async fn wait_for_event(
     event_type: &str,
     after_seq: u64,
 ) -> tt_domain::models::agent::AgentRunEvent {
+    // Host requests are awaited like the frontend does: journal seq hints wake each read.
+    let mut hints = fixture
+        .service
+        .subscribe_event_hints(run_id)
+        .await
+        .unwrap()
+        .expect("run awaiting a host request is active");
     tokio::time::timeout(AGENT_CONTRACT_ASYNC_TIMEOUT, async {
         loop {
             if let Some(event) = read_agent_events(&fixture.agent_repository, run_id)
@@ -1159,6 +1166,10 @@ async fn wait_for_event(
             {
                 return event;
             }
+            hints
+                .changed()
+                .await
+                .unwrap_or_else(|_| panic!("run released before {event_type}"));
         }
     })
     .await

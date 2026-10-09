@@ -26,6 +26,9 @@ pub(super) struct ActiveRunHandle {
     pub(super) host_presentation: bool,
     pub(super) pending_checkpoint: tokio::sync::Mutex<Option<RunCheckpoint>>,
     pub(super) live_projection: watch::Sender<AgentRunLiveProjection>,
+    /// Highest journal seq appended while this handle is active. Host subscribers
+    /// use it as a wake-up hint and still read the events from the journal.
+    pub(super) event_seq: watch::Sender<u64>,
 }
 
 impl ActiveRunHandle {
@@ -38,6 +41,7 @@ impl ActiveRunHandle {
         host_presentation: bool,
     ) -> Self {
         let (live_projection, _) = watch::channel(AgentRunLiveProjection::default());
+        let (event_seq, _) = watch::channel(0_u64);
         Self {
             target: run.target.clone(),
             files,
@@ -48,6 +52,7 @@ impl ActiveRunHandle {
             host_presentation,
             pending_checkpoint: tokio::sync::Mutex::new(None),
             live_projection,
+            event_seq,
         }
     }
 
