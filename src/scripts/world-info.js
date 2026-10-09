@@ -1,3 +1,4 @@
+import { getPageForItem, initPagination } from './pagination.js';
 import { Fuse } from '../lib.js';
 import {
     flushWorldInfoSaves,
@@ -12,7 +13,7 @@ import { isInlineDrawerOpen } from './drawers.js';
 
 import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, getExtensionPromptByName, saveMetadata, getCurrentChatId, create_save, createOrEditCharacter, name1, getOneCharacter, select_selected_character } from '../script.js';
 import { extension_prompt_roles } from './extension-prompts.js';
-import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, escapeRegex, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, checkOverwriteExistingData, getStringHash, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName, logSlashCommandWarn, addLongPressEvent, escapeHtml, setInfoBlock, clearInfoBlock } from './utils.js';
+import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, escapeRegex, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, checkOverwriteExistingData, getStringHash, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName, logSlashCommandWarn, addLongPressEvent, escapeHtml, setInfoBlock, clearInfoBlock } from './utils.js';
 import { extension_settings, getContext } from './extensions.js';
 import { NOTE_MODULE_NAME, metadata_keys, shouldWIAddPrompt } from './authors-note.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -2431,34 +2432,20 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         return entriesArray;
     }
 
-    const storageKey = 'WI_PerPage';
-    const perPageDefault = 25;
-    let startPage = 1;
-
-    if (navigation === navigation_option.previous) {
-        startPage = $('#world_info_pagination').pagination('getCurrentPageNum');
-    }
+    const paginationSettings = { storageKey: 'WI_PerPage', defaultPageSize: 25 };
+    let startPage = navigation === navigation_option.previous ? undefined : 1;
 
     if (typeof navigation === 'number' && Number(navigation) >= 0) {
         const data = getDataArray();
         const uidIndex = data.findIndex(x => x.uid === navigation);
-        const perPage = Number(accountStorage.getItem(storageKey)) || perPageDefault;
-        startPage = Math.floor(uidIndex / perPage) + 1;
+        startPage = getPageForItem(uidIndex, paginationSettings);
     }
 
-    $('#world_info_pagination').pagination({
-        dataSource: getDataArray,
-        pageSize: Number(accountStorage.getItem(storageKey)) || perPageDefault,
+    initPagination($('#world_info_pagination'), {
+        ...paginationSettings,
         sizeChangerOptions: [10, 25, 50, 100, 500, 1000],
-        showSizeChanger: true,
-        pageRange: 1,
+        dataSource: getDataArray,
         pageNumber: startPage,
-        position: 'top',
-        showPageNumbers: false,
-        prevText: '<',
-        nextText: '>',
-        formatNavigator: PAGINATION_TEMPLATE,
-        showNavigator: true,
         callback: async function (/** @type {object[]} */ page) {
             try {
                 clearEntryList(worldEntriesList);
@@ -2489,9 +2476,6 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
             } catch (error) {
                 console.error('Error while rendering WI entries:', error);
             }
-        },
-        afterSizeSelectorChange: function (e) {
-            accountStorage.setItem(storageKey, e.target.value);
         },
         afterPaging: function () {
             if (!worldEntriesList[0].isConnected) return;
@@ -6496,8 +6480,8 @@ export function initWorldInfo() {
     });
 
     $('#group-chat-lorebook-dropdown').on('change', async function () {
-        $(this).prop('selectedIndex', 0);
         await assignLorebookToChat({ shiftKey: true, altKey: false });
+        $(this).prop('selectedIndex', 0);
     });
 
     // Not needed on mobile

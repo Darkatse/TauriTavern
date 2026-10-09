@@ -2,6 +2,7 @@
 import { isElement, isHTMLElement } from './util/dom-types.js';
 
 export const INTERACTABLE_CONTROL_CLASS = 'interactable';
+export const CONTROL_SHELL_CLASS = 'tt-control-shell';
 export const CUSTOM_INTERACTABLE_CONTROL_CLASS = 'custom_interactable';
 export const NOT_FOCUSABLE_CONTROL_CLASS = 'not_focusable';
 export const DISABLED_CONTROL_CLASS = 'disabled';
@@ -9,22 +10,19 @@ export const DISABLED_CONTROL_CLASS = 'disabled';
 // These rows retain their existing Enter action without claiming that their whole
 // contents, including independent child controls, form one button.
 const rowSelectors = [
-    '.group_select', '.character_select', '.bogus_folder_select',
-    '.swipe_picker_block', '.avatar-container', '.bg_example', '.select_chat_block',
+    '.bg_example',
     '#userList .userSelect',
 ].join(',');
 
 let interactableSelectors = [
     '.interactable', '.custom_interactable', '.menu_button', '.right_menu_button',
-    '.drawer-icon', '.inline-drawer-icon', '.paginationjs-pages li a',
+    '.drawer-icon', '.inline-drawer-icon', '.paginationjs-pages li:not(.paginationjs-ellipsis) a',
     rowSelectors, '.tag .tag_remove', '.jg-menu .jg-button',
     '.bg_example .mobile-only-menu-toggle', '#options a', '.mes_button',
     '.extraMesButtons>div:not(.mes_button)', '.swipe_left', '.swipe_right',
     '.stscript_btn',
     '.select2_choice_clickable+span.select2-container .select2-selection__choice__display',
     '.avatar_load_preview', '#show_more_messages',
-    '.select_chat_block .exportRawChatButton', '.select_chat_block .exportChatButton',
-    '.select_chat_block .PastChat_cross', '.select_chat_block .renameChatButton',
     '#extensionsMenu .list-group-item',
 ].join(',');
 
@@ -32,14 +30,12 @@ let interactableSelectors = [
 // such as .list-group, and jQuery UI's tabs, do not belong to this adapter.
 const structuralRoles = [
     [[
-        '#rm_print_characters_block', '#rm_group_members', '#rm_group_add_members',
-        '.tag_view_list_tags', '.secretKeyManagerList', '.recentChatList',
+        '.tag_view_list_tags', '.secretKeyManagerList',
         '.dataMaidCategoryContent', '#userList', '.bg_list',
     ].join(','), 'list'],
     [[
-        '#rm_print_characters_block .entity_block', '#rm_group_members .group_member',
-        '#rm_group_add_members .group_member', '.tag_view_list_tags .tag_view_item',
-        '.secretKeyManagerList .secretKeyManagerItem', '.recentChatList .recentChat',
+        '.tag_view_list_tags .tag_view_item',
+        '.secretKeyManagerList .secretKeyManagerItem',
         '.dataMaidCategoryContent .dataMaidItem', '#userList .userSelect',
         '.bg_list .bg_example',
     ].join(','), 'listitem'],
@@ -89,14 +85,15 @@ function isNativeActionContent(control) {
 /** @param {Element} control */
 function needsLegacyActivation(control) {
     return isKeyboardInteractable(control) && !control.matches(nativeControls)
-        && !isEditable(control) && !isNativeActionContent(control);
+        && !control.classList.contains(CONTROL_SHELL_CLASS) && !isEditable(control) && !isNativeActionContent(control);
 }
 
 /** @param {Element} control */
 function getFallbackRole(control) {
     // Add semantics only to the neutral elements used by the old markup. This
     // leaves labels, headings, images and native controls with their own meaning.
-    if (!control.matches('div,span,i,a:not([href])') || isEditable(control) || isNativeActionContent(control)) return null;
+    if (!control.matches('div,span,i,a:not([href])') || control.classList.contains(CONTROL_SHELL_CLASS)
+        || isEditable(control) || isNativeActionContent(control)) return null;
     // Menu groups are layout, even when an extension opts the wrapper into focus.
     if (control.matches('#extensionsMenu .extension_container')) return null;
     for (const [selector, role] of structuralRoles) {

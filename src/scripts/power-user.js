@@ -909,26 +909,19 @@ function switchWaifuMode() {
     scrollChatToBottom();
 }
 
+function showCharacterDetails(show) {
+    $('#descriptionWrapper, #firstMessageWrapper').toggle(show);
+    $('#spoiler_free_desc').toggleClass('flex1', !show);
+    $('#creators_note_desc_hidden').toggle(!show);
+    $('#spoiler_free_desc_button').attr('aria-expanded', String(show));
+}
+
 function switchSpoilerMode() {
-    if (power_user.spoiler_free_mode) {
-        $('#descriptionWrapper').hide();
-        $('#firstMessageWrapper').hide();
-        $('#spoiler_free_desc').addClass('flex1');
-        $('#creators_note_desc_hidden').show();
-    }
-    else {
-        $('#descriptionWrapper').show();
-        $('#firstMessageWrapper').show();
-        $('#spoiler_free_desc').removeClass('flex1');
-        $('#creators_note_desc_hidden').hide();
-    }
+    showCharacterDetails(!power_user.spoiler_free_mode);
 }
 
 function peekSpoilerMode() {
-    $('#descriptionWrapper').toggle();
-    $('#firstMessageWrapper').toggle();
-    $('#spoiler_free_desc').toggleClass('flex1');
-    $('#creators_note_desc_hidden').toggle();
+    showCharacterDetails(!$('#descriptionWrapper').is(':visible'));
 }
 
 function switchMovingUI() {
@@ -2019,8 +2012,9 @@ function toggleMDHotkeyIconDisplay() {
     }
 }
 
-function loadCharListState() {
+export function loadCharListState() {
     document.body.classList.toggle('charListGrid', power_user.charListGrid);
+    $('#charListGridToggle').attr('aria-pressed', String(power_user.charListGrid));
 }
 
 export function loadMovingUIState() {
@@ -4064,8 +4058,8 @@ jQuery(() => {
 
     $('#spoiler_free_desc_button').on('click', function (e) {
         e.stopPropagation();
-        peekSpoilerMode();
         $(this).toggleClass('fa-eye fa-eye-slash');
+        peekSpoilerMode();
     });
 
     $('#custom_stopping_strings').on('input', function () {

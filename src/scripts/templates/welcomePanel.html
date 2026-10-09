@@ -2,15 +2,12 @@
     <div class="welcomeHeaderTitle">
         <img src="img/logo.png" alt="SillyTavern Logo" data-i18n="[alt]SillyTavern Logo" class="welcomeHeaderLogo">
         <span class="welcomeHeaderVersionDisplay">{{version}}</span>
-        <div class="mes_button showRecentChats" title="Show recent chats" data-i18n="[title]Show recent chats">
-            <i class="fa-solid fa-circle-chevron-down fa-fw fa-lg"></i>
-        </div>
-        <div class="mes_button recentChatsSettings" title="Recent chats settings" data-i18n="[title]Recent chats settings">
+        <button type="button" class="mes_button recentChatsSettings" title="Recent chats settings" data-i18n="[title]Recent chats settings">
             <i class="fa-solid fa-gear fa-fw fa-lg"></i>
-        </div>
-        <div class="mes_button hideRecentChats" title="Hide recent chats" data-i18n="[title]Hide recent chats">
+        </button>
+        <button type="button" class="mes_button toggleRecentChats" title="Show / Hide recent chats" data-i18n="[title]Show / Hide recent chats">
             <i class="fa-solid fa-circle-xmark fa-fw fa-lg"></i>
-        </div>
+        </button>
     </div>
     <div class="welcomeHeader">
         <div class="recentChatsTitle" data-i18n="Recent Chats">
@@ -30,30 +27,31 @@
                 <span data-i18n="Discord">Discord</span>
             </a>
             <span class="welcomeShortcutsSeparator">&vert;</span>
-            <button class="openTemporaryChat menu_button menu_button_icon">
+            <button type="button" class="openTemporaryChat menu_button menu_button_icon">
                 <i class="fa-solid fa-comment-dots"></i>
                 <span data-i18n="Temporary Chat">Temporary Chat</span>
             </button>
         </div>
     </div>
     <div class="welcomeRecent">
-        <div class="recentChatList">
+        <div class="recentChatList" role="list">
         {{#if empty}}
-            <div class="noRecentChat">
+            <div class="noRecentChat" role="listitem">
                 <i class="fa-solid fa-comment-dots"></i>
                 <span data-i18n="No recent chats">No recent chats</span>
             </div>
         {{/if}}
         {{#each chats}}
             {{#with this}}
-            <div class="recentChat {{#if hidden}}hidden{{/if}} {{#if is_group}}group{{/if}}" data-file="{{chat_name}}" data-avatar="{{avatar}}" data-group="{{group}}">
+            <div role="listitem" class="tt-control-shell recentChat {{#if hidden}}hidden{{/if}} {{#if is_group}}group{{/if}}" data-file="{{chat_name}}" data-avatar="{{avatar}}" data-group="{{group}}">
+                <button type="button" class="sr-only"></button>
                 {{#if pinned}}
                     <div class="recentChatPinned">
                         <i class="fa-solid fa-thumbtack fa-fw fa-xs" title="Pinned chat" data-i18n="[title]Pinned chat"></i>
                     </div>
                 {{/if}}
                 <div class="avatar" title="[Character] {{char_name}}&#10;File: {{avatar}}">
-                    <img src="{{char_thumbnail}}" alt="{{char_name}}">
+                    <img src="{{char_thumbnail}}" alt="">
                 </div>
                 <div class="recentChatInfo">
                     <div class="chatNameContainer">
@@ -64,13 +62,13 @@
                         </div>
                         <small class="chatDate" title="{{date_long}}">{{date_short}}</small>
                         <div class="chatActions">
-                            <button class="menu_button menu_button_icon pinChat {{#if pinned}}active{{/if}}" title="Pin chat" data-i18n="[title]Pin chat">
+                            <button type="button" aria-pressed="{{#if pinned}}true{{else}}false{{/if}}" class="menu_button menu_button_icon pinChat {{#if pinned}}active{{/if}}" title="Pin chat" data-i18n="[title]Pin chat">
                                 <i class="fa-solid fa-thumbtack fa-fw"></i>
                             </button>
-                            <button class="menu_button menu_button_icon renameChat" title="Rename chat" data-i18n="[title]Rename chat">
+                            <button type="button" class="menu_button menu_button_icon renameChat" title="Rename chat" data-i18n="[title]Rename chat">
                                 <i class="fa-solid fa-pen-to-square fa-fw"></i>
                             </button>
-                            <button class="menu_button menu_button_icon deleteChat" title="Delete chat" data-i18n="[title]Delete chat">
+                            <button type="button" class="menu_button menu_button_icon deleteChat" title="Delete chat" data-i18n="[title]Delete chat">
                                 <i class="fa-solid fa-trash fa-fw"></i>
                             </button>
                         </div>
@@ -92,9 +90,11 @@
             {{/with}}
         {{/each}}
         {{#if more}}
-            <button class="menu_button menu_button_icon showMoreChats">
-                <small class="fa-solid fa-chevron-down fa-fw fa-1x"></small>
-            </button>
+            <div class="recentChatsMore" role="listitem">
+                <button type="button" class="menu_button menu_button_icon showMoreChats">
+                    <small class="fa-solid fa-chevron-down fa-fw fa-1x"></small>
+                </button>
+            </div>
         {{/if}}
         </div>
     </div>

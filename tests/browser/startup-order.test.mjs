@@ -28,6 +28,21 @@ try {
     assert.equal(dialog.open, true, 'A failed startup must stay visible');
     assert.ok(dialog.querySelector('pre').textContent.includes(error.message), 'The dialog must show the startup error');
     console.log('PASS: a failed startup shows its error and still reports it');
+
+    // The ready callback still binds DOM actions after settings fail; jQuery event.result exposes the core handler's promise.
+    const dropdown = window.document.getElementById('char-management-dropdown');
+    dropdown.add(new window.Option('Extension action', 'extension-action'));
+    dropdown.lastElementChild.id = 'extension-action';
+    let pendingAction;
+    window.jQuery(dropdown).on('change', event => {
+        assert.equal(dropdown.selectedOptions[0].id, 'extension-action', 'Synchronous extension handlers see their selected option');
+        pendingAction = event.result;
+    });
+    dropdown.value = 'extension-action';
+    window.jQuery(dropdown).trigger('change');
+    await pendingAction;
+    assert.equal(dropdown.selectedIndex, 0, 'The completed action resets the menu');
+    console.log('PASS: character actions preserve the extension change contract');
 } finally {
     await window.happyDOM.close();
 }

@@ -1,3 +1,4 @@
+import { keepFocus, setAriaRelation } from './dom-handlers.js';
 import { DOMPurify } from '../lib.js';
 
 import {
@@ -7,10 +8,10 @@ import {
     menu_type,
     entitiesFilter,
     printCharactersDebounced,
+    requestCharacterListRender,
     buildAvatarList,
     eventSource,
     event_types,
-    DEFAULT_PRINT_TIMEOUT,
     printCharacters,
 } from '../script.js';
 import { FILTER_TYPES, FILTER_STATES, DEFAULT_FILTER_STATE, isFilterState, FilterHelper } from './filters.js';
@@ -24,7 +25,8 @@ import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '
 import { isMobile } from './RossAscends-mods.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { debounce_timeout } from './constants.js';
-import { INTERACTABLE_CONTROL_CLASS } from './keyboard.js';
+import { INTERACTABLE_CONTROL_CLASS, makeKeyboardInteractable } from './keyboard.js';
+import { CONTROL_SHELL_CLASS } from './legacy-controls.js';
 import { commonEnumProviders } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { renderTemplateAsync } from './templates.js';
 import { t, translate } from './i18n.js';
@@ -56,7 +58,7 @@ export {
 
 const CHARACTER_FILTER_SELECTOR = '#rm_characters_block .rm_tag_filter';
 const GROUP_FILTER_SELECTOR = '#rm_group_add_members_header ~ .rm_tag_controls .rm_tag_filter';
-const GROUP_MEMBERS_FILTER_SELECTOR = '#rm_group_members_header ~ .rm_tag_controls .rm_tag_filter';
+const GROUP_MEMBERS_FILTER_SELECTOR = '.rm_group_members_header ~ .rm_tag_controls .rm_tag_filter';
 const TAG_TEMPLATE = $('#tag_template .tag');
 const FOLDER_TEMPLATE = $('#bogus_folder_template .bogus_folder_select');
 const VIEW_TAG_TEMPLATE = $('#tag_view_template .tag_view_item');
@@ -96,7 +98,7 @@ function getFilterHelper(listSelector) {
     const $element = typeof listSelector === 'string' ? $(listSelector) : listSelector;
 
     // Check if this filter is in the group members section
-    if ($element.closest('#currentGroupMembers').length > 0) {
+    if ($element.closest('.currentGroupMembers').length > 0) {
         return groupMembersFilter;
     }
 
@@ -490,7 +492,11 @@ function chooseBogusFolder(source, tagId, remove = false) {
     const FILTER_SELECTOR = ($(source).closest('#rm_characters_block') ?? $(source).closest('#rm_group_chats_block')).find('.rm_tag_filter');
     const tagElement = $(FILTER_SELECTOR).find(`.tag[id=${tagId}]`);
 
+    const previousFilter = JSON.stringify(entitiesFilter.getFilterData(FILTER_TYPES.TAG));
     toggleTagThreeState(tagElement, { stateOverride: !remove ? FILTER_STATES.SELECTED : DEFAULT_FILTER_STATE, simulateClick: true });
+    if (previousFilter !== JSON.stringify(entitiesFilter.getFilterData(FILTER_TYPES.TAG))) {
+        requestCharacterListRender({ focus: remove ? `[tagid="${CSS.escape(tagId)}"]` : `.${CONTROL_SHELL_CLASS}:not(#BogusFolderBack)` });
+    }
 }
 
 /**
@@ -512,6 +518,8 @@ function getTagBlock(tag, entities, hidden = 0, isUseless = false) {
     template.attr({ 'tagid': tag.id, 'id': `BogusFolder${tag.id}` });
     template.find('.avatar').css({ 'background-color': tag.color, 'color': tag.color2 }).attr('title', `[Folder] ${tag.name}`);
     template.find('.ch_name').text(tag.name).attr('title', `[Folder] ${tag.name}`);
+    setAriaRelation(template[0].querySelector(':scope > .sr-only'), 'labelledby', template.find('.ch_name')[0]);
+    setAriaRelation(template[0].querySelector(':scope > .sr-only'), 'describedby', template.find('.bogus_folder_counter')[0]);
     template.find('.bogus_folder_hidden_counter').text(hidden > 0 ? `${hidden} hidden` : '');
     template.find('.bogus_folder_counter').text(`${count} ` + (count != 1 ? t`characters` : t`character`));
     template.find('.bogus_folder_icon').addClass(tagFolder.fa_icon);
@@ -1307,6 +1315,7 @@ function appendTagToList(listElement, tag, { removable = false, isFilter = false
 
     tagElement.find('.tag_name').text(tag.name);
     const removeButton = tagElement.find('.tag_remove');
+    setAriaRelation(removeButton[0], 'labelledby', removeButton[0], tagElement.find('.tag_name')[0]);
     removable ? removeButton.show() : removeButton.hide();
     if (removable && removeAction) {
         tagElement.attr('custom-remove-action', String(true));
@@ -1323,7 +1332,10 @@ function appendTagToList(listElement, tag, { removable = false, isFilter = false
         tagElement.attr('title', tag.title);
     }
     if (tag.icon) {
-        tagElement.find('.tag_name').text('').attr('title', `${translate(tag.name)} ${tag.title || ''}`.trim()).addClass(tag.icon);
+        tagElement.find('.tag_name').text('').addClass(tag.icon);
+        tagElement.attr('title', `${translate(tag.name)} ${tag.title || ''}`.trim());
+        const [label] = tag.name.split('\n');
+        if (label !== tag.name) tagElement.attr('aria-label', translate(label));
         tagElement.addClass('actionable');
     }
     if (isInactive) {
@@ -1355,13 +1367,13 @@ function appendTagToList(listElement, tag, { removable = false, isFilter = false
         tagElement.addClass('clickable-action').addClass(INTERACTABLE_CONTROL_CLASS);
     }
 
+    if (isFilter || clickableAction) makeKeyboardInteractable(tagElement[0]);
     $(listElement).append(tagElement);
 }
 
 function onTagFilterClick(listElement) {
     const tagId = $(this).attr('id');
     const existingTag = tags.find((tag) => tag.id === tagId);
-    const parent = $(this).parents('.tags');
 
     let state = toggleTagThreeState($(this));
 
@@ -1382,9 +1394,6 @@ function onTagFilterClick(listElement) {
 
     // Apply all tag filters by reading from DOM state (this triggers the filter helper update)
     runTagFilters(listElement);
-
-    // Focus the tag again we were at, if possible. To improve keyboard navigation
-    setTimeout(() => parent.find(`.tag[id="${tagId}"]`).trigger('focus'), DEFAULT_PRINT_TIMEOUT + 1);
 
     updateTagFilterIndicator(listElement);
 }
@@ -1476,7 +1485,9 @@ function toggleTagThreeState(element, { stateOverride = undefined, simulateClick
 
         console.debug('manually click-toggle three-way filter from', states[currentStateIndex], 'to', states[targetStateIndex], 'on', element);
     } else {
-        element.attr('data-toggle-state', states[targetStateIndex]);
+        const state = states[targetStateIndex];
+        element.attr('data-toggle-state', state);
+        element.attr('aria-describedby', state === 'SELECTED' ? 'tag_filter_included' : state === 'EXCLUDED' ? 'tag_filter_excluded' : null);
 
         // Update css class and remove all others
         states.forEach(state => {
@@ -1518,86 +1529,48 @@ function printTagFilters(type = tag_filter_type.character) {
             break;
     }
 
-    $(FILTER_SELECTOR).empty();
-
-    // Print all action tags. (Rework 'Folder' button to some kind of onboarding if no folders are enabled yet)
     let actionTags = Object.values(ACTIONABLE_TAGS);
-    actionTags.find(x => x == ACTIONABLE_TAGS.FOLDER).name = power_user.bogus_folders ? 'Show only folders' : 'Enable \'Tags as Folder\'\n\nAllows characters to be grouped in folders by their assigned tags.\nTags have to be explicitly chosen as folder to show up.\n\nClick here to start';
-
-    // For group contexts, filter actionable tags to only show relevant ones
-    if (isGroupContext(type)) {
-        actionTags = filterActionableTagsForGroupContext(actionTags);
-    }
-
-    printTagList($(FILTER_SELECTOR), { empty: false, sort: false, tags: actionTags, tagActionSelector: tag => tag.action, tagOptions: { isGeneralList: true } });
-
+    ACTIONABLE_TAGS.FOLDER.name = power_user.bogus_folders ? 'Show only folders' : 'Enable \'Tags as Folder\'\n\nAllows characters to be grouped in folders by their assigned tags.\nTags have to be explicitly chosen as folder to show up.\n\nClick here to start';
+    if (isGroupContext(type)) actionTags = filterActionableTagsForGroupContext(actionTags);
     const inListActionTags = Object.values(InListActionable);
-    printTagList($(FILTER_SELECTOR), { empty: false, sort: false, tags: inListActionTags, tagActionSelector: tag => tag.action, tagOptions: { isGeneralList: true } });
-
-    // Determine which character tags to display based on context
-    let tagsToDisplay;
+    const characterTagIds = Object.values(tag_map).flat();
+    let tagsToDisplay = tags.filter(tag => characterTagIds.includes(tag.id)).sort(compareTagsForSort);
     let inactiveTags = [];
-
     if (isGroupContext(type)) {
-        // For group contexts, show all tags but mark ones without presence in current context as inactive
-        // CAUTION: when called by openGroupById, the selected_group variable might not yet be updated
-        const currentGroup = selected_group ? groups.find(x => x.id == selected_group) : null;
+        const currentGroup = selected_group ? groups.find(group => group.id === selected_group) : null;
         const visibleAvatars = getVisibleAvatarsForGroupContext(type, currentGroup);
-
-        if (visibleAvatars.length > 0) {
-            // Get tags that are assigned to at least one visible character
-            const activeCharacterTagIds = visibleAvatars
-                .map(avatar => tag_map[avatar] || [])
-                .flat()
-                .filter(onlyUnique);
-
-            // Show all tags that exist in the tag_map
-            const allCharacterTagIds = Object.values(tag_map).flat().filter(onlyUnique);
-            tagsToDisplay = tags.filter(x => allCharacterTagIds.includes(x.id)).sort(compareTagsForSort);
-
-            // Mark tags that are not in the active set as inactive
-            inactiveTags = tagsToDisplay
-                .filter(x => !activeCharacterTagIds.includes(x.id))
-                .map(x => x.id);
+        if (visibleAvatars.length) {
+            const activeTagIds = new Set(visibleAvatars.flatMap(avatar => tag_map[avatar] || []));
+            inactiveTags = tagsToDisplay.filter(tag => !activeTagIds.has(tag.id)).map(tag => tag.id);
         } else {
-            // No group selected, show no tags
             tagsToDisplay = [];
         }
-    } else {
-        // For main character list, show all tags as before
-        const characterTagIds = Object.values(tag_map).flat();
-        tagsToDisplay = tags.filter(x => characterTagIds.includes(x.id)).sort(compareTagsForSort);
     }
-
-    printTagList($(FILTER_SELECTOR), { empty: false, tags: tagsToDisplay, tagOptions: { isFilter: true, isGeneralList: true }, inactiveTags: inactiveTags });
-
-
-    // Print bogus folder navigation
-    const bogusDrilldown = $(FILTER_SELECTOR).siblings('.rm_tag_bogus_drilldown');
-    bogusDrilldown.empty();
-    if (power_user.bogus_folders && bogusDrilldown.length > 0) {
-        const navigatedTags = getOpenBogusFolders();
-        printTagList(bogusDrilldown, { tags: navigatedTags, tagOptions: { removable: true } });
-    }
-
-    // Don't call runTagFilters here - it would overwrite the loaded filter states with the DOM state.
-    // The visual state (CSS classes) already matches the filter helper state set by loadFilterStatesForContext.
-    // runTagFilters is only needed when user clicks a tag (handled in onTagFilterClick).
-
-    // Initialize the tag list visibility based on saved settings for this context
+    const navigatedTags = power_user.bogus_folders ? getOpenBogusFolders() : [];
     const shouldShowTags = getTagFilterVisibility(type);
-    const showTagListButton = $(FILTER_SELECTOR).closest('.rm_tag_controls').find('.showTagList');
 
-    // Update button state to match the saved setting
-    showTagListButton.toggleClass('selected', shouldShowTags);
+    $(FILTER_SELECTOR).each((_, element) => {
+        const list = $(element);
+        const controls = list.closest('.rm_tag_controls');
+        const bogusDrilldown = list.siblings('.rm_tag_bogus_drilldown');
+        keepFocus(
+            () => controls.find('.tag').toArray(),
+            tag => tag.id,
+            () => {
+                list.empty();
+                printTagList(list, { empty: false, sort: false, tags: actionTags, tagActionSelector: tag => tag.action, tagOptions: { isGeneralList: true } });
+                printTagList(list, { empty: false, sort: false, tags: inListActionTags, tagActionSelector: tag => tag.action, tagOptions: { isGeneralList: true } });
+                printTagList(list, { empty: false, sort: false, tags: tagsToDisplay, tagOptions: { isFilter: true, isGeneralList: true }, inactiveTags });
+                bogusDrilldown.empty();
+                if (navigatedTags.length) printTagList(bogusDrilldown, { tags: navigatedTags, tagOptions: { removable: true } });
 
-    if (shouldShowTags) {
-        $(FILTER_SELECTOR).find('.tag:not(.actionable)').show();
-    } else {
-        $(FILTER_SELECTOR).find('.tag:not(.actionable)').hide();
-    }
-
-    updateTagFilterIndicator(FILTER_SELECTOR);
+                const showTagListButton = controls.find('.showTagList');
+                setAriaRelation(showTagListButton[0], 'controls', list[0]);
+                applyTagFilterVisibility(controls, shouldShowTags);
+                updateTagFilterIndicator(list);
+            },
+        );
+    });
 }
 
 /**
@@ -2204,19 +2177,12 @@ const debouncedTagColoring = debounce((tagId, cssProperty, newColor) => {
     $(`.bogus_folder_select[tagid="${tagId}"] .avatar`).css(cssProperty, newColor);
 }, debounce_timeout.quick);
 
+function applyTagFilterVisibility(controls, visible) {
+    controls.find('.showTagList').toggleClass('selected', visible).attr('aria-expanded', String(visible));
+    controls.find('.rm_tag_filter .tag:not(.actionable)').toggle(visible);
+}
+
 function onTagListHintClick() {
-    $(this).toggleClass('selected');
-
-    const $tagSiblings = $(this).siblings('.tag:not(.actionable)');
-
-    if ($(this).hasClass('selected')) {
-        $tagSiblings.show();
-    } else {
-        $tagSiblings.hide();
-    }
-
-    $(this).siblings('.innerActionable').toggleClass('hidden');
-
     // Determine which context this button belongs to and save the setting
     let filterType = tag_filter_type.character;
 
@@ -2224,13 +2190,13 @@ function onTagListHintClick() {
     const $tagControls = $(this).closest('.rm_tag_controls');
     if ($tagControls.prev().is('#rm_group_add_members_header')) {
         filterType = tag_filter_type.group_candidates_list;
-    } else if ($tagControls.prev().is('#rm_group_members_header')) {
+    } else if ($tagControls.prev().is('.rm_group_members_header')) {
         filterType = tag_filter_type.group_members_list;
     }
 
-    const isSelected = $(this).hasClass('selected');
-    setTagFilterVisibility(filterType, isSelected);
-    console.debug('show_tag_filters for type', filterType, ':', isSelected);
+    const visible = !getTagFilterVisibility(filterType);
+    setTagFilterVisibility(filterType, visible);
+    applyTagFilterVisibility($tagControls, visible);
 }
 
 /**

@@ -29,12 +29,13 @@ async function withControls(html, run) {
 
 test('legacy roles preserve native, explicit and collection semantics while keeping click-only buttons operable', async () => {
     await withControls(`
-        <div class="list-group"><div id="action" class="menu_button list-group-item" role="button">Action</div></div>
+        <div class="list-group"><div id="row" class="interactable tt-control-shell">
+            <button class="sr-only">Character</button><div id="action" class="menu_button list-group-item" role="button">Action</div>
+        </div></div>
         <a id="link" class="menu_button" href="#destination">Link</a>
         <button id="native" class="menu_button">Native</button>
         <h2 id="heading" class="interactable">Heading</h2>
         <div id="switch" class="menu_button" role="switch" aria-checked="false">Switch</div>
-        <div id="rm_print_characters_block"><div id="row" class="character_select entity_block">Character</div></div>
         <div class="tags"><span id="passiveTag" class="tag">Passive</span><span id="activeTag" class="tag interactable">Filter</span></div>
         <div id="bg_tabs"><ul class="bg_tabs_list" role="tablist"><li id="tab" class="bg_tab_button" role="tab" tabindex="-1">Tab</li></ul></div>
     `, ({ key }) => {
@@ -42,7 +43,8 @@ test('legacy roles preserve native, explicit and collection semantics while keep
         assert.equal(document.getElementById('action').getAttribute('role'), 'button');
         assert.equal(document.getElementById('switch').getAttribute('role'), 'switch');
         for (const id of ['link', 'native', 'heading']) assert.equal(document.getElementById(id).hasAttribute('role'), false);
-        assert.equal(document.getElementById('row').getAttribute('role'), 'listitem');
+        assert.equal(document.getElementById('row').hasAttribute('role'), false);
+        assert.equal(document.getElementById('row').hasAttribute('tabindex'), false);
         assert.equal(document.getElementById('passiveTag').hasAttribute('role'), false);
         assert.equal(document.getElementById('passiveTag').hasAttribute('tabindex'), false);
         assert.equal(document.getElementById('activeTag').getAttribute('role'), 'button');

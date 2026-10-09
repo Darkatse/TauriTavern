@@ -51,7 +51,7 @@ transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方
 
 扩展的兼容 get 共用仓储读取器，将 JSONL 按需转换为 JSON 数组字节，由消费者解析；接口与流式错误语义见 [FrontendHostContract §4.3](../FrontendHostContract.md#43-路由表public)。
 
-角色聊天在完整水合后才绑定本次 payload 请求的 character/chat 快照。若角色当前 stem 不存在、但已有聊天列表非空，则沿用 `replaceCurrentChat()` 的最近聊天语义按需修复并写回；列表为空时才允许创建新聊天。恢复只在打开目标角色时发生，不做启动期全库扫描。
+角色聊天在完整水合后才绑定本次 payload 请求的 character/chat 快照。若角色当前 stem 不存在、但已有聊天列表非空，则由 `resolvePersistedChat` 按最近聊天语义按需修复并写回；列表为空时才允许创建新聊天。恢复只在打开目标角色时发生，不做启动期全库扫描。
 
 显式打开指定聊天（首页 recent、聊天管理器、书签、分支）统一经由 `selectCharacterById(id, { chatFile })` 与 `openGroupById(id, { chatId })`：不预扫聊天列表、不恢复、不新建；角色 `chat` 与群组 `chat_id` 只在目标加载成功后写回。
 
@@ -92,6 +92,19 @@ metadata 操作要求目标文件存在。新群聊在首次问候扩展事件�
 storage-core 的 `chat_metadata.rs` 在路径 mutation lock 内读取最新 header、应用修改并复制正文，复用统一发布机制；成功后失效缓存并通知备份协调器。内容签名必须对应完整发布文件，不能用上传的 metadata 字节代替。integrity 表示身份而非内容版本，进程内锁不提供跨进程或 Sync 冲突隔离。
 
 JS 与 IPC 成本随提交的 metadata 大小增长；Rust 工作内存随 header 与新值增长，不随正文增长。磁盘仍需读写完整替代文件，成本为 Θ(文件大小)，文件 mtime 随之更新。header 不保证字段顺序或格式，正文保持原字节。
+
+### 3.2 删除与重命名
+
+删除或重命名打开中的聊天前先经 `prepareCurrentChatFileChange()`：生成中拒绝，否则等待一次完整保存（`saveChatConditional()`，同时取消已排定的防抖保存），保存失败则中止操作。`doNewChat({ deleteCurrentChat: true })` 在清空前使用同一准入。
+
+文件操作在开始时确定目标（头像或群组 id 加文件名），角色记录由 `updateRemoteChatName(characterId, name)` 写入。上游导出 `replaceCurrentChat`、`deleteCharacterChatByName`、`deleteGroupChatByName` 与界面共用同一套删除与替换实现。删除打开中的聊天后，按“清空 → 重置元数据 → 记录指向替代聊天 → 加载 → 保存记录”替换；改名后由 `renameGroupOrCharacterChat` 让仍指向旧名的记录跟随。文件操作成功后，后续步骤失败报告“已删除 / 已改名，但……”。导出只在目标是打开中的聊天时先保存。
+
+按名删除也会加载替代聊天。已确认的扩展边界（2026-10-09）：
+
+- Discordia 0.7.3 删除后再次清空宿主聊天的流程不支持；它可能清空并在后续保存时覆盖替代聊天。
+- Folder Manager 3.0.15 批量删除最后一条当前聊天后会自行新建，可能多留一份新聊天；此差异已接受。
+
+已知边界：当前聊天没有显式会话；准入不阻止之后新发起的保存，也不覆盖队列外的批量写入（`renamePastChats`、`renameGroupMember`）。
 
 ## 4. First-class Tool 消息
 

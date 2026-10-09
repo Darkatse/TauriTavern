@@ -1,10 +1,10 @@
 /**
- * Shared disclosure behavior for the chat options and extensions menus.
+ * Shared disclosure behavior for action menus.
  * Business actions and positioning stay with the caller.
  * @param {HTMLElement} trigger
  * @param {HTMLElement} panel
  * @param {{ onOpen: () => void, closesOnClick: (target: Element) => boolean }} options
- * @returns {() => void} Close the menu from programmatic actions.
+ * @returns {{ open: () => void, close: () => void, isOpen: () => boolean }}
  */
 export function initPopupMenu(trigger, panel, { onOpen, closesOnClick }) {
     const doc = panel.ownerDocument;
@@ -43,5 +43,9 @@ export function initPopupMenu(trigger, panel, { onOpen, closesOnClick }) {
         if (panel.style.display !== 'none' && event.target instanceof Node
             && !panel.contains(event.target) && !trigger.contains(event.target)) setOpen(false);
     });
-    return () => setOpen(false);
+    return {
+        open: () => setOpen(true),
+        close: () => setOpen(false),
+        isOpen: () => panel.style.display !== 'none',
+    };
 }

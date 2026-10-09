@@ -12,7 +12,7 @@ import { Popup, POPUP_TYPE } from './popup.js';
 import { localforage } from '../lib.js';
 import { t, translate } from './i18n.js';
 import { escapeHtml } from './utils.js';
-import { getControlLabel } from './dom-handlers.js';
+import { getControlName } from './dom-handlers.js';
 
 const forcedOnColoring = 'color: #89db35;';
 const forcedOffColoring = 'color: #e84f62;';
@@ -263,8 +263,7 @@ async function listSamplers(main_api, arrayOnly = false) {
 
         if (displayname === undefined) {
             const control = document.getElementById(`${sampler}_${main_api}`);
-            const label = control && getControlLabel(control);
-            displayname = label?.textContent.trim() || sampler;
+            displayname = (control && getControlName(control)) || sampler;
         } else {
             displayname = translate(displayname);
         }

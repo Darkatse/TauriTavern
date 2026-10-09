@@ -4,6 +4,7 @@ import type { ElementTarget, Observation } from './snapshot';
 import { documentWindow, isHTMLElement, isHtmlTag, isInScope } from './document';
 import type { DocumentScope } from './document';
 import { inspectInputSurface } from './geometry';
+import { CONTROL_SHELL_CLASS } from '../../../../legacy-controls.js';
 import type { InteractionPoint } from './geometry';
 export type { InteractionPoint } from './geometry';
 
@@ -161,9 +162,9 @@ function prepareAction(
     const requireSurface = (candidates: HTMLElement[]) => requireInputSurface(candidates, scope, semantics, feedback);
     switch (request.action) {
         case 'click': {
-            const surface = requireSurface(clickCandidates(element));
+            requireSurface(surfaceCandidates(element));
             return () => {
-                surface.click();
+                element.click();
                 return true;
             };
         }
@@ -207,13 +208,13 @@ function prepareAction(
             if (element.type === 'radio' && !request.checked) {
                 throw new Error('A radio cannot be unchecked directly. Select another radio in the group with checked=true.');
             }
-            const surface = requireSurface(clickCandidates(element));
+            requireSurface(surfaceCandidates(element));
 
             return () => {
                 if (element.checked === request.checked) {
                     return false;
                 }
-                surface.click();
+                element.click();
                 return true;
             };
         }
@@ -255,21 +256,24 @@ function notifyValueChange(element: HTMLElement) {
     element.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-function clickCandidates(element: HTMLElement): HTMLElement[] {
+function surfaceCandidates(element: HTMLElement): HTMLElement[] {
     const candidates = [element];
     if (isCheckableInput(element)) {
         candidates.push(...Array.from(element.labels ?? []));
     }
-    return candidates;
+    if (element.matches(`.${CONTROL_SHELL_CLASS} > .sr-only`) && element.parentElement) {
+        candidates.push(element.parentElement);
+    }
+    return [...new Set(candidates)];
 }
 
-function requireInputSurface(candidates: HTMLElement[], scope: DocumentScope, semantics: Semantics, feedback?: InteractionFeedback): HTMLElement {
+function requireInputSurface(candidates: HTMLElement[], scope: DocumentScope, semantics: Semantics, feedback?: InteractionFeedback): void {
     const reasons: string[] = [];
     for (const candidate of candidates) {
         const surface = inspectInputSurface(candidate, scope, semantics);
         if ('point' in surface) {
             feedback?.(surface.point);
-            return candidate;
+            return;
         }
         reasons.push(surface.reason);
     }

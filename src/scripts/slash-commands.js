@@ -14,7 +14,7 @@ import {
     default_avatar,
     deleteCharacter,
     deleteSwipe,
-    displayPastChats,
+    deleteCharacterChat,
     duplicateCharacter,
     eventSource,
     event_types,
@@ -77,7 +77,7 @@ import { getMessageTimeStamp, isMobile } from './RossAscends-mods.js';
 import { hideChatMessageRange } from './chats.js';
 import { getContext, saveMetadataDebounced } from './extensions.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
-import { findGroupMemberId, groups, is_group_generating, openGroupById, regenerateGroup, resetSelectedGroup, saveGroupChat, selected_group, getGroupMembers } from './group-chats.js';
+import { deleteGroupChat, findGroupMemberId, groups, is_group_generating, openGroupById, regenerateGroup, resetSelectedGroup, saveGroupChat, selected_group, getGroupMembers } from './group-chats.js';
 import { addAndSelectCustomModelForSource, chat_completion_sources, getChatCompletionModelControl, isCustomModelActionValue, MINIMAX_ENDPOINT, MOONSHOT_ENDPOINT, oai_settings, OPENCODE_API_FORMAT, OPENCODE_ENDPOINT, POLLINATIONS_ENDPOINT, promptManager, SILICONFLOW_ENDPOINT, ZAI_ENDPOINT } from './openai.js';
 import { user_avatar } from './personas.js';
 import { addEphemeralStoppingString, chat_styles, context_presets, flushEphemeralStoppingStrings, playMessageSound, power_user } from './power-user.js';
@@ -599,32 +599,11 @@ export function initDefaultSlashCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'delchat',
         callback: async function () {
-            return displayPastChats().then(() => new Promise((resolve) => {
-                let resolved = false;
-                const timeOutId = setTimeout(() => {
-                    toastr.error(t`Chat deletion timed out. Please try again.`);
-                    setResolved();
-                }, 5000);
-
-                const setResolved = () => {
-                    if (resolved) {
-                        return;
-                    }
-                    resolved = true;
-                    [event_types.CHAT_DELETED, event_types.GROUP_CHAT_DELETED].forEach((eventType) => {
-                        eventSource.removeListener(eventType, setResolved);
-                    });
-                    clearTimeout(timeOutId);
-                    resolve('');
-                };
-
-                [event_types.CHAT_DELETED, event_types.GROUP_CHAT_DELETED].forEach((eventType) => {
-                    eventSource.on(eventType, setResolved);
-                });
-
-                const currentChatDeleteButton = $('.select_chat_block[highlight=\'true\']').parent().find('.PastChat_cross');
-                $(currentChatDeleteButton).trigger('click', { fromSlashCommand: true });
-            }));
+            const fileName = getCurrentChatId();
+            if (!fileName) throw new Error('No chat is selected');
+            if (selected_group) await deleteGroupChat(selected_group, fileName);
+            else await deleteCharacterChat(characters[this_chid].avatar, fileName);
+            return '';
         },
         helpString: t`Deletes the current chat.`,
     }));

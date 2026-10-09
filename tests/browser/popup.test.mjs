@@ -14,6 +14,30 @@ test('Popup naming and result controls', async context => {
         const { document } = window;
         power_user.send_on_enter = send_on_enter_options.ENABLED;
 
+        await context.test('expanded editors write through native and jQuery input handlers', async () => {
+            getModule('scripts/chats.js').namespace.initChatUtilities();
+            const fixture = document.createElement('div');
+            fixture.innerHTML = '<div id="expanded-editor-source" contenteditable="true"></div><button type="button" class="editor_maximize" data-for="expanded-editor-source"></button>';
+            document.body.append(fixture);
+            const source = fixture.querySelector('[contenteditable]');
+            const values = {};
+            source.addEventListener('input', () => { values.native = source.innerText; });
+            window.jQuery(source).on('input', () => { values.jquery = source.innerText; });
+            const click = window.jQuery.Event('click');
+            window.jQuery(fixture.querySelector('button')).trigger(click);
+            const popup = Popup.util.popups.at(-1);
+            try {
+                const editor = popup.dlg.querySelector('textarea.maximized_textarea');
+                editor.value = 'Edited greeting';
+                editor.dispatchEvent(new window.Event('input', { bubbles: true }));
+                assert.deepEqual(values, { native: 'Edited greeting', jquery: 'Edited greeting' });
+            } finally {
+                await popup.completeAffirmative();
+                await click.result;
+                fixture.remove();
+            }
+        });
+
         await context.test('extension menus let Tab leave, consume Escape and hand dialogs a visible focus origin', async () => {
             await getModule('scripts/extensions.js').namespace.ensureExtensionsUiReady();
             const trigger = document.getElementById('extensionsMenuButton');

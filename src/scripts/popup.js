@@ -1,3 +1,4 @@
+import { setAriaRelation } from './dom-handlers.js';
 import dialogPolyfill from '../lib/dialog-polyfill.esm.js';
 import { shouldSendOnEnter } from './RossAscends-mods.js';
 import { t } from './i18n.js';
@@ -157,13 +158,12 @@ const showPopupHelper = {
 function setPopupText(popup, target, kind, text) {
     if (text === undefined) return;
     const attribute = `aria-${kind}`;
-    const reference = kind === 'label' ? 'aria-labelledby' : 'aria-describedby';
+    const relation = kind === 'label' ? 'labelledby' : 'describedby';
     if (typeof text === 'string') {
         target.setAttribute(attribute, text);
-        target.removeAttribute(reference);
+        target.removeAttribute(`aria-${relation}`);
     } else if (text instanceof HTMLElement && popup.dlg.contains(text)) {
-        text.id ||= `${popup.id}-${target === popup.dlg ? 'dialog' : 'input'}-${kind}`;
-        target.setAttribute(reference, text.id);
+        setAriaRelation(target, relation, text);
         target.removeAttribute(attribute);
     } else {
         throw new Error(`Popup ${kind} must be a string or an element inside this popup.`);

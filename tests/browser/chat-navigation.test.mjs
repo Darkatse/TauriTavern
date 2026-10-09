@@ -242,7 +242,7 @@ test('chat persistence and navigation', async (context) => {
                 case '/api/chats/search':
                     listReads += 1;
                     return window.Response.json([...payloads.keys()].map(fileName => ({
-                        file_name: `${fileName}.jsonl`, last_mes: '2026-01-01T12:00:00Z',
+                        file_name: url === '/api/chats/search' ? fileName : `${fileName}.jsonl`, last_mes: '2026-01-01T12:00:00Z',
                     })));
                 case '/api/characters/merge-attributes':
                     storedChat = body.chat;
@@ -252,6 +252,9 @@ test('chat persistence and navigation', async (context) => {
                     storedChat = body.chat_id;
                     writes.push(storedChat);
                     return window.Response.json({ ok: true });
+                case '/api/chats/delete':
+                case '/api/chats/group/delete':
+                    return new window.Response('Test deletion failure', { status: 500 });
                 default: throw new Error(`Unexpected request: ${url}`);
             }
         };
@@ -309,6 +312,24 @@ test('chat persistence and navigation', async (context) => {
             assert.equal(handles.size, 0, 'Chat reads must close their file handles');
         }
 
+        await context.test('debounced group failures report once while immediate saves reject', async () => {
+            await reset('group');
+            const fetch = window.fetch;
+            window.fetch = async (url, options) => url === '/api/groups/edit'
+                ? new window.Response('Group store unavailable', { status: 503 })
+                : fetch(url, options);
+            try {
+                await assert.rejects(groupChats.editGroup('review-group', true, false));
+                assert.deepEqual(errors, []);
+                await groupChats.editGroup('review-group', false, false);
+                await window.happyDOM.waitUntilComplete();
+                assert.equal(errors.length, 1);
+                assert.ok(errors[0][0].includes('503'));
+            } finally {
+                window.fetch = fetch;
+            }
+        });
+
         await context.test('character branching preserves the source identity and assigns a new identity', async () => {
             await reset('character');
             const sourceIntegrity = ' legacy/chat\n ';
@@ -325,7 +346,109 @@ test('chat persistence and navigation', async (context) => {
             assert.equal(stateCopies[0].targetStableChatId, targetIntegrity);
         });
 
+        await context.test('saving during current-chat deletion preserves the replacement and original character ownership', async () => {
+            await reset('character');
+            await openExplicit('target-chat');
+            payloads.delete('default-chat');
+            const replacementIntegrity = readHeader('later-chat').chat_metadata.integrity;
+            const { Popup } = getModule('scripts/popup.js').namespace;
+            const originalInput = Popup.show.input;
+            Popup.show.input = () => { throw new Error('The replacement save must not conflict'); };
+            const fetch = window.fetch;
+            let savedAvatar;
+            let saving;
+            window.fetch = async (url, options) => {
+                if (url === '/api/chats/delete') {
+                    payloads.delete('target-chat');
+                    return window.Response.json({ ok: true });
+                }
+                if (url === '/api/characters/chats') {
+                    main.characters.unshift({ ...main.characters[0], avatar: 'Other.png', chat: 'untouched' });
+                    main.setCharacterId(1);
+                }
+                if (url === '/api/characters/merge-attributes') {
+                    savedAvatar = JSON.parse(options.body).avatar;
+                    saving = main.saveChatConditional();
+                    await saving;
+                }
+                return fetch(url, options);
+            };
+            try {
+                await main.deleteCharacterChat('Review.png', 'target-chat');
+                assert.equal(savedAvatar, 'Review.png');
+                assert.equal(main.characters[0].chat, 'untouched');
+                await saving;
+                assert.equal(readHeader('later-chat').chat_metadata.integrity, replacementIntegrity);
+                const messages = payloads.get('later-chat').split('\n').slice(1).filter(Boolean).map(JSON.parse);
+                assert.deepEqual(messages.map(message => message.mes), ['later-chat']);
+            } finally {
+                window.fetch = fetch;
+                Popup.show.input = originalInput;
+            }
+        });
+
+        await context.test('deleting the open group chat drains pending saves before removing its file', async () => {
+            await reset('group');
+            await openExplicit('target-chat');
+            const entered = Promise.withResolvers();
+            const release = Promise.withResolvers();
+            const invoke = window.__TAURI__.core.invoke;
+            const fetch = window.fetch;
+            window.__TAURI__.core.invoke = async (command, args, options) => {
+                if (command === 'finish_chat_commit' && sessions.get(args.sessionId)?.target.chatId === 'target-chat') {
+                    entered.resolve();
+                    await release.promise;
+                }
+                return invoke(command, args, options);
+            };
+            window.fetch = async (url, options) => {
+                if (url === '/api/chats/group/delete') {
+                    payloads.delete('target-chat');
+                    return window.Response.json({ ok: true });
+                }
+                return fetch(url, options);
+            };
+            const saving = main.saveChatConditional();
+            let deletion;
+            try {
+                await entered.promise;
+                deletion = groupChats.deleteGroupChat('review-group', 'target-chat');
+                release.resolve();
+                await Promise.all([saving, deletion]);
+                assert.equal(payloads.has('target-chat'), false);
+            } finally {
+                release.resolve();
+                await Promise.all([saving, deletion]);
+                await window.happyDOM.waitUntilComplete();
+                window.__TAURI__.core.invoke = invoke;
+                window.fetch = fetch;
+            }
+        });
+
         for (const kind of ['character', 'group']) {
+            await context.test(`${kind}: failed recent deletion reports failure and preserves chat state`, async () => {
+                await reset(kind);
+                await welcome.openWelcomeScreen();
+                const { Popup } = getModule('scripts/popup.js').namespace;
+                const confirm = Popup.show.confirm;
+                let deleted = 0;
+                const onDeleted = () => deleted++;
+                const event = kind === 'character' ? main.event_types.CHAT_DELETED : main.event_types.GROUP_CHAT_DELETED;
+                Popup.show.confirm = async () => true;
+                main.eventSource.on(event, onDeleted);
+                try {
+                    window.document.querySelector('.recentChat[data-file="target-chat"] .deleteChat').click();
+                    await window.happyDOM.waitUntilComplete();
+                    assert.equal(errors.length, 1);
+                    assert.equal(deleted, 0);
+                    if (kind === 'group') assert.ok(groupChats.groups[0].chats.includes('target-chat'));
+                    assert.ok(window.document.querySelector('.recentChat[data-file="target-chat"]'));
+                } finally {
+                    Popup.show.confirm = confirm;
+                    main.eventSource.removeListener(event, onDeleted);
+                }
+            });
+
             await context.test(`${kind}: persisted empty chats and field-free headers load without a message`, async () => {
                 await reset(kind);
                 for (const text of ['', ' \n\uFEFF\n\t', '{}']) {

@@ -42,6 +42,9 @@ export function isChatInputFocused() {
 }
 
 export function shouldFocusChatInput(intent) {
+    if (intent === ChatInputFocusIntent.NAVIGATION && $(document.activeElement).is('input:visible, textarea:visible')) {
+        return false;
+    }
     if (!isMobileHost()) {
         return true;
     }

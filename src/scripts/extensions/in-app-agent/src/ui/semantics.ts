@@ -229,7 +229,7 @@ export function createSemantics() {
                     getComputedStyle: getStyle,
                     computedStyleSupportsPseudoElements: false,
                 });
-                if (description && description !== name) result.description = description;
+                if (description && name !== description && !name.startsWith(`${description} `)) result.description = description;
             }
         }
 
@@ -308,6 +308,8 @@ function appendAriaState(element: Element, result: ElementDescription) {
     const invalid = element.getAttribute('aria-invalid');
     if (invalid === 'true' || invalid === 'false') result.invalid = invalid === 'true';
     else if (invalid === 'grammar' || invalid === 'spelling') result.invalid = invalid;
+    const current = element.getAttribute('aria-current');
+    if (current) result.current = current === 'true' ? true : current === 'false' ? false : current;
 }
 
 function appendDisclosureState(element: Element, result: ElementDescription) {

@@ -25,23 +25,6 @@ export const shiftUpByOne = (e, i, a) => a[i] = e + 1;
 export const shiftDownByOne = (e, i, a) => a[i] = e - 1;
 
 /**
- * Pagination status string template.
- * @type {string}
- */
-export const PAGINATION_TEMPLATE = '<%= rangeStart %>-<%= rangeEnd %> .. <%= totalNumber %>';
-
-export const localizePagination = function (container) {
-    container.find('[title="Next page"]').attr('title', t`Next page`);
-    container.find('[title="Previous page"]').attr('title', t`Previous page`);
-    container.find('[title="First page"]').attr('title', t`First page`);
-    container.find('[title="Last page"]').attr('title', t`Last page`);
-    container.find('.paginationjs-page a').removeAttr('aria-current');
-    container.find('.paginationjs-page.active a').attr('aria-current', 'page');
-    container.find('.paginationjs-prev a').attr('aria-label', t`Previous page`);
-    container.find('.paginationjs-next a').attr('aria-label', t`Next page`);
-};
-
-/**
  * Checks if the current environment supports negative lookbehind in regular expressions.
  * @type {{ (): boolean; result?: boolean }} Defines the function as a memoized object with a cached result.
  * @returns {boolean} True if negative lookbehind is supported, false otherwise.
@@ -64,40 +47,6 @@ export function canUseNegativeLookbehind() {
     }
     return result;
 }
-
-/**
- * Renders a dropdown for selecting page size in pagination.
- * @param {number} pageSize Page size
- * @param {number[]} sizeChangerOptions Array of page size options
- * @returns {string} The rendered dropdown element as a string
- */
-export const renderPaginationDropdown = function (pageSize, sizeChangerOptions) {
-    const sizeSelect = document.createElement('select');
-    sizeSelect.classList.add('J-paginationjs-size-select');
-
-    if (sizeChangerOptions.indexOf(pageSize) === -1) {
-        sizeChangerOptions.unshift(pageSize);
-        sizeChangerOptions.sort((a, b) => a - b);
-    }
-
-    for (let i = 0; i < sizeChangerOptions.length; i++) {
-        const option = document.createElement('option');
-        option.value = `${sizeChangerOptions[i]}`;
-        option.textContent = `${sizeChangerOptions[i]} ${t`/ page`}`;
-        if (sizeChangerOptions[i] === pageSize) {
-            option.setAttribute('selected', 'selected');
-        }
-        sizeSelect.appendChild(option);
-    }
-
-    return sizeSelect.outerHTML;
-};
-
-export const paginationDropdownChangeHandler = function (event, size) {
-    let dropdown = $(event?.originalEvent?.currentTarget || event.delegateTarget).find('select');
-    dropdown.find('[selected]').removeAttr('selected');
-    dropdown.find(`[value=${size}]`).attr('selected', '');
-};
 
 /**
  * Navigation options for pagination.
@@ -2618,8 +2567,8 @@ export async function fetchFaFile(name) {
     const sheet = style.sheet;
     style.remove();
     return [...sheet.cssRules]
-        .filter(rule => (rule instanceof CSSStyleRule && rule.style?.content))
-        .map(rule => rule['selectorText'].split(/,\s*/).map(selector => selector.split('::').shift().slice(1)))
+        .filter(rule => rule instanceof CSSStyleRule && rule.style.getPropertyValue('--fa'))
+        .map(rule => rule.selectorText.split(/,\s*/).map(selector => selector.slice(1)))
     ;
 }
 

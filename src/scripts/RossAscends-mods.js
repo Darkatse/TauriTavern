@@ -19,6 +19,8 @@ import {
     getEntitiesList,
     buildAvatarList,
     selectCharacterById,
+    setCharacterPopupOpen,
+    setChatHistoryOpen,
     eventSource,
     menu_type,
     substituteParams,
@@ -1218,12 +1220,12 @@ export function initRossMods() {
             }
 
             if ($('#select_chat_popup').is(':visible')) {
-                $('#select_chat_cross').trigger('click');
+                setChatHistoryOpen(false);
                 return;
             }
 
             if ($('#character_popup').is(':visible')) {
-                $('#character_cross').trigger('click');
+                setCharacterPopupOpen(false);
                 return;
             }
 

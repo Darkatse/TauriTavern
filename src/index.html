@@ -63,13 +63,13 @@
 <body class="no-blur">
     <div id="preloader"></div>
     <div id="bg1"></div>
-    <div id="character_context_menu" class="hidden">
+    <div id="character_context_menu" style="display: none;">
         <ul>
-            <li><button id="character_context_menu_favorite" data-i18n="Favorite">Favorite</button></li>
-            <li><button id="character_context_menu_tag" data-i18n="Tag">Tag</button></li>
-            <li><button id="character_context_menu_duplicate" data-i18n="Duplicate">Duplicate</button></li>
-            <li><button id="character_context_menu_persona" data-i18n="Persona">Persona</button></li>
-            <li><button id="character_context_menu_delete" data-i18n="Delete">Delete</button></li>
+            <li><button type="button" id="character_context_menu_favorite" data-i18n="Favorite">Favorite</button></li>
+            <li><button type="button" id="character_context_menu_tag" data-i18n="Tag">Tag</button></li>
+            <li><button type="button" id="character_context_menu_duplicate" data-i18n="Duplicate">Duplicate</button></li>
+            <li><button type="button" id="character_context_menu_persona" data-i18n="Persona">Persona</button></li>
+            <li><button type="button" id="character_context_menu_delete" data-i18n="Delete">Delete</button></li>
         </ul>
     </div>
     <!-- top bar central settings buttons -->
@@ -83,7 +83,7 @@
             </div>
             <div id="left-nav-panel" class="drawer-content fillLeft closedDrawer" role="region" aria-labelledby="leftNavDrawerIcon">
                 <div id="left-nav-panelheader" class="fa-solid fa-grip drag-grabber"></div>
-                <div id="lm_button_panel_pin_div" title="Locked = AI Configuration panel will stay open" data-i18n="[title]AI Configuration panel will stay open" class="tt-icon-checkbox">
+                <div id="lm_button_panel_pin_div" title="Locked = AI Configuration panel will stay open" data-i18n="[title]AI Configuration panel will stay open" class="tt-control-shell">
                     <input type="checkbox" id="lm_button_panel_pin" class="sr-only" aria-label="Lock AI response configuration panel" data-i18n="[aria-label]Lock AI response configuration panel">
                     <label for="lm_button_panel_pin" class="not_focusable">
                         <div class="unchecked fa-solid fa-unlock right_menu_button" aria-hidden="true"></div>
@@ -189,7 +189,7 @@
                                         </strong>
 
                                         <div class="flex-container gap3px">
-                                            <label for="bind_preset_to_connection" title="Bind presets to API connections" data-i18n="[title]Bind presets to API connections" class="margin0 menu_button menu_button_icon not_focusable tt-icon-checkbox">
+                                            <label for="bind_preset_to_connection" title="Bind presets to API connections" data-i18n="[title]Bind presets to API connections" class="margin0 menu_button menu_button_icon not_focusable tt-control-shell">
                                                 <input id="bind_preset_to_connection" type="checkbox" class="sr-only" aria-label="Bind presets to API connections" data-i18n="[aria-label]Bind presets to API connections">
                                                 <i class="fa-fw fa-solid fa-link toggleOn" aria-hidden="true"></i>
                                                 <i class="fa-fw fa-solid fa-link-slash toggleOff" aria-hidden="true"></i>
@@ -1742,7 +1742,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                                 <strong data-i18n="Banned Tokens">Banned Tokens/Strings</strong>
                                                 <div class="margin5 fa-solid fa-circle-info opacity50p " data-i18n="[title]LLaMA / Mistral / Yi models only" title="Enter sequences you don't want to appear in the output.&#13;Unquoted text will be tokenized in the back end and banned as tokens.&#13;[token ids] will be banned as-is.&#13;Most tokens have a leading space. Use token counter (with the correct tokenizer selected first!) if you are unsure.&#13;Enclose text in double quotes to ban the entire string as a set.&#13;Quoted Strings and [Token ids] must be on their own line."></div>
                                             </div>
-                                            <label data-tg-samplers="send_banned_tokens" id="send_banned_tokens_label" for="send_banned_tokens_textgenerationwebui" class="checkbox_label not_focusable tt-icon-checkbox">
+                                            <label data-tg-samplers="send_banned_tokens" id="send_banned_tokens_label" for="send_banned_tokens_textgenerationwebui" class="checkbox_label not_focusable tt-control-shell">
                                                 <input id="send_banned_tokens_textgenerationwebui" type="checkbox" aria-label="Send banned tokens/strings" data-i18n="[aria-label]Send banned tokens/strings" class="sr-only">
                                                 <small><i class="fa-solid fa-power-off menu_button togglable margin0" aria-hidden="true"></i></small>
                                             </label>
@@ -4986,7 +4986,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
             <div id="WorldInfo" class="drawer-content closedDrawer">
                 <div id="WorldInfoheader" class="fa-solid fa-grip drag-grabber"></div>
                 <div class="flex-container alignitemscenter gap10px">
-                    <div id="WI_panel_pin_div" class="tt-icon-checkbox" title="Locked = World Editor will stay open" data-i18n="[title]Locked = World Editor will stay open">
+                    <div id="WI_panel_pin_div" class="tt-control-shell" title="Locked = World Editor will stay open" data-i18n="[title]Locked = World Editor will stay open">
                         <input type="checkbox" id="WI_panel_pin" class="sr-only" aria-label="Lock World Info panel" data-i18n="[aria-label]Lock World Info panel">
                         <label for="WI_panel_pin" class="not_focusable">
                             <div class="unchecked fa-solid fa-unlock " aria-hidden="true"></div>
@@ -6175,8 +6175,8 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                     <div class="flex-container alignItemsBaseline wide100p">
                         <div class="flex1 flex-container alignItemsBaseline">
                             <h3 class="margin0">
-                                <span data-i18n="Persona Management">Persona Management</span>
-                                <a href="https://docs.sillytavern.app/usage/core-concepts/personas/" target="_blank">
+                                <span data-i18n="Persona Management" id="persona_management_title">Persona Management</span>
+                                <a href="https://docs.sillytavern.app/usage/core-concepts/personas/" target="_blank" id="persona_management_title_docs" aria-label="Docs" data-i18n="[aria-label]Docs" aria-labelledby="persona_management_title_docs persona_management_title">
                                     <span class="fa-solid fa-circle-question note-link-span"></span>
                                 </a>
                             </h3>
@@ -6186,35 +6186,35 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                 <i class="fa-solid fa-ranking-star"></i>
                                 <span data-i18n="Usage Stats">Usage Stats</span>
                             </div>
-                            <div id="personas_backup" class="menu_button menu_button_icon" data-i18n="[title]Backup your personas to a file" title="Backup your personas to a file">
+                            <button id="personas_backup" class="menu_button menu_button_icon" data-i18n="[title]Backup your personas to a file" title="Backup your personas to a file" type="button">
                                 <i class="fa-solid fa-file-export"></i>
                                 <span data-i18n="Backup">Backup</span>
-                            </div>
-                            <div id="personas_restore" class="menu_button menu_button_icon" data-i18n="[title]Restore your personas from a file" title="Restore your personas from a file">
+                            </button>
+                            <button id="personas_restore" class="menu_button menu_button_icon" data-i18n="[title]Restore your personas from a file" title="Restore your personas from a file" type="button">
                                 <i class="fa-solid fa-file-import"></i>
                                 <span data-i18n="Restore">Restore</span>
-                            </div>
+                            </button>
                             <input id="personas_restore_input" type="file" accept=".json" hidden>
                         </div>
                     </div>
                     <div id="persona-management-block" class="flex-container wide100p flexGap10">
                         <div class="persona_management_left_column flex1 overflowHidden wide100p">
                             <div class="flex-container marginBot10 alignitemscenter">
-                                <div id="create_dummy_persona" class="menu_button menu_button_icon" title="Create a dummy persona" data-i18n="[title]Create a dummy persona">
+                                <button id="create_dummy_persona" class="menu_button menu_button_icon" title="Create a dummy persona" data-i18n="[title]Create a dummy persona" type="button">
                                     <i class="fa-solid fa-person-circle-question fa-fw"></i>
-                                    <div data-i18n="Create">Create</div>
-                                </div>
-                                <input id="persona_search_bar" class="text_pole width100p flex1 margin0" type="search" data-i18n="[placeholder]Search..." placeholder="Search...">
-                                <select id="persona_sort_order" class="margin0">
+                                    <span data-i18n="Create">Create</span>
+                                </button>
+                                <input id="persona_search_bar" class="text_pole width100p flex1 margin0" type="search" data-i18n="[placeholder]Search...;[aria-label]Search personas" placeholder="Search..." aria-label="Search personas">
+                                <select id="persona_sort_order" class="margin0" aria-label="Sort personas" data-i18n="[aria-label]Sort personas">
                                     <option value="search" data-i18n="Search" hidden>Search</option>
                                     <option value="asc">A-Z</option>
                                     <option value="desc">Z-A</option>
                                 </select>
                                 <div id="persona_pagination_container" class="flex1"></div>
-                                <i id="persona_grid_toggle" class="fa-solid fa-table-cells-large menu_button" data-i18n="[title]Toggle grid view" title="Toggle grid view"></i>
+                                <button id="persona_grid_toggle" class="fa-solid fa-table-cells-large menu_button" data-i18n="[title]Toggle grid view" title="Toggle grid view" type="button" aria-pressed="false"></button>
                             </div>
-                            <div id="user_avatar_block" data-i18n="[no_desc_text]No persona description" no_desc_text="[No description]">
-                                <div class="avatar_upload">+</div>
+                            <div id="user_avatar_block" data-i18n="[no_desc_text]No persona description" no_desc_text="[No description]" role="list">
+
                             </div>
                             <form id="form_upload_avatar" action="javascript:void(null);" method="post" enctype="multipart/form-data">
                                 <input type="file" id="avatar_upload_file" accept="image/*" name="avatar">
@@ -6228,16 +6228,16 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                 <div id="persona_controls" class="flex-container">
                                     <h5 id="your_name" class="persona_name">[Persona Name]</h5>
                                     <div class="persona_controls_buttons_block buttons_block">
-                                        <div id="persona_rename_button" class="menu_button fa-solid fa-pencil" title="Rename Persona" data-i18n="[title]Rename Persona"></div>
-                                        <div id="sync_name_button" class="menu_button fa-solid fa-sync" title="Click to set user name for all messages" data-i18n="[title]Click to set user name for all messages"></div>
-                                        <div id="persona_lore_button" class="menu_button fa-solid fa-globe" title="Persona Lore&#10;&#10;Click to load&#10;Shift/Alt-click or long-press to open 'Link to Persona Lorebook' popup" data-i18n="[title]persona_lore_button_title"></div>
+                                        <button id="persona_rename_button" class="menu_button fa-solid fa-pencil" title="Rename Persona" data-i18n="[title]Rename Persona" type="button"></button>
+                                        <button id="sync_name_button" class="menu_button fa-solid fa-sync" title="Click to set user name for all messages" data-i18n="[title]Click to set user name for all messages" type="button"></button>
+                                        <button id="persona_lore_button" class="menu_button fa-solid fa-globe" title="Persona Lore&#10;&#10;Click to load&#10;Shift/Alt-click or long-press to open 'Link to Persona Lorebook' popup" data-i18n="[title]persona_lore_button_title;[aria-label]Persona Lore" type="button" aria-label="Persona Lore"></button>
 
-                                        <div id="persona_set_image_button" class="menu_button fa-solid fa-image" title="Change Persona Image" data-i18n="[title]Change Persona Image"></div>
-                                        <div id="persona_duplicate_button" class="menu_button fa-solid fa-clone" title="Duplicate Persona" data-i18n="[title]Duplicate Persona"></div>
-                                        <div id="persona_delete_button" class="menu_button fa-solid fa-skull red_button" title="Delete Persona" data-i18n="[title]Delete Persona"></div>
+                                        <button id="persona_set_image_button" class="menu_button fa-solid fa-image" title="Change Persona Image" data-i18n="[title]Change Persona Image" type="button"></button>
+                                        <button id="persona_duplicate_button" class="menu_button fa-solid fa-clone" title="Duplicate Persona" data-i18n="[title]Duplicate Persona" type="button"></button>
+                                        <button id="persona_delete_button" class="menu_button fa-solid fa-skull red_button" title="Delete Persona" data-i18n="[title]Delete Persona" type="button"></button>
                                     </div>
                                     <label class="flex1 height100p" for="persona-management-dropdown">
-                                        <select id="persona-management-dropdown" class="text_pole">
+                                        <select id="persona-management-dropdown" class="text_pole" aria-label="More..." data-i18n="[aria-label]More...">
                                             <option value="default" disabled selected data-i18n="More...">More...</option>
                                             <option id="persona_lorebook_link" data-i18n="Link to Persona Lorebook">Link to Persona Lorebook</option>
                                         </select>
@@ -6245,20 +6245,20 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                 </div>
 
                                 <h4 class="flex-container alignItemsBaseline">
-                                    <span data-i18n="Persona Description">Persona Description</span>
-                                    <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="persona_description" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
+                                    <span data-i18n="Persona Description" id="persona_description_label">Persona Description</span>
+                                    <button class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="persona_description" title="Expand the editor" data-i18n="[title]Expand the editor" type="button" id="persona_description_expand" aria-labelledby="persona_description_expand persona_description_label"></button>
                                 </h4>
-                                <textarea id="persona_description" name="persona_description" data-macros data-i18n="[placeholder]Example: [{{user}} is a 28-year-old Romanian cat girl.]" placeholder="Example:&#10;[{{user}} is a 28-year-old Romanian cat girl.]" class="text_pole textarea_compact" value="" autocomplete="off" rows="8"></textarea>
+                                <textarea id="persona_description" name="persona_description" data-macros data-i18n="[placeholder]Example: [{{user}} is a 28-year-old Romanian cat girl.]" placeholder="Example:&#10;[{{user}} is a 28-year-old Romanian cat girl.]" class="text_pole textarea_compact" value="" autocomplete="off" rows="8" aria-labelledby="persona_description_label" aria-describedby="persona_description_token_count_description"></textarea>
 
                                 <div class="flex-container justifySpaceBetween">
-                                    <h4 data-i18n="Position">Position</h4>
-                                    <div class="extension_token_counter widthFitContent">
+                                    <h4 data-i18n="Position" id="persona_description_position_label">Position</h4>
+                                    <div class="extension_token_counter widthFitContent" id="persona_description_token_count_description">
                                         <span data-i18n="Tokens persona description">Tokens</span>: <span id="persona_description_token_count">0</span>
                                     </div>
                                 </div>
 
                                 <div class="persona_management_description_position_container">
-                                    <select id="persona_description_position">
+                                    <select id="persona_description_position" aria-labelledby="persona_description_position_label">
                                         <option value="9" data-i18n="None (disabled)">None (disabled)</option>
                                         <option value="0" data-i18n="In Story String / Prompt Manager">In Story String / Prompt Manager</option>
                                         <option value="2" data-i18n="Top of Author's Note">Top of Author's Note</option>
@@ -6283,18 +6283,18 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
 
                                 <h4 data-i18n="Connections">Connections</h4>
                                 <div id="persona_connections_buttons" class="flex-container">
-                                    <div id="lock_persona_default" class="menu_button menu_button_icon" title="Click to select this as default persona for the new chats. Click again to remove it." data-i18n="[title]Click to select this as default persona for the new chats. Click again to remove it.">
+                                    <button id="lock_persona_default" class="menu_button menu_button_icon" title="Click to select this as default persona for the new chats. Click again to remove it." data-i18n="[title]Click to select this as default persona for the new chats. Click again to remove it." type="button" aria-pressed="false">
                                         <i class="icon fa-solid fa-crown fa-fw"></i>
-                                        <div data-i18n="Default">Default</div>
-                                    </div>
-                                    <div id="lock_persona_to_char" class="menu_button menu_button_icon" title="Click to lock your selected persona to the current character. Click again to remove the lock." data-i18n="[title]Click to lock your selected persona to the current character. Click again to remove the lock.">
+                                        <span data-i18n="Default">Default</span>
+                                    </button>
+                                    <button id="lock_persona_to_char" class="menu_button menu_button_icon" title="Click to lock your selected persona to the current character. Click again to remove the lock." data-i18n="[title]Click to lock your selected persona to the current character. Click again to remove the lock." type="button" aria-pressed="false">
                                         <i class="icon fa-solid fa-unlock fa-fw"></i>
-                                        <div data-i18n="Character">Character</div>
-                                    </div>
-                                    <div id="lock_user_name" class="menu_button menu_button_icon" title="Click to lock your selected persona to the current chat. Click again to remove the lock." data-i18n="[title]Click to lock your selected persona to the current chat. Click again to remove the lock.">
+                                        <span data-i18n="Character">Character</span>
+                                    </button>
+                                    <button id="lock_user_name" class="menu_button menu_button_icon" title="Click to lock your selected persona to the current chat. Click again to remove the lock." data-i18n="[title]Click to lock your selected persona to the current chat. Click again to remove the lock." type="button" aria-pressed="false">
                                         <i class="icon fa-solid fa-unlock fa-fw"></i>
-                                        <div data-i18n="Chat">Chat</div>
-                                    </div>
+                                        <span data-i18n="Chat">Chat</span>
+                                    </button>
                                 </div>
                                 <div id="persona_connections_info_block"></div>
                                 <div id="persona_connections_list" class="text_muted m-b-1 avatars_inline avatars_multiline scroll-reset-container expander">
@@ -6344,14 +6344,14 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                 </div>
                 <div id="CharListButtonAndHotSwaps" class="flex-container flexnowrap">
                     <div class="flexFlowColumn flex-container">
-                        <div id="rm_button_panel_pin_div" title="Locked = Character Management panel will stay open" data-i18n="[title]Locked = Character Management panel will stay open" class="alignitemsflexstart tt-icon-checkbox">
+                        <div id="rm_button_panel_pin_div" title="Locked = Character Management panel will stay open" data-i18n="[title]Locked = Character Management panel will stay open" class="alignitemsflexstart tt-control-shell">
                             <input type="checkbox" id="rm_button_panel_pin" class="sr-only" aria-label="Lock character panel" data-i18n="[aria-label]Lock character panel">
                             <label for="rm_button_panel_pin" class="not_focusable">
                                 <div class="fa-solid unchecked fa-unlock right_menu_button" alt="" aria-hidden="true"></div>
                                 <div class="fa-solid checked fa-lock right_menu_button" alt="" aria-hidden="true"></div>
                             </label>
                         </div>
-                        <div class="right_menu_button fa-solid fa-list-ul" id="rm_button_characters" title="Select/Create Characters" data-i18n="[title]Select/Create Characters"></div>
+                        <button class="right_menu_button fa-solid fa-list-ul" id="rm_button_characters" title="Select/Create Characters" data-i18n="[title]Select/Create Characters" type="button"></button>
                     </div>
                     <div id="HotSwapWrapper" class="alignitemscenter flex-container margin0auto wide100p">
                         <div class="hotswap avatars_inline scroll-reset-container expander" data-i18n="[no_favs]Favorite characters to add them to HotSwaps" no_favs="Favorite characters to add them to HotSwaps">
@@ -6362,8 +6362,9 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                 <!-- this div structure must be preserved until group peeking can adjust -->
                 <div id="rm_PinAndTabs">
                     <div id="right-nav-panel-tabs" class="">
-                        <div id="rm_button_selected_ch">
-                            <h2 class="interactable"></h2>
+                        <div id="rm_button_selected_ch" class="tt-control-shell interactable">
+                            <button type="button" class="sr-only" aria-labelledby="selected_character_label" hidden></button>
+                            <h2 id="selected_character_label"></h2>
                         </div>
                         <div id="result_info" class="flex-container" style="display: none;">
                             <div id="result_info_text" title="Token counts may be inaccurate and provided just for reference." data-i18n="[title]Token counts may be inaccurate and provided just for reference.">
@@ -6378,7 +6379,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                             </div>
                             <a id="chartokenwarning" class="right_menu_button fa-solid fa-triangle-exclamation" href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#character-tokens" target="_blank" title="About Token 'Limits'" data-i18n="[title]About Token 'Limits'"></a>
                             <i title="Click for stats!" data-i18n="[title]Click for stats!" class="fa-solid fa-ranking-star right_menu_button rm_stats_button"></i>
-                            <i title="Toggle character info panel" data-i18n="[title]Toggle character info panel" id="hideCharPanelAvatarButton" class="fa-solid fa-eye right_menu_button"></i>
+                            <button title="Toggle character info panel" data-i18n="[title]Toggle character info panel" id="hideCharPanelAvatarButton" class="fa-solid fa-eye right_menu_button" type="button" aria-expanded="true" aria-controls="avatar-and-name-block"></button>
                         </div>
                     </div>
                 </div>
@@ -6389,38 +6390,38 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                         <form id="form_create" action="javascript:void(null);" method="post" enctype="multipart/form-data">
                             <div id="avatar-and-name-block">
                                 <div id="name_div">
-                                    <input id="character_name_pole" name="ch_name" class="text_pole" data-i18n="[placeholder]Name this character" placeholder="Name this character" value="" autocomplete="off">
-                                    <div class="extension_token_counter">
+                                    <input id="character_name_pole" name="ch_name" class="text_pole" data-i18n="[placeholder]Name this character;[aria-label]Name this character" placeholder="Name this character" value="" autocomplete="off" aria-label="Name this character" aria-describedby="character_name_pole_tokens_description">
+                                    <div class="extension_token_counter" id="character_name_pole_tokens_description">
                                         <span data-i18n="extension_token_counter">Tokens:</span> <span data-token-counter="character_name_pole" data-token-permanent="true">counting...</span>
                                     </div>
                                 </div>
                                 <div class="flex-container flexFlowColumn expander flexNoGap">
                                     <div id="avatar_div" class="avatar_div buttons_block alignitemsflexstart justifySpaceBetween flexnowrap">
-                                        <label id="avatar_div_div" class="add_avatar avatar" for="add_avatar_button" title="Click to select a new avatar for this character" data-i18n="[title]Click to select a new avatar for this character">
-                                            <img id="avatar_load_preview" src="img/ai4.png" alt="avatar">
-                                            <input hidden type="file" id="add_avatar_button" name="avatar" accept="image/*">
+                                        <label id="avatar_div_div" class="add_avatar avatar tt-control-shell not_focusable" for="add_avatar_button" title="Click to select a new avatar for this character" data-i18n="[title]Click to select a new avatar for this character">
+                                            <img id="avatar_load_preview" src="img/ai4.png" alt="">
+                                            <input type="file" id="add_avatar_button" name="avatar" accept="image/*" class="sr-only" aria-label="Click to select a new avatar for this character" data-i18n="[aria-label]Click to select a new avatar for this character">
                                         </label>
                                         <div class="flex-container" id="avatar_controls">
                                             <div class="form_create_bottom_buttons_block buttons_block">
-                                                <div id="rm_button_back" class="menu_button fa-solid fa-left-long "></div>
+                                                <button id="rm_button_back" class="menu_button fa-solid fa-left-long " type="button" aria-label="Back" data-i18n="[aria-label]Back"></button>
                                                 <!-- <div id="renameCharButton" class="menu_button fa-solid fa-user-pen" title="Rename Character"></div> -->
-                                                <div id="favorite_button" class="menu_button fa-solid fa-star" title="Add to Favorites" data-i18n="[title]Add to Favorites"></div>
+                                                <button id="favorite_button" class="menu_button fa-solid fa-star" title="Add to Favorites" aria-label="Favorite" data-i18n="[title]Add to Favorites;[aria-label]Favorite" type="button" aria-pressed="false"></button>
                                                 <input type="hidden" id="fav_checkbox" name="fav" />
-                                                <div id="advanced_div" class="menu_button fa-solid fa-book " title="Advanced Definitions" data-i18n="[title]Advanced Definition"></div>
-                                                <div id="world_button" class="menu_button fa-solid fa-globe" title="Character Lore&#10;&#10;Click to load&#10;Shift/Alt-click or long-press to open 'Link to World Info' popup" data-i18n="[title]world_button_title"></div>
-                                                <div class="chat_lorebook_button menu_button fa-solid fa-passport" title="Chat Lore&#10;&#10;Click to load&#10;Shift/Alt-click or long-press to open 'Link to Chat Lorebook' popup" data-i18n="[title]chat_lorebook_button_title"></div>
-                                                <div id="char_connections_button" class="menu_button fa-solid fa-face-smile" title="Connected Personas" data-i18n="[title]Connected Personas"></div>
-                                                <div id="export_button" class="menu_button fa-solid fa-file-export " title="Export and Download" data-i18n="[title]Export and Download"></div>
+                                                <button id="advanced_div" class="menu_button fa-solid fa-book " title="Advanced Definitions" data-i18n="[title]Advanced Definition" type="button" aria-expanded="false" aria-controls="character_popup"></button>
+                                                <button id="world_button" class="menu_button fa-solid fa-globe" title="Character Lore&#10;&#10;Click to load&#10;Shift/Alt-click or long-press to open 'Link to World Info' popup" data-i18n="[title]world_button_title;[aria-label]Character Lore" type="button" aria-label="Character Lore"></button>
+                                                <button class="chat_lorebook_button menu_button fa-solid fa-passport" title="Chat Lore&#10;&#10;Click to load&#10;Shift/Alt-click or long-press to open 'Link to Chat Lorebook' popup" data-i18n="[title]chat_lorebook_button_title;[aria-label]Chat Lore" type="button" aria-label="Chat Lore"></button>
+                                                <button id="char_connections_button" class="menu_button fa-solid fa-face-smile" title="Connected Personas" data-i18n="[title]Connected Personas" type="button"></button>
+                                                <button id="export_button" class="menu_button fa-solid fa-file-export " title="Export and Download" data-i18n="[title]Export and Download" type="button"></button>
                                                 <!-- <div id="set_chat_character_settings" class="menu_button fa-solid fa-scroll" title="Set a chat scenario override"></div> -->
                                                 <!-- <div id="set_character_world" class="menu_button fa-solid fa-globe" title="Set a character World Info / Lorebook"></div> -->
-                                                <div id="dupe_button" class="menu_button fa-solid fa-clone " title="Duplicate Character" data-i18n="[title]Duplicate Character"></div>
-                                                <label for="create_button" id="create_button_label" class="menu_button fa-solid fa-user-check" title="Create Character" data-i18n="[title]Create Character">
+                                                <button id="dupe_button" class="menu_button fa-solid fa-clone " title="Duplicate Character" data-i18n="[title]Duplicate Character" type="button"></button>
+                                                <label for="create_button" id="create_button_label" role="button" class="menu_button fa-solid fa-user-check" title="Create Character" data-i18n="[title]Create Character">
                                                     <input type="submit" id="create_button" name="create_button">
                                                 </label>
-                                                <div id="delete_button" class="menu_button fa-solid fa-skull red_button" title="Delete Character" data-i18n="[title]Delete Character"></div>
+                                                <button id="delete_button" class="menu_button fa-solid fa-skull red_button" title="Delete Character" data-i18n="[title]Delete Character" type="button"></button>
                                             </div>
                                             <label class="flex1 height100p" for="char-management-dropdown">
-                                                <select id="char-management-dropdown" class="text_pole">
+                                                <select id="char-management-dropdown" class="text_pole" aria-label="More..." data-i18n="[aria-label]More...">
                                                     <option value="default" disabled selected data-i18n="More...">More...</option>
                                                     <option id="set_character_world" data-i18n="Link to World Info">
                                                         Link to World Info
@@ -6464,8 +6465,8 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                     </div>
                                     <div id="tags_div">
                                         <div class="tag_controls">
-                                            <input id="tagInput" class="text_pole textarea_compact tag_input wide100p margin0" data-i18n="[placeholder]Search / Create Tags" placeholder="Search / Create tags" />
-                                            <div class="tags_view menu_button fa-solid fa-tags" title="View all tags" data-i18n="[title]View all tags"></div>
+                                            <input id="tagInput" class="text_pole textarea_compact tag_input wide100p margin0" data-i18n="[placeholder]Search / Create Tags;[aria-label]Search / Create Tags" placeholder="Search / Create tags" aria-label="Search / Create Tags" />
+                                            <button class="tags_view menu_button fa-solid fa-tags" title="View all tags" data-i18n="[title]View all tags" type="button"></button>
                                         </div>
                                         <div id="tagList" class="tags"></div>
                                     </div>
@@ -6474,12 +6475,12 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                             <div id="spoiler_free_desc" class="inline-drawer flex-container flexFlowColumn flexNoGap">
                                 <div class="inline-drawer-toggle inline-drawer-header padding0 gap5px standoutHeader">
                                     <div id="creators_notes_div" class="title_restorable flexGap5 wide100p ">
-                                        <span class="flex1" data-i18n="Creator's Notes">Creator's Notes</span>
-                                        <div id="creators_note_styles_button" class="margin0 menu_button fa-solid fa-palette fa-fw" title="Allow / Forbid the use of global styles for this character." data-i18n="[title]Allow / Forbid the use of global styles for this character."></div>
-                                        <div id="spoiler_free_desc_button" class="margin0 menu_button fa-solid fa-eye fa-fw" title="Show / Hide Description and First Message" data-i18n="[title]Show / Hide Description and First Message"></div>
+                                        <span class="flex1" data-i18n="Creator's Notes" id="character_creator_notes_label">Creator's Notes</span>
+                                        <button id="creators_note_styles_button" class="margin0 menu_button fa-solid fa-palette fa-fw" title="Allow / Forbid the use of global styles for this character." data-i18n="[title]Allow / Forbid the use of global styles for this character." type="button"></button>
+                                        <button id="spoiler_free_desc_button" aria-controls="descriptionWrapper firstMessageWrapper" class="margin0 menu_button fa-solid fa-eye fa-fw" title="Show / Hide Description and First Message" data-i18n="[title]Show / Hide Description and First Message" type="button" aria-expanded="true"></button>
                                     </div>
                                     <div class="flex-container widthFitContent">
-                                        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down interactable"></div>
+                                        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down interactable" aria-labelledby="character_creator_notes_label"></div>
                                     </div>
                                 </div>
                                 <div class="inline-drawer-content">
@@ -6493,42 +6494,42 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                             <div id="descriptionWrapper" class="flex-container flexFlowColumn flex1">
                                 <div id="description_div" class="title_restorable">
                                     <div class="flex-container alignitemscenter">
-                                        <span data-i18n="Character Description" class="mdhotkey_location">Description</span>
-                                        <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="description_textarea" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
-                                        <a href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#character-description" class="notes-link" target="_blank">
+                                        <span data-i18n="Character Description" class="mdhotkey_location" id="description_textarea_label">Description</span>
+                                        <button class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="description_textarea" title="Expand the editor" data-i18n="[title]Expand the editor" type="button" id="description_textarea_expand" aria-labelledby="description_textarea_expand description_textarea_label"></button>
+                                        <a href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#character-description" class="notes-link" target="_blank" id="description_textarea_docs" aria-label="Docs" data-i18n="[aria-label]Docs" aria-labelledby="description_textarea_docs description_textarea_label">
                                             <span class="fa-solid fa-circle-question note-link-span"></span>
                                         </a>
                                     </div>
-                                    <div id="character_open_media_overrides" class="menu_button menu_button_icon open_media_overrides" title="Click to allow/forbid the use of external media for this character." data-i18n="[title]Click to allow/forbid the use of external media for this character.">
+                                    <button id="character_open_media_overrides" class="menu_button menu_button_icon open_media_overrides" title="Click to allow/forbid the use of external media for this character." data-i18n="[title]Click to allow/forbid the use of external media for this character." type="button">
                                         <i id="character_media_allowed_icon" class="fa-solid fa-fw fa-link"></i>
                                         <i id="character_media_forbidden_icon" class="fa-solid fa-fw fa-link-slash"></i>
                                         <span data-i18n="Ext. Media">
                                             Ext. Media
                                         </span>
-                                    </div>
+                                    </button>
                                 </div>
-                                <textarea id="description_textarea" class="mdHotkeys" data-macros data-i18n="[placeholder]Describe your character's physical and mental traits here." placeholder="Describe your character's physical and mental traits here." name="description" placeholder=""></textarea>
-                                <div class="extension_token_counter">
+                                <textarea id="description_textarea" class="mdHotkeys" data-macros data-i18n="[placeholder]Describe your character's physical and mental traits here." placeholder="Describe your character's physical and mental traits here." name="description" placeholder="" aria-labelledby="description_textarea_label" aria-describedby="description_textarea_tokens_description"></textarea>
+                                <div class="extension_token_counter" id="description_textarea_tokens_description">
                                     <span data-i18n="extension_token_counter">Tokens:</span> <span data-token-counter="description_textarea" data-token-permanent="true">counting...</span>
                                 </div>
                             </div>
                             <div id="firstMessageWrapper" class="flex-container flexFlowColumn flex1">
                                 <div id="first_message_div" class="title_restorable">
                                     <div class="flex-container alignitemscenter flex1">
-                                        <span data-i18n="First message" class="mdhotkey_location">First message</span>
-                                        <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="firstmessage_textarea" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
-                                        <a href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#first-message" class="notes-link" target="_blank">
+                                        <span data-i18n="First message" class="mdhotkey_location" id="firstmessage_textarea_label">First message</span>
+                                        <button class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="firstmessage_textarea" title="Expand the editor" data-i18n="[title]Expand the editor" type="button" id="firstmessage_textarea_expand" aria-labelledby="firstmessage_textarea_expand firstmessage_textarea_label"></button>
+                                        <a href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#first-message" class="notes-link" target="_blank" id="firstmessage_textarea_docs" aria-label="Docs" data-i18n="[aria-label]Docs" aria-labelledby="firstmessage_textarea_docs firstmessage_textarea_label">
                                             <span class="fa-solid fa-circle-question note-link-span"></span>
                                         </a>
                                     </div>
-                                    <div class="menu_button menu_button_icon open_alternate_greetings margin0" title="Click to set additional greeting messages" data-i18n="[title]Click to set additional greeting messages">
+                                    <button class="menu_button menu_button_icon open_alternate_greetings margin0" title="Click to set additional greeting messages" data-i18n="[title]Click to set additional greeting messages" type="button">
                                         <span data-i18n="Alt. Greetings">
                                             Alt. Greetings
                                         </span>
-                                    </div>
+                                    </button>
                                 </div>
-                                <textarea id="firstmessage_textarea" class="mdHotkeys" data-macros data-i18n="[placeholder]This will be the first message from the character that starts every chat." placeholder="This will be the first message from the character that starts every chat." name="first_mes" placeholder=""></textarea>
-                                <div class="extension_token_counter">
+                                <textarea id="firstmessage_textarea" class="mdHotkeys" data-macros data-i18n="[placeholder]This will be the first message from the character that starts every chat." placeholder="This will be the first message from the character that starts every chat." name="first_mes" placeholder="" aria-labelledby="firstmessage_textarea_label" aria-describedby="firstmessage_textarea_tokens_description"></textarea>
+                                <div class="extension_token_counter" id="firstmessage_textarea_tokens_description">
                                     <span data-i18n="extension_token_counter">Tokens:</span> <span data-token-counter="firstmessage_textarea">counting...</span>
                                 </div>
                             </div>
@@ -6548,41 +6549,41 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                         <div class="inline-drawer wide100p flexFlowColumn">
                             <div id="groupControlsToggle" class="inline-drawer-toggle inline-drawer-header">
                                 <span>
-                                    <span data-i18n="Group Controls">Group Controls</span>
-                                    <a href="https://docs.sillytavern.app/usage/core-concepts/groupchats/" class="notes-link" target="_blank">
+                                    <span data-i18n="Group Controls" id="groupControlsToggle_label">Group Controls</span>
+                                    <a href="https://docs.sillytavern.app/usage/core-concepts/groupchats/" class="notes-link" target="_blank" id="groupControlsToggle_label_docs" aria-label="Docs" data-i18n="[aria-label]Docs" aria-labelledby="groupControlsToggle_label_docs groupControlsToggle_label">
                                         <span class="fa-solid fa-circle-question note-link-span"></span>
                                     </a>
                                 </span>
-                                <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                                <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down" aria-labelledby="groupControlsToggle_label"></div>
                             </div>
                             <div class="inline-drawer-content">
                                 <div id="group-metadata-controls" class="marginTopBot5">
                                     <div class="flex-container wide100p">
-                                        <input id="rm_group_chat_name" class="text_pole flex1" type="text" name="chat_name" data-i18n="[placeholder]Chat Name (Optional)" placeholder="Chat Name (Optional)" />
-                                        <div class="chat_lorebook_button menu_button fa-solid fa-passport" title="Chat Lore&#10;&#10;Click to load&#10;Shift/Alt-click or long-press to open 'Link to Chat Lorebook' popup" data-i18n="[title]chat_lorebook_button_title"></div>
+                                        <input id="rm_group_chat_name" class="text_pole flex1" type="text" name="chat_name" data-i18n="[placeholder]Chat Name (Optional);[aria-label]Chat Name (Optional)" placeholder="Chat Name (Optional)" aria-label="Chat Name (Optional)" />
+                                        <button class="chat_lorebook_button menu_button fa-solid fa-passport" title="Chat Lore&#10;&#10;Click to load&#10;Shift/Alt-click or long-press to open 'Link to Chat Lorebook' popup" data-i18n="[title]chat_lorebook_button_title;[aria-label]Chat Lore" type="button" aria-label="Chat Lore"></button>
                                     </div>
                                     <label class="flex1 height100p" for="group-chat-lorebook-dropdown">
-                                        <select id="group-chat-lorebook-dropdown" class="text_pole">
+                                        <select id="group-chat-lorebook-dropdown" class="text_pole" aria-label="More..." data-i18n="[aria-label]More...">
                                             <option value="default" disabled selected data-i18n="More...">More...</option>
                                             <option id="group_chat_lorebook_link" data-i18n="Link to Chat Lorebook">Link to Chat Lorebook</option>
                                         </select>
                                     </label>
                                     <div id="group_tags_div" class="wide100p">
                                         <div class="tag_controls">
-                                            <input id="groupTagInput" class="text_pole textarea_compact tag_input flex1 margin0" data-i18n="[placeholder]Search / Create Tags" placeholder="Search / Create tags" />
-                                            <div class="tags_view menu_button fa-solid fa-tags margin0" title="View all tags" data-i18n="[title]View all tags"></div>
+                                            <input id="groupTagInput" class="text_pole textarea_compact tag_input flex1 margin0" data-i18n="[placeholder]Search / Create Tags;[aria-label]Search / Create Tags" placeholder="Search / Create tags" aria-label="Search / Create Tags" />
+                                            <button class="tags_view menu_button fa-solid fa-tags margin0" title="View all tags" data-i18n="[title]View all tags" type="button"></button>
                                         </div>
                                         <div id="groupTagList" class="tags paddingTopBot5"></div>
                                     </div>
                                     <div id="rm_group_top_bar" class="flex-container alignitemscenter spaceBetween width100p fontsize80p">
                                         <div>
-                                            <label class="add_avatar avatar flex-container justifyCenter" for="group_avatar_button" title="Click to select a new avatar for this group" data-i18n="[title]Click to select a new avatar for this group">
+                                            <label class="add_avatar avatar flex-container justifyCenter tt-control-shell not_focusable" for="group_avatar_button" title="Click to select a new avatar for this group" data-i18n="[title]Click to select a new avatar for this group">
                                                 <div id="group_avatar_preview">
                                                     <div class="avatar">
-                                                        <img src="img/ai4.png" alt="avatar">
+                                                        <img src="img/ai4.png" alt="">
                                                     </div>
                                                 </div>
-                                                <input hidden type="file" id="group_avatar_button" name="avatar" accept="image/png, image/jpeg, image/jpg, image/gif, image/bmp">
+                                                <input type="file" id="group_avatar_button" name="avatar" accept="image/png, image/jpeg, image/jpg, image/gif, image/bmp" class="sr-only" aria-label="Click to select a new avatar for this group" data-i18n="[aria-label]Click to select a new avatar for this group">
                                             </label>
                                         </div>
                                         <div name="GroupStragegyAndOrder" id="rm_group_buttons" class="flex-container paddingLeftRight5 flex2">
@@ -6625,25 +6626,25 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                             </div>
                                         </div>
                                         <div id="GroupFavDelOkBack" class="flex-container flexGap5 spaceEvenly flex1">
-                                            <div id="rm_button_back_from_group" class="heightFitContent margin0 menu_button fa-solid fa-fw fa-left-long"></div>
-                                            <div id="rm_group_scenario" class="heightFitContent margin0 menu_button fa-solid fa-fw fa-scroll" title="Set group chat character settings overrides" data-i18n="[title]Set group chat character settings overrides"></div>
-                                            <div id="group_favorite_button" class="heightFitContent margin0 menu_button fa-solid fa-fw fa-star" title="Add to Favorites" data-i18n="[title]Add to Favorites"></div>
+                                            <button id="rm_button_back_from_group" class="heightFitContent margin0 menu_button fa-solid fa-fw fa-left-long" type="button" aria-label="Back" data-i18n="[aria-label]Back"></button>
+                                            <button id="rm_group_scenario" class="heightFitContent margin0 menu_button fa-solid fa-fw fa-scroll" title="Set group chat character settings overrides" data-i18n="[title]Set group chat character settings overrides" type="button"></button>
+                                            <button id="group_favorite_button" class="heightFitContent margin0 menu_button fa-solid fa-fw fa-star" title="Add to Favorites" aria-label="Favorite" data-i18n="[title]Add to Favorites;[aria-label]Favorite" type="button" aria-pressed="false"></button>
                                             <input id="rm_group_fav" type="hidden" />
-                                            <div id="group_open_media_overrides" class="heightFitContent margin0 menu_button menu_button_icon open_media_overrides" title="Click to allow/forbid the use of external media for this group." data-i18n="[title]Click to allow/forbid the use of external media for this group.">
+                                            <button id="group_open_media_overrides" class="heightFitContent margin0 menu_button menu_button_icon open_media_overrides" title="Click to allow/forbid the use of external media for this group." data-i18n="[title]Click to allow/forbid the use of external media for this group." type="button">
                                                 <i id="group_media_allowed_icon" class="fa-solid fa-fw fa-link"></i>
                                                 <i id="group_media_forbidden_icon" class="fa-solid fa-fw fa-link-slash"></i>
-                                            </div>
-                                            <div id="rm_group_submit" class="heightFitContent margin0 menu_button fa-solid fa-fw fa-check" title="Create" data-i18n="[title]Create"></div>
-                                            <div id="rm_group_restore_avatar" class="heightFitContent margin0 menu_button fa-solid fa-fw fa-images" title="Restore collage avatar" data-i18n="[title]Restore collage avatar"></div>
-                                            <div id="rm_group_delete" class="heightFitContent margin0 menu_button fa-solid fa-fw fa-trash-can" title="Delete" data-i18n="[title]Delete"></div>
+                                            </button>
+                                            <button id="rm_group_submit" class="heightFitContent margin0 menu_button fa-solid fa-fw fa-check" title="Create" data-i18n="[title]Create" type="button"></button>
+                                            <button id="rm_group_restore_avatar" class="heightFitContent margin0 menu_button fa-solid fa-fw fa-images" title="Restore collage avatar" data-i18n="[title]Restore collage avatar" type="button"></button>
+                                            <button id="rm_group_delete" class="heightFitContent margin0 menu_button fa-solid fa-fw fa-trash-can" title="Delete" data-i18n="[title]Delete" type="button"></button>
                                             <div class="flex1">
                                                 <label class="checkbox_label whitespacenowrap">
                                                     <input id="rm_group_allow_self_responses" type="checkbox" />
                                                     <span data-i18n="Allow self responses">Allow self responses</span>
                                                 </label>
                                                 <label id="rm_group_automode_label" class="checkbox_label whitespacenowrap">
-                                                    <input id="rm_group_automode" type="checkbox" />
-                                                    <span data-i18n="Auto Mode">Auto Mode</span>
+                                                    <input id="rm_group_automode" type="checkbox" aria-labelledby="rm_group_automode_text" />
+                                                    <span data-i18n="Auto Mode" id="rm_group_automode_text">Auto Mode</span>
                                                     <input id="rm_group_automode_delay" class="text_pole textarea_compact widthUnset" type="number" min="1" max="999" step="1" value="5" title="Auto Mode delay" data-i18n="[title]Auto Mode delay" />
                                                 </label>
                                                 <label id="rm_group_hidemutedsprites_label" class="checkbox_label whitespacenowrap">
@@ -6658,37 +6659,37 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                         </div>
                         <div class="inline-drawer wide100p flexFlowColumn">
                             <div id="groupCurrentMemberListToggle" class="inline-drawer-toggle inline-drawer-header">
-                                <span data-i18n="Current Members">Current Members </span><i id="groupCurrentMemberPopoutButton" class="fa-solid fa-window-restore menu_button"></i>
-                                <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                                <span data-i18n="Current Members" id="groupCurrentMemberListToggle_label">Current Members </span><button id="groupCurrentMemberPopoutButton" class="fa-solid fa-window-restore menu_button" type="button" aria-label="Pop out current members" data-i18n="[aria-label]Pop out current members"></button>
+                                <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down" aria-labelledby="groupCurrentMemberListToggle_label"></div>
                             </div>
                             <div class="inline-drawer-content">
-                                <div id="currentGroupMembers" name="Current Group Members" class="flex-container flexFlowColumn overflowYAuto flex1">
-                                    <div id="rm_group_members_header">
-                                        <input id="rm_group_members_filter" class="text_pole margin0" type="search" data-i18n="[placeholder]Search..." placeholder="Search..." />
+                                <div id="currentGroupMembers" name="Current Group Members" class="flex-container flexFlowColumn overflowYAuto flex1 currentGroupMembers">
+                                    <div id="rm_group_members_header" class="rm_group_members_header">
+                                        <input id="rm_group_members_filter" class="text_pole margin0 rm_group_members_filter" type="search" data-i18n="[placeholder]Search...;[aria-label]Search group members" placeholder="Search..." aria-label="Search group members" />
                                     </div>
                                     <div class="rm_tag_controls">
                                         <div class="tags rm_tag_filter"></div>
                                     </div>
                                     <div id="rm_group_members_pagination" class="rm_group_members_pagination group_pagination"></div>
-                                    <div id="rm_group_members" class="rm_group_members overflowYAuto flex-container" group_empty_text="Group is empty." data-i18n="[group_empty_text]Group is empty."></div>
+                                    <div id="rm_group_members" class="rm_group_members overflowYAuto flex-container" group_empty_text="Group is empty." data-i18n="[group_empty_text]Group is empty." role="list"></div>
                                 </div>
                             </div>
                         </div>
                         <div class="inline-drawer wide100p flexFlowColumn">
                             <div id="groupAddMemberListToggle" class="inline-drawer-toggle inline-drawer-header">
-                                <span data-i18n="Add Members">Add Members</span>
-                                <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                                <span data-i18n="Add Members" id="groupAddMemberListToggle_label">Add Members</span>
+                                <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down" aria-labelledby="groupAddMemberListToggle_label"></div>
                             </div>
                             <div class="inline-drawer-content">
                                 <div id="unaddedCharList" name="Unadded Char List" class="flex-container flexFlowColumn overflowYAuto flex1">
                                     <div id="rm_group_add_members_header">
-                                        <input id="rm_group_filter" class="text_pole margin0" type="search" data-i18n="[placeholder]Search..." placeholder="Search..." />
+                                        <input id="rm_group_filter" class="text_pole margin0" type="search" data-i18n="[placeholder]Search...;[aria-label]Search characters to add" placeholder="Search..." aria-label="Search characters to add" />
                                     </div>
                                     <div class="rm_tag_controls">
                                         <div class="tags rm_tag_filter"></div>
                                     </div>
                                     <div id="rm_group_add_members_pagination" class="group_pagination"></div>
-                                    <div id="rm_group_add_members" class="overflowYAuto flex-container" no_characters_text="No characters available" data-i18n="[no_characters_text]No characters available"></div>
+                                    <div id="rm_group_add_members" class="overflowYAuto flex-container" no_characters_text="No characters available" data-i18n="[no_characters_text]No characters available" role="list"></div>
                                 </div>
                             </div>
                         </div>
@@ -6703,10 +6704,10 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                     <div name="Character List Panel" id="rm_characters_block" class="right_menu">
                         <div id="charListFixedTop">
                             <div id="rm_button_bar">
-                                <div id="rm_button_create" title="Create New Character" data-i18n="[title]Create New Character" class="menu_button fa-solid fa-user-plus"></div>
+                                <button id="rm_button_create" title="Create New Character" data-i18n="[title]Create New Character" class="menu_button fa-solid fa-user-plus" type="button"></button>
                                 <div id="character_import_button" title="Import Character from File" data-i18n="[title]Import Character from File" class="menu_button fa-solid fa-file-import"></div>
                                 <div id="external_import_button" title="Import content from external URL" data-i18n="[title]Import content from external URL" class="menu_button fa-solid fa-cloud-arrow-down"></div>
-                                <div id="rm_button_group_chats" title="Create New Chat Group" data-i18n="[title]Create New Chat Group" class="menu_button fa-solid fa-users-gear"></div>
+                                <button id="rm_button_group_chats" title="Create New Chat Group" data-i18n="[title]Create New Chat Group" class="menu_button fa-solid fa-users-gear" type="button"></button>
                                 <div id="rm_buttons_container">
                                     <!-- Container for additional buttons added by extensions -->
                                 </div>
@@ -6724,10 +6725,10 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                     <option data-field="data_size" data-order="asc" data-i18n="Least tokens">Least tokens</option>
                                     <option data-field="name" data-order="random" data-i18n="Random">Random</option>
                                 </select>
-                                <div id="rm_button_search" class="right_menu_button fa-fw fa-solid fa-search" title="Toggle search bar" data-i18n="[title]Toggle search bar"></div>
+                                <button type="button" id="rm_button_search" aria-controls="form_character_search_form" aria-expanded="false" class="right_menu_button fa-fw fa-solid fa-search" title="Toggle search bar" data-i18n="[title]Toggle search bar"></button>
                             </div>
                             <div id="form_character_search_form">
-                                <input id="character_search_bar" class="text_pole textarea_compact width100p" type="search" data-i18n="[placeholder]Search..." placeholder="Search..." />
+                                <input id="character_search_bar" aria-label="Search characters" class="text_pole textarea_compact width100p" type="search" data-i18n="[placeholder]Search...;[aria-label]Search characters" placeholder="Search..." />
                             </div>
                             <div class="rm_tag_controls">
                                 <div class="tags rm_tag_filter"></div>
@@ -6736,13 +6737,14 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                         </div>
 
                         <div id="rm_print_characters_pagination">
-                            <i id="charListGridToggle" class="fa-solid fa-table-cells-large menu_button" title="Toggle character grid view" data-i18n="[title]Toggle character grid view"></i>
-                            <i id="bulkEditButton" class="fa-solid fa-edit menu_button bulkEditButton" title="Bulk edit characters&#13;&#13;Click to toggle characters&#13;Shift + Click to select/deselect a range of characters&#13;Right-click for actions" data-i18n="[title]Bulk_edit_characters"></i>
-                            <div id="bulkSelectedCount" class="bulkEditOptionElement paginationjs-nav"></div>
-                            <i id="bulkSelectAllButton" class="fa-solid fa-check-double menu_button bulkEditOptionElement bulkSelectAllButton" title="Bulk select all characters" data-i18n="[title]Bulk select all characters" style="display: none;"></i>
-                            <i id="bulkDeleteButton" class="fa-solid fa-trash menu_button bulkEditOptionElement bulkDeleteButton" title="Bulk delete characters" data-i18n="[title]Bulk delete characters" style="display: none;"></i>
+                            <button type="button" id="charListGridToggle" aria-pressed="false" class="fa-solid fa-table-cells-large menu_button" title="Toggle character grid view" data-i18n="[title]Toggle character grid view"></button>
+                            <button type="button" id="bulkEditButton" aria-label="Bulk edit characters" aria-pressed="false" class="fa-solid fa-edit menu_button bulkEditButton" title="Bulk edit characters&#13;&#13;Click to toggle characters&#13;Shift + Click to select/deselect a range of characters&#13;Right-click for actions" data-i18n="[title]Bulk_edit_characters;[aria-label]Bulk edit characters"></button>
+                            <button type="button" id="bulkMoreButton" class="fa-solid fa-ellipsis menu_button bulkEditOptionElement" title="More actions" data-i18n="[title]More actions" style="display: none;"></button>
+                            <div id="bulkSelectedCount" role="status" class="bulkEditOptionElement paginationjs-nav"><span aria-hidden="true"></span><span class="sr-only"></span></div>
+                            <button type="button" id="bulkSelectAllButton" class="fa-solid fa-check-double menu_button bulkEditOptionElement bulkSelectAllButton" title="Bulk select all characters" data-i18n="[title]Bulk select all characters" style="display: none;"></button>
+                            <button type="button" id="bulkDeleteButton" class="fa-solid fa-trash menu_button bulkEditOptionElement bulkDeleteButton" title="Bulk delete characters" data-i18n="[title]Bulk delete characters" style="display: none;"></button>
                         </div>
-                        <div id="rm_print_characters_block" class="flexFlowColumn"></div>
+                        <div id="rm_print_characters_block" class="flexFlowColumn" role="list"></div>
                     </div>
                 </div>
             </nav>
@@ -6752,9 +6754,9 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
     <div name="templatesAndPopupsWrapper"> <!--this div is just for IDE sanity for quick collapsing-->
         <!-- Point to this element when you need a no-op selector -->
         <template id="NULL_SELECTOR" class="displayNone"></template>
-        <div id="export_format_popup" class="list-group">
-            <div class="export_format list-group-item" data-format="png">PNG</div>
-            <div class="export_format list-group-item" data-format="json">JSON</div>
+        <div id="export_format_popup" class="list-group" style="display: none;">
+            <button class="export_format list-group-item" data-format="png" type="button">PNG</button>
+            <button class="export_format list-group-item" data-format="json" type="button">JSON</button>
         </div>
         <div id="zoomed_avatar_template" class="template_element">
             <div class="zoomed_avatar">
@@ -6777,9 +6779,10 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
             </div>
         </template>
         <div id="user_avatar_template" class="template_element">
-            <div class="avatar-container">
+            <div class="avatar-container tt-control-shell interactable" role="listitem">
+                <button type="button" class="sr-only"></button>
                 <div imgfile="" class="avatar">
-                    <img src="" alt="User Avatar">
+                    <img src="" alt="">
                 </div>
                 <div class="flex-container wide100pLess70px character_select_container">
                     <div class="wide100p character_name_block">
@@ -6788,12 +6791,12 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                     </div>
                     <div class="ch_description"></div>
                     <div class="avatar_container_states buttons_block">
-                        <div class="locked_to_chat_label avatar_state has_hover_label menu_button menu_button_icon disabled" title="Persona is locked to the current chat" data-i18n="[title]Persona is locked to the current chat">
+                        <div class="locked_to_chat_label avatar_state has_hover_label menu_button menu_button_icon disabled" title="Persona is locked to the current chat" data-i18n="[title]Persona is locked to the current chat" role="img">
                             <i class="icon fa-solid fa-lock fa-fw"></i>
                             <i class="label_icon icon fa-solid fa-comments fa-fw"></i>
                             <div class="label" data-i18n="Chat">Chat</div>
                         </div>
-                        <div class="locked_to_character_label avatar_state has_hover_label menu_button menu_button_icon disabled " title="Persona is locked to the current character" data-i18n="[title]Persona is locked to the current character">
+                        <div class="locked_to_character_label avatar_state has_hover_label menu_button menu_button_icon disabled " title="Persona is locked to the current character" data-i18n="[title]Persona is locked to the current character" role="img">
                             <i class="icon fa-solid fa-lock fa-fw"></i>
                             <i class="label_icon icon fa-solid fa-user fa-fw"></i>
                             <div class="label" data-i18n="Character">Character</div>
@@ -6835,40 +6838,40 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                 </div>
             </div>
         </div>
-        <div id="character_popup" class="flex-container flexFlowColumn flexNoGap">
-            <div id="character_popup_text">
+        <div id="character_popup" class="flex-container flexFlowColumn flexNoGap" role="dialog" aria-labelledby="character_popup_text">
+            <div id="character_popup_text" tabindex="-1">
                 <h3 id="character_popup-button-h3" class="margin0"></h3> <span data-i18n="Advanced Definitions">- Advanced
                     Definitions</span>
             </div>
             <hr class="margin-bot-10px">
-            <div id="character_cross" class="fa-solid fa-circle-xmark"></div>
+            <button id="character_cross" class="fa-solid fa-circle-xmark" type="button" aria-label="Close" data-i18n="[aria-label]Close"></button>
             <div class="inline-drawer">
                 <div class="inline-drawer-toggle inline-drawer-header">
                     <h4>
-                        <span data-i18n="Prompt Overrides">Prompt Overrides</span>
+                        <span data-i18n="Prompt Overrides" id="character_prompt_overrides_label">Prompt Overrides</span>
                         <small data-i18n="(For Chat Completion and Instruct Mode)">(For Chat Completion and Instruct Mode)</small>
                     </h4>
-                    <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+                    <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down" aria-labelledby="character_prompt_overrides_label"></div>
                 </div>
                 <div class="inline-drawer-content">
                     <small data-i18n="Insert {{original}} into either box to include the respective default prompt from system settings.">Insert {{original}} into either box to include the respective default prompt from system settings.</small>
                     <div>
                         <h4 class="flex-container alignItemsBaseline">
-                            <span data-i18n="Main Prompt">Main Prompt</span>
-                            <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="system_prompt_textarea" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
+                            <span data-i18n="Main Prompt" id="system_prompt_textarea_label">Main Prompt</span>
+                            <button class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="system_prompt_textarea" title="Expand the editor" data-i18n="[title]Expand the editor" type="button" id="system_prompt_textarea_expand" aria-labelledby="system_prompt_textarea_expand system_prompt_textarea_label"></button>
                         </h4>
-                        <textarea id="system_prompt_textarea" name="system_prompt" data-macros data-i18n="[placeholder]Any contents here will replace the default Main Prompt used for this character. (v2 spec: system_prompt)" placeholder="Any contents here will replace the default Main Prompt used for this character.&#10;(v2 spec: system_prompt)" form="form_create" class="text_pole" autocomplete="off" rows="3"></textarea>
-                        <div class="extension_token_counter">
+                        <textarea id="system_prompt_textarea" name="system_prompt" data-macros data-i18n="[placeholder]Any contents here will replace the default Main Prompt used for this character. (v2 spec: system_prompt)" placeholder="Any contents here will replace the default Main Prompt used for this character.&#10;(v2 spec: system_prompt)" form="form_create" class="text_pole" autocomplete="off" rows="3" aria-labelledby="system_prompt_textarea_label" aria-describedby="system_prompt_textarea_tokens_description"></textarea>
+                        <div class="extension_token_counter" id="system_prompt_textarea_tokens_description">
                             <span data-i18n="extension_token_counter">Tokens:</span> <span data-token-counter="system_prompt_textarea">counting...</span>
                         </div>
                     </div>
                     <div>
                         <h4 class="flex-container alignItemsBaseline">
-                            <span data-i18n="Post-History Instructions">Post-History Instructions</span>
-                            <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="post_history_instructions_textarea" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
+                            <span data-i18n="Post-History Instructions" id="post_history_instructions_textarea_label">Post-History Instructions</span>
+                            <button class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="post_history_instructions_textarea" title="Expand the editor" data-i18n="[title]Expand the editor" type="button" id="post_history_instructions_textarea_expand" aria-labelledby="post_history_instructions_textarea_expand post_history_instructions_textarea_label"></button>
                         </h4>
-                        <textarea id="post_history_instructions_textarea" name="post_history_instructions" data-macros data-i18n="[placeholder]Any contents here will replace the default Post-History Instructions used for this character. (v2 spec: post_history_instructions)" placeholder="Any contents here will replace the default Post-History Instructions used for this character.&#10;(v2 spec: post_history_instructions)" form="form_create" class="text_pole" autocomplete="off" rows="3"></textarea>
-                        <div class="extension_token_counter">
+                        <textarea id="post_history_instructions_textarea" name="post_history_instructions" data-macros data-i18n="[placeholder]Any contents here will replace the default Post-History Instructions used for this character. (v2 spec: post_history_instructions)" placeholder="Any contents here will replace the default Post-History Instructions used for this character.&#10;(v2 spec: post_history_instructions)" form="form_create" class="text_pole" autocomplete="off" rows="3" aria-labelledby="post_history_instructions_textarea_label" aria-describedby="post_history_instructions_textarea_tokens_description"></textarea>
+                        <div class="extension_token_counter" id="post_history_instructions_textarea_tokens_description">
                             <span data-i18n="extension_token_counter">Tokens:</span> <span data-token-counter="post_history_instructions_textarea">counting...</span>
                         </div>
                     </div>
@@ -6877,38 +6880,38 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
             <hr>
             <div class="inline-drawer">
                 <div class="inline-drawer-toggle inline-drawer-header">
-                    <h4 data-i18n="Creator's Metadata (Not sent with the AI prompt)"><!-- This data-i18n attribute on the left is kept for backward compatibility, use the ones below when translating -->
-                        <span data-i18n="Creator's Metadata">Creator's Metadata</span>
+                    <h4>
+                        <span data-i18n="Creator's Metadata" id="character_metadata_label">Creator's Metadata</span>
                         <small data-i18n="(Not sent with the AI Prompt)">(Not sent with the AI Prompt)</small>
                     </h4>
-                    <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+                    <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down" aria-labelledby="character_metadata_label"></div>
                 </div>
                 <div class="inline-drawer-content">
                     <small data-i18n="Everything here is optional">Everything here is optional</small>
                     <div class="flex-container flexnowrap">
                         <div class="flex1">
-                            <h4 data-i18n="Created by">Created by</h4>
-                            <textarea id="creator_textarea" name="creator" data-i18n="[placeholder](Botmaker's name / Contact Info)" placeholder="(Botmaker's name / Contact info)" form="form_create" class="text_pole" autocomplete="off" rows="2"></textarea>
+                            <h4><span id="creator_textarea_label" data-i18n="Created by">Created by</span></h4>
+                            <textarea id="creator_textarea" name="creator" data-i18n="[placeholder](Botmaker's name / Contact Info)" placeholder="(Botmaker's name / Contact info)" form="form_create" class="text_pole" autocomplete="off" rows="2" aria-labelledby="creator_textarea_label"></textarea>
                         </div>
                         <div class="flex1">
-                            <h4 data-i18n="Character Version">Character Version</h4>
-                            <textarea id="character_version_textarea" name="character_version" data-i18n="[placeholder](If you want to track character versions)" placeholder="(If you want to track character versions)" form="form_create" class="text_pole" autocomplete="off" rows="2"></textarea>
+                            <h4><span id="character_version_textarea_label" data-i18n="Character Version">Character Version</span></h4>
+                            <textarea id="character_version_textarea" name="character_version" data-i18n="[placeholder](If you want to track character versions)" placeholder="(If you want to track character versions)" form="form_create" class="text_pole" autocomplete="off" rows="2" aria-labelledby="character_version_textarea_label"></textarea>
                         </div>
                     </div>
                     <div class="flex-container flexnowrap">
                         <div class="flex1">
                             <h4 class="flex-container alignItemsBaseline">
-                                <span data-i18n="Creator's Notes">Creator's Notes</span>
-                                <i class="editor_maximize fa-solid fa-maximize" data-for="creator_notes_textarea" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
+                                <span data-i18n="Creator's Notes" id="creator_notes_textarea_label">Creator's Notes</span>
+                                <button class="editor_maximize fa-solid fa-maximize" data-for="creator_notes_textarea" title="Expand the editor" data-i18n="[title]Expand the editor" type="button" id="creator_notes_textarea_expand" aria-labelledby="creator_notes_textarea_expand creator_notes_textarea_label"></button>
                             </h4>
-                            <textarea id="creator_notes_textarea" name="creator_notes" data-i18n="[placeholder](Describe the bot, give use tips, or list the chat models it has been tested on. This will be displayed in the character list.)" placeholder="(Describe the bot, give use tips, or list the chat models it has been tested on. This will be displayed in the character list.)" form="form_create" class="text_pole" autocomplete="off" rows="4"></textarea>
+                            <textarea id="creator_notes_textarea" name="creator_notes" data-i18n="[placeholder](Describe the bot, give use tips, or list the chat models it has been tested on. This will be displayed in the character list.)" placeholder="(Describe the bot, give use tips, or list the chat models it has been tested on. This will be displayed in the character list.)" form="form_create" class="text_pole" autocomplete="off" rows="4" aria-labelledby="creator_notes_textarea_label"></textarea>
                         </div>
                         <div class="flex1">
                             <h4 class="flex-container alignItemsBaseline">
-                                <span data-i18n="Tags to Embed">Tags to Embed</span>
-                                <i class="editor_maximize fa-solid fa-maximize" data-for="tags_textarea" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
+                                <span data-i18n="Tags to Embed" id="tags_textarea_label">Tags to Embed</span>
+                                <button class="editor_maximize fa-solid fa-maximize" data-for="tags_textarea" title="Expand the editor" data-i18n="[title]Expand the editor" type="button" id="tags_textarea_expand" aria-labelledby="tags_textarea_expand tags_textarea_label"></button>
                             </h4>
-                            <textarea id="tags_textarea" name="tags" data-i18n="[placeholder](Write a comma-separated list of tags)" placeholder="(Write a comma-separated list of tags)" form="form_create" class="text_pole" autocomplete="off" rows="4"></textarea>
+                            <textarea id="tags_textarea" name="tags" data-i18n="[placeholder](Write a comma-separated list of tags)" placeholder="(Write a comma-separated list of tags)" form="form_create" class="text_pole" autocomplete="off" rows="4" aria-labelledby="tags_textarea_label"></textarea>
                         </div>
                     </div>
                 </div>
@@ -6916,67 +6919,67 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
             <hr>
             <div id="personality_div">
                 <h4 class="flex-container alignItemsBaseline">
-                    <span data-i18n="Personality summary">Personality summary</span>
-                    <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="personality_textarea" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
-                    <a href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#personality-summary" class="notes-link" target="_blank"><span class="fa-solid fa-circle-question note-link-span"></span></a>
+                    <span data-i18n="Personality summary" id="personality_textarea_label">Personality summary</span>
+                    <button class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="personality_textarea" title="Expand the editor" data-i18n="[title]Expand the editor" type="button" id="personality_textarea_expand" aria-labelledby="personality_textarea_expand personality_textarea_label"></button>
+                    <a href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#personality-summary" class="notes-link" target="_blank" id="personality_textarea_docs" aria-label="Docs" data-i18n="[aria-label]Docs" aria-labelledby="personality_textarea_docs personality_textarea_label"><span class="fa-solid fa-circle-question note-link-span"></span></a>
                 </h4>
-                <textarea id="personality_textarea" name="personality" data-macros data-i18n="[placeholder](A brief description of the personality)" placeholder="(A brief description of the personality)" form="form_create" class="text_pole" autocomplete="off" rows="4"></textarea>
-                <div class="extension_token_counter">
+                <textarea id="personality_textarea" name="personality" data-macros data-i18n="[placeholder](A brief description of the personality)" placeholder="(A brief description of the personality)" form="form_create" class="text_pole" autocomplete="off" rows="4" aria-labelledby="personality_textarea_label" aria-describedby="personality_textarea_tokens_description"></textarea>
+                <div class="extension_token_counter" id="personality_textarea_tokens_description">
                     <span data-i18n="extension_token_counter">Tokens:</span> <span data-token-counter="personality_textarea" data-token-permanent="true">counting...</span>
                 </div>
             </div>
             <div id="scenario_div">
                 <h4 class="flex-container alignItemsBaseline">
-                    <span data-i18n="Scenario">Scenario</span>
-                    <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="scenario_pole" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
-                    <a href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#scenario" class="notes-link" target="_blank">
+                    <span data-i18n="Scenario" id="scenario_pole_label">Scenario</span>
+                    <button class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="scenario_pole" title="Expand the editor" data-i18n="[title]Expand the editor" type="button" id="scenario_pole_expand" aria-labelledby="scenario_pole_expand scenario_pole_label"></button>
+                    <a href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#scenario" class="notes-link" target="_blank" id="scenario_pole_docs" aria-label="Docs" data-i18n="[aria-label]Docs" aria-labelledby="scenario_pole_docs scenario_pole_label">
                         <span class="fa-solid fa-circle-question note-link-span"></span>
                     </a>
                 </h4>
-                <textarea id="scenario_pole" name="scenario" data-macros data-i18n="[placeholder](Circumstances and context of the interaction)" placeholder="(Circumstances and context of the interaction)" class="text_pole" value="" autocomplete="off" form="form_create" rows="4"></textarea>
-                <div class="extension_token_counter">
+                <textarea id="scenario_pole" name="scenario" data-macros data-i18n="[placeholder](Circumstances and context of the interaction)" placeholder="(Circumstances and context of the interaction)" class="text_pole" value="" autocomplete="off" form="form_create" rows="4" aria-labelledby="scenario_pole_label" aria-describedby="scenario_pole_tokens_description"></textarea>
+                <div class="extension_token_counter" id="scenario_pole_tokens_description">
                     <span data-i18n="extension_token_counter">Tokens:</span> <span data-token-counter="scenario_pole" data-token-permanent="true">counting...</span>
                 </div>
             </div>
             <div id="depth_prompt_div" class="flex-container">
                 <div class="flex1">
                     <h4 class="flex-container alignItemsBaseline">
-                        <span data-i18n="Character's Note">
+                        <span data-i18n="Character's Note" id="depth_prompt_prompt_label">
                             Character's Note
                         </span>
-                        <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="depth_prompt_prompt" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
+                        <button class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="depth_prompt_prompt" title="Expand the editor" data-i18n="[title]Expand the editor" type="button" id="depth_prompt_prompt_expand" aria-labelledby="depth_prompt_prompt_expand depth_prompt_prompt_label"></button>
                     </h4>
-                    <textarea id="depth_prompt_prompt" name="depth_prompt_prompt" data-macros class="text_pole" rows="5" autocomplete="off" form="form_create" data-i18n="[placeholder](Text to be inserted in-chat @ designated depth and role)" placeholder="(Text to be inserted in-chat @ designated depth and role)"></textarea>
+                    <textarea id="depth_prompt_prompt" name="depth_prompt_prompt" data-macros class="text_pole" rows="5" autocomplete="off" form="form_create" data-i18n="[placeholder](Text to be inserted in-chat @ designated depth and role)" placeholder="(Text to be inserted in-chat @ designated depth and role)" aria-labelledby="depth_prompt_prompt_label" aria-describedby="depth_prompt_prompt_tokens_description"></textarea>
                 </div>
                 <div>
                     <h4>
-                        <span data-i18n="@ Depth">
+                        <span data-i18n="@ Depth" id="depth_prompt_depth_label">
                             @ Depth
                         </span>
                     </h4>
-                    <input id="depth_prompt_depth" name="depth_prompt_depth" class="text_pole textarea_compact m-t-0" type="number" min="0" max="9999" value="4" form="form_create" />
+                    <input id="depth_prompt_depth" name="depth_prompt_depth" class="text_pole textarea_compact m-t-0" type="number" min="0" max="9999" value="4" form="form_create" aria-labelledby="depth_prompt_depth_label" />
                     <h4>
-                        <span data-i18n="Role">
+                        <span data-i18n="Role" id="depth_prompt_role_label">
                             Role
                         </span>
                     </h4>
-                    <select id="depth_prompt_role" name="depth_prompt_role" form="form_create" class="text_pole textarea_compact m-t-0">
+                    <select id="depth_prompt_role" name="depth_prompt_role" form="form_create" class="text_pole textarea_compact m-t-0" aria-labelledby="depth_prompt_role_label">
                         <option value="system" data-i18n="System">System</option>
                         <option value="user" data-i18n="User">User</option>
                         <option value="assistant" data-i18n="Assistant">Assistant</option>
                     </select>
-                    <div class="extension_token_counter">
+                    <div class="extension_token_counter" id="depth_prompt_prompt_tokens_description">
                         <span data-i18n="extension_token_counter">Tokens:</span> <span data-token-counter="depth_prompt_prompt" data-token-permanent="true">counting...</span>
                     </div>
                 </div>
             </div>
             <div id="talkativeness_div">
-                <h4><span data-i18n="Talkativeness">Talkativeness</span></h4>
-                <h5 data-i18n="How often the character speaks in group chats!"><!-- This data-i18n attribute on the left is kept for backward compatibility, use the ones below when translating -->
+                <h4><span data-i18n="Talkativeness" id="talkativeness_slider_label">Talkativeness</span></h4>
+                <h5 id="talkativeness_slider_description">
                     <span data-i18n="How often the character speaks in">How often the character speaks in</span>&nbsp;<span class="warning" data-i18n="group chats!">group chats!</span>
                 </h5>
-                <input id="talkativeness_slider" name="talkativeness" type="range" min="0" max="1" step="0.05" value="0.5" form="form_create">
-                <div class="slider_hint">
+                <input id="talkativeness_slider" name="talkativeness" type="range" min="0" max="1" step="0.05" value="0.5" form="form_create" aria-labelledby="talkativeness_slider_label" aria-describedby="talkativeness_slider_description talkativeness_slider_hint">
+                <div class="slider_hint" id="talkativeness_slider_hint">
                     <span data-i18n="Shy">Shy</span>
                     <span data-i18n="Normal">Normal</span>
                     <span data-i18n="Chatty">Chatty</span>
@@ -6986,27 +6989,27 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
             <div id="mes_example_div" class="flex-container flexFlowColumn">
                 <div>
                     <h4 class="flex-container alignItemsBaseline">
-                        <span data-i18n="Examples of dialogue" class="mdhotkey_location">Examples of dialogue</span>
-                        <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="mes_example_textarea" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
+                        <span data-i18n="Examples of dialogue" class="mdhotkey_location" id="mes_example_textarea_label">Examples of dialogue</span>
+                        <button class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="mes_example_textarea" title="Expand the editor" data-i18n="[title]Expand the editor" type="button" id="mes_example_textarea_expand" aria-labelledby="mes_example_textarea_expand mes_example_textarea_label"></button>
                     </h4>
-                    <h5>
+                    <h5 id="mes_example_textarea_description">
                         <span data-i18n="Important to set the character's writing style.">Important to set the character's writing style.</span>
-                        <a href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#examples-of-dialogue" class="notes-link" target="_blank">
+                        <a href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#examples-of-dialogue" class="notes-link" target="_blank" id="mes_example_textarea_docs" aria-label="Docs" data-i18n="[aria-label]Docs" aria-labelledby="mes_example_textarea_docs mes_example_textarea_label">
                             <span class="fa-solid fa-circle-question note-link-span"></span>
                         </a>
                     </h5>
                 </div>
-                <textarea id="mes_example_textarea" class="flexGrow mdHotkeys" name="mes_example" data-macros data-i18n="[placeholder](Examples of chat dialog. Begin each example with START on a new line.)" placeholder="(Examples of chat dialog. Begin each example with &lt;START&gt; on a new line.)" form="form_create" rows="6"></textarea>
-                <div class="extension_token_counter">
+                <textarea id="mes_example_textarea" class="flexGrow mdHotkeys" name="mes_example" data-macros data-i18n="[placeholder](Examples of chat dialog. Begin each example with START on a new line.)" placeholder="(Examples of chat dialog. Begin each example with &lt;START&gt; on a new line.)" form="form_create" rows="6" aria-labelledby="mes_example_textarea_label" aria-describedby="mes_example_textarea_tokens_description mes_example_textarea_description"></textarea>
+                <div class="extension_token_counter" id="mes_example_textarea_tokens_description">
                     <span data-i18n="extension_token_counter">Tokens:</span> <span data-token-counter="mes_example_textarea">counting...</span>
                 </div>
                 <!-- TODO: Example chats handhold-editor concept: https://gist.github.com/Cohee1207/50da02a4001ac1adae9b440f9b8e1079 -->
             </div>
-            <div id="character_popup_ok" class="menu_button" data-i18n="Save">Save</div>
+            <button id="character_popup_ok" class="menu_button" data-i18n="Save" type="button">Save</button>
         </div>
 
         <div id="shadow_select_chat_popup">
-            <div id="select_chat_popup">
+            <div id="select_chat_popup" role="dialog" aria-labelledby="ChatHistoryCharName chat_history_title" tabindex="-1">
                 <div name="selectChatPopupHeader" class="flex-container alignitemscenter justifySpaceBetween flexGap10">
                     <div id="select_chat_import"> <!-- import chat popup header -->
                         <form id="form_import_chat" action="javascript:void(null);" method="post" enctype="multipart/form-data" style="display: none;">
@@ -7017,21 +7020,21 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                         </form>
                     </div>
                     <div id="selectChatPopupHeaderText" class="TxtLrgBoldCenter">
-                        <span id="ChatHistoryCharName"></span><span data-i18n="Chat History">Chat History</span>
-                        <a href="https://docs.sillytavern.app/usage/core-concepts/chatfilemanagement/" class="notes-link" target="_blank"><span class="fa-solid fa-circle-question note-link-span"></span></a>
+                        <span id="ChatHistoryCharName"></span><span data-i18n="Chat History" id="chat_history_title">Chat History</span>
+                        <a href="https://docs.sillytavern.app/usage/core-concepts/chatfilemanagement/" class="notes-link" target="_blank" id="chat_history_title_docs" aria-label="Docs" data-i18n="[aria-label]Docs" aria-labelledby="chat_history_title_docs chat_history_title"><span class="fa-solid fa-circle-question note-link-span"></span></a>
                     </div>
-                    <div id="newChatFromManageScreenButton" class="menu_button menu_button_icon">
+                    <button id="newChatFromManageScreenButton" class="menu_button menu_button_icon" type="button">
                         <i class="fa-solid fa-plus"></i>
                         <span data-i18n="New Chat">New Chat</span>
-                    </div>
-                    <div id="chat_import_button" class="menu_button menu_button_icon">
+                    </button>
+                    <button id="chat_import_button" class="menu_button menu_button_icon" type="button">
                         <i class="fa-solid fa-file-import"></i>
                         <span data-i18n="Import Chat">Import Chat</span>
-                    </div>
-                    <input type="search" id="select_chat_search" class="text_pole flex1" data-i18n="[placeholder]Search..." placeholder="Search..." autocomplete="off">
-                    <div id="select_chat_cross" class="opacity50p hoverglow fa-solid fa-circle-xmark fontsize120p" alt="Close Past Chat Popup"></div>
+                    </button>
+                    <input type="search" id="select_chat_search" class="text_pole flex1" data-i18n="[placeholder]Search...;[aria-label]Search chats" placeholder="Search..." autocomplete="off" aria-label="Search chats">
+                    <button id="select_chat_cross" class="opacity50p hoverglow fa-solid fa-circle-xmark fontsize120p" type="button" aria-label="Close" data-i18n="[aria-label]Close"></button>
                 </div>
-                <div id="select_chat_div"></div>
+                <div id="select_chat_div" role="list"></div>
             </div>
         </div>
         <div id="background_template" class="template_element">
@@ -7111,12 +7114,13 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
             </div>
         </div>
         <div id="past_chat_template" class="template_element">
-            <div class="select_chat_block_wrapper flex-container">
-                <div class="select_chat_block  wide100p flex-container" file_name="">
-                    <div id="select_chat_name_wrapper" class="flex-container alignitemscenter justifySpaceBetween wide100p">
+            <div class="select_chat_block_wrapper flex-container" role="listitem">
+                <div class="select_chat_block wide100p flex-container tt-control-shell interactable" file_name="">
+                    <button type="button" class="sr-only"></button>
+                    <div class="flex-container alignitemscenter justifySpaceBetween wide100p select_chat_name_wrapper">
                         <div class="flex-container alignItemsCenter">
                             <small class="select_chat_block_filename select_chat_block_filename_item"></small>
-                            <div title="Rename chat file" class="renameChatButton hoverglow opacity50p fa-solid fa-pencil fa-sm" data-i18n="[title]Rename chat file"></div>
+                            <button title="Rename chat file" class="interactable renameChatButton hoverglow opacity50p fa-solid fa-pencil fa-sm" data-i18n="[title]Rename chat file" type="button"></button>
                         </div>
                         <div class="flex-container gap10px alignItemsCenter">
                             <div class="select_chat_info flex-container">
@@ -7125,9 +7129,9 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                 <small class="chat_messages_num select_chat_block_filename_item"></small>
                             </div>
                             <div class="select_chat_actions flex-container gap10px">
-                                <div title="Export JSONL chat file" data-format="jsonl" class="exportRawChatButton opacity50p hoverglow fa-solid fa-file-export" data-i18n="[title]Export JSONL chat file"></div>
-                                <div title="Download chat as plain text document" data-format="txt" class="exportChatButton opacity50p hoverglow fa-solid fa-file-lines" data-i18n="[title]Download chat as plain text document"></div>
-                                <div title="Delete chat file" file_name="" class="PastChat_cross opacity50p hoverglow fa-solid fa-skull" data-i18n="[title]Delete chat file"></div>
+                                <button title="Export JSONL chat file" data-format="jsonl" class="interactable exportRawChatButton opacity50p hoverglow fa-solid fa-file-export" data-i18n="[title]Export JSONL chat file" type="button"></button>
+                                <button title="Download chat as plain text document" data-format="txt" class="interactable exportChatButton opacity50p hoverglow fa-solid fa-file-lines" data-i18n="[title]Download chat as plain text document" type="button"></button>
+                                <button title="Delete chat file" file_name="" class="interactable PastChat_cross opacity50p hoverglow fa-solid fa-skull" data-i18n="[title]Delete chat file" type="button"></button>
                             </div>
                         </div>
                     </div>
@@ -7566,9 +7570,10 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
             </div>
         </div>
         <div id="character_template" class="template_element">
-            <div class="character_select entity_block flex-container wide100p alignitemsflexstart" chid="" id="">
+            <div class="tt-control-shell interactable character_select entity_block flex-container wide100p alignitemsflexstart" role="listitem" chid="" id="">
+                <button type="button" class="sr-only"></button>
                 <div class="avatar" title="">
-                    <img src="">
+                    <img src="" alt="">
                 </div>
                 <div class="flex-container wide100pLess70px character_select_container">
                     <div class="wide100p character_name_block">
@@ -7587,10 +7592,36 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                 </div>
             </div>
         </div>
+        <span id="tag_filter_included" hidden data-i18n="Included">Included</span>
+        <span id="tag_filter_excluded" hidden data-i18n="Excluded">Excluded</span>
+        <template id="bulk_tag_template">
+            <div class="flex-container flexFlowColumn">
+                <h3 class="marginBot5"></h3>
+                <small class="bulk_tags_desc m-b-1" data-i18n="Add or remove the mutual tags of all selected characters. Import all or existing tags for all selected characters.">Add or remove the mutual tags of all selected characters. Import all or existing tags for all selected characters.</small>
+                <div id="bulk_tags_avatars_block" class="avatars_inline avatars_inline_small tags tags_inline"></div>
+                <div id="bulk_tags_div" class="marginBot5">
+                    <div class="tag_controls">
+                        <input id="bulkTagInput" class="text_pole tag_input wide100p margin0" data-i18n="[placeholder]Search / Create Tags;[aria-label]Search / Create Tags" placeholder="Search / Create Tags" aria-label="Search / Create Tags" maxlength="25" autofocus />
+                        <button type="button" class="tags_view menu_button fa-solid fa-tags" title="View all tags" data-i18n="[title]View all tags"></button>
+                    </div>
+                    <div id="bulkTagList" class="m-t-1 tags"></div>
+                </div>
+                <div class="flex-container justifyCenter">
+                    <button type="button" id="bulk_tag_popup_reset" class="menu_button" title="Remove all tags from the selected characters" data-i18n="[title]Remove all tags from the selected characters">
+                        <i class="fa-solid fa-trash-can margin-right-10px"></i><span data-i18n="All">All</span>
+                    </button>
+                    <button type="button" id="bulk_tag_popup_remove_mutual" class="menu_button" title="Remove all mutual tags from the selected characters" data-i18n="[title]Remove all mutual tags from the selected characters">
+                        <i class="fa-solid fa-trash-can margin-right-10px"></i><span data-i18n="Mutual">Mutual</span>
+                    </button>
+                    <button type="button" id="bulk_tag_popup_import_all_tags" class="menu_button" title="Import all tags from selected characters" data-i18n="[title]Import all tags from selected characters;Import All">Import All</button>
+                    <button type="button" id="bulk_tag_popup_import_existing_tags" class="menu_button" title="Import existing tags from selected characters" data-i18n="[title]Import existing tags from selected characters;Import Existing">Import Existing</button>
+                </div>
+            </div>
+        </template>
         <div id="tag_template" class="template_element">
             <span id="" class="tag">
                 <span class="tag_name"></span>
-                <i class="fa-solid fa-circle-xmark tag_remove"></i>
+                <button type="button" class="fa-solid fa-circle-xmark tag_remove" title="Remove" data-i18n="[title]Remove"></button>
             </span>
         </div>
         <div id="openai_logit_bias_template" class="template_element">
@@ -7843,22 +7874,22 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
         </div>
         <div id="group_avatars_template" class="template_element">
             <div class="avatar avatar_collage collage_1">
-                <img alt="img1" class="img_1" src="">
+                <img alt="" class="img_1" src="">
             </div>
             <div class="avatar avatar_collage collage_2">
-                <img alt="img1" class="img_1" src="">
-                <img alt="img2" class="img_2" src="">
+                <img alt="" class="img_1" src="">
+                <img alt="" class="img_2" src="">
             </div>
             <div class="avatar avatar_collage collage_3">
-                <img alt="img1" class="img_1" src="">
-                <img alt="img2" class="img_2" src="">
-                <img alt="img3" class="img_3" src="">
+                <img alt="" class="img_1" src="">
+                <img alt="" class="img_2" src="">
+                <img alt="" class="img_3" src="">
             </div>
             <div class="avatar avatar_collage collage_4">
-                <img alt="img1" class="img_1" src="">
-                <img alt="img2" class="img_2" src="">
-                <img alt="img3" class="img_3" src="">
-                <img alt="img4" class="img_4" src="">
+                <img alt="" class="img_1" src="">
+                <img alt="" class="img_2" src="">
+                <img alt="" class="img_3" src="">
+                <img alt="" class="img_4" src="">
             </div>
         </div>
 
@@ -7913,9 +7944,9 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
             </div>
         </div>
         <div id="group_member_template" class="template_element">
-            <div class="group_member">
+            <div class="group_member" role="listitem">
                 <div class="avatar">
-                    <img alt="Avatar" src="" />
+                    <img alt="" src="" />
                 </div>
                 <div class="group_member_name">
                     <div class="character_name_block">
@@ -7927,21 +7958,22 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                 <input class="ch_fav" value="" hidden />
                 <div class="queue_position"></div>
                 <div class="group_member_icon">
-                    <div title="Temporarily disable automatic replies from this character" data-action="disable" class="right_menu_button fa-solid fa-lg fa-comment-slash" data-i18n="[title]Temporarily disable automatic replies from this character"></div>
-                    <div title="Enable automatic replies from this character" data-action="enable" class="right_menu_button fa-solid fa-lg fa-comment-slash" data-i18n="[title]Enable automatic replies from this character"></div>
-                    <div title="Trigger a message from this character" data-action="speak" class="right_menu_button fa-solid fa-lg fa-comment" data-i18n="[title]Trigger a message from this character"></div>
+                    <button title="Temporarily disable automatic replies from this character" data-action="disable" class="right_menu_button fa-solid fa-lg fa-comment-slash" data-i18n="[title]Temporarily disable automatic replies from this character" type="button"></button>
+                    <button title="Enable automatic replies from this character" data-action="enable" class="right_menu_button fa-solid fa-lg fa-comment-slash" data-i18n="[title]Enable automatic replies from this character" type="button"></button>
+                    <button title="Trigger a message from this character" data-action="speak" class="right_menu_button fa-solid fa-lg fa-comment" data-i18n="[title]Trigger a message from this character" type="button"></button>
                     <div class="flexFlowColumn flex-container">
-                        <div title="Move up" data-action="up" class="right_menu_button fa-solid fa-chevron-up" data-i18n="[title]Move up"></div>
-                        <div title="Move down" data-action="down" class="right_menu_button fa-solid fa-chevron-down" data-i18n="[title]Move down"></div>
+                        <button title="Move up" data-action="up" class="right_menu_button fa-solid fa-chevron-up" data-i18n="[title]Move up" type="button"></button>
+                        <button title="Move down" data-action="down" class="right_menu_button fa-solid fa-chevron-down" data-i18n="[title]Move down" type="button"></button>
                     </div>
-                    <div title="View character card" data-action="view" class="right_menu_button fa-solid fa-xl fa-image-portrait" data-i18n="[title]View character card"></div>
-                    <div title="Remove from group" data-action="remove" class="right_menu_button fa-solid fa-xl fa-xmark" data-i18n="[title]Remove from group"></div>
-                    <div title="Add to group" data-action="add" class="right_menu_button fa-solid fa-xl fa-plus" data-i18n="[title]Add to group"></div>
+                    <button title="View character card" data-action="view" class="right_menu_button fa-solid fa-xl fa-image-portrait" data-i18n="[title]View character card" type="button"></button>
+                    <button title="Remove from group" data-action="remove" class="right_menu_button fa-solid fa-xl fa-xmark" data-i18n="[title]Remove from group" type="button"></button>
+                    <button title="Add to group" data-action="add" class="right_menu_button fa-solid fa-xl fa-plus" data-i18n="[title]Add to group" type="button"></button>
                 </div>
             </div>
         </div>
         <div id="group_list_template" class="template_element">
-            <div class="group_select entity_block flex-container wide100p alignitemsflexstart">
+            <div class="tt-control-shell interactable group_select entity_block flex-container wide100p alignitemsflexstart" role="listitem">
+                <button type="button" class="sr-only"></button>
                 <div class="avatar">
                     <img src="">
                 </div>
@@ -7959,7 +7991,8 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
             </div>
         </div>
         <div id="bogus_folder_template" class="template_element">
-            <div class="bogus_folder_select entity_block flex-container wide100p alignitemsflexstart">
+            <div class="tt-control-shell interactable bogus_folder_select entity_block flex-container wide100p alignitemsflexstart" role="listitem">
+                <button type="button" class="sr-only"></button>
                 <div class="avatar flex alignitemscenter textAlignCenter">
                     <i class="bogus_folder_icon fa-solid fa-xl"></i>
                 </div>
@@ -7974,7 +8007,8 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
             </div>
         </div>
         <div id="bogus_folder_back_template" class="template_element">
-            <div class="bogus_folder_select bogus_folder_select_back flex-container wide100p alignitemsflexstart" id="BogusFolderBack" tagid="back">
+            <div class="tt-control-shell interactable bogus_folder_select bogus_folder_select_back flex-container wide100p alignitemsflexstart" role="listitem" id="BogusFolderBack" tagid="back">
+                <button type="button" class="sr-only"></button>
                 <div class="avatar flex alignitemscenter textAlignCenter">
                     <i class="bogus_folder_icon fa-solid fa-xl fa-right-from-bracket fa-flip-horizontal"></i>
                 </div>
@@ -7993,51 +8027,37 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                 <img src="">
             </div>
         </div>
+        <span id="persona_used_in_chat" hidden data-i18n="Used in this chat">Used in this chat</span>
         <div id="alternate_greetings_template" class="template_element">
             <div class="alternate_grettings flexFlowColumn flex-container">
                 <div class="title_restorable">
                     <h3><span data-i18n="Alternate Greetings" class="mdhotkey_location">Alternate Greetings</span></h3>
-                    <div class="menu_button menu_button_icon add_alternate_greeting">
+                    <button class="menu_button menu_button_icon add_alternate_greeting" type="button">
                         <i class="fa-solid fa-plus"></i>
                         <span data-i18n="Add">Add</span>
-                    </div>
+                    </button>
                 </div>
-                <small class="justifyLeft" data-i18n="Alternate_Greetings_desc">
+                <small class="justifyLeft alternate_greetings_description" data-i18n="Alternate_Greetings_desc">
                     These will be displayed as swipes on the first message when starting a new chat.
                     Group members can select one of them to initiate the conversation.
                 </small>
                 <hr>
-                <div class="alternate_greetings_list flexFlowColumn flex-container wide100p">
-                    <strong class="alternate_grettings_hint margin-bot-10px">
-                        <span data-i18n="alternate_greetings_hint_1">Click the</span> <i class="fa-solid fa-plus"></i> <span data-i18n="alternate_greetings_hint_2">button to get started!</span>
-                    </strong>
-                </div>
+                <strong class="alternate_grettings_hint margin-bot-10px">
+                    <span data-i18n="alternate_greetings_hint_1">Click the</span> <i class="fa-solid fa-plus"></i> <span data-i18n="alternate_greetings_hint_2">button to get started!</span>
+                </strong>
+                <div class="alternate_greetings_list flexFlowColumn flex-container wide100p"></div>
             </div>
         </div>
         <div id="alternate_greeting_form_template" class="template_element">
             <div class="alternate_greeting">
                 <details open>
-                    <summary>
-                        <div class="title_restorable gap5px">
-                            <div class="flex-container alignItemsCenter">
-                                <strong><span data-i18n="Alternate Greeting #">Alternate Greeting #</span><span class="greeting_index"></span></strong>
-                                <i class="editor_maximize fa-solid fa-maximize right_menu_button" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
-                            </div>
-                            <span class="expander"></span>
-                            <div class="menu_button menu_button_icon move_up_alternate_greeting" title="Move up" data-i18n="[title]Move up">
-                                <i class="fa-solid fa-chevron-up"></i>
-                            </div>
-                            <div class="menu_button menu_button_icon move_down_alternate_greeting" title="Move down" data-i18n="[title]Move down">
-                                <i class="fa-solid fa-chevron-down"></i>
-                            </div>
-                            <div class="menu_button menu_button_icon delete_alternate_greeting">
-                                <i class="fa-solid fa-trash-alt"></i>
-                                <span data-i18n="Delete">Delete</span>
-                            </div>
-                        </div>
-                    </summary>
+                    <summary><strong><span data-i18n="Alternate Greeting #">Alternate Greeting #</span><span class="greeting_index"></span></strong></summary>
                     <textarea data-macros name="alternate_greetings" data-i18n="[placeholder](This will be the first message from the character that starts every chat)" placeholder="(This will be the first message from the character that starts every chat)" class="text_pole textarea_compact alternate_greeting_text mdHotkeys" value="" autocomplete="off" rows="12"></textarea>
                 </details>
+                <div class="alternate_greeting_actions flex-container">
+                    <button type="button" class="editor_maximize fa-solid fa-maximize right_menu_button" title="Expand the editor" data-i18n="[title]Expand the editor"></button>
+                    <button type="button" class="menu_button menu_button_icon delete_alternate_greeting"><i class="fa-solid fa-trash-alt"></i><span data-i18n="Delete">Delete</span></button>
+                </div>
             </div>
         </div>
 

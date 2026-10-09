@@ -1,3 +1,4 @@
+import { getPageForItem, initPagination } from './pagination.js';
 import { DOMPurify } from '../lib.js';
 import { isMobile } from './RossAscends-mods.js';
 import { amount_gen, eventSource, event_types, getRequestHeaders, isConnectionValidationSuspended, max_context, online_status, setGenerationParamsFromPreset } from '../script.js';
@@ -6,9 +7,8 @@ import { tokenizers } from './tokenizers.js';
 import { renderTemplateAsync } from './templates.js';
 import { POPUP_TYPE, callGenericPopup } from './popup.js';
 import { t } from './i18n.js';
-import { accountStorage } from './util/AccountStorage.js';
-import { showNumericAdjustments } from './dom-handlers.js';
-import { localizePagination, PAGINATION_TEMPLATE, textValueMatcher } from './utils.js';
+import { keepFocus, showNumericAdjustments } from './dom-handlers.js';
+import { textValueMatcher } from './utils.js';
 
 let mancerModels = [];
 let togetherModels = [];
@@ -567,7 +567,6 @@ export async function loadAphroditeModels(data) {
     }
 }
 
-let featherlessCurrentPage = 1;
 export async function loadFeatherlessModels(data) {
     const searchBar = document.getElementById('featherless_model_search_bar');
     const modelCardBlock = document.getElementById('featherless_model_card_block');
@@ -575,7 +574,7 @@ export async function loadFeatherlessModels(data) {
     const sortOrderSelect = document.getElementById('featherless_model_sort_order');
     const classSelect = document.getElementById('featherless_class_selection');
     const categoriesSelect = document.getElementById('featherless_category_selection');
-    const storageKey = 'FeatherlessModels_PerPage';
+    const paginationSettings = { storageKey: 'FeatherlessModels_PerPage', defaultPageSize: 10 };
 
     // Store the original models data for search and filtering
     let originalModels = [];
@@ -595,90 +594,80 @@ export async function loadFeatherlessModels(data) {
     // Populate class select options with unique classes
     populateClassSelection(data);
 
-    // Retrieve the stored number of items per page or default to 10
-    const perPage = Number(accountStorage.getItem(storageKey)) || 10;
-
     // Initialize pagination
     applyFiltersAndSort();
 
     // Function to set up pagination (also used for filtered results)
-    function setupPagination(models, perPage, pageNumber = featherlessCurrentPage) {
-        paginationContainer.pagination({
+    function setupPagination(models, pageNumber) {
+        initPagination(paginationContainer, {
+            ...paginationSettings,
             dataSource: models,
-            pageSize: perPage,
-            pageNumber: pageNumber,
-            sizeChangerOptions: [6, 10, 26, 50, 100, 250, 500, 1000],
-            pageRange: 1,
+            pageNumber,
             showPageNumbers: true,
             showSizeChanger: false,
-            prevText: '<',
-            nextText: '>',
-            formatNavigator: PAGINATION_TEMPLATE,
-            showNavigator: true,
-            callback: function (modelsOnPage, pagination) {
-                modelCardBlock.innerHTML = '';
+            callback: function (modelsOnPage) {
+                const retained = keepFocus(
+                    () => modelCardBlock.querySelectorAll('.model-card'),
+                    item => item.dataset.modelId,
+                    () => {
+                        modelCardBlock.innerHTML = '';
 
-                modelsOnPage.forEach(model => {
-                    const card = document.createElement('button');
-                    card.type = 'button';
-                    card.setAttribute('aria-pressed', String(model.id === textgen_settings.featherless_model));
-                    card.classList.add('model-card');
+                        modelsOnPage.forEach(model => {
+                            const card = document.createElement('button');
+                            card.type = 'button';
+                            card.setAttribute('aria-pressed', String(model.id === textgen_settings.featherless_model));
+                            card.classList.add('model-card');
+                            card.dataset.modelId = model.id;
 
-                    const modelNameContainer = document.createElement('div');
-                    modelNameContainer.classList.add('model-name-container');
+                            const modelNameContainer = document.createElement('div');
+                            modelNameContainer.classList.add('model-name-container');
 
-                    const modelTitle = document.createElement('div');
-                    modelTitle.classList.add('model-title');
-                    modelTitle.textContent = model.id.replace(/_/g, '_\u200B');
-                    modelNameContainer.appendChild(modelTitle);
+                            const modelTitle = document.createElement('div');
+                            modelTitle.classList.add('model-title');
+                            modelTitle.textContent = model.id.replace(/_/g, '_\u200B');
+                            modelNameContainer.appendChild(modelTitle);
 
-                    const detailsContainer = document.createElement('div');
-                    detailsContainer.classList.add('details-container');
+                            const detailsContainer = document.createElement('div');
+                            detailsContainer.classList.add('details-container');
 
-                    const modelClassDiv = document.createElement('div');
-                    modelClassDiv.classList.add('model-class');
-                    modelClassDiv.textContent = t`Class` + `: ${model.model_class || 'N/A'}`;
+                            const modelClassDiv = document.createElement('div');
+                            modelClassDiv.classList.add('model-class');
+                            modelClassDiv.textContent = t`Class` + `: ${model.model_class || 'N/A'}`;
 
-                    const contextLengthDiv = document.createElement('div');
-                    contextLengthDiv.classList.add('model-context-length');
-                    contextLengthDiv.textContent = t`Context Length` + `: ${model.context_length}`;
+                            const contextLengthDiv = document.createElement('div');
+                            contextLengthDiv.classList.add('model-context-length');
+                            contextLengthDiv.textContent = t`Context Length` + `: ${model.context_length}`;
 
-                    const dateAddedDiv = document.createElement('div');
-                    dateAddedDiv.classList.add('model-date-added');
-                    dateAddedDiv.textContent = t`Added On` + `: ${new Date(model.created * 1000).toLocaleDateString()}`;
+                            const dateAddedDiv = document.createElement('div');
+                            dateAddedDiv.classList.add('model-date-added');
+                            dateAddedDiv.textContent = t`Added On` + `: ${new Date(model.created * 1000).toLocaleDateString()}`;
 
-                    detailsContainer.appendChild(modelClassDiv);
-                    detailsContainer.appendChild(contextLengthDiv);
-                    detailsContainer.appendChild(dateAddedDiv);
+                            detailsContainer.appendChild(modelClassDiv);
+                            detailsContainer.appendChild(contextLengthDiv);
+                            detailsContainer.appendChild(dateAddedDiv);
 
-                    card.appendChild(modelNameContainer);
-                    card.appendChild(detailsContainer);
+                            card.appendChild(modelNameContainer);
+                            card.appendChild(detailsContainer);
 
-                    modelCardBlock.appendChild(card);
+                            modelCardBlock.appendChild(card);
 
-                    if (model.id === textgen_settings.featherless_model) {
-                        card.classList.add('selected');
-                    }
+                            if (model.id === textgen_settings.featherless_model) {
+                                card.classList.add('selected');
+                            }
 
-                    card.addEventListener('click', function () {
-                        modelCardBlock.querySelectorAll('.model-card').forEach(c => {
-                            c.classList.remove('selected');
-                            c.setAttribute('aria-pressed', 'false');
+                            card.addEventListener('click', function () {
+                                modelCardBlock.querySelectorAll('.model-card').forEach(c => {
+                                    c.classList.remove('selected');
+                                    c.setAttribute('aria-pressed', 'false');
+                                });
+                                card.setAttribute('aria-pressed', 'true');
+                                card.classList.add('selected');
+                                onFeatherlessModelSelect(model.id);
+                            });
                         });
-                        card.setAttribute('aria-pressed', 'true');
-                        card.classList.add('selected');
-                        onFeatherlessModelSelect(model.id);
-                    });
-                });
-
-                // Update the current page value whenever the page changes
-                featherlessCurrentPage = pagination.pageNumber;
-                localizePagination(paginationContainer);
-            },
-            afterSizeSelectorChange: function (e) {
-                const newPerPage = e.target.value;
-                accountStorage.setItem(storageKey, newPerPage);
-                setupPagination(models, Number(newPerPage), featherlessCurrentPage); // Use the stored current page number
+                    },
+                );
+                if (!retained) searchBar.focus();
             },
         });
     }
@@ -776,9 +765,8 @@ export async function loadFeatherlessModels(data) {
         }
 
         const currentModelIndex = filteredModels.findIndex(x => x.id === textgen_settings.featherless_model);
-        featherlessCurrentPage = currentModelIndex >= 0 ? (currentModelIndex / perPage) + 1 : 1;
-
-        setupPagination(filteredModels, Number(accountStorage.getItem(storageKey)) || perPage, featherlessCurrentPage);
+        const pageNumber = currentModelIndex >= 0 ? getPageForItem(currentModelIndex, paginationSettings) : 1;
+        setupPagination(filteredModels, pageNumber);
     }
 
     // Required to keep the /model command function

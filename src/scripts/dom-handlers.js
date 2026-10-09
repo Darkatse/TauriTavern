@@ -10,6 +10,75 @@ export function getControlLabel(control) {
         ?? control.labels?.[0];
 }
 
+export function getControlName(control) {
+    return control.getAttribute('aria-label') || getControlLabel(control)?.textContent.trim() || '';
+}
+
+export function getEditorName(control) {
+    return getControlName(control) || control.getAttribute('placeholder') || t`Text editor`;
+}
+
+/** @param {Element} element */
+export function ensureElementId(element) {
+    return element.id ||= `tt-${uuidv4()}`;
+}
+
+/** @param {Element} control @param {'labelledby'|'describedby'|'controls'} relation @param {...Element} targets */
+export function setAriaRelation(control, relation, ...targets) {
+    control.setAttribute(`aria-${relation}`, targets.map(ensureElementId).join(' '));
+}
+
+/**
+ * Record the focused item and return its synchronous restoration step.
+ * False means the owned collection has no remaining focusable control.
+ * @param {() => Iterable<HTMLElement>} getItems
+ * @param {(item: HTMLElement) => string} keyOf
+ * @returns {() => boolean}
+ */
+export function captureFocus(getItems, keyOf) {
+    const items = Array.from(getItems());
+    const active = document.activeElement;
+    const index = items.findIndex(item => item.contains(active));
+    if (index < 0) return () => true;
+    const controls = item => [item, ...item.querySelectorAll('button,input,select,textarea,a[href],summary,[tabindex]')]
+        .filter(control => control.tabIndex >= 0 && !control.matches(':disabled') && $(control).is(':visible'));
+    const key = keyOf(items[index]);
+    const controlIndex = controls(items[index]).indexOf(active);
+
+    return () => {
+        const nextItems = Array.from(getItems());
+        const sameIndex = nextItems.findIndex(item => keyOf(item) === key);
+        const targetIndex = sameIndex >= 0 ? sameIndex : Math.min(index, nextItems.length - 1);
+        function focusAt(index) {
+            const item = nextItems[index];
+            if (!item) return false;
+            const candidates = controls(item);
+            const target = (index === sameIndex && candidates[controlIndex]) || candidates[0];
+            if (!target) return false;
+            target.focus();
+            return true;
+        }
+        if (focusAt(targetIndex)) return true;
+        for (let distance = 1; distance < nextItems.length; distance++) {
+            if (focusAt(targetIndex - distance) || focusAt(targetIndex + distance)) return true;
+        }
+        return false;
+    };
+}
+
+/**
+ * Preserve focus across one synchronous DOM replacement. Prepare asynchronous data before calling.
+ * @param {() => Iterable<HTMLElement>} getItems
+ * @param {(item: HTMLElement) => string} keyOf
+ * @param {() => void} write
+ * @returns {boolean}
+ */
+export function keepFocus(getItems, keyOf, write) {
+    const restore = captureFocus(getItems, keyOf);
+    write();
+    return restore();
+}
+
 /** @typedef {{ group: string, input: HTMLInputElement, before: number, after: number }} NumericAdjustment */
 
 /**
@@ -36,7 +105,7 @@ export function showNumericAdjustments(adjustments) {
     if (!adjustments.length) return;
     const groups = new Map();
     for (const { group, input, before, after } of adjustments) {
-        const name = getControlLabel(input)?.textContent.trim() || input.id;
+        const name = getControlName(input) || input.id;
         if (!groups.has(group)) groups.set(group, []);
         groups.get(group).push(escapeHtml(`${name}: ${before} → ${after}`));
     }
@@ -77,7 +146,7 @@ function showValidation(input) {
     let message = validationMessages.get(input);
     if (!message) {
         message = document.createElement('small');
-        message.id = `${input.id || uuidv4()}-validation`;
+        ensureElementId(message);
         message.className = 'range-input-error';
         message.setAttribute('role', 'status');
         (input.closest('.range-block') ?? input.parentElement).append(message);

@@ -57,7 +57,7 @@ try {
         agentContextPolicy: { initialChatHistoryMessages: -1, includeActivatedWorldInfo: false },
         agentSystemPrompt: 'Inspect the captured inputs.',
     });
-    await Promise.race([entered.promise, generation.then(() => { throw new Error('Generate returned without its awaited data event'); })]);
+    await entered.promise;
     release.resolve();
     const seed = await generation;
     const saved = seed.frozenRunInputSnapshot;

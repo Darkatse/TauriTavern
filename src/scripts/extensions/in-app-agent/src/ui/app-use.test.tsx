@@ -34,11 +34,13 @@ function ref(tree: string, text: string) {
 const signal = () => new AbortController().signal;
 
 test('a paginated region stays actionable while earlier page and run refs expire', async () => {
-    const buttons = Array.from({ length: 110 }, (_, index) =>
+    const buttons = Array.from({ length: 109 }, (_, index) =>
         `<button>Action ${index}</button>`,
     ).join('');
     document.body.innerHTML = `<section aria-label="Actions"><div class="mes_text">
-        <p>${'Opening text '.repeat(200)}</p>${buttons}<p>omitted-body-tail</p>
+        <p>${'Opening text '.repeat(200)}</p>${buttons}
+        <div class="tt-control-shell"><button class="sr-only" aria-labelledby="last-action"></button>
+            <span id="last-action">Action 109</span></div><p>omitted-body-tail</p>
     </div></section>`;
     const observation = createObservation();
     observation.enterRun('one');
@@ -53,10 +55,9 @@ test('a paginated region stays actionable while earlier page and run refs expire
     expect(next.tree).not.toContain('omitted-body-tail');
     expect(() => observation.snapshot({ root: oldRef })).toThrow();
     const button = screen.getByRole('button', { name: 'Action 109' });
-    button.onclick = () => { button.textContent = 'Done'; button.setAttribute('aria-pressed', 'true'); };
-    hit = button;
+    button.onclick = () => button.setAttribute('aria-pressed', 'true');
+    hit = screen.getByText('Action 109');
     const action = await interact({ action: 'click', ref: ref(next.tree, 'Action 109') }, observation, signal());
-    expect(button.textContent).toBe('Done');
     expect(action.observed).toMatchObject({ pressed: true });
     observation.enterRun('two');
     expect(() => observation.snapshot({ root: ref(next.tree, 'Actions') })).toThrow();
@@ -159,6 +160,8 @@ test('long formatted messages leave embedded controls and following swipes actio
 test('snapshots preserve control state while bounding text and omitting sensitive content', () => {
     document.body.innerHTML = `
         <button role="menuitemradio">Model A</button>
+        <button aria-label="Alice" title="Al"></button>
+        <button aria-label="Delete Alice" title="Delete"></button>
         <input data-tt-sensitive value="secret-should-not-appear">
         <span id="public-key-label">API key</span>
         <input data-tt-sensitive aria-labelledby="public-key-label" value="secret-should-not-appear">
@@ -193,6 +196,8 @@ test('snapshots preserve control state while bounding text and omitting sensitiv
     observation.enterRun('run');
     const snapshot = observation.snapshot({});
     expect(snapshot.tree.match(/Model A/g)).toHaveLength(1);
+    expect(snapshot.tree.split('\n').find(line => line.includes('"Alice"'))).toContain('description="Al"');
+    expect(snapshot.tree.split('\n').find(line => line.includes('"Delete Alice"'))).not.toContain('description=');
     expect(snapshot.tree).toContain('valueTruncated=true');
     expect(snapshot.tree).toContain('descriptionTruncated=true');
     expect(snapshot.tree).toContain('"Public action"');

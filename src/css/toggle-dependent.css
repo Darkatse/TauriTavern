@@ -184,8 +184,7 @@ body.big-avatars .avatar {
     border-radius: calc(var(--avatar-base-border-radius) * var(--big-avatar-border-factor));
 }
 
-body.big-avatars #user_avatar_block .avatar,
-body.big-avatars #user_avatar_block .avatar_upload {
+body.big-avatars #user_avatar_block .avatar {
     width: calc(var(--avatar-base-width) * var(--big-avatar-width-factor));
     height: calc(var(--avatar-base-height) * var(--big-avatar-height-factor));
     border-radius: calc(var(--avatar-base-border-radius) * var(--big-avatar-border-factor));
