@@ -6,6 +6,7 @@ use tt_ports::repositories::chat_completion_repository::{
 };
 
 use super::HttpChatCompletionRepository;
+use super::normalizers::{gemini_blocked_prompt_feedback, normalize_gemini_response};
 
 pub(super) async fn consume_generate_content_stream(
     provider_name: &str,
@@ -41,8 +42,14 @@ pub(super) async fn stream_generate_content_with_native(
         return Ok(());
     }
 
+    let response = accumulator.finish()?;
+    // SillyTavern does not read promptFeedback from the stream, so show it in the error.
+    if let Some(feedback) = gemini_blocked_prompt_feedback(&response) {
+        return Err(invalid_stream(format!("promptFeedback: {feedback}")));
+    }
+
     // Keep Gemini deltas unchanged; publish the complete native turn for history replay.
-    let normalized = super::normalizers::normalize_gemini_response(accumulator.finish()?).body;
+    let normalized = normalize_gemini_response(response).body;
     if let Some(native) = normalized.pointer("/choices/0/message/native") {
         let _ = sender.send(
             serde_json::json!({
@@ -188,6 +195,11 @@ impl GeminiStreamAccumulator {
             .and_then(Value::as_str)
             .is_none()
         {
+            // A blocked prompt has no candidate; it finishes as the complete response does.
+            let response = Value::Object(self.response);
+            if gemini_blocked_prompt_feedback(&response).is_some() {
+                return Ok(response);
+            }
             return Err(invalid_stream("ended without a finish reason"));
         }
 
