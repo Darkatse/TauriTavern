@@ -10,21 +10,18 @@ pub(in crate::services::agent_tools) fn workspace_list_files_descriptor() -> Too
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_LIST_FILES).expect("builtin tool name must be valid"),
         title: Some("Workspace List Files".to_string()),
-        description: Some(
-            "List workspace files and directories. Use this to find paths before reading files."
-                .to_string(),
-        ),
+        description: Some("List workspace files and directories.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Optional workspace directory or file path. Omit to list from the workspace root."
+                    "description": "Directory to list. Defaults to the workspace root."
                 },
                 "depth": {
                     "type": "integer",
-                    "description": "Directory depth to list. Defaults to 2; maximum is 4."
+                    "description": "Depth to list. Defaults to 2, at most 4."
                 }
             }
         }),
@@ -37,27 +34,27 @@ pub(in crate::services::agent_tools) fn workspace_read_file_descriptor() -> Tool
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_READ_FILE).expect("builtin tool name must be valid"),
         title: Some("Workspace Read File".to_string()),
-        description: Some("Read a UTF-8 workspace file with line numbers. Use this to inspect text before editing. Large results include a preview and the next line to read.".to_string()),
+        description: Some("Read a workspace text file with line numbers. Long results return a preview and the next line to read.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
-                "path": {
+                "file_path": {
                     "type": "string",
-                    "description": "Workspace file path, such as output/main.md."
+                    "description": "Workspace file path, e.g. output/main.md."
                 },
-                "start_line": {
+                "offset": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "1-based starting line. Omit to start at line 1."
+                    "description": "1-based first line. Defaults to 1."
                 },
-                "line_count": {
+                "limit": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Number of lines to read. Omit to read through the end; oversized results return a shorter preview."
+                    "description": "Lines to return. Defaults to the rest of the file."
                 }
             },
-            "required": ["path"]
+            "required": ["file_path"]
         }),
         output_schema: None,
         annotations: json!({ "readOnly": true }),
@@ -68,7 +65,7 @@ pub(in crate::services::agent_tools) fn workspace_search_files_descriptor() -> T
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_SEARCH_FILES).expect("builtin tool name must be valid"),
         title: Some("Workspace Search Files".to_string()),
-        description: Some("Find text in workspace files. Results include snippets; use workspace_read_file for the full text or exact lines.".to_string()),
+        description: Some("Find text in workspace files. Results include snippets; use read for the full text or exact lines.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -101,26 +98,26 @@ pub(in crate::services::agent_tools) fn workspace_write_file_descriptor() -> Too
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_WRITE_FILE).expect("builtin tool name must be valid"),
         title: Some("Workspace Write File".to_string()),
-        description: Some("Create a UTF-8 text file, append text, or replace its full contents. Use workspace_apply_patch for local edits. Before replacing an existing file, read it with workspace_read_file unless you created or replaced its current contents with the text tools.".to_string()),
+        description: Some("Create a workspace text file or replace its full content; mode append adds text to the end.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
-                "path": {
+                "file_path": {
                     "type": "string",
-                    "description": "Workspace file path in a writable directory."
+                    "description": "File path in a writable directory."
                 },
                 "content": {
                     "type": "string",
-                    "description": "Complete file content for replace, or the exact text to add for append. Include any needed newlines."
+                    "description": "Full file content, or the text to append."
                 },
                 "mode": {
                     "type": "string",
                     "enum": ["replace", "append"],
-                    "description": "replace writes the complete file; append adds content to the end, creating the file if missing. Defaults to replace."
+                    "description": "Defaults to replace."
                 }
             },
-            "required": ["path", "content"]
+            "required": ["file_path", "content"]
         }),
         output_schema: None,
         annotations: json!({ "mutating": true }),
@@ -131,29 +128,29 @@ pub(in crate::services::agent_tools) fn workspace_apply_patch_descriptor() -> To
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_APPLY_PATCH).expect("builtin tool name must be valid"),
         title: Some("Workspace Apply Patch".to_string()),
-        description: Some("Replace exact text in one file. Read the text with workspace_read_file first, unless you created or replaced the file with the text tools. old_string must match exactly and be unique unless replace_all is true. After a failed patch, read the full file before retrying.".to_string()),
+        description: Some("Replace exact text in a workspace file. old_string must occur exactly once unless replace_all is true.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
-                "path": {
+                "file_path": {
                     "type": "string",
-                    "description": "Workspace file path in a writable directory."
+                    "description": "File path in a writable directory."
                 },
                 "old_string": {
                     "type": "string",
-                    "description": "Exact text to replace. Do not include line number prefixes from read output."
+                    "description": "Exact text to replace, without line-number prefixes."
                 },
                 "new_string": {
                     "type": "string",
-                    "description": "Replacement text without line number prefixes."
+                    "description": "Replacement text; empty deletes the match."
                 },
                 "replace_all": {
                     "type": "boolean",
-                    "description": "Replace every occurrence of old_string. Requires a full read or a file created/replaced with the text tools. Defaults to false."
+                    "description": "Replace every match. Defaults to false."
                 }
             },
-            "required": ["path", "old_string", "new_string"]
+            "required": ["file_path", "old_string", "new_string"]
         }),
         output_schema: None,
         annotations: json!({ "mutating": true }),
@@ -164,18 +161,18 @@ pub(in crate::services::agent_tools) fn workspace_shell_descriptor() -> ToolDesc
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_SHELL).expect("builtin tool name must be valid"),
         title: Some("Workspace Shell".to_string()),
-        description: Some("Run workspace commands for scripts, pipelines, data processing, batch changes, and copying, moving or deleting files. Includes jq, a Python subset (python/python3), and JavaScript (js). Use js --help for JavaScript syntax and workspace APIs. Completed file changes persist after failure or cancellation.".to_string()),
+        description: Some("Run commands in the workspace: ls/find to list, mv/rm to move or delete, jq, a Python subset (python/python3) and js for batch processing. Run `js --help` for the workspace JS API. Each call starts a fresh session; files persist.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "Commands to execute in a new shell session."
+                    "description": "Commands to run."
                 },
                 "workdir": {
                     "type": "string",
-                    "description": "Working directory in the workspace. Defaults to /."
+                    "description": "Working directory. Defaults to /."
                 }
             },
             "required": ["command"]
@@ -189,7 +186,7 @@ pub(in crate::services::agent_tools) fn workspace_finish_descriptor() -> ToolDes
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_FINISH).expect("builtin tool name must be valid"),
         title: Some("Workspace Finish".to_string()),
-        description: Some("Finish the Agent run after required foreground chat commits and workspace changes are complete.".to_string()),
+        description: Some("End the run without publishing a new chat message.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -209,25 +206,30 @@ pub(in crate::services::agent_tools) fn workspace_commit_descriptor() -> ToolDes
     ToolDescriptor {
         id: ToolId::builtin(WORKSPACE_COMMIT).expect("builtin tool name must be valid"),
         title: Some("Workspace Commit".to_string()),
-        description: Some("Commit a workspace text file to the current chat message. With no arguments, replace the current run message with output/main.md. append adds the file text to the same message, creating it when this run has not committed yet. You may keep editing and commit again as needed; after the final commit, call workspace_finish to close the run. Do not reply in plain text as the final answer.".to_string()),
+        description: Some("Publish a workspace file as this run's chat message. Only committed text reaches the chat; plain-text replies are never shown. Set finish: true on the final commit to end the run.".to_string()),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
-                "path": {
+                "file_path": {
                     "type": "string",
-                    "description": "Relative visible workspace file path to publish. Defaults to output/main.md."
+                    "description": "File to publish. Defaults to output/main.md."
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "One sentence on what this commit delivers and why."
                 },
                 "mode": {
                     "type": "string",
                     "enum": ["replace", "append"],
-                    "description": "replace overwrites this run's chat message; append appends to the same message. Defaults to replace."
+                    "description": "replace (default) rewrites this run's message; append adds to it."
                 },
-                "reason": {
-                    "type": "string",
-                    "description": "Short commit reason."
+                "finish": {
+                    "type": "boolean",
+                    "description": "End the run after this commit succeeds. Must be the last call in its turn."
                 }
-            }
+            },
+            "required": ["reason"]
         }),
         output_schema: None,
         annotations: json!({ "control": true, "mutating": true }),

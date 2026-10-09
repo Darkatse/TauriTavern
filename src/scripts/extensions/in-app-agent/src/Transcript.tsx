@@ -35,7 +35,7 @@ function shortText(value: unknown): string | null {
     const text = value.replace(/\s+/g, ' ').trim();
     return text || null;
 }
-const detailKeys = ['command', 'query', 'path', 'url', 'input', 'name', 'code'];
+const detailKeys = ['command', 'query', 'file_path', 'path', 'url', 'input', 'name', 'code'];
 function toolDetail(call: Call): string | null {
     const args = record(call.arguments);
     if (call.toolId === 'extension/in-app-agent:app.read_logs' && Array.isArray(args.levels)) return shortText(args.levels.join(', '));

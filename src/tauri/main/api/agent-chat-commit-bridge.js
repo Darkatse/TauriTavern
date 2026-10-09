@@ -7,7 +7,6 @@ import {
     finalizeGeneratedMessage,
     getActiveMessageId,
     initialCommitSaveType,
-    isAutoCommitTextPath,
     mergeAgentCommitExtraIntoMessage,
     mergePersistentStateExtraIntoMessage,
     normalizeCommitMode,
@@ -43,12 +42,15 @@ export function attachHostCommitBridge({
     presentation = null,
     chatLength = null,
     finishPresentation = null,
+    messageBodyPath = null,
 }) {
     const normalizedRunId = requireRunId(runId);
     let resolveTerminal;
     const terminal = new Promise(resolve => { resolveTerminal = resolve; });
     const state = {
         runId: normalizedRunId,
+        // Only the message body is previewed and kept; other text files are working notes.
+        messageBodyPath,
         messageId: null,
         messageRef: null,
         swipeId: null,
@@ -342,7 +344,7 @@ async function flushLiveWriteFrame(state) {
 async function renderCurrentLiveWrite(state) {
     const current = state.current;
     if (!current
-        || !isAutoCommitTextPath(current.path)) {
+        || current.path !== state.messageBodyPath) {
         return;
     }
 
@@ -364,7 +366,7 @@ async function renderCurrentLiveWrite(state) {
 
     const latest = state.current;
     if (!latest
-        || !isAutoCommitTextPath(latest.path)) {
+        || latest.path !== state.messageBodyPath) {
         return;
     }
     const getMessage = prepareGeneratedReplyForDisplay(script, latest.content, state.generationType);

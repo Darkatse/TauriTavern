@@ -6,11 +6,13 @@
 
 工具目录使用稳定的 `ToolId`。内置工具是 `builtin:<name>`，MCP 工具是 `mcp/<registration-id>:<name>`，扩展工具是 `extension/<extensionId>:<name>`。Profile 的工具配置和运行记录使用这些 ID。
 
-模型调用名称在 Invocation 创建时生成，与稳定 ID 的映射保存在工具快照中。内置工具如 `workspace_read_file` 保留固定名称；扩展使用注册的 `name`，MCP 使用服务器与工具名，按模型协议规范字符和长度，重名时加 `__2` 等短后缀。
+模型调用名称在 Invocation 创建时生成，与稳定 ID 的映射保存在工具快照中，续跑沿用快照中的名称。读写、编辑、列目录、Shell 与提交使用模型熟悉的短名称：`read`、`write`、`edit`、`list`、`shell`、`commit`；其他内置工具保留命名空间，如 `workspace_search_files`、`workspace_finish`、`chat_search`。扩展使用注册的 `name`，MCP 使用服务器与工具名，按模型协议规范字符和长度，重名时加 `__2` 等短后缀。
+
+模型调用本轮未提供的名称时，runtime 返回可恢复错误 `model.unknown_tool_call`，列出本轮可用的名称；使用旧名称（如 `workspace_write_file`）时提示对应的新名称。这类调用计入 Invocation 调用预算。
 
 工具准备按目录、Chat/Session 场景和 Profile 选择生成 bindings，Invocation 再单独应用完成协议，形成包含描述、参数、名称映射及预算的快照。输出修订沿用原快照。每个 Invocation 的调用计数独立，由 `ToolRequestGate` 检查后明确分派到 Builtin、MCP 或 Extension。
 
-新 Profile 默认启用 Shell。
+新 Profile 默认启用 Shell。`Default Writer` 提供 `chat.search`、`chat.read_messages`、`workspace.search_files`、`workspace.read_file`、`workspace.write_file`、`workspace.apply_patch`、`workspace.shell` 与 `workspace.commit`：提示词已包含激活世界书和预算内的完整历史，最后一次提交即可结束运行。其余内置工具可在复制的 Profile 中开启。
 
 ## 内置工具
 
@@ -23,11 +25,11 @@
 | 读取工作文件与 Skill | `workspace.list_files`、`workspace.search_files`、`workspace.read_file` |
 | 修改文件 | `workspace.write_file`、`workspace.apply_patch` |
 | Shell 与数据处理 | `workspace.shell`，内含 jq、Python 与 JavaScript |
-| 发布与结束 | `workspace.commit`、`workspace.finish` |
+| 发布与结束 | `workspace.commit`（`finish: true` 提交后结束）、`workspace.finish`（不发布新消息时结束，后台运行必需） |
 | 委派与交接 | `agent.delegate`、`agent.await`、`agent.handoff`、`task.return` |
 | 掷骰 | `dice.roll` |
 
-聊天工具读取 Run 输入对应的历史范围；文件读取使用 1-based 行号，聊天消息索引使用 0-based。较长文本可以分段读取。完整工具集合会按 Profile 收窄，return-mode 子 Agent 使用 `task.return` 作为结束工具。
+文件工具使用通用参数名：`file_path`，读取范围为 `offset`（1-based 起始行）与 `limit`；`workspace.search_files` 与 `workspace.list_files` 接受文件或目录，使用 `path`。`workspace.commit` 须附一句 `reason`，说明本次提交的内容与原因，供模型自查并记入运行记录。内置工具的参数表是封闭的：runtime 按当前定义拒绝未知参数（包括按旧 schema 续跑的调用），改名的参数会提示新名称。已保存 Profile 中写给旧参数名（`path`、`start_line`、`line_count`）的描述覆盖会在加载时迁移。聊天工具读取 Run 输入对应的历史范围；聊天消息索引使用 0-based。较长文本可以分段读取。完整工具集合会按 Profile 收窄，return-mode 子 Agent 使用 `task.return` 作为结束工具。
 
 可调用 Agent 目录随提示词提供，协作方式与错误反馈见 [多 Agent 协作](SubAgent.md)。
 
@@ -47,7 +49,7 @@
 
 `AgentToolResult` 包含调用 ID、工具 ID、文本、结构化结果、错误信息和资源引用。模型读取其中的 `content`，错误结果带有明确的错误标记；结构化元数据保留在记录中，不自动展开为模型文字。
 
-面向模型的文字各司其职：提示词说明职责与完成方式，工具说明用途与参数，结果报告事实，错误说明问题与已知的纠正办法。以理解成本衡量简洁，保留必要的内容边界和后续指引；内部配置、身份与审计细节留在记录中。
+面向模型的文字各司其职：提示词说明职责、可读写目录与完成方式，工具说明用途与参数，结果报告事实，错误说明问题与已知的纠正办法。访问与读写顺序等规则由 runtime 执行并在错误中说明，不在工具描述里重复；运行时文字使用本轮快照中的工具名称。以理解成本衡量简洁，保留必要的内容边界和后续指引；内部配置、身份与审计细节留在记录中。
 
 MCP 与扩展共用结果审计和长结果处理。超过 [Profile 内联阈值](ProfilesAndPreset.md#调整工作方式) 时，原始 JSON 留作审计，完整可读内容写入只读 `tool-results/` 文件；模型收到开头预览、字符上限、不完整说明及文件路径，并按可用工具给出读取、分页或搜索指引。中断历史保留调用与结果的配对；结果未知时，提醒重复操作前检查状态。
 

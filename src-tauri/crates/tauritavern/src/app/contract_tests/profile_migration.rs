@@ -38,7 +38,7 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
             "builtin:workspace.read_file".into(),
             serde_json::from_value(json!({
                 "description": "  Read the supplied file.  ",
-                "properties": {"path": "  Keep this parameter guidance.  "}
+                "properties": {"file_path": "  Keep this parameter guidance.  "}
             }))
             .unwrap(),
         );
@@ -50,6 +50,9 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
             .insert("builtin:workspace.read_file".into(), 7);
         let expected = serde_json::to_value(&profile).unwrap();
         let mut legacy = expected.clone();
+        // Overrides written for the former parameter name move to the current one.
+        legacy["tools"]["toolDescriptions"]["builtin:workspace.read_file"]["properties"] =
+            json!({"path": "  Keep this parameter guidance.  "});
         legacy["tools"]["mcpResultInlineCharLimit"] = legacy["tools"]
             .as_object_mut()
             .unwrap()
