@@ -156,6 +156,19 @@ impl McpService {
         Ok(())
     }
 
+    /// The user-chosen name of a registration, when it still exists.
+    ///
+    /// The shell lists servers by name and id together, so it needs the name
+    /// without requiring the registration to be active.
+    pub(crate) async fn registration_display_name(&self, id: &McpRegistrationId) -> Option<String> {
+        self.repository
+            .load(id)
+            .await
+            .ok()
+            .flatten()
+            .map(|registration| registration.display_name().to_string())
+    }
+
     async fn require_registration(
         &self,
         id: &McpRegistrationId,

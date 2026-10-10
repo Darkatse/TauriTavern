@@ -46,7 +46,8 @@ impl WorkspaceShell for WorkspaceShellEngine {
             .builtin("js", javascript.builtin("js"))
             .builtin("node", javascript.builtin("node"))
             .builtin("deno", javascript.builtin("deno"));
-        let mut bash = crate::builtin_tools::register(builder, context.tools.as_ref())
+        let builder = crate::builtin_tools::register(builder, context.tools.as_ref());
+        let mut bash = crate::mcp_tools::register(builder, context.mcp.as_ref())
             .cwd(workdir.clone())
             .env("HOME", "/")
             .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")

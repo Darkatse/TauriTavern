@@ -236,6 +236,7 @@ async fn run_with_tools(command: &str, tools: Arc<RecordingTools>) -> (String, i
         frozen_macros: Arc::default(),
         host: Err("test".to_string()),
         tools: Some(tools),
+        mcp: None,
     };
     let (_, receiver) = watch::channel(false);
     let result = WorkspaceShellEngine

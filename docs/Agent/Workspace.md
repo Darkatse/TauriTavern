@@ -68,6 +68,20 @@ builtin.chat.search '{"query":"lantern"}' > /scratch/hits.txt || echo "search fa
 
 Shell 调用不建立文件读取记录，也不参与模型回合的调用计数。
 
+## 调用 MCP
+
+MCP 用三个固定命令访问，而不是每个工具一个命令：
+
+```sh
+mcp.list
+mcp.check --server "<名称或 id>" <工具> [<工具>...]
+mcp.invoke --server "<名称或 id>" <工具> '<JSON 参数>' [--timeout <秒>]
+```
+
+服务器名和 registration id 都可以直接写给它；两者都匹配到（例如某个服务器的名字恰好是另一服务器的 id）会**报错并列出候选**，不会随便选一个。找不到服务器时也会列出当前可用的服务器。名称与 id 的取舍见 [工具系统](ToolSystem.md#调用-mcp)。
+
+因为是同步调用，`--timeout` 用于限定等待；超时退出码为 `124`，表示**远端可能已经执行**，重跑前应先确认状态。
+
 ## Run 与聊天的关系
 
 磁盘数据位于数据目录的 `_tauritavern/agent-workspaces/`：

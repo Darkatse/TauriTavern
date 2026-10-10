@@ -5,6 +5,7 @@ mod engine;
 mod filesystem;
 mod javascript;
 mod kit;
+mod mcp_tools;
 
 pub use engine::WorkspaceShellEngine;
 
