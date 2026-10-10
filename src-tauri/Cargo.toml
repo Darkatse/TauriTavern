@@ -29,6 +29,8 @@ reqwest = { version = "0.13", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = { version = "0.11", default-features = false }
+# Only the Windows tray entry inherits this; see crates/tauritavern/Cargo.toml.
+tauri = "2.12.2"
 thiserror = "2"
 ttsync-fs = "2"
 ttsync-contract = "2"
