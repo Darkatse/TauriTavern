@@ -1,0 +1,11 @@
+{
+  "$schema": "../../gen/schemas/desktop-schema.json",
+  "identifier": "pilot-devtools",
+  "description": "Development-only capability for tauri-pilot WebView automation.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "pilot:default"
+  ]
+}

@@ -178,7 +178,6 @@ jobs:
           tauriScript: node ../../../scripts/tauri-app.mjs
           args: >-
             ${{ startsWith(matrix.platform, 'ubuntu-22.04') && format('{0} --config {1}', matrix.target_args, steps.linux-version.outputs.config_path) || matrix.target_args }}
-            ${{ matrix.artifact_prefix == 'debug-' && format('--config "{0}/src-tauri/crates/tauritavern/tauri.pilot.conf.json"', github.workspace) || '' }}
           uploadWorkflowArtifacts: true
           uploadUpdaterJson: false
           uploadUpdaterSignatures: false

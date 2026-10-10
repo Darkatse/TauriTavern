@@ -31,10 +31,22 @@ fn main() {
         panic!("Failed to generate resource artifacts: {}", error);
     }
 
-    tauri_build::try_build(tauri_build::Attributes::new().plugin(
-        "speech-synthesis",
-        tauri_build::InlinedPlugin::new().commands(&["initialize", "speak", "cancel"]),
-    ))
+    // `capabilities/pilot/` grants the pilot plugin, which only devtools-pilot builds compile.
+    let capabilities = if std::env::var_os("CARGO_FEATURE_DEVTOOLS_PILOT").is_some() {
+        "./capabilities/**/*.json"
+    } else {
+        "./capabilities/*.json"
+    };
+    println!("cargo:rerun-if-changed=capabilities");
+
+    tauri_build::try_build(
+        tauri_build::Attributes::new()
+            .capabilities_path_pattern(capabilities)
+            .plugin(
+                "speech-synthesis",
+                tauri_build::InlinedPlugin::new().commands(&["initialize", "speak", "cancel"]),
+            ),
+    )
     .expect("Failed to build Tauri application")
 }
 
