@@ -226,6 +226,55 @@ impl AgentRuntimeService {
         ))
     }
 
+    /// Extend a run's shell context with the builtin tools its shells may call.
+    ///
+    /// Visibility comes from the compiled tool snapshot, so a shell command can
+    /// reach exactly the builtins the invocation already admits.
+    pub(super) async fn shell_ready_context(
+        &self,
+        context: Arc<tt_ports::workspace_shell::WorkspaceShellContext>,
+        profile: &ResolvedAgentProfile,
+        run_id: &str,
+        snapshot: &tt_domain::models::tool::InvocationToolSnapshot,
+        skills: Arc<[tt_domain::models::skill::SkillIndexEntry]>,
+    ) -> Result<Arc<tt_ports::workspace_shell::WorkspaceShellContext>, ApplicationError> {
+        let tool_ids = snapshot
+            .bindings()
+            .iter()
+            .map(|binding| binding.tool_id().clone())
+            .collect::<Vec<_>>();
+        let names = crate::services::agent_tools::shell_visible_tools(&tool_ids);
+        let mcp_servers = crate::services::agent_tools::ShellMcp::from_snapshot(&tool_ids);
+        if names.is_empty() && mcp_servers.is_empty() {
+            return Ok(context);
+        }
+        // Builtins and MCP attach independently: an invocation may reach either,
+        // both, or neither, and one must not short-circuit the other.
+        let context = if names.is_empty() {
+            context
+        } else {
+            prompt_snapshot::with_shell_tools(
+                context,
+                Arc::new(self.tool_dispatcher.clone()),
+                profile,
+                run_id,
+                self.workspace_files(run_id).await?,
+                skills,
+                names,
+            )
+        };
+        if mcp_servers.is_empty() {
+            return Ok(context);
+        }
+        Ok(prompt_snapshot::with_shell_mcp(
+            context,
+            Arc::new(crate::services::agent_tools::ShellMcp::new(
+                self.mcp_service.clone(),
+                mcp_servers,
+            )),
+        ))
+    }
+
     async fn workspace_files(
         &self,
         run_id: &str,

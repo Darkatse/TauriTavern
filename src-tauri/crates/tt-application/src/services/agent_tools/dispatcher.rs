@@ -65,6 +65,7 @@ pub(crate) enum AgentToolEffect {
     Finish,
 }
 
+#[derive(Clone)]
 pub(crate) struct AgentToolDispatcher {
     run_repository: Arc<dyn AgentRunRepository>,
     chat_repository: Arc<dyn ChatRepository>,

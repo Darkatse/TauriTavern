@@ -44,6 +44,44 @@ Run 工作文件允许并行读取，按单次操作串行修改；CAS 的条件
 
 取消停止后续 Shell 调度，等待当前 JS 和已开始的文件操作收尾。收尾以整个 `workspace.shell` 返回为界，内部 `timeout` 不保证单条命令已结束。
 
+## 调用内置工具
+
+Shell 内可用 `builtin.<工具名>` 调用当前 Invocation 可见的内置工具，参数为单个 JSON 对象：
+
+```sh
+builtin.chat.search '{"query":"lantern","limit":10}'
+builtin.dice.roll '{"formula":"2d6"}'
+builtin.worldinfo.read_activated '{}'
+```
+
+可调用的集合在 Invocation 编译时确定，与该次调用的可见工具集一致，只是去掉了以下几类：文件编辑工具（`read_file`、`write_file`、`apply_patch`，它们需要模型回合的读取记录）、控制流工具（`commit`、`finish`）与委派协议工具（`delegate`、`await`、`handoff`、`task.return`），以及 `workspace.shell` 自身。未注册的名字就是普通的 `command not found`，因此递归在构造上不会发生。
+
+当前内置工具里可调用的是 `chat.search`、`chat.read_messages`、`worldinfo.read_activated`、`dice.roll`、`workspace.list_files`、`workspace.search_files` 六个；完整清单与逐项理由见 [工具系统](ToolSystem.md#shell)。
+
+命令名带 `builtin.` 前缀，避免与 Bashkit 内置命令（`ls`、`cat`、`test`）重名，也标明来源。参数是 JSON 对象，用单引号包裹以免 Shell 拆词；原样传给工具，与模型调用走同一条分派路径，权限收窄也一致。
+
+成功时工具文本写入 stdout、退出码为 0；失败时错误信息写入 stderr、退出码非零。因此 `&&`、`||`、`if` 与管道都可以照常使用：
+
+```sh
+builtin.chat.search '{"query":"lantern"}' > /scratch/hits.txt || echo "search failed"
+```
+
+Shell 调用不建立文件读取记录，也不参与模型回合的调用计数。
+
+## 调用 MCP
+
+MCP 用三个固定命令访问，而不是每个工具一个命令：
+
+```sh
+mcp.list
+mcp.check --server "<名称或 id>" <工具> [<工具>...]
+mcp.invoke --server "<名称或 id>" <工具> '<JSON 参数>' [--timeout <秒>]
+```
+
+服务器名和 registration id 都可以直接写给它；两者都匹配到（例如某个服务器的名字恰好是另一服务器的 id）会**报错并列出候选**，不会随便选一个。找不到服务器时也会列出当前可用的服务器。名称与 id 的取舍见 [工具系统](ToolSystem.md#调用-mcp)。
+
+因为是同步调用，`--timeout` 用于限定等待；超时退出码为 `124`，表示**远端可能已经执行**，重跑前应先确认状态。
+
 ## Run 与聊天的关系
 
 磁盘数据位于数据目录的 `_tauritavern/agent-workspaces/`：
