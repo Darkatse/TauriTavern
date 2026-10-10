@@ -4,6 +4,14 @@
 //! the app shell. Downstream code should consume those capabilities through
 //! commands, bridges, or managed state instead of installing plugins itself.
 
+use serde_json::Value;
+use tauri::{
+    AppHandle, RunEvent, Runtime, Url, Webview, Window,
+    ipc::Invoke,
+    plugin::{Plugin, TauriPlugin},
+    webview::PageLoadPayload,
+};
+
 #[cfg(desktop)]
 use crate::presentation::main_window_presenter::present_main_window_from_app;
 #[cfg(any(dev, debug_assertions))]
@@ -11,7 +19,7 @@ use crate::presentation::web_resources::dev_protocol_endpoint::{
     dev_protocol_task_error_response, handle_dev_protocol_request,
 };
 
-pub(super) fn install<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+pub(super) fn install<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
         if let Err(error) = present_main_window_from_app(app) {
@@ -24,7 +32,7 @@ pub(super) fn install<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::B
     // depend on runtime initialization order instead of Builder construction.
     let builder = builder
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(DialogPlugin(tauri_plugin_dialog::init()))
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init());
@@ -69,4 +77,46 @@ pub(super) fn install<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::B
     );
 
     builder
+}
+
+/// The dialog plugin without its init script, which would turn the webview's synchronous
+/// `alert`/`confirm` into async IPC. The two script methods stay unforwarded.
+struct DialogPlugin<R: Runtime>(TauriPlugin<R>);
+
+impl<R: Runtime> Plugin<R> for DialogPlugin<R> {
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+
+    fn initialize(
+        &mut self,
+        app: &AppHandle<R>,
+        config: Value,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.0.initialize(app, config)
+    }
+
+    fn window_created(&mut self, window: Window<R>) {
+        self.0.window_created(window)
+    }
+
+    fn webview_created(&mut self, webview: Webview<R>) {
+        self.0.webview_created(webview)
+    }
+
+    fn on_navigation(&mut self, webview: &Webview<R>, url: &Url) -> bool {
+        self.0.on_navigation(webview, url)
+    }
+
+    fn on_page_load(&mut self, webview: &Webview<R>, payload: &PageLoadPayload<'_>) {
+        self.0.on_page_load(webview, payload)
+    }
+
+    fn on_event(&mut self, app: &AppHandle<R>, event: &RunEvent) {
+        self.0.on_event(app, event)
+    }
+
+    fn extend_api(&mut self, invoke: Invoke<R>) -> bool {
+        self.0.extend_api(invoke)
+    }
 }

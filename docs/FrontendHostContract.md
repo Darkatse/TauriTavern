@@ -339,11 +339,11 @@ TauriTavern 第一方功能在所有平台直接使用同一个原生剪贴板�
 
 ### 5.3 Dialog 兼容（Public in practice）
 
-> 目的：补齐 iOS/macOS（WKWebView）下脚本生态高频依赖的“浏览器内置弹窗语义”，避免出现“点击后完全无反应”。
+> 目的：保持脚本生态依赖的浏览器内置弹窗语义，用户作出选择后脚本才继续执行。
 
-- iOS/macOS：`window.alert/confirm/prompt` 必须可用且不会挂死（无法展示 UI 时返回 Cancel/默认值并记录错误，不做 silent noop）
+- 所有平台的 `window.alert/confirm/prompt` 由 WebView 原生实现，保持同步语义。宿主不安装 JS 替代实现：dialog 插件注册时不带它替换 `alert/confirm` 的脚本，因此也不授予 `dialog:allow-message`。
+- iOS/macOS 由 [WKUIDelegate 桥](../src-tauri/crates/tauritavern/src/infrastructure/apple_webview_js_dialogs.rs) 展示；无法展示 UI 时返回 Cancel/默认值并记录错误，不能挂死或 silent noop。
 - 若运行环境缺失 `HTMLDialogElement.prototype.showModal`：宿主会安装 `dialog-polyfill` 并覆盖主窗口 + same-origin iframe/window（仅在缺失时启用）
-- 实施细节与边界：见 `docs/WkWebViewJsDialogBridgePlan.md`
 
 ### 5.4 外链打开与 `window.open()`（Public in practice）
 
