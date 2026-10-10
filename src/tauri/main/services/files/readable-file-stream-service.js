@@ -96,7 +96,7 @@ export function createReadableFileStreamService({ invoke }) {
                     return new Uint8Array(0);
                 }
 
-                // plugin-fs returns the requested length even on a short read, plus its 8-byte trailer.
+                // plugin-fs returns the bytes it read followed by their count as an 8-byte trailer.
                 const len = Math.min(FS_READ_MAX_CHUNK_BYTES, remaining);
                 const data = await invoke('plugin:fs|read', {
                     rid,

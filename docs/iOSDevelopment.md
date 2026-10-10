@@ -29,9 +29,11 @@ iOS 27 SDK 要求 UIScene 生命周期。Tao 只要看到 `UIApplicationSceneMan
 
 scene 生命周期相关的改动以 release 构建真机冷启动验收：#337 的崩溃只在 release 构建出现。
 
-### 1.2 Xcode 27 开发构建
+### 1.2 Xcode 27 构建
 
-锁定的 `swift-rs 1.0.8` 修正了 SwiftPM 交叉编译时混用 macOS/iOS SDK 的问题。尚未发布的 [Swift 运行时符号导出修复](https://github.com/Brendonovich/swift-rs/pull/79) 仍影响优化构建，所以 `src-tauri/Cargo.toml` 为 Tauri 和带 Swift 包的插件（opener、notification、dialog、clipboard-manager、barcode-scanner）的 dev profile 保留调试信息，让 `swift-rs` 以同一模式构建它们的 Swift 包；模式不一致时真机 `registerPlugin` 以 `swift_deletedMethodError` 中止，模拟器不会暴露。只影响开发构建；上游修复发布后删除这些覆盖。
+Xcode 27 的优化构建会把非 `public` 的 `@_cdecl` 函数降为本地符号，Rust 因此链接不到 Swift 入口。swift-rs 1.0.9、Tauri 2.12.3 与当前锁定的官方插件已把这些入口声明为 `public`；引入新的带 Swift 包的插件时，确认它的 `init_plugin_*` 也是 `public`。
+
+`swift-rs` 按所在 crate 的调试设置选择 Swift 优化级别。Tauri 与带 Swift 包的插件必须以同一模式构建：dev profile 对所有依赖关闭调试信息，不为其中个别 crate 单独开启。模式不一致时，真机在 `registerPlugin` 以 `swift_deletedMethodError` 中止，模拟器不会暴露。
 
 ## 2. 文件导入与导出
 
