@@ -13493,7 +13493,6 @@ jQuery(async function () {
     });
 
 
-    /** Menu and chat history entries report a failed new chat; `/newchat` fails the command instead. */
     async function startNewChat(deleteCurrentChat) {
         try {
             await doNewChat({ deleteCurrentChat });
