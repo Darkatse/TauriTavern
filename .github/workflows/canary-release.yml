@@ -77,38 +77,32 @@ jobs:
           - platform: windows-latest
             target_args: ""
             artifact_prefix: ""
-            portable: true
-            portable_name: windows-x64
+            cache_key: windows-x64
           - platform: windows-latest
             target_args: --debug --bundles nsis --features devtools-pilot
             artifact_prefix: debug-
-            portable: false
           - platform: macos-latest
             target_args: --target x86_64-apple-darwin
             artifact_prefix: ""
-            portable: false
+            cache_key: macos-x64
           - platform: macos-latest
             target_args: --target x86_64-apple-darwin --debug --bundles dmg --features devtools-pilot
             artifact_prefix: debug-
-            portable: false
           - platform: macos-latest
             target_args: --target aarch64-apple-darwin
             artifact_prefix: ""
-            portable: false
+            cache_key: macos-arm64
           - platform: macos-latest
             target_args: --target aarch64-apple-darwin --debug --bundles dmg --features devtools-pilot
             artifact_prefix: debug-
-            portable: false
           - platform: ubuntu-22.04
             target_args: --bundles appimage,deb,rpm
             artifact_prefix: ""
-            portable: true
-            portable_name: linux-x64
+            cache_key: linux-x64
           - platform: ubuntu-22.04-arm
             target_args: --bundles deb,rpm
             artifact_prefix: ""
-            portable: true
-            portable_name: linux-arm64
+            cache_key: linux-arm64
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -128,8 +122,10 @@ jobs:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - uses: swatinem/rust-cache@v2
+        if: matrix.cache_key
         with:
           workspaces: "src-tauri -> target"
+          shared-key: release-${{ matrix.cache_key }}
 
       - uses: pnpm/setup@v2
         with:
@@ -183,15 +179,54 @@ jobs:
           uploadUpdaterSignatures: false
           workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.asset_time }}-canary-${{ matrix.artifact_prefix }}[platform]-[arch]-[bundle]'
 
+  portable:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            name: windows-x64
+          - platform: ubuntu-22.04
+            name: linux-x64
+          - platform: ubuntu-22.04-arm
+            name: linux-arm64
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        if: startsWith(matrix.platform, 'ubuntu-22.04')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libdbus-1-dev libwebkit2gtk-4.1-dev librsvg2-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Restores the desktop release cache; `name` must equal that entry's `cache_key`.
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+          shared-key: release-${{ matrix.name }}
+          save-if: false
+
+      - uses: pnpm/setup@v2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - run: pnpm install --frozen-lockfile
+
       - name: Build portable binary
-        if: matrix.portable
-        run: node scripts/build-portable.mjs --skip-web-build --output-dir portable
+        run: node scripts/build-portable.mjs --output-dir portable
 
       - name: Upload portable binary
-        if: matrix.portable
         uses: actions/upload-artifact@v7
         with:
-          name: TauriTavern-${{ needs.prepare.outputs.asset_time }}-canary-${{ matrix.portable_name }}-portable
+          name: TauriTavern-${{ needs.prepare.outputs.asset_time }}-canary-${{ matrix.name }}-portable
           path: portable/*
           if-no-files-found: error
 
@@ -530,7 +565,7 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: [prepare, desktop, mobile, ohos, notes]
+    needs: [prepare, desktop, portable, mobile, ohos, notes]
     # Wait for experimental HAPs, but publish the other platforms if OHOS fails.
     if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.desktop.result == 'success' && needs.mobile.result == 'success' && needs.notes.result == 'success' }}
     runs-on: ubuntu-latest

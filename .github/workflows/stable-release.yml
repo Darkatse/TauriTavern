@@ -88,38 +88,27 @@ jobs:
           - platform: windows-latest
             target_args: ""
             artifact_prefix: ""
-            portable: true
-            portable_name: windows-x64
           - platform: windows-latest
             target_args: --debug --bundles nsis --features devtools-pilot
             artifact_prefix: debug-
-            portable: false
           - platform: macos-latest
             target_args: --target x86_64-apple-darwin
             artifact_prefix: ""
-            portable: false
           - platform: macos-latest
             target_args: --target x86_64-apple-darwin --debug --bundles dmg --features devtools-pilot
             artifact_prefix: debug-
-            portable: false
           - platform: macos-latest
             target_args: --target aarch64-apple-darwin
             artifact_prefix: ""
-            portable: false
           - platform: macos-latest
             target_args: --target aarch64-apple-darwin --debug --bundles dmg --features devtools-pilot
             artifact_prefix: debug-
-            portable: false
           - platform: ubuntu-22.04
             target_args: --bundles appimage,deb,rpm
             artifact_prefix: ""
-            portable: true
-            portable_name: linux-x64
           - platform: ubuntu-22.04-arm
             target_args: --bundles deb,rpm
             artifact_prefix: ""
-            portable: true
-            portable_name: linux-arm64
 
     runs-on: ${{ matrix.platform }}
     env:
@@ -142,10 +131,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "src-tauri -> target"
 
       - uses: pnpm/setup@v2
         with:
@@ -182,15 +167,52 @@ jobs:
           uploadUpdaterSignatures: false
           workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-${{ matrix.artifact_prefix }}[platform]-[arch]-[bundle]'
 
+  portable:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            name: windows-x64
+          - platform: ubuntu-22.04
+            name: linux-x64
+          - platform: ubuntu-22.04-arm
+            name: linux-arm64
+
+    runs-on: ${{ matrix.platform }}
+    env:
+      TAURITAVERN_BUILD_BRANCH: main
+      TAURITAVERN_BUILD_REVISION: ${{ needs.prepare.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install Linux dependencies
+        if: startsWith(matrix.platform, 'ubuntu-22.04')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libdbus-1-dev libwebkit2gtk-4.1-dev librsvg2-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: pnpm/setup@v2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - run: pnpm install --frozen-lockfile
+
       - name: Build portable binary
-        if: matrix.portable
-        run: node scripts/build-portable.mjs --skip-web-build --output-dir portable
+        run: node scripts/build-portable.mjs --output-dir portable
 
       - name: Upload portable binary
-        if: matrix.portable
         uses: actions/upload-artifact@v7
         with:
-          name: TauriTavern-${{ needs.prepare.outputs.version }}-${{ matrix.portable_name }}-portable
+          name: TauriTavern-${{ needs.prepare.outputs.version }}-${{ matrix.name }}-portable
           path: portable/*
           if-no-files-found: error
 
@@ -320,10 +342,6 @@ jobs:
             echo "BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi=--sysroot=$sysroot"
           } >> "$GITHUB_ENV"
 
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "src-tauri -> target"
-
       - uses: pnpm/setup@v2
         with:
           runtime: node@22
@@ -445,7 +463,7 @@ jobs:
       APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
 
   publish-release:
-    needs: [prepare, desktop, mobile]
+    needs: [prepare, desktop, portable, mobile]
     runs-on: ubuntu-latest
     permissions:
       actions: read

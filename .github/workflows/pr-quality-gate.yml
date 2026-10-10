@@ -45,11 +45,6 @@ jobs:
         with:
           components: clippy
 
-      - name: Cache Rust build artifacts
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "src-tauri -> target"
-
       - name: Setup pnpm and Node.js
         uses: pnpm/setup@v2
         with:
@@ -120,11 +115,6 @@ jobs:
             echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$toolchain/aarch64-linux-android24-clang"
             echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$sysroot"
           } >> "$GITHUB_ENV"
-
-      - name: Cache Rust build artifacts
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "src-tauri -> target"
 
       - name: Check ${{ matrix.name }} Rust target
         run: >-
