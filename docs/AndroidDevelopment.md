@@ -302,12 +302,12 @@ Android WebView 可能暴露 `navigator.clipboard.writeText()`，却在调用时
 
 `generated/*` 只是一份可重建的构建输出。项目实际维护的 Wry 分叉只有 generated 目录外、同 package 同类名的两个文件，Gradle 排除对应 generated 类以避免重复编译：
 
-- `RustWebChromeClient.kt`：fullscreen 转发与结构化 WebView 日志；
-- `RustWebViewClient.kt`：主文档导航通知、拦截失败响应，以及 Host Resource 显式缓存策略优先级。
+- `RustWebChromeClient.kt`：fullscreen 转发与 JSONL MIME 补充；Activity result 与权限 launcher 归上游 `WryActivity`，本类只调用其接口；
+- `RustWebViewClient.kt`：拦截失败日志与错误响应，以及 Host Resource 显式缓存策略优先级。
 
 两个文件头必须记录当前 Wry baseline。升级 Wry 时逐文件与锁文件解析到的 upstream 模板比较；缺少显式 `Cache-Control` 的自定义协议响应采用 Wry 的 `no-store` 默认值，Host Resource 已明确返回的 `private, no-cache` 或错误 `no-store` 不得被 transport 层覆盖。删除 generated 目录后，debug 与 minified release 构建都必须能够从零重建。
 
-`app/tauri.build.gradle.kts` 同样是 ignored 派生物：`tauri-build` 2.6.3会在其中声明 `androidx.lifecycle:lifecycle-process:2.10.0`。tracked `app/build.gradle.kts` 只应用该脚本，不重复维护依赖版本；从空生成目录完成 canonical debug/release构建用于证明生成顺序和依赖闭合。
+`app/tauri.build.gradle.kts` 同样是 ignored 派生物：`tauri-build` 会在其中声明 `androidx.lifecycle:lifecycle-process`。tracked `app/build.gradle.kts` 只应用该脚本，不重复维护依赖版本；从空生成目录完成 canonical debug/release 构建用于证明生成顺序和依赖闭合。
 
 ---
 
@@ -315,7 +315,7 @@ Android WebView 可能暴露 `navigator.clipboard.writeText()`，却在调用时
 
 现象：
 
-- Android 端 `<video src="/backgrounds/*.mp4">` 无法进入播放，页面表现为“只有一个大播放按钮”。
+- Android 端 `<video src="/backgrounds/*.mp4">` 无法进入播放。默认 poster 是透明的，不能凭播放按钮判断是否已加载。
 - DevTools 常见表现为：
   - 早期出现 `416 Range Not Satisfiable` 或某个 `Range: bytes=...-` 请求被快速 canceled；
   - `<video>` 长时间停留在 `readyState=HAVE_NOTHING`，无法触发 `loadedmetadata`。
@@ -356,6 +356,6 @@ Tauri Android 当前不支持 raw byte invoke；嵌套 `Uint8Array` 会被编码
 
 ## 12. LAN Sync 多播发现
 
-Android 的 Rust mDNS 发现需要 `CHANGE_WIFI_MULTICAST_STATE` 权限。宿主只在前台持有 `MulticastLock`，进入后台或停止发现时释放，回到前台后为已启动的发现重新获取；网络逻辑由 Rust 负责。
+Android 的 Rust mDNS 发现需要 `CHANGE_WIFI_MULTICAST_STATE` 权限。宿主只在 Activity 处于前台时持有 `MulticastLock`：停止发现或插件收到 `onPause(activity)` 时释放，Activity resume 后由 Rust 为已启动的发现重新获取；网络逻辑由 Rust 负责。插件构造参数保持 `Activity`，与 Tauri 的 JNI 加载签名一致。
 
 平台适配见 [LanDiscoveryPlugin](../src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/LanDiscoveryPlugin.kt)，功能边界见[同步总览](CurrentState/Sync.md)。

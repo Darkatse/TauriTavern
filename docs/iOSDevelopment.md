@@ -8,8 +8,8 @@
 
 | iOS/iPadOS | `structuredClone` | Element Fullscreen | 支持级别 |
 | --- | --- | --- | --- |
-| 15.0–15.3 | 上游 vendored polyfill | 关闭 | 有限支持 |
-| 15.4–15.x | WebKit 原生实现 | 关闭 | 有限支持 |
+| 15.0–15.3 | 上游 vendored polyfill | 开启 | 有限支持 |
+| 15.4–15.x | WebKit 原生实现 | 开启 | 有限支持 |
 | 16.0–16.3 | WebKit 原生实现 | 开启 | 有限支持 |
 | 16.4+ | WebKit 原生实现 | 开启 | 完整支持 |
 
@@ -25,7 +25,9 @@
 
 ### 1.1 UIScene 生命周期
 
-iOS 27 SDK 要求 UIScene 生命周期。Tao 0.35.3 只在 `UIApplicationSupportsMultipleScenes = true` 时启用它，因此 `gen/apple/project.yml` 与生成的 `Info.plist` 声明为 true。应用只有一个主窗口：系统额外请求的 scene 经 `RunEvent::SceneRequested` 交给 `platform::ios_ui::close_extra_scene()` 销毁。Tao 把 scene 生命周期与多窗口拆开后，改为 false 并删除这段处理。
+iOS 27 SDK 要求 UIScene 生命周期。Tao 只要看到 `UIApplicationSceneManifest` 就启用它，与多窗口无关。`gen/apple/project.yml` 与已提交的 `Info.plist` 保留 manifest 并声明 `UIApplicationSupportsMultipleScenes = false`，应用只有一个主窗口；Tao 动态返回带 `TaoSceneDelegate` 的配置，宿主不监听 `SceneRequested`，也不声明 `UISceneConfigurations`。
+
+scene 生命周期相关的改动以 release 构建真机冷启动验收：#337 的崩溃只在 release 构建出现。
 
 ### 1.2 Xcode 27 开发构建
 
@@ -51,32 +53,12 @@ UIKit 界面在主线程上展示；在 iPad 上，popover 必须指定 sourceVi
 - `src-tauri/crates/tt-adapter-archive/src/data_archive/import/layout.rs`
 - `src-tauri/crates/tt-adapter-archive/src/data_archive/import/extract.rs`
 
-## 4. WKWebView Element Fullscreen（iOS 16+ 启用）
+## 4. WKWebView Element Fullscreen
 
-### 4.1 现象
+- Element fullscreen 由 Wry 默认开启（iOS 15.4+ 用公开的 `WKPreferences.elementFullscreenEnabled`，更早的系统用 KVC）；宿主不配置，也不按版本关闭。支持级别见文首表格。
+- 角色卡、JS-Slash-Runner、同源 iframe 使用标准浏览器 Fullscreen API，不增加 JS-native bridge。退出全屏后视图重挂载，由 `KeyboardScrollView` 恢复约束。
 
-- 角色卡或扩展内的同源 iframe 页面在桌面/Android 可进入全屏，但 iOS 上 `requestFullscreen()` / `webkitRequestFullscreen()` 不生效。
-
-### 4.2 根因
-
-- 问题不在前端按钮或 JS-Slash-Runner 事件语义，而在宿主 WKWebView 默认没有开启 element fullscreen 能力。
-- TauriTavern 的兼容目标仍然是让上游页面继续使用标准浏览器 Fullscreen API，而不是引入额外 JS-native bridge。
-
-### 4.3 已落地方案
-
-- 继续复用 `src-tauri/crates/tauritavern/src/infrastructure/ios_webview.rs` 的主 WebView 配置入口，在 `configure_main_wkwebview()` 内统一完成 native 配置：
-  - 安装安全区/键盘内容视口与窗口背景宿主；
-  - 关闭 `scrollView` 的 safe-area 自动 inset 调整；
-  - 仅在 iOS 16.0+ 开启 `WKPreferences.setElementFullscreenEnabled(true)`。
-- 这样角色卡、JS-Slash-Runner、同源 iframe 的 fullscreen 事件、退出语义和上游契约保持一致，宿主只补齐平台能力，不改前端行为。
-
-### 4.4 支持边界
-
-- 公开 `WKPreferences.elementFullscreenEnabled` 从 iOS 15.4 可用且默认关闭；TauriTavern 仍将 iOS 16.0 作为产品 fullscreen feature floor。
-- iOS 15 保持 WebKit 默认关闭，不删除 iframe 权限、不改写 `requestFullscreen()`，让页面继续观察标准浏览器失败语义。
-- iOS 16.0–16.3 可使用 fullscreen，但仍属于有限支持；完整支持从 iOS 16.4 开始。
-
-### 4.5 构建版本契约
+### 4.1 构建版本契约
 
 - 最低部署版本是 `15.0`，规范值写在 `tauri.conf.json` 的 `bundle.iOS.minimumSystemVersion`。
 - `gen/apple/project.yml`、`Podfile` 与已提交 `.xcodeproj` 必须保持同值；Xcode pre-build script 会将真实 `IPHONEOS_DEPLOYMENT_TARGET` 与 Tauri 配置比较，不一致时直接失败。

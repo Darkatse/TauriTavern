@@ -125,8 +125,8 @@ pub(super) fn create_main_window(
     let window = builder.build()?;
 
     #[cfg(target_os = "ios")]
-    // iOS needs explicit WKWebView policy for safe-area/content inset behavior,
-    // fullscreen media, and JS dialogs.
+    // iOS needs explicit WKWebView policy for safe-area/content inset behavior
+    // and JS dialogs.
     crate::infrastructure::ios_webview::configure_main_wkwebview(&window)?;
 
     #[cfg(target_os = "macos")]
