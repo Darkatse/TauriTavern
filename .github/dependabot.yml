@@ -20,3 +20,4 @@ updates:
       - dependency-name: "dispatch2"
     commit-message:
       prefix: "chore(deps)"
+    labels: ["dependencies"]
