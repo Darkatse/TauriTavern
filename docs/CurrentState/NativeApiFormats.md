@@ -92,7 +92,7 @@ JSON 响应中的明确 error（包括 HTTP 200）在共同读取处转为错误
 ### 3.2 明确的当前限制
 
 - **Custom OpenAI Responses 不再维护 call_id → response_id 内存缓存**。普通 Custom 请求和默认关闭增强模式的 Agent 请求依赖完整 transcript / native output replay；显式启用 Responses WebSocket 模式后，Agent 才通过 run-scoped `provider_state` 使用 `previous_response_id` 与 incremental input。
-- **Custom 的 model list / status check** 已按 `custom_api_format` 对齐传输协议：OpenAI-compatible / Responses 继续使用兼容 `/models`，Claude Messages 使用 Claude `/models`，Gemini generateContent / Interactions 均使用 Gemini `/models`。Google 模型列表读取完整分页并保留模型 metadata，中途失败不返回部分列表。
+- **Custom 的 model list / status check** 已按 `custom_api_format` 对齐传输协议：OpenAI-compatible / Responses 继续使用兼容 `/models`，Claude Messages 使用 Claude `/models`，Gemini generateContent / Interactions 均使用 Gemini `/models`。Google 模型列表读取完整分页并保留模型 metadata，中途失败不返回部分列表；服务器给回已请求过的分页令牌（不转发 `pageToken` 的反向代理）时分页到此结束，重放的一页丢弃，此前各页就是它能提供的列表。
 - **Claude streaming 不做 chunk 归一化**：前端需走 Anthropic events 分支解析（现状就是如此，优先复用既有 Claude 语义）。
 
 ---

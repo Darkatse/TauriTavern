@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde_json::{Value, json};
 
@@ -30,6 +32,7 @@ pub(super) async fn list_models(
     let url = build_gemini_url(&config.base_url, "models");
     let client = repository.metadata_client(config)?;
     let mut page_token = None;
+    let mut requested_tokens = HashSet::new();
     let mut models = Vec::new();
 
     loop {
@@ -55,6 +58,17 @@ pub(super) async fn list_models(
             DomainError::InvalidData(format!("Invalid Google Gemini models page: {error}"))
         })?;
 
+        let next = page.next_page_token.filter(|token| !token.is_empty());
+        if next
+            .as_ref()
+            .is_some_and(|token| requested_tokens.contains(token))
+        {
+            tracing::warn!(
+                "Google Gemini models pagination stopped: the server repeated a page token"
+            );
+            break;
+        }
+
         for mut model in page.models {
             if !model
                 .get("supportedGenerationMethods")
@@ -74,16 +88,9 @@ pub(super) async fn list_models(
             models.push(model);
         }
 
-        let next = page.next_page_token.filter(|token| !token.is_empty());
-        if next.is_none() {
-            break;
-        }
-        if next == page_token {
-            return Err(DomainError::InvalidData(
-                "Google Gemini models pagination did not advance".to_string(),
-            ));
-        }
-        page_token = next;
+        let Some(next) = next else { break };
+        requested_tokens.insert(next.clone());
+        page_token = Some(next);
     }
 
     Ok(json!({ "data": models }))

@@ -252,3 +252,31 @@ async fn models_pagination_preserves_metadata_and_headers_and_rejects_partial_re
         }
     }
 }
+
+#[tokio::test]
+async fn models_pagination_stops_when_a_proxy_ignores_page_token() {
+    let page = json!({
+        "models": [{"name": "models/first", "supportedGenerationMethods": ["generateContent"]}],
+        "nextPageToken": "page-2"
+    })
+    .to_string();
+    let (base, server) = upstream(vec![page.clone(), page]).await;
+    let (repository, config) = repository(base);
+
+    let result = repository
+        .list_models(ChatCompletionSource::Makersuite, &config)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result["data"],
+        json!([{
+            "name": "models/first",
+            "supportedGenerationMethods": ["generateContent"],
+            "id": "first"
+        }])
+    );
+    let requests = server.await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].contains("pageToken=page-2"));
+}
