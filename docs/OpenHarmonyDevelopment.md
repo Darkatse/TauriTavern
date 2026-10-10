@@ -23,7 +23,7 @@
 
 openharmony-ability 的 Rust crate 与 ArkTS HAR 出自同一份源码。
 
-**版本约束。** 当前 fork 停在 Tauri 2.11.6，低于 TT 声明的 2.12.3，部分插件 pin 也低于应用的版本下限，鸿蒙构建暂不可用；恢复需同时跟进 core 与插件 fork。准备脚本保留应用的版本约束、features 和 workspace 继承，pin 不满足声明时由 Cargo 报错。鸿蒙失败时 Canary 照常发布其他平台。
+**版本约束。** fork 跟随 TT 声明的 Tauri 与插件版本：core、Wry、Tao 与插件 fork 各自合并对应的上游发布版本，升级 Tauri 或插件时一同跟进。准备脚本保留应用的版本约束、features 和 workspace 继承，pin 不满足声明时由 Cargo 报错。鸿蒙失败时 Canary 照常发布其他平台。
 
 ## 3. 构建
 

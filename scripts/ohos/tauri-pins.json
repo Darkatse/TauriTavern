@@ -1,18 +1,18 @@
 {
   "tauri": {
-    "repository": "LeenHawk/tauri",
-    "revision": "44ae4230ab7ce2f7361a957f50e4fb1df580ce49"
+    "repository": "Darkatse/tauri",
+    "revision": "ed12183b91ad7816193ad4f7d1f52d8d817cc675"
   },
   "wry": {
-    "repository": "LeenHawk/wry",
-    "revision": "9feaf086c3bd02ca14a8a1492f87e7a7714ea2fb"
+    "repository": "Darkatse/wry",
+    "revision": "2eebde3ed8cbb687348397667ccf572d9cbab1c9"
   },
   "ability": {
     "repository": "Darkatse/openharmony-ability",
     "revision": "72bf94655645a0e86ddabe5c9396388f1e533ca6"
   },
   "tao": {
-    "repository": "tauri-apps/tao",
-    "revision": "813572fbe582005e2fb513458bc212842745ceab"
+    "repository": "Darkatse/tao",
+    "revision": "a6f06b5f05dceb16a983f64bdece6c93141850cb"
   }
 }
