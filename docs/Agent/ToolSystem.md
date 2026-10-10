@@ -43,6 +43,8 @@
 
 `workspace.shell` 提供 Bashkit 内置命令、jq、Python 子集与 JavaScript。参数为 `command` 与可选 `workdir`（默认 `/`）。每次调用创建新环境，共享工作区文件保留；不执行宿主外部程序。退出状态与输出沿普通工具结果返回，执行与文件契约见 [Workspace](Workspace.md)。
 
+其中的 JavaScript 可用 `shell.exec` 执行嵌套工作区命令，命令集与权限和外层一致，同样不执行宿主外部程序。
+
 ## 结果如何进入下一轮
 
 `AgentToolResult` 包含调用 ID、工具 ID、文本、结构化结果、错误信息和资源引用。模型读取其中的 `content`，错误结果带有明确的错误标记；结构化元数据保留在记录中，不自动展开为模型文字。
