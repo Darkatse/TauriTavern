@@ -199,11 +199,13 @@ pnpm run ios:dev       # iOS dev mode
 
 **Tauri Pilot (UI development with AI agents)**
 
-The project already includes the development-only [Tauri Pilot](https://github.com/mpiton/tauri-pilot) plugin and capability. It lets an AI agent inspect and operate the desktop WebView through accessibility snapshots. The standard development and release commands do not enable it.
+The project already includes the development-only [Tauri Pilot](https://github.com/mpiton/tauri-pilot) plugin and capability. It lets an AI agent inspect and operate the WebView on desktop, Android and the iOS Simulator through accessibility snapshots. The standard development and release commands do not enable it.
 
 ```bash
 cargo install tauri-pilot-cli  # only needed once
-pnpm run tauri:dev:pilot
+pnpm run tauri:dev:pilot       # desktop
+pnpm run android:dev:pilot     # Android; forward the socket first, see docs/AndroidDevelopment.md
+pnpm run ios:dev:pilot         # iOS Simulator
 ```
 
 After the app starts, use another terminal for the basic workflow:

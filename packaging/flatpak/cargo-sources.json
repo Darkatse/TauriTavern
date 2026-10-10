@@ -9791,14 +9791,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/tauri-plugin-pilot/tauri-plugin-pilot-0.7.3.crate",
-        "sha256": "5533e31cc94a9ee5e6c32271bdef0ee7b05fc432d9e41f299623b51b40c8dbaf",
-        "dest": "cargo/vendor/tauri-plugin-pilot-0.7.3"
+        "url": "https://static.crates.io/crates/tauri-plugin-pilot/tauri-plugin-pilot-0.8.1.crate",
+        "sha256": "cb1870e351e575443b98ad7e3df2530146fcfc78aa01eb6aacb252a1f8f38436",
+        "dest": "cargo/vendor/tauri-plugin-pilot-0.8.1"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"5533e31cc94a9ee5e6c32271bdef0ee7b05fc432d9e41f299623b51b40c8dbaf\", \"files\": {}}",
-        "dest": "cargo/vendor/tauri-plugin-pilot-0.7.3",
+        "contents": "{\"package\": \"cb1870e351e575443b98ad7e3df2530146fcfc78aa01eb6aacb252a1f8f38436\", \"files\": {}}",
+        "dest": "cargo/vendor/tauri-plugin-pilot-0.8.1",
         "dest-filename": ".cargo-checksum.json"
     },
     {

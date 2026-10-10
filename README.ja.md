@@ -199,11 +199,13 @@ pnpm run ios:dev       # iOS開発モード
 
 **Tauri Pilot（AIエージェントを使ったUI開発）**
 
-このプロジェクトには、開発時にのみ有効になる[Tauri Pilot](https://github.com/mpiton/tauri-pilot)プラグインと権限設定が含まれています。アクセシビリティのスナップショットを通じて、AIエージェントがデスクトップWebViewを確認・操作できます。通常の開発コマンドとリリースビルドでは有効になりません。
+このプロジェクトには、開発時にのみ有効になる[Tauri Pilot](https://github.com/mpiton/tauri-pilot)プラグインと権限設定が含まれています。アクセシビリティのスナップショットを通じて、AIエージェントがデスクトップ、Android、iOSシミュレーターのWebViewを確認・操作できます。通常の開発コマンドとリリースビルドでは有効になりません。
 
 ```bash
 cargo install tauri-pilot-cli  # 初回のみ必要
-pnpm run tauri:dev:pilot
+pnpm run tauri:dev:pilot       # デスクトップ
+pnpm run android:dev:pilot     # Android。接続前にソケットを転送（docs/AndroidDevelopment.md）
+pnpm run ios:dev:pilot         # iOSシミュレーター
 ```
 
 アプリを起動したら、別のターミナルで次の基本手順を実行します。

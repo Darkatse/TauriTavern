@@ -359,3 +359,17 @@ Tauri Android 当前不支持 raw byte invoke；嵌套 `Uint8Array` 会被编码
 Android 的 Rust mDNS 发现需要 `CHANGE_WIFI_MULTICAST_STATE` 权限。宿主只在 Activity 处于前台时持有 `MulticastLock`：停止发现或插件收到 `onPause(activity)` 时释放，Activity resume 后由 Rust 为已启动的发现重新获取；网络逻辑由 Rust 负责。插件构造参数保持 `Activity`，与 Tauri 的 JNI 加载签名一致。
 
 平台适配见 [LanDiscoveryPlugin](../src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/LanDiscoveryPlugin.kt)，功能边界见[同步总览](CurrentState/Sync.md)。
+
+## 13. Tauri Pilot
+
+`pnpm run android:dev:pilot` 构建带 Pilot 的 debug 包。插件在应用内监听 abstract socket，名字随每次启动变化，CLI 无法自动发现；页面加载后转发到私有目录，并用 `TAURI_PILOT_SOCKET` 指给 CLI：
+
+```bash
+name=$(adb shell cat /proc/net/unix | grep -o 'tauri-pilot-com\.tauritavern\.-[0-9a-f]*\.sock' | tail -1)
+dir=$(mktemp -d /tmp/tauri-pilot.XXXXXX)
+adb forward "localfilesystem:$dir/pilot.sock" "localabstract:$name"
+export TAURI_PILOT_SOCKET="$dir/pilot.sock"
+tauri-pilot ping
+```
+
+应用重启后旧转发失效，重新执行以上命令；结束时 `adb forward --remove "localfilesystem:$dir/pilot.sock"` 并删除该目录。多台设备时给每条 `adb` 命令加 `-s <serial>`。Android 上没有 `press`，文字输入用 `fill` 或 `type`。

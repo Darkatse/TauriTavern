@@ -200,11 +200,13 @@ pnpm run ios:dev       # iOS 开发模式
 
 **Tauri Pilot（AI Agent 界面调试）**
 
-项目已接入 [Tauri Pilot](https://github.com/mpiton/tauri-pilot) 的开发专用插件与权限。它让 AI Agent 通过可访问性快照检查和操作桌面端 WebView；普通开发与发行命令不会启用这项能力。
+项目已接入 [Tauri Pilot](https://github.com/mpiton/tauri-pilot) 的开发专用插件与权限。它让 AI Agent 通过可访问性快照检查和操作桌面端、Android 与 iOS 模拟器中的 WebView；普通开发与发行命令不会启用这项能力。
 
 ```bash
 cargo install tauri-pilot-cli  # 仅首次需要
-pnpm run tauri:dev:pilot
+pnpm run tauri:dev:pilot       # 桌面
+pnpm run android:dev:pilot     # Android，连接前转发 socket，见 docs/AndroidDevelopment.md
+pnpm run ios:dev:pilot         # iOS 模拟器
 ```
 
 应用启动后，在另一终端按以下顺序操作：

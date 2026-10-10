@@ -6,16 +6,13 @@
         "default",
         "desktop-fullscreen",
         "system-file-picker",
+        "mobile-barcode-scanner",
+        "android-speech-synthesis",
         {
           "identifier": "pilot-devtools",
           "description": "Development-only capability for tauri-pilot WebView automation.",
           "windows": [
             "main"
-          ],
-          "platforms": [
-            "macOS",
-            "linux",
-            "windows"
           ],
           "permissions": [
             "pilot:default"

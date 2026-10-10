@@ -47,7 +47,7 @@ pub(super) fn install<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<
         .plugin(crate::platform::file_transfer::plugin())
         .plugin(crate::platform::speech_synthesis::plugin());
 
-    #[cfg(all(feature = "devtools-pilot", desktop))]
+    #[cfg(feature = "devtools-pilot")]
     let builder = builder.plugin(tauri_plugin_pilot::init());
 
     #[cfg(mobile)]

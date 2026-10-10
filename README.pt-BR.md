@@ -199,11 +199,13 @@ pnpm run ios:dev       # modo de desenvolvimento para iOS
 
 **Tauri Pilot (desenvolvimento de frontend com agentes de IA)**
 
-O projeto inclui o plugin [Tauri Pilot](https://github.com/mpiton/tauri-pilot) e suas permissões somente para desenvolvimento. Com ele, um agente de IA pode inspecionar e operar o WebView para desktop por meio de snapshots de acessibilidade. Os comandos normais de desenvolvimento e as compilações de lançamento não ativam esse recurso.
+O projeto inclui o plugin [Tauri Pilot](https://github.com/mpiton/tauri-pilot) e suas permissões somente para desenvolvimento. Com ele, um agente de IA pode inspecionar e operar o WebView no desktop, no Android e no Simulador do iOS por meio de snapshots de acessibilidade. Os comandos normais de desenvolvimento e as compilações de lançamento não ativam esse recurso.
 
 ```bash
 cargo install tauri-pilot-cli  # necessário apenas uma vez
-pnpm run tauri:dev:pilot
+pnpm run tauri:dev:pilot       # desktop
+pnpm run android:dev:pilot     # Android; encaminhe o socket antes, veja docs/AndroidDevelopment.md
+pnpm run ios:dev:pilot         # Simulador do iOS
 ```
 
 Depois de iniciar o aplicativo, use outro terminal para executar o fluxo básico:

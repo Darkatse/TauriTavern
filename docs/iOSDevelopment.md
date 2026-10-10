@@ -142,3 +142,7 @@ iOS Chat Completion 的后台租约由 Rust `ChatCompletionService` 持有，不
 LAN 发现通过系统 Bonjour 浏览和注册 `_tauritavern._tcp`。Info.plist 声明 `NSLocalNetworkUsageDescription` 与 `NSBonjourServices`，由用户授予本地网络访问权限；此路径不需要 Multicast Networking entitlement。macOS 使用相同的系统后端与用途声明。
 
 权限行为以真机签名包验证，后台发现受 iOS 生命周期限制。配置入口见 [Apple host 工程](../src-tauri/crates/tauritavern/gen/apple/project.yml)，功能边界见[同步总览](CurrentState/Sync.md)。
+
+## 9. Tauri Pilot
+
+`pnpm run ios:dev:pilot` 在模拟器中启动带 Pilot 的 debug 包。模拟器共享 Mac 的文件系统，插件的 socket 位于 `/tmp/tauri-pilot-com.tauritavern.client.sock`，CLI 直接发现，无需转发。桌面开发版与模拟器使用同一路径，先启动的占用，其余实例不启动 Pilot 服务。真机沙箱对 Mac 隐藏 socket，暂不支持；iOS 上没有 `press`，文字输入用 `fill` 或 `type`。
