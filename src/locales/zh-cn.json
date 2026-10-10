@@ -22,6 +22,7 @@
     "Mutual": "共有",
     "Chat deleted, but another chat could not be selected.": "聊天已删除，但未能切换到其他聊天。",
     "Chat deleted, but the character's current chat could not be saved.": "聊天已删除，但未能保存角色的当前聊天选择。",
+    "Chat created, but the previous chat could not be deleted.": "聊天已创建，但未能删除之前的聊天。",
     "Included": "已包含",
     "Excluded": "已排除",
     "More actions": "更多操作",

@@ -6480,8 +6480,8 @@ export function initWorldInfo() {
     });
 
     $('#group-chat-lorebook-dropdown').on('change', async function () {
-        await assignLorebookToChat({ shiftKey: true, altKey: false });
         $(this).prop('selectedIndex', 0);
+        await assignLorebookToChat({ shiftKey: true, altKey: false });
     });
 
     // Not needed on mobile

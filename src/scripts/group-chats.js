@@ -2332,7 +2332,7 @@ export async function deleteGroupChat(groupId, chatId) {
     if (!groups.find(group => group.id === groupId)?.chats.includes(chatId)) {
         throw new Error(`Chat "${chatId}" not found in group "${groupId}"`);
     }
-    if (isChatOpen({ groupId }, chatId)) await prepareCurrentChatFileChange();
+    if (isChatOpen({ groupId }, chatId)) await prepareCurrentChatFileChange({ saveEdits: false });
 
     const response = await fetch('/api/chats/group/delete', {
         method: 'POST',

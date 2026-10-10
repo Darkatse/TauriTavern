@@ -1982,10 +1982,19 @@ export async function getCharacters() {
     }
 }
 
-/** Finish pending edits before the current file changes; the save queue owns in-flight writes. */
-export async function prepareCurrentChatFileChange() {
+/**
+ * Admit a change to the open chat's file: no write may land after it.
+ * @param {{ saveEdits: boolean }} options Save pending edits first, or discard them once queued writes settle
+ */
+export async function prepareCurrentChatFileChange({ saveEdits }) {
     if (is_send_press || is_group_generating) throw new Error(t`Stop generation before deleting or renaming the current chat.`);
-    await saveChatConditional();
+    if (saveEdits) {
+        await saveChatConditional();
+        return;
+    }
+    cancelDebouncedChatSave();
+    cancelDebouncedMetadataSave();
+    await enqueueChatSave(async () => {});
 }
 
 /**
@@ -1998,7 +2007,7 @@ export async function deleteCharacterChat(avatar, fileName) {
     if (characterId === -1) throw new Error(`Character not found: ${avatar}`);
     await unshallowCharacter(String(characterId));
     if (isChatOpen({ avatar }, fileName)) {
-        await prepareCurrentChatFileChange();
+        await prepareCurrentChatFileChange({ saveEdits: false });
     }
 
     const response = await fetch('/api/chats/delete', {
@@ -12628,7 +12637,7 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
     const avatar = characters[this_chid]?.avatar;
 
     if (deleteCurrentChat) {
-        await prepareCurrentChatFileChange();
+        await prepareCurrentChatFileChange({ saveEdits: true });
     }
     await clearChat({ clearData: true });
 
@@ -12644,8 +12653,10 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
     }
     focusChatInput(ChatInputFocusIntent.NAVIGATION);
     if (deleteCurrentChat) {
-        if (groupId) await deleteGroupChat(groupId, oldChat);
-        else await deleteCharacterChat(avatar, oldChat);
+        await (groupId ? deleteGroupChat(groupId, oldChat) : deleteCharacterChat(avatar, oldChat)).catch(error => {
+            console.error('Chat created, but the previous chat could not be deleted:', error);
+            toastr.warning(error.message, t`Chat created, but the previous chat could not be deleted.`);
+        });
     }
 }
 
@@ -12704,7 +12715,7 @@ export async function renameGroupOrCharacterChat({ characterId, groupId, oldFile
     try {
         if (!groupId && !avatar) throw new Error(`Character not found: ${characterId}`);
         if (isChatOpen({ avatar, groupId }, oldFileName)) {
-            await prepareCurrentChatFileChange();
+            await prepareCurrentChatFileChange({ saveEdits: true });
         }
         const response = await fetch('/api/chats/rename', {
             method: 'POST',
@@ -13482,6 +13493,16 @@ jQuery(async function () {
     });
 
 
+    /** Menu and chat history entries report a failed new chat; `/newchat` fails the command instead. */
+    async function startNewChat(deleteCurrentChat) {
+        try {
+            await doNewChat({ deleteCurrentChat });
+        } catch (error) {
+            console.error('New chat operation failed:', error);
+            toastr.error(error.message, t`Chat could not be created.`);
+        }
+    }
+
     const { close: closeOptionsMenu } = initPopupMenu(document.getElementById('options_button'), document.getElementById('options'), {
         onOpen() {
             showBookmarksButtons();
@@ -13522,12 +13543,7 @@ jQuery(async function () {
                     return;
                 }
 
-                try {
-                    await doNewChat({ deleteCurrentChat });
-                } catch (error) {
-                    console.error('New chat operation failed:', error);
-                    toastr.error(error.message, t`Chat could not be created.`);
-                }
+                await startNewChat(deleteCurrentChat);
             }
             if (!selected_group && this_chid === undefined && !is_send_press) {
                 const alreadyInTempChat = this_chid === undefined && name2 === neutralCharacterName;
@@ -13607,7 +13623,7 @@ jQuery(async function () {
 
     $('#newChatFromManageScreenButton').on('click', async function () {
         setChatHistoryOpen(false);
-        await doNewChat({ deleteCurrentChat: false });
+        await startNewChat(false);
     });
 
     //////////////////////////////////////////////////////////////////////////////////////////////

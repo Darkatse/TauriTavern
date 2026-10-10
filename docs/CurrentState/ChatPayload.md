@@ -95,7 +95,7 @@ JS 与 IPC 成本随提交的 metadata 大小增长；Rust 工作内存随 heade
 
 ### 3.2 删除与重命名
 
-删除或重命名打开中的聊天前先经 `prepareCurrentChatFileChange()`：生成中拒绝，否则等待一次完整保存（`saveChatConditional()`，同时取消已排定的防抖保存），保存失败则中止操作。`doNewChat({ deleteCurrentChat: true })` 在清空前使用同一准入。
+删除或重命名打开中的聊天前先经 `prepareCurrentChatFileChange({ saveEdits })`：生成中拒绝；之后不再有写入落到该文件。重命名保留内容，先完整保存（`saveChatConditional()`），保存失败则中止；删除不需要内容，取消已排定的防抖保存并等待已排队的写入结束，未保存的编辑随文件一起删除。`doNewChat({ deleteCurrentChat: true })` 在清空前保存，与 HEAD 一致，使被删聊天的备份是最新的；新聊天建立后删除失败，报告“已创建，但……”。
 
 文件操作在开始时确定目标（头像或群组 id 加文件名），角色记录由 `updateRemoteChatName(characterId, name)` 写入。上游导出 `replaceCurrentChat`、`deleteCharacterChatByName`、`deleteGroupChatByName` 与界面共用同一套删除与替换实现。删除打开中的聊天后，按“清空 → 重置元数据 → 记录指向替代聊天 → 加载 → 保存记录”替换；改名后由 `renameGroupOrCharacterChat` 让仍指向旧名的记录跟随。文件操作成功后，后续步骤失败报告“已删除 / 已改名，但……”。导出只在目标是打开中的聊天时先保存。
 

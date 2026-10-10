@@ -2759,12 +2759,12 @@ export async function initPersonas() {
     });
     $('#persona-management-dropdown').on('change', async function () {
         const target = $(this).find(':selected').attr('id');
+        $(this).prop('selectedIndex', 0);
         switch (target) {
             case 'persona_lorebook_link':
                 await onPersonaLoreButtonClick({ shiftKey: true, altKey: false });
                 break;
         }
-        $(this).prop('selectedIndex', 0);
     });
     $('#personas_backup').on('click', onBackupPersonas);
     $('#personas_restore').on('click', () => $('#personas_restore_input').trigger('click'));
