@@ -1,7 +1,7 @@
 name: 功能建议 / Feature request
 description: 提议一项有明确使用场景的改进 / Propose an improvement grounded in a concrete use case
 title: "[Feature] "
-labels: ["enhancement"]
+labels: ["type: feature"]
 body:
   - type: markdown
     attributes:

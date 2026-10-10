@@ -1,0 +1,35 @@
+name: Issue platform labels
+
+on:
+  issues:
+    # Labels removed during triage must stay removed, so edits are not rescanned.
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label platforms mentioned in the issue
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const platforms = {
+              Windows: /\bwin(dows|10|11)?\b/i,
+              macOS: /\bmac(os|book)?\b/i,
+              Linux: /\b(linux|ubuntu|debian|fedora|flatpak)\b/i,
+              Android: /\bandroid\b|安卓/i,
+              iOS: /\b(ios|ipados|iphone|ipad)\b/i,
+              HarmonyOS: /\b(harmonyos|openharmony)\b|鸿蒙/i,
+            };
+            const { number, title, body } = context.payload.issue;
+            const text = `${title}\n${body ?? ''}`;
+            const labels = Object.keys(platforms)
+              .filter(name => platforms[name].test(text))
+              .map(name => `platform: ${name}`);
+
+            if (labels.length > 0) {
+              await github.rest.issues.addLabels({ ...context.repo, issue_number: number, labels });
+            }
