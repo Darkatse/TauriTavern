@@ -1,4 +1,4 @@
-import { assertCharacterAvatarFileName } from '../services/characters/character-identity.js';
+import { characterAvatarFileNameFromPreservedName, characterStemFromAvatarFileName } from '../services/characters/character-identity.js';
 import { badRequestBody, isNotFoundError } from './character-route-utils.js';
 
 /**
@@ -30,12 +30,12 @@ export function registerCharacterImportRoute(router, context, { jsonResponse }) 
         const requestedPreservedName = body.get('preserved_name');
         if (requestedPreservedName !== null && String(requestedPreservedName).length > 0) {
             try {
-                preserveFileName = assertCharacterAvatarFileName(requestedPreservedName, 'preserved_name', { required: true });
+                preserveFileName = characterAvatarFileNameFromPreservedName(String(requestedPreservedName));
             } catch (error) {
                 return jsonResponse(badRequestBody(error), 400);
             }
 
-            replacementName = preserveFileName.slice(0, -'.png'.length);
+            replacementName = characterStemFromAvatarFileName(preserveFileName, 'preserved_name', { required: true });
         }
 
         const fileType = String(body.get('file_type') || '').trim().toLowerCase();
