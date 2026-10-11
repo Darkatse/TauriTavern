@@ -3,6 +3,7 @@ use serde_json::{Map, Value, json};
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionNormalizationReport, ChatCompletionRepositoryGenerateResponse,
+    ChatCompletionStop, ChatCompletionStopKind,
 };
 
 use super::current_unix_timestamp;
@@ -105,10 +106,14 @@ pub(super) fn normalize_claude_response(
         message.insert("native".to_string(), json!({ "claude": native_claude }));
     }
 
-    let finish_reason = map_claude_finish_reason(
-        stop_reason.as_ref().and_then(Value::as_str),
-        message.contains_key("tool_calls"),
-    );
+    let mut finish_reason = stop_reason.as_ref().and_then(Value::as_str).map(|native| {
+        let (finish_reason, kind) = map_claude_stop_reason(native);
+        report.record_stop(ChatCompletionStop::new(kind, native));
+        finish_reason
+    });
+    if message.contains_key("tool_calls") {
+        finish_reason = Some("tool_calls");
+    }
 
     let mut choice = Map::new();
     choice.insert(
@@ -118,7 +123,7 @@ pub(super) fn normalize_claude_response(
     choice.insert("message".to_string(), Value::Object(message));
     choice.insert(
         "finish_reason".to_string(),
-        finish_reason.map(Value::String).unwrap_or(Value::Null),
+        finish_reason.map_or(Value::Null, Value::from),
     );
 
     let mut normalized = Map::new();
@@ -255,10 +260,25 @@ pub(super) fn normalize_gemini_response(
         message.insert("tool_calls".to_string(), Value::Array(tool_calls));
     }
 
-    let finish_reason = map_gemini_finish_reason(
-        first_candidate.get("finishReason").and_then(Value::as_str),
-        message.contains_key("tool_calls"),
-    );
+    let mut finish_reason = "stop";
+    if let Some(native) = first_candidate.get("finishReason").and_then(Value::as_str) {
+        let (mapped, kind) = map_gemini_finish_reason(native);
+        finish_reason = mapped;
+        let native = match first_candidate.get("finishMessage").and_then(Value::as_str) {
+            Some(message) => format!("{native}: {message}"),
+            None => native.to_string(),
+        };
+        report.record_stop(ChatCompletionStop::new(kind, native));
+    } else if let Some(feedback) = gemini_blocked_prompt_feedback(&response) {
+        // Gemini filtered the prompt before any output; like a filtered output, a retry may pass.
+        report.record_stop(ChatCompletionStop::new(
+            ChatCompletionStopKind::Filtered,
+            feedback.to_string(),
+        ));
+    }
+    if message.contains_key("tool_calls") {
+        finish_reason = "tool_calls";
+    }
 
     let mut choice = Map::new();
     choice.insert(
@@ -266,7 +286,7 @@ pub(super) fn normalize_gemini_response(
         Value::Number(serde_json::Number::from(0)),
     );
     choice.insert("message".to_string(), Value::Object(message));
-    choice.insert("finish_reason".to_string(), Value::String(finish_reason));
+    choice.insert("finish_reason".to_string(), Value::from(finish_reason));
 
     let mut normalized = Map::new();
     normalized.insert(
@@ -494,9 +514,10 @@ pub(super) fn normalize_gemini_interactions_response(
             DomainError::InternalError("Gemini Interactions response is missing status".to_string())
         })?;
 
-    let incomplete = match status {
-        "completed" | "requires_action" => false,
-        "incomplete" => true,
+    let (incomplete, stop_kind) = match status {
+        "completed" => (false, ChatCompletionStopKind::Completed),
+        "requires_action" => (false, ChatCompletionStopKind::ToolCalls),
+        "incomplete" => (true, ChatCompletionStopKind::Truncated),
         "failed" => {
             let message = response
                 .pointer("/error/message")
@@ -690,9 +711,11 @@ pub(super) fn normalize_gemini_interactions_response(
         normalized.insert("usage".to_string(), usage);
     }
 
+    let mut report = ChatCompletionNormalizationReport::default();
+    report.record_stop(ChatCompletionStop::new(stop_kind, status));
     Ok(ChatCompletionRepositoryGenerateResponse::new(
         Value::Object(normalized),
-        ChatCompletionNormalizationReport::default(),
+        report,
     ))
 }
 
@@ -702,17 +725,18 @@ fn synthetic_tool_call_id(report: &mut ChatCompletionNormalizationReport, index:
     id
 }
 
-fn map_claude_finish_reason(stop_reason: Option<&str>, has_tool_calls: bool) -> Option<String> {
-    if has_tool_calls {
-        return Some("tool_calls".to_string());
+/// Maps a native Claude `stop_reason` to the body's `finish_reason` and the stop kind.
+/// Values the body does not rename pass through unchanged.
+fn map_claude_stop_reason(native: &str) -> (&str, ChatCompletionStopKind) {
+    match native {
+        "end_turn" | "stop_sequence" => ("stop", ChatCompletionStopKind::Completed),
+        "tool_use" => ("tool_calls", ChatCompletionStopKind::ToolCalls),
+        "max_tokens" => ("length", ChatCompletionStopKind::Truncated),
+        "model_context_window_exceeded" => (native, ChatCompletionStopKind::Truncated),
+        "refusal" => (native, ChatCompletionStopKind::Refused),
+        "pause_turn" => (native, ChatCompletionStopKind::Paused),
+        _ => (native, ChatCompletionStopKind::Unknown),
     }
-
-    stop_reason.map(|value| match value {
-        "max_tokens" => "length".to_string(),
-        "tool_use" => "tool_calls".to_string(),
-        "stop_sequence" | "end_turn" => "stop".to_string(),
-        other => other.to_string(),
-    })
 }
 
 fn map_claude_usage(raw_usage: Option<&Value>) -> Option<Value> {
@@ -740,22 +764,41 @@ fn map_claude_usage(raw_usage: Option<&Value>) -> Option<Value> {
     ))
 }
 
-fn map_gemini_finish_reason(finish_reason: Option<&str>, has_tool_calls: bool) -> String {
-    if has_tool_calls {
-        return "tool_calls".to_string();
+/// Maps a native Gemini `finishReason` to the body's `finish_reason` and the stop kind.
+/// The body only tells truncation apart; every other reason reads as `stop`.
+fn map_gemini_finish_reason(native: &str) -> (&'static str, ChatCompletionStopKind) {
+    match native.to_ascii_uppercase().as_str() {
+        "STOP" => ("stop", ChatCompletionStopKind::Completed),
+        "MAX_TOKENS" => ("length", ChatCompletionStopKind::Truncated),
+        "SAFETY"
+        | "RECITATION"
+        | "BLOCKLIST"
+        | "PROHIBITED_CONTENT"
+        | "SPII"
+        | "IMAGE_SAFETY"
+        | "IMAGE_PROHIBITED_CONTENT"
+        | "IMAGE_RECITATION"
+        | "LANGUAGE" => ("stop", ChatCompletionStopKind::Filtered),
+        "MALFORMED_FUNCTION_CALL" | "UNEXPECTED_TOOL_CALL" | "TOO_MANY_TOOL_CALLS" => {
+            ("stop", ChatCompletionStopKind::MalformedToolCall)
+        }
+        _ => ("stop", ChatCompletionStopKind::Unknown),
     }
+}
 
-    let value = finish_reason.unwrap_or("STOP");
-    if value.eq_ignore_ascii_case("MAX_TOKENS") {
-        return "length".to_string();
-    }
-
-    if value.eq_ignore_ascii_case("STOP") || value.eq_ignore_ascii_case("FINISH_REASON_UNSPECIFIED")
-    {
-        return "stop".to_string();
-    }
-
-    "stop".to_string()
+/// Gemini blocked the prompt itself: no candidate, only `promptFeedback.blockReason`.
+/// Returns the `promptFeedback` unchanged.
+pub(super) fn gemini_blocked_prompt_feedback(response: &Value) -> Option<&Value> {
+    let no_candidates = response
+        .get("candidates")
+        .and_then(Value::as_array)
+        .is_none_or(Vec::is_empty);
+    let feedback = response.get("promptFeedback")?;
+    let blocked = feedback
+        .get("blockReason")
+        .and_then(Value::as_str)
+        .is_some();
+    (no_candidates && blocked).then_some(feedback)
 }
 
 fn map_gemini_usage(response: &Value) -> Option<Value> {
@@ -930,6 +973,9 @@ fn push_reasoning_text(texts: &mut Vec<String>, text: &str) {
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
+    use tt_ports::repositories::chat_completion_repository::{
+        ChatCompletionStop, ChatCompletionStopKind,
+    };
 
     use super::{
         normalize_claude_response, normalize_gemini_interactions_response,
@@ -1094,6 +1140,28 @@ mod tests {
     }
 
     #[test]
+    fn claude_stop_classifies_pause_and_truncation_without_changing_the_body() {
+        for (stop_reason, kind, finish_reason) in [
+            ("pause_turn", ChatCompletionStopKind::Paused, "pause_turn"),
+            ("max_tokens", ChatCompletionStopKind::Truncated, "length"),
+        ] {
+            let normalized = normalize_claude_response(json!({
+                "content": [{ "type": "text", "text": "partial" }],
+                "stop_reason": stop_reason
+            }));
+
+            assert_eq!(
+                normalized.body["choices"][0]["finish_reason"],
+                finish_reason
+            );
+            assert_eq!(
+                normalized.normalization_report.stop(),
+                Some(&ChatCompletionStop::new(kind, stop_reason))
+            );
+        }
+    }
+
+    #[test]
     fn normalize_claude_reports_synthetic_tool_call_id() {
         let response = json!({
             "id": "claude-response",
@@ -1173,6 +1241,72 @@ mod tests {
                 .and_then(Value::as_str),
             Some("sig_2")
         );
+    }
+
+    #[test]
+    fn gemini_stop_keeps_native_reasons_the_body_flattens() {
+        let cases = [
+            (
+                json!({ "candidates": [{
+                    "finishReason": "RECITATION",
+                    "finishMessage": "Output resembles a protected source.",
+                    "content": { "parts": [{ "text": "partial" }] }
+                }] }),
+                "stop",
+                Some((
+                    ChatCompletionStopKind::Filtered,
+                    "RECITATION: Output resembles a protected source.",
+                )),
+            ),
+            (
+                json!({ "candidates": [{ "finishReason": "MALFORMED_FUNCTION_CALL" }] }),
+                "stop",
+                Some((
+                    ChatCompletionStopKind::MalformedToolCall,
+                    "MALFORMED_FUNCTION_CALL",
+                )),
+            ),
+            (
+                json!({ "candidates": [{
+                    "finishReason": "STOP",
+                    "content": { "parts": [{
+                        "functionCall": { "id": "call_1", "name": "weather", "args": {} }
+                    }] }
+                }] }),
+                "tool_calls",
+                Some((ChatCompletionStopKind::Completed, "STOP")),
+            ),
+            (
+                json!({ "promptFeedback": {
+                    "blockReason": "PROHIBITED_CONTENT",
+                    "blockReasonMessage": "The prompt was blocked."
+                } }),
+                "stop",
+                Some((
+                    ChatCompletionStopKind::Filtered,
+                    r#"{"blockReason":"PROHIBITED_CONTENT","blockReasonMessage":"The prompt was blocked."}"#,
+                )),
+            ),
+            (
+                json!({ "candidates": [{ "content": { "parts": [{ "text": "hi" }] } }] }),
+                "stop",
+                None,
+            ),
+        ];
+
+        for (response, finish_reason, stop) in cases {
+            let normalized = normalize_gemini_response(response);
+
+            assert_eq!(
+                normalized.body["choices"][0]["finish_reason"],
+                finish_reason
+            );
+            assert_eq!(
+                normalized.normalization_report.stop(),
+                stop.map(|(kind, native)| ChatCompletionStop::new(kind, native))
+                    .as_ref()
+            );
+        }
     }
 
     #[test]

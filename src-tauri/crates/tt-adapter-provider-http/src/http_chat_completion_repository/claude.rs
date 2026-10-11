@@ -330,6 +330,9 @@ impl ClaudeMessageAccumulator {
                     .message
                     .take()
                     .ok_or_else(|| invalid_claude_stream("message_stop arrived before message"))?;
+                if message.get("stop_reason").and_then(Value::as_str).is_none() {
+                    return Err(invalid_claude_stream("ended without a stop reason"));
+                }
                 return Ok(Some(Value::Object(message)));
             }
             ClaudeStreamEvent::Error { error } => {
@@ -560,6 +563,7 @@ mod tests {
     use std::collections::HashMap;
 
     use serde_json::json;
+    use tt_domain::errors::DomainError;
 
     use super::{
         ANTHROPIC_BETA_CONTEXT_1M, ANTHROPIC_BETA_EXTENDED_CACHE_TTL, ANTHROPIC_BETA_FAST_MODE,
@@ -645,6 +649,26 @@ mod tests {
             body["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"],
             "{\"content\":\"hello\",\"path\":\"a.md\"}"
         );
+    }
+
+    #[test]
+    fn claude_stream_without_stop_reason_is_a_transient_invalid_response() {
+        let mut accumulator = ClaudeMessageAccumulator::default();
+        accumulator
+            .apply_event(
+                br#"{"type":"message_start","message":{"id":"msg_1","content":[],"stop_reason":null}}"#,
+                &mut |_| {},
+            )
+            .unwrap();
+
+        let error = accumulator
+            .apply_event(br#"{"type":"message_stop"}"#, &mut |_| {})
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DomainError::Transient(message)
+                if message.starts_with("model.upstream_invalid_response:")
+        ));
     }
 
     #[test]

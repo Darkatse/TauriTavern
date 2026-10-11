@@ -18,6 +18,7 @@ use tt_domain::models::agent::{
 use tt_domain::models::tool::{ToolArguments, ToolChoice, ToolId, ToolInvocation, ToolProviderId};
 use tt_ports::repositories::chat_completion_repository::{
     CHAT_COMPLETION_PROVIDER_STATE_FIELD, ChatCompletionNormalizationReport, ChatCompletionSource,
+    ChatCompletionStop, ChatCompletionStopKind,
 };
 
 fn model_tools(registry: &BuiltinAgentToolRegistry) -> Vec<AgentModelTool> {
@@ -399,49 +400,92 @@ fn agent_encoder_owns_tool_selection_stream_and_choice_count() {
     assert_eq!(dto.payload["stream"], true);
 }
 
-#[test]
-fn rejects_provider_refusal_before_decoding_the_agent_turn() {
-    let response = json!({
-        "stop_reason": "refusal",
-        "stop_details": {
-            "explanation": "This request was declined by the provider."
-        },
-        "choices": [{
-            "finish_reason": "refusal",
-            "message": {
-                "role": "assistant",
-                "content": "partial output"
-            }
-        }]
-    });
-
-    let error = decode_chat_completion_response(response, &[]).unwrap_err();
-    assert!(error.to_string().contains("model.provider_refusal"));
-    assert!(
-        error
-            .to_string()
-            .contains("This request was declined by the provider.")
-    );
+fn decode_with_stop(
+    response: Value,
+    kind: ChatCompletionStopKind,
+    native: &str,
+) -> Result<tt_domain::models::agent::AgentModelResponse, crate::errors::ApplicationError> {
+    let mut report = ChatCompletionNormalizationReport::default();
+    report.record_stop(ChatCompletionStop::new(kind, native));
+    let exchange = ChatCompletionExchange {
+        source: ChatCompletionSource::Makersuite,
+        provider_format: ChatCompletionProviderFormat::Gemini,
+        normalized_response: NormalizedChatCompletionResponse::from_value(response).unwrap(),
+        normalization_report: report,
+    };
+    decode_chat_completion_exchange(exchange, &model_tools(&BuiltinAgentToolRegistry::all()))
 }
 
 #[test]
-fn rejects_truncated_agent_turns() {
-    for response in [
-        json!({
-            "stop_reason": "model_context_window_exceeded",
-            "choices": [{
-                "message": { "role": "assistant", "content": "partial output" }
-            }]
-        }),
-        json!({
-            "choices": [{
-                "finish_reason": "length",
-                "message": { "role": "assistant", "content": "partial output" }
-            }]
-        }),
+fn provider_stops_decide_whether_the_agent_turn_is_usable() {
+    let text = json!({
+        "stop_details": { "explanation": "This request was declined by the provider." },
+        "choices": [{ "message": { "role": "assistant", "content": "partial output" } }]
+    });
+    let tool_call = json!({
+        "choices": [{ "message": { "tool_calls": [{
+            "id": "call_1",
+            "type": "function",
+            "function": { "name": "workspace_commit", "arguments": "{}" }
+        }] } }]
+    });
+
+    for (response, kind, native) in [
+        (&text, ChatCompletionStopKind::Completed, "STOP"),
+        (&text, ChatCompletionStopKind::Unknown, "OTHER"),
+        (&tool_call, ChatCompletionStopKind::ToolCalls, "tool_calls"),
     ] {
-        let error = decode_chat_completion_response(response, &[]).unwrap_err();
-        assert!(error.to_string().contains("model.output_truncated"));
+        decode_with_stop(response.clone(), kind, native).unwrap();
+    }
+
+    for (response, kind, native, code, retryable) in [
+        (
+            &text,
+            ChatCompletionStopKind::Truncated,
+            "MAX_TOKENS",
+            "model.output_truncated",
+            false,
+        ),
+        (
+            &text,
+            ChatCompletionStopKind::Refused,
+            "refusal",
+            "This request was declined",
+            false,
+        ),
+        (
+            &text,
+            ChatCompletionStopKind::Filtered,
+            "SAFETY: The response was blocked.",
+            "model.upstream_invalid_response",
+            true,
+        ),
+        (
+            &text,
+            ChatCompletionStopKind::Filtered,
+            r#"{"blockReason":"PROHIBITED_CONTENT"}"#,
+            "model.upstream_invalid_response",
+            true,
+        ),
+        (
+            &text,
+            ChatCompletionStopKind::ToolCalls,
+            "tool_calls",
+            "model.upstream_invalid_response",
+            true,
+        ),
+        (
+            &text,
+            ChatCompletionStopKind::MalformedToolCall,
+            "MALFORMED_FUNCTION_CALL",
+            "model.upstream_invalid_response",
+            true,
+        ),
+    ] {
+        let error = decode_with_stop(response.clone(), kind, native).unwrap_err();
+        assert!(error.to_string().contains(code), "{native}: {error}");
+        assert!(error.to_string().contains(native), "{error}");
+        assert_eq!(error.is_retryable(), retryable, "{native}");
     }
 }
 

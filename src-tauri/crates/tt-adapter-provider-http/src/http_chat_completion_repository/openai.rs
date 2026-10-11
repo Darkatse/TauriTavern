@@ -3,9 +3,9 @@ use serde_json::{Map, Value};
 
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_completion_repository::{
-    ChatCompletionApiConfig, ChatCompletionCancelReceiver,
-    ChatCompletionRepositoryGenerateResponse, ChatCompletionStreamDelta,
-    ChatCompletionStreamSender,
+    ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionNormalizationReport,
+    ChatCompletionRepositoryGenerateResponse, ChatCompletionStop, ChatCompletionStopKind,
+    ChatCompletionStreamDelta, ChatCompletionStreamSender,
 };
 
 use super::HttpChatCompletionRepository;
@@ -46,7 +46,7 @@ pub(super) async fn generate(
     endpoint_path: &str,
     payload: &Value,
     provider_name: &str,
-) -> Result<Value, DomainError> {
+) -> Result<ChatCompletionRepositoryGenerateResponse, DomainError> {
     let url = HttpChatCompletionRepository::build_url(&config.base_url, endpoint_path)?;
 
     let client = repository.client(config)?;
@@ -81,7 +81,7 @@ pub(super) async fn generate(
         let _ = super::log_prompt_cache_performance_if_present(provider_name, model, &body);
     }
 
-    Ok(body)
+    Ok(chat_completion_response(body))
 }
 
 pub(super) async fn generate_stream(
@@ -490,10 +490,35 @@ impl OpenAiChatAccumulator {
             body.insert("usage".to_string(), value);
         }
 
-        Ok(ChatCompletionRepositoryGenerateResponse::from_body(
-            Value::Object(body),
-        ))
+        Ok(chat_completion_response(Value::Object(body)))
     }
+}
+
+/// Both paths classify the same `finish_reason` the chat-completion body carries.
+fn chat_completion_response(body: Value) -> ChatCompletionRepositoryGenerateResponse {
+    let mut report = ChatCompletionNormalizationReport::default();
+    if let Some(finish_reason) = body
+        .pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+    {
+        report.record_stop(openai_chat_stop(finish_reason));
+    }
+    ChatCompletionRepositoryGenerateResponse::new(body, report)
+}
+
+fn openai_chat_stop(finish_reason: &str) -> ChatCompletionStop {
+    // Compatible proxies often pass other providers' native values through unchanged.
+    let kind = match finish_reason.to_ascii_lowercase().as_str() {
+        "stop" | "end_turn" | "stop_sequence" | "eos" => ChatCompletionStopKind::Completed,
+        "tool_calls" | "function_call" | "tool_use" => ChatCompletionStopKind::ToolCalls,
+        "length" | "max_tokens" | "model_context_window_exceeded" => {
+            ChatCompletionStopKind::Truncated
+        }
+        "content_filter" => ChatCompletionStopKind::Filtered,
+        "refusal" => ChatCompletionStopKind::Refused,
+        _ => ChatCompletionStopKind::Unknown,
+    };
+    ChatCompletionStop::new(kind, finish_reason)
 }
 
 // A message and a stream delta use the same visible fields. Normalize before
@@ -572,8 +597,50 @@ fn invalid_openai_response(message: impl std::fmt::Display) -> DomainError {
 mod tests {
     use serde_json::json;
 
-    use super::{OpenAiChatAccumulator, normalize_message_reasoning};
-    use tt_ports::repositories::chat_completion_repository::ChatCompletionStreamDelta;
+    use super::{OpenAiChatAccumulator, chat_completion_response, normalize_message_reasoning};
+    use tt_ports::repositories::chat_completion_repository::{
+        ChatCompletionStop, ChatCompletionStopKind, ChatCompletionStreamDelta,
+    };
+
+    #[test]
+    fn chat_stop_classifies_finish_reason_without_changing_the_body() {
+        let mut accumulator = OpenAiChatAccumulator::default();
+        accumulator
+            .apply_event(
+                br#"{"choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":"content_filter"}]}"#,
+                &mut |_| {},
+            )
+            .unwrap();
+        let streamed = accumulator.finish().unwrap();
+        assert_eq!(
+            streamed.body["choices"][0]["finish_reason"],
+            "content_filter"
+        );
+        assert_eq!(
+            streamed.normalization_report.stop(),
+            Some(&ChatCompletionStop::new(
+                ChatCompletionStopKind::Filtered,
+                "content_filter"
+            ))
+        );
+
+        for (finish_reason, kind) in [
+            ("MAX_TOKENS", ChatCompletionStopKind::Truncated),
+            (
+                "model_context_window_exceeded",
+                ChatCompletionStopKind::Truncated,
+            ),
+            ("refusal", ChatCompletionStopKind::Refused),
+        ] {
+            let body = json!({"choices": [{"index": 0, "message": {"content": "hi"}, "finish_reason": finish_reason}]});
+            let complete = chat_completion_response(body.clone());
+            assert_eq!(complete.body, body);
+            assert_eq!(
+                complete.normalization_report.stop(),
+                Some(&ChatCompletionStop::new(kind, finish_reason))
+            );
+        }
+    }
 
     #[test]
     fn reasoning_aliases_and_details_expose_text_once_without_opaque_state() {

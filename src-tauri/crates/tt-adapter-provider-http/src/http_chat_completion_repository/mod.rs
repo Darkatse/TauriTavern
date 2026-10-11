@@ -717,9 +717,7 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
                 | ChatCompletionSource::Xai
                 | ChatCompletionSource::Pollinations,
                 _,
-            ) => openai::generate(self, config, endpoint_path, payload, source_name)
-                .await
-                .map(ChatCompletionRepositoryGenerateResponse::from_body),
+            ) => openai::generate(self, config, endpoint_path, payload, source_name).await,
             (ChatCompletionSource::Cohere, _) => {
                 cohere::generate(self, config, endpoint_path, payload)
                     .await
