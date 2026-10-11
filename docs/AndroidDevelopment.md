@@ -4,6 +4,15 @@
 
 当前支持 Android 8.0（API 26）及以上，并要求系统 WebView/Chrome 已更新到能执行 ES2020 的版本。
 
+## 构建工具链
+
+Gradle 工程跟随 Tauri CLI 的 Android 模板，当前对齐 2.12.3：Gradle 9.6.1、AGP 9.3.1、Kotlin Gradle Plugin 2.2.10。升级 Tauri 时按模板差异同步；AGP 版本同时写在根 `build.gradle.kts` 和 `buildSrc/build.gradle.kts`，两处一起改。
+
+- `compileSdk`、`targetSdk` 为 36。targetSdk 37 起访问局域网需要 `ACCESS_LOCAL_NETWORK` 运行时权限，提升前先建立统一的本地网络权限入口。
+- 开启 configuration cache：`BuildTask` 经 `ExecOperations` 调用 CLI，执行阶段不访问 `Project`。
+- `android.builtInKotlin=false`、`android.newDsl=false` 与模板一致，因为 Tauri 与官方插件仍应用 `org.jetbrains.kotlin.android`。
+- release 沿用 `proguard-android-optimize.txt`，`@JavascriptInterface` 方法由其中的默认规则保留；`proguard-rules.pro` 只补依赖缺失的规则，原因写在规则旁。
+
 ## 1. 原生内容视口与窗口背景
 
 `AndroidWindowLayout` 拥有主 WebView 的矩形：系统栏、刘海和停靠键盘在原生层消费，网页按普通视口排版。`WindowLayoutPlugin` 供 Rust 读取窗口快照、提交背景条带。职责、提交时机与背景链路见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md)。
