@@ -34,10 +34,21 @@ impl AgentRuntimeService {
         payload: Value,
     ) -> Result<AgentRunEvent, ApplicationError> {
         let payload = with_canonical_event_scope(event_type, payload)?;
-        self.run_repository
+        let event = self
+            .run_repository
             .append_event(run_id, level, event_type, payload)
-            .await
-            .map_err(ApplicationError::from)
+            .await?;
+        if let Some(handle) = self.active_runs.read().await.get(run_id) {
+            // Concurrent appenders may finish out of order; the hint only moves forward.
+            handle.event_seq.send_if_modified(|seq| {
+                let advanced = event.seq > *seq;
+                if advanced {
+                    *seq = event.seq;
+                }
+                advanced
+            });
+        }
+        Ok(event)
     }
 
     pub(super) fn ensure_not_cancelled(
