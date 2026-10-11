@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use crate::presentation::web_resources::download_dispatch;
 use crate::presentation::web_resources::tauri_resource_adapter::handle_tauri_web_resource_request;
 #[cfg(desktop)]
 use tauri_plugin_opener::OpenerExt;
@@ -66,8 +67,11 @@ pub(super) fn create_main_window(
         // Route browser-visible URLs to host-owned file handlers so upstream JS
         // can keep using HTTP-like paths for extensions, thumbnails, and user
         // data assets.
-        .on_web_resource_request(move |request, response| {
-            handle_tauri_web_resource_request(host_resource_service.as_ref(), &request, response);
+        .on_web_resource_request({
+            let host_resources = Arc::clone(&host_resource_service);
+            move |request, response| {
+                handle_tauri_web_resource_request(host_resources.as_ref(), &request, response);
+            }
         });
 
     #[cfg(desktop)]
@@ -76,6 +80,17 @@ pub(super) fn create_main_window(
         // drag-drop events so each drop target keeps its existing behavior.
         let builder = builder.disable_drag_drop_handler();
         let app_handle = app.handle().clone();
+
+        // Native WebView downloads bypass web-resource interception (they fetch
+        // over the real network stack), so host-served same-origin URLs cannot
+        // be saved with the browser's "Save image as". Route them through the
+        // host delivery flow instead.
+        let builder = builder.on_download({
+            let host_resources = Arc::clone(&host_resource_service);
+            move |webview, event| {
+                download_dispatch::handle_download_event(&host_resources, &webview, event)
+            }
+        });
 
         // `window.open()` semantics belong to the host/runtime boundary. Keep
         // OAuth-style popups in-app to preserve opener/postMessage behavior, and

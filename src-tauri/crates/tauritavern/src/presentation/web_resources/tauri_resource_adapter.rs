@@ -17,7 +17,7 @@ use tt_application::services::host_resource_service::{
     HostResourceDeliveryCapabilities, HostResourceResponse, HostResourceService,
 };
 
-const WRY_DELIVERY: HostResourceDeliveryCapabilities = resource_delivery(false);
+pub(crate) const WRY_DELIVERY: HostResourceDeliveryCapabilities = resource_delivery(false);
 #[cfg(any(dev, debug_assertions))]
 const DEV_IPC_DELIVERY: HostResourceDeliveryCapabilities = resource_delivery(true);
 
