@@ -2,7 +2,8 @@ import { expect, test } from '@rstest/core';
 
 import { formatPatchDiffDetail } from './run-detail-format';
 
-test('patch detail preserves line numbers across the changed middle range', () => {
+// Runs recorded before the file tools adopted `file_path` store the file as `path`.
+test.each(['file_path', 'path'])('patch detail preserves line numbers across the changed middle range (%s)', pathKey => {
     const section = formatPatchDiffDetail({
         type: 'patchDiff',
         labelKey: 'timelinePatchDiff',
@@ -14,7 +15,7 @@ test('patch detail preserves line numbers across the changed middle range', () =
     }, {
         path: 'tool-arguments/call.json',
         text: JSON.stringify({
-            path: 'output/main.md',
+            [pathKey]: 'output/main.md',
             old_string: 'alpha\nbeta\ngamma\n',
             new_string: 'alpha\ndelta\ngamma\n',
         }),

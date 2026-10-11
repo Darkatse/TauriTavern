@@ -37,9 +37,9 @@ pub(in crate::services::agent_tools) async fn write_file(
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let policy = &workspace.policy;
     let workspace_files: &dyn WorkspaceFs = workspace;
-    let Some(path) = required_trimmed_string_arg(args, "path") else {
+    let Some(path) = required_trimmed_string_arg(args, "file_path") else {
         return Ok((
-            tool_error(call, "tool.invalid_arguments", "path is required"),
+            tool_error(call, "tool.invalid_arguments", "file_path is required"),
             AgentToolEffect::None,
         ));
     };
@@ -178,7 +178,7 @@ fn write_conflict_error(
         WorkspaceWriteConflictKind::AlreadyExists { .. } => tool_error(
             call,
             "workspace.write_requires_read",
-            "file already exists; read it with workspace_read_file before rewriting it",
+            "file already exists; read it before rewriting it",
         ),
         WorkspaceWriteConflictKind::Stale {
             actual_sha256: Some(_),

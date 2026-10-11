@@ -1,11 +1,13 @@
 use serde_json::Value;
 
 use super::super::markdown::{indent_lines, render_inline_value, render_markdown_value};
+use crate::services::agent_tools::{stage_can_finish_run, visible_builtin_alias};
 use tt_domain::models::agent::{AgentModelTool, AgentRunPresentation, AgentTaskRecord};
 
 pub(super) struct DelegatedResultContinuationHint {
     commit_tool: Option<String>,
     finish_tool: Option<String>,
+    can_finish_run: bool,
     presentation: AgentRunPresentation,
     committed_count: usize,
 }
@@ -17,8 +19,11 @@ impl DelegatedResultContinuationHint {
         committed_count: usize,
     ) -> Self {
         Self {
-            commit_tool: builtin_model_alias(tools, "workspace.commit"),
-            finish_tool: builtin_model_alias(tools, "workspace.finish"),
+            commit_tool: visible_builtin_alias(tools, "workspace.commit").map(str::to_owned),
+            finish_tool: visible_builtin_alias(tools, "workspace.finish").map(str::to_owned),
+            can_finish_run: stage_can_finish_run(|name| {
+                visible_builtin_alias(tools, name).is_some()
+            }),
             presentation,
             committed_count,
         }
@@ -281,31 +286,28 @@ fn push_continuation_hint(lines: &mut Vec<String>, hint: &DelegatedResultContinu
     );
 
     match (
+        hint.can_finish_run,
         hint.presentation,
         hint.commit_tool.as_deref(),
         hint.finish_tool.as_deref(),
         hint.committed_count,
     ) {
-        (AgentRunPresentation::Foreground, Some(commit), Some(finish), 0) => lines.push(format!(
-            "If these results are enough to finish, prepare the final workspace reply, call {commit}, then call {finish}."
+        (true, AgentRunPresentation::Foreground, Some(commit), _, 0) => lines.push(format!(
+            "If these results are enough to finish, prepare the final workspace reply, then call {commit} with finish: true."
         )),
-        (AgentRunPresentation::Foreground, Some(commit), Some(finish), _) => lines.push(format!(
-            "If the current committed reply already accounts for these results, call {finish}. If you revise it, update the workspace, call {commit} again, then call {finish}."
+        (true, AgentRunPresentation::Foreground, Some(commit), Some(finish), _) => lines.push(format!(
+            "If the current committed reply already accounts for these results, call {finish}. If you revise it, update the workspace, then call {commit} with finish: true."
         )),
-        (_, _, Some(finish), _) => {
+        (true, AgentRunPresentation::Foreground, Some(commit), None, _) => lines.push(format!(
+            "If you revise the committed reply, update the workspace first; then call {commit} with finish: true."
+        )),
+        (true, _, _, Some(finish), _) => {
             lines.push(format!("If no more work is needed, call {finish}."));
         }
         _ => {
             lines.push("Use another appropriate Agent tool for the next step.".to_string());
         }
     }
-}
-
-fn builtin_model_alias(tools: &[AgentModelTool], name: &str) -> Option<String> {
-    tools
-        .iter()
-        .find(|tool| tool.tool_id.is_builtin() && tool.tool_id.native_name() == name)
-        .map(|tool| tool.model_alias.clone())
 }
 
 fn push_task_section(lines: &mut Vec<String>, title: &str, value: Option<&Value>) {

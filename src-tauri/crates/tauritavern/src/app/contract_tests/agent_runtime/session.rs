@@ -19,12 +19,12 @@ async fn session_keeps_files_and_canonical_history_across_runs_and_restart() {
             model_tool_response(vec![
                 model_tool_call(
                     "work",
-                    "workspace_write_file",
-                    json!({"path":"work/note.md","content":"saved work"}),
+                    "write",
+                    json!({"file_path":"work/note.md","content":"saved work"}),
                 ),
                 model_tool_call(
                     "tmp",
-                    "workspace_shell",
+                    "shell",
                     json!({"command":"printf 'saved tmp' > /tmp/check.txt"}),
                 ),
             ]),
@@ -104,16 +104,8 @@ async fn session_keeps_files_and_canonical_history_across_runs_and_restart() {
         &root,
         vec![
             model_tool_response(vec![
-                model_tool_call(
-                    "read-work",
-                    "workspace_read_file",
-                    json!({"path":"work/note.md"}),
-                ),
-                model_tool_call(
-                    "read-tmp",
-                    "workspace_read_file",
-                    json!({"path":"tmp/check.txt"}),
-                ),
+                model_tool_call("read-work", "read", json!({"file_path":"work/note.md"})),
+                model_tool_call("read-tmp", "read", json!({"file_path":"tmp/check.txt"})),
             ]),
             json!({"choices":[{"message":{"role":"assistant","content":"Both files survived."}}]}),
         ],
@@ -348,12 +340,8 @@ async fn preset_rename_updates_shared_session_profile_without_listing_it_as_chat
         .save_session_profile(AgentSaveProfileDto { profile })
         .await
         .unwrap();
-    let mut writer = fixture
-        .profile_service
-        .load_profile("default-writer")
-        .await
-        .unwrap()
-        .unwrap();
+    let mut writer =
+        crate::app::contract_tests::contract_writer_definition(&fixture.profile_service).await;
     writer.id = AgentProfileId::parse("writer").unwrap();
     writer.preset.mode = AgentPresetBindingMode::Ref;
     writer.preset.ref_ = Some(from.clone());
@@ -442,12 +430,8 @@ pub(super) async fn configure_session_profile(
         .save_connection(&connection)
         .await
         .unwrap();
-    let mut profile = fixture
-        .profile_service
-        .load_profile("default-writer")
-        .await
-        .unwrap()
-        .unwrap();
+    let mut profile =
+        crate::app::contract_tests::contract_writer_definition(&fixture.profile_service).await;
     profile.id = AgentProfileId::parse("session-agent").unwrap();
     profile.preset.mode = AgentPresetBindingMode::Ref;
     profile.preset.ref_ = Some(AgentPresetRef {

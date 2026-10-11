@@ -2,7 +2,8 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::args::{
-    ensure_visible_workspace_path, parse_workspace_path, required_trimmed_string_arg, tool_error,
+    ensure_visible_workspace_path, optional_bool_arg, parse_workspace_path,
+    required_trimmed_string_arg, tool_error,
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_workspace_scope::ScopedWorkspaceFs;
@@ -18,7 +19,8 @@ use super::super::structured::structured_value;
 struct WorkspaceCommitStructured<'a> {
     path: &'a str,
     mode: AgentChatCommitMode,
-    reason: Option<&'a str>,
+    reason: &'a str,
+    finish: bool,
 }
 
 pub(in crate::services::agent_tools) async fn commit(
@@ -28,7 +30,7 @@ pub(in crate::services::agent_tools) async fn commit(
     profile: &ResolvedAgentProfile,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let policy = &workspace.policy;
-    let path = required_trimmed_string_arg(args, "path").unwrap_or(
+    let path = required_trimmed_string_arg(args, "file_path").unwrap_or(
         crate::services::agent_profile_service::require_output(profile)?
             .message_body_path
             .as_str(),
@@ -55,7 +57,21 @@ pub(in crate::services::agent_tools) async fn commit(
             ));
         }
     };
-    let reason = required_trimmed_string_arg(args, "reason").map(str::to_string);
+    let Some(reason) = required_trimmed_string_arg(args, "reason").map(str::to_string) else {
+        return Ok((
+            tool_error(call, "tool.invalid_arguments", "reason is required"),
+            AgentToolEffect::None,
+        ));
+    };
+    let finish = match optional_bool_arg(args, "finish") {
+        Ok(finish) => finish.unwrap_or(false),
+        Err(message) => {
+            return Ok((
+                tool_error(call, "tool.invalid_arguments", &message),
+                AgentToolEffect::None,
+            ));
+        }
+    };
 
     Ok((
         AgentToolResult {
@@ -69,12 +85,18 @@ pub(in crate::services::agent_tools) async fn commit(
             structured: structured_value(WorkspaceCommitStructured {
                 path: path.as_str(),
                 mode,
-                reason: reason.as_deref(),
+                reason: &reason,
+                finish,
             }),
             is_error: false,
             error_code: None,
             resource_refs: vec![path.as_str().to_string()],
         },
-        AgentToolEffect::ChatCommitRequested { path, mode, reason },
+        AgentToolEffect::ChatCommitRequested {
+            path,
+            mode,
+            reason,
+            finish,
+        },
     ))
 }

@@ -9,7 +9,7 @@ use tt_ports::workspace_shell::{
     WorkspaceShellResult,
 };
 
-use super::args::{ensure_only_args, required_raw_string_arg, tool_error};
+use super::args::{required_raw_string_arg, tool_error};
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::dispatcher::AgentToolEffect;
 use crate::services::agent_workspace_scope::ScopedWorkspaceFs;
@@ -28,9 +28,6 @@ pub(in crate::services::agent_tools) async fn shell(
             AgentToolEffect::None,
         ))
     };
-    if let Err(message) = ensure_only_args(args, &["command", "workdir"]) {
-        return invalid(&message);
-    }
     let Some(command) = required_raw_string_arg(args, "command") else {
         return invalid("command must be a string");
     };

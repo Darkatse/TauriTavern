@@ -287,7 +287,7 @@ impl ProjectionKind {
 
     fn selected_field(self, key: &str) -> Option<ProjectionField> {
         match (self, key) {
-            (Self::WriteFile | Self::ApplyPatch, "path") => Some(ProjectionField::Path),
+            (Self::WriteFile | Self::ApplyPatch, "file_path") => Some(ProjectionField::Path),
             (Self::WriteFile, "content") => Some(ProjectionField::Content),
             (Self::ApplyPatch, "old_string") => Some(ProjectionField::OldString),
             (Self::ApplyPatch, "new_string") => Some(ProjectionField::NewString),
@@ -624,7 +624,7 @@ mod tests {
     fn projection_is_invariant_across_fragment_boundaries() {
         assert_every_split(
             WORKSPACE_WRITE_FILE,
-            r#"{"content":"line\nquote:\" slash:\\ emoji:\uD83D\uDE00","path":"output/你好.md","mode":"replace"}"#,
+            r#"{"content":"line\nquote:\" slash:\\ emoji:\uD83D\uDE00","file_path":"output/你好.md","mode":"replace"}"#,
             ToolCallProjection::WriteFile {
                 path: "output/你好.md".to_string(),
                 content: "line\nquote:\" slash:\\ emoji:😀".to_string(),
@@ -632,7 +632,7 @@ mod tests {
         );
         assert_every_split(
             WORKSPACE_APPLY_PATCH,
-            r#"{"new_string":"after","replace_all":false,"old_string":"before","path":"output/a.md"}"#,
+            r#"{"new_string":"after","replace_all":false,"old_string":"before","file_path":"output/a.md"}"#,
             ToolCallProjection::ApplyPatch {
                 path: "output/a.md".to_string(),
                 old_string: "before".to_string(),
@@ -655,7 +655,8 @@ mod tests {
         projector.observe(AgentModelStreamDelta::ToolCall {
             tool_call_index: 0,
             tool_id: tool_id.clone(),
-            arguments_fragment: r#"{"path":"output/a.md","content":"visible","extra":"#.to_string(),
+            arguments_fragment: r#"{"file_path":"output/a.md","content":"visible","extra":"#
+                .to_string(),
         });
         assert_eq!(receiver.borrow().calls.len(), 1);
 

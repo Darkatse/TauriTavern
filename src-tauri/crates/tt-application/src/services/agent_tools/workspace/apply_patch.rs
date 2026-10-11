@@ -36,9 +36,9 @@ pub(in crate::services::agent_tools) async fn apply_patch(
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
     let policy = &workspace.policy;
     let workspace_files: &dyn WorkspaceFs = workspace;
-    let Some(path) = required_trimmed_string_arg(args, "path") else {
+    let Some(path) = required_trimmed_string_arg(args, "file_path") else {
         return Ok((
-            tool_error(call, "tool.invalid_arguments", "path is required"),
+            tool_error(call, "tool.invalid_arguments", "file_path is required"),
             AgentToolEffect::None,
         ));
     };
@@ -98,7 +98,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
             tool_error(
                 call,
                 "workspace.patch_requires_read",
-                "file must be read with workspace_read_file before applying a patch",
+                "file must be read before applying a patch",
             ),
             AgentToolEffect::None,
         ));
@@ -108,7 +108,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
             tool_error(
                 call,
                 "workspace.patch_requires_full_read",
-                "a previous patch attempt for this file failed. Fully read the file with workspace_read_file before applying another patch.",
+                "a previous patch attempt for this file failed. Fully read the file before applying another patch.",
             ),
             AgentToolEffect::None,
         ));
@@ -120,7 +120,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
             tool_error(
                 call,
                 "workspace.patch_requires_full_read",
-                "replace_all can modify text outside the range you read. Fully read the file with workspace_read_file before using replace_all.",
+                "replace_all can modify text outside the range you read. Fully read the file before using replace_all.",
             ),
             AgentToolEffect::None,
         ));
@@ -131,7 +131,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
             tool_error(
                 call,
                 "workspace.patch_requires_full_read",
-                "old_string was not in the text you have read for this file. Fully read the file with workspace_read_file before retrying the patch.",
+                "old_string was not in the text you have read for this file. Fully read the file before retrying the patch.",
             ),
             AgentToolEffect::None,
         ));
@@ -153,7 +153,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
                 call,
                 "workspace.patch_stale_file",
                 if patch_uses_partial_read {
-                    "file changed since your last read. Fully read the file with workspace_read_file before patching it."
+                    "file changed since your last read. Fully read the file before patching it."
                 } else {
                     "file changed since your last full read. Read the file again before patching it."
                 },
@@ -172,7 +172,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
                 call,
                 "workspace.patch_old_string_not_found",
                 if patch_uses_partial_read {
-                    "old_string was not found in the file. Fully read the file with workspace_read_file before retrying the patch."
+                    "old_string was not found in the file. Fully read the file before retrying the patch."
                 } else {
                     "old_string was not found in the file"
                 },
@@ -265,7 +265,7 @@ pub(in crate::services::agent_tools) async fn apply_patch(
 fn patch_not_unique_message(matches: usize, require_full_read: bool) -> String {
     if require_full_read {
         format!(
-            "old_string matched {matches} times in the file. Fully read the file with workspace_read_file before retrying with more context, or use replace_all after a full read."
+            "old_string matched {matches} times in the file. Fully read the file before retrying with more context, or use replace_all after a full read."
         )
     } else {
         format!("old_string matched {matches} times; provide more context or set replace_all=true")
@@ -278,7 +278,7 @@ fn patch_conflict_error(
     require_full_read: bool,
 ) -> AgentToolResult {
     let changed_message = if require_full_read {
-        "file changed before the patch could be written. Fully read the file with workspace_read_file before patching it."
+        "file changed before the patch could be written. Fully read the file before patching it."
     } else {
         "file changed before the patch could be written. Read the file again before patching it."
     };

@@ -132,7 +132,8 @@ export function formatPatchDiffDetail(
     if (!parsed.ok || !plainObject(parsed.value)) {
         throw new Error(tr('timelinePatchDiffInvalidArguments'));
     }
-    const path = requiredString(parsed.value, 'path');
+    // Calls recorded before the file tools adopted `file_path` name the file `path`.
+    const path = requiredString(parsed.value, 'file_path' in parsed.value ? 'file_path' : 'path');
     if (path !== target.path) {
         throw new Error(tr('timelinePatchDiffPathMismatch', { expected: target.path, actual: path }));
     }

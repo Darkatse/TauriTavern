@@ -16,7 +16,7 @@
 | `tool-results/` | 工具结果及较长结果的可读版本，只读 |
 | `skills/` | 当前 Invocation 的有效 Skill 安装包，只读；无绑定时为空目录 |
 
-模型用 `workspace.list_files`、`search_files`、`read_file` 寻找和读取材料，用 `write_file`、`apply_patch` 修改文本，或用 `workspace.shell` 批量处理文件。路径相对于工作区，例如 `output/main.md`；Shell 中的 `/output/main.md` 指向同一文件。
+模型用 `workspace.search_files`、`read_file`（及 Profile 开启的 `list_files`）寻找和读取材料，用 `write_file`、`apply_patch` 修改文本，或用 `workspace.shell` 列目录和批量处理文件。路径相对于工作区，例如 `output/main.md`；Shell 中的 `/output/main.md` 指向同一文件。
 
 文本工具替换已有文件和应用补丁时，使用读取记录和内容 SHA 检查冲突。Shell 不建立此读取记录；Shell 修改文件后，替换文件或应用补丁前需重新读取。
 
@@ -84,9 +84,9 @@ agent-workspaces/
 
 模型调用 `workspace.commit` 时，runtime 读取指定的可访问 Run 工作文件并请求前端宿主保存。默认操作是替换本次输出楼层的正文；`append` 则将文件内容追加到本次输出。Host bridge 沿用 SillyTavern 的输出处理与保存流程，成功后把结果交回 runtime。
 
-首次显式提交前，前台运行还会展示写作进度：流式写入形成实时正文，符合条件的文本修改会自动提交为进度记录。首次显式提交成功后，后续聊天发布由显式 `workspace.commit` 控制。`workspace.finish` 仍要求前台至少完成一次显式提交。
+首次显式提交前，前台运行还会展示写作进度：流式写入正文文件时形成实时正文，正文文件的修改会自动提交为进度记录。正文文件是输出策略中 `messageBody` 目标的文件（Default Writer 为 `output/main.md`）；`persist/`、`scratch/` 等其他文件是工作笔记，不会自动进入聊天。首次显式提交成功后，后续聊天发布由显式 `workspace.commit` 控制。`workspace.finish` 仍要求前台至少完成一次显式提交。
 
-Shell 与文本工具共用自动提交规则：每轮最多发布最后修改的合格文本文件，提交时读取当前内容。Shell 非零退出、取消或超时会清除本轮待提交候选。
+Shell 与文本工具共用自动提交规则：每轮最多发布一次正文文件，提交时读取当前内容；同一轮之后写入的其他文件不会取代它。Shell 非零退出、取消或超时会清除本轮待提交候选。
 
 已确认的提交会保留，即使后续运行失败。模型、工具与文件处理的详细过程放在 Timeline；聊天消息保存正文、可见 reasoning 和关联 Run 的 metadata。
 
@@ -94,7 +94,7 @@ Shell 与文本工具共用自动提交规则：每轮最多发布最后修改�
 
 `persist/` 的起点由 `persistBaseStateId` 指定。初始化时，仓储把对应持久版本复制到本次 Run；模型随后像处理普通文件一样修改它。
 
-`workspace.finish` 将 `persist/` 的文件与目录发布为不可变版本，并将其 ID 写入已提交消息的 Agent metadata。版本反映删除、移动和空目录等变化；修订未改变完整状态时复用上一版本。后续生成根据当前消息或 swipe 选择起点，因此不同候选可以保有各自的持久内容。
+运行结束时（`workspace.finish` 或带 `finish: true` 的提交），runtime 将 `persist/` 的文件与目录发布为不可变版本，并将其 ID 写入已提交消息的 Agent metadata。版本反映删除、移动和空目录等变化；修订未改变完整状态时复用上一版本。后续生成根据当前消息或 swipe 选择起点，因此不同候选可以保有各自的持久内容。
 
 聊天分叉会复制持久版本并使用新聊天身份。运行历史清理与持久版本清理分别处理：缩减旧 Run 的材料不会删除仍被聊天使用的持久内容。
 

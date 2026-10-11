@@ -414,6 +414,9 @@ pub struct AgentRunHandleDto {
     pub status: AgentRunStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub after_seq: Option<u64>,
+    /// The file the host previews and keeps while a foreground run writes it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_body_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

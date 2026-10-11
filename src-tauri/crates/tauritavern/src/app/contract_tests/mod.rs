@@ -293,8 +293,8 @@ fn default_agent_responses() -> Vec<Value> {
                         "id": "call_write",
                         "type": "function",
                         "function": {
-                            "name": "workspace_write_file",
-                            "arguments": "{\"path\":\"output/main.md\",\"content\":\"hello from real repo\"}"
+                            "name": "write",
+                            "arguments": "{\"file_path\":\"output/main.md\",\"content\":\"hello from real repo\"}"
                         }
                     }]
                 }
@@ -319,18 +319,77 @@ fn default_agent_responses() -> Vec<Value> {
     ]
 }
 
+/// The contract suite exercises every builtin the runtime supports, so its base profile
+/// (saved over the default id in the fixture store) also enables the tools the Default
+/// Writer leaves to custom Profiles.
+async fn contract_writer_definition(
+    profile_service: &AgentProfileService,
+) -> tt_domain::models::agent::profile::AgentProfileDefinition {
+    let mut definition = profile_service
+        .load_profile(DEFAULT_AGENT_PROFILE_ID)
+        .await
+        .expect("load default profile")
+        .expect("default profile exists");
+    definition.delegation.can_delegate = true;
+    definition.tools.allow = [
+        "agent.delegate",
+        "agent.await",
+        "chat.search",
+        "chat.read_messages",
+        "worldinfo.read_activated",
+        "workspace.list_files",
+        "workspace.search_files",
+        "workspace.read_file",
+        "workspace.write_file",
+        "workspace.apply_patch",
+        "workspace.shell",
+        "workspace.commit",
+        "workspace.finish",
+    ]
+    .into_iter()
+    .map(|name| {
+        tt_domain::models::tool::ToolId::builtin(name)
+            .unwrap()
+            .to_string()
+    })
+    .collect();
+    definition
+}
+
+/// Resolves the default id as the test already saved it.
+async fn resolve_saved_default_profile(
+    fixture: &AgentRuntimeFixture,
+) -> tt_domain::models::agent::profile::ResolvedAgentProfile {
+    fixture
+        .profile_service
+        .resolve_profile(AgentProfileResolveInput {
+            profile_id: Some(DEFAULT_AGENT_PROFILE_ID),
+            tool_catalog: BuiltinAgentToolRegistry::all().catalog(),
+        })
+        .await
+        .expect("resolve saved default profile")
+}
+
 async fn resolve_contract_profile(
     fixture: &AgentRuntimeFixture,
 ) -> tt_domain::models::agent::profile::ResolvedAgentProfile {
     let registry = BuiltinAgentToolRegistry::all();
     fixture
         .profile_service
+        .save_profile(
+            contract_writer_definition(&fixture.profile_service).await,
+            registry.catalog(),
+        )
+        .await
+        .expect("save contract writer profile");
+    fixture
+        .profile_service
         .resolve_profile(AgentProfileResolveInput {
-            profile_id: None,
+            profile_id: Some(DEFAULT_AGENT_PROFILE_ID),
             tool_catalog: registry.catalog(),
         })
         .await
-        .expect("resolve default profile")
+        .expect("resolve contract writer profile")
 }
 
 async fn start_contract_agent_run(

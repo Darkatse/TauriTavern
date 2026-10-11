@@ -153,14 +153,6 @@ fn parse_request(args: &Map<String, Value>) -> Result<ReadActivatedRequest, Stri
         return Ok(ReadActivatedRequest::Index);
     }
 
-    for key in args.keys() {
-        if key != "entries" {
-            return Err(format!(
-                "{key} is not supported; omit arguments to list active World Info entries, or pass entries to read selected content"
-            ));
-        }
-    }
-
     let values = args
         .get("entries")
         .and_then(Value::as_array)

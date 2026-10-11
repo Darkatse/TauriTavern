@@ -24,8 +24,8 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
             model_tool_response(vec![
                 model_tool_call(
                     "call_child_write",
-                    "workspace_write_file",
-                    json!({ "path": "summaries/note.md", "content": "Add rain." }),
+                    "write",
+                    json!({ "file_path": "summaries/note.md", "content": "Add rain." }),
                 ),
                 model_tool_call(
                     "call_child_return",
@@ -176,10 +176,14 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
             model_tool_response(vec![
                 model_tool_call(
                     "call_write",
-                    "workspace_write_file",
-                    json!({ "path": "output/main.md", "content": "Committed draft." }),
+                    "write",
+                    json!({ "file_path": "output/main.md", "content": "Committed draft." }),
                 ),
-                model_tool_call("call_commit", "workspace_commit", json!({})),
+                model_tool_call(
+                    "call_commit",
+                    "commit",
+                    json!({ "reason": "Deliver the reply." }),
+                ),
                 model_tool_call(
                     "call_handoff",
                     "agent_handoff",
@@ -192,20 +196,25 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
             model_tool_response(vec![
                 model_tool_call(
                     "call_target_denied",
-                    "workspace_write_file",
+                    "write",
                     json!({
-                        "path": "scratch/forbidden.md", "content": "must not be written"
+                        "file_path": "scratch/forbidden.md", "content": "must not be written"
                     }),
                 ),
                 model_tool_call(
                     "call_target_write",
-                    "workspace_write_file",
+                    "write",
                     json!({
-                        "path": "summaries/review.md", "content": "Reviewed."
+                        "file_path": "summaries/review.md", "content": "Reviewed."
                     }),
                 ),
-                model_tool_call("call_target_finish", "workspace_finish", json!({})),
             ]),
+            // The denied write reaches the target before it can finish.
+            model_tool_response(vec![model_tool_call(
+                "call_target_finish",
+                "workspace_finish",
+                json!({}),
+            )]),
         ],
     );
     let profile = configure_handoff_profiles(&fixture).await;
@@ -217,6 +226,7 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
         .unwrap();
     editor.workspace.visible_roots = vec!["output".into(), "summaries".into()];
     editor.workspace.writable_roots = vec!["output".into(), "summaries".into()];
+    editor.tools.max_rounds = 2;
     fixture
         .profile_service
         .save_profile(editor, fixture.service.tool_catalog())
@@ -324,14 +334,13 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
         .expect("run completed event");
     assert!(task_completed < invocation_completed && invocation_completed < run_completed);
     let requests = fixture.model_gateway.requests().await;
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 3);
     assert!(
         message_text_for_role(&requests[0], AgentModelRole::System)
             .contains("final-editor [handoff]")
     );
-    assert!(
-        !message_text_for_role(&requests[1], AgentModelRole::System).contains("Available agents:")
-    );
+    let target_system = message_text_for_role(&requests[1], AgentModelRole::System);
+    assert!(!target_system.contains("Available agents:"));
     assert_eq!(
         requests[1].provider_state["invocationId"],
         task.child_invocation_id
@@ -469,9 +478,9 @@ async fn agent_runtime_recovers_handoff_before_trailing_tool() {
                 ),
                 model_tool_call(
                     "call_after_handoff",
-                    "workspace_write_file",
+                    "write",
                     json!({
-                        "path": "output/main.md",
+                        "file_path": "output/main.md",
                         "content": "Complete this work before handing off."
                     }),
                 ),
@@ -539,12 +548,8 @@ async fn agent_runtime_recovers_handoff_before_trailing_tool() {
 pub(super) async fn configure_return_mode_profiles(
     fixture: &AgentRuntimeFixture,
 ) -> tt_domain::models::agent::profile::ResolvedAgentProfile {
-    let mut root = fixture
-        .profile_service
-        .load_profile("default-writer")
-        .await
-        .expect("load root profile")
-        .expect("root profile exists");
+    let mut root =
+        crate::app::contract_tests::contract_writer_definition(&fixture.profile_service).await;
     let mut child = root.clone();
     child.id = AgentProfileId::parse("scene-critic").expect("child profile id");
     child.display_name = "Scene Critic".to_string();
@@ -571,18 +576,14 @@ pub(super) async fn configure_return_mode_profiles(
         .save_profile(root, fixture.service.tool_catalog())
         .await
         .expect("save root profile");
-    resolve_contract_profile(fixture).await
+    resolve_saved_default_profile(fixture).await
 }
 
 async fn configure_handoff_profiles(
     fixture: &AgentRuntimeFixture,
 ) -> tt_domain::models::agent::profile::ResolvedAgentProfile {
-    let mut root = fixture
-        .profile_service
-        .load_profile("default-writer")
-        .await
-        .expect("load root profile")
-        .expect("root profile exists");
+    let mut root =
+        crate::app::contract_tests::contract_writer_definition(&fixture.profile_service).await;
     let mut target = root.clone();
     target.id = AgentProfileId::parse("final-editor").expect("target profile id");
     target.display_name = "Final Editor".to_string();
@@ -615,5 +616,5 @@ async fn configure_handoff_profiles(
         .save_profile(root, fixture.service.tool_catalog())
         .await
         .expect("save root profile");
-    resolve_contract_profile(fixture).await
+    resolve_saved_default_profile(fixture).await
 }

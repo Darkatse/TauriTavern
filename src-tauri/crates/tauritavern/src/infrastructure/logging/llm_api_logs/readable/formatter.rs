@@ -126,7 +126,7 @@ fn append_block_json(out: &mut String, value: &Value) {
 fn append_tool_arguments(out: &mut String, tool_name: Option<&str>, arguments: &Value) {
     if !matches!(
         tool_name,
-        Some("workspace_write_file" | "workspace.write_file")
+        Some("write" | "workspace_write_file" | "workspace.write_file")
     ) {
         append_block_json(out, arguments);
         return;
