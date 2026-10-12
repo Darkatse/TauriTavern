@@ -2,6 +2,7 @@
 //! A host scroll view supplies UIKit's interactive keyboard-dismissal gesture.
 use std::cell::{Cell, RefCell};
 
+use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
 use objc2::{ClassType, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
@@ -26,6 +27,13 @@ struct WindowHostIvars {
     color: Cell<[u8; 3]>,
     status_bar_style: Cell<UIStatusBarStyle>,
     strips: RefCell<Vec<VisibleStrip>>,
+    /// True while `install` is still wiring the view tree. Requesting the
+    /// keyboard layout guide below makes UIKit run a synchronous layout pass
+    /// while the webview-creation call stack still holds the tauri manager
+    /// state on this thread; publishing from that pass evals into the
+    /// webview and self-deadlocks. Cleared on the next main-queue drain,
+    /// where a layout is re-scheduled so the first snapshot still ships.
+    installing: Cell<bool>,
 }
 
 struct VisibleStrip {
@@ -217,6 +225,14 @@ impl WindowHost {
     }
 
     fn publish_window(&self) {
+        // Suppressed while `install` is wiring the view tree: UIKit can run
+        // this synchronously from inside the webview-creation call stack
+        // (the keyboard layout guide request forces a layout pass), where
+        // eval'ing into the webview would wait on the tauri manager state
+        // this thread already holds. The deferred finish publishes instead.
+        if self.ivars().installing.get() {
+            return;
+        }
         let Some(window) = self.window() else { return };
         let scale = window.screen().scale();
         let bounds = self.bounds();
@@ -304,6 +320,7 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
         color: Cell::new([0; 3]),
         status_bar_style: Cell::new(UIStatusBarStyle::Default),
         strips: RefCell::new(Vec::new()),
+        installing: Cell::new(true),
     });
     let host: Retained<WindowHost> =
         unsafe { msg_send![super(allocated), initWithFrame: parent.bounds()] };
@@ -366,6 +383,18 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
     MAIN_HOST.with(|slot| *slot.borrow_mut() = Some(host.clone()));
     host.update_status_bar_style();
     host.setNeedsLayout();
+    // The creation call stack that invoked this function still holds the
+    // tauri manager state on this thread, so publishing must not run until
+    // it has unwound. Clear the suppression on the next main-queue drain
+    // and schedule the pass that publishes the first snapshot there.
+    DispatchQueue::main().exec_async(|| {
+        MAIN_HOST.with(|slot| {
+            if let Some(host) = slot.borrow().as_ref() {
+                host.ivars().installing.set(false);
+                host.setNeedsLayout();
+            }
+        });
+    });
 }
 
 async fn with_host<T: Send + 'static>(
