@@ -317,7 +317,7 @@ export function activateApiConnectionsSubtreeGates({ manager: nextManager }) {
     manager.reconcile();
 
     if (selectedMainApi === 'openai') {
-        openaiSourceGate.apply(currentSelectValue('chat_completion_source') || 'openai');
+        openaiSourceGate.apply(normalizeChatCompletionSourceForGate(currentSelectValue('chat_completion_source')) || 'openai');
     }
     if (selectedMainApi === 'textgenerationwebui') {
         textgenTypeGate.apply(currentSelectValue('textgen_type') || '');
