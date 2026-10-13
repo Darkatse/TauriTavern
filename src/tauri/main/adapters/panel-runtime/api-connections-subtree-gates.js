@@ -169,19 +169,25 @@ function currentSelectValue(id) {
 }
 
 /**
- * @param {string} source
+ * Applies the nested gate (OpenAI source / Textgen type) of the given main API
+ * from the current selection.
+ *
+ * @param {string} mainApi
  */
-function normalizeChatCompletionSourceForGate(source) {
-    const value = String(source || '').trim();
-    if (value.startsWith('custom_')) {
-        return 'custom';
+function applyNestedGate(mainApi) {
+    if (mainApi === 'openai' && openaiSourceGate) {
+        // Custom API format variants (`custom_*`) share the `custom` data-source hosts.
+        const source = currentSelectValue('chat_completion_source');
+        openaiSourceGate.apply(source.startsWith('custom_') ? 'custom' : source || 'openai');
     }
-    return value;
+    if (mainApi === 'textgenerationwebui' && textgenTypeGate) {
+        textgenTypeGate.apply(currentSelectValue('textgen_type'));
+    }
 }
 
 /**
- * Hydrates the selected provider subtree and parks all others, then applies any
- * nested gates (OpenAI source / Textgen type) for the active provider.
+ * Hydrates the selected provider subtree and parks all others, then applies the
+ * nested gate of the active provider.
  *
  * Must run synchronously inside the `change` event so downstream handlers can
  * safely query their expected DOM.
@@ -198,46 +204,7 @@ function handleMainApiChange(mainApi) {
         manager.setVisible(slotId, api === next);
     }
     manager.reconcile();
-
-    if (next === 'openai' && openaiSourceGate) {
-        const selection = currentSelectValue('chat_completion_source') || 'openai';
-        openaiSourceGate.apply(normalizeChatCompletionSourceForGate(selection) || 'openai');
-    }
-    if (next === 'textgenerationwebui' && textgenTypeGate) {
-        textgenTypeGate.apply(currentSelectValue('textgen_type') || '');
-    }
-}
-
-/**
- * @param {string} source
- */
-function handleChatCompletionSourceChange(source) {
-    if (!openaiSourceGate) {
-        return;
-    }
-
-    const mainApi = currentSelectValue('main_api');
-    if (mainApi !== 'openai') {
-        return;
-    }
-
-    openaiSourceGate.apply(normalizeChatCompletionSourceForGate(source) || 'openai');
-}
-
-/**
- * @param {string} type
- */
-function handleTextgenTypeChange(type) {
-    if (!textgenTypeGate) {
-        return;
-    }
-
-    const mainApi = currentSelectValue('main_api');
-    if (mainApi !== 'textgenerationwebui') {
-        return;
-    }
-
-    textgenTypeGate.apply(type || '');
+    applyNestedGate(next);
 }
 
 /**
@@ -265,7 +232,7 @@ export function preinstallApiConnectionsSubtreeGates() {
         throw new Error('PanelRuntime: #chat_completion_source is not a <select>');
     }
     $(chatCompletionSource).on('change.ttPanelRuntimeGate', () => {
-        handleChatCompletionSourceChange(String(chatCompletionSource.value || ''));
+        applyNestedGate(currentSelectValue('main_api'));
     });
 
     const textgenType = mustGetElementById('textgen_type');
@@ -273,7 +240,7 @@ export function preinstallApiConnectionsSubtreeGates() {
         throw new Error('PanelRuntime: #textgen_type is not a <select>');
     }
     $(textgenType).on('change.ttPanelRuntimeGate', () => {
-        handleTextgenTypeChange(String(textgenType.value || ''));
+        applyNestedGate(currentSelectValue('main_api'));
     });
 }
 
@@ -315,11 +282,5 @@ export function activateApiConnectionsSubtreeGates({ manager: nextManager }) {
     });
 
     manager.reconcile();
-
-    if (selectedMainApi === 'openai') {
-        openaiSourceGate.apply(normalizeChatCompletionSourceForGate(currentSelectValue('chat_completion_source')) || 'openai');
-    }
-    if (selectedMainApi === 'textgenerationwebui') {
-        textgenTypeGate.apply(currentSelectValue('textgen_type') || '');
-    }
+    applyNestedGate(selectedMainApi);
 }
