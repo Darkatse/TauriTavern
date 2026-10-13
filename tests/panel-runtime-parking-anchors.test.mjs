@@ -63,3 +63,24 @@ test('aggressive parking keeps the OpenAI bounds but drops the third-party ancho
         dom.cleanup();
     }
 });
+
+test('API connections gates keep the custom form for a saved custom source variant', async () => {
+    const dom = installFakeDom();
+    try {
+        renderIndexBody(dom.document);
+        dom.document.getElementById('main_api').value = 'openai';
+        dom.document.getElementById('chat_completion_source').value = 'custom_gemini_generate_content';
+
+        const { createEmbeddedRuntimeManager } = await import('../src/tauri/main/services/embedded-runtime/embedded-runtime-manager.js');
+        const { resolvePanelRuntimeProfile } = await import('../src/tauri/main/services/panel-runtime/panel-runtime-profiles.js');
+        const { activateApiConnectionsSubtreeGates } = await import('../src/tauri/main/adapters/panel-runtime/api-connections-subtree-gates.js');
+        activateApiConnectionsSubtreeGates({ manager: createEmbeddedRuntimeManager({ profile: resolvePanelRuntimeProfile('compat') }) });
+
+        assert.ok(dom.document.getElementById('custom_api_url_text'));
+        assert.ok(dom.document.getElementById('custom_model_id'));
+        assert.ok(dom.document.getElementById('model_custom_select'));
+        assert.equal(dom.document.getElementById('openai_form').children.length, 0);
+    } finally {
+        dom.cleanup();
+    }
+});
