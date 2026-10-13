@@ -2038,7 +2038,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                             <input type="hidden" id="continue_postfix" class="displayNone" />
                                         </div>
                                     </div>
-                                    <div id="continue_prefill_block" class="range-block">
+                                    <div class="range-block">
                                         <label for="continue_prefill" class="checkbox_label widthFreeExpand">
                                             <input id="continue_prefill" type="checkbox" aria-describedby="continue_prefill_description">
                                             <span data-i18n="Continue prefill">Continue prefill</span>
@@ -2169,7 +2169,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                                     <i class="icon-supported fa-solid fa-image" title="Supported by the current model" data-i18n="[title]Supported by the current model"></i>
                                                     <i class="icon-unsupported fa-solid fa-image" title="Unsupported by the current model" data-i18n="[title]Unsupported by the current model"></i>
                                                 </div>
-                                                <div id="openai_video_inlining_supported" data-source="makersuite,vertexai,openrouter,zai">
+                                                <div id="openai_video_inlining_supported" data-source="makersuite,vertexai,openrouter,zai,custom">
                                                     <i class="icon-supported fa-solid fa-film" title="Supported by the current model" data-i18n="[title]Supported by the current model"></i>
                                                     <i class="icon-unsupported fa-solid fa-film" title="Unsupported by the current model" data-i18n="[title]Unsupported by the current model"></i>
                                                 </div>
@@ -2290,8 +2290,8 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                                 Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default. Claude 5 models think by default.
                                             </div>
                                             <div class="toggle-description justifyLeft marginBot5" data-source="makersuite,vertexai,custom" data-custom-api-format="gemini_generate_content">
-                                                <span data-i18n="Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.">
-                                                    Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.
+                                                <span data-i18n="Gemini 3 and later use thinking levels. An option the model does not support falls back to a supported level, for example Minimum to Low and Maximum to High. Auto uses the model default.">
+                                                    Gemini 3 and later use thinking levels. An option the model does not support falls back to a supported level, for example Minimum to Low and Maximum to High. Auto uses the model default.
                                                 </span>
                                                 <br>
                                                 <span data-i18n="Allocates a portion of the response length for thinking (Flash 2.5/Pro 2.5) (min: 0/128 tokens, low: 10%, medium: 25%, high: 50%, max: 24576/32768 tokens). Auto lets the model decide.">
@@ -3445,6 +3445,9 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                             <div>
                                 <h4><span data-i18n="Google Model" id="model_google_select_label">Google Model</span></h4>
                                 <select id="model_google_select" aria-labelledby="model_google_select_label">
+                                    <optgroup label="Gemini 4">
+                                        <option value="gemini-4-argon">gemini-4-argon</option>
+                                    </optgroup>
                                     <optgroup label="Gemini 3.8">
                                         <option value="gemini-3.8-flash">gemini-3.8-flash</option>
                                     </optgroup>
@@ -3635,6 +3638,9 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                         <option value="claude-opus-4-5@20251101" data-mode="full">claude-opus-4-5@20251101</option>
                                         <option value="claude-sonnet-4-5@20250929" data-mode="full">claude-sonnet-4-5@20250929</option>
                                         <option value="claude-haiku-4-5@20251001" data-mode="full">claude-haiku-4-5@20251001</option>
+                                    </optgroup>
+                                    <optgroup label="Gemini 4">
+                                        <option value="gemini-4-argon">gemini-4-argon</option>
                                     </optgroup>
                                     <optgroup label="Gemini 3.8">
                                         <option value="gemini-3.8-flash">gemini-3.8-flash</option>

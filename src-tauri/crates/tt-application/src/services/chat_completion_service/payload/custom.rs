@@ -138,6 +138,18 @@ mod tests {
         assert_eq!(upstream["generationConfig"]["temperature"], 0.3);
         assert_eq!(upstream["generationConfig"]["topP"], 0.9);
 
+        let (_, upstream) = request(
+            "relay/gemini-4-argon",
+            json!({ "reasoning_effort": "min", "temperature": 0.3 }),
+        )
+        .unwrap();
+        assert_eq!(upstream["model"], "relay/gemini-4-argon");
+        assert_eq!(
+            upstream["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "low"
+        );
+        assert_eq!(upstream["generationConfig"]["temperature"], 0.3);
+
         for model in [
             "gemini-3-pro-image-preview",
             "models/gemini-3-pro-image-preview",

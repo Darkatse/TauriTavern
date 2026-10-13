@@ -4383,7 +4383,7 @@
     "Send inline media": "發送內嵌媒體",
     "Aspect Ratio": "長寬比",
     "audio_inlining_hint_2": "音訊必須小於 20 MB。",
-    "Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.": "設定動態推理強度等級（3 Flash / 3 Pro）。 兩者都支援高和低，但極低和中只有 3 Flash 支援。 自動會讓模型自己選擇。",
+    "Gemini 3 and later use thinking levels. An option the model does not support falls back to a supported level, for example Minimum to Low and Maximum to High. Auto uses the model default.": "Gemini 3 及以後的模型使用推理耗費等級。模型不支援的選項會改用它支援的等級，例如最小改為低、最高改為高。自動使用模型預設值。",
     "Verbosity": "長度",
     "openai_verbosity_medium": "中",
     "openai_verbosity_high": "高",

@@ -741,21 +741,17 @@ fn map_claude_usage(raw_usage: Option<&Value>) -> Option<Value> {
 }
 
 fn map_gemini_finish_reason(finish_reason: Option<&str>, has_tool_calls: bool) -> String {
-    if has_tool_calls {
-        return "tool_calls".to_string();
+    match finish_reason {
+        Some(reason)
+            if reason.eq_ignore_ascii_case("MAX_TOKENS")
+                || reason.eq_ignore_ascii_case("CONTINUATION") =>
+        {
+            "length"
+        }
+        _ if has_tool_calls => "tool_calls",
+        _ => "stop",
     }
-
-    let value = finish_reason.unwrap_or("STOP");
-    if value.eq_ignore_ascii_case("MAX_TOKENS") {
-        return "length".to_string();
-    }
-
-    if value.eq_ignore_ascii_case("STOP") || value.eq_ignore_ascii_case("FINISH_REASON_UNSPECIFIED")
-    {
-        return "stop".to_string();
-    }
-
-    "stop".to_string()
+    .to_string()
 }
 
 fn map_gemini_usage(response: &Value) -> Option<Value> {
@@ -1111,6 +1107,27 @@ mod tests {
             normalized.normalization_report.synthetic_tool_call_ids(),
             &["tool_call_0".to_string()]
         );
+    }
+
+    #[test]
+    fn normalize_gemini_truncation_takes_precedence_over_tool_calls() {
+        for finish_reason in ["MAX_TOKENS", "CONTINUATION"] {
+            let response = json!({
+                "candidates": [{
+                    "finishReason": finish_reason,
+                    "content": { "parts": [{
+                        "functionCall": {
+                            "id": "call_weather",
+                            "name": "weather",
+                            "args": { "city": "Paris" }
+                        }
+                    }] }
+                }]
+            });
+
+            let normalized = normalize_gemini_response(response).body;
+            assert_eq!(normalized["choices"][0]["finish_reason"], "length");
+        }
     }
 
     #[test]

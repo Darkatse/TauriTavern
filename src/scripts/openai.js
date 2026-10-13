@@ -7057,6 +7057,7 @@ function getGeminiMaxContext(model, isUnlocked) {
         [/gemini-3\.1-flash-image/, max_128k],
         [/gemini-3-pro-image/, max_64k],
         [/gemini-(?:3[.\d]*|2\.(?:5|0))-(pro|flash)/, max_1mil],
+        [/gemini-4/, max_1mil],
         [/(gemini-exp|learnlm-2\.0-flash|gemini-robotics)/, max_1mil],
         [/gemma-3-27b-it/, max_128k],
         [/gemma-3n-e4b-it/, max_8k],
@@ -8366,6 +8367,7 @@ export function isImageInliningSupported(settings = oai_settings) {
         'gemini-2.0',
         'gemini-2.5',
         'gemini-3',
+        'gemini-4',
         'gemini-exp-1206',
         'learnlm',
         'gemini-robotics',
@@ -8477,6 +8479,7 @@ export function isVideoInliningSupported(settings = oai_settings) {
         'gemini-2.5',
         'gemini-exp-1206',
         'gemini-3',
+        'gemini-4',
         'gemma-4',
         // Z.AI (GLM)
         'glm-5.3-flash',
@@ -8493,6 +8496,8 @@ export function isVideoInliningSupported(settings = oai_settings) {
             return (Array.isArray(model_list) && model_list.find(m => m.id === settings.openrouter_model)?.architecture?.input_modalities?.includes('video'));
         case chat_completion_sources.ZAI:
             return videoSupportedModels.some(model => settings.zai_model.includes(model));
+        case chat_completion_sources.CUSTOM:
+            return true;
         default:
             return false;
     }
@@ -8515,6 +8520,7 @@ export function isAudioInliningSupported(settings = oai_settings) {
         'gemini-2.0',
         'gemini-2.5',
         'gemini-3',
+        'gemini-4',
         'gemini-exp-1206',
         'gpt-4o-audio',
         'gpt-4o-realtime',
@@ -8901,9 +8907,6 @@ function updateFeatureSupportFlags() {
             element.dataset.ccToggle = String(value ?? false);
         }
     }
-
-    const model = getChatCompletionModel();
-    $('#continue_prefill_block').toggle(!isDirectGeminiSource() || !['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.7-flash'].includes(model));
 }
 
 export function initOpenAI() {

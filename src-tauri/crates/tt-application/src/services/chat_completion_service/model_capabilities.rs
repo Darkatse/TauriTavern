@@ -37,15 +37,55 @@ pub(super) enum GeminiThinkingControl {
     Level(&'static str),
 }
 
+/// `gemini-<major>[.<minor>]-<name>` inside a request model name.
+pub(super) struct GeminiModel {
+    version: (u32, u32),
+    name: String,
+}
+
+impl GeminiModel {
+    pub(super) fn parse(model: &str) -> Option<Self> {
+        let model = model.trim().to_ascii_lowercase();
+        let rest = model
+            .match_indices("gemini-")
+            .map(|(index, _)| &model[index + "gemini-".len()..])
+            .find(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))?;
+        let (version, name) = rest.split_once('-')?;
+        let (major, minor) = version.split_once('.').unwrap_or((version, "0"));
+
+        Some(Self {
+            version: (major.parse().ok()?, minor.parse().ok()?),
+            name: name.to_string(),
+        })
+    }
+
+    fn is(&self, family: &str) -> bool {
+        self.name == family
+            || self
+                .name
+                .strip_prefix(family)
+                .is_some_and(|tail| tail.starts_with('-'))
+    }
+
+    pub(super) fn is_gemini3_or_later(&self) -> bool {
+        self.version.0 >= 3
+    }
+
+    /// Gemini 3.6 Flash, 3.5 Flash-Lite and every later release ignore sampling
+    /// parameters and reject a request that ends with a model turn.
+    pub(super) fn has_fixed_sampling(&self) -> bool {
+        self.version >= (3, 6) || (self.version == (3, 5) && self.is("flash-lite"))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GeminiThinkingModel {
     Gemini25FlashLite,
     Gemini25Flash,
     Gemini25Pro,
-    Gemini37Flash,
-    Gemini3Flash,
-    Gemini3ProLowHigh,
-    Gemini3ProMedium,
+    LowHighLevels,
+    LowToHighLevels,
+    MinimalToHighLevels,
 }
 
 pub(super) fn parse_known_reasoning_effort(
@@ -122,12 +162,12 @@ pub(super) fn map_zai_reasoning_effort(
     }
 }
 
-pub(super) fn is_gemini_thinking_config_model(model: &str) -> bool {
+pub(super) fn is_gemini_thinking_config_model(model: &GeminiModel) -> bool {
     classify_gemini_thinking_model(model).is_some()
 }
 
 pub(super) fn map_gemini_thinking_control(
-    model: &str,
+    model: &GeminiModel,
     max_tokens: i64,
     effort: RequestedReasoningEffort,
 ) -> Result<Option<GeminiThinkingControl>, ApplicationError> {
@@ -150,75 +190,37 @@ pub(super) fn map_gemini_thinking_control(
         GeminiThinkingModel::Gemini25Pro => Some(GeminiThinkingControl::BudgetTokens(
             gemini_pro_budget(max_tokens, effort),
         )),
-        GeminiThinkingModel::Gemini37Flash => {
-            gemini_3_7_flash_level(effort).map(GeminiThinkingControl::Level)
+        GeminiThinkingModel::MinimalToHighLevels => {
+            minimal_to_high_level(effort).map(GeminiThinkingControl::Level)
         }
-        GeminiThinkingModel::Gemini3Flash => {
-            gemini_3_flash_level(effort).map(GeminiThinkingControl::Level)
+        GeminiThinkingModel::LowHighLevels => {
+            low_high_level(effort).map(GeminiThinkingControl::Level)
         }
-        GeminiThinkingModel::Gemini3ProLowHigh => {
-            gemini_3_pro_low_high_level(effort).map(GeminiThinkingControl::Level)
-        }
-        GeminiThinkingModel::Gemini3ProMedium => {
-            gemini_3_pro_medium_level(effort).map(GeminiThinkingControl::Level)
+        GeminiThinkingModel::LowToHighLevels => {
+            low_to_high_level(effort).map(GeminiThinkingControl::Level)
         }
     };
 
     Ok(control)
 }
 
-fn classify_gemini_thinking_model(model: &str) -> Option<GeminiThinkingModel> {
-    let model = model.trim().to_ascii_lowercase();
-    if model.starts_with("gemini-2.5-") && is_gemini_image_model(&model) {
-        return None;
+fn classify_gemini_thinking_model(model: &GeminiModel) -> Option<GeminiThinkingModel> {
+    match model.version {
+        (2, 5) if is_gemini_image_model(&model.name) => None,
+        (2, 5) if model.is("flash-lite") => Some(GeminiThinkingModel::Gemini25FlashLite),
+        (2, 5) if model.is("flash") => Some(GeminiThinkingModel::Gemini25Flash),
+        (2, 5) if model.is("pro") => Some(GeminiThinkingModel::Gemini25Pro),
+        (3, 0) if model.is("pro") => Some(GeminiThinkingModel::LowHighLevels),
+        (3, 7) | (3, 8) if model.is("flash") => Some(GeminiThinkingModel::LowToHighLevels),
+        (3, _) if model.is("pro") => Some(GeminiThinkingModel::LowToHighLevels),
+        (3, _) if model.is("flash") => Some(GeminiThinkingModel::MinimalToHighLevels),
+        (4, _) if model.is("argon") => Some(GeminiThinkingModel::LowToHighLevels),
+        _ => None,
     }
-
-    if model.starts_with("gemini-2.5-flash-lite") {
-        return Some(GeminiThinkingModel::Gemini25FlashLite);
-    }
-    if model.starts_with("gemini-2.5-flash") {
-        return Some(GeminiThinkingModel::Gemini25Flash);
-    }
-    if model.starts_with("gemini-2.5-pro") {
-        return Some(GeminiThinkingModel::Gemini25Pro);
-    }
-    if model == "gemini-3.7-flash" {
-        return Some(GeminiThinkingModel::Gemini37Flash);
-    }
-    if is_gemini_3_variant(&model, "flash") {
-        return Some(GeminiThinkingModel::Gemini3Flash);
-    }
-    if is_gemini_3_variant(&model, "pro") {
-        return Some(if model.starts_with("gemini-3.") {
-            GeminiThinkingModel::Gemini3ProMedium
-        } else {
-            GeminiThinkingModel::Gemini3ProLowHigh
-        });
-    }
-
-    None
 }
 
 fn is_gemini_image_model(model: &str) -> bool {
     model.ends_with("-image") || model.ends_with("-image-preview")
-}
-
-fn is_gemini_3_variant(model: &str, variant: &str) -> bool {
-    let Some(rest) = model.strip_prefix("gemini-3") else {
-        return false;
-    };
-
-    let version_end = rest
-        .find(|character: char| character != '.' && !character.is_ascii_digit())
-        .unwrap_or(rest.len());
-    let Some(name) = rest[version_end..].strip_prefix('-') else {
-        return false;
-    };
-
-    name == variant
-        || name
-            .strip_prefix(variant)
-            .is_some_and(|tail| tail.starts_with('-'))
 }
 
 fn gemini_flash_lite_budget(max_tokens: i64, effort: RequestedReasoningEffort) -> Option<i64> {
@@ -268,7 +270,7 @@ fn gemini_budget_tokens(
     }
 }
 
-fn gemini_3_flash_level(effort: RequestedReasoningEffort) -> Option<&'static str> {
+fn minimal_to_high_level(effort: RequestedReasoningEffort) -> Option<&'static str> {
     match effort {
         RequestedReasoningEffort::Auto => None,
         RequestedReasoningEffort::Minimal => Some("minimal"),
@@ -281,7 +283,7 @@ fn gemini_3_flash_level(effort: RequestedReasoningEffort) -> Option<&'static str
     }
 }
 
-fn gemini_3_7_flash_level(effort: RequestedReasoningEffort) -> Option<&'static str> {
+fn low_to_high_level(effort: RequestedReasoningEffort) -> Option<&'static str> {
     match effort {
         RequestedReasoningEffort::Auto => None,
         RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => Some("low"),
@@ -293,7 +295,7 @@ fn gemini_3_7_flash_level(effort: RequestedReasoningEffort) -> Option<&'static s
     }
 }
 
-fn gemini_3_pro_low_high_level(effort: RequestedReasoningEffort) -> Option<&'static str> {
+fn low_high_level(effort: RequestedReasoningEffort) -> Option<&'static str> {
     match effort {
         RequestedReasoningEffort::Auto => None,
         RequestedReasoningEffort::Minimal
@@ -306,22 +308,10 @@ fn gemini_3_pro_low_high_level(effort: RequestedReasoningEffort) -> Option<&'sta
     }
 }
 
-fn gemini_3_pro_medium_level(effort: RequestedReasoningEffort) -> Option<&'static str> {
-    match effort {
-        RequestedReasoningEffort::Auto => None,
-        RequestedReasoningEffort::Minimal | RequestedReasoningEffort::Low => Some("low"),
-        RequestedReasoningEffort::Medium => Some("medium"),
-        RequestedReasoningEffort::High
-        | RequestedReasoningEffort::Max
-        | RequestedReasoningEffort::XHigh => Some("high"),
-        RequestedReasoningEffort::None => unreachable!("Gemini reasoning mapper rejects none"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        GeminiThinkingControl, RequestedReasoningEffort, map_gemini_thinking_control,
+        GeminiModel, GeminiThinkingControl, RequestedReasoningEffort, map_gemini_thinking_control,
         map_openrouter_reasoning_effort,
     };
 
@@ -371,8 +361,9 @@ mod tests {
             ),
             ("gemini-2.5-pro", 8000, RequestedReasoningEffort::Auto, -1),
         ] {
+            let model = GeminiModel::parse(model).expect("model must be Gemini");
             assert_eq!(
-                map_gemini_thinking_control(model, max_tokens, effort)
+                map_gemini_thinking_control(&model, max_tokens, effort)
                     .expect("known Gemini effort should map"),
                 Some(GeminiThinkingControl::BudgetTokens(expected))
             );
@@ -380,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn gemini_3_models_map_effort_to_thinking_level() {
+    fn gemini_3_and_later_map_effort_to_thinking_level() {
         for (model, effort, expected) in [
             (
                 "gemini-3-pro-preview",
@@ -405,9 +396,12 @@ mod tests {
             ("gemini-3.5-flash", RequestedReasoningEffort::Max, "high"),
             ("gemini-3.5-flash", RequestedReasoningEffort::XHigh, "high"),
             ("gemini-3.7-flash", RequestedReasoningEffort::Minimal, "low"),
+            ("gemini-3.8-flash", RequestedReasoningEffort::Minimal, "low"),
+            ("gemini-4-argon", RequestedReasoningEffort::Minimal, "low"),
         ] {
+            let model = GeminiModel::parse(model).expect("model must be Gemini");
             assert_eq!(
-                map_gemini_thinking_control(model, 8000, effort)
+                map_gemini_thinking_control(&model, 8000, effort)
                     .expect("known Gemini effort should map"),
                 Some(GeminiThinkingControl::Level(expected))
             );
@@ -416,12 +410,9 @@ mod tests {
 
     #[test]
     fn gemini_rejects_none_reasoning_effort() {
-        let error = map_gemini_thinking_control(
-            "gemini-3-flash-preview",
-            8000,
-            RequestedReasoningEffort::None,
-        )
-        .expect_err("none should fail locally");
+        let model = GeminiModel::parse("gemini-3-flash-preview").expect("model must be Gemini");
+        let error = map_gemini_thinking_control(&model, 8000, RequestedReasoningEffort::None)
+            .expect_err("none should fail locally");
         assert!(
             error
                 .to_string()

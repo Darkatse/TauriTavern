@@ -350,7 +350,7 @@
     "Z.AI GLM-5.3 models require thinking and accept low, high, or max. XHigh and Maximum both request max. GLM-5.2 accepts the full effort list.": "Z.AI GLM-5.3 系列要求开启思考，并仅接受 low、high 或 max。超高和最高均请求 max。GLM-5.2 接受完整的推理强度列表。",
     "Claude options: legacy thinking maps effort to a token budget. Adaptive thinking preserves XHigh and Maximum when supported. Auto uses the model default. Claude 5 models think by default.": "Claude 选项：旧式思维链会将推理强度映射为词符预算。自适应思维链会在模型支持时保留超高和最高档位。自动使用模型默认值；Claude 5 模型默认启用思维链。",
     "Allocates a portion of the response length for thinking (min: 1024 tokens, low: 10%, medium: 25%, high: 50%, max: 95%), but minimum 1024 tokens. Auto does not request thinking.": "将最大回复空间的一部分分配给思维链（极低：1024词符，低：10%，中：25%，高：50%，最高：95%），最低1024词符。选择“自动”不会请求模型思维链。",
-    "Sets a dynamic reasoning depth level for thinking (Flash 3/Pro 3). High and low are supported by both, minimal and medium are Flash 3 only. Auto lets the model decide.": "设置动态推理强度等级（3 Flash / 3 Pro）。两者都支持高和低，但极低和中只有 3 Flash 支持。自动会让模型自己选择。",
+    "Gemini 3 and later use thinking levels. An option the model does not support falls back to a supported level, for example Minimum to Low and Maximum to High. Auto uses the model default.": "Gemini 3 及以后的模型使用推理强度等级。模型不支持的选项会改用它支持的等级，例如极低改为低、最高改为高。自动使用模型默认值。",
     "Allocates a portion of the response length for thinking (Flash 2.5/Pro 2.5) (min: 0/128 tokens, low: 10%, medium: 25%, high: 50%, max: 24576/32768 tokens). Auto lets the model decide.": "将最大回复空间的一部分分配给思维链（仅 2.5 Flash / 2.5 Pro 模型）（极低：0/128词符，低：10%，中：25%，高：50%，最高：24576/32768词符），最低1024词符。选择“自动”会让模型自己决定。",
     "Verbosity": "长度",
     "openai_verbosity_auto": "自动",

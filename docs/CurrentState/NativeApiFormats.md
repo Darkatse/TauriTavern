@@ -1,6 +1,6 @@
 # 原生 API 格式（Custom）兼容现状
 
-最后更新：2026-09-08
+最后更新：2026-10-13
 
 本文件描述 **TauriTavern 已落地** 的三家原生 API 格式兼容（OpenAI Responses / Claude Messages / Gemini generateContent / Gemini Interactions）的当前实现快照与持续开发约束。
 
@@ -208,7 +208,7 @@ streaming 语义：
 
 - Custom 入口复用 MakerSuite 的翻译与传输链路，通过 `custom_api_format=gemini_generate_content` 显式选择协议。
 - Base URL 与模型分开配置：保留显式 `/v1` 或 `/v1beta`，否则补 `/v1beta`。鉴权使用 Custom API Key；Additional Parameters 在翻译后应用。
-- Custom 模型名按别名处理，显式采样与图像参数按协议转发。未知别名的 `reasoning_effort` 默认映射为 `thinkingLevel`，`auto` 不发送；Additional Parameters 可覆盖，上游错误正常返回。`n` 多候选尚未实现，不参与生成判断。
+- Custom 模型名按别名处理，显式采样与图像参数按协议转发，不自动改写预填充。模型名中能识别出 Gemini 模型 ID 时（包括 `models/` 或中转前缀），`reasoning_effort` 按该模型支持的思考级别或预算映射；其他别名默认映射为 `thinkingLevel`，`auto` 不发送。Additional Parameters 可覆盖，上游错误正常返回。`n` 多候选尚未实现，不参与生成判断。
 - 原生 parts 与签名仅在正文与原响应一致、API/format/model 匹配时回放。无法核对的旧记录保留正文与可见 reasoning；流式请求仅在完整结束后提交 native 历史。
 
 实现入口：[`payload/custom.rs`](../../src-tauri/crates/tt-application/src/services/chat_completion_service/payload/custom.rs)、[`makersuite.rs`](../../src-tauri/crates/tt-adapter-provider-http/src/http_chat_completion_repository/makersuite.rs)。
