@@ -4026,15 +4026,7 @@ function getVertexAiClaudeMaxContext(modelId, unlocked = false) {
     }
 
     const value = String(modelId ?? '').trim().toLowerCase();
-    if (isClaudeOneMillionContextModel(value)) {
-        return max_1mil;
-    }
-
-    if (/^claude-/.test(value)) {
-        return max_200k;
-    }
-
-    return null;
+    return isClaudeOneMillionContextModel(value) ? max_1mil : max_200k;
 }
 
 /**
@@ -7042,6 +7034,66 @@ function getMaxContextOpenAI(value) {
 }
 
 /**
+ * Get the maximum context size for Gemini models based on model identifier and optional model list.
+ * @param {string} model Model identifier
+ * @param {boolean} isUnlocked Whether context limits are unlocked
+ * @returns {number} Maximum context size in tokens
+ */
+function getGeminiMaxContext(model, isUnlocked) {
+    if (isUnlocked) {
+        return unlocked_max;
+    }
+
+    if (Array.isArray(model_list) && model_list.length > 0) {
+        const contextLength = model_list.find((record) => record.id === model)?.inputTokenLimit;
+        if (Number.isFinite(contextLength) && contextLength > 0) {
+            return contextLength;
+        }
+    }
+
+    /** @type {[RegExp, number][]} */
+    const contextMap = [
+        [/gemini-2\.5-flash-image/, max_32k],
+        [/gemini-3\.1-flash-image/, max_128k],
+        [/gemini-3-pro-image/, max_64k],
+        [/gemini-(?:3[.\d]*|2\.(?:5|0))-(pro|flash)/, max_1mil],
+        [/(gemini-exp|learnlm-2\.0-flash|gemini-robotics)/, max_1mil],
+        [/gemma-3-27b-it/, max_128k],
+        [/gemma-3n-e4b-it/, max_8k],
+        [/gemma-3/, max_32k],
+        [/gemma-4/, max_256k],
+    ];
+
+    for (const [regex, max] of contextMap) {
+        if (regex.test(model)) {
+            return max;
+        }
+    }
+
+    return max_128k;
+}
+
+/**
+ * Get the maximum temperature for Gemini models based on model identifier and optional model list.
+ * @param {string} model Model identifier
+ * @returns {number} Maximum temperature for Gemini models
+ */
+function getGeminiMaxTemp(model) {
+    if (Array.isArray(model_list) && model_list.length > 0) {
+        const temp = model_list.find((record) => record.id === model)?.maxTemperature;
+        if (Number.isFinite(temp) && temp > 0) {
+            return temp;
+        }
+    }
+
+    if (/(vision|ultra|gemma)/.test(model)) {
+        return 1.0;
+    }
+
+    return 2.0;
+}
+
+/**
  * Get the maximum context size for the Mistral model
  * @param {string} model Model identifier
  * @param {boolean} isUnlocked Whether context limits are unlocked
@@ -7598,38 +7650,15 @@ async function onModelChange() {
     }
 
     if ([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(oai_settings.chat_completion_source)) {
-        const vertexClaudeMaxContext = oai_settings.chat_completion_source === chat_completion_sources.VERTEXAI
+        const isVertexClaude = oai_settings.chat_completion_source === chat_completion_sources.VERTEXAI
+            && isVertexAiClaudeModelId(value);
+        const contextSize = isVertexClaude
             ? getVertexAiClaudeMaxContext(value, oai_settings.max_context_unlocked)
-            : null;
-
-        if (vertexClaudeMaxContext) {
-            $('#openai_max_context').attr('max', vertexClaudeMaxContext);
-        } else if (oai_settings.max_context_unlocked) {
-            $('#openai_max_context').attr('max', max_2mil);
-        } else if (value.includes('gemini-2.5-flash-image')) {
-            $('#openai_max_context').attr('max', max_32k);
-        } else if (value.includes('gemini-3.1-flash-image')) {
-            $('#openai_max_context').attr('max', max_128k);
-        } else if (value.includes('gemini-3-pro-image')) {
-            $('#openai_max_context').attr('max', max_64k);
-        } else if (/gemini-3[.\d]*-(pro|flash)/.test(value) || /gemini-2.5-(pro|flash)/.test(value) || /gemini-2.0-(pro|flash)/.test(value)) {
-            $('#openai_max_context').attr('max', max_1mil);
-        } else if (value.includes('gemini-exp') || value.includes('learnlm-2.0-flash') || value.includes('gemini-robotics')) {
-            $('#openai_max_context').attr('max', max_1mil);
-        } else if (value.includes('gemma-3-27b-it')) {
-            $('#openai_max_context').attr('max', max_128k);
-        } else if (value.includes('gemma-3n-e4b-it')) {
-            $('#openai_max_context').attr('max', max_8k);
-        } else if (value.includes('gemma-3')) {
-            $('#openai_max_context').attr('max', max_32k);
-        } else {
-            $('#openai_max_context').attr('max', max_32k);
-        }
-        let makersuite_max_temp = vertexClaudeMaxContext
-            ? claude_max_temp
-            : ((value.includes('vision') || value.includes('ultra') || value.includes('gemma')) ? 1.0 : 2.0);
-        oai_settings.temp_openai = Math.min(makersuite_max_temp, oai_settings.temp_openai);
-        $('#temp_openai').attr('max', makersuite_max_temp).val(oai_settings.temp_openai).trigger('input');
+            : getGeminiMaxContext(value, oai_settings.max_context_unlocked);
+        const maxTemp = isVertexClaude ? claude_max_temp : getGeminiMaxTemp(value);
+        $('#openai_max_context').attr('max', contextSize);
+        oai_settings.temp_openai = Math.min(maxTemp, oai_settings.temp_openai);
+        $('#temp_openai').attr('max', maxTemp).val(oai_settings.temp_openai).trigger('input');
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
         $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
     }
@@ -8340,6 +8369,10 @@ export function isImageInliningSupported(settings = oai_settings) {
         'gemini-exp-1206',
         'learnlm',
         'gemini-robotics',
+        'gemma-3-27b',
+        'gemma-3-12b',
+        'gemma-3-4b',
+        'gemma-4',
         // MistralAI
         'mistral-small-2503',
         'mistral-small-2506',
@@ -8444,6 +8477,7 @@ export function isVideoInliningSupported(settings = oai_settings) {
         'gemini-2.5',
         'gemini-exp-1206',
         'gemini-3',
+        'gemma-4',
         // Z.AI (GLM)
         'glm-5.3-flash',
         'glm-4.5v',

@@ -122,7 +122,7 @@ fn build_google_payload(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let is_gemma = model.contains("gemma");
+    let is_gemma3 = model.contains("gemma-3");
     let is_learnlm = model.contains("learnlm");
 
     let enable_image_modality =
@@ -132,7 +132,7 @@ fn build_google_payload(
         .get("use_sysprompt")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-        && (is_custom || (!enable_image_modality && !is_gemma));
+        && (is_custom || (!enable_image_modality && !is_gemma3));
 
     let has_fixed_sampling_parameters = !is_custom
         && matches!(
@@ -301,7 +301,7 @@ fn build_google_payload(
 
     let mut tools = Vec::<Value>::new();
 
-    if is_custom || (!enable_image_modality && !is_gemma) {
+    if is_custom || (!enable_image_modality && !is_gemma3) {
         if let Some(raw_tools) = payload.get("tools") {
             let (function_declarations, custom_tools) = split_openai_tools(raw_tools);
 
