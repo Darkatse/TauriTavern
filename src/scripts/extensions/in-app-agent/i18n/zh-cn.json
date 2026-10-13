@@ -78,7 +78,7 @@
     "in_app_agent.effortLow": "低",
     "in_app_agent.effortMedium": "中",
     "in_app_agent.effortHigh": "高",
-    "in_app_agent.effortXhigh": "超高",
+    "in_app_agent.effortXhigh": "极高",
     "in_app_agent.effortMax": "最高",
     "in_app_agent.preset": "预设",
     "in_app_agent.bindingMissing": "已保存的模型已不可用，请重新选择。",
