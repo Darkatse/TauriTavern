@@ -4392,7 +4392,7 @@
     "Project ID": "項目ID：",
     "llama.cpp Model": "llama.cpp 模型",
     "Constrains the verbosity of the model's response.": "限制模型回复的長度。",
-    "Project ID is required when selecting regions other than the default (us-central1). You can find this in a model 404 error message.": "僅當選擇非預設區域（us-central1）時才需要項目ID。 您可以在模型 404 錯誤訊息中找到它。",
+    "In Express mode, Region applies only when a Project ID is set. Without one, Google uses the location of your Express mode account. You can find the Project ID in a model 404 error message.": "快速模式下，填寫項目ID後區域才會生效；未填寫時，Google 使用快速模式帳號所在的位置。您可以在模型 404 錯誤訊息中找到項目ID。",
     "Output Price": "輸出價格（最便宜）",
     "Electron Hub Model Sorting": "Electron Hub 模型排序",
     "Input Price": "輸入價格（最便宜）",

@@ -533,7 +533,7 @@
     "(Express mode)": "（快速模式）",
     "API Key": "API 密钥",
     "Project ID": "项目ID：",
-    "Project ID is required when selecting regions other than the default (us-central1). You can find this in a model 404 error message.": "仅当选择非默认区域（us-central1）时才需要 项目ID。\n 您可以在模型 404 错误消息中找到它。",
+    "In Express mode, Region applies only when a Project ID is set. Without one, Google uses the location of your Express mode account. You can find the Project ID in a model 404 error message.": "快速模式下，填写项目ID后地区才会生效；未填写时，Google 使用快速模式账号所在的位置。您可以在模型 404 错误消息中找到项目ID。",
     "Service Account Configuration": "服务帐户配置",
     "Service Account JSON Content": "服务帐户 JSON 内容：",
     "For privacy reasons, your Service Account JSON content will be hidden after you click 'Validate JSON'.": "出于隐私考虑，你的服务账号 JSON 内容将在点击“验证JSON”后隐藏。",
