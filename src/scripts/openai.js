@@ -2639,9 +2639,7 @@ export function createChatCompletionMacroContext(context, settings, model) {
 
 /**
  * Builds deterministic chat-completion settings for headless Agent prompt assembly.
- * Saved OpenAI presets are deltas over SillyTavern's full settings object; Agent
- * assembly cannot read the current UI state, so missing fields are filled from the
- * canonical defaults before normal migration is applied.
+ * `settingsToUpdate` only renames preset keys; resolved keys outside it, such as `secret_id`, must pass through.
  *
  * @param {Record<string, any>} settings Preset/effective chat-completion settings
  * @returns {Record<string, any>} Normalized settings
@@ -2653,6 +2651,12 @@ export function normalizeChatCompletionSettingsForPromptAssembly(settings) {
 
     const normalized = structuredClone(default_settings);
     Object.assign(normalized, structuredClone(settings));
+    for (const [presetKey, [, settingsKey]] of Object.entries(settingsToUpdate)) {
+        if (presetKey !== settingsKey && normalized[presetKey] !== undefined) {
+            normalized[settingsKey] = normalized[presetKey];
+            delete normalized[presetKey];
+        }
+    }
     migrateChatCompletionSettings(normalized);
     return normalized;
 }

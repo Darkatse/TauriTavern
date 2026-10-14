@@ -22,6 +22,35 @@ test('additional parameter assembly', async (context) => {
             ? Promise.resolve({ token_counts: JSON.parse(options.data).map(() => 1) })
             : ajax(options);
 
+        await context.test('preset sampling reaches the request without dropping resolved connection keys', async () => {
+            const { buildPromptAssemblySnapshot } = getModule('tauri/main/api/agent-prompt-assembly.js').namespace;
+            const { buildFrozenRunInputSnapshot, updateFrozenMacroContext } = getModule('scripts/tauritavern/agent/frozen-run-input-snapshot.js').namespace;
+            const sampling = {
+                temperature: 0.37, frequency_penalty: 0.23, presence_penalty: 0.19,
+                top_p: 0.41, top_k: 7, top_a: 0.42, min_p: 0.11, repetition_penalty: 1.07,
+            };
+            const { promptSnapshot } = await buildPromptAssemblySnapshot({
+                settings: {
+                    ...sampling,
+                    chat_completion_source: 'openrouter', openrouter_model: 'preset-model',
+                    secret_id: 'preset-secret',
+                    openai_max_context: 1024, openai_max_tokens: 64,
+                },
+                frozenRunInputSnapshot: buildFrozenRunInputSnapshot(updateFrozenMacroContext({
+                    generationType: 'normal',
+                    promptInputs: { messages: [], messageExamples: [], extensionPrompts: {} },
+                    worldInfoActivation: { entries: [] },
+                }, macros.captureContext())),
+                agentContextPolicy: { initialChatHistoryMessages: -1, includeActivatedWorldInfo: true },
+                agentSystemPrompt: 'Complete the task.',
+            });
+            const parameters = promptSnapshot.generationParameters;
+            for (const [key, value] of Object.entries(sampling)) {
+                assert.equal(parameters[key], value, key);
+            }
+            assert.equal(parameters.secret_id, 'preset-secret');
+        });
+
         await context.test('independent assembly shares variables across prompt, stops, prefill and parameters', async () => {
             const settings = openai.normalizeChatCompletionSettingsForPromptAssembly({
                 chat_completion_source: 'claude', claude_model: 'claude-3-5-sonnet-latest',

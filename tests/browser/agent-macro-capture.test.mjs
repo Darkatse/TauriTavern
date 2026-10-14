@@ -51,6 +51,8 @@ try {
         await release.promise;
         script.chat_metadata.variables.phase = 'after';
         extension_settings.variables.global.token = 'after-global';
+        openai.oai_settings.preset_settings_openai = 'Capture preset';
+        openai.oai_settings.temp_openai = 0.37;
     });
     const generation = buildAgentPromptSnapshotSeed({
         generationType: 'normal',
@@ -66,6 +68,8 @@ try {
     assert.equal(saved.variables.local.fieldReads, 1);
     assert.equal(script.chat_metadata.variables.fieldReads, 1, 'Capturing raw fields must not execute the character write macro again');
     assert.equal(saved.macroContext.character.description, '1|before');
+    assert.equal(saved.currentPreset.name, 'Capture preset');
+    assert.equal(saved.currentPreset.settings.temperature, 0.37);
 
     console.log('PASS: real Agent dry-run captures awaited extension changes without repeating character write macros');
 } finally {

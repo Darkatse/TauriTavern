@@ -13,6 +13,7 @@ export function buildFrozenRunInputSnapshot({
     worldInfoActivation,
     macroContext,
     variables,
+    currentPreset,
     currentModelConnection,
 } = {}) {
     const normalizedGenerationType = normalizeGenerationType(generationType ?? promptInputs?.type);
@@ -29,6 +30,7 @@ export function buildFrozenRunInputSnapshot({
         worldInfoActivation: frozenWorldInfoActivation,
         macroContext: frozenMacroContext,
         ...(variables ? { variables: clonePlainObject(variables, 'agent.frozen_run_input_variables_invalid: variables must be a structured-cloneable object') } : {}),
+        ...(currentPreset !== undefined ? { currentPreset: normalizeCurrentPreset(currentPreset) } : {}),
         ...(currentModelConnection ? { currentModelConnection: normalizeCurrentModelConnectionSnapshot(currentModelConnection) } : {}),
     };
 }
@@ -76,12 +78,11 @@ export async function buildCurrentModelConnectionSnapshot({
     secretState,
     currentModelConnectionApi,
 } = {}) {
-    const settingsSnapshot = clonePlainObject(
-        settings,
-        'agent.current_model_connection_settings_invalid: settings must be a structured-cloneable object',
-    );
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+        throw new Error('agent.current_model_connection_settings_invalid: settings must be an object');
+    }
     const source = normalizeNonEmptyString(
-        settingsSnapshot.chat_completion_source,
+        settings.chat_completion_source,
         'agent.current_model_connection_source_required: chat_completion_source cannot be empty',
     );
     const resolvedModel = normalizeNonEmptyString(
@@ -92,7 +93,7 @@ export async function buildCurrentModelConnectionSnapshot({
     const api = currentModelConnectionApi || requireCurrentModelConnectionApi();
     const snapshot = await api.buildCurrentModelConnectionSnapshot({
         settings: {
-            ...settingsSnapshot,
+            ...settings,
             chat_completion_source: source,
         },
         model: resolvedModel,
@@ -207,31 +208,26 @@ export function normalizeFrozenRunInputSnapshot(value) {
     }
 
     const generationType = normalizeGenerationType(value.generationType ?? value.generation_type);
-    const promptInputs = clonePlainObject(
-        value.promptInputs ?? value.prompt_inputs,
-        'agent.frozen_run_input_prompt_inputs_invalid: promptInputs must be a structured-cloneable object',
-    );
-    const worldInfoActivation = clonePlainObject(
-        value.worldInfoActivation ?? value.world_info_activation,
-        'agent.frozen_run_input_world_info_activation_invalid: worldInfoActivation must be a structured-cloneable object',
-    );
-    const macroContext = clonePlainObject(
-        value.macroContext ?? value.macro_context,
-        'agent.frozen_run_input_macro_context_invalid: macroContext must be a structured-cloneable object',
-    );
-
-    return {
-        schemaVersion: FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
-        kind: FROZEN_RUN_INPUT_SNAPSHOT_KIND,
+    return buildFrozenRunInputSnapshot({
         generationType,
-        ...(value.contextKind ? { contextKind: normalizeContextKind(value.contextKind) } : {}),
-        promptInputs,
-        worldInfoActivation,
-        macroContext,
-        ...(value.variables ? { variables: clonePlainObject(value.variables, 'agent.frozen_run_input_variables_invalid: variables must be a structured-cloneable object') } : {}),
-        ...((value.currentModelConnection ?? value.current_model_connection)
-            ? { currentModelConnection: normalizeCurrentModelConnectionSnapshot(value.currentModelConnection ?? value.current_model_connection) }
-            : {}),
+        contextKind: value.contextKind,
+        promptInputs: value.promptInputs ?? value.prompt_inputs,
+        worldInfoActivation: value.worldInfoActivation ?? value.world_info_activation,
+        macroContext: value.macroContext ?? value.macro_context,
+        variables: value.variables,
+        currentPreset: value.currentPreset,
+        currentModelConnection: value.currentModelConnection ?? value.current_model_connection,
+    });
+}
+
+function normalizeCurrentPreset(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('agent.current_preset_invalid: currentPreset must be an object');
+    }
+    return {
+        apiId: normalizeNonEmptyString(value.apiId, 'agent.current_preset_ref_invalid: currentPreset.apiId cannot be empty'),
+        name: value.name == null ? null : normalizeNonEmptyString(value.name, 'agent.current_preset_ref_invalid: currentPreset.name cannot be empty'),
+        settings: clonePlainObject(value.settings, 'agent.current_preset_settings_invalid: currentPreset.settings must be an object'),
     };
 }
 

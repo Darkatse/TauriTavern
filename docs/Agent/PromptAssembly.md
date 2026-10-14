@@ -12,6 +12,7 @@ Chat 的 `Generate()` 在 `GENERATE_AFTER_DATA` 的异步处理完成后、dry-r
 | `worldInfoActivation` | 本次生成激活的世界书 |
 | `macroContext` | 名称、角色模板、聊天事实、设置与模块数据，以及供原生端使用的只读文本 |
 | `variables` | local/global 变量原值 |
+| `currentPreset` | 当前聊天预设：预设文件格式的内容（含未保存的改动）与名称；没有具名预设时名称为 null |
 | `currentModelConnection` | 本次生成使用的模型连接 |
 
 根 Agent、子 Agent 和接手的 Agent 共用这份输入，各自按 Profile 决定历史范围、提示词和模型。每次组装使用工作副本，提示词和请求参数通过同一[宏求值入口](../API/Macros.md)共享本次变量，保存的输入保持不变。
@@ -49,7 +50,7 @@ Skill 目录与文件视图使用同一份有效绑定；Agent 目录由实际�
 
 ## 预设与连接各管什么
 
-Preset 提供提示词布局和生成设置。Profile 的 model binding 提供最终 source、model、endpoint、secret 和路由；这些连接字段会覆盖预设中的旧值。
+Preset 提供提示词布局和生成设置。Profile 的 model binding 提供最终 source、model、endpoint、secret 和路由；这些连接字段会覆盖预设中的旧值。预设字段按 live 加载预设的同一映射转为 settings，映射外的字段原样保留。
 
 Additional Parameters 在前端准备请求时展开，后续轮次复用结果；适用范围见[宏与请求模板](../API/Macros.md#agent-与请求模板)。
 

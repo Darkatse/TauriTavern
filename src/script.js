@@ -208,6 +208,7 @@ import {
     openai_messages_count,
     chat_completion_sources,
     getChatCompletionModel,
+    getChatCompletionPreset,
     isVertexAiClaudeModelId,
     createGenerationParameters,
     createChatCompletionMacroContext,
@@ -6282,9 +6283,15 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
     if (agentMode) {
         const context = captureMacroContext();
         context.state.lastGenerationType = type || 'normal';
+        const settings = structuredClone(oai_settings);
+        const currentPreset = {
+            apiId: 'openai',
+            name: settings.preset_settings_openai,
+            settings: getChatCompletionPreset(settings),
+        };
         const currentModelConnection = await buildCurrentModelConnectionSnapshot({
-            settings: oai_settings,
-            model: getChatCompletionModel(oai_settings),
+            settings,
+            model: getChatCompletionModel(settings),
             secretKey: resolveSecretKey(),
             secretState: secret_state,
         });
@@ -6292,6 +6299,7 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
             generationType: type,
             promptInputs: agentPromptInputs,
             worldInfoActivation,
+            currentPreset,
             currentModelConnection,
         }, context, buildAgentReadOnlyMacros(context, characterFields, characterExamples)));
     }

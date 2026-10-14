@@ -491,6 +491,12 @@ fn normalize_frozen_run_input_snapshot(
         )?;
         normalized.insert("variables".to_string(), variables.clone());
     }
+    if let Some(current_preset) = object.get("currentPreset") {
+        normalized.insert(
+            "currentPreset".to_string(),
+            normalize_current_preset(current_preset)?,
+        );
+    }
     if let Some(current_model_connection) = object
         .get("currentModelConnection")
         .or_else(|| object.get("current_model_connection"))
@@ -501,6 +507,41 @@ fn normalize_frozen_run_input_snapshot(
         );
     }
     Ok(Value::Object(normalized))
+}
+
+fn normalize_current_preset(value: &Value) -> Result<Value, ApplicationError> {
+    let object = value.as_object().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "agent.current_preset_invalid: currentPreset must be an object".to_string(),
+        )
+    })?;
+    let text = |field: &str| {
+        object
+            .get(field)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                ApplicationError::ValidationError(format!(
+                    "agent.current_preset_ref_invalid: currentPreset.{field} cannot be empty"
+                ))
+            })
+    };
+    let api_id = text("apiId")?;
+    let name = match object.get("name") {
+        None | Some(Value::Null) => Value::Null,
+        Some(_) => Value::String(text("name")?.to_string()),
+    };
+    let settings = object
+        .get("settings")
+        .filter(|value| value.is_object())
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.current_preset_settings_invalid: currentPreset.settings must be an object"
+                    .to_string(),
+            )
+        })?;
+    Ok(json!({ "apiId": api_id, "name": name, "settings": settings }))
 }
 
 fn normalize_current_model_connection_snapshot(value: &Value) -> Result<Value, ApplicationError> {
