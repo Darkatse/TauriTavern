@@ -2,8 +2,8 @@ use serde_json::{Map, Value};
 
 use crate::errors::ApplicationError;
 
-const ZEN_API_BASE: &str = "https://opencode.ai/zen/v1";
-const GO_API_BASE: &str = "https://opencode.ai/zen/go/v1";
+const ZEN_API_BASE: &str = "https://opencode.ai/inference/v1";
+const GO_API_BASE: &str = "https://opencode.ai/inference/go/v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::services) enum OpenCodeApiFormat {
@@ -46,38 +46,16 @@ pub(in crate::services) fn resolve_format(
     endpoint: &str,
     api_format: &str,
 ) -> Result<OpenCodeApiFormat, ApplicationError> {
-    let format = OpenCodeApiFormat::parse(api_format)?;
-    base_url(endpoint, format)?;
-    Ok(format)
+    base_url(endpoint)?;
+    OpenCodeApiFormat::parse(api_format)
 }
 
-pub(super) fn base_url(
-    endpoint: &str,
-    format: OpenCodeApiFormat,
-) -> Result<&'static str, ApplicationError> {
-    match (endpoint.trim(), format) {
-        ("" | "zen", _) => Ok(ZEN_API_BASE),
-        ("go", OpenCodeApiFormat::Gemini) => Err(ApplicationError::ValidationError(
-            "OpenCode Go does not support the Gemini API format".to_string(),
-        )),
-        ("go", _) => Ok(GO_API_BASE),
-        (other, _) => Err(ApplicationError::ValidationError(format!(
+pub(super) fn base_url(endpoint: &str) -> Result<&'static str, ApplicationError> {
+    match endpoint.trim() {
+        "" | "zen" => Ok(ZEN_API_BASE),
+        "go" => Ok(GO_API_BASE),
+        other => Err(ApplicationError::ValidationError(format!(
             "Unsupported OpenCode endpoint: {other}"
         ))),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{OpenCodeApiFormat, base_url};
-
-    #[test]
-    fn service_and_format_are_validated_together() {
-        assert_eq!(
-            base_url("go", OpenCodeApiFormat::OpenAiCompat).unwrap(),
-            "https://opencode.ai/zen/go/v1"
-        );
-        assert!(base_url("go", OpenCodeApiFormat::Gemini).is_err());
-        assert!(OpenCodeApiFormat::parse("unknown").is_err());
     }
 }

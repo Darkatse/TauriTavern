@@ -463,11 +463,7 @@ fn default_base_url(
 ) -> Result<String, ApplicationError> {
     let base_url = match source {
         ChatCompletionSource::OpenAi => OPENAI_API_BASE.to_string(),
-        ChatCompletionSource::OpenCode => opencode::base_url(
-            hints.opencode_endpoint,
-            OpenCodeApiFormat::parse(hints.opencode_api_format)?,
-        )?
-        .to_string(),
+        ChatCompletionSource::OpenCode => opencode::base_url(hints.opencode_endpoint)?.to_string(),
         ChatCompletionSource::OpenRouter => OPENROUTER_API_BASE.to_string(),
         ChatCompletionSource::Claude => CLAUDE_API_BASE.to_string(),
         ChatCompletionSource::Makersuite => GEMINI_API_BASE.to_string(),

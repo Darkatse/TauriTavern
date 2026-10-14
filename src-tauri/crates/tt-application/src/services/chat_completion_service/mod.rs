@@ -1081,7 +1081,7 @@ mod tests {
     #[test]
     fn opencode_uses_stable_chat_id_as_session_header() {
         let mut config = ChatCompletionApiConfig {
-            base_url: "https://opencode.ai/zen/v1".to_string(),
+            base_url: "https://opencode.ai/inference/v1".to_string(),
             user_configured_endpoint: false,
             api_key: "secret".to_string(),
             authorization_header: None,
