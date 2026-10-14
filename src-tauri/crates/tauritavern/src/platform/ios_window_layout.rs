@@ -2,6 +2,7 @@
 //! A host scroll view supplies UIKit's interactive keyboard-dismissal gesture.
 use std::cell::{Cell, RefCell};
 
+use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
 use objc2::{ClassType, DefinedClass, MainThreadOnly, Message, define_class, msg_send, sel};
@@ -26,6 +27,7 @@ struct WindowHostIvars {
     color: Cell<[u8; 3]>,
     status_bar_style: Cell<UIStatusBarStyle>,
     strips: RefCell<Vec<VisibleStrip>>,
+    installing: Cell<bool>,
 }
 
 struct VisibleStrip {
@@ -217,6 +219,9 @@ impl WindowHost {
     }
 
     fn publish_window(&self) {
+        if self.ivars().installing.get() {
+            return;
+        }
         let Some(window) = self.window() else { return };
         let scale = window.screen().scale();
         let bounds = self.bounds();
@@ -304,6 +309,7 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
         color: Cell::new([0; 3]),
         status_bar_style: Cell::new(UIStatusBarStyle::Default),
         strips: RefCell::new(Vec::new()),
+        installing: Cell::new(true),
     });
     let host: Retained<WindowHost> =
         unsafe { msg_send![super(allocated), initWithFrame: parent.bounds()] };
@@ -366,6 +372,15 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
     MAIN_HOST.with(|slot| *slot.borrow_mut() = Some(host.clone()));
     host.update_status_bar_style();
     host.setNeedsLayout();
+    // Publishing must wait for `with_webview` to release its window-id lock.
+    DispatchQueue::main().exec_async(|| {
+        MAIN_HOST.with(|slot| {
+            if let Some(host) = slot.borrow().as_ref() {
+                host.ivars().installing.set(false);
+                host.setNeedsLayout();
+            }
+        });
+    });
 }
 
 async fn with_host<T: Send + 'static>(
