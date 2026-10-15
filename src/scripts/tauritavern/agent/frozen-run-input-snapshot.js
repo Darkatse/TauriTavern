@@ -2,7 +2,7 @@ import { snapshotVariableMacroValues } from '../../variables/values.js';
 import { normalizeMacroResult } from '../../macros/values.js';
 
 export const FROZEN_RUN_INPUT_SNAPSHOT_KIND = 'tauritavern.agentFrozenRunInputSnapshot';
-export const FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION = 1;
+export const FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION = 2;
 export const CURRENT_MODEL_CONNECTION_SNAPSHOT_KIND = 'tauritavern.currentModelConnectionSnapshot';
 export const CURRENT_MODEL_CONNECTION_SNAPSHOT_SCHEMA_VERSION = 1;
 
@@ -56,7 +56,7 @@ export function updateFrozenMacroContext(snapshot, context, { characterValues = 
 }
 
 /** Only rebuilding needs raw templates. Viewing/resuming a prepared old Run does not. */
-export function createMacroContextFromSnapshot(snapshot) {
+export function createMacroContextFromSnapshot(snapshot, workingInputs) {
     const saved = snapshot.macroContext;
     if (!saved?.characterTemplates || !saved.settings || !saved.engine || !snapshot.variables) {
         throw new Error('agent.macro_context_rebuild_unavailable: This Run has no captured macro inputs for independent prompt assembly; start a new Run to rebuild its prompt');
@@ -66,7 +66,7 @@ export function createMacroContextFromSnapshot(snapshot) {
         ...facts,
         character: characterTemplates,
         variables: snapshot.variables,
-        extensionPrompts: snapshot.promptInputs.extensionPrompts ?? {},
+        extensionPrompts: workingInputs.extensionPrompts,
         bannedWords: [],
     };
 }
@@ -198,6 +198,9 @@ export function normalizeFrozenRunInputSnapshot(value) {
     }
 
     const schemaVersion = Number(value.schemaVersion ?? value.schema_version);
+    if (schemaVersion === 1) {
+        throw new Error('agent.frozen_run_input_outdated: schemaVersion 1 input predates per-source context capture; generate again to capture a new input');
+    }
     if (schemaVersion !== FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION) {
         throw new Error(`agent.frozen_run_input_snapshot_schema_unsupported: schemaVersion ${schemaVersion} is unsupported`);
     }

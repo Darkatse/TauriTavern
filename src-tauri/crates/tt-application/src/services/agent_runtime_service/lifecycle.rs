@@ -84,7 +84,8 @@ impl AgentRuntimeService {
             presentation,
         )?;
         resolved_profile.run.presentation = presentation;
-        let skill_scope_refs = resolve_run_skill_scope_refs(&dto, &resolved_profile)?;
+        let skill_scope_refs =
+            resolve_run_skill_scope_refs(&dto, &resolved_profile, &prompt_snapshot)?;
         let skill_scope_order =
             skill_scope_order_for_profile(&resolved_profile, &skill_scope_refs)?;
         let effective_skills = self

@@ -93,13 +93,12 @@ fn resolve_run_skill_scope_refs_rejects_mismatched_character() {
         frozen_run_input_snapshot: None,
         generation_intent: None,
         skill_scope_refs: AgentSkillScopeRefsDto {
-            preset: None,
             character_id: Some("Other".to_string()),
         },
         options: AgentStartRunOptionsDto::default(),
     };
 
-    let error = resolve_run_skill_scope_refs(&dto, &profile).unwrap_err();
+    let error = resolve_run_skill_scope_refs(&dto, &profile, &json!({})).unwrap_err();
 
     assert!(
         error

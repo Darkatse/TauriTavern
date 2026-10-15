@@ -154,7 +154,7 @@ function normalizePresetBinding(value: unknown): AgentProfile['preset'] {
     const mode = (looseString(binding.mode) || 'currentPromptSnapshot').trim() || 'currentPromptSnapshot';
     if (mode === 'currentPromptSnapshot' || mode === 'none') {
         return {
-            mode,
+            mode: 'currentPromptSnapshot',
             required: false,
         };
     }

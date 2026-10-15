@@ -99,23 +99,26 @@ async fn agent_runtime_parent_and_child_read_their_own_skill_binding() {
         },
         { "role": "user", "content": "Use the style skill and ask for a critique." }
     ]);
+    let mut frozen_input = contract_frozen_run_input();
+    frozen_input["macroContext"] = json!({ "names": { "char": "Frozen Alice" } });
     let snapshot = json!({
         "chatCompletionPayload": request.payload,
-        "frozenRunInputSnapshot": {
-            "macroContext": { "names": { "char": "Frozen Alice" } }
-        }
+        "frozenRunInputSnapshot": frozen_input,
     });
     let (_cancel, mut receiver) = watch::channel(false);
-    tokio::time::timeout(
-        AGENT_CONTRACT_ASYNC_TIMEOUT,
-        fixture.service.execute_agent_loop_run_inner(
-            &run.id,
-            snapshot,
-            request,
-            profile,
-            &mut receiver,
-        ),
-    )
+    tokio::time::timeout(AGENT_CONTRACT_ASYNC_TIMEOUT, async {
+        let (result, _) = tokio::join!(
+            fixture.service.execute_agent_loop_run_inner(
+                &run.id,
+                snapshot,
+                request,
+                profile,
+                &mut receiver,
+            ),
+            resolve_contract_prompt_assembly(&fixture, &run.id)
+        );
+        result
+    })
     .await
     .expect("scoped skill run completes")
     .expect("run scoped skill task");

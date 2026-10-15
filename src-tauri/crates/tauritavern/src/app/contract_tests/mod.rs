@@ -326,7 +326,7 @@ async fn resolve_contract_profile(
     fixture
         .profile_service
         .resolve_profile(AgentProfileResolveInput {
-            profile_id: None,
+            profile_id: Some("default-writer"),
             tool_catalog: registry.catalog(),
         })
         .await
@@ -349,7 +349,7 @@ async fn start_contract_agent_run(
             presentation: Some(presentation),
             ..Default::default()
         },
-        None,
+        Some(contract_frozen_run_input()),
     )
     .await
 }
@@ -392,6 +392,23 @@ async fn start_contract_agent_run_with_options(
         })
         .await
         .expect("start contract Agent run")
+}
+
+fn contract_frozen_run_input() -> Value {
+    json!({
+        "schemaVersion": 2, "kind": "tauritavern.agentFrozenRunInputSnapshot", "generationType": "normal",
+        "promptInputs": { "messages": [], "extensionPrompts": {} },
+        "worldInfoActivation": { "entries": [] },
+        "macroContext": {},
+        "currentPreset": {
+            "apiId": "openai", "name": "Captured A",
+            "settings": { "prompts": [{ "identifier": "main", "content": "Captured preset A" }] }
+        },
+        "currentModelConnection": {
+            "schemaVersion": 1, "kind": "tauritavern.currentModelConnectionSnapshot",
+            "settings": { "chat_completion_source": "openai", "model": "captured-model", "openai_model": "captured-model" }
+        }
+    })
 }
 
 async fn wait_for_terminal_agent_run(repository: &FileAgentRepository, run_id: &str) -> AgentRun {

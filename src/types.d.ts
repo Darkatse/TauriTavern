@@ -515,7 +515,7 @@ type TauriTavernAgentProfileDefinition = {
     displayName: string;
     description?: string;
     preset: {
-        mode: 'currentPromptSnapshot' | 'ref' | 'none';
+        mode: 'currentPromptSnapshot' | 'ref';
         ref?: {
             apiId: string;
             name: string;

@@ -63,7 +63,7 @@ runtime 保存结构化结果，并生成 `summaries/<workspace-key>-result.md` 
 
 ## 接收方看到什么
 
-runtime 用目标 Profile 准备新的提示词和工具集合。初始聊天材料来自 Run 启动时冻结的输入，任务包通过 `agentTask` 进入提示词。调用方应在任务中写明目标、必要背景和文件路径。
+runtime 用目标 Profile 准备新的提示词和工具集合。初始聊天材料来自 Run 启动时冻结的输入，预设、模型与上下文范围取自目标 Profile，不继承上一棒，见 [Prompt assembly](PromptAssembly.md)。任务包通过 `agentTask` 进入提示词。调用方应在任务中写明目标、必要背景和文件路径。
 
 双方共享工作文件，各自按 Profile 获得读写范围；`skills/` 使用各自的有效绑定。不同任务可约定输出文件，再由调用方汇总；文件与并发语义见 [Workspace](Workspace.md)。
 

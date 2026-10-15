@@ -43,13 +43,13 @@ try {
     });
     preset.prompt_order = [{ character_id: 100001, order: ['main', 'agentSystemPrompt', 'chatHistory'].map(identifier => ({ identifier, enabled: true })) }];
     const sessionInput = messages => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         kind: 'tauritavern.agentFrozenRunInputSnapshot',
         generationType: 'normal',
         contextKind: 'session',
         worldInfoActivation: {},
         macroContext: {},
-        promptInputs: { messages: [], agentMessages: messages, messageExamples: [], extensionPrompts: {} },
+        promptInputs: { messages: [], agentMessages: messages, messageExamples: [], worldInfoExamples: { before: [], after: [] }, extensionPrompts: {} },
     });
     const assemble = (messages, contextBudget = 4096, reasoningEffort) => {
         const context = MacroEnvBuilder.createSessionContext(messages, {

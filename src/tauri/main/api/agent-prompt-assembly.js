@@ -3,6 +3,7 @@
 import {
     loadAgentContextPolicy,
     normalizeAgentContextPolicy,
+    projectAgentPromptInputs,
 } from '../../../scripts/tauritavern/agent/agent-context-policy.js';
 import {
     loadResolvedAgentSystemPrompt,
@@ -56,7 +57,6 @@ export async function buildPromptAssemblyPayload(input = {}) {
         macroContext: request.macroContext,
         jsonSchema: request.jsonSchema,
         agentMode: true,
-        agentContextPolicy: request.agentContextPolicy,
         agentSystemPrompt: request.agentSystemPrompt,
         agentTaskPrompt: request.agentTaskPrompt,
         contextKind: request.frozenRunInputSnapshot.contextKind ?? 'chat',
@@ -115,15 +115,16 @@ async function normalizePromptAssemblyRequest(input) {
     if (directMacroContext != null) {
         throw new Error('prompt_assembly.macro_context_duplicated: macroContext must be read from FrozenRunInputSnapshot');
     }
-    const promptInputs = requirePlainObject(
+    const capturedPromptInputs = requirePlainObject(
         frozenRunInputSnapshot.promptInputs,
         'prompt_assembly.prompt_inputs_required: promptInputs must be an object',
     );
-    const macroContext = createMacroContextFromSnapshot(frozenRunInputSnapshot);
     const settings = normalizeSettings(input);
     const agentContextPolicy = input.agentContextPolicy || input.contextPolicy
         ? normalizeAgentContextPolicy(input.agentContextPolicy ?? input.contextPolicy)
         : await loadAgentContextPolicy(profileId);
+    const promptInputs = projectAgentPromptInputs(capturedPromptInputs, agentContextPolicy);
+    const macroContext = createMacroContextFromSnapshot(frozenRunInputSnapshot, promptInputs);
     const agentSystemPrompt = Object.prototype.hasOwnProperty.call(input, 'agentSystemPrompt')
         ? normalizeAgentSystemPrompt(input.agentSystemPrompt)
         : Object.prototype.hasOwnProperty.call(input, 'agent_system_prompt')

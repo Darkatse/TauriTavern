@@ -7,12 +7,15 @@ use super::{
     AgentCancelReceiver, AgentRuntimeService, HostPromptAssemblyResult, PendingHostPromptAssembly,
 };
 use crate::dto::agent_dto::{
-    AgentPreparePromptAssemblyDto, AgentPromptAssemblyBrokerRequestDto, AgentPromptAssemblyModeDto,
+    AgentPreparePromptAssemblyDto, AgentPromptAssemblyBrokerRequestDto,
     AgentPromptAssemblyScopeDto, AgentReadPromptAssemblyRequestDto, AgentResolvePromptAssemblyDto,
 };
 use crate::errors::ApplicationError;
-use crate::services::prompt_assembly_service::AgentInvocationPromptAssemblyContext;
-use tt_domain::models::agent::profile::{AgentPresetBindingMode, ResolvedAgentProfile};
+use crate::services::prompt_assembly_service::{
+    AgentInvocationPromptAssemblyContext, FROZEN_RUN_INPUT_SNAPSHOT_KIND,
+    FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
+};
+use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{AgentModelTool, AgentRunEventLevel, WorkspacePath};
 
 impl AgentRuntimeService {
@@ -74,11 +77,17 @@ impl AgentRuntimeService {
                     profile_id: None,
                     generation_type: "normal".into(),
                     frozen_run_input_snapshot: json!({
-                        "schemaVersion": 1,
-                        "kind": "tauritavern.agentFrozenRunInputSnapshot",
+                        "schemaVersion": FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
+                        "kind": FROZEN_RUN_INPUT_SNAPSHOT_KIND,
                         "contextKind": "session",
                         "generationType": "normal",
-                        "promptInputs": { "messages": [], "agentMessages": messages },
+                        "promptInputs": {
+                            "messages": [],
+                            "agentMessages": messages,
+                            "messageExamples": [],
+                            "worldInfoExamples": { "before": [], "after": [] },
+                            "extensionPrompts": {},
+                        },
                         "worldInfoActivation": {},
                         "macroContext": {},
                     }),
@@ -192,14 +201,11 @@ impl AgentRuntimeService {
         scope: &AgentPromptAssemblyScopeDto,
         agent_task_prompt: String,
         cancel: &mut AgentCancelReceiver,
-    ) -> Result<Option<Value>, ApplicationError> {
+    ) -> Result<Value, ApplicationError> {
         let run_id = scope.run_id.as_str();
         let invocation_id = scope.invocation_id.as_str();
-        if profile.preset.mode != AgentPresetBindingMode::Ref {
-            return Ok(None);
-        }
         let assembly_id = format!("prompt_assembly_{}", Uuid::new_v4().simple());
-        let prepared = self
+        let (request, request_metadata) = self
             .prompt_assembly_service
             .prepare_invocation_frontend_prompt_assembly(
                 AgentPreparePromptAssemblyDto {
@@ -221,24 +227,6 @@ impl AgentRuntimeService {
                 },
             )
             .await?;
-        if matches!(
-            prepared.mode,
-            AgentPromptAssemblyModeDto::CurrentPromptSnapshot
-        ) {
-            return Ok(None);
-        }
-        let request = prepared.request.ok_or_else(|| {
-            ApplicationError::InternalError(
-                "agent.prompt_assembly_request_missing: frontend prompt assembly mode requires request"
-                    .to_string(),
-            )
-        })?;
-        let request_metadata = prepared.assembly.ok_or_else(|| {
-            ApplicationError::InternalError(
-                "agent.prompt_assembly_metadata_missing: frontend prompt assembly mode requires metadata"
-                    .to_string(),
-            )
-        })?;
         let requested_event = json!({
             "assemblyId": assembly_id.as_str(),
             "invocationId": invocation_id,
@@ -371,7 +359,7 @@ impl AgentRuntimeService {
                     }),
                 )
                 .await?;
-                Ok(Some(result.prompt_snapshot))
+                Ok(result.prompt_snapshot)
             }
             Err(message) => {
                 self.event(

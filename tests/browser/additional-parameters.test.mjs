@@ -38,7 +38,7 @@ test('additional parameter assembly', async (context) => {
                 },
                 frozenRunInputSnapshot: buildFrozenRunInputSnapshot(updateFrozenMacroContext({
                     generationType: 'normal',
-                    promptInputs: { messages: [], messageExamples: [], extensionPrompts: {} },
+                    promptInputs: { messages: [], messageExamples: [], worldInfoExamples: { before: [], after: [] }, extensionPrompts: {} },
                     worldInfoActivation: { entries: [] },
                 }, macros.captureContext())),
                 agentContextPolicy: { initialChatHistoryMessages: -1, includeActivatedWorldInfo: true },

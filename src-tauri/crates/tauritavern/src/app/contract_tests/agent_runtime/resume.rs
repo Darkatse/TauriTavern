@@ -623,48 +623,14 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
             ])],
         );
         let profile = super::delegation::configure_return_mode_profiles(&fixture).await;
-        if during_preparation {
-            use tt_domain::models::agent::profile::{AgentPresetBindingMode, AgentPresetRef};
-            fixture
-                .preset_repository
-                .save_preset(&Preset::new(
-                    "child-prompt".to_string(),
-                    PresetType::OpenAI,
-                    json!({}),
-                ))
-                .await
-                .unwrap();
-            let mut child = fixture
-                .profile_service
-                .load_profile("scene-critic")
-                .await
-                .unwrap()
-                .unwrap();
-            child.preset.mode = AgentPresetBindingMode::Ref;
-            child.preset.ref_ = Some(AgentPresetRef {
-                api_id: "openai".to_string(),
-                name: "child-prompt".to_string(),
-            });
-            fixture
-                .profile_service
-                .save_profile(child, fixture.service.tool_catalog())
-                .await
-                .unwrap();
-        } else {
+        if !during_preparation {
             fixture
                 .model_gateway
                 .wait_for_cancel_on_request
                 .store(2, Ordering::SeqCst);
         }
-        let frozen_input = Some(json!({
-            "schemaVersion": 1, "kind": "tauritavern.agentFrozenRunInputSnapshot", "generationType": "normal",
-            "promptInputs": {}, "worldInfoActivation": { "entries": [] },
-            "macroContext": { "names": { "char": "Frozen child" } },
-            "currentModelConnection": {
-                "schemaVersion": 1, "kind": "tauritavern.currentModelConnectionSnapshot",
-                "settings": { "chat_completion_source": "custom", "model": "contract-model", "custom_model": "contract-model" }
-            }
-        }));
+        let mut frozen_input = contract_frozen_run_input();
+        frozen_input["macroContext"] = json!({ "names": { "char": "Frozen child" } });
         let handle = start_contract_agent_run_with_options(
             &fixture,
             &profile,
@@ -674,13 +640,14 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
                 stream: Some(false),
                 ..Default::default()
             },
-            frozen_input,
+            Some(frozen_input),
         )
         .await;
         if during_preparation {
             wait_for_event(&fixture, &handle.run_id, "prompt_assembly_requested", 0).await;
             assert_eq!(fixture.model_gateway.requests().await.len(), 1);
         } else {
+            resolve_contract_prompt_assembly(&fixture, &handle.run_id).await;
             let mut request_count = fixture.model_gateway.request_count.subscribe();
             tokio::time::timeout(
                 AGENT_CONTRACT_ASYNC_TIMEOUT,
@@ -1142,25 +1109,4 @@ async fn read_output(fixture: &AgentRuntimeFixture, run_id: &str) -> String {
         .await
         .unwrap()
         .text
-}
-
-async fn wait_for_event(
-    fixture: &AgentRuntimeFixture,
-    run_id: &str,
-    event_type: &str,
-    after_seq: u64,
-) -> tt_domain::models::agent::AgentRunEvent {
-    tokio::time::timeout(AGENT_CONTRACT_ASYNC_TIMEOUT, async {
-        loop {
-            if let Some(event) = read_agent_events(&fixture.agent_repository, run_id)
-                .await
-                .into_iter()
-                .find(|event| event.seq > after_seq && event.event_type == event_type)
-            {
-                return event;
-            }
-        }
-    })
-    .await
-    .expect("expected runtime event")
 }

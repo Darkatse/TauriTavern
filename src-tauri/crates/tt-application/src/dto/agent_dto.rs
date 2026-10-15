@@ -138,10 +138,8 @@ pub struct AgentStartRunDto {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentSkillScopeRefsDto {
-    #[serde(default)]
-    pub preset: Option<AgentPresetRef>,
     #[serde(default)]
     pub character_id: Option<String>,
 }
@@ -270,8 +268,7 @@ pub struct AgentPromptAssemblyScopeDto {
     pub parent_invocation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exit_policy: Option<String>,
+    pub exit_policy: AgentInvocationExitPolicy,
 }
 
 #[derive(Debug, Clone, Serialize)]

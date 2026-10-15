@@ -33,6 +33,8 @@ Skill 可以属于全局、预设、Profile 或角色。运行时按 `global →
 
 子 Agent 使用目标 Profile 的 Skill 配置，环境信息来自 Run 冻结输入。同名 Skill 可在不同 Invocation 中绑定到不同作用域。绑定在准备时确定，后续轮次与恢复沿用；读取使用安装包当前内容，缺失时失败，不改选其他同名包。
 
+预设作用域跟随该 Invocation 的预设绑定：指定预设用 `preset.ref`，当前预设用 Run 捕获的聊天预设；没有冻结输入的 Run 没有当前预设作用域。
+
 ## 在运行中使用
 
 有效 Skill 的名称、描述和 `SKILL.md` 路径随系统提示词提供，见 [Prompt assembly](PromptAssembly.md)。模型通过工作区文件工具读取 `skills/<name>/SKILL.md` 及支持材料；相对引用以 Skill 目录为起点，Shell 中 `/skills/<name>/` 指向同一视图。

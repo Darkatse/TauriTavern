@@ -50,6 +50,7 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
             .insert("builtin:workspace.read_file".into(), 7);
         let expected = serde_json::to_value(&profile).unwrap();
         let mut legacy = expected.clone();
+        legacy["preset"]["mode"] = json!("none");
         legacy["tools"]["mcpResultInlineCharLimit"] = legacy["tools"]
             .as_object_mut()
             .unwrap()

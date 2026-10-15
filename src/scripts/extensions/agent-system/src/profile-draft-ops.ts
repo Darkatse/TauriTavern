@@ -33,13 +33,6 @@ export function applyPresetMode(draft: AgentProfileDraft, mode: string, presetOp
         };
         return;
     }
-    if (mode === 'none') {
-        draft.preset = {
-            mode: 'none',
-            required: false,
-        };
-        return;
-    }
     if (mode !== 'ref') {
         throw new Error(`Unsupported preset mode: ${mode}`);
     }

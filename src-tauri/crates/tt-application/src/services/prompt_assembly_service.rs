@@ -28,8 +28,8 @@ use tt_ports::repositories::preset_repository::PresetRepository;
 
 const PROMPT_ASSEMBLY_REQUEST_KIND: &str = "tauritavern.agentPromptAssemblyRequest";
 const PROMPT_ASSEMBLY_REQUEST_SCHEMA_VERSION: u32 = 1;
-const FROZEN_RUN_INPUT_SNAPSHOT_KIND: &str = "tauritavern.agentFrozenRunInputSnapshot";
-const FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
+pub(crate) const FROZEN_RUN_INPUT_SNAPSHOT_KIND: &str = "tauritavern.agentFrozenRunInputSnapshot";
+pub(crate) const FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION: u32 = 2;
 const CURRENT_MODEL_CONNECTION_SNAPSHOT_KIND: &str = "tauritavern.currentModelConnectionSnapshot";
 const CURRENT_MODEL_CONNECTION_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 const PROMPT_CONNECTION_EXTRA_SETTING_KEYS: &[&str] = &[
@@ -98,14 +98,22 @@ impl PromptAssemblyService {
         visible_tools: &[AgentModelTool],
         exit_policy: AgentInvocationExitPolicy,
     ) -> Result<AgentPreparePromptAssemblyResultDto, ApplicationError> {
-        self.prepare_frontend_prompt_assembly_with_context(
-            dto,
-            profile,
-            visible_tools,
-            None,
-            exit_policy,
-        )
-        .await
+        // Only the root can reuse the live generation prepared by Generate().
+        if profile.preset.mode == AgentPresetBindingMode::CurrentPromptSnapshot {
+            return Ok(AgentPreparePromptAssemblyResultDto {
+                mode: AgentPromptAssemblyModeDto::CurrentPromptSnapshot,
+                request: None,
+                assembly: None,
+            });
+        }
+        let (request, metadata) = self
+            .build_prompt_assembly_request(dto, profile, visible_tools, None, exit_policy)
+            .await?;
+        Ok(AgentPreparePromptAssemblyResultDto {
+            mode: AgentPromptAssemblyModeDto::FrontendPromptAssembly,
+            request: Some(request),
+            assembly: Some(metadata),
+        })
     }
 
     pub async fn prepare_invocation_frontend_prompt_assembly(
@@ -114,15 +122,16 @@ impl PromptAssemblyService {
         profile: ResolvedAgentProfile,
         visible_tools: &[AgentModelTool],
         context: AgentInvocationPromptAssemblyContext,
-    ) -> Result<AgentPreparePromptAssemblyResultDto, ApplicationError> {
-        self.prepare_frontend_prompt_assembly_with_context(
-            dto,
-            profile,
-            visible_tools,
-            Some(context),
-            AgentInvocationExitPolicy::TaskReturnRequired,
-        )
-        .await
+    ) -> Result<
+        (
+            AgentPromptAssemblyBrokerRequestDto,
+            AgentPromptAssemblyRequestMetadataDto,
+        ),
+        ApplicationError,
+    > {
+        let exit_policy = context.scope.exit_policy;
+        self.build_prompt_assembly_request(dto, profile, visible_tools, Some(context), exit_policy)
+            .await
     }
 
     pub fn build_current_model_connection_snapshot(
@@ -147,154 +156,150 @@ impl PromptAssemblyService {
         Ok(settings)
     }
 
-    async fn prepare_frontend_prompt_assembly_with_context(
+    async fn build_prompt_assembly_request(
         &self,
         dto: AgentPreparePromptAssemblyDto,
         profile: ResolvedAgentProfile,
         visible_tools: &[AgentModelTool],
         invocation_context: Option<AgentInvocationPromptAssemblyContext>,
         exit_policy: AgentInvocationExitPolicy,
-    ) -> Result<AgentPreparePromptAssemblyResultDto, ApplicationError> {
+    ) -> Result<
+        (
+            AgentPromptAssemblyBrokerRequestDto,
+            AgentPromptAssemblyRequestMetadataDto,
+        ),
+        ApplicationError,
+    > {
         let generation_type = normalize_generation_type(&dto.generation_type)?;
         let frozen_run_input_snapshot =
             normalize_frozen_run_input_snapshot(&dto.frozen_run_input_snapshot, &generation_type)?;
         ensure_profile_model_configured(&profile)?;
+        let (preset_ref, preset_settings) = self
+            .resolve_openai_preset(&profile, &frozen_run_input_snapshot)
+            .await?;
+        let preset_sha256 = sha256_value(&preset_settings)?;
+        let (settings, model_id) = self
+            .resolve_prompt_assembly_settings(&profile, preset_settings, &frozen_run_input_snapshot)
+            .await?;
+        let fingerprint = AgentPromptAssemblyFingerprintDto {
+            preset_sha256,
+            frozen_run_input_snapshot_sha256: sha256_value(&frozen_run_input_snapshot)?,
+            agent_task_prompt_sha256: invocation_context
+                .as_ref()
+                .and_then(|context| context.agent_task_prompt.as_ref())
+                .map(|prompt| sha256_string(prompt)),
+        };
+        let metadata = AgentPromptAssemblyRequestMetadataDto {
+            assembly_id: invocation_context
+                .as_ref()
+                .map(|context| context.assembly_id.clone()),
+            schema_version: PROMPT_ASSEMBLY_REQUEST_SCHEMA_VERSION,
+            engine: "frontend-prompt-assembly-broker".to_string(),
+            profile_id: profile.id.as_str().to_string(),
+            preset_ref: preset_ref.clone(),
+            scope: invocation_context
+                .as_ref()
+                .map(|context| context.scope.clone()),
+            fingerprint: fingerprint.clone(),
+        };
+        let agent_task_prompt = invocation_context
+            .as_ref()
+            .and_then(|context| context.agent_task_prompt.clone());
+        let required_agent_prompt_components = invocation_context
+            .as_ref()
+            .map(|context| context.required_agent_prompt_components.clone())
+            .unwrap_or_default();
 
-        match profile.preset.mode {
-            AgentPresetBindingMode::CurrentPromptSnapshot | AgentPresetBindingMode::None => {
-                Ok(AgentPreparePromptAssemblyResultDto {
-                    mode: AgentPromptAssemblyModeDto::CurrentPromptSnapshot,
-                    request: None,
-                    assembly: None,
-                })
-            }
+        Ok((
+            AgentPromptAssemblyBrokerRequestDto {
+                schema_version: PROMPT_ASSEMBLY_REQUEST_SCHEMA_VERSION,
+                kind: PROMPT_ASSEMBLY_REQUEST_KIND.to_string(),
+                assembly_id: invocation_context
+                    .as_ref()
+                    .map(|context| context.assembly_id.clone()),
+                scope: invocation_context
+                    .as_ref()
+                    .map(|context| context.scope.clone()),
+                profile_id: profile.id.as_str().to_string(),
+                generation_type,
+                frozen_run_input_snapshot,
+                settings,
+                model_id,
+                preset_ref,
+                reasoning_effort: profile.preset.reasoning_effort,
+                agent_context_policy: profile.context.clone(),
+                agent_system_prompt: materialize_agent_system_prompt(
+                    visible_tools,
+                    &profile,
+                    exit_policy,
+                ),
+                agent_task_prompt,
+                required_agent_prompt_components,
+                json_schema: dto.json_schema,
+                fingerprint,
+            },
+            metadata,
+        ))
+    }
+
+    async fn resolve_openai_preset(
+        &self,
+        profile: &ResolvedAgentProfile,
+        frozen_run_input_snapshot: &Value,
+    ) -> Result<(AgentPresetRef, Value), ApplicationError> {
+        let (preset_ref, settings) = match profile.preset.mode {
             AgentPresetBindingMode::Ref => {
                 let preset_ref = profile.preset.ref_.clone().ok_or_else(|| {
                     ApplicationError::ValidationError(
                         "prompt_assembly.profile_preset_ref_required: preset.ref is required"
-                            .to_string(),
+                            .into(),
                     )
                 })?;
-                let preset_settings = self.load_openai_preset_settings(&preset_ref).await?;
-                let (settings, model_id) = self
-                    .resolve_prompt_assembly_settings(
-                        &profile,
-                        preset_settings.clone(),
-                        &frozen_run_input_snapshot,
-                    )
-                    .await?;
-                let fingerprint = AgentPromptAssemblyFingerprintDto {
-                    preset_sha256: sha256_value(&preset_settings)?,
-                    frozen_run_input_snapshot_sha256: sha256_value(&frozen_run_input_snapshot)?,
-                    agent_task_prompt_sha256: invocation_context
-                        .as_ref()
-                        .and_then(|context| context.agent_task_prompt.as_ref())
-                        .map(|prompt| sha256_string(prompt)),
-                };
-                let metadata = AgentPromptAssemblyRequestMetadataDto {
-                    assembly_id: invocation_context
-                        .as_ref()
-                        .map(|context| context.assembly_id.clone()),
-                    schema_version: PROMPT_ASSEMBLY_REQUEST_SCHEMA_VERSION,
-                    engine: "frontend-prompt-assembly-broker".to_string(),
-                    profile_id: profile.id.as_str().to_string(),
-                    preset_ref: preset_ref.clone(),
-                    scope: invocation_context
-                        .as_ref()
-                        .map(|context| context.scope.clone()),
-                    fingerprint: fingerprint.clone(),
-                };
-                let agent_task_prompt = invocation_context
-                    .as_ref()
-                    .and_then(|context| context.agent_task_prompt.clone());
-                let required_agent_prompt_components = invocation_context
-                    .as_ref()
-                    .map(|context| context.required_agent_prompt_components.clone())
-                    .unwrap_or_default();
-
-                Ok(AgentPreparePromptAssemblyResultDto {
-                    mode: AgentPromptAssemblyModeDto::FrontendPromptAssembly,
-                    request: Some(AgentPromptAssemblyBrokerRequestDto {
-                        schema_version: PROMPT_ASSEMBLY_REQUEST_SCHEMA_VERSION,
-                        kind: PROMPT_ASSEMBLY_REQUEST_KIND.to_string(),
-                        assembly_id: invocation_context
-                            .as_ref()
-                            .map(|context| context.assembly_id.clone()),
-                        scope: invocation_context
-                            .as_ref()
-                            .map(|context| context.scope.clone()),
-                        profile_id: profile.id.as_str().to_string(),
-                        generation_type,
-                        frozen_run_input_snapshot,
-                        settings,
-                        model_id,
-                        preset_ref,
-                        reasoning_effort: profile.preset.reasoning_effort,
-                        agent_context_policy: profile.context.clone(),
-                        agent_system_prompt: materialize_agent_system_prompt(
-                            visible_tools,
-                            &profile,
-                            exit_policy,
-                        ),
-                        agent_task_prompt,
-                        required_agent_prompt_components,
-                        json_schema: dto.json_schema,
-                        fingerprint,
-                    }),
-                    assembly: Some(metadata),
-                })
+                ensure_openai_preset(&preset_ref)?;
+                let settings = self.load_openai_preset_settings(&preset_ref.name).await?;
+                (preset_ref, settings)
             }
-        }
+            AgentPresetBindingMode::CurrentPromptSnapshot => {
+                let preset = frozen_run_input_snapshot.get("currentPreset").ok_or_else(|| {
+                    ApplicationError::ValidationError(
+                        "prompt_assembly.current_preset_unavailable: this Run has no captured current preset; start a new Run from the chat".into(),
+                    )
+                })?;
+                let preset_ref = current_preset_ref(preset)?;
+                ensure_openai_preset(&preset_ref)?;
+                (preset_ref, preset["settings"].clone())
+            }
+        };
+        ensure_json_object(
+            &settings,
+            "prompt_assembly.preset_data_invalid: preset data must be an object",
+        )?;
+        Ok((preset_ref, settings))
     }
 
-    async fn load_openai_preset_settings(
-        &self,
-        preset_ref: &AgentPresetRef,
-    ) -> Result<Value, ApplicationError> {
-        let preset_type = PresetType::from_api_id(preset_ref.api_id.as_str()).ok_or_else(|| {
-            ApplicationError::ValidationError(format!(
-                "prompt_assembly.preset_api_invalid: unsupported preset apiId `{}`",
-                preset_ref.api_id
-            ))
-        })?;
-        if preset_type != PresetType::OpenAI {
-            return Err(ApplicationError::ValidationError(format!(
-                "prompt_assembly.openai_preset_required: independent Agent prompt assembly currently requires an openai preset, got `{}`",
-                preset_ref.api_id
-            )));
-        }
-
+    async fn load_openai_preset_settings(&self, name: &str) -> Result<Value, ApplicationError> {
         let preset = self
             .preset_repository
-            .get_preset(preset_ref.name.as_str(), &preset_type)
+            .get_preset(name, &PresetType::OpenAI)
             .await?
             .map(|preset| preset.data_with_name());
         if let Some(settings) = preset {
-            ensure_json_object(
-                &settings,
-                "prompt_assembly.preset_data_invalid: preset data must be an object",
-            )?;
             return Ok(settings);
         }
 
         let default_preset = self
             .preset_repository
-            .get_default_preset(preset_ref.name.as_str(), &preset_type)
+            .get_default_preset(name, &PresetType::OpenAI)
             .await?
             .map(|preset| {
                 Preset::new(preset.name, preset.preset_type, preset.data).data_with_name()
             });
         if let Some(settings) = default_preset {
-            ensure_json_object(
-                &settings,
-                "prompt_assembly.preset_data_invalid: preset data must be an object",
-            )?;
             return Ok(settings);
         }
 
         Err(ApplicationError::NotFound(format!(
-            "prompt_assembly.preset_not_found: preset `{}` for apiId `{}` does not exist",
-            preset_ref.name, preset_ref.api_id
+            "prompt_assembly.preset_not_found: preset `{name}` for apiId `openai` does not exist"
         )))
     }
 
@@ -395,6 +400,11 @@ fn normalize_frozen_run_input_snapshot(
                     .to_string(),
             )
         })?;
+    if schema_version == 1 {
+        return Err(ApplicationError::ValidationError(
+            "agent.frozen_run_input_outdated: schemaVersion 1 input predates per-source context capture; generate again to capture a new input".to_string(),
+        ));
+    }
     if schema_version != u64::from(FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION) {
         return Err(ApplicationError::ValidationError(format!(
             "agent.frozen_run_input_snapshot_schema_unsupported: schemaVersion {schema_version} is unsupported"
@@ -507,6 +517,39 @@ fn normalize_frozen_run_input_snapshot(
         );
     }
     Ok(Value::Object(normalized))
+}
+
+fn ensure_openai_preset(preset_ref: &AgentPresetRef) -> Result<(), ApplicationError> {
+    let preset_type = PresetType::from_api_id(preset_ref.api_id.as_str()).ok_or_else(|| {
+        ApplicationError::ValidationError(format!(
+            "prompt_assembly.preset_api_invalid: unsupported preset apiId `{}`",
+            preset_ref.api_id
+        ))
+    })?;
+    if preset_type != PresetType::OpenAI {
+        return Err(ApplicationError::ValidationError(format!(
+            "prompt_assembly.openai_preset_required: independent Agent prompt assembly currently requires an openai preset, got `{}`",
+            preset_ref.api_id
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn current_preset_ref(preset: &Value) -> Result<AgentPresetRef, ApplicationError> {
+    let name = preset["name"].as_str().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "agent.current_preset_unnamed: this Run captured an unnamed current preset; save the chat preset and start a new Run".into(),
+        )
+    })?;
+    let api_id = preset["apiId"].as_str().ok_or_else(|| {
+        ApplicationError::ValidationError(
+            "agent.current_preset_ref_invalid: currentPreset.apiId is required".into(),
+        )
+    })?;
+    Ok(AgentPresetRef {
+        api_id: api_id.into(),
+        name: name.into(),
+    })
 }
 
 fn normalize_current_preset(value: &Value) -> Result<Value, ApplicationError> {
@@ -763,7 +806,7 @@ fn apply_current_model_connection_to_prompt_settings(
         .get("currentModelConnection")
         .ok_or_else(|| {
             ApplicationError::ValidationError(
-                "prompt_assembly.current_model_connection_required: model.mode=currentPromptSnapshot with preset.ref requires FrozenRunInputSnapshot.currentModelConnection"
+                "prompt_assembly.current_model_connection_required: model.mode=currentPromptSnapshot requires FrozenRunInputSnapshot.currentModelConnection"
                     .to_string(),
             )
         })?;

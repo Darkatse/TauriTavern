@@ -4,26 +4,34 @@ Agent 继续使用 SillyTavern 的 PromptManager 组装提示词。Rust 解析 P
 
 ## 冻结一次输入
 
-Chat 的 `Generate()` 在 `GENERATE_AFTER_DATA` 的异步处理完成后、dry-run 返回前创建 `FrozenRunInputSnapshot`，供 Chat 与 SDK 使用：
+Chat 的 `Generate()` 在组装前采集材料，在 `GENERATE_AFTER_DATA` 的异步处理完成后、dry-run 返回前封存 `FrozenRunInputSnapshot`，供 Chat 与 SDK 使用。它记录生成那一刻的聊天事实，不按任何 Profile 裁剪：
 
 | 内容 | 来源和用途 |
 | --- | --- |
-| `promptInputs` | 聊天、角色、示例、扩展提示词等 PromptManager 输入 |
+| `promptInputs` | 聊天、角色、示例、扩展提示词等 PromptManager 输入；世界书按来源保存 |
 | `worldInfoActivation` | 本次生成激活的世界书 |
 | `macroContext` | 名称、角色模板、聊天事实、设置与模块数据，以及供原生端使用的只读文本 |
 | `variables` | local/global 变量原值 |
-| `currentPreset` | 当前聊天预设：预设文件格式的内容（含未保存的改动）与名称；没有具名预设时名称为 null |
+| `currentPreset` | 当前聊天预设的名称与内容（预设文件格式，含未保存的改动）；未选中预设时名称为 null |
 | `currentModelConnection` | 本次生成使用的模型连接 |
 
-根 Agent、子 Agent 和接手的 Agent 共用这份输入，各自按 Profile 决定历史范围、提示词和模型。每次组装使用工作副本，提示词和请求参数通过同一[宏求值入口](../API/Macros.md)共享本次变量，保存的输入保持不变。
+根 Agent、子 Agent 和接手的 Agent 共用这份输入，各自按 Profile 决定预设、模型和上下文范围。每次组装使用工作副本，提示词和请求参数通过同一[宏求值入口](../API/Macros.md)共享本次变量，保存的输入保持不变。
 
 Session 从自身历史与本次用户消息准备输入，使用指定预设，不取当前角色聊天的数据。变量来源见 [Session API](../API/Agent.md#持续-session)。完整历史保存在 JSONL 中；Run 只保存预算内的最终消息和运行上下文。
 
-捕获保存原始角色模板，不执行其中的宏；原生只读文本复用首次生成的结果。旧 Run 可查看和尝试 resume/fix，独立重建缺少必要输入时返回 `agent.macro_context_rebuild_unavailable`。
+捕获保存原始角色模板，不执行其中的宏；原生只读文本复用首次生成的结果。旧 Run 可查看和尝试 resume/fix；需要重新组装时，schemaVersion 1 的输入返回 `agent.frozen_run_input_outdated`，缺少宏重建材料时返回 `agent.macro_context_rebuild_unavailable`。
 
-## 两条组装路径
+## 上下文策略
 
-默认 Profile 使用当前生成得到的 prompt snapshot。Profile 设置 `preset.mode = ref` 时，按指定预设重新组装：
+Profile 的历史窗口与 `includeActivatedWorldInfo` 只在 [agent-context-policy.js](../../src/scripts/tauritavern/agent/agent-context-policy.js) 的投影中应用：它从冻结输入生成每次组装的工作输入。世界书只激活一次，前后文、示例、深度注入、outlet 与 Author's Note 附加内容按来源保存，由投影取舍。`includeActivatedWorldInfo` 只约束初始提示词，工具读取完整的激活结果。
+
+live 根生成同样先投影。live `{{outlet}}` 读取全局扩展提示词，因此投影后的世界书注入会写回全局。
+
+## 一种组装，一个 live 例外
+
+每个 Invocation 按自己的 Profile 选择预设与连接：`currentPromptSnapshot` 取冻结的 `currentPreset` 与 `currentModelConnection`，`ref` 与 `connectionRef` 解析具名资源。“当前”是 Run 捕获时的聊天，不随根 Agent 的绑定或运行中的 UI 切换改变。
+
+聊天根 Invocation 绑定当前预设时，直接复用 `Generate()` 的 live 生成，保留扩展钩子对消息和参数的修改。其余情况都独立组装。根绑定指定预设时：
 
 ```text
 冻结聊天输入
@@ -32,7 +40,7 @@ Session 从自身历史与本次用户消息准备输入，使用指定预设，
   → startRunWithPromptSnapshot：Rust 创建 Run 并开始循环
 ```
 
-子 Agent 或交接发生在运行中。它们需要独立预设时，runtime 写入 `prompt_assembly_requested` 事件，host bridge 按请求 ID 读取组装输入，调用同一个前端组装器，再把结果交回等待中的 Invocation。
+子 Agent 或交接发生在运行中：runtime 写入 `prompt_assembly_requested` 事件，host bridge 按请求 ID 读取组装输入，调用同一个前端组装器，再把结果交回等待中的 Invocation。缺少当前预设时返回 `prompt_assembly.current_preset_unavailable`；需要预设身份而当前预设未命名时返回 `agent.current_preset_unnamed`。
 
 `agentSystemPrompt` 是 Profile 指令在 PromptManager 中的位置，`agentTask` 是委派或交接任务的位置。Preset 控制组件的位置和 role，runtime 消费最终组装好的消息。
 
@@ -58,13 +66,14 @@ Additional Parameters 在前端准备请求时展开，后续轮次复用结果�
 
 `currentPromptSnapshot` 使用输入中冻结的连接。`connectionRef` 则通过 LLM Connection 解析：组装时应用一次，让 PromptManager 使用正确的模型设置；Invocation 进入循环前再应用到最终请求。Model Target 与反向代理预设的管理见 [LLM Connection API](../API/LlmConnections.md)。
 
-独立组装使用 headless PromptManager，不切换 UI 的预设或模型。动态扩展提示词在输入冻结时收集；依赖普通 `CHAT_COMPLETION_PROMPT_READY` 事件改写提示词的扩展不会参与这条独立组装路径。
+独立组装使用 headless PromptManager，不切换 UI 的预设或模型。动态扩展提示词在 live 组装前采集；依赖普通 `CHAT_COMPLETION_PROMPT_READY` 事件改写提示词的扩展不会参与这条独立组装路径。
 
 ## 源码
 
 | 位置 | 职责 |
 | --- | --- |
 | [frozen-run-input-snapshot.js](../../src/scripts/tauritavern/agent/frozen-run-input-snapshot.js) | 前端冻结输入 |
+| [agent-context-policy.js](../../src/scripts/tauritavern/agent/agent-context-policy.js) | 上下文策略投影 |
 | [prompt_assembly_service.rs](../../src-tauri/crates/tt-application/src/services/prompt_assembly_service.rs) | 解析预设、模型和组装请求 |
 | [agent-prompt-assembly-run.js](../../src/tauri/main/api/agent-prompt-assembly-run.js) | 根 Run 的 prepare/build 编排 |
 | [agent-prompt-assembly.js](../../src/tauri/main/api/agent-prompt-assembly.js) | 前端组装器 |

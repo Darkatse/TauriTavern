@@ -260,64 +260,6 @@ test('Agent generation router rejects non-direct callable profiles before direct
     );
 });
 
-
-test('Agent context policy windows latest-first prompt history without mutating frozen input', async () => {
-    const contextPolicy = await importFresh('src/scripts/tauritavern/agent/agent-context-policy.js');
-    const chat = [
-        { role: 'user', content: 'latest' },
-        { role: 'assistant', content: 'middle' },
-        { role: 'user', content: 'oldest' },
-    ];
-
-    assert.deepEqual(contextPolicy.normalizeAgentContextPolicy({
-        initialChatHistoryMessages: 0,
-        includeActivatedWorldInfo: true,
-    }), {
-        initialChatHistoryMessages: 0,
-        includeActivatedWorldInfo: true,
-    });
-    assert.deepEqual(contextPolicy.applyInitialChatHistoryPolicy(chat, {
-        initialChatHistoryMessages: 0,
-        includeActivatedWorldInfo: true,
-    }), []);
-    assert.deepEqual(contextPolicy.applyInitialChatHistoryPolicy(chat, {
-        initialChatHistoryMessages: 2,
-        includeActivatedWorldInfo: true,
-    }), chat.slice(0, 2));
-    assert.equal(contextPolicy.applyInitialChatHistoryPolicy(chat, {
-        initialChatHistoryMessages: -1,
-        includeActivatedWorldInfo: true,
-    }), chat);
-
-    const materialized = contextPolicy.materializeInitialChatHistoryMessages(chat, {
-        initialChatHistoryMessages: -1,
-        includeActivatedWorldInfo: true,
-    });
-    assert.deepEqual(materialized, chat);
-    assert.notEqual(materialized, chat);
-    assert.notEqual(materialized[0], chat[0]);
-
-    materialized[0].content = 'mutated';
-    assert.equal(chat[0].content, 'latest');
-
-    assert.throws(
-        () => contextPolicy.applyInitialChatHistoryPolicy(null, {
-            initialChatHistoryMessages: -1,
-            includeActivatedWorldInfo: true,
-        }),
-        /agent\.context_history_messages_invalid/,
-    );
-});
-
-
-
-
-
-
-
-
-
-
 test('Agent run controller tracks active runs until terminal events', async () => {
     let listener = null;
     let stopped = false;

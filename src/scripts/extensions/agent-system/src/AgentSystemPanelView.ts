@@ -46,9 +46,6 @@ export function presetSummaryLabel(draft: AgentProfileDraft, tr: Tr): string {
     if (preset.mode === 'ref') {
         return preset.ref?.name || tr('savedPreset');
     }
-    if (preset.mode === 'none') {
-        return tr('none');
-    }
     return tr('currentPromptPreset');
 }
 

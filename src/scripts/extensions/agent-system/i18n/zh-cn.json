@@ -105,7 +105,6 @@
     "agent_system.newSkillImport": "新建 Skill",
     "agent_system.noFilesFoundForSkill": "未找到此SKILLS的文件。",
     "agent_system.noSkillsInstalled": "尚未安装SKILLS。",
-    "agent_system.noPromptPreset": "不使用预设",
     "agent_system.noSavedModelTargets": "暂无已保存模型。请先在 Connection Manager 保存模型。",
     "agent_system.noToolParameters": "无参数。",
     "agent_system.normalizedAgentProfileIdentity": "已修复 Agent 配置文件身份信息：{id}",

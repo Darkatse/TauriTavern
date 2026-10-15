@@ -29,6 +29,8 @@ const unsubscribe = agent.subscribe(run.runId, event => {
 
 canonical snapshot 的指令消息以 Text part 保存正文，并携带 `providerMetadata.promptComponent: "agentSystemPrompt"`，供 runtime 追加目录。旧 Chat 输入仍接受字符串 `content` 与 `_tauritavern_prompt_component: "agentSystemPrompt"`。共同 PromptManager 自动提供标记，标记不会发送给模型。
 
+手工 snapshot 需要委派或交接时须携带 `frozenRunInputSnapshot`，当前预设及其 Skill 作用域都从中取得。
+
 ## 持续 Session
 
 Session 独立于角色聊天和写作 Agent Mode。使用前通过 `sessions.profile.save()` 保存[共享配置](../Agent/ProfilesAndPreset.md#session-配置)，此后每次发送读取最新配置。

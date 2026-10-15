@@ -643,7 +643,7 @@ mod tests {
             "id": "test",
             "displayName": "Test",
             "preset": {
-                "mode": "none",
+                "mode": "currentPromptSnapshot",
                 "required": false
             },
             "model": {

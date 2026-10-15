@@ -187,9 +187,9 @@ pub enum AgentReasoningEffort {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum AgentPresetBindingMode {
+    #[serde(alias = "none")]
     CurrentPromptSnapshot,
     Ref,
-    None,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

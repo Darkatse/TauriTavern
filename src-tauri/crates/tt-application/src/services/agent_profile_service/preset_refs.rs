@@ -87,7 +87,7 @@ pub(super) async fn validate_preset_binding(
         ));
     }
     match binding.mode {
-        AgentPresetBindingMode::CurrentPromptSnapshot | AgentPresetBindingMode::None => Ok(()),
+        AgentPresetBindingMode::CurrentPromptSnapshot => Ok(()),
         AgentPresetBindingMode::Ref => {
             let Some(ref_) = binding.ref_.as_ref() else {
                 return Err(ApplicationError::ValidationError(

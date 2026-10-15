@@ -28,12 +28,13 @@ await agent.profiles.save(reviewer);
 
 | 配置 | 选择 | 含义 |
 | --- | --- | --- |
-| `preset.mode` | `currentPromptSnapshot` | 使用当前生成准备好的提示词 |
+| `preset.mode` | `currentPromptSnapshot` | 使用 Run 捕获时的当前聊天预设（包含未保存改动）；聊天根 Agent 复用 live 生成 |
 | | `ref` | 用 `preset.ref` 指定的预设重新组装 |
-| | `none` | 使用输入提示词，作为兼容绑定保留 |
 | `model.mode` | `currentPromptSnapshot` | 使用本次输入冻结的模型连接 |
 | | `connectionRef` | 使用指定 LLM Connection 和 `modelId` |
 | | `requiresConfiguration` | 等待用户在本机选择模型 |
+
+子 Agent 与交接目标同样按自己的绑定组装，“当前”的含义见 [Prompt assembly](PromptAssembly.md)。需要精简的子 Agent 时，缩小历史窗口或绑定一份精简预设。
 
 例如，使用专门的写作预设和本地连接：
 

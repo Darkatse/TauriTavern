@@ -7,7 +7,7 @@ import {
     saveSettingsDebounced,
     this_chid,
 } from '../script.js';
-import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
+import { extension_prompt_roles, extension_prompt_types, NOTE_MODULE_NAME as MODULE_NAME } from './extension-prompts.js';
 import { isInlineDrawerOpen } from './drawers.js';
 import { selected_group } from './group-chats.js';
 import { extension_settings, getContext, saveMetadataDebounced } from './extensions.js';
@@ -22,8 +22,6 @@ import { t } from './i18n.js';
 import { macros, MacroCategory } from './macros/macro-system.js';
 import { MacrosParser } from './macros.js';
 import { power_user } from './power-user.js';
-
-const MODULE_NAME = '2_floating_prompt'; // <= Deliberate, for sorting lower than memory
 
 export var shouldWIAddPrompt = false;
 

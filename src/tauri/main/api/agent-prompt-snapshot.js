@@ -3,6 +3,7 @@
 import {
     loadAgentContextPolicy,
     normalizeAgentContextPolicy,
+    projectAgentPromptInputs,
 } from '../../../scripts/tauritavern/agent/agent-context-policy.js';
 import {
     loadResolvedAgentSystemPrompt,
@@ -91,6 +92,10 @@ export async function materializeCurrentPromptSnapshot(input) {
         throw new Error('agent.model_required: current chat-completion source did not resolve a model');
     }
 
+    const workingInputs = projectAgentPromptInputs(frozenRunInputSnapshot.promptInputs, seed.contextPolicy);
+    const macroContext = openai.createChatCompletionMacroContext(
+        createMacroContextFromSnapshot(frozenRunInputSnapshot, workingInputs), settings, model,
+    );
     const { generate_data: payload } = await openai.createGenerationParameters(
         settings,
         model,
@@ -99,9 +104,7 @@ export async function materializeCurrentPromptSnapshot(input) {
         {
             jsonSchema: seed.jsonSchema ?? null,
             agentMode: true,
-            macroContext: openai.createChatCompletionMacroContext(
-                createMacroContextFromSnapshot(frozenRunInputSnapshot), settings, model,
-            ),
+            macroContext,
         },
     );
 

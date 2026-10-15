@@ -1,3 +1,6 @@
+import { composeAuthorsNote, isWorldInfoInjection, NOTE_MODULE_NAME } from '../../extension-prompts.js';
+import { prepareAgentHistory } from './agent-model-messages.js';
+
 export const DEFAULT_AGENT_CONTEXT_POLICY = Object.freeze({
     initialChatHistoryMessages: -1,
     includeActivatedWorldInfo: true,
@@ -41,26 +44,35 @@ export async function loadAgentContextPolicy(profileId) {
     return agentContextPolicyForProfile(result.profile);
 }
 
-export function applyInitialChatHistoryPolicy(coreChat, policy) {
-    if (!Array.isArray(coreChat)) {
-        throw new Error('agent.context_history_messages_invalid: messages must be an array');
-    }
-
+/** Returns a fresh working input; the captured input is never mutated. */
+export function projectAgentPromptInputs(promptInputs, policy) {
     const resolved = normalizeAgentContextPolicy(policy);
-    if (resolved.initialChatHistoryMessages < 0) {
-        return coreChat;
-    }
-    if (resolved.initialChatHistoryMessages === 0) {
-        return [];
-    }
+    const { agentMessages, worldInfoExamples, authorsNoteAdditions, ...working } = structuredClone(promptInputs);
+    working.messages = agentMessages
+        ? prepareAgentHistory(agentMessages, resolved)
+        : windowChatHistory(working.messages, resolved.initialChatHistoryMessages);
 
-    // SillyTavern's OpenAI PromptManager raw chat history is latest-first.
-    // Positive Agent windows therefore keep the front of the array.
-    return coreChat.slice(0, resolved.initialChatHistoryMessages);
+    let noteAdditions = authorsNoteAdditions;
+    if (resolved.includeActivatedWorldInfo) {
+        working.messageExamples = [...worldInfoExamples.before, ...working.messageExamples, ...worldInfoExamples.after];
+    } else {
+        working.worldInfoBefore = '';
+        working.worldInfoAfter = '';
+        for (const key of Object.keys(working.extensionPrompts)) {
+            if (isWorldInfoInjection(key)) delete working.extensionPrompts[key];
+        }
+        noteAdditions = authorsNoteAdditions?.persona ? { ...authorsNoteAdditions, worldInfo: null } : null;
+    }
+    if (noteAdditions) {
+        working.extensionPrompts[NOTE_MODULE_NAME] = composeAuthorsNote(working.extensionPrompts[NOTE_MODULE_NAME], noteAdditions);
+    }
+    return working;
 }
 
-export function materializeInitialChatHistoryMessages(coreChat, policy) {
-    // PromptManager assembly mutates history while injecting prompts and
-    // reversing into provider order; frozen Agent input must stay reusable.
-    return structuredClone(applyInitialChatHistoryPolicy(coreChat, policy));
+function windowChatHistory(messages, limit) {
+    if (!Array.isArray(messages)) {
+        throw new Error('agent.context_history_messages_invalid: messages must be an array');
+    }
+    // SillyTavern's OpenAI PromptManager raw chat history is latest-first.
+    return limit < 0 ? messages : messages.slice(0, limit);
 }

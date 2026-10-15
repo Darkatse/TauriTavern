@@ -111,6 +111,7 @@ async fn completed_legacy_revision_preserves_work_and_translates_only_affected_t
     let prepared = &mut checkpoint["state"]["foreground"]["prepared"];
     prepared["effectiveSkills"] = bound_skills.clone();
     prepared["profile"]["schemaVersion"] = json!(3);
+    prepared["profile"]["preset"]["mode"] = json!("none");
     prepared["profile"]["skills"]["maxReadCharsPerCall"] = json!(100_000);
     prepared["profile"]["skills"]["maxReadCharsPerRun"] = json!(200_000);
     prepared["profile"]["tools"]["allow"]

@@ -104,7 +104,6 @@
     "agent_system.newAgentProfile": "新增Agent 設定檔",
     "agent_system.newSkillImport": "新增 Skill",
     "agent_system.noFilesFoundForSkill": "此SKILLS沒有檔案。",
-    "agent_system.noPromptPreset": "不使用預設",
     "agent_system.noSavedModelTargets": "暫無已儲存模型。請先在 Connection Manager 儲存模型。",
     "agent_system.noSkillsInstalled": "尚未安裝SKILLS。",
     "agent_system.noToolParameters": "無參數。",

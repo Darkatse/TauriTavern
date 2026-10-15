@@ -592,7 +592,7 @@ fn test_profile(agent_system_prompt: Option<&str>, presentation: &str) -> Resolv
         "id": "test",
         "displayName": "Test",
         "preset": {
-            "mode": "none",
+            "mode": "currentPromptSnapshot",
             "required": false
         },
         "model": {
