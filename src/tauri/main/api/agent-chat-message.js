@@ -1,7 +1,5 @@
 // @ts-check
 
-const AUTO_COMMIT_TEXT_EXTENSIONS = new Set(['md', 'markdown', 'txt', 'text']);
-
 export function prepareGeneratedReplyForSave(script, rawText, generationType) {
     // saveReply is a low-level chat writer. Legacy generation runs cleanup
     // before saveReply, so Agent commit must preserve that boundary here.
@@ -38,12 +36,6 @@ export function initialCommitSaveType(generationType, mode) {
         return 'normal';
     }
     return type;
-}
-
-export function isAutoCommitTextPath(path) {
-    const name = String(path || '').split('/').at(-1) || '';
-    const dot = name.lastIndexOf('.');
-    return dot > 0 && AUTO_COMMIT_TEXT_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
 }
 
 export function getActiveMessageId(chat) {

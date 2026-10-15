@@ -610,6 +610,7 @@ test('agent live write keeps one real partial chat message and saves it on failu
         let persistCount = 0;
         attachHostCommitBridge({
             runId: 'run-live-partial',
+            messageBodyPath: 'output/main.md',
             chatRef,
             stableChatId: 'stable-live-partial',
             generationType: 'normal',
@@ -631,6 +632,13 @@ test('agent live write keeps one real partial chat message and saves it on failu
             persistChat: async () => { persistCount += 1; },
         });
 
+        // Working notes are not previewed; only the message body reaches the chat.
+        liveListener({
+            type: 'replace',
+            call: liveWriteCall('working note', { path: 'persist/notes.md' }),
+        });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        assert.equal(script.chat.length, 0);
         liveListener({
             type: 'replace',
             call: liveWriteCall('partial'),
@@ -724,6 +732,7 @@ test('agent live swipe keeps prior commit metadata on the prior swipe only', asy
         let liveListener = null;
         attachHostCommitBridge({
             runId: 'run-live-swipe',
+            messageBodyPath: 'output/main.md',
             chatRef,
             stableChatId: 'stable-live-swipe',
             generationType: 'swipe',
@@ -771,6 +780,7 @@ test('agent live write reuses auto checkpoints and stops after the first explici
         let persistCount = 0;
         attachHostCommitBridge({
             runId: 'run-live-commit',
+            messageBodyPath: 'output/main.md',
             chatRef,
             stableChatId: 'stable-live-commit',
             generationType: 'normal',
@@ -864,6 +874,7 @@ test('agent live write emits generated-message events once when commit persisten
         let persistAttempts = 0;
         attachHostCommitBridge({
             runId: 'run-live-persist-failure',
+            messageBodyPath: 'output/main.md',
             chatRef,
             stableChatId: 'stable-live-persist-failure',
             generationType: 'normal',
@@ -1229,7 +1240,7 @@ test('Agent stop retains the last raw frame and retries a failed chat save', asy
     let saved;
     let failSave = true;
     const bridge = attachHostCommitBridge({
-        runId: 'run-frame', chatRef, stableChatId: 'stable-story',
+        runId: 'run-frame', chatRef, stableChatId: 'stable-story', messageBodyPath: 'output/main.md',
         safeInvoke: async () => {}, readWorkspaceFile: async () => {},
         subscribe(_runId, handler) { durable = handler; return () => {}; },
         subscribeLiveProjection(_runId, handler) { live = handler; return () => {}; },
