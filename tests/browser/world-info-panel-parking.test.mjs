@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createBrowserRuntime } from './runtime.mjs';
+import { createBrowserRuntime, createPaginationWaiter } from './runtime.mjs';
 
 test('editing a reattached lorebook does not overwrite changes made while detached', async context => {
     const { window, getModule, load, startHost } = createBrowserRuntime();
@@ -10,21 +10,7 @@ test('editing a reattached lorebook does not overwrite changes made while detach
     const worldInfo = getModule('scripts/world-info.js').namespace;
     const $ = window.jQuery;
 
-    // Observe completion without replacing the pagination plugin or using sleeps.
-    let pageRendered;
-    const pagination = $.fn.pagination;
-    $.fn.pagination = function (options, ...args) {
-        if (options && typeof options === 'object') {
-            const callback = options.callback;
-            options.callback = (...args) => (pageRendered = callback(...args));
-        }
-        return pagination.call(this, options, ...args);
-    };
-    Object.assign($.fn.pagination, pagination);
-    const render = async () => {
-        await worldInfo.showWorldEditor('Book');
-        await pageRendered;
-    };
+    const waitForPagination = createPaginationWaiter(window);
 
     let saved;
     window.fetch = async (url, init) => {
@@ -34,7 +20,7 @@ test('editing a reattached lorebook does not overwrite changes made while detach
     };
     const data = { entries: { 0: { ...structuredClone(worldInfo.newWorldInfoEntryTemplate), uid: 0, content: 'original' } } };
     worldInfo.worldInfoCache.set('Book', data);
-    await render();
+    await waitForPagination(() => worldInfo.showWorldEditor('Book'));
 
     const list = window.document.getElementById('world_popup_entries_list');
     const parent = list.parentNode;
@@ -42,7 +28,7 @@ test('editing a reattached lorebook does not overwrite changes made while detach
     const updated = structuredClone(data);
     updated.entries[0].content = 'external update';
     await worldInfo.saveWorldInfo('Book', updated, true);
-    await render();
+    await waitForPagination(() => worldInfo.showWorldEditor('Book'));
     parent.appendChild(list);
 
     const order = window.document.querySelector('#world_popup_entries_list input[name="order"]');

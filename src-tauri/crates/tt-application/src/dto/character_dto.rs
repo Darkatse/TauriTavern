@@ -129,39 +129,47 @@ pub struct UpdateCharacterCardDataDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CheckCharacterLorebookConflictDto {
+pub struct AdoptCharacterLorebookDto {
     pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CharacterLorebookConflictDto {
-    pub conflict: bool,
-    pub world: String,
-    pub embedded_name: Option<String>,
-    pub current_available: bool,
-    pub conflict_token: Option<String>,
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum CharacterLorebookAdoptionDto {
+    None,
+    Linked {
+        world: String,
+        previous: String,
+        created: bool,
+        updated: bool,
+    },
+    Decision {
+        world: String,
+        target: String,
+        can_update: bool,
+        token: String,
+    },
+    Failed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum CharacterLorebookConflictResolution {
-    Current,
-    Embedded,
-    Copy,
+pub enum CharacterLorebookAdoptionChoice {
+    Adopt,
+    Update,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResolveCharacterLorebookConflictDto {
+pub struct ResolveCharacterLorebookAdoptionDto {
     pub name: String,
-    pub resolution: CharacterLorebookConflictResolution,
-    pub conflict_token: Option<String>,
+    pub choice: CharacterLorebookAdoptionChoice,
+    pub token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResolveCharacterLorebookConflictResultDto {
-    pub world: String,
-    pub affected_world: Option<String>,
-    pub world_written: bool,
+pub struct ImportCharacterResultDto {
+    pub character: CharacterDto,
+    pub lorebook: CharacterLorebookAdoptionDto,
 }
 
 /// Raw character card merge DTO used by upstream-compatible HTTP routes.

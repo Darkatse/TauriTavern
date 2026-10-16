@@ -18,7 +18,7 @@
 | [数据目录](DataDirectorySelection.md) | 桌面目录选择与迁移 |
 | [原生模型 API](NativeApiFormats.md) | Responses、Claude、Gemini 等格式 |
 | [iOS 策略](iOSPolicy.md) | 平台能力与分发设置 |
-| [角色身份](CharacterIdentityContract.md) | 角色、聊天目录与重命名 |
+| [角色身份](CharacterIdentityContract.md) | 角色、聊天目录、重命名与世界书绑定 |
 | [日志](LoggingObservability.md) | tracing、Dev API 与 LLM 请求日志 |
 | [资源缓存](HostResourceCaching.md) | 资源版本与条件请求 |
 | [更新渠道](UpdateChannels.md) | Stable、Canary 与更新检测 |

@@ -91,5 +91,19 @@
     "Toggle replace": "Toggle replace",
     "No matches": "No matches",
     "Invalid regular expression": "Invalid regular expression",
-    "All": "All"
+    "All": "All",
+    "Update Lorebook": "Update Lorebook",
+    "The new card's lorebook differs from the current one, ${0}.": "The new card's lorebook differs from the current one, ${0}.",
+    "Switch to New: use ${0}; the current one stays unchanged.": "Switch to New: use ${0}; the current one stays unchanged.",
+    "Update Current: overwrite ${0}.": "Update Current: overwrite ${0}.",
+    "Switch to New": "Switch to New",
+    "Update Current": "Update Current",
+    "Keep Current": "Keep Current",
+    "Linked lorebook \"${0}\"": "Linked lorebook \"${0}\"",
+    "Updated lorebook \"${0}\"": "Updated lorebook \"${0}\"",
+    "Lorebook is up to date": "Lorebook is up to date",
+    "The lorebook was changed elsewhere; nothing was applied": "The lorebook was changed elsewhere; nothing was applied",
+    "Lorebook refresh failed": "Lorebook refresh failed",
+    "Lorebook import failed": "Lorebook import failed",
+    "Character imported; lorebook import failed": "Character imported; lorebook import failed"
 }

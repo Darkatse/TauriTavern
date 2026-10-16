@@ -598,7 +598,7 @@ impl CharacterRepository for FileCharacterRepository {
         &self,
         file_path: &Path,
         name: &str,
-        primary_lorebook: Option<&str>,
+        primary_lorebook: &str,
     ) -> Result<Character, DomainError> {
         self.ensure_directory_exists().await?;
         if !validate_path_segment(name) {

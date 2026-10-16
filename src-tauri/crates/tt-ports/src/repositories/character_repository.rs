@@ -49,7 +49,7 @@ pub trait CharacterRepository: Send + Sync {
         &self,
         file_path: &Path,
         name: &str,
-        primary_lorebook: Option<&str>,
+        primary_lorebook: &str,
     ) -> Result<Character, DomainError>;
 
     /// Read the raw character card JSON payload as stored (PNG metadata, preferring V3 when available).

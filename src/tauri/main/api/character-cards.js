@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createFileStagingService } from '../services/files/file-staging-service.js';
+import { characterStemFromAvatarFileName } from '../services/characters/character-identity.js';
 
 const CHARACTER_CARD_EXTENSIONS = ['json', 'png'];
 const CHARACTER_CARD_EXTENSION_SET = new Set(CHARACTER_CARD_EXTENSIONS);
@@ -9,6 +10,15 @@ const CHARACTER_CARD_MIME_BY_EXTENSION = new Map([
     ['png', 'image/png'],
 ]);
 
+export class LorebookAdoptionConflictError extends Error {
+    /** @param {string} message */
+    constructor(message) {
+        super(message);
+        this.name = 'LorebookAdoptionConflictError';
+    }
+}
+
+/** @param {unknown} value @param {string} label */
 function requireNonEmptyString(value, label) {
     const normalized = String(value ?? '').trim();
     if (!normalized) {
@@ -17,6 +27,7 @@ function requireNonEmptyString(value, label) {
     return normalized;
 }
 
+/** @param {string} fileName */
 function characterCardExtension(fileName) {
     const match = String(fileName || '').match(/\.([^.]+)$/);
     const extension = match?.[1]?.toLowerCase() || '';
@@ -29,15 +40,20 @@ function characterCardExtension(fileName) {
 /**
  * @param {{
  *   safeInvoke: (command: string, args?: any) => Promise<any>;
+ *   invalidateCharacterCache: () => void;
  *   createReadableFileStream: (filePath: string) => ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;
  * }} deps
  */
 function createCharacterCardsApi({
     safeInvoke,
+    invalidateCharacterCache,
     createReadableFileStream,
 }) {
     if (typeof safeInvoke !== 'function') {
         throw new Error('Tauri main context safeInvoke is missing');
+    }
+    if (typeof invalidateCharacterCache !== 'function') {
+        throw new Error('Tauri main context invalidateCharacterCache is missing');
     }
     if (typeof createReadableFileStream !== 'function') {
         throw new Error('Tauri readable file stream service is missing');
@@ -45,29 +61,13 @@ function createCharacterCardsApi({
 
     const staging = createFileStagingService({ safeInvoke });
 
+    /** @param {string} filePath @param {string} preferredName */
     async function fileFromPath(filePath, preferredName) {
         const fileName = requireNonEmptyString(preferredName, 'character card file name');
         const extension = characterCardExtension(fileName);
         const type = CHARACTER_CARD_MIME_BY_EXTENSION.get(extension) || 'application/octet-stream';
         const stream = await createReadableFileStream(filePath);
-        const reader = stream.getReader();
-        const chunks = [];
-
-        try {
-            for (;;) {
-                const { done, value } = await reader.read();
-                if (done) {
-                    break;
-                }
-                if (value) {
-                    chunks.push(value);
-                }
-            }
-        } finally {
-            reader.releaseLock();
-        }
-
-        return new File(chunks, fileName, { type });
+        return new File([await new Response(stream).blob()], fileName, { type });
     }
 
     async function pickFiles({ multiple = false } = {}) {
@@ -82,9 +82,38 @@ function createCharacterCardsApi({
         }
     }
 
+    /** @param {string} avatar */
+    async function adoptLorebook(avatar) {
+        const name = characterStemFromAvatarFileName(avatar, 'avatar', { required: true });
+        const result = await safeInvoke('adopt_character_lorebook', { dto: { name } });
+        invalidateCharacterCache();
+        return result;
+    }
+
+    /**
+     * @param {string} avatar
+     * @param {'adopt' | 'update'} choice
+     * @param {string} token
+     */
+    async function resolveLorebookAdoption(avatar, choice, token) {
+        const name = characterStemFromAvatarFileName(avatar, 'avatar', { required: true });
+        try {
+            const result = await safeInvoke('resolve_character_lorebook_adoption', { dto: { name, choice, token } });
+            invalidateCharacterCache();
+            return result;
+        } catch (error) {
+            if (error instanceof Error && error.message.startsWith('Conflict:')) {
+                throw new LorebookAdoptionConflictError(error.message);
+            }
+            throw error;
+        }
+    }
+
     return {
         isNativePickerAvailable: () => true,
         pickFiles,
+        adoptLorebook,
+        resolveLorebookAdoption,
     };
 }
 
@@ -104,6 +133,7 @@ export function installCharacterCardsApi(context) {
 
     hostAbi.api.characterCards = createCharacterCardsApi({
         safeInvoke: context?.safeInvoke,
+        invalidateCharacterCache: context?.invalidateCharacterCache,
         createReadableFileStream: context?.createReadableFileStream,
     });
 }

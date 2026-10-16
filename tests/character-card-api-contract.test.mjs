@@ -6,6 +6,7 @@ function installHarness({ files, readFile }) {
     const discarded = [];
     globalThis.window = { __TAURITAVERN__: { api: {} } };
     installCharacterCardsApi({
+        invalidateCharacterCache: () => {},
         safeInvoke: async (command, args) => {
             if (command === 'pick_import_files') {
                 return files;

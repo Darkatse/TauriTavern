@@ -1,6 +1,47 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createBrowserRuntime } from './runtime.mjs';
+import { createBrowserRuntime, createPaginationWaiter } from './runtime.mjs';
+
+test('editing after a backend lorebook update preserves the new document', async context => {
+    const { window, getModule, load, startHost } = createBrowserRuntime();
+    context.after(() => window.happyDOM.close());
+    await startHost();
+    await load('script.js');
+    const worldInfo = getModule('scripts/world-info.js').namespace;
+    const $ = window.jQuery;
+    const waitForPagination = createPaginationWaiter(window);
+
+    const entry = (uid, content) => ({ ...structuredClone(worldInfo.newWorldInfoEntryTemplate), uid, content });
+    const oldDocument = { entries: { 0: entry(0, 'old content') } };
+    const newDocument = { entries: { 0: entry(0, 'new content'), 1: entry(1, 'new entry') } };
+    let saved;
+    window.fetch = async (url, init) => {
+        if (url === '/api/settings/get') return new window.Response(JSON.stringify({ world_names: ['Book'] }));
+        if (url === '/api/worldinfo/get') return new window.Response(JSON.stringify(newDocument));
+        if (url === '/api/worldinfo/edit') {
+            saved = JSON.parse(init.body).data;
+            return new window.Response('{}');
+        }
+        throw new Error(`Unexpected request: ${url}`);
+    };
+    await worldInfo.updateWorldInfoList();
+    worldInfo.initWorldInfo();
+    $('#world_editor_select').val('0');
+    worldInfo.worldInfoCache.set('Book', oldDocument);
+    await waitForPagination(() => worldInfo.showWorldEditor('Book'));
+
+    await worldInfo.saveWorldInfo('Book', oldDocument);
+    await waitForPagination(() => worldInfo.refreshWorldInfoAfterExternalWrite('Book'));
+    await worldInfo.flushWorldInfoSaves();
+    assert.equal(saved, undefined);
+    const order = window.document.querySelector('#world_popup_entries_list input[name="order"]');
+    order.value = '101';
+    await $(order).triggerHandler('input');
+    await worldInfo.flushWorldInfoSaves();
+    assert.equal(saved.entries[0].content, 'new content');
+    assert.equal(saved.entries[1].content, 'new entry');
+    assert.equal(saved.entries[0].order, 101);
+});
 
 test('immediate and debounced world info saves keep their snapshots and later edits', async context => {
     const { window, getModule, load, startHost } = createBrowserRuntime();

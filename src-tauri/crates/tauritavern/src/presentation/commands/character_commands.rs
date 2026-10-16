@@ -8,13 +8,13 @@ use crate::presentation::commands::helpers::{
 };
 use crate::presentation::errors::CommandError;
 use tt_application::dto::character_dto::{
-    BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataResultDto, CharacterChatDto,
-    CharacterDto, CharacterLorebookConflictDto, CheckCharacterLorebookConflictDto,
-    CreateCharacterDto, CreateCharacterWithAvatarResultDto, CreateWithAvatarDto,
-    DeleteCharacterDto, DuplicateCharacterDto, ExportCharacterContentDto, GetCharacterChatsDto,
-    ImportCharacterDto, MergeCharacterCardDataDto, RenameCharacterDto, ReplaceCharacterDto,
-    ResolveCharacterLorebookConflictDto, ResolveCharacterLorebookConflictResultDto,
-    UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
+    AdoptCharacterLorebookDto, BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataResultDto,
+    CharacterChatDto, CharacterDto, CharacterLorebookAdoptionDto, CreateCharacterDto,
+    CreateCharacterWithAvatarResultDto, CreateWithAvatarDto, DeleteCharacterDto,
+    DuplicateCharacterDto, ExportCharacterContentDto, GetCharacterChatsDto, ImportCharacterDto,
+    ImportCharacterResultDto, MergeCharacterCardDataDto, RenameCharacterDto, ReplaceCharacterDto,
+    ResolveCharacterLorebookAdoptionDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
+    UpdateCharacterDto,
 };
 use tt_domain::models::skill::{SkillScope, SkillScopeRetargetRequest};
 
@@ -119,36 +119,32 @@ pub async fn update_character_card_data(
 }
 
 #[tauri::command]
-pub async fn check_character_lorebook_conflict(
-    dto: CheckCharacterLorebookConflictDto,
+pub async fn adopt_character_lorebook(
+    dto: AdoptCharacterLorebookDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<CharacterLorebookConflictDto, CommandError> {
-    log_command(format!("check_character_lorebook_conflict {}", dto.name));
-
+) -> Result<CharacterLorebookAdoptionDto, CommandError> {
+    log_command(format!("adopt_character_lorebook {}", dto.name));
     app_state
         .services
         .character_service
-        .check_lorebook_conflict(dto)
+        .adopt_character_lorebook(&dto.name)
         .await
-        .map_err(map_command_error(
-            "Failed to check character lorebook conflict",
-        ))
+        .map_err(map_command_error("Failed to adopt character lorebook"))
 }
 
 #[tauri::command]
-pub async fn resolve_character_lorebook_conflict(
-    dto: ResolveCharacterLorebookConflictDto,
+pub async fn resolve_character_lorebook_adoption(
+    dto: ResolveCharacterLorebookAdoptionDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<ResolveCharacterLorebookConflictResultDto, CommandError> {
-    log_command(format!("resolve_character_lorebook_conflict {}", dto.name));
-
+) -> Result<CharacterLorebookAdoptionDto, CommandError> {
+    log_command(format!("resolve_character_lorebook_adoption {}", dto.name));
     app_state
         .services
         .character_service
-        .resolve_lorebook_conflict(dto)
+        .resolve_lorebook_adoption(dto)
         .await
         .map_err(map_command_error(
-            "Failed to resolve character lorebook conflict",
+            "Failed to resolve character lorebook adoption",
         ))
 }
 
@@ -286,7 +282,7 @@ pub async fn duplicate_character(
 pub async fn import_character(
     dto: ImportCharacterDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<CharacterDto, CommandError> {
+) -> Result<ImportCharacterResultDto, CommandError> {
     log_command(format!("import_character from {}", dto.file_path));
 
     app_state
@@ -301,7 +297,7 @@ pub async fn import_character(
 pub async fn replace_character(
     dto: ReplaceCharacterDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<CharacterDto, CommandError> {
+) -> Result<ImportCharacterResultDto, CommandError> {
     log_command(format!(
         "replace_character {} from {}",
         dto.name, dto.file_path

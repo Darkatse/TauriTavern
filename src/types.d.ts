@@ -1299,9 +1299,24 @@ type TauriTavernCharacterCardsPickOptions = {
     multiple?: boolean;
 };
 
+type TauriTavernCharacterLorebookAdoption =
+    | { status: 'none' }
+    | { status: 'linked'; world: string; previous: string; created: boolean; updated: boolean }
+    | { status: 'decision'; world: string; target: string; can_update: boolean; token: string };
+
+type TauriTavernCharacterImportResult = {
+    avatarFileName: string;
+    replaced: boolean;
+    lorebook: TauriTavernCharacterLorebookAdoption | { status: 'failed' };
+};
+
 type TauriTavernCharacterCardsApi = {
     isNativePickerAvailable: () => boolean;
     pickFiles: (options?: TauriTavernCharacterCardsPickOptions) => Promise<File[] | null>;
+    /** Project: adopt the stored card's embedded lorebook using its current binding. */
+    adoptLorebook: (avatar: string) => Promise<TauriTavernCharacterLorebookAdoption>;
+    /** Project: apply a decision returned by import or adoptLorebook. */
+    resolveLorebookAdoption: (avatar: string, choice: 'adopt' | 'update', token: string) => Promise<TauriTavernCharacterLorebookAdoption>;
 };
 
 type TauriTavernChatSurfaceDisposable = (() => void) | { dispose: () => void };

@@ -20,6 +20,29 @@ const root = fileURLToPath(new URL('../../src/', import.meta.url));
 // Past 10 the remaining gain is under 0.1 s, which is not worth spending that margin on.
 const TIMER_SCALE = 10;
 
+export function createPaginationWaiter(window) {
+    const $ = window.jQuery;
+    const pagination = $.fn.pagination;
+    let rendered;
+    $.fn.pagination = function (options, ...args) {
+        if (options && typeof options === 'object') {
+            const callback = options.callback;
+            options.callback = (...args) => {
+                const pending = callback(...args);
+                Promise.resolve(pending).then(rendered.resolve, rendered.reject);
+                return pending;
+            };
+        }
+        return pagination.call(this, options, ...args);
+    };
+    Object.assign($.fn.pagination, pagination);
+    return async action => {
+        rendered = Promise.withResolvers();
+        await action();
+        await rendered.promise;
+    };
+}
+
 export function createBrowserRuntime() {
     const window = new Window({
         url: 'http://localhost/',

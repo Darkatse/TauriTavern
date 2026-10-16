@@ -31,9 +31,9 @@ use tt_application::dto::agent_dto::{
     AgentSkillScopeRefsDto, AgentStartRunDto, AgentStartRunOptionsDto,
 };
 use tt_application::dto::character_dto::{
-    CharacterLorebookConflictResolution, CheckCharacterLorebookConflictDto, CreateCharacterDto,
+    CharacterLorebookAdoptionChoice, CharacterLorebookAdoptionDto, CreateCharacterDto,
     DeleteCharacterDto, ExportCharacterContentDto, ImportCharacterDto, MergeCharacterCardDataDto,
-    ReplaceCharacterDto, ResolveCharacterLorebookConflictDto, UpdateAvatarDto,
+    ReplaceCharacterDto, ResolveCharacterLorebookAdoptionDto, UpdateAvatarDto,
     UpdateCharacterCardDataDto, UpdateCharacterDto,
 };
 use tt_application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;

@@ -1,6 +1,6 @@
 # 角色身份契约现状
 
-本文档记录 TauriTavern 当前已经落地的角色身份契约，重点覆盖角色头像文件名、聊天目录、旧错误目录兼容、以及后续开发时不能误改的边界。
+本文档记录 TauriTavern 当前已经落地的角色身份契约，重点覆盖角色头像文件名、聊天目录、旧错误目录兼容、世界书绑定，以及后续开发时不能误改的边界。
 
 目标读者：后续继续修改角色导入、编辑、聊天保存、聊天导出、Agent profile/skill 导入链路的开发者。
 
@@ -196,3 +196,15 @@ alias key 是 Rust 内部 character stem，不是 avatar filename。
 - 新数据严格使用 exact avatar filename -> stem -> canonical directory。
 - 旧错误目录只通过 alias/lazy resolver 兼容。
 - 发现歧义时 fail-fast。
+
+## 10. 角色世界书
+
+- 角色使用 `data.extensions.world` 绑定的那本世界书。卡内的 `character_book` 只是它的副本，在保存和导出时刷新；两者不一致是正常的，不算冲突。
+- 内嵌书只在卡片到达时处理：导入、替换、“导入角色卡的世界书”。规则只写在 `CharacterService::adopt_embedded_lorebook` 一处。
+- 绑定只在接管或用户手动链接时改变。替换时先写回原绑定，再接管；原来没有绑定或旧卡读不出时，写回空绑定。
+- 新书以 `character_book.name` 命名，没有名字时用 `<角色名>'s Lorebook`。名字被占用时依次尝试 `名字 (1)`、`名字 (2)`……，遇到条目完全相同的书就直接复用。
+- 接管时，按角色当前在用的书分三种情况。其中“本地版本”指名字是新书原名或它的编号副本的那本书。
+  - 内容相同，且是本地版本：不做任何改动。
+  - 内容不同：询问一次；“更新当前”只对本地版本提供。
+  - 其余情况：直接链接分配到的书，必要时新建。
+- 前端的询问和刷新由 `world-info.js` 的 `completeCharacterLorebookAdoption` 负责。

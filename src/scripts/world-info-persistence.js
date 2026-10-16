@@ -128,6 +128,13 @@ export async function saveWorldInfo(name, data, immediately = false) {
     }
 }
 
+/** Discard the working document and pending edits after an external write or deletion. */
+export function discardWorldInfoDocument(name) {
+    dirty.delete(name);
+    reads.delete(name);
+    worldInfoCache.delete(name);
+}
+
 export function deleteWorldInfoDocument(name) {
     return enqueueWrite(async () => {
         const response = await fetch('/api/worldinfo/delete', {
@@ -136,9 +143,7 @@ export function deleteWorldInfoDocument(name) {
             body: JSON.stringify({ name }),
         });
         if (!response.ok) return false;
-        dirty.delete(name);
-        reads.delete(name);
-        worldInfoCache.delete(name);
+        discardWorldInfoDocument(name);
         return true;
     });
 }

@@ -3,6 +3,7 @@ import { Fuse } from '../lib.js';
 import {
     flushWorldInfoSaves,
     deleteWorldInfoDocument,
+    discardWorldInfoDocument,
     loadWorldInfo,
     prefetchWorldInfos,
     saveWorldInfo,
@@ -35,6 +36,7 @@ import { accountStorage } from './util/AccountStorage.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
 import { normalizeWorldInfoActivationBatch } from './tauritavern/agent/world-info-activation.js';
 import { canPrefetchWorldInfoTokenCount, getWorldInfoTokenPrefetchBatch } from './world-info-token-prefetch.js';
+import { LorebookAdoptionConflictError } from '../tauri/main/api/character-cards.js';
 import { prepareWorldInfoEntries } from './world-info-entry-prepare.js';
 import { getMountedCodeMirrorEditor, mountCodeMirrorEditor } from './tauri/codemirror-editor.js';
 
@@ -1075,6 +1077,81 @@ export function reloadEditor(file, loadIfNotSelected = false) {
     if (selectedIndex !== -1 && (loadIfNotSelected || currentIndex === selectedIndex)) {
         $('#world_editor_select').val(selectedIndex).trigger('change');
     }
+}
+
+/** Refresh the working document and editor after a backend write. */
+export async function refreshWorldInfoAfterExternalWrite(name, { created = false } = {}) {
+    discardWorldInfoDocument(name);
+    const data = await loadWorldInfo(name);
+    await eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
+    if (created) await updateWorldInfoList();
+    reloadEditor(name);
+}
+
+/**
+ * Resolve an adoption decision and refresh the linked lorebook and character views.
+ * @param {string} avatar
+ * @param {TauriTavernCharacterImportResult['lorebook']} adoption
+ * @param {{ skipPopup?: boolean, notify?: boolean }} [options]
+ * @returns {Promise<{ world: string, changed: boolean } | null>}
+ */
+export async function completeCharacterLorebookAdoption(avatar, adoption, { skipPopup = false, notify = true } = {}) {
+    if (adoption.status === 'decision') {
+        /** @type {'adopt' | 'update'} */
+        let choice = 'adopt';
+        if (!skipPopup) {
+            const current = `<code>${escapeHtml(adoption.world)}</code>`;
+            const target = `<code>${escapeHtml(adoption.target)}</code>`;
+            const body = `<div>${t`The new card's lorebook differs from the current one, ${current}.`}</div>
+                <div class="m-t-1">${t`Switch to New: use ${target}; the current one stays unchanged.`}</div>
+                ${adoption.can_update ? `<div>${t`Update Current: overwrite ${current}.`}</div>` : ''}`;
+            const customButtons = [{ text: t`Switch to New`, result: POPUP_RESULT.CUSTOM1 }];
+            if (adoption.can_update) customButtons.push({ text: t`Update Current`, result: POPUP_RESULT.CUSTOM2 });
+            const result = await Popup.show.confirm(t`Update Lorebook`, body, {
+                okButton: false,
+                cancelButton: t`Keep Current`,
+                customButtons,
+                defaultResult: POPUP_RESULT.CUSTOM1,
+            });
+            if (result !== POPUP_RESULT.CUSTOM1 && result !== POPUP_RESULT.CUSTOM2) return null;
+            choice = result === POPUP_RESULT.CUSTOM1 ? 'adopt' : 'update';
+        }
+        try {
+            adoption = await window.__TAURITAVERN__.api.characterCards.resolveLorebookAdoption(avatar, choice, adoption.token);
+        } catch (error) {
+            if (error instanceof LorebookAdoptionConflictError) {
+                throw new Error(t`The lorebook was changed elsewhere; nothing was applied`, { cause: error });
+            }
+            throw error;
+        }
+    }
+
+    if (adoption.status !== 'linked') return null;
+    const relinked = adoption.previous !== adoption.world;
+    const changed = relinked || adoption.created || adoption.updated;
+    if (adoption.created || adoption.updated) {
+        try {
+            await refreshWorldInfoAfterExternalWrite(adoption.world, { created: adoption.created });
+        } catch (error) {
+            console.error('Lorebook saved, but its view could not be refreshed:', error);
+            toastr.error(error?.message, t`Lorebook refresh failed`);
+        }
+    }
+
+    if (relinked) {
+        const index = characters.findIndex(character => character.avatar === avatar);
+        if (index !== -1) {
+            await getOneCharacter(avatar);
+            if (characters[this_chid]?.avatar === avatar) select_selected_character(this_chid, { switchMenu: false });
+        }
+    }
+    if (characters[this_chid]?.avatar === avatar) setWorldInfoButtonClass(this_chid);
+    if (notify && changed) {
+        toastr.success(adoption.updated
+            ? t`Updated lorebook "${adoption.world}"`
+            : t`Linked lorebook "${adoption.world}"`);
+    }
+    return { world: adoption.world, changed };
 }
 
 //MARK: regWISlashCommands
@@ -5807,43 +5884,22 @@ export function checkEmbeddedWorld(chid) {
 
 export async function importEmbeddedWorldInfo(skipPopup = false) {
     const chid = $('#import_character_info').data('chid');
+    const character = characters[chid];
+    if (!character?.data?.character_book) return;
 
-    if (chid === undefined || chid === -1) {
-        return;
-    }
-
-    const hasEmbed = checkEmbeddedWorld(chid);
-
-    if (!hasEmbed) {
-        return;
-    }
-
-    const bookName = characters[chid]?.data?.character_book?.name || `${characters[chid]?.name}'s Lorebook`;
-
-    if (!skipPopup) {
-        const confirmation = await Popup.show.confirm(t`Are you sure you want to import '${bookName}'?`, world_names.includes(bookName) ? t`It will overwrite the World/Lorebook with the same name.` : '');
-        if (!confirmation) {
-            return;
+    try {
+        await flushWorldInfoSaves('adopt_character_lorebook');
+        const adoption = await window.__TAURITAVERN__.api.characterCards.adoptLorebook(character.avatar);
+        const result = await completeCharacterLorebookAdoption(character.avatar, adoption, { skipPopup });
+        if (!result) return;
+        if (!result.changed) {
+            toastr.info(t`Lorebook is up to date`);
         }
+        openWorldInfoEditor(result.world);
+    } catch (error) {
+        console.error('Failed to adopt the embedded lorebook:', error);
+        toastr.error(error?.message, t`Lorebook import failed`);
     }
-
-    const convertedBook = convertCharacterBook(characters[chid].data.character_book);
-
-    await saveWorldInfo(bookName, convertedBook, true);
-    await updateWorldInfoList();
-    $('#character_world').val(bookName).trigger('change');
-
-    toastr.success(t`The world '${bookName}' has been imported and linked to the character successfully.`, t`World/Lorebook imported`);
-
-    const newIndex = world_names.indexOf(bookName);
-    if (newIndex >= 0) {
-        //show&draw the WI panel before..
-        $('#WIDrawerIcon').trigger('click');
-        //..auto-opening the new imported WI
-        $('#world_editor_select').val(newIndex).trigger('change');
-    }
-
-    setWorldInfoButtonClass(chid, true);
 }
 
 export function onWorldInfoChange(args, text) {
@@ -6438,7 +6494,6 @@ export function initWorldInfo() {
             openWorldInfoEditor(worldName);
         } else if (hasEmbed && !event.shiftKey && !event.altKey) {
             await importEmbeddedWorldInfo();
-            saveCharacterDebounced();
         }
         else {
             openSetWorldMenu();

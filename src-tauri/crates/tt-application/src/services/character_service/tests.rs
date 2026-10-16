@@ -14,14 +14,6 @@ fn indexed_world_name_reserves_suffix_bytes() {
 }
 
 #[test]
-fn indexed_world_copy_continues_existing_suffix_sequence() {
-    assert_eq!(
-        CharacterService::strip_trailing_index_suffix("Lore (2)"),
-        "Lore"
-    );
-}
-
-#[test]
 fn invalid_bulk_merge_avatar_filename_fails_fast() {
     let error = CharacterService::normalize_merge_avatar_filename("../Alice.png").unwrap_err();
 
