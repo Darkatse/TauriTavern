@@ -121,8 +121,13 @@
     display: none !important;
 }
 
+/* The remove button stays on its label's row. */
 .tt-gp-block > .range-block-title {
     width: auto;
+}
+
+.tt-gp-block > .checkbox_label {
+    flex: 1;
 }
 
 /* Slider blocks: label left, number box right, no range track. */
