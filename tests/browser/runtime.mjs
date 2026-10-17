@@ -159,5 +159,14 @@ export function createBrowserRuntime() {
         }
     }
 
-    return { window, listeners, getModule, load, startHost };
+    async function initializeChatRendering() {
+        const main = (await load('script.js')).namespace;
+        main.reloadMarkdownProcessor();
+        getModule('tauri/main/services/chat-surface/chat-virtualization-state.js').namespace
+            .initializeChatVirtualization({ chat_virtualization_enabled: false });
+        await getModule('scripts/system-messages.js').namespace.initSystemMessages();
+        return main;
+    }
+
+    return { window, listeners, getModule, load, startHost, initializeChatRendering };
 }

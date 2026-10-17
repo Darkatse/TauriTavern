@@ -11,7 +11,7 @@ function chatPayload(fileName) {
 }
 
 test('chat persistence and navigation', async (context) => {
-    const { window, getModule, load, startHost } = createBrowserRuntime();
+    const { window, getModule, load, startHost, initializeChatRendering } = createBrowserRuntime();
     window.happyDOM.settings.timer.maxIntervalIterations = 1;
     window.happyDOM.settings.timer.maxIntervalTime = 0;
     const errors = [];
@@ -215,14 +215,10 @@ test('chat persistence and navigation', async (context) => {
             payloads.delete('broken');
             assert.equal(handles.size, 0);
         });
-        const main = (await load('script.js')).namespace;
+        const main = await initializeChatRendering();
         const groupChats = getModule('scripts/group-chats.js').namespace;
         const welcome = getModule('scripts/welcome-screen.js').namespace;
         const coldSwipes = getModule('scripts/tauri/chat/cold-swipes.js').namespace;
-        main.reloadMarkdownProcessor();
-        getModule('tauri/main/services/chat-surface/chat-virtualization-state.js').namespace
-            .initializeChatVirtualization({ chat_virtualization_enabled: false });
-        await getModule('scripts/system-messages.js').namespace.initSystemMessages();
         main.eventSource.on(main.event_types.CHAT_CHANGED, id => changed.push(id));
 
         window.fetch = async (url, options) => {

@@ -831,51 +831,6 @@ async fn character_service_replaces_an_unreadable_existing_card() {
 }
 
 #[tokio::test]
-async fn character_delete_removes_only_string_linked_lorebooks() {
-    let root = temp_root("character-delete-lorebook");
-    let (service, world_repository) = character_service_with_world_repository(&root).await;
-    for name in ["Lore", "42"] {
-        world_repository
-            .save_world_info(name, &world_info(name))
-            .await
-            .expect("save world info");
-    }
-    for (name, world) in [("Linked", json!("Lore")), ("Opaque", json!(42))] {
-        let card = character_card(name, json!({ "world": world }));
-        fs::write(
-            root.join(format!("default-user/characters/{name}.png")),
-            character_png(&card),
-        )
-        .await
-        .expect("write character card");
-        service
-            .delete_character(DeleteCharacterDto {
-                name: name.to_string(),
-                delete_chats: false,
-            })
-            .await
-            .expect("delete character");
-    }
-
-    assert!(
-        world_repository
-            .get_world_info("Lore")
-            .await
-            .expect("read linked world")
-            .is_none()
-    );
-    assert!(
-        world_repository
-            .get_world_info("42")
-            .await
-            .expect("read numeric world")
-            .is_some()
-    );
-
-    let _ = fs::remove_dir_all(root).await;
-}
-
-#[tokio::test]
 async fn character_service_replace_rejects_non_segment_storage_identity() {
     let root = temp_root("character-replace-invalid-storage-identity");
     let service = character_service(&root).await;

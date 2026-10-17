@@ -4723,5 +4723,7 @@
     "The lorebook was changed elsewhere; nothing was applied": "世界书已在别处被修改，未作更改",
     "Lorebook refresh failed": "世界书刷新失败",
     "Lorebook import failed": "世界书导入失败",
-    "Character imported; lorebook import failed": "角色已导入，但世界书导入失败"
+    "Character imported; lorebook import failed": "角色已导入，但世界书导入失败",
+    "Also deleted lorebook \"${0}\"": "已一并删除世界书「${0}」",
+    "Character deleted; lorebook cleanup failed": "角色已删除，但世界书清理失败"
 }

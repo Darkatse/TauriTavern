@@ -32,9 +32,9 @@ use tt_application::dto::agent_dto::{
 };
 use tt_application::dto::character_dto::{
     CharacterLorebookAdoptionChoice, CharacterLorebookAdoptionDto, CreateCharacterDto,
-    DeleteCharacterDto, ExportCharacterContentDto, ImportCharacterDto, MergeCharacterCardDataDto,
-    ReplaceCharacterDto, ResolveCharacterLorebookAdoptionDto, UpdateAvatarDto,
-    UpdateCharacterCardDataDto, UpdateCharacterDto,
+    ExportCharacterContentDto, ImportCharacterDto, MergeCharacterCardDataDto, ReplaceCharacterDto,
+    ResolveCharacterLorebookAdoptionDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
+    UpdateCharacterDto,
 };
 use tt_application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use tt_application::errors::ApplicationError;

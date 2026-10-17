@@ -364,33 +364,6 @@ impl CharacterService {
             .agent_workspace_lifecycle_service
             .lock_run_lifecycle()
             .await;
-        let linked_world = match self.repository.read_character_card_json(&dto.name).await {
-            Ok(raw_json) => match serde_json::from_str::<Value>(&raw_json) {
-                Ok(card) => card
-                    .pointer("/data/extensions/world")
-                    .and_then(Value::as_str)
-                    .filter(|world| !world.is_empty())
-                    .map(ToString::to_string),
-                Err(error) => {
-                    tracing::error!(
-                        target: tt_contracts::observability::USER_VISIBLE_ERROR,
-                        "Deleting character '{}' without resolving its linked lorebook: {}",
-                        dto.name,
-                        error
-                    );
-                    None
-                }
-            },
-            Err(error) => {
-                tracing::error!(
-                    target: tt_contracts::observability::USER_VISIBLE_ERROR,
-                    "Deleting character '{}' without resolving its linked lorebook: {}",
-                    dto.name,
-                    error
-                );
-                None
-            }
-        };
         let workspace_targets = if dto.delete_chats {
             self.agent_workspace_targets_for_character_chats(&dto.name)
                 .await?
@@ -422,18 +395,6 @@ impl CharacterService {
                 target: tt_contracts::observability::USER_VISIBLE_ERROR,
                 "Deleted character '{}' but could not delete all Agent workspaces: {}",
                 dto.name,
-                error
-            );
-        }
-        if let Some(world) = linked_world
-            && let Err(error) = self.world_info_repository.delete_world_info(&world).await
-            && !matches!(&error, DomainError::NotFound(_))
-        {
-            tracing::error!(
-                target: tt_contracts::observability::USER_VISIBLE_ERROR,
-                "Deleted character '{}' but could not delete linked lorebook '{}': {}",
-                dto.name,
-                world,
                 error
             );
         }

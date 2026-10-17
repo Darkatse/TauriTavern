@@ -131,8 +131,8 @@ import {
     getWorldInfoSettings,
     setWorldInfoSettings,
     world_names,
+    selected_world_info,
     flushWorldInfoSaves,
-    updateWorldInfoList,
     deleteWorldInfo,
     importEmbeddedWorldInfo,
     completeCharacterLorebookAdoption,
@@ -12639,7 +12639,7 @@ export async function handleDeleteCharacter(this_chid, delete_chats) {
 }
 
 /**
- * Deletes a character completely, including associated chats if specified
+ * Deletes characters and their unreferenced primary lorebooks, including chats if specified.
  *
  * @param {string|string[]} characterKey - The key (avatar) of the character to be deleted
  * @param {Object} [options] - Optional parameters for the deletion
@@ -12667,7 +12667,8 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
         return false;
     }
 
-    let deleted = false;
+    const deletedAvatars = new Set();
+    const candidateLorebooks = new Set();
 
     for (const key of characterKey) {
         const character = characters.find(x => x.avatar == key);
@@ -12675,6 +12676,7 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
             toastr.warning(t`Character ${key} not found. Skipping deletion.`);
             continue;
         }
+        const world = character.data?.extensions?.world;
 
         const chid = characters.indexOf(character);
         const pastChats = deleteChats
@@ -12697,6 +12699,9 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
             toastr.error(`${response.status} ${response.statusText}`, t`Failed to delete character`);
             continue;
         }
+        deletedAvatars.add(character.avatar);
+        // Only strings identify lorebooks; card extensions preserve other JSON types.
+        if (typeof world === 'string' && world) candidateLorebooks.add(world);
 
         try {
             const { clearCharacterSkillImportReminders } = await import('./scripts/tauri/agent-skills/reminders.js');
@@ -12718,7 +12723,23 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
         }
 
         await eventSource.emit(event_types.CHARACTER_DELETED, { id: chid, character: character });
-        deleted = true;
+    }
+
+    // Decide from the loaded list before a refresh can replace it, including after partial failure.
+    const remainingCharacterFiles = new Set();
+    for (const character of characters) {
+        if (deletedAvatars.has(character.avatar)) continue;
+        candidateLorebooks.delete(character.data?.extensions?.world);
+        remainingCharacterFiles.add(getCharaFilename(null, { manualAvatarKey: character.avatar }));
+    }
+    for (const lore of world_info.charLore ?? []) {
+        if (!remainingCharacterFiles.has(lore.name)) continue;
+        for (const world of lore.extraBooks ?? []) candidateLorebooks.delete(world);
+    }
+    for (const world of selected_world_info) candidateLorebooks.delete(world);
+    candidateLorebooks.delete(power_user.persona_description_lorebook);
+    for (const persona of Object.values(power_user.persona_descriptions)) {
+        candidateLorebooks.delete(persona.lorebook);
     }
 
     try {
@@ -12727,15 +12748,18 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
         console.error('Character deleted, but the UI refresh failed:', error);
         toastr.warning(t`Character deleted, but the character list could not be refreshed.`);
     }
-    if (deleted) {
+    for (const world of candidateLorebooks) {
         try {
-            await updateWorldInfoList();
+            if (await deleteWorldInfo(world, { saveLinkedCharacter: false })) {
+                toastr.success(t`Also deleted lorebook "${world}"`);
+            }
         } catch (error) {
-            console.error('Character deleted, but the World/Lorebook list refresh failed:', error);
+            console.error('Character deleted, but its lorebook cleanup could not be completed:', error);
+            toastr.warning(error?.message, t`Character deleted; lorebook cleanup failed`);
         }
     }
 
-    return deleted;
+    return deletedAvatars.size > 0;
 }
 
 /**

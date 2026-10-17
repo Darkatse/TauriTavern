@@ -105,5 +105,7 @@
     "The lorebook was changed elsewhere; nothing was applied": "The lorebook was changed elsewhere; nothing was applied",
     "Lorebook refresh failed": "Lorebook refresh failed",
     "Lorebook import failed": "Lorebook import failed",
-    "Character imported; lorebook import failed": "Character imported; lorebook import failed"
+    "Character imported; lorebook import failed": "Character imported; lorebook import failed",
+    "Also deleted lorebook \"${0}\"": "Also deleted lorebook \"${0}\"",
+    "Character deleted; lorebook cleanup failed": "Character deleted; lorebook cleanup failed"
 }

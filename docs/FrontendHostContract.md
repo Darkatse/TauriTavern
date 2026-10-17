@@ -235,6 +235,8 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 
 `/api/characters/import` 的响应比上游多一个 `lorebook` 字段，形状与 `api.characterCards` 相同。角色已经写入、但世界书接管失败时，`lorebook.status` 为 `failed`，错误由后端提示。
 
+`/api/characters/delete` 只删除角色和请求删除的聊天，不删除世界书。界面删卡时如何清理世界书，见[角色世界书](CurrentState/CharacterIdentityContract.md#10-角色世界书)。
+
 第一方聊天读写直连内部 transport，不产生兼容路由的 Fetch 请求；外部观察应使用既有业务事件。`/api/chats/get`、`/api/chats/group/get`、`/api/chats/save`、`/api/chats/group/save` 仍供扩展调用。保存成功为 `200 { ok: true }`；integrity 冲突按错误码识别，返回 `400 { error: 'integrity' }`。
 
 聊天 get/save 遵循 [ChatPayload §1.1](CurrentState/ChatPayload.md#11-统一格式底线)。兼容 get 返回保留记录原始 JSON 文本的流式数组（含 header 和全部 swipes），无记录返回空数组。正文错误使 `.json()` / `.text()` 或 jQuery 请求失败，即使 HTTP 状态为 200；取消请求或正文读取会停止后续读取。

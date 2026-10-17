@@ -162,6 +162,7 @@ alias key 是 Rust 内部 character stem，不是 avatar filename。
 - 删除角色卡。
 - 当 `delete_chats=true` 时，通过 resolver 找到当前身份对应的物理聊天目录并删除。
 - 这包括已经确认的 alias 目录，也包括 safe legacy discovery 找到的历史错误目录。
+- 绑定的世界书按 [§10](#10-角色世界书) 处理。
 
 这意味着 delete 语义偏向用户意图：“删除这个角色及其聊天”，而不是只删除 canonical directory。
 
@@ -199,12 +200,22 @@ alias key 是 Rust 内部 character stem，不是 avatar filename。
 
 ## 10. 角色世界书
 
-- 角色使用 `data.extensions.world` 绑定的那本世界书。卡内的 `character_book` 只是它的副本，在保存和导出时刷新；两者不一致是正常的，不算冲突。
-- 内嵌书只在卡片到达时处理：导入、替换、“导入角色卡的世界书”。规则只写在 `CharacterService::adopt_embedded_lorebook` 一处。
+角色使用 `data.extensions.world` 绑定的那本世界书。卡内的 `character_book` 只是它的副本，在保存和导出时刷新；两者不一致是正常的，不算冲突。
+
+接管内嵌书：
+
+- 只在卡片到达时处理：导入、替换、“导入角色卡的世界书”。规则在 `CharacterService::adopt_embedded_lorebook`，前端的询问和刷新在 `world-info.js` 的 `completeCharacterLorebookAdoption`。
 - 绑定只在接管或用户手动链接时改变。替换时先写回原绑定，再接管；原来没有绑定或旧卡读不出时，写回空绑定。
-- 新书以 `character_book.name` 命名，没有名字时用 `<角色名>'s Lorebook`。名字被占用时依次尝试 `名字 (1)`、`名字 (2)`……，遇到条目完全相同的书就直接复用。
-- 接管时，按角色当前在用的书分三种情况。其中“本地版本”指名字是新书原名或它的编号副本的那本书。
-  - 内容相同，且是本地版本：不做任何改动。
+- 新书以 `character_book.name` 命名，没有名字时用 `<角色名>'s Lorebook`。名字被占用时依次用 `名字 (1)`、`名字 (2)`……，遇到条目完全相同的书就直接复用。
+- 按角色当前在用的书处理。“本地版本”指名字是新书原名或其编号副本的那本书。
+  - 内容相同，且是本地版本：不改动。
   - 内容不同：询问一次；“更新当前”只对本地版本提供。
-  - 其余情况：直接链接分配到的书，必要时新建。
-- 前端的询问和刷新由 `world-info.js` 的 `completeCharacterLorebookAdoption` 负责。
+  - 其余情况：链接分配到的书，必要时新建。
+
+删除角色：
+
+- 后端只删角色，不删世界书。
+- 前端 `deleteCharacter` 只删除没有其他使用者的绑定世界书。
+  - 使用者包括其他角色的绑定和附加世界书、全局启用的世界书、Persona 的世界书。
+  - 删除失败的角色仍算使用者。判断在刷新列表之前完成。
+- 不检查聊天级世界书，也不检查读不出的角色卡。
