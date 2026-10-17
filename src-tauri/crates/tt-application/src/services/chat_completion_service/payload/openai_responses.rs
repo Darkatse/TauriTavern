@@ -189,14 +189,7 @@ impl ResponsesTranscriptCompiler {
         match role.as_str() {
             "assistant" => self.compile_assistant_message(message),
             "tool" | "function" => self.compile_tool_message(message),
-            "system" => {
-                self.input.push(json!({
-                    "role": "developer",
-                    "content": responses_input_message_content(message.get("content"), false)?,
-                }));
-                Ok(())
-            }
-            "developer" | "user" => {
+            "system" | "developer" | "user" => {
                 self.input.push(json!({
                     "role": role,
                     "content": responses_input_message_content(
@@ -723,7 +716,7 @@ mod tests {
             .cloned()
             .unwrap_or_default();
 
-        assert_eq!(input[0]["role"], "developer");
+        assert_eq!(input[0]["role"], "system");
         assert_eq!(input[0]["content"], "sys");
         assert_eq!(input[1]["content"], "hi");
         assert_eq!(input[2]["type"], "function_call");

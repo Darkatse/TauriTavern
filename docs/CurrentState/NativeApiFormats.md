@@ -1,6 +1,6 @@
 # 原生 API 格式（Custom）兼容现状
 
-最后更新：2026-10-13
+最后更新：2026-10-16
 
 本文件描述 **TauriTavern 已落地** 的三家原生 API 格式兼容（OpenAI Responses / Claude Messages / Gemini generateContent / Gemini Interactions）的当前实现快照与持续开发约束。
 
@@ -113,7 +113,7 @@ JSON 响应中的明确 error（包括 HTTP 200）在共同读取处转为错误
 ### 4.1 OpenAI Responses（/responses）
 
 请求侧（payload）：
-- `messages[]` → `input[]` items；`system` → `developer`
+- `messages[]` → `input[]` items；`system` / `developer` / `user` 角色原样保留
 - assistant message 若携带 `message.native.openai_responses.output`，则原样回放 raw Responses `output` items，并记住其中的 `function_call.call_id`
 - assistant text 会编码为 Responses `message` / `output_text`
 - assistant `tool_calls[]` 会编码为 Responses `function_call` items；`id` / `function.name` / `function.arguments` 必须可解析，缺失结构会 fail-fast
