@@ -545,7 +545,7 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "sha1 0.11.0",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "thiserror 2.0.20",
  "tokio",
  "unit-prefix",
@@ -7663,9 +7663,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
+checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
@@ -9318,7 +9318,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "tokio",
  "tokio-tungstenite",
  "tracing",
@@ -9345,7 +9345,7 @@ dependencies = [
  "rand 0.10.3",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "sys-locale",
  "tokio",
  "tracing",
@@ -9370,7 +9370,7 @@ dependencies = [
  "rand 0.10.3",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "tokio",
  "tracing",
  "tt-adapter-storage-core",
@@ -9454,7 +9454,7 @@ dependencies = [
  "hf-hub",
  "redb",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "tokenizers",
  "tokio",
  "tt-domain",
@@ -9490,7 +9490,7 @@ dependencies = [
  "rand 0.10.3",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
@@ -9524,7 +9524,7 @@ dependencies = [
  "rand 0.10.3",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "thiserror 2.0.20",
  "ttsync-contract",
  "url",
@@ -9539,7 +9539,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "tokio",
  "tokio-util",
  "tt-contracts",
