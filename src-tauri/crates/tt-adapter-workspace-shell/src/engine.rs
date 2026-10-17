@@ -39,13 +39,15 @@ impl WorkspaceShell for WorkspaceShellEngine {
             return Ok(stopped(WorkspaceShellExit::Cancelled));
         }
         let files = Arc::new(WorkspaceFileSystem::new(files));
-        let javascript = Arc::new(Javascript::new(context));
+        let javascript = Arc::new(Javascript::new(context.clone()));
         let workdir = bashkit::normalize_path(Path::new(&workdir));
-        let mut bash = Bash::builder()
+        let builder = Bash::builder()
             .fs(files.clone())
             .builtin("js", javascript.builtin("js"))
             .builtin("node", javascript.builtin("node"))
-            .builtin("deno", javascript.builtin("deno"))
+            .builtin("deno", javascript.builtin("deno"));
+        let builder = crate::builtin_tools::register(builder, context.tools.as_ref());
+        let mut bash = crate::mcp_tools::register(builder, context.mcp.as_ref())
             .cwd(workdir.clone())
             .env("HOME", "/")
             .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")

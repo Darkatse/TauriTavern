@@ -437,8 +437,60 @@ pub(super) fn runtime_context_from_snapshot(
                     tracing::debug!(%error, "JavaScript chat context is unavailable");
                 })
                 .map_err(|error| error.to_string()),
+            tools: None,
+            mcp: None,
         },
     ))
+}
+
+/// Attach the invocation's shell-visible builtin tools to its context.
+///
+/// Shell commands share the run's repositories and frozen chat facts, so the
+/// shell sees the same tool results the model would.
+pub(super) fn with_shell_tools(
+    context: std::sync::Arc<tt_ports::workspace_shell::WorkspaceShellContext>,
+    dispatcher: std::sync::Arc<crate::services::agent_tools::AgentToolDispatcher>,
+    profile: &ResolvedAgentProfile,
+    run_id: &str,
+    files: std::sync::Arc<dyn tt_ports::workspace_fs::WorkspaceFs>,
+    skills: std::sync::Arc<[tt_domain::models::skill::SkillIndexEntry]>,
+    names: Vec<String>,
+) -> std::sync::Arc<tt_ports::workspace_shell::WorkspaceShellContext> {
+    if names.is_empty() {
+        return context;
+    }
+    std::sync::Arc::new(tt_ports::workspace_shell::WorkspaceShellContext {
+        frozen_macros: context.frozen_macros.clone(),
+        host: context.host.clone(),
+        mcp: context.mcp.clone(),
+        tools: Some(std::sync::Arc::new(
+            crate::services::agent_tools::ShellTools::new(
+                dispatcher,
+                profile.clone(),
+                run_id.to_string(),
+                files,
+                context.clone(),
+                skills,
+                names,
+            ),
+        )),
+    })
+}
+
+/// Attach the invocation's reachable MCP servers to its context.
+///
+/// The set comes from the same frozen snapshot the model sees, so a shell can
+/// reach exactly the MCP tools the invocation already admits.
+pub(super) fn with_shell_mcp(
+    context: std::sync::Arc<tt_ports::workspace_shell::WorkspaceShellContext>,
+    mcp: std::sync::Arc<dyn tt_ports::workspace_shell::WorkspaceShellMcp>,
+) -> std::sync::Arc<tt_ports::workspace_shell::WorkspaceShellContext> {
+    std::sync::Arc::new(tt_ports::workspace_shell::WorkspaceShellContext {
+        frozen_macros: context.frozen_macros.clone(),
+        host: context.host.clone(),
+        tools: context.tools.clone(),
+        mcp: Some(mcp),
+    })
 }
 
 #[cfg(test)]

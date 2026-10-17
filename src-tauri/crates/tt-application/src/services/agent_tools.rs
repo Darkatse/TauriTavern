@@ -7,6 +7,8 @@ mod policy;
 mod registry;
 mod runtime_context;
 mod session;
+mod shell_mcp;
+mod shell_tools;
 mod structured;
 mod workspace;
 mod world_info;
@@ -16,6 +18,8 @@ pub use registry::BuiltinAgentToolRegistry;
 pub(crate) use dispatcher::{AgentToolDispatchOutcome, AgentToolDispatcher, AgentToolEffect};
 pub(crate) use runtime_context::build_script_context_json;
 pub(crate) use session::AgentToolSession;
+pub(crate) use shell_mcp::ShellMcp;
+pub(crate) use shell_tools::{ShellTools, shell_visible_tools};
 
 pub(crate) use agent::{AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, TASK_RETURN};
 pub(crate) use policy::{

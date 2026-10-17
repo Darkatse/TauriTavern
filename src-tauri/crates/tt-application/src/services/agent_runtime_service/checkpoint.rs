@@ -281,13 +281,24 @@ impl AgentRuntimeService {
         let snapshot: Value = serde_json::from_str(&snapshot.text).map_err(|error| {
             invalid(format!("frozen prompt snapshot cannot be decoded: {error}"))
         })?;
-        let context = runtime_context_from_snapshot(&snapshot)?;
+        let base_context = runtime_context_from_snapshot(&snapshot)?;
         for frame in checkpoint
             .state
             .foreground
             .iter_mut()
             .chain(&mut checkpoint.state.children)
         {
+            // Each frame keeps its own Profile and tool snapshot, so the shell
+            // tool set is resolved per frame rather than shared.
+            let context = self
+                .shell_ready_context(
+                    base_context.clone(),
+                    &frame.prepared.profile,
+                    &dto.run_id,
+                    &frame.prepared.tool_snapshot,
+                    frame.prepared.effective_skills.clone().into(),
+                )
+                .await?;
             hydrate_frame(frame, &dto.run_id, dto.additional_rounds, &context)?;
         }
         let foreground = checkpoint
