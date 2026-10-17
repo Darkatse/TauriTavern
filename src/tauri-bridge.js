@@ -237,6 +237,10 @@ export function writeClipboardText(text) {
     return invoke('plugin:clipboard-manager|write_text', { text });
 }
 
+export function requestIgnoreBatteryOptimizations() {
+    return invoke('plugin:generation-background|requestIgnoreBatteryOptimizations');
+}
+
 function normalizeExternalUrl(url) {
     const value = String(url instanceof URL ? url.href : url ?? '').trim();
     if (!value) {

@@ -99,20 +99,47 @@ function SettingsApp({
                 </div>
             </header>
 
-            {capabilities.supportsCloseToTrayOnClose && (
+            {(capabilities.supportsCloseToTrayOnClose || capabilities.supportsKeepAliveInBackground) && (
                 <SettingsSection title={tr('Interface')} icon="fa-window-minimize">
-                    <SettingRow
-                        label={tr('Minimize to tray on close (Windows)')}
-                        helpTopic="closeToTray"
-                        helpTitle={tr('Learn more')}
-                        onHelp={showHelp}
-                    >
-                        <ToggleSwitch
-                            checked={draft.closeToTrayOnClose}
-                            ariaLabel={tr('Minimize to tray on close (Windows)')}
-                            onChange={checked => controller.updateDraft('closeToTrayOnClose', checked)}
-                        />
-                    </SettingRow>
+                    {capabilities.supportsCloseToTrayOnClose && (
+                        <SettingRow
+                            label={tr('Minimize to tray on close (Windows)')}
+                            helpTopic="closeToTray"
+                            helpTitle={tr('Learn more')}
+                            onHelp={showHelp}
+                        >
+                            <ToggleSwitch
+                                checked={draft.closeToTrayOnClose}
+                                ariaLabel={tr('Minimize to tray on close (Windows)')}
+                                onChange={checked => controller.updateDraft('closeToTrayOnClose', checked)}
+                            />
+                        </SettingRow>
+                    )}
+
+                    {capabilities.supportsKeepAliveInBackground && (
+                        <>
+                            <SettingRow
+                                label={tr('Keep alive in background (Android)')}
+                                helpTopic="keepAliveInBackground"
+                                helpTitle={tr('Learn more')}
+                                onHelp={showHelp}
+                            >
+                                <ToggleSwitch
+                                    checked={draft.keepAliveInBackground}
+                                    ariaLabel={tr('Keep alive in background (Android)')}
+                                    onChange={checked => controller.updateDraft('keepAliveInBackground', checked)}
+                                />
+                            </SettingRow>
+
+                            <SettingRow label={tr('Battery Optimization')}>
+                                <ActionButton
+                                    label={tr('Request Battery Optimization Exemption')}
+                                    icon="fa-battery-full"
+                                    onClick={() => void actions.requestIgnoreBatteryOptimizations()}
+                                />
+                            </SettingRow>
+                        </>
+                    )}
                 </SettingsSection>
             )}
 

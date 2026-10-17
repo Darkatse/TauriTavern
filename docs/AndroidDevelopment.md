@@ -134,23 +134,24 @@ https://v2.tauri.app/develop/resources/#android
 
 ---
 
-## 6. AI 生成后台执行与通知生命周期
+## 6. AI 生成后台执行、常驻保活与通知生命周期
 
-Android AI 生成使用任务级 `dataSync` Foreground Service。Rust `ChatCompletionService` 持有生成任务与后台执行租约；WebView 只负责消费流事件，并在 Android 16+ 可用时补充非关键的 token 进度。
+Android 后台保护统一复用单个 `AiGenerationForegroundService`（Manifest 声明 `dataSync|specialUse`）。Rust `generation_background.rs` 中的 `KeepAliveTracker` 统一维护 `(active_tasks, persistent)` 并计算声明式状态 `KeepAliveState { active, needs_cpu, persistent }`；Kotlin `AiGenerationForegroundService.render(state, startId)` 只负责将该声明式状态渲染为前台服务类型、通知与 WakeLock。
 
-执行契约：
+状态与执行契约：
 
-- 第一个 Chat Completion 任务开始时，由 Rust 通过原生 Tauri plugin 启动 `AiGenerationForegroundService`；
-- 并发任务通过稳定 task id 计数，共享一个 FGS；
-- 最后一个任务成功、失败或取消后立即 `stopForeground()` + `stopSelfResult()`；
-- Service 使用 `START_NOT_STICKY`，不会在没有真实生成任务时被系统复活；
-- Android 15+ `dataSync` 超时时通过 `onTimeout()` 立即释放 FGS，但不把平台保护到期升级为生成失败；
-- 应用启动本身不再启动保活服务，避免无任务时消耗 Android 的后台 FGS 配额。
+- `active = generations_running || persistent`：控制 `AiGenerationForegroundService` 是否保持前台运行；当 `!state.active` 时立即释放 WakeLock、`stopForeground(STOP_FOREGROUND_REMOVE)` 并 `stopSelfResult(startId)`；
+- `needs_cpu = generations_running`：仅在存在活跃 AI 生成任务时持有非引用计数的 `PARTIAL_WAKE_LOCK`（30 分钟安全超时），最后一个任务结束、`onTimeout()` 或 `onDestroy()` 时立即释放；空闲常驻保活不持有 CPU WakeLock；
+- `persistent = keep_alive_in_background`：由 `TauriTavernSettings.keep_alive_in_background`（默认 `false`）控制，在异步启动初始化与 `update_tauritavern_settings` 时由 Rust 推送至原生插件：
+  - `state.persistent == true` 时在 Android 14+（API 34+）使用 `FOREGROUND_SERVICE_TYPE_SPECIAL_USE`（API 29–33 回退 `FOREGROUND_SERVICE_TYPE_DATA_SYNC`），避免 Android 15+ 的 `dataSync` 6 小时配额限制；
+  - `state.persistent == false` 时仅在生成期间以 `FOREGROUND_SERVICE_TYPE_DATA_SYNC` 运行，应用冷启动在未开启常驻保活时不会启动任何前台服务；
+- Service 使用 `START_NOT_STICKY`；Android 15+ `dataSync` 超时时通过 `onTimeout()` 立即释放 FGS 与 WakeLock，但不把平台保护到期升级为生成失败；
+- 原生插件还提供 `requestIgnoreBatteryOptimizations` Tauri 命令（由 TauriTavern 设置面板 `Interface` 分组按钮调用），拉起系统 `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 页面；
 - 原生插件不可用或 FGS 启停失败只记录警告；Chat Completion 仍按真实 provider 结果继续，不阻塞应用启动或生成。
 
 当前通知槽位：
 
-- `42000`：前台服务保活通知，只维持 Android 后台执行契约；
+- `42000`：前台服务通知（当 `needs_cpu == true` 时显示生成保活通知或 Android 16+ 实时进度通知；当 `needs_cpu == false && persistent == true` 时在同一 `tauritavern_ai_generation_keepalive` 低优先级渠道显示后台常驻通知）；
 - `42001`：生成完成通知，表示需要用户知晓的一次完成/失败结果。
 
 生命周期契约：
@@ -163,6 +164,7 @@ Android AI 生成使用任务级 `dataSync` Foreground Service。Rust `ChatCompl
 
 维护原则：
 
+- 不要拆分第二个保活 Foreground Service 或新增平行通知渠道/槽位，状态计算保持在 Rust `KeepAliveTracker`，Kotlin 侧只做单点 `render(state, startId)`；
 - 不要用 `cancelAll()` 清通知，避免误伤系统或未来扩展通知；
 - 不要把 native completion 能力绑定到 Android 16+ `ProgressStyle`，旧版 Android 也需要完成通知生命周期；
 - 不要把 FGS 的结束重新绑定到 WebView 回调；WebView 被系统挂起时，Rust 任务仍必须能够独立释放原生租约；

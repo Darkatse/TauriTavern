@@ -1,7 +1,59 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use tauri::AppHandle;
 use tt_ports::generation_background::GenerationBackgroundRuntime;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(target_os = "android", derive(serde::Serialize))]
+#[cfg_attr(target_os = "android", serde(rename_all = "camelCase"))]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub(crate) struct KeepAliveState {
+    pub(crate) active: bool,
+    pub(crate) needs_cpu: bool,
+    pub(crate) persistent: bool,
+}
+
+#[derive(Debug, Default)]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub(crate) struct KeepAliveTracker {
+    active_tasks: HashSet<String>,
+    persistent: bool,
+}
+
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+impl KeepAliveTracker {
+    pub(crate) fn state(&self) -> KeepAliveState {
+        let generations_running = !self.active_tasks.is_empty();
+        KeepAliveState {
+            active: generations_running || self.persistent,
+            needs_cpu: generations_running,
+            persistent: self.persistent,
+        }
+    }
+
+    pub(crate) fn start_task(&mut self, task_id: &str) -> KeepAliveState {
+        let trimmed = task_id.trim();
+        if !trimmed.is_empty() && !self.active_tasks.contains(trimmed) {
+            self.active_tasks.insert(trimmed.to_owned());
+        }
+        self.state()
+    }
+
+    pub(crate) fn finish_task(&mut self, task_id: &str) -> (KeepAliveState, bool) {
+        let trimmed = task_id.trim();
+        let removed = !trimmed.is_empty() && self.active_tasks.remove(trimmed);
+        let state = self.state();
+        (state, removed && !state.needs_cpu)
+    }
+
+    pub(crate) fn set_persistent(&mut self, persistent: bool) -> (KeepAliveState, bool) {
+        let previous = self.state();
+        self.persistent = persistent;
+        let next = self.state();
+        (next, next != previous)
+    }
+}
 
 pub(crate) fn runtime(_app_handle: &AppHandle) -> Option<Arc<dyn GenerationBackgroundRuntime>> {
     #[cfg(target_os = "android")]
@@ -32,9 +84,48 @@ pub(crate) fn runtime(_app_handle: &AppHandle) -> Option<Arc<dyn GenerationBackg
     None
 }
 
+pub(crate) async fn request_notification_permission_if_needed(_app_handle: &AppHandle) {
+    #[cfg(target_os = "android")]
+    {
+        use tauri_plugin_notification::{NotificationExt, PermissionState};
+
+        let app_handle = _app_handle.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            let notification = app_handle.notification();
+            if matches!(
+                notification.permission_state(),
+                Ok(PermissionState::Prompt | PermissionState::PromptWithRationale)
+            ) && let Err(error) = notification.request_permission()
+            {
+                tracing::warn!("Failed to request Android notification permission: {error}");
+            }
+        })
+        .await;
+    }
+}
+
+pub(crate) fn set_persistent_keep_alive(_app_handle: &AppHandle, _persistent: bool) {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+
+        let Some(state) =
+            _app_handle.try_state::<Arc<AndroidGenerationBackgroundRuntime<tauri::Wry>>>()
+        else {
+            tracing::warn!(
+                "Android generation background plugin is unavailable; cannot update persistent keep-alive state"
+            );
+            return;
+        };
+        if let Err(error) = state.set_persistent(_persistent) {
+            tracing::warn!("Failed to update Android persistent keep-alive state: {error}");
+        }
+    }
+}
+
 #[cfg(target_os = "android")]
 mod android {
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     use serde::Serialize;
     use tauri::plugin::{Builder, PluginHandle, TauriPlugin};
@@ -43,6 +134,8 @@ mod android {
     use tt_ports::generation_background::{
         GenerationBackgroundOutcome, GenerationBackgroundRuntime,
     };
+
+    use super::{KeepAliveState, KeepAliveTracker};
 
     const PLUGIN_IDENTIFIER: &str = "com.tauritavern.client";
 
@@ -60,7 +153,10 @@ mod android {
                         return Ok(());
                     }
                 };
-                if !app.manage(Arc::new(AndroidGenerationBackgroundRuntime { handle })) {
+                if !app.manage(Arc::new(AndroidGenerationBackgroundRuntime {
+                    handle,
+                    tracker: Mutex::new(KeepAliveTracker::default()),
+                })) {
                     tracing::warn!("Android generation background runtime is already managed");
                 }
                 Ok(())
@@ -70,32 +166,85 @@ mod android {
 
     pub(super) struct AndroidGenerationBackgroundRuntime<R: Runtime> {
         handle: PluginHandle<R>,
+        tracker: Mutex<KeepAliveTracker>,
     }
 
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
-    struct StartArgs<'a> {
-        task_id: &'a str,
+    struct SyncStateArgs {
+        #[serde(flatten)]
+        state: KeepAliveState,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        outcome: Option<&'static str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        status_code: Option<u16>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        notify_completion: Option<bool>,
     }
 
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct FinishArgs<'a> {
-        task_id: &'a str,
-        outcome: &'static str,
-        status_code: u16,
-        notify_completion: bool,
+    impl<R: Runtime> AndroidGenerationBackgroundRuntime<R> {
+        pub(super) fn set_persistent(&self, persistent: bool) -> Result<(), DomainError> {
+            let mut tracker = self
+                .tracker
+                .lock()
+                .expect("Android keep-alive tracker mutex poisoned");
+            let (state, changed) = tracker.set_persistent(persistent);
+            if !changed {
+                return Ok(());
+            }
+            self.sync_state(
+                state,
+                None,
+                "Failed to update Android background keep-alive service",
+            )
+        }
+
+        fn sync_state(
+            &self,
+            state: KeepAliveState,
+            completion: Option<(GenerationBackgroundOutcome, bool)>,
+            context: &'static str,
+        ) -> Result<(), DomainError> {
+            let (outcome, status_code, notify_completion) = match completion {
+                Some((GenerationBackgroundOutcome::Succeeded, notify)) => {
+                    (Some("succeeded"), Some(0), Some(notify))
+                }
+                Some((GenerationBackgroundOutcome::Failed { status_code }, notify)) => (
+                    Some("failed"),
+                    Some(status_code.unwrap_or_default()),
+                    Some(notify),
+                ),
+                Some((GenerationBackgroundOutcome::Cancelled, notify)) => {
+                    (Some("cancelled"), Some(0), Some(notify))
+                }
+                None => (None, None, None),
+            };
+            self.handle
+                .run_mobile_plugin::<()>(
+                    "syncState",
+                    SyncStateArgs {
+                        state,
+                        outcome,
+                        status_code,
+                        notify_completion,
+                    },
+                )
+                .map_err(|error| DomainError::InternalError(format!("{context}: {error}")))
+        }
     }
 
     impl<R: Runtime> GenerationBackgroundRuntime for AndroidGenerationBackgroundRuntime<R> {
         fn start(&self, task_id: &str, _user_visible: bool) -> Result<(), DomainError> {
-            self.handle
-                .run_mobile_plugin::<()>("start", StartArgs { task_id })
-                .map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to start Android generation foreground service: {error}"
-                    ))
-                })
+            let mut tracker = self
+                .tracker
+                .lock()
+                .expect("Android keep-alive tracker mutex poisoned");
+            let state = tracker.start_task(task_id);
+            self.sync_state(
+                state,
+                None,
+                "Failed to start Android generation foreground service",
+            )
         }
 
         fn finish(
@@ -104,28 +253,19 @@ mod android {
             outcome: GenerationBackgroundOutcome,
             notify_completion: bool,
         ) -> Result<(), DomainError> {
-            let (outcome, status_code) = match outcome {
-                GenerationBackgroundOutcome::Succeeded => ("succeeded", 0),
-                GenerationBackgroundOutcome::Failed { status_code } => {
-                    ("failed", status_code.unwrap_or_default())
-                }
-                GenerationBackgroundOutcome::Cancelled => ("cancelled", 0),
-            };
-            self.handle
-                .run_mobile_plugin::<()>(
-                    "finish",
-                    FinishArgs {
-                        task_id,
-                        outcome,
-                        status_code,
-                        notify_completion,
-                    },
-                )
-                .map_err(|error| {
-                    DomainError::InternalError(format!(
-                        "Failed to finish Android generation foreground service: {error}"
-                    ))
-                })
+            let mut tracker = self
+                .tracker
+                .lock()
+                .expect("Android keep-alive tracker mutex poisoned");
+            let (state, last_generation_finished) = tracker.finish_task(task_id);
+            if !last_generation_finished {
+                return Ok(());
+            }
+            self.sync_state(
+                state,
+                Some((outcome, notify_completion)),
+                "Failed to finish Android generation foreground service",
+            )
         }
     }
 }
@@ -460,3 +600,141 @@ mod ios {
 
 #[cfg(target_os = "ios")]
 use ios::IosGenerationBackgroundRuntime;
+
+#[cfg(test)]
+mod tests {
+    use super::{KeepAliveState, KeepAliveTracker};
+
+    enum Step {
+        Start(&'static str),
+        Finish(&'static str, bool),
+        SetPersistent(bool, bool),
+    }
+
+    #[test]
+    fn keep_alive_tracker_computes_expected_state_across_transitions() {
+        let mut tracker = KeepAliveTracker::default();
+        assert_eq!(
+            tracker.state(),
+            KeepAliveState {
+                active: false,
+                needs_cpu: false,
+                persistent: false,
+            }
+        );
+
+        let cases = [
+            (
+                Step::SetPersistent(false, false),
+                KeepAliveState {
+                    active: false,
+                    needs_cpu: false,
+                    persistent: false,
+                },
+            ),
+            (
+                Step::Start("task-1"),
+                KeepAliveState {
+                    active: true,
+                    needs_cpu: true,
+                    persistent: false,
+                },
+            ),
+            (
+                Step::Start("task-2"),
+                KeepAliveState {
+                    active: true,
+                    needs_cpu: true,
+                    persistent: false,
+                },
+            ),
+            (
+                Step::Finish("task-1", false),
+                KeepAliveState {
+                    active: true,
+                    needs_cpu: true,
+                    persistent: false,
+                },
+            ),
+            (
+                Step::SetPersistent(true, true),
+                KeepAliveState {
+                    active: true,
+                    needs_cpu: true,
+                    persistent: true,
+                },
+            ),
+            (
+                Step::Finish("task-2", true),
+                KeepAliveState {
+                    active: true,
+                    needs_cpu: false,
+                    persistent: true,
+                },
+            ),
+            (
+                Step::SetPersistent(false, true),
+                KeepAliveState {
+                    active: false,
+                    needs_cpu: false,
+                    persistent: false,
+                },
+            ),
+            (
+                Step::SetPersistent(true, true),
+                KeepAliveState {
+                    active: true,
+                    needs_cpu: false,
+                    persistent: true,
+                },
+            ),
+            (
+                Step::Start("task-3"),
+                KeepAliveState {
+                    active: true,
+                    needs_cpu: true,
+                    persistent: true,
+                },
+            ),
+            (
+                Step::SetPersistent(false, true),
+                KeepAliveState {
+                    active: true,
+                    needs_cpu: true,
+                    persistent: false,
+                },
+            ),
+            (
+                Step::Finish("task-3", true),
+                KeepAliveState {
+                    active: false,
+                    needs_cpu: false,
+                    persistent: false,
+                },
+            ),
+        ];
+
+        for (index, (step, expected)) in cases.into_iter().enumerate() {
+            let actual = match step {
+                Step::Start(task_id) => tracker.start_task(task_id),
+                Step::Finish(task_id, expected_last_finished) => {
+                    let (state, last_finished) = tracker.finish_task(task_id);
+                    assert_eq!(
+                        last_finished, expected_last_finished,
+                        "step {index}: unexpected last_finished flag"
+                    );
+                    state
+                }
+                Step::SetPersistent(persistent, expected_changed) => {
+                    let (state, changed) = tracker.set_persistent(persistent);
+                    assert_eq!(
+                        changed, expected_changed,
+                        "step {index}: unexpected changed flag"
+                    );
+                    state
+                }
+            };
+            assert_eq!(actual, expected, "step {index}: unexpected KeepAliveState");
+        }
+    }
+}

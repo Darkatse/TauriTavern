@@ -59,6 +59,7 @@ function createValues(overrides: ValuesOverrides = {}): SettingsValues {
             ...overrides.chatBackups,
         },
         closeToTrayOnClose: false,
+        keepAliveInBackground: false,
         requestProxy: { enabled: false, url: '', bypass: [], ...overrides.requestProxy },
         allowKeysExposure: false,
         avatarPersonaOriginalImagesEnabled: false,
@@ -81,6 +82,7 @@ function createActions(overrides: Partial<SettingsActions> = {}): SettingsAction
         chooseDataRoot: () => Promise.resolve(null),
         chooseWallpaper: () => Promise.resolve(null),
         showHelp: () => Promise.resolve(),
+        requestIgnoreBatteryOptimizations: () => Promise.resolve(),
         manageQuickAccess: () => Promise.resolve(),
         reloadFrontend: () => Promise.resolve(),
         openFrontendLogs: () => Promise.resolve(),
@@ -98,6 +100,7 @@ function createOptions(overrides: Partial<SettingsMountOptions> = {}): SettingsM
                 requestProxyAllowed: true,
                 lanSyncAllowed: true,
                 supportsCloseToTrayOnClose: true,
+                supportsKeepAliveInBackground: false,
                 supportsDataRootSelection: true,
             },
             values: createValues(),
@@ -251,6 +254,7 @@ test('iOS proxy repair path: an enabled proxy can be disabled but not re-enabled
         requestProxyAllowed: false,
         lanSyncAllowed: false,
         supportsCloseToTrayOnClose: false,
+        supportsKeepAliveInBackground: false,
         supportsDataRootSelection: false,
     };
     options.viewModel.values = createValues({
@@ -331,4 +335,38 @@ test('choosing a data root projects busy state and the pending migration result'
         .toContain('Configured data directory: /new/root');
     expect(chooseButton.disabled).toBe(false);
     expect(container.textContent).toContain('Data directory migration is pending.');
+});
+
+test('Android interface section updates keep-alive draft and invokes battery optimization exemption', async () => {
+    const user = userEvent.setup();
+    let batteryExemptionCalls = 0;
+    const options = createOptions({
+        actions: createActions({
+            requestIgnoreBatteryOptimizations: () => {
+                batteryExemptionCalls += 1;
+                return Promise.resolve();
+            },
+        }),
+    });
+    options.viewModel.capabilities = {
+        requestProxyAllowed: true,
+        lanSyncAllowed: true,
+        supportsCloseToTrayOnClose: false,
+        supportsKeepAliveInBackground: true,
+        supportsDataRootSelection: false,
+    };
+    const { container, handle } = mountApp(options);
+
+    const toggle = within(container).getByRole<HTMLInputElement>('checkbox', {
+        name: 'Keep alive in background (Android)',
+    });
+    expect(toggle.checked).toBe(false);
+
+    await user.click(toggle);
+    expect(handle.getDraft().keepAliveInBackground).toBe(true);
+
+    await user.click(
+        within(container).getByRole('button', { name: 'Request Battery Optimization Exemption' }),
+    );
+    expect(batteryExemptionCalls).toBe(1);
 });

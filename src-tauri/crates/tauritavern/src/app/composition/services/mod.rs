@@ -127,6 +127,10 @@ pub(super) async fn build(
         repositories.mcp_server_repository.clone(),
         mcp_gateway,
     ));
+    crate::platform::generation_background::set_persistent_keep_alive(
+        app_handle,
+        tauritavern_settings.keep_alive_in_background,
+    );
     let generation_background_runtime = crate::platform::generation_background::runtime(app_handle);
     let chat_completion_service = Arc::new(ChatCompletionService::new(
         repositories.chat_completion_repository.clone(),

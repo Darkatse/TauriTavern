@@ -331,6 +331,8 @@ pub struct TauriTavernSettings {
     #[serde(default = "default_close_to_tray_on_close")]
     pub close_to_tray_on_close: bool,
     #[serde(default)]
+    pub keep_alive_in_background: bool,
+    #[serde(default)]
     pub request_proxy: RequestProxySettings,
     #[serde(default)]
     pub allow_keys_exposure: bool,
@@ -368,6 +370,7 @@ impl Default for TauriTavernSettings {
             codemirror_editor_enabled: default_codemirror_editor_enabled(),
             chat_backups: ChatBackupSettings::default(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
+            keep_alive_in_background: false,
             request_proxy: RequestProxySettings::default(),
             allow_keys_exposure: false,
             avatar_persona_original_images_enabled: default_avatar_persona_original_images_enabled(

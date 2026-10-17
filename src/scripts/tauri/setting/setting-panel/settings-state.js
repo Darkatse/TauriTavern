@@ -117,6 +117,7 @@ export function createTauriTavernSettingsState(settings) {
             maxTotalBytes,
         },
         closeToTrayOnClose: Boolean(settings.close_to_tray_on_close),
+        keepAliveInBackground: Boolean(settings.keep_alive_in_background),
         requestProxy: {
             enabled: Boolean(settings.request_proxy?.enabled),
             url: typeof settings.request_proxy?.url === 'string' ? settings.request_proxy.url : '',
