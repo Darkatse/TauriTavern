@@ -10,15 +10,54 @@ use tokio::runtime::Handle;
 use tokio::sync::watch;
 use tt_domain::errors::DomainError;
 use tt_ports::workspace_shell::{
-    WorkspaceShell, WorkspaceShellExit, WorkspaceShellRequest, WorkspaceShellResult,
+    WorkspaceShell, WorkspaceShellContext, WorkspaceShellExit, WorkspaceShellRequest,
+    WorkspaceShellResult,
 };
 
 use crate::filesystem::WorkspaceFileSystem;
 use crate::javascript::Javascript;
 
-const EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const MAX_COMMAND_BYTES: usize = 128 * 1024;
 pub(crate) const MAX_OUTPUT_BYTES: usize = 128 * 1024;
+
+/// Assemble the command set of one shell instance.
+///
+/// Both the workspace shell and the shell nested inside JavaScript are built
+/// here, so a command registered once is visible everywhere a script can reach.
+/// The context carries the host capabilities the command set is derived from.
+pub(crate) fn with_commands(
+    builder: bashkit::BashBuilder,
+    context: &WorkspaceShellContext,
+) -> bashkit::BashBuilder {
+    let _ = context;
+    builder
+}
+
+/// Reject a working directory that is not an existing directory.
+///
+/// bashkit accepts any path as `cwd` and only reports it through `pwd`, so an
+/// unusable directory would otherwise surface as a confusing downstream failure.
+/// The message names the path, because both callers report it to a user who
+/// supplied only that path.
+pub(crate) async fn require_directory(
+    files: &dyn FileSystem,
+    workdir: &Path,
+) -> bashkit::Result<()> {
+    let shown = workdir.display();
+    match files.stat(workdir).await {
+        Ok(metadata) if metadata.file_type.is_dir() => Ok(()),
+        Ok(_) => Err(bad_directory(format!("`{shown}` is not a directory"))),
+        Err(bashkit::Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(bad_directory(format!("`{shown}` does not exist")))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn bad_directory(message: String) -> bashkit::Error {
+    std::io::Error::new(std::io::ErrorKind::NotADirectory, message).into()
+}
 
 pub struct WorkspaceShellEngine;
 
@@ -39,28 +78,32 @@ impl WorkspaceShell for WorkspaceShellEngine {
             return Ok(stopped(WorkspaceShellExit::Cancelled));
         }
         let files = Arc::new(WorkspaceFileSystem::new(files));
-        let javascript = Arc::new(Javascript::new(context));
+        let javascript = Arc::new(Javascript::new(context.clone()));
         let workdir = bashkit::normalize_path(Path::new(&workdir));
-        let mut bash = Bash::builder()
-            .fs(files.clone())
-            .builtin("js", javascript.builtin("js"))
-            .builtin("node", javascript.builtin("node"))
-            .builtin("deno", javascript.builtin("deno"))
-            .cwd(workdir.clone())
-            .env("HOME", "/")
-            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
-            .python_with_limits(PythonLimits::default().max_duration(EXECUTION_TIMEOUT))
-            .limits(
-                ExecutionLimits::new()
-                    .timeout(EXECUTION_TIMEOUT)
-                    .max_input_bytes(MAX_COMMAND_BYTES)
-                    .max_stdout_bytes(MAX_OUTPUT_BYTES)
-                    .max_stderr_bytes(MAX_OUTPUT_BYTES),
-            )
-            .build();
+        let mut bash = with_commands(
+            Bash::builder()
+                .fs(files.clone())
+                .builtin("js", javascript.builtin("js"))
+                .builtin("node", javascript.builtin("node"))
+                .builtin("deno", javascript.builtin("deno")),
+            &context,
+        )
+        .cwd(workdir.clone())
+        .env("HOME", "/")
+        .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+        .python_with_limits(PythonLimits::default().max_duration(EXECUTION_TIMEOUT))
+        .limits(
+            ExecutionLimits::new()
+                .timeout(EXECUTION_TIMEOUT)
+                .max_input_bytes(MAX_COMMAND_BYTES)
+                .max_stdout_bytes(MAX_OUTPUT_BYTES)
+                .max_stderr_bytes(MAX_OUTPUT_BYTES),
+        )
+        .build();
         let cancellation = bash.cancellation_token();
         let mut worker_cancel = cancel.clone();
         let runtime = Handle::current();
+        let worker_javascript = javascript.clone();
         let mut worker = tokio::task::spawn_blocking(move || {
             let result = catch_unwind(AssertUnwindSafe(|| {
                 runtime.block_on(async {
@@ -68,12 +111,7 @@ impl WorkspaceShell for WorkspaceShellEngine {
                         biased;
                         _ = cancelled(&mut worker_cancel) => Err(bashkit::Error::Cancelled),
                         result = async {
-                            if !files.stat(&workdir).await?.file_type.is_dir() {
-                                return Err(std::io::Error::new(
-                                    std::io::ErrorKind::NotADirectory,
-                                    "workdir is not a directory",
-                                ).into());
-                            }
+                            require_directory(files.as_ref(), &workdir).await?;
                             bash.exec(&command).await
                         } => result,
                     }
@@ -81,7 +119,7 @@ impl WorkspaceShell for WorkspaceShellEngine {
             }));
             // This runs even when polling the interpreter panics or its internal
             // timeout drops an awaited write.
-            let js_finished = runtime.block_on(javascript.finish());
+            let js_finished = runtime.block_on(worker_javascript.finish());
             let files_finished = runtime.block_on(files.finish());
             js_finished?;
             files_finished?;
@@ -97,6 +135,9 @@ impl WorkspaceShell for WorkspaceShellEngine {
                 // This observer runs outside the blocking worker so CPU-bound
                 // interpreter polls can see cancellation at their checkpoints.
                 cancellation.store(true, Ordering::Relaxed);
+                // A nested shell has its own token and does not observe the
+                // outer one or the revoked filesystem scope, so stop it here.
+                javascript.cancel();
                 worker.await
             }
         };

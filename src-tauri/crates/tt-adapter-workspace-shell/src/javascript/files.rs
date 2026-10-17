@@ -5,6 +5,7 @@ use bashkit::{ExecutionBudget, ExecutionCapability, FileSystem};
 use tokio::runtime::Handle;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::WorkspacePath;
+use tt_ports::workspace_shell::WorkspaceShellContext;
 
 use crate::filesystem::MAX_DIRECTORY_ENTRIES;
 
@@ -13,9 +14,45 @@ pub(super) struct Files {
     pub fs: Arc<dyn FileSystem>,
     pub runtime: Handle,
     pub budget: ExecutionCapability<ExecutionBudget>,
+    /// Directory the surrounding command started in; the base for relative paths.
+    origin: String,
+    context: Arc<WorkspaceShellContext>,
 }
 
 impl Files {
+    pub fn new(
+        fs: Arc<dyn FileSystem>,
+        runtime: Handle,
+        budget: ExecutionCapability<ExecutionBudget>,
+        context: Arc<WorkspaceShellContext>,
+    ) -> Self {
+        Self {
+            fs,
+            runtime,
+            budget,
+            // The engine validates the workdir before executing, so the shell
+            // always starts in a real directory; `at` replaces this default.
+            origin: "/".to_owned(),
+            context,
+        }
+    }
+
+    /// Record the directory the command starts in.
+    pub fn at(mut self, origin: &str) -> Self {
+        self.origin = origin.to_owned();
+        self
+    }
+
+    /// Directory the surrounding command started in.
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    /// Host capabilities the command set of a nested shell derives from.
+    pub fn context(&self) -> &WorkspaceShellContext {
+        &self.context
+    }
+
     pub fn check(&self) -> Result<(), String> {
         self.budget
             .try_with(|budget| budget.check())
