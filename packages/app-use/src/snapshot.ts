@@ -1,7 +1,8 @@
-import { createSemantics, describeLine, isSensitive, isTextRegion, preview, suppressesText } from './semantics';
-import type { Semantics } from './semantics';
-import { isElement, isHtmlTag, isText, mainDocumentScope, requireCurrentScope } from './document';
-import type { DocumentScope } from './document';
+import { createSemantics, describeLine, isTextRegion, preview, suppressesText } from './semantics.ts';
+import type { ObservationOptions, Semantics } from './semantics.ts';
+import type { ToolArguments } from './types.ts';
+import { isElement, isHtmlTag, isText, mainDocumentScope, requireCurrentScope } from './document.ts';
+import type { DocumentScope } from './document.ts';
 
 const MAX_NODES = 80;
 const MAX_VISITS = 2_000;
@@ -10,7 +11,6 @@ const MAX_PAGE_CONTENT_PREVIEWS = 4_000;
 export const MAX_DEPTH = 6;
 const SNAPSHOT_SEQUENCE_KEY = 'tauritavern:in_app_agent_snapshot_sequence';
 
-type ToolArguments = Record<string, TauriTavernJsonValue>;
 export type ElementTarget = { ref: string } | { selector: string; root?: string | undefined };
 type ResolvedTarget = { element: Element; scope: DocumentScope };
 type TextPreview = { value: string; truncated: boolean };
@@ -33,11 +33,18 @@ type Traversal = {
 type Continuation = { token: string; traversal: Traversal };
 
 /** One recent observation for the page. It survives drawer closure, not a Run change. */
-export function createObservation() {
+export function createObservation(options: ObservationOptions = {}) {
     let ownerRunId = '';
     let references = new Map<string, Element>();
     let continuation: Continuation | null = null;
     let scope = mainDocumentScope();
+    const semantics = () => createSemantics(options);
+
+    function requireScope(scope: DocumentScope) {
+        requireCurrentScope(scope);
+        const current = semantics();
+        for (const frame of scope.frames) current.requireFrameVisible(frame);
+    }
 
     function enterRun(runId: string) {
         if (ownerRunId === runId) {
@@ -62,7 +69,7 @@ export function createObservation() {
         if (!element.isConnected || element.ownerDocument !== scope.document) {
             throw new Error('The target is no longer in this page. Call app.snapshot to inspect the current interface before acting.');
         }
-        if (!createSemantics().isWithinObservedContent(element)) {
+        if (!semantics().isWithinObservedContent(element)) {
             throw new Error('The target is inside a hidden or omitted region. Call app.snapshot to find its visible panel or restore control before acting.');
         }
         return { element, scope };
@@ -71,12 +78,12 @@ export function createObservation() {
     /** Locating an element does not replace snapshot refs or change the observed document. */
     function resolve(target: ElementTarget): ResolvedTarget {
         if ('ref' in target) return resolveRef(target.ref);
-        const semantics = createSemantics();
+        const current = semantics();
         const base = target.root === undefined
             ? { element: document.documentElement, scope: mainDocumentScope() }
             : resolveRef(target.root);
-        const region = enterFrame(base, semantics);
-        return { element: selectElement(region.element, target.selector, semantics), scope: region.scope };
+        const region = enterFrame(base, current);
+        return { element: selectElement(region.element, target.selector, current), scope: region.scope };
     }
 
     function snapshot(args: ToolArguments) {
@@ -87,7 +94,7 @@ export function createObservation() {
         clearCursor();
         references = new Map();
 
-        const page = readPage(traversal, prefix, references);
+        const page = readPage(traversal, prefix, references, semantics());
         if (page.hasMore) {
             const token = `${prefix}:next`;
             continuation = { token, traversal };
@@ -137,7 +144,7 @@ export function createObservation() {
         } else if (args.root !== undefined) {
             target = resolveRef(args.root);
         }
-        const { element: root, scope: nextScope } = enterFrame(target, createSemantics());
+        const { element: root, scope: nextScope } = enterFrame(target, semantics());
         const isDocumentRoot = root === nextScope.document.documentElement || root === nextScope.document.body;
         const dialogs = isDocumentRoot
             ? Array.from(nextScope.document.querySelectorAll('dialog[open]')).slice(0, MAX_NODES)
@@ -152,13 +159,7 @@ export function createObservation() {
         };
     }
 
-    return { enterRun, resolve, snapshot, clearCursor };
-}
-
-function requireScope(scope: DocumentScope) {
-    requireCurrentScope(scope);
-    const semantics = createSemantics();
-    for (const frame of scope.frames) semantics.requireFrameVisible(frame);
+    return { enterRun, resolve, snapshot, clearCursor, createSemantics: semantics };
 }
 
 export type Observation = ReturnType<typeof createObservation>;
@@ -217,8 +218,7 @@ function nextSnapshotPrefix(): string {
 }
 
 /** Render one bounded page and leave traversal.next at the first unvisited node. */
-function readPage(traversal: Traversal, prefix: string, references: Map<string, Element>) {
-    const semantics = createSemantics();
+function readPage(traversal: Traversal, prefix: string, references: Map<string, Element>, semantics: Semantics) {
     // Descendants fill their region's preview during this same walk; format lines after the page is read.
     const lines: SnapshotLine[] = [];
     const textBudget = { remaining: MAX_PAGE_CONTENT_PREVIEWS };
@@ -302,7 +302,7 @@ function readPage(traversal: Traversal, prefix: string, references: Map<string, 
                     }
                 }
                 if (childContext) {
-                    childContext.suppressText ||= suppressesText(node, role) || isSensitive(node);
+                    childContext.suppressText ||= suppressesText(node, role) || semantics.isSensitive(node);
                 }
             }
         } else if (isText(node) && !suppressText && !textPreview?.truncated && semantics.isTextVisible(node)) {
@@ -375,7 +375,7 @@ function advance(
             const ancestors = position.ancestors.filter(ancestor => ancestor.element.contains(parent));
             const lastAncestor = ancestors.at(-1);
             const suppressText = ancestors.some(ancestor =>
-                suppressesText(ancestor.element, semantics.readRole(ancestor.element)) || isSensitive(ancestor.element),
+                suppressesText(ancestor.element, semantics.readRole(ancestor.element)) || semantics.isSensitive(ancestor.element),
             );
             return {
                 node: node.nextSibling,

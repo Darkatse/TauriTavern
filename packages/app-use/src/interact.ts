@@ -1,14 +1,13 @@
-import { createSemantics, isCheckableInput, isDisabled } from './semantics';
-import type { Semantics } from './semantics';
-import type { ElementTarget, Observation } from './snapshot';
-import { documentWindow, isHTMLElement, isHtmlTag, isInScope } from './document';
-import type { DocumentScope } from './document';
-import { inspectInputSurface } from './geometry';
-import { CONTROL_SHELL_CLASS } from '../../../../legacy-controls.js';
-import type { InteractionPoint } from './geometry';
-export type { InteractionPoint } from './geometry';
+import { isCheckableInput, isDisabled } from './semantics.ts';
+import type { Semantics } from './semantics.ts';
+import type { ElementTarget, Observation } from './snapshot.ts';
+import { documentWindow, isHTMLElement, isHtmlTag, isInScope } from './document.ts';
+import type { DocumentScope } from './document.ts';
+import { inspectInputSurface } from './geometry.ts';
+import type { InteractionPoint } from './geometry.ts';
+import type { ToolArguments } from './types.ts';
+export type { InteractionPoint } from './geometry.ts';
 
-type ToolArguments = Record<string, TauriTavernJsonValue>;
 type Interaction = { target: ElementTarget } & (
     | { action: 'click' }
     | { action: 'fill'; value: string }
@@ -16,8 +15,12 @@ type Interaction = { target: ElementTarget } & (
     | { action: 'set_checked'; checked: boolean }
     | { action: 'scroll'; direction: 'up' | 'down' }
 );
-type ChatScroller = (options: ScrollToOptions) => void;
 type InteractionFeedback = (point: InteractionPoint) => void;
+export type InteractionOptions = {
+    feedback?: InteractionFeedback;
+    surfaceCandidates?: (element: HTMLElement) => HTMLElement[];
+    scrollTo?: (element: HTMLElement, options: ScrollToOptions) => void;
+};
 
 const ACTION_FIELDS: Record<Interaction['action'], string[]> = {
     click: [],
@@ -28,32 +31,20 @@ const ACTION_FIELDS: Record<Interaction['action'], string[]> = {
 };
 const FILLABLE_INPUT_TYPES = new Set(['text', 'search', 'email', 'url', 'tel', 'number']);
 
-export async function interact(args: ToolArguments, observation: Observation, signal: AbortSignal, feedback?: InteractionFeedback) {
+export function interact(args: ToolArguments, observation: Observation, options: InteractionOptions = {}) {
     const request = parseInteraction(args);
-    let target = observation.resolve(request.target);
-    let scrollChat: ChatScroller | undefined;
-
-    if (request.action === 'scroll' && target.element === document.getElementById('chat')) {
-        scrollChat = await loadChatScroller();
-    }
-
-    if (signal.aborted) {
-        throw new Error('The operation was cancelled before acting.');
-    }
-    // Loading the page module can yield. Locate and validate again before acting.
-    if (scrollChat) target = observation.resolve(request.target);
+    const target = observation.resolve(request.target);
     const { scope } = target;
     const element = requireInteractiveElement(target.element, scope);
-    // A selector may match a different element after the awaited import.
-    const chatScroller = element === document.getElementById('chat') ? scrollChat : undefined;
-    const apply = prepareAction(request, element, scope, chatScroller, feedback);
+    const semantics = observation.createSemantics();
+    const apply = prepareAction(request, element, scope, semantics, options);
     observation.clearCursor();
 
     // Preparation only checks the target and signals visual feedback. apply changes application state.
     try {
         const dispatched = apply();
         const observed = isInScope(element, scope)
-            ? { connected: true, ...createSemantics().describeElement(element) }
+            ? { connected: true, ...observation.createSemantics().describeElement(element) }
             : { connected: false };
         return { action: request.action, dispatched, observed };
     } catch (error) {
@@ -121,15 +112,6 @@ function parseTarget(args: ToolArguments): ElementTarget {
     return { selector: args.selector, root: args.root };
 }
 
-async function loadChatScroller(): Promise<ChatScroller> {
-    // Import the running page instance: a static import would bundle a second SillyTavern runtime.
-    const scriptUrl = '/script.js';
-    const page = await import(scriptUrl /* webpackIgnore: true */) as {
-        scrollChatSurfaceTo: ChatScroller;
-    };
-    return page.scrollChatSurfaceTo;
-}
-
 function requireInteractiveElement(element: Element, scope: DocumentScope): HTMLElement {
     if (!isHTMLElement(element)) {
         throw new Error('app.interact does not support this element. Choose its enclosing control from app.snapshot, or use app.evaluate with a known API.');
@@ -155,14 +137,13 @@ function prepareAction(
     request: Interaction,
     element: HTMLElement,
     scope: DocumentScope,
-    scrollChat: ChatScroller | undefined,
-    feedback?: InteractionFeedback,
+    semantics: Semantics,
+    options: InteractionOptions,
 ): () => boolean {
-    const semantics = createSemantics();
-    const requireSurface = (candidates: HTMLElement[]) => requireInputSurface(candidates, scope, semantics, feedback);
+    const requireSurface = (candidates: HTMLElement[]) => requireInputSurface(candidates, scope, semantics, options.feedback);
     switch (request.action) {
         case 'click': {
-            requireSurface(surfaceCandidates(element));
+            requireSurface(surfaceCandidates(element, options));
             return () => {
                 element.click();
                 return true;
@@ -208,7 +189,7 @@ function prepareAction(
             if (element.type === 'radio' && !request.checked) {
                 throw new Error('A radio cannot be unchecked directly. Select another radio in the group with checked=true.');
             }
-            requireSurface(surfaceCandidates(element));
+            requireSurface(surfaceCandidates(element, options));
 
             return () => {
                 if (element.checked === request.checked) {
@@ -227,8 +208,8 @@ function prepareAction(
             return () => {
                 const direction = request.direction === 'down' ? 1 : -1;
                 const top = element.scrollTop + direction * element.clientHeight;
-                if (scrollChat) {
-                    scrollChat({ top, behavior: 'instant' });
+                if (options.scrollTo) {
+                    options.scrollTo(element, { top, behavior: 'instant' });
                 } else {
                     element.scrollTo({ top, behavior: 'instant' });
                 }
@@ -256,14 +237,12 @@ function notifyValueChange(element: HTMLElement) {
     element.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-function surfaceCandidates(element: HTMLElement): HTMLElement[] {
+function surfaceCandidates(element: HTMLElement, options: InteractionOptions): HTMLElement[] {
     const candidates = [element];
     if (isCheckableInput(element)) {
         candidates.push(...Array.from(element.labels ?? []));
     }
-    if (element.matches(`.${CONTROL_SHELL_CLASS} > .sr-only`) && element.parentElement) {
-        candidates.push(element.parentElement);
-    }
+    candidates.push(...options.surfaceCandidates?.(element) ?? []);
     return [...new Set(candidates)];
 }
 

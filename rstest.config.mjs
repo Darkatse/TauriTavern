@@ -2,6 +2,7 @@ import { defineConfig } from '@rstest/core';
 
 export default defineConfig({
   include: [
+    'packages/app-use/src/**/*.test.{ts,tsx}',
     'src/scripts/extensions/agent-system/src/**/*.test.{ts,tsx}',
     'src/scripts/extensions/in-app-agent/src/**/*.test.{ts,tsx}',
     'src/scripts/extensions/mcp-manager/src/**/*.test.{ts,tsx}',

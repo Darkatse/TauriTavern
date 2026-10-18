@@ -1,8 +1,12 @@
 import { computeAccessibleDescription, computeAccessibleName, getRole } from 'dom-accessibility-api';
-import { documentWindow, isHtmlTag } from './document';
+import { documentWindow, isHtmlTag } from './document.ts';
 
 export const MAX_PREVIEW = 200;
 export type ElementDescription = Record<string, string | number | boolean>;
+export type ObservationOptions = {
+    sensitiveSelector?: string;
+    omit?: (element: Element) => string | null;
+};
 
 const FORM_CONTROLS = 'input,textarea,select,button';
 const NAME_FROM_CONTENT_ROLES = new Set([
@@ -36,15 +40,11 @@ export function isDisabled(element: Element): boolean {
     return element.matches(':disabled') || element.closest('[aria-disabled="true"]') !== null;
 }
 
-export function isSensitive(element: Element): boolean {
-    return element.matches('input[type="password"]') || element.closest('[data-tt-sensitive]') !== null;
-}
-
 export function isCheckableInput(element: Element): element is HTMLInputElement & { type: 'checkbox' | 'radio' } {
     return isHtmlTag(element, 'input') && (element.type === 'checkbox' || element.type === 'radio');
 }
 
-function hasSensitiveTextSource(element: Element, reference: 'aria-labelledby' | 'aria-describedby'): boolean {
+function hasSensitiveTextSource(element: Element, reference: 'aria-labelledby' | 'aria-describedby', isSensitive: (element: Element) => boolean): boolean {
     // Accessible text can follow external labels and owned nodes, including cycles.
     const valueContainer = isHtmlTag(element, 'textarea') || isHtmlTag(element, 'select')
         || (isHtmlTag(element, 'input') && !['button', 'submit', 'reset', 'image'].includes(element.type));
@@ -74,8 +74,13 @@ function hasSensitiveTextSource(element: Element, reference: 'aria-labelledby' |
 }
 
 /** Styles belong to one observation/action, never to a persistent DOM mirror. */
-export function createSemantics() {
+export function createSemantics(options: ObservationOptions) {
     const styles = new Map<Element, CSSStyleDeclaration>();
+
+    function isSensitive(element: Element): boolean {
+        return element.matches('input[type="password"]')
+            || (options.sensitiveSelector !== undefined && element.closest(options.sensitiveSelector) !== null);
+    }
 
     function getStyle(element: Element): CSSStyleDeclaration {
         let result = styles.get(element);
@@ -145,10 +150,10 @@ export function createSemantics() {
         if (element === element.ownerDocument.documentElement) {
             return 'document';
         }
-        if (element.matches('.ttia-history-area') || isTextRegion(element)) {
+        if (options.omit?.(element) || isTextRegion(element)) {
             return 'region';
         }
-        if (element.matches('[data-tt-sensitive]') && !element.matches(FORM_CONTROLS)) {
+        if (options.sensitiveSelector !== undefined && element.matches(options.sensitiveSelector) && !element.matches(FORM_CONTROLS)) {
             return 'group';
         }
         if (element.localName === 'iframe') {
@@ -182,9 +187,8 @@ export function createSemantics() {
         if (isSensitive(element) && !element.matches(FORM_CONTROLS)) {
             return 'sensitive content';
         }
-        if (element.matches('.ttia-history-area')) {
-            return 'assistant conversation and tool logs';
-        }
+        const omitted = options.omit?.(element);
+        if (omitted) return omitted;
         if (isHtmlTag(element, 'iframe')) {
             const doc = element.contentDocument;
             if (!doc) return 'content is not accessible from this page; it may be isolated or cross-origin';
@@ -201,7 +205,7 @@ export function createSemantics() {
 
     function readName(element: Element): string {
         // Associated labels can contain sensitive values too; avoid deriving a name from those contents.
-        if (hasSensitiveTextSource(element, 'aria-labelledby')) {
+        if (hasSensitiveTextSource(element, 'aria-labelledby', isSensitive)) {
             return element.getAttribute('aria-label') ?? element.getAttribute('title') ?? '';
         }
         if (isHtmlTag(element, 'option')) {
@@ -224,7 +228,7 @@ export function createSemantics() {
             if (name) {
                 result.name = name;
             }
-            if (!hasSensitiveTextSource(element, 'aria-describedby')) {
+            if (!hasSensitiveTextSource(element, 'aria-describedby', isSensitive)) {
                 const description = computeAccessibleDescription(element, {
                     getComputedStyle: getStyle,
                     computedStyleSupportsPseudoElements: false,
@@ -241,7 +245,7 @@ export function createSemantics() {
         }
         // Native form state takes precedence; ARIA also supplies states for custom controls.
         appendAriaState(element, result);
-        appendControlState(element, result);
+        appendControlState(element, result, isSensitive);
         appendDisclosureState(element, result);
 
         if (isScrollable(element)) {
@@ -253,12 +257,12 @@ export function createSemantics() {
         return result;
     }
 
-    return { excludesSubtree, isVisible, isWithinObservedContent, requireFrameVisible, isTextVisible, isScrollable, readRole, readOmissionReason, describeElement };
+    return { isSensitive, excludesSubtree, isVisible, isWithinObservedContent, requireFrameVisible, isTextVisible, isScrollable, readRole, readOmissionReason, describeElement };
 }
 
 export type Semantics = ReturnType<typeof createSemantics>;
 
-function appendControlState(element: Element, result: ElementDescription) {
+function appendControlState(element: Element, result: ElementDescription, isSensitive: (element: Element) => boolean) {
     if ((isHtmlTag(element, 'input') || isHtmlTag(element, 'textarea') || isHtmlTag(element, 'select'))
         && !element.validity.valid) {
         result.invalid = true;

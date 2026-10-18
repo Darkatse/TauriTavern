@@ -31,6 +31,7 @@ export type SettingsOptions = {
 };
 const MODEL_TARGET_EVENTS = ['MODEL_TARGET_CREATED', 'MODEL_TARGET_UPDATED', 'MODEL_TARGET_DELETED'] as const;
 export type AssistantContext = {
+    scrollChatSurfaceTo: (options: ScrollToOptions) => void;
     eventSource: {
         once: (event: string, listener: () => void) => void;
         on: (event: string, listener: () => void) => void;

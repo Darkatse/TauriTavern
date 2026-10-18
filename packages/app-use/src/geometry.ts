@@ -1,7 +1,7 @@
-import { documentWindow } from './document';
-import type { DocumentScope } from './document';
-import { isSensitive, preview } from './semantics';
-import type { Semantics } from './semantics';
+import { documentWindow } from './document.ts';
+import type { DocumentScope } from './document.ts';
+import { preview } from './semantics.ts';
+import type { Semantics } from './semantics.ts';
 
 export type InteractionPoint = { x: number; y: number };
 type Bounds = { left: number; right: number; top: number; bottom: number };
@@ -66,7 +66,7 @@ function findMissedHit(point: InteractionPoint, mappings: FrameMapping[], target
 
 function identify(element: Element, semantics: Semantics): string {
     // A hit may belong to an omitted region; diagnostics must not disclose its contents.
-    if (!semantics.isWithinObservedContent(element) || isSensitive(element)) return `${element.localName} (content omitted)`;
+    if (!semantics.isWithinObservedContent(element) || semantics.isSensitive(element)) return `${element.localName} (content omitted)`;
     const { name } = semantics.describeElement(element);
     const id = element.id ? ` id=${JSON.stringify(preview(element.id).value)}` : '';
     return `${element.localName}${id}${name ? ` ${JSON.stringify(name)}` : ''}`;

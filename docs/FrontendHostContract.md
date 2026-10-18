@@ -199,7 +199,7 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 
 > 注意：`window.__TAURITAVERN__` 是“平台 ABI”，应保持**小而稳定**；不要把内部实现对象整个暴露出去。
 
-### 3.7 ChatSurface participant（Project Contract）
+### 3.7 ChatSurface（Project Contract）
 
 - `window.__TAURITAVERN__.api.chatSurface`
   - 当前是实验性的 Project Contract，尚未作为 Public Contract 稳定发布。
@@ -208,6 +208,10 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
   - participant 必须显式声明协议版本；hook 返回同步 disposer，宿主用 `AbortSignal` 表达 mount/content/runtime 三种真实寿命。
   - mount/remount/content lifecycle 不得伪装为 SillyTavern 消息业务事件。
   - 完整协议与 raw API 接入示例见 `docs/API/ChatSurface.md`。
+
+- `SillyTavern.getContext().scrollChatSurfaceTo(options: ScrollToOptions): void`
+  - TT 在上游 `src/scripts/st-context.js` 中增加的函数，属于 Project Contract，目前供第一方助手使用。
+  - 效果等同于对主页面 `#chat` 调用 `scrollTo(options)`。`#chat` 的原生滚动只由 ChatSurface 写入，所以要经由它，不直接操作 DOM。
 
 ---
 

@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, expect, test, rstest } from '@rstest/core';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { useState } from 'react';
-import { createObservation } from './snapshot';
-import { interact } from './interact';
+import { createObservation } from './snapshot.ts';
+import { interact } from './interact.ts';
+
+const observationOptions = {
+    sensitiveSelector: '[data-private]',
+    omit: (element: Element) => element.matches('.agent-history') ? 'assistant conversation and tool logs' : null,
+};
 
 let hit: Element | null = null;
 beforeEach(() => {
@@ -31,18 +36,16 @@ function ref(tree: string, text: string) {
     }
     return result;
 }
-const signal = () => new AbortController().signal;
-
-test('a paginated region stays actionable while earlier page and run refs expire', async () => {
+test('a paginated region stays actionable while earlier page and run refs expire', () => {
     const buttons = Array.from({ length: 109 }, (_, index) =>
         `<button>Action ${index}</button>`,
     ).join('');
     document.body.innerHTML = `<section aria-label="Actions"><div class="mes_text">
         <p>${'Opening text '.repeat(200)}</p>${buttons}
-        <div class="tt-control-shell"><button class="sr-only" aria-labelledby="last-action"></button>
+        <div class="control-surface"><button class="sr-only" aria-labelledby="last-action"></button>
             <span id="last-action">Action 109</span></div><p>omitted-body-tail</p>
     </div></section>`;
-    const observation = createObservation();
+    const observation = createObservation(observationOptions);
     observation.enterRun('one');
     const overview = observation.snapshot({ depth: 1 });
     const oldRef = ref(overview.tree, 'Actions');
@@ -57,7 +60,10 @@ test('a paginated region stays actionable while earlier page and run refs expire
     const button = screen.getByRole('button', { name: 'Action 109' });
     button.onclick = () => button.setAttribute('aria-pressed', 'true');
     hit = screen.getByText('Action 109');
-    const action = await interact({ action: 'click', ref: ref(next.tree, 'Action 109') }, observation, signal());
+    const action = interact({ action: 'click', ref: ref(next.tree, 'Action 109') }, observation, {
+        surfaceCandidates: element => element.matches('.control-surface > .sr-only') && element.parentElement
+            ? [element.parentElement] : [],
+    });
     expect(action.observed).toMatchObject({ pressed: true });
     observation.enterRun('two');
     expect(() => observation.snapshot({ root: ref(next.tree, 'Actions') })).toThrow();
@@ -66,65 +72,65 @@ test('a paginated region stays actionable while earlier page and run refs expire
 test('short refs are not reused when the page module reloads', async () => {
     document.body.innerHTML = '<button>Before reload</button>';
     rstest.resetModules();
-    const beforeReload = (await import('./snapshot')).createObservation();
+    const beforeReload = (await import('./snapshot.ts')).createObservation(observationOptions);
     beforeReload.enterRun('run');
     const oldRef = ref(beforeReload.snapshot({}).tree, 'Before reload');
 
     // Reload the module as a page would, keeping browser storage and conversation history.
     rstest.resetModules();
     document.body.innerHTML = '<button>After reload</button>';
-    const afterReload = (await import('./snapshot')).createObservation();
+    const afterReload = (await import('./snapshot.ts')).createObservation(observationOptions);
     afterReload.enterRun('run');
     const newRef = ref(afterReload.snapshot({}).tree, 'After reload');
     expect(() => afterReload.snapshot({ root: oldRef })).toThrow();
     expect(afterReload.snapshot({ root: newRef }).tree).toContain('After reload');
 });
 
-test('selectors reach a replaced region beyond pagination without choosing hidden or ambiguous copies', async () => {
+test('selectors reach a replaced region beyond pagination without choosing hidden or ambiguous copies', () => {
     document.body.innerHTML = `${'<button>Background action</button>'.repeat(110)}
         <div style="display:none"><section class="phone"><button>Hidden copy</button></section></div>
-        <div data-tt-sensitive><section class="phone"><button id="private-action">Private copy</button></section></div>
+        <div data-private><section class="phone"><button id="private-action">Private copy</button></section></div>
         <section class="phone" aria-label="Phone"><button>Open</button></section>`;
-    const observation = createObservation();
+    const observation = createObservation(observationOptions);
     observation.enterRun('run');
     expect(observation.snapshot({ depth: 6 }).tree).not.toContain('"Phone"');
     const page = observation.snapshot({ selector: '.phone' });
     const openRef = ref(page.tree, '"Open"');
     let clicks = 0;
     screen.getByRole('button', { name: 'Open' }).onclick = () => { clicks++; };
-    await expect(interact({ action: 'click', ref: openRef, selector: '.phone button' }, observation, signal())).rejects.toThrow();
+    expect(() => interact({ action: 'click', ref: openRef, selector: '.phone button' }, observation)).toThrow();
     expect(clicks).toBe(0);
     const phone = screen.getByRole('region', { name: 'Phone' });
     phone.outerHTML = '<section class="phone" aria-label="Phone"><button>Save</button></section>';
-    await expect(interact({ action: 'click', ref: openRef }, observation, signal())).rejects.toThrow();
+    expect(() => interact({ action: 'click', ref: openRef }, observation)).toThrow();
 
     const save = screen.getByRole('button', { name: 'Save' });
     save.onclick = () => { clicks++; save.textContent = 'Saved'; };
     hit = save;
-    await interact({ action: 'click', selector: '.phone button' }, observation, signal());
+    interact({ action: 'click', selector: '.phone button' }, observation);
     expect(save.textContent).toBe('Saved');
     expect(clicks).toBe(1);
     const fresh = observation.snapshot({ selector: '.phone' });
     expect(fresh.tree).toContain('"Saved"');
     expect(() => observation.snapshot({ selector: '#private-action' })).toThrow();
-    await expect(interact({ action: 'click', selector: '#private-action' }, observation, signal())).rejects.toThrow();
+    expect(() => interact({ action: 'click', selector: '#private-action' }, observation)).toThrow();
 
     document.body.insertAdjacentHTML('beforeend', '<section class="phone" aria-label="Other phone"><button>Other action</button></section>');
     expect(() => observation.snapshot({ selector: '.phone' })).toThrow();
-    await expect(interact({ action: 'click', selector: '.phone button' }, observation, signal())).rejects.toThrow();
+    expect(() => interact({ action: 'click', selector: '.phone button' }, observation)).toThrow();
     expect(clicks).toBe(1);
-    await interact({ action: 'click', root: ref(fresh.tree, '"Phone"'), selector: 'button' }, observation, signal());
+    interact({ action: 'click', root: ref(fresh.tree, '"Phone"'), selector: 'button' }, observation);
     expect(clicks).toBe(2);
     const scoped = observation.snapshot({ root: ref(fresh.tree, '"Phone"'), selector: 'button' });
     expect(scoped.tree).toContain('"Saved"');
     expect(scoped.tree).not.toContain('Background action');
 });
 
-test('long formatted messages leave embedded controls and following swipes actionable without text pagination', async () => {
+test('long formatted messages leave embedded controls and following swipes actionable without text pagination', () => {
     const paragraph = '<p>故事正文' + '内容'.repeat(350) + '<strong>强调</strong></p>';
     document.body.innerHTML = `<section aria-label="Chat">
         <div class="mes_text">
-            <span style="display:none">hidden-body-text</span><span data-tt-sensitive>sensitive-body-text</span>
+            <span style="display:none">hidden-body-text</span><span data-private>sensitive-body-text</span>
             <h2>故事开头</h2>${paragraph.repeat(120)}
             <ul>${'<li>正文列表项</li>'.repeat(100)}</ul>
             <p>end-of-long-body</p>
@@ -133,7 +139,7 @@ test('long formatted messages leave embedded controls and following swipes actio
         <button>Previous swipe</button><span>11/11</span>
         <div class="mes_text"><p>第二条消息</p><p>仍然可读</p></div>
     </section>`;
-    const observation = createObservation();
+    const observation = createObservation(observationOptions);
     observation.enterRun('run');
     const overview = observation.snapshot({});
     const snapshot = observation.snapshot({ root: ref(overview.tree, 'Chat') });
@@ -152,7 +158,7 @@ test('long formatted messages leave embedded controls and following swipes actio
         const button = screen.getByRole('button', { name });
         button.onclick = () => { button.textContent = 'Done'; };
         hit = button;
-        await interact({ action: 'click', ref: ref(snapshot.tree, name) }, observation, signal());
+        interact({ action: 'click', ref: ref(snapshot.tree, name) }, observation);
         expect(button.textContent).toBe('Done');
     }
 });
@@ -162,18 +168,18 @@ test('snapshots preserve control state while bounding text and omitting sensitiv
         <button role="menuitemradio">Model A</button>
         <button aria-label="Alice" title="Al"></button>
         <button aria-label="Delete Alice" title="Delete"></button>
-        <input data-tt-sensitive value="secret-should-not-appear">
+        <input data-private value="secret-should-not-appear">
         <span id="public-key-label">API key</span>
-        <input data-tt-sensitive aria-labelledby="public-key-label" value="secret-should-not-appear">
-        <input id="self-key" data-tt-sensitive aria-labelledby="self-key" value="secret-should-not-appear">
-        <button data-tt-sensitive>secret-should-not-appear</button>
-        <div class="ttia-history-area">assistant-history-should-not-appear</div>
-        <label><input type="checkbox">Show <span id="secret-label" data-tt-sensitive>secret-label-should-not-appear</span></label>
+        <input data-private aria-labelledby="public-key-label" value="secret-should-not-appear">
+        <input id="self-key" data-private aria-labelledby="self-key" value="secret-should-not-appear">
+        <button data-private>secret-should-not-appear</button>
+        <div class="agent-history">assistant-history-should-not-appear</div>
+        <label><input type="checkbox">Show <span id="secret-label" data-private>secret-label-should-not-appear</span></label>
         <button aria-labelledby="secret-label"></button>
         <button aria-label="Public action" aria-describedby="secret-label"></button>
         <span id="owned-description" aria-owns="secret-label">Public explanation</span>
         <button aria-label="Owned description" aria-describedby="owned-description"></button>
-        <label for="described-field" data-tt-sensitive>secret-label-should-not-appear</label>
+        <label for="described-field" data-private>secret-label-should-not-appear</label>
         <input id="described-field">
         <button aria-label="Label description" aria-describedby="described-field"></button>
         <input aria-label="Readonly" readonly aria-readonly="false">
@@ -192,7 +198,7 @@ test('snapshots preserve control state while bounding text and omitting sensitiv
         body.textContent = 'Long message '.repeat(1_000);
         document.body.append(body);
     }
-    const observation = createObservation();
+    const observation = createObservation(observationOptions);
     observation.enterRun('run');
     const snapshot = observation.snapshot({});
     expect(snapshot.tree.match(/Model A/g)).toHaveLength(1);
@@ -213,7 +219,7 @@ test('snapshots preserve control state while bounding text and omitting sensitiv
     expect(observation.snapshot({}).tree.split('\n').find(line => line.includes('"Limited"'))).toContain('invalid=false');
 });
 
-test('fill updates React controlled state, not just the DOM value', async () => {
+test('fill updates React controlled state, not just the DOM value', () => {
     function Form() {
         const [text, setText] = useState('before');
         return (
@@ -224,11 +230,11 @@ test('fill updates React controlled state, not just the DOM value', async () => 
         );
     }
     render(<Form />);
-    const observation = createObservation();
+    const observation = createObservation(observationOptions);
     observation.enterRun('run');
     hit = screen.getByRole('textbox');
-    await act(async () => {
-        await interact({ action: 'fill', selector: 'input[aria-label="Text"]', value: 'after' }, observation, signal());
+    act(() => {
+        interact({ action: 'fill', selector: 'input[aria-label="Text"]', value: 'after' }, observation);
     });
     expect(screen.getByRole('status').textContent).toBe('after');
 });

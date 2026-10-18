@@ -1,7 +1,7 @@
 // Adapted from the signature_arc motion of Cua Driver's agent cursor:
 // https://github.com/trycua/cua/tree/main/libs/typescript/cursor-motion
 // Copyright (c) 2025 Cua AI, Inc. MIT License.
-import type { InteractionPoint } from './geometry';
+import type { InteractionPoint } from './geometry.ts';
 
 /** The tip, and the arrow's rotation in radians from its resting up-left pose. */
 export type CursorPose = InteractionPoint & { rotation: number };

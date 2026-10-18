@@ -48,13 +48,17 @@ src/scripts/tauri/setting/sync-app
 | 功能 | Rspack entry | 输出 | 加载方 |
 | --- | --- | --- | --- |
 | Agent System | `agent-system/src/index.tsx` | `agent-system/dist/index.bundle.js` | Agent manifest |
-| In-App Assistant | `in-app-agent/src/index.ts` | `in-app-agent/dist/index.bundle.js` | Assistant manifest |
+| In-App Assistant | `in-app-agent/src/index.ts` | `in-app-agent/dist/index.bundle.js`、`index.bundle.css` | Assistant manifest |
 | MCP Manager | `mcp-manager/src/index.tsx` | `mcp-manager/dist/index.bundle.js` | MCP manifest |
 | Settings | `settings-app/SettingsApp.tsx` | `setting/dist/settings.bundle.js` | `setting-panel/settings-popup.js` |
 | Dev Logs | `dev-logs-app/DevLogsApp.tsx` | `setting/dist/dev-logs.bundle.js` | `setting/dev-logs.js` |
 | Sync | `sync-app/index.ts` | `setting/dist/sync.bundle.js` | Sync popup 与 listener 外壳 |
 
+In-App Assistant 的 manifest 加载构建生成的 `dist/index.bundle.css`，因为光标样式要从 app-use 包导入；Agent System 与 MCP Manager 的 manifest 直接加载 `style.css`。所以改了助手的 `style.css`，要经 rspack 重新构建才会生效。
+
 本地 TS/TSX 模块使用无扩展名相对 import。显式 `.js` import 只指向磁盘上真实存在、由浏览器执行的 JavaScript 模块。
+
+[app-use](../../packages/app-use/README.md) 是例外：它的相对 import 写显式 `.ts`，构建时由 TypeScript 改写为 `.js`。包用自己的 tsconfig（NodeNext）做类型检查和 lint。TT 直接 import 包的源码，所以 `tsconfig.ui.json` 打开了 `allowImportingTsExtensions`。ESLint 按目录显式指定 tsconfig，因为自动查找会用到上游的 `src/jsconfig.json`。
 
 `src/scripts/tauri/setting/*.js` 与 `setting-panel/*.js` 是 WebView 直接加载的宿主适配层。它们拥有 Popup 生命周期、保存/关闭时序、原生事件接线和 bundle 动态导入，因此继续以浏览器 ESM 交付。`format-bytes.js` 同时服务宿主脚本与 TS bundle，并在实现中通过 `// @ts-check` 和 JSDoc 提供类型信息。
 

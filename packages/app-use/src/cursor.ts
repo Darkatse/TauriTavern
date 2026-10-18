@@ -1,6 +1,6 @@
-import type { InteractionPoint } from './interact';
-import { planCursorMove, press, ripple } from './cursor-motion';
-import type { CursorPose, CursorSample } from './cursor-motion';
+import type { InteractionPoint } from './interact.ts';
+import { planCursorMove, press, ripple } from './cursor-motion.ts';
+import type { CursorPose, CursorSample } from './cursor-motion.ts';
 
 const PRESS = press.frames.map(scale => ({ transform: `scale(${scale})` }));
 const RIPPLE = ripple.frames.map(({ scale, opacity }) => ({ transform: `scale(${scale})`, opacity }));
@@ -89,12 +89,12 @@ export function createInteractionCursor(getModalLayer: () => HTMLElement) {
 
 function createCursor() {
     const part = (className: string) => Object.assign(document.createElement('span'), { className });
-    const element = Object.assign(document.createElement('div'), { className: 'ttia-agent-cursor' });
+    const element = Object.assign(document.createElement('div'), { className: 'app-use-cursor' });
     element.setAttribute('aria-hidden', 'true');
-    const heading = part('ttia-cursor-heading');
-    const glow = part('ttia-cursor-glow');
-    const arrow = part('ttia-cursor-arrow');
-    const pulse = part('ttia-cursor-pulse');
+    const heading = part('app-use-cursor-heading');
+    const glow = part('app-use-cursor-glow');
+    const arrow = part('app-use-cursor-arrow');
+    const pulse = part('app-use-cursor-pulse');
     arrow.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M4.6 3.7 19.1 9.2Q20.5 9.75 19 10.4L12.9 12.9 10.4 19Q9.75 20.5 9.2 19.1L3.7 4.6Q3.2 3.2 4.6 3.7Z" />
     </svg>`;

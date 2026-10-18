@@ -5,7 +5,9 @@ import { createRoot } from 'react-dom/client';
 import { AssistantApp } from './AssistantApp';
 import { installAssistantDrawer, type DrawerState } from './drawer';
 import { assistantSelection, createAssistantActions, requireContext } from './host';
-import { createInteractionCursor } from './ui/cursor';
+import { createInteractionCursor } from '@tauritavern/app-use';
+import '@tauritavern/app-use/cursor.css';
+import '../style.css';
 
 const host = window.__TAURITAVERN__;
 if (host?.ready == null) throw new Error('in-app-agent: Host readiness is unavailable');
@@ -22,7 +24,7 @@ const unsubscribeCursor = controller.subscribe(() => {
     if (!activeRun && sendingSessionId === undefined) cursor.clear();
 });
 let pageReady = false;
-await registerAssistantTools(api, agent.tools, dev.frontendLogs, () => pageReady, (point, toolContext) => {
+await registerAssistantTools(api, agent.tools, dev.frontendLogs, () => pageReady, context.scrollChatSurfaceTo, (point, toolContext) => {
     const { activeRun, sendingSessionId } = controller.getSnapshot();
     // Only the task owned by this assistant drives its cursor, including the send admission window.
     if (activeRun?.runId === toolContext.runId

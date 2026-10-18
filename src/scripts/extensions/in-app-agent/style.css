@@ -396,41 +396,6 @@
 #advanced-formatting-button .drawer-icon[data-tt-assistant-activity="working"]::after { animation: ttia-breathe 1.7s ease-in-out infinite; }
 #advanced-formatting-button .drawer-icon[data-tt-assistant-activity] { position: relative; }
 
-/* The assistant cursor lives outside the drawer and never receives user input. */
-.ttia-agent-cursor {
-    position: fixed; inset: 0 auto auto 0; z-index: 2147483647;
-    width: 24px; height: 24px; min-width: 0; min-height: 0;
-    margin: 0; padding: 0; border: 0; overflow: visible;
-    background: transparent; box-shadow: none; user-select: none;
-    --ttia-cursor-accent: var(--SmartThemeUnderlineColor);
-}
-.ttia-agent-cursor, .ttia-agent-cursor * { pointer-events: none !important; }
-.ttia-agent-cursor::backdrop { background: transparent; pointer-events: none; }
-.ttia-cursor-heading, .ttia-cursor-arrow { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-.ttia-cursor-arrow { scale: 1.2; }
-.ttia-cursor-glow {
-    position: absolute; left: -22px; top: -22px; width: 60px; height: 60px; opacity: 0;
-    background: radial-gradient(closest-side, var(--ttia-cursor-accent), transparent);
-}
-.ttia-agent-cursor svg {
-    position: absolute; left: -4px; top: -4px; width: 24px; height: 24px; overflow: visible;
-    fill: var(--SmartThemeBodyColor); stroke: var(--SmartThemeBlurTintColor);
-    stroke-width: 1.8; stroke-linejoin: round;
-    filter: drop-shadow(0 1px 2px color-mix(in srgb, var(--SmartThemeShadowColor) 50%, transparent))
-        drop-shadow(0 0 1px color-mix(in srgb, var(--ttia-cursor-accent) 70%, transparent))
-        drop-shadow(0 0 3px color-mix(in srgb, var(--ttia-cursor-accent) 55%, transparent));
-}
-.ttia-cursor-pulse {
-    position: absolute; left: -52px; top: -52px; width: 104px; height: 104px;
-    box-sizing: border-box; border-radius: 50%; opacity: 0;
-    border: 3px solid var(--ttia-cursor-accent);
-}
-@media (pointer: coarse), (max-width: 600px) {
-    .ttia-cursor-arrow { scale: none; }
-    .ttia-cursor-glow { left: -16px; top: -16px; width: 48px; height: 48px; }
-    .ttia-cursor-pulse { left: -42px; top: -42px; width: 84px; height: 84px; }
-}
-
 /* ---------- motion ---------- */
 @keyframes ttia-breathe { 0%, 100% { opacity: .45; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
 @keyframes ttia-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }

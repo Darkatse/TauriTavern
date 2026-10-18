@@ -34,7 +34,7 @@ Zen 滑块创建和刷新时不写业务值。值不在档位上时显示真实�
 
 [`sortable-list.js`](../src/scripts/sortable-list.js) 为列表提供拖拽和上移/下移按钮。DOM 顺序是唯一的位置事实，功能在 `onReorder` 中读取并保存；后加入的条目经返回的 `addItem` 接入。`setSortableListEnabled` 同时停用拖拽与排序按钮。
 
-`.tt-control-shell` 是原生控件的可见外壳：控件本身用 `.sr-only`，仍参与键盘、读屏与 Agent 操作；外壳相对定位并显示内部焦点环。图标开关（checkbox，关联 label 加 `.not_focusable`）、头像上传与列表条目共用这一写法。legacy 适配层不为外壳推断角色或键盘行为；Agent 以外壳为可见点击表面，click 派发给原生控件。
+`.tt-control-shell` 是原生控件的可见外壳：控件本身用 `.sr-only`，仍参与键盘、读屏与 Agent 操作；外壳相对定位并显示内部焦点环。图标开关（checkbox，关联 label 加 `.not_focusable`）、头像上传与列表条目共用这一写法。legacy 适配层不为外壳推断角色或键盘行为；Agent 以外壳为可见点击表面，click 派发给原生控件。这条规则写在 in-app-agent 的 `createInteractionOptions`，外壳结构变化时要同步修改。
 
 列表条目保留原有容器，第一个子元素是原生主操作按钮（`:scope > .sr-only`，JS 用 `CONTROL_SHELL_CLASS`），点击冒泡到原有条目处理器。主操作名称引用条目标题，说明只引用日期、计数等简短事实；子操作是并列的原生按钮，读作“动作 + 对象”（`title` 提供动作，`aria-labelledby` 引用自身与条目名称）。列表与 listitem 角色由模板声明。
 

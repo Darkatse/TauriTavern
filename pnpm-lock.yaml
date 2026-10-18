@@ -38,6 +38,9 @@ importers:
       '@tanstack/virtual-core':
         specifier: 3.17.7
         version: 3.17.7
+      '@tauritavern/app-use':
+        specifier: workspace:*
+        version: link:packages/app-use
       bowser:
         specifier: ^2.12.1
         version: 2.14.1
@@ -53,9 +56,6 @@ importers:
       diff-match-patch:
         specifier: ^1.0.5
         version: 1.0.5
-      dom-accessibility-api:
-        specifier: ^0.7.1
-        version: 0.7.1
       dompurify:
         specifier: ^3.4.15
         version: 3.4.15
@@ -159,6 +159,9 @@ importers:
       '@types/toastr':
         specifier: ^2.1.43
         version: 2.1.43
+      dom-accessibility-api:
+        specifier: ^0.7.1
+        version: 0.7.1
       es-module-lexer:
         specifier: ^2.3.2
         version: 2.3.2
@@ -180,6 +183,16 @@ importers:
       typescript-eslint:
         specifier: ^8.67.0
         version: 8.67.0(eslint@9.39.5(supports-color@7.2.0))(supports-color@7.2.0)(typescript@5.9.3)
+
+  packages/app-use:
+    dependencies:
+      dom-accessibility-api:
+        specifier: ^0.7.1
+        version: 0.7.1
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
 packages:
 

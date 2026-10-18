@@ -1,5 +1,5 @@
 import { expect, test } from '@rstest/core';
-import { planCursorMove } from './cursor-motion';
+import { planCursorMove } from './cursor-motion.ts';
 
 test('acting on the same point again keeps the cursor still and unturned', () => {
     const point = { x: 100.1, y: 100.1 };

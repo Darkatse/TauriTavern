@@ -1,0 +1,37 @@
+{
+  "name": "@tauritavern/app-use",
+  "version": "0.1.0",
+  "description": "Semantic DOM observation, interaction and agent cursor for SillyTavern pages.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Darkatse/TauriTavern.git",
+    "directory": "packages/app-use"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./cursor.css": "./cursor.css"
+  },
+  "files": ["dist", "cursor.css"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "pnpm run build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./cursor.css": "./cursor.css"
+    }
+  },
+  "dependencies": {
+    "dom-accessibility-api": "^0.7.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
