@@ -15,10 +15,10 @@ const TARGET = Object.freeze({
     fileName: 'Story',
 });
 
-function installRuntime(identity, invoke) {
+function installRuntime(identity, invoke, windowExtras = {}) {
     const previousWindow = globalThis.window;
     const restoreIdentity = installHostIdentity(identity);
-    globalThis.window = { __TAURI__: { core: { invoke } } };
+    globalThis.window = { __TAURI__: { core: { invoke } }, ...windowExtras };
     return () => {
         restoreIdentity();
         if (previousWindow === undefined) {
@@ -279,4 +279,84 @@ test('cold commit captures source references before asynchronous transport', asy
         assert.equal(message.tt_swipe_cold.sourceId, 7);
         assert.equal(message.mes, 'active');
     } finally { restore(); }
+});
+
+function collectCommitProgress() {
+    const events = [];
+    return {
+        events,
+        dispatchEvent: event => { events.push(event.detail); },
+        /** The last event that still described a live commit. */
+        lastLive: () => events.filter(event => event.primary !== null).at(-1)?.primary ?? null,
+    };
+}
+
+test('chat payload commits report short labels and real byte progress', async () => {
+    const progress = collectCommitProgress();
+    const host = createCommitHost({ maxFrameBytes: 7 });
+    const restore = installRuntime(HOSTS.android, host.invoke, { dispatchEvent: progress.dispatchEvent });
+    const payload = [{ chat_metadata: {} }, { mes: '你好 👋\nsecond line'.repeat(6) }];
+    const expectedBytes = Buffer.byteLength(payload.map(entry => JSON.stringify(entry)).join('\n'));
+
+    try {
+        await commit(payload);
+
+        assert.ok(progress.events.length > 2, 'every frame and both edges emit');
+        assert.equal(progress.events[0].primary.kind, 'payload');
+        assert.equal(progress.events[0].primary.targetKind, 'character');
+        assert.equal(progress.events[0].primary.total, expectedBytes);
+        assert.equal(progress.events[0].primary.percent, 0);
+
+        // Bytes are reported monotonically and finish exactly at the measured total.
+        const written = progress.events
+            .filter(event => event.primary?.status === 'writing')
+            .map(event => event.primary.written);
+        assert.deepEqual(written, [...written].sort((a, b) => a - b));
+
+        const finishing = progress.events.filter(event => event.primary?.status === 'finishing').at(-1).primary;
+        assert.equal(finishing.written, expectedBytes);
+        assert.equal(finishing.percent, 100);
+
+        // The commit is released once it settles, so the queue signal drops back to empty.
+        assert.equal(progress.events.at(-1).pending, 0);
+        assert.equal(progress.events.at(-1).primary, null);
+    } finally {
+        restore();
+    }
+});
+
+test('metadata commits report their own kind and a single-frame total', async () => {
+    const progress = collectCommitProgress();
+    const host = createCommitHost();
+    const restore = installRuntime(HOSTS.windows, host.invoke, { dispatchEvent: progress.dispatchEvent });
+    const chatMetadata = { variables: { score: 1 } };
+    const expectedBytes = Buffer.byteLength(JSON.stringify(chatMetadata));
+
+    try {
+        await commitChatMetadata({ target: TARGET, chatMetadata });
+
+        assert.equal(progress.events[0].primary.kind, 'metadata');
+        assert.equal(progress.events[0].primary.targetKind, 'character');
+        assert.equal(progress.events[0].primary.total, expectedBytes);
+        assert.equal(progress.lastLive().percent, 100);
+        assert.equal(progress.events.at(-1).pending, 0);
+    } finally {
+        restore();
+    }
+});
+
+test('failed commits still release their progress slot', async () => {
+    const progress = collectCommitProgress();
+    const host = createCommitHost({
+        onAppend: () => { throw new Error('append failed'); },
+    });
+    const restore = installRuntime(HOSTS.macos, host.invoke, { dispatchEvent: progress.dispatchEvent });
+
+    try {
+        await assert.rejects(() => commit([{ mes: 'failure' }]), /append failed/);
+        assert.equal(progress.events.at(-1).pending, 0);
+        assert.equal(progress.events.at(-1).primary, null);
+    } finally {
+        restore();
+    }
 });

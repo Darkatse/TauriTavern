@@ -79,6 +79,8 @@ transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方
 
 提交和取消错误向调用方传播；收尾及启动清理失败只记告警，不改写提交结果。integrity 冲突按明确错误码识别。
 
+提交期间按帧广播 `tt-chat-commit`：每次提交携带 `kind`、`targetKind`、已写字节与总量；队列层另有 `tt-record-save` 报告尚未排空的任务数。两者都是纯广播，监听者异常不影响提交，契约见 [API/Chat §3](../API/Chat.md#3-保存进度事件window)。总量由前端在提交前按 UTF-8 精确测量（约 900MB/s），所以大聊天保存会多一次与内容同规模但远快于写盘的编码遍历。
+
 聊天发布先同步暂存文件，再原子替换目标；失败不回退为覆盖复制。此保证不包含 rename 后父目录项的断电持久化。
 
 ### 3.1 Metadata 保存
@@ -194,6 +196,7 @@ Rust：
 - 完整保存后重开，编辑、删除、swipe、隐藏范围和 metadata 均保持。
 - metadata 保存后 header 字段更新且正文逐字节不变；待保存的消息删除不被取消，新群聊的问候事件可立即保存 metadata。
 - 保存开始后修改消息和嵌套 metadata，不会改变正在传输的快照；后续保存读取新的状态。
+- 保存期间 `tt-chat-commit` 的 `percent` 单调不减，`finishing` 时为 100；提交成功、失败或取消后 `pending` 都归零。
 - integrity 冲突与其他失败保持区分；非 integrity 的 host 拒绝以可读 message 到达调用方和兼容路由的 `details`；兼容保存路由保持成功和错误响应语义。
 - tail/before 对角色和群聊返回相同索引语义，stale cursor 明确失败。
 - 旧 settings 中的 `chat_history_mode` 被 serde 作为未知字段忽略，重新序列化时不会保留。

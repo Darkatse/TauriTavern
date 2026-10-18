@@ -202,3 +202,58 @@ while (page.hasMoreBefore) {
 | `history.beforePages(page, { limit, pages })` | 一次拉多页（减少 IPC 往返，移动端推荐） |
 
 返回值包含 `startIndex`（本页首条消息的绝对索引，0-based）和 `hasMoreBefore`（是否还有更早的消息）。
+
+## 3. 保存进度事件（window）
+
+聊天写盘有两个层次的 window 事件。两者都是纯广播，监听者抛错不会影响保存本身。
+
+### `tt-record-save` — 队列层
+
+```js
+window.addEventListener('tt-record-save', event => {
+  // event.detail.pending: 尚未排空的聊天记录写盘任务数（含排队）
+});
+```
+
+入队即计、完成即减，因此包含排队与压缩等待。它回答的是**「现在能不能杀后台」**：`pending === 0` 表示队列已排空。只统计聊天记录文件写入，不含 IndexedDB post-save、设置与角色卡保存。
+
+### `tt-chat-commit` — 单次写盘的字节进度
+
+```js
+window.addEventListener('tt-chat-commit', event => {
+  // event.detail.pending: 正在进行的提交数
+  // event.detail.primary: 最早开始的提交（移动端单行显示用），无提交时为 null
+  // event.detail.commits: 全部进行中的提交
+});
+```
+
+每次提交的形状：
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | 单调递增的提交序号 |
+| `kind` | `payload` / `metadata` / `metadataExtension` |
+| `targetKind` | `character` 或 `group` |
+| `status` | `writing`（写分块）或 `finishing`（已写满，宿主正在发布） |
+| `written` / `total` | 已写入字节数 / 本次提交的总字节数 |
+| `percent` | `written / total`，0–100 的整数 |
+| `startedAt` | `Date.now()` 起点，用于自算耗时 |
+
+事件只携带事实，不携带展示文案；标签由消费者按 `kind` 决定。TauriTavern 自带的指示器使用这组短名：`payload` → `savechat`，`metadata` / `metadataExtension` → `savemeta`。
+
+覆盖范围是全部聊天写盘：单人/群聊 × 聊天内容/聊天元数据/元数据扩展。总量在前端按 UTF-8 精确测量（约 900MB/s，94MB 聊天约 100ms），分块大小由宿主决定（Android 256KB、iOS 1MB、桌面 4MB），所以移动端大聊天的进度粒度约 0.3%。
+
+`status` 转为 `finishing` 后 `percent` 已经是 100，但宿主还在做 rename / fsync / 缓存失效，这段时间通常很短但并非零。需要「进度到顶后保持一小段收尾态」的界面可以直接用这个状态。
+
+### TauriTavern 自带的指示器
+
+TauriTavern 已经用这个事件在输入框 placeholder 上显示 `savechat:53%` 这类单行进度（`src/scripts/tauri/save-progress-indicator.js`，由 `bootstrap.js` 在宿主就绪后安装），只在输入框为空时可见，队列排空后自动还原。
+
+扩展如果也想渲染保存进度，请先检查能力标记，避免两处同时改写 placeholder：
+
+```js
+if (document.documentElement.dataset.ttSaveProgress === 'on') {
+  // TauriTavern 已经显示，扩展不要重复实现
+}
+```
+
