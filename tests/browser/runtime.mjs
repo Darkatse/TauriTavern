@@ -95,7 +95,6 @@ export function createBrowserRuntime() {
         core: {
             async invoke(command, args) {
                 switch (command) {
-                    case 'is_ready': return true;
                     case 'backend_error_bridge_ready': return [];
                     case 'wait_for_backend_ready': return;
                     case 'get_tauritavern_settings': return {

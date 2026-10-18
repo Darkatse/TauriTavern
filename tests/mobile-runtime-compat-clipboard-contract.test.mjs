@@ -9,7 +9,6 @@ let invokedCommand;
 let invokedArgs;
 
 global.window = {
-    __TAURI_RUNNING__: true,
     __TAURI__: {
         core: {
             invoke: async (command, args) => {

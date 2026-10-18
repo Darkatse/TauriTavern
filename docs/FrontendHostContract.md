@@ -27,7 +27,7 @@
 
 页面脚本运行前，宿主已写入 `window.__TAURITAVERN_HOST__`（见 2.2）。
 
-开发态 HTTP 入口会先由 `scripts/tauri-dev-server.mjs` 注入 `src/dev-sw-bootstrap.js`，仅负责让持久 Service Worker registration 与当前 WebView 会话重新绑定，不参与应用模块初始化。
+开发态资源桥的就绪契约见 2.2，安装与接管机制见[第三方扩展](CurrentState/ThirdPartyExtensions.md)。
 
 1. `src/init.js`：负责最早期的环境标记、可选 perf 开关与动态 import。
 2. `src/tauri-main.js`：薄入口，仅调用 `bootstrapTauriMain()`。
@@ -36,15 +36,19 @@
 
 ### 2.2 就绪信号（Public/Project）
 
+- `window.__TAURITAVERN_DEV_SW_READY__ : Promise<void> | undefined`（Project）
+  - 开发资源桥引导脚本在安装资源桥时同步发布；SW 接管页面后 resolve，注册失败则 reject。
+  - 以下情况不发布，应用照常启动：打包运行（没有注入）；移动端 dev（经 app 协议加载，资源由宿主提供）；WebView 不支持 SW（会警告开发资源不可用）；旧会话正在注销并重载。
+  - `init.js` 在导入 `lib.js` 前等待它。
 - `window.__TAURITAVERN_MAIN_READY__ : Promise<void>`
-  - 由 `src/tauri/main/bootstrap.js` 写入，表示宿主层初始化已完成（或失败已被捕获并写入 console）。
-  - 在 Tauri runtime 下，resolve 前必须完成 Rust `BackendReadiness` 等待，确保首批依赖 `AppState` 的命令不靠 “state not managed” 文本重试作为正常控制流。
+  - 由 `src/tauri/main/bootstrap.js` 在主应用模块加载前同步写入；初始化成功时 resolve，失败时 reject，由调用者传播失败。
+  - resolve 前必须完成 Rust `BackendReadiness` 等待，确保首批依赖 `AppState` 的命令不靠 “state not managed” 文本重试作为正常控制流。
 - `window.__TAURITAVERN_PERF_READY__ : Promise<unknown> | undefined`
   - 仅在 perf-hud 启用时存在（见第 5 节）。
 - `globalThis.__TAURITAVERN_PERF_ENABLED__ : boolean`
   - 由 `src/init.js` 在动态 import 前写入；`bootstrap` 会优先读取它（避免重复计算/时序差异）。
 - `window.__TAURI_RUNNING__ : true`
-  - 由 `src/init.js` 写入；用于桥接层尽早判断 Tauri 环境（避免移动端注入时序 race）。
+  - 由 `src/init.js` 写入，作为 TT 前端的对外识别标记；内部代码不读取它，新代码使用 `__TAURITAVERN__` 提供的 API。
 - `window.__TAURITAVERN_HOST__ : { platform, kind }`（Project）
   - 宿主身份：Rust 按编译目标生成，在页面脚本之前写入主 WebView 的顶层 frame，对象冻结。
   - `platform`：`'windows' | 'macos' | 'linux' | 'android' | 'ios' | 'ohos'`；`kind`：`'desktop' | 'mobile'`，与 Rust 的 `desktop` / `mobile` 编译条件同源。
@@ -218,7 +222,7 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 
 拦截生效条件（见 `src/tauri/main/bootstrap.js`）：
 
-- 仅在 **Tauri 环境**启用（`bootstrapTauriMain()` 早退保护）。
+- 由宿主启动链路安装；`bootstrapTauriMain()` 只防止重复安装。
 - 仅拦截 **same-origin** 请求（包含被 patch 的同源 iframe/window）。
 - 是否接管由 `router.canHandle(method, pathname)` 决定（仅看 `url.pathname`）。
 

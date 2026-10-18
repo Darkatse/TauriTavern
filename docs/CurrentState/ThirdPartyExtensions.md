@@ -113,13 +113,15 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 
 开发态本地 Web 入口：
 
-- `scripts/tauri-dev-server.mjs` 会在入口文档最前面注入 `src/dev-sw-bootstrap.js`；新 WebView 会话若继承旧 Service Worker controller，会先注销旧注册并重载一次，避免跨宿主进程复用失效的 Wry 协议过滤器
-- `src/init.js` 会注册 `/tt-ext-sw.js`
+- `scripts/tauri-dev-server.mjs` 只在主应用入口注入 `src/dev-sw-bootstrap.js`，标签上带 `devUrl` 的 origin。引导脚本只为这个 origin 的文档安装资源桥：移动端 dev 经 Tauri app 协议代理 dev server，这些资源由宿主 web resource 钩子提供，与打包运行一致。生产入口不注册 SW
+- 引导脚本负责注册 `/tt-ext-sw.js`、提供 window 代理和发布[就绪信号](../FrontendHostContract.md#22-就绪信号publicproject)。新 WebView 会话若继承旧 controller，先注销旧注册并重载，避免复用失效的 Wry 协议过滤器
+- 页面未受控时（首次安装或强制刷新），引导脚本先监听 `controllerchange`，再请 active worker 执行 `clients.claim()`；页面受控后才发布就绪信号
 - Service Worker 将 `/css/user.css`、`/scripts/extensions/third-party/*`、`/thumbnail`、`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*` 转发到 `tt-ext` 自定义 scheme
 - Rust 侧 `register_uri_scheme_protocol("tt-ext", ...)` 在 dev 下统一分发上述资源请求
 - `convertFileSrc('', 'tt-ext')` 的结果可能因平台/WebView 不同而表现为 `tt-ext://localhost/` 或 `http(s)://tt-ext.localhost/`
 - Service Worker 的直接 `tt-ext` fetch 保留原请求 cache mode；`Range`、`If-Range`、`If-None-Match`、`If-Modified-Since` 在直连或 IPC 路径中保持同一 Host Resource 语义，并通过 `Access-Control-Expose-Headers: *` 保留直连响应的完整表示头
 - `If-Range`、`If-None-Match`、`If-Modified-Since` 会触发 custom scheme 跨源 preflight，必须直接通过通用 header wire 进入 IPC；其余 Service Worker `fetch(tt-ext)` 失败时切换到 window-context `fetch(tt-ext)`，正文以 transferable `ArrayBuffer` 返回。普通二进制资源不得经过 serde JSON IPC
+- window 代理在文档解析期间就调用 `startMessages()` 开始接收请求：`<head>` 中的 `/css/user.css` 可能经它加载，而 module 脚本要等这个样式表；等到 DOMContentLoaded 才投递，双方会互相等待
 - 非 Android 的 production、`tt-ext` 与 IPC fallback 都能代理 304；Android 按 Wry 硬约束返回完整 200。IPC 不另建 Cache API，因此自动生成 validator 的存储行为仍由具体 transport 决定
 
 因此，开发态与生产态虽然入口不同，但 third-party 路径语义保持一致。
@@ -190,7 +192,7 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
   - `src-tauri/crates/tt-application/src/services/host_resource_service/route_classifier.rs`
   - `src-tauri/crates/tt-application/src/services/host_resource_service/third_party.rs`
   - 相关测试
-- 若改动开发态代理链路，也必须同步验证 `src/dev-sw-bootstrap.js`、`src/init.js` 与 `src/tt-ext-sw.js`
+- 若改动开发态代理链路，也必须同步验证 `scripts/tauri-dev-server.mjs`、`src/dev-sw-bootstrap.js` 与 `src/tt-ext-sw.js`
 
 ## 7. 建议的最小回归面
 

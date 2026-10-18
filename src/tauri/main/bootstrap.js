@@ -1,6 +1,6 @@
 import { installWindowLayout } from '../../scripts/util/window-layout.js';
 import { installWindowBackdrop } from '../../scripts/window-backdrop.js';
-import { invoke, isTauri as isTauriRuntime } from '../../tauri-bridge.js';
+import { invoke } from '../../tauri-bridge.js';
 import { eventSource, event_types } from '../../scripts/events.js';
 import { createTauriMainContext } from './context.js';
 import { createDownloadBridge } from './download-bridge.js';
@@ -231,7 +231,7 @@ function installSameOriginWindowPatches(interceptors, downloadBridge, { runtimeC
 }
 
 export function bootstrapTauriMain() {
-    if (!isTauriRuntime() || bootstrapped) {
+    if (bootstrapped) {
         return;
     }
     bootstrapped = true;
@@ -326,7 +326,6 @@ export function bootstrapTauriMain() {
     };
 
     const interceptors = createInterceptors({
-        isTauri: true,
         originalFetch: window.fetch.bind(window),
         canHandleRequest,
         toUrl,
@@ -365,16 +364,11 @@ export function bootstrapTauriMain() {
         perfReadyPromise,
         safePerfMark,
     );
-    void readyPromise.catch((error) => {
-        console.error('Failed to initialize Tauri integration:', error);
-    });
     const runAfterTauriReady = (callback) => {
         void readyPromise.then(callback, () => {});
     };
     window.__TAURITAVERN_MAIN_READY__ = readyPromise;
-    if (window.__TAURITAVERN__) {
-        window.__TAURITAVERN__.ready = readyPromise;
-    }
+    window.__TAURITAVERN__.ready = readyPromise;
 
     runAfterTauriReady(() => setFrontendLogBackendForwardingEnabled(true));
     runAfterTauriReady(() => {

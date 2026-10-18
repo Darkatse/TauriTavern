@@ -31,7 +31,6 @@ test('fetch interceptor rejects immediately when AbortSignal is already aborted'
 
     let routedCalls = 0;
     const interceptors = createInterceptors({
-        isTauri: true,
         originalFetch: dom.window.fetch.bind(dom.window),
         canHandleRequest: () => true,
         toUrl: (input, base) => new URL(String(input), base),
@@ -83,7 +82,6 @@ test('fetch interceptor rejects when AbortSignal is aborted while routed request
 
     let routedCalls = 0;
     const interceptors = createInterceptors({
-        isTauri: true,
         originalFetch: dom.window.fetch.bind(dom.window),
         canHandleRequest: () => true,
         toUrl: (input, base) => new URL(String(input), base),
@@ -123,7 +121,6 @@ test('fetch abort remains active after headers while a consumer reads the body',
         const reading = Promise.withResolvers();
         const cancelled = Promise.withResolvers();
         createInterceptors({
-            isTauri: true,
             originalFetch: dom.window.fetch.bind(dom.window),
             canHandleRequest: () => true,
             toUrl: (input, base) => new URL(String(input), base),

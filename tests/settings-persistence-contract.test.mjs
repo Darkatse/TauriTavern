@@ -11,13 +11,9 @@ test.beforeEach(t => t.after(installHostIdentity()));
 
 const revision = { token: 'loaded' };
 const originalFetch = globalThis.fetch;
-const originalWindow = globalThis.window;
 
-test.beforeEach(() => { globalThis.window = { __TAURI_RUNNING__: true }; });
 test.afterEach(() => {
     globalThis.fetch = originalFetch;
-    if (originalWindow === undefined) delete globalThis.window;
-    else globalThis.window = originalWindow;
 });
 
 test('edits made during a save belong to the next snapshot and revision', async () => {

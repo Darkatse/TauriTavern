@@ -4571,7 +4571,6 @@
     "Frontend logs are only available in TauriTavern.": "前端日誌僅在 TauriTavern 中可用。",
     "Backend logs are only available in TauriTavern.": "後端日誌僅在 TauriTavern 中可用。",
     "LLM API logs are only available in TauriTavern.": "LLM API 日誌僅在 TauriTavern 中可用。",
-    "LAN Sync panel is only available in TauriTavern.": "LAN Sync 面板僅在 TauriTavern 中可用。",
     "LAN Sync is disabled by the active iOS policy.": "目前 iOS 策略已停用 LAN Sync。",
     "Open the frontend log viewer (TauriTavern only).": "開啟前端日誌檢視器（僅限 TauriTavern）。",
     "Open the backend log viewer (TauriTavern only).": "開啟後端日誌檢視器（僅限 TauriTavern）。",

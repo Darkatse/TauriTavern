@@ -12,7 +12,6 @@ function installAjax(t, routeRequest, options = { dataType: 'json' }) {
     t.after(() => dom.cleanup());
     dom.window.eval(readFileSync(new URL('../src/lib/jquery-3.5.1.min.js', import.meta.url), 'utf8'));
     createInterceptors({
-        isTauri: true,
         originalFetch: dom.window.fetch.bind(dom.window),
         canHandleRequest: () => true,
         toUrl: (input, base) => new URL(String(input), base),

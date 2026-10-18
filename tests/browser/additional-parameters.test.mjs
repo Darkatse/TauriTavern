@@ -168,7 +168,6 @@ test('additional parameter assembly', async (context) => {
             extension_settings.caption = {
                 multimodal_api: 'custom', multimodal_model: 'custom_custom', custom_model: 'caption-model',
             };
-            window.__TAURI_RUNNING__ = true;
             let request;
             window.fetch = async (url, options) => {
                 assert.equal(url, '/api/openai/caption-image');

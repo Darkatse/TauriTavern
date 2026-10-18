@@ -48,7 +48,6 @@ import {
 } from './scripts/chat-payload-transport.js';
 import { getActiveChatSnapshot } from './tauri/main/adapters/st/active-chat-ref.js';
 import { composeAuthorsNote, extension_prompt_roles, extension_prompt_types, isWorldInfoInjection } from './scripts/extension-prompts.js';
-import { waitForTauriMainReady } from './scripts/extensions/runtime/tauri-ready.js';
 import {
     ChatInputFocusIntent,
     focusChatInput,
@@ -1140,8 +1139,6 @@ async function firstLoadInit() {
 
     const nextPaint = () => new Promise((resolve) => requestAnimationFrame(resolve));
 
-    const hostReadyPromise = waitForTauriMainReady({ failFast: true });
-
     perfMark('tt:startup:start');
 
     try {
@@ -1161,7 +1158,7 @@ async function firstLoadInit() {
 
         // Ensure bridge/interceptors are installed before first /api/* calls.
         setStage('core', t`Starting: connecting to the backend…`);
-        await hostReadyPromise;
+        await window.__TAURITAVERN_MAIN_READY__;
         const tauriTavernSettings = await getTauriTavernSettings();
         initializeChatVirtualization(tauriTavernSettings);
         initializeColdSwipes(tauriTavernSettings);

@@ -400,9 +400,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         super::update_commands::check_for_update,
         // Bridge commands
         super::bridge::emit_event,
-        super::bridge::get_version,
         super::bridge::get_client_version,
-        super::bridge::is_ready,
         #[cfg(any(dev, debug_assertions))]
         super::bridge::read_dev_web_resource,
         super::resource_bridge_commands::read_frontend_template,

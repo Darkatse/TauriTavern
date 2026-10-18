@@ -16,7 +16,6 @@ import { initPopupMenu } from './popup-menu.js';
 import { createThirdPartyStylesheetResolver } from './extensions/runtime/third-party-runtime.js';
 import { createExtensionAssetLoader } from './extensions/runtime/asset-loader.js';
 import { getExtensionResourceUrl, isThirdPartyExtension } from './extensions/runtime/resource-paths.js';
-import { waitForTauriMainReady } from './extensions/runtime/tauri-ready.js';
 
 export {
     getContext,
@@ -373,7 +372,6 @@ export function startOfflineExtensionsDiscovery({ forceRefresh = false } = {}) {
 
     const generation = offlineExtensionsDiscoveryGeneration;
     offlineExtensionsDiscoveryPromise = (async () => {
-        await waitForTauriMainReady();
         const extensions = await discoverExtensions();
         const nextManifests = await getManifests(extensions.map(x => x.name));
         if (generation !== offlineExtensionsDiscoveryGeneration) {
@@ -404,7 +402,6 @@ async function prepareOfflineExtensionsActivation({
     }
 
     offlineExtensionsPreparationPromise = (async () => {
-        await waitForTauriMainReady();
         const uiReady = ensureExtensionsUiReady();
 
         extensionLoadErrors.clear();

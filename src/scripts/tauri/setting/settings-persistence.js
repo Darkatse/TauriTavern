@@ -1,6 +1,6 @@
 // @ts-check
 
-import { invoke, isTauri } from '../../../tauri-bridge.js';
+import { invoke } from '../../../tauri-bridge.js';
 
 /** @type {unknown} */
 let settingsRevision = null;
@@ -33,8 +33,8 @@ function requireSettingsRevision(revision) {
  * @param {unknown} revision
  */
 export function captureSettingsSaveState(settings, revision) {
-    settingsRevision = isTauri() ? requireSettingsRevision(revision) : null;
-    personaBaseline = settingsRevision == null ? {} : structuredClone(personaRecords(settings));
+    settingsRevision = requireSettingsRevision(revision);
+    personaBaseline = structuredClone(personaRecords(settings));
 }
 
 /** @param {any} left @param {any} right */
@@ -101,22 +101,18 @@ export async function loadPersonaSnapshot(powerUser) {
  */
 export async function saveSettingsSnapshot(payload, headers) {
     const requestHeaders = new Headers(headers);
-    const tauri = isTauri();
-    let personaUpdates = {};
-    if (tauri) {
-        if (settingsRevision == null) {
-            throw new Error('Cannot save settings before settings have loaded');
-        }
-        personaUpdates = Object.fromEntries(Object.entries(personaRecords(payload))
-            .filter(([id, value]) => !sameJsonValue(personaBaseline[id], value)));
-        // The small independent card snapshot must survive edits during the request.
-        personaUpdates = JSON.parse(JSON.stringify(personaUpdates));
-        payload = {
-            ...payload,
-            power_user: { ...payload.power_user, ...personaProjection(personaUpdates) },
-        };
-        requestHeaders.set('X-TauriTavern-Settings-Revision', JSON.stringify(settingsRevision));
+    if (settingsRevision == null) {
+        throw new Error('Cannot save settings before settings have loaded');
     }
+    let personaUpdates = Object.fromEntries(Object.entries(personaRecords(payload))
+        .filter(([id, value]) => !sameJsonValue(personaBaseline[id], value)));
+    // The small independent card snapshot must survive edits during the request.
+    personaUpdates = JSON.parse(JSON.stringify(personaUpdates));
+    payload = {
+        ...payload,
+        power_user: { ...payload.power_user, ...personaProjection(personaUpdates) },
+    };
+    requestHeaders.set('X-TauriTavern-Settings-Revision', JSON.stringify(settingsRevision));
     const body = JSON.stringify(payload);
     if (typeof body !== 'string') throw new Error('Settings payload is not JSON serializable');
 
@@ -128,8 +124,6 @@ export async function saveSettingsSnapshot(payload, headers) {
         if (response.status === 409) throw new SettingsConflictError(message);
         throw new Error(message);
     }
-    if (!tauri) return {};
-
     const result = await response.json();
     settingsRevision = requireSettingsRevision(result.tauritavern_settings_revision);
     const personaErrors = result.persona_errors ?? {};

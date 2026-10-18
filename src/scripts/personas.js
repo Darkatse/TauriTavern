@@ -1,5 +1,4 @@
 import { getPageForItem, initPagination } from './pagination.js';
-import { isTauri } from '../tauri-bridge.js';
 import { loadPersonaSnapshot } from './tauri/setting/settings-persistence.js';
 import {
     buildAvatarList,
@@ -305,17 +304,8 @@ export async function getUserAvatars(doRender = true, openPageAt = '') {
     if (primedUserAvatars !== null) {
         userAvatars = primedUserAvatars;
         primedUserAvatars = null;
-    } else if (isTauri()) {
-        userAvatars = await loadPersonaSnapshot(power_user);
     } else {
-        const response = await fetch('/api/avatars/get', {
-            method: 'POST',
-            headers: getRequestHeaders({ omitContentType: true }),
-        });
-        if (!response.ok) {
-            return;
-        }
-        userAvatars = await response.json();
+        userAvatars = await loadPersonaSnapshot(power_user);
     }
 
     if (doRender) renderUserAvatars(openPageAt);

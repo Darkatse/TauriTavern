@@ -17,7 +17,7 @@
 
 当前前端启动顺序如下（宿主身份在页面脚本运行前已写入，见 2.1）：
 
-1. `src/init.js` 动态导入：`lib.js` -> `tauri-main.js` -> `script.js`
+1. `src/init.js` 等待[可选的开发资源桥就绪信号](FrontendHostContract.md#22-就绪信号publicproject)，随后动态导入：`lib.js` -> `tauri-main.js` -> `script.js`
 2. `src/lib.js` 静态导入 `src/dist/lib.core.bundle.js`，统一提供 ESM 导出；`highlight.js` 通过 `getHljs()` 按需加载
 3. `src/tauri-main.js` 仅调用 `bootstrapTauriMain()`（薄入口）
 4. `src/tauri/main/bootstrap.js` 负责：
@@ -28,7 +28,7 @@
    - 安装同源窗口下载桥（所有宿主的浏览器式导出 → 原生交付）
    - 安装 Tauri mobile 兼容层（runtime polyfills，仅移动端）
    - 为宿主接管的路由响应注入追踪 header：`x-tauritavern-trace-id`
-   - 初始化 bridge 与目录信息
+   - 安装后端错误桥并等待 `BackendReadiness`
    - Tauri 就绪后安装窗口快照与窗口背景发布（仅移动端）
 
 ### 2.1 宿主身份
@@ -51,6 +51,10 @@
 - 上游 Bowser `isMobile()` 与 CSS 媒体查询属于上游布局语义，保持不变。规则同时取决于宿主类别与窗口方向时（如聊天宽度），组合 `isMobileHost()` 与 `util/window-layout.js` 的 `isWindowPortrait()`。
 
 `pnpm run check:platform`（已接入 `pnpm run check`）检查以上约束，报错指向本节。
+
+### 2.2 原生能力
+
+TT 前端总是运行在宿主之上，代码中不判断“是否在 Tauri 中”。应用模块只通过 `tauri-bridge.js` 使用原生能力，能力缺失时由 bridge 在调用处报错。可选插件由对应 service 判断是否可用，例如扫码的 `canScanQrCode()`。唯一例外是 Rust 在 document-start 注入的 Android 语音脚本，见[系统 TTS](CurrentState/TTS.md#接入位置)。`__TAURI_RUNNING__` 只是对外标记，内部不读取。`check:frontend` 检查这条边界。
 
 ## 3. 目录结构（前端集成相关）
 
@@ -89,7 +93,7 @@ src/
 
 - 组装模块依赖并执行初始化。
 - 确保只 bootstrap 一次。
-- 在 bridge 初始化后再次尝试 patch 运行时补丁（处理加载时序问题）。
+- 在后端就绪后再次尝试 patch 运行时补丁（处理加载时序问题）。
 - 维护对第三方可见的宿主 ABI（`window.__TAURITAVERN__`）与请求追踪 header。
 
 ### 4.2 `context.js`
@@ -215,13 +219,12 @@ src/
 - `src/tauri/main/compat/mobile/mobile-runtime-compat.js`：Tauri mobile 运行时 polyfills（补齐旧 WebView 缺失 JS API）。
 - `src/scripts/util/window-layout.js`：移动端原生窗口快照；`src/scripts/window-backdrop.js`：第一方背景唯一写入与条带发布入口。
 - `src/scripts/extensions/runtime/resource-paths.js`：扩展资源路径规范化与 third-party 判定。
-- `src/scripts/extensions/runtime/tauri-ready.js`：等待 `__TAURITAVERN_MAIN_READY__`，避免 bridge 未就绪时提前加载。
 - `src/scripts/extensions/runtime/third-party-runtime.js`：第三方扩展样式兼容层（legacy WebView 下为样式 URL 附加 `ttCompat=layer`，触发 Rust 端点做 `@layer` 展平；不再走前端预取/Blob 注入）。
 - `src/scripts/extensions/runtime/asset-loader.js`：脚本与样式注入、超时保护、重复注入幂等控制。
 
 ### 7.3 端到端加载链路
 
-1. `loadExtensionSettings()` 先等待 `waitForTauriMainReady()`。
+1. 启动 core 阶段确认宿主就绪后，才开始扩展发现。
 2. 前端通过 `/api/extensions/discover` 获取扩展列表与类型，读取 manifest 并进入 `activateExtensions()`。
 3. 对每个扩展执行 `addExtensionLocale()` + `addExtensionScript()` + `addExtensionStyle()`。
 4. 当扩展为 `third-party/*` 时：

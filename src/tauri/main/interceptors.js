@@ -1,7 +1,6 @@
 import { createAbortError, isAbortError } from './kernel/abort-error.js';
 
 export function createInterceptors({
-    isTauri,
     originalFetch,
     canHandleRequest,
     toUrl,
@@ -147,10 +146,6 @@ export function createInterceptors({
                 throw createAbortError();
             }
 
-            if (!isTauri) {
-                return delegateFetch(input, init);
-            }
-
             const requestUrl = toUrl(input, resolveWindowBaseUrl(targetWindow));
             if (!requestUrl || !canHandleRequest(requestUrl, input, init, targetWindow)) {
                 return delegateFetch(input, init);
@@ -190,10 +185,6 @@ export function createInterceptors({
         const originalAjax = $.ajax.bind($);
 
         const patchedAjax = function ajaxProxy(urlOrOptions, maybeOptions) {
-            if (!isTauri) {
-                return originalAjax(urlOrOptions, maybeOptions);
-            }
-
             const options = typeof urlOrOptions === 'string'
                 ? { ...(maybeOptions || {}), url: urlOrOptions }
                 : { ...(urlOrOptions || {}) };

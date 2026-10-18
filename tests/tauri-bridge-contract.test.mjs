@@ -13,7 +13,6 @@ let lastInvokedCommand = null;
 let lastInvokedArgs = null;
 
 global.window = {
-    __TAURI_RUNNING__: true,
     __TAURI__: {
         core: {
             invoke: async (command, args) => {
