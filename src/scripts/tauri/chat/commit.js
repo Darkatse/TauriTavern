@@ -26,6 +26,18 @@ function invokeChatCommit(...args) {
     });
 }
 
+/**
+ * Cancellation hook of the single in-flight chat commit, or null between commits. Chat saves
+ * are serialized by `enqueueChatSave`, so at most one queued commit is registered at a time;
+ * the HTTP route that bypasses the queue can only ever cost its own save a loud failure.
+ */
+let cancelInFlightChatCommit = null;
+
+/** Ask the in-flight chat commit, if any, to abort at its next frame boundary. */
+export function requestChatCommitCancellation() {
+    cancelInFlightChatCommit?.();
+}
+
 export async function commitChatMetadata({ target, chatMetadata }) {
     return commitChatRecords({
         target,
@@ -63,15 +75,23 @@ export async function commitChatPayload({ target, payload, force, commitReason }
 
 // Callers capture all payload values as JSON text before this first await.
 async function commitChatRecords({ target, operation, records, commitReason }) {
-    await commitBytes({
-        begin: () => invokeChatCommit('begin_chat_commit', { target, operation }),
-        frames: maxChunkBytes => jsonlRecordsToByteChunks(records, { maxChunkBytes }),
-        append: (body, options) => invokeChatCommit('append_chat_commit_chunk', body, options),
-        finish: (sessionId, expectedSize) => invokeChatCommit('finish_chat_commit', {
-            sessionId,
-            expectedSize,
-            commitReason,
-        }),
-        abort: sessionId => invokeChatCommit('abort_chat_commit', { sessionId }),
-    });
+    let cancelled = false;
+    const previousCancellation = cancelInFlightChatCommit;
+    cancelInFlightChatCommit = () => { cancelled = true; };
+    try {
+        return await commitBytes({
+            begin: () => invokeChatCommit('begin_chat_commit', { target, operation }),
+            frames: maxChunkBytes => jsonlRecordsToByteChunks(records, { maxChunkBytes }),
+            append: (body, options) => invokeChatCommit('append_chat_commit_chunk', body, options),
+            shouldCancel: () => cancelled,
+            finish: (sessionId, expectedSize) => invokeChatCommit('finish_chat_commit', {
+                sessionId,
+                expectedSize,
+                commitReason,
+            }),
+            abort: sessionId => invokeChatCommit('abort_chat_commit', { sessionId }),
+        });
+    } finally {
+        cancelInFlightChatCommit = previousCancellation;
+    }
 }

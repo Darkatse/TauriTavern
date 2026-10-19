@@ -73,6 +73,8 @@ transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方
 
 第一方聊天保存经由 `chat-payload-transport.js`；当前聊天由 `enqueueChatSave()` 串行调度，transport 不重复入队。兼容路由与事件契约见 [FrontendHostContract §4.3](../FrontendHostContract.md#43-路由表public)。
 
+排队中尚未开始的保存会被后到的、写入范围覆盖它的保存合并，已开始写的保存也会被这样的保存接管：写入先落在 staging 文件、只有 `finish` 的原子替换才触碰目标文件，因此接管只需作废 staging（`abort_chat_commit`），不会留下部分写入。完整保存合并或接管完整保存与 metadata 保存，metadata 保存只合并或接管 metadata 保存（因此 metadata 保存不会取消待执行的完整保存）。生成前必须落盘的保存（`PROVIDER_BARRIER` / `GENERATION_CHECKPOINT`）与写的不一定是当前聊天活状态的保存（显式 `chatData` / `chatName` / `mesId` / `withMetadata`）不参与。被合并或被接管的调用方等待真正执行写盘的那次保存的结果，失败同样传播。
+
 提交在首次异步让出前捕获 JSON 文本快照，当前聊天在队列任务开始时捕获；后续修改不混入本次保存。分帧限制传输开销，快照仍随内容规模增长。
 
 聊天与世界书共用 storage-core 的提交会话、帧上限和暂存生命周期，各仓储负责内容校验与发布。host 确认数据完整后才发布；平台传输限制见 [AndroidDevelopment §11](../AndroidDevelopment.md#11-android-大型-byte-ingress)。
@@ -173,7 +175,7 @@ Rust 仍保留 JSONL tail/before 读取，因为 Agent 和扩展可能只需要�
 - `src/scripts/chat-payload-transport.js`：完整 payload transport 公共入口。
 - `src/scripts/tauri/chat/transport.js`：完整 payload Tauri transport 与共享 FileHandle pull stream 接入边界。
 - `src/scripts/tauri/chat/jsonl.js`：同步 JSON 记录快照、字节分帧与 JSONL 读取。
-- `src/scripts/tauri/chat/commit.js`：快照捕获时机、IPC 会话、ACK 校验与提交错误分类。
+- `src/scripts/tauri/chat/commit.js`：快照捕获时机、IPC 会话、ACK 校验、提交错误分类与在飞提交取消。
 - `src/tauri/main/services/files/readable-file-stream-service.js`：跨平台 plugin-fs open/read/close pull stream。
 - `src/tauri/main/api/chat.js`：扩展历史分页 API 与 `windowInfo()`。
 
@@ -194,6 +196,7 @@ Rust：
 - 完整保存后重开，编辑、删除、swipe、隐藏范围和 metadata 均保持。
 - metadata 保存后 header 字段更新且正文逐字节不变；待保存的消息删除不被取消，新群聊的问候事件可立即保存 metadata。
 - 保存开始后修改消息和嵌套 metadata，不会改变正在传输的快照；后续保存读取新的状态。
+- 后到的更宽保存合并或接管未开始与在飞的重复保存，写盘次数不随重复保存增加；被合并方的结果由真正写盘的那次保存决定，barrier 与带显式目标的保存不参与。
 - integrity 冲突与其他失败保持区分；非 integrity 的 host 拒绝以可读 message 到达调用方和兼容路由的 `details`；兼容保存路由保持成功和错误响应语义。
 - tail/before 对角色和群聊返回相同索引语义，stale cursor 明确失败。
 - 旧 settings 中的 `chat_history_mode` 被 serde 作为未知字段忽略，重新序列化时不会保留。
