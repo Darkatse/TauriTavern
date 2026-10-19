@@ -216,6 +216,34 @@ jobs:
           path: portable/*
           if-no-files-found: error
 
+  web:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - uses: pnpm/setup@v2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm web:build
+
+      - name: Archive web frontend
+        working-directory: src
+        run: zip -qr ../web.zip .
+
+      - name: Upload web frontend
+        uses: actions/upload-artifact@v7
+        with:
+          name: TauriTavern-${{ needs.prepare.outputs.version }}-web
+          path: web.zip
+          if-no-files-found: error
+
   flatpak:
     needs: prepare
     runs-on: ubuntu-24.04
@@ -463,7 +491,7 @@ jobs:
       APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
 
   publish-release:
-    needs: [prepare, desktop, portable, mobile]
+    needs: [prepare, desktop, portable, web, mobile]
     runs-on: ubuntu-latest
     permissions:
       actions: read

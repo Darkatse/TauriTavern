@@ -230,6 +230,32 @@ jobs:
           path: portable/*
           if-no-files-found: error
 
+  web:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/setup@v2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm web:build
+
+      - name: Archive web frontend
+        working-directory: src
+        run: zip -qr ../web.zip .
+
+      - name: Upload web frontend
+        uses: actions/upload-artifact@v7
+        with:
+          name: TauriTavern-${{ needs.prepare.outputs.asset_time }}-canary-web
+          path: web.zip
+          if-no-files-found: error
+
   mobile:
     needs: prepare
     strategy:
@@ -565,9 +591,9 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: [prepare, desktop, portable, mobile, ohos, notes]
+    needs: [prepare, desktop, portable, web, mobile, ohos, notes]
     # Wait for experimental HAPs, but publish the other platforms if OHOS fails.
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.desktop.result == 'success' && needs.mobile.result == 'success' && needs.notes.result == 'success' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.desktop.result == 'success' && needs.web.result == 'success' && needs.mobile.result == 'success' && needs.notes.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read

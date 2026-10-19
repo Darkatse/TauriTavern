@@ -28,6 +28,7 @@ const ARTIFACTS = new Map([
     ['linux-arm64-portable', 'TauriTavern-linux-arm64-portable'],
     ['linux-x64-portable', 'TauriTavern-linux-x64-portable'],
     ['linux-x86_64-rpm', 'TauriTavern-2.2.0-1.x86_64.rpm'],
+    ['web', 'web.zip'],
     ['windows-x64-msi', 'TauriTavern_2.2.0_x64_en-US.msi'],
     ['windows-x64-nsis', 'TauriTavern_2.2.0_x64-setup.exe'],
     ['windows-x64-portable', 'TauriTavern-windows-x64-portable.exe'],
@@ -50,6 +51,7 @@ const EXPECTED_RELEASE_ASSETS = [
     'TauriTavern-2.2.0-macos-arm64.dmg',
     'TauriTavern-2.2.0-macos-x64-DEBUG.dmg',
     'TauriTavern-2.2.0-macos-x64.dmg',
+    'TauriTavern-2.2.0-web.zip',
     'TauriTavern-2.2.0-windows-x64-portable.exe',
     'TauriTavern-2.2.0-windows-x64-setup-DEBUG.exe',
     'TauriTavern-2.2.0-windows-x64-setup.exe',
@@ -96,7 +98,7 @@ test('collectReleaseAssets fails before publishing an incomplete release set', a
     const outputDirectory = join(root, 'release-assets');
     const artifactPrefix = 'TauriTavern-20260726-canary-';
     await createArtifacts(inputDirectory, artifactPrefix, [
-        'android-arm64-apk',
+        'web',
         'debug-darwin-aarch64-app',
         'debug-darwin-aarch64-dmg',
         'debug-darwin-x64-app',
@@ -110,7 +112,7 @@ test('collectReleaseAssets fails before publishing an incomplete release set', a
             outputDirectory,
             artifactPrefix,
         }),
-        { message: 'Missing workflow artifacts: TauriTavern-20260726-canary-android-arm64-apk' },
+        { message: 'Missing workflow artifacts: TauriTavern-20260726-canary-web' },
     );
     await assert.rejects(readdir(outputDirectory), { code: 'ENOENT' });
 });

@@ -10,6 +10,17 @@ TT 的前端代码不知道自己运行在哪个宿主上，也不需要为 Web 
 - `tt-application` 的 `web_host_defaults` 测试失败：原生默认值或 DTO 变了，按“维护”一节重新生成默认状态。
 - 修改了下表中命令的 DTO 或协议，例如设置提交、聊天文件读取、Persona 增量：同步修改这里的映射。
 
+## 发行物
+
+stable 与 canary 的 GitHub Release 提供 web 发行物：
+
+- stable：`TauriTavern-<version>-web.zip`。
+- canary：`TauriTavern-<YYYYMMDD>-canary-web.zip`。
+
+内容为 `pnpm web:build` 之后的整个 `src/`，与原生 App 使用的前端目录相同。zip 根目录就是 vendor 根目录，解压后按下文在 `init.js` 之前安装 Web Host。
+
+嵌入方记录资产名与 GitHub Release 提供的 SHA-256 摘要，下载后校验。长期固定版本使用 stable；canary 随发布替换，旧资产会被清理。
+
 ## 安装
 
 ```js
