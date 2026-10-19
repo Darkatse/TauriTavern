@@ -1,8 +1,8 @@
-use tt_application::dto::settings_dto::TauriTavernSettingsDto;
-use tt_domain::models::settings::TauriTavernSettings;
+#[path = "support/web_host_defaults.rs"]
+mod defaults;
 
-fn main() -> Result<(), serde_json::Error> {
-    let defaults = TauriTavernSettingsDto::from(TauriTavernSettings::default());
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let defaults = defaults::native_defaults()?;
     println!("{}", serde_json::to_string_pretty(&defaults)?);
     Ok(())
 }

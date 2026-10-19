@@ -15,7 +15,7 @@ use tt_domain::models::tool::ToolId;
 
 use super::constants::{AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, CHAT_WORKSPACE_ROOTS};
 
-pub(super) fn default_writer_profile() -> Result<AgentProfileDefinition, ApplicationError> {
+pub fn default_writer_profile() -> Result<AgentProfileDefinition, ApplicationError> {
     Ok(AgentProfileDefinition {
         schema_version: AGENT_PROFILE_SCHEMA_VERSION,
         kind: AGENT_PROFILE_KIND.to_string(),

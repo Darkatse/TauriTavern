@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import vm from 'node:vm';
@@ -9,6 +9,17 @@ import { createWebHostFixture } from './web-host-fixture.mjs';
 const root = fileURLToPath(new URL('../../src/', import.meta.url));
 const defaultSettings = JSON.parse(readFileSync(new URL('../../default/content/settings.json', import.meta.url), 'utf8'));
 const defaultTheme = JSON.parse(readFileSync(new URL('../../default/content/themes/Dark Lite.json', import.meta.url), 'utf8'));
+const extensions = readdirSync(path.join(root, 'scripts/extensions'))
+    .filter(name => existsSync(path.join(root, 'scripts/extensions', name, 'manifest.json')))
+    .map(name => ({ name, type: 'system' }));
+extensions.push({ name: 'third-party/web-host-fixture', type: 'local' });
+
+function resourcePath(pathname) {
+    const prefix = '/scripts/extensions/third-party/';
+    return pathname.startsWith(prefix)
+        ? fileURLToPath(new URL(`./fixtures/extensions/${pathname.slice(prefix.length)}`, import.meta.url))
+        : path.join(root, pathname);
+}
 
 // These tests drive the application through happyDOM.waitUntilComplete(), which drains its
 // pending timers in real time: one navigation run schedules ~57 s of nominal delay, mostly
@@ -46,11 +57,24 @@ export function createPaginationWaiter(window) {
     };
 }
 
-export async function createBrowserRuntime({ identity = HOSTS.windows, fixture = createWebHostFixture(defaultSettings, defaultTheme) } = {}) {
+export function captureBrowserErrors(window) {
+    const errors = [];
+    const failed = Promise.withResolvers();
+    const record = error => { errors.push(error); failed.reject(error); };
+    window.addEventListener('error', event => record(event.error ?? event.message));
+    window.addEventListener('unhandledrejection', event => record(event.reason));
+    window.toastr.error = (...args) => record(new Error(args.join(' ')));
+    return { errors, failed: failed.promise };
+}
+
+export async function createBrowserRuntime({ identity = HOSTS.windows, fixture = createWebHostFixture(defaultSettings, defaultTheme, extensions) } = {}) {
     const window = new Window({
         url: 'http://localhost/',
         settings: {
             disableCSSFileLoading: true, disableJavaScriptFileLoading: true,
+            // asset-loader explicitly imports modules through this runtime's VM loader.
+            // Acknowledge its DOM tags while CSS remains disabled.
+            handleDisabledFileLoadingAsSuccess: true,
             // Application lifetime intervals must not keep waitUntilComplete() running forever.
             timer: { maxIntervalIterations: 1 },
         },
@@ -84,6 +108,7 @@ export async function createBrowserRuntime({ identity = HOSTS.windows, fixture =
     window.structuredClone = structuredClone;
     // happy-dom's TransformStream is a Node Transform, not the Web Streams constructor.
     window.TransformStream = TransformStream;
+    window.TextDecoderStream = TextDecoderStream;
     // happy-dom exposes option elements but omits the browser's Option constructor.
     window.Option = function (text = '', value = text, defaultSelected = false, selected = false) {
         const option = window.document.createElement('option');
@@ -98,7 +123,7 @@ export async function createBrowserRuntime({ identity = HOSTS.windows, fixture =
         scheduleTimeout(callback, Math.ceil(delay / TIMER_SCALE), ...args);
     window.fetch = async input => {
         const url = new URL(input, window.location.href);
-        const file = url.protocol === 'file:' ? fileURLToPath(url) : path.join(root, decodeURIComponent(url.pathname));
+        const file = url.protocol === 'file:' ? fileURLToPath(url) : resourcePath(decodeURIComponent(url.pathname));
         try { return new window.Response(readFileSync(file)); }
         catch (error) {
             if (error.code === 'ENOENT') return new window.Response('Not found', { status: 404 });
@@ -108,7 +133,7 @@ export async function createBrowserRuntime({ identity = HOSTS.windows, fixture =
     const modules = new Map();
     let imports = Promise.resolve();
     const resolve = (specifier, owner) => specifier.startsWith('/')
-        ? path.join(root, specifier) : fileURLToPath(new URL(specifier, owner.identifier));
+        ? resourcePath(specifier) : fileURLToPath(new URL(specifier, owner.identifier));
     const link = (specifier, owner) => getModule(resolve(specifier, owner));
 
     function getModule(file) {

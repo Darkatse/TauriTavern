@@ -1,8 +1,8 @@
-// Fails with Unsupported or "Unexpected ST backend request" when the startup path uses a command
-// the browser host does not map yet: add it in src/tauri/web-host/ (docs/CurrentState/WebHost.md).
+// Fails when a command the browser host does not map, or an ST request the fixture does not serve,
+// breaks startup: add it in src/tauri/web-host/ (docs/CurrentState/WebHost.md).
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createBrowserRuntime } from './runtime.mjs';
+import { captureBrowserErrors, createBrowserRuntime } from './runtime.mjs';
 import { HOSTS } from '../helpers/host-identity.mjs';
 
 for (const identity of [HOSTS.windows, HOSTS.android]) {
@@ -12,26 +12,27 @@ for (const identity of [HOSTS.windows, HOSTS.android]) {
             method: 'POST', url: '/api/settings/get', headers: {}, body: '{}',
         }).body).settings);
         const original = readSettings().power_user;
-        const failed = Promise.withResolvers();
-        window.addEventListener('error', event => failed.reject(event.error));
-        window.addEventListener('unhandledrejection', event => failed.reject(event.reason));
-        window.toastr.error = (...args) => failed.reject(new Error(args.join(' ')));
+        const { errors, failed } = captureBrowserErrors(window);
         try {
             await startHost();
             await load('script.js');
             const { eventSource, event_types } = getModule('scripts/events.js').namespace;
             const ready = new Promise(resolve => eventSource.once(event_types.APP_READY, resolve));
+            const extensionsLoaded = new Promise(resolve => eventSource.once(event_types.EXTENSION_SETTINGS_LOADED, resolve));
             const settingsSaved = new Promise(resolve => eventSource.once(event_types.SETTINGS_UPDATED, resolve));
             const loreLoaded = new Promise(resolve => eventSource.on(event_types.WORLDINFO_ENTRIES_LOADED, ({ characterLore }) => {
                 if (characterLore.length) resolve(characterLore);
             }));
             window.jQuery.holdReady(false);
-            const [, lore] = await Promise.race([Promise.all([ready, loreLoaded, settingsSaved]), failed.promise]);
+            const [, lore] = await Promise.race([Promise.all([ready, loreLoaded, settingsSaved, extensionsLoaded]), failed]);
             assert.match(window.document.querySelector('#chat .mes_text').textContent, /A chat loaded through Web Host/);
+            assert.equal(window.document.getElementById('extensions_details').classList.contains('warning'), false);
+            assert.equal(window.webHostFixtureActivated, true);
             assert.equal(lore[0].content, 'Review lore loaded.');
             const saved = readSettings().power_user;
             assert.deepEqual(saved.personas, original.personas);
             assert.deepEqual(saved.persona_descriptions, original.persona_descriptions);
+            assert.deepEqual(errors, []);
         } finally {
             await window.happyDOM.close();
         }

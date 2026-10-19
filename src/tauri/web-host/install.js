@@ -6,10 +6,15 @@ import { createChatCommands } from './commands/chat.js';
 import { createResources } from './protocols/resources.js';
 import { createSettingsCommits } from './protocols/settings-commit.js';
 import { createBackend } from './backend.js';
+import { createChatCommits } from './protocols/chat-commit.js';
+import { createWriteCommands } from './commands/write.js';
+import { createGenerationCommands } from './protocols/generation.js';
+import { createExtensionCommands } from './commands/extensions.js';
 
 /**
- * @typedef {{ method: string, url: string, headers: Record<string, string>, body: string | null }} BackendRequest
- * @typedef {{ status: number, headers: Record<string, string>, body: string }} BackendResponse
+ * @typedef {{ kind: 'form', entries: [string, string][] }} FormEntries
+ * @typedef {{ method: string, url: string, headers: Record<string, string>, body: string | FormEntries | null }} BackendRequest
+ * @typedef {{ status: number, headers: Record<string, string>, body: string | ReadableStream<Uint8Array> | null }} BackendResponse
  * @typedef {{
  *   identity: import('../../scripts/util/host-identity.js').HostIdentity,
  *   backend: { handle: (request: BackendRequest) => BackendResponse },
@@ -22,7 +27,15 @@ import { createBackend } from './backend.js';
 export function installWebHost({ identity, backend, store }) {
     Object.defineProperty(window, '__TAURITAVERN_HOST__', { value: Object.freeze({ ...identity }) });
     const fetchResource = window.fetch.bind(window);
-    const settings = createSettings(store, fetchResource);
+    /** @type {Promise<any> | undefined} */
+    let defaults;
+    function loadDefaults() {
+        return defaults ??= fetchResource(new URL('./default-state.json', import.meta.url)).then(async response => {
+            if (!response.ok) throw new Error(`Cannot load Web Host defaults: ${response.status}`);
+            return response.json();
+        });
+    }
+    const settings = createSettings(store, async () => (await loadDefaults()).settings);
     const st = createBackend(backend);
     const resources = createResources();
     /** @type {CommandHandlers} */
@@ -31,16 +44,20 @@ export function installWebHost({ identity, backend, store }) {
         ...createChatCommands(st, resources),
         ...resources.commands,
         ...createSettingsCommits(st),
+        ...createChatCommits(st),
+        ...createWriteCommands(st),
+        ...createGenerationCommands(st),
+        ...createExtensionCommands(st, fetchResource, loadDefaults),
         wait_for_backend_ready: () => undefined,
         backend_error_bridge_ready: () => [],
         get_tauritavern_settings: settings.get,
+        update_tauritavern_settings: ({ dto }) => settings.update(dto),
         get_window_snapshot: () => null,
         // Browser logs already stay in the frontend capture; there is no native log file.
         devlog_append_frontend_logs: () => undefined,
-        read_frontend_template: async ({ name }) => {
-            const response = await fetchResource(`/scripts/templates/${name}`);
-            if (!response.ok) throw new Error(`Cannot read frontend template ${name}: ${response.status}`);
-            return response.text();
+        database_handle: ({ request }) => {
+            if (request.type !== 'flushAll') return unsupported(`database_handle:${request.type}`);
+            return null;
         },
     };
     /** @param {string} name @returns {never} */
