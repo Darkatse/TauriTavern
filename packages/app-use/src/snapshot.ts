@@ -3,6 +3,9 @@ import type { ObservationOptions, Semantics } from './semantics.ts';
 import type { ToolArguments } from './types.ts';
 import { isElement, isHtmlTag, isText, mainDocumentScope, requireCurrentScope } from './document.ts';
 import type { DocumentScope } from './document.ts';
+import { appToolAliases } from './names.ts';
+
+const { snapshot: SNAPSHOT, evaluate: EVALUATE } = appToolAliases;
 
 const MAX_NODES = 80;
 const MAX_VISITS = 2_000;
@@ -63,14 +66,14 @@ export function createObservation(options: ObservationOptions = {}) {
     function resolveRef(ref: string): ResolvedTarget {
         const element = references.get(ref);
         if (!element) {
-            throw new Error('This ref is not in the current snapshot. Call app.snapshot and use a ref from its returned page.');
+            throw new Error(`This ref is not in the current snapshot. Call ${SNAPSHOT} and use a ref from its returned page.`);
         }
         requireScope(scope);
         if (!element.isConnected || element.ownerDocument !== scope.document) {
-            throw new Error('The target is no longer in this page. Call app.snapshot to inspect the current interface before acting.');
+            throw new Error(`The target is no longer in this page. Call ${SNAPSHOT} to inspect the current interface before acting.`);
         }
         if (!semantics().isWithinObservedContent(element)) {
-            throw new Error('The target is inside a hidden or omitted region. Call app.snapshot to find its visible panel or restore control before acting.');
+            throw new Error(`The target is inside a hidden or omitted region. Call ${SNAPSHOT} to find its visible panel or restore control before acting.`);
         }
         return { element, scope };
     }
@@ -111,7 +114,7 @@ export function createObservation(options: ObservationOptions = {}) {
     function startOrResumeTraversal(args: ToolArguments): Traversal {
         const hasUnexpectedField = Object.keys(args).some(key => !['root', 'selector', 'depth', 'cursor'].includes(key));
         if (hasUnexpectedField) {
-            throw new Error('app.snapshot accepts root, selector and depth, or cursor alone. Use {} for an overview.');
+            throw new Error(`${SNAPSHOT} accepts root, selector and depth, or cursor alone. Use {} for an overview.`);
         }
 
         if (args.cursor !== undefined) {
@@ -119,7 +122,7 @@ export function createObservation(options: ObservationOptions = {}) {
                 throw new Error('Pass cursor alone to continue reading. To inspect a region with root, selector or depth, omit cursor.');
             }
             if (typeof args.cursor !== 'string' || args.cursor !== continuation?.token) {
-                throw new Error('This cursor is invalid or expired. Call app.snapshot without cursor to observe the current interface.');
+                throw new Error(`This cursor is invalid or expired. Call ${SNAPSHOT} without cursor to observe the current interface.`);
             }
 
             const traversal = continuation.traversal;
@@ -127,13 +130,13 @@ export function createObservation(options: ObservationOptions = {}) {
             const nextNode = traversal.next?.node;
             const nextNodeLeftRoot = nextNode && (!nextNode.isConnected || !traversal.root.contains(nextNode));
             if (!traversal.root.isConnected || nextNodeLeftRoot) {
-                throw new Error('The observed region changed and cannot be continued. Call app.snapshot without cursor to observe it again.');
+                throw new Error(`The observed region changed and cannot be continued. Call ${SNAPSHOT} without cursor to observe it again.`);
             }
             return traversal;
         }
 
         if (args.root !== undefined && typeof args.root !== 'string') {
-            throw new Error('root must be a ref string from the latest app.snapshot page. Omit root for an overview.');
+            throw new Error(`root must be a ref string from the latest ${SNAPSHOT} page. Omit root for an overview.`);
         }
         if (args.selector !== undefined && (typeof args.selector !== 'string' || !args.selector.trim())) {
             throw new Error('selector must be a non-empty CSS selector for a known target. Omit it to explore with an overview.');
@@ -216,7 +219,7 @@ function nextSnapshotPrefix(): string {
     // Persist the sequence so reloading the page cannot reuse refs still present in conversation history.
     const next = Number(localStorage.getItem(SNAPSHOT_SEQUENCE_KEY) ?? 0) + 1;
     if (!Number.isSafeInteger(next) || next < 1) {
-        throw new Error('Cannot create UI references: the saved snapshot counter is invalid. Use app.evaluate to inspect the app while this is resolved.');
+        throw new Error(`Cannot create UI references: the saved snapshot counter is invalid. Use ${EVALUATE} to inspect the app while this is resolved.`);
     }
     localStorage.setItem(SNAPSHOT_SEQUENCE_KEY, String(next));
     return `s${next}`;

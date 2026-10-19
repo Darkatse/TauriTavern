@@ -70,11 +70,16 @@ which application it runs in.
 ## Tool definitions
 
 `snapshotTool`, `interactTool`, `evaluateTool` and `readLogsTool` hold the tool
-names, base descriptions and JSON schemas. A host registers them with its own
+IDs, base descriptions and JSON schemas. A host registers them with its own
 tool runtime and appends its own notes to the descriptions. The host implements
 `app.evaluate` and `app.read_logs` itself. Call `observation.clearCursor()`
 before running evaluate code, because the code can change the page even if it
 then fails.
+
+The `name` fields are these IDs. The model calls each tool by its alias, the ID
+with dots replaced by underscores (`app.snapshot` → `app_snapshot`), so register
+the tools under these aliases. Descriptions and errors name tools by alias;
+`appToolAliases` lists them.
 
 ## Cursor
 

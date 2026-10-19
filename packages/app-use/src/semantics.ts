@@ -1,5 +1,8 @@
 import { computeAccessibleDescription, computeAccessibleName, getRole } from 'dom-accessibility-api';
 import { documentWindow, isHtmlTag } from './document.ts';
+import { appToolAliases } from './names.ts';
+
+const { snapshot: SNAPSHOT } = appToolAliases;
 
 export const MAX_PREVIEW = 200;
 export type ElementDescription = Record<string, string | number | boolean>;
@@ -115,7 +118,7 @@ export function createSemantics(options: ObservationOptions) {
 
     function requireFrameVisible(frame: HTMLIFrameElement) {
         if (!isVisible(frame) || !isWithinObservedContent(frame) || isSensitive(frame)) {
-            throw new Error('The embedded page is hidden or no longer displayed. Call app.snapshot with {} and open or restore its visible panel before entering it again.');
+            throw new Error(`The embedded page is hidden or no longer displayed. Call ${SNAPSHOT} with {} and open or restore its visible panel before entering it again.`);
         }
     }
 

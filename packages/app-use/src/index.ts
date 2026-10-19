@@ -6,3 +6,4 @@ export type { InteractionOptions, InteractionPoint } from './interact.ts';
 export { createInteractionCursor } from './cursor.ts';
 export type { JsonValue, ToolArguments } from './types.ts';
 export { snapshotTool, interactTool, evaluateTool, readLogsTool } from './tools.ts';
+export { appToolAliases } from './names.ts';

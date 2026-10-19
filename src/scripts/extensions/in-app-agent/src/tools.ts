@@ -1,8 +1,9 @@
-import { createObservation, interact, snapshotTool, interactTool, evaluateTool, readLogsTool } from '@tauritavern/app-use';
+import { createObservation, interact, snapshotTool, interactTool, evaluateTool, readLogsTool, appToolAliases } from '@tauritavern/app-use';
 import type { InteractionOptions, InteractionPoint } from '@tauritavern/app-use';
 import { CONTROL_SHELL_CLASS } from '../../../legacy-controls.js';
 
 const EXTENSION_ID = 'in-app-agent';
+const { snapshot: SNAPSHOT, interact: INTERACT, evaluate: EVALUATE, readLogs: READ_LOGS } = appToolAliases;
 
 export const ASSISTANT_TOOL_IDS = [
     evaluateTool, readLogsTool, snapshotTool, interactTool,
@@ -42,7 +43,7 @@ export async function registerAssistantTools(
     function enterUI(context: ToolContext) {
         if (context.signal.aborted) throw new Error('The operation was cancelled before acting.');
         if (!isPageReady()) {
-            throw new Error('The app is still starting. No UI action was performed. Call app.snapshot once startup has finished.');
+            throw new Error(`The app is still starting. No UI action was performed. Call ${SNAPSHOT} once startup has finished.`);
         }
         observation.enterRun(context.runId);
     }
@@ -53,7 +54,7 @@ export async function registerAssistantTools(
         contexts: ['session'],
         enabled: true,
         description: snapshotTool.description + `
-The assistant panel is usually open during conversation and can cover other controls. Before operating controls outside it, check whether it is open. If open, use app.interact to click its top-right close button with the observed ref, then take a fresh snapshot of your target after the panel has closed. Your task continues while the panel is closed.
+The assistant panel is usually open during conversation and can cover other controls. Before operating controls outside it, check whether it is open. If open, use ${INTERACT} to click its top-right close button with the observed ref, then take a fresh snapshot of your target after the panel has closed. Your task continues while the panel is closed.
 Assistant conversation and tool logs are omitted from observation.`,
     }, (args, context) => {
         enterUI(context);
@@ -81,10 +82,10 @@ Assistant conversation and tool logs are omitted from observation.`,
         description: evaluateTool.description + `
 api is the public application API (window.__TAURITAVERN__.api). This assistant conversation is separate from the selected character chat; read the current app state when that distinction matters.
 context.signal is an AbortSignal for cooperative cancellation.
-This executes in the app page. workspace.shell JavaScript is a separate environment without this window, document or api.`,
+This executes in the app page. workspace_shell JavaScript is a separate environment without this window, document or api.`,
     }, async (args, context) => {
         if (typeof args.code !== 'string' || !args.code.trim()) {
-            throw new Error('app.evaluate: code must be a non-empty string');
+            throw new Error(`${EVALUATE}: code must be a non-empty string`);
         }
         observation.enterRun(context.runId);
         observation.clearCursor();
@@ -101,11 +102,11 @@ Returns consoleCaptureEnabled and entries with id, timestampMs, level, message a
 When consoleCaptureEnabled is false, console messages are not captured, but errors and unhandled rejections may still be recorded. Logs and individual messages have retention/size limits; IDs reset on page reload.`,
     }, async ({ limit = 30, levels }) => {
         if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
-            throw new Error('app.read_logs: limit must be an integer between 1 and 100');
+            throw new Error(`${READ_LOGS}: limit must be an integer between 1 and 100`);
         }
         if (levels !== undefined && (!Array.isArray(levels)
             || levels.some(level => typeof level !== 'string' || !['debug', 'info', 'warn', 'error'].includes(level)))) {
-            throw new Error('app.read_logs: levels must contain only debug, info, warn or error');
+            throw new Error(`${READ_LOGS}: levels must contain only debug, info, warn or error`);
         }
         const selectedLevels = levels === undefined ? null : new Set(levels as string[]);
         const [entries, consoleCaptureEnabled] = await Promise.all([logs.list(), logs.getConsoleCaptureEnabled()]);

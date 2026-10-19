@@ -6,7 +6,10 @@ import type { DocumentScope } from './document.ts';
 import { inspectInputSurface } from './geometry.ts';
 import type { InteractionPoint } from './geometry.ts';
 import type { ToolArguments } from './types.ts';
+import { appToolAliases } from './names.ts';
 export type { InteractionPoint } from './geometry.ts';
+
+const { snapshot: SNAPSHOT, interact: INTERACT, evaluate: EVALUATE } = appToolAliases;
 
 type Interaction = { target: ElementTarget } & (
     | { action: 'click' }
@@ -49,7 +52,7 @@ export function interact(args: ToolArguments, observation: Observation, options:
         return { action: request.action, dispatched, observed };
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`The action was attempted, but its result could not be confirmed. Changes may already have taken effect. Check the current state with app.snapshot or a known API before retrying. Details: ${message}`);
+        throw new Error(`The action was attempted, but its result could not be confirmed. Changes may already have taken effect. Check the current state with ${SNAPSHOT} or a known API before retrying. Details: ${message}`);
     }
 }
 
@@ -96,7 +99,7 @@ function parseTarget(args: ToolArguments): ElementTarget {
     }
     if (hasRef) {
         if (typeof args.ref !== 'string' || !args.ref.trim()) {
-            throw new Error('ref must be a non-empty string copied from the latest app.snapshot page.');
+            throw new Error(`ref must be a non-empty string copied from the latest ${SNAPSHOT} page.`);
         }
         if (args.root !== undefined) {
             throw new Error('root is only used with selector. A ref already identifies its element and page; omit root.');
@@ -104,7 +107,7 @@ function parseTarget(args: ToolArguments): ElementTarget {
         return { ref: args.ref };
     }
     if (typeof args.selector !== 'string' || !args.selector.trim()) {
-        throw new Error('selector must be a non-empty CSS selector for a known target. Use app.snapshot if the target is unclear.');
+        throw new Error(`selector must be a non-empty CSS selector for a known target. Use ${SNAPSHOT} if the target is unclear.`);
     }
     if (args.root !== undefined && typeof args.root !== 'string') {
         throw new Error('root must be a ref from the latest snapshot. Omit root to search the main document.');
@@ -114,19 +117,19 @@ function parseTarget(args: ToolArguments): ElementTarget {
 
 function requireInteractiveElement(element: Element, scope: DocumentScope): HTMLElement {
     if (!isHTMLElement(element)) {
-        throw new Error('app.interact does not support this element. Choose its enclosing control from app.snapshot, or use app.evaluate with a known API.');
+        throw new Error(`${INTERACT} does not support this element. Choose its enclosing control from ${SNAPSHOT}, or use ${EVALUATE} with a known API.`);
     }
     for (const target of [...scope.frames, element]) {
         if (isDisabled(target)) {
             throw new Error('The target or its containing page is disabled. Check which condition enables it before trying again.');
         }
         if (target.closest('[inert]')) {
-            throw new Error('This region is currently inactive and cannot receive input. Call app.snapshot with {} to inspect the active panel or dialog.');
+            throw new Error(`This region is currently inactive and cannot receive input. Call ${SNAPSHOT} with {} to inspect the active panel or dialog.`);
         }
         const doc = target.ownerDocument;
         const hasModal = documentWindow(doc).CSS.supports('selector(:modal)') && doc.querySelector(':modal') !== null;
         if (hasModal && !target.closest(':modal')) {
-            throw new Error('An open modal dialog blocks this target. Observe the dialog and operate or close it first. For a dialog outside this embedded page, call app.snapshot with {} to inspect the main page.');
+            throw new Error(`An open modal dialog blocks this target. Observe the dialog and operate or close it first. For a dialog outside this embedded page, call ${SNAPSHOT} with {} to inspect the main page.`);
         }
     }
     return element;
@@ -152,7 +155,7 @@ function prepareAction(
         case 'fill': {
             const supportedInput = isHtmlTag(element, 'input') && FILLABLE_INPUT_TYPES.has(element.type);
             if (!(isHtmlTag(element, 'textarea') || supportedInput) || element.closest('.cm-editor')) {
-                throw new Error('fill supports ordinary text/number inputs and textareas. For a complex editor, use app.evaluate with its editing API. Password and file inputs are not supported.');
+                throw new Error(`fill supports ordinary text/number inputs and textareas. For a complex editor, use ${EVALUATE} with its editing API. Password and file inputs are not supported.`);
             }
             if (element.readOnly || element.getAttribute('aria-readonly') === 'true') {
                 throw new Error('The target is read-only. Find an editable control or inspect what makes this field read-only before trying again.');
@@ -168,11 +171,11 @@ function prepareAction(
         }
         case 'select': {
             if (!isHtmlTag(element, 'select') || element.multiple) {
-                throw new Error('select supports standard single-select controls. For a custom dropdown, click to open it and use app.snapshot to inspect its options; for multi-select, use a known API.');
+                throw new Error(`select supports standard single-select controls. For a custom dropdown, click to open it and use ${SNAPSHOT} to inspect its options; for multi-select, use a known API.`);
             }
             const option = Array.from(element.options).find(candidate => candidate.value === request.value);
             if (!option || option.disabled || option.parentElement?.matches('optgroup:disabled')) {
-                throw new Error('This option is missing or disabled. Call app.snapshot with this control as root, then use an enabled option\'s exact value and the control\'s new ref.');
+                throw new Error(`This option is missing or disabled. Call ${SNAPSHOT} with this control as root, then use an enabled option's exact value and the control's new ref.`);
             }
             requireSurface([element]);
 
@@ -201,7 +204,7 @@ function prepareAction(
         }
         case 'scroll': {
             if (!semantics.isScrollable(element)) {
-                throw new Error('This target cannot scroll vertically. Use app.snapshot to find a region marked scrollable=true, then scroll that region.');
+                throw new Error(`This target cannot scroll vertically. Use ${SNAPSHOT} to find a region marked scrollable=true, then scroll that region.`);
             }
             requireSurface([element]);
 
@@ -256,5 +259,5 @@ function requireInputSurface(candidates: HTMLElement[], scope: DocumentScope, se
         }
         reasons.push(surface.reason);
     }
-    throw new Error(`No action was performed. ${reasons.join(' ')} For a panel outside an embedded page, call app.snapshot with {} to inspect the main page.`);
+    throw new Error(`No action was performed. ${reasons.join(' ')} For a panel outside an embedded page, call ${SNAPSHOT} with {} to inspect the main page.`);
 }

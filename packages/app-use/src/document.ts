@@ -1,3 +1,7 @@
+import { appToolAliases } from './names.ts';
+
+const { snapshot: SNAPSHOT } = appToolAliases;
+
 /** A page of refs belongs to one document, reached through these outer-to-inner frames. */
 export type DocumentScope = { document: Document; frames: HTMLIFrameElement[] };
 
@@ -24,7 +28,7 @@ export function isHtmlTag<K extends keyof HTMLElementTagNameMap>(element: Elemen
 
 export function documentWindow(doc: Document) {
     const view = doc.defaultView;
-    if (!view) throw new Error('This page is no longer active. Call app.snapshot with {} to observe the main page again.');
+    if (!view) throw new Error(`This page is no longer active. Call ${SNAPSHOT} with {} to observe the main page again.`);
     return view;
 }
 
@@ -45,6 +49,6 @@ export function isInScope(element: Element, scope: DocumentScope): boolean {
 
 export function requireCurrentScope(scope: DocumentScope) {
     if (!isScopeCurrent(scope)) {
-        throw new Error('The embedded page was reloaded, removed, or is no longer accessible. Call app.snapshot with {} and enter it again using its new ref.');
+        throw new Error(`The embedded page was reloaded, removed, or is no longer accessible. Call ${SNAPSHOT} with {} and enter it again using its new ref.`);
     }
 }

@@ -2,6 +2,9 @@ import { documentWindow } from './document.ts';
 import type { DocumentScope } from './document.ts';
 import { preview } from './semantics.ts';
 import type { Semantics } from './semantics.ts';
+import { appToolAliases } from './names.ts';
+
+const { interact: INTERACT, evaluate: EVALUATE } = appToolAliases;
 
 export type InteractionPoint = { x: number; y: number };
 type Bounds = { left: number; right: number; top: number; bottom: number };
@@ -100,7 +103,7 @@ function frameMapping(frame: HTMLIFrameElement): FrameMapping {
         const rotated = style.rotate && style.rotate !== 'none' && Number.parseFloat(style.rotate) !== 0;
         const flipped = style.scale && style.scale !== 'none' && style.scale.split(/\s+/).some(value => Number(value) <= 0);
         if (!matrix.is2D || matrix.b !== 0 || matrix.c !== 0 || matrix.a <= 0 || matrix.d <= 0 || rotated || flipped) {
-            throw new Error('No action was performed: this embedded page has a rotation, skew, or 3D transform that app.interact cannot map reliably. Use app.evaluate with a known API for this control.');
+            throw new Error(`No action was performed: this embedded page has a rotation, skew, or 3D transform that ${INTERACT} cannot map reliably. Use ${EVALUATE} with a known API for this control.`);
         }
     }
 
