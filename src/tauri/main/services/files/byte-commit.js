@@ -1,4 +1,5 @@
 import { encodeIpcByteBody } from './ipc-byte-body.js';
+import { BYTE_HEADERS } from '../../kernel/byte-protocol.js';
 
 /**
  * Own a bounded byte commit from begin through finish/abort.
@@ -17,7 +18,7 @@ export async function commitBytes({ begin, frames, append, finish, abort }) {
         }
         for await (const frame of frames(maxFrameBytes)) {
             const { body, headers: encodingHeaders } = encodeIpcByteBody(frame);
-            const headers = { ...encodingHeaders, 'session-id': sessionId, offset: String(offset) };
+            const headers = { ...encodingHeaders, [BYTE_HEADERS.sessionId]: sessionId, [BYTE_HEADERS.offset]: String(offset) };
             const accepted = Number(await append(body, { headers }));
             if (accepted !== offset + frame.byteLength) {
                 throw new Error(`Host commit returned unexpected offset ${accepted}`);

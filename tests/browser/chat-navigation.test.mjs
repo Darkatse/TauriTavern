@@ -11,8 +11,7 @@ function chatPayload(fileName) {
 }
 
 test('chat persistence and navigation', async (context) => {
-    const { window, getModule, load, startHost, initializeChatRendering } = createBrowserRuntime();
-    window.happyDOM.settings.timer.maxIntervalIterations = 1;
+    const { window, getModule, load, startHost, initializeChatRendering } = await createBrowserRuntime();
     window.happyDOM.settings.timer.maxIntervalTime = 0;
     const errors = [];
     window.toastr.error = (...args) => errors.push(args);

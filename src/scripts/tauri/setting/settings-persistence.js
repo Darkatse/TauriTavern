@@ -1,6 +1,7 @@
 // @ts-check
 
 import { invoke } from '../../../tauri-bridge.js';
+import { personaProjection, personaRecords } from '../../../tauri/main/kernel/persona-projection.js';
 
 /** @type {unknown} */
 let settingsRevision = null;
@@ -40,29 +41,6 @@ export function captureSettingsSaveState(settings, revision) {
 /** @param {any} left @param {any} right */
 function sameJsonValue(left, right) {
     return Object.is(left, right) || JSON.stringify(left) === JSON.stringify(right);
-}
-
-/** @param {any} settings */
-function personaRecords(settings) {
-    const { personas = {}, persona_descriptions = {} } = settings.power_user ?? {};
-    return Object.fromEntries([...new Set([...Object.keys(personas), ...Object.keys(persona_descriptions)])]
-        .map(id => [id, {
-            ...(Object.hasOwn(personas, id) ? { name: personas[id] } : {}),
-            ...(Object.hasOwn(persona_descriptions, id) ? { description: persona_descriptions[id] } : {}),
-        }]));
-}
-
-/** @param {Record<string, any>} records */
-function personaProjection(records) {
-    /** @type {Record<string, any>} */
-    const personas = {};
-    /** @type {Record<string, any>} */
-    const persona_descriptions = {};
-    for (const [id, data] of Object.entries(records)) {
-        if (data.name !== undefined) personas[id] = data.name;
-        if (data.description !== undefined) persona_descriptions[id] = data.description;
-    }
-    return { personas, persona_descriptions };
 }
 
 /**

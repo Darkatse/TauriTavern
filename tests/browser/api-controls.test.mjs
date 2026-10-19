@@ -4,7 +4,7 @@ import { computeAccessibleName } from 'dom-accessibility-api';
 import { createBrowserRuntime } from './runtime.mjs';
 
 test('API presets, Select2 activation and key failures preserve their public behavior', async context => {
-    const { window, load, getModule, startHost } = createBrowserRuntime();
+    const { window, load, getModule, startHost } = await createBrowserRuntime();
     try {
         await startHost();
         await load('script.js');

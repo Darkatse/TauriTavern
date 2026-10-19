@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createBrowserRuntime } from './runtime.mjs';
 
 for (const experimental of [true, false]) {
-    const { window, getModule, load, startHost } = createBrowserRuntime();
+    const { window, getModule, load, startHost } = await createBrowserRuntime();
     try {
         await startHost();
         await load('script.js');

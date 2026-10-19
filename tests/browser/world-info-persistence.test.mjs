@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createBrowserRuntime, createPaginationWaiter } from './runtime.mjs';
 
 test('deleting characters keeps a shared lorebook until its last user is deleted', async context => {
-    const { window, getModule, startHost, initializeChatRendering } = createBrowserRuntime();
+    const { window, getModule, startHost, initializeChatRendering } = await createBrowserRuntime();
     context.after(() => window.happyDOM.close());
     await startHost();
     const main = await initializeChatRendering();
@@ -53,7 +53,7 @@ test('deleting characters keeps a shared lorebook until its last user is deleted
 });
 
 test('editing after a backend lorebook update preserves the new document', async context => {
-    const { window, getModule, load, startHost } = createBrowserRuntime();
+    const { window, getModule, load, startHost } = await createBrowserRuntime();
     context.after(() => window.happyDOM.close());
     await startHost();
     await load('script.js');
@@ -94,7 +94,7 @@ test('editing after a backend lorebook update preserves the new document', async
 });
 
 test('immediate and debounced world info saves keep their snapshots and later edits', async context => {
-    const { window, getModule, load, startHost } = createBrowserRuntime();
+    const { window, getModule, load, startHost } = await createBrowserRuntime();
     context.after(() => window.happyDOM.close());
     await startHost();
     await load('script.js');
@@ -136,7 +136,7 @@ test('immediate and debounced world info saves keep their snapshots and later ed
 });
 
 test('world info failures stop dependent reads and leave unrelated saves and retries usable', async context => {
-    const { window, getModule, load, startHost } = createBrowserRuntime();
+    const { window, getModule, load, startHost } = await createBrowserRuntime();
     context.after(() => window.happyDOM.close());
     await startHost();
     await load('script.js');
@@ -181,7 +181,7 @@ test('world info failures stop dependent reads and leave unrelated saves and ret
 });
 
 test('performance HUD keeps world info byte commits intact', async context => {
-    const { window, load } = createBrowserRuntime();
+    const { window, load } = await createBrowserRuntime();
     let hud;
     context.after(async () => {
         hud?.disable();

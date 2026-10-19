@@ -11,6 +11,7 @@ const OVER_MAX_WHITELIST = new Set([
 
 const NATIVE_GLOBAL_OWNERS = new Set([
     'src/tauri-bridge.js',
+    'src/tauri/web-host/install.js',
     // Rust injects this classic script before the application ESM graph exists.
     'src/tauri/main/compat/android-speech-synthesis.js',
 ]);

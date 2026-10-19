@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createBrowserRuntime, createPaginationWaiter } from './runtime.mjs';
 
 test('editing a reattached lorebook does not overwrite changes made while detached', async context => {
-    const { window, getModule, load, startHost } = createBrowserRuntime();
+    const { window, getModule, load, startHost } = await createBrowserRuntime();
     context.after(() => window.happyDOM.close());
     await startHost();
     await load('script.js');

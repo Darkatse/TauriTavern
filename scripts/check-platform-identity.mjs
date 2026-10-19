@@ -6,6 +6,7 @@ import ts from 'typescript';
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const HOST = 'src-tauri/crates/tauritavern/src/';
 const IDENTITY = 'src/scripts/util/host-identity.js';
+const HOST_IDENTITY_OWNERS = new Set([IDENTITY, 'src/tauri/web-host/install.js']);
 const FRONTEND_DOC = 'docs/FrontendGuide.md §2.1（宿主身份）';
 const BACKEND_DOC = 'docs/BackendStructure.md §6.4（平台事实）';
 // These own browser compatibility or diagnostics, not native host identity.
@@ -126,13 +127,13 @@ function scanFrontend(file, source) {
     };
     visit(ast, node => {
         const member = property(node);
-        if (file !== IDENTITY && ((ts.isIdentifier(node) && node.text === '__TAURITAVERN_HOST__') || member === '__TAURITAVERN_HOST__')) {
+        if (!HOST_IDENTITY_OWNERS.has(file) && ((ts.isIdentifier(node) && node.text === '__TAURITAVERN_HOST__') || member === '__TAURITAVERN_HOST__')) {
             // Property-access identifiers are visited separately.
             if (!ts.isPropertyAccessExpression(node)) report.add(node.getStart(ast), 'FE-owner', `不要直接读写 __TAURITAVERN_HOST__；从 ${IDENTITY} 导入 hostPlatform()/isMobileHost()/isDesktopHost()。参见 ${FRONTEND_DOC}。`);
         }
-        if (file !== IDENTITY && ts.isCallExpression(node) && property(node.expression) === 'defineProperty'
+        if (!HOST_IDENTITY_OWNERS.has(file) && ts.isCallExpression(node) && property(node.expression) === 'defineProperty'
             && node.arguments[1] && ts.isStringLiteral(node.arguments[1]) && node.arguments[1].text === '__TAURITAVERN_HOST__') {
-            report.add(node.getStart(ast), 'FE-owner', `宿主身份由 Rust 注入；删除本地 defineProperty，读取时使用 ${IDENTITY}。参见 ${FRONTEND_DOC}。`);
+            report.add(node.getStart(ast), 'FE-owner', `宿主身份由 Rust 或 Web Host 安装；删除本地 defineProperty，读取时使用 ${IDENTITY}。参见 ${FRONTEND_DOC}。`);
         }
         if (!BROWSER_READERS.has(file)) {
             if (member && ['userAgent', 'platform', 'maxTouchPoints', 'userAgentData'].includes(member)

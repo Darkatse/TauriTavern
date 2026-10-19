@@ -4,7 +4,7 @@ import { computeAccessibleName } from 'dom-accessibility-api';
 import { createBrowserRuntime } from './runtime.mjs';
 
 test('Popup naming and result controls', async context => {
-    const { window, getModule, load, startHost } = createBrowserRuntime();
+    const { window, getModule, load, startHost } = await createBrowserRuntime();
     try {
         await startHost();
         await load('script.js');

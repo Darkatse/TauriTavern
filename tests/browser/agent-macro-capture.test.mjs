@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createBrowserRuntime } from './runtime.mjs';
 
-const { window, getModule, load, startHost } = createBrowserRuntime();
+const { window, getModule, load, startHost } = await createBrowserRuntime();
 const invoke = window.__TAURI__.core.invoke;
 window.__TAURI__.core.invoke = async (command, args, options) => {
     if (command === 'build_agent_current_model_connection_snapshot') {

@@ -10,7 +10,7 @@ function injectBootstrapScript(window, devServerOrigin) {
 }
 
 test('dev READY resolves only after the active worker controls the page', async () => {
-    const { window, load } = createBrowserRuntime();
+    const { window, load } = await createBrowserRuntime();
     const claimRequested = Promise.withResolvers();
     const allowControl = Promise.withResolvers();
     const serviceWorker = new window.EventTarget();
@@ -60,7 +60,7 @@ test('dev READY resolves only after the active worker controls the page', async 
 });
 
 test('a document loaded through the app protocol does not install the dev bridge', async () => {
-    const { window, load } = createBrowserRuntime();
+    const { window, load } = await createBrowserRuntime();
     Object.defineProperty(window.navigator, 'serviceWorker', {
         value: { register: () => assert.fail('the app protocol serves host resources natively') },
     });

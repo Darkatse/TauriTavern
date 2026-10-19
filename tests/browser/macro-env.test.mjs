@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createBrowserRuntime } from './runtime.mjs';
 
 test('macro evaluation environments', async (context) => {
-    const { window, getModule, load, startHost } = createBrowserRuntime();
+    const { window, getModule, load, startHost } = await createBrowserRuntime();
 
     try {
         await startHost();

@@ -33,7 +33,7 @@
 
 ### 2.1 宿主身份
 
-宿主身份 `{ platform, kind }` 由 Rust 按编译目标生成（契约见 `docs/FrontendHostContract.md` §2.2）。前端只通过 `src/scripts/util/host-identity.js` 读取：`hostPlatform()` 返回平台，`isMobileHost()` / `isDesktopHost()` 返回宿主类别。测试用 `tests/helpers/host-identity.mjs` 安装身份。
+宿主身份 `{ platform, kind }` 由 Rust 按编译目标生成（契约见 `docs/FrontendHostContract.md` §2.2）。前端只通过 `src/scripts/util/host-identity.js` 读取：`hostPlatform()` 返回平台，`isMobileHost()` / `isDesktopHost()` 返回宿主类别。测试由 harness 安装身份。
 
 与平台有关的判断，先分清在问什么：
 

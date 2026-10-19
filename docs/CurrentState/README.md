@@ -27,3 +27,4 @@
 | [MCP](MCP.md) | 服务器、工具目录与模型调用 |
 | [向量 API](VectorApi.md) | 索引、embedding 与查询 |
 | [自有界面](FirstPartyUI.md) | React、TypeScript 与构建流程 |
+| [Web Host](WebHost.md) | 浏览器嵌入方（Tavern Studio）使用的宿主实现 |

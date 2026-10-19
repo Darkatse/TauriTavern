@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createBrowserRuntime } from './runtime.mjs';
 
-const { window, getModule, load, startHost } = createBrowserRuntime();
+const { window, getModule, load, startHost } = await createBrowserRuntime();
 const message = (role, text) => ({ role, parts: [{ type: 'text', text }], providerMetadata: {} });
 const call = { callId: 'call-1', toolId: 'builtin:workspace.read_file', arguments: { path: 'work/{{user}}.md' }, providerMetadata: { modelAlias: 'workspace_read_file', signature: 'opaque-signature' } };
 const assistant = {

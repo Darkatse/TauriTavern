@@ -5,7 +5,7 @@ import { applyV8RegexTasks } from '../../src/scripts/tauri/regex/v8-regex-worker
 import { createBrowserRuntime } from './runtime.mjs';
 
 async function openRuntime(t) {
-    const runtime = createBrowserRuntime();
+    const runtime = await createBrowserRuntime();
     const { window, getModule, load, startHost } = runtime;
     t.after(() => window.happyDOM.close());
     // Run the real regex evaluator; only the worker transport is replaced.
