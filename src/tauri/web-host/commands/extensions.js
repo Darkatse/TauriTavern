@@ -6,7 +6,7 @@
  * @param {() => Promise<any>} loadDefaults
  * @returns {import('../install.js').CommandHandlers}
  */
-export function createExtensionCommands({ json }, fetchResource, loadDefaults) {
+export function createExtensionCommands({ json, send }, fetchResource, loadDefaults) {
     /** @param {string} path */
     async function readTemplate(path) {
         const response = await fetchResource(path);
@@ -25,5 +25,15 @@ export function createExtensionCommands({ json }, fetchResource, loadDefaults) {
         list_skills: () => [],
         // Accept page-owned tool declarations; Agent execution remains unsupported.
         register_agent_extension_tool: () => undefined,
+        list_sprites: ({ dto }) => json(`/api/sprites/get?name=${encodeURIComponent(dto.name)}`, undefined, 'GET'),
+        // Like native, failed statuses are returned for the SD extension to handle.
+        sd_handle: ({ path, body }) => {
+            const response = send(`/api/sd/${path}`, JSON.stringify(body));
+            const text = /** @type {string | null} */ (response.body);
+            if (!text) return { status: response.status, kind: 'empty', body: null };
+            return response.headers['content-type']?.includes('json')
+                ? { status: response.status, kind: 'json', body: JSON.parse(text) }
+                : { status: response.status, kind: 'text', body: text };
+        },
     };
 }

@@ -61,6 +61,8 @@ const host = installWebHost({
 | `list_mcp_servers`、`list_skills` | 全新安装的空列表 |
 | `register_agent_extension_tool` | 确认接收页面启动时的工具声明；运行 Agent 时拒绝 |
 | `database_handle` | `flushAll` 返回 `null`：没有打开的数据库；其他请求拒绝 |
+| `list_sprites` | `GET /api/sprites/get?name=<name>` |
+| `sd_handle` | `/api/sd/<path>`，与原生一样原样返回状态码与响应体，失败由 SD 扩展自己处理 |
 | `get_world_info` | `/api/worldinfo/get`；打开聊天时会预读关联的世界书 |
 | `begin_settings_commit`、`append_settings_commit_chunk`、`finish_settings_commit`、`abort_settings_commit` | 最终写入 `/api/settings/save`，见"设置提交" |
 | `begin_chat_commit`、`append_chat_commit_chunk`、`finish_chat_commit`、`abort_chat_commit` | 完整聊天、metadata 与 metadata extension，最终写入 `/api/chats/save` |
