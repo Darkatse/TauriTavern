@@ -83,7 +83,7 @@ impl AgentRuntimeService {
                 return Ok(tool_error_outcome(
                     call,
                     "tool.invalid_arguments",
-                    &format!("invalid agent.await arguments: {error}"),
+                    &format!("invalid arguments: {error}"),
                     started.elapsed().as_millis(),
                 ));
             }

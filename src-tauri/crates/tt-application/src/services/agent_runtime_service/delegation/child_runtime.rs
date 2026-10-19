@@ -23,6 +23,7 @@ use crate::services::agent_runtime_service::tool_snapshot::tool_snapshot_summary
 use crate::services::agent_runtime_service::{
     AgentCancelReceiver, AgentRuntimeService, PreparedInvocation,
 };
+use crate::services::agent_tools::{TASK_RETURN, builtin_model_alias};
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentDelegationContinuation, AgentInvocation, AgentInvocationStatus, AgentRunEventLevel,
@@ -166,7 +167,8 @@ impl AgentRuntimeService {
             .await?
             .ok_or_else(|| {
                 ApplicationError::ValidationError(format!(
-                    "agent.max_tool_rounds_exceeded: task.return was not called within {} rounds",
+                    "agent.max_tool_rounds_exceeded: {} was not called within {} rounds",
+                    builtin_model_alias(TASK_RETURN),
                     frame.progress.max_rounds
                 ))
             })?;

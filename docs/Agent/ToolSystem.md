@@ -8,6 +8,8 @@
 
 模型调用名称在 Invocation 创建时生成，与稳定 ID 的映射保存在工具快照中。内置工具如 `workspace_read_file` 保留固定名称；扩展使用注册的 `name`，MCP 使用服务器与工具名，按模型协议规范字符和长度，重名时加 `__2` 等短后缀。
 
+写给模型的文字，包括工具描述、参数说明、工具结果与错误、系统提示词，提到其他工具时用模型调用名称，例如 `workspace_read_file`；说的是本次调用的工具，就写 "this tool"。Profile、运行记录和设置界面用稳定 ID。
+
 工具准备按目录、Chat/Session 场景和 Profile 选择生成 bindings，Invocation 再单独应用完成协议，形成包含描述、参数、名称映射及预算的快照。输出修订沿用原快照。每个 Invocation 的调用计数独立，由 `ToolRequestGate` 检查后明确分派到 Builtin、MCP 或 Extension。
 
 新 Profile 默认启用 Shell。

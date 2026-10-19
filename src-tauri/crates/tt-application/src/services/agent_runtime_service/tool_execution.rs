@@ -12,7 +12,8 @@ use crate::services::tool_request_gate::{ToolRequestGate, ToolRequestGateError};
 
 use crate::services::agent_tools::{
     AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AgentToolDispatchOutcome, AgentToolEffect,
-    AgentToolSession, TASK_RETURN, WORKSPACE_FINISH, WORKSPACE_SHELL,
+    AgentToolSession, TASK_RETURN, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_SHELL,
+    builtin_model_alias,
 };
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
@@ -92,7 +93,7 @@ impl AgentRuntimeService {
                         "The tool call limit for this task has been reached ({max_calls} calls)."
                     )),
                     ToolRequestGateError::ToolBudgetExhausted { max_calls, .. } => Some(format!(
-                        "`{tool_name}` has reached its call limit for this task ({max_calls} calls)."
+                        "This tool has reached its call limit for this task ({max_calls} calls)."
                     )),
                     _ => None,
                 };
@@ -171,10 +172,7 @@ impl AgentRuntimeService {
                 Ok(recoverable_tool_error(
                     call,
                     "agent.tool_after_finish",
-                    &format!(
-                        "{} must be the final tool call in a model turn; complete the other work first, then call it again.",
-                        call.tool_id.native_name()
-                    ),
+                    "This tool must be the final tool call in a model turn; complete the other work first, then call it again.",
                     started.elapsed().as_millis(),
                 ))
             } else if builtin_name == Some(AGENT_DELEGATE) {
@@ -279,7 +277,10 @@ impl AgentRuntimeService {
                                 recoverable_tool_error(
                                     tool_invocation,
                                     "agent.child_finish_denied",
-                                    "Return-mode child Agent invocations must complete with task.return, not workspace.finish.",
+                                    &format!(
+                                        "Return-mode child Agent invocations must complete with {}, not this tool.",
+                                        builtin_model_alias(TASK_RETURN),
+                                    ),
                                     outcome.elapsed_ms,
                                 )
                             } else if !commit_ledger.has_explicit_commit()
@@ -289,7 +290,10 @@ impl AgentRuntimeService {
                                 recoverable_tool_error(
                                     tool_invocation,
                                     "agent.foreground_commit_required",
-                                    "Foreground Agent runs must call workspace.commit successfully before workspace.finish.",
+                                    &format!(
+                                        "Foreground Agent runs must call {} successfully before finishing.",
+                                        builtin_model_alias(WORKSPACE_COMMIT),
+                                    ),
                                     outcome.elapsed_ms,
                                 )
                             } else {

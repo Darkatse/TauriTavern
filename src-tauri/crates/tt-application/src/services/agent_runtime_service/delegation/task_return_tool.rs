@@ -33,7 +33,7 @@ impl AgentRuntimeService {
             return Ok(tool_error_outcome(
                 call,
                 "agent.task_return_denied",
-                "task.return is available only while completing a delegated task.",
+                "This tool is available only while completing a delegated task.",
                 started.elapsed().as_millis(),
             ));
         }
@@ -71,7 +71,7 @@ impl AgentRuntimeService {
             return Ok(tool_error_outcome(
                 call,
                 "agent.task_already_finished",
-                "This delegated task is already finished and cannot accept another task.return.",
+                "This delegated task is already finished and cannot be returned again.",
                 started.elapsed().as_millis(),
             ));
         }
@@ -135,7 +135,7 @@ impl AgentRuntimeService {
             return Ok(tool_error_outcome(
                 call,
                 "agent.task_already_finished",
-                "This delegated task is already finished and cannot accept another task.return.",
+                "This delegated task is already finished and cannot be returned again.",
                 started.elapsed().as_millis(),
             ));
         }

@@ -128,7 +128,7 @@ pub(crate) fn compile_invocation_tool_snapshot(
         .map_err(Into::into)
 }
 
-pub(super) fn builtin_model_alias(name: &str) -> String {
+pub(crate) fn builtin_model_alias(name: &str) -> String {
     name.replace('.', "_")
 }
 
