@@ -52,6 +52,7 @@ run.onclick = async () => {
         const frame = await mountFrame(fixture, 'Embedded form', `<!doctype html>
             <section aria-label="Child form">
             <label>Child text<input oninput="document.querySelector('output').value=this.value"></label>
+            <button onclick="this.textContent='Clicked'">Child action</button>
             <output>before</output></section>`);
         const overview = main();
         assert(!overview.tree.includes('Child text'), 'overview entered a frame implicitly');
@@ -60,6 +61,13 @@ run.onclick = async () => {
         const page = enter(overview, 'Embedded form');
         const child = frame.contentDocument;
         assert(child.querySelector('output').value === 'changed', 'child did not receive the input event');
+        // ST's compositor workaround also changes fixed positioning; scope it to this scenario.
+        document.documentElement.style.cssText = '-webkit-transform:translateZ(0);-webkit-backface-visibility:hidden;-webkit-perspective:1000';
+        try {
+            const clicked = act(page, 'Child action', { action: 'click' });
+            assert(clicked.dispatched && child.querySelector('button').textContent === 'Clicked', 'ST root perspective prevented the iframe click');
+        } finally { document.documentElement.style.cssText = ''; }
+        reports.push('PASS: ST root perspective permits iframe clicks and runs the button handler');
 
         const childRef = ref(page, 'Child text');
         const childFormRef = ref(page, 'Child form');

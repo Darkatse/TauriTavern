@@ -92,14 +92,14 @@ function describeMissedHit({ point, document: doc, hit }: MissedHit, semantics: 
 function frameMapping(frame: HTMLIFrameElement): FrameMapping {
     const view = documentWindow(frame.ownerDocument);
     // Bounding rectangles provide a reliable mapping for translation and positive axis-aligned scale.
+    // Perspective alone leaves points on the z=0 plane unchanged.
     // Reject other transforms instead of using an approximate point to bypass an outer obstruction.
     for (let ancestor: Element | null = frame; ancestor; ancestor = ancestor.parentElement) {
         const style = view.getComputedStyle(ancestor);
         const matrix = new view.DOMMatrixReadOnly(style.transform === 'none' ? undefined : style.transform);
         const rotated = style.rotate && style.rotate !== 'none' && Number.parseFloat(style.rotate) !== 0;
         const flipped = style.scale && style.scale !== 'none' && style.scale.split(/\s+/).some(value => Number(value) <= 0);
-        const perspective = style.perspective && style.perspective !== 'none';
-        if (!matrix.is2D || matrix.b !== 0 || matrix.c !== 0 || matrix.a <= 0 || matrix.d <= 0 || rotated || flipped || perspective) {
+        if (!matrix.is2D || matrix.b !== 0 || matrix.c !== 0 || matrix.a <= 0 || matrix.d <= 0 || rotated || flipped) {
             throw new Error('No action was performed: this embedded page has a rotation, skew, or 3D transform that app.interact cannot map reliably. Use app.evaluate with a known API for this control.');
         }
     }
