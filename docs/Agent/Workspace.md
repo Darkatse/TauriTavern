@@ -36,6 +36,26 @@ Run 工作文件允许并行读取，按单次操作串行修改；CAS 的条件
 
 脚本入口相对于 Shell 当前目录，import 相对于导入模块；`@tauritavern/runtime` 的文件 API 相对于工作区根。模块按需加载，文件直接读写，遵循上述权限与提交规则。
 
+### 调用工作区命令
+
+脚本通过 `shell.exec(command, options?)` 执行工作区命令：
+
+```js
+import { shell } from '@tauritavern/runtime';
+
+const { stdout, stderr, code } = shell.exec('ls -al');
+if (code !== 0) throw new Error(stderr);
+
+shell.exec('cat', { stdin: text });
+shell.exec('ls', { cwd: '/scratch', env: { LANG: 'C' } });
+```
+
+对脚本而言调用是同步的，返回 `{ stdout, stderr, code }`。每次调用创建新环境，`cd` 与变量不保留；需要连续命令共享目录时写在同一命令内（`shell.exec('cd /scratch && ls -al')`）。
+
+`stdin` 是命令未被子脚本管道或重定向时的输入，脚本内部的管道优先；`cwd` 覆盖起始目录，省略时继承当前目录，**不存在时抛错**；`env` 在基础环境之上追加，不替换。
+
+嵌套命令与外层 Shell 使用同一 `WorkspaceFs`，因此遵循相同的权限与提交规则；`shell.exec` 不注册 `js`，避免递归调用。输出量大时先重定向到工作区文件再读取。
+
 模块执行顶层代码，业务函数由脚本显式调用，异步工作使用 `await`。参数从 `process.argv` 读取，文件脚本使用 `process.argv.slice(2)` 获取字符串参数；选项和子命令由脚本解析。文件、stdin 与 eval 的参数边界见 `js --help`。
 
 结构化结果显式写入 stdout，诊断写入 stderr；较大的输入输出使用工作区文件。`process.exitCode` 默认是 0，可设置为数字整数 `0–255`，非法赋值抛错。未捕获异常或非零退出码表示失败，遵循既有文件保留与自动提交规则。
