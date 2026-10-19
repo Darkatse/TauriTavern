@@ -75,6 +75,11 @@ export function createObservation(options: ObservationOptions = {}) {
         return { element, scope };
     }
 
+    /** The refs of the latest snapshot page, in the order the page lists them. */
+    function refs(): string[] {
+        return [...references.keys()];
+    }
+
     /** Locating an element does not replace snapshot refs or change the observed document. */
     function resolve(target: ElementTarget): ResolvedTarget {
         if ('ref' in target) return resolveRef(target.ref);
@@ -159,7 +164,7 @@ export function createObservation(options: ObservationOptions = {}) {
         };
     }
 
-    return { enterRun, resolve, snapshot, clearCursor, createSemantics: semantics };
+    return { enterRun, refs, resolve, snapshot, clearCursor, createSemantics: semantics };
 }
 
 export type Observation = ReturnType<typeof createObservation>;

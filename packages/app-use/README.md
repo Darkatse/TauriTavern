@@ -25,6 +25,12 @@ same-origin iframe, pass its ref as `root`; `snapshot({})` returns to the main
 page. Refs and continuation cursors stop working once their document is removed
 or navigated.
 
+A host that shows refs itself, for example as numbered marks on a screenshot,
+reads them with `observation.refs()`, the refs of the latest page in its order,
+and finds each element with `observation.resolve({ ref })`. `resolve` applies
+the same checks as `interact`, so it throws for a ref whose element has been
+removed or hidden since the snapshot.
+
 The snapshot counter is kept in the page's localStorage under
 `tauritavern:in_app_agent_snapshot_sequence`. After a reload, new refs therefore
 never collide with refs that still appear in the conversation.

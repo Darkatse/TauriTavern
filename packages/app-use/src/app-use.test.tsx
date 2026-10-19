@@ -56,6 +56,8 @@ test('a paginated region stays actionable while earlier page and run refs expire
     }
     const next = observation.snapshot({ cursor });
     expect(next.tree).not.toContain('omitted-body-tail');
+    // refs() lists exactly the refs the latest page shows.
+    expect(observation.refs()).toEqual([...next.tree.matchAll(/\[ref=([^\]]+)\]/g)].map(match => match[1]));
     expect(() => observation.snapshot({ root: oldRef })).toThrow();
     const button = screen.getByRole('button', { name: 'Action 109' });
     button.onclick = () => button.setAttribute('aria-pressed', 'true');
