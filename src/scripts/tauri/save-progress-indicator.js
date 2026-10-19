@@ -29,11 +29,42 @@ export const SAVE_PROGRESS_MIN_VISIBLE_MS = 400;
  */
 export const SAVE_PROGRESS_SETTLE_MS = 300;
 
+/** @type {Readonly<Record<string, string>>} */
 const SHORT_LABELS = Object.freeze({
     payload: 'savechat',
     metadata: 'savemeta',
     metadataExtension: 'savemeta',
 });
+
+/**
+ * Per-device display preference. It lives in localStorage rather than the settings store because
+ * whether this line is welcome is a property of the device — a phone may want it off while a
+ * desktop does not — and it needs no early-boot restore, so the store would buy nothing.
+ * Off by default: only the "on" state is stored, absent means disabled.
+ */
+export const SAVE_PROGRESS_ENABLED_KEY = 'ttSaveProgress.enabled';
+
+/** @returns {boolean} */
+export function isSaveProgressEnabled() {
+    try {
+        return window.localStorage?.getItem(SAVE_PROGRESS_ENABLED_KEY) === '1';
+    } catch {
+        return false;
+    }
+}
+
+/** @param {boolean} enabled */
+export function setSaveProgressEnabled(enabled) {
+    try {
+        if (enabled) {
+            window.localStorage?.setItem(SAVE_PROGRESS_ENABLED_KEY, '1');
+        } else {
+            window.localStorage?.removeItem(SAVE_PROGRESS_ENABLED_KEY);
+        }
+    } catch {
+        // Storage unavailable: the default (disabled) stands, which is what the row shows.
+    }
+}
 
 /**
  * Owns the shared status pill, but only while it is free. Startup holds the same element, so an
@@ -118,6 +149,17 @@ export function createSaveProgressIndicator({
 
     /** @param {Event} event */
     function onCommit(event) {
+        // Read on every event so turning the setting off takes effect without a reload. If it is
+        // turned off while the line is up, drop it here instead of waiting for a queue-empty event
+        // that may never come.
+        if (!isSaveProgressEnabled()) {
+            if (active) {
+                cancelSettle();
+                active = false;
+                pill.hide();
+            }
+            return;
+        }
         const primary = /** @type {CustomEvent} */ (event).detail?.primary ?? null;
         if (primary) {
             cancelSettle();

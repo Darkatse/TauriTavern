@@ -63,6 +63,7 @@ function createValues(overrides: ValuesOverrides = {}): SettingsValues {
         allowKeysExposure: false,
         avatarPersonaOriginalImagesEnabled: false,
         oledBackgroundEnabled: false,
+        saveProgressEnabled: false,
         dynamicTheme: {
             themeEnabled: false,
             dayTheme: '',

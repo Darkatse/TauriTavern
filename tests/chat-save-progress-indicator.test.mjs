@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
     createSaveProgressIndicator,
+    setSaveProgressEnabled,
     SAVE_PROGRESS_MIN_VISIBLE_MS,
     SAVE_PROGRESS_SETTLE_MS,
 } from '../src/scripts/tauri/save-progress-indicator.js';
@@ -50,7 +51,21 @@ function fakeTarget() {
     };
 }
 
+function installStorage() {
+    const store = new Map();
+    globalThis.window = {
+        localStorage: {
+            getItem: key => store.get(key) ?? null,
+            setItem: (key, value) => { store.set(key, value); },
+            removeItem: key => { store.delete(key); },
+        },
+    };
+    return store;
+}
+
 function setup() {
+    installStorage();
+    setSaveProgressEnabled(true); // The line is opt-in, so every case here starts opted in.
     const pill = fakePill();
     const clock = fakeClock();
     const target = fakeTarget();
@@ -108,4 +123,24 @@ test('consecutive writes bridge instead of hiding the pill twice', () => {
     target.emit({ pending: 0, primary: null });
     clock.advance(SAVE_PROGRESS_SETTLE_MS + SAVE_PROGRESS_MIN_VISIBLE_MS);
     assert.equal(pill.state.hides, 1);
+});
+
+test('the line is opt-in and the setting turns it off mid-save', () => {
+    installStorage();
+    const pill = fakePill();
+    const clock = fakeClock();
+    const target = fakeTarget();
+    createSaveProgressIndicator({ pill, target, now: clock.now, schedule: clock.schedule, cancel: clock.cancel });
+
+    // Nothing stored yet: the line stays off.
+    target.emit({ pending: 1, primary: { kind: 'payload', percent: 50 } });
+    assert.equal(pill.state.shows, 0, 'off by default');
+
+    setSaveProgressEnabled(true);
+    target.emit({ pending: 1, primary: { kind: 'payload', percent: 50 } });
+    assert.equal(pill.state.text, 'savechat 50%');
+
+    setSaveProgressEnabled(false);
+    target.emit({ pending: 1, primary: { kind: 'payload', percent: 60 } });
+    assert.equal(pill.state.hides, 1, 'turning it off mid-save drops the line');
 });
