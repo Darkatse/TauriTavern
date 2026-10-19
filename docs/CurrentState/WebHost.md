@@ -36,7 +36,7 @@ const host = installWebHost({
   - `store.load()` 与 `store.save(value)` 读写 Web Host 自己的一份文档，里面是 TT 设置的 DTO。嵌入方原样保存它，不需要理解其内容。
 - 后端数据和 `store` 都归嵌入方所有。页面模板与 `default-state.json` 按静态文件读取，嵌入方需原样提供 vendor 镜像中的这些文件。
 - 返回的 `host.emit(name, payload)` 向 `__TAURI__.event.listen` 注册的监听器投递事件，回调收到的形状与 Tauri 相同：`{ event, id, payload }`。
-- TT 在页面隐藏时（`pagehide`、`visibilitychange:hidden`）异步保存设置与聊天，这些保存要求页面仍在文档中。
+- 移除页面前先 `await host.exit()`。它走原生关闭窗口的流程：TT 保存设置与聊天后调用 `getCurrentWindow().destroy()`，Promise 随之完成。保存失败时 TT 记录错误并保持页面打开，Promise 保持等待，再次调用即重试。
 
 ## 命令
 

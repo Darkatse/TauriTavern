@@ -68,8 +68,7 @@ for (const identity of [HOSTS.windows, HOSTS.android]) {
             await assert.rejects(transport.saveCharacterChatPayload(repair), /400.*integrity/);
             assert.equal(fixture.chatFiles.get('review-chat'), corrupted);
             await transport.saveCharacterChatPayload({ ...repair, force: true });
-            const { flushLifecycleState } = getModule('tauri/main/services/lifecycle/lifecycle-flush-service.js').namespace;
-            await Promise.race([flushLifecycleState('pagehide'), first.failed]);
+            await Promise.race([first.host.exit(), first.failed]);
             assert.deepEqual(first.errors, []);
         } finally { await window.happyDOM.close(); }
 

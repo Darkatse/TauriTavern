@@ -10,6 +10,7 @@ import { createChatCommits } from './protocols/chat-commit.js';
 import { createWriteCommands } from './commands/write.js';
 import { createGenerationCommands } from './protocols/generation.js';
 import { createExtensionCommands } from './commands/extensions.js';
+import { TAURI_GRACEFUL_EXIT_EVENT } from '../main/services/lifecycle/lifecycle-flush-service.js';
 
 /**
  * @typedef {{ kind: 'form', entries: [string, string][] }} FormEntries
@@ -65,6 +66,10 @@ export function installWebHost({ identity, backend, store }) {
     let listenerId = 0;
     /** @type {Map<number, { name: string, callback: (event: any) => unknown }>} */
     const listeners = new Map();
+    /** @type {Promise<void> | undefined} */
+    let exited;
+    /** @type {() => void} */
+    let markExited = () => {};
     window.__TAURI__ = {
         core: {
             /** @param {string} command @param {any} args @param {any} options */
@@ -91,15 +96,24 @@ export function installWebHost({ identity, backend, store }) {
             getCurrentWindow: () => ({
                 isFullscreen: async () => false,
                 setFullscreen: async () => unsupported('window.setFullscreen'),
+                // TT closes the window once its graceful-exit flush succeeds.
+                destroy: async () => markExited(),
             }),
         },
     };
+    /** @param {string} name @param {any} payload */
+    function emit(name, payload) {
+        for (const [id, listener] of listeners) {
+            if (listener.name === name) listener.callback({ event: name, id, payload });
+        }
+    }
     return {
-        /** @param {string} name @param {any} payload */
-        emit(name, payload) {
-            for (const [id, listener] of listeners) {
-                if (listener.name === name) listener.callback({ event: name, id, payload });
-            }
+        emit,
+        /** Close through TT's native exit path. A failed flush keeps the page open and this pending; call again to retry. */
+        exit() {
+            exited ??= new Promise(resolve => { markExited = resolve; });
+            emit(TAURI_GRACEFUL_EXIT_EVENT, null);
+            return exited;
         },
     };
 }
