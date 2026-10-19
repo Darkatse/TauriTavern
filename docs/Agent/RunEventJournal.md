@@ -13,7 +13,7 @@
   "runId": "run_...",
   "timestamp": "2026-09-06T12:00:00Z",
   "level": "info",
-  "type": "run_started",
+  "type": "run_created",
   "payload": {}
 }
 ```
@@ -23,7 +23,7 @@
 事件保存阶段信息和文件引用。工具参数、完整结果和模型响应单独保存，避免每次读取 Timeline 都搬运完整上下文。常用事件可按一次运行理解：
 
 ```text
-run_started
+run_created
   → workspace_initialized
   → model_request_created → model_completed
   → tool_call_requested → tool_call_completed / tool_call_failed

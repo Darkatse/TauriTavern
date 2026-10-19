@@ -84,6 +84,7 @@ impl AgentRuntimeService {
                 session_id,
                 run_id,
                 status: run.status,
+                created_at: run.created_at,
             });
         }
         Ok(AgentListSessionsResultDto {
@@ -177,6 +178,7 @@ impl AgentRuntimeService {
                 session_id: session.id.clone(),
                 run_id,
                 status: run.status,
+                created_at: run.created_at,
             })
         } else {
             None
@@ -326,6 +328,7 @@ impl AgentRuntimeService {
             session_id: dto.session_id,
             run_id: run.id,
             status: run.status,
+            created_at: run.created_at,
         })
     }
 

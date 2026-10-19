@@ -44,7 +44,7 @@ Session 独立于角色聊天和写作 Agent Mode。使用前通过 `sessions.pr
 | `sessions.rename({ sessionId, title })` | `{ session }`；标题 trim 后为 1–120 字符 |
 | `sessions.delete({ sessionId })` | 删除会话数据；活动会话拒绝删除，目标已不存在时成功 |
 | `sessions.read({ sessionId, beforeSeq?, limit? })` | `{ session, messages, lastSeq, nextBeforeSeq, activeRun }` |
-| `sessions.send({ sessionId, text, variables? })` | `{ sessionId, runId, status }`；执行在原生端继续 |
+| `sessions.send({ sessionId, text, variables? })` | `{ sessionId, runId, status, createdAt }`；执行在原生端继续 |
 
 ```js
 // 已配置 Session Profile；agent 的取得方式同上。
@@ -68,7 +68,7 @@ Session 的结束与恢复边界见 [运行循环](../Agent/Runtime.md)，文件
 
 | 方法 | 行为 |
 | --- | --- |
-| `cancel(runId)` | 请求取消，返回 Chat handle 或 `{ sessionId, runId, status }`；终态通过事件观察 |
+| `cancel(runId)` | 请求取消，返回 Chat handle 或 `{ sessionId, runId, status, createdAt }`；终态通过事件观察 |
 | `readCheckpoint(runId)` | 读取保存状态及可恢复性信息 |
 | `resume({ runId, additionalRounds?, revisionGuidance? })` | 续接同一 Run，或根据新要求修订已完成输出；返回含订阅游标 `afterSeq` 的 Run handle |
 | `submitGuidance({ runId, text, clientGuidanceId? })` | 向活跃 Run 补充指令，返回 `guidanceId` 与 `status: 'queued'` |

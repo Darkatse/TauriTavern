@@ -233,6 +233,7 @@ type TauriTavernAgentSessionRunHandle = {
     sessionId: string;
     runId: string;
     status: TauriTavernAgentRunStatus;
+    createdAt: string;
 };
 
 type TauriTavernAgentSessionMessage = {

@@ -167,7 +167,10 @@ export function createInAppAgentController({ agent, selection }: { agent: Agent;
         const knownSeq = Math.max(0, ...events.map(appendedMessageSeq));
         if (knownSeq > (snapshot.messages.at(-1)?.seq ?? 0) && refreshing?.epoch === epoch) refreshing.requested = true;
         const active = tail.activeRun !== null && !terminal;
-        publish({ events, run: { runId, active, status: terminal ?? (active ? progress : null) ?? (active ? tail.activeRun?.status : null) ?? 'interrupted' } });
+        const status = terminal ?? (active ? progress : null) ?? (active ? tail.activeRun?.status : null) ?? 'interrupted';
+        // An ended run leaves the tail without a handle; keep the creation time observed for the same run.
+        const createdAt = tail.activeRun?.createdAt ?? (snapshot.run?.runId === runId ? snapshot.run.createdAt : undefined);
+        publish({ events, run: { runId, active, status, ...(createdAt === undefined ? {} : { createdAt }) } });
         if (active && tail.activeRun && (!snapshot.activeRun || snapshot.activeRun.runId === runId)) {
             attach(tail.activeRun, events);
         } else if (!active && snapshot.activeRun?.runId === runId) {

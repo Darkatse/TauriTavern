@@ -3,6 +3,7 @@ import { createInAppAgentController } from './controller';
 import { createAssistantProfile } from './profile';
 
 type Dependencies = Parameters<typeof createInAppAgentController>[0];
+const createdAt = '2026-09-22T12:00:00Z';
 
 function message(seq: number, role: 'user' | 'assistant' = 'assistant'): TauriTavernAgentSessionMessage {
     return { seq, runId: 'run', createdAt: '', message: { role, parts: [{ type: 'text', text: `message ${seq}` }], providerMetadata: null },
@@ -39,7 +40,7 @@ function harness(selectionId?: string | null) {
             send: () => {
                 state.sends++;
                 state.messages.push(message(1, 'user'));
-                const handle: TauriTavernAgentSessionRunHandle = { sessionId: 'session', runId: 'run', status: 'calling_model' };
+                const handle: TauriTavernAgentSessionRunHandle = { sessionId: 'session', runId: 'run', status: 'calling_model', createdAt };
                 state.active = handle;
                 return state.failSend ? Promise.reject(new Error('send receipt lost')) : Promise.resolve(handle);
             },
@@ -47,7 +48,7 @@ function harness(selectionId?: string | null) {
         readEvents: () => Promise.resolve({ events: [...state.events] }),
         subscribe: (_runId, handler) => { state.event = handler; return () => { state.event = null; }; },
         subscribeLiveProjection: (_runId, handler) => { state.live = handler; return () => { state.live = null; }; },
-        cancel: () => Promise.resolve({ sessionId: 'session', runId: 'run', status: 'cancelling' }),
+        cancel: () => Promise.resolve({ sessionId: 'session', runId: 'run', status: 'cancelling', createdAt }),
     };
     const selection: Dependencies['selection'] = {
         load: () => state.selectionId,
@@ -116,7 +117,7 @@ test('canonical origin replaces previews in either delivery order; terminal refr
     state.events.push(done);
     state.event?.(done);
     await controller.refresh();
-    expect(controller.getSnapshot().run).toMatchObject({ runId: 'run', status: 'cancelled', active: false });
+    expect(controller.getSnapshot().run).toMatchObject({ runId: 'run', status: 'cancelled', active: false, createdAt });
     expect(controller.getSnapshot().responses).toEqual([]);
     expect(state.event).toBeNull();
     expect(state.live).toBeNull();
@@ -142,7 +143,7 @@ test('tail refresh fills a multi-page gap, and inactive history without a termin
 test('a reply saved between the history and event reads is caught up before initialization completes', async () => {
     const { controller, state, agent } = harness('session');
     state.messages = [message(1, 'user')];
-    state.active = { sessionId: 'session', runId: 'run', status: 'calling_model' };
+    state.active = { sessionId: 'session', runId: 'run', status: 'calling_model', createdAt };
     const read = agent.sessions.read;
     let finishTail: (() => void) | undefined;
     let signalRead: (() => void) | undefined;
@@ -163,7 +164,7 @@ test('a reply saved between the history and event reads is caught up before init
     finishTail();
     await initializing;
     expect(controller.getSnapshot().messages.map(entry => entry.seq)).toEqual([1, 2]);
-    expect(controller.getSnapshot().run).toEqual({ runId: 'run', status: 'completed', active: false });
+    expect(controller.getSnapshot().run).toEqual({ runId: 'run', status: 'completed', active: false, createdAt });
     expect(state.live).toBeNull();
     controller.dispose();
 });
@@ -208,7 +209,7 @@ test('navigation during send preserves the destination draft and stopping still 
     expect(controller.getSnapshot().messages[0]?.runId).toBe('other-run');
     expect(controller.getSnapshot().activeRun?.sessionId).toBe('session');
     let cancelled: string | undefined;
-    agent.cancel = runId => { cancelled = runId; return Promise.resolve({ sessionId: 'session', runId, status: 'cancelling' }); };
+    agent.cancel = runId => { cancelled = runId; return Promise.resolve({ sessionId: 'session', runId, status: 'cancelling', createdAt }); };
     await controller.cancel();
     expect(cancelled).toBe('run');
     state.active = null;
@@ -273,7 +274,7 @@ test('a lazy creation receipt does not reverse later navigation back to the blan
 test('late event reads retain newer progress already delivered by the subscription', async () => {
     const { controller, state, agent } = harness('session');
     state.messages = [message(1, 'user')];
-    state.active = { sessionId: 'session', runId: 'run', status: 'calling_model' };
+    state.active = { sessionId: 'session', runId: 'run', status: 'calling_model', createdAt };
     state.events = [{ ...event(1, 'status_changed'), payload: { status: 'calling_model' } }];
     await controller.initialize();
     const received = deferred<void>();

@@ -54,6 +54,7 @@ pub struct AgentSessionRunHandleDto {
     pub session_id: String,
     pub run_id: String,
     pub status: AgentRunStatus,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize)]

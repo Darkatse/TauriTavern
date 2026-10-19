@@ -31,7 +31,7 @@ function harness() {
     };
     const listeners = new Set<() => void>();
     function publish(patch: Partial<AssistantSnapshot>) { snapshot = { ...snapshot, ...patch }; listeners.forEach(listener => listener()); }
-    const sendMessage = vi.fn(() => Promise.resolve<TauriTavernAgentSessionRunHandle>({ runId: 'run', sessionId: 'session', status: 'calling_model' }));
+    const sendMessage = vi.fn(() => Promise.resolve<TauriTavernAgentSessionRunHandle>({ runId: 'run', sessionId: 'session', status: 'calling_model', createdAt: '2026-09-22T12:00:00Z' }));
     const controller: AssistantController = {
         getSnapshot: () => snapshot, subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
         initialize: () => Promise.resolve(), saveProfile: () => Promise.resolve(), send: sendMessage,
@@ -130,6 +130,17 @@ test('stop remains pending until a terminal update and preserves the next draft'
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     act(() => h.publish({ run: { runId: 'next-run', active: true, status: 'calling_model' }, activeRun: { sessionId: 'session', runId: 'next-run', active: true, status: 'calling_model' }, busy: true }));
     expect(screen.getByRole('button', { name: 'Stop this run' }).hasAttribute('disabled')).toBe(false);
+    drawer.dispose();
+});
+
+test('the status strip times an active run from its creation', () => {
+    document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
+    const drawer = installAssistantDrawer(drawers);
+    const h = harness();
+    const createdAt = new Date(Date.now() - 65_000).toISOString();
+    h.publish({ run: { runId: 'run', active: true, status: 'calling_model', createdAt }, activeRun: { sessionId: 'session', runId: 'run', active: true, status: 'calling_model', createdAt } });
+    render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
+    expect(screen.getByText(/^1:0[56]$/)).toBeTruthy();
     drawer.dispose();
 });
 

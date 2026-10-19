@@ -97,9 +97,9 @@ function buildRunBlocks(snapshot: AssistantSnapshot, lastMessageByRun: Map<strin
         }
         block.responses = snapshot.responses;
         block.active = Boolean(snapshot.run?.active);
-        const startedEvent = snapshot.events.find(item => item.type === 'run_started');
         const terminalEvent = [...snapshot.events].reverse().find(item => runTerminalEvents.includes(item.type));
-        block.startedAt = (startedEvent ? parseTime(startedEvent.timestamp) : null) ?? block.startedAt;
+        // The run record's creation time; older pages of messages may not be loaded.
+        if (snapshot.run?.createdAt) block.startedAt = parseTime(snapshot.run.createdAt);
         if (terminalEvent) block.endedAt = parseTime(terminalEvent.timestamp) ?? block.endedAt;
     }
     return blocks.filter(block => block.userEntries.length + block.workEntries.length + block.responses.length > 0 || block.finalEntry !== null);

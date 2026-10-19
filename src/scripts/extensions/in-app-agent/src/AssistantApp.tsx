@@ -23,11 +23,8 @@ function statusLabel(snapshot: AssistantSnapshot): string {
 }
 function StatusStrip({ snapshot, preparing, cancelling }: { snapshot: AssistantSnapshot; preparing: boolean; cancelling: boolean }) {
     const active = Boolean(snapshot.run?.active) || preparing;
-    const startedAt = (() => {
-        const event = snapshot.events.find(item => item.type === 'run_started');
-        const time = event ? Date.parse(event.timestamp) : NaN;
-        return Number.isFinite(time) ? time : null;
-    })();
+    const createdAt = snapshot.run?.createdAt;
+    const startedAt = createdAt === undefined ? null : Date.parse(createdAt);
     const now = useNow(1000, active && startedAt !== null);
     if (!active) return null;
     const label = snapshot.run?.active ? (cancelling ? tr('stopping') : statusLabel(snapshot)) : tr('preparing');

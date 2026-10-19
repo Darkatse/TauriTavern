@@ -2,6 +2,8 @@ export type AssistantRun = {
     runId: string;
     active: boolean;
     status: TauriTavernAgentRunStatus | 'interrupted';
+    /** Known when the run was observed through a Session run handle. */
+    createdAt?: string;
 };
 
 export function terminalStatus(event: TauriTavernAgentRunEvent): TauriTavernAgentRunStatus | null {

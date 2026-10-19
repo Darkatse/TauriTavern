@@ -429,6 +429,7 @@ fn cancel_run_handle(run: AgentRun) -> AgentCancelRunResultDto {
                 session_id,
                 run_id: run.id,
                 status: run.status,
+                created_at: run.created_at,
             })
         }
     }
