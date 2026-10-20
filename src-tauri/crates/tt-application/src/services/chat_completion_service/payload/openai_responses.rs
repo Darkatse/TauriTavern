@@ -7,7 +7,7 @@ use tt_domain::models::tool::ToolArguments;
 use tt_ports::repositories::chat_completion_repository::CHAT_COMPLETION_PROVIDER_STATE_FIELD;
 
 use super::content_parts::{InputPart, MediaPart, MediaSource, parse_openai_chat_content};
-use super::shared::message_content_to_text;
+use super::shared::{json_schema_fields, message_content_to_text};
 use super::tool_calls::message_tool_call_id;
 
 const REASONING_ENCRYPTED_CONTENT: &str = "reasoning.encrypted_content";
@@ -91,13 +91,21 @@ fn build_openai_responses_payload(
         );
     }
 
+    let mut text = Map::new();
+    if let Some(mut format) = json_schema_fields(payload) {
+        format.insert("type".to_string(), json!("json_schema"));
+        text.insert("format".to_string(), Value::Object(format));
+    }
     if let Some(verbosity) = payload
         .get("verbosity")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("auto"))
     {
-        request.insert("text".to_string(), json!({ "verbosity": verbosity }));
+        text.insert("verbosity".to_string(), json!(verbosity));
+    }
+    if !text.is_empty() {
+        request.insert("text".to_string(), Value::Object(text));
     }
 
     let mut tools = payload
@@ -672,6 +680,41 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::build;
+
+    #[test]
+    fn openai_responses_payload_preserves_json_schema_and_verbosity() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "answer": { "type": "string" } },
+            "required": ["answer"],
+            "additionalProperties": false,
+        });
+        let payload = json!({
+            "model": "gpt-6-astra",
+            "messages": [{ "role": "user", "content": "Answer in JSON" }],
+            "verbosity": "low",
+            "json_schema": {
+                "name": "answer",
+                "value": schema,
+                "strict": false,
+                "description": "A short answer",
+            },
+        });
+        let (_, upstream) = build(payload.as_object().unwrap().clone()).unwrap();
+        assert_eq!(
+            upstream["text"],
+            json!({
+                "verbosity": "low",
+                "format": {
+                    "type": "json_schema",
+                    "name": "answer",
+                    "schema": schema,
+                    "strict": false,
+                    "description": "A short answer",
+                },
+            })
+        );
+    }
 
     #[test]
     fn openai_responses_payload_maps_system_and_tool_turns_to_typed_items() {

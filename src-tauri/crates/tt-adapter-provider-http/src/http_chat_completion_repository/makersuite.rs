@@ -140,7 +140,7 @@ pub(super) async fn generate(
 
     let body = read_upstream_json_body("Google Gemini", "generate", response).await?;
 
-    Ok(normalizers::normalize_gemini_response(body))
+    normalizers::normalize_gemini_response("Google Gemini", body)
 }
 
 pub(super) async fn generate_stream(
@@ -166,7 +166,7 @@ pub(super) async fn generate_with_deltas(
     let response = send_stream_request(repository, config, endpoint_path, payload).await?;
     let body = gemini::consume_generate_content_stream("Google Gemini", response, on_delta).await?;
 
-    Ok(normalizers::normalize_gemini_response(body))
+    normalizers::normalize_gemini_response("Google Gemini", body)
 }
 
 async fn send_stream_request(
