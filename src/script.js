@@ -2265,7 +2265,7 @@ export async function deleteLastMessage() {
  * @param {boolean} [askConfirmation=false] Whether to ask for confirmation before deleting.
  */
 export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfirmation = false) {
-    const index = Number(id);
+    const index = typeof id === 'string' && /^\d+$/.test(id) ? Number(id) : id;
     if (!Number.isInteger(index) || index < 0 || index >= chat.length) {
         throw new RangeError(`Invalid message id: ${String(id)}`);
     }

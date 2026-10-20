@@ -229,7 +229,7 @@ async function attachOpenCodeStableChatId(payload) {
 
     payload[OPENCODE_STABLE_CHAT_ID_FIELD] = mustGetSillyTavernContext().getCurrentChatId()
         ? await globalThis.__TAURITAVERN__.api.chat.current.handle().stableId()
-        : crypto.randomUUID();
+        : createRandomId();
 }
 
 function buildErrorAssistantText(error) {
@@ -346,7 +346,7 @@ function createImmediateErrorStreamResponse(error, payload) {
     });
 }
 
-function createStreamId() {
+function createRandomId() {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
         return crypto.randomUUID();
     }
@@ -362,7 +362,7 @@ async function invokeChatCompletionWithAbort(context, payload, signal) {
     }
     await attachOpenCodeStableChatId(payload);
 
-    const requestId = createStreamId();
+    const requestId = createRandomId();
     let abortRequested = false;
     let abortHandler = null;
     if (signal) {
@@ -397,7 +397,7 @@ async function invokeChatCompletionWithAbort(context, payload, signal) {
 
 async function createChatCompletionStreamResponse(context, payload, signal, lifecycle) {
     await attachOpenCodeStableChatId(payload);
-    const streamId = createStreamId();
+    const streamId = createRandomId();
     const encoder = new TextEncoder();
 
     let isClosed = false;

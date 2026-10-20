@@ -1,4 +1,3 @@
-use serde::Serialize;
 use serde_json::{Map, Value, json};
 use tt_ports::repositories::chat_completion_repository::ChatCompletionSource;
 
@@ -138,16 +137,9 @@ pub(super) fn build(mut payload: Map<String, Value>) -> Result<(String, Value), 
         .and_then(|schema| schema.get("value"))
         .filter(|schema| !schema.is_null())
         .map(|schema| {
-            let mut bytes = Vec::new();
-            let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
-            schema
-                .serialize(&mut serde_json::Serializer::with_formatter(
-                    &mut bytes, formatter,
-                ))
-                .expect("JSON value serializes");
             format!(
                 "JSON schema for the response:\n{}",
-                String::from_utf8(bytes).expect("JSON is UTF-8"),
+                serde_json::to_string_pretty(schema).expect("JSON value serializes"),
             )
         });
     if schema_prompt.is_some() {

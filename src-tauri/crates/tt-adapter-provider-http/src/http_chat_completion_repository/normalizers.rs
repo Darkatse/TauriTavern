@@ -217,8 +217,16 @@ pub(super) fn normalize_gemini_response(
             || part.get("inlineData").is_some()
     });
     if !usable {
+        let finish_reason = first_candidate.get("finishReason").and_then(Value::as_str);
+        if let Some(reason) = finish_reason
+            .filter(|reason| map_gemini_finish_reason(Some(reason), false) == "length")
+        {
+            return Err(DomainError::InvalidData(format!(
+                "model.output_truncated: {provider_name} reached {reason} before returning visible output"
+            )));
+        }
         let mut message = format!("{provider_name} Candidate text empty");
-        if let Some(reason) = first_candidate.get("finishReason").and_then(Value::as_str) {
+        if let Some(reason) = finish_reason {
             message.push_str(&format!(". Finish reason: {reason}"));
         }
         return Err(DomainError::transient(message));
@@ -958,6 +966,7 @@ fn push_reasoning_text(texts: &mut Vec<String>, text: &str) {
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
+    use tt_domain::errors::DomainError;
 
     use super::{
         normalize_claude_response, normalize_gemini_interactions_response,
@@ -983,6 +992,24 @@ mod tests {
                 .to_string()
                 .contains("Prompt was blocked due to: SAFETY")
         );
+    }
+
+    #[test]
+    fn normalize_gemini_thought_only_truncation_is_not_retryable() {
+        let error = normalize_gemini_response(
+            "Google Gemini",
+            json!({
+                "candidates": [{
+                    "content": { "parts": [{ "text": "plan", "thought": true }] },
+                    "finishReason": "MAX_TOKENS"
+                }]
+            }),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            DomainError::InvalidData(message) if message.starts_with("model.output_truncated:")
+        ));
     }
 
     #[test]
