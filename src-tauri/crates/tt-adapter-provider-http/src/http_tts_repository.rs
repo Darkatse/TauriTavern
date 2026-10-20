@@ -248,11 +248,7 @@ mod tests {
     async fn openai_compatible_rejects_error_documents_and_preserves_audio_bytes() {
         let repository = HttpTtsRepository::new(Arc::new(HttpClientPool::new("TauriTavern/test")));
         for (content_type, body, status) in [
-            (
-                "text/html; charset=utf-8",
-                b"<!DOCTYPE html>".to_vec(),
-                502,
-            ),
+            ("text/html; charset=utf-8", b"<!DOCTYPE html>".to_vec(), 502),
             (
                 "application/json",
                 br#"{"error":"invalid voice"}"#.to_vec(),
@@ -279,7 +275,11 @@ mod tests {
             if status == 200 {
                 assert_eq!(response.body, body);
             } else {
-                assert!(String::from_utf8(response.body).unwrap().contains(content_type));
+                assert!(
+                    String::from_utf8(response.body)
+                        .unwrap()
+                        .contains(content_type)
+                );
             }
         }
     }
