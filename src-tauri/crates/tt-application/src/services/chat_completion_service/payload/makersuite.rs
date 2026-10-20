@@ -410,7 +410,7 @@ fn convert_messages(
             .to_lowercase();
         let mut merge_with_previous = matches!(role.as_str(), "tool" | "function");
 
-        let native_gemini_parts = if role == "assistant" {
+        let native_gemini_parts = if !matches!(role.as_str(), "tool" | "function") {
             message_native_gemini_parts(message)
         } else {
             None
