@@ -1,3 +1,4 @@
+import { mustGetSillyTavernContext } from '../adapters/st/active-chat-ref.js';
 import { estimateTokenCount } from '../brokers/token-count-broker.js';
 import { createAndroidGenerationBridge } from '../adapters/android/android-generation-bridge.js';
 import { confirmAiNotificationPermissionRationale } from '../adapters/st/ai-notification-permission-rationale-popup.js';
@@ -226,7 +227,9 @@ async function attachOpenCodeStableChatId(payload) {
         return;
     }
 
-    payload[OPENCODE_STABLE_CHAT_ID_FIELD] = await globalThis.__TAURITAVERN__.api.chat.current.handle().stableId();
+    payload[OPENCODE_STABLE_CHAT_ID_FIELD] = mustGetSillyTavernContext().getCurrentChatId()
+        ? await globalThis.__TAURITAVERN__.api.chat.current.handle().stableId()
+        : crypto.randomUUID();
 }
 
 function buildErrorAssistantText(error) {

@@ -2260,25 +2260,26 @@ export async function deleteLastMessage() {
 
 /**
  * Deletes a message from the chat by its ID, optionally asking for confirmation.
- * @param {number} id The ID of the message to delete.
+ * @param {number|string} id The ID of the message to delete.
  * @param {number} [swipeDeletionIndex] Deletes the swipe with that index.
  * @param {boolean} [askConfirmation=false] Whether to ask for confirmation before deleting.
  */
 export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfirmation = false) {
-    if (!Number.isInteger(id) || id < 0 || id >= chat.length) {
+    const index = Number(id);
+    if (!Number.isInteger(index) || index < 0 || index >= chat.length) {
         throw new RangeError(`Invalid message id: ${String(id)}`);
     }
-    const element = chatSurface.getMessageElement(id);
+    const element = chatSurface.getMessageElement(index);
     const ownedFocus = element?.contains(document.activeElement);
     const canDeleteSwipe = swipeDeletionIndex !== undefined && swipeDeletionIndex !== null;
     if (canDeleteSwipe) {
         if (swipeDeletionIndex < 0) {
             throw new Error('Swipe index cannot be negative');
         }
-        if (!Array.isArray(chat[id].swipes)) {
+        if (!Array.isArray(chat[index].swipes)) {
             throw new Error('Message has no swipes to delete');
         }
-        if (chat[id].swipes.length <= swipeDeletionIndex) {
+        if (chat[index].swipes.length <= swipeDeletionIndex) {
             throw new Error('Swipe index out of bounds');
         }
     }
@@ -2298,13 +2299,13 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     }
 
     if (deleteOnlySwipe) {
-        await deleteSwipe(swipeDeletionIndex, id);
+        await deleteSwipe(swipeDeletionIndex, index);
         return;
     }
 
-    const deletedMessage = chat[id];
-    deleteItemizedPromptForMessage(id);
-    chat.splice(id, 1);
+    const deletedMessage = chat[index];
+    deleteItemizedPromptForMessage(index);
+    chat.splice(index, 1);
 
     chat_metadata.tainted = true;
 
@@ -2312,14 +2313,14 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     saveChatDebounced();
     void cleanupDeletedMessageStates([deletedMessage]);
 
-    if (this_edit_mes_id === id) {
+    if (this_edit_mes_id === index) {
         this_edit_mes_id = undefined;
         syncChatSurfaceProjectionHold();
     }
 
     refreshActiveSwipeButtons();
 
-    if (ownedFocus && document.activeElement === document.body) focusMessageOrInput(id);
+    if (ownedFocus && document.activeElement === document.body) focusMessageOrInput(index);
     await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
 }
 
@@ -5401,8 +5402,21 @@ async function GenerateInternal(type, { automatic_trigger, force_name2, quiet_pr
         ? inheritedLegacyMcpContext ?? await prepareLegacyMcpGenerationContext()
         : inheritedLegacyMcpContext;
     const legacyMcpToolRound = useLegacyMcpTools ? legacyMcpContext.createRound() : null;
-    let coreChat = chat.filter(x => !x.is_system
-        || (main_api === 'openai' && (x.role === 'tool' || Object.hasOwn(x.extra ?? {}, 'tool_invocations'))));
+    const hiddenToolOwners = new Map();
+    let coreChat = chat.filter(message => {
+        if (main_api === 'openai') {
+            if (message.role === 'tool') {
+                return hiddenToolOwners.get(message.tool_call_id) !== true;
+            }
+            if (!message.is_user && Array.isArray(message.tool_calls)) {
+                for (const call of message.tool_calls) {
+                    hiddenToolOwners.set(call.id, Boolean(message.is_system));
+                }
+            }
+        }
+        return !message.is_system
+            || (main_api === 'openai' && Object.hasOwn(message.extra ?? {}, 'tool_invocations'));
+    });
     if (type === 'swipe') {
         coreChat.pop();
     }

@@ -78,6 +78,9 @@ test('OpenCode generation carries the current stable chat id', async () => {
         calls.push({ command, args });
         return {};
     });
+    window.SillyTavern = {
+        getContext: () => ({ getCurrentChatId: () => 'current-chat' }),
+    };
 
     await router.handle({
         method: 'POST',
