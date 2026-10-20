@@ -99,26 +99,52 @@ fn claude_rejects_unknown_tool_choice_instead_of_using_auto() {
 }
 
 #[test]
-fn claude_rejects_assistant_prefill_for_models_that_removed_it() {
-    for model in [
-        "claude-opus-5",
-        "claude-fable-5",
-        "claude-mythos-5",
-        "claude-sonnet-5",
-        "claude-opus-4-7",
-        "claude-opus-4-6",
-        "claude-sonnet-4-6",
+fn claude_model_contract_builds_supported_requests() {
+    for (model, parameters, expected) in [
+        (
+            "claude-sonnet-4-20250514",
+            json!({"temperature": 0.7}),
+            json!({"/temperature": 0.7}),
+        ),
+        (
+            "claude-sonnet-4-20250514",
+            json!({"reasoning_effort": "medium"}),
+            json!({"/thinking/type": "enabled"}),
+        ),
+        (
+            "claude-sonnet-4-5",
+            json!({"temperature": 0.7, "top_p": 0.9}),
+            json!({"/top_p": 0.9, "/temperature": null}),
+        ),
+        (
+            "claude-sonnet-4-20250514",
+            json!({"reasoning_effort": "medium", "assistant_prefill": "prefill"}),
+            json!({"/messages": [{"role": "user", "content": [
+                {"type": "text", "text": "hello"},
+                {"type": "text", "text": "prefill"}
+            ]}]}),
+        ),
+        (
+            "claude-opus-5-5",
+            json!({"json_schema": {"value": {"type": "object"}}}),
+            json!({"/output_config/format": {"type": "json_schema", "schema": {"type": "object"}}}),
+        ),
+        (
+            "claude-sonnet-5-5",
+            json!({"json_schema": {"value": {"type": "object"}}}),
+            json!({"/output_config/format": {"type": "json_schema", "schema": {"type": "object"}}}),
+        ),
     ] {
         let mut payload = claude_payload(model);
-        payload.insert("assistant_prefill".to_string(), json!("prefill"));
-
-        let error = build(payload).expect_err("build should fail");
-        let message = error.to_string();
-
-        assert!(
-            message.contains("does not support assistant_prefill"),
-            "{model} should reject assistant_prefill, got: {message}"
-        );
+        payload.extend(parameters.as_object().unwrap().clone());
+        let (_, request) = build(payload).expect("supported request should build");
+        for (pointer, value) in expected.as_object().unwrap() {
+            assert_eq!(
+                request.pointer(pointer).unwrap_or(&Value::Null),
+                value,
+                "{model}: {pointer}"
+            );
+        }
     }
 }
 
@@ -566,7 +592,7 @@ fn claude_sampling_free_models_drop_non_default_sampling_params() {
 
 #[test]
 fn claude_unknown_models_do_not_inherit_reasoning_support() {
-    let mut payload = claude_payload("claude-opus-4-9");
+    let mut payload = claude_payload("claude-unknown");
     payload.insert("reasoning_effort".to_string(), json!("medium"));
 
     let error = build(payload).expect_err("build should fail");
