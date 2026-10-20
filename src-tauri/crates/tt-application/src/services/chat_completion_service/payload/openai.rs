@@ -4,7 +4,7 @@ use crate::errors::ApplicationError;
 
 use super::content_parts::{
     AudioInputFormatSet, AudioRewriteFallbackPolicy, reject_media_for_text_only_provider,
-    reject_video_for_provider, rewrite_audio_url_parts_to_input_audio,
+    rewrite_audio_url_parts_to_input_audio,
 };
 use super::openai_reasoning::{
     normalize_openai_reasoning_effort, should_forward_openai_reasoning_effort,
@@ -232,7 +232,6 @@ fn build_chat_completion_payload(
             AudioInputFormatSet::OpenAi,
             AudioRewriteFallbackPolicy::Reject,
         )?;
-        reject_video_for_provider("OpenAI Chat Completions", request.get("messages"))?;
     }
 
     Ok(request)
@@ -623,37 +622,5 @@ mod tests {
                 .to_string()
                 .contains("unsupported audio data URL MIME type")
         );
-    }
-
-    #[test]
-    fn openai_chat_rejects_video_parts() {
-        for content in [
-            json!([
-                { "type": "video_url", "video_url": { "url": "data:video/mp4;base64,AAAA" } }
-            ]),
-            json!([
-                { "type": "video_url", "video_url": { "url": "https://example.test/video.mp4" } }
-            ]),
-            json!([
-                { "inlineData": { "mimeType": "video/mp4", "data": "AAAA" } }
-            ]),
-            json!({ "type": "video_url", "video_url": { "url": "data:video/mp4;base64,AAAA" } }),
-        ] {
-            let payload = json!({
-                "chat_completion_source": "openai",
-                "model": "gpt-4.1-mini",
-                "messages": [{
-                    "role": "user",
-                    "content": content
-                }]
-            })
-            .as_object()
-            .cloned()
-            .expect("payload must be object");
-
-            let error = build(payload).expect_err("video should fail fast");
-
-            assert!(error.to_string().contains("cannot preserve video input"));
-        }
     }
 }

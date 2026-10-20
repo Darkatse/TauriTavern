@@ -136,11 +136,7 @@ fn build_google_payload(
         && gemini_model
             .as_ref()
             .is_some_and(GeminiModel::has_fixed_sampling);
-    let no_prefill = has_fixed_sampling_parameters
-        && payload
-            .get("chat_completion_source")
-            .and_then(Value::as_str)
-            != Some("opencode");
+    let no_prefill = has_fixed_sampling_parameters;
     let (contents, system_prompt) = convert_messages(
         payload.get("messages"),
         use_system_prompt,

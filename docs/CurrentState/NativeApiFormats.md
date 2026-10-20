@@ -60,7 +60,7 @@ Connection Profiles（Connection Manager 扩展）：
 
 DeepSeek 的原生与 Custom/OpenCode 兼容请求共享后端适配，保留各来源的参数与提示词策略；适配在协议构建后、用户覆盖前执行。
 
-内建渠道的模型规则只用于构造请求，不再对构造出的 Claude payload 重复执行远端参数校验。Fable 5.1 的 JSON schema 使用 output_config.format，与 effort 和普通 tools 共存；其他 Claude 保留 schema tool。Custom 仍保留显式参数，最终是否接受由上游响应说明。
+内建渠道的模型规则只用于构造请求，不再对构造出的 Claude payload 重复执行远端参数校验。Fable 5.1、Opus 5.5 与 Sonnet 5.5 的 JSON schema 使用 output_config.format，与 effort 和普通 tools 共存；其他 Claude 保留 schema tool。Custom 仍保留显式参数，最终是否接受由上游响应说明。
 
 ### 2.3 HTTP 调用 + Stream 处理（Rust repository）
 
@@ -114,12 +114,10 @@ JSON 响应中的明确 error（包括 HTTP 200）在共同读取处转为错误
 
 请求侧（payload）：
 - `messages[]` → `input[]` items；`system` / `developer` / `user` 角色原样保留
-- assistant message 若携带 `message.native.openai_responses.output`，则原样回放 raw Responses `output` items，并记住其中的 `function_call.call_id`
+- assistant message 若携带 `message.native.openai_responses.output`，则原样回放 raw Responses `output` items
 - assistant text 会编码为 Responses `message` / `output_text`
 - assistant `tool_calls[]` 会编码为 Responses `function_call` items；`id` / `function.name` / `function.arguments` 必须可解析，缺失结构会 fail-fast
 - `tool` / `function` message 会编码为 `function_call_output`，必须有 `tool_call_id`
-- 没有 `previous_response_id` 时，`function_call_output` 必须能在同次 transcript 中找到前置 `function_call`；否则 fail-fast
-- 有 `previous_response_id` 时，允许 orphan `function_call_output`，因为前置 function call 可由 provider previous response state 提供
 - `store` 默认 `false`；`include` 会保证包含 `reasoning.encrypted_content`，用于 reasoning/native continuation
 - Preset `enable_web_search=true` 会加入 `{ "type": "web_search" }` hosted tool；它可与本地 function tools 共存，不会进入 Agent 本地工具注册表
 - `previous_response_id`、`max_tokens` / `max_completion_tokens`→`max_output_tokens`、`verbosity`→`text.verbosity`、`metadata`、`parallel_tool_calls` 等字段按当前 payload builder 映射
@@ -144,8 +142,7 @@ JSON 响应中的明确 error（包括 HTTP 200）在共同读取处转为错误
 - SSE 必须以 Responses terminal event 结束；连接提前关闭会 fail-fast，用户主动取消除外
 
 tool follow-up（关键契约）：
-- 普通 Custom Responses 不再依赖 repository 内存缓存。若没有 `previous_response_id`，请求必须通过 full transcript replay 或 native output replay 提供前置 `function_call`。
-- 若 payload 已有 `previous_response_id`，builder 允许只发送对应的 `function_call_output`。
+- 普通 Custom Responses 不依赖 repository 内存缓存。转换层只翻译工具项，调用与结果的配对由服务商判定。
 - portable Agent Responses follow-up 使用 full transcript/native output replay；显式启用 WebSocket 模式后才由 `AgentModelGateway` 的 `provider_state.previousResponseId` 驱动。详见 [Agent LLM gateway](../Agent/LlmGateway.md#续接状态)。
 
 ### 4.2 Gemini Interactions（/v1beta/interactions）

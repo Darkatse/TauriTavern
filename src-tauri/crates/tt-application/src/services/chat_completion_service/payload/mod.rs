@@ -97,17 +97,6 @@ pub(super) fn build_payload(
     Ok((endpoint, body))
 }
 
-pub(super) fn validate_upstream_tool_transcript(
-    endpoint_path: &str,
-    upstream_payload: &Value,
-) -> Result<(), ApplicationError> {
-    if endpoint_path != "/chat/completions" {
-        return Ok(());
-    }
-
-    tool_calls::validate_openai_chat_tool_transcript(upstream_payload.get("messages"), false)
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
@@ -299,31 +288,6 @@ mod tests {
         assert_eq!(input[1]["call_id"], "call_1");
         assert_eq!(input[2]["type"], "function_call_output");
         assert_eq!(input[2]["call_id"], "call_1");
-    }
-
-    #[test]
-    fn custom_openai_responses_rejects_orphan_tool_output_through_payload_boundary() {
-        let payload = json!({
-            "chat_completion_source": "custom",
-            "custom_api_format": "openai_responses",
-            "model": "gpt-5",
-            "messages": [
-                { "role": "user", "content": "hi" },
-                { "role": "tool", "tool_call_id": "call_1", "content": "orphan" }
-            ]
-        })
-        .as_object()
-        .cloned()
-        .expect("payload must be object");
-
-        let error = build_payload(ChatCompletionSource::Custom, payload)
-            .expect_err("orphan tool output must fail");
-
-        assert!(
-            error
-                .to_string()
-                .contains("without preceding function_call")
-        );
     }
 
     #[test]
