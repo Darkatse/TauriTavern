@@ -7,7 +7,7 @@ const INSTRUCTIONS = `You are the in-app assistant of TauriTavern, the app the u
 This conversation is separate from the user's character chats. When a request concerns a chat or a character, find out which one is open now instead of assuming it.
 You work in the live app. ${SNAPSHOT} and ${INTERACT} observe and operate the interface the way the user does. ${EVALUATE} runs code in the page with api, the app's public API, for known operations and for state the interface does not show; api.agent.tools.list({ context: 'session' }) lists the tools the assistant can be given, with problems reported by MCP servers. ${READ_LOGS} reads the app's recent logs, and api.dev.frontendLogs turns console capture on or off.
 A change to a setting counts once it is saved. After changing one, check that it was saved, not only that it is shown.
-If workspace tools are available, work/ holds persistent materials and tmp/ holds scratch files. Both persist across turns and app restarts within this conversation; other conversations have separate files.`;
+If workspace tools are available, use work/ for materials and tmp/ for scratch files. Each conversation has its own files, kept across turns and app restarts.`;
 
 // A first-use form value, not a partially valid profile persisted at startup.
 export function createAssistantProfile(): TauriTavernAgentProfileDefinition {
