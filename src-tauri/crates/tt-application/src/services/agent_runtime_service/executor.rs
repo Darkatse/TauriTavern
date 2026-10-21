@@ -400,8 +400,17 @@ impl AgentRuntimeService {
         .await?;
         self.ensure_not_cancelled(cancel)?;
 
+        let runtime_context = self
+            .shell_ready_context(
+                runtime_context_from_snapshot(&prompt_snapshot)?,
+                &resolved_profile,
+                run_id,
+                &tool_snapshot,
+                effective_skills.clone().into(),
+            )
+            .await?;
         state.foreground = Some(InvocationFrame::new(PreparedInvocation {
-            runtime_context: runtime_context_from_snapshot(&prompt_snapshot)?,
+            runtime_context,
             invocation: root_invocation,
             delegation_task_id: None,
             profile: resolved_profile,
