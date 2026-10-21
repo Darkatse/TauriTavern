@@ -138,6 +138,7 @@ pub struct AgentRuntimeService {
     skill_service: Arc<SkillService>,
     mcp_service: Arc<McpService>,
     extension_tools: Arc<dyn tt_ports::extension_tools::ExtensionTools>,
+    tokenization: Arc<crate::services::tokenization_service::TokenizationService>,
     tool_registry: BuiltinAgentToolRegistry,
     tool_dispatcher: AgentToolDispatcher,
     active_runs: RwLock<HashMap<String, Arc<ActiveRunHandle>>>,
@@ -168,6 +169,7 @@ impl AgentRuntimeService {
         mcp_service: Arc<McpService>,
         workspace_shell: Arc<dyn WorkspaceShell>,
         extension_tools: Arc<dyn tt_ports::extension_tools::ExtensionTools>,
+        tokenization: Arc<crate::services::tokenization_service::TokenizationService>,
     ) -> Self {
         let tool_registry = BuiltinAgentToolRegistry::all();
         let tool_dispatcher = AgentToolDispatcher::new(
@@ -191,6 +193,7 @@ impl AgentRuntimeService {
             skill_service,
             mcp_service,
             extension_tools,
+            tokenization,
             tool_registry,
             tool_dispatcher,
             active_runs: RwLock::new(HashMap::new()),

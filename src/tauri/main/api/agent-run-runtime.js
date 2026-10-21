@@ -9,6 +9,7 @@ const AGENT_RUN_STATUSES = new Set([
     'initializing_workspace',
     'assembling_context',
     'calling_model',
+    'compacting_context',
     'dispatching_tool',
     'applying_workspace_patch',
     'awaiting_host_commit',

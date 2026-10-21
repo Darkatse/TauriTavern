@@ -125,7 +125,6 @@ try {
             },
             async safeInvoke(command, { dto } = {}) {
                 switch (command) {
-                    case 'list_agent_sessions': return { sessions: [], activeRuns: [{ runId: `${runId}-restored` }] };
                     case 'load_agent_session_profile':
                         loading.resolve();
                         await release.promise;
@@ -154,7 +153,7 @@ try {
         extension_settings.variables.global = { globalValue: 'later-live-global' };
         release.resolve();
         await sending;
-        assert.deepEqual(subscriptions, [{ runId: `${runId}-restored`, afterSeq: 0 }, { runId, afterSeq: 0 }]);
+        assert.deepEqual(subscriptions, [{ runId, afterSeq: 0 }]);
         const expectedLocal = variables ? 'explicit-local' : '';
         assert.ok(started.promptSnapshot.messages.some(item => item.parts.some(part =>
             part.text === `Local=${expectedLocal};Global=captured-global;Char=;Last=Own Session input.`)));

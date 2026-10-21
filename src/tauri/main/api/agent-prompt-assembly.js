@@ -71,6 +71,7 @@ export async function buildPromptAssemblyPayload(input = {}) {
     return {
         payload,
         snapshotMetadata: {
+            ...openai.agentPromptModelFacts(settings),
             contextPolicy: request.agentContextPolicy,
             ...(request.worldInfoActivation ? { worldInfoActivation: request.worldInfoActivation } : {}),
         },

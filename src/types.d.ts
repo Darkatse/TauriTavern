@@ -82,6 +82,7 @@ type TauriTavernAgentRunStatus =
     | 'initializing_workspace'
     | 'assembling_context'
     | 'calling_model'
+    | 'compacting_context'
     | 'dispatching_tool'
     | 'applying_workspace_patch'
     | 'awaiting_host_commit'
@@ -216,6 +217,7 @@ type TauriTavernAgentModelContentPart =
     } };
 
 type TauriTavernAgentPromptSnapshot = {
+    tokenBudget?: { context: number; response: number; tokenizerModel: string };
     messages: TauriTavernAgentModelMessage[];
     generationParameters: Record<string, unknown>;
     contextPolicy: { initialChatHistoryMessages: number; includeActivatedWorldInfo: boolean };
@@ -242,6 +244,7 @@ type TauriTavernAgentSessionMessage = {
     createdAt: string;
     message: TauriTavernAgentModelMessage;
     origin?: { invocationId: string; round: number };
+    compaction?: { keptFromSeq: number | null; tokensBefore: number; tokensAfter: number };
 };
 
 type TauriTavernAgentSessionsApi = {

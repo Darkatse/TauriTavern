@@ -80,6 +80,7 @@ function buildRunBlocks(snapshot: AssistantSnapshot, lastMessageByRun: Map<strin
             block.endedAt = at;
         }
         const { message } = entry;
+        if (entry.compaction) { block.workEntries.push(entry); continue; }
         if (message.role === 'user') { block.userEntries.push(entry); continue; }
         block.toolCalls += message.parts.filter(part => part.type === 'toolCall').length;
         if (message.role === 'assistant' && lastMessageByRun.get(entry.runId) === entry && !message.parts.some(part => part.type === 'toolCall')) {
@@ -248,7 +249,7 @@ export function Transcript({ snapshot, controller, actions, visible }: {
     useLayoutEffect(() => {
         const root = scroller.current;
         if (!root || !visible) return;
-        const userSeq = snapshot.messages.filter(entry => entry.message.role === 'user').at(-1)?.seq;
+        const userSeq = snapshot.messages.filter(entry => !entry.compaction && entry.message.role === 'user').at(-1)?.seq;
         if (userSeq !== undefined && userSeq > lastMessageSeq.current) following.current = true;
         lastMessageSeq.current = snapshot.messages.at(-1)?.seq ?? 0;
         if (anchor.current && (snapshot.messages[0]?.seq ?? Infinity) < anchor.current.firstSeq) {
@@ -288,6 +289,14 @@ export function Transcript({ snapshot, controller, actions, visible }: {
                 {buildRunBlocks(snapshot, lastMessageByRun).map((block, blockIndex, blocks) => {
                     const renderEntry = (entry: TauriTavernAgentSessionMessage, collapseContent = false) => {
                         const { message } = entry;
+                        if (entry.compaction) {
+                            const summary = message.parts[1] as Extract<Part, { type: 'text' }>;
+                            return <div key={entry.seq} data-message-seq={entry.seq}>
+                                <Disclosure label={<>{tr('contextCompacted')} <span className="ttia-muted">{entry.compaction.tokensBefore.toLocaleString()} → {entry.compaction.tokensAfter.toLocaleString()} tokens</span></>}>
+                                    <Markdown text={summary.text} actions={actions} />
+                                </Disclosure>
+                            </div>;
+                        }
                         if (message.role === 'user') return <div className="ttia-user" key={entry.seq} data-message-seq={entry.seq} data-new={entry.seq > initialSeq}>
                             {message.parts.filter(part => part.type === 'text').map(part => part.text).join('\n')}</div>;
                         if (message.role === 'tool') {

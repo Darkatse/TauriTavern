@@ -29,6 +29,10 @@ pub(super) struct AgentServices {
     pub(super) agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "composition supplies shared application services"
+)]
 pub(super) fn build(
     repositories: &AppRepositories,
     skill_service: Arc<SkillService>,
@@ -37,6 +41,7 @@ pub(super) fn build(
     mcp_service: Arc<McpService>,
     workspace_shell: Arc<dyn WorkspaceShell>,
     extension_tools: Arc<dyn ExtensionTools>,
+    tokenization: Arc<tt_application::services::tokenization_service::TokenizationService>,
 ) -> AgentServices {
     let agent_profile_service = Arc::new(AgentProfileService::new(
         repositories.agent_profile_repository.clone(),
@@ -71,6 +76,7 @@ pub(super) fn build(
         mcp_service,
         workspace_shell,
         extension_tools,
+        tokenization,
     ));
     let agent_run_history_service = Arc::new(AgentRunHistoryService::new(
         repositories.agent_run_repository.clone(),

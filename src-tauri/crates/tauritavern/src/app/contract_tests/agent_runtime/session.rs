@@ -1,7 +1,8 @@
 use super::*;
 use tt_application::dto::agent_dto::{
     AgentCancelRunDto, AgentCancelRunResultDto, AgentDeleteSessionDto, AgentPrepareSessionRunDto,
-    AgentReadSessionDto, AgentSaveProfileDto, AgentStartSessionRunDto,
+    AgentPromptAssemblyBrokerRequestDto, AgentReadPromptAssemblyRequestDto, AgentReadSessionDto,
+    AgentResolvePromptAssemblyDto, AgentSaveProfileDto, AgentStartSessionRunDto,
 };
 use tt_domain::models::agent::AgentModelMessage;
 use tt_domain::models::agent::profile::{
@@ -421,6 +422,224 @@ async fn preset_rename_updates_shared_session_profile_without_listing_it_as_chat
     fs::remove_dir_all(root).await.unwrap();
 }
 
+#[tokio::test]
+async fn session_compacts_at_the_point_and_rebuilds_before_continuing() {
+    use tt_domain::models::tool::ToolChoice;
+
+    let root = temp_root("session-compaction-point");
+    let mut tool_response = model_tool_response(vec![model_tool_call(
+        "large-result",
+        "workspace_shell",
+        json!({"command":format!("printf '{}'", "界".repeat(2000))}),
+    )]);
+    tool_response["usage"] = json!({"prompt_tokens":6900,"completion_tokens":100});
+    let mut invalid_summary = model_tool_response(vec![model_tool_call(
+        "discarded-summary-call",
+        "workspace_write_file",
+        json!({"path":"work/must-not-write.txt","content":"unexpected effect"}),
+    )]);
+    invalid_summary["choices"][0]["message"]["content"] = json!("I will inspect the app first.");
+    let summary = "## Goal\nInspect the app and report what remains.\n## Next steps\nContinue the original request.";
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![
+            tool_response,
+            invalid_summary,
+            json!({"choices":[{"message":{"role":"assistant","content":summary}}]}),
+            json!({"choices":[{"message":{"role":"assistant","content":"Finished the original request."}}]}),
+        ],
+    );
+    let mut profile = configure_session_profile(&fixture, &root).await;
+    profile.tools.allow = vec![
+        "builtin:workspace.shell".into(),
+        "builtin:workspace.write_file".into(),
+    ];
+    let session = fixture.service.create_session().await.unwrap().session;
+    let input = prepare_input(
+        &fixture,
+        &session.id,
+        &profile,
+        "Inspect the app and report what remains.",
+    )
+    .await;
+    let handle = fixture.service.start_session_run(input).await.unwrap();
+    let assembly = resolve_session_prompt_assembly(&fixture, &handle.run_id).await;
+    let history_groups = &assembly.frozen_run_input_snapshot["promptInputs"]["sessionHistory"];
+    assert_eq!(history_groups[0][0]["role"], "user");
+    assert_eq!(history_groups[0][0]["parts"][1]["text"], summary);
+    wait_until_session_idle(&fixture, &handle.run_id).await;
+    assert_eq!(
+        fixture
+            .agent_repository
+            .load_run(&handle.run_id)
+            .await
+            .unwrap()
+            .status,
+        AgentRunStatus::Completed
+    );
+    let history = fixture
+        .service
+        .read_session(AgentReadSessionDto {
+            session_id: session.id.clone(),
+            before_seq: None,
+            limit: Some(100),
+        })
+        .await
+        .unwrap();
+    let compacted = history
+        .messages
+        .iter()
+        .find(|entry| entry.compaction.is_some())
+        .unwrap();
+    assert_eq!(compacted.message.role, AgentModelRole::User);
+    assert_eq!(compacted.message.parts.len(), 2);
+    assert!(
+        matches!(&compacted.message.parts[1], AgentModelContentPart::Text{text} if text == summary)
+    );
+    let requests = fixture.model_gateway.requests().await;
+    assert_eq!(requests.len(), 4);
+    let mut previous_context = requests[0].messages.clone();
+    previous_context.extend(
+        history.messages[1..3]
+            .iter()
+            .map(|entry| entry.message.clone()),
+    );
+    assert_eq!(
+        &requests[1].messages[..previous_context.len()],
+        previous_context.as_slice()
+    );
+    assert!(
+        matches!(&requests[1].messages.last().unwrap().parts[0], AgentModelContentPart::Text{text} if text.starts_with("Context compaction:"))
+    );
+    assert_eq!(requests[2].tool_choice, ToolChoice::None);
+    assert_eq!(requests[3].messages[1], compacted.message);
+    assert!(
+        !history
+            .messages
+            .iter()
+            .flat_map(|entry| &entry.message.parts)
+            .any(|part| matches!(part,
+        AgentModelContentPart::ToolResult{result} if result.call_id == "discarded-summary-call"))
+    );
+    let files = fixture
+        .agent_repository
+        .open_filesystem(&handle.run_id)
+        .await
+        .unwrap();
+    assert!(
+        files
+            .read_text(&WorkspacePath::parse("work/must-not-write.txt").unwrap())
+            .await
+            .is_err()
+    );
+    let next = fixture
+        .service
+        .prepare_session_run(AgentPrepareSessionRunDto {
+            session_id: session.id.clone(),
+            text: "Continue.".into(),
+            profile,
+        })
+        .await
+        .unwrap();
+    assert_eq!(next.session_messages.len(), history.messages.len() + 1);
+    let prompt_inputs = &next.assembly.request.unwrap().frozen_run_input_snapshot["promptInputs"];
+    assert_eq!(
+        prompt_inputs["sessionHistory"][0][0],
+        serde_json::to_value(&compacted.message).unwrap()
+    );
+    let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "context_compaction_started"
+                && event.payload["trigger"] == "point")
+    );
+    fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
+async fn session_recovers_an_overflow_and_retries_the_original_round() {
+    let root = temp_root("session-compaction-overflow");
+    let summary =
+        "The earlier inspection finished. The user now wants the remaining work completed.";
+    let fixture = agent_runtime_fixture_with_results(
+        &root,
+        vec![
+            Ok(model_tool_response(vec![model_tool_call(
+                "large-result",
+                "workspace_shell",
+                json!({"command":format!("printf '{}'", "界".repeat(2000))}),
+            )])),
+            Ok(json!({"choices":[{"message":{"role":"assistant","content":"Inspected."}}]})),
+            Err(ApplicationError::ValidationError(
+                "model.context_overflow: prompt is too long".into(),
+            )),
+            Ok(json!({"choices":[{"message":{"role":"assistant","content":summary}}]})),
+            Ok(
+                json!({"choices":[{"message":{"role":"assistant","content":"Completed the remaining work."}}]}),
+            ),
+        ],
+    );
+    let mut profile = configure_session_profile(&fixture, &root).await;
+    profile.tools.allow = vec!["builtin:workspace.shell".into()];
+    let session = fixture.service.create_session().await.unwrap().session;
+    let input = prepare_input(&fixture, &session.id, &profile, "Inspect the app.").await;
+    let first = fixture.service.start_session_run(input).await.unwrap();
+    wait_until_session_idle(&fixture, &first.run_id).await;
+    assert_eq!(
+        fixture
+            .agent_repository
+            .load_run(&first.run_id)
+            .await
+            .unwrap()
+            .status,
+        AgentRunStatus::Completed
+    );
+    let input = prepare_input(
+        &fixture,
+        &session.id,
+        &profile,
+        "Complete the remaining work.",
+    )
+    .await;
+    let second = fixture.service.start_session_run(input).await.unwrap();
+    resolve_session_prompt_assembly(&fixture, &second.run_id).await;
+    wait_until_session_idle(&fixture, &second.run_id).await;
+    assert_eq!(
+        fixture
+            .agent_repository
+            .load_run(&second.run_id)
+            .await
+            .unwrap()
+            .status,
+        AgentRunStatus::Completed
+    );
+    let requests = fixture.model_gateway.requests().await;
+    assert_eq!(requests.len(), 5);
+    assert_eq!(
+        &requests[3].messages[..requests[2].messages.len()],
+        requests[2].messages.as_slice()
+    );
+    assert!(
+        matches!(&requests[3].messages.last().unwrap().parts[0], AgentModelContentPart::Text{text} if text.starts_with("Context compaction:"))
+    );
+    assert!(
+        requests[4]
+            .messages
+            .iter()
+            .flat_map(|message| &message.parts)
+            .any(|part| matches!(part, AgentModelContentPart::Text{text} if text == summary))
+    );
+    let events = read_agent_events(&fixture.agent_repository, &second.run_id).await;
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "context_compaction_started"
+                && event.payload["trigger"] == "overflow")
+    );
+    fs::remove_dir_all(root).await.unwrap();
+}
+
 pub(super) async fn configure_session_profile(
     fixture: &AgentRuntimeFixture,
     root: &Path,
@@ -496,7 +715,22 @@ pub(super) async fn prepare_input(
         .await
         .unwrap();
     let request = prepared.assembly.request.unwrap();
-    let mut frozen_run_input_snapshot = request.frozen_run_input_snapshot.clone();
+    let (prompt_snapshot, frozen_run_input_snapshot) = session_prompt_snapshot(&request);
+    AgentStartSessionRunDto {
+        session_id: session_id.into(),
+        text: text.into(),
+        profile: profile.clone(),
+        expected_history_seq: prepared.expected_history_seq,
+        prompt_assembly_request: request,
+        prompt_snapshot,
+        frozen_run_input_snapshot,
+        generation_intent: None,
+        stream: Some(false),
+    }
+}
+
+fn session_prompt_snapshot(request: &AgentPromptAssemblyBrokerRequestDto) -> (Value, Value) {
+    let mut frozen = request.frozen_run_input_snapshot.clone();
     let mut messages = vec![AgentModelMessage {
         role: AgentModelRole::System,
         parts: vec![AgentModelContentPart::Text {
@@ -506,7 +740,7 @@ pub(super) async fn prepare_input(
     }];
     messages.extend(
         serde_json::from_value::<Vec<Vec<AgentModelMessage>>>(
-            frozen_run_input_snapshot["promptInputs"]
+            frozen["promptInputs"]
                 .as_object_mut()
                 .unwrap()
                 .remove("sessionHistory")
@@ -516,17 +750,53 @@ pub(super) async fn prepare_input(
         .into_iter()
         .flatten(),
     );
-    AgentStartSessionRunDto {
-        session_id: session_id.into(),
-        text: text.into(),
-        profile: profile.clone(),
-        expected_history_seq: prepared.expected_history_seq,
-        prompt_assembly_request: request,
-        prompt_snapshot: json!({"contextPolicy":profile.context,"messages":messages,"generationParameters":{"chat_completion_source":"openai","model":"test-model","max_tokens":512}}),
-        frozen_run_input_snapshot,
-        generation_intent: None,
-        stream: Some(false),
-    }
+    (
+        json!({
+            "contextPolicy":request.agent_context_policy,
+            "tokenBudget":{
+                "context":request.settings["openai_max_context"],
+                "response":request.settings["openai_max_tokens"],
+                "tokenizerModel":"gpt-4o",
+            },
+            "messages":messages,
+            "generationParameters":{
+                "chat_completion_source":"openai", "model":"test-model",
+                "max_tokens":request.settings["openai_max_tokens"],
+            },
+        }),
+        frozen,
+    )
+}
+
+async fn resolve_session_prompt_assembly(
+    fixture: &AgentRuntimeFixture,
+    run_id: &str,
+) -> AgentPromptAssemblyBrokerRequestDto {
+    let event = wait_for_event(fixture, run_id, "prompt_assembly_requested", 0).await;
+    let assembly_id = event.payload["assemblyId"].as_str().unwrap().to_string();
+    let request = fixture
+        .service
+        .read_prompt_assembly_request(AgentReadPromptAssemblyRequestDto {
+            run_id: run_id.into(),
+            assembly_id: assembly_id.clone(),
+        })
+        .await
+        .unwrap();
+    let (snapshot, frozen) = session_prompt_snapshot(&request);
+    fixture
+        .service
+        .resolve_prompt_assembly(AgentResolvePromptAssemblyDto {
+            run_id: run_id.into(),
+            assembly_id,
+            prompt_snapshot: Some(snapshot),
+            frozen_run_input_snapshot: Some(frozen),
+            generation_intent: None,
+            assembly: None,
+            error: None,
+        })
+        .await
+        .unwrap();
+    request
 }
 
 pub(super) async fn wait_until_session_idle(fixture: &AgentRuntimeFixture, run_id: &str) {

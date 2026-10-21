@@ -74,6 +74,7 @@ import { agentErrorMessage } from './scripts/tauritavern/agent/agent-error-prese
 import { normalizeAgentContextPolicy, projectAgentPromptInputs } from './scripts/tauritavern/agent/agent-context-policy.js';
 import { createAgentPromptSnapshot } from './scripts/tauritavern/agent/agent-model-messages.js';
 import { buildPromptAssemblyPayload } from './tauri/main/api/agent-prompt-assembly.js';
+import { attachSessionAssemblyBridge } from './tauri/main/api/agent-sessions.js';
 import { normalizeAgentSystemPrompt } from './scripts/tauritavern/agent/agent-system-prompt.js';
 import { readLegacyToolInvocations, stripOldToolTurns } from './scripts/tauritavern/tool-turn-projection.js';
 import {
@@ -210,6 +211,7 @@ import {
     isVertexAiClaudeModelId,
     createGenerationParameters,
     createChatCompletionMacroContext,
+    agentPromptModelFacts,
     proxies,
     loadProxyPresets,
     selected_proxy,
@@ -1297,6 +1299,14 @@ async function firstLoadInit() {
         await eventSource.emit(event_types.APP_INITIALIZED);
         await fixViewport();
         await eventSource.emit(event_types.APP_READY);
+        const host = window.__TAURITAVERN__;
+        for (const runId of bootstrapMetadata.active_session_run_ids) {
+            attachSessionAssemblyBridge(runId, {
+                safeInvoke: host.invoke.safeInvoke,
+                promptAssembly: host.api.agent.promptAssembly,
+                subscribe: host.api.agent.subscribe,
+            });
+        }
 
         startupStatus.remove();
         perfMark('tt:startup:ready');
@@ -6733,6 +6743,7 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
         assertAgentPromptSnapshotHasNoExternalTools(chatCompletionPayload);
         payload = chatCompletionPayload;
         snapshotMetadata = {
+            ...agentPromptModelFacts(settings),
             contextPolicy: agentContextPolicy,
             ...(frozenRunInputSnapshot.worldInfoActivation ? { worldInfoActivation: frozenRunInputSnapshot.worldInfoActivation } : {}),
         };

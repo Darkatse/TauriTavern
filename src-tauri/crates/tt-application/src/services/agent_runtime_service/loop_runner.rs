@@ -8,6 +8,7 @@ use super::commit_ledger::RunCommitLedger;
 use super::continuation::{AutoCommitFile, InvocationFrame, InvocationStep, PendingToolTurn};
 use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
+use super::session_context::is_context_overflow;
 use super::tool_execution::recoverable_tool_error;
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::errors::ApplicationError;
@@ -79,28 +80,54 @@ impl AgentRuntimeService {
                         self.transition_status(run_id, AgentRunStatus::CallingModel)
                             .await?;
                     }
-                    self.event(
-                        run_id,
-                        AgentRunEventLevel::Info,
-                        "model_request_created",
-                        json!({
-                            "round": round,
-                            "invocationId": invocation_id,
-                            "toolTurn": &prepared.tool_turn,
-                            "request": request_summary(&prepared.request),
-                        }),
-                    )
-                    .await?;
-                    let exchange = self
-                        .generate_model_with_retry(
-                            &prepared.invocation,
-                            round,
-                            &prepared.request,
-                            &profile.run.model_retry,
-                            stream,
-                            cancel,
-                        )
-                        .await?;
+                    let mut trigger = match &prepared.session {
+                        Some(session)
+                            if self.context_tokens(&prepared.request, session).await?
+                                >= session.point =>
+                        {
+                            Some("point")
+                        }
+                        _ => None,
+                    };
+                    let mut compacted = false;
+                    let exchange = loop {
+                        if let Some(trigger) = trigger.take() {
+                            prepared.request = self
+                                .compact_session_context(prepared, round, trigger, cancel)
+                                .await?;
+                            prepared
+                                .session
+                                .as_mut()
+                                .expect("Session compaction")
+                                .usage_anchor = None;
+                            progress.session.clear_reads();
+                            compacted = true;
+                        }
+                        self.event(run_id, AgentRunEventLevel::Info, "model_request_created", json!({
+                            "round": round, "invocationId": invocation_id,
+                            "toolTurn": &prepared.tool_turn, "request": request_summary(&prepared.request),
+                        })).await?;
+                        match self
+                            .generate_model_with_retry(
+                                &prepared.invocation,
+                                round,
+                                &prepared.request,
+                                &profile.run.model_retry,
+                                stream,
+                                cancel,
+                            )
+                            .await
+                        {
+                            Err(error)
+                                if is_context_overflow(&error)
+                                    && prepared.session.is_some()
+                                    && !compacted =>
+                            {
+                                trigger = Some("overflow");
+                            }
+                            result => break result?,
+                        }
+                    };
                     let response = exchange.response;
                     let model_response_path = self
                         .store_model_response(run_id, invocation_id, round, &response)
@@ -181,6 +208,12 @@ impl AgentRuntimeService {
                     // Keep the actual transcript current, including finish/return/handoff turns.
                     prepared.request.provider_state = exchange.provider_state;
                     prepared.request.messages.push(response.message);
+                    if let Some(session) = &mut prepared.session {
+                        session.observe_usage(
+                            &response.provider_metadata,
+                            prepared.request.messages.len(),
+                        );
+                    }
                     if replied {
                         return Ok(Some(AgentLoopExit::Replied));
                     } else if !has_tools {

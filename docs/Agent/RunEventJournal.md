@@ -34,6 +34,8 @@ run_created
 
 这张图说明主要步骤；一次运行通常有多轮调用，期间还会记录状态变化、委派、交接和用户补充指令。
 
+Session 压缩期间状态为 `compacting_context`。`context_compaction_started` 携带 `round`、`invocationId`、`trigger`（`point` 或 `overflow`）及当前 `tokens`；成功后 `context_compacted` 携带同一回合身份、压缩记录的 `seq`、`tokensBefore`、`tokensAfter` 和 `keptFromSeq`，随后回到 `calling_model`。压缩记录本身通过 `session_message_appended` 通知读取，摘要正文保存在 Session 历史，不复制进事件。
+
 ## 读取与展示
 
 `api.agent.readEvents({ runId, afterSeq, limit })` 读取游标之后的事件。`beforeSeq` 读取指定序号之前最近的一页，结果仍按序号升序排列。`api.agent.subscribe()` 在此基础上持续追踪新事件。

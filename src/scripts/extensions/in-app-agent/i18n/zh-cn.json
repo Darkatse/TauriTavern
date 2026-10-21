@@ -1,4 +1,6 @@
 {
+    "in_app_agent.compacting": "正在压缩上下文",
+    "in_app_agent.contextCompacted": "已压缩上下文",
     "in_app_agent.contentWidth": "桌面内容宽度",
     "in_app_agent.contentWidthHelp": "调整内容区域的宽度，抽屉背景保持不变。",
     "in_app_agent.builtin": "内置工具",

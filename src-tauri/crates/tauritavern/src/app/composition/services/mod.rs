@@ -151,6 +151,9 @@ pub(super) async fn build(
         repositories.secret_repository.clone(),
         ios_policy.clone(),
     ));
+    let tokenization_service = Arc::new(TokenizationService::new(
+        repositories.tokenizer_repository.clone(),
+    ));
     let agent_services = agent::build(
         &repositories,
         skill_service.clone(),
@@ -162,10 +165,8 @@ pub(super) async fn build(
             .state::<Arc<AgentExtensionTools>>()
             .inner()
             .clone(),
+        tokenization_service.clone(),
     );
-    let tokenization_service = Arc::new(TokenizationService::new(
-        repositories.tokenizer_repository.clone(),
-    ));
     let stable_diffusion_service = Arc::new(StableDiffusionService::new(
         repositories.stable_diffusion_repository.clone(),
         repositories.secret_repository.clone(),

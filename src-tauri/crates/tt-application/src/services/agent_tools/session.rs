@@ -47,6 +47,10 @@ pub struct AgentToolSession {
 }
 
 impl AgentToolSession {
+    pub fn clear_reads(&mut self) {
+        self.read_state.clear();
+    }
+
     pub fn new(effective_skills: Vec<SkillIndexEntry>) -> Self {
         Self {
             effective_skills: effective_skills.into(),

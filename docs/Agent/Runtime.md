@@ -12,13 +12,13 @@ Runtime 创建 Run，初始化工作区，保存输入和解析后的 Profile，
 
 `sessions.send()` 每次创建一个 Run，共用该 Session 的历史与工作区。Rust 选取历史并按工具协议成组，PromptManager 负责布局；宏环境从完整会话求出并冻结。同一 Session 只允许一个活跃 Run；准备期间历史发生变化时拒绝启动。
 
-Session 发送时交回组装请求，runtime 与冻结输入一起保留。Session、委派与交接共用宿主组装桥；页面加载时，Session API 为活动 Run 重新挂桥。
+Session 发送时交回组装请求，runtime 与冻结输入一起保留。Session、委派与交接共用宿主组装桥；页面启动从 bootstrap 取得本进程活动 Session Run 的 ID，在 `APP_READY` 后重新挂桥，此时扩展工具已注册。
 
 ## 每一轮
 
 每个 Invocation 在累计预算内交替调用模型与工具：
 
-1. Chat 前台消费待处理的用户补充指令；记录本轮模型请求。
+1. Chat 前台消费待处理的用户补充指令；Session 检查上下文并在需要时压缩；记录本轮模型请求。
 2. 通过 Agent Model Gateway 调用模型，保存响应并将完整 assistant 消息加入请求历史。
 3. 按返回顺序执行工具，将已确认的结果加入上下文。
 4. 本轮工具全部结算后才进入下一次模型请求。
@@ -28,6 +28,16 @@ Session 发送时交回组装请求，runtime 与冻结输入一起保留。Sess
 Session 在 assistant 无工具调用时结束本轮，消息由后端连续保存。取消保留已写入的消息和工作文件。
 
 流式调用提供正文、思考及工具参数预览，正式消息的关联规则见 [Agent API](../API/Agent.md#控制与订阅)。工具执行始终使用完整响应；重试策略只作用于模型请求，工具执行由本轮调用记录管理。
+
+## Session 上下文压缩
+
+Session 的预算取自预设的上下文长度与最大回复长度，压缩点为 `⌊0.9 × (context − response)⌋`。Runtime 优先使用最近一次响应的输入、输出用量，再估算此后追加的消息；没有用量时，由 `TokenizationService` 估算整个请求。每轮调用前达到压缩点时自动压缩；服务商返回 `model.context_overflow` 时，本轮尚未压缩则压缩一次再发。压缩后仍超窗时结束 Run，不重复恢复。
+
+摘要请求沿用当前请求并追加摘要指令。摘要不作为普通模型回复发布；出现工具调用时禁用工具重问一次，调用始终不执行。摘要请求超窗时，逐组移除最早的工具往来再试，保留用户消息和已有摘要；无法得到完整摘要时返回 `agent.compaction_failed`。
+
+新的模型上下文由摘要与最近的完整消息组组成，经发送时保留的组装请求和冻结宏环境交给 PromptManager 重组。普通轮次继续向请求末尾追加消息；只有压缩才重新组装。重组复用 Invocation 已解析的连接与生成参数，不读取运行中修改的配置。摘要加保留内容仍达到压缩点，或没有可缩小的历史时，返回 `agent.context_full`。
+
+压缩成功后在 `history.jsonl` 追加带 `compaction` 的记录，原始历史不删除；下一次发送从最近的摘要和保留记录接续。完整会话仍用于发送时的宏环境。摘要标明自己是模型笔记，状态需要重新观察；工作区文件的读取记录在压缩后清空，修改前须重读。取消或压缩失败不追加压缩记录。
 
 ## 结束与交接
 
@@ -61,6 +71,7 @@ Session 重启后从已保存历史发起新 Run；当前不支持 resume、revi
 | --- | --- |
 | [agent_runtime_service/lifecycle.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/lifecycle.rs) | 输入校验、创建与取消 Run |
 | [agent_runtime_service/session.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/session.rs) | Session 配置、历史读取、发送受理与消息记录 |
+| [agent_runtime_service/session_context.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/session_context.rs) | Session 上下文选取、分组、计数与压缩 |
 | [agent_runtime_service/executor.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/executor.rs) | 准备根 Invocation、推进交接链、处理终态 |
 | [agent_runtime_service/checkpoint.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/checkpoint.rs) | Checkpoint 保存、读取与恢复准入 |
 | [agent_runtime_service/revision.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/revision.rs) | 已完成输出的后续修订 |

@@ -180,8 +180,7 @@ async function installHarness(options = {}) {
 
     const { createAgentApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent.js')));
     globalThis.window.__TAURITAVERN__.api.agent = createAgentApi({
-        safeInvoke: (command, args) => command === 'list_agent_sessions'
-            ? Promise.resolve({ sessions: [], activeRuns: [] }) : safeInvoke(command, args),
+        safeInvoke,
         loadScript: async () => options.script || createFakeStreamingCommitScript().script,
     });
 

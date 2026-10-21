@@ -133,13 +133,14 @@ test('stop remains pending until a terminal update and preserves the next draft'
     drawer.dispose();
 });
 
-test('the status strip times an active run from its creation', () => {
+test('the status strip names compaction and times the run from its creation', () => {
     document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
     const drawer = installAssistantDrawer(drawers);
     const h = harness();
     const createdAt = new Date(Date.now() - 65_000).toISOString();
-    h.publish({ run: { runId: 'run', active: true, status: 'calling_model', createdAt }, activeRun: { sessionId: 'session', runId: 'run', active: true, status: 'calling_model', createdAt } });
+    h.publish({ run: { runId: 'run', active: true, status: 'compacting_context', createdAt }, activeRun: { sessionId: 'session', runId: 'run', active: true, status: 'compacting_context', createdAt } });
     render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
+    expect(screen.getByRole('status').textContent).toBe('Compacting context');
     expect(screen.getByText(/^1:0[56]$/)).toBeTruthy();
     drawer.dispose();
 });
@@ -186,7 +187,12 @@ test('reused provider call IDs keep each round’s result with its own call', ()
     });
     const call = { type: 'toolCall' as const, call: { callId: 'tool_call_0', toolId: 'extension/in-app-agent:app.evaluate', arguments: { code: 'return 1' }, providerMetadata: {} } };
     const result = (content: string) => ({ type: 'toolResult' as const, result: { callId: 'tool_call_0', toolId: call.call.toolId, content, structured: null, isError: false, resourceRefs: [] } });
-    h.publish({ messages: [entry(1, 1, call), entry(2, 1, result('first result')), entry(3, 2, call), entry(4, 2, result('second result'))] });
+    const compaction: TauriTavernAgentSessionMessage = {
+        seq: 3, runId: 'run', createdAt: '', origin: { invocationId: 'root', round: 2 },
+        compaction: { keptFromSeq: 1, tokensBefore: 7000, tokensAfter: 1000 },
+        message: { role: 'user', providerMetadata: null, parts: [{ type: 'text', text: 'Earlier context' }, { type: 'text', text: 'Summary notes' }] },
+    };
+    h.publish({ messages: [entry(1, 1, call), entry(2, 1, result('first result')), compaction, entry(4, 2, call), entry(5, 2, result('second result'))] });
     render(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
     const [first, second] = screen.getAllByRole('article');
     if (!first || !second) throw new Error('Expected both model rounds');
@@ -195,6 +201,11 @@ test('reused provider call IDs keep each round’s result with its own call', ()
     expect(within(first).getByText('first result')).toBeTruthy();
     expect(within(first).queryByText('second result')).toBeNull();
     expect(within(second).getByText('second result')).toBeTruthy();
+    const compacted = screen.getByRole('button', { name: /Compacted context/ });
+    expect(first.compareDocumentPosition(compacted) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(compacted.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(compacted);
+    expect(screen.getByText('Summary notes')).toBeTruthy();
 });
 
 test('paging skips collapsed rows, preserves the visible anchor, and never follows an older user message', async () => {
@@ -228,7 +239,11 @@ test('paging skips collapsed rows, preserves the visible anchor, and never follo
     view.rerender(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
     await act(async () => { page.resolve(); await page.promise; });
     expect(visibleOffset()).toBe(before);
-    h.publish({ responses: [] });
+    h.publish({ messages: [...h.snapshot.messages, {
+        ...entry(12, 'user'), runId: 'next-run',
+        compaction: { keptFromSeq: null, tokensBefore: 7000, tokensAfter: 1000 },
+        message: { role: 'user', providerMetadata: null, parts: [{ type: 'text', text: 'Earlier context' }, { type: 'text', text: 'Summary notes' }] },
+    }] });
     view.rerender(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
     expect(visibleOffset()).toBe(before);
 });

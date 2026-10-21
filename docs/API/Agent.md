@@ -25,7 +25,7 @@ const unsubscribe = agent.subscribe(run.runId, event => {
 
 共同选项有 `profileId`、`generationType`、`stableChatId`、`presentation` 和 `options.stream`。稳定聊天 ID 省略时由 Host API 解析。`options.stream` 省略时使用各 Invocation 的 Profile 设置，显式值覆盖整次 Run。
 
-两种 Chat 方法返回 `{ runId, status, workspaceId, stableChatId, generationType }`。Snapshot 使用 `{ contextPolicy, messages, generationParameters }`，消息为 `AgentModelMessage[]`；旧 `chatCompletionPayload` 在入口适配，Chat 输入不能注入外部工具回合。冻结输入与组装规则见 [Prompt assembly](../Agent/PromptAssembly.md)。
+两种 Chat 方法返回 `{ runId, status, workspaceId, stableChatId, generationType }`。Snapshot 使用 `{ contextPolicy, messages, generationParameters, tokenBudget? }`，消息为 `AgentModelMessage[]`；旧 `chatCompletionPayload` 在入口适配，Chat 输入不能注入外部工具回合。`tokenBudget: { context, response, tokenizerModel }` 由组装时的有效模型设置提供，Session 必需，Chat 当前不消费。冻结输入与组装规则见 [Prompt assembly](../Agent/PromptAssembly.md)。
 
 canonical snapshot 的指令消息以 Text part 保存正文，并携带 `providerMetadata.promptComponent: "agentSystemPrompt"`，供 runtime 追加目录。旧 Chat 输入仍接受字符串 `content` 与 `_tauritavern_prompt_component: "agentSystemPrompt"`。共同 PromptManager 自动提供标记，标记不会发送给模型。
 
@@ -58,9 +58,20 @@ const run = await agent.sessions.send({ sessionId: session.id, text: '查看 wor
 
 `title`、`lastUsedAt` 未设置或旧数据缺字段时为 null。用户消息落盘时更新 `lastUsedAt`，未命名时生成短标题。目录按 `lastUsedAt ?? createdAt` 降序排列；改名不改变排序。
 
-历史由后端保存；收到 `session_message_appended` 后可调用 `sessions.read()` 更新界面，实时进度沿用 `subscribeLiveProjection()`。历史页按 seq 升序返回，每项为 `{ seq, runId, createdAt, message, origin? }`；`nextBeforeSeq` 用于向前翻页，`activeRun` 为活动 handle 或 null。
+历史由后端保存；收到 `session_message_appended` 后可调用 `sessions.read()` 更新界面，实时进度沿用 `subscribeLiveProjection()`。历史页按 seq 升序返回，每项为 `{ seq, runId, createdAt, message, origin?, compaction? }`；`nextBeforeSeq` 用于向前翻页，`activeRun` 为活动 handle 或 null。
 
-`origin: { invocationId, round }` 关联 assistant/tool 记录所属的模型回合，不进入模型消息；user 消息与旧历史可不带 origin。Session seq 标识持久消息。
+`origin: { invocationId, round }` 关联 assistant/tool 消息及压缩记录所属的回合，不进入模型消息；用户自己的消息没有 origin，旧历史也可缺少它。Session seq 标识持久消息。压缩记录为 user 角色，两个 Text part 分别保存说明和摘要，并带 `compaction: { keptFromSeq: number | null, tokensBefore: number, tokensAfter: number }`；它不是用户发言，不更新标题或 `lastUsedAt`，也不替代同 origin 的模型回复。`keptFromSeq` 指向保留的完整组起点，null 表示没有保留组。
+
+Session 压缩期间状态为 `compacting_context`，自动压缩的规则见[运行循环](../Agent/Runtime.md#session-上下文压缩)。常见失败码：
+
+| 错误码 | 含义 |
+| --- | --- |
+| `agent.session_history_window_unsupported` | Session Profile 的历史窗口不是 `-1` |
+| `agent.session_token_budget_missing` | 快照缺少有效预算或分词模型 |
+| `agent.session_token_budget_invalid` | 上下文长度不大于最大回复长度 |
+| `agent.context_full` | 上下文无法通过压缩降到压缩点以下 |
+| `agent.compaction_failed` | 模型未按要求产出摘要、回复截断或输入无法缩小到可摘要的范围 |
+| `model.context_overflow` | 服务商报告超窗；本轮压缩恢复后仍失败时传播 |
 
 Session 的结束与恢复边界见 [运行循环](../Agent/Runtime.md)，文件保留规则见 [Workspace](../Agent/Workspace.md#session-的持续工作区)。
 

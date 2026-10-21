@@ -90,6 +90,8 @@ const messages = {
     "waiting": "Waiting for a reply…",
     "replying": "Replying…",
     "working": "Working…",
+    "compacting": "Compacting context",
+    "contextCompacted": "Compacted context",
     "finishing": "Finishing this reply…",
     "stopping": "Stopping…",
     "cancelled": "This run was stopped. Completed actions were not undone.",

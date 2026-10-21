@@ -14,6 +14,7 @@ use tokio::sync::{Mutex, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use tt_adapter_http::HttpClientPool;
 use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use tt_adapter_storage_core::{FileChatRepository, FileSettingsRepository};
 use tt_adapter_storage_core::{FileLlmConnectionRepository, FileMcpServerRepository};
@@ -25,6 +26,7 @@ use tt_adapter_storage_userdata::FileWorldInfoRepository;
 use tt_adapter_storage_userdata::png_card_metadata::{
     read_character_data_from_png, write_character_data_to_png,
 };
+use tt_adapter_tokenization::MiktikTokenizerRepository;
 use tt_adapter_workspace_shell::WorkspaceShellEngine;
 use tt_application::dto::agent_dto::{
     AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto, AgentRunHandleDto,
@@ -55,6 +57,7 @@ use tt_application::services::llm_connection_service::LlmConnectionService;
 use tt_application::services::mcp_service::McpService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
+use tt_application::services::tokenization_service::TokenizationService;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::profile::{
     AgentDelegationPolicy, AgentProfileId, DEFAULT_AGENT_PROFILE_ID,
@@ -267,6 +270,12 @@ fn agent_runtime_fixture_with_shell(
         mcp_service.clone(),
         shell,
         extension_tools.clone(),
+        Arc::new(TokenizationService::new(Arc::new(
+            MiktikTokenizerRepository::new(
+                root.join("tokenizers"),
+                Arc::new(HttpClientPool::new("TauriTavern contract tests")),
+            ),
+        ))),
     ));
 
     AgentRuntimeFixture {

@@ -2520,6 +2520,17 @@ export async function prepareOpenAIMessages({
     return [chat, activePromptManager.tokenHandler.counts, toolData];
 }
 
+/** Facts about the model a prompt snapshot is assembled for, from its effective settings. */
+export function agentPromptModelFacts(settings) {
+    return {
+        tokenBudget: {
+            context: settings.openai_max_context,
+            response: settings.openai_max_tokens,
+            tokenizerModel: getTokenizerModel(settings),
+        },
+    };
+}
+
 /**
  * @param {{
  *   settings?: Record<string, unknown>;

@@ -113,6 +113,7 @@ export async function materializeCurrentPromptSnapshot(input) {
 
     return {
         promptSnapshot: createAgentPromptSnapshot(payload, {
+            ...openai.agentPromptModelFacts(settings),
             contextPolicy: seed.contextPolicy,
             ...(seed.worldInfoActivation ? { worldInfoActivation: seed.worldInfoActivation } : {}),
         }),

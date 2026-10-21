@@ -1,8 +1,13 @@
 // @ts-check
 
+/** @typedef {(command: string, args?: any) => Promise<any>} SafeInvoke */
+/** @typedef {{ runId: string; resolvedAssemblyIds: Set<string>; stop: (() => void) | null }} AssemblyBridgeState */
+
+/** @type {Map<string, AssemblyBridgeState>} */
 const activePromptAssemblyBridges = new Map();
 const TERMINAL_EVENTS = new Set(['run_completed', 'run_partial_success', 'run_cancelled', 'run_failed']);
 
+/** @param {{ runId: string; safeInvoke: SafeInvoke; promptAssembly: TauriTavernAgentPromptAssemblyApi; subscribe: TauriTavernAgentApi['subscribe'] }} deps */
 export function attachHostPromptAssemblyBridge({ runId, safeInvoke, promptAssembly, subscribe }) {
     const normalizedRunId = requireRunId(runId);
     if (activePromptAssemblyBridges.has(normalizedRunId)) {
@@ -12,6 +17,7 @@ export function attachHostPromptAssemblyBridge({ runId, safeInvoke, promptAssemb
         throw new Error('agent.prompt_assembly_api_unavailable: promptAssembly.buildSnapshot is required');
     }
 
+    /** @type {AssemblyBridgeState} */
     const state = {
         runId: normalizedRunId,
         resolvedAssemblyIds: new Set(),
@@ -48,6 +54,7 @@ export function attachHostPromptAssemblyBridge({ runId, safeInvoke, promptAssemb
     return state;
 }
 
+/** @param {string} runId */
 function detachHostPromptAssemblyBridge(runId) {
     const normalizedRunId = requireRunId(runId);
     const state = activePromptAssemblyBridges.get(normalizedRunId);
@@ -60,6 +67,7 @@ function detachHostPromptAssemblyBridge(runId) {
     }
 }
 
+/** @param {{ state: AssemblyBridgeState; event: TauriTavernAgentRunEvent; safeInvoke: SafeInvoke; promptAssembly: TauriTavernAgentPromptAssemblyApi }} input */
 async function handlePromptAssemblyRequested({ state, event, safeInvoke, promptAssembly }) {
     const payload = event?.payload || {};
     const assemblyId = requirePayloadString(payload, 'assemblyId');
@@ -74,7 +82,7 @@ async function handlePromptAssemblyRequested({ state, event, safeInvoke, promptA
             request = await readPromptAssemblyRequest({ safeInvoke, runId: state.runId, assemblyId });
         } catch (error) {
             // Reload replays requests which the native runtime has already resolved.
-            if (String(error?.message ?? error).includes('agent.prompt_assembly_not_pending:')) return;
+            if (String(/** @type {any} */ (error)?.message ?? error).includes('agent.prompt_assembly_not_pending:')) return;
             throw error;
         }
         const assembled = await promptAssembly.buildSnapshot(request);
@@ -93,12 +101,13 @@ async function handlePromptAssemblyRequested({ state, event, safeInvoke, promptA
             dto: {
                 runId: state.runId,
                 assemblyId,
-                error: String(error?.message ?? error),
+                error: String(/** @type {any} */ (error)?.message ?? error),
             },
         });
     }
 }
 
+/** @param {{ safeInvoke: SafeInvoke; runId: string; assemblyId: string }} input */
 async function readPromptAssemblyRequest({ safeInvoke, runId, assemblyId }) {
     const request = await safeInvoke('read_agent_prompt_assembly_request', {
         dto: {
@@ -112,6 +121,7 @@ async function readPromptAssemblyRequest({ safeInvoke, runId, assemblyId }) {
     );
 }
 
+/** @param {unknown} value */
 function requireRunId(value) {
     const runId = String(value || '').trim();
     if (!runId) {
@@ -120,6 +130,7 @@ function requireRunId(value) {
     return runId;
 }
 
+/** @param {any} payload @param {string} field */
 function requirePayloadString(payload, field) {
     const value = String(payload?.[field] || '').trim();
     if (!value) {
@@ -128,6 +139,7 @@ function requirePayloadString(payload, field) {
     return value;
 }
 
+/** @param {any} value @param {string} message @returns {any} */
 function requirePlainObject(value, message) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         throw new Error(message);

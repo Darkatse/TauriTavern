@@ -62,7 +62,7 @@ impl AgentRuntimeService {
             parts: vec![AgentModelContentPart::Text { text: dto.text }],
             provider_metadata: Value::Null,
         };
-        let mut groups = session_history_groups(&session_context(&history))?;
+        let mut groups = session_history_groups(&session_context(&history)?)?;
         groups.push(vec![user_message.clone()]);
         messages.push(user_message);
         let tools = self

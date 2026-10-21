@@ -10,7 +10,7 @@ use tt_domain::models::agent::profile::{
     AgentPresetRef, AgentProfileDefinition, AgentProfileId, ResolvedAgentProfile,
 };
 use tt_domain::models::agent::session::{AgentSession, AgentSessionMessage};
-use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelMessage, AgentModelTool};
+use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool};
 use tt_domain::models::preset::{DefaultPreset, Preset, PresetType};
 use tt_domain::models::tool::ToolId;
 use tt_ports::repositories::agent_profile_repository::AgentProfileRepository;
@@ -415,9 +415,7 @@ impl AgentSessionRepository for TestAgentProfileRepository {
     async fn append_session_message(
         &self,
         _session_id: &str,
-        _run_id: &str,
-        _message: &AgentModelMessage,
-        _origin: Option<&tt_domain::models::agent::session::AgentSessionMessageOrigin>,
+        _entry: tt_domain::models::agent::session::NewAgentSessionMessage,
     ) -> Result<AgentSessionMessage, DomainError> {
         unreachable!("Profile tests do not append Session history")
     }

@@ -46,9 +46,11 @@ pub struct AgentSessionMessage {
     pub run_id: String,
     pub created_at: DateTime<Utc>,
     pub message: AgentModelMessage,
-    /// Invocation output identity; user messages have no model origin.
+    /// Model output and compaction records carry their origin; the user's own messages have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<AgentSessionMessageOrigin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<AgentSessionCompaction>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,4 +58,21 @@ pub struct AgentSessionMessage {
 pub struct AgentSessionMessageOrigin {
     pub invocation_id: String,
     pub round: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionCompaction {
+    /// The first entry kept as it was, the start of a whole group; none when no group fit.
+    pub kept_from_seq: Option<u64>,
+    pub tokens_before: usize,
+    pub tokens_after: usize,
+}
+
+/// What is appended to a Session's history; the store assigns `seq` and `created_at`.
+pub struct NewAgentSessionMessage {
+    pub run_id: String,
+    pub message: AgentModelMessage,
+    pub origin: Option<AgentSessionMessageOrigin>,
+    pub compaction: Option<AgentSessionCompaction>,
 }

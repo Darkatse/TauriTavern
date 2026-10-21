@@ -39,6 +39,7 @@ pub enum AgentRunStatus {
     InitializingWorkspace,
     AssemblingContext,
     CallingModel,
+    CompactingContext,
     DispatchingTool,
     ApplyingWorkspacePatch,
     AwaitingHostCommit,

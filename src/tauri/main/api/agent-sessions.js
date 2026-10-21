@@ -6,19 +6,6 @@ import { updateFrozenMacroContext } from '../../../scripts/tauritavern/agent/fro
 export function createAgentSessionsApi({ safeInvoke, promptAssembly, subscribe }) {
     const preparing = new Set();
 
-    function attachAssemblyBridge(runId) {
-        attachHostPromptAssemblyBridge({
-            runId, safeInvoke, promptAssembly,
-            subscribe: createSharedRunEventSubscribe(runId, subscribe, 0),
-        });
-    }
-
-    void safeInvoke('list_agent_sessions').then(({ activeRuns }) => {
-        for (const run of activeRuns) attachAssemblyBridge(run.runId);
-    }).catch(error => {
-        queueMicrotask(() => { throw error; });
-    });
-
     async function load() {
         return safeInvoke('load_agent_session_profile');
     }
@@ -68,7 +55,7 @@ export function createAgentSessionsApi({ safeInvoke, promptAssembly, subscribe }
                 frozenRunInputSnapshot: assembled.frozenRunInputSnapshot,
                 generationIntent: { ...assembled.generationIntent, source: 'session', promptAssembly: prepared.assembly },
             } });
-            attachAssemblyBridge(run.runId);
+            attachSessionAssemblyBridge(run.runId, { safeInvoke, promptAssembly, subscribe });
             return run;
         } finally {
             preparing.delete(sessionId);
@@ -95,6 +82,13 @@ export function createAgentSessionsApi({ safeInvoke, promptAssembly, subscribe }
         },
         send,
     };
+}
+
+export function attachSessionAssemblyBridge(runId, { safeInvoke, promptAssembly, subscribe }) {
+    attachHostPromptAssemblyBridge({
+        runId, safeInvoke, promptAssembly,
+        subscribe: createSharedRunEventSubscribe(runId, subscribe, 0),
+    });
 }
 
 function requireSessionId(value) {

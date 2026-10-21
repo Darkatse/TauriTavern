@@ -13,6 +13,7 @@ import { History, sessionTitle } from './History';
 
 function statusLabel(snapshot: AssistantSnapshot): string {
     const status = snapshot.run?.status;
+    if (status === 'compacting_context') return tr('compacting');
     if (status === 'calling_model') return tr(snapshot.responses.some(response => response.text) ? 'replying' : 'waiting');
     if (status === 'dispatching_tool') {
         const event = [...snapshot.events].reverse().find(item => item.type === 'tool_call_requested');

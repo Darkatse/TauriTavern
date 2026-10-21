@@ -19,7 +19,9 @@ use crate::dto::agent_dto::{
 };
 use crate::errors::ApplicationError;
 use crate::services::prompt_assembly_service::{attach_frozen_run_input_snapshot, sha256_value};
-use tt_domain::models::agent::session::{AgentSession, AgentSessionMessageOrigin};
+use tt_domain::models::agent::session::{
+    AgentSession, AgentSessionMessageOrigin, NewAgentSessionMessage,
+};
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRole, AgentRun, AgentRunEventLevel,
     AgentRunStatus, AgentRunTarget,
@@ -60,6 +62,16 @@ impl AgentRuntimeService {
         };
         self.session_repository.create_session(&session).await?;
         Ok(AgentSessionResultDto { session })
+    }
+
+    pub async fn active_session_run_ids(&self) -> Vec<String> {
+        self.active_runs
+            .read()
+            .await
+            .iter()
+            .filter(|(_, handle)| handle.target.session_id().is_some())
+            .map(|(run_id, _)| run_id.clone())
+            .collect()
     }
 
     pub async fn list_sessions(&self) -> Result<AgentListSessionsResultDto, ApplicationError> {
@@ -217,6 +229,7 @@ impl AgentRuntimeService {
         let mut assembly_request = dto.prompt_assembly_request;
         assembly_request.frozen_run_input_snapshot =
             prompt_snapshot["frozenRunInputSnapshot"].clone();
+        let session_invocation = SessionInvocation::new(assembly_request, &prompt_snapshot)?;
         let _admission = self.run_lifecycle_lock.lock().await;
         self.session_repository
             .load_session(&dto.session_id)
@@ -257,13 +270,16 @@ impl AgentRuntimeService {
             .session_repository
             .append_session_message(
                 &dto.session_id,
-                &run.id,
-                &AgentModelMessage {
-                    role: AgentModelRole::User,
-                    parts: vec![AgentModelContentPart::Text { text: dto.text }],
-                    provider_metadata: Value::Null,
+                NewAgentSessionMessage {
+                    run_id: run.id.clone(),
+                    message: AgentModelMessage {
+                        role: AgentModelRole::User,
+                        parts: vec![AgentModelContentPart::Text { text: dto.text }],
+                        provider_metadata: Value::Null,
+                    },
+                    origin: None,
+                    compaction: None,
                 },
-                None,
             )
             .await?;
         self.event(
@@ -324,7 +340,7 @@ impl AgentRuntimeService {
                     request,
                     profile,
                     effective_skills,
-                    Some(SessionInvocation { assembly_request }),
+                    Some(session_invocation),
                     cancel_receiver,
                 )
                 .await;
@@ -352,12 +368,15 @@ impl AgentRuntimeService {
             .session_repository
             .append_session_message(
                 session_id,
-                run_id,
-                message,
-                Some(&AgentSessionMessageOrigin {
-                    invocation_id: invocation_id.to_string(),
-                    round,
-                }),
+                NewAgentSessionMessage {
+                    run_id: run_id.to_owned(),
+                    message: message.clone(),
+                    origin: Some(AgentSessionMessageOrigin {
+                        invocation_id: invocation_id.to_string(),
+                        round,
+                    }),
+                    compaction: None,
+                },
             )
             .await?;
         self.event(
