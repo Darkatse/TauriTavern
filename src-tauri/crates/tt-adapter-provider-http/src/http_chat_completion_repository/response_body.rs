@@ -7,6 +7,8 @@ use serde_json::Value;
 
 use tt_domain::errors::DomainError;
 
+use super::context_overflow::is_context_overflow;
+
 /// Maximum number of bytes from a non-JSON upstream body to capture in the
 /// diagnostic log. Anything larger is truncated; the full `body_len` is still
 /// emitted so log readers know how much was elided.
@@ -105,6 +107,11 @@ pub(super) fn parse_upstream_json_body(
 ) -> Result<Value, DomainError> {
     match serde_json::from_slice::<Value>(body) {
         Ok(value) => match provider_error_message(&value) {
+            Some(message) if is_context_overflow(&value.to_string()) => {
+                Err(DomainError::InvalidData(format!(
+                    "model.context_overflow: {provider_name}: {message}"
+                )))
+            }
             Some(message) => Err(DomainError::InvalidData(format!(
                 "{provider_name}: {message}"
             ))),
@@ -154,6 +161,21 @@ pub(super) fn provider_error_message(value: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn successful_http_error_body_keeps_context_overflow_code() {
+        let error = parse_upstream_json_body(
+            "OpenRouter",
+            "generate",
+            StatusCode::OK,
+            "application/json",
+            br#"{"error":{"code":"context_length_exceeded","message":"invalid request"}}"#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, DomainError::InvalidData(message) if message == "model.context_overflow: OpenRouter: invalid request")
+        );
+    }
 
     #[test]
     fn body_preview_string_truncates_to_first_512_bytes() {

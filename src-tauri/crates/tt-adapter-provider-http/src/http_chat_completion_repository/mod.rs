@@ -19,6 +19,7 @@ use tt_ports::repositories::chat_completion_repository::{
 mod aws_bedrock;
 mod claude;
 mod cohere;
+mod context_overflow;
 mod gemini;
 mod gemini_interactions;
 mod makersuite;
@@ -287,6 +288,11 @@ impl HttpChatCompletionRepository {
         match status {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
                 DomainError::AuthenticationError(message)
+            }
+            StatusCode::BAD_REQUEST | StatusCode::PAYLOAD_TOO_LARGE
+                if context_overflow::is_context_overflow(body) =>
+            {
+                DomainError::InvalidData(format!("model.context_overflow: {message}"))
             }
             StatusCode::BAD_REQUEST => DomainError::InvalidData(message),
             StatusCode::TOO_MANY_REQUESTS => DomainError::rate_limited(format!(
@@ -1119,30 +1125,68 @@ mod tests {
     }
 
     #[test]
-    fn error_status_classification_marks_retryable_provider_failures() {
-        let rate_limited = HttpChatCompletionRepository::map_error_status(
-            "OpenAI",
-            reqwest::StatusCode::TOO_MANY_REQUESTS,
-            r#"{"error":{"message":"slow down"}}"#,
-            "Generation request failed",
-        );
-        assert!(matches!(rate_limited, DomainError::RateLimited { .. }));
-
-        let gateway_timeout = HttpChatCompletionRepository::map_error_status(
-            "OpenAI",
-            reqwest::StatusCode::BAD_GATEWAY,
-            "upstream unavailable",
-            "Generation request failed",
-        );
-        assert!(matches!(gateway_timeout, DomainError::Transient(_)));
-
-        let bad_request = HttpChatCompletionRepository::map_error_status(
-            "OpenAI",
-            reqwest::StatusCode::BAD_REQUEST,
-            r#"{"error":{"message":"bad payload"}}"#,
-            "Generation request failed",
-        );
-        assert!(matches!(bad_request, DomainError::InvalidData(_)));
+    fn error_status_classification_preserves_recovery_semantics() {
+        for (status, body, overflow) in [
+            (
+                400,
+                "prompt is too long: 213462 tokens > 200000 maximum",
+                true,
+            ),
+            (
+                400,
+                "input length and `max_tokens` exceed context limit: 190000 + 32768 > 200000",
+                true,
+            ),
+            (
+                400,
+                "Your input exceeds the context window of this model",
+                true,
+            ),
+            (
+                400,
+                "This model's maximum context length is 131072 tokens. However, you requested 140000 tokens",
+                true,
+            ),
+            (
+                400,
+                "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)",
+                true,
+            ),
+            (
+                400,
+                r#"{"error":{"code":"context_length_exceeded","message":"invalid request"}}"#,
+                true,
+            ),
+            (413, "PROMPT IS TOO LONG", true),
+            (413, "request_too_large", false),
+            (400, "Invalid value for temperature", false),
+            (400, "rate limit: too many tokens", false),
+            (400, "too many requests: token limit exceeded", false),
+            (
+                429,
+                "ThrottlingException: Too many tokens, please wait before trying again.",
+                false,
+            ),
+            (502, "upstream unavailable", false),
+        ] {
+            let error = HttpChatCompletionRepository::map_error_status(
+                "Provider",
+                reqwest::StatusCode::from_u16(status).unwrap(),
+                body,
+                "Generation request failed",
+            );
+            assert_eq!(
+                matches!(&error, DomainError::InvalidData(message) if message.starts_with("model.context_overflow:")),
+                overflow,
+                "{status}: {body}: {error}"
+            );
+            match status {
+                429 => assert!(matches!(error, DomainError::RateLimited { .. })),
+                502 => assert!(matches!(error, DomainError::Transient(_))),
+                413 if !overflow => assert!(matches!(error, DomainError::InternalError(_))),
+                _ => assert!(matches!(error, DomainError::InvalidData(_))),
+            }
+        }
     }
 
     #[test]

@@ -425,23 +425,29 @@ fn rejects_provider_refusal_before_decoding_the_agent_turn() {
 }
 
 #[test]
-fn rejects_truncated_agent_turns() {
-    for response in [
-        json!({
-            "stop_reason": "model_context_window_exceeded",
-            "choices": [{
-                "message": { "role": "assistant", "content": "partial output" }
-            }]
-        }),
-        json!({
-            "choices": [{
-                "finish_reason": "length",
-                "message": { "role": "assistant", "content": "partial output" }
-            }]
-        }),
+fn rejects_incomplete_agent_turns_with_their_recovery_code() {
+    for (response, code) in [
+        (
+            json!({
+                "stop_reason": "model_context_window_exceeded",
+                "choices": [{
+                    "message": { "role": "assistant", "content": "partial output" }
+                }]
+            }),
+            "model.context_overflow",
+        ),
+        (
+            json!({
+                "choices": [{
+                    "finish_reason": "length",
+                    "message": { "role": "assistant", "content": "partial output" }
+                }]
+            }),
+            "model.output_truncated",
+        ),
     ] {
         let error = decode_chat_completion_response(response, &[]).unwrap_err();
-        assert!(error.to_string().contains("model.output_truncated"));
+        assert!(error.to_string().contains(code));
     }
 }
 

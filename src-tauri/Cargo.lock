@@ -9315,6 +9315,7 @@ dependencies = [
  "futures-util",
  "jsonwebtoken",
  "percent-encoding",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

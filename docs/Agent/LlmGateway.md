@@ -35,6 +35,12 @@ Profile 的 `run.stream` 控制当前 Invocation 的默认行为，启动参数 
 
 签名和加密内容不进入预览；工具保留完整 `ToolId`，包括区分同名工具所需的 MCP 身份。预览按 Invocation 与模型尝试隔离，协议与清理规则见 [Agent API](../API/Agent.md#控制与订阅)。OpenAI 兼容格式的流式与完整响应共用推理字段归一化规则；最终完整响应仍走共同存储与工具执行路径。不支持的流式路由直接报错。
 
+## 错误归类
+
+`model.context_overflow` 表示模型上下文窗口不足。HTTP 400/413 的错误正文、成功 HTTP 响应内的错误对象、OpenAI 兼容流的错误事件及 Responses 的失败事件使用同一套文本分类；分类同时读取原始错误码字段，向调用者返回带原错误消息的 `InvalidData`。匹配规则改编自 pi-ai 1.3.0 `utils/overflow.js`（MIT），排除限流文字；HTTP 429 和 5xx 保留原有可重试映射。`request_too_large` 单独表示传输体过大，不归为上下文超窗。
+
+Claude 的 `model_context_window_exceeded` 停止原因同样归为 `model.context_overflow`。输出上限则统一为 `model.output_truncated`，包括 `max_tokens`、`length` 和 Responses 的 `incomplete_details.reason=max_output_tokens`。这些错误不自动重试同一请求；Session 的压缩恢复由运行时负责，见 [Runtime](Runtime.md)。
+
 ## 修改入口
 
 - [agent_model_gateway](../../src-tauri/crates/tt-application/src/services/agent_model_gateway)：`encode`、`decode`、工具 schema 与 provider adapter。
