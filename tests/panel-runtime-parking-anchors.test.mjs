@@ -50,7 +50,7 @@ test('compat parking keeps the OpenAI bounds and third-party anchors reachable',
     }
 });
 
-test('aggressive parking keeps the OpenAI bounds but drops the third-party anchors', async () => {
+test('aggressive parking keeps first-party anchors but drops the third-party ones', async () => {
     const dom = installFakeDom();
     try {
         renderIndexBody(dom.document);
@@ -58,7 +58,8 @@ test('aggressive parking keeps the OpenAI bounds but drops the third-party ancho
 
         assert.equal(dom.document.querySelector('#left-nav-panel .scrollableInner'), null);
         assert.ok(dom.document.getElementById('openai_max_context'));
-        assert.equal(dom.document.getElementById('openai_api-presets'), null);
+        assert.ok(dom.document.getElementById('openai_api-presets'));
+        assert.equal(dom.document.getElementById('completion_prompt_manager'), null);
     } finally {
         dom.cleanup();
     }
