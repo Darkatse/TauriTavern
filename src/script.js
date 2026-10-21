@@ -9657,8 +9657,13 @@ export function setGenerationParamsFromPreset(preset, adjustments) {
 // Common code for message editor done and auto-save
 function updateMessage(div) {
     const mesBlock = div.closest('.mes_block');
-    let text = mesBlock.find('.edit_textarea').val()
-        ?? mesBlock.find('.mes_text').text();
+    const editTextarea = mesBlock.find('.edit_textarea');
+    if (!editTextarea.length) {
+        // The editor was closed by a concurrent re-render. Reading the rendered .mes_text
+        // here would write extension HTML/CSS into the message; fail loudly instead.
+        throw new Error('messageEdit: the editor closed before the edit was saved; reopen the message to retry');
+    }
+    let text = editTextarea.val();
     const mesElement = div.closest('.mes');
     const messageId = Number(mesElement.attr('mesid'));
     const mes = chat[messageId];
@@ -9997,10 +10002,17 @@ async function messageEditDone(div) {
     mesBlock.find('.mes_edit_buttons').css('display', 'none');
     mesBlock.find('.mes_buttons').css('display', '');
 
-    replaceMesTextHtmlWithRuntimePolicy(
-        /** @type {HTMLElement} */ (div.closest('.mes')[0]),
-        getMessageTextHTML(mes, { messageId: this_edit_mes_id }),
-    );
+    // A display refresh never replaces an editor or a detached message: while we awaited
+    // the event, a concurrent re-render (or a newer edit on this message) may have replaced
+    // the DOM. Re-rendering now would destroy an open editor, and updateMessage would then
+    // read rendered text and corrupt the message.
+    const mesElement = div.closest('.mes');
+    if (mesElement.length && !mesElement.find('.edit_textarea').length) {
+        replaceMesTextHtmlWithRuntimePolicy(
+            /** @type {HTMLElement} */ (mesElement[0]),
+            getMessageTextHTML(mes, { messageId: this_edit_mes_id }),
+        );
+    }
     mesBlock.find('.mes_bias').empty();
     mesBlock.find('.mes_bias').append(messageFormatting(bias, '', false, false, -1, {}, false));
     appendMediaToMessage(mes, div.closest('.mes'));
