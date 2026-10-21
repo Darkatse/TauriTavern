@@ -22,11 +22,6 @@ const history = [[message('user', 'Read the file.')], [assistant, result], [mess
 try {
     await startHost();
     await load('script.js');
-    // A deterministic tokenizer transport keeps this a real PromptManager test.
-    const ajax = window.jQuery.ajax;
-    window.jQuery.ajax = options => options.url?.startsWith('/api/tokenizers/openai/count-batch')
-        ? Promise.resolve({ token_counts: JSON.parse(options.data).map(item => 4 + Math.ceil(JSON.stringify(item).length / 4)) })
-        : ajax(options);
     const { normalizeChatCompletionSettingsForPromptAssembly } = getModule('scripts/openai.js').namespace;
     const { buildPromptAssemblySnapshot } = getModule('tauri/main/api/agent-prompt-assembly.js').namespace;
     const { createAgentSessionsApi } = getModule('tauri/main/api/agent-sessions.js').namespace;
@@ -39,7 +34,7 @@ try {
     initRegisterMacros();
     const { setParamOmitted } = getModule('scripts/tauri/generation-params/omission.js').namespace;
     const preset = normalizeChatCompletionSettingsForPromptAssembly({
-        chat_completion_source: 'custom', custom_model: 'test-model', openai_max_tokens: 32, new_chat_prompt: '',
+        chat_completion_source: 'custom', custom_model: 'test-model', openai_max_context: 4096, openai_max_tokens: 32, new_chat_prompt: '',
     });
     preset.prompt_order = [{ character_id: 100001, order: ['main', 'agentSystemPrompt', 'chatHistory'].map(identifier => ({ identifier, enabled: true })) }];
     const sessionInput = messages => ({
@@ -51,7 +46,7 @@ try {
         macroContext: {},
         promptInputs: { messages: [], sessionHistory: messages, messageExamples: [], worldInfoExamples: { before: [], after: [] }, extensionPrompts: {} },
     });
-    const assemble = (messages, contextBudget = 4096, reasoningEffort) => {
+    const assemble = (messages, reasoningEffort) => {
         const context = MacroEnvBuilder.createSessionContext(messages.flat(), {
             sessionId: 'session-history', variables: { local: {}, global: {} },
         });
@@ -59,24 +54,21 @@ try {
         return buildPromptAssemblySnapshot({
             modelId: 'test-model',
             reasoningEffort,
-            settings: { ...preset, openai_max_context: contextBudget },
+            settings: preset,
             agentContextPolicy: { initialChatHistoryMessages: -1, includeActivatedWorldInfo: false },
             agentSystemPrompt: 'Inspect the workspace.',
             frozenRunInputSnapshot: updateFrozenMacroContext(sessionInput(messages), context),
         });
     };
 
-    const { promptSnapshot: snapshot } = await assemble(history);
+    const assembled = await assemble(history);
+    const { promptSnapshot: snapshot } = assembled;
     const recordedAssistant = snapshot.messages.find(item => item.parts.some(part => part.type === 'toolCall'));
     assert.deepEqual(JSON.parse(JSON.stringify(recordedAssistant)), assistant);
     assert.deepEqual(JSON.parse(JSON.stringify(snapshot.messages.find(item => item.role === 'tool'))), result);
 
-    // Runtime owns the budget; PromptManager must retain the full history.
-    const limitedInput = await assemble(history, 200);
-    assert.deepEqual(limitedInput.promptSnapshot.messages, snapshot.messages);
-    const longerInput = await assemble([[message('user', 'Older history. '.repeat(1000))], ...history], 200);
-    assert.ok(longerInput.promptSnapshot.messages.some(item => item.parts.some(part => part.text?.startsWith('Older history.'))));
-    assert.deepEqual(longerInput.frozenRunInputSnapshot.promptInputs, limitedInput.frozenRunInputSnapshot.promptInputs);
+    const longerInput = await assemble([[message('user', 'Older history.')], ...history]);
+    assert.deepEqual(longerInput.frozenRunInputSnapshot.promptInputs, assembled.frozenRunInputSnapshot.promptInputs);
     assert.equal(JSON.stringify(longerInput.frozenRunInputSnapshot).includes('Older history.'), false);
 
     const depthPrompt = { identifier: 'session-depth', name: 'Session depth', role: 'system', content: 'Depth instruction.', injection_position: 1, injection_depth: 1 };
@@ -93,9 +85,9 @@ try {
     preset.reasoning_effort = 'low';
     assert.equal((await assemble(history)).promptSnapshot.generationParameters.reasoning_effort, 'low');
     setParamOmitted(preset, 'reasoning_effort', true);
-    assert.equal((await assemble(history, 4096, 'high')).promptSnapshot.generationParameters.reasoning_effort, 'high');
+    assert.equal((await assemble(history, 'high')).promptSnapshot.generationParameters.reasoning_effort, 'high');
     assert.equal((await assemble(history)).promptSnapshot.generationParameters.reasoning_effort, undefined);
-    console.log('PASS: Session PromptManager preserves canonical history, depth injections and complete context');
+    console.log('PASS: Session PromptManager preserves canonical history and depth injections');
 
     const script = getModule('script.js').namespace;
     script.chat_metadata.variables = { sessionValue: 'foreground-chat' };

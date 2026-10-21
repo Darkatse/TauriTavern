@@ -576,25 +576,31 @@ mod tests {
 
     #[test]
     fn session_history_pairs_out_of_order_results_in_an_interrupted_group() {
-        let calls = ["saved", "pending", "missing"].map(|name| {
+        let identities = [
+            ("saved", "opaque-call-7a", "builtin:opaque_tool_31"),
+            ("pending", "opaque-call-8b", "builtin:opaque_tool_42"),
+            ("missing", "opaque-call-9c", "builtin:opaque_tool_53"),
+        ];
+        let calls = identities.map(|(name, call_id, tool_id)| {
             json!({
                 "type": "toolCall",
                 "call": {
-                    "callId": name,
-                    "toolId": "builtin:workspace.read_file",
+                    "callId": call_id,
+                    "toolId": tool_id,
                     "arguments": { "path": format!("work/{name}.md") },
                     "providerMetadata": { "modelAlias": "workspace_read_file" }
                 }
             })
         });
-        let result = |id: &str, content: &str, is_error: bool| {
+        let result = |index: usize, content: &str, is_error: bool| {
+            let (_, call_id, tool_id) = identities[index];
             json!({
                 "role": "tool",
                 "parts": [{
                     "type": "toolResult",
                     "result": {
-                        "callId": id,
-                        "toolId": "builtin:workspace.read_file",
+                        "callId": call_id,
+                        "toolId": tool_id,
                         "content": content,
                         "isError": is_error,
                         "structured": {},
@@ -603,10 +609,13 @@ mod tests {
                 }]
             })
         };
+        let original_text = "Reading the requested files.";
+        let mut parts = vec![json!({ "type": "text", "text": original_text })];
+        parts.extend(calls);
         let history = [
-            json!({ "role": "assistant", "parts": calls }),
-            result("missing", "File does not exist.", true),
-            result("saved", "The saved content.", false),
+            json!({ "role": "assistant", "parts": parts }),
+            result(2, "File does not exist.", true),
+            result(0, "The saved content.", false),
         ]
         .into_iter()
         .enumerate()
@@ -631,6 +640,11 @@ mod tests {
         let [AgentModelContentPart::Text { text }] = message.parts.as_slice() else {
             panic!("interrupted calls must become text instead of replayable tool calls")
         };
+        assert!(text.contains(original_text));
+        for (_, call_id, tool_id) in identities {
+            assert!(!text.contains(call_id));
+            assert!(!text.contains(tool_id));
+        }
         let outcomes = text
             .split("workspace_read_file(")
             .skip(1)

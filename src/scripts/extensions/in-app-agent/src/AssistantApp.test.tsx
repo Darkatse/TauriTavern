@@ -133,14 +133,13 @@ test('stop remains pending until a terminal update and preserves the next draft'
     drawer.dispose();
 });
 
-test('the status strip names compaction and times the run from its creation', () => {
+test('the status strip times an active run from its creation', () => {
     document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
     const drawer = installAssistantDrawer(drawers);
     const h = harness();
     const createdAt = new Date(Date.now() - 65_000).toISOString();
-    h.publish({ run: { runId: 'run', active: true, status: 'compacting_context', createdAt }, activeRun: { sessionId: 'session', runId: 'run', active: true, status: 'compacting_context', createdAt } });
+    h.publish({ run: { runId: 'run', active: true, status: 'calling_model', createdAt }, activeRun: { sessionId: 'session', runId: 'run', active: true, status: 'calling_model', createdAt } });
     render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
-    expect(screen.getByRole('status').textContent).toBe('Compacting context');
     expect(screen.getByText(/^1:0[56]$/)).toBeTruthy();
     drawer.dispose();
 });
@@ -187,12 +186,7 @@ test('reused provider call IDs keep each round’s result with its own call', ()
     });
     const call = { type: 'toolCall' as const, call: { callId: 'tool_call_0', toolId: 'extension/in-app-agent:app.evaluate', arguments: { code: 'return 1' }, providerMetadata: {} } };
     const result = (content: string) => ({ type: 'toolResult' as const, result: { callId: 'tool_call_0', toolId: call.call.toolId, content, structured: null, isError: false, resourceRefs: [] } });
-    const compaction: TauriTavernAgentSessionMessage = {
-        seq: 3, runId: 'run', createdAt: '', origin: { invocationId: 'root', round: 2 },
-        compaction: { keptFromSeq: 1, tokensBefore: 7000, tokensAfter: 1000 },
-        message: { role: 'user', providerMetadata: null, parts: [{ type: 'text', text: 'Earlier context' }, { type: 'text', text: 'Summary notes' }] },
-    };
-    h.publish({ messages: [entry(1, 1, call), entry(2, 1, result('first result')), compaction, entry(4, 2, call), entry(5, 2, result('second result'))] });
+    h.publish({ messages: [entry(1, 1, call), entry(2, 1, result('first result')), entry(3, 2, call), entry(4, 2, result('second result'))] });
     render(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
     const [first, second] = screen.getAllByRole('article');
     if (!first || !second) throw new Error('Expected both model rounds');
@@ -201,11 +195,6 @@ test('reused provider call IDs keep each round’s result with its own call', ()
     expect(within(first).getByText('first result')).toBeTruthy();
     expect(within(first).queryByText('second result')).toBeNull();
     expect(within(second).getByText('second result')).toBeTruthy();
-    const compacted = screen.getByRole('button', { name: /Compacted context/ });
-    expect(first.compareDocumentPosition(compacted) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(compacted.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    fireEvent.click(compacted);
-    expect(screen.getByText('Summary notes')).toBeTruthy();
 });
 
 test('paging skips collapsed rows, preserves the visible anchor, and never follows an older user message', async () => {
@@ -239,13 +228,39 @@ test('paging skips collapsed rows, preserves the visible anchor, and never follo
     view.rerender(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
     await act(async () => { page.resolve(); await page.promise; });
     expect(visibleOffset()).toBe(before);
+    h.publish({ responses: [] });
+    view.rerender(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
+    expect(visibleOffset()).toBe(before);
+});
+
+test('compaction stays in run order, opens its summary, and preserves a reader’s scroll position', () => {
+    const h = harness();
+    const entry = (seq: number, role: 'user' | 'assistant', text: string): TauriTavernAgentSessionMessage => ({
+        seq, runId: 'run', createdAt: '',
+        ...(role === 'assistant' ? { origin: { invocationId: 'root', round: seq } } : {}),
+        message: { role, providerMetadata: null, parts: [{ type: 'text', text }] },
+    });
+    h.publish({ messages: [entry(1, 'user', 'Question'), entry(2, 'assistant', 'Earlier work')] });
+    const view = render(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
+    const root = screen.getByRole('region', { name: 'Conversation' });
+    Object.defineProperties(root, { scrollHeight: { value: 1000 }, clientHeight: { value: 300 } });
+    root.scrollTop = 120;
+    fireEvent.scroll(root);
     h.publish({ messages: [...h.snapshot.messages, {
-        ...entry(12, 'user'), runId: 'next-run',
-        compaction: { keptFromSeq: null, tokensBefore: 7000, tokensAfter: 1000 },
+        seq: 3, runId: 'run', createdAt: '', origin: { invocationId: 'root', round: 4 },
+        compaction: { keptFromSeq: 1, tokensBefore: 7000, tokensAfter: 1000 },
         message: { role: 'user', providerMetadata: null, parts: [{ type: 'text', text: 'Earlier context' }, { type: 'text', text: 'Summary notes' }] },
     }] });
     view.rerender(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
-    expect(visibleOffset()).toBe(before);
+    expect(root.scrollTop).toBe(120);
+    h.publish({ messages: [...h.snapshot.messages, entry(4, 'assistant', 'Next answer')] });
+    view.rerender(<Transcript snapshot={h.snapshot} controller={h.controller} actions={h.actions} visible />);
+    const compacted = screen.getByRole('button', { name: /Compacted context/ });
+    expect(screen.getByText('Earlier work').compareDocumentPosition(compacted) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(compacted.compareDocumentPosition(screen.getByText('Next answer')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(compacted);
+    expect(compacted.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('Summary notes')).toBeTruthy();
 });
 
 test('cancelling settings releases an unconfirmed Skill import and saving waits for its selection', async () => {

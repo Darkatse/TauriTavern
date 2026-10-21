@@ -115,7 +115,7 @@ async fn agent_runtime_parent_and_child_read_their_own_skill_binding() {
                 profile,
                 &mut receiver,
             ),
-            resolve_contract_prompt_assembly(&fixture, &run.id)
+            resolve_contract_prompt_assembly(&fixture, &run.id, delegated_prompt_snapshot)
         );
         result
     })

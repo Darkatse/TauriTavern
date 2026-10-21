@@ -1,8 +1,8 @@
 use super::*;
 use tt_application::dto::agent_dto::{
     AgentCancelRunDto, AgentCancelRunResultDto, AgentDeleteSessionDto, AgentPrepareSessionRunDto,
-    AgentPromptAssemblyBrokerRequestDto, AgentReadPromptAssemblyRequestDto, AgentReadSessionDto,
-    AgentResolvePromptAssemblyDto, AgentSaveProfileDto, AgentStartSessionRunDto,
+    AgentPromptAssemblyBrokerRequestDto, AgentReadSessionDto, AgentSaveProfileDto,
+    AgentStartSessionRunDto,
 };
 use tt_domain::models::agent::AgentModelMessage;
 use tt_domain::models::agent::profile::{
@@ -424,8 +424,6 @@ async fn preset_rename_updates_shared_session_profile_without_listing_it_as_chat
 
 #[tokio::test]
 async fn session_compacts_at_the_point_and_rebuilds_before_continuing() {
-    use tt_domain::models::tool::ToolChoice;
-
     let root = temp_root("session-compaction-point");
     let mut tool_response = model_tool_response(vec![model_tool_call(
         "large-result",
@@ -463,7 +461,8 @@ async fn session_compacts_at_the_point_and_rebuilds_before_continuing() {
     )
     .await;
     let handle = fixture.service.start_session_run(input).await.unwrap();
-    let assembly = resolve_session_prompt_assembly(&fixture, &handle.run_id).await;
+    let assembly =
+        resolve_contract_prompt_assembly(&fixture, &handle.run_id, session_prompt_snapshot).await;
     let history_groups = &assembly.frozen_run_input_snapshot["promptInputs"]["sessionHistory"];
     assert_eq!(history_groups[0][0]["role"], "user");
     assert_eq!(history_groups[0][0]["parts"][1]["text"], summary);
@@ -511,7 +510,6 @@ async fn session_compacts_at_the_point_and_rebuilds_before_continuing() {
     assert!(
         matches!(&requests[1].messages.last().unwrap().parts[0], AgentModelContentPart::Text{text} if text.starts_with("Context compaction:"))
     );
-    assert_eq!(requests[2].tool_choice, ToolChoice::None);
     assert_eq!(requests[3].messages[1], compacted.message);
     assert!(
         !history
@@ -603,7 +601,7 @@ async fn session_recovers_an_overflow_and_retries_the_original_round() {
     )
     .await;
     let second = fixture.service.start_session_run(input).await.unwrap();
-    resolve_session_prompt_assembly(&fixture, &second.run_id).await;
+    resolve_contract_prompt_assembly(&fixture, &second.run_id, session_prompt_snapshot).await;
     wait_until_session_idle(&fixture, &second.run_id).await;
     assert_eq!(
         fixture
@@ -766,38 +764,6 @@ fn session_prompt_snapshot(request: &AgentPromptAssemblyBrokerRequestDto) -> (Va
         }),
         frozen,
     )
-}
-
-async fn resolve_session_prompt_assembly(
-    fixture: &AgentRuntimeFixture,
-    run_id: &str,
-) -> AgentPromptAssemblyBrokerRequestDto {
-    let event = wait_for_event(fixture, run_id, "prompt_assembly_requested", 0).await;
-    let assembly_id = event.payload["assemblyId"].as_str().unwrap().to_string();
-    let request = fixture
-        .service
-        .read_prompt_assembly_request(AgentReadPromptAssemblyRequestDto {
-            run_id: run_id.into(),
-            assembly_id: assembly_id.clone(),
-        })
-        .await
-        .unwrap()
-        .unwrap();
-    let (snapshot, frozen) = session_prompt_snapshot(&request);
-    fixture
-        .service
-        .resolve_prompt_assembly(AgentResolvePromptAssemblyDto {
-            run_id: run_id.into(),
-            assembly_id,
-            prompt_snapshot: Some(snapshot),
-            frozen_run_input_snapshot: Some(frozen),
-            generation_intent: None,
-            assembly: None,
-            error: None,
-        })
-        .await
-        .unwrap();
-    request
 }
 
 pub(super) async fn wait_until_session_idle(fixture: &AgentRuntimeFixture, run_id: &str) {

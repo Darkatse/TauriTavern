@@ -61,9 +61,34 @@ fn message_text_for_role(request: &AgentModelRequest, role: AgentModelRole) -> &
         .expect("message text for role")
 }
 
+fn delegated_prompt_snapshot(
+    request: &tt_application::dto::agent_dto::AgentPromptAssemblyBrokerRequestDto,
+) -> (Value, Value) {
+    let preset_content = request.settings["prompts"][0]["content"].as_str().unwrap();
+    (
+        json!({
+            "contextPolicy": request.agent_context_policy,
+            "messages": [
+                { "role": "system", "parts": [{ "type": "text", "text": format!("{}\n{preset_content}", request.agent_system_prompt) }],
+                  "providerMetadata": { "promptComponent": "agentSystemPrompt" } },
+                { "role": "user", "parts": [{ "type": "text", "text": request.agent_task_prompt.as_ref().unwrap() }],
+                  "providerMetadata": { "promptComponent": "agentTask" } }
+            ],
+            "generationParameters": {
+                "chat_completion_source": request.settings["chat_completion_source"],
+                "model": request.settings["model"],
+            }
+        }),
+        request.frozen_run_input_snapshot.clone(),
+    )
+}
+
 async fn resolve_contract_prompt_assembly(
     fixture: &AgentRuntimeFixture,
     run_id: &str,
+    build_snapshot: fn(
+        &tt_application::dto::agent_dto::AgentPromptAssemblyBrokerRequestDto,
+    ) -> (Value, Value),
 ) -> tt_application::dto::agent_dto::AgentPromptAssemblyBrokerRequestDto {
     use tt_application::dto::agent_dto::{
         AgentReadPromptAssemblyRequestDto, AgentResolvePromptAssemblyDto,
@@ -80,25 +105,20 @@ async fn resolve_contract_prompt_assembly(
         .await
         .unwrap()
         .unwrap();
-    let preset_content = request.settings["prompts"][0]["content"].as_str().unwrap();
-    fixture.service.resolve_prompt_assembly(AgentResolvePromptAssemblyDto {
-        run_id: run_id.into(), assembly_id,
-        prompt_snapshot: Some(json!({
-            "contextPolicy": request.agent_context_policy,
-            "messages": [
-                { "role": "system", "parts": [{ "type": "text", "text": format!("{}\n{preset_content}", request.agent_system_prompt) }],
-                  "providerMetadata": { "promptComponent": "agentSystemPrompt" } },
-                { "role": "user", "parts": [{ "type": "text", "text": request.agent_task_prompt.as_ref().unwrap() }],
-                  "providerMetadata": { "promptComponent": "agentTask" } }
-            ],
-            "generationParameters": {
-                "chat_completion_source": request.settings["chat_completion_source"],
-                "model": request.settings["model"],
-            }
-        })),
-        frozen_run_input_snapshot: Some(request.frozen_run_input_snapshot.clone()),
-        generation_intent: None, assembly: None, error: None,
-    }).await.unwrap();
+    let (snapshot, frozen) = build_snapshot(&request);
+    fixture
+        .service
+        .resolve_prompt_assembly(AgentResolvePromptAssemblyDto {
+            run_id: run_id.into(),
+            assembly_id,
+            prompt_snapshot: Some(snapshot),
+            frozen_run_input_snapshot: Some(frozen),
+            generation_intent: None,
+            assembly: None,
+            error: None,
+        })
+        .await
+        .unwrap();
     request
 }
 

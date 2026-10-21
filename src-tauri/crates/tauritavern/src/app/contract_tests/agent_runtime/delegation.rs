@@ -51,7 +51,8 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
     )
     .await;
 
-    let assembly = resolve_contract_prompt_assembly(&fixture, &handle.run_id).await;
+    let assembly =
+        resolve_contract_prompt_assembly(&fixture, &handle.run_id, delegated_prompt_snapshot).await;
     assert_eq!(assembly.preset_ref.name, "Captured A");
     assert_eq!(
         assembly.agent_context_policy.initial_chat_history_messages,
@@ -261,7 +262,7 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
             "message_handoff",
             &[],
         ),
-        resolve_contract_prompt_assembly(&fixture, &handle.run_id)
+        resolve_contract_prompt_assembly(&fixture, &handle.run_id, delegated_prompt_snapshot)
     );
     commits.expect("resolve host commit");
     assert_eq!(assembly.preset_ref.name, "Captured A");
@@ -433,7 +434,7 @@ async fn agent_runtime_handoff_target_failure_keeps_root_transferred() {
         Some(false),
     )
     .await;
-    resolve_contract_prompt_assembly(&fixture, &handle.run_id).await;
+    resolve_contract_prompt_assembly(&fixture, &handle.run_id, delegated_prompt_snapshot).await;
 
     let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;
     assert_eq!(run.status, AgentRunStatus::Failed);
@@ -529,7 +530,7 @@ async fn agent_runtime_recovers_handoff_before_trailing_tool() {
         Some(false),
     )
     .await;
-    resolve_contract_prompt_assembly(&fixture, &handle.run_id).await;
+    resolve_contract_prompt_assembly(&fixture, &handle.run_id, delegated_prompt_snapshot).await;
 
     let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;
     assert_eq!(run.status, AgentRunStatus::Completed);

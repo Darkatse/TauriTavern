@@ -647,7 +647,8 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
             wait_for_event(&fixture, &handle.run_id, "prompt_assembly_requested", 0).await;
             assert_eq!(fixture.model_gateway.requests().await.len(), 1);
         } else {
-            resolve_contract_prompt_assembly(&fixture, &handle.run_id).await;
+            resolve_contract_prompt_assembly(&fixture, &handle.run_id, delegated_prompt_snapshot)
+                .await;
             let mut request_count = fixture.model_gateway.request_count.subscribe();
             tokio::time::timeout(
                 AGENT_CONTRACT_ASYNC_TIMEOUT,
