@@ -82,3 +82,4 @@ Additional Parameters 在前端准备请求时展开，后续轮次复用结果�
 | [openai.js](../../src/scripts/openai.js) | PromptManager 与生成参数 |
 | [agent-prompt-assembly-bridge.js](../../src/tauri/main/api/agent-prompt-assembly-bridge.js) | 运行中 Invocation 的组装桥接 |
 | [agent_runtime_service/prompt_assembly.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/prompt_assembly.rs) | 等待组装结果与保存快照 |
+| [agent_runtime_service/session_context.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/session_context.rs) | Session 历史选取、分组、计数与压缩重组 |

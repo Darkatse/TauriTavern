@@ -6,7 +6,7 @@
 
 - 入口等待 Host ready、注册工具，再通过 APP_READY 回调挂载。不能在扩展顶层等待 APP_READY：上游在扩展加载完成后才发出该事件。
 - 一个 React root 对应一个 controller；首次打开读取配置和历史，隐藏保留视图与订阅，卸载释放订阅但不取消原生 Run。
-- 首次选择模型时保存 Profile，引用内置 `openai/Agent` 预设，默认开启 `app.snapshot`、`app.interact`、`app.evaluate`、`app.read_logs`；其他工具按需选入。Agent 预设不含角色扮演提示词，省略采样参数，默认上下文 128k、最大回复 32k。已有 Profile 保留用户选择与指令，新工具从助手设置显式启用。
+- 首次选择模型时保存 Profile，引用内置 `openai/Agent` 预设，默认开启 `app.snapshot`、`app.interact`、`app.evaluate`、`app.read_logs`；其他工具按需选入。预设取值与取舍见[内置 Agent 预设](../Agent/ProfilesAndPreset.md#内置-agent-预设)。已有 Profile 保留用户选择与指令，新工具从助手设置显式启用。
 - 输入框中的模型与推理强度选择立即保存，并同步到未保存的设置草稿；修改影响下次发送，不改变运行中的冻结输入。
 - 会话选择保存在 `localStorage`：null 表示新对话，未保存或目标已删除时打开最近会话。`extension.store` 保存宽度偏好；Session 数据与共享 Profile 由 Session API 管理。
 - Skill 使用助手 Profile 的作用域，与 Skill Manager 共用[导入准入](../API/Skill.md#预览与安装)。取消设置释放待确认来源，但不撤销已完成的安装；选择 Skill 不自动启用 Shell。
@@ -25,7 +25,7 @@
 
 运行状态以后端活动 Run 为准；没有活动 Run 且缺少终态证据时显示 interrupted，不重放工具。
 
-上下文达到预设预算的压缩点或服务商报告超窗时，由 runtime 自动压缩，规则见[运行循环](../Agent/Runtime.md#session-上下文压缩)。状态条显示正在压缩；Transcript 在所属 Run 的工作条目之间显示“已压缩上下文”和前后 token 数，展开可读摘要。压缩记录不显示为用户气泡，也不触发新用户消息的自动跟随；原始对话仍保留在历史中。
+上下文达到预设预算的压缩点或服务商报告超窗时，由 runtime 自动压缩，规则见[运行循环](../Agent/Runtime.md#session-上下文压缩)。状态条显示正在压缩；Transcript 在所属 Run 的工作条目之间显示“已压缩上下文”和前后 token 数，展开可读摘要。压缩记录不显示为用户气泡，也不触发新用户消息的自动跟随；原始对话仍保留在历史中。Run 中途压缩需要页面在线；页面重载后，宿主会恢复仍活动 Run 的组装应答。
 
 ## 界面与工具边界
 

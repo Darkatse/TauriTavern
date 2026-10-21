@@ -86,9 +86,24 @@ Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点�
 
 `descriptionForAgents` 说明适合处理的工作，未填写时使用 `description`。并发、任务数量和交接深度也在 `delegation` 中设置。完整流程见 [多 Agent 协作](SubAgent.md)。
 
-## Session 配置
+## 内置 Agent 预设
 
-内置 `openai/Agent` 预设供直接与用户对话的 Agent 使用：Main Prompt 说明这类 Agent 的工作方式，具体职责写在 Profile 指令里。应用内助手首次配置默认绑定它；已保存的 Session Profile 保留原有预设和指令。预设默认上下文为 128000、最大回复为 32768，并省略采样参数，让服务商采用模型默认值。
+内置 `openai/Agent` 预设供直接与用户对话的 Agent 使用：Main Prompt 说明这类 Agent 的工作方式，具体职责写在 Profile 指令里。应用内助手首次配置默认绑定它；已保存的 Session Profile 保留原有预设和指令。预设不指定模型、来源或端点，连接仍由 Profile 决定。
+
+| 取值 | 理由与调整边界 |
+| --- | --- |
+| 上下文 `128000` | 为多轮对话与工具结果留出空间，沿用 SillyTavern 的 128k 取值。用户应按所选模型的实际窗口调大或调小。 |
+| 最大回复 `32768` | 为思考、长回答和工具调用代码留出输出预算；这部分会从上下文预算中预留。模型拒绝此上限时，用户可调小；需要更长输出时按模型限制调大。 |
+| 省略 `temperature`、`frequency_penalty`、`presence_penalty`、`top_p`、`top_k`、`top_a`、`min_p`、`repetition_penalty` | 采用服务商为模型提供的采样默认值。 |
+| `use_sysprompt: true` | 让 Claude、Gemini、Bedrock 等来源按各自协议发送系统提示词。 |
+| `media_inlining: true` | 允许既有媒体内联流程按模型能力将媒体加入请求。 |
+| 角色扮演包装句为空 | 直接面向用户的 Agent 不需要聊天、群聊、示例、续写或代写包装句。 |
+| 保留角色与世界书标记 | 沿用 SillyTavern 标准预设结构；Session 没有相应材料时为空，不产生消息。 |
+| `agentSystemPrompt` 在 Main Prompt 前，`agentTask` 在历史前，`agentResults` 在末尾 | 沿用 PromptManager 的默认插入位置，加载后无需改写顺序。 |
+
+预设是用户可编辑的内容。内置文件播种不覆盖已有同名文件，也不迁移已保存 Profile 的选择。
+
+## Session 配置
 
 Session 使用相同的 `AgentProfileDefinition`，独立保存到 `_tauritavern/agent-workspaces/sessions/profile.json`，由所有 Session 共用，不进入普通 Profile 列表。修改从下一次发送准备时生效；预设重命名同时更新其引用。
 
