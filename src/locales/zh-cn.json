@@ -751,6 +751,8 @@
     "comma delimited,no spaces between": "以逗号分隔，无需空格",
     "Start Reply With": "以...开始回复",
     "Show reply prefix in chat": "在聊天中显示回复前缀",
+    "Show Save Progress": "显示保存进度",
+    "Shows chat write progress in the status line at the bottom left. Applies to this device only.": "在左下角状态行显示聊天写盘进度。仅对本设备生效。",
     "World Info": "世界信息",
     "Locked = World Editor will stay open": "锁定 = 世界编辑器将保持打开状态",
     "Worlds/Lorebooks": "世界/知识书",

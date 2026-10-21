@@ -53,6 +53,7 @@ export type SettingsValues = {
     allowKeysExposure: boolean;
     avatarPersonaOriginalImagesEnabled: boolean;
     oledBackgroundEnabled: boolean;
+    saveProgressEnabled: boolean;
     dynamicTheme: {
         themeEnabled: boolean;
         dayTheme: string;
@@ -122,6 +123,7 @@ export type SettingsDraft = {
     allowKeysExposure: boolean;
     avatarPersonaOriginalImagesEnabled: boolean;
     oledBackgroundEnabled: boolean;
+    saveProgressEnabled: boolean;
     dynamicTheme: {
         themeEnabled: boolean;
         dayTheme: string;
@@ -169,6 +171,7 @@ export function createSettingsDraft(values: SettingsValues): SettingsDraft {
         allowKeysExposure: values.allowKeysExposure,
         avatarPersonaOriginalImagesEnabled: values.avatarPersonaOriginalImagesEnabled,
         oledBackgroundEnabled: values.oledBackgroundEnabled,
+        saveProgressEnabled: values.saveProgressEnabled,
         dynamicTheme: {
             themeEnabled: values.dynamicTheme.themeEnabled,
             dayTheme: values.dynamicTheme.dayTheme,

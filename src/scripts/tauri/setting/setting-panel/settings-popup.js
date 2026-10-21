@@ -14,6 +14,7 @@ import { buildTauriTavernSettingsUpdate } from './settings-patch.js';
 import { applyTauriTavernSettingsUpdateEffects } from './settings-effects.js';
 import { callTauriTavernPanelPopup, createTauriTavernPanelPopup } from '../panel-popup.js';
 import { setOledBackgroundEnabled } from '../oled-background.js';
+import { setSaveProgressEnabled } from '../../save-progress-indicator.js';
 
 const SETTINGS_STYLE_ID = 'tauritavern-settings-style';
 
@@ -110,6 +111,12 @@ const HELP_TOPICS = {
         title: 'OLED Pure Black Background',
         lines: [
             'Use pure black backgrounds and hide wallpaper on this device, keeping theme text and accent colors.',
+        ],
+    },
+    saveProgress: {
+        title: 'Show Save Progress',
+        lines: [
+            'Shows chat write progress in the status line at the bottom left. Applies to this device only.',
         ],
     },
     dynamicTheme: {
@@ -477,6 +484,10 @@ export async function openTauriTavernSettingsPopup() {
                             console.warn('Could not save OLED background setting:', error);
                             toastr.warning(translate('Could not save OLED background setting.'));
                         }
+                    }
+
+                    if (draft.saveProgressEnabled !== viewModel.values.saveProgressEnabled) {
+                        setSaveProgressEnabled(draft.saveProgressEnabled);
                     }
                     return true;
                 } catch (error) {

@@ -4,8 +4,11 @@ import { BYTE_HEADERS } from '../../kernel/byte-protocol.js';
 /**
  * Own a bounded byte commit from begin through finish/abort.
  * Callers capture their immutable snapshot before entering this asynchronous boundary.
+ *
+ * `onProgress` receives the accepted offset after every frame. It is advisory only and
+ * never changes the commit outcome, so a throwing listener has to be caught by the caller.
  */
-export async function commitBytes({ begin, frames, append, finish, abort }) {
+export async function commitBytes({ begin, frames, append, finish, abort, onProgress }) {
     const session = await begin();
     const sessionId = String(session?.sessionId || '').trim();
     if (!sessionId) throw new Error('Host did not return a commit session id');
@@ -24,6 +27,7 @@ export async function commitBytes({ begin, frames, append, finish, abort }) {
                 throw new Error(`Host commit returned unexpected offset ${accepted}`);
             }
             offset = accepted;
+            onProgress?.(offset);
         }
     } catch (error) {
         try {

@@ -364,6 +364,19 @@ function SettingsApp({
                     onPatch={patch => controller.patchDynamicTheme(patch)}
                     onShowHelp={showHelp}
                 />
+
+                <SettingRow
+                    label={tr('Show Save Progress')}
+                    helpTopic="saveProgress"
+                    helpTitle={tr('Shows chat write progress in the status line at the bottom left. Applies to this device only.')}
+                    onHelp={showHelp}
+                >
+                    <ToggleSwitch
+                        checked={draft.saveProgressEnabled}
+                        ariaLabel={tr('Show Save Progress')}
+                        onChange={checked => controller.updateDraft('saveProgressEnabled', checked)}
+                    />
+                </SettingRow>
             </SettingsSection>
 
             <SettingsSection title={tr('Development')} icon="fa-code">

@@ -15,10 +15,10 @@ const TARGET = Object.freeze({
     fileName: 'Story',
 });
 
-function installRuntime(identity, invoke) {
+function installRuntime(identity, invoke, windowExtras = {}) {
     const previousWindow = globalThis.window;
     const restoreIdentity = installHostIdentity(identity);
-    globalThis.window = { __TAURI__: { core: { invoke } } };
+    globalThis.window = { __TAURI__: { core: { invoke } }, ...windowExtras };
     return () => {
         restoreIdentity();
         if (previousWindow === undefined) {
@@ -279,4 +279,71 @@ test('cold commit captures source references before asynchronous transport', asy
         assert.equal(message.tt_swipe_cold.sourceId, 7);
         assert.equal(message.mes, 'active');
     } finally { restore(); }
+});
+
+function collectCommitProgress() {
+    const events = [];
+    return {
+        events,
+        dispatchEvent: event => { events.push(event.detail); },
+        /** The last event that still described a live commit. */
+        lastLive: () => events.filter(event => event.primary !== null).at(-1)?.primary ?? null,
+    };
+}
+
+test('chat payload commits report their kind and real byte progress', async () => {
+    const progress = collectCommitProgress();
+    const host = createCommitHost({ maxFrameBytes: 7 });
+    const restore = installRuntime(HOSTS.android, host.invoke, { dispatchEvent: progress.dispatchEvent });
+
+    try {
+        await commit([{ chat_metadata: {} }, { mes: '你好 👋\nsecond line'.repeat(6) }]);
+
+        assert.ok(progress.events.length > 2, 'every frame and both edges emit');
+        assert.equal(progress.events[0].primary.kind, 'payload');
+        assert.equal(progress.events[0].primary.percent, 0);
+
+        // Percent is monotonic and reaches 100 before the commit is released.
+        const percent = progress.events.filter(event => event.primary).map(event => event.primary.percent);
+        assert.deepEqual(percent, [...percent].sort((a, b) => a - b));
+        assert.equal(progress.lastLive().percent, 100);
+
+        // The commit is released once it settles, so the queue signal drops back to empty.
+        assert.equal(progress.events.at(-1).pending, 0);
+        assert.equal(progress.events.at(-1).primary, null);
+    } finally {
+        restore();
+    }
+});
+
+test('metadata commits report their own kind and reach 100 in a single frame', async () => {
+    const progress = collectCommitProgress();
+    const host = createCommitHost();
+    const restore = installRuntime(HOSTS.windows, host.invoke, { dispatchEvent: progress.dispatchEvent });
+
+    try {
+        await commitChatMetadata({ target: TARGET, chatMetadata: { variables: { score: 1 } } });
+
+        assert.equal(progress.events[0].primary.kind, 'metadata');
+        assert.equal(progress.lastLive().percent, 100);
+        assert.equal(progress.events.at(-1).pending, 0);
+    } finally {
+        restore();
+    }
+});
+
+test('failed commits still release their progress slot', async () => {
+    const progress = collectCommitProgress();
+    const host = createCommitHost({
+        onAppend: () => { throw new Error('append failed'); },
+    });
+    const restore = installRuntime(HOSTS.macos, host.invoke, { dispatchEvent: progress.dispatchEvent });
+
+    try {
+        await assert.rejects(() => commit([{ mes: 'failure' }]), /append failed/);
+        assert.equal(progress.events.at(-1).pending, 0);
+        assert.equal(progress.events.at(-1).primary, null);
+    } finally {
+        restore();
+    }
 });

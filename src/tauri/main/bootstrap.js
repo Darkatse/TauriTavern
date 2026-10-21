@@ -379,6 +379,10 @@ export function bootstrapTauriMain() {
     runAfterTauriReady(() => import('../../scripts/tauri/setting/setting-panel.js')
         .then(({ installTauriTavernSettingsPanel }) => installTauriTavernSettingsPanel())
         .catch((error) => { console.warn('TauriTavern: Failed to load settings panels:', error); }));
+    // Decoration only: the indicator reads no application state, so it can mount before APP_READY.
+    runAfterTauriReady(() => import('../../scripts/tauri/save-progress-indicator.js')
+        .then(({ installSaveProgressIndicator }) => installSaveProgressIndicator())
+        .catch((error) => { console.warn('TauriTavern: Failed to install the save progress indicator:', error); }));
     // This panel imports application state as well as rendering it.
     eventSource.once(event_types.APP_READY, () => {
         void import('../../scripts/tauri/generation-params/panel.js')

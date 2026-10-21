@@ -8,6 +8,7 @@ import {
 } from '../../../../tauri-bridge.js';
 import { getActiveIosPolicyCapabilities } from '../../../tauritavern/ios-policy.js';
 import { isOledBackgroundEnabled } from '../oled-background.js';
+import { isSaveProgressEnabled } from '../../save-progress-indicator.js';
 import { createDataRootState, createTauriTavernSettingsState } from './settings-state.js';
 
 export function resolveTauriTavernSettingsCapabilities() {
@@ -57,6 +58,7 @@ export async function loadTauriTavernSettingsViewModel() {
         values: {
             ...createTauriTavernSettingsState(settings),
             oledBackgroundEnabled: isOledBackgroundEnabled(),
+            saveProgressEnabled: isSaveProgressEnabled(),
         },
     };
 }
