@@ -12,7 +12,7 @@ Runtime 创建 Run，初始化工作区，保存输入和解析后的 Profile，
 
 `sessions.send()` 每次创建一个 Run，共用该 Session 的历史与工作区。Rust 选取历史并按工具协议成组，PromptManager 负责布局；宏环境从完整会话求出并冻结。同一 Session 只允许一个活跃 Run；准备期间历史发生变化时拒绝启动。
 
-Session 发送时交回组装请求，runtime 与冻结输入一起保留。Session、委派与交接共用宿主组装桥；页面启动从 bootstrap 取得本进程活动 Session Run 的 ID，在 `APP_READY` 后重新挂桥，此时扩展工具已注册。
+Session 发送时只在组装请求中交回接受的冻结输入，runtime 在 start 处确定其 fingerprint 并派生元数据。Session、委派与交接共用宿主组装桥；宿主在 `APP_READY` 后查询 runtime 的全部活动 Run 并挂桥，此时扩展工具已注册。重建沿用已绑定的模型 payload，只取新快照的消息，不重新解析连接。
 
 ## 每一轮
 

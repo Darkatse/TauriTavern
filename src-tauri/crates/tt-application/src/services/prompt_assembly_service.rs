@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use crate::dto::agent_dto::{
     AgentPreparePromptAssemblyDto, AgentPreparePromptAssemblyResultDto,
     AgentPromptAssemblyBrokerRequestDto, AgentPromptAssemblyFingerprintDto,
-    AgentPromptAssemblyModeDto, AgentPromptAssemblyRequestMetadataDto, AgentPromptAssemblyScopeDto,
+    AgentPromptAssemblyModeDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::{
@@ -52,8 +52,7 @@ pub struct PromptAssemblyService {
 
 #[derive(Debug, Clone)]
 pub struct AgentInvocationPromptAssemblyContext {
-    pub assembly_id: String,
-    pub scope: AgentPromptAssemblyScopeDto,
+    pub exit_policy: AgentInvocationExitPolicy,
     pub agent_task_prompt: Option<String>,
     pub required_agent_prompt_components: Vec<String>,
 }
@@ -106,13 +105,13 @@ impl PromptAssemblyService {
                 assembly: None,
             });
         }
-        let (request, metadata) = self
+        let request = self
             .build_prompt_assembly_request(dto, profile, visible_tools, None, exit_policy)
             .await?;
         Ok(AgentPreparePromptAssemblyResultDto {
             mode: AgentPromptAssemblyModeDto::FrontendPromptAssembly,
+            assembly: Some(request.metadata()),
             request: Some(request),
-            assembly: Some(metadata),
         })
     }
 
@@ -122,14 +121,8 @@ impl PromptAssemblyService {
         profile: ResolvedAgentProfile,
         visible_tools: &[AgentModelTool],
         context: AgentInvocationPromptAssemblyContext,
-    ) -> Result<
-        (
-            AgentPromptAssemblyBrokerRequestDto,
-            AgentPromptAssemblyRequestMetadataDto,
-        ),
-        ApplicationError,
-    > {
-        let exit_policy = context.scope.exit_policy;
+    ) -> Result<AgentPromptAssemblyBrokerRequestDto, ApplicationError> {
+        let exit_policy = context.exit_policy;
         self.build_prompt_assembly_request(dto, profile, visible_tools, Some(context), exit_policy)
             .await
     }
@@ -163,13 +156,7 @@ impl PromptAssemblyService {
         visible_tools: &[AgentModelTool],
         invocation_context: Option<AgentInvocationPromptAssemblyContext>,
         exit_policy: AgentInvocationExitPolicy,
-    ) -> Result<
-        (
-            AgentPromptAssemblyBrokerRequestDto,
-            AgentPromptAssemblyRequestMetadataDto,
-        ),
-        ApplicationError,
-    > {
+    ) -> Result<AgentPromptAssemblyBrokerRequestDto, ApplicationError> {
         let generation_type = normalize_generation_type(&dto.generation_type)?;
         let frozen_run_input_snapshot =
             normalize_frozen_run_input_snapshot(&dto.frozen_run_input_snapshot, &generation_type)?;
@@ -200,12 +187,8 @@ impl PromptAssemblyService {
         let request = AgentPromptAssemblyBrokerRequestDto {
             schema_version: PROMPT_ASSEMBLY_REQUEST_SCHEMA_VERSION,
             kind: PROMPT_ASSEMBLY_REQUEST_KIND.to_string(),
-            assembly_id: invocation_context
-                .as_ref()
-                .map(|context| context.assembly_id.clone()),
-            scope: invocation_context
-                .as_ref()
-                .map(|context| context.scope.clone()),
+            assembly_id: None,
+            scope: None,
             profile_id: profile.id.as_str().to_string(),
             generation_type,
             frozen_run_input_snapshot,
@@ -224,8 +207,7 @@ impl PromptAssemblyService {
             json_schema: dto.json_schema,
             fingerprint,
         };
-        let metadata = request.metadata();
-        Ok((request, metadata))
+        Ok(request)
     }
 
     async fn resolve_openai_preset(

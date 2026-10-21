@@ -40,7 +40,7 @@ live 根生成同样先投影。live `{{outlet}}` 读取全局扩展提示词，
   → startRunWithPromptSnapshot：Rust 创建 Run 并开始循环
 ```
 
-运行中的组装通过同一宿主往返：runtime 写入 `prompt_assembly_requested` 事件，host bridge 按请求 ID 读取组装输入，调用同一个前端组装器，再把结果交回等待中的 Invocation。委派与交接先按接收方 Profile 生成请求；Session 保留发送时的组装请求和冻结输入。页面启动根据 bootstrap 中的活动 Session Run ID，在 `APP_READY` 后重新挂桥，已完成的组装请求在事件重放中跳过。缺少当前预设时返回 `prompt_assembly.current_preset_unavailable`；需要预设身份而当前预设未命名时返回 `agent.current_preset_unnamed`。
+运行中的组装通过同一宿主往返：runtime 写入 `prompt_assembly_requested` 事件，host bridge 按请求 ID 读取组装输入，调用同一个前端组装器，再把结果交回等待中的 Invocation。委派与交接先按接收方 Profile 生成请求；Session 保留发送时包含已接受冻结输入的组装请求。宿主往返生成组装 ID 并从 scope 取得运行身份。宿主在 `APP_READY` 后为全部活动 Run 挂桥；待决查询以请求或 null 表达当前状态。缺少当前预设时返回 `prompt_assembly.current_preset_unavailable`；需要预设身份而当前预设未命名时返回 `agent.current_preset_unnamed`。
 
 `agentSystemPrompt` 是 Profile 指令在 PromptManager 中的位置，`agentTask` 是委派或交接任务的位置。Preset 控制组件的位置和 role，runtime 消费最终组装好的消息。
 

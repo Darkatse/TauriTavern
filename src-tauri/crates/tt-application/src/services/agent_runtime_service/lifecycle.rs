@@ -206,7 +206,6 @@ impl AgentRuntimeService {
                 .execute_agent_loop_run(
                     background_run_id,
                     prompt_snapshot,
-                    request,
                     resolved_profile,
                     effective_skills,
                     None,

@@ -714,8 +714,9 @@ pub(super) async fn prepare_input(
         })
         .await
         .unwrap();
-    let request = prepared.assembly.request.unwrap();
+    let mut request = prepared.assembly.request.unwrap();
     let (prompt_snapshot, frozen_run_input_snapshot) = session_prompt_snapshot(&request);
+    request.frozen_run_input_snapshot = frozen_run_input_snapshot;
     AgentStartSessionRunDto {
         session_id: session_id.into(),
         text: text.into(),
@@ -723,7 +724,6 @@ pub(super) async fn prepare_input(
         expected_history_seq: prepared.expected_history_seq,
         prompt_assembly_request: request,
         prompt_snapshot,
-        frozen_run_input_snapshot,
         generation_intent: None,
         stream: Some(false),
     }
@@ -781,6 +781,7 @@ async fn resolve_session_prompt_assembly(
             assembly_id: assembly_id.clone(),
         })
         .await
+        .unwrap()
         .unwrap();
     let (snapshot, frozen) = session_prompt_snapshot(&request);
     fixture

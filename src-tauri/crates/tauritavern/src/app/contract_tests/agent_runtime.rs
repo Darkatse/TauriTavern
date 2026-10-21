@@ -78,6 +78,7 @@ async fn resolve_contract_prompt_assembly(
             assembly_id: assembly_id.clone(),
         })
         .await
+        .unwrap()
         .unwrap();
     let preset_content = request.settings["prompts"][0]["content"].as_str().unwrap();
     fixture.service.resolve_prompt_assembly(AgentResolvePromptAssemblyDto {

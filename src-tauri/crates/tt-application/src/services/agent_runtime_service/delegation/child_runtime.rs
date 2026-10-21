@@ -4,7 +4,7 @@ use tt_ports::workspace_fs::WorkspaceWriteGuard;
 use super::super::loop_runner::AgentLoopExit;
 use super::rendering::{render_child_task_prompt, render_handoff_task_prompt};
 use super::task_status::task_is_terminal;
-use crate::dto::agent_dto::AgentPromptAssemblyScopeDto;
+use crate::dto::agent_dto::{AgentPreparePromptAssemblyDto, AgentPromptAssemblyScopeDto};
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::{
     AgentProfileResolveInput, ensure_profile_model_configured, validate_chat_profile,
@@ -13,7 +13,7 @@ use crate::services::agent_runtime_service::commit_ledger::RunCommitLedger;
 use crate::services::agent_runtime_service::continuation::InvocationFrame;
 use crate::services::agent_runtime_service::model_stream_projection::clear_live_invocation;
 use crate::services::agent_runtime_service::prompt_snapshot::{
-    request_from_prompt_snapshot, request_summary, runtime_context_from_snapshot,
+    request_summary, runtime_context_from_snapshot,
 };
 use crate::services::agent_runtime_service::skill_scope::{
     skill_event_summary, skill_scope_order_for_profile,
@@ -23,6 +23,7 @@ use crate::services::agent_runtime_service::{
     AgentCancelReceiver, AgentRuntimeService, PreparedInvocation,
 };
 use crate::services::agent_tools::{TASK_RETURN, builtin_model_alias};
+use crate::services::prompt_assembly_service::AgentInvocationPromptAssemblyContext;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentDelegationContinuation, AgentInvocation, AgentInvocationStatus, AgentRunEventLevel,
@@ -233,14 +234,12 @@ impl AgentRuntimeService {
         let invocation_id = invocation.id.as_str();
         let mut profile = self.resolve_task_profile(task).await?;
         ensure_profile_model_configured(&profile)?;
-        let (invocation_kind, task_prompt) = match task.continuation {
+        let task_prompt = match task.continuation {
             AgentDelegationContinuation::ReturnToParent => {
                 profile.run.presentation = AgentRunPresentation::Background;
-                ("subagent", render_child_task_prompt(task))
+                render_child_task_prompt(task)
             }
-            AgentDelegationContinuation::TransferControl => {
-                ("handoff", render_handoff_task_prompt(task))
-            }
+            AgentDelegationContinuation::TransferControl => render_handoff_task_prompt(task),
         };
         validate_chat_profile(&profile, invocation.exit_policy, profile.run.presentation)?;
         let prompt_snapshot = self
@@ -270,24 +269,39 @@ impl AgentRuntimeService {
         let scope = AgentPromptAssemblyScopeDto {
             run_id: run_id.to_string(),
             invocation_id: invocation_id.to_string(),
-            invocation_kind: invocation_kind.to_string(),
-            parent_invocation_id: Some(task.parent_invocation_id.clone()),
+            invocation_kind: invocation.kind,
+            parent_invocation_id: invocation.parent_invocation_id.clone(),
             task_id: Some(task.id.clone()),
             exit_policy: invocation.exit_policy,
         };
-        let invocation_prompt_snapshot = self
-            .assemble_invocation_prompt_snapshot(
-                &profile,
+        let request = self
+            .prompt_assembly_service
+            .prepare_invocation_frontend_prompt_assembly(
+                AgentPreparePromptAssemblyDto {
+                    profile_id: Some(profile.id.as_str().to_owned()),
+                    generation_type: run.chat_target()?.generation_type.clone(),
+                    frozen_run_input_snapshot: frozen_run_input_snapshot_from_prompt_snapshot(
+                        &prompt_snapshot,
+                    )?,
+                    json_schema: None,
+                },
+                profile.clone(),
                 &visible_tools,
-                run.chat_target()?.generation_type.as_str(),
-                frozen_run_input_snapshot_from_prompt_snapshot(&prompt_snapshot)?,
-                &scope,
-                task_prompt,
-                cancel,
+                AgentInvocationPromptAssemblyContext {
+                    exit_policy: invocation.exit_policy,
+                    agent_task_prompt: Some(task_prompt),
+                    required_agent_prompt_components: vec![
+                        "agentSystemPrompt".into(),
+                        "agentTask".into(),
+                    ],
+                },
             )
             .await?;
-        let mut request = request_from_prompt_snapshot(&invocation_prompt_snapshot)?;
-        self.resolve_model_binding(run_id, &profile, &mut request)
+        let invocation_prompt_snapshot = self
+            .request_host_prompt_assembly(&profile, request, scope, cancel)
+            .await?;
+        let request = self
+            .bind_invocation_model_request(run_id, &profile, &invocation_prompt_snapshot)
             .await?;
         let (skill_scope_order, effective_skills) = self
             .resolve_child_effective_skills(&profile, &run.chat_target()?.skill_scope_refs)

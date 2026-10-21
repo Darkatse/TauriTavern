@@ -116,13 +116,9 @@ try {
         const release = Promise.withResolvers();
         let started;
         const runId = variables ? 'session-run-explicit' : 'session-run-default';
-        const subscriptions = [];
         const sessions = createAgentSessionsApi({
             promptAssembly: { buildSnapshot: buildPromptAssemblySnapshot },
-            subscribe(id, _handler, options) {
-                subscriptions.push({ runId: id, afterSeq: options.afterSeq });
-                return () => {};
-            },
+            attachAssemblyBridge() {},
             async safeInvoke(command, { dto } = {}) {
                 switch (command) {
                     case 'load_agent_session_profile':
@@ -153,12 +149,11 @@ try {
         extension_settings.variables.global = { globalValue: 'later-live-global' };
         release.resolve();
         await sending;
-        assert.deepEqual(subscriptions, [{ runId, afterSeq: 0 }]);
         const expectedLocal = variables ? 'explicit-local' : '';
         assert.ok(started.promptSnapshot.messages.some(item => item.parts.some(part =>
             part.text === `Local=${expectedLocal};Global=captured-global;Char=;Last=Own Session input.`)));
-        assert.deepEqual(started.frozenRunInputSnapshot.variables.local, originalVariables?.local ?? {});
-        assert.deepEqual(started.frozenRunInputSnapshot.variables.global, { globalValue: 'captured-global' });
+        assert.deepEqual(started.promptAssemblyRequest.frozenRunInputSnapshot.variables.local, originalVariables?.local ?? {});
+        assert.deepEqual(started.promptAssemblyRequest.frozenRunInputSnapshot.variables.global, { globalValue: 'captured-global' });
         assert.deepEqual(variables, originalVariables);
         assert.equal(extension_settings.variables.global.globalValue, 'later-live-global');
         assert.equal(script.chat_metadata.variables.sessionValue, 'foreground-chat');

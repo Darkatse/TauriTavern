@@ -7,7 +7,6 @@ use tt_domain::ios_policy::IosPolicyActivationReport;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BootstrapMetadataDto {
-    pub active_session_run_ids: Vec<String>,
     pub characters: Vec<CharacterDto>,
     pub groups: Vec<GroupDto>,
     pub avatars: Vec<String>,

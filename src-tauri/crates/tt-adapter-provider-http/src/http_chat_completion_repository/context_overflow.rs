@@ -1,13 +1,15 @@
 use std::sync::LazyLock;
 
 use regex::{RegexSet, RegexSetBuilder};
+use tt_domain::errors::DomainError;
 
-// Adapted from pi-ai 1.3.0 utils/overflow.js (MIT); transport body limits are not context limits.
+// Adapted from pi-ai 1.3.0 utils/overflow.js (MIT).
 pub(super) fn is_context_overflow(text: &str) -> bool {
     static OVERFLOW: LazyLock<RegexSet> = LazyLock::new(|| {
         RegexSetBuilder::new([
             r"prompt (?:is )?too long",
             r"prompt exceeds max length",
+            r"request_too_large",
             r"input is too long for requested model",
             r"input length and `?max_tokens`? exceed context limit",
             r"exceeds the context window",
@@ -44,4 +46,8 @@ pub(super) fn is_context_overflow(text: &str) -> bool {
     });
 
     !EXCLUDED.is_match(text) && OVERFLOW.is_match(text)
+}
+
+pub(super) fn context_overflow_error(message: impl std::fmt::Display) -> DomainError {
+    DomainError::InvalidData(format!("model.context_overflow: {message}"))
 }

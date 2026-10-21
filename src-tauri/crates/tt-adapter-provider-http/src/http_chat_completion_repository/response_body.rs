@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use tt_domain::errors::DomainError;
 
-use super::context_overflow::is_context_overflow;
+use super::context_overflow::{context_overflow_error, is_context_overflow};
 
 /// Maximum number of bytes from a non-JSON upstream body to capture in the
 /// diagnostic log. Anything larger is truncated; the full `body_len` is still
@@ -106,15 +106,15 @@ pub(super) fn parse_upstream_json_body(
     body: &[u8],
 ) -> Result<Value, DomainError> {
     match serde_json::from_slice::<Value>(body) {
-        Ok(value) => match provider_error_message(&value) {
-            Some(message) if is_context_overflow(&value.to_string()) => {
-                Err(DomainError::InvalidData(format!(
-                    "model.context_overflow: {provider_name}: {message}"
-                )))
+        Ok(value) => match provider_error(&value) {
+            Some(error) => {
+                let message = format!("{provider_name}: {}", provider_error_message(error, &value));
+                Err(if is_context_overflow(&error.to_string()) {
+                    context_overflow_error(message)
+                } else {
+                    DomainError::InvalidData(message)
+                })
             }
-            Some(message) => Err(DomainError::InvalidData(format!(
-                "{provider_name}: {message}"
-            ))),
             None => Ok(value),
         },
         Err(error) => {
@@ -135,27 +135,29 @@ pub(super) fn parse_upstream_json_body(
 }
 
 /// Provider-declared errors can arrive in a successful HTTP response.
-pub(super) fn provider_error_message(value: &Value) -> Option<String> {
-    let error = value
+pub(super) fn provider_error(value: &Value) -> Option<&Value> {
+    value
         .get("error")
         .or_else(|| value.pointer("/detail/error"))
-        .filter(|error| !error.is_null() && **error != Value::Bool(false))?;
+        .or_else(|| (value.get("type").and_then(Value::as_str) == Some("error")).then_some(value))
+        .filter(|error| !error.is_null() && **error != Value::Bool(false))
+}
+
+pub(super) fn provider_error_message(error: &Value, envelope: &Value) -> String {
     let message = if error.is_string() {
         error
     } else {
         error
             .get("message")
-            .or_else(|| value.get("message"))
+            .or_else(|| envelope.get("message"))
             .or_else(|| error.get("code"))
             .or_else(|| error.get("type"))
             .unwrap_or(error)
     };
-    Some(
-        message
-            .as_str()
-            .map(str::to_owned)
-            .unwrap_or_else(|| message.to_string()),
-    )
+    message
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| message.to_string())
 }
 
 #[cfg(test)]
@@ -163,17 +165,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn successful_http_error_body_keeps_context_overflow_code() {
+    fn provider_error_envelopes_exclude_echoed_context() {
+        for envelope in [
+            serde_json::json!({"error":{"code":"context_length_exceeded","message":"invalid request"}}),
+            serde_json::json!({"detail":{"error":{"code":"context_length_exceeded","message":"invalid request"}}}),
+            serde_json::json!({"error":{"code":"context_length_exceeded"},"message":"invalid request"}),
+            serde_json::json!({"type":"error","code":"context_length_exceeded","message":"invalid request"}),
+        ] {
+            let error = provider_error(&envelope).unwrap();
+            assert!(is_context_overflow(&error.to_string()));
+            assert_eq!(provider_error_message(error, &envelope), "invalid request");
+        }
+        let body = br#"{"error":{"message":"invalid temperature"},"tools":[{"description":"prompt is too long"}],"output":[{"text":"context_length_exceeded"}]}"#;
         let error = parse_upstream_json_body(
-            "OpenRouter",
+            "Provider",
             "generate",
             StatusCode::OK,
             "application/json",
-            br#"{"error":{"code":"context_length_exceeded","message":"invalid request"}}"#,
+            body,
         )
         .unwrap_err();
         assert!(
-            matches!(error, DomainError::InvalidData(message) if message == "model.context_overflow: OpenRouter: invalid request")
+            matches!(error, DomainError::InvalidData(message) if message == "Provider: invalid temperature")
         );
     }
 

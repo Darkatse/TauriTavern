@@ -42,10 +42,9 @@ pub struct AgentStartSessionRunDto {
     pub profile: AgentProfileDefinition,
     pub expected_history_seq: u64,
     pub prompt_snapshot: Value,
-    pub frozen_run_input_snapshot: Value,
     pub prompt_assembly_request: AgentPromptAssemblyBrokerRequestDto,
     #[serde(default)]
-    pub generation_intent: Option<Value>,
+    pub generation_intent: Option<serde_json::Map<String, Value>>,
     #[serde(default)]
     pub stream: Option<bool>,
 }
@@ -266,7 +265,7 @@ pub struct AgentPromptAssemblyFingerprintDto {
 pub struct AgentPromptAssemblyScopeDto {
     pub run_id: String,
     pub invocation_id: String,
-    pub invocation_kind: String,
+    pub invocation_kind: AgentInvocationKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_invocation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

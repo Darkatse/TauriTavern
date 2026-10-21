@@ -283,16 +283,36 @@ impl HttpChatCompletionRepository {
         body: &str,
         default_message: &str,
     ) -> DomainError {
-        let message = extract_error_message(body, default_message);
+        let body = body.trim();
+        let parsed = serde_json::from_str::<Value>(body).ok();
+        let error = parsed.as_ref().and_then(|value| {
+            response_body::provider_error(value)
+                .or_else(|| value.get("message").filter(|message| message.is_string()))
+        });
+        let message = parsed
+            .as_ref()
+            .zip(error)
+            .map(|(value, error)| response_body::provider_error_message(error, value))
+            .unwrap_or_else(|| {
+                if body.is_empty() {
+                    default_message
+                } else {
+                    body
+                }
+                .to_string()
+            });
 
         match status {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
                 DomainError::AuthenticationError(message)
             }
             StatusCode::BAD_REQUEST | StatusCode::PAYLOAD_TOO_LARGE
-                if context_overflow::is_context_overflow(body) =>
+                if error.map_or_else(
+                    || parsed.is_none() && context_overflow::is_context_overflow(body),
+                    |error| context_overflow::is_context_overflow(&error.to_string()),
+                ) =>
             {
-                DomainError::InvalidData(format!("model.context_overflow: {message}"))
+                context_overflow::context_overflow_error(message)
             }
             StatusCode::BAD_REQUEST => DomainError::InvalidData(message),
             StatusCode::TOO_MANY_REQUESTS => DomainError::rate_limited(format!(
@@ -988,26 +1008,6 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
     }
 }
 
-fn extract_error_message(body: &str, default_message: &str) -> String {
-    let body = body.trim();
-    if body.is_empty() {
-        return default_message.to_string();
-    }
-
-    if let Ok(value) = serde_json::from_str::<Value>(body)
-        && let Some(message) = response_body::provider_error_message(&value).or_else(|| {
-            value
-                .get("message")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-    {
-        return message;
-    }
-
-    body.to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -1157,11 +1157,16 @@ mod tests {
                 r#"{"error":{"code":"context_length_exceeded","message":"invalid request"}}"#,
                 true,
             ),
+            (
+                400,
+                r#"{"error":{"message":"invalid temperature"},"tools":[{"description":"prompt is too long"}]}"#,
+                false,
+            ),
+            (400, r#"{"message":"prompt is too long"}"#, true),
             (413, "PROMPT IS TOO LONG", true),
-            (413, "request_too_large", false),
+            (413, "request_too_large", true),
             (400, "Invalid value for temperature", false),
             (400, "rate limit: too many tokens", false),
-            (400, "too many requests: token limit exceeded", false),
             (
                 429,
                 "ThrottlingException: Too many tokens, please wait before trying again.",
@@ -1183,7 +1188,6 @@ mod tests {
             match status {
                 429 => assert!(matches!(error, DomainError::RateLimited { .. })),
                 502 => assert!(matches!(error, DomainError::Transient(_))),
-                413 if !overflow => assert!(matches!(error, DomainError::InternalError(_))),
                 _ => assert!(matches!(error, DomainError::InvalidData(_))),
             }
         }

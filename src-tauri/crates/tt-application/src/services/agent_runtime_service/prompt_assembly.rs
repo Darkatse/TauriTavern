@@ -13,11 +13,10 @@ use crate::dto::agent_dto::{
 };
 use crate::errors::ApplicationError;
 use crate::services::prompt_assembly_service::{
-    AgentInvocationPromptAssemblyContext, FROZEN_RUN_INPUT_SNAPSHOT_KIND,
-    FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
+    FROZEN_RUN_INPUT_SNAPSHOT_KIND, FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
 };
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
-use tt_domain::models::agent::{AgentModelTool, AgentRunEventLevel, WorkspacePath};
+use tt_domain::models::agent::{AgentRunEventLevel, WorkspacePath};
 
 impl AgentRuntimeService {
     pub async fn prepare_session_run(
@@ -111,7 +110,7 @@ impl AgentRuntimeService {
     pub async fn read_prompt_assembly_request(
         &self,
         dto: AgentReadPromptAssemblyRequestDto,
-    ) -> Result<AgentPromptAssemblyBrokerRequestDto, ApplicationError> {
+    ) -> Result<Option<AgentPromptAssemblyBrokerRequestDto>, ApplicationError> {
         let run_id = dto.run_id.trim();
         let assembly_id = dto.assembly_id.trim();
         if run_id.is_empty() || assembly_id.is_empty() {
@@ -122,14 +121,14 @@ impl AgentRuntimeService {
         }
 
         let assemblies = self.active_prompt_assemblies.read().await;
-        let pending = assemblies
-            .get(assembly_id)
-            .ok_or_else(|| prompt_assembly_not_pending_error(assembly_id))?;
+        let Some(pending) = assemblies.get(assembly_id) else {
+            return Ok(None);
+        };
         if pending.run_id != run_id {
             return Err(prompt_assembly_run_mismatch_error(assembly_id));
         }
 
-        Ok(pending.request.clone())
+        Ok(Some(pending.request.clone()))
     }
 
     pub async fn resolve_prompt_assembly(
@@ -192,68 +191,18 @@ impl AgentRuntimeService {
         })
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "prompt assembly boundary keeps profile, tools, snapshot, scope, and cancellation explicit"
-    )]
-    pub(super) async fn assemble_invocation_prompt_snapshot(
-        &self,
-        profile: &ResolvedAgentProfile,
-        visible_tools: &[AgentModelTool],
-        generation_type: &str,
-        frozen_run_input_snapshot: Value,
-        scope: &AgentPromptAssemblyScopeDto,
-        agent_task_prompt: String,
-        cancel: &mut AgentCancelReceiver,
-    ) -> Result<Value, ApplicationError> {
-        let run_id = scope.run_id.as_str();
-        let invocation_id = scope.invocation_id.as_str();
-        let assembly_id = format!("prompt_assembly_{}", Uuid::new_v4().simple());
-        let (request, _) = self
-            .prompt_assembly_service
-            .prepare_invocation_frontend_prompt_assembly(
-                AgentPreparePromptAssemblyDto {
-                    profile_id: Some(profile.id.as_str().to_string()),
-                    generation_type: generation_type.to_string(),
-                    frozen_run_input_snapshot,
-                    json_schema: None,
-                },
-                profile.clone(),
-                visible_tools,
-                AgentInvocationPromptAssemblyContext {
-                    assembly_id: assembly_id.clone(),
-                    scope: scope.clone(),
-                    agent_task_prompt: Some(agent_task_prompt),
-                    required_agent_prompt_components: vec![
-                        "agentSystemPrompt".to_string(),
-                        "agentTask".to_string(),
-                    ],
-                },
-            )
-            .await?;
-        self.request_host_prompt_assembly(run_id, invocation_id, profile, request, cancel)
-            .await
-    }
-
     pub(super) async fn request_host_prompt_assembly(
         &self,
-        run_id: &str,
-        invocation_id: &str,
         profile: &ResolvedAgentProfile,
-        request: crate::dto::agent_dto::AgentPromptAssemblyBrokerRequestDto,
+        mut request: AgentPromptAssemblyBrokerRequestDto,
+        scope: AgentPromptAssemblyScopeDto,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<Value, ApplicationError> {
-        let assembly_id = request
-            .assembly_id
-            .as_deref()
-            .ok_or_else(|| {
-                ApplicationError::ValidationError(
-                    "agent.prompt_assembly_id_required: host assembly requires an assembly id"
-                        .into(),
-                )
-            })?
-            .to_owned();
-        let scope = request.scope.clone();
+        let assembly_id = format!("prompt_assembly_{}", Uuid::new_v4().simple());
+        request.assembly_id = Some(assembly_id.clone());
+        request.scope = Some(scope.clone());
+        let run_id = scope.run_id.as_str();
+        let invocation_id = scope.invocation_id.as_str();
         let request_metadata = request.metadata();
         let requested_event = json!({
             "assemblyId": assembly_id.as_str(),
@@ -314,10 +263,18 @@ impl AgentRuntimeService {
 
         match host_result {
             Ok(result) => {
-                if let Err(error) = super::prompt_snapshot::validate_prompt_snapshot_context_policy(
-                    &result.prompt_snapshot,
-                    profile,
-                ) {
+                let validation =
+                    super::prompt_snapshot::request_from_prompt_snapshot(&result.prompt_snapshot)
+                        .and_then(|request| {
+                            super::prompt_snapshot::reject_external_tool_request(&request.payload)
+                        })
+                        .and_then(|()| {
+                            super::prompt_snapshot::validate_prompt_snapshot_context_policy(
+                                &result.prompt_snapshot,
+                                profile,
+                            )
+                        });
+                if let Err(error) = validation {
                     self.event(
                         run_id,
                         AgentRunEventLevel::Error,

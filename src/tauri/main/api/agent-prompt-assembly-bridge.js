@@ -77,14 +77,8 @@ async function handlePromptAssemblyRequested({ state, event, safeInvoke, promptA
     state.resolvedAssemblyIds.add(assemblyId);
 
     try {
-        let request;
-        try {
-            request = await readPromptAssemblyRequest({ safeInvoke, runId: state.runId, assemblyId });
-        } catch (error) {
-            // Reload replays requests which the native runtime has already resolved.
-            if (String(/** @type {any} */ (error)?.message ?? error).includes('agent.prompt_assembly_not_pending:')) return;
-            throw error;
-        }
+        const request = await readPromptAssemblyRequest({ safeInvoke, runId: state.runId, assemblyId });
+        if (request === null) return;
         const assembled = await promptAssembly.buildSnapshot(request);
         await safeInvoke('resolve_agent_prompt_assembly', {
             dto: {
@@ -115,6 +109,7 @@ async function readPromptAssemblyRequest({ safeInvoke, runId, assemblyId }) {
             assemblyId,
         },
     });
+    if (request === null) return null;
     return requirePlainObject(
         request,
         'agent.prompt_assembly_request_invalid: pending prompt assembly request must be an object',

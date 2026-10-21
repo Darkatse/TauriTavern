@@ -61,9 +61,10 @@ const host = installWebHost({
 | `get_sillytavern_settings`、`get_personas` | `/api/settings/get`，转为 TT 的形状 |
 | `read_secret_state` | `/api/secrets/read`，连接按钮刷新密钥状态 |
 | `get_character` | `/api/characters/get`，见“角色” |
-| `get_bootstrap_metadata` | `/api/characters/all`、`/api/groups/all`、`/api/avatars/get`、`/api/secrets/read`；`active_session_run_ids` 为空，浏览器宿主不拥有原生 Session Run |
+| `get_bootstrap_metadata` | `/api/characters/all`、`/api/groups/all`、`/api/avatars/get`、`/api/secrets/read` |
 | `get_character_chats_by_id` | `/api/characters/chats`，结果须为数组，没有聊天时为 `[]`；ST 这时返回的 `{ error: true }` 会被拒绝 |
 | `get_chat_payload_path`；`plugin:fs\|open`、`plugin:fs\|fstat`、`plugin:fs\|read`；`plugin:resources\|close` | `/api/chats/get`，见"聊天读取" |
+| `list_active_agent_runs` | 返回空集合，浏览器宿主不拥有原生 Agent Run |
 | `get_all_backgrounds`、`get_background_folders`、`get_all_background_metadata` | `/api/backgrounds/all`、`/api/backgrounds/folders`、`/api/image-metadata/all` |
 | `get_extensions` | `GET /api/extensions/discover`，把 ST 的 `type` 转回原生 `extension_type` |
 | `read_frontend_template`、`read_frontend_extension_template` | 读取页面的模板与系统扩展模板 |

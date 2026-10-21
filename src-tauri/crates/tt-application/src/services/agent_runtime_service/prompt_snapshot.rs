@@ -13,6 +13,18 @@ use tt_ports::repositories::chat_completion_repository::OPENAI_RESPONSES_WEBSOCK
 use super::invocation::model_session_id;
 
 impl super::AgentRuntimeService {
+    pub(super) async fn bind_invocation_model_request(
+        &self,
+        run_id: &str,
+        profile: &ResolvedAgentProfile,
+        snapshot: &Value,
+    ) -> Result<AgentPromptRequest, ApplicationError> {
+        let mut request = request_from_prompt_snapshot(snapshot)?;
+        self.resolve_model_binding(run_id, profile, &mut request)
+            .await?;
+        Ok(request)
+    }
+
     pub(super) async fn prepare_invocation_model_request(
         &self,
         mut request: AgentPromptRequest,
@@ -95,21 +107,11 @@ pub(super) fn append_runtime_catalogs_text(
     }
 }
 
-pub(super) fn request_from_prompt_snapshot(
+pub(super) fn prompt_snapshot_messages(
     prompt_snapshot: &Value,
-) -> Result<AgentPromptRequest, ApplicationError> {
-    let (mut payload, messages) = if let Some(parameters) =
-        prompt_snapshot.get("generationParameters")
-    {
-        let payload = parameters.as_object().cloned().ok_or_else(|| {
-            ApplicationError::ValidationError(
-                "agent.invalid_prompt_snapshot: generationParameters must be an object".into(),
-            )
-        })?;
-        if payload.contains_key("messages") || payload.contains_key("prompt") {
-            return Err(ApplicationError::ValidationError("agent.duplicate_prompt_messages: generationParameters must not contain messages or prompt".into()));
-        }
-        let messages = serde_json::from_value::<Vec<AgentModelMessage>>(
+) -> Result<Vec<AgentModelMessage>, ApplicationError> {
+    if prompt_snapshot.get("generationParameters").is_some() {
+        serde_json::from_value::<Vec<AgentModelMessage>>(
             prompt_snapshot.get("messages").cloned().ok_or_else(|| {
                 ApplicationError::ValidationError(
                     "agent.prompt_messages_required: canonical messages are required".into(),
@@ -118,18 +120,43 @@ pub(super) fn request_from_prompt_snapshot(
         )
         .map_err(|error| {
             ApplicationError::ValidationError(format!("agent.invalid_prompt_messages: {error}"))
-        })?;
-        (payload, messages)
+        })
     } else {
-        // The existing Chat API is adapted once; the runtime only consumes canonical messages.
+        // The existing Chat API is adapted once; the runtime consumes canonical messages.
         let mut payload = find_payload_object(prompt_snapshot).ok_or_else(|| {
             ApplicationError::ValidationError(
                 "agent.invalid_prompt_snapshot: expected a prompt snapshot".into(),
             )
         })?;
-        let messages = messages_from_payload(&mut payload)?;
-        (payload, messages)
+        messages_from_payload(&mut payload)
+    }
+}
+
+pub(super) fn request_from_prompt_snapshot(
+    prompt_snapshot: &Value,
+) -> Result<AgentPromptRequest, ApplicationError> {
+    let mut payload = if let Some(parameters) = prompt_snapshot.get("generationParameters") {
+        let payload = parameters.as_object().cloned().ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.invalid_prompt_snapshot: generationParameters must be an object".into(),
+            )
+        })?;
+        if payload.contains_key("messages") || payload.contains_key("prompt") {
+            return Err(ApplicationError::ValidationError("agent.duplicate_prompt_messages: generationParameters must not contain messages or prompt".into()));
+        }
+        payload
+    } else {
+        let mut payload = find_payload_object(prompt_snapshot).ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.invalid_prompt_snapshot: expected a prompt snapshot".into(),
+            )
+        })?;
+        if payload.remove("messages").is_none() {
+            payload.remove("prompt");
+        }
+        payload
     };
+    let messages = prompt_snapshot_messages(prompt_snapshot)?;
     payload.insert("stream".into(), Value::Bool(false));
     payload
         .entry("chat_completion_source")
@@ -145,8 +172,6 @@ pub(super) fn prepare_agent_tool_request(
     run_id: &str,
     invocation_id: &str,
 ) -> Result<AgentModelRequest, ApplicationError> {
-    reject_external_tool_request(&request.payload)?;
-
     let responses_websocket = match request.payload.get("custom_openai_responses_websocket") {
         Some(Value::Bool(enabled)) => *enabled,
         Some(_) => {

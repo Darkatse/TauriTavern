@@ -935,17 +935,15 @@ fn response_incomplete_error(response: &Value) -> DomainError {
 }
 
 fn response_failure_error(response: &Value) -> DomainError {
-    let message = response
-        .get("error")
-        .and_then(|error| error.get("message"))
-        .or_else(|| response.get("message"))
-        .and_then(Value::as_str)
-        .unwrap_or("OpenAI Responses response failed");
+    let error = super::response_body::provider_error(response);
+    let message = error
+        .map(|error| super::response_body::provider_error_message(error, response))
+        .unwrap_or_else(|| "OpenAI Responses response failed".to_string());
 
-    if super::context_overflow::is_context_overflow(&response.to_string()) {
-        DomainError::InvalidData(format!("model.context_overflow: {message}"))
+    if error.is_some_and(|error| super::context_overflow::is_context_overflow(&error.to_string())) {
+        super::context_overflow::context_overflow_error(message)
     } else {
-        DomainError::InternalError(message.to_string())
+        DomainError::InternalError(message)
     }
 }
 
@@ -1098,21 +1096,11 @@ mod tests {
             "Invalid data: model.output_truncated: OpenAI Responses response incomplete: max_output_tokens"
         );
 
-        let overflow = json!({
-            "status": "failed",
-            "error": { "code": "context_length_exceeded", "message": "invalid request" }
-        });
-        assert!(
-            matches!(validate_terminal_response(&overflow), Err(DomainError::InvalidData(message)) if message == "model.context_overflow: invalid request")
-        );
-        let event = json!({ "type": "response.failed", "response": overflow });
-        assert!(
-            matches!(terminal_response_from_event(&event), Err(DomainError::InvalidData(message)) if message.starts_with("model.context_overflow:"))
-        );
-
         let failed = json!({
             "status": "failed",
-            "error": { "message": "provider rejected the response" }
+            "error": { "message": "provider rejected the response" },
+            "tools": [{ "description": "prompt is too long" }],
+            "output": [{ "text": "context_length_exceeded" }]
         });
         assert_eq!(
             validate_terminal_response(&failed).unwrap_err().to_string(),

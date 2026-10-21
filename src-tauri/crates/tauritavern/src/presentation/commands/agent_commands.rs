@@ -415,6 +415,20 @@ pub async fn submit_agent_run_guidance(
 }
 
 #[tauri::command]
+pub async fn list_active_agent_runs(
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<Vec<String>, CommandError> {
+    use tt_application::services::agent_workspace_lifecycle_service::AgentRunActivity;
+    log_command("list_active_agent_runs");
+    app_state
+        .services
+        .agent_runtime_service
+        .active_run_ids()
+        .await
+        .map_err(map_command_error("Failed to list active agent runs"))
+}
+
+#[tauri::command]
 pub async fn list_agent_runs(
     dto: AgentListRunsDto,
     app_state: State<'_, Arc<AppState>>,
@@ -522,7 +536,7 @@ pub async fn read_agent_model_turn(
 pub async fn read_agent_prompt_assembly_request(
     dto: AgentReadPromptAssemblyRequestDto,
     app_state: State<'_, Arc<AppState>>,
-) -> Result<AgentPromptAssemblyBrokerRequestDto, CommandError> {
+) -> Result<Option<AgentPromptAssemblyBrokerRequestDto>, CommandError> {
     log_command("read_agent_prompt_assembly_request");
 
     app_state

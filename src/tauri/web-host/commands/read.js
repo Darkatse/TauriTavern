@@ -27,8 +27,8 @@ export function createReadCommands(backend) {
     const { json } = backend;
     return {
         get_client_version: () => json('/version', undefined, 'GET'),
+        list_active_agent_runs: () => [],
         get_bootstrap_metadata: () => ({
-            active_session_run_ids: [],
             characters: json('/api/characters/all').map(characterDto), groups: json('/api/groups/all'),
             avatars: json('/api/avatars/get'), secret_state: json('/api/secrets/read'),
         }),

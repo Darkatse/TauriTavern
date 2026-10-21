@@ -33,6 +33,15 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
     const subscribeLiveProjection = createAgentRunLiveSubscribe({ safeInvoke });
     const commitBridges = new Map();
 
+    function attachAssemblyBridge(runId, subscribe = createSharedRunEventSubscribe(runId, runtime.subscribe, 0)) {
+        attachHostPromptAssemblyBridge({ runId, safeInvoke, promptAssembly, subscribe });
+    }
+
+    async function restoreAssemblyBridges() {
+        const runIds = await safeInvoke('list_active_agent_runs');
+        for (const runId of runIds) attachAssemblyBridge(runId);
+    }
+
     async function startRunWithPromptSnapshot(input) {
         return startRunWithPromptSnapshotInternal(input, { ensureModelTargetConnection: true });
     }
@@ -87,12 +96,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
                 : null,
         });
         commitBridges.set(handle.runId, commitBridge);
-        attachHostPromptAssemblyBridge({
-            runId: handle?.runId,
-            safeInvoke,
-            promptAssembly,
-            subscribe: hostSubscribe,
-        });
+        attachAssemblyBridge(handle.runId, hostSubscribe);
     }
 
     async function readCheckpoint(runId) {
@@ -182,7 +186,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
         if (bridge) await settleHostCommitBridge(bridge);
     }
 
-    return {
+    const api = {
         startRunWithPromptSnapshot,
         startRunFromLegacyGenerate,
         readCheckpoint,
@@ -200,7 +204,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
         subscribeLiveProjection,
         settleChatPresentation,
         profiles,
-        sessions: createAgentSessionsApi({ safeInvoke, promptAssembly, subscribe: runtime.subscribe }),
+        sessions: createAgentSessionsApi({ safeInvoke, promptAssembly, attachAssemblyBridge }),
         tools: createAgentToolsApi({ safeInvoke }),
         promptAssembly,
         approveToolCall() {
@@ -208,6 +212,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
         },
         listRuns: runtime.listRuns,
     };
+    return { api, restoreAssemblyBridges };
 }
 
 function normalizeGenerationType(value) {
@@ -315,5 +320,7 @@ export function installAgentApi(context) {
         hostAbi.api = {};
     }
 
-    hostAbi.api.agent = createAgentApi({ safeInvoke });
+    const { api, restoreAssemblyBridges } = createAgentApi({ safeInvoke });
+    hostAbi.api.agent = api;
+    return restoreAssemblyBridges;
 }

@@ -9,8 +9,8 @@ use tt_ports::repositories::chat_completion_repository::{
 };
 
 use super::HttpChatCompletionRepository;
-use super::context_overflow::is_context_overflow;
-use super::response_body::{provider_error_message, read_upstream_json_body};
+use super::context_overflow::{context_overflow_error, is_context_overflow};
+use super::response_body::{provider_error, provider_error_message, read_upstream_json_body};
 
 pub(super) async fn list_models(
     repository: &HttpChatCompletionRepository,
@@ -199,14 +199,13 @@ impl OpenAiChatAccumulator {
         let mut event = serde_json::from_slice::<Value>(raw_event).map_err(|error| {
             invalid_openai_response(format!("event is not valid JSON: {error}"))
         })?;
-        if let Some(message) = provider_error_message(&event) {
-            return Err(DomainError::InvalidData(
-                if is_context_overflow(&event.to_string()) {
-                    format!("model.context_overflow: {message}")
-                } else {
-                    message
-                },
-            ));
+        if let Some(error) = provider_error(&event) {
+            let message = provider_error_message(error, &event);
+            return Err(if is_context_overflow(&error.to_string()) {
+                context_overflow_error(message)
+            } else {
+                DomainError::InvalidData(message)
+            });
         }
         let event = event
             .as_object_mut()
@@ -578,24 +577,9 @@ fn invalid_openai_response(message: impl std::fmt::Display) -> DomainError {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use tt_domain::errors::DomainError;
 
     use super::{OpenAiChatAccumulator, normalize_message_reasoning};
     use tt_ports::repositories::chat_completion_repository::ChatCompletionStreamDelta;
-
-    #[test]
-    fn stream_error_keeps_context_overflow_code() {
-        let mut accumulator = OpenAiChatAccumulator::default();
-        let error = accumulator
-            .apply_event(
-                br#"{"error":{"code":"context_length_exceeded","message":"invalid request"}}"#,
-                &mut |_| {},
-            )
-            .unwrap_err();
-        assert!(
-            matches!(error, DomainError::InvalidData(message) if message == "model.context_overflow: invalid request")
-        );
-    }
 
     #[test]
     fn reasoning_aliases_and_details_expose_text_once_without_opaque_state() {

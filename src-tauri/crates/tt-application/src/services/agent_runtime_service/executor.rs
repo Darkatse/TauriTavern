@@ -23,15 +23,10 @@ use tt_domain::models::agent::{
 use tt_domain::models::skill::SkillIndexEntry;
 
 impl AgentRuntimeService {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "run bootstrap passes frozen input and its optional Session assembly together"
-    )]
     pub(super) async fn execute_agent_loop_run(
         self: Arc<Self>,
         run_id: String,
         prompt_snapshot: Value,
-        request: AgentPromptRequest,
         resolved_profile: ResolvedAgentProfile,
         effective_skills: Vec<SkillIndexEntry>,
         session: Option<super::session_context::SessionInvocation>,
@@ -42,7 +37,6 @@ impl AgentRuntimeService {
             .execute_agent_loop_run_body(
                 &run_id,
                 prompt_snapshot,
-                request,
                 resolved_profile,
                 effective_skills,
                 session,
@@ -223,9 +217,14 @@ impl AgentRuntimeService {
         resolved_profile: ResolvedAgentProfile,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
-        let request = super::prompt_snapshot::request_from_prompt_snapshot(&json!({
-            "chatCompletionPayload": request.payload,
-        }))?;
+        let mut prompt_snapshot = prompt_snapshot;
+        let snapshot = prompt_snapshot.as_object_mut().ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.invalid_prompt_snapshot: expected an object".into(),
+            )
+        })?;
+        snapshot.remove("generationParameters");
+        snapshot.insert("chatCompletionPayload".into(), json!(request.payload));
         let mut state = RunExecutionState::default();
         let run = self.run_repository.load_run(run_id).await?;
         let effective_skills = match &run.target {
@@ -258,7 +257,6 @@ impl AgentRuntimeService {
             .execute_agent_loop_run_body(
                 run_id,
                 prompt_snapshot,
-                request,
                 resolved_profile,
                 effective_skills,
                 None,
@@ -289,7 +287,6 @@ impl AgentRuntimeService {
         &self,
         run_id: &str,
         prompt_snapshot: Value,
-        request: AgentPromptRequest,
         resolved_profile: ResolvedAgentProfile,
         effective_skills: Vec<SkillIndexEntry>,
         session: Option<super::session_context::SessionInvocation>,
@@ -363,8 +360,8 @@ impl AgentRuntimeService {
         let visible_tools = prepared_tools.model_tools;
         let tool_diagnostics = prepared_tools.diagnostics;
         let tool_snapshot_path = self.persist_tool_snapshot(run_id, &tool_snapshot).await?;
-        let mut request = request;
-        self.resolve_model_binding(run_id, &resolved_profile, &mut request)
+        let request = self
+            .bind_invocation_model_request(run_id, &resolved_profile, &prompt_snapshot)
             .await?;
         self.ensure_not_cancelled(cancel)?;
         let request = self

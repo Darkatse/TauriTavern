@@ -18,9 +18,10 @@ use crate::dto::agent_dto::{
     AgentStartSessionRunDto,
 };
 use crate::errors::ApplicationError;
+use crate::services::agent_workspace_lifecycle_service::AgentRunActivity;
 use crate::services::prompt_assembly_service::{attach_frozen_run_input_snapshot, sha256_value};
 use tt_domain::models::agent::session::{
-    AgentSession, AgentSessionMessageOrigin, NewAgentSessionMessage,
+    AgentSession, AgentSessionMessage, AgentSessionMessageOrigin, NewAgentSessionMessage,
 };
 use tt_domain::models::agent::{
     AgentModelContentPart, AgentModelMessage, AgentModelRole, AgentRun, AgentRunEventLevel,
@@ -64,37 +65,19 @@ impl AgentRuntimeService {
         Ok(AgentSessionResultDto { session })
     }
 
-    pub async fn active_session_run_ids(&self) -> Vec<String> {
-        self.active_runs
-            .read()
-            .await
-            .iter()
-            .filter(|(_, handle)| handle.target.session_id().is_some())
-            .map(|(run_id, _)| run_id.clone())
-            .collect()
-    }
-
     pub async fn list_sessions(&self) -> Result<AgentListSessionsResultDto, ApplicationError> {
         // Creation and deletion hold this same lock, keeping partial directories out of lists.
         let _admission = self.run_lifecycle_lock.lock().await;
         let sessions = self.session_repository.list_sessions().await?;
-        let active = self
-            .active_runs
-            .read()
-            .await
-            .iter()
-            .filter_map(|(run_id, handle)| {
-                handle
-                    .target
-                    .session_id()
-                    .map(|session_id| (session_id.to_owned(), run_id.clone()))
-            })
-            .collect::<Vec<_>>();
+        let active = self.active_run_ids().await?;
         let mut active_runs = Vec::with_capacity(active.len());
-        for (session_id, run_id) in active {
+        for run_id in active {
             let run = self.run_repository.load_run(&run_id).await?;
+            let Some(session_id) = run.target.session_id() else {
+                continue;
+            };
             active_runs.push(AgentSessionRunHandleDto {
-                session_id,
+                session_id: session_id.to_owned(),
                 run_id,
                 status: run.status,
                 created_at: run.created_at,
@@ -222,13 +205,20 @@ impl AgentRuntimeService {
         let request = request_from_prompt_snapshot(&dto.prompt_snapshot)?;
         reject_external_tool_request(&request.payload)?;
         validate_prompt_snapshot_context_policy(&dto.prompt_snapshot, &profile)?;
+        let mut assembly_request = dto.prompt_assembly_request;
         let prompt_snapshot = attach_frozen_run_input_snapshot(
             dto.prompt_snapshot,
-            Some(dto.frozen_run_input_snapshot),
+            Some(std::mem::take(
+                &mut assembly_request.frozen_run_input_snapshot,
+            )),
         )?;
-        let mut assembly_request = dto.prompt_assembly_request;
         assembly_request.frozen_run_input_snapshot =
             prompt_snapshot["frozenRunInputSnapshot"].clone();
+        assembly_request
+            .fingerprint
+            .frozen_run_input_snapshot_sha256 =
+            sha256_value(&assembly_request.frozen_run_input_snapshot)?;
+        let assembly_metadata = assembly_request.metadata();
         let session_invocation = SessionInvocation::new(assembly_request, &prompt_snapshot)?;
         let _admission = self.run_lifecycle_lock.lock().await;
         self.session_repository
@@ -266,22 +256,6 @@ impl AgentRuntimeService {
             updated_at: now,
         };
         self.run_repository.create_run(&run).await?;
-        let user_message = self
-            .session_repository
-            .append_session_message(
-                &dto.session_id,
-                NewAgentSessionMessage {
-                    run_id: run.id.clone(),
-                    message: AgentModelMessage {
-                        role: AgentModelRole::User,
-                        parts: vec![AgentModelContentPart::Text { text: dto.text }],
-                        provider_metadata: Value::Null,
-                    },
-                    origin: None,
-                    compaction: None,
-                },
-            )
-            .await?;
         self.event(
             &run.id,
             AgentRunEventLevel::Info,
@@ -292,28 +266,27 @@ impl AgentRuntimeService {
             }),
         )
         .await?;
-        self.event(
-            &run.id,
-            AgentRunEventLevel::Info,
-            "session_message_appended",
-            json!({
-                "sessionId": dto.session_id, "seq": user_message.seq,
-            }),
+        self.record_session_message(
+            &dto.session_id,
+            NewAgentSessionMessage {
+                run_id: run.id.clone(),
+                message: AgentModelMessage {
+                    role: AgentModelRole::User,
+                    parts: vec![AgentModelContentPart::Text { text: dto.text }],
+                    provider_metadata: Value::Null,
+                },
+                origin: None,
+                compaction: None,
+            },
         )
         .await?;
         if let Some(mut intent) = dto.generation_intent {
-            // The host finishes Session macro input after reading its transcript.
-            // Record the input accepted here, rather than the earlier preparation seed.
-            if let Some(fingerprint) =
-                intent.pointer_mut("/promptAssembly/fingerprint/frozenRunInputSnapshotSha256")
-            {
-                *fingerprint = json!(sha256_value(&prompt_snapshot["frozenRunInputSnapshot"])?);
-            }
+            intent.insert("promptAssembly".into(), json!(assembly_metadata));
             self.event(
                 &run.id,
                 AgentRunEventLevel::Info,
                 "generation_intent_recorded",
-                intent,
+                Value::Object(intent),
             )
             .await?;
         }
@@ -337,7 +310,6 @@ impl AgentRuntimeService {
                 .execute_agent_loop_run(
                     run_id,
                     prompt_snapshot,
-                    request,
                     profile,
                     effective_skills,
                     Some(session_invocation),
@@ -364,23 +336,33 @@ impl AgentRuntimeService {
         let Some(session_id) = active.target.session_id() else {
             return Ok(());
         };
+        self.record_session_message(
+            session_id,
+            NewAgentSessionMessage {
+                run_id: run_id.to_owned(),
+                message: message.clone(),
+                origin: Some(AgentSessionMessageOrigin {
+                    invocation_id: invocation_id.to_string(),
+                    round,
+                }),
+                compaction: None,
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub(super) async fn record_session_message(
+        &self,
+        session_id: &str,
+        entry: NewAgentSessionMessage,
+    ) -> Result<AgentSessionMessage, ApplicationError> {
         let entry = self
             .session_repository
-            .append_session_message(
-                session_id,
-                NewAgentSessionMessage {
-                    run_id: run_id.to_owned(),
-                    message: message.clone(),
-                    origin: Some(AgentSessionMessageOrigin {
-                        invocation_id: invocation_id.to_string(),
-                        round,
-                    }),
-                    compaction: None,
-                },
-            )
+            .append_session_message(session_id, entry)
             .await?;
         self.event(
-            run_id,
+            &entry.run_id,
             AgentRunEventLevel::Info,
             "session_message_appended",
             json!({
@@ -389,7 +371,7 @@ impl AgentRuntimeService {
             }),
         )
         .await?;
-        Ok(())
+        Ok(entry)
     }
 
     pub(super) async fn resolve_session_skills(

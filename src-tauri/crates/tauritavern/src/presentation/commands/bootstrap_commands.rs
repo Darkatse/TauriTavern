@@ -71,11 +71,6 @@ pub async fn get_bootstrap_metadata(
     let secret_state = secret_state.unwrap_or_default();
 
     Ok(BootstrapMetadataDto {
-        active_session_run_ids: app_state
-            .services
-            .agent_runtime_service
-            .active_session_run_ids()
-            .await,
         ios_policy: app_state.ios_policy.clone(),
         characters,
         groups,

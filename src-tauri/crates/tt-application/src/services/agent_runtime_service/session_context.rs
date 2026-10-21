@@ -18,7 +18,7 @@ use crate::errors::ApplicationError;
 use crate::services::agent_model_gateway::reset_transport_for_resume;
 use crate::services::prompt_assembly_service::sha256_value;
 
-use super::prompt_snapshot::request_from_prompt_snapshot;
+use super::prompt_snapshot::{AgentPromptRequest, prompt_snapshot_messages};
 use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
 
 const COMPACT_SHARE: f64 = 0.9;
@@ -320,30 +320,24 @@ impl AgentRuntimeService {
             .expect("Session compaction")
             .assembly_request
             .clone();
-        assembly.assembly_id = Some(format!("prompt_assembly_{}", uuid::Uuid::new_v4().simple()));
-        assembly.scope = Some(AgentPromptAssemblyScopeDto {
+        let scope = AgentPromptAssemblyScopeDto {
             run_id: prepared.invocation.run_id.clone(),
             invocation_id: prepared.invocation.id.clone(),
-            invocation_kind: "root".into(),
-            parent_invocation_id: None,
-            task_id: None,
+            invocation_kind: prepared.invocation.kind,
+            parent_invocation_id: prepared.invocation.parent_invocation_id.clone(),
+            task_id: prepared.delegation_task_id.clone(),
             exit_policy: prepared.invocation.exit_policy,
-        });
+        };
         assembly.frozen_run_input_snapshot["promptInputs"]["sessionHistory"] = json!(groups);
         assembly.fingerprint.frozen_run_input_snapshot_sha256 =
             sha256_value(&assembly.frozen_run_input_snapshot)?;
         let snapshot = self
-            .request_host_prompt_assembly(
-                &prepared.invocation.run_id,
-                &prepared.invocation.id,
-                &prepared.profile,
-                assembly,
-                cancel,
-            )
+            .request_host_prompt_assembly(&prepared.profile, assembly, scope, cancel)
             .await?;
-        let mut request = request_from_prompt_snapshot(&snapshot)?;
-        // Reassembly changes context, not the invocation's resolved connection or parameters.
-        request.payload = prepared.request.payload.clone();
+        let request = AgentPromptRequest {
+            payload: prepared.request.payload.clone(),
+            messages: prompt_snapshot_messages(&snapshot)?,
+        };
         self.prepare_invocation_model_request(
             request,
             &prepared.invocation,
@@ -541,8 +535,7 @@ impl AgentRuntimeService {
         self.ensure_not_cancelled(cancel)?;
         let kept_from_seq = entries.get(kept_start).map(|entry| entry.seq);
         let record = self
-            .session_repository
-            .append_session_message(
+            .record_session_message(
                 session_id,
                 NewAgentSessionMessage {
                     run_id: run_id.to_owned(),
@@ -559,15 +552,6 @@ impl AgentRuntimeService {
                 },
             )
             .await?;
-        self.event(
-            run_id,
-            AgentRunEventLevel::Info,
-            "session_message_appended",
-            json!({
-                "sessionId": session_id, "seq": record.seq,
-            }),
-        )
-        .await?;
         self.event(run_id, AgentRunEventLevel::Info, "context_compacted", json!({
             "round": round, "invocationId": invocation.id, "seq": record.seq,
             "tokensBefore": tokens_before, "tokensAfter": tokens_after, "keptFromSeq": kept_from_seq,

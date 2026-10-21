@@ -1,9 +1,7 @@
-import { attachHostPromptAssemblyBridge } from './agent-prompt-assembly-bridge.js';
-import { createSharedRunEventSubscribe } from './agent-run-event-subscription.js';
 import { ensureModelTargetLlmConnectionForProfile } from '../../../scripts/tauritavern/agent/model-target-llm-connection.js';
 import { updateFrozenMacroContext } from '../../../scripts/tauritavern/agent/frozen-run-input-snapshot.js';
 
-export function createAgentSessionsApi({ safeInvoke, promptAssembly, subscribe }) {
+export function createAgentSessionsApi({ safeInvoke, promptAssembly, attachAssemblyBridge }) {
     const preparing = new Set();
 
     async function load() {
@@ -45,6 +43,7 @@ export function createAgentSessionsApi({ safeInvoke, promptAssembly, subscribe }
             });
             prepared.request.frozenRunInputSnapshot = updateFrozenMacroContext(frozenInput, macroContext);
             const assembled = await promptAssembly.buildSnapshot(prepared.request);
+            prepared.request.frozenRunInputSnapshot = assembled.frozenRunInputSnapshot;
             const run = await safeInvoke('start_agent_session_run', { dto: {
                 sessionId,
                 text,
@@ -52,10 +51,9 @@ export function createAgentSessionsApi({ safeInvoke, promptAssembly, subscribe }
                 expectedHistorySeq: prepared.expectedHistorySeq,
                 promptAssemblyRequest: prepared.request,
                 promptSnapshot: assembled.promptSnapshot,
-                frozenRunInputSnapshot: assembled.frozenRunInputSnapshot,
-                generationIntent: { ...assembled.generationIntent, source: 'session', promptAssembly: prepared.assembly },
+                generationIntent: { ...assembled.generationIntent, source: 'session' },
             } });
-            attachSessionAssemblyBridge(run.runId, { safeInvoke, promptAssembly, subscribe });
+            attachAssemblyBridge(run.runId);
             return run;
         } finally {
             preparing.delete(sessionId);
@@ -82,13 +80,6 @@ export function createAgentSessionsApi({ safeInvoke, promptAssembly, subscribe }
         },
         send,
     };
-}
-
-export function attachSessionAssemblyBridge(runId, { safeInvoke, promptAssembly, subscribe }) {
-    attachHostPromptAssemblyBridge({
-        runId, safeInvoke, promptAssembly,
-        subscribe: createSharedRunEventSubscribe(runId, subscribe, 0),
-    });
 }
 
 function requireSessionId(value) {
