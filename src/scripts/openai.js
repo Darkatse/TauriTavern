@@ -32,7 +32,7 @@ import {
 import { getGroupNames, selected_group } from './group-chats.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { allowlistSettingAllows, getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
-import { agentMessageProjection } from './tauritavern/agent/agent-model-messages.js';
+import { agentMessageProjection, toAgentModelMessage } from './tauritavern/agent/agent-model-messages.js';
 import { projectToolTurns } from './tauritavern/tool-turn-projection.js';
 import { canReplayProviderMetadata, getChatCompletionRequestContext } from './tauritavern/provider-replay.js';
 import { applyParamOmissions, getEffectiveGenerationSettings } from './tauri/generation-params/omission.js';
@@ -1243,6 +1243,7 @@ function getPromptAssemblyRuntime(runtime = null) {
 
 function createHeadlessChatCompletionPromptManager(settings, {
     macroContext,
+    contextKind,
 } = {}) {
     if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
         throw new Error('prompt_assembly.settings_required: Headless prompt assembly requires chat-completion settings');
@@ -1257,7 +1258,9 @@ function createHeadlessChatCompletionPromptManager(settings, {
     assemblyPromptManager.activeCharacter = { id: configuration.promptOrder.dummyId };
     assemblyPromptManager.saveServiceSettings = () => Promise.resolve();
     assemblyPromptManager.tryGenerate = () => Promise.resolve();
-    assemblyPromptManager.tokenHandler = new TokenHandler((messages, full) => countTokensOpenAIAsync(messages, full, serviceSettings));
+    assemblyPromptManager.tokenHandler = new TokenHandler(contextKind === 'session'
+        ? async () => 0
+        : (messages, full) => countTokensOpenAIAsync(messages, full, serviceSettings));
     assemblyPromptManager.substituteParams = (content, options = {}) => substitutePromptParams(content ?? '', options, {
         macroContext,
     });
@@ -2439,7 +2442,7 @@ export async function prepareOpenAIMessages({
     if (power_user.console_log_prompts) chatCompletion.enableLogging();
 
     const userSettings = activePromptManager.serviceSettings;
-    // Session history is budgeted by runtime compaction.
+    // Runtime compaction owns the budget for the entire Session prompt.
     chatCompletion.setTokenBudget(
         assemblyRuntime.contextKind === 'session' ? Number.POSITIVE_INFINITY : userSettings.openai_max_context,
         assemblyRuntime.contextKind === 'session' ? 0 : userSettings.openai_max_tokens,
@@ -2520,14 +2523,24 @@ export async function prepareOpenAIMessages({
     return [chat, activePromptManager.tokenHandler.counts, toolData];
 }
 
-/** Facts about the model a prompt snapshot is assembled for, from its effective settings. */
-export function agentPromptModelFacts(settings) {
+export function createAgentPromptSnapshot(payload, { settings, contextPolicy, worldInfoActivation }) {
+    if (!Array.isArray(payload?.messages)) {
+        throw new Error('agent.prompt_snapshot_messages_required: prompt assembly must produce messages');
+    }
+    if (payload.tools?.length || Object.hasOwn(payload, 'tool_choice')) {
+        throw new Error('agent.external_tools_unsupported: Agent runtime owns the tool registry and choice');
+    }
+    const { messages, prompt: _prompt, ...generationParameters } = payload;
     return {
-        tokenBudget: {
+        contextLimits: {
             context: settings.openai_max_context,
             response: settings.openai_max_tokens,
             tokenizerModel: getTokenizerModel(settings),
         },
+        contextPolicy,
+        ...(worldInfoActivation ? { worldInfoActivation } : {}),
+        messages: messages.map(toAgentModelMessage),
+        generationParameters,
     };
 }
 
@@ -2573,6 +2586,7 @@ export async function assembleOpenAIChatCompletionPrompt({
     const extensionPrompts = normalizePromptAssemblyExtensionPrompts(promptInputs.extensionPrompts);
     const assemblyPromptManager = createHeadlessChatCompletionPromptManager(settings, {
         macroContext,
+        contextKind,
     });
     const runtime = createPromptAssemblyRuntime({
         promptManager: assemblyPromptManager,
@@ -2616,7 +2630,7 @@ export async function assembleOpenAIChatCompletionPrompt({
     return {
         messages,
         chatCompletionPayload,
-        tokenCounts,
+        ...(contextKind === 'chat' ? { tokenCounts } : {}),
     };
 }
 

@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
+use serde::Serialize;
 use serde_json::{Value, json};
 use tt_domain::models::agent::session::{
     AgentSessionCompaction, AgentSessionMessage, AgentSessionMessageOrigin, NewAgentSessionMessage,
@@ -10,7 +11,6 @@ use tt_domain::models::agent::{
     AgentRunEventLevel, AgentRunStatus,
 };
 use tt_domain::models::tool::ToolChoice;
-use tt_ports::repositories::agent_session_repository::AgentSessionMessageReadQuery;
 
 use crate::dto::agent_dto::{AgentPromptAssemblyBrokerRequestDto, AgentPromptAssemblyScopeDto};
 use crate::dto::tokenization_dto::{OpenAiTokenCountBatchItemDto, OpenAiTokenCountBatchRequestDto};
@@ -44,7 +44,7 @@ Keep exact names, paths, selectors, setting keys, values and error messages. Lea
 const EARLIER_SUMMARY: &str = "\n\nYour context begins with an earlier summary. Keep from it what still holds, and add what happened since.";
 const COMPACTION_PREFIX: &str = "The earlier part of this conversation was compacted. Below is the summary you wrote as it left your context: your own notes, not a message from the user. The messages after it are as they were. Observe the app again before you rely on the state it describes.\n\n";
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(super) struct SessionInvocation {
     pub assembly_request: AgentPromptAssemblyBrokerRequestDto,
     pub point: usize,
@@ -52,10 +52,17 @@ pub(super) struct SessionInvocation {
     pub usage_anchor: Option<UsageAnchor>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(super) struct UsageAnchor {
     tokens: usize,
     messages: usize,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum CompactionTrigger {
+    Point,
+    Overflow,
 }
 
 impl SessionInvocation {
@@ -63,7 +70,7 @@ impl SessionInvocation {
         assembly_request: AgentPromptAssemblyBrokerRequestDto,
         snapshot: &Value,
     ) -> Result<Self, ApplicationError> {
-        let budget = &snapshot["tokenBudget"];
+        let budget = &snapshot["contextLimits"];
         let missing = || {
             ApplicationError::ValidationError(
             "agent.session_token_budget_missing: Session prompt snapshot requires positive context and response token budgets and a tokenizerModel".into()
@@ -262,12 +269,15 @@ fn message_token_input(message: &AgentModelMessage) -> Value {
     json!({ "role": message.role, "content": content })
 }
 
-pub(super) fn is_context_overflow(error: &ApplicationError) -> bool {
+pub(super) fn is_context_overflow_error(error: &ApplicationError) -> bool {
     matches!(error, ApplicationError::ValidationError(message) if message.starts_with("model.context_overflow:"))
 }
 
-fn context_full(prepared: &PreparedInvocation, tokens: usize) -> ApplicationError {
-    let session = prepared.session.as_ref().expect("Session compaction");
+fn is_output_truncated_error(error: &ApplicationError) -> bool {
+    matches!(error, ApplicationError::ValidationError(message) if message.starts_with("model.output_truncated:"))
+}
+
+fn context_full(session: &SessionInvocation, tokens: usize) -> ApplicationError {
     ApplicationError::ValidationError(format!(
         "agent.context_full: The context is {tokens} tokens even with its history compacted, at or above the compaction point of {}. Raise the context size of the preset \"{}\", or choose a preset with a larger one.",
         session.point, session.assembly_request.preset_ref.name,
@@ -278,9 +288,10 @@ impl AgentRuntimeService {
     pub(super) async fn context_tokens(
         &self,
         request: &AgentModelRequest,
-        session: &SessionInvocation,
+        tokenizer_model: &str,
+        anchor: Option<&UsageAnchor>,
     ) -> Result<usize, ApplicationError> {
-        let (base, start) = match &session.usage_anchor {
+        let (base, start) = match anchor {
             Some(anchor) => (anchor.tokens, anchor.messages),
             None => (0, 0),
         };
@@ -288,7 +299,7 @@ impl AgentRuntimeService {
             .iter()
             .map(message_token_input)
             .collect::<Vec<_>>();
-        if session.usage_anchor.is_none() {
+        if anchor.is_none() {
             for tool in &request.tools {
                 let mut content = tool.model_alias.clone();
                 if let Some(description) = &tool.description {
@@ -301,7 +312,7 @@ impl AgentRuntimeService {
         let counts = self
             .tokenization
             .count_openai_tokens_batch(OpenAiTokenCountBatchRequestDto {
-                model: session.tokenizer_model.clone(),
+                model: tokenizer_model.to_owned(),
                 requests: vec![OpenAiTokenCountBatchItemDto { messages }],
             })
             .await?;
@@ -311,15 +322,11 @@ impl AgentRuntimeService {
     async fn rebuild_session_request(
         &self,
         prepared: &PreparedInvocation,
+        session: &SessionInvocation,
         groups: Vec<Vec<AgentModelMessage>>,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<AgentModelRequest, ApplicationError> {
-        let mut assembly = prepared
-            .session
-            .as_ref()
-            .expect("Session compaction")
-            .assembly_request
-            .clone();
+        let mut assembly = session.assembly_request.clone();
         let scope = AgentPromptAssemblyScopeDto {
             run_id: prepared.invocation.run_id.clone(),
             invocation_id: prepared.invocation.id.clone(),
@@ -349,39 +356,12 @@ impl AgentRuntimeService {
         .await
     }
 
-    pub(super) async fn compact_session_context(
+    async fn retained_group_start(
         &self,
-        prepared: &PreparedInvocation,
-        round: usize,
-        trigger: &str,
-        cancel: &mut AgentCancelReceiver,
-    ) -> Result<AgentModelRequest, ApplicationError> {
-        let session = prepared.session.as_ref().expect("Session compaction");
-        let invocation = &prepared.invocation;
-        let run_id = invocation.run_id.as_str();
-        let active = self.active_run_handle(run_id).await?;
-        let session_id = active
-            .target
-            .session_id()
-            .expect("Session invocation target");
-        let history = self
-            .session_repository
-            .read_session_messages(
-                session_id,
-                AgentSessionMessageReadQuery {
-                    after_seq: Some(0),
-                    before_seq: None,
-                    limit: usize::MAX,
-                },
-            )
-            .await?;
-        let current = session_context(&history)?;
-        let entries = current
-            .iter()
-            .copied()
-            .filter(|entry| entry.compaction.is_none())
-            .collect::<Vec<_>>();
-        let groups = session_groups(&entries)?;
+        entries: &[&AgentSessionMessage],
+        session: &SessionInvocation,
+    ) -> Result<usize, ApplicationError> {
+        let groups = session_groups(entries)?;
         let counts = self
             .tokenization
             .count_openai_tokens_batch(OpenAiTokenCountBatchRequestDto {
@@ -407,18 +387,20 @@ impl AgentRuntimeService {
             kept_tokens += tokens;
             kept_start = group.range.start;
         }
-        let tokens_before = self.context_tokens(&prepared.request, session).await?;
-        if kept_start == 0 {
-            return Err(context_full(prepared, tokens_before));
-        }
-        self.transition_status(run_id, AgentRunStatus::CompactingContext)
-            .await?;
-        self.event(run_id, AgentRunEventLevel::Info, "context_compaction_started", json!({
-            "round": round, "invocationId": invocation.id, "trigger": trigger, "tokens": tokens_before,
-        })).await?;
+        Ok(kept_start)
+    }
 
+    async fn summarize_session_context(
+        &self,
+        prepared: &PreparedInvocation,
+        session: &SessionInvocation,
+        mut entries: Vec<&AgentSessionMessage>,
+        round: usize,
+        trigger: CompactionTrigger,
+        cancel: &mut AgentCancelReceiver,
+    ) -> Result<String, ApplicationError> {
         let mut instruction = COMPACTION_REQUEST.to_owned();
-        if current
+        if entries
             .first()
             .is_some_and(|entry| entry.compaction.is_some())
         {
@@ -431,16 +413,15 @@ impl AgentRuntimeService {
         };
         let mut request = prepared.request.clone();
         request.messages.push(instruction.clone());
-        if trigger == "overflow" {
+        if matches!(trigger, CompactionTrigger::Overflow) {
             reset_transport_for_resume(&mut request);
         }
-        let mut summary_entries = current;
         let mut tools_off = false;
-        let summary = loop {
+        loop {
             self.ensure_not_cancelled(cancel)?;
             let exchange = self
                 .generate_model_with_retry(
-                    invocation,
+                    &prepared.invocation,
                     round,
                     &request,
                     &prepared.profile.run.model_retry,
@@ -449,18 +430,19 @@ impl AgentRuntimeService {
                 )
                 .await;
             match exchange {
-                Err(error) if is_context_overflow(&error) => {
-                    let group = session_groups(&summary_entries)?.into_iter().find(|group| {
-                        summary_entries[group.range.start].message.parts.iter()
+                Err(error) if is_context_overflow_error(&error) => {
+                    let group = session_groups(&entries)?.into_iter().find(|group| {
+                        entries[group.range.start].message.parts.iter()
                             .any(|part| matches!(part, AgentModelContentPart::ToolCall { .. }))
                     }).ok_or_else(|| ApplicationError::ValidationError(
                         "agent.compaction_failed: The context is too long to summarize, even after leaving out its earlier tool results.".into()
                     ))?;
-                    summary_entries.drain(group.range);
+                    entries.drain(group.range);
                     request = self
                         .rebuild_session_request(
                             prepared,
-                            session_history_groups(&summary_entries)?,
+                            session,
+                            session_history_groups(&entries)?,
                             cancel,
                         )
                         .await?;
@@ -468,11 +450,8 @@ impl AgentRuntimeService {
                     if tools_off {
                         request.tool_choice = ToolChoice::None;
                     }
-                    reset_transport_for_resume(&mut request);
                 }
-                Err(ApplicationError::ValidationError(message))
-                    if message.starts_with("model.output_truncated:") =>
-                {
+                Err(error) if is_output_truncated_error(&error) => {
                     return Err(ApplicationError::ValidationError(format!(
                         "agent.compaction_failed: The summary stopped at the response limit of the preset \"{}\". Raise its max response length.",
                         session.assembly_request.preset_ref.name,
@@ -491,26 +470,53 @@ impl AgentRuntimeService {
                         reset_transport_for_resume(&mut request);
                         continue;
                     }
-                    let text = exchange
-                        .response
-                        .message
-                        .parts
-                        .iter()
-                        .filter_map(|part| match part {
-                            AgentModelContentPart::Text { text } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("");
-                    if text.trim().is_empty() {
+                    let text = exchange.response.text.trim();
+                    if text.is_empty() {
                         return Err(ApplicationError::ValidationError(
                             "agent.compaction_failed: The model wrote no summary.".into(),
                         ));
                     }
-                    break text.trim().to_owned();
+                    return Ok(text.to_owned());
                 }
             }
-        };
+        }
+    }
+
+    pub(super) async fn compact_session_context(
+        &self,
+        prepared: &PreparedInvocation,
+        session: &SessionInvocation,
+        round: usize,
+        trigger: CompactionTrigger,
+        tokens_before: usize,
+        cancel: &mut AgentCancelReceiver,
+    ) -> Result<AgentModelRequest, ApplicationError> {
+        let invocation = &prepared.invocation;
+        let run_id = invocation.run_id.as_str();
+        let active = self.active_run_handle(run_id).await?;
+        let session_id = active
+            .target
+            .session_id()
+            .expect("Session invocation target");
+        let history = self.read_session_history(session_id).await?;
+        let current = session_context(&history)?;
+        let entries = current
+            .iter()
+            .copied()
+            .filter(|entry| entry.compaction.is_none())
+            .collect::<Vec<_>>();
+        let kept_start = self.retained_group_start(&entries, session).await?;
+        if kept_start == 0 {
+            return Err(context_full(session, tokens_before));
+        }
+        self.transition_status(run_id, AgentRunStatus::CompactingContext)
+            .await?;
+        self.event(run_id, AgentRunEventLevel::Info, "context_compaction_started", json!({
+            "round": round, "invocationId": invocation.id, "trigger": trigger, "tokens": tokens_before,
+        })).await?;
+        let summary = self
+            .summarize_session_context(prepared, session, current, round, trigger, cancel)
+            .await?;
         let summary_message = AgentModelMessage {
             role: AgentModelRole::User,
             parts: vec![
@@ -524,13 +530,13 @@ impl AgentRuntimeService {
         let mut groups = session_history_groups(&entries[kept_start..])?;
         groups.insert(0, vec![summary_message.clone()]);
         let request = self
-            .rebuild_session_request(prepared, groups, cancel)
+            .rebuild_session_request(prepared, session, groups, cancel)
             .await?;
-        let mut fresh_session = session.clone();
-        fresh_session.usage_anchor = None;
-        let tokens_after = self.context_tokens(&request, &fresh_session).await?;
+        let tokens_after = self
+            .context_tokens(&request, &session.tokenizer_model, None)
+            .await?;
         if tokens_after >= session.point {
-            return Err(context_full(prepared, tokens_after));
+            return Err(context_full(session, tokens_after));
         }
         self.ensure_not_cancelled(cancel)?;
         let kept_from_seq = entries.get(kept_start).map(|entry| entry.seq);

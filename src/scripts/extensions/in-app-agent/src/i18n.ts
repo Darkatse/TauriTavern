@@ -92,6 +92,7 @@ const messages = {
     "working": "Working…",
     "compacting": "Compacting context",
     "contextCompacted": "Compacted context",
+    "compactionTokens": "{before} → {after} tokens",
     "finishing": "Finishing this reply…",
     "stopping": "Stopping…",
     "cancelled": "This run was stopped. Completed actions were not undone.",

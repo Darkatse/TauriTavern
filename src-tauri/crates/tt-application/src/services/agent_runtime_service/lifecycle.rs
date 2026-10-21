@@ -204,11 +204,13 @@ impl AgentRuntimeService {
         tokio::spawn(async move {
             service
                 .execute_agent_loop_run(
-                    background_run_id,
-                    prompt_snapshot,
-                    resolved_profile,
-                    effective_skills,
-                    None,
+                    super::RootInvocationInput {
+                        run_id: background_run_id,
+                        prompt_snapshot,
+                        resolved_profile,
+                        effective_skills,
+                        session: None,
+                    },
                     cancel_receiver,
                 )
                 .await;

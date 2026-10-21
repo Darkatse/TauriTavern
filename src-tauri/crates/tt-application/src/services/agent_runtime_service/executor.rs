@@ -13,36 +13,24 @@ use super::loop_runner::AgentLoopExit;
 use super::prompt_snapshot::AgentPromptRequest;
 use super::prompt_snapshot::{request_summary, runtime_context_from_snapshot};
 use super::tool_snapshot::tool_snapshot_summary;
-use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
+use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation, RootInvocationInput};
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::ensure_profile_model_configured;
 use tt_domain::models::agent::profile::{AgentModelBindingMode, ResolvedAgentProfile};
 use tt_domain::models::agent::{
     AgentInvocationStatus, AgentRunEventLevel, AgentRunStatus, WorkspacePath,
 };
-use tt_domain::models::skill::SkillIndexEntry;
 
 impl AgentRuntimeService {
     pub(super) async fn execute_agent_loop_run(
         self: Arc<Self>,
-        run_id: String,
-        prompt_snapshot: Value,
-        resolved_profile: ResolvedAgentProfile,
-        effective_skills: Vec<SkillIndexEntry>,
-        session: Option<super::session_context::SessionInvocation>,
+        input: RootInvocationInput,
         mut cancel: AgentCancelReceiver,
     ) {
+        let run_id = input.run_id.clone();
         let mut state = RunExecutionState::default();
         let result = self
-            .execute_agent_loop_run_body(
-                &run_id,
-                prompt_snapshot,
-                resolved_profile,
-                effective_skills,
-                session,
-                &mut state,
-                &mut cancel,
-            )
+            .execute_agent_loop_run_body(input, &mut state, &mut cancel)
             .await;
         self.finish_execution(&run_id, state, result).await;
     }
@@ -255,11 +243,13 @@ impl AgentRuntimeService {
         );
         let result = self
             .execute_agent_loop_run_body(
-                run_id,
-                prompt_snapshot,
-                resolved_profile,
-                effective_skills,
-                None,
+                RootInvocationInput {
+                    run_id: run_id.to_owned(),
+                    prompt_snapshot,
+                    resolved_profile,
+                    effective_skills,
+                    session: None,
+                },
                 &mut state,
                 cancel,
             )
@@ -279,20 +269,20 @@ impl AgentRuntimeService {
         Ok(())
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "run bootstrap boundary keeps input snapshot, profile, skills, ledger, and cancellation explicit"
-    )]
     async fn execute_agent_loop_run_body(
         &self,
-        run_id: &str,
-        prompt_snapshot: Value,
-        resolved_profile: ResolvedAgentProfile,
-        effective_skills: Vec<SkillIndexEntry>,
-        session: Option<super::session_context::SessionInvocation>,
+        input: RootInvocationInput,
         state: &mut RunExecutionState,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
+        let RootInvocationInput {
+            run_id,
+            prompt_snapshot,
+            resolved_profile,
+            effective_skills,
+            session,
+        } = input;
+        let run_id = run_id.as_str();
         let run = self
             .transition_status(run_id, AgentRunStatus::InitializingWorkspace)
             .await?;

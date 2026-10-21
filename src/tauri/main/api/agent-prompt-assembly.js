@@ -10,7 +10,6 @@ import {
     normalizeAgentSystemPrompt,
 } from '../../../scripts/tauritavern/agent/agent-system-prompt.js';
 import { createMacroContextFromSnapshot, normalizeFrozenRunInputSnapshot } from '../../../scripts/tauritavern/agent/frozen-run-input-snapshot.js';
-import { createAgentPromptSnapshot } from '../../../scripts/tauritavern/agent/agent-model-messages.js';
 import { setParamOmitted } from '../../../scripts/tauri/generation-params/omission.js';
 
 const PROMPT_ASSEMBLY_SOURCE = 'frontend-prompt-assembly-broker';
@@ -22,10 +21,11 @@ const PROMPT_ASSEMBLY_SOURCE = 'frontend-prompt-assembly-broker';
  * @param {Record<string, unknown>} input
  */
 export async function buildPromptAssemblySnapshot(input = {}) {
-    const { payload, snapshotMetadata, ...assembled } = await buildPromptAssemblyPayload(input);
+    const { payload, snapshotInputs, ...assembled } = await buildPromptAssemblyPayload(input);
+    const { createAgentPromptSnapshot } = await import('../../../scripts/openai.js');
     return {
         ...assembled,
-        promptSnapshot: createAgentPromptSnapshot(payload, snapshotMetadata),
+        promptSnapshot: createAgentPromptSnapshot(payload, snapshotInputs),
     };
 }
 
@@ -70,10 +70,10 @@ export async function buildPromptAssemblyPayload(input = {}) {
     const payload = result.chatCompletionPayload;
     return {
         payload,
-        snapshotMetadata: {
-            ...openai.agentPromptModelFacts(settings),
+        snapshotInputs: {
+            settings,
             contextPolicy: request.agentContextPolicy,
-            ...(request.worldInfoActivation ? { worldInfoActivation: request.worldInfoActivation } : {}),
+            worldInfoActivation: request.worldInfoActivation,
         },
         frozenRunInputSnapshot: request.frozenRunInputSnapshot,
         generationIntent: {
@@ -85,7 +85,7 @@ export async function buildPromptAssemblyPayload(input = {}) {
         assembly: {
             schemaVersion: 1,
             engine: 'sillytavern-chat-completion-prompt-manager',
-            tokenCounts: result.tokenCounts,
+            ...(result.tokenCounts ? { tokenCounts: result.tokenCounts } : {}),
         },
     };
 }

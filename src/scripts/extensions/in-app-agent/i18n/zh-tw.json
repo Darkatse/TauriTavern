@@ -1,6 +1,7 @@
 {
     "in_app_agent.compacting": "正在壓縮上下文",
     "in_app_agent.contextCompacted": "已壓縮上下文",
+    "in_app_agent.compactionTokens": "{before} → {after} 詞元",
     "in_app_agent.contentWidth": "桌面內容寬度",
     "in_app_agent.contentWidthHelp": "調整內容區域的寬度，抽屜背景維持不變。",
     "in_app_agent.builtin": "內建工具",

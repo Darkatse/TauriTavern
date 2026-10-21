@@ -39,17 +39,6 @@ export function toAgentModelMessage(message) {
     };
 }
 
-export function createAgentPromptSnapshot(payload, metadata) {
-    if (!Array.isArray(payload?.messages)) {
-        throw new Error('agent.prompt_snapshot_messages_required: prompt assembly must produce messages');
-    }
-    if (payload.tools?.length || Object.hasOwn(payload, 'tool_choice')) {
-        throw new Error('agent.external_tools_unsupported: Agent runtime owns the tool registry and choice');
-    }
-    const { messages, prompt: _prompt, ...generationParameters } = payload;
-    return { ...metadata, messages: messages.map(toAgentModelMessage), generationParameters };
-}
-
 /** Provider-shaped projection for PromptManager token counting. */
 export function agentMessageProjection(message) {
     const content = [];

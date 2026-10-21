@@ -44,11 +44,11 @@ live 根生成同样先投影。live `{{outlet}}` 读取全局扩展提示词，
 
 `agentSystemPrompt` 是 Profile 指令在 PromptManager 中的位置，`agentTask` 是委派或交接任务的位置。Preset 控制组件的位置和 role，runtime 消费最终组装好的消息。
 
-Snapshot 使用 `messages: AgentModelMessage[]` 与独立的 `generationParameters`，旧 Chat payload 在入口适配。三个快照入口统一通过 `agentPromptModelFacts(settings)` 从有效设置提供 `tokenBudget: { context, response, tokenizerModel }`，Session runtime 据此计数并决定压缩点。
+`openai.js` 的 `createAgentPromptSnapshot` 统一把 payload 转为 `messages: AgentModelMessage[]` 与独立的 `generationParameters`，并从有效设置提供 `contextLimits: { context, response, tokenizerModel }`。Session runtime 据此计数并决定压缩点；旧 Chat payload 在入口适配。live 当前预设与 SDK 的快照共用 payload 准备入口，各自保留事件和调用来源语义。
 
 普通 Chat 在 `CHAT_COMPLETION_SETTINGS_READY` 完成后转换最终请求；其中的 live 变量修改不写回冻结输入。SDK 独立组装不触发此事件。
 
-Session 历史由 Rust 选取、校验并组成完整的工具调用与结果组，以 `promptInputs.sessionHistory` 交给 PromptManager。PromptManager 负责布局、历史位置、深度注入和附加提示词，保留原始内容及 metadata，不重新展开历史宏，也不按预算截断历史。未闭合工具组由 Rust 转为中断说明，原历史不改写，工具不重放。Session 不接受历史窗口，`initialChatHistoryMessages` 必须为 `-1`。
+Session 历史由 Rust 选取、校验并组成完整的工具调用与结果组，以 `promptInputs.sessionHistory` 交给 PromptManager。PromptManager 负责布局、历史位置、深度注入和附加提示词，保留原始内容及 metadata，不重新展开历史宏。整个 Session 提示词的预算与计数由 runtime 负责，前端不分词，也不提供 `assembly.tokenCounts`。未闭合工具组由 Rust 转为中断说明，原历史不改写，工具不重放。Session 不接受历史窗口，`initialChatHistoryMessages` 必须为 `-1`。
 
 普通 Session 轮次沿用已组装请求并追加消息；压缩时才以摘要和保留组替换组装输入，复用本 Run 的组装请求、宏环境及已解析的连接和生成参数。深度注入和附加提示词继续作用于模型当前看到的上下文；附加提示词的正索引从该上下文开头计数，摘要可能成为第一条 user 消息。完整会话的宏值不随压缩倒退。压缩规则见[运行循环](Runtime.md#session-上下文压缩)。
 

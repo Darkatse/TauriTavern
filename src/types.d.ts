@@ -217,7 +217,7 @@ type TauriTavernAgentModelContentPart =
     } };
 
 type TauriTavernAgentPromptSnapshot = {
-    tokenBudget?: { context: number; response: number; tokenizerModel: string };
+    contextLimits?: { context: number; response: number; tokenizerModel: string };
     messages: TauriTavernAgentModelMessage[];
     generationParameters: Record<string, unknown>;
     contextPolicy: { initialChatHistoryMessages: number; includeActivatedWorldInfo: boolean };

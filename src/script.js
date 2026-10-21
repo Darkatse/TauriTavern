@@ -72,16 +72,14 @@ import {
 } from './scripts/tauritavern/agent/agent-run-controller.js';
 import { agentErrorMessage } from './scripts/tauritavern/agent/agent-error-presenter.js';
 import { normalizeAgentContextPolicy, projectAgentPromptInputs } from './scripts/tauritavern/agent/agent-context-policy.js';
-import { createAgentPromptSnapshot } from './scripts/tauritavern/agent/agent-model-messages.js';
+import { prepareCurrentPromptPayload } from './tauri/main/api/agent-prompt-snapshot.js';
 import { buildPromptAssemblyPayload } from './tauri/main/api/agent-prompt-assembly.js';
 import { normalizeAgentSystemPrompt } from './scripts/tauritavern/agent/agent-system-prompt.js';
 import { readLegacyToolInvocations, stripOldToolTurns } from './scripts/tauritavern/tool-turn-projection.js';
 import {
     buildFrozenRunInputSnapshot,
     updateFrozenMacroContext,
-    createMacroContextFromSnapshot,
     buildCurrentModelConnectionSnapshot,
-    buildSettingsWithCurrentModelConnectionSnapshot,
     normalizeFrozenRunInputSnapshot,
     snapshotExtensionPromptsForFrozenRun,
 } from './scripts/tauritavern/agent/frozen-run-input-snapshot.js';
@@ -208,9 +206,7 @@ import {
     getChatCompletionModel,
     getChatCompletionPreset,
     isVertexAiClaudeModelId,
-    createGenerationParameters,
-    createChatCompletionMacroContext,
-    agentPromptModelFacts,
+    createAgentPromptSnapshot,
     proxies,
     loadProxyPresets,
     selected_proxy,
@@ -6703,58 +6699,39 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
         jsonSchema,
     });
     let payload;
-    let snapshotMetadata;
+    let snapshotInputs;
     let generationIntent;
     let runFrozenRunInputSnapshot = frozenRunInputSnapshot;
 
     if (promptAssembly?.mode === 'currentPromptSnapshot') {
-        const settings = await buildSettingsWithCurrentModelConnectionSnapshot(
-            oai_settings,
-            frozenRunInputSnapshot.currentModelConnection,
-        );
-        const model = getChatCompletionModel(settings);
-        if (!model) {
-            throw new Error('agent.model_required: current chat-completion source did not resolve a model');
-        }
-
-        const workingInputs = projectAgentPromptInputs(frozenRunInputSnapshot.promptInputs, agentContextPolicy);
-        const macroContext = createChatCompletionMacroContext(
-            createMacroContextFromSnapshot(frozenRunInputSnapshot, workingInputs), settings, model,
-        );
-        const { generate_data: chatCompletionPayload } = await createGenerationParameters(
-            settings,
-            model,
-            type,
-            structuredClone(messages),
-            {
-                jsonSchema, agentMode: true, macroContext,
+        const prepared = await prepareCurrentPromptPayload({
+            currentPromptSnapshotSeed: {
+                generationType: type,
+                messages,
+                contextPolicy: agentContextPolicy,
+                jsonSchema,
+                worldInfoActivation: frozenRunInputSnapshot.worldInfoActivation,
             },
-        );
-
-        assertAgentPromptSnapshotHasNoExternalTools(chatCompletionPayload);
-        payload = chatCompletionPayload;
-        snapshotMetadata = {
-            ...agentPromptModelFacts(settings),
-            contextPolicy: agentContextPolicy,
-            ...(frozenRunInputSnapshot.worldInfoActivation ? { worldInfoActivation: frozenRunInputSnapshot.worldInfoActivation } : {}),
-        };
+            frozenRunInputSnapshot,
+        });
+        payload = prepared.payload;
+        snapshotInputs = prepared.snapshotInputs;
+        runFrozenRunInputSnapshot = prepared.frozenRunInputSnapshot;
         generationIntent = {
+            ...prepared.generationIntent,
             source: 'legacy-generate-live-handoff',
-            generationType: type,
-            chatCompletionSource: chatCompletionPayload.chat_completion_source,
-            model: chatCompletionPayload.model,
             contextPolicy: agentContextPolicy,
         };
     } else if (promptAssembly?.mode === 'frontendPromptAssembly') {
         const assembled = await buildPromptAssemblyPayload(promptAssembly.request);
         payload = assembled.payload;
-        snapshotMetadata = assembled.snapshotMetadata;
+        snapshotInputs = assembled.snapshotInputs;
         runFrozenRunInputSnapshot = assembled.frozenRunInputSnapshot ?? frozenRunInputSnapshot;
         generationIntent = {
             ...assembled.generationIntent,
             source: 'frontend-prompt-assembly-broker',
             parentSource: 'legacy-generate-live-handoff',
-            contextPolicy: snapshotMetadata.contextPolicy,
+            contextPolicy: snapshotInputs.contextPolicy,
             promptAssembly: promptAssembly.assembly,
         };
     } else {
@@ -6763,7 +6740,7 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
 
     // Extensions finish editing the provider payload before it becomes canonical Agent input.
     await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, payload);
-    const promptSnapshot = createAgentPromptSnapshot(payload, snapshotMetadata);
+    const promptSnapshot = createAgentPromptSnapshot(payload, snapshotInputs);
 
     return startAndWaitForAgentRun({
         generationType: type,
@@ -6944,29 +6921,6 @@ async function pruneAgentPersistentStatesAfterDeletion(deletedStateIds, chatRef)
         return;
     }
     await agentApi.pruneChatPersistentStates({ candidateStateIds, chatRef });
-}
-
-function assertAgentPromptSnapshotHasNoExternalTools(payload) {
-    const tools = payload?.tools;
-    if (Array.isArray(tools) && tools.length > 0) {
-        throw new Error('agent.external_tools_unsupported: Agent runtime owns the tool registry');
-    }
-    if (Object.hasOwn(payload || {}, 'tool_choice')) {
-        throw new Error('agent.external_tool_choice_unsupported: Agent runtime owns tool choice');
-    }
-
-    const messages = payload?.messages;
-    if (!Array.isArray(messages)) {
-        throw new Error('agent.prompt_snapshot_messages_required: chat-completion payload missing messages');
-    }
-    const hasToolTurn = messages.some((message) => {
-        const role = String(message?.role || '').toLowerCase();
-        return role === 'tool'
-            || (Array.isArray(message?.tool_calls) && message.tool_calls.length > 0);
-    });
-    if (hasToolTurn) {
-        throw new Error('agent.external_tool_turns_unsupported: prompt snapshot already contains tool turns');
-    }
 }
 
 /**

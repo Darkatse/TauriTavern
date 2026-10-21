@@ -308,11 +308,13 @@ impl AgentRuntimeService {
         tokio::spawn(async move {
             service
                 .execute_agent_loop_run(
-                    run_id,
-                    prompt_snapshot,
-                    profile,
-                    effective_skills,
-                    Some(session_invocation),
+                    super::RootInvocationInput {
+                        run_id,
+                        prompt_snapshot,
+                        resolved_profile: profile,
+                        effective_skills,
+                        session: Some(session_invocation),
+                    },
                     cancel_receiver,
                 )
                 .await;
@@ -372,6 +374,23 @@ impl AgentRuntimeService {
         )
         .await?;
         Ok(entry)
+    }
+
+    pub(super) async fn read_session_history(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<AgentSessionMessage>, ApplicationError> {
+        Ok(self
+            .session_repository
+            .read_session_messages(
+                session_id,
+                AgentSessionMessageReadQuery {
+                    after_seq: Some(0),
+                    before_seq: None,
+                    limit: usize::MAX,
+                },
+            )
+            .await?)
     }
 
     pub(super) async fn resolve_session_skills(

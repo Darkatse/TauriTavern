@@ -753,7 +753,7 @@ fn session_prompt_snapshot(request: &AgentPromptAssemblyBrokerRequestDto) -> (Va
     (
         json!({
             "contextPolicy":request.agent_context_policy,
-            "tokenBudget":{
+            "contextLimits":{
                 "context":request.settings["openai_max_context"],
                 "response":request.settings["openai_max_tokens"],
                 "tokenizerModel":"gpt-4o",

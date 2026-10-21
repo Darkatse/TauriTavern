@@ -8,7 +8,7 @@ use super::commit_ledger::RunCommitLedger;
 use super::continuation::{AutoCommitFile, InvocationFrame, InvocationStep, PendingToolTurn};
 use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
-use super::session_context::is_context_overflow;
+use super::session_context::{CompactionTrigger, is_context_overflow_error};
 use super::tool_execution::recoverable_tool_error;
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::errors::ApplicationError;
@@ -80,20 +80,32 @@ impl AgentRuntimeService {
                         self.transition_status(run_id, AgentRunStatus::CallingModel)
                             .await?;
                     }
-                    let mut trigger = match &prepared.session {
-                        Some(session)
-                            if self.context_tokens(&prepared.request, session).await?
-                                >= session.point =>
-                        {
-                            Some("point")
+                    let session_tokens = match &prepared.session {
+                        Some(session) => Some(
+                            self.context_tokens(
+                                &prepared.request,
+                                &session.tokenizer_model,
+                                session.usage_anchor.as_ref(),
+                            )
+                            .await?,
+                        ),
+                        None => None,
+                    };
+                    let mut trigger = match (&prepared.session, session_tokens) {
+                        (Some(session), Some(tokens)) if tokens >= session.point => {
+                            Some(CompactionTrigger::Point)
                         }
                         _ => None,
                     };
                     let mut compacted = false;
                     let exchange = loop {
-                        if let Some(trigger) = trigger.take() {
+                        if let (Some(trigger), Some(session), Some(tokens)) =
+                            (trigger.take(), prepared.session.as_ref(), session_tokens)
+                        {
                             prepared.request = self
-                                .compact_session_context(prepared, round, trigger, cancel)
+                                .compact_session_context(
+                                    prepared, session, round, trigger, tokens, cancel,
+                                )
                                 .await?;
                             prepared
                                 .session
@@ -119,11 +131,11 @@ impl AgentRuntimeService {
                             .await
                         {
                             Err(error)
-                                if is_context_overflow(&error)
+                                if is_context_overflow_error(&error)
                                     && prepared.session.is_some()
                                     && !compacted =>
                             {
-                                trigger = Some("overflow");
+                                trigger = Some(CompactionTrigger::Overflow);
                             }
                             result => break result?,
                         }

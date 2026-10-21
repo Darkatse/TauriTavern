@@ -26,7 +26,6 @@ impl AgentRuntimeService {
         use tt_domain::models::agent::{
             AgentInvocationExitPolicy, AgentModelContentPart, AgentModelMessage, AgentModelRole,
         };
-        use tt_ports::repositories::agent_session_repository::AgentSessionMessageReadQuery;
 
         self.session_repository
             .load_session(&dto.session_id)
@@ -40,17 +39,7 @@ impl AgentRuntimeService {
             .profile_service
             .resolve_session_profile(dto.profile, self.tool_catalog())
             .await?;
-        let history = self
-            .session_repository
-            .read_session_messages(
-                &dto.session_id,
-                AgentSessionMessageReadQuery {
-                    after_seq: Some(0),
-                    before_seq: None,
-                    limit: usize::MAX,
-                },
-            )
-            .await?;
+        let history = self.read_session_history(&dto.session_id).await?;
         let last_seq = history.last().map_or(0, |entry| entry.seq);
         let mut messages = history
             .iter()

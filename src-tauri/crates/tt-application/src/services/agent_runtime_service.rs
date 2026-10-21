@@ -117,6 +117,14 @@ struct PreparedInvocation {
     session: Option<session_context::SessionInvocation>,
 }
 
+struct RootInvocationInput {
+    run_id: String,
+    prompt_snapshot: serde_json::Value,
+    resolved_profile: ResolvedAgentProfile,
+    effective_skills: Vec<SkillIndexEntry>,
+    session: Option<session_context::SessionInvocation>,
+}
+
 struct PreparedInvocationTools {
     snapshot: InvocationToolSnapshot,
     turn: ToolTurnContract,

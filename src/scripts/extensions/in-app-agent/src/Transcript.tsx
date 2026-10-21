@@ -291,8 +291,11 @@ export function Transcript({ snapshot, controller, actions, visible }: {
                         const { message } = entry;
                         if (entry.compaction) {
                             const summary = message.parts[1] as Extract<Part, { type: 'text' }>;
-                            return <div key={entry.seq} data-message-seq={entry.seq}>
-                                <Disclosure label={<>{tr('contextCompacted')} <span className="ttia-muted">{entry.compaction.tokensBefore.toLocaleString()} → {entry.compaction.tokensAfter.toLocaleString()} tokens</span></>}>
+                            const locale = document.documentElement.lang || undefined;
+                            return <div key={entry.seq} data-message-seq={entry.seq} data-new={entry.seq > initialSeq}>
+                                <Disclosure label={<>{tr('contextCompacted')} <span className="ttia-muted">{tr('compactionTokens', {
+                                    before: entry.compaction.tokensBefore.toLocaleString(locale), after: entry.compaction.tokensAfter.toLocaleString(locale),
+                                })}</span></>}>
                                     <Markdown text={summary.text} actions={actions} />
                                 </Disclosure>
                             </div>;
