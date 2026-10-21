@@ -49,7 +49,7 @@ function harness() {
         copy: () => Promise.resolve(), openLink: () => Promise.resolve(), markdown: text => text,
         isMobile: () => true, shouldSendOnEnter: () => true,
         isMobileHost: () => false,
-        loadOptions: () => Promise.resolve({ presets: ['Default'], tools: [], diagnostics: [], skills: [] }),
+        loadOptions: () => Promise.resolve({ presets: ['Agent'], tools: [], diagnostics: [], skills: [] }),
         readResult: () => Promise.reject(new Error('No external result')), openConnections: () => {},
         confirmDeleteSession: () => Promise.resolve(true),
     };

@@ -88,6 +88,8 @@ Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点�
 
 ## Session 配置
 
+内置 `openai/Agent` 预设供直接与用户对话的 Agent 使用：Main Prompt 说明这类 Agent 的工作方式，具体职责写在 Profile 指令里。应用内助手首次配置默认绑定它；已保存的 Session Profile 保留原有预设和指令。预设默认上下文为 128000、最大回复为 32768，并省略采样参数，让服务商采用模型默认值。
+
 Session 使用相同的 `AgentProfileDefinition`，独立保存到 `_tauritavern/agent-workspaces/sessions/profile.json`，由所有 Session 共用，不进入普通 Profile 列表。修改从下一次发送准备时生效；预设重命名同时更新其引用。
 
 Session 必须指定 `preset.mode = ref` 和 `model.mode = connectionRef`，Skill 只取 Profile 自身作用域。正文产物与 commit/finish 要求属于 Chat 执行准入，Session 可使用空产物配置。目录与生命周期见 [Workspace](Workspace.md#session-的持续工作区)。

@@ -80,7 +80,6 @@ Assistant conversation and tool logs are omitted from observation.`,
         contexts: ['session'],
         enabled: true,
         description: evaluateTool.description + `
-api is the public application API (window.__TAURITAVERN__.api). This assistant conversation is separate from the selected character chat; read the current app state when that distinction matters.
 context.signal is an AbortSignal for cooperative cancellation.
 This executes in the app page. workspace_shell JavaScript is a separate environment without this window, document or api.`,
     }, async (args, context) => {
