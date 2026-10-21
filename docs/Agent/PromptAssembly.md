@@ -17,13 +17,13 @@ Chat 的 `Generate()` 在组装前采集材料，在 `GENERATE_AFTER_DATA` 的�
 
 根 Agent、子 Agent 和接手的 Agent 共用这份输入，各自按 Profile 决定预设、模型和上下文范围。每次组装使用工作副本，提示词和请求参数通过同一[宏求值入口](../API/Macros.md)共享本次变量，保存的输入保持不变。
 
-Session 从自身历史与本次用户消息准备输入，使用指定预设，不取当前角色聊天的数据。变量来源见 [Session API](../API/Agent.md#持续-session)。完整历史保存在 JSONL 中；Run 只保存预算内的最终消息和运行上下文。
+Session 从自身历史与本次用户消息准备输入，使用指定预设，不取当前角色聊天的数据。变量来源见 [Session API](../API/Agent.md#持续-session)。完整历史保存在 JSONL 中；宏环境由完整会话求出并在发送时冻结，Run 保留最终消息和组装请求。
 
 捕获保存原始角色模板，不执行其中的宏；原生只读文本复用首次生成的结果。旧 Run 可查看和尝试 resume/fix；需要重新组装时，schemaVersion 1 的输入返回 `agent.frozen_run_input_outdated`，缺少宏重建材料时返回 `agent.macro_context_rebuild_unavailable`。
 
 ## 上下文策略
 
-Profile 的历史窗口与 `includeActivatedWorldInfo` 只在 [agent-context-policy.js](../../src/scripts/tauritavern/agent/agent-context-policy.js) 的投影中应用：它从冻结输入生成每次组装的工作输入。世界书只激活一次，前后文、示例、深度注入、outlet 与 Author's Note 附加内容按来源保存，由投影取舍。`includeActivatedWorldInfo` 只约束初始提示词，工具读取完整的激活结果。
+Profile 的 `includeActivatedWorldInfo` 与 Chat 的历史窗口只在 [agent-context-policy.js](../../src/scripts/tauritavern/agent/agent-context-policy.js) 的投影中应用：它从冻结输入生成每次组装的工作输入。世界书只激活一次，前后文、示例、深度注入、outlet 与 Author's Note 附加内容按来源保存，由投影取舍。`includeActivatedWorldInfo` 只约束初始提示词，工具读取完整的激活结果。
 
 live 根生成同样先投影。live `{{outlet}}` 读取全局扩展提示词，因此投影后的世界书注入会写回全局。
 
@@ -40,7 +40,7 @@ live 根生成同样先投影。live `{{outlet}}` 读取全局扩展提示词，
   → startRunWithPromptSnapshot：Rust 创建 Run 并开始循环
 ```
 
-子 Agent 或交接发生在运行中：runtime 写入 `prompt_assembly_requested` 事件，host bridge 按请求 ID 读取组装输入，调用同一个前端组装器，再把结果交回等待中的 Invocation。缺少当前预设时返回 `prompt_assembly.current_preset_unavailable`；需要预设身份而当前预设未命名时返回 `agent.current_preset_unnamed`。
+运行中的组装通过同一宿主往返：runtime 写入 `prompt_assembly_requested` 事件，host bridge 按请求 ID 读取组装输入，调用同一个前端组装器，再把结果交回等待中的 Invocation。委派与交接先按接收方 Profile 生成请求；Session 保留发送时的组装请求和冻结输入。Session API 在页面加载时为活动 Run 重新挂桥，已完成的组装请求在事件重放中跳过。缺少当前预设时返回 `prompt_assembly.current_preset_unavailable`；需要预设身份而当前预设未命名时返回 `agent.current_preset_unnamed`。
 
 `agentSystemPrompt` 是 Profile 指令在 PromptManager 中的位置，`agentTask` 是委派或交接任务的位置。Preset 控制组件的位置和 role，runtime 消费最终组装好的消息。
 
@@ -48,7 +48,7 @@ Snapshot 使用 `messages: AgentModelMessage[]` 与独立的 `generationParamete
 
 普通 Chat 在 `CHAT_COMPLETION_SETTINGS_READY` 完成后转换最终请求；其中的 live 变量修改不写回冻结输入。SDK 独立组装不触发此事件。
 
-Session 历史按完整的工具调用与结果组参与预算裁剪，保留原始内容和 metadata，不重新展开历史宏。未闭合工具组在下次组装时呈现为中断说明，原历史不改写，工具不重放。实际输入范围由预设预算与 Profile 的历史窗口决定。
+Session 历史由 Rust 选取、校验并组成完整的工具调用与结果组，以 `promptInputs.sessionHistory` 交给 PromptManager。PromptManager 负责布局、历史位置、深度注入和附加提示词，保留原始内容及 metadata，不重新展开历史宏，也不按预算截断历史。未闭合工具组由 Rust 转为中断说明，原历史不改写，工具不重放。Session 不接受历史窗口，`initialChatHistoryMessages` 必须为 `-1`。
 
 ## Skill 与 Agent 目录
 

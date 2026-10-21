@@ -3,6 +3,7 @@ use tokio::sync::oneshot;
 use tt_ports::workspace_fs::WorkspaceWriteGuard;
 use uuid::Uuid;
 
+use super::session_context::{session_context, session_history_groups};
 use super::{
     AgentCancelReceiver, AgentRuntimeService, HostPromptAssemblyResult, PendingHostPromptAssembly,
 };
@@ -40,7 +41,6 @@ impl AgentRuntimeService {
             .profile_service
             .resolve_session_profile(dto.profile, self.tool_catalog())
             .await?;
-        // Assembly needs the full transcript; read it once, then let PromptManager budget it.
         let history = self
             .session_repository
             .read_session_messages(
@@ -54,14 +54,17 @@ impl AgentRuntimeService {
             .await?;
         let last_seq = history.last().map_or(0, |entry| entry.seq);
         let mut messages = history
-            .into_iter()
-            .map(|entry| entry.message)
+            .iter()
+            .map(|entry| entry.message.clone())
             .collect::<Vec<_>>();
-        messages.push(AgentModelMessage {
+        let user_message = AgentModelMessage {
             role: AgentModelRole::User,
             parts: vec![AgentModelContentPart::Text { text: dto.text }],
             provider_metadata: Value::Null,
-        });
+        };
+        let mut groups = session_history_groups(&session_context(&history))?;
+        groups.push(vec![user_message.clone()]);
+        messages.push(user_message);
         let tools = self
             .prepare_invocation_tools(
                 &profile,
@@ -83,7 +86,7 @@ impl AgentRuntimeService {
                         "generationType": "normal",
                         "promptInputs": {
                             "messages": [],
-                            "agentMessages": messages,
+                            "sessionHistory": groups,
                             "messageExamples": [],
                             "worldInfoExamples": { "before": [], "after": [] },
                             "extensionPrompts": {},
@@ -100,6 +103,7 @@ impl AgentRuntimeService {
             .await?;
         Ok(crate::dto::agent_dto::AgentPrepareSessionRunResultDto {
             expected_history_seq: last_seq,
+            session_messages: messages,
             assembly,
         })
     }
@@ -205,7 +209,7 @@ impl AgentRuntimeService {
         let run_id = scope.run_id.as_str();
         let invocation_id = scope.invocation_id.as_str();
         let assembly_id = format!("prompt_assembly_{}", Uuid::new_v4().simple());
-        let (request, request_metadata) = self
+        let (request, _) = self
             .prompt_assembly_service
             .prepare_invocation_frontend_prompt_assembly(
                 AgentPreparePromptAssemblyDto {
@@ -227,6 +231,30 @@ impl AgentRuntimeService {
                 },
             )
             .await?;
+        self.request_host_prompt_assembly(run_id, invocation_id, profile, request, cancel)
+            .await
+    }
+
+    pub(super) async fn request_host_prompt_assembly(
+        &self,
+        run_id: &str,
+        invocation_id: &str,
+        profile: &ResolvedAgentProfile,
+        request: crate::dto::agent_dto::AgentPromptAssemblyBrokerRequestDto,
+        cancel: &mut AgentCancelReceiver,
+    ) -> Result<Value, ApplicationError> {
+        let assembly_id = request
+            .assembly_id
+            .as_deref()
+            .ok_or_else(|| {
+                ApplicationError::ValidationError(
+                    "agent.prompt_assembly_id_required: host assembly requires an assembly id"
+                        .into(),
+                )
+            })?
+            .to_owned();
+        let scope = request.scope.clone();
+        let request_metadata = request.metadata();
         let requested_event = json!({
             "assemblyId": assembly_id.as_str(),
             "invocationId": invocation_id,

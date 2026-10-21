@@ -10,7 +10,9 @@ Runtime 创建 Run，初始化工作区，保存输入和解析后的 Profile，
 
 `startRunFromLegacyGenerate()` 负责从当前聊天取得输入；`startRunWithPromptSnapshot()` 接受已经组装好的输入。两者进入相同的 Rust runtime。具体参数见 [API](../API/Agent.md)，提示词的生成过程见 [Prompt assembly](PromptAssembly.md)。
 
-`sessions.send()` 每次创建一个 Run，共用该 Session 的历史与工作区。同一 Session 只允许一个活跃 Run；准备期间历史发生变化时拒绝启动。
+`sessions.send()` 每次创建一个 Run，共用该 Session 的历史与工作区。Rust 选取历史并按工具协议成组，PromptManager 负责布局；宏环境从完整会话求出并冻结。同一 Session 只允许一个活跃 Run；准备期间历史发生变化时拒绝启动。
+
+Session 发送时交回组装请求，runtime 与冻结输入一起保留。Session、委派与交接共用宿主组装桥；页面加载时，Session API 为活动 Run 重新挂桥。
 
 ## 每一轮
 

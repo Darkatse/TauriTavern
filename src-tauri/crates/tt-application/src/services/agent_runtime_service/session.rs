@@ -9,6 +9,7 @@ use super::prompt_snapshot::{
     reject_external_tool_request, request_from_prompt_snapshot,
     validate_prompt_snapshot_context_policy,
 };
+use super::session_context::SessionInvocation;
 use super::{ActiveRunHandle, AgentRuntimeService};
 use crate::dto::agent_dto::{
     AgentDeleteSessionDto, AgentListSessionsResultDto, AgentReadSessionDto,
@@ -213,6 +214,9 @@ impl AgentRuntimeService {
             dto.prompt_snapshot,
             Some(dto.frozen_run_input_snapshot),
         )?;
+        let mut assembly_request = dto.prompt_assembly_request;
+        assembly_request.frozen_run_input_snapshot =
+            prompt_snapshot["frozenRunInputSnapshot"].clone();
         let _admission = self.run_lifecycle_lock.lock().await;
         self.session_repository
             .load_session(&dto.session_id)
@@ -320,6 +324,7 @@ impl AgentRuntimeService {
                     request,
                     profile,
                     effective_skills,
+                    Some(SessionInvocation { assembly_request }),
                     cancel_receiver,
                 )
                 .await;

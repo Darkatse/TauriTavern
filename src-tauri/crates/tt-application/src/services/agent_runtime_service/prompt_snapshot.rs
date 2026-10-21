@@ -12,6 +12,34 @@ use tt_ports::repositories::chat_completion_repository::OPENAI_RESPONSES_WEBSOCK
 
 use super::invocation::model_session_id;
 
+impl super::AgentRuntimeService {
+    pub(super) async fn prepare_invocation_model_request(
+        &self,
+        mut request: AgentPromptRequest,
+        invocation: &tt_domain::models::agent::AgentInvocation,
+        profile: &ResolvedAgentProfile,
+        skills: &[SkillIndexEntry],
+        tools: &[AgentModelTool],
+        choice: ToolChoice,
+    ) -> Result<AgentModelRequest, ApplicationError> {
+        let agents = self.agent_catalog(profile, tools).await?;
+        append_runtime_catalogs(&mut request, skills, &agents)?;
+        let active = self.active_run_handle(&invocation.run_id).await?;
+        let identity = match &active.target {
+            tt_domain::models::agent::AgentRunTarget::Chat(chat) => &chat.stable_chat_id,
+            tt_domain::models::agent::AgentRunTarget::Session { session_id } => session_id,
+        };
+        prepare_agent_tool_request(
+            request,
+            tools,
+            choice,
+            identity,
+            &invocation.run_id,
+            &invocation.id,
+        )
+    }
+}
+
 const AGENT_PROMPT_MARKER_FIELD: &str = "_tauritavern_agent_prompt_marker";
 
 #[derive(Debug, Clone)]

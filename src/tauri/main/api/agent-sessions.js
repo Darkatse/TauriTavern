@@ -1,8 +1,23 @@
+import { attachHostPromptAssemblyBridge } from './agent-prompt-assembly-bridge.js';
+import { createSharedRunEventSubscribe } from './agent-run-event-subscription.js';
 import { ensureModelTargetLlmConnectionForProfile } from '../../../scripts/tauritavern/agent/model-target-llm-connection.js';
 import { updateFrozenMacroContext } from '../../../scripts/tauritavern/agent/frozen-run-input-snapshot.js';
 
-export function createAgentSessionsApi({ safeInvoke, promptAssembly }) {
+export function createAgentSessionsApi({ safeInvoke, promptAssembly, subscribe }) {
     const preparing = new Set();
+
+    function attachAssemblyBridge(runId) {
+        attachHostPromptAssemblyBridge({
+            runId, safeInvoke, promptAssembly,
+            subscribe: createSharedRunEventSubscribe(runId, subscribe, 0),
+        });
+    }
+
+    void safeInvoke('list_agent_sessions').then(({ activeRuns }) => {
+        for (const run of activeRuns) attachAssemblyBridge(run.runId);
+    }).catch(error => {
+        queueMicrotask(() => { throw error; });
+    });
 
     async function load() {
         return safeInvoke('load_agent_session_profile');
@@ -37,21 +52,24 @@ export function createAgentSessionsApi({ safeInvoke, promptAssembly }) {
             await ensureModelTargetLlmConnectionForProfile(profile);
             const prepared = await safeInvoke('prepare_agent_session_run', { dto: { sessionId, text, profile } });
             const frozenInput = prepared.request.frozenRunInputSnapshot;
-            const macroContext = MacroEnvBuilder.createSessionContext(frozenInput.promptInputs.agentMessages, {
+            const macroContext = MacroEnvBuilder.createSessionContext(prepared.sessionMessages, {
                 sessionId,
                 variables: sessionVariables,
             });
             prepared.request.frozenRunInputSnapshot = updateFrozenMacroContext(frozenInput, macroContext);
             const assembled = await promptAssembly.buildSnapshot(prepared.request);
-            return await safeInvoke('start_agent_session_run', { dto: {
+            const run = await safeInvoke('start_agent_session_run', { dto: {
                 sessionId,
                 text,
                 profile,
                 expectedHistorySeq: prepared.expectedHistorySeq,
+                promptAssemblyRequest: prepared.request,
                 promptSnapshot: assembled.promptSnapshot,
                 frozenRunInputSnapshot: assembled.frozenRunInputSnapshot,
                 generationIntent: { ...assembled.generationIntent, source: 'session', promptAssembly: prepared.assembly },
             } });
+            attachAssemblyBridge(run.runId);
+            return run;
         } finally {
             preparing.delete(sessionId);
         }

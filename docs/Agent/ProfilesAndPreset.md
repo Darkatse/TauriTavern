@@ -63,7 +63,7 @@ Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点�
 | 字段 | 用途 |
 | --- | --- |
 | `instructions.agentSystemPrompt` | Agent 的工作指令；省略时使用默认指令 |
-| `context.initialChatHistoryMessages` | 初始历史楼数：`-1` 不主动裁剪，`0` 不注入，正数取最近 N 楼；仍受模型上下文预算限制 |
+| `context.initialChatHistoryMessages` | Chat 初始历史楼数：`-1` 不主动裁剪，`0` 不注入，正数取最近 N 楼；仍受模型上下文预算限制 |
 | `context.includeActivatedWorldInfo` | 是否在初始提示词中包含已激活世界书 |
 | `tools.allow` / `deny` | 可用工具，deny 优先 |
 | `tools.maxRounds` / `maxCallsPerRun` / `maxCallsPerTool` | 每个 Invocation 的轮数与调用预算 |
@@ -92,7 +92,7 @@ Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点�
 
 Session 使用相同的 `AgentProfileDefinition`，独立保存到 `_tauritavern/agent-workspaces/sessions/profile.json`，由所有 Session 共用，不进入普通 Profile 列表。修改从下一次发送准备时生效；预设重命名同时更新其引用。
 
-Session 必须指定 `preset.mode = ref` 和 `model.mode = connectionRef`，Skill 只取 Profile 自身作用域。正文产物与 commit/finish 要求属于 Chat 执行准入，Session 可使用空产物配置。目录与生命周期见 [Workspace](Workspace.md#session-的持续工作区)。
+Session 必须指定 `preset.mode = ref`、`model.mode = connectionRef` 和 `context.initialChatHistoryMessages = -1`，不接受历史窗口；Skill 只取 Profile 自身作用域。正文产物与 commit/finish 要求属于 Chat 执行准入，Session 可使用空产物配置。目录与生命周期见 [Workspace](Workspace.md#session-的持续工作区)。
 
 ## 源码
 

@@ -54,6 +54,7 @@ mod prompt_snapshot;
 mod revision;
 mod scheduler;
 mod session;
+mod session_context;
 mod skill_scope;
 mod task_details;
 mod timeline_projection;
@@ -112,6 +113,8 @@ struct PreparedInvocation {
     tool_turn: ToolTurnContract,
     request: AgentModelRequest,
     effective_skills: Vec<SkillIndexEntry>,
+    #[serde(skip)]
+    session: Option<session_context::SessionInvocation>,
 }
 
 struct PreparedInvocationTools {

@@ -1,5 +1,4 @@
 import { composeAuthorsNote, isWorldInfoInjection, NOTE_MODULE_NAME } from '../../extension-prompts.js';
-import { prepareAgentHistory } from './agent-model-messages.js';
 
 export const DEFAULT_AGENT_CONTEXT_POLICY = Object.freeze({
     initialChatHistoryMessages: -1,
@@ -47,9 +46,9 @@ export async function loadAgentContextPolicy(profileId) {
 /** Returns a fresh working input; the captured input is never mutated. */
 export function projectAgentPromptInputs(promptInputs, policy) {
     const resolved = normalizeAgentContextPolicy(policy);
-    const { agentMessages, worldInfoExamples, authorsNoteAdditions, ...working } = structuredClone(promptInputs);
-    working.messages = agentMessages
-        ? prepareAgentHistory(agentMessages, resolved)
+    const { sessionHistory, worldInfoExamples, authorsNoteAdditions, ...working } = structuredClone(promptInputs);
+    working.messages = sessionHistory
+        ? sessionHistory.map(group => ({ role: group[0].role, content: '', agentMessages: group, sourceCount: group.length })).reverse()
         : windowChatHistory(working.messages, resolved.initialChatHistoryMessages);
 
     let noteAdditions = authorsNoteAdditions;

@@ -200,7 +200,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
         subscribeLiveProjection,
         settleChatPresentation,
         profiles,
-        sessions: createAgentSessionsApi({ safeInvoke, promptAssembly }),
+        sessions: createAgentSessionsApi({ safeInvoke, promptAssembly, subscribe: runtime.subscribe }),
         tools: createAgentToolsApi({ safeInvoke }),
         promptAssembly,
         approveToolCall() {

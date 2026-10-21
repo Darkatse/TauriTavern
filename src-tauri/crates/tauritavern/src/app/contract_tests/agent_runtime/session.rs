@@ -496,29 +496,32 @@ pub(super) async fn prepare_input(
         .await
         .unwrap();
     let request = prepared.assembly.request.unwrap();
-    let mut frozen_run_input_snapshot = request.frozen_run_input_snapshot;
+    let mut frozen_run_input_snapshot = request.frozen_run_input_snapshot.clone();
     let mut messages = vec![AgentModelMessage {
         role: AgentModelRole::System,
         parts: vec![AgentModelContentPart::Text {
-            text: request.agent_system_prompt,
+            text: request.agent_system_prompt.clone(),
         }],
         provider_metadata: json!({"promptComponent":"agentSystemPrompt"}),
     }];
     messages.extend(
-        serde_json::from_value::<Vec<AgentModelMessage>>(
+        serde_json::from_value::<Vec<Vec<AgentModelMessage>>>(
             frozen_run_input_snapshot["promptInputs"]
                 .as_object_mut()
                 .unwrap()
-                .remove("agentMessages")
+                .remove("sessionHistory")
                 .unwrap(),
         )
-        .unwrap(),
+        .unwrap()
+        .into_iter()
+        .flatten(),
     );
     AgentStartSessionRunDto {
         session_id: session_id.into(),
         text: text.into(),
         profile: profile.clone(),
         expected_history_seq: prepared.expected_history_seq,
+        prompt_assembly_request: request,
         prompt_snapshot: json!({"contextPolicy":profile.context,"messages":messages,"generationParameters":{"chat_completion_source":"openai","model":"test-model","max_tokens":512}}),
         frozen_run_input_snapshot,
         generation_intent: None,

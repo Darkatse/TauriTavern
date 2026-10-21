@@ -29,6 +29,7 @@ pub struct AgentPrepareSessionRunDto {
 #[serde(rename_all = "camelCase")]
 pub struct AgentPrepareSessionRunResultDto {
     pub expected_history_seq: u64,
+    pub session_messages: Vec<tt_domain::models::agent::AgentModelMessage>,
     #[serde(flatten)]
     pub assembly: AgentPreparePromptAssemblyResultDto,
 }
@@ -42,6 +43,7 @@ pub struct AgentStartSessionRunDto {
     pub expected_history_seq: u64,
     pub prompt_snapshot: Value,
     pub frozen_run_input_snapshot: Value,
+    pub prompt_assembly_request: AgentPromptAssemblyBrokerRequestDto,
     #[serde(default)]
     pub generation_intent: Option<Value>,
     #[serde(default)]
@@ -221,7 +223,7 @@ pub enum AgentPromptAssemblyModeDto {
     FrontendPromptAssembly,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentPromptAssemblyBrokerRequestDto {
     pub schema_version: u32,
@@ -250,7 +252,7 @@ pub struct AgentPromptAssemblyBrokerRequestDto {
     pub fingerprint: AgentPromptAssemblyFingerprintDto,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentPromptAssemblyFingerprintDto {
     pub preset_sha256: String,
@@ -259,7 +261,7 @@ pub struct AgentPromptAssemblyFingerprintDto {
     pub agent_task_prompt_sha256: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentPromptAssemblyScopeDto {
     pub run_id: String,
@@ -284,6 +286,20 @@ pub struct AgentPromptAssemblyRequestMetadataDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<AgentPromptAssemblyScopeDto>,
     pub fingerprint: AgentPromptAssemblyFingerprintDto,
+}
+
+impl AgentPromptAssemblyBrokerRequestDto {
+    pub fn metadata(&self) -> AgentPromptAssemblyRequestMetadataDto {
+        AgentPromptAssemblyRequestMetadataDto {
+            assembly_id: self.assembly_id.clone(),
+            schema_version: self.schema_version,
+            engine: "frontend-prompt-assembly-broker".into(),
+            profile_id: self.profile_id.clone(),
+            preset_ref: self.preset_ref.clone(),
+            scope: self.scope.clone(),
+            fingerprint: self.fingerprint.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

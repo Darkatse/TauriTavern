@@ -11,9 +11,7 @@ use super::error_payload::{run_failure_payload, run_partial_success_payload};
 use super::invocation::model_session_id;
 use super::loop_runner::AgentLoopExit;
 use super::prompt_snapshot::AgentPromptRequest;
-use super::prompt_snapshot::{
-    prepare_agent_tool_request, request_summary, runtime_context_from_snapshot,
-};
+use super::prompt_snapshot::{request_summary, runtime_context_from_snapshot};
 use super::tool_snapshot::tool_snapshot_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
@@ -25,6 +23,10 @@ use tt_domain::models::agent::{
 use tt_domain::models::skill::SkillIndexEntry;
 
 impl AgentRuntimeService {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "run bootstrap passes frozen input and its optional Session assembly together"
+    )]
     pub(super) async fn execute_agent_loop_run(
         self: Arc<Self>,
         run_id: String,
@@ -32,6 +34,7 @@ impl AgentRuntimeService {
         request: AgentPromptRequest,
         resolved_profile: ResolvedAgentProfile,
         effective_skills: Vec<SkillIndexEntry>,
+        session: Option<super::session_context::SessionInvocation>,
         mut cancel: AgentCancelReceiver,
     ) {
         let mut state = RunExecutionState::default();
@@ -42,6 +45,7 @@ impl AgentRuntimeService {
                 request,
                 resolved_profile,
                 effective_skills,
+                session,
                 &mut state,
                 &mut cancel,
             )
@@ -257,6 +261,7 @@ impl AgentRuntimeService {
                 request,
                 resolved_profile,
                 effective_skills,
+                None,
                 &mut state,
                 cancel,
             )
@@ -287,6 +292,7 @@ impl AgentRuntimeService {
         request: AgentPromptRequest,
         resolved_profile: ResolvedAgentProfile,
         effective_skills: Vec<SkillIndexEntry>,
+        session: Option<super::session_context::SessionInvocation>,
         state: &mut RunExecutionState,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
@@ -361,21 +367,16 @@ impl AgentRuntimeService {
         self.resolve_model_binding(run_id, &resolved_profile, &mut request)
             .await?;
         self.ensure_not_cancelled(cancel)?;
-        let agents = self
-            .agent_catalog(&resolved_profile, &visible_tools)
+        let request = self
+            .prepare_invocation_model_request(
+                request,
+                &root_invocation,
+                &resolved_profile,
+                &effective_skills,
+                &visible_tools,
+                tool_turn.choice().clone(),
+            )
             .await?;
-        super::prompt_snapshot::append_runtime_catalogs(&mut request, &effective_skills, &agents)?;
-        let request = prepare_agent_tool_request(
-            request,
-            &visible_tools,
-            tool_turn.choice().clone(),
-            match &run.target {
-                tt_domain::models::agent::AgentRunTarget::Chat(chat) => &chat.stable_chat_id,
-                tt_domain::models::agent::AgentRunTarget::Session { session_id } => session_id,
-            },
-            run_id,
-            root_invocation.id.as_str(),
-        )?;
         self.transition_status(run_id, AgentRunStatus::AssemblingContext)
             .await?;
         self.event(
@@ -409,6 +410,7 @@ impl AgentRuntimeService {
             tool_turn,
             request,
             effective_skills,
+            session,
         }));
         self.execute_active_invocation_chain(state, cancel).await
     }

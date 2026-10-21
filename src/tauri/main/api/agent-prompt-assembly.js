@@ -63,8 +63,8 @@ export async function buildPromptAssemblyPayload(input = {}) {
     });
 
     if (request.frozenRunInputSnapshot.contextKind === 'session') {
-        // JSONL owns the full history; the Run retains only the budgeted prompt messages.
-        delete request.frozenRunInputSnapshot.promptInputs.agentMessages;
+        // JSONL owns Session history; the frozen input retains the macro environment.
+        delete request.frozenRunInputSnapshot.promptInputs.sessionHistory;
     }
 
     const payload = result.chatCompletionPayload;

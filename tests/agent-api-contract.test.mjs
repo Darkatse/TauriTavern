@@ -180,7 +180,8 @@ async function installHarness(options = {}) {
 
     const { createAgentApi } = await import(pathToFileURL(path.join(REPO_ROOT, 'src/tauri/main/api/agent.js')));
     globalThis.window.__TAURITAVERN__.api.agent = createAgentApi({
-        safeInvoke,
+        safeInvoke: (command, args) => command === 'list_agent_sessions'
+            ? Promise.resolve({ sessions: [], activeRuns: [] }) : safeInvoke(command, args),
         loadScript: async () => options.script || createFakeStreamingCommitScript().script,
     });
 
@@ -1418,3 +1419,31 @@ function captureAsyncError(t, expected) {
     }));
     return reported.promise;
 }
+
+
+test('prompt assembly bridge skips completed requests replayed after reload', async () => {
+    const { attachHostPromptAssemblyBridge } = await import('../src/tauri/main/api/agent-prompt-assembly-bridge.js');
+    const completed = Promise.withResolvers();
+    const resolvedIds = [];
+    let listener;
+    attachHostPromptAssemblyBridge({
+        runId: 'run-assembly-reload',
+        subscribe(runId, handler) { listener = handler; return () => {}; },
+        promptAssembly: { async buildSnapshot(request) { return { promptSnapshot: request }; } },
+        async safeInvoke(command, { dto }) {
+            if (command === 'read_agent_prompt_assembly_request') {
+                if (dto.assemblyId === 'completed') throw new Error('agent.prompt_assembly_not_pending: already resolved');
+                return { messages: [] };
+            }
+            assert.equal(command, 'resolve_agent_prompt_assembly');
+            assert.equal(dto.error, undefined);
+            resolvedIds.push(dto.assemblyId);
+            completed.resolve();
+        },
+    });
+    listener({ type: 'prompt_assembly_requested', payload: { assemblyId: 'completed' } });
+    listener({ type: 'prompt_assembly_requested', payload: { assemblyId: 'pending' } });
+    await completed.promise;
+    assert.deepEqual(resolvedIds, ['pending']);
+    listener({ type: 'run_completed' });
+});

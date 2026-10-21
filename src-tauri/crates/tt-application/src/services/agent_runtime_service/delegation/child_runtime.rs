@@ -13,8 +13,7 @@ use crate::services::agent_runtime_service::commit_ledger::RunCommitLedger;
 use crate::services::agent_runtime_service::continuation::InvocationFrame;
 use crate::services::agent_runtime_service::model_stream_projection::clear_live_invocation;
 use crate::services::agent_runtime_service::prompt_snapshot::{
-    prepare_agent_tool_request, request_from_prompt_snapshot, request_summary,
-    runtime_context_from_snapshot,
+    request_from_prompt_snapshot, request_summary, runtime_context_from_snapshot,
 };
 use crate::services::agent_runtime_service::skill_scope::{
     skill_event_summary, skill_scope_order_for_profile,
@@ -293,20 +292,16 @@ impl AgentRuntimeService {
         let (skill_scope_order, effective_skills) = self
             .resolve_child_effective_skills(&profile, &run.chat_target()?.skill_scope_refs)
             .await?;
-        let agents = self.agent_catalog(&profile, &visible_tools).await?;
-        super::super::prompt_snapshot::append_runtime_catalogs(
-            &mut request,
-            &effective_skills,
-            &agents,
-        )?;
-        let request = prepare_agent_tool_request(
-            request,
-            &visible_tools,
-            tool_turn.choice().clone(),
-            &run.chat_target()?.stable_chat_id,
-            run_id,
-            invocation_id,
-        )?;
+        let request = self
+            .prepare_invocation_model_request(
+                request,
+                &invocation,
+                &profile,
+                &effective_skills,
+                &visible_tools,
+                tool_turn.choice().clone(),
+            )
+            .await?;
         self.event(
             run_id,
             AgentRunEventLevel::Info,
@@ -363,6 +358,7 @@ impl AgentRuntimeService {
             tool_turn,
             request,
             effective_skills,
+            session: None,
         })
     }
 

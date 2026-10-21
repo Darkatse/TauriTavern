@@ -32,6 +32,11 @@ pub fn validate_chat_profile(
 pub(super) fn validate_session_profile(
     profile: &ResolvedAgentProfile,
 ) -> Result<(), ApplicationError> {
+    if profile.context.initial_chat_history_messages != -1 {
+        return Err(ApplicationError::ValidationError(
+            "agent.session_history_window_unsupported: Session context is compacted, not windowed; set context.initialChatHistoryMessages to -1".into(),
+        ));
+    }
     if !profile.run.direct_runnable {
         return Err(ApplicationError::ValidationError(format!(
             "agent.profile_not_direct_runnable: profile `{}` cannot start a root invocation",

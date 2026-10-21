@@ -209,6 +209,7 @@ impl AgentRuntimeService {
                     request,
                     resolved_profile,
                     effective_skills,
+                    None,
                     cancel_receiver,
                 )
                 .await;

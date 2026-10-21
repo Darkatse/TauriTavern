@@ -69,11 +69,14 @@ async function handlePromptAssemblyRequested({ state, event, safeInvoke, promptA
     state.resolvedAssemblyIds.add(assemblyId);
 
     try {
-        const request = await readPromptAssemblyRequest({
-            safeInvoke,
-            runId: state.runId,
-            assemblyId,
-        });
+        let request;
+        try {
+            request = await readPromptAssemblyRequest({ safeInvoke, runId: state.runId, assemblyId });
+        } catch (error) {
+            // Reload replays requests which the native runtime has already resolved.
+            if (String(error?.message ?? error).includes('agent.prompt_assembly_not_pending:')) return;
+            throw error;
+        }
         const assembled = await promptAssembly.buildSnapshot(request);
         await safeInvoke('resolve_agent_prompt_assembly', {
             dto: {

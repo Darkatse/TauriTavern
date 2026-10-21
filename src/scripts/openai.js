@@ -1593,10 +1593,6 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
         if (Array.isArray(chatPrompt.agentMessages)) {
             const group = await Promise.all(chatPrompt.agentMessages.map((message, partIndex) =>
                 Message.fromAgentMessage(message, `agentHistory-${index}-${partIndex}`, assemblyTokenHandler)));
-            if (!chatCompletion.canAffordAll(group)) {
-                if (chatPrompt.required) throw new TokenBudgetExceededError('agentCurrentUserMessage');
-                break;
-            }
             for (const message of group.reverse()) chatCompletion.insertAtStart(message, 'chatHistory');
             sourceCount += chatPrompt.sourceCount;
             index += 1;
@@ -2443,7 +2439,11 @@ export async function prepareOpenAIMessages({
     if (power_user.console_log_prompts) chatCompletion.enableLogging();
 
     const userSettings = activePromptManager.serviceSettings;
-    chatCompletion.setTokenBudget(userSettings.openai_max_context, userSettings.openai_max_tokens);
+    // Session history is budgeted by runtime compaction.
+    chatCompletion.setTokenBudget(
+        assemblyRuntime.contextKind === 'session' ? Number.POSITIVE_INFINITY : userSettings.openai_max_context,
+        assemblyRuntime.contextKind === 'session' ? 0 : userSettings.openai_max_tokens,
+    );
     let chatSourceCount = 0;
     let toolData = null;
 
