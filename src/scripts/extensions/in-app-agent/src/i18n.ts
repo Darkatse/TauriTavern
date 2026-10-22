@@ -7,7 +7,7 @@ const messages = {
     "interact": "Operate app UI",
     "interactHelp": "Operate an observed control and read back its state.",
     "capture": "Screenshot",
-    "captureHelp": "See how the app looks on screen",
+    "captureHelp": "See how the app looks on screen.",
     "readFile": "Read files",
     "writeFile": "Write files",
     "listFiles": "List files",

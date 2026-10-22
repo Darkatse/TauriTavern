@@ -101,6 +101,11 @@ test('file stream closes an opened resource when stat or read fails', async t =>
             commands: { 'plugin:fs|read': () => Uint8Array.of(65, 66) },
             error: Error,
         },
+        {
+            name: 'non-binary response',
+            commands: { 'plugin:fs|read': () => [65, 66] },
+            error: /Unexpected IPC byte response/,
+        },
     ];
 
     for (const entry of cases) {

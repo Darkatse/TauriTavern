@@ -90,6 +90,7 @@ Gray boxes cover what you cannot observe: this assistant's conversation and sens
     }, async (args, context) => {
         enterUI(context);
         await nextPaint();
+        // Do not await between measuring layout and requesting the matching viewport pixels.
         const layout = observation.captureLayout(args);
         const pixels = api.layout!.capture();
         const bitmap = await createImageBitmap(await pixels);

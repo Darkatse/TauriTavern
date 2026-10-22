@@ -15,7 +15,7 @@
     "in_app_agent.interact": "操作应用界面",
     "in_app_agent.interactHelp": "操作已观察的控件，并读取当前结果。",
     "in_app_agent.capture": "截图",
-    "in_app_agent.captureHelp": "查看应用在屏幕上的样子",
+    "in_app_agent.captureHelp": "查看应用在屏幕上的样子。",
     "in_app_agent.readFile": "读取文件",
     "in_app_agent.writeFile": "写入文件",
     "in_app_agent.listFiles": "列出文件",

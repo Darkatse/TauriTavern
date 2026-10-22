@@ -119,20 +119,23 @@ function RunBar({ block, expanded, onToggle }: { block: RunBlock; expanded: bool
     </button>;
 }
 
-function ToolImage({ image, runId, actions }: { image: { path: string; mimeType: string }; runId: string; actions: AssistantActions }) {
+function ToolImage({ path, mimeType, runId, actions }: { path: string; mimeType: string; runId: string; actions: AssistantActions }) {
     const [url, setUrl] = useState<string | null>(null);
     const [error, setError] = useState<unknown>(null);
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the previous resource while the new workspace image loads.
+        setUrl(null);
+        setError(null);
         let active = true;
         let objectUrl: string | null = null;
-        void actions.readImage(runId, image).then(blob => {
+        void actions.readImage(runId, { path, mimeType }).then(blob => {
             if (!active) return;
             objectUrl = URL.createObjectURL(blob);
             setUrl(objectUrl);
         }).catch(error => { if (active) setError(error); });
         return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-    }, [runId, image.path, image.mimeType, actions]);
-    return error != null ? <ErrorNotice error={error} /> : url ? <img className="ttia-tool-image" src={url} alt={image.path} /> : null;
+    }, [runId, path, mimeType, actions]);
+    return error != null ? <ErrorNotice error={error} /> : url ? <img className="ttia-tool-image" src={url} alt={path} /> : null;
 }
 
 function ToolResult({ result, runId, actions, expanded }: { result: Result; runId: string; actions: AssistantActions; expanded: boolean }) {
@@ -149,7 +152,7 @@ function ToolResult({ result, runId, actions, expanded }: { result: Result; runI
             setLoading(true); setError(null);
             void actions.readResult(runId, path).then(file => setFull(file.text)).catch(setError).finally(() => setLoading(false));
         }}>{loading ? tr('loading') : tr('fullResult')}</button>}
-        {expanded && result.images?.map(image => <ToolImage key={image.path} image={image} runId={runId} actions={actions} />)}
+        {expanded && result.images?.map(image => <ToolImage key={image.path} path={image.path} mimeType={image.mimeType} runId={runId} actions={actions} />)}
         {result.resourceRefs.length > 0 && <div className="ttia-refs">{result.resourceRefs.join('\n')}</div>}
         {error != null && <ErrorNotice error={error} />}
     </div>;

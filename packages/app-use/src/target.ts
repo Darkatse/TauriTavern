@@ -1,8 +1,9 @@
-import type { ElementTarget } from './snapshot.ts';
 import type { ToolArguments } from './types.ts';
 import { appToolAliases } from './names.ts';
 
 const { snapshot: SNAPSHOT } = appToolAliases;
+
+export type ElementTarget = { ref: string } | { selector: string; root?: string | undefined };
 
 export function parseTarget(args: ToolArguments): ElementTarget {
     const hasRef = args.ref !== undefined;

@@ -2,6 +2,7 @@
 import { resolveStableChatId } from './agent-chat-identity.js';
 import { createAgentRunGuidanceApi } from './agent-run-guidance.js';
 import { createAgentRunRetentionApi } from './agent-run-retention.js';
+import { readByteResponse } from '../kernel/byte-protocol.js';
 const DEFAULT_EVENT_POLL_MS = 500;
 const MAX_RUN_LIST_LIMIT = 200;
 const AGENT_RUN_STATUSES = new Set([
@@ -86,9 +87,7 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
 
     async function readWorkspaceBytes(input) {
         const data = await safeInvoke('read_agent_workspace_bytes', { dto: workspaceReadInput(input) });
-        if (data instanceof Uint8Array) return data;
-        if (data instanceof ArrayBuffer) return new Uint8Array(data);
-        throw new Error('Unexpected agent workspace bytes response');
+        return readByteResponse(data);
     }
 
     async function readTaskDetail(input) {

@@ -1,7 +1,7 @@
 {
   "name": "@tauritavern/app-use",
   "version": "0.1.4",
-  "description": "Semantic DOM observation, interaction and agent cursor for SillyTavern pages.",
+  "description": "Semantic DOM observation, interaction, screenshots and agent cursor for SillyTavern pages.",
   "license": "AGPL-3.0-only",
   "type": "module",
   "repository": {

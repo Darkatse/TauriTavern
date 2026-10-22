@@ -1,7 +1,8 @@
 import { parseTarget } from './target.ts';
 import { isCheckableInput, isDisabled } from './semantics.ts';
 import type { Semantics } from './semantics.ts';
-import type { ElementTarget, Observation } from './snapshot.ts';
+import type { Observation } from './snapshot.ts';
+import type { ElementTarget } from './target.ts';
 import { documentWindow, isHTMLElement, isHtmlTag, isInScope } from './document.ts';
 import type { DocumentScope } from './document.ts';
 import { inspectInputSurface } from './geometry.ts';

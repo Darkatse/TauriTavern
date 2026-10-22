@@ -1,5 +1,6 @@
 import { appToolAliases } from './names.ts';
 
+// Keep equal to tt_ports::tool_images::MAX_TOOL_IMAGE_EDGE so stored images preserve annotation coordinates.
 const CAPTURE_MAX_EDGE = 1280;
 const MASK_COLOR = '#808080';
 const MARK_COLOR = '#FF3B30';
@@ -7,6 +8,7 @@ const LABEL_COLOR = '#FFFFFF';
 const LABEL_FONT = '600 12px system-ui';
 const LABEL_HEIGHT = 20;
 const LABEL_PADDING = 4;
+const MARK_WIDTH = 2;
 const { snapshot: SNAPSHOT } = appToolAliases;
 
 export type Rect = { x: number; y: number; width: number; height: number };
@@ -47,14 +49,14 @@ export async function renderCapture(image: ImageBitmap, layout: CaptureLayout): 
     }
     context.font = LABEL_FONT;
     context.textBaseline = 'middle';
-    context.lineWidth = 2;
+    context.lineWidth = MARK_WIDTH;
     context.strokeStyle = MARK_COLOR;
     for (const mark of layout.marks) {
         const rect = outputRect(mark.rect);
         context.strokeRect(rect.x, rect.y, rect.width, rect.height);
         const labelWidth = context.measureText(mark.label).width + LABEL_PADDING * 2;
-        const x = Math.max(0, Math.min(rect.x + 2, canvas.width - labelWidth));
-        const y = Math.max(0, Math.min(rect.y + 2, canvas.height - LABEL_HEIGHT));
+        const x = Math.max(0, Math.min(rect.x + MARK_WIDTH, canvas.width - labelWidth));
+        const y = Math.max(0, Math.min(rect.y + MARK_WIDTH, canvas.height - LABEL_HEIGHT));
         context.fillStyle = MARK_COLOR;
         context.fillRect(x, y, labelWidth, LABEL_HEIGHT);
         context.fillStyle = LABEL_COLOR;
@@ -73,6 +75,6 @@ export function captureSummary(layout: CaptureLayout, size: { width: number; hei
     let summary = `Screenshot of the ${layout.crop ? 'element' : 'visible page'}, ${size.width}×${size.height}.`;
     if (layout.cropClipped) summary += ' Only the part inside the visible area is shown.';
     if (layout.masks.length > 0) summary += ' Gray boxes cover areas you cannot observe.';
-    if (layout.marks.length > 0) summary += ` Red boxes mark ${layout.marks.length} of the ${layout.markTotal} refs on your latest ${SNAPSHOT} page; each label is the part after "${layout.markPage}:".`;
+    if (layout.markPage !== null) summary += ` Red boxes mark ${layout.marks.length} of the ${layout.markTotal} refs on your latest ${SNAPSHOT} page; each label is the part after "${layout.markPage}:".`;
     return summary;
 }

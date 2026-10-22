@@ -3,6 +3,7 @@ import { act, cleanup, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { createObservation } from './snapshot.ts';
 import { interact } from './interact.ts';
+import { captureSummary } from './capture.ts';
 
 const observationOptions = {
     sensitiveSelector: '[data-private]',
@@ -267,4 +268,10 @@ test('capture layout masks private regions and clips targets to the visible view
     expect(partial.crop).toEqual({ x: 0, y: 300, width: 80, height: 30 });
     expect(partial.cropClipped).toBe(true);
     expect(() => observation.captureLayout({ selector: '#outside' })).toThrow('outside the visible part of the page');
+    observation.snapshot({ selector: '#partial' });
+    expect(observation.captureLayout({ marks: true }).marks).toHaveLength(1);
+    document.getElementById('partial')!.remove();
+    const staleMarks = observation.captureLayout({ marks: true });
+    expect(staleMarks.marks).toHaveLength(0);
+    expect(captureSummary(staleMarks, { width: 800, height: 600 })).toContain('Red boxes mark 0 of the 1 refs');
 });

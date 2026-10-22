@@ -25,6 +25,9 @@ same-origin iframe, pass its ref as `root`; `snapshot({})` returns to the main
 page. Refs and continuation cursors stop working once their document is removed
 or navigated.
 
+`observation.refs()` lists the latest page's refs in display order;
+`observation.resolve(target)` locates a ref or selector without replacing that page.
+
 For screenshots, the host supplies a bitmap of the content viewport, whose top
 left is the page's viewport origin and whose width corresponds to
 `window.innerWidth`. After waiting for the page to paint, call

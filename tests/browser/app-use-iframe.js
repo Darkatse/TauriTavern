@@ -152,6 +152,7 @@ run.onclick = async () => {
         const reload = loaded(nested);
         nested.srcdoc = '<input aria-label="Replacement">';
         await reload;
+        throws(() => observation.captureLayout({ marks: true }), 'navigated snapshot silently lost all screenshot marks');
         throws(() => interact({ action: 'fill', ref: oldRef, value: 'stale' }, observation, interactionOptions), 'old document ref remained actionable');
         assert(oldInput.value === 'nested', 'old document was mutated');
         throws(() => observation.snapshot({ cursor }), 'old document cursor remained readable');
@@ -170,6 +171,7 @@ run.onclick = async () => {
         const parked = await mountFrame(fixture, 'Parked page', '<input aria-label="Parked input">');
         const parkedRef = ref(enter(main(), 'Parked page'), 'Parked input');
         parkManagedIframe({ id: 'app-use-check', iframe: parked, maxIframes: 1, ttlMs: 60_000 });
+        throws(() => observation.captureLayout({ marks: true }), 'parked snapshot silently lost all screenshot marks');
         throws(() => interact({ action: 'fill', ref: parkedRef, value: 'hidden' }, observation, interactionOptions), 'parked page remained actionable');
         assert(!main().tree.includes('Parked page'), 'parked page leaked into observation');
         act(main(), 'Adopted input', { action: 'fill', value: 'still works' });
