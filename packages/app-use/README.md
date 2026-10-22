@@ -1,7 +1,7 @@
 # @tauritavern/app-use
 
 Lets an agent read and operate a SillyTavern page: semantic DOM snapshots,
-control interaction and an optional on-screen cursor.
+control interaction, screenshot layout and rendering, and an optional on-screen cursor.
 
 The engine runs inside the page it observes. To observe another page, such as a
 preview iframe, inject the bundle into that page instead of calling it from the
@@ -25,11 +25,19 @@ same-origin iframe, pass its ref as `root`; `snapshot({})` returns to the main
 page. Refs and continuation cursors stop working once their document is removed
 or navigated.
 
-A host that shows refs itself, for example as numbered marks on a screenshot,
-reads them with `observation.refs()`, the refs of the latest page in its order,
-and finds each element with `observation.resolve({ ref })`. `resolve` applies
-the same checks as `interact`, so it throws for a ref whose element has been
-removed or hidden since the snapshot.
+For screenshots, the host supplies a bitmap of the content viewport, whose top
+left is the page's viewport origin and whose width corresponds to
+`window.innerWidth`. After waiting for the page to paint, call
+`observation.captureLayout(args)` immediately before requesting the bitmap.
+`renderCapture(bitmap, layout)` crops to the target's visible area, masks sensitive
+and host-omitted regions, draws optional marks from the latest snapshot page, and
+returns a JPEG Blob with a longest edge of at most 1280 pixels.
+`captureSummary(layout, { width, height })` describes the resulting image.
+
+The capture target uses the same ref or selector addressing as `interact`;
+leaving both out captures the viewport. `marks: true` labels refs from the latest
+snapshot, including those inside accessible same-origin frames. The host owns
+bitmap capture and delivery; the package handles layout and rendering in the page.
 
 The snapshot counter is kept in the page's localStorage under
 `tauritavern:in_app_agent_snapshot_sequence`. After a reload, new refs therefore
@@ -69,7 +77,7 @@ which application it runs in.
 
 ## Tool definitions
 
-`snapshotTool`, `interactTool`, `evaluateTool` and `readLogsTool` hold the tool
+`snapshotTool`, `interactTool`, `captureTool`, `evaluateTool` and `readLogsTool` hold the tool
 IDs, base descriptions and JSON schemas. A host registers them with its own
 tool runtime and appends its own notes to the descriptions. The host implements
 `app.evaluate` and `app.read_logs` itself. Call `observation.clearCursor()`

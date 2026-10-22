@@ -1,5 +1,6 @@
 export const appToolIds = {
     snapshot: 'app.snapshot',
+    capture: 'app.capture',
     interact: 'app.interact',
     evaluate: 'app.evaluate',
     readLogs: 'app.read_logs',
@@ -12,6 +13,7 @@ function modelAlias(id: string): string {
 
 export const appToolAliases = {
     snapshot: modelAlias(appToolIds.snapshot),
+    capture: modelAlias(appToolIds.capture),
     interact: modelAlias(appToolIds.interact),
     evaluate: modelAlias(appToolIds.evaluate),
     readLogs: modelAlias(appToolIds.readLogs),

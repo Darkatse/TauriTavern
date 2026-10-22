@@ -53,6 +53,23 @@ dispatched=true means the action was requested, not that its intended result was
     },
 };
 
+export const captureTool = {
+    name: appToolIds.capture,
+    description: `Take a screenshot of the page as it appears on screen, or of one element, to judge how it looks: layout, spacing, colors, images, and whether anything overlaps or is cut off. To find controls or read text, use ${SNAPSHOT}; to read an exact value such as a color or a size, use ${EVALUATE}.
+Omit ref and selector to capture the whole visible page. Address an element the same way as ${INTERACT}: a ref from the latest ${SNAPSHOT} page, or a known CSS selector, optionally within root. Only what is on screen is captured; to see an element that is off screen, scroll the region that contains it first.
+With marks, the refs of your latest ${SNAPSHOT} page are boxed and labelled on the image, so that what you see can be matched to refs for ${INTERACT}. The marks are drawn on the image, not on the page.`,
+    inputSchema: {
+        type: 'object',
+        properties: {
+            ref: { type: 'string', description: `Copy the target element's ref from the latest ${SNAPSHOT} page. Omit ref and selector to capture the whole visible page. Cannot be combined with selector or root.` },
+            selector: { type: 'string', description: 'A known CSS selector matching one observable element. Searches the main document unless root is provided. Cannot be combined with ref.' },
+            root: { type: 'string', description: 'Optional scope for selector: a ref from the latest snapshot. Requires selector.' },
+            marks: { type: 'boolean', description: `Box and label the refs of your latest ${SNAPSHOT} page on the image. Call ${SNAPSHOT} first.` },
+        },
+        additionalProperties: false,
+    },
+};
+
 export const evaluateTool = {
     name: appToolIds.evaluate,
     description: `Execute JavaScript in the running app to call known APIs, inspect specific data, or handle tasks outside ${SNAPSHOT}/${INTERACT}'s supported controls. Use ${SNAPSHOT} for general interface exploration and ${INTERACT} for ordinary controls when available; use this tool directly when a known API is the appropriate path.

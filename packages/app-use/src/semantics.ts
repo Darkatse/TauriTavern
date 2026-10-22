@@ -85,6 +85,10 @@ export function createSemantics(options: ObservationOptions) {
             || (options.sensitiveSelector !== undefined && element.closest(options.sensitiveSelector) !== null);
     }
 
+    function isMasked(element: Element): boolean {
+        return isSensitive(element) || Boolean(options.omit?.(element));
+    }
+
     function getStyle(element: Element): CSSStyleDeclaration {
         let result = styles.get(element);
         if (!result) {
@@ -260,7 +264,7 @@ export function createSemantics(options: ObservationOptions) {
         return result;
     }
 
-    return { isSensitive, excludesSubtree, isVisible, isWithinObservedContent, requireFrameVisible, isTextVisible, isScrollable, readRole, readOmissionReason, describeElement };
+    return { isSensitive, isMasked, excludesSubtree, isVisible, isWithinObservedContent, requireFrameVisible, isTextVisible, isScrollable, readRole, readOmissionReason, describeElement };
 }
 
 export type Semantics = ReturnType<typeof createSemantics>;

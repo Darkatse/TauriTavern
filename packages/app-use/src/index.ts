@@ -5,5 +5,7 @@ export { interact } from './interact.ts';
 export type { InteractionOptions, InteractionPoint } from './interact.ts';
 export { createInteractionCursor } from './cursor.ts';
 export type { JsonValue, ToolArguments } from './types.ts';
-export { snapshotTool, interactTool, evaluateTool, readLogsTool } from './tools.ts';
+export { snapshotTool, interactTool, captureTool, evaluateTool, readLogsTool } from './tools.ts';
 export { appToolAliases } from './names.ts';
+export { renderCapture, captureSummary } from './capture.ts';
+export type { CaptureLayout, Rect } from './capture.ts';

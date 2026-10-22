@@ -1,11 +1,14 @@
+import { clipToViewport, frameMapping } from './geometry.ts';
+import { parseTarget } from './target.ts';
+import type { CaptureLayout, Rect } from './capture.ts';
 import { createSemantics, describeLine, isTextRegion, preview, suppressesText } from './semantics.ts';
 import type { ObservationOptions, Semantics } from './semantics.ts';
 import type { ToolArguments } from './types.ts';
-import { isElement, isHtmlTag, isText, mainDocumentScope, requireCurrentScope } from './document.ts';
+import { isElement, isHtmlTag, isText, documentWindow, mainDocumentScope, requireCurrentScope } from './document.ts';
 import type { DocumentScope } from './document.ts';
 import { appToolAliases } from './names.ts';
 
-const { snapshot: SNAPSHOT, evaluate: EVALUATE } = appToolAliases;
+const { snapshot: SNAPSHOT, interact: INTERACT, capture: CAPTURE, evaluate: EVALUATE } = appToolAliases;
 
 const MAX_NODES = 80;
 const MAX_VISITS = 2_000;
@@ -94,6 +97,58 @@ export function createObservation(options: ObservationOptions = {}) {
         return { element: selectElement(region.element, target.selector, current), scope: region.scope };
     }
 
+    function captureLayout(args: ToolArguments): CaptureLayout {
+        if (Object.keys(args).some(key => !['ref', 'selector', 'root', 'marks'].includes(key))) {
+            throw new Error(`${CAPTURE} accepts ref, selector, root and marks.`);
+        }
+        if (args.marks !== undefined && typeof args.marks !== 'boolean') {
+            throw new Error('marks must be a boolean.');
+        }
+        const target = args.ref === undefined && args.selector === undefined && args.root === undefined
+            ? null : resolve(parseTarget(args));
+        const view = documentWindow(document);
+        const viewport = { width: view.innerWidth, height: view.innerHeight };
+        const targetRect = target ? captureRect(target) : null;
+        if (target && !targetRect) {
+            throw new Error(`The element is outside the visible part of the page. Scroll the region that contains it with ${INTERACT}, then capture again.`);
+        }
+        const crop = targetRect?.rect ?? null;
+        const area = crop ?? { x: 0, y: 0, ...viewport };
+        const current = semantics();
+        const masks: Rect[] = [];
+        function walk(element: Element, region: DocumentScope) {
+            if (current.isMasked(element)) {
+                const visible = captureRect({ element, scope: region });
+                if (visible && intersects(visible.rect, area)) masks.push(visible.rect);
+                return;
+            }
+            for (const child of element.children) walk(child, region);
+            if (isHtmlTag(element, 'iframe') && !current.readOmissionReason(element)) {
+                const child = element.contentDocument;
+                if (child?.body) walk(child.documentElement, { document: child, frames: [...region.frames, element] });
+            }
+        }
+        walk(document.documentElement, mainDocumentScope());
+        const marks: CaptureLayout['marks'] = [];
+        let markPage: string | null = null;
+        let markTotal = 0;
+        if (args.marks === true) {
+            const pageRefs = refs();
+            if (pageRefs.length === 0) throw new Error(`Call ${SNAPSHOT} first: marks number the refs of your latest snapshot page.`);
+            markTotal = pageRefs.length;
+            for (const ref of pageRefs) {
+                const colon = ref.indexOf(':');
+                markPage = ref.slice(0, colon);
+                let target: ResolvedTarget;
+                try { target = resolve({ ref }); } catch { continue; }
+                const visible = captureRect(target);
+                if (!visible || !intersects(visible.rect, area) || contains(visible.rect, area)) continue;
+                marks.push({ label: ref.slice(colon + 1), rect: visible.rect });
+            }
+        }
+        return { viewport, crop, cropClipped: targetRect?.clipped ?? false, masks, marks, markPage, markTotal };
+    }
+
     function snapshot(args: ToolArguments) {
         // Resolve root/cursor against the previous page before replacing its references.
         const traversal = startOrResumeTraversal(args);
@@ -167,10 +222,43 @@ export function createObservation(options: ObservationOptions = {}) {
         };
     }
 
-    return { enterRun, refs, resolve, snapshot, clearCursor, createSemantics: semantics };
+    return { enterRun, refs, resolve, snapshot, captureLayout, clearCursor, createSemantics: semantics };
 }
 
 export type Observation = ReturnType<typeof createObservation>;
+
+function captureRect({ element, scope }: ResolvedTarget): { rect: Rect; clipped: boolean } | null {
+    const source = element.getBoundingClientRect();
+    let bounds = { left: source.left, right: source.right, top: source.top, bottom: source.bottom };
+    let clipped = false;
+    const clip = (doc: Document) => {
+        const visible = clipToViewport(bounds, doc);
+        if (!visible) return false;
+        clipped ||= visible.left !== bounds.left || visible.right !== bounds.right || visible.top !== bounds.top || visible.bottom !== bounds.bottom;
+        bounds = visible;
+        return true;
+    };
+    if (!clip(scope.document)) return null;
+    for (const frame of [...scope.frames].reverse()) {
+        const mapping = frameMapping(frame);
+        bounds = {
+            left: mapping.x + bounds.left * mapping.scaleX,
+            right: mapping.x + bounds.right * mapping.scaleX,
+            top: mapping.y + bounds.top * mapping.scaleY,
+            bottom: mapping.y + bounds.bottom * mapping.scaleY,
+        };
+        if (!clip(frame.ownerDocument)) return null;
+    }
+    return { rect: { x: bounds.left, y: bounds.top, width: bounds.right - bounds.left, height: bounds.bottom - bounds.top }, clipped };
+}
+
+function intersects(a: Rect, b: Rect): boolean {
+    return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+function contains(outer: Rect, inner: Rect): boolean {
+    return outer.x <= inner.x && outer.y <= inner.y && outer.x + outer.width >= inner.x + inner.width && outer.y + outer.height >= inner.y + inner.height;
+}
 
 function enterFrame(target: ResolvedTarget, semantics: Semantics): ResolvedTarget {
     const { element, scope } = target;

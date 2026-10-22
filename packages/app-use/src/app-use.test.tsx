@@ -240,3 +240,31 @@ test('fill updates React controlled state, not just the DOM value', () => {
     });
     expect(screen.getByRole('status').textContent).toBe('after');
 });
+
+test('capture layout masks private regions and clips targets to the visible viewport', () => {
+    document.body.innerHTML = `<div data-private id="sensitive"><button id="sensitive-child">Private</button></div>
+        <input type="password" id="password"><div class="agent-history" id="history"><div id="history-child">Conversation</div></div>
+        <div class="cm-editor" id="editor">Custom CSS</div><button id="partial">Partially visible</button><button id="outside">Outside</button>`;
+    const bounds: Record<string, DOMRect> = {
+        sensitive: new DOMRect(10, 20, 100, 40), 'sensitive-child': new DOMRect(20, 25, 50, 20),
+        password: new DOMRect(10, 80, 100, 20), history: new DOMRect(200, 20, 200, 150),
+        'history-child': new DOMRect(210, 30, 100, 20), editor: new DOMRect(10, 200, 300, 100),
+        partial: new DOMRect(-20, 300, 100, 30), outside: new DOMRect(window.innerWidth + 10, 300, 100, 30),
+    };
+    rstest.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+        return bounds[this.id] ?? new DOMRect(0, 0, window.innerWidth, window.innerHeight);
+    });
+    const observation = createObservation(observationOptions);
+    observation.enterRun('capture');
+    expect(() => observation.captureLayout({ marks: true })).toThrow('Call app_snapshot first');
+    const layout = observation.captureLayout({});
+    expect(layout.masks).toEqual([
+        { x: 10, y: 20, width: 100, height: 40 },
+        { x: 10, y: 80, width: 100, height: 20 },
+        { x: 200, y: 20, width: 200, height: 150 },
+    ]);
+    const partial = observation.captureLayout({ selector: '#partial' });
+    expect(partial.crop).toEqual({ x: 0, y: 300, width: 80, height: 30 });
+    expect(partial.cropClipped).toBe(true);
+    expect(() => observation.captureLayout({ selector: '#outside' })).toThrow('outside the visible part of the page');
+});
