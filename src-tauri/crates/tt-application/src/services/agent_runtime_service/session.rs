@@ -31,7 +31,7 @@ impl AgentRuntimeService {
         &self,
     ) -> Result<AgentSessionProfileResultDto, ApplicationError> {
         Ok(AgentSessionProfileResultDto {
-            profile: self.session_repository.load_session_profile().await?,
+            profile: self.profile_service.load_session_profile().await?,
         })
     }
 
@@ -39,15 +39,11 @@ impl AgentRuntimeService {
         &self,
         dto: AgentSaveProfileDto,
     ) -> Result<(), ApplicationError> {
-        let previous = self.session_repository.load_session_profile().await?;
+        let previous = self.profile_service.load_session_profile().await?;
         self.validate_new_extension_tools(&dto.profile, previous.as_ref())?;
         self.profile_service
-            .resolve_session_profile(dto.profile.clone(), self.tool_registry.catalog())
-            .await?;
-        self.session_repository
-            .save_session_profile(&dto.profile)
-            .await?;
-        Ok(())
+            .save_session_profile(dto.profile, self.tool_registry.catalog())
+            .await
     }
 
     pub async fn create_session(&self) -> Result<AgentSessionResultDto, ApplicationError> {

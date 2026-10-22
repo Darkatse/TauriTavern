@@ -130,10 +130,10 @@ impl AgentRuntimeService {
         let mut value: Value = serde_json::from_slice(&bytes)
             .map_err(|error| invalid(format!("checkpoint cannot be decoded: {error}")))?;
         match value.get("schemaVersion").and_then(Value::as_u64) {
-            Some(1) => legacy::prepare_for_read(&mut value),
-            Some(2) => {}
+            Some(1 | 2) => {}
             _ => return Err(invalid("unsupported checkpoint version; start a new run")),
         }
+        remove_retired_budgets(&mut value);
         tt_contracts::agent_run_record::canonicalize_agent_run_record(
             value
                 .get_mut("run")
@@ -165,12 +165,9 @@ impl AgentRuntimeService {
             .await?
             .chat_target()?;
         let checkpoint = self.load_checkpoint(&dto.run_id).await?;
-        let frame = checkpoint.state.foreground.as_ref();
         Ok(AgentReadRunCheckpointResultDto {
             next_step: checkpoint.next_step().to_string(),
             blocked_reason: checkpoint.blocked_reason().map(str::to_string),
-            round: frame.map_or(0, |frame| frame.progress.round),
-            max_rounds: frame.map_or(0, |frame| frame.progress.max_rounds),
             run: run_handle(&checkpoint.run, None)?,
             terminal_seq: checkpoint.terminal_seq,
             presentation: checkpoint.presentation,
@@ -288,19 +285,7 @@ impl AgentRuntimeService {
             .iter_mut()
             .chain(&mut checkpoint.state.children)
         {
-            hydrate_frame(frame, &dto.run_id, dto.additional_rounds, &context)?;
-        }
-        let foreground = checkpoint
-            .state
-            .foreground
-            .as_ref()
-            .ok_or_else(|| invalid("foreground invocation is missing"))?;
-        if matches!(foreground.progress.step, InvocationStep::Model)
-            && foreground.progress.round > foreground.progress.max_rounds
-        {
-            return Err(invalid(
-                "round budget is exhausted; explicitly add rounds to resume",
-            ));
+            hydrate_frame(frame, &dto.run_id, &context)?;
         }
         self.run_repository
             .reset_event_sequence(&dto.run_id)
@@ -335,7 +320,6 @@ impl AgentRuntimeService {
                     "run_resumed",
                     json!({
                         "checkpointTerminalSeq": checkpoint.terminal_seq,
-                        "additionalRounds": dto.additional_rounds,
                         "invocationId": foreground_id(&checkpoint.state),
                         "revision": dto.revision.is_some(),
                     }),
@@ -436,10 +420,53 @@ impl AgentRuntimeService {
     }
 }
 
+fn remove_retired_budgets(value: &mut Value) {
+    let remove = |frame: &mut Value| {
+        for (path, keys) in [
+            (
+                "/prepared/profile/skills",
+                &["maxReadCharsPerCall", "maxReadCharsPerRun"][..],
+            ),
+            (
+                "/prepared/profile/tools",
+                &["maxRounds", "maxCallsPerRun", "maxCallsPerTool"][..],
+            ),
+            ("/prepared/toolSnapshot", &["maxCallsPerInvocation"][..]),
+            ("/progress", &["maxRounds", "gate"][..]),
+        ] {
+            if let Some(object) = frame.pointer_mut(path).and_then(Value::as_object_mut) {
+                for key in keys {
+                    object.remove(*key);
+                }
+            }
+        }
+        if let Some(bindings) = frame
+            .pointer_mut("/prepared/toolSnapshot/bindings")
+            .and_then(Value::as_array_mut)
+        {
+            for binding in bindings {
+                if let Some(binding) = binding.as_object_mut() {
+                    binding.remove("maxCalls");
+                }
+            }
+        }
+    };
+    if let Some(frame) = value.pointer_mut("/state/foreground") {
+        remove(frame);
+    }
+    if let Some(children) = value
+        .pointer_mut("/state/children")
+        .and_then(Value::as_array_mut)
+    {
+        for frame in children {
+            remove(frame);
+        }
+    }
+}
+
 fn hydrate_frame(
     frame: &mut InvocationFrame,
     run_id: &str,
-    additional_rounds: usize,
     context: &Arc<tt_ports::workspace_shell::WorkspaceShellContext>,
 ) -> Result<(), ApplicationError> {
     let prepared = &mut frame.prepared;
@@ -456,11 +483,7 @@ fn hydrate_frame(
     {
         return Err(invalid("checkpoint execution cursor is invalid"));
     }
-    frame.progress.max_rounds = frame
-        .progress
-        .max_rounds
-        .checked_add(additional_rounds)
-        .ok_or_else(|| invalid("additional round budget is too large"))?;
+    frame.progress.drift_attempts = 0;
     prepared.runtime_context = Arc::clone(context);
     frame.progress.session.runtime_context = Arc::clone(context);
     frame.progress.session.effective_skills = prepared.effective_skills.clone().into();

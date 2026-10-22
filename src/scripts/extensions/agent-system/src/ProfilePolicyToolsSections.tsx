@@ -250,28 +250,6 @@ export function ProfileRunSection({ snapshot, controller, tr }: ProfileSectionPr
                     </select>
                 </label>
                 <label className="ttas-field">
-                    <span>{tr('maxRounds')}</span>
-                    <input
-                        className="text_pole"
-                        type="number"
-                        min="1"
-                        value={draft.tools.maxRounds}
-                        disabled={builtin}
-                        onChange={(event) => controller.setToolsLimitField('maxRounds', parseNumberInput(event.target.value))}
-                    />
-                </label>
-                <label className="ttas-field">
-                    <span>{tr('maxToolCalls')}</span>
-                    <input
-                        className="text_pole"
-                        type="number"
-                        min="1"
-                        value={draft.tools.maxCallsPerRun}
-                        disabled={builtin}
-                        onChange={(event) => controller.setToolsLimitField('maxCallsPerRun', parseNumberInput(event.target.value))}
-                    />
-                </label>
-                <label className="ttas-field">
                     <span>{tr('externalResultInlineCharLimit')}</span>
                     <input
                         className="text_pole"
@@ -280,7 +258,7 @@ export function ProfileRunSection({ snapshot, controller, tr }: ProfileSectionPr
                         step="1000"
                         value={draft.tools.externalResultInlineCharLimit}
                         disabled={builtin}
-                        onChange={(event) => controller.setToolsLimitField('externalResultInlineCharLimit', parseNumberInput(event.target.value))}
+                        onChange={(event) => controller.setExternalResultInlineCharLimit(parseNumberInput(event.target.value))}
                     />
                     <small className="ttas-field-hint">
                         <i className="fa-solid fa-circle-info" aria-hidden="true"></i>

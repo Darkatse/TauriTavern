@@ -373,7 +373,6 @@ impl AgentRuntimeService {
                 "toolSnapshotPath": tool_snapshot_path.as_str(),
                 "toolTurn": &tool_turn,
                 "toolDiagnostics": &tool_diagnostics,
-                "maxRounds": resolved_profile.tools.max_rounds,
                 "contextPolicy": &resolved_profile.context,
                 "modelRetry": {
                     "maxRetries": resolved_profile.run.model_retry.max_retries,
@@ -436,17 +435,7 @@ impl AgentRuntimeService {
             })?;
             let exit = self
                 .run_tool_loop(frame, &mut state.commits, cancel)
-                .await?
-                .ok_or_else(|| {
-                    ApplicationError::ValidationError(format!(
-                        "agent.max_tool_rounds_exceeded: {} was not completed within {} rounds",
-                        super::loop_runner::completion_tool_name(
-                            frame.prepared.invocation.exit_policy,
-                            &frame.prepared.tool_turn
-                        ),
-                        frame.progress.max_rounds
-                    ))
-                })?;
+                .await?;
             match exit {
                 AgentLoopExit::Replied => return Ok(()),
                 AgentLoopExit::Finished => {

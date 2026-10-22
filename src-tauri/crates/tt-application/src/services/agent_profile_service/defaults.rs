@@ -9,7 +9,7 @@ use tt_domain::models::agent::profile::{
     AgentOutputPolicy, AgentPresetBinding, AgentPresetBindingMode, AgentProfileDefinition,
     AgentProfileId, AgentProfileInstructions, AgentRunPolicy, AgentSkillPolicy, AgentToolPolicy,
     AgentWorkspacePolicy, DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT,
-    DEFAULT_AGENT_PROFILE_ID, DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN, DEFAULT_AGENT_TOOL_MAX_ROUNDS,
+    DEFAULT_AGENT_PROFILE_ID,
 };
 use tt_domain::models::tool::ToolId;
 
@@ -73,10 +73,7 @@ pub fn default_writer_profile() -> Result<AgentProfileDefinition, ApplicationErr
             .collect(),
             deny: Vec::new(),
             tool_descriptions: BTreeMap::new(),
-            max_rounds: DEFAULT_AGENT_TOOL_MAX_ROUNDS,
-            max_calls_per_run: DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
             external_result_inline_char_limit: DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT,
-            max_calls_per_tool: BTreeMap::new(),
         },
         skills: AgentSkillPolicy {
             visible: vec!["*".to_string()],

@@ -685,7 +685,7 @@ mod tests {
         };
 
         serde_json::from_value(json!({
-            "schemaVersion": 4,
+            "schemaVersion": 5,
             "kind": "tauritavern.agentProfile",
             "id": "test",
             "displayName": "Test",
@@ -708,9 +708,6 @@ mod tests {
                 ],
                 "deny": [],
                 "toolDescriptions": {},
-                "maxRounds": 1,
-                "maxCallsPerRun": 1,
-                "maxCallsPerTool": {}
             },
             "skills": {
                 "visible": ["*"],

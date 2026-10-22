@@ -448,7 +448,6 @@ async fn cancelled_shell_records_its_result_and_resumes_after_the_confirmed_call
             expected_terminal_seq: checkpoint.terminal_seq,
             chat_ref: run.chat_target().unwrap().chat_ref.clone(),
             stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
-            additional_rounds: 0,
             host_presentation: false,
             revision: None,
         })

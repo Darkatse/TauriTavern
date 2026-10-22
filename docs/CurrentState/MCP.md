@@ -19,7 +19,7 @@ Agent Profile v3
   -> AgentRuntimeService invocation preparation
   -> McpService memory/disk-only catalog + registration description override
   -> Agent Profile description override
-  -> InvocationToolSnapshot / ToolRequestGate
+  -> InvocationToolSnapshot / tool_request_gate
   -> McpService permission recheck
   -> McpGateway::call_tool
   -> Agent journal + tool-results (image files + result references) + next model turn

@@ -9,7 +9,7 @@ use super::model_stream_projection::remove_live_tool_call;
 use super::tool_results::{mcp_known_response_result, tool_call_audit_file_stem};
 use super::{AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
-use crate::services::tool_request_gate::{ToolRequestGate, ToolRequestGateError};
+use crate::services::tool_request_gate::{self, ToolRequestGateError};
 
 use crate::services::agent_tools::{
     AGENT_AWAIT, AGENT_DELEGATE, AGENT_HANDOFF, AgentToolDispatchOutcome, AgentToolEffect,
@@ -40,7 +40,6 @@ impl AgentRuntimeService {
         round: usize,
         tool_call_index: usize,
         tool_invocation: &ToolInvocation,
-        gate: &mut ToolRequestGate,
         session: &mut AgentToolSession,
         is_last_call: bool,
         commit_ledger: &mut RunCommitLedger,
@@ -84,30 +83,11 @@ impl AgentRuntimeService {
             remove_live_tool_call(&active_run.live_projection, invocation_id, tool_call_index);
             let started = Instant::now();
 
-            if let Err(rejection) = gate.authorize_and_reserve(
+            if let Err(rejection) = tool_request_gate::authorize(
                 &prepared.tool_snapshot,
                 &prepared.tool_turn,
                 tool_invocation,
             ) {
-                let budget_message = match &rejection {
-                    ToolRequestGateError::InvocationBudgetExhausted { max_calls } => Some(format!(
-                        "The tool call limit for this task has been reached ({max_calls} calls)."
-                    )),
-                    ToolRequestGateError::ToolBudgetExhausted { max_calls, .. } => Some(format!(
-                        "This tool has reached its call limit for this task ({max_calls} calls)."
-                    )),
-                    _ => None,
-                };
-                if let Some(message) = budget_message {
-                    let outcome = AgentToolDispatchOutcome::error(
-                        tool_invocation,
-                        "agent.tool_budget_exhausted",
-                        &message,
-                        started.elapsed().as_millis(),
-                    );
-                    return Ok(outcome);
-                }
-
                 let error = if matches!(
                     &rejection,
                     ToolRequestGateError::TurnSnapshotMismatch { .. }
@@ -134,7 +114,6 @@ impl AgentRuntimeService {
                 return Err(error);
             }
 
-            // Charge the budget before rejecting arguments so malformed calls cannot retry for free.
             let args = match tool_invocation.arguments.as_map() {
                 Ok(args) => args,
                 Err(message) => {

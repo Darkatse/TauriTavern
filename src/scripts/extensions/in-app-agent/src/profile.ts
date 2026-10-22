@@ -12,7 +12,7 @@ If workspace tools are available, use work/ for materials and tmp/ for scratch f
 // A first-use form value, not a partially valid profile persisted at startup.
 export function createAssistantProfile(): TauriTavernAgentProfileDefinition {
     return {
-        schemaVersion: 4,
+        schemaVersion: 5,
         kind: 'tauritavern.agentProfile',
         id: 'in-app-assistant',
         displayName: 'In-App Assistant',
@@ -29,7 +29,7 @@ export function createAssistantProfile(): TauriTavernAgentProfileDefinition {
         instructions: { agentSystemPrompt: INSTRUCTIONS },
         tools: {
             allow: [...ASSISTANT_TOOL_IDS], deny: [], toolDescriptions: {},
-            maxRounds: 80, maxCallsPerRun: 80, externalResultInlineCharLimit: 50_000, maxCallsPerTool: {},
+            externalResultInlineCharLimit: 50_000,
         },
         skills: { visible: [], deny: [] },
         workspace: { visibleRoots: ['work', 'tmp'], writableRoots: ['work', 'tmp'] },

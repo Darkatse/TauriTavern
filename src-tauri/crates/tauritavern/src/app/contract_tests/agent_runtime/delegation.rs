@@ -648,7 +648,6 @@ pub(super) async fn configure_return_mode_profiles(
     let mut child = root.clone();
     child.id = AgentProfileId::parse("scene-critic").expect("child profile id");
     child.display_name = "Scene Critic".to_string();
-    child.tools.max_rounds = 1;
     // The return-mode invocation must prune these capabilities from the profile.
     child.delegation = AgentDelegationPolicy {
         can_delegate: true,
@@ -657,7 +656,6 @@ pub(super) async fn configure_return_mode_profiles(
         allowed_callers: vec![root.id.as_str().to_string()],
         ..Default::default()
     };
-    root.tools.max_rounds = 2;
     root.delegation.can_delegate = true;
     allow_profile_tool(&mut root.tools.allow, "agent.delegate");
     allow_profile_tool(&mut root.tools.allow, "agent.await");
@@ -687,7 +685,6 @@ async fn configure_handoff_profiles(
     target.id = AgentProfileId::parse("final-editor").expect("target profile id");
     target.display_name = "Final Editor".to_string();
     target.run.direct_runnable = false;
-    target.tools.max_rounds = 1;
     target.tools.allow.retain(|name| {
         matches!(
             name.as_str(),
@@ -702,7 +699,6 @@ async fn configure_handoff_profiles(
         allowed_callers: vec![root.id.as_str().to_string()],
         ..Default::default()
     };
-    root.tools.max_rounds = 2;
     root.delegation.can_handoff = true;
     allow_profile_tool(&mut root.tools.allow, "agent.handoff");
     fixture

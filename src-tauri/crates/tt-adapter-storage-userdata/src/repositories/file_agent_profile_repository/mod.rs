@@ -544,7 +544,6 @@ mod tests {
         profile.kind = "wrong.kind".to_string();
         profile.display_name = "Keep Me".to_string();
         profile.description = Some("Do not replace this profile body.".to_string());
-        profile.tools.max_rounds = 7;
         tokio::fs::write(
             profiles_dir.join("writer.json"),
             serde_json::to_string_pretty(&profile).expect("serialize profile"),
@@ -570,7 +569,6 @@ mod tests {
             loaded.description.as_deref(),
             Some("Do not replace this profile body.")
         );
-        assert_eq!(loaded.tools.max_rounds, 7);
 
         tokio::fs::remove_dir_all(root).await.expect("cleanup");
     }
@@ -645,10 +643,7 @@ mod tests {
                 allow: vec!["workspace.finish".to_string()],
                 deny: Vec::new(),
                 tool_descriptions: BTreeMap::new(),
-                max_rounds: 1,
-                max_calls_per_run: 1,
                 external_result_inline_char_limit: 50_000,
-                max_calls_per_tool: BTreeMap::new(),
             },
             skills: AgentSkillPolicy {
                 visible: vec!["*".to_string()],

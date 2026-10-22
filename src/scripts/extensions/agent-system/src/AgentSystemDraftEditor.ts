@@ -76,10 +76,7 @@ export type AgentSystemDraftEditor = {
         value: AgentProfileDraftNumber,
     ) => void;
     setPlanMode: (mode: string) => void;
-    setToolsLimitField: (
-        field: 'maxRounds' | 'maxCallsPerRun' | 'externalResultInlineCharLimit',
-        value: AgentProfileDraftNumber,
-    ) => void;
+    setExternalResultInlineCharLimit: (value: AgentProfileDraftNumber) => void;
     setModelRetryField: (field: 'maxRetries' | 'intervalMs', value: AgentProfileDraftNumber) => void;
     setContextHistoryMessages: (value: AgentProfileDraftNumber) => void;
     setContextIncludeWorldInfo: (checked: boolean) => void;
@@ -260,9 +257,9 @@ export function createAgentSystemDraftEditor(context: AgentSystemDraftEditorCont
                 draft.plan.mode = mode;
             });
         },
-        setToolsLimitField(field, value) {
+        setExternalResultInlineCharLimit(value) {
             editDraft((draft) => {
-                draft.tools[field] = value;
+                draft.tools.externalResultInlineCharLimit = value;
             });
         },
         setModelRetryField(field, value) {

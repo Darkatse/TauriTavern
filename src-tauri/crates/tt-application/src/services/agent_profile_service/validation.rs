@@ -43,15 +43,16 @@ pub(super) fn migrate_profile_schema(
     profile: &mut AgentProfileDefinition,
 ) -> Result<bool, ApplicationError> {
     match profile.schema_version {
-        1..=3 => {
-            if profile.schema_version < 3 {
-                migrate_tool_policy_to_canonical_ids(&mut profile.tools)?;
+        1..=4 => {
+            if profile.schema_version < 4 {
+                if profile.schema_version < 3 {
+                    migrate_tool_policy_to_canonical_ids(&mut profile.tools)?;
+                }
+                let keep = |id: &str| !is_retired_agent_tool(id);
+                profile.tools.allow.retain(|id| keep(id));
+                profile.tools.deny.retain(|id| keep(id));
+                profile.tools.tool_descriptions.retain(|id, _| keep(id));
             }
-            let keep = |id: &str| !is_retired_agent_tool(id);
-            profile.tools.allow.retain(|id| keep(id));
-            profile.tools.deny.retain(|id| keep(id));
-            profile.tools.tool_descriptions.retain(|id, _| keep(id));
-            profile.tools.max_calls_per_tool.retain(|id, _| keep(id));
             profile.schema_version = AGENT_PROFILE_SCHEMA_VERSION;
             Ok(true)
         }
@@ -82,10 +83,6 @@ fn migrate_tool_policy_to_canonical_ids(
     policy.tool_descriptions = std::mem::take(&mut policy.tool_descriptions)
         .into_iter()
         .map(|(id, override_)| Ok((ToolId::builtin(id)?.to_string(), override_)))
-        .collect::<Result<_, ApplicationError>>()?;
-    policy.max_calls_per_tool = std::mem::take(&mut policy.max_calls_per_tool)
-        .into_iter()
-        .map(|(id, max)| Ok((ToolId::builtin(id)?.to_string(), max)))
         .collect::<Result<_, ApplicationError>>()?;
     Ok(())
 }
@@ -200,16 +197,6 @@ pub(super) fn validate_tool_policy(
     policy: &AgentToolPolicy,
     tool_catalog: &ToolCatalog,
 ) -> Result<ResolvedAgentToolPolicy, ApplicationError> {
-    if policy.max_rounds == 0 {
-        return Err(ApplicationError::ValidationError(
-            "agent.profile_max_rounds_invalid: tools.maxRounds must be > 0".to_string(),
-        ));
-    }
-    if policy.max_calls_per_run == 0 {
-        return Err(ApplicationError::ValidationError(
-            "agent.profile_max_calls_invalid: tools.maxCallsPerRun must be > 0".to_string(),
-        ));
-    }
     if policy.external_result_inline_char_limit == 0 {
         return Err(ApplicationError::ValidationError(
             "agent.profile_external_result_inline_char_limit_invalid: tools.externalResultInlineCharLimit must be > 0"
@@ -255,31 +242,11 @@ pub(super) fn validate_tool_policy(
         tool_descriptions.insert(id, override_.clone());
     }
 
-    let mut max_calls_per_tool = std::collections::BTreeMap::new();
-    for (raw_id, max) in &policy.max_calls_per_tool {
-        let id = ToolId::parse(raw_id.clone())?;
-        validate_profile_tool_id(&id, tool_catalog)?;
-        if !visible.contains(&id) {
-            return Err(ApplicationError::ValidationError(format!(
-                "agent.profile_tool_budget_invisible: `{id}` is not visible"
-            )));
-        }
-        if *max == 0 {
-            return Err(ApplicationError::ValidationError(format!(
-                "agent.profile_tool_budget_invalid: maxCallsPerTool.{id} must be > 0"
-            )));
-        }
-        max_calls_per_tool.insert(id, *max);
-    }
-
     Ok(ResolvedAgentToolPolicy {
         allow,
         deny,
         tool_descriptions,
-        max_rounds: policy.max_rounds,
-        max_calls_per_run: policy.max_calls_per_run,
         external_result_inline_char_limit: policy.external_result_inline_char_limit,
-        max_calls_per_tool,
     })
 }
 

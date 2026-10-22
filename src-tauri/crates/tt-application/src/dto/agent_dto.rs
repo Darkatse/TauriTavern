@@ -447,8 +447,6 @@ pub struct AgentReadRunCheckpointResultDto {
     pub terminal_seq: u64,
     pub presentation: Option<Value>,
     pub next_step: String,
-    pub round: usize,
-    pub max_rounds: usize,
     pub blocked_reason: Option<String>,
 }
 
@@ -459,8 +457,6 @@ pub struct AgentResumeRunDto {
     pub expected_terminal_seq: u64,
     pub chat_ref: AgentChatRef,
     pub stable_chat_id: String,
-    #[serde(default)]
-    pub additional_rounds: usize,
     #[serde(default)]
     pub host_presentation: bool,
     #[serde(default)]

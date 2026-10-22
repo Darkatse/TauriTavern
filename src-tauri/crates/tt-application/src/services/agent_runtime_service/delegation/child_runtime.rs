@@ -22,7 +22,6 @@ use crate::services::agent_runtime_service::tool_snapshot::tool_snapshot_summary
 use crate::services::agent_runtime_service::{
     AgentCancelReceiver, AgentRuntimeService, PreparedInvocation,
 };
-use crate::services::agent_tools::{TASK_RETURN, builtin_model_alias};
 use crate::services::prompt_assembly_service::AgentInvocationPromptAssemblyContext;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
@@ -164,14 +163,7 @@ impl AgentRuntimeService {
         let mut child_commit_ledger = RunCommitLedger::default();
         let exit = self
             .run_tool_loop(frame, &mut child_commit_ledger, cancel)
-            .await?
-            .ok_or_else(|| {
-                ApplicationError::ValidationError(format!(
-                    "agent.max_tool_rounds_exceeded: {} was not called within {} rounds",
-                    builtin_model_alias(TASK_RETURN),
-                    frame.progress.max_rounds
-                ))
-            })?;
+            .await?;
         if let AgentLoopExit::Transferred { .. } = exit {
             return Err(ApplicationError::ValidationError(
                 "agent.child_handoff_denied: delegated tasks cannot hand off".to_string(),
@@ -320,7 +312,6 @@ impl AgentRuntimeService {
                 "toolSnapshotPath": tool_snapshot_path.as_str(),
                 "toolTurn": &tool_turn,
                 "toolDiagnostics": &tool_diagnostics,
-                "maxRounds": profile.tools.max_rounds,
                 "contextPolicy": &profile.context,
             }),
         )

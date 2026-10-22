@@ -183,6 +183,7 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
   - Session 独立于当前角色聊天和写作生成状态，不发出 SillyTavern 聊天/生成事件；目录、共享配置与连续历史由后端管理，提示词与宏环境见 [Prompt assembly](Agent/PromptAssembly.md)。Agent Mode 只控制 Chat 的 Agent/Legacy 路由。
   - 扩展工具通过 `tools.register/setEnabled/list` 注册、开关与查询，按 Chat/Session 筛选，共用 Agent 工具执行链路；用法见 [注册扩展工具](API/Agent.md#注册扩展工具)。
   - 运行控制属于 Public Contract；模型回合、任务详情、工具目录和 Timeline 关系是 Project Contract，由对应 API 提供展示 DTO。
+  - Agent Profile 不设置模型轮数或工具调用次数上限；续接只接收 Run 身份与可选修订要求，签名及迁移范围见 [Agent API](API/Agent.md#控制与订阅) 与 [Profile](Agent/ProfilesAndPreset.md#源码)。
   - Session 历史中的 `compaction`、运行状态 `compacting_context`、`context_compaction_started` / `context_compacted` 事件与 `model_request_created` 的 `context`、`sessions.compact()`，以及 Agent 快照的 `contextLimits: { context, response, tokenizerModel }` 均为 Project Contract；字段与事件形状见 [Agent API](API/Agent.md)。
 
 - `api.llmConnections`：管理 Profile 引用的模型连接，见 [LLM Connection API](API/LlmConnections.md)。Profile 通过连接 ID 和模型 ID 绑定；Model Target 是界面的配置来源。

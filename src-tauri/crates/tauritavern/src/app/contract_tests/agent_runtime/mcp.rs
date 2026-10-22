@@ -30,7 +30,7 @@ async fn agent_runtime_executes_cached_mcp_tool_through_readable_alias() {
             ]),
         ],
     );
-    let (profile, mcp_tool_id) = configure_mcp_profile(&fixture, "mcp-writer", 3, 10_000).await;
+    let (profile, mcp_tool_id) = configure_mcp_profile(&fixture, "mcp-writer", 10_000).await;
     let mcp_tool = tt_domain::models::tool::ToolId::parse(&mcp_tool_id).unwrap();
     let registration_id =
         tt_domain::models::mcp::McpRegistrationId::from_provider_id(mcp_tool.provider_id())
@@ -205,7 +205,7 @@ async fn agent_runtime_stops_after_unknown_mcp_call_outcome() {
             code: "mcp.call_response_failed".to_string(),
             message: "connection closed before a tool response arrived".to_string(),
         }));
-    let (profile, _) = configure_mcp_profile(&fixture, "mcp-unknown-writer", 1, 50_000).await;
+    let (profile, _) = configure_mcp_profile(&fixture, "mcp-unknown-writer", 50_000).await;
 
     let handle = start_contract_agent_run(
         &fixture,
@@ -230,7 +230,6 @@ async fn agent_runtime_stops_after_unknown_mcp_call_outcome() {
             expected_terminal_seq: checkpoint.terminal_seq,
             chat_ref: run.chat_target().unwrap().chat_ref.clone(),
             stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
-            additional_rounds: 0,
             host_presentation: false,
             revision: None,
         })
@@ -324,7 +323,7 @@ async fn mcp_images_keep_structured_projection_and_image_only_results_readable()
             diagnostics: Vec::new(),
         })),
     ]);
-    let (profile, _) = configure_mcp_profile(&fixture, "mcp-image-writer", 2, 50_000).await;
+    let (profile, _) = configure_mcp_profile(&fixture, "mcp-image-writer", 50_000).await;
     let handle = start_contract_agent_run(
         &fixture,
         &profile,
@@ -371,7 +370,6 @@ async fn mcp_images_keep_structured_projection_and_image_only_results_readable()
 pub(super) async fn configure_mcp_profile(
     fixture: &AgentRuntimeFixture,
     profile_id: &str,
-    max_rounds: usize,
     external_result_inline_char_limit: usize,
 ) -> (
     tt_domain::models::agent::profile::ResolvedAgentProfile,
@@ -416,7 +414,6 @@ pub(super) async fn configure_mcp_profile(
     definition.id = AgentProfileId::parse(profile_id).unwrap();
     let mcp_tool_id = format!("mcp/{}:issue.create", server.id);
     definition.tools.allow.push(mcp_tool_id.clone());
-    definition.tools.max_rounds = max_rounds;
     definition.tools.external_result_inline_char_limit = external_result_inline_char_limit;
     fixture
         .profile_service

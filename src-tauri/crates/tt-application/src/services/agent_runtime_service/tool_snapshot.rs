@@ -32,11 +32,9 @@ impl AgentRuntimeService {
 pub(super) fn tool_snapshot_summary(snapshot: &InvocationToolSnapshot) -> Value {
     json!({
         "id": snapshot.id(),
-        "maxCallsPerInvocation": snapshot.max_calls_per_invocation(),
         "tools": snapshot.bindings().iter().map(|binding| json!({
             "toolId": binding.tool_id(),
             "alias": binding.model_alias(),
-            "maxCalls": binding.max_calls(),
         })).collect::<Vec<_>>(),
     })
 }

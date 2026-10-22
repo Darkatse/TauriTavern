@@ -8,7 +8,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tt_adapter_storage_core::file_system::persist_json_file;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::AgentModelRole;
-use tt_domain::models::agent::profile::AgentProfileDefinition;
+use tt_domain::models::agent::profile::{AgentProfileDefinition, deserialize_profile_definition};
 use tt_domain::models::agent::session::{
     AgentSession, AgentSessionMessage, NewAgentSessionMessage,
 };
@@ -23,7 +23,18 @@ use super::run_prune_store::remove_index_file_if_exists;
 #[async_trait]
 impl AgentSessionRepository for FileAgentRepository {
     async fn load_session_profile(&self) -> Result<Option<AgentProfileDefinition>, DomainError> {
-        Self::try_read_json(&self.root.join("sessions/profile.json")).await
+        let path = self.root.join("sessions/profile.json");
+        let Some(value) = Self::try_read_json::<serde_json::Value>(&path).await? else {
+            return Ok(None);
+        };
+        deserialize_profile_definition(value)
+            .map(Some)
+            .map_err(|error| {
+                DomainError::InvalidData(format!(
+                    "Invalid Agent session profile in {}: {error}",
+                    path.display()
+                ))
+            })
     }
 
     async fn save_session_profile(

@@ -7,7 +7,6 @@ use super::commit_ledger::RunCommitLedger;
 use super::guidance::AgentGuidanceItem;
 use super::loop_runner::AgentLoopExit;
 use crate::services::agent_tools::AgentToolSession;
-use crate::services::tool_request_gate::ToolRequestGate;
 use tt_domain::models::agent::{WorkspacePath, WorkspacePersistentChangeSet};
 use tt_domain::models::tool::ToolInvocation;
 
@@ -37,15 +36,12 @@ impl InvocationFrame {
     pub fn new(prepared: PreparedInvocation) -> Self {
         let mut session = AgentToolSession::new(prepared.effective_skills.clone());
         session.runtime_context = prepared.runtime_context.clone();
-        let max_rounds = prepared.profile.tools.max_rounds;
         Self {
             prepared,
             progress: InvocationProgress {
                 round: 1,
-                max_rounds,
                 step: InvocationStep::Model,
                 session,
-                gate: ToolRequestGate::default(),
                 seen_child_results: HashSet::new(),
                 drift_attempts: 0,
                 blocked_reason: None,
@@ -58,10 +54,8 @@ impl InvocationFrame {
 #[serde(rename_all = "camelCase")]
 pub(super) struct InvocationProgress {
     pub round: usize,
-    pub max_rounds: usize,
     pub step: InvocationStep,
     pub session: AgentToolSession,
-    pub gate: ToolRequestGate,
     pub seen_child_results: HashSet<String>,
     pub drift_attempts: usize,
     /// Set across operations whose failure can leave an unconfirmed effect or missing record.

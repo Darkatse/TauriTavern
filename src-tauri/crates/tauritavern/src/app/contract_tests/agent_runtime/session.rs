@@ -6,7 +6,8 @@ use tt_application::dto::agent_dto::{
 };
 use tt_domain::models::agent::AgentModelMessage;
 use tt_domain::models::agent::profile::{
-    AgentModelBindingMode, AgentPresetBindingMode, AgentPresetRef, AgentProfileDefinition,
+    AGENT_PROFILE_SCHEMA_VERSION, AgentModelBindingMode, AgentPresetBindingMode, AgentPresetRef,
+    AgentProfileDefinition,
 };
 use tt_domain::models::llm_connection::LlmConnectionDefinition;
 use tt_ports::repositories::llm_connection_repository::LlmConnectionRepository;
@@ -362,9 +363,16 @@ async fn preset_rename_updates_shared_session_profile_without_listing_it_as_chat
             .is_none()
     );
 
-    fixture
-        .service
-        .save_session_profile(AgentSaveProfileDto { profile })
+    let profile_path = root.join("_tauritavern/agent-workspaces/sessions/profile.json");
+    let mut legacy_profile = serde_json::to_value(profile).unwrap();
+    legacy_profile["schemaVersion"] = json!(4);
+    legacy_profile["tools"]["maxRounds"] = json!(80);
+    legacy_profile["tools"]["maxCallsPerRun"] = json!(80);
+    legacy_profile["tools"]["maxCallsPerTool"] = json!({"builtin:workspace.shell": 10});
+    fs::create_dir_all(profile_path.parent().unwrap())
+        .await
+        .unwrap();
+    fs::write(&profile_path, serde_json::to_vec(&legacy_profile).unwrap())
         .await
         .unwrap();
     let mut writer = fixture
@@ -416,6 +424,10 @@ async fn preset_rename_updates_shared_session_profile_without_listing_it_as_chat
         .profile
         .unwrap();
     assert_eq!(stored.preset.ref_, Some(to.clone()));
+    let persisted: Value = serde_json::from_slice(&fs::read(&profile_path).await.unwrap()).unwrap();
+    assert_eq!(persisted, serde_json::to_value(&stored).unwrap());
+    assert_eq!(stored.schema_version, AGENT_PROFILE_SCHEMA_VERSION);
+
     assert!(
         fixture
             .profile_service
@@ -813,8 +825,6 @@ pub(super) async fn configure_session_profile(
     .into();
     profile.tools.deny.clear();
     profile.tools.tool_descriptions.clear();
-    profile.tools.max_calls_per_tool.clear();
-    profile.tools.max_rounds = 3;
     profile.skills.visible.clear();
     profile.workspace.visible_roots = vec!["work".into(), "tmp".into()];
     profile.workspace.writable_roots = profile.workspace.visible_roots.clone();

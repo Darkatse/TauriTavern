@@ -14,31 +14,6 @@ use crate::services::agent_tools::project_agent_model_tools;
 
 pub(super) const REVISION_ONLY: &str = "older checkpoints support /fix for completed runs only; start a new run to continue unfinished work";
 
-/// Decode the old shape for read-only inspection without upgrading its protocol.
-pub(super) fn prepare_for_read(value: &mut Value) {
-    if let Some(frame) = value.pointer_mut("/state/foreground") {
-        remove_read_budgets(frame);
-    }
-    if let Some(children) = value
-        .pointer_mut("/state/children")
-        .and_then(Value::as_array_mut)
-    {
-        for frame in children {
-            remove_read_budgets(frame);
-        }
-    }
-}
-
-fn remove_read_budgets(frame: &mut Value) {
-    if let Some(skills) = frame
-        .pointer_mut("/prepared/profile/skills")
-        .and_then(Value::as_object_mut)
-    {
-        skills.remove("maxReadCharsPerCall");
-        skills.remove("maxReadCharsPerRun");
-    }
-}
-
 /// Called after begin_output_revision creates the new invocation and resets its
 /// progress. No old execution cursor or child invocation is resumed.
 pub(super) fn migrate_revision(
@@ -55,9 +30,6 @@ pub(super) fn migrate_revision(
     policy
         .tool_descriptions
         .retain(|id, _| !is_retired_agent_tool(id.as_str()));
-    policy
-        .max_calls_per_tool
-        .retain(|id, _| !is_retired_agent_tool(id.as_str()));
     prepared.profile.schema_version = AGENT_PROFILE_SCHEMA_VERSION;
 
     // Preserve frozen aliases, descriptions and permissions, including MCP.
@@ -71,7 +43,6 @@ pub(super) fn migrate_revision(
             .filter(|binding| !is_retired_agent_tool(binding.tool_id().as_str()))
             .cloned()
             .collect(),
-        prepared.tool_snapshot.max_calls_per_invocation(),
     )?;
     prepared.tool_turn =
         ToolTurnContract::all(&prepared.tool_snapshot, prepared.tool_turn.choice().clone())?;

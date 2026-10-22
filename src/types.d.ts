@@ -274,8 +274,6 @@ type TauriTavernAgentRunCheckpoint = {
     terminalSeq: number;
     presentation: Record<string, any> | null;
     nextStep: 'model' | 'tools' | 'handoff' | 'finalize' | 'finished' | 'unavailable';
-    round: number;
-    maxRounds: number;
     blockedReason: string | null;
 };
 
@@ -572,10 +570,7 @@ type TauriTavernAgentProfileDefinition = {
         allow: string[];
         deny?: string[];
         toolDescriptions?: Record<string, TauriTavernToolDescriptionOverride>;
-        maxRounds: number;
-        maxCallsPerRun: number;
         externalResultInlineCharLimit: number;
-        maxCallsPerTool?: Record<string, number>;
     };
     skills: {
         visible: string[];
@@ -760,7 +755,7 @@ type TauriTavernAgentRetentionApi = {
 
 type TauriTavernAgentApi = {
     readCheckpoint: (runId: string) => Promise<TauriTavernAgentRunCheckpoint>;
-    resume: (input: { runId: string; additionalRounds?: number; checkpoint?: TauriTavernAgentRunCheckpoint; revisionGuidance?: string }) => Promise<TauriTavernAgentRunHandle>;
+    resume: (input: { runId: string; checkpoint?: TauriTavernAgentRunCheckpoint; revisionGuidance?: string }) => Promise<TauriTavernAgentRunHandle>;
     startRunWithPromptSnapshot: (input: {
         chatRef: TauriTavernChatRef;
         stableChatId?: string;

@@ -304,10 +304,6 @@ mod tests {
             ToolId::builtin(AGENT_DELEGATE).unwrap(),
         ];
         profile.tools.deny = vec![ToolId::builtin(WORKSPACE_SEARCH_FILES).unwrap()];
-        profile
-            .tools
-            .max_calls_per_tool
-            .insert(ToolId::builtin(WORKSPACE_READ_FILE).unwrap(), 2);
 
         let root = compile_invocation_tool_snapshot(
             &registry,
@@ -324,7 +320,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![WORKSPACE_READ_FILE, WORKSPACE_FINISH, AGENT_DELEGATE]
         );
-        assert_eq!(root.bindings()[0].max_calls(), Some(2));
 
         let child = compile_invocation_tool_snapshot(
             &registry,
@@ -384,10 +379,7 @@ mod tests {
                 allow: vec![ToolId::builtin(WORKSPACE_READ_FILE).unwrap()],
                 deny: Vec::new(),
                 tool_descriptions: BTreeMap::new(),
-                max_rounds: 1,
-                max_calls_per_run: 1,
                 external_result_inline_char_limit: 50_000,
-                max_calls_per_tool: BTreeMap::new(),
             },
             skills: AgentSkillPolicy {
                 visible: vec!["*".to_string()],

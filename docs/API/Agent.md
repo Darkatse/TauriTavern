@@ -85,7 +85,7 @@ Session 的结束与恢复边界见 [运行循环](../Agent/Runtime.md)，文件
 | --- | --- |
 | `cancel(runId)` | 请求取消，返回 Chat handle 或 `{ sessionId, runId, status, createdAt }`；终态通过事件观察 |
 | `readCheckpoint(runId)` | 读取保存状态及可恢复性信息 |
-| `resume({ runId, additionalRounds?, revisionGuidance? })` | 续接同一 Run，或根据新要求修订已完成输出；返回含订阅游标 `afterSeq` 的 Run handle |
+| `resume({ runId, revisionGuidance? })` | 续接同一 Run，或根据新要求修订已完成输出；返回含订阅游标 `afterSeq` 的 Run handle |
 | `submitGuidance({ runId, text, clientGuidanceId? })` | 向活跃 Run 补充指令，返回 `guidanceId` 与 `status: 'queued'` |
 | `subscribe(runId, handler, options?)` | 订阅持久事件，返回可重复调用的 unsubscribe |
 | `subscribeLiveProjection(runId, handler, options?)` | 订阅当前正文、推理文字及文件工具参数预览，返回 unsubscribe |
@@ -106,9 +106,9 @@ Chat 补充指令在下一次前台模型请求前加入上下文，已经发出
 
 `response` 包含 `invocationId`、`invocationExitPolicy`、`round`、`attempt`、`text`、`reasoning`、`toolIds`。正文与思考共用回合/尝试身份，完成快照不重复发送增量。正式 assistant 按 `runId + invocationId + round` 接替对应 attempt 的预览，须处理事件与 Channel 的任意到达顺序。失败、取消及终态清除预览，不将其写入历史。写作 Timeline 只消费 reasoning，Chat 正文仍走文件提交。
 
-`resume` 保留原始输入与累计预算，要求当前聊天及消息仍属于原 Run；普通重新生成仍创建新 Run。轮数不足时可经用户明确选择追加 `additionalRounds`。续接订阅使用返回的 `afterSeq`，恢复条件见 [运行循环](../Agent/Runtime.md#checkpoint-与恢复)。
+`resume` 保留原始输入与已确认结果，要求当前聊天及消息仍属于原 Run；普通重新生成仍创建新 Run。续接订阅使用返回的 `afterSeq`，恢复条件见 [运行循环](../Agent/Runtime.md#checkpoint-与恢复)。
 
-传入 `revisionGuidance` 时，从已完成的 checkpoint 开始新的前台 Invocation，继承上下文并使用原 Profile 的预算。聊天命令 `/fix 修改要求` 使用这一入口，原地修改最后一条 Agent 回复的当前 swipe，以当前已保存的正文为基准。
+传入 `revisionGuidance` 时，从已完成的 checkpoint 开始新的前台 Invocation，继承上下文与原 Profile。聊天命令 `/fix 修改要求` 使用这一入口，原地修改最后一条 Agent 回复的当前 swipe，以当前已保存的正文为基准。
 
 v1 checkpoint 仅支持查看状态和修订已完成的 Run；首次修订时转换，范围见 [运行循环](../Agent/Runtime.md#checkpoint-与恢复)。
 

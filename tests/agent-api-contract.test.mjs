@@ -1269,7 +1269,7 @@ test('Agent resume attaches from its returned cursor and saves completed present
         calls.push({ command, args });
         if (command === 'read_agent_run_checkpoint') return {
             run: { runId: 'run-resume', generationType: 'swipe', status: 'cancelled' },
-            terminalSeq: 10, presentation, nextStep: 'model', round: 4, maxRounds: 5, blockedReason: null,
+            terminalSeq: 10, presentation, nextStep: 'model', blockedReason: null,
         };
         if (command === 'resume_agent_run') return { runId: 'run-resume', generationType: 'swipe', afterSeq: 10 };
         if (command === 'read_agent_run_events') {
@@ -1288,7 +1288,7 @@ test('Agent resume attaches from its returned cursor and saves completed present
         open: () => ({ stableId: async () => ' stable-story\n' }),
     };
     const savedCheckpoint = await agent.readCheckpoint('run-resume');
-    const handle = await agent.resume({ runId: 'run-resume', additionalRounds: 5, checkpoint: savedCheckpoint });
+    const handle = await agent.resume({ runId: 'run-resume', checkpoint: savedCheckpoint });
     const settling = agent.settleChatPresentation(handle);
     const checkpoint = await saved;
     await settling;
@@ -1299,7 +1299,7 @@ test('Agent resume attaches from its returned cursor and saves completed present
     assert.deepEqual(checkpoint.presentation.reasoning.turns, [{ invocationId: 'inv_root', round: 4, maxChars: 17 }]);
     assert.equal(calls.filter(call => call.command === 'finish_agent_run_presentation').length, 1);
     assert.deepEqual(calls.find(call => call.command === 'resume_agent_run').args.dto, {
-        runId: 'run-resume', expectedTerminalSeq: 10, chatRef, stableChatId: ' stable-story\n', additionalRounds: 5, hostPresentation: true,
+        runId: 'run-resume', expectedTerminalSeq: 10, chatRef, stableChatId: ' stable-story\n', hostPresentation: true,
     });
 });
 
@@ -1381,7 +1381,7 @@ test('Checkpoint publication can be retried through the Agent API after failure'
     const { agent } = await installHarness({ script, safeInvoke: async (command, args) => {
         if (command === 'read_agent_run_checkpoint') return {
             run: { runId: 'run-save-retry', status: 'cancelled' },
-            terminalSeq: 10, presentation, nextStep: 'model', round: 2, maxRounds: 5,
+            terminalSeq: 10, presentation, nextStep: 'model',
         };
         if (command === 'resume_agent_run') return { runId: 'run-save-retry', afterSeq: 10 };
         if (command === 'read_agent_run_events') return { events: [

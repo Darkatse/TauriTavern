@@ -66,7 +66,6 @@ Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点�
 | `context.initialChatHistoryMessages` | Chat 初始历史楼数：`-1` 不主动裁剪，`0` 不注入，正数取最近 N 楼；仍受模型上下文预算限制 |
 | `context.includeActivatedWorldInfo` | 是否在初始提示词中包含已激活世界书 |
 | `tools.allow` / `deny` | 可用工具，deny 优先 |
-| `tools.maxRounds` / `maxCallsPerRun` / `maxCallsPerTool` | 每个 Invocation 的轮数与调用预算 |
 | `tools.externalResultInlineCharLimit` | MCP 与 Extension 结果的模型内联字符阈值，默认 50,000；长结果保留完整可读文件 |
 | `tools.toolDescriptions` | 替换模型看到的工具或参数描述 |
 | `skills.visible` / `deny` | 按名称选择可用 Skill |
@@ -111,9 +110,9 @@ Session 必须指定 `preset.mode = ref`、`model.mode = connectionRef` 和 `con
 
 ## 源码
 
-普通 Profile 以 JSON 保存到 `_tauritavern/agent-profiles/profiles/`，当前 schema 版本为 4。
+普通 Profile 以 JSON 保存到 `_tauritavern/agent-profiles/profiles/`，当前 schema 版本为 5。
 
-schema 1–3 在加载或导入时自动迁移，移除旧 `skill.*`、`agent.list` 工具配置及 Skill 读取预算；保留其余配置，不自动授予新权限或重写指令。
+schema 1–4 在加载或导入时自动迁移，丢弃轮数与调用次数上限；1–3 版还会移除旧 `skill.*`、`agent.list` 工具配置及 Skill 读取预算。保留其余配置，不自动授予新权限或重写指令。普通 Profile 与共享 Session Profile 在读取迁移或保存后以当前版本写回。
 
 旧 `tools.mcpResultInlineCharLimit` 的数值在读取时保留，再次保存使用 `tools.externalResultInlineCharLimit`。
 

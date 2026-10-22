@@ -71,7 +71,6 @@ pub(crate) fn prepare_tool_bindings(
             ToolBinding::new(
                 registry.materialize_profile_descriptor(tool_id, profile)?,
                 builtin_model_alias(tool_id.native_name()),
-                profile.tools.max_calls_per_tool.get(tool_id).copied(),
             )?
         } else {
             let Some(tool) = external_tools
@@ -81,11 +80,7 @@ pub(crate) fn prepare_tool_bindings(
                 continue;
             };
             let alias = allocate_model_alias(&tool.model_name, &aliases);
-            ToolBinding::new(
-                tool.descriptor.clone(),
-                alias,
-                profile.tools.max_calls_per_tool.get(tool_id).copied(),
-            )?
+            ToolBinding::new(tool.descriptor.clone(), alias)?
         };
         aliases.insert(binding.model_alias().to_string());
         bindings.push(binding);
@@ -111,8 +106,7 @@ pub(crate) fn compile_invocation_tool_snapshot(
             if binding.tool_id().is_builtin() {
                 let mut descriptor = binding.descriptor().clone();
                 registry.apply_return_mode_context(&mut descriptor, profile)?;
-                *binding =
-                    ToolBinding::new(descriptor, binding.model_alias(), binding.max_calls())?;
+                *binding = ToolBinding::new(descriptor, binding.model_alias())?;
             }
         }
         let id = ToolId::builtin(TASK_RETURN)?;
@@ -121,11 +115,9 @@ pub(crate) fn compile_invocation_tool_snapshot(
         bindings.push(ToolBinding::new(
             descriptor,
             builtin_model_alias(TASK_RETURN),
-            profile.tools.max_calls_per_tool.get(&id).copied(),
         )?);
     }
-    InvocationToolSnapshot::try_new(snapshot_id, bindings, profile.tools.max_calls_per_run)
-        .map_err(Into::into)
+    InvocationToolSnapshot::try_new(snapshot_id, bindings).map_err(Into::into)
 }
 
 pub(crate) fn builtin_model_alias(name: &str) -> String {

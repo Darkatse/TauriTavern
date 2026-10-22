@@ -156,7 +156,7 @@ async fn agent_runtime_resume_retries_metadata_without_republishing_or_calling_m
     drop(fixture);
 
     let fixture = agent_runtime_fixture_with_responses(&root, Vec::new());
-    resume_checkpoint(&fixture, &stopped, 0).await;
+    resume_checkpoint(&fixture, &stopped).await;
     let retried = wait_for_event(
         &fixture,
         &handle.run_id,
@@ -266,7 +266,7 @@ async fn agent_runtime_resumes_after_tool_bookkeeping_failure_without_replaying_
         assert!(stopped.blocked_reason.is_none());
         fs::remove_file(&blocked_path).await.unwrap();
         fs::create_dir(&blocked_path).await.unwrap();
-        resume_checkpoint(&fixture, &stopped, 0).await;
+        resume_checkpoint(&fixture, &stopped).await;
         let completed = wait_for_checkpoint(&fixture, &run.id).await;
         assert_eq!(completed.run.status, AgentRunStatus::Completed);
         assert_eq!(fixture.model_gateway.requests().await.len(), 1);
@@ -357,7 +357,6 @@ async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_public
             expected_terminal_seq: completed.terminal_seq,
             chat_ref: run.chat_target().unwrap().chat_ref.clone(),
             stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
-            additional_rounds: 0,
             host_presentation: false,
             revision: None,
         })
@@ -396,7 +395,6 @@ async fn agent_runtime_completed_checkpoint_retains_final_native_turn_and_public
             expected_terminal_seq: completed.terminal_seq,
             chat_ref: run.chat_target().unwrap().chat_ref.clone(),
             stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
-            additional_rounds: 0,
             host_presentation: false,
             revision: None,
         })
@@ -446,7 +444,7 @@ async fn agent_runtime_resume_after_restart_preserves_history_and_successful_too
             )),
         ],
     );
-    let profile = configure_resume_profile(&fixture, 2, None).await;
+    let profile = configure_resume_profile(&fixture).await;
     let handle = start_contract_agent_run(
         &fixture,
         &profile,
@@ -473,7 +471,7 @@ async fn agent_runtime_resume_after_restart_preserves_history_and_successful_too
             model_tool_call("call_finish", "workspace_finish", json!({})),
         ])],
     );
-    resume_checkpoint(&fixture, &stopped, 0).await;
+    resume_checkpoint(&fixture, &stopped).await;
     let completed = wait_for_checkpoint(&fixture, &handle.run_id).await;
     assert_eq!(completed.run.status, AgentRunStatus::Completed);
     assert!(completed.terminal_seq > stopped.terminal_seq);
@@ -508,7 +506,7 @@ async fn agent_runtime_resume_keeps_partial_turn_cursor_after_confirmed_tool() {
         .mcp_gateway
         .wait_for_cancel
         .store(true, Ordering::SeqCst);
-    let (profile, _) = super::mcp::configure_mcp_profile(&fixture, "resume-mcp", 1, 10_000).await;
+    let (profile, _) = super::mcp::configure_mcp_profile(&fixture, "resume-mcp", 10_000).await;
     let handle = start_contract_agent_run(
         &fixture,
         &profile,
@@ -536,7 +534,7 @@ async fn agent_runtime_resume_keeps_partial_turn_cursor_after_confirmed_tool() {
     drop(fixture);
 
     let fixture = agent_runtime_fixture_with_responses(&root, Vec::new());
-    resume_checkpoint(&fixture, &stopped, 0).await;
+    resume_checkpoint(&fixture, &stopped).await;
     let completed = wait_for_checkpoint(&fixture, &handle.run_id).await;
     assert_eq!(completed.run.status, AgentRunStatus::Completed);
     assert!(fixture.model_gateway.requests().await.is_empty());
@@ -545,57 +543,6 @@ async fn agent_runtime_resume_keeps_partial_turn_cursor_after_confirmed_tool() {
         read_output(&fixture, &handle.run_id).await,
         "continued original turn"
     );
-
-    fs::remove_dir_all(root).await.unwrap();
-}
-
-#[tokio::test]
-async fn agent_runtime_resume_adds_rounds_without_resetting_tool_budget() {
-    let root = temp_root("agent-resume-budget");
-    let fixture = agent_runtime_fixture_with_responses(
-        &root,
-        vec![model_tool_response(vec![model_tool_call(
-            "call_first_write",
-            "workspace_write_file",
-            json!({ "path": "output/main.md", "mode": "append", "content": "first" }),
-        )])],
-    );
-    let profile = configure_resume_profile(&fixture, 1, Some(1)).await;
-    let handle = start_contract_agent_run(
-        &fixture,
-        &profile,
-        AgentRunPresentation::Background,
-        "resume-budget",
-        Some(false),
-    )
-    .await;
-    let stopped = wait_for_checkpoint(&fixture, &handle.run_id).await;
-    assert_eq!(stopped.run.status, AgentRunStatus::Failed);
-    assert_eq!(stopped.max_rounds, 1);
-    drop(fixture);
-
-    let fixture = agent_runtime_fixture_with_responses(
-        &root,
-        vec![model_tool_response(vec![
-            model_tool_call(
-                "call_disallowed_second_write",
-                "workspace_write_file",
-                json!({ "path": "output/main.md", "mode": "append", "content": " duplicated" }),
-            ),
-            model_tool_call("call_finish", "workspace_finish", json!({})),
-        ])],
-    );
-    resume_checkpoint(&fixture, &stopped, 1).await;
-    let completed = wait_for_checkpoint(&fixture, &handle.run_id).await;
-    assert_eq!(completed.run.status, AgentRunStatus::Completed);
-    assert_eq!(completed.max_rounds, 2);
-    assert_eq!(read_output(&fixture, &handle.run_id).await, "first");
-    let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
-    assert!(events.iter().any(|event| {
-        event.event_type == "tool_call_failed"
-            && event.payload["callId"] == "call_disallowed_second_write"
-            && event.payload["errorCode"] == "agent.tool_budget_exhausted"
-    }));
 
     fs::remove_dir_all(root).await.unwrap();
 }
@@ -723,7 +670,7 @@ async fn agent_runtime_resume_preserves_cancelled_child_progress() {
                     ]))]),
                 );
         }
-        resume_checkpoint(&fixture, &stopped, 1).await;
+        resume_checkpoint(&fixture, &stopped).await;
         let completed = wait_for_checkpoint(&fixture, &handle.run_id).await;
         assert_eq!(completed.run.status, AgentRunStatus::Completed);
         let resumed_tasks = fixture
@@ -782,7 +729,7 @@ async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_wo
             model_tool_call("finish", "workspace_finish", json!({})),
         ])],
     );
-    let profile = configure_resume_profile(&fixture, 2, Some(1)).await;
+    let profile = configure_resume_profile(&fixture).await;
     let handle = start_contract_agent_run(
         &fixture,
         &profile,
@@ -870,7 +817,7 @@ async fn agent_runtime_revises_completed_output_and_resumes_without_replaying_wo
             model_tool_call("finish", "workspace_finish", json!({})),
         ])],
     );
-    resume_checkpoint(&fixture, &stopped, 0).await;
+    resume_checkpoint(&fixture, &stopped).await;
     let revised_state = acknowledge_revision_output(
         &fixture,
         &handle.run_id,
@@ -958,7 +905,6 @@ pub(super) async fn revise_checkpoint(
             expected_terminal_seq: checkpoint.terminal_seq,
             chat_ref: run.chat_target().unwrap().chat_ref.clone(),
             stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
-            additional_rounds: 0,
             host_presentation: false,
             revision: Some(AgentOutputRevisionDto {
                 guidance: guidance.to_string(),
@@ -1023,8 +969,6 @@ async fn acknowledge_revision_output(
 
 async fn configure_resume_profile(
     fixture: &AgentRuntimeFixture,
-    max_rounds: usize,
-    write_limit: Option<usize>,
 ) -> tt_domain::models::agent::profile::ResolvedAgentProfile {
     let mut profile = fixture
         .profile_service
@@ -1032,14 +976,7 @@ async fn configure_resume_profile(
         .await
         .unwrap()
         .unwrap();
-    profile.tools.max_rounds = max_rounds;
     profile.run.model_retry.max_retries = 0;
-    if let Some(limit) = write_limit {
-        profile
-            .tools
-            .max_calls_per_tool
-            .insert("builtin:workspace.write_file".to_string(), limit);
-    }
     fixture
         .profile_service
         .save_profile(profile, fixture.service.tool_catalog())
@@ -1076,7 +1013,6 @@ pub(super) async fn wait_for_checkpoint(
 async fn resume_checkpoint(
     fixture: &AgentRuntimeFixture,
     checkpoint: &AgentReadRunCheckpointResultDto,
-    additional_rounds: usize,
 ) {
     let run = fixture
         .agent_repository
@@ -1090,7 +1026,6 @@ async fn resume_checkpoint(
             expected_terminal_seq: checkpoint.terminal_seq,
             chat_ref: run.chat_target().unwrap().chat_ref.clone(),
             stable_chat_id: run.chat_target().unwrap().stable_chat_id.clone(),
-            additional_rounds,
             host_presentation: false,
             revision: None,
         })

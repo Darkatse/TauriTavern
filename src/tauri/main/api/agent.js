@@ -111,11 +111,8 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
         return safeInvoke('read_agent_run_checkpoint', { dto: { runId } });
     }
 
-    async function resume({ runId, additionalRounds = 0, checkpoint = null, revisionGuidance = null } = {}) {
+    async function resume({ runId, checkpoint = null, revisionGuidance = null } = {}) {
         runId = String(runId || '').trim();
-        if (!Number.isInteger(additionalRounds) || additionalRounds < 0) {
-            throw new Error('agent.resume_rounds_invalid: additionalRounds must be a non-negative integer');
-        }
         checkpoint ??= await readCheckpoint(runId);
         if (checkpoint.run.sessionId) throw new Error('agent.session_resume_unsupported: Session runs cannot be resumed');
         if (checkpoint.run.runId !== runId) throw new Error('agent.resume_checkpoint_mismatch: checkpoint belongs to another run');
@@ -131,7 +128,6 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
             expectedTerminalSeq: checkpoint.terminalSeq,
             chatRef,
             stableChatId,
-            additionalRounds,
             hostPresentation: true,
             ...(revision ? { revision: { guidance: revisionGuidance, previousOutput: presentation.rawCommittedText } } : {}),
         } });

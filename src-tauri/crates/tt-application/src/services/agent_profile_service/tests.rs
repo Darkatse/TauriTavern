@@ -6,8 +6,9 @@ use serde_json::json;
 use crate::services::agent_tools::BuiltinAgentToolRegistry;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::profile::{
-    AgentContextPolicy, AgentModelBinding, AgentModelBindingMode, AgentPresetBindingMode,
-    AgentPresetRef, AgentProfileDefinition, AgentProfileId, ResolvedAgentProfile,
+    AGENT_PROFILE_SCHEMA_VERSION, AgentContextPolicy, AgentModelBinding, AgentModelBindingMode,
+    AgentPresetBindingMode, AgentPresetRef, AgentProfileDefinition, AgentProfileId,
+    ResolvedAgentProfile,
 };
 use tt_domain::models::agent::session::{AgentSession, AgentSessionMessage};
 use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool};
@@ -270,10 +271,6 @@ async fn loading_v2_profile_persists_current_canonical_tool_ids() {
         .into_iter()
         .map(|(id, value)| (id.strip_prefix("builtin:").unwrap().to_string(), value))
         .collect();
-    legacy.tools.max_calls_per_tool = std::mem::take(&mut legacy.tools.max_calls_per_tool)
-        .into_iter()
-        .map(|(id, value)| (id.strip_prefix("builtin:").unwrap().to_string(), value))
-        .collect();
     repository.save_profile(&legacy).await.unwrap();
 
     let loaded = service
@@ -281,7 +278,7 @@ async fn loading_v2_profile_persists_current_canonical_tool_ids() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(loaded.schema_version, 4);
+    assert_eq!(loaded.schema_version, AGENT_PROFILE_SCHEMA_VERSION);
     assert!(
         loaded
             .tools
@@ -294,7 +291,7 @@ async fn loading_v2_profile_persists_current_canonical_tool_ids() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(stored.schema_version, 4);
+    assert_eq!(stored.schema_version, AGENT_PROFILE_SCHEMA_VERSION);
     assert_eq!(stored.tools.allow, loaded.tools.allow);
 }
 
@@ -571,10 +568,7 @@ fn test_tool_policy(allow: &[&str]) -> tt_domain::models::agent::profile::Resolv
             .collect(),
         deny: Vec::new(),
         tool_descriptions: Default::default(),
-        max_rounds: 1,
-        max_calls_per_run: 1,
         external_result_inline_char_limit: 50_000,
-        max_calls_per_tool: Default::default(),
     }
 }
 
@@ -585,7 +579,7 @@ fn test_profile(agent_system_prompt: Option<&str>, presentation: &str) -> Resolv
     };
 
     serde_json::from_value(json!({
-        "schemaVersion": 4,
+        "schemaVersion": AGENT_PROFILE_SCHEMA_VERSION,
         "kind": "tauritavern.agentProfile",
         "id": "test",
         "displayName": "Test",
@@ -611,10 +605,7 @@ fn test_profile(agent_system_prompt: Option<&str>, presentation: &str) -> Resolv
         "tools": {
             "allow": ["builtin:workspace.finish"],
             "deny": [],
-            "toolDescriptions": {},
-            "maxRounds": 1,
-            "maxCallsPerRun": 1,
-            "maxCallsPerTool": {}
+            "toolDescriptions": {}
         },
         "skills": {
             "visible": ["*"],

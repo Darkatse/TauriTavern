@@ -22,6 +22,8 @@ use tt_domain::models::agent::{
 use tt_domain::models::tool::ToolTurnContract;
 use tt_domain::text_metrics::TextMetrics;
 
+const MAX_DRIFT_RECOVERY_ATTEMPTS: usize = 20;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(
     tag = "reason",
@@ -43,7 +45,7 @@ impl AgentRuntimeService {
         frame: &mut InvocationFrame,
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
-    ) -> Result<Option<AgentLoopExit>, ApplicationError> {
+    ) -> Result<AgentLoopExit, ApplicationError> {
         let InvocationFrame { prepared, progress } = frame;
         let run_id = prepared.invocation.run_id.as_str();
         let invocation_id = prepared.invocation.id.as_str();
@@ -62,12 +64,9 @@ impl AgentRuntimeService {
         loop {
             let round = progress.round;
             match &mut progress.step {
-                InvocationStep::Exited(exit) => return Ok(Some(exit.clone())),
+                InvocationStep::Exited(exit) => return Ok(exit.clone()),
                 InvocationStep::Model => {
                     self.ensure_not_cancelled(cancel)?;
-                    if round > progress.max_rounds {
-                        return Ok(None);
-                    }
                     if updates_run_status {
                         self.apply_pending_guidance_to_request(
                             run_id,
@@ -234,7 +233,7 @@ impl AgentRuntimeService {
                         );
                     }
                     if replied {
-                        return Ok(Some(AgentLoopExit::Replied));
+                        return Ok(AgentLoopExit::Replied);
                     } else if !has_tools {
                         progress.drift_attempts += 1;
                         let nudge = build_drift_recovery_nudge(
@@ -249,19 +248,23 @@ impl AgentRuntimeService {
                             parts: vec![AgentModelContentPart::Text { text: nudge }],
                             provider_metadata: Value::Null,
                         });
-                        let can_recover = round < progress.max_rounds;
+                        let can_recover = progress.drift_attempts <= MAX_DRIFT_RECOVERY_ATTEMPTS;
                         progress.round += 1;
                         if can_recover {
-                            self.event(run_id, AgentRunEventLevel::Warn, "drift_recovery_attempted", json!({
-                                "attempt": progress.drift_attempts,
-                                "maxAttempts": drift_recovery_attempt_limit(progress.max_rounds),
-                                "maxRounds": progress.max_rounds,
-                                "limitReason": "max_rounds",
-                                "round": round,
-                                "invocationId": invocation_id,
-                                "committedCount": commit_ledger.explicit_count(),
-                                "reasonCode": "model.tool_call_required",
-                            })).await?;
+                            self.event(
+                                run_id,
+                                AgentRunEventLevel::Warn,
+                                "drift_recovery_attempted",
+                                json!({
+                                    "attempt": progress.drift_attempts,
+                                    "maxAttempts": MAX_DRIFT_RECOVERY_ATTEMPTS,
+                                    "round": round,
+                                    "invocationId": invocation_id,
+                                    "committedCount": commit_ledger.explicit_count(),
+                                    "reasonCode": "model.tool_call_required",
+                                }),
+                            )
+                            .await?;
                         }
                         self.ensure_not_cancelled(cancel)?;
                         if !can_recover {
@@ -289,7 +292,6 @@ impl AgentRuntimeService {
                                 round,
                                 turn.next_call,
                                 call,
-                                &mut progress.gate,
                                 &mut progress.session,
                                 turn.next_call + 1 == turn.calls.len(),
                                 commit_ledger,
@@ -589,7 +591,7 @@ fn remember_seen_child_results_from_await(
     }
 }
 
-pub(super) fn completion_tool_name(
+fn completion_tool_name(
     exit_policy: AgentInvocationExitPolicy,
     turn: &ToolTurnContract,
 ) -> &'static str {
@@ -612,10 +614,6 @@ fn turn_has_builtin(turn: &ToolTurnContract, native_name: &str) -> bool {
     turn.tools()
         .iter()
         .any(|tool_id| tool_id.is_builtin() && tool_id.native_name() == native_name)
-}
-
-fn drift_recovery_attempt_limit(max_rounds: usize) -> usize {
-    max_rounds.saturating_sub(1)
 }
 
 /// Build the corrective `user` message we inject when the model returns a
