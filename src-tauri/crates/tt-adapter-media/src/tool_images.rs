@@ -47,7 +47,7 @@ impl ToolImageNormalizer for MediaToolImageNormalizer {
         let mut data = Vec::new();
         JpegEncoder::new_with_quality(&mut data, 85)
             .encode_image(&opaque)
-            .map_err(|error| ToolImageRejection::EncodingFailed(error.to_string()))?;
+            .expect("an in-memory RGB image within the edge limit always encodes as JPEG");
         if data.len() > MAX_TOOL_IMAGE_BYTES {
             return Err(ToolImageRejection::TooLarge { bytes: data.len() });
         }

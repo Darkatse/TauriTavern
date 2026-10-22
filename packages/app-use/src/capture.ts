@@ -1,6 +1,7 @@
 import { appToolAliases } from './names.ts';
+import type { Rect } from './geometry.ts';
 
-// Keep equal to tt_ports::tool_images::MAX_TOOL_IMAGE_EDGE so stored images preserve annotation coordinates.
+// At most tt_ports::tool_images::MAX_TOOL_IMAGE_EDGE, so the host stores the image unchanged and the reported size is the stored size.
 const CAPTURE_MAX_EDGE = 1280;
 const MASK_COLOR = '#808080';
 const MARK_COLOR = '#FF3B30';
@@ -11,7 +12,6 @@ const LABEL_PADDING = 4;
 const MARK_WIDTH = 2;
 const { snapshot: SNAPSHOT } = appToolAliases;
 
-export type Rect = { x: number; y: number; width: number; height: number };
 export type CaptureLayout = {
     viewport: { width: number; height: number };
     crop: Rect | null;

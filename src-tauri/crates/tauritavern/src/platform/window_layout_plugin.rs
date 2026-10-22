@@ -1,5 +1,6 @@
 //! Plugin transport shared by Android and OpenHarmony window owners.
 use base64::Engine;
+use tauri::plugin::mobile::PluginInvokeError;
 use tauri::{AppHandle, Manager};
 use tt_adapter_media::window_backdrop::{BackdropStrip, StripEdge};
 use tt_contracts::window_layout::{WindowBackdropRequest, WindowSnapshot};
@@ -23,14 +24,23 @@ pub fn plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
         .build()
 }
 
+async fn invoke<T: serde::de::DeserializeOwned>(
+    app: &AppHandle,
+    method: &str,
+    args: serde_json::Value,
+) -> Result<T, PluginInvokeError> {
+    app.state::<WindowLayoutPlugin<tauri::Wry>>()
+        .0
+        .run_mobile_plugin_async(method, args)
+        .await
+}
+
 async fn call<T: serde::de::DeserializeOwned>(
     app: &AppHandle,
     method: &str,
     args: serde_json::Value,
 ) -> Result<T, DomainError> {
-    app.state::<WindowLayoutPlugin<tauri::Wry>>()
-        .0
-        .run_mobile_plugin_async(method, args)
+    invoke(app, method, args)
         .await
         .map_err(|error| DomainError::InternalError(format!("Native window {method}: {error}")))
 }
@@ -44,15 +54,12 @@ pub(super) async fn capture_viewport(app: &AppHandle) -> Result<Vec<u8>, String>
     struct Capture {
         png: String,
     }
-    let capture: Capture = app
-        .state::<WindowLayoutPlugin<tauri::Wry>>()
-        .0
-        .run_mobile_plugin_async("captureViewport", serde_json::json!({}))
+    let capture: Capture = invoke(app, "captureViewport", serde_json::json!({}))
         .await
         .map_err(|error| error.to_string())?;
     base64::engine::general_purpose::STANDARD
         .decode(capture.png)
-        .map_err(|error| error.to_string())
+        .map_err(|error| format!("PNG base64: {error}"))
 }
 
 pub(super) async fn begin_backdrop(

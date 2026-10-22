@@ -24,18 +24,13 @@ pub async fn capture_png(webview: &tauri::Webview) -> Result<Vec<u8>, String> {
     webview.with_webview(move |native| unsafe {
         let window = &*native.ns_window().cast::<AnyObject>();
         let window_id: isize = msg_send![window, windowNumber];
-        let window_frame: NSRect = msg_send![window, frame];
-        // Tauri fills the window with WKWebView; WebKit derives its titlebar inset from this rectangle.
+        // With Tauri's Visible title bar (full-size content, opaque title bar), WebKit insets the
+        // page viewport to this rectangle; WKWebView itself still spans the title bar.
         let viewport: NSRect = msg_send![window, contentLayoutRect];
         if viewport.size.width <= 0.0 || viewport.size.height <= 0.0 {
             let _ = sender.send(Err(failure("WebView has no content viewport")));
             return;
         }
-        // AppKit uses a bottom-left window origin; the captured image uses a top-left origin.
-        let crop = NSRect::new(
-            NSPoint::new(viewport.origin.x, window_frame.size.height - viewport.origin.y - viewport.size.height),
-            viewport.size,
-        );
         let sender = RefCell::new(Some(sender));
         let completion = RcBlock::new(move |content: *mut AnyObject, error: *mut NSError| {
             let Some(sender) = sender.borrow_mut().take() else { return; };
@@ -53,7 +48,7 @@ pub async fn capture_png(webview: &tauri::Webview) -> Result<Vec<u8>, String> {
                 let candidate: *mut AnyObject = msg_send![&*windows, objectAtIndex: index];
                 let id: u32 = msg_send![candidate, windowID];
                 if id == window_id as u32 {
-                    capture_window(candidate, crop, sender);
+                    capture_window(candidate, viewport, sender);
                     return;
                 }
             }
@@ -66,7 +61,7 @@ pub async fn capture_png(webview: &tauri::Webview) -> Result<Vec<u8>, String> {
 
 unsafe fn capture_window(
     window: *mut AnyObject,
-    crop: NSRect,
+    viewport: NSRect,
     sender: tokio::sync::oneshot::Sender<Result<Vec<u8>, String>>,
 ) {
     unsafe {
@@ -74,6 +69,14 @@ unsafe fn capture_window(
         let filter: Retained<AnyObject> =
             msg_send![filter, initWithDesktopIndependentWindow: window];
         let rect: NSRect = msg_send![&*filter, contentRect];
+        // AppKit uses a bottom-left window origin; the captured image uses a top-left origin.
+        let crop = NSRect::new(
+            NSPoint::new(
+                viewport.origin.x,
+                rect.size.height - viewport.origin.y - viewport.size.height,
+            ),
+            viewport.size,
+        );
         let scale: f32 = msg_send![&*filter, pointPixelScale];
         let config: Retained<AnyObject> = msg_send![class!(SCStreamConfiguration), new];
         let _: () =

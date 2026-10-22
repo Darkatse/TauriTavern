@@ -95,7 +95,7 @@ pub(in crate::services::agent_tools) async fn write_file(
             }
         }
         WorkspaceFileWriteMode::Append => {
-            workspace_files.create_text_parent(&path).await?;
+            workspace_files.create_parent(&path).await?;
             let result = match workspace_files.append_text(&path, content).await {
                 Ok(result) => result,
                 Err(error) => match classify_workspace_io_error(call, error) {

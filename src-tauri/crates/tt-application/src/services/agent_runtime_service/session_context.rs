@@ -22,7 +22,7 @@ use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
 
 const COMPACT_SHARE: f64 = 0.9;
 const KEPT_TOKENS: usize = 20_000;
-// Assumes tool images are normalized to MAX_TOOL_IMAGE_EDGE (1280 pixels).
+// Assumes tool images are normalized to MAX_TOOL_IMAGE_EDGE.
 const IMAGE_TOKENS: usize = 1_400;
 
 const COMPACTION_REQUEST: &str = "Context compaction: write a summary for yourself. The earlier part of this conversation is about to leave your context, and you will continue from the summary, with only the latest messages kept as they are. Reply with the summary alone; do not call tools and do not continue the task.

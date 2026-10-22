@@ -148,12 +148,12 @@ impl dyn WorkspaceFs + '_ {
         text: &str,
         guard: WorkspaceWriteGuard,
     ) -> Result<WorkspaceFile, DomainError> {
-        self.create_text_parent(path).await?;
+        self.create_parent(path).await?;
         self.write_file(path, text.as_bytes(), guard).await?;
         Ok(WorkspaceFile::from_text(path.clone(), text.to_owned()))
     }
 
-    pub async fn create_text_parent(&self, path: &WorkspacePath) -> Result<(), DomainError> {
+    pub async fn create_parent(&self, path: &WorkspacePath) -> Result<(), DomainError> {
         if let Some((parent, _)) = path.as_str().rsplit_once('/') {
             let parent = WorkspacePath::parse(parent)?;
             match self.metadata(Some(&parent)).await {

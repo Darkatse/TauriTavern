@@ -9,7 +9,7 @@ use super::super::model_capabilities::{
     map_gemini_thinking_control, parse_known_reasoning_effort,
 };
 use super::content_parts::{
-    InputPart, MediaPart, MediaSource, parse_openai_chat_content,
+    InputPart, MediaPart, MediaSource, media_kind_in_value, parse_openai_chat_content,
     reject_media_for_text_only_content, to_lossy_text,
 };
 use super::shared::message_content_to_text;
@@ -373,14 +373,7 @@ fn convert_messages(
                 break;
             };
 
-            let role = message
-                .get("role")
-                .and_then(Value::as_str)
-                .unwrap_or("user")
-                .trim()
-                .to_lowercase();
-
-            if role != "system" {
+            if message_role(message) != "system" {
                 break;
             }
 
@@ -403,20 +396,16 @@ fn convert_messages(
             continue;
         };
 
-        let role = message
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or("user")
-            .trim()
-            .to_lowercase();
-        let mut merge_with_previous = matches!(role.as_str(), "tool" | "function");
+        let role = message_role(message);
+        let is_tool = is_tool_role(&role);
+        let mut merge_with_previous = is_tool;
 
-        let native_gemini_parts = if !matches!(role.as_str(), "tool" | "function") {
-            message_native_gemini_parts(message)
-        } else {
+        let native_gemini_parts = if is_tool {
             None
+        } else {
+            message_native_gemini_parts(message)
         };
-        let mut parts = if matches!(role.as_str(), "tool" | "function") {
+        let mut parts = if is_tool {
             let previous_call =
                 message_tool_call_id(message).and_then(|id| tool_call_by_id.get(&id));
             let name = message_tool_name(message)
@@ -430,14 +419,10 @@ fn convert_messages(
                         images.push(render_google_media_part("image", media, false)?);
                     }
                     InputPart::Text(_) => {}
-                    InputPart::Unknown { ty, .. }
-                        if !matches!(
-                            ty.as_deref(),
-                            Some("input_audio" | "audio" | "input_video" | "video")
-                        ) => {}
+                    InputPart::Unknown { value, .. } if media_kind_in_value(value).is_none() => {}
                     InputPart::Audio(_) | InputPart::Video(_) | InputPart::Unknown { .. } => {
                         return Err(ApplicationError::ValidationError(
-                            "Gemini function response does not support audio or video content parts"
+                            "Gemini function response supports only text and image content parts"
                                 .to_string(),
                         ));
                     }
@@ -575,9 +560,8 @@ fn convert_messages(
         }
         let next_is_tool = entries
             .get(index + 1)
-            .and_then(|entry| entry.get("role"))
-            .and_then(Value::as_str)
-            .is_some_and(|role| matches!(role.trim().to_lowercase().as_str(), "tool" | "function"));
+            .and_then(Value::as_object)
+            .is_some_and(|message| is_tool_role(&message_role(message)));
         if !next_is_tool && !tool_images.is_empty() {
             let mut parts = vec![json!({ "text": "Tool result image:" })];
             parts.append(&mut tool_images);
@@ -761,6 +745,19 @@ fn normalize_google_part_field(object: &mut Map<String, Value>, legacy: &str, ca
     {
         object.insert(canonical.to_string(), value);
     }
+}
+
+fn message_role(message: &Map<String, Value>) -> String {
+    message
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("user")
+        .trim()
+        .to_lowercase()
+}
+
+fn is_tool_role(role: &str) -> bool {
+    matches!(role, "tool" | "function")
 }
 
 fn message_native_gemini_parts(message: &Map<String, Value>) -> Option<Vec<Value>> {
@@ -1380,22 +1377,22 @@ mod tests {
             (
                 "tool",
                 json!([{ "type": "audio_url", "audio_url": { "url": "data:audio/wav;base64,AAAA" } }]),
-                "function response does not support audio or video",
+                "function response supports only text and image",
             ),
             (
                 "tool",
                 json!([{ "type": "video_url", "video_url": { "url": "data:video/mp4;base64,AAAA" } }]),
-                "function response does not support audio or video",
+                "function response supports only text and image",
             ),
             (
                 "tool",
                 json!([{ "type": "input_audio", "input_audio": { "data": "AAAA", "format": "wav" } }]),
-                "function response does not support audio or video",
+                "function response supports only text and image",
             ),
             (
                 "tool",
                 json!([{ "type": "input_video", "video_url": "data:video/mp4;base64,AAAA" }]),
-                "function response does not support audio or video",
+                "function response supports only text and image",
             ),
         ] {
             let payload = json!({

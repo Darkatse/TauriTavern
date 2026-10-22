@@ -543,7 +543,7 @@ async fn tool_images_are_normalized_stored_as_references_and_hydrated_only_for_t
         assert!(
             result
                 .content
-                .ends_with("[The tool also returned an image that could not be decoded.]")
+                .ends_with("[The tool returned an image that could not be decoded.]")
         );
         assert!(
             history

@@ -34,8 +34,8 @@ left is the page's viewport origin and whose width corresponds to
 `observation.captureLayout(args)` immediately before requesting the bitmap.
 `renderCapture(bitmap, layout)` crops to the target's visible area, masks sensitive
 and host-omitted regions, draws optional marks from the latest snapshot page, and
-returns a JPEG Blob with a longest edge of at most 1280 pixels.
-`captureSummary(layout, { width, height })` describes the resulting image.
+resolves to `{ blob, width, height }`: a JPEG with a longest edge of at most 1280
+pixels and its size. `captureSummary(layout, { width, height })` describes that image.
 
 The capture target uses the same ref or selector addressing as `interact`;
 leaving both out captures the viewport. `marks: true` labels refs from the latest

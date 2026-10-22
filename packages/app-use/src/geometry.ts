@@ -1,9 +1,10 @@
 import { documentWindow } from './document.ts';
 import type { DocumentScope } from './document.ts';
-import type { Rect } from './capture.ts';
 import { preview } from './semantics.ts';
 import type { Semantics } from './semantics.ts';
 import { appToolAliases } from './names.ts';
+
+export type Rect = { x: number; y: number; width: number; height: number };
 
 const { evaluate: EVALUATE } = appToolAliases;
 
@@ -129,7 +130,7 @@ function frameMapping(frame: HTMLIFrameElement): FrameMapping {
         const rotated = style.rotate && style.rotate !== 'none' && Number.parseFloat(style.rotate) !== 0;
         const flipped = style.scale && style.scale !== 'none' && style.scale.split(/\s+/).some(value => Number(value) <= 0);
         if (!matrix.is2D || matrix.b !== 0 || matrix.c !== 0 || matrix.a <= 0 || matrix.d <= 0 || rotated || flipped) {
-            throw new Error(`Nothing was done: this embedded page has a rotation, skew, or 3D transform that cannot be mapped to the screen reliably. Use ${EVALUATE} with a known API for this control.`);
+            throw new Error(`Nothing was done: this embedded page has a rotation, skew, or 3D transform that cannot be mapped to the screen reliably. Use ${EVALUATE} with a known API instead.`);
         }
     }
 

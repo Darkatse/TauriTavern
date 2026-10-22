@@ -47,7 +47,7 @@ await unsubscribe();
 
 `await layout.capture()` 返回当前内容视口的 `image/png` Blob，属于第一方使用的 Project Contract。图像左上角对应内容视口 `(0, 0)`，宽度对应 `window.innerWidth`；分辨率由平台决定，调用方用图片宽度除以视口宽度换算 CSS 坐标。系统栏不在图中，不滚动页面或拼接视口外内容。
 
-调用方负责等待重绘，原生接口只读取像素。macOS 使用 ScreenCaptureKit 捕获本进程窗口并裁至 WebView，无需屏幕录制授权；iOS 使用 WK snapshot，其他平台使用各自的原生截图接口。失败直接拒绝 Promise，Web Host 以 `Unsupported` 拒绝。
+调用方负责等待重绘，原生接口只读取像素。macOS 使用 ScreenCaptureKit 捕获本进程窗口并裁至内容视口，无需屏幕录制授权；iOS 使用 WK snapshot，其他平台使用各自的原生截图接口。失败直接拒绝 Promise，Web Host 以 `Unsupported` 拒绝。
 
 ## 旧契约
 

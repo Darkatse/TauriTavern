@@ -25,7 +25,7 @@ const unsubscribe = agent.subscribe(run.runId, event => {
 
 共同选项有 `profileId`、`generationType`、`stableChatId`、`presentation` 和 `options.stream`。稳定聊天 ID 省略时由 Host API 解析。`options.stream` 省略时使用各 Invocation 的 Profile 设置，显式值覆盖整次 Run。
 
-两种 Chat 方法返回 `{ runId, status, workspaceId, stableChatId, generationType }`。Snapshot 使用 `{ contextPolicy, messages, generationParameters, acceptsImages? }`，消息为 `AgentModelMessage[]`；旧 `chatCompletionPayload` 在入口适配，Chat 输入不能注入外部工具回合。冻结输入与组装规则见 [Prompt assembly](../Agent/PromptAssembly.md)。
+两种 Chat 方法返回 `{ runId, status, workspaceId, stableChatId, generationType }`。Snapshot 使用 `{ contextPolicy, messages, generationParameters, acceptsImages? }`，消息为 `AgentModelMessage[]`；Legacy `chatCompletionPayload` 在入口适配，Chat 输入不能注入外部工具回合。冻结输入与组装规则见 [Prompt assembly](../Agent/PromptAssembly.md)。
 
 `acceptsImages` 的公开默认值为 false；判定与 Invocation 生命周期见 [Prompt assembly](../Agent/PromptAssembly.md#一种组装一个-live-例外)。
 

@@ -40,7 +40,7 @@ impl AgentRuntimeService {
             .provider_id()
             .starts_with("mcp/")
             .then(|| mcp_model_content(&outcome.result));
-        outcome.result.content.push_str(&image_notes);
+        append_notes(&mut outcome.result.content, &image_notes);
         let result_path = self
             .record_tool_outcome(prepared, round, &file_base, outcome)
             .await?;
@@ -48,7 +48,10 @@ impl AgentRuntimeService {
             let readable_path = WorkspacePath::parse(format!("{file_base}.txt"))?;
             let mut projected = outcome.result.clone();
             if let Some(mut content) = mcp_content {
-                content.push_str(&image_notes);
+                append_notes(&mut content, &image_notes);
+                if content.is_empty() && projected.images.is_empty() {
+                    content = "The tool completed without returning content.".to_string();
+                }
                 projected.content = content;
             }
             if let Some(readable) = project_external_result_for_model(
@@ -87,12 +90,12 @@ impl AgentRuntimeService {
         run_id: &str,
         file_base: &str,
         outcome: &mut AgentToolDispatchOutcome,
-    ) -> Result<String, ApplicationError> {
+    ) -> Result<Vec<String>, ApplicationError> {
         if outcome.images.is_empty() {
-            return Ok(String::new());
+            return Ok(Vec::new());
         }
         let workspace = self.workspace_files(run_id).await?;
-        let mut notes = String::new();
+        let mut notes = Vec::new();
         for (index, image) in std::mem::take(&mut outcome.images).into_iter().enumerate() {
             let normalized = match image {
                 Ok(data) => {
@@ -109,34 +112,26 @@ impl AgentRuntimeService {
             };
             match normalized {
                 Ok(image) => {
-                    let (mime_type, extension) = image.format.properties();
-                    let path =
-                        WorkspacePath::parse(format!("{file_base}-{}.{extension}", index + 1))?;
-                    workspace.create_text_parent(&path).await?;
+                    let path = WorkspacePath::parse(format!(
+                        "{file_base}-{}.{}",
+                        index + 1,
+                        image.format.extension()
+                    ))?;
+                    workspace.create_parent(&path).await?;
                     workspace
                         .write_file(&path, &image.data, WorkspaceWriteGuard::MustNotExist)
                         .await?;
                     outcome.result.images.push(AgentToolImage {
                         path: path.as_str().to_owned(),
-                        mime_type: mime_type.to_owned(),
+                        mime_type: image.format.mime_type().to_owned(),
                     });
                 }
-                Err(ToolImageRejection::Undecodable) => {
-                    notes.push_str(
-                        "\n\n[The tool also returned an image that could not be decoded.]",
-                    );
-                }
-                Err(ToolImageRejection::TooLarge { bytes }) => {
-                    notes.push_str(&format!(
-                        "\n\n[The tool also returned an image of {:.2} MB even after it was reduced to {MAX_TOOL_IMAGE_EDGE} pixels, which is too large to show.]",
-                        bytes as f64 / 1_000_000.0
-                    ));
-                }
-                Err(ToolImageRejection::EncodingFailed(message)) => {
-                    return Err(ApplicationError::InternalError(format!(
-                        "agent.tool_image_encoding_failed: {message}"
-                    )));
-                }
+                Err(ToolImageRejection::Undecodable) => notes
+                    .push("[The tool returned an image that could not be decoded.]".to_string()),
+                Err(ToolImageRejection::TooLarge { bytes }) => notes.push(format!(
+                    "[The tool returned an image of {:.2} MB even after it was reduced to {MAX_TOOL_IMAGE_EDGE} pixels, which is too large to show.]",
+                    bytes as f64 / 1_000_000.0
+                )),
             }
         }
         Ok(notes)
@@ -276,6 +271,15 @@ pub(super) fn extension_reply_result(
     }
 }
 
+fn append_notes(content: &mut String, notes: &[String]) {
+    for note in notes {
+        if !content.is_empty() {
+            content.push_str("\n\n");
+        }
+        content.push_str(note);
+    }
+}
+
 fn decode_tool_images(images: impl IntoIterator<Item = String>) -> Vec<IncomingToolImage> {
     images
         .into_iter()
@@ -350,11 +354,7 @@ fn mcp_model_content(result: &AgentToolResult) -> String {
         sections.push(markdown_value_section("Error details", data));
     }
 
-    if sections.is_empty() && result.images.is_empty() {
-        "The tool completed without returning content.".to_string()
-    } else {
-        sections.join("\n\n")
-    }
+    sections.join("\n\n")
 }
 
 fn markdown_value_section(title: &str, value: &Value) -> String {

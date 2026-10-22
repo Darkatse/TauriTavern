@@ -245,7 +245,9 @@ impl AgentRuntimeService {
                             &message,
                             started.elapsed().as_millis(),
                         );
-                        let file_base = self.tool_call_file_base(run_id, invocation_id, round, &call.call_id).await?;
+                        let file_base = self
+                            .tool_call_file_base(run_id, invocation_id, round, &call.call_id)
+                            .await?;
                         let _ = self
                             .record_tool_outcome(prepared, round, &file_base, &outcome)
                             .await?;

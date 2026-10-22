@@ -7,16 +7,25 @@ pub enum ToolImageFormat {
 }
 
 impl ToolImageFormat {
-    pub fn properties(self) -> (&'static str, &'static str) {
+    pub fn mime_type(self) -> &'static str {
         match self {
-            Self::Png => ("image/png", "png"),
-            Self::Jpeg => ("image/jpeg", "jpg"),
-            Self::Webp => ("image/webp", "webp"),
+            Self::Png => "image/png",
+            Self::Jpeg => "image/jpeg",
+            Self::Webp => "image/webp",
+        }
+    }
+
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Jpeg => "jpg",
+            Self::Webp => "webp",
         }
     }
 }
 
-/// Longest edge of a stored tool image, in pixels.
+/// Longest edge of a stored tool image, in pixels. `CAPTURE_MAX_EDGE` in
+/// `packages/app-use/src/capture.ts` must not exceed it, or captures are resampled and re-encoded twice.
 pub const MAX_TOOL_IMAGE_EDGE: u32 = 1280;
 pub const MAX_TOOL_IMAGE_BYTES: usize = 1_000_000;
 
@@ -32,6 +41,5 @@ pub struct StoredToolImage {
 #[derive(Debug, Clone)]
 pub enum ToolImageRejection {
     Undecodable,
-    EncodingFailed(String),
     TooLarge { bytes: usize },
 }

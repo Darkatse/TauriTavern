@@ -123,9 +123,6 @@ function ToolImage({ path, mimeType, runId, actions }: { path: string; mimeType:
     const [url, setUrl] = useState<string | null>(null);
     const [error, setError] = useState<unknown>(null);
     useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the previous resource while the new workspace image loads.
-        setUrl(null);
-        setError(null);
         let active = true;
         let objectUrl: string | null = null;
         void actions.readImage(runId, { path, mimeType }).then(blob => {
@@ -152,7 +149,7 @@ function ToolResult({ result, runId, actions, expanded }: { result: Result; runI
             setLoading(true); setError(null);
             void actions.readResult(runId, path).then(file => setFull(file.text)).catch(setError).finally(() => setLoading(false));
         }}>{loading ? tr('loading') : tr('fullResult')}</button>}
-        {expanded && result.images?.map(image => <ToolImage key={image.path} path={image.path} mimeType={image.mimeType} runId={runId} actions={actions} />)}
+        {expanded && result.images?.map(image => <ToolImage key={`${runId}:${image.path}`} path={image.path} mimeType={image.mimeType} runId={runId} actions={actions} />)}
         {result.resourceRefs.length > 0 && <div className="ttia-refs">{result.resourceRefs.join('\n')}</div>}
         {error != null && <ErrorNotice error={error} />}
     </div>;
