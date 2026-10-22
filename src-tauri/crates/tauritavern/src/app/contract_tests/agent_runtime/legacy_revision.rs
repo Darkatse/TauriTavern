@@ -117,7 +117,6 @@ async fn completed_legacy_revision_preserves_work_and_translates_only_affected_t
     for binding in prepared["toolSnapshot"]["bindings"].as_array_mut().unwrap() {
         binding["maxCalls"] = json!(10);
     }
-
     prepared["profile"]["preset"]["mode"] = json!("none");
     prepared["profile"]["skills"]["maxReadCharsPerCall"] = json!(100_000);
     prepared["profile"]["skills"]["maxReadCharsPerRun"] = json!(200_000);

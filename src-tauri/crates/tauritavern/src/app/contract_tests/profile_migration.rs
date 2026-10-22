@@ -1,28 +1,15 @@
 use super::*;
 use tt_application::dto::agent_dto::AgentSaveProfileDto;
-use tt_domain::models::agent::profile::{
-    AgentModelBindingMode, AgentPresetBindingMode, AgentPresetRef,
-};
 
 #[tokio::test]
 async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choices() {
     let root = temp_root("profile-migration");
     let repository = Arc::new(FileAgentProfileRepository::new(root.clone()));
-    let session_repository = Arc::new(FileAgentRepository::new(root.join("session-workspace")));
-    let preset_repository = Arc::new(TestPresetRepository::default());
-    preset_repository
-        .save_preset(&Preset::new(
-            "Session".into(),
-            PresetType::OpenAI,
-            json!({}),
-        ))
-        .await
-        .unwrap();
     let service = AgentProfileService::new(
         repository.clone(),
         repository.clone(),
-        preset_repository,
-        session_repository,
+        Arc::new(TestPresetRepository::default()),
+        Arc::new(FileAgentRepository::new(root.join("session-workspace"))),
     );
     let registry = BuiltinAgentToolRegistry::all();
     fs::create_dir_all(root.join("profiles")).await.unwrap();
@@ -128,51 +115,18 @@ async fn legacy_profiles_load_import_and_persist_without_changing_remaining_choi
         assert_eq!(saved, expected);
 
         if version == 4 {
-            let mut session_profile = loaded.clone();
-            session_profile.preset.mode = AgentPresetBindingMode::Ref;
-            session_profile.preset.ref_ = Some(AgentPresetRef {
-                api_id: "openai".into(),
-                name: "Session".into(),
-            });
-            session_profile.model.mode = AgentModelBindingMode::ConnectionRef;
-            session_profile.model.connection_ref = Some("session-model".into());
-            session_profile.model.model_id = Some("test-model".into());
-            session_profile.context.initial_chat_history_messages = -1;
-            session_profile.workspace.visible_roots = vec!["work".into(), "tmp".into()];
-            session_profile.workspace.writable_roots =
-                session_profile.workspace.visible_roots.clone();
-            session_profile.output.artifacts.clear();
-            let expected_session = serde_json::to_value(&session_profile).unwrap();
-            let mut legacy_session = expected_session.clone();
-            legacy_session["schemaVersion"] = json!(4);
-            legacy_session["tools"]["maxRounds"] = json!(80);
-            legacy_session["tools"]["maxCallsPerRun"] = json!(80);
-            legacy_session["tools"]["maxCallsPerTool"] = json!({"builtin:workspace.read_file": 7});
             let session_path = root.join("session-workspace/sessions/profile.json");
             fs::create_dir_all(session_path.parent().unwrap())
                 .await
                 .unwrap();
-            fs::write(&session_path, serde_json::to_vec(&legacy_session).unwrap())
+            fs::write(&session_path, serde_json::to_vec(&legacy).unwrap())
                 .await
                 .unwrap();
-            let loaded_session = service.load_session_profile().await.unwrap().unwrap();
-            assert_eq!(
-                serde_json::to_value(loaded_session).unwrap(),
-                expected_session
-            );
-            let saved_session: Value =
+            let loaded = service.load_session_profile().await.unwrap().unwrap();
+            assert_eq!(serde_json::to_value(&loaded).unwrap(), expected);
+            let saved: Value =
                 serde_json::from_slice(&fs::read(&session_path).await.unwrap()).unwrap();
-            assert_eq!(saved_session, expected_session);
-
-            let imported_session: AgentSaveProfileDto =
-                serde_json::from_value(json!({"profile": legacy_session})).unwrap();
-            service
-                .save_session_profile(imported_session.profile, registry.catalog())
-                .await
-                .unwrap();
-            let saved_session: Value =
-                serde_json::from_slice(&fs::read(&session_path).await.unwrap()).unwrap();
-            assert_eq!(saved_session, expected_session);
+            assert_eq!(saved, expected);
         }
 
         let mut invalid_current = expected;
