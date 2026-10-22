@@ -85,10 +85,10 @@ tauri-plugin-window-state = "2.5.0"
 tauri = { workspace = true, features = ["tray-icon"] }
 tauri-winrt-notification = "0.8.1"
 webview2-com = "0.39.1"
-windows = { version = "0.62.2", features = ["Win32_System_Com_StructuredStorage"] }
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage"] }
 
 [target.'cfg(all(target_os = "linux", not(target_env = "ohos")))'.dependencies]
-webkit2gtk = { version = "2.0.2", features = ["v2_38"] }
+webkit2gtk = "2.0.2"
 cairo-rs = { version = "0.18.5", features = ["png"] }
 
 [target.'cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))'.dependencies]
@@ -110,7 +110,7 @@ objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std",
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
 block2 = "0.6.2"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSError", "NSString", "NSGeometry", "objc2-core-foundation"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSError", "NSString", "NSGeometry", "objc2-core-foundation"] }
 
 [features]
 default = ["custom-protocol"]

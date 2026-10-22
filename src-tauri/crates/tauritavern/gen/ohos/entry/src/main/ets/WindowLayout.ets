@@ -151,7 +151,7 @@ export class WindowLayout implements NativePlugin {
   private async captureViewport(): Promise<string> {
     const mainWindow = this.mainWindow;
     const snapshot = this.currentSnapshot;
-    if (!mainWindow || !snapshot) throw new Error('OpenHarmony viewport capture: window layout is not ready');
+    if (!mainWindow || !snapshot) throw new Error('Window layout is not ready');
     const pixelMap = await mainWindow.snapshot();
     const packer = image.createImagePacker();
     try {

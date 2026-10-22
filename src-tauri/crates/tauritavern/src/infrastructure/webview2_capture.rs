@@ -1,6 +1,5 @@
 use std::{cell::RefCell, rc::Rc};
 
-use tt_domain::errors::DomainError;
 use webview2_com::{
     CapturePreviewCompletedHandler,
     Microsoft::Web::WebView2::Win32::COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
@@ -13,7 +12,7 @@ use windows::Win32::{
     },
 };
 
-pub async fn capture_png(webview: &tauri::Webview) -> Result<Vec<u8>, DomainError> {
+pub async fn capture_png(webview: &tauri::Webview) -> Result<Vec<u8>, String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     webview
         .with_webview(move |native| {
@@ -49,7 +48,7 @@ pub async fn capture_png(webview: &tauri::Webview) -> Result<Vec<u8>, DomainErro
     receiver.await.map_err(failure)?
 }
 
-unsafe fn read_stream(stream: &IStream) -> Result<Vec<u8>, DomainError> {
+unsafe fn read_stream(stream: &IStream) -> Result<Vec<u8>, String> {
     unsafe {
         let mut stat = STATSTG::default();
         stream.Stat(&mut stat, STATFLAG_NONAME).map_err(failure)?;
@@ -70,6 +69,6 @@ unsafe fn read_stream(stream: &IStream) -> Result<Vec<u8>, DomainError> {
     }
 }
 
-fn failure(error: impl std::fmt::Display) -> DomainError {
-    DomainError::InternalError(format!("Windows viewport capture: {error}"))
+fn failure(error: impl std::fmt::Display) -> String {
+    error.to_string()
 }

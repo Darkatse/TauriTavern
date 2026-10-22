@@ -39,15 +39,20 @@ pub(super) async fn snapshot(app: &AppHandle) -> Result<WindowSnapshot, DomainEr
     call(app, "snapshot", serde_json::json!({})).await
 }
 
-pub(super) async fn capture_viewport(app: &AppHandle) -> Result<Vec<u8>, DomainError> {
+pub(super) async fn capture_viewport(app: &AppHandle) -> Result<Vec<u8>, String> {
     #[derive(serde::Deserialize)]
     struct Capture {
         png: String,
     }
-    let capture: Capture = call(app, "captureViewport", serde_json::json!({})).await?;
+    let capture: Capture = app
+        .state::<WindowLayoutPlugin<tauri::Wry>>()
+        .0
+        .run_mobile_plugin_async("captureViewport", serde_json::json!({}))
+        .await
+        .map_err(|error| error.to_string())?;
     base64::engine::general_purpose::STANDARD
         .decode(capture.png)
-        .map_err(|error| DomainError::InternalError(format!("Native viewport PNG: {error}")))
+        .map_err(|error| error.to_string())
 }
 
 pub(super) async fn begin_backdrop(

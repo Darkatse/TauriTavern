@@ -6,40 +6,36 @@ use objc2::{
     rc::{Allocated, Retained},
     runtime::AnyObject,
 };
-use objc2_foundation::{NSError, NSPoint, NSRect, NSSize};
-use tt_domain::errors::DomainError;
+use objc2_foundation::{NSData, NSError, NSPoint, NSRect, NSSize};
 
 const NS_BITMAP_IMAGE_FILE_TYPE_PNG: usize = 4;
 
+// Register ScreenCaptureKit classes for the dynamic Objective-C calls below.
 #[link(name = "ScreenCaptureKit", kind = "framework")]
 unsafe extern "C" {}
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
-    fn CGImageGetWidth(image: *const c_void) -> usize;
     fn CGImageCreateWithImageInRect(image: *const c_void, rect: NSRect) -> *const c_void;
     fn CGImageRelease(image: *const c_void);
 }
 
-pub async fn capture_png(webview: &tauri::Webview) -> Result<Vec<u8>, DomainError> {
+pub async fn capture_png(webview: &tauri::Webview) -> Result<Vec<u8>, String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     webview.with_webview(move |native| unsafe {
-        let view = &*native.inner().cast::<AnyObject>();
-        let window: *mut AnyObject = msg_send![view, window];
+        let window = &*native.ns_window().cast::<AnyObject>();
         let window_id: isize = msg_send![window, windowNumber];
         let window_frame: NSRect = msg_send![window, frame];
-        let visible: NSRect = msg_send![view, visibleRect];
-        let view_frame: NSRect = msg_send![view, convertRect: visible, toView: std::ptr::null::<AnyObject>()];
-        let content: NSRect = msg_send![window, contentLayoutRect];
-        let left = view_frame.origin.x.max(content.origin.x);
-        let bottom = view_frame.origin.y.max(content.origin.y);
-        let right = (view_frame.origin.x + view_frame.size.width).min(content.origin.x + content.size.width);
-        let top = (view_frame.origin.y + view_frame.size.height).min(content.origin.y + content.size.height);
-        if right <= left || top <= bottom {
-            let _ = sender.send(Err(failure("WebView has no visible content viewport")));
+        // Tauri fills the window with WKWebView; WebKit derives its titlebar inset from this rectangle.
+        let viewport: NSRect = msg_send![window, contentLayoutRect];
+        if viewport.size.width <= 0.0 || viewport.size.height <= 0.0 {
+            let _ = sender.send(Err(failure("WebView has no content viewport")));
             return;
         }
         // AppKit uses a bottom-left window origin; the captured image uses a top-left origin.
-        let crop = NSRect::new(NSPoint::new(left, window_frame.size.height - top), NSSize::new(right - left, top - bottom));
+        let crop = NSRect::new(
+            NSPoint::new(viewport.origin.x, window_frame.size.height - viewport.origin.y - viewport.size.height),
+            viewport.size,
+        );
         let sender = RefCell::new(Some(sender));
         let completion = RcBlock::new(move |content: *mut AnyObject, error: *mut NSError| {
             let Some(sender) = sender.borrow_mut().take() else { return; };
@@ -71,7 +67,7 @@ pub async fn capture_png(webview: &tauri::Webview) -> Result<Vec<u8>, DomainErro
 unsafe fn capture_window(
     window: *mut AnyObject,
     crop: NSRect,
-    sender: tokio::sync::oneshot::Sender<Result<Vec<u8>, DomainError>>,
+    sender: tokio::sync::oneshot::Sender<Result<Vec<u8>, String>>,
 ) {
     unsafe {
         let filter: Allocated<AnyObject> = msg_send![class!(SCContentFilter), alloc];
@@ -91,7 +87,7 @@ unsafe fn capture_window(
             let result = if let Some(error) = error.as_ref() {
                 Err(failure(error.localizedDescription()))
             } else {
-                crop_and_encode(image, crop, rect.size.width)
+                crop_and_encode(image, crop, f64::from(scale))
             };
             if let Some(sender) = sender.borrow_mut().take() {
                 let _ = sender.send(result);
@@ -104,13 +100,12 @@ unsafe fn capture_window(
 unsafe fn crop_and_encode(
     image: *const c_void,
     crop: NSRect,
-    window_width: f64,
-) -> Result<Vec<u8>, DomainError> {
+    scale: f64,
+) -> Result<Vec<u8>, String> {
     if image.is_null() {
         return Err(failure("ScreenCaptureKit returned no image"));
     }
     unsafe {
-        let scale = CGImageGetWidth(image) as f64 / window_width;
         let rect = NSRect::new(
             NSPoint::new(
                 (crop.origin.x * scale).round(),
@@ -129,14 +124,12 @@ unsafe fn crop_and_encode(
         let bitmap: Retained<AnyObject> = msg_send![bitmap, initWithCGImage: cropped];
         CGImageRelease(cropped);
         let properties: Retained<AnyObject> = msg_send![class!(NSDictionary), dictionary];
-        let png: Option<Retained<AnyObject>> = msg_send![&*bitmap, representationUsingType: NS_BITMAP_IMAGE_FILE_TYPE_PNG, properties: &*properties];
+        let png: Option<Retained<NSData>> = msg_send![&*bitmap, representationUsingType: NS_BITMAP_IMAGE_FILE_TYPE_PNG, properties: &*properties];
         let png = png.ok_or_else(|| failure("Cannot encode content viewport PNG"))?;
-        let length: usize = msg_send![&*png, length];
-        let bytes: *const u8 = msg_send![&*png, bytes];
-        Ok(std::slice::from_raw_parts(bytes, length).to_vec())
+        Ok(png.to_vec())
     }
 }
 
-fn failure(error: impl std::fmt::Display) -> DomainError {
-    DomainError::InternalError(format!("macOS viewport capture: {error}"))
+fn failure(error: impl std::fmt::Display) -> String {
+    error.to_string()
 }
