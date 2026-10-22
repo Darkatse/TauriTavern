@@ -22,6 +22,10 @@ const env = {
     TAURI_FRONTEND_PATH: repoRoot,
 };
 
+if (process.platform === "darwin") {
+    env.PATH = `${path.join(scriptDir, "macos")}${path.delimiter}${env.PATH}`;
+}
+
 const args = process.argv.slice(2);
 if (args[0] === "--") {
     args.shift();
