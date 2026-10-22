@@ -89,6 +89,8 @@ Flatpak 构建配方位于 `packaging/flatpak/`，软件源发布工具位于
   构建 Tauri portable 二进制，并将产物复制到指定输出目录。对应 `pnpm run tauri:build:portable`。
 - `tauri-before-build.mjs`
   统一生成 Tauri 打包所需的前端 bundle；pnpm 启动入口也复用它以覆盖移动端 IDE 构建。
+- `macos/actool`
+  为 Tauri npm CLI 调用的图标编译器提供空 stdin，避免 Icon Composer 图标编译崩溃；由 `tauri-app.mjs` 自动接入。
 - `tauri-dev-server.mjs`
   为 `tauri dev` 提供轻量静态前端服务器和页面刷新通道，并注入[开发资源桥](../docs/CurrentState/ThirdPartyExtensions.md)引导脚本；端口取自 `tauri.conf.json` 的 `devUrl`。静态文件通过 `@parcel/watcher` 的原生事件监听，Rspack 依赖在成功重编译后刷新。
 - `check-frontend-guardrails.mjs`

@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
+import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -9,6 +12,42 @@ const TAURI_APP_ROOT = path.join(REPO_ROOT, 'src-tauri', 'crates', 'tauritavern'
 const TAURI_CONFIG_PATH = path.join(TAURI_APP_ROOT, 'tauri.conf.json');
 const ANDROID_RES_PATH = path.join(TAURI_APP_ROOT, 'gen', 'android', 'app', 'src', 'main', 'res');
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+test('macOS Icon Composer compiles with closed stdin and retains system appearances', {
+    skip: process.platform !== 'darwin',
+}, async (t) => {
+    const config = JSON.parse(await readFile(TAURI_CONFIG_PATH, 'utf8'));
+    const icon = config.bundle.icon.find((file) => file.endsWith('.icon'));
+    assert.ok(icon, 'the macOS bundle must retain its Icon Composer source');
+    const outputDir = await mkdtemp(path.join(tmpdir(), 'tt-macos-icon-'));
+    t.after(() => rm(outputDir, { recursive: true, force: true }));
+
+    const compiled = spawnSync('/bin/sh', [
+        '-c', 'exec "$@" <&-', 'sh',
+        path.join(REPO_ROOT, 'scripts/macos/actool'),
+        path.join(TAURI_APP_ROOT, icon),
+        '--compile', outputDir,
+        '--app-icon', path.basename(icon, '.icon'),
+        '--output-partial-info-plist', path.join(outputDir, 'partial.plist'),
+        '--target-device', 'mac',
+        '--minimum-deployment-target', '26.0',
+        '--platform', 'macosx',
+    ], { encoding: 'utf8' });
+    assert.equal(compiled.status, 0, compiled.error?.message ?? `${compiled.stderr}\n${compiled.stdout}`);
+
+    const inspected = spawnSync('xcrun', ['assetutil', '--info', path.join(outputDir, 'Assets.car')], {
+        encoding: 'utf8',
+    });
+    assert.equal(inspected.status, 0, inspected.error?.message ?? inspected.stderr);
+    const assets = JSON.parse(inspected.stdout);
+    assert.ok(assets.some((asset) => asset.AssetType === 'Icon Image'));
+    const appearances = new Set(assets
+        .filter((asset) => asset.AssetType === 'IconImageStack')
+        .map((asset) => asset.Appearance));
+    for (const appearance of ['NSAppearanceNameAqua', 'NSAppearanceNameDarkAqua', 'ISAppearanceTintable']) {
+        assert.ok(appearances.has(appearance), `missing macOS icon appearance: ${appearance}`);
+    }
+});
 
 function readPngHeader(buffer, iconPath) {
     assert.ok(

@@ -1,0 +1,3 @@
+#!/bin/sh
+# shortcut: Tauri's npm CLI closes actool stdin; remove after upgrading to the fix for tauri-apps/tauri#15991.
+exec xcrun actool "$@" </dev/null
