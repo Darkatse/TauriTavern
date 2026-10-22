@@ -45,30 +45,27 @@ pub async fn materialize_builtin_skills(
         )
     })?;
 
-    let mut entries = fs::read_dir(&cache_root).await.map_err(|error| {
-        DomainError::file_io(
-            "list builtin Skills cache",
-            cache_root.display().to_string(),
-            error,
-        )
-    })?;
-    while let Some(entry) = entries.next_entry().await.map_err(|error| {
-        DomainError::file_io(
-            "list builtin Skills cache",
-            cache_root.display().to_string(),
-            error,
-        )
-    })? {
-        if entry.path() == target {
-            continue;
-        }
-        fs::remove_dir_all(entry.path()).await.map_err(|error| {
-            DomainError::file_io(
-                "remove old builtin Skills",
-                entry.path().display().to_string(),
-                error,
-            )
-        })?;
+    // Older copies are never read again; leftovers must not block startup.
+    if let Err(error) = remove_other_entries(&cache_root, &target).await {
+        tracing::warn!(
+            "Failed to remove old builtin Skills in {}: {error}",
+            cache_root.display()
+        );
     }
     Ok(target)
+}
+
+async fn remove_other_entries(cache_root: &Path, keep: &Path) -> std::io::Result<()> {
+    let mut entries = fs::read_dir(cache_root).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        if entry.path() == keep {
+            continue;
+        }
+        if entry.file_type().await?.is_dir() {
+            fs::remove_dir_all(entry.path()).await?;
+        } else {
+            fs::remove_file(entry.path()).await?;
+        }
+    }
+    Ok(())
 }

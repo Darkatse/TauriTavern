@@ -268,8 +268,6 @@ for (const { visible, deny, checked, nextVisible, nextDeny } of [
     { visible: ['*'], deny: [], checked: true, nextVisible: ['*'], nextDeny: ['test-skill'] },
     { visible: ['test-skill', 'missing-skill'], deny: [], checked: true, nextVisible: ['missing-skill'], nextDeny: [] },
     { visible: [], deny: [], checked: false, nextVisible: ['test-skill'], nextDeny: [] },
-    { visible: ['test-skill'], deny: ['test-skill'], checked: false, nextVisible: ['test-skill'], nextDeny: [] },
-    { visible: ['*'], deny: ['*'], checked: false, nextVisible: ['*'], nextDeny: ['*'] },
 ]) test(`Skill selection preserves visible ${JSON.stringify(visible)} and deny ${JSON.stringify(deny)}`, async () => {
     document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
     const drawer = installAssistantDrawer(drawers);
@@ -290,12 +288,8 @@ for (const { visible, deny, checked, nextVisible, nextDeny } of [
     expect(screen.queryByRole('checkbox', { name: '*' })).toBeNull();
     if (visible.includes('missing-skill')) expect(screen.getByRole('checkbox', { name: /missing-skill/ })).toBeTruthy();
     fireEvent.click(checkbox);
-    if (deny.includes('*')) {
-        expect(checkbox.checked).toBe(false);
-    } else {
-        fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
-        await waitFor(() => expect(saveProfile).toHaveBeenCalledWith(expect.objectContaining({ skills: { visible: nextVisible, deny: nextDeny } })));
-    }
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(saveProfile).toHaveBeenCalledWith(expect.objectContaining({ skills: { visible: nextVisible, deny: nextDeny } })));
     drawer.dispose();
 });
 

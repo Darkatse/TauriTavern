@@ -10,7 +10,7 @@
 - 输入框中的模型与推理强度选择立即保存，并同步到未保存的设置草稿；修改影响下次发送，不改变运行中的冻结输入。
 - 会话选择保存在 `localStorage`：null 表示新对话，未保存或目标已删除时打开最近会话。`extension.store` 保存宽度偏好；Session 数据与共享 Profile 由 Session API 管理。
 - Skill 来自内置与助手 Profile 作用域，同名时 Profile 覆盖内置包。新 Profile 默认 `visible: ['*']`，取消勾选加入 `deny`；已有显式名单保持原样，设置按相同的可见性规则显示和修改。安装与 Skill Manager 共用[导入准入](../API/Skill.md#预览与安装)。取消设置释放待确认来源，但不撤销已完成的安装；选择 Skill 不自动启用 Shell。
-- 内置知识包括 `tt-docs`、`tt-app-guide`、`tt-troubleshooting`、`tt-extensions`、`tt-frontend-map`，分别提供版本文档、使用指引、排障、扩展生态和前端代码入口；正文按需读取。内置包只读，来源与宏规则见 [Skill](../Agent/Skill.md)。
+- 内置知识位于 [default/skills/](../../default/skills/)，正文按需读取；内置包只读，来源与宏规则见 [Skill](../Agent/Skill.md)。
 
 ## 运行与历史
 
