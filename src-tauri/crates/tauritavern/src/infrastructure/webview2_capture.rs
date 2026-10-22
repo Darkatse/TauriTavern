@@ -38,10 +38,10 @@ pub async fn capture_png(webview: &tauri::Webview) -> Result<Vec<u8>, String> {
                 )
                 .map_err(failure)
             })();
-            if let Err(error) = result {
-                if let Some(sender) = sender.borrow_mut().take() {
-                    let _ = sender.send(Err(error));
-                }
+            if let Err(error) = result
+                && let Some(sender) = sender.borrow_mut().take()
+            {
+                let _ = sender.send(Err(error));
             }
         })
         .map_err(failure)?;
