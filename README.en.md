@@ -37,6 +37,7 @@
 [![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black)](https://tauritavern.github.io/en/downloads/platforms/)
 [![Android](https://img.shields.io/badge/Android-3DDC84?style=flat-square&logo=android&logoColor=white)](https://tauritavern.github.io/en/downloads/platforms/)
 [![iOS TestFlight](https://img.shields.io/badge/iOS-TestFlight-0D96F6?style=flat-square&logo=apple&logoColor=white)](https://testflight.apple.com/join/gpqAdeTm)
+[![HarmonyOS Beta](https://img.shields.io/badge/HarmonyOS-Beta-000000?style=flat-square&logo=harmonyos&logoColor=white)](https://github.com/Darkatse/TauriTavern/releases/latest)
 
 [All platforms](https://tauritavern.github.io/en/downloads/platforms/) · [GitHub Releases](https://github.com/Darkatse/TauriTavern/releases)
 
@@ -139,6 +140,8 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 > **iOS**: install via the [public TestFlight beta](https://testflight.apple.com/join/gpqAdeTm). It requires iOS 15.0 or later. iOS 15.0–16.3 receives limited support; full support starts with iOS 16.4. TestFlight builds are subject to Apple's TestFlight rules and have usage restrictions.
 >
 > **Windows portable**: requires the WebView2 runtime on the system.
+>
+> **HarmonyOS (beta)**: the HAP in Releases is for HarmonyOS NEXT. Sign it with your own certificate to install it; we recommend [Auto-Installer](https://github.com/likuai2010/auto-installer/). It has only been tested on the emulator so far.
 
 ## What is TauriTavern
 
@@ -150,7 +153,7 @@ No Node.js to install, no command line — just download and run. Your character
 
 ## Highlights
 
-- 🖥️ **Five native platforms**: Windows, macOS, Linux, Android, and iOS — one experience everywhere
+- 🖥️ **Five native platforms**: Windows, macOS, Linux, Android, and iOS — one experience everywhere; native HarmonyOS support is currently in beta
 - 🎭 **Full SillyTavern experience**: frontend synced to upstream 1.19.0, with fully compatible data formats and directory layout
 - 🧩 **Frontend extension ecosystem**: built-in native Git — install, update, and switch branches right in the UI (Node-only backend plugins are not supported)
 - 🔄 **Built-in multi-device sync**: encrypted LAN pairing, or automatic upload via the remote TT-Sync v2
@@ -242,7 +245,7 @@ Issues and PRs are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first
 
 ## Acknowledgements & License
 
-Built on [SillyTavern](https://github.com/SillyTavern/SillyTavern) and [Tauri](https://tauri.app/), with thanks to [Cocktail](https://github.com/Lianues/cocktail), [Tavern-Helper](https://github.com/N0VI028/JS-Slash-Runner), [LittleWhiteBox](https://github.com/RT15548/LittleWhiteBox), [MikTik](https://github.com/Darkatse/MikTik), and [@LX2000WASD](https://github.com/LX2000WASD) for maintaining the [TauriTavern AUR package](https://github.com/LX2000WASD/TauriTavern-aur).
+Built on [SillyTavern](https://github.com/SillyTavern/SillyTavern) and [Tauri](https://tauri.app/), with thanks to [Cocktail](https://github.com/Lianues/cocktail), [Tavern-Helper](https://github.com/N0VI028/JS-Slash-Runner), [LittleWhiteBox](https://github.com/RT15548/LittleWhiteBox), [MikTik](https://github.com/Darkatse/MikTik), [@LX2000WASD](https://github.com/LX2000WASD) for maintaining the [TauriTavern AUR package](https://github.com/LX2000WASD/TauriTavern-aur), and [@LeenHawk](https://github.com/LeenHawk) for the HarmonyOS port.
 
 Released under [AGPL-3.0](LICENSE) (same license family as SillyTavern).
 
