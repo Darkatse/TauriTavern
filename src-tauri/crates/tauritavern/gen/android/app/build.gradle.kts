@@ -39,6 +39,10 @@ android {
             keyPassword = keystoreProperties["password"] as String
             storeFile = file(keystoreProperties["storeFile"] as String)
             storePassword = keystoreProperties["password"] as String
+            // Some OEM installers read the v1 (JAR) certificate even though Android 7+ ignores it.
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
     buildTypes {
