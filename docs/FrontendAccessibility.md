@@ -22,7 +22,7 @@
 
 数值都经 range 的 `input` 提交到业务值，数字框与 Zen 滑块只从 range 投影；改变 `min/max/step` 后同样发送 `input`。格式化与保存仍由各 API 负责。
 
-恢复保存值（启动、切换预设、应用模型上下文）按“最终约束 → 写值 → `input`”进行，数值统一经 `restoreNumericInput` 写入。它只接受有限 number，缺省值由各 API 的数据层提供：Kobold、NovelAI 使用各自的默认表，Text Completion 预设只覆盖所提供的字段。超出最终范围的值会被调整，由操作入口用 `showNumericAdjustments` 按来源分组汇总提示一次；用户自己收紧约束时直接截断，不提示。
+恢复保存值（启动、切换预设、应用模型上下文）按“最终约束 → 写值 → `input`”进行，数值统一经 `restoreNumericInput` 写入。它只接受有限 number，缺省值由各 API 的数据层提供：Kobold、NovelAI 使用各自的默认表，Text Completion 预设只覆盖所提供的字段，通用的回复长度与上下文保留声明的默认值。超出最终范围的值会被调整，由操作入口用 `showNumericAdjustments` 按来源分组汇总提示一次；用户自己收紧约束时直接截断，不提示。
 
 Zen 滑块创建和刷新时不写业务值。值不在档位上时显示真实值、位置取最近档位，用户拖动后才提交档位值。
 
