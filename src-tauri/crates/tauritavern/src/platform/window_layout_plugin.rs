@@ -39,6 +39,17 @@ pub(super) async fn snapshot(app: &AppHandle) -> Result<WindowSnapshot, DomainEr
     call(app, "snapshot", serde_json::json!({})).await
 }
 
+pub(super) async fn capture_viewport(app: &AppHandle) -> Result<Vec<u8>, DomainError> {
+    #[derive(serde::Deserialize)]
+    struct Capture {
+        png: String,
+    }
+    let capture: Capture = call(app, "captureViewport", serde_json::json!({})).await?;
+    base64::engine::general_purpose::STANDARD
+        .decode(capture.png)
+        .map_err(|error| DomainError::InternalError(format!("Native viewport PNG: {error}")))
+}
+
 pub(super) async fn begin_backdrop(
     app: &AppHandle,
     request: &WindowBackdropRequest,

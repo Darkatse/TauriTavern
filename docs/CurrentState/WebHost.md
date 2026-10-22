@@ -92,7 +92,7 @@ const host = installWebHost({
 | `devlog_append_frontend_logs` | 确认接收；日志留在前端采集器里，浏览器里没有原生日志文件 |
 
 其余命令和 `core.convertFileSrc` 一律以 `{ Unsupported: message }` 拒绝：
-- 不在范围内的：Agent 运行、MCP 操作、同步、扫码、原生分享与导出、剪贴板、外部打开、更新安装、extension store 写入、群聊与 cold swipe 资源。
+- 不在范围内的：Agent 运行、MCP 操作、同步、扫码、原生分享与导出、剪贴板、外部打开、更新安装、extension store 写入、群聊与 cold swipe 资源、原生截图 `capture_content_viewport`。
 - 调用方自己能处理失败的命令不实现，例如 token 计数（ST 改用估算）和启动时的更新检查（跳过）。
 - 桌面窗口的 `isFullscreen()` 返回 `false`，`setFullscreen()` 不支持。
 

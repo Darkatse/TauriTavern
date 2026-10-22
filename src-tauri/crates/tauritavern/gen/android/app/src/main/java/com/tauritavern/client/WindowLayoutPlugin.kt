@@ -4,6 +4,12 @@ import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
+import android.view.PixelCopy
+import android.webkit.WebView
+import java.io.ByteArrayOutputStream
 import android.util.Base64
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
@@ -38,6 +44,12 @@ class BackdropApplyArgs {
 
 @TauriPlugin
 class WindowLayoutPlugin(private val activity: Activity) : Plugin(activity) {
+  private lateinit var captureWebView: WebView
+
+  override fun load(webView: WebView) {
+    captureWebView = webView
+  }
+
   private val layout get(): AndroidWindowLayout {
     // Tauri's plugin manager retains its first Activity across Activity recreation.
     check(!activity.isDestroyed) { "Activity was recreated; restart the app to restore window layout" }
@@ -48,6 +60,39 @@ class WindowLayoutPlugin(private val activity: Activity) : Plugin(activity) {
     activity.runOnUiThread {
       try { invoke.resolve(action()) }
       catch (error: Exception) { invoke.reject("Window layout: ${error.message}") }
+    }
+  }
+
+  @Command
+  fun captureViewport(invoke: Invoke) {
+    activity.runOnUiThread {
+      try {
+        check(!activity.isDestroyed) { "Activity was recreated; restart the app to capture" }
+        val webView = captureWebView
+        val location = IntArray(2)
+        webView.getLocationInWindow(location)
+        val rect = Rect(location[0], location[1], location[0] + webView.width, location[1] + webView.height)
+        val bitmap = Bitmap.createBitmap(webView.width, webView.height, Bitmap.Config.ARGB_8888)
+        try {
+          PixelCopy.request(activity.window, rect, bitmap, { status ->
+            try {
+              check(status == PixelCopy.SUCCESS) { "PixelCopy failed with status $status" }
+              val stream = ByteArrayOutputStream()
+              check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)) { "PNG encoding failed" }
+              invoke.resolve(JSObject().put("png", Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)))
+            } catch (error: Exception) {
+              invoke.reject("Android viewport capture: ${error.message}")
+            } finally {
+              bitmap.recycle()
+            }
+          }, Handler(Looper.getMainLooper()))
+        } catch (error: Exception) {
+          bitmap.recycle()
+          throw error
+        }
+      } catch (error: Exception) {
+        invoke.reject("Android viewport capture: ${error.message}")
+      }
     }
   }
 

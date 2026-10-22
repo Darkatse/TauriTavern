@@ -42,6 +42,13 @@ export function installLayoutApi() {
     };
     hostAbi.api.layout = {
         snapshot: readSnapshot,
+        async capture() {
+            const bytes = await window.__TAURITAVERN__.invoke.safeInvoke('capture_content_viewport');
+            if (!(bytes instanceof Uint8Array || bytes instanceof ArrayBuffer)) {
+                throw new Error('Unexpected viewport capture response');
+            }
+            return new Blob([bytes], { type: 'image/png' });
+        },
         async subscribe(handler) {
             if (typeof handler !== 'function') throw new TypeError('handler must be a function');
             if (subscribers.size === 0) {

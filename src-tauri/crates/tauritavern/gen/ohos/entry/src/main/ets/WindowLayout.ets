@@ -134,6 +134,8 @@ export class WindowLayout implements NativePlugin {
         this.pageReady = true;
         if (!this.currentSnapshot) throw new Error('Window layout is not ready');
         return JSON.stringify(this.currentSnapshot);
+      case 'captureViewport':
+        return JSON.stringify({ png: await this.captureViewport() });
       case 'beginBackdrop': {
         const response: BackdropAcceptance = { target: this.beginBackdrop(JSON.parse(payload) as BeginBackdropArgs) };
         return JSON.stringify(response);
@@ -143,6 +145,30 @@ export class WindowLayout implements NativePlugin {
         return '{}';
       default:
         throw new Error(`Unknown window layout command: ${command}`);
+    }
+  }
+
+  private async captureViewport(): Promise<string> {
+    const mainWindow = this.mainWindow;
+    const snapshot = this.currentSnapshot;
+    if (!mainWindow || !snapshot) throw new Error('OpenHarmony viewport capture: window layout is not ready');
+    const pixelMap = await mainWindow.snapshot();
+    const packer = image.createImagePacker();
+    try {
+      const insets = snapshot.insets;
+      await pixelMap.crop({
+        x: insets.left,
+        y: insets.top,
+        size: {
+          width: snapshot.width - insets.left - insets.right,
+          height: snapshot.height - insets.top - insets.bottom,
+        },
+      });
+      const png = await packer.packing(pixelMap, { format: 'image/png', quality: 100 });
+      return new util.Base64Helper().encodeToStringSync(new Uint8Array(png));
+    } finally {
+      await packer.release();
+      await pixelMap.release();
     }
   }
 

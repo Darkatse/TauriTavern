@@ -8602,6 +8602,7 @@ dependencies = [
  "base64 0.23.1",
  "block2",
  "bytes",
+ "cairo-rs",
  "chrono",
  "dispatch2",
  "dunce",
@@ -8658,6 +8659,9 @@ dependencies = [
  "ttsync-core",
  "url",
  "uuid",
+ "webkit2gtk",
+ "webview2-com",
+ "windows 0.62.2",
  "zip",
 ]
 

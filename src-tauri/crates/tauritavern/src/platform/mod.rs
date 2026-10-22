@@ -13,6 +13,7 @@ pub mod ipc;
 pub mod lan_discovery;
 #[cfg(target_os = "android")]
 pub mod speech_synthesis;
+pub mod viewport_capture;
 pub mod window_layout;
 #[cfg(any(target_os = "android", target_env = "ohos"))]
 mod window_layout_plugin;

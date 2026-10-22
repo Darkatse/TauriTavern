@@ -10,13 +10,21 @@ pub mod bundled_resources;
 pub mod ios_policy_cache;
 #[cfg(target_os = "ios")]
 pub mod ios_webview;
+#[cfg(target_os = "ios")]
+pub mod ios_webview_capture;
 pub mod logging;
 #[cfg(target_os = "macos")]
 pub mod macos_webview;
+#[cfg(target_os = "macos")]
+pub mod macos_webview_capture;
 pub mod paths;
 pub mod persistence;
 pub mod repositories;
 #[cfg(desktop)]
 pub mod runtime_paths_config_store;
 pub mod staging;
+#[cfg(all(target_os = "linux", not(target_env = "ohos")))]
+pub mod webkitgtk_capture;
+#[cfg(target_os = "windows")]
+pub mod webview2_capture;
 pub mod zipkit;

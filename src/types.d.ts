@@ -1300,6 +1300,8 @@ type TauriTavernLayoutSnapshot = {
 
 type TauriTavernLayoutApi = {
     snapshot: () => TauriTavernLayoutSnapshot;
+    /** Project Contract: native content viewport PNG; caller waits for paint. */
+    capture: () => Promise<Blob>;
     subscribe: (
         handler: (snapshot: TauriTavernLayoutSnapshot) => void,
     ) => Promise<TauriTavernHostUnsubscribe>;
