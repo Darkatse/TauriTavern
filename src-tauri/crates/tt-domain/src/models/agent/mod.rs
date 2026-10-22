@@ -327,9 +327,6 @@ pub struct AgentToolImage {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentToolResult {
-    // Existing history, checkpoints and audit records predate tool images.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub images: Vec<AgentToolImage>,
     pub call_id: String,
     pub tool_id: ToolId,
     pub content: String,
@@ -341,6 +338,9 @@ pub struct AgentToolResult {
     pub error_code: Option<String>,
     #[serde(default)]
     pub resource_refs: Vec<String>,
+    // Existing history, checkpoints and audit records predate tool images.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<AgentToolImage>,
 }
 
 impl AgentToolResult {
@@ -357,7 +357,7 @@ impl AgentToolResult {
         }
     }
 
-    /// The model reads `message`; structured records the error code and message.
+    /// The model reads `message`; callers may replace the default structured error details.
     pub fn error(call: &ToolInvocation, code: &str, message: &str) -> Self {
         let mut result = Self::ok(
             call,

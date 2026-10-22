@@ -60,7 +60,7 @@ mod task_details;
 mod timeline_projection;
 mod tool_catalog;
 mod tool_execution;
-pub(crate) mod tool_images;
+mod tool_images;
 mod tool_results;
 mod tool_snapshot;
 

@@ -241,11 +241,7 @@ impl ResponsesTranscriptCompiler {
         self.input.push(json!({
             "type": "function_call_output",
             "call_id": call_id,
-            "output": if message.get("content").is_some_and(Value::is_array) {
-                responses_input_message_content(message.get("content"), true)?
-            } else {
-                Value::String(message_content_to_text(message.get("content")))
-            },
+            "output": responses_input_message_content(message.get("content"), true)?,
         }));
 
         Ok(())

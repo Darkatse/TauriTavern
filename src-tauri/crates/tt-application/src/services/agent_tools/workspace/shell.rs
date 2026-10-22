@@ -55,13 +55,15 @@ pub(in crate::services::agent_tools) async fn shell(
         WorkspaceShellExit::TimedOut => (None, Some("workspace.shell_timeout")),
         WorkspaceShellExit::Failed => (None, Some("workspace.shell_failed")),
     };
-    let mut result = AgentToolResult::ok(
-        call,
-        render_output(&output),
-        json!({"exitCode": exit_code, "outputTruncated": output.output_truncated}),
-    );
-    result.is_error = error_code.is_some();
-    result.error_code = error_code.map(str::to_string);
+    let content = render_output(&output);
+    let structured = json!({"exitCode": exit_code, "outputTruncated": output.output_truncated});
+    let result = if let Some(code) = error_code {
+        let mut result = AgentToolResult::error(call, code, &content);
+        result.structured = structured;
+        result
+    } else {
+        AgentToolResult::ok(call, content, structured)
+    };
     let effect = if result.is_error {
         AgentToolEffect::AutoCommitCandidateUpdated { path: None }
     } else if let Some(mutation) = workspace

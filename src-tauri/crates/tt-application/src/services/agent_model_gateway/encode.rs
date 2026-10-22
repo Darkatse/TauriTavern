@@ -34,21 +34,12 @@ pub(crate) fn encode_chat_completion_request(
         if message.role != AgentModelRole::Tool && !tool_images.is_empty() {
             messages.push(tool_image_message(std::mem::take(&mut tool_images)));
         }
-        if adapter == AgentProviderAdapter::OpenAiCompatible && message.role == AgentModelRole::Tool
-        {
-            tool_images.extend(message.parts.iter().filter_map(|part| match part {
-                AgentModelContentPart::Media { value, .. } => Some(value.clone()),
-                _ => None,
-            }));
-        }
         // Call IDs may recur across Session runs; the preceding call owns its result.
         record_call_aliases(message, &request.tools, &mut call_aliases)?;
-        messages.push(encode_openai_compatible_message(
-            message,
-            &request.tools,
-            &call_aliases,
-            adapter,
-        )?);
+        let (encoded, images) =
+            encode_openai_compatible_message(message, &request.tools, &call_aliases, adapter)?;
+        messages.push(encoded);
+        tool_images.extend(images);
     }
     if !tool_images.is_empty() {
         messages.push(tool_image_message(tool_images));
@@ -117,8 +108,9 @@ fn encode_openai_compatible_message(
     tools: &[AgentModelTool],
     call_aliases: &HashMap<&str, &str>,
     adapter: AgentProviderAdapter,
-) -> Result<Value, ApplicationError> {
+) -> Result<(Value, Vec<Value>), ApplicationError> {
     let mut object = Map::new();
+    let mut tool_images = Vec::new();
     object.insert(
         "role".to_string(),
         Value::String(role_name(message.role).to_string()),
@@ -216,6 +208,7 @@ fn encode_openai_compatible_message(
             let content = if media.is_empty() {
                 Value::String(text)
             } else if adapter == AgentProviderAdapter::OpenAiCompatible {
+                tool_images = media;
                 if text.is_empty() {
                     text = "(see attached image)".to_string();
                 }
@@ -238,7 +231,7 @@ fn encode_openai_compatible_message(
     copy_native_continuation(&mut object, &message.parts, adapter);
     copy_reasoning_content(&mut object, &message.parts);
 
-    Ok(Value::Object(object))
+    Ok((Value::Object(object), tool_images))
 }
 
 fn role_name(role: AgentModelRole) -> &'static str {

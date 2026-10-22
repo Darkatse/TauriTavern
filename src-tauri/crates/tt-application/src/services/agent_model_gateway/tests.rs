@@ -1057,4 +1057,22 @@ fn openai_tool_images_follow_the_complete_tool_result_group() {
             {"role":"assistant", "content":"finished"}
         ])
     );
+
+    let mut next_result = tool_result_message("call_c", "search", "another screen");
+    next_result.parts.push(AgentModelContentPart::Media {
+        mime_type: "image/png".into(),
+        value: image.clone(),
+    });
+    request.messages.push(next_result);
+    let followup = encode_chat_completion_request(&request, false).unwrap();
+    let previous_messages = dto.payload["messages"].as_array().unwrap();
+    let followup_messages = followup.payload["messages"].as_array().unwrap();
+    assert_eq!(
+        &followup_messages[..previous_messages.len()],
+        previous_messages
+    );
+    assert_eq!(
+        followup_messages.last().unwrap(),
+        &json!({"role":"user", "content":[{"type":"text", "text":"Attached image(s) from tool result:"}, image]})
+    );
 }

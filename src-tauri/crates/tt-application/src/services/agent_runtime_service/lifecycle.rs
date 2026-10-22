@@ -23,14 +23,12 @@ use crate::services::agent_profile_service::{
 };
 use crate::services::agent_workspace_lifecycle_service::AgentRunActivity;
 use crate::services::prompt_assembly_service::attach_frozen_run_input_snapshot;
-use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{
     AgentChatRunTarget, AgentRun, AgentRunEventLevel, AgentRunStatus, AgentRunTarget, WorkspacePath,
 };
 use tt_domain::text_metrics::TextMetrics;
 use tt_ports::repositories::agent_run_repository::AgentRunEventReadQuery;
 use tt_ports::tool_images::MAX_TOOL_IMAGE_BYTES;
-use tt_ports::workspace_fs::WorkspaceFile;
 
 impl AgentRuntimeService {
     pub async fn start_run(
@@ -344,32 +342,24 @@ impl AgentRuntimeService {
         &self,
         dto: AgentReadWorkspaceFileDto,
     ) -> Result<Vec<u8>, ApplicationError> {
-        let (_, bytes) = self.read_workspace_data(dto, MAX_TOOL_IMAGE_BYTES).await?;
-        Ok(bytes)
-    }
-
-    async fn read_workspace_data(
-        &self,
-        dto: AgentReadWorkspaceFileDto,
-        maximum_bytes: usize,
-    ) -> Result<(WorkspacePath, Vec<u8>), ApplicationError> {
         let path = WorkspacePath::parse(dto.path)?;
-        let bytes = self
+        Ok(self
             .workspace_files(&dto.run_id)
             .await?
-            .read_file(&path, maximum_bytes)
-            .await?;
-        Ok((path, bytes))
+            .read_file(&path, MAX_TOOL_IMAGE_BYTES)
+            .await?)
     }
 
     pub async fn read_workspace_file(
         &self,
         dto: AgentReadWorkspaceFileDto,
     ) -> Result<AgentWorkspaceFileDto, ApplicationError> {
-        let (path, bytes) = self.read_workspace_data(dto, usize::MAX).await?;
-        let text = String::from_utf8(bytes)
-            .map_err(|_| DomainError::workspace_file_not_text(path.as_str()))?;
-        let file = WorkspaceFile::from_text(path, text);
+        let path = WorkspacePath::parse(dto.path)?;
+        let file = self
+            .workspace_files(&dto.run_id)
+            .await?
+            .read_text(&path)
+            .await?;
         let metrics = TextMetrics::from_text(&file.text);
         Ok(AgentWorkspaceFileDto {
             path: file.path.as_str().to_string(),

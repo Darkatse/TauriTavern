@@ -1,5 +1,21 @@
 /// Formats accepted by every supported image provider.
-pub const TOOL_IMAGE_TYPES: [&str; 3] = ["image/png", "image/jpeg", "image/webp"];
+#[derive(Debug, Clone, Copy)]
+pub enum ToolImageFormat {
+    Png,
+    Jpeg,
+    Webp,
+}
+
+impl ToolImageFormat {
+    pub fn properties(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Png => ("image/png", "png"),
+            Self::Jpeg => ("image/jpeg", "jpg"),
+            Self::Webp => ("image/webp", "webp"),
+        }
+    }
+}
+
 /// Longest edge of a stored tool image, in pixels.
 pub const MAX_TOOL_IMAGE_EDGE: u32 = 1280;
 pub const MAX_TOOL_IMAGE_BYTES: usize = 1_000_000;
@@ -9,12 +25,13 @@ pub trait ToolImageNormalizer: Send + Sync {
 }
 
 pub struct StoredToolImage {
-    pub mime_type: &'static str,
+    pub format: ToolImageFormat,
     pub data: Vec<u8>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ToolImageRejection {
     Undecodable,
+    EncodingFailed(String),
     TooLarge { bytes: usize },
 }

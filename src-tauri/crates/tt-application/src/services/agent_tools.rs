@@ -13,7 +13,9 @@ mod world_info;
 
 pub use registry::BuiltinAgentToolRegistry;
 
-pub(crate) use dispatcher::{AgentToolDispatchOutcome, AgentToolDispatcher, AgentToolEffect};
+pub(crate) use dispatcher::{
+    AgentToolDispatchOutcome, AgentToolDispatcher, AgentToolEffect, IncomingToolImage,
+};
 pub(crate) use runtime_context::build_script_context_json;
 pub(crate) use session::AgentToolSession;
 

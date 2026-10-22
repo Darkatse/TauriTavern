@@ -11,9 +11,7 @@ use super::prompt_snapshot::request_summary;
 use super::session_context::{CompactionTrigger, is_context_overflow_error};
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::errors::ApplicationError;
-use crate::services::agent_tools::{
-    AGENT_AWAIT, AGENT_HANDOFF, AgentToolDispatchOutcome, AgentToolEffect,
-};
+use crate::services::agent_tools::{AGENT_AWAIT, AGENT_HANDOFF, AgentToolEffect};
 use crate::services::agent_workspace_scope::is_auto_commit_text_path;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
@@ -308,13 +306,11 @@ impl AgentRuntimeService {
                                         call.call_id, call.tool_id, failure.error
                                     ));
                                 } else {
-                                    let result = AgentToolDispatchOutcome::error(
+                                    let result = AgentToolResult::error(
                                         call,
                                         "agent.tool_not_started",
                                         &failure.error.to_string(),
-                                        0,
-                                    )
-                                    .result;
+                                    );
                                     prepared.request.messages.push(AgentModelMessage {
                                         role: AgentModelRole::Tool,
                                         parts: vec![AgentModelContentPart::ToolResult { result }],

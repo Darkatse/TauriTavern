@@ -495,6 +495,9 @@ async fn tool_images_are_normalized_stored_as_references_and_hydrated_only_for_t
                 value: json!("Page captured."),
                 images: vec![
                     ExtensionToolImage {
+                        data: "invalid base64!".into()
+                    },
+                    ExtensionToolImage {
                         data: STANDARD.encode(png.into_inner())
                     },
                     ExtensionToolImage {
@@ -536,6 +539,7 @@ async fn tool_images_are_normalized_stored_as_references_and_hydrated_only_for_t
         assert_eq!(result.images.len(), 1);
         assert_eq!(result.images[0].mime_type, "image/jpeg");
         assert!(result.content.starts_with("Page captured."));
+        assert_eq!(result.content.matches("could not be decoded").count(), 2);
         assert!(
             result
                 .content
@@ -557,10 +561,10 @@ async fn tool_images_are_normalized_stored_as_references_and_hydrated_only_for_t
         let image_files = stored_files
             .iter()
             .filter(|entry| {
-                entry.path.as_str().starts_with("tool-results/")
-                    && [".jpg", ".png", ".webp"]
-                        .iter()
-                        .any(|extension| entry.path.as_str().ends_with(extension))
+                result
+                    .images
+                    .iter()
+                    .any(|image| image.path == entry.path.as_str())
             })
             .collect::<Vec<_>>();
         assert_eq!(image_files.len(), 1);
@@ -574,15 +578,14 @@ async fn tool_images_are_normalized_stored_as_references_and_hydrated_only_for_t
             .unwrap();
         let image = image::load_from_memory(&bytes).unwrap();
         assert_eq!((image.width(), image.height()), (1280, 640));
-        let audit_path = WorkspacePath::parse(
-            result.images[0]
-                .path
-                .strip_suffix("-1.jpg")
-                .unwrap()
-                .to_owned()
-                + ".json",
-        )
-        .unwrap();
+        let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+        let stored = events
+            .iter()
+            .find(|event| {
+                event.event_type == "tool_result_stored" && event.payload["callId"] == "capture"
+            })
+            .unwrap();
+        let audit_path = WorkspacePath::parse(stored.payload["path"].as_str().unwrap()).unwrap();
         let audit: Value =
             serde_json::from_str(&files.read_text(&audit_path).await.unwrap().text).unwrap();
         assert_eq!(
@@ -590,6 +593,7 @@ async fn tool_images_are_normalized_stored_as_references_and_hydrated_only_for_t
             serde_json::to_value(&result.images).unwrap()
         );
         assert_eq!(audit["structured"], json!("Page captured."));
+        assert_eq!(audit["content"], result.content);
         let requests = fixture.model_gateway.requests().await;
         assert_eq!(requests.len(), 3);
         let mut previous_media = None;

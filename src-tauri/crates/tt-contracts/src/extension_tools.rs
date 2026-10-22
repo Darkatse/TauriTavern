@@ -18,7 +18,6 @@ pub struct ExtensionToolDefinition {
     pub contexts: Vec<AgentToolScope>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    // Existing public tool declarations omit this capability.
     #[serde(default)]
     pub returns_images: bool,
 }
@@ -137,6 +136,7 @@ pub enum ExtensionToolReply {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionToolImage {
+    /// Base64-encoded image bytes.
     pub data: String,
 }
 

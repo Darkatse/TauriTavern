@@ -80,7 +80,7 @@ impl AgentRuntimeService {
             .model_tools)
     }
 
-    /// Preview and pre-assembly bindings have no image capability; only admitted snapshots supply it.
+    /// Extension tools declaring `returnsImages` are bound only when `accepts_images` is true.
     pub(super) async fn prepare_invocation_tools(
         &self,
         profile: &ResolvedAgentProfile,

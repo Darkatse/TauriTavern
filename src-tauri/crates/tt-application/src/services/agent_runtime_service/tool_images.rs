@@ -1,8 +1,3 @@
-#[derive(Debug, Clone)]
-pub(crate) struct IncomingToolImage {
-    pub data: Vec<u8>,
-}
-
 use base64::Engine;
 use serde_json::json;
 use tt_domain::models::agent::WorkspacePath;
@@ -20,6 +15,7 @@ impl AgentRuntimeService {
         accepts_images: bool,
     ) -> Result<AgentModelRequest, ApplicationError> {
         let mut request = request.clone();
+        let workspace = self.workspace_files(run_id).await?;
         for message in &mut request.messages {
             let mut parts = Vec::new();
             for mut part in std::mem::take(&mut message.parts) {
@@ -28,11 +24,7 @@ impl AgentRuntimeService {
                     for image in &result.images {
                         if accepts_images {
                             let path = WorkspacePath::parse(&image.path)?;
-                            let bytes = self
-                                .workspace_files(run_id)
-                                .await?
-                                .read_file(&path, MAX_TOOL_IMAGE_BYTES)
-                                .await?;
+                            let bytes = workspace.read_file(&path, MAX_TOOL_IMAGE_BYTES).await?;
                             let data = base64::engine::general_purpose::STANDARD.encode(bytes);
                             media.push(AgentModelContentPart::Media {
                                 mime_type: image.mime_type.clone(),

@@ -150,20 +150,14 @@ pub(super) fn convert_messages(
                 }
             }
             "tool" => {
-                if !use_tools {
-                    let result_text = message_tool_result_text(message);
-                    converted.push(json!({
-                        "role": "user",
-                        "content": [normalize_claude_text_block(&result_text)],
-                    }));
-                } else if let Some(tool_use_id) = message_tool_call_id(message) {
+                if use_tools && let Some(tool_use_id) = message_tool_call_id(message) {
                     converted.push(json!({
                         "role": "user",
                         "content": [{
                             "type": "tool_result",
                             "tool_use_id": tool_use_id,
                             "content": if message.get("content").is_some_and(Value::is_array) {
-                                Value::Array(convert_message_content_to_claude_blocks(message.get("content"), name)?)
+                                Value::Array(convert_message_content_to_claude_blocks(message.get("content"), None)?)
                             } else {
                                 Value::String(message_tool_result_text(message))
                             },
@@ -171,7 +165,7 @@ pub(super) fn convert_messages(
                     }));
                 } else {
                     let blocks =
-                        convert_message_content_to_claude_blocks(message.get("content"), name)?;
+                        convert_message_content_to_claude_blocks(message.get("content"), None)?;
                     let blocks = if blocks.is_empty() {
                         vec![normalize_claude_text_block("")]
                     } else {

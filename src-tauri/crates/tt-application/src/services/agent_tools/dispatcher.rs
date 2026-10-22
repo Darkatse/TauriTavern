@@ -1,4 +1,3 @@
-use crate::services::agent_runtime_service::tool_images::IncomingToolImage;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -21,17 +20,20 @@ use tt_domain::models::tool::{ToolId, ToolInvocation};
 use tt_ports::repositories::agent_run_repository::AgentRunRepository;
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::group_chat_repository::GroupChatRepository;
+use tt_ports::tool_images::ToolImageRejection;
 use tt_ports::workspace_fs::{WorkspaceFile, WorkspaceFs};
 use tt_ports::workspace_shell::WorkspaceShell;
 
 const RUN_PROMPT_SNAPSHOT_PATH: &str = "input/prompt_snapshot.json";
 
+pub(crate) type IncomingToolImage = Result<Vec<u8>, ToolImageRejection>;
+
 #[derive(Debug, Clone)]
 pub(crate) struct AgentToolDispatchOutcome {
-    pub images: Vec<IncomingToolImage>,
     pub result: AgentToolResult,
     pub effect: AgentToolEffect,
     pub elapsed_ms: u128,
+    pub images: Vec<IncomingToolImage>,
 }
 
 impl AgentToolDispatchOutcome {

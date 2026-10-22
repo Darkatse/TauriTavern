@@ -65,9 +65,9 @@ pub struct McpImageContent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpToolCallResult {
-    pub images: Vec<McpImageContent>,
     pub is_error: bool,
     pub text: Vec<McpTextContent>,
+    pub images: Vec<McpImageContent>,
     pub structured_content: Option<Value>,
     pub diagnostics: Vec<McpCallDiagnostic>,
 }

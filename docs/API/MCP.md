@@ -187,7 +187,7 @@ Agent 没有新增公共 raw-call API。Profile v3 以 `mcp/<registration-uuid>:
 
 只有 Active 且 permission 为 Ask/Allow、input schema root 明确为 `type: "object"` 的工具可以进入 Agent binding。共享 resolver 先将 registration description override 应用到 catalog descriptor 的副本，Agent invocation 再应用 Profile `tools.toolDescriptions`，因此 Profile 优先。当前按用户要求不实现 Ask 审批 UI：Ask 与 Allow 都自动执行；Off 与 Paused 在广告前过滤，并在实际发送前重新读取 registration 复核。参数必须是 256 KiB 内 JSON object，Host 不按 schema 改写。alias 由 Agent snapshot 生成，不属于 Manager DTO 或 MCP identity。
 
-已知结果转为 `AgentToolResult`：text 保持原文，structured content 去重后呈现，image 块经共同的工具图片入库与注入链交给模型；模型不接受图片时在结果原位置说明。audio、resource 仍产生可见诊断，metadata 留在内部记录。长结果沿用 Agent 的共同 [结果处理](../Agent/ToolSystem.md#结果如何进入下一轮)，不改变共享 `McpService` 调用契约。`outcome_unknown` 终止当前 Agent run，不自动重试，也不伪造工具结果。
+已知结果转为 `AgentToolResult`：text 保持原文，structured content 去重后呈现，image 块进入 Agent 的共同 [结果处理](../Agent/ToolSystem.md#结果如何进入下一轮)。audio、resource 产生可见诊断，metadata 留在内部记录。长结果也走共同结果处理，不改变共享 `McpService` 调用契约。`outcome_unknown` 终止当前 Agent run，不自动重试，也不伪造工具结果。
 
 ## 8. Legacy 消费契约
 

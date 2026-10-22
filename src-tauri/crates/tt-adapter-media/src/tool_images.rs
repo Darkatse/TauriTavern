@@ -1,6 +1,6 @@
 use image::{ImageFormat, Rgb, RgbImage, codecs::jpeg::JpegEncoder, imageops::FilterType};
 use tt_ports::tool_images::{
-    MAX_TOOL_IMAGE_BYTES, MAX_TOOL_IMAGE_EDGE, StoredToolImage, TOOL_IMAGE_TYPES,
+    MAX_TOOL_IMAGE_BYTES, MAX_TOOL_IMAGE_EDGE, StoredToolImage, ToolImageFormat,
     ToolImageNormalizer, ToolImageRejection,
 };
 
@@ -11,17 +11,23 @@ impl ToolImageNormalizer for MediaToolImageNormalizer {
         let format = image::guess_format(data).map_err(|_| ToolImageRejection::Undecodable)?;
         let image = image::load_from_memory_with_format(data, format)
             .map_err(|_| ToolImageRejection::Undecodable)?;
-        let mime_type = format.to_mime_type();
-        if TOOL_IMAGE_TYPES.contains(&mime_type)
-            && image.width().max(image.height()) <= MAX_TOOL_IMAGE_EDGE
+        let supported_format = match format {
+            ImageFormat::Png => Some(ToolImageFormat::Png),
+            ImageFormat::Jpeg => Some(ToolImageFormat::Jpeg),
+            ImageFormat::WebP => Some(ToolImageFormat::Webp),
+            _ => None,
+        };
+        let longest_edge = image.width().max(image.height());
+        if let Some(format) = supported_format
+            && longest_edge <= MAX_TOOL_IMAGE_EDGE
             && data.len() <= MAX_TOOL_IMAGE_BYTES
         {
             return Ok(StoredToolImage {
-                mime_type,
+                format,
                 data: data.to_vec(),
             });
         }
-        let image = if image.width().max(image.height()) > MAX_TOOL_IMAGE_EDGE {
+        let image = if longest_edge > MAX_TOOL_IMAGE_EDGE {
             image.resize(
                 MAX_TOOL_IMAGE_EDGE,
                 MAX_TOOL_IMAGE_EDGE,
@@ -41,12 +47,12 @@ impl ToolImageNormalizer for MediaToolImageNormalizer {
         let mut data = Vec::new();
         JpegEncoder::new_with_quality(&mut data, 85)
             .encode_image(&opaque)
-            .map_err(|_| ToolImageRejection::Undecodable)?;
+            .map_err(|error| ToolImageRejection::EncodingFailed(error.to_string()))?;
         if data.len() > MAX_TOOL_IMAGE_BYTES {
             return Err(ToolImageRejection::TooLarge { bytes: data.len() });
         }
         Ok(StoredToolImage {
-            mime_type: ImageFormat::Jpeg.to_mime_type(),
+            format: ToolImageFormat::Jpeg,
             data,
         })
     }

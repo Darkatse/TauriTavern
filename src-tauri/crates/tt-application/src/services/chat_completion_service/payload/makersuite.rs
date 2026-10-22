@@ -10,12 +10,12 @@ use super::super::model_capabilities::{
 };
 use super::content_parts::{
     InputPart, MediaPart, MediaSource, parse_openai_chat_content,
-    reject_media_for_text_only_content,
+    reject_media_for_text_only_content, to_lossy_text,
 };
 use super::shared::message_content_to_text;
 use super::tool_calls::{
     OpenAiToolCall, extract_openai_tool_calls, fallback_tool_name, message_tool_call_id,
-    message_tool_name, message_tool_result_text, normalize_tool_result_payload,
+    message_tool_name, normalize_tool_result_payload,
 };
 use super::tool_choice::{OpenAiToolChoice, parse_openai_tool_choice};
 
@@ -422,16 +422,28 @@ fn convert_messages(
             let name = message_tool_name(message)
                 .or_else(|| previous_call.map(|(name, _)| name.clone()))
                 .unwrap_or_else(|| fallback_tool_name().to_string());
-            let content = message_tool_result_text(message);
-            let images = parse_openai_chat_content(message.get("content"))?
-                .iter()
-                .filter_map(|part| match part {
+            let content_parts = parse_openai_chat_content(message.get("content"))?;
+            let mut images = Vec::new();
+            for part in &content_parts {
+                match part {
                     InputPart::Image(media) => {
-                        Some(render_google_media_part("image", media, false))
+                        images.push(render_google_media_part("image", media, false)?);
                     }
-                    _ => None,
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+                    InputPart::Text(_) => {}
+                    InputPart::Unknown { ty, .. }
+                        if !matches!(
+                            ty.as_deref(),
+                            Some("input_audio" | "audio" | "input_video" | "video")
+                        ) => {}
+                    InputPart::Audio(_) | InputPart::Video(_) | InputPart::Unknown { .. } => {
+                        return Err(ApplicationError::ValidationError(
+                            "Gemini function response does not support audio or video content parts"
+                                .to_string(),
+                        ));
+                    }
+                }
+            }
+            let content = to_lossy_text(&content_parts);
             let mut response = build_tool_response_part(
                 &name,
                 &content,
@@ -565,7 +577,7 @@ fn convert_messages(
             .get(index + 1)
             .and_then(|entry| entry.get("role"))
             .and_then(Value::as_str)
-            .is_some_and(|role| matches!(role, "tool" | "function"));
+            .is_some_and(|role| matches!(role.trim().to_lowercase().as_str(), "tool" | "function"));
         if !next_is_tool && !tool_images.is_empty() {
             let mut parts = vec![json!({ "text": "Tool result image:" })];
             parts.append(&mut tool_images);
@@ -1338,12 +1350,14 @@ mod tests {
 
     #[test]
     fn makersuite_rejects_media_that_generate_content_cannot_preserve() {
-        for (content, expected) in [
+        for (role, content, expected) in [
             (
+                "user",
                 json!([{ "type": "image_url", "image_url": { "detail": "high" } }]),
                 "missing url",
             ),
             (
+                "user",
                 json!([{
                     "type": "audio_url",
                     "audio_url": { "url": "data:audio/wav;base64," }
@@ -1351,6 +1365,7 @@ mod tests {
                 "invalid data URL",
             ),
             (
+                "user",
                 json!([{
                     "type": "image_url",
                     "image_url": { "url": "https://example.test/cat.png" }
@@ -1358,13 +1373,34 @@ mod tests {
                 "remote image URLs",
             ),
             (
+                "user",
                 json!([{ "type": "input_image", "file_id": "file_123" }]),
                 "file_id",
+            ),
+            (
+                "tool",
+                json!([{ "type": "audio_url", "audio_url": { "url": "data:audio/wav;base64,AAAA" } }]),
+                "function response does not support audio or video",
+            ),
+            (
+                "tool",
+                json!([{ "type": "video_url", "video_url": { "url": "data:video/mp4;base64,AAAA" } }]),
+                "function response does not support audio or video",
+            ),
+            (
+                "tool",
+                json!([{ "type": "input_audio", "input_audio": { "data": "AAAA", "format": "wav" } }]),
+                "function response does not support audio or video",
+            ),
+            (
+                "tool",
+                json!([{ "type": "input_video", "video_url": "data:video/mp4;base64,AAAA" }]),
+                "function response does not support audio or video",
             ),
         ] {
             let payload = json!({
                 "model": "gemini-2.5-flash",
-                "messages": [{ "role": "user", "content": content }]
+                "messages": [{ "role": role, "content": content }]
             })
             .as_object()
             .cloned()
@@ -1756,7 +1792,7 @@ mod tests {
                 {"role":"user","content":"capture"},
                 {"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"capture","arguments":"{}"}},{"id":"call_2","type":"function","function":{"name":"capture","arguments":"{}"}}]},
                 {"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"screen"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]},
-                {"role":"tool","tool_call_id":"call_2","content":"done"}
+                {"role":" FUNCTION ","tool_call_id":"call_2","content":"done"}
             ]}).as_object().unwrap().clone();
             let (_, upstream) = build(payload).unwrap();
             let contents = upstream["contents"].as_array().unwrap();

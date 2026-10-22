@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use serde_json::{Map, Value, json};
 use tokio_util::sync::CancellationToken;
+use tt_contracts::extension_tools::ExtensionToolCall;
 
 use super::commit_ledger::RunCommitLedger;
 use super::model_stream_projection::remove_live_tool_call;
@@ -17,7 +18,7 @@ use crate::services::agent_tools::{
 };
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
-    AgentToolResult, WorkspacePath,
+    WorkspacePath,
 };
 use tt_domain::models::tool::{ToolArguments, ToolInvocation};
 use tt_ports::mcp::McpCallOutcome;
@@ -209,7 +210,7 @@ impl AgentRuntimeService {
                 .await
             } else if call.tool_id.extension_id().is_some() {
                 let reply = self.extension_tools.call(
-                    tt_contracts::extension_tools::ExtensionToolCall {
+                    ExtensionToolCall {
                         tool_id: call.tool_id.clone(),
                         run_id: run_id.to_string(),
                         invocation_id: invocation_id.to_string(),
@@ -244,8 +245,9 @@ impl AgentRuntimeService {
                             &message,
                             started.elapsed().as_millis(),
                         );
+                        let file_base = self.tool_call_file_base(run_id, invocation_id, round, &call.call_id).await?;
                         let _ = self
-                            .record_tool_outcome(run_id, invocation_id, round, snapshot_id, &outcome)
+                            .record_tool_outcome(prepared, round, &file_base, &outcome)
                             .await?;
                         return Err(if *cancel.borrow() {
                             ApplicationError::Cancelled(message)
@@ -262,7 +264,6 @@ impl AgentRuntimeService {
 
             match dispatch_result {
                 Ok(outcome) => {
-                    ensure_tool_result_identity(tool_invocation, &outcome.result)?;
                     let outcome = match outcome.effect.clone() {
                         AgentToolEffect::Finish => {
                             if exit_policy == AgentInvocationExitPolicy::TaskReturnRequired {
@@ -403,41 +404,4 @@ impl AgentRuntimeService {
 
 fn is_completion_tool(tool_name: &str) -> bool {
     matches!(tool_name, WORKSPACE_FINISH | AGENT_HANDOFF | TASK_RETURN)
-}
-
-fn ensure_tool_result_identity(
-    invocation: &ToolInvocation,
-    result: &AgentToolResult,
-) -> Result<(), ApplicationError> {
-    if result.call_id == invocation.call_id && result.tool_id == invocation.tool_id {
-        return Ok(());
-    }
-    Err(ApplicationError::InternalError(format!(
-        "tool.result_identity_mismatch: invocation `{}` / `{}` produced result `{}` / `{}`",
-        invocation.call_id, invocation.tool_id, result.call_id, result.tool_id
-    )))
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::Value;
-    use tt_domain::models::agent::AgentToolResult;
-    use tt_domain::models::tool::{ToolArguments, ToolId, ToolInvocation};
-
-    use super::ensure_tool_result_identity;
-
-    #[test]
-    fn tool_result_identity_must_match_its_invocation() {
-        let invocation = ToolInvocation {
-            call_id: "call_1".to_string(),
-            tool_id: ToolId::builtin("workspace.finish").unwrap(),
-            arguments: ToolArguments::empty(),
-            provider_metadata: Value::Null,
-        };
-        let mut result = AgentToolResult::ok(&invocation, String::new(), Value::Null);
-        result.tool_id = ToolId::builtin("workspace.commit").unwrap();
-
-        let error = ensure_tool_result_identity(&invocation, &result).unwrap_err();
-        assert!(error.to_string().contains("tool.result_identity_mismatch"));
-    }
 }

@@ -725,18 +725,23 @@ fn tool_result_images_are_preserved() {
             "messages":[
                 {"role":"user","content":"capture"},
                 {"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"capture","arguments":"{}"}}]},
-                {"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"screen"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}
+                {"role":"tool","tool_call_id":"call_1","name":"capture","content":[{"type":"text","text":"screen"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}
             ]}).as_object().unwrap().clone();
-    let (_, upstream) = build(payload).unwrap();
-    let blocks = upstream["messages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .flat_map(|m| m["content"].as_array().unwrap())
-        .find(|b| b["type"] == "tool_result")
-        .unwrap();
-    assert_eq!(
-        blocks["content"],
-        json!([{"type":"text","text":"screen"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}])
-    );
+    let expected = json!([{"type":"text","text":"screen"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}]);
+    for use_tools in [true, false] {
+        let mut payload = payload.clone();
+        if !use_tools {
+            payload.remove("tools");
+        }
+        let (_, upstream) = build(payload).unwrap();
+        let message = upstream["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(message["role"], "user");
+        let content = if use_tools {
+            assert_eq!(message["content"][0]["type"], "tool_result");
+            &message["content"][0]["content"]
+        } else {
+            &message["content"]
+        };
+        assert_eq!(content, &expected);
+    }
 }

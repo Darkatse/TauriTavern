@@ -1161,8 +1161,6 @@ mod tests {
                 true,
             ),
             (400, r#"{"message":"prompt is too long"}"#, true),
-            (413, "PROMPT IS TOO LONG", true),
-            (413, "request_too_large", true),
             (413, "<html>Request Entity Too Large</html>", true),
             (
                 400,

@@ -257,6 +257,154 @@ async fn agent_runtime_stops_after_unknown_mcp_call_outcome() {
     let _ = fs::remove_dir_all(root).await;
 }
 
+#[tokio::test]
+async fn mcp_images_keep_structured_projection_and_image_only_results_readable() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use tt_ports::mcp::{McpCallDiagnostic, McpImageContent};
+
+    let root = temp_root("mcp-image-projection");
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![
+            model_tool_response(vec![
+                model_tool_call(
+                    "details",
+                    "mcp__my_server__issue_create",
+                    json!({"title": "Details"}),
+                ),
+                model_tool_call(
+                    "image_only",
+                    "mcp__my_server__issue_create",
+                    json!({"title": "Image"}),
+                ),
+            ]),
+            model_tool_response(vec![model_tool_call(
+                "finish",
+                "workspace_finish",
+                json!({}),
+            )]),
+        ],
+    );
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(2, 2)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    let image = McpImageContent {
+        index: 1,
+        mime_type: "image/png".into(),
+        data: STANDARD.encode(png.into_inner()),
+    };
+    fixture.mcp_gateway.outcomes.lock().await.extend([
+        McpCallOutcome::KnownResponse(McpKnownResponse::ToolResult(McpToolCallResult {
+            is_error: false,
+            text: vec![McpTextContent {
+                index: 0,
+                text: r#"{"issueId":42}"#.into(),
+            }],
+            images: vec![
+                image.clone(),
+                McpImageContent {
+                    index: 2,
+                    data: "invalid base64!".into(),
+                    ..image.clone()
+                },
+            ],
+            structured_content: Some(json!({"issueId": 42})),
+            diagnostics: vec![McpCallDiagnostic {
+                code: "mcp.call_content_unsupported".into(),
+                message: "Other content omitted.".into(),
+                content_index: Some(3),
+            }],
+        })),
+        McpCallOutcome::KnownResponse(McpKnownResponse::ToolResult(McpToolCallResult {
+            is_error: false,
+            text: Vec::new(),
+            images: vec![image],
+            structured_content: None,
+            diagnostics: Vec::new(),
+        })),
+    ]);
+    let (profile, _) = configure_mcp_profile(&fixture, "mcp-image-writer", 2, 50_000).await;
+    let handle = start_contract_agent_run(
+        &fixture,
+        &profile,
+        AgentRunPresentation::Background,
+        "mcp-images",
+        Some(false),
+    )
+    .await;
+    assert_eq!(
+        wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id)
+            .await
+            .status,
+        AgentRunStatus::Completed
+    );
+    let requests = fixture.model_gateway.requests().await;
+    let results = requests[1]
+        .messages
+        .iter()
+        .flat_map(|message| &message.parts)
+        .filter_map(|part| match part {
+            AgentModelContentPart::ToolResult { result } => Some(result),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let details = results
+        .iter()
+        .find(|result| result.call_id == "details")
+        .unwrap();
+    assert_eq!(details.content.matches("issueId").count(), 1);
+    assert!(details.content.starts_with("## Details"));
+    assert!(
+        details.content.find("Other content omitted.").unwrap()
+            < details.content.find("could not be decoded").unwrap()
+    );
+    let image_only = results
+        .iter()
+        .find(|result| result.call_id == "image_only")
+        .unwrap();
+    assert_eq!(image_only.images.len(), 1);
+    assert_eq!(
+        image_only.content.trim(),
+        "[The image is not shown: this model does not accept images.]"
+    );
+    let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+    let stored = events
+        .iter()
+        .find(|event| {
+            event.event_type == "tool_result_stored" && event.payload["callId"] == "details"
+        })
+        .unwrap();
+    let files = fixture
+        .agent_repository
+        .open_filesystem(&handle.run_id)
+        .await
+        .unwrap();
+    let path = WorkspacePath::parse(stored.payload["path"].as_str().unwrap()).unwrap();
+    let audit: Value = serde_json::from_str(&files.read_text(&path).await.unwrap().text).unwrap();
+    assert!(
+        audit["content"]
+            .as_str()
+            .unwrap()
+            .starts_with(r#"{"issueId":42}"#)
+    );
+    assert!(
+        audit["content"]
+            .as_str()
+            .unwrap()
+            .ends_with("[The tool also returned an image that could not be decoded.]")
+    );
+    assert_eq!(
+        audit["structured"]["structuredContent"],
+        json!({"issueId": 42})
+    );
+    assert_eq!(
+        audit["structured"]["diagnostics"][0]["message"],
+        "Other content omitted."
+    );
+    fs::remove_dir_all(root).await.unwrap();
+}
+
 pub(super) async fn configure_mcp_profile(
     fixture: &AgentRuntimeFixture,
     profile_id: &str,

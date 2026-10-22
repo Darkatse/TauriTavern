@@ -20,25 +20,24 @@ Claude、Gemini、OpenAI Responses 等协议还需要回传原生内容，如 re
 
 ## 工具结果图片
 
-运行时在发送前按工具结果中的工作区引用读取图片，将其注入请求副本的 `Media` 部件；持久化历史只保存引用。模型是否接受图片来自前端组装快照的 `acceptsImages`，判定为 `isImageInliningSupported(settings) === true`，快照缺省为 `false`。不接受图片时不发送图片，并在工具结果文字中说明。
+运行时在发送前按工具结果中的工作区引用读取图片，将其注入请求副本的 `Media` 部件。图片能力来自[组装快照](PromptAssembly.md#一种组装一个-live-例外)，存储、留存与不接受图片时的处理见[工具结果](ToolSystem.md#结果如何进入下一轮)。
 
-Gateway 与现有 payload 构建器共同完成协议转换：
+Gateway 与 payload 构建器共同完成协议转换：
 
 | 协议 | 工具结果图片 |
 | --- | --- |
 | OpenAI 兼容 Chat Completions | tool 消息保留文字；纯图片结果使用 `(see attached image)`。一组相邻 tool 消息结束后，追加 user 消息，文字为 `Attached image(s) from tool result:`，后接该组图片。 |
-| Claude Messages（含 Bedrock、Vertex、Custom 与 OpenCode） | `tool_result.content` 使用文字与 base64 图片块数组。 |
+| Claude Messages（含 Bedrock、Vertex、Custom 与 OpenCode） | `tool_result.content` 使用文字与 base64 图片块数组，文字不加工具名前缀。当前请求没有工具定义时，历史工具结果转为保留图片的 user 内容块。 |
 | OpenAI Responses | `function_call_output.output` 使用 `input_text` 与 `input_image` 数组。 |
 | Gemini 3 及之后 | 图片放在 `functionResponse.parts` 的 `inlineData` 中。 |
 | Gemini 2.5 等早期模型 | 函数结果不变；结果组结束后追加 user content，文字为 `Tool result image:`，后接 `inlineData` 图片。 |
 | Gemini Interactions | `function_result.result` 使用文字与 image 块。 |
 
-没有图片的工具结果保持原有文字形状；用户消息继续使用既有图片编码。Bedrock 非 Claude 等不支持媒体的格式明确拒绝输入。
+没有图片的工具结果使用文字形状；工具结果与用户消息共用图片编码。Bedrock 非 Claude 等不支持媒体的格式明确拒绝输入。
 
 已知限制：
 
-- 图片能力判定沿用上游 `isImageInliningSupported`，依赖界面全局 `main_api`，部分来源还依赖界面当前来源的 `model_list`。
-- 每次请求重新上传上下文中的全部图片，临时内存约为图片字节的 3–4 倍；图片随消息保留至压缩移出该消息。
+- 每次请求重新上传上下文中的全部图片，临时内存约为图片字节的 3–4 倍。
 - Anthropic 单次请求的图片数量上限（200k 窗口模型为 100 张）可能先于压缩点达到；尚未确认相应错误文案，不预设分类。
 
 ## 续接状态
@@ -60,7 +59,7 @@ Profile 的 `run.stream` 控制当前 Invocation 的默认行为，启动参数 
 
 ## 错误归类
 
-`model.context_overflow` 表示模型上下文窗口不足或请求体过大。HTTP 413 一律归入此类，包括反向代理返回的 HTML 正文；Gemini 的 HTTP 400 `Request payload size exceeds the limit` 也归入此类，由 Session 已有的压缩流程恢复。
+`model.context_overflow` 表示模型上下文窗口不足或请求体过大。HTTP 413 一律归入此类，包括反向代理返回的 HTML 正文；Gemini 的 HTTP 400 `Request payload size exceeds the limit` 也归入此类，由 Session 压缩流程恢复。
 
 HTTP 400 的错误、成功 HTTP 响应内的错误对象、OpenAI 兼容流的错误事件及 Responses 的失败事件使用同一套文本分类，分类只读服务商的错误值：JSON 的 `error` 或 `detail.error`、Responses `error` 事件中的 `error` 对象（扁平的 SSE 事件则是事件本身）、失败 Response 的 `error`，回显的工具描述与部分输出不参与分类。HTTP 400 的正文没有这样的错误值时（非 JSON，或 JSON 中没有这两个字段），按整段正文分类。超窗错误由同一个构造函数返回带原错误消息的 `InvalidData`。匹配规则改编自 pi-ai 1.3.0 `utils/overflow.js`（MIT），排除限流文字；HTTP 429 和 5xx 保留原有可重试映射。
 

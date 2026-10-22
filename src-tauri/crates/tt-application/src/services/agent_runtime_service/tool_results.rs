@@ -1,4 +1,3 @@
-use super::tool_images::IncomingToolImage;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -9,13 +8,13 @@ use tt_domain::models::agent::{
 use tt_domain::models::tool::{InvocationToolSnapshot, ToolId, ToolInvocation};
 use tt_domain::text_metrics::TextMetrics;
 use tt_ports::mcp::McpKnownResponse;
-use tt_ports::tool_images::ToolImageRejection;
+use tt_ports::tool_images::{MAX_TOOL_IMAGE_EDGE, ToolImageRejection};
 use tt_ports::workspace_fs::WorkspaceWriteGuard;
 
 use super::markdown::render_markdown_value;
 use super::{AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
-use crate::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
+use crate::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect, IncomingToolImage};
 use crate::services::hashing::hex_lower;
 
 const TOOL_CALL_AUDIT_DIGEST_BYTES: usize = 8;
@@ -30,53 +29,27 @@ impl AgentRuntimeService {
     ) -> Result<(), ApplicationError> {
         let run_id = prepared.invocation.run_id.as_str();
         let invocation_id = prepared.invocation.id.as_str();
-        let snapshot_id = prepared.tool_snapshot.id().as_str();
         let profile = &prepared.profile;
-        if !outcome.images.is_empty() {
-            let root = self.tool_result_root(run_id).await?;
-            let directory = WorkspacePath::parse(format!("{root}/{invocation_id}"))?;
-            let workspace = self.workspace_files(run_id).await?;
-            workspace.create_dir(&directory, true).await?;
-            for (index, image) in std::mem::take(&mut outcome.images).into_iter().enumerate() {
-                let normalizer = self.tool_image_normalizer.clone();
-                let normalized =
-                    tokio::task::spawn_blocking(move || normalizer.normalize(&image.data))
-                        .await
-                        .map_err(|error| {
-                            ApplicationError::InternalError(format!(
-                                "agent.tool_image_normalization_failed: {error}"
-                            ))
-                        })?;
-                match normalized {
-                    Ok(image) => {
-                        let extension = match image.mime_type {
-                            "image/png" => "png",
-                            "image/jpeg" => "jpg",
-                            "image/webp" => "webp",
-                            mime => return Err(ApplicationError::InternalError(format!("agent.tool_image_format_invalid: normalizer returned {mime}"))),
-                        };
-                        let stem = tool_call_audit_file_stem(&outcome.result.call_id);
-                        let path = WorkspacePath::parse(format!("{root}/{invocation_id}/round-{round:03}-{stem}-{}.{extension}", index + 1))?;
-                        workspace.write_file(&path, &image.data, WorkspaceWriteGuard::MustNotExist).await?;
-                        outcome.result.images.push(AgentToolImage { path: path.as_str().to_owned(), mime_type: image.mime_type.to_owned() });
-                    }
-                    Err(ToolImageRejection::Undecodable) => outcome.result.content.push_str("\n\n[The tool also returned an image that could not be decoded.]"),
-                    Err(ToolImageRejection::TooLarge { bytes }) => outcome.result.content.push_str(&format!("\n\n[The tool also returned an image of {:.2} MB even after it was reduced to 1280 pixels, which is too large to show.]", bytes as f64 / 1_000_000.0)),
-                }
-            }
-        }
+        let file_base = self
+            .tool_call_file_base(run_id, invocation_id, round, &outcome.result.call_id)
+            .await?;
+        let image_notes = self.store_tool_images(run_id, &file_base, outcome).await?;
+        let mcp_content = outcome
+            .result
+            .tool_id
+            .provider_id()
+            .starts_with("mcp/")
+            .then(|| mcp_model_content(&outcome.result));
+        outcome.result.content.push_str(&image_notes);
         let result_path = self
-            .record_tool_outcome(run_id, invocation_id, round, snapshot_id, outcome)
+            .record_tool_outcome(prepared, round, &file_base, outcome)
             .await?;
         if !outcome.result.tool_id.is_builtin() {
-            let result_root = self.tool_result_root(run_id).await?;
-            let readable_path = WorkspacePath::parse(format!(
-                "{result_root}/{invocation_id}/round-{round:03}-{}.txt",
-                tool_call_audit_file_stem(&outcome.result.call_id)
-            ))?;
+            let readable_path = WorkspacePath::parse(format!("{file_base}.txt"))?;
             let mut projected = outcome.result.clone();
-            if projected.tool_id.provider_id().starts_with("mcp/") {
-                projected.content = mcp_model_content(&projected);
+            if let Some(mut content) = mcp_content {
+                content.push_str(&image_notes);
+                projected.content = content;
             }
             if let Some(readable) = project_external_result_for_model(
                 &mut projected,
@@ -109,16 +82,78 @@ impl AgentRuntimeService {
         Ok(())
     }
 
-    pub(super) async fn record_tool_outcome(
+    async fn store_tool_images(
         &self,
         run_id: &str,
-        invocation_id: &str,
+        file_base: &str,
+        outcome: &mut AgentToolDispatchOutcome,
+    ) -> Result<String, ApplicationError> {
+        if outcome.images.is_empty() {
+            return Ok(String::new());
+        }
+        let workspace = self.workspace_files(run_id).await?;
+        let mut notes = String::new();
+        for (index, image) in std::mem::take(&mut outcome.images).into_iter().enumerate() {
+            let normalized = match image {
+                Ok(data) => {
+                    let normalizer = self.tool_image_normalizer.clone();
+                    tokio::task::spawn_blocking(move || normalizer.normalize(&data))
+                        .await
+                        .map_err(|error| {
+                            ApplicationError::InternalError(format!(
+                                "agent.tool_image_normalization_failed: {error}"
+                            ))
+                        })?
+                }
+                Err(rejection) => Err(rejection),
+            };
+            match normalized {
+                Ok(image) => {
+                    let (mime_type, extension) = image.format.properties();
+                    let path =
+                        WorkspacePath::parse(format!("{file_base}-{}.{extension}", index + 1))?;
+                    workspace.create_text_parent(&path).await?;
+                    workspace
+                        .write_file(&path, &image.data, WorkspaceWriteGuard::MustNotExist)
+                        .await?;
+                    outcome.result.images.push(AgentToolImage {
+                        path: path.as_str().to_owned(),
+                        mime_type: mime_type.to_owned(),
+                    });
+                }
+                Err(ToolImageRejection::Undecodable) => {
+                    notes.push_str(
+                        "\n\n[The tool also returned an image that could not be decoded.]",
+                    );
+                }
+                Err(ToolImageRejection::TooLarge { bytes }) => {
+                    notes.push_str(&format!(
+                        "\n\n[The tool also returned an image of {:.2} MB even after it was reduced to {MAX_TOOL_IMAGE_EDGE} pixels, which is too large to show.]",
+                        bytes as f64 / 1_000_000.0
+                    ));
+                }
+                Err(ToolImageRejection::EncodingFailed(message)) => {
+                    return Err(ApplicationError::InternalError(format!(
+                        "agent.tool_image_encoding_failed: {message}"
+                    )));
+                }
+            }
+        }
+        Ok(notes)
+    }
+
+    pub(super) async fn record_tool_outcome(
+        &self,
+        prepared: &PreparedInvocation,
         round: usize,
-        snapshot_id: &str,
+        file_base: &str,
         outcome: &AgentToolDispatchOutcome,
     ) -> Result<WorkspacePath, ApplicationError> {
+        let run_id = prepared.invocation.run_id.as_str();
+        let invocation_id = prepared.invocation.id.as_str();
+        let snapshot_id = prepared.tool_snapshot.id().as_str();
         let path = self
-            .store_tool_result(run_id, invocation_id, round, &outcome.result)
+            .store_tool_result(run_id, invocation_id, round, file_base, &outcome.result)
             .await?;
         let error_message = outcome.result.is_error.then(|| {
             if outcome.result.tool_id.is_builtin() {
@@ -165,13 +200,10 @@ impl AgentRuntimeService {
         run_id: &str,
         invocation_id: &str,
         round: usize,
+        file_base: &str,
         result: &AgentToolResult,
     ) -> Result<WorkspacePath, ApplicationError> {
-        let result_root = self.tool_result_root(run_id).await?;
-        let path = WorkspacePath::parse(format!(
-            "{result_root}/{invocation_id}/round-{round:03}-{}.json",
-            tool_call_audit_file_stem(&result.call_id)
-        ))?;
+        let path = WorkspacePath::parse(format!("{file_base}.json"))?;
         let text = serde_json::to_string_pretty(result).map_err(|error| {
             ApplicationError::ValidationError(format!(
                 "agent.tool_result_serialize_failed: {error}"
@@ -197,20 +229,28 @@ impl AgentRuntimeService {
         Ok(path)
     }
 
-    async fn tool_result_root(&self, run_id: &str) -> Result<String, ApplicationError> {
-        Ok(
-            if self
-                .active_run_handle(run_id)
-                .await?
-                .target
-                .session_id()
-                .is_some()
-            {
-                format!("tool-results/{run_id}")
-            } else {
-                "tool-results".to_string()
-            },
-        )
+    pub(super) async fn tool_call_file_base(
+        &self,
+        run_id: &str,
+        invocation_id: &str,
+        round: usize,
+        call_id: &str,
+    ) -> Result<String, ApplicationError> {
+        let root = if self
+            .active_run_handle(run_id)
+            .await?
+            .target
+            .session_id()
+            .is_some()
+        {
+            format!("tool-results/{run_id}")
+        } else {
+            "tool-results".to_string()
+        };
+        Ok(format!(
+            "{root}/{invocation_id}/round-{round:03}-{}",
+            tool_call_audit_file_stem(call_id)
+        ))
     }
 }
 
@@ -225,9 +265,8 @@ pub(super) fn extension_reply_result(
                 Value::String(text) => text.clone(),
                 _ => value.to_string(),
             };
-            let mut result = AgentToolResult::ok(call, content, value);
-            let images =
-                decode_tool_images(&mut result, images.into_iter().map(|image| image.data));
+            let result = AgentToolResult::ok(call, content, value);
+            let images = decode_tool_images(images.into_iter().map(|image| image.data));
             AgentToolDispatchOutcome::new(result, AgentToolEffect::None, elapsed_ms)
                 .with_images(images)
         }
@@ -237,20 +276,13 @@ pub(super) fn extension_reply_result(
     }
 }
 
-pub(super) fn decode_tool_images(
-    result: &mut AgentToolResult,
-    images: impl IntoIterator<Item = String>,
-) -> Vec<IncomingToolImage> {
+fn decode_tool_images(images: impl IntoIterator<Item = String>) -> Vec<IncomingToolImage> {
     images
         .into_iter()
-        .filter_map(|data| match STANDARD.decode(data) {
-            Ok(data) => Some(IncomingToolImage { data }),
-            Err(_) => {
-                result
-                    .content
-                    .push_str("\n\n[The tool also returned an image that could not be decoded.]");
-                None
-            }
+        .map(|data| {
+            STANDARD
+                .decode(data)
+                .map_err(|_| ToolImageRejection::Undecodable)
         })
         .collect()
 }
@@ -318,7 +350,7 @@ fn mcp_model_content(result: &AgentToolResult) -> String {
         sections.push(markdown_value_section("Error details", data));
     }
 
-    if sections.is_empty() {
+    if sections.is_empty() && result.images.is_empty() {
         "The tool completed without returning content.".to_string()
     } else {
         sections.join("\n\n")
@@ -417,7 +449,7 @@ pub(super) fn mcp_known_response_result(
     response: McpKnownResponse,
     elapsed_ms: u128,
 ) -> AgentToolDispatchOutcome {
-    match response {
+    let (result, images) = match response {
         McpKnownResponse::ToolResult(result) => {
             let content = result
                 .text
@@ -440,19 +472,15 @@ pub(super) fn mcp_known_response_result(
                 "structuredContent": result.structured_content,
                 "diagnostics": diagnostics,
             });
-            let mut projected = if result.is_error {
+            let projected = if result.is_error {
                 let mut projected = AgentToolResult::error(call, "mcp.tool_error", &content);
                 projected.structured = structured;
                 projected
             } else {
                 AgentToolResult::ok(call, content, structured)
             };
-            let images = decode_tool_images(
-                &mut projected,
-                result.images.into_iter().map(|image| image.data),
-            );
-            AgentToolDispatchOutcome::new(projected, AgentToolEffect::None, elapsed_ms)
-                .with_images(images)
+            let images = decode_tool_images(result.images.into_iter().map(|image| image.data));
+            (projected, images)
         }
 
         McpKnownResponse::ServerError(error) => {
@@ -464,7 +492,7 @@ pub(super) fn mcp_known_response_result(
                     "data": error.data,
                 }
             });
-            AgentToolDispatchOutcome::new(result, AgentToolEffect::None, elapsed_ms)
+            (result, Vec::new())
         }
         McpKnownResponse::Unsupported(response) => {
             let mut result =
@@ -475,9 +503,10 @@ pub(super) fn mcp_known_response_result(
                     "message": response.message,
                 }
             });
-            AgentToolDispatchOutcome::new(result, AgentToolEffect::None, elapsed_ms)
+            (result, Vec::new())
         }
-    }
+    };
+    AgentToolDispatchOutcome::new(result, AgentToolEffect::None, elapsed_ms).with_images(images)
 }
 
 pub(super) fn tool_call_audit_file_stem(call_id: &str) -> String {
@@ -531,30 +560,5 @@ mod tests {
         assert!(content.contains("Image content is not supported"));
         assert!(!content.contains("mcp.call_content_unsupported"));
         assert!(!content.contains("Result metadata"));
-    }
-
-    #[test]
-    fn mcp_model_content_deduplicates_serialized_structured_data() {
-        let result = AgentToolResult::ok(
-            &tt_domain::models::tool::ToolInvocation {
-                call_id: "call_mcp".to_string(),
-                tool_id: ToolId::new(
-                    &ToolProviderId::parse("mcp/550e8400-e29b-41d4-a716-446655440000").unwrap(),
-                    "lookup",
-                )
-                .unwrap(),
-                arguments: tt_domain::models::tool::ToolArguments::empty(),
-                provider_metadata: serde_json::Value::Null,
-            },
-            r#"{"issueId":42}"#.to_string(),
-            json!({
-                "structuredContent": { "issueId": 42 },
-                "diagnostics": [],
-            }),
-        );
-
-        let content = mcp_model_content(&result);
-        assert_eq!(content.matches("issueId").count(), 1);
-        assert!(content.contains("42"));
     }
 }
