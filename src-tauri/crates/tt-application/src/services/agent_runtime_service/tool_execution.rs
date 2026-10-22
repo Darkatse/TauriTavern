@@ -226,7 +226,7 @@ impl AgentRuntimeService {
                 let outcome = self.call_mcp_tool(call, args, cancel).await?;
                 started_tool = true;
                 match outcome {
-                    McpCallOutcome::KnownResponse(response) => Ok(AgentToolDispatchOutcome::new(mcp_known_response_result(call, response), AgentToolEffect::None, started.elapsed().as_millis())),
+                    McpCallOutcome::KnownResponse(response) => Ok(mcp_known_response_result(call, response, started.elapsed().as_millis())),
                     McpCallOutcome::NotSent(issue) => Ok(AgentToolDispatchOutcome::error(
                         call,
                         issue.code.as_str(),

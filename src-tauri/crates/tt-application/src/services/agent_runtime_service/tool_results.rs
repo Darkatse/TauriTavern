@@ -15,7 +15,7 @@ use tt_ports::workspace_fs::WorkspaceWriteGuard;
 use super::markdown::render_markdown_value;
 use super::{AgentRuntimeService, PreparedInvocation};
 use crate::errors::ApplicationError;
-use crate::services::agent_tools::AgentToolDispatchOutcome;
+use crate::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
 use crate::services::hashing::hex_lower;
 
 const TOOL_CALL_AUDIT_DIGEST_BYTES: usize = 8;
@@ -228,12 +228,8 @@ pub(super) fn extension_reply_result(
             let mut result = AgentToolResult::ok(call, content, value);
             let images =
                 decode_tool_images(&mut result, images.into_iter().map(|image| image.data));
-            AgentToolDispatchOutcome::new(
-                result,
-                crate::services::agent_tools::AgentToolEffect::None,
-                elapsed_ms,
-            )
-            .with_images(images)
+            AgentToolDispatchOutcome::new(result, AgentToolEffect::None, elapsed_ms)
+                .with_images(images)
         }
         ExtensionToolReply::Error { message } => {
             AgentToolDispatchOutcome::error(call, "extension.tool_error", &message, elapsed_ms)
@@ -419,7 +415,8 @@ fn line_addressable_content(text: &str) -> String {
 pub(super) fn mcp_known_response_result(
     call: &ToolInvocation,
     response: McpKnownResponse,
-) -> AgentToolResult {
+    elapsed_ms: u128,
+) -> AgentToolDispatchOutcome {
     match response {
         McpKnownResponse::ToolResult(result) => {
             let content = result
@@ -443,13 +440,19 @@ pub(super) fn mcp_known_response_result(
                 "structuredContent": result.structured_content,
                 "diagnostics": diagnostics,
             });
-            if result.is_error {
-                let mut result = AgentToolResult::error(call, "mcp.tool_error", &content);
-                result.structured = structured;
-                result
+            let mut projected = if result.is_error {
+                let mut projected = AgentToolResult::error(call, "mcp.tool_error", &content);
+                projected.structured = structured;
+                projected
             } else {
                 AgentToolResult::ok(call, content, structured)
-            }
+            };
+            let images = decode_tool_images(
+                &mut projected,
+                result.images.into_iter().map(|image| image.data),
+            );
+            AgentToolDispatchOutcome::new(projected, AgentToolEffect::None, elapsed_ms)
+                .with_images(images)
         }
 
         McpKnownResponse::ServerError(error) => {
@@ -461,7 +464,7 @@ pub(super) fn mcp_known_response_result(
                     "data": error.data,
                 }
             });
-            result
+            AgentToolDispatchOutcome::new(result, AgentToolEffect::None, elapsed_ms)
         }
         McpKnownResponse::Unsupported(response) => {
             let mut result =
@@ -472,7 +475,7 @@ pub(super) fn mcp_known_response_result(
                     "message": response.message,
                 }
             });
-            result
+            AgentToolDispatchOutcome::new(result, AgentToolEffect::None, elapsed_ms)
         }
     }
 }

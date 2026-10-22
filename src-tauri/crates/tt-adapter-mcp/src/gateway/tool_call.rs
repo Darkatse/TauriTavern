@@ -13,8 +13,8 @@ use tokio_util::sync::CancellationToken;
 use tt_adapter_http::MCP_REQUEST_TIMEOUT;
 
 use tt_ports::mcp::{
-    McpCallDiagnostic, McpCallIssue, McpCallOutcome, McpKnownResponse, McpServerError,
-    McpTextContent, McpToolCallResult, McpUnsupportedResponse,
+    McpCallDiagnostic, McpCallIssue, McpCallOutcome, McpImageContent, McpKnownResponse,
+    McpServerError, McpTextContent, McpToolCallResult, McpUnsupportedResponse,
 };
 
 use super::{DISCOVERY_TIMEOUT, client::McpClient, discovery::list_tools};
@@ -187,6 +187,7 @@ fn map_call_response(result: Result<ServerResult, ServiceError>) -> McpCallOutco
 
 fn project_tool_result(result: rmcp::model::CallToolResult) -> McpToolCallResult {
     let mut text = Vec::new();
+    let mut images = Vec::new();
     let mut diagnostics = Vec::new();
     for (index, content) in result.content.into_iter().enumerate() {
         match content {
@@ -194,14 +195,10 @@ fn project_tool_result(result: rmcp::model::CallToolResult) -> McpToolCallResult
                 index,
                 text: content.text,
             }),
-            ContentBlock::Image(content) => diagnostics.push(McpCallDiagnostic {
-                code: "mcp.call_content_unsupported".to_string(),
-                message: format!(
-                    "Image content ({}, {} encoded bytes) is not supported",
-                    content.mime_type,
-                    content.data.len()
-                ),
-                content_index: Some(index),
+            ContentBlock::Image(content) => images.push(McpImageContent {
+                index,
+                mime_type: content.mime_type,
+                data: content.data,
             }),
             ContentBlock::Audio(content) => diagnostics.push(McpCallDiagnostic {
                 code: "mcp.call_content_unsupported".to_string(),
@@ -255,6 +252,7 @@ fn project_tool_result(result: rmcp::model::CallToolResult) -> McpToolCallResult
     }
 
     McpToolCallResult {
+        images,
         is_error: result.is_error.unwrap_or(false),
         text,
         structured_content: result.structured_content,
