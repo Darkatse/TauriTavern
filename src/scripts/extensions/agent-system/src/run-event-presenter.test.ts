@@ -296,6 +296,7 @@ test('reused tool call IDs keep pending calls and detail links within their invo
 
     for (const call of calls) {
         const toolTargets = buildEventDetailTargets(presentRunEvent(call.completed), events);
+        expect(toolTargets).toContainEqual({ type: 'file', labelKey: 'timelineArguments', path: call.argumentsRef });
         expect(toolTargets).toContainEqual({ type: 'file', labelKey: 'timelineToolResult', path: call.resultPath });
         const patchTargets = buildEventDetailTargets(presentRunEvent(call.patched), events);
         expect(patchTargets.find(target => target.type === 'patchDiff')).toMatchObject({

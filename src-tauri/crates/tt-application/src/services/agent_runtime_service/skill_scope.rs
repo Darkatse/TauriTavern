@@ -1,7 +1,8 @@
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::dto::agent_dto::AgentStartRunDto;
 use crate::errors::ApplicationError;
+use crate::services::prompt_assembly_service::current_preset_ref;
 use tt_domain::models::agent::profile::{
     AgentPresetBindingMode, AgentPresetRef, ResolvedAgentProfile,
 };
@@ -11,32 +12,18 @@ use tt_domain::models::skill::{SkillIndexEntry, SkillScope};
 pub(super) fn resolve_run_skill_scope_refs(
     dto: &AgentStartRunDto,
     profile: &ResolvedAgentProfile,
+    prompt_snapshot: &Value,
 ) -> Result<AgentRunSkillScopeRefs, ApplicationError> {
-    let explicit_preset = dto
-        .skill_scope_refs
-        .preset
-        .as_ref()
-        .map(clone_valid_preset_ref)
-        .transpose()?;
-    let preset = if profile.preset.mode == AgentPresetBindingMode::Ref {
-        let profile_preset = profile.preset.ref_.as_ref().ok_or_else(|| {
-            ApplicationError::ValidationError(
-                "agent.profile_preset_ref_required: preset.ref is required when preset.mode is ref"
-                    .to_string(),
-            )
-        })?;
-        let profile_preset = clone_valid_preset_ref(profile_preset)?;
-        if let Some(explicit) = explicit_preset.as_ref()
-            && explicit != &profile_preset
+    // Always the captured chat preset, whatever the root binds.
+    let preset = match prompt_snapshot.pointer("/frozenRunInputSnapshot/currentPreset") {
+        // An unnamed capture blocks only a root bound to the current preset.
+        Some(preset)
+            if preset["name"].is_null() && profile.preset.mode == AgentPresetBindingMode::Ref =>
         {
-            return Err(ApplicationError::ValidationError(format!(
-                "agent.skill_scope_preset_mismatch: skillScopeRefs.preset `{}/{}` does not match profile preset `{}/{}`",
-                explicit.api_id, explicit.name, profile_preset.api_id, profile_preset.name
-            )));
+            None
         }
-        Some(profile_preset)
-    } else {
-        explicit_preset
+        Some(preset) => Some(current_preset_ref(preset)?),
+        None => None,
     };
 
     let chat_character_id = match &dto.chat_ref {
@@ -78,7 +65,6 @@ pub(super) fn skill_scope_order_for_profile(
             Some(preset)
         }
         AgentPresetBindingMode::CurrentPromptSnapshot => refs.preset.as_ref(),
-        AgentPresetBindingMode::None => None,
     };
     if let Some(preset) = preset {
         let preset = clone_valid_preset_ref(preset)?;

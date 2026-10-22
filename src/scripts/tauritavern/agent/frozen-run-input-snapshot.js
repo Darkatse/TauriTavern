@@ -1,14 +1,19 @@
+import { snapshotVariableMacroValues } from '../../variables/values.js';
+import { normalizeMacroResult } from '../../macros/values.js';
+
 export const FROZEN_RUN_INPUT_SNAPSHOT_KIND = 'tauritavern.agentFrozenRunInputSnapshot';
-export const FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION = 1;
+export const FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION = 2;
 export const CURRENT_MODEL_CONNECTION_SNAPSHOT_KIND = 'tauritavern.currentModelConnectionSnapshot';
 export const CURRENT_MODEL_CONNECTION_SNAPSHOT_SCHEMA_VERSION = 1;
 
 export function buildFrozenRunInputSnapshot({
     generationType,
+    contextKind,
     promptInputs,
     worldInfoActivation,
     macroContext,
     variables,
+    currentPreset,
     currentModelConnection,
 } = {}) {
     const normalizedGenerationType = normalizeGenerationType(generationType ?? promptInputs?.type);
@@ -20,11 +25,49 @@ export function buildFrozenRunInputSnapshot({
         schemaVersion: FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
         kind: FROZEN_RUN_INPUT_SNAPSHOT_KIND,
         generationType: normalizedGenerationType,
+        ...(contextKind ? { contextKind: normalizeContextKind(contextKind) } : {}),
         promptInputs: frozenPromptInputs,
         worldInfoActivation: frozenWorldInfoActivation,
         macroContext: frozenMacroContext,
         ...(variables ? { variables: clonePlainObject(variables, 'agent.frozen_run_input_variables_invalid: variables must be a structured-cloneable object') } : {}),
+        ...(currentPreset !== undefined ? { currentPreset: normalizeCurrentPreset(currentPreset) } : {}),
         ...(currentModelConnection ? { currentModelConnection: normalizeCurrentModelConnectionSnapshot(currentModelConnection) } : {}),
+    };
+}
+
+/**
+ * Keep the existing read-only values usable by old Run readers. Only character
+ * templates need a second representation; names, settings and chat facts are shared.
+ */
+export function updateFrozenMacroContext(snapshot, context, { characterValues = {}, builtins = {} } = {}) {
+    const { variables, character, extensionPrompts, bannedWords, ...facts } = context;
+    return {
+        ...snapshot,
+        macroContext: {
+            ...facts,
+            characterTemplates: character,
+            character: characterValues,
+            builtins,
+            variableValues: snapshotVariableMacroValues(variables,
+                context.engine === 'new' ? normalizeMacroResult : String),
+        },
+        variables,
+    };
+}
+
+/** Only rebuilding needs raw templates. Viewing/resuming a prepared old Run does not. */
+export function createMacroContextFromSnapshot(snapshot, workingInputs) {
+    const saved = snapshot.macroContext;
+    if (!saved?.characterTemplates || !saved.settings || !saved.engine || !snapshot.variables) {
+        throw new Error('agent.macro_context_rebuild_unavailable: This Run has no captured macro inputs for independent prompt assembly; start a new Run to rebuild its prompt');
+    }
+    const { characterTemplates, character, builtins, variableValues, ...facts } = saved;
+    return {
+        ...facts,
+        character: characterTemplates,
+        variables: snapshot.variables,
+        extensionPrompts: workingInputs.extensionPrompts,
+        bannedWords: [],
     };
 }
 
@@ -35,12 +78,11 @@ export async function buildCurrentModelConnectionSnapshot({
     secretState,
     currentModelConnectionApi,
 } = {}) {
-    const settingsSnapshot = clonePlainObject(
-        settings,
-        'agent.current_model_connection_settings_invalid: settings must be a structured-cloneable object',
-    );
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+        throw new Error('agent.current_model_connection_settings_invalid: settings must be an object');
+    }
     const source = normalizeNonEmptyString(
-        settingsSnapshot.chat_completion_source,
+        settings.chat_completion_source,
         'agent.current_model_connection_source_required: chat_completion_source cannot be empty',
     );
     const resolvedModel = normalizeNonEmptyString(
@@ -51,7 +93,7 @@ export async function buildCurrentModelConnectionSnapshot({
     const api = currentModelConnectionApi || requireCurrentModelConnectionApi();
     const snapshot = await api.buildCurrentModelConnectionSnapshot({
         settings: {
-            ...settingsSnapshot,
+            ...settings,
             chat_completion_source: source,
         },
         model: resolvedModel,
@@ -156,6 +198,9 @@ export function normalizeFrozenRunInputSnapshot(value) {
     }
 
     const schemaVersion = Number(value.schemaVersion ?? value.schema_version);
+    if (schemaVersion === 1) {
+        throw new Error('agent.frozen_run_input_outdated: schemaVersion 1 input predates per-source context capture; generate again to capture a new input');
+    }
     if (schemaVersion !== FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION) {
         throw new Error(`agent.frozen_run_input_snapshot_schema_unsupported: schemaVersion ${schemaVersion} is unsupported`);
     }
@@ -166,30 +211,26 @@ export function normalizeFrozenRunInputSnapshot(value) {
     }
 
     const generationType = normalizeGenerationType(value.generationType ?? value.generation_type);
-    const promptInputs = clonePlainObject(
-        value.promptInputs ?? value.prompt_inputs,
-        'agent.frozen_run_input_prompt_inputs_invalid: promptInputs must be a structured-cloneable object',
-    );
-    const worldInfoActivation = clonePlainObject(
-        value.worldInfoActivation ?? value.world_info_activation,
-        'agent.frozen_run_input_world_info_activation_invalid: worldInfoActivation must be a structured-cloneable object',
-    );
-    const macroContext = clonePlainObject(
-        value.macroContext ?? value.macro_context,
-        'agent.frozen_run_input_macro_context_invalid: macroContext must be a structured-cloneable object',
-    );
-
-    return {
-        schemaVersion: FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
-        kind: FROZEN_RUN_INPUT_SNAPSHOT_KIND,
+    return buildFrozenRunInputSnapshot({
         generationType,
-        promptInputs,
-        worldInfoActivation,
-        macroContext,
-        ...(value.variables ? { variables: clonePlainObject(value.variables, 'agent.frozen_run_input_variables_invalid: variables must be a structured-cloneable object') } : {}),
-        ...((value.currentModelConnection ?? value.current_model_connection)
-            ? { currentModelConnection: normalizeCurrentModelConnectionSnapshot(value.currentModelConnection ?? value.current_model_connection) }
-            : {}),
+        contextKind: value.contextKind,
+        promptInputs: value.promptInputs ?? value.prompt_inputs,
+        worldInfoActivation: value.worldInfoActivation ?? value.world_info_activation,
+        macroContext: value.macroContext ?? value.macro_context,
+        variables: value.variables,
+        currentPreset: value.currentPreset,
+        currentModelConnection: value.currentModelConnection ?? value.current_model_connection,
+    });
+}
+
+function normalizeCurrentPreset(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('agent.current_preset_invalid: currentPreset must be an object');
+    }
+    return {
+        apiId: normalizeNonEmptyString(value.apiId, 'agent.current_preset_ref_invalid: currentPreset.apiId cannot be empty'),
+        name: value.name == null ? null : normalizeNonEmptyString(value.name, 'agent.current_preset_ref_invalid: currentPreset.name cannot be empty'),
+        settings: clonePlainObject(value.settings, 'agent.current_preset_settings_invalid: currentPreset.settings must be an object'),
     };
 }
 
@@ -199,6 +240,11 @@ function normalizeGenerationType(value) {
         throw new Error('agent.frozen_run_input_generation_type_empty: generationType cannot be empty');
     }
     return generationType;
+}
+
+function normalizeContextKind(value) {
+    if (value !== 'chat' && value !== 'session') throw new Error('agent.context_kind_invalid: expected chat or session');
+    return value;
 }
 
 function normalizeNonEmptyString(value, message) {

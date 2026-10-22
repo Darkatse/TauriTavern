@@ -1,0 +1,365 @@
+import { computeAccessibleDescription, computeAccessibleName, getRole } from 'dom-accessibility-api';
+import { documentWindow, isHtmlTag } from './document.ts';
+import { appToolAliases } from './names.ts';
+
+const { snapshot: SNAPSHOT } = appToolAliases;
+
+export const MAX_PREVIEW = 200;
+export type ElementDescription = Record<string, string | number | boolean>;
+export type ObservationOptions = {
+    sensitiveSelector?: string;
+    omit?: (element: Element) => string | null;
+};
+
+const FORM_CONTROLS = 'input,textarea,select,button';
+const NAME_FROM_CONTENT_ROLES = new Set([
+    'button', 'link', 'heading', 'checkbox', 'radio', 'option', 'tab',
+    'menuitem', 'menuitemradio', 'menuitemcheckbox',
+]);
+const TEXT_STRUCTURE_ROLES = new Set([
+    'heading', 'paragraph', 'list', 'listitem', 'definition', 'term',
+    'table', 'rowgroup', 'row', 'cell', 'columnheader', 'rowheader', 'separator',
+]);
+
+export function isTextRegion(element: Element): boolean {
+    return element.matches('.mes_text,.mes_reasoning');
+}
+
+/** Bound escaped text, so quotes/control characters cannot expand a preview without limit. */
+export function preview(text: string, limit = MAX_PREVIEW) {
+    let value = '';
+    let size = 0;
+    for (const character of text) {
+        size += JSON.stringify(character).length - 2;
+        if (size > limit) {
+            return { value, truncated: true };
+        }
+        value += character;
+    }
+    return { value, truncated: false };
+}
+
+export function isDisabled(element: Element): boolean {
+    return element.matches(':disabled') || element.closest('[aria-disabled="true"]') !== null;
+}
+
+export function isCheckableInput(element: Element): element is HTMLInputElement & { type: 'checkbox' | 'radio' } {
+    return isHtmlTag(element, 'input') && (element.type === 'checkbox' || element.type === 'radio');
+}
+
+function hasSensitiveTextSource(element: Element, reference: 'aria-labelledby' | 'aria-describedby', isSensitive: (element: Element) => boolean): boolean {
+    // Accessible text can follow external labels and owned nodes, including cycles.
+    const valueContainer = isHtmlTag(element, 'textarea') || isHtmlTag(element, 'select')
+        || (isHtmlTag(element, 'input') && !['button', 'submit', 'reset', 'image'].includes(element.type));
+    const sources = [element];
+    const visited = new Set<Element>();
+    for (const [index, source] of sources.entries()) {
+        // Only the initial value container is exempt; references back to it are text sources.
+        if ((index !== 0 || !valueContainer) && isSensitive(source)) return true;
+        if (visited.has(source)) continue;
+        visited.add(source);
+        // A field's value and a region's contents are not the text of its explicit label.
+        if (index !== 0 || (reference === 'aria-labelledby' && !valueContainer && !source.hasAttribute('aria-labelledby'))) {
+            sources.push(...source.children);
+        }
+        if (isHtmlTag(source, 'input') || isHtmlTag(source, 'textarea')
+            || isHtmlTag(source, 'select') || isHtmlTag(source, 'button')) {
+            sources.push(...source.labels ?? []);
+        }
+        for (const attribute of [reference, 'aria-labelledby', 'aria-owns']) {
+            for (const id of (source.getAttribute(attribute) ?? '').split(/\s+/)) {
+                const related = source.ownerDocument.getElementById(id);
+                if (related) sources.push(related);
+            }
+        }
+    }
+    return false;
+}
+
+/** Styles belong to one observation/action, never to a persistent DOM mirror. */
+export function createSemantics(options: ObservationOptions) {
+    const styles = new Map<Element, CSSStyleDeclaration>();
+
+    function isSensitive(element: Element): boolean {
+        return element.matches('input[type="password"]')
+            || (options.sensitiveSelector !== undefined && element.closest(options.sensitiveSelector) !== null);
+    }
+
+    function isMasked(element: Element): boolean {
+        return isSensitive(element) || Boolean(options.omit?.(element));
+    }
+
+    function getStyle(element: Element): CSSStyleDeclaration {
+        let result = styles.get(element);
+        if (!result) {
+            result = documentWindow(element.ownerDocument).getComputedStyle(element);
+            styles.set(element, result);
+        }
+        return result;
+    }
+
+    function excludesSubtree(element: Element): boolean {
+        return element.matches('script,style,template,noscript,head,[aria-hidden="true"]')
+            || getStyle(element).display === 'none';
+    }
+
+    function isVisible(element: Element): boolean {
+        return !excludesSubtree(element)
+            && getStyle(element).visibility === 'visible'
+            && Array.from(element.getClientRects()).some(rect => rect.width > 0 && rect.height > 0);
+    }
+
+    // Direct roots must respect the same ancestor boundaries as a walk from the document.
+    // A zero-size wrapper alone is not a boundary: its positioned children may still be visible.
+    function isWithinObservedContent(element: Element): boolean {
+        for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+            if (excludesSubtree(parent) || readOmissionReason(parent)) return false;
+            if (isHtmlTag(parent, 'details') && !parent.open
+                && !parent.querySelector(':scope > summary')?.contains(element)) return false;
+        }
+        return true;
+    }
+
+    function requireFrameVisible(frame: HTMLIFrameElement) {
+        if (!isVisible(frame) || !isWithinObservedContent(frame) || isSensitive(frame)) {
+            throw new Error(`The embedded page is hidden or no longer displayed. Call ${SNAPSHOT} with {} and open or restore its visible panel before entering it again.`);
+        }
+    }
+
+    function isTextVisible(node: Text): boolean {
+        const parent = node.parentElement;
+        if (!parent) {
+            return false;
+        }
+        if (isVisible(parent)) {
+            return true;
+        }
+        const parentStyle = getStyle(parent);
+        if (parentStyle.display !== 'contents' || parentStyle.visibility !== 'visible') {
+            return false;
+        }
+
+        // display:contents has no element box. Inspect the text's own rendered range.
+        const range = node.ownerDocument.createRange();
+        range.setStart(node, 0);
+        range.setEnd(node, Math.min(node.length, MAX_PREVIEW));
+        return Array.from(range.getClientRects()).some(rect => rect.width > 0 && rect.height > 0);
+    }
+
+    function isScrollable(element: Element): boolean {
+        if (element.clientHeight <= 0 || element.scrollHeight <= element.clientHeight) {
+            return false;
+        }
+        return element === element.ownerDocument.scrollingElement || /^(auto|scroll)$/.test(getStyle(element).overflowY);
+    }
+
+    function readRole(element: Element, compactText = false): string | null {
+        if (element === element.ownerDocument.documentElement) {
+            return 'document';
+        }
+        if (options.omit?.(element) || isTextRegion(element)) {
+            return 'region';
+        }
+        if (options.sensitiveSelector !== undefined && element.matches(options.sensitiveSelector) && !element.matches(FORM_CONTROLS)) {
+            return 'group';
+        }
+        if (element.localName === 'iframe') {
+            return 'iframe';
+        }
+        if (element.matches('.cm-editor') || element.shadowRoot) {
+            return 'element';
+        }
+        if (element.localName === 'summary') {
+            return 'button';
+        }
+        if (element.localName === 'details') {
+            return 'group';
+        }
+
+        const computedRole = getRole(element);
+        const isSemanticRole = computedRole && !['generic', 'none', 'presentation'].includes(computedRole);
+        // Message formatting shares one preview; widgets and scrollable regions remain discoverable.
+        const textStructure = compactText && computedRole && TEXT_STRUCTURE_ROLES.has(computedRole)
+            && !element.hasAttribute('tabindex') && !isScrollable(element);
+        if (isSemanticRole && !textStructure && /^[a-z]{1,40}$/.test(computedRole)) {
+            return computedRole;
+        }
+        if (element.matches(FORM_CONTROLS)) {
+            return 'control';
+        }
+        return isScrollable(element) ? 'container' : null;
+    }
+
+    function readOmissionReason(element: Element): string | null {
+        if (isSensitive(element) && !element.matches(FORM_CONTROLS)) {
+            return 'sensitive content';
+        }
+        const omitted = options.omit?.(element);
+        if (omitted) return omitted;
+        if (isHtmlTag(element, 'iframe')) {
+            const doc = element.contentDocument;
+            if (!doc) return 'content is not accessible from this page; it may be isolated or cross-origin';
+            if (!doc.body) return 'no readable HTML content yet; observe again after it loads';
+        }
+        if (element.shadowRoot) {
+            return 'shadow DOM; not inspected';
+        }
+        if (element.matches('.cm-editor')) {
+            return 'complex editor; use its API';
+        }
+        return null;
+    }
+
+    function readName(element: Element): string {
+        // Associated labels can contain sensitive values too; avoid deriving a name from those contents.
+        if (hasSensitiveTextSource(element, 'aria-labelledby', isSensitive)) {
+            return element.getAttribute('aria-label') ?? element.getAttribute('title') ?? '';
+        }
+        if (isHtmlTag(element, 'option')) {
+            return element.label;
+        }
+        return computeAccessibleName(element, {
+            getComputedStyle: getStyle,
+            computedStyleSupportsPseudoElements: false,
+        });
+    }
+
+    function describeElement(element: Element): ElementDescription {
+        const result: ElementDescription = { role: readRole(element) ?? 'element' };
+        const omitted = readOmissionReason(element);
+        if (omitted) {
+            result.omitted = omitted;
+        }
+        if (!omitted || isHtmlTag(element, 'iframe')) {
+            const name = readName(element);
+            if (name) {
+                result.name = name;
+            }
+            if (!hasSensitiveTextSource(element, 'aria-describedby', isSensitive)) {
+                const description = computeAccessibleDescription(element, {
+                    getComputedStyle: getStyle,
+                    computedStyleSupportsPseudoElements: false,
+                });
+                if (description && name !== description && !name.startsWith(`${description} `)) result.description = description;
+            }
+        }
+
+        if (isDisabled(element)) {
+            result.disabled = true;
+        }
+        if (element.closest('[inert]')) {
+            result.inert = true;
+        }
+        // Native form state takes precedence; ARIA also supplies states for custom controls.
+        appendAriaState(element, result);
+        appendControlState(element, result, isSensitive);
+        appendDisclosureState(element, result);
+
+        if (isScrollable(element)) {
+            result.scrollable = true;
+            result.scrollTop = Math.round(element.scrollTop);
+            result.scrollMax = Math.max(0, element.scrollHeight - element.clientHeight);
+        }
+        limitDescriptionText(result);
+        return result;
+    }
+
+    return { isSensitive, isMasked, excludesSubtree, isVisible, isWithinObservedContent, requireFrameVisible, isTextVisible, isScrollable, readRole, readOmissionReason, describeElement };
+}
+
+export type Semantics = ReturnType<typeof createSemantics>;
+
+function appendControlState(element: Element, result: ElementDescription, isSensitive: (element: Element) => boolean) {
+    if ((isHtmlTag(element, 'input') || isHtmlTag(element, 'textarea') || isHtmlTag(element, 'select'))
+        && !element.validity.valid) {
+        result.invalid = true;
+    }
+    if (isHtmlTag(element, 'input') || isHtmlTag(element, 'textarea')) {
+        if (element.readOnly) {
+            result.readOnly = true;
+        }
+    }
+
+    if (isHtmlTag(element, 'input')) {
+        result.inputType = element.type;
+        if (element.type === 'number' || element.type === 'range') {
+            for (const constraint of ['min', 'max', 'step'] as const) {
+                if (element[constraint]) result[constraint] = element[constraint];
+            }
+        }
+        if (isCheckableInput(element)) {
+            result.checked = element.checked;
+            if (element.indeterminate) {
+                result.indeterminate = true;
+            }
+        } else if (element.type !== 'file') {
+            result.value = isSensitive(element) ? '[redacted]' : element.value;
+        }
+    } else if (isHtmlTag(element, 'textarea')) {
+        result.value = isSensitive(element) ? '[redacted]' : element.value;
+    } else if (isHtmlTag(element, 'select') || isHtmlTag(element, 'option')) {
+        result.value = isSensitive(element) ? '[redacted]' : element.value;
+        if (isHtmlTag(element, 'option')) {
+            result.selected = element.selected;
+        } else if (element.multiple) {
+            result.multiple = true;
+        }
+    }
+}
+
+function appendAriaState(element: Element, result: ElementDescription) {
+    for (const state of ['checked', 'selected', 'expanded', 'readonly', 'pressed', 'busy']) {
+        const value = element.getAttribute(`aria-${state}`);
+        if (value !== 'true' && value !== 'false' && !(value === 'mixed' && (state === 'checked' || state === 'pressed'))) {
+            continue;
+        }
+        const key = state === 'readonly' ? 'readOnly' : state;
+        result[key] = value === 'mixed' ? value : value === 'true';
+    }
+    const invalid = element.getAttribute('aria-invalid');
+    if (invalid === 'true' || invalid === 'false') result.invalid = invalid === 'true';
+    else if (invalid === 'grammar' || invalid === 'spelling') result.invalid = invalid;
+    const current = element.getAttribute('aria-current');
+    if (current) result.current = current === 'true' ? true : current === 'false' ? false : current;
+}
+
+function appendDisclosureState(element: Element, result: ElementDescription) {
+    if (isHtmlTag(element, 'details')) {
+        result.expanded = element.open;
+    }
+    if (element.localName === 'summary' && element.parentElement && isHtmlTag(element.parentElement, 'details')) {
+        result.expanded = element.parentElement.open;
+    }
+    if (isHtmlTag(element, 'dialog') && documentWindow(element.ownerDocument).CSS.supports('selector(:modal)')) {
+        result.modal = element.matches(':modal');
+    }
+}
+
+function limitDescriptionText(description: ElementDescription) {
+    const textFields = Object.entries(description).filter(
+        (entry): entry is [string, string] => entry[0] !== 'role' && typeof entry[1] === 'string',
+    );
+    for (const [key, text] of textFields) {
+        const bounded = preview(text, Math.floor(MAX_PREVIEW / textFields.length));
+        description[key] = bounded.value;
+        if (bounded.truncated) {
+            description[`${key}Truncated`] = true;
+        }
+    }
+}
+
+export function suppressesText(element: Element, role: string | null): boolean {
+    return (role !== null && NAME_FROM_CONTENT_ROLES.has(role)) || element.matches('input,textarea,select');
+}
+
+export function describeLine(description: ElementDescription): string {
+    const { role, name, ...states } = description;
+    const parts = [String(role)];
+    if (name) {
+        parts.push(JSON.stringify(name));
+    }
+    for (const [key, value] of Object.entries(states)) {
+        parts.push(`${key}=${JSON.stringify(value)}`);
+    }
+    return parts.join(' ');
+}

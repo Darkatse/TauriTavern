@@ -9,6 +9,7 @@ const original = {
     mes: 'current body', swipe_id: 1, swipes: ['older', 'active'],
     swipe_info: [{ extra: { state: 'old' } }, { extra: { state: 'current' } }],
     variables: [{ score: 0 }, { score: 1 }], extra: { content: 'live' },
+    chat_metadata: { integrity: 'ordinary message data' },
 };
 
 function cold(sourceId = 0) {
@@ -39,7 +40,7 @@ test('hydration fills nulls in place and preserves edits, appended slots, select
             streams.set(index + 10, byteStream(JSON.stringify(original)));
             return index + 10;
         }
-        if (command === 'read_chat_bytes') return streams.get(args.rid).shift();
+        if (command === 'read_bytes') return streams.get(args.rid).shift();
         if (command === 'plugin:resources|close') { closed.push(args.rid); return; }
         throw new Error(command);
     });
@@ -86,7 +87,7 @@ test('current and candidate sources close independently on acceptance, stale loa
             streams.set(source + 100, byteStream(source === 3 ? '{invalid' : JSON.stringify({chat_metadata:{}}) + '\n' + JSON.stringify(cold(source))));
             return { sourceId:source, readerId:source + 100 };
         }
-        if (command === 'read_chat_bytes') return streams.get(args.rid).shift();
+        if (command === 'read_bytes') return streams.get(args.rid).shift();
         if (command === 'plugin:resources|close') { closed.push(args.rid); return; }
         throw new Error(command);
     });
@@ -111,7 +112,7 @@ test('hydration rejects shortened arrays without partially filling either array'
     let stream;
     const restore = installHost(async (command) => {
         if (command === 'open_cold_swipe_record') { stream = byteStream(JSON.stringify(original)); return 10; }
-        if (command === 'read_chat_bytes') return stream.shift();
+        if (command === 'read_bytes') return stream.shift();
         if (command === 'plugin:resources|close') return;
         throw new Error(command);
     });

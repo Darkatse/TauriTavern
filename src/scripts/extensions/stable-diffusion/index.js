@@ -6000,24 +6000,31 @@ export async function init() {
         return isNegative ? negativePrompt : characterPrompt;
     };
 
+    const macroData = Object.freeze({
+        get positive() { return getMacroValue({ isNegative: false }); },
+        get negative() { return getMacroValue({ isNegative: true }); },
+    });
+    macros.envBuilder.registerProvider(env => {
+        env.extra.stableDiffusion = macroData;
+    });
     if (power_user.experimental_macro_engine) {
         macros.register('charPrefix', {
             category: MacroCategory.PROMPTS,
             description: t`Character's positive Image Generation prompt prefix`,
-            handler: () => getMacroValue({ isNegative: false }),
+            handler: ({ env }) => env.extra.stableDiffusion?.positive ?? '',
         });
         macros.register('charNegativePrefix', {
             category: MacroCategory.PROMPTS,
             description: t`Character's negative Image Generation prompt prefix`,
-            handler: () => getMacroValue({ isNegative: true }),
+            handler: ({ env }) => env.extra.stableDiffusion?.negative ?? '',
         });
     } else {
         MacrosParser.registerMacro('charPrefix',
-            () => getMacroValue({ isNegative: false }),
+            (_nonce, env) => env.extra.stableDiffusion?.positive ?? '',
             t`Character's positive Image Generation prompt prefix`,
         );
         MacrosParser.registerMacro('charNegativePrefix',
-            () => getMacroValue({ isNegative: true }),
+            (_nonce, env) => env.extra.stableDiffusion?.negative ?? '',
             t`Character's negative Image Generation prompt prefix`,
         );
     }

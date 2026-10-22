@@ -5,14 +5,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use super::{AgentRunPresentation, ArtifactSpec};
 use crate::models::tool::{ToolDescriptionOverride, ToolId};
 
-pub const AGENT_PROFILE_SCHEMA_VERSION: u32 = 3;
+pub const AGENT_PROFILE_SCHEMA_VERSION: u32 = 5;
 pub const AGENT_PROFILE_KIND: &str = "tauritavern.agentProfile";
 pub const DEFAULT_AGENT_PROFILE_ID: &str = "default-writer";
-pub const DEFAULT_AGENT_TOOL_MAX_ROUNDS: usize = 80;
-pub const DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN: usize = 80;
-pub const DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT: usize = 50_000;
-pub const DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL: usize = 20_000;
-pub const DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN: usize = 80_000;
+pub const DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT: usize = 50_000;
 pub const DEFAULT_AGENT_MODEL_MAX_RETRIES: usize = 3;
 pub const DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS: u64 = 3_000;
 pub const DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES: i64 = -1;
@@ -108,6 +104,35 @@ pub struct AgentProfileDefinition {
     pub output: AgentOutputPolicy,
 }
 
+/// Parse editable profiles before application-level schema migration. Resolved
+/// profiles in Run snapshots deliberately keep their strict deserialization.
+pub fn deserialize_profile_definition<'de, D>(
+    deserializer: D,
+) -> Result<AgentProfileDefinition, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let mut value = serde_json::Value::deserialize(deserializer)?;
+    if matches!(value["schemaVersion"].as_u64(), Some(1..=3))
+        && let Some(skills) = value
+            .get_mut("skills")
+            .and_then(serde_json::Value::as_object_mut)
+    {
+        skills.remove("maxReadCharsPerCall");
+        skills.remove("maxReadCharsPerRun");
+    }
+    if matches!(value["schemaVersion"].as_u64(), Some(1..=4))
+        && let Some(tools) = value
+            .get_mut("tools")
+            .and_then(serde_json::Value::as_object_mut)
+    {
+        tools.remove("maxRounds");
+        tools.remove("maxCallsPerRun");
+        tools.remove("maxCallsPerTool");
+    }
+    serde_json::from_value(value).map_err(serde::de::Error::custom)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResolvedAgentProfile {
@@ -129,7 +154,7 @@ pub struct ResolvedAgentProfile {
     pub skills: AgentSkillPolicy,
     pub workspace: AgentWorkspacePolicy,
     pub plan: super::plan::AgentPlanPolicy,
-    pub output: ResolvedAgentOutputPolicy,
+    pub output: Option<ResolvedAgentOutputPolicy>,
     pub source_trace: AgentProfileSourceTrace,
 }
 
@@ -148,14 +173,30 @@ pub struct AgentPresetBinding {
     pub ref_: Option<AgentPresetRef>,
     #[serde(default)]
     pub required: bool,
+    /// Replaces the preset's own `reasoning_effort` when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<AgentReasoningEffort>,
+}
+
+/// SillyTavern's chat-completion vocabulary; prompt assembly maps it per source and model.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentReasoningEffort {
+    Auto,
+    Min,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum AgentPresetBindingMode {
+    #[serde(alias = "none")]
     CurrentPromptSnapshot,
     Ref,
-    None,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -264,13 +305,11 @@ pub struct AgentToolPolicy<T = String> {
     pub deny: Vec<T>,
     #[serde(default)]
     pub tool_descriptions: BTreeMap<T, ToolDescriptionOverride>,
-    pub max_rounds: usize,
-    #[serde(default = "default_agent_tool_max_calls_per_run")]
-    pub max_calls_per_run: usize,
-    #[serde(default = "default_agent_mcp_result_inline_char_limit")]
-    pub mcp_result_inline_char_limit: usize,
-    #[serde(default)]
-    pub max_calls_per_tool: BTreeMap<T, usize>,
+    #[serde(
+        default = "default_agent_external_result_inline_char_limit",
+        alias = "mcpResultInlineCharLimit"
+    )]
+    pub external_result_inline_char_limit: usize,
 }
 
 pub type ResolvedAgentToolPolicy = AgentToolPolicy<ToolId>;
@@ -281,10 +320,6 @@ pub struct AgentSkillPolicy {
     pub visible: Vec<String>,
     #[serde(default)]
     pub deny: Vec<String>,
-    #[serde(default = "default_agent_skill_max_read_chars_per_call")]
-    pub max_read_chars_per_call: usize,
-    #[serde(default = "default_agent_skill_max_read_chars_per_run")]
-    pub max_read_chars_per_run: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -338,20 +373,8 @@ impl AgentProfileDefinition {
     }
 }
 
-fn default_agent_tool_max_calls_per_run() -> usize {
-    DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN
-}
-
-fn default_agent_mcp_result_inline_char_limit() -> usize {
-    DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT
-}
-
-fn default_agent_skill_max_read_chars_per_call() -> usize {
-    DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL
-}
-
-fn default_agent_skill_max_read_chars_per_run() -> usize {
-    DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN
+fn default_agent_external_result_inline_char_limit() -> usize {
+    DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT
 }
 
 fn default_agent_model_max_retries() -> usize {
@@ -434,11 +457,10 @@ mod tests {
     use super::{
         AgentProfileDefinition, DEFAULT_AGENT_DELEGATION_MAX_CONCURRENT_INVOCATIONS,
         DEFAULT_AGENT_DELEGATION_MAX_INVOCATIONS_PER_RUN,
-        DEFAULT_AGENT_DELEGATION_RESULT_BUDGET_TOKENS, DEFAULT_AGENT_HANDOFF_MAX_DEPTH,
-        DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES, DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT,
-        DEFAULT_AGENT_MODEL_MAX_RETRIES, DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS,
-        DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL, DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN,
-        DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN,
+        DEFAULT_AGENT_DELEGATION_RESULT_BUDGET_TOKENS,
+        DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT, DEFAULT_AGENT_HANDOFF_MAX_DEPTH,
+        DEFAULT_AGENT_INITIAL_CHAT_HISTORY_MESSAGES, DEFAULT_AGENT_MODEL_MAX_RETRIES,
+        DEFAULT_AGENT_MODEL_RETRY_INTERVAL_MS,
     };
     use crate::models::agent::plan::DEFAULT_AGENT_PLAN_BETA;
 
@@ -462,8 +484,7 @@ mod tests {
                 "presentation": "foreground"
             },
             "tools": {
-                "allow": ["workspace.write_file", "workspace.commit", "workspace.finish"],
-                "maxRounds": 80
+                "allow": ["workspace.write_file", "workspace.commit", "workspace.finish"]
             },
             "skills": {
                 "visible": ["*"]
@@ -530,23 +551,10 @@ mod tests {
         assert!(profile.tools.deny.is_empty());
         assert!(profile.tools.tool_descriptions.is_empty());
         assert_eq!(
-            profile.tools.max_calls_per_run,
-            DEFAULT_AGENT_TOOL_MAX_CALLS_PER_RUN
+            profile.tools.external_result_inline_char_limit,
+            DEFAULT_AGENT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT
         );
-        assert_eq!(
-            profile.tools.mcp_result_inline_char_limit,
-            DEFAULT_AGENT_MCP_RESULT_INLINE_CHAR_LIMIT
-        );
-        assert!(profile.tools.max_calls_per_tool.is_empty());
         assert!(profile.skills.deny.is_empty());
-        assert_eq!(
-            profile.skills.max_read_chars_per_call,
-            DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_CALL
-        );
-        assert_eq!(
-            profile.skills.max_read_chars_per_run,
-            DEFAULT_AGENT_SKILL_MAX_READ_CHARS_PER_RUN
-        );
         assert_eq!(profile.plan.beta, DEFAULT_AGENT_PLAN_BETA);
         assert!(profile.plan.nodes.is_empty());
     }

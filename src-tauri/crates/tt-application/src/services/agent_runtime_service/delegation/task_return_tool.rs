@@ -1,10 +1,10 @@
 use std::time::Instant;
+use tt_ports::workspace_fs::WorkspaceWriteGuard;
 
 use serde_json::{Map, Value, json};
 
 use super::rendering::render_task_return_summary;
 use super::task_status::{task_is_terminal, task_return_status, task_status_label};
-use super::tool_error::tool_error_outcome;
 use crate::errors::ApplicationError;
 use crate::services::agent_runtime_service::AgentRuntimeService;
 use crate::services::agent_tools::{AgentToolDispatchOutcome, AgentToolEffect};
@@ -29,17 +29,17 @@ impl AgentRuntimeService {
     ) -> Result<AgentToolDispatchOutcome, ApplicationError> {
         let started = Instant::now();
         if exit_policy != AgentInvocationExitPolicy::TaskReturnRequired {
-            return Ok(tool_error_outcome(
+            return Ok(AgentToolDispatchOutcome::error(
                 call,
                 "agent.task_return_denied",
-                "task.return is available only while completing a delegated task.",
+                "This tool is available only while completing a delegated task.",
                 started.elapsed().as_millis(),
             ));
         }
         let summary = match required_trimmed_string(args, "summary") {
             Ok(summary) => summary,
             Err(message) => {
-                return Ok(tool_error_outcome(
+                return Ok(AgentToolDispatchOutcome::error(
                     call,
                     "tool.invalid_arguments",
                     &message,
@@ -50,7 +50,7 @@ impl AgentRuntimeService {
         let status = match task_return_status(args.get("status")) {
             Ok(status) => status,
             Err(message) => {
-                return Ok(tool_error_outcome(
+                return Ok(AgentToolDispatchOutcome::error(
                     call,
                     "tool.invalid_arguments",
                     &message,
@@ -67,10 +67,10 @@ impl AgentRuntimeService {
                 ))
             })?;
         if task_is_terminal(task.status) {
-            return Ok(tool_error_outcome(
+            return Ok(AgentToolDispatchOutcome::error(
                 call,
                 "agent.task_already_finished",
-                "This delegated task is already finished and cannot accept another task.return.",
+                "This delegated task is already finished and cannot be returned again.",
                 started.elapsed().as_millis(),
             ));
         }
@@ -79,7 +79,7 @@ impl AgentRuntimeService {
         let result_payload = match normalize_task_return_arguments(args, profile) {
             Ok(arguments) => arguments,
             Err(error) => {
-                return Ok(tool_error_outcome(
+                return Ok(AgentToolDispatchOutcome::error(
                     call,
                     error.code,
                     &error.message,
@@ -108,14 +108,16 @@ impl AgentRuntimeService {
                 "agent.task_return_result_serialize_failed: {error}"
             ))
         })?;
-        self.workspace_repository
-            .write_text(run_id, &result_ref, &result_text)
+        self.workspace_files(run_id)
+            .await?
+            .write_text(&result_ref, &result_text, WorkspaceWriteGuard::Unchecked)
             .await?;
-        self.workspace_repository
+        self.workspace_files(run_id)
+            .await?
             .write_text(
-                run_id,
                 &summary_ref,
                 &render_task_return_summary(&result_doc),
+                WorkspaceWriteGuard::Unchecked,
             )
             .await?;
 
@@ -129,10 +131,10 @@ impl AgentRuntimeService {
             )
             .await?;
         if !transition.changed {
-            return Ok(tool_error_outcome(
+            return Ok(AgentToolDispatchOutcome::error(
                 call,
                 "agent.task_already_finished",
-                "This delegated task is already finished and cannot accept another task.return.",
+                "This delegated task is already finished and cannot be returned again.",
                 started.elapsed().as_millis(),
             ));
         }
@@ -152,30 +154,28 @@ impl AgentRuntimeService {
         )
         .await?;
 
-        Ok(AgentToolDispatchOutcome {
-            result: AgentToolResult {
-                call_id: call.call_id.clone(),
-                tool_id: call.tool_id.clone(),
-                content: format!(
-                    "Returned {} result for delegated task {}.",
-                    task_status_label(status),
-                    task.id
-                ),
-                structured: result_doc,
-                is_error: false,
-                error_code: None,
-                resource_refs: vec![
-                    result_ref.as_str().to_string(),
-                    summary_ref.as_str().to_string(),
-                ],
-            },
-            effect: AgentToolEffect::TaskReturned {
+        let mut result = AgentToolResult::ok(
+            call,
+            format!(
+                "Returned {} result for delegated task {}.",
+                task_status_label(status),
+                task.id
+            ),
+            result_doc,
+        );
+        result.resource_refs = vec![
+            result_ref.as_str().to_string(),
+            summary_ref.as_str().to_string(),
+        ];
+        Ok(AgentToolDispatchOutcome::new(
+            result,
+            AgentToolEffect::TaskReturned {
                 status,
                 result_ref,
                 summary,
             },
-            elapsed_ms: started.elapsed().as_millis(),
-        })
+            started.elapsed().as_millis(),
+        ))
     }
 
     async fn task_for_child_invocation(

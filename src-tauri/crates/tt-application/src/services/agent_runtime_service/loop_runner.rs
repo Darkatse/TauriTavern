@@ -1,24 +1,28 @@
 use std::collections::HashSet;
+use tt_ports::workspace_fs::WorkspaceWriteGuard;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::commit_ledger::RunCommitLedger;
-use super::continuation::{InvocationFrame, InvocationStep, PendingToolTurn};
+use super::continuation::{AutoCommitFile, InvocationFrame, InvocationStep, PendingToolTurn};
 use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
-use super::tool_execution::recoverable_tool_error;
+use super::session_context::{CompactionTrigger, is_context_overflow_error};
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::errors::ApplicationError;
 use crate::services::agent_tools::{AGENT_AWAIT, AGENT_HANDOFF, AgentToolEffect};
+use crate::services::agent_workspace_scope::is_auto_commit_text_path;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
     AgentInvocationExitPolicy, AgentInvocationStatus, AgentModelContentPart, AgentModelMessage,
     AgentModelResponse, AgentModelRole, AgentRunEventLevel, AgentRunPresentation, AgentRunStatus,
-    AgentToolResult, WorkspaceFileWriteMode, WorkspacePath,
+    AgentToolResult, WorkspacePath,
 };
 use tt_domain::models::tool::ToolTurnContract;
 use tt_domain::text_metrics::TextMetrics;
+
+const MAX_DRIFT_RECOVERY_ATTEMPTS: usize = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(
@@ -28,6 +32,7 @@ use tt_domain::text_metrics::TextMetrics;
 )]
 pub(super) enum AgentLoopExit {
     Finished,
+    Replied,
     Transferred {
         task_id: String,
         new_invocation_id: String,
@@ -40,16 +45,17 @@ impl AgentRuntimeService {
         frame: &mut InvocationFrame,
         commit_ledger: &mut RunCommitLedger,
         cancel: &mut AgentCancelReceiver,
-    ) -> Result<Option<AgentLoopExit>, ApplicationError> {
+    ) -> Result<AgentLoopExit, ApplicationError> {
         let InvocationFrame { prepared, progress } = frame;
         let run_id = prepared.invocation.run_id.as_str();
         let invocation_id = prepared.invocation.id.as_str();
         let exit_policy = prepared.invocation.exit_policy;
         let profile = &prepared.profile;
-        let updates_run_status = exit_policy == AgentInvocationExitPolicy::RunFinishAllowed;
+        let updates_run_status = prepared.invocation.kind.owns_run_status();
+        let active_run = self.active_run_handle(run_id).await?;
         let auto_commit_text_mutations = updates_run_status
-            && self.run_repository.load_run(run_id).await?.presentation
-                == AgentRunPresentation::Foreground;
+            && matches!(&active_run.target, tt_domain::models::agent::AgentRunTarget::Chat(chat)
+                if chat.presentation == AgentRunPresentation::Foreground);
         let stream = self
             .active_run_handle(run_id)
             .await?
@@ -58,12 +64,9 @@ impl AgentRuntimeService {
         loop {
             let round = progress.round;
             match &mut progress.step {
-                InvocationStep::Exited(exit) => return Ok(Some(exit.clone())),
+                InvocationStep::Exited(exit) => return Ok(exit.clone()),
                 InvocationStep::Model => {
                     self.ensure_not_cancelled(cancel)?;
-                    if round > progress.max_rounds {
-                        return Ok(None);
-                    }
                     if updates_run_status {
                         self.apply_pending_guidance_to_request(
                             run_id,
@@ -75,32 +78,106 @@ impl AgentRuntimeService {
                         self.transition_status(run_id, AgentRunStatus::CallingModel)
                             .await?;
                     }
-                    self.event(
-                        run_id,
-                        AgentRunEventLevel::Info,
-                        "model_request_created",
-                        json!({
-                            "round": round,
-                            "invocationId": invocation_id,
-                            "toolTurn": &prepared.tool_turn,
-                            "request": request_summary(&prepared.request),
-                        }),
-                    )
-                    .await?;
-                    let exchange = self
-                        .generate_model_with_retry(
-                            &prepared.invocation,
-                            round,
-                            &prepared.request,
-                            &profile.run.model_retry,
-                            stream,
-                            cancel,
+                    let mut session_tokens = match &prepared.session {
+                        Some(session) => Some(
+                            self.context_tokens(
+                                &prepared.request,
+                                &session.tokenizer_model,
+                                session.usage_anchor.as_ref(),
+                                prepared.accepts_images,
+                            )
+                            .await?,
+                        ),
+                        None => None,
+                    };
+                    let mut pending = match (&prepared.session, session_tokens) {
+                        (Some(session), Some(tokens)) if tokens >= session.point => {
+                            Some((CompactionTrigger::Point, tokens))
+                        }
+                        _ => None,
+                    };
+                    let mut compacted = false;
+                    let exchange = loop {
+                        if let (Some((trigger, tokens)), Some(session)) =
+                            (pending.take(), &prepared.session)
+                        {
+                            let (request, tokens_after) = self
+                                .compact_session_context(
+                                    prepared, session, round, trigger, tokens, cancel,
+                                )
+                                .await?;
+                            prepared.request = request;
+                            session_tokens = Some(tokens_after);
+                            progress.session.clear_reads();
+                            compacted = true;
+                            self.transition_status(run_id, AgentRunStatus::CallingModel)
+                                .await?;
+                        }
+                        let mut created = json!({
+                            "round": round, "invocationId": invocation_id,
+                            "toolTurn": &prepared.tool_turn, "request": request_summary(&prepared.request),
+                        });
+                        if let (Some(session), Some(tokens)) = (&prepared.session, session_tokens) {
+                            created["context"] =
+                                json!({ "tokens": tokens, "point": session.point });
+                        }
+                        self.event(
+                            run_id,
+                            AgentRunEventLevel::Info,
+                            "model_request_created",
+                            created,
                         )
                         .await?;
+                        let result = self
+                            .generate_model_with_retry(
+                                prepared,
+                                round,
+                                &prepared.request,
+                                stream,
+                                cancel,
+                            )
+                            .await;
+                        match (result, session_tokens) {
+                            (Err(error), Some(tokens))
+                                if !compacted && is_context_overflow_error(&error) =>
+                            {
+                                pending = Some((CompactionTrigger::Overflow, tokens));
+                            }
+                            (result, _) => break result?,
+                        }
+                    };
                     let response = exchange.response;
                     let model_response_path = self
                         .store_model_response(run_id, invocation_id, round, &response)
                         .await?;
+                    let replied = exit_policy == AgentInvocationExitPolicy::ReplyAllowed
+                        && response.tool_calls.is_empty();
+                    if replied {
+                        let _publication = self.run_lifecycle_lock.lock().await;
+                        self.ensure_not_cancelled(cancel)?;
+                        self.append_session_history(
+                            run_id,
+                            invocation_id,
+                            round,
+                            &response.message,
+                        )
+                        .await?;
+                        self.transition_status(run_id, AgentRunStatus::Finishing)
+                            .await?;
+                        progress.step = InvocationStep::Exited(AgentLoopExit::Replied);
+                    } else {
+                        self.append_session_history(
+                            run_id,
+                            invocation_id,
+                            round,
+                            &response.message,
+                        )
+                        .await?;
+                    }
+                    // Canonical history owns the response now; previews never publish messages.
+                    active_run.live_projection.send_if_modified(|projection| {
+                        projection.responses.remove(invocation_id).is_some()
+                    });
                     self.event(
                         run_id,
                         AgentRunEventLevel::Debug,
@@ -134,7 +211,7 @@ impl AgentRuntimeService {
                     .await?;
 
                     let has_tools = !response.tool_calls.is_empty();
-                    let direct_output_path = if has_tools {
+                    let direct_output_path = if has_tools || replied {
                         None
                     } else {
                         self.capture_direct_output(
@@ -149,7 +226,15 @@ impl AgentRuntimeService {
                     // Keep the actual transcript current, including finish/return/handoff turns.
                     prepared.request.provider_state = exchange.provider_state;
                     prepared.request.messages.push(response.message);
-                    if !has_tools {
+                    if let Some(session) = &mut prepared.session {
+                        session.observe_usage(
+                            &response.provider_metadata,
+                            prepared.request.messages.len(),
+                        );
+                    }
+                    if replied {
+                        return Ok(AgentLoopExit::Replied);
+                    } else if !has_tools {
                         progress.drift_attempts += 1;
                         let nudge = build_drift_recovery_nudge(
                             commit_ledger.explicit_count(),
@@ -163,19 +248,23 @@ impl AgentRuntimeService {
                             parts: vec![AgentModelContentPart::Text { text: nudge }],
                             provider_metadata: Value::Null,
                         });
-                        let can_recover = round < progress.max_rounds;
+                        let can_recover = progress.drift_attempts <= MAX_DRIFT_RECOVERY_ATTEMPTS;
                         progress.round += 1;
                         if can_recover {
-                            self.event(run_id, AgentRunEventLevel::Warn, "drift_recovery_attempted", json!({
-                                "attempt": progress.drift_attempts,
-                                "maxAttempts": drift_recovery_attempt_limit(progress.max_rounds),
-                                "maxRounds": progress.max_rounds,
-                                "limitReason": "max_rounds",
-                                "round": round,
-                                "invocationId": invocation_id,
-                                "committedCount": commit_ledger.explicit_count(),
-                                "reasonCode": "model.tool_call_required",
-                            })).await?;
+                            self.event(
+                                run_id,
+                                AgentRunEventLevel::Warn,
+                                "drift_recovery_attempted",
+                                json!({
+                                    "attempt": progress.drift_attempts,
+                                    "maxAttempts": MAX_DRIFT_RECOVERY_ATTEMPTS,
+                                    "round": round,
+                                    "invocationId": invocation_id,
+                                    "committedCount": commit_ledger.explicit_count(),
+                                    "reasonCode": "model.tool_call_required",
+                                }),
+                            )
+                            .await?;
                         }
                         self.ensure_not_cancelled(cancel)?;
                         if !can_recover {
@@ -203,11 +292,11 @@ impl AgentRuntimeService {
                                 round,
                                 turn.next_call,
                                 call,
-                                &mut progress.gate,
                                 &mut progress.session,
                                 turn.next_call + 1 == turn.calls.len(),
                                 commit_ledger,
                                 cancel,
+                                turn.auto_commit.as_ref().map(|(_, file)| file.path.clone()),
                             )
                             .await
                         {
@@ -219,13 +308,11 @@ impl AgentRuntimeService {
                                         call.call_id, call.tool_id, failure.error
                                     ));
                                 } else {
-                                    let result = recoverable_tool_error(
+                                    let result = AgentToolResult::error(
                                         call,
                                         "agent.tool_not_started",
                                         &failure.error.to_string(),
-                                        0,
-                                    )
-                                    .result;
+                                    );
                                     prepared.request.messages.push(AgentModelMessage {
                                         role: AgentModelRole::Tool,
                                         parts: vec![AgentModelContentPart::ToolResult { result }],
@@ -249,6 +336,31 @@ impl AgentRuntimeService {
                             matches!(&outcome.effect, AgentToolEffect::HandoffAccepted { .. });
                         let mut events = Vec::new();
                         let result = outcome.result;
+                        // All file tools use one publication policy. Failed direct writes may
+                        // have changed an earlier candidate, so they cancel this round's publish.
+                        let candidate = match &outcome.effect {
+                            AgentToolEffect::WorkspaceFileWritten { file, .. } => {
+                                if stream && is_auto_commit_text_path(&file.path) {
+                                    turn.auto_commit = None;
+                                    None
+                                } else {
+                                    Some(&file.path)
+                                }
+                            }
+                            AgentToolEffect::WorkspaceFilePatched { file, .. } => Some(&file.path),
+                            AgentToolEffect::AutoCommitCandidateUpdated { path } => {
+                                turn.auto_commit = None;
+                                path.as_ref()
+                            }
+                            _ => None,
+                        };
+                        if !result.is_error
+                            && let Some(path) =
+                                candidate.filter(|path| is_auto_commit_text_path(path))
+                        {
+                            turn.auto_commit =
+                                Some((call.call_id.clone(), AutoCommitFile { path: path.clone() }));
+                        }
                         match outcome.effect {
                             AgentToolEffect::WorkspaceFileWritten { file, mode } => {
                                 let metrics = TextMetrics::from_text(&file.text);
@@ -263,44 +375,6 @@ impl AgentRuntimeService {
                                         "sha256": file.sha256.as_str(),
                                     }),
                                 ));
-                                turn.auto_commit = if stream {
-                                    None
-                                } else {
-                                    Some((call.call_id.clone(), file))
-                                };
-                            }
-                            AgentToolEffect::WorkspaceFilesWritten {
-                                files,
-                                last_text_mutation,
-                            } => {
-                                for file in &files {
-                                    let metrics = TextMetrics::from_text(&file.text);
-                                    events.push((
-                                        "workspace_file_written",
-                                        json!({
-                                            "invocationId": invocation_id,
-                                            "path": file.path.as_str(),
-                                            "mode": WorkspaceFileWriteMode::Replace,
-                                            "chars": metrics.chars,
-                                            "words": metrics.words,
-                                            "sha256": file.sha256.as_str(),
-                                        }),
-                                    ));
-                                }
-                                if let Some(path) = last_text_mutation {
-                                    let file = files
-                                        .into_iter()
-                                        .find(|file| file.path == path)
-                                        .ok_or_else(|| {
-                                            let message = format!(
-                                                "Workspace batch effect is missing its last mutation `{}`",
-                                                path.as_str()
-                                            );
-                                            progress.blocked_reason = Some(message.clone());
-                                            ApplicationError::InternalError(message)
-                                        })?;
-                                    turn.auto_commit = Some((call.call_id.clone(), file));
-                                }
                             }
                             AgentToolEffect::WorkspaceFilePatched {
                                 file,
@@ -320,7 +394,6 @@ impl AgentRuntimeService {
                                         "replacements": replacements,
                                     }),
                                 ));
-                                turn.auto_commit = Some((call.call_id.clone(), file));
                             }
                             AgentToolEffect::ChatCommitRequested { .. } => {}
                             AgentToolEffect::Finish => {
@@ -354,20 +427,24 @@ impl AgentRuntimeService {
                                     new_invocation_id,
                                 });
                             }
-                            AgentToolEffect::None => {}
+                            AgentToolEffect::None
+                            | AgentToolEffect::AutoCommitCandidateUpdated { .. } => {}
                         }
 
                         remember_seen_child_results_from_await(
                             std::slice::from_ref(&result),
                             &mut progress.seen_child_results,
                         );
-                        prepared.request.messages.push(AgentModelMessage {
+                        let message = AgentModelMessage {
                             role: AgentModelRole::Tool,
                             parts: vec![AgentModelContentPart::ToolResult { result }],
                             provider_metadata: Value::Null,
-                        });
+                        };
+                        prepared.request.messages.push(message.clone());
                         turn.next_call += 1;
                         recorded?;
+                        self.append_session_history(run_id, invocation_id, round, &message)
+                            .await?;
                         if patched && updates_run_status {
                             self.transition_status(run_id, AgentRunStatus::ApplyingWorkspacePatch)
                                 .await?;
@@ -393,7 +470,7 @@ impl AgentRuntimeService {
                         self.auto_commit_text_file_if_eligible(
                             run_id,
                             call_id,
-                            file,
+                            &file.path,
                             round,
                             invocation_id,
                             commit_ledger,
@@ -457,8 +534,9 @@ impl AgentRuntimeService {
 
         let path = direct_output_path(profile)?;
         let file = self
-            .workspace_repository
-            .write_text(run_id, &path, text)
+            .workspace_files(run_id)
+            .await?
+            .write_text(&path, text, WorkspaceWriteGuard::Unchecked)
             .await?;
         let metrics = TextMetrics::from_text(&file.text);
         self.event(
@@ -528,6 +606,7 @@ fn completion_tool_name(
             }
         }
         AgentInvocationExitPolicy::TaskReturnRequired => "task_return",
+        AgentInvocationExitPolicy::ReplyAllowed => "an assistant reply",
     }
 }
 
@@ -535,10 +614,6 @@ fn turn_has_builtin(turn: &ToolTurnContract, native_name: &str) -> bool {
     turn.tools()
         .iter()
         .any(|tool_id| tool_id.is_builtin() && tool_id.native_name() == native_name)
-}
-
-fn drift_recovery_attempt_limit(max_rounds: usize) -> usize {
-    max_rounds.saturating_sub(1)
 }
 
 /// Build the corrective `user` message we inject when the model returns a
@@ -644,11 +719,16 @@ fn build_drift_recovery_nudge(
                  in plain text."
             )
         }
+        AgentInvocationExitPolicy::ReplyAllowed => {
+            unreachable!("Session replies do not enter drift recovery")
+        }
     }
 }
 
 fn direct_output_path(profile: &ResolvedAgentProfile) -> Result<WorkspacePath, ApplicationError> {
-    let message_body_path = WorkspacePath::parse(&profile.output.message_body_path)?;
+    let message_body_path = WorkspacePath::parse(
+        &crate::services::agent_profile_service::require_output(profile)?.message_body_path,
+    )?;
     let root = message_body_path
         .as_str()
         .split('/')

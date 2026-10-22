@@ -1,0 +1,93 @@
+import { ensureModelTargetLlmConnectionForProfile } from '../../../scripts/tauritavern/agent/model-target-llm-connection.js';
+import { updateFrozenMacroContext } from '../../../scripts/tauritavern/agent/frozen-run-input-snapshot.js';
+
+export function createAgentSessionsApi({ safeInvoke, promptAssembly, attachAssemblyBridge }) {
+    const preparing = new Set();
+
+    async function load() {
+        return safeInvoke('load_agent_session_profile');
+    }
+
+    async function save(profile) {
+        if (!profile || typeof profile !== 'object' || Array.isArray(profile)) {
+            throw new Error('agent.profile_required: profile must be an object');
+        }
+        await ensureModelTargetLlmConnectionForProfile(profile);
+        return safeInvoke('save_agent_session_profile', { dto: { profile } });
+    }
+
+    async function send({ sessionId, text, variables } = {}) {
+        return startRun(requireSessionId(sessionId), { kind: 'message', text }, variables);
+    }
+
+    async function compact({ sessionId } = {}) {
+        return startRun(requireSessionId(sessionId), { kind: 'compaction' });
+    }
+
+    async function startRun(sessionId, input, variables) {
+        if (preparing.has(sessionId)) throw new Error('agent.session_busy: this Session is already preparing a run');
+        preparing.add(sessionId);
+        try {
+            const [{ extension_settings }, { MacroEnvBuilder }] = await Promise.all([
+                import('../../../scripts/extensions.js'),
+                import('../../../scripts/macros/engine/MacroEnvBuilder.js'),
+            ]);
+            const sessionVariables = structuredClone({
+                local: variables?.local ?? {},
+                global: extension_settings.variables.global,
+            });
+            const { profile } = await load();
+            if (!profile) throw new Error('agent.session_profile_missing: configure the Session Profile before sending');
+            await ensureModelTargetLlmConnectionForProfile(profile);
+            const prepared = await safeInvoke('prepare_agent_session_run', { dto: { sessionId, input, profile } });
+            const frozenInput = prepared.request.frozenRunInputSnapshot;
+            const macroContext = MacroEnvBuilder.createSessionContext(prepared.sessionMessages, {
+                sessionId,
+                variables: sessionVariables,
+            });
+            prepared.request.frozenRunInputSnapshot = updateFrozenMacroContext(frozenInput, macroContext);
+            const assembled = await promptAssembly.buildSnapshot(prepared.request);
+            prepared.request.frozenRunInputSnapshot = assembled.frozenRunInputSnapshot;
+            const run = await safeInvoke('start_agent_session_run', { dto: {
+                sessionId,
+                input,
+                profile,
+                expectedHistorySeq: prepared.expectedHistorySeq,
+                promptAssemblyRequest: prepared.request,
+                promptSnapshot: assembled.promptSnapshot,
+                generationIntent: { ...assembled.generationIntent, source: 'session' },
+            } });
+            attachAssemblyBridge(run);
+            return run;
+        } finally {
+            preparing.delete(sessionId);
+        }
+    }
+
+    return {
+        profile: { load, save },
+        create: () => safeInvoke('create_agent_session'),
+        list: () => safeInvoke('list_agent_sessions'),
+        rename({ sessionId, title }) {
+            return safeInvoke('rename_agent_session', { dto: { sessionId: requireSessionId(sessionId), title } });
+        },
+        delete({ sessionId }) {
+            return safeInvoke('delete_agent_session', { dto: { sessionId: requireSessionId(sessionId) } });
+        },
+        read(input) {
+            const sessionId = requireSessionId(input?.sessionId);
+            return safeInvoke('read_agent_session', { dto: {
+                sessionId,
+                ...(input.beforeSeq == null ? {} : { beforeSeq: input.beforeSeq }),
+                ...(input.limit == null ? {} : { limit: input.limit }),
+            } });
+        },
+        send,
+        compact,
+    };
+}
+
+function requireSessionId(value) {
+    if (typeof value !== 'string' || !value.trim()) throw new Error('sessionId is required');
+    return value.trim();
+}

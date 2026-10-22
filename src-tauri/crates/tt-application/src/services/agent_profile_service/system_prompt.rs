@@ -1,19 +1,65 @@
 use crate::services::agent_workspace_scope::{
     format_model_visible_workspace_roots, format_model_workspace_roots,
 };
-use tt_domain::models::agent::AgentModelTool;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
+use tt_domain::models::agent::{AgentInvocationExitPolicy, AgentModelTool};
 
 use super::constants::{
-    AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, AGENT_LIST_TOOL, TASK_RETURN_TOOL,
+    AGENT_AWAIT_TOOL, AGENT_DELEGATE_TOOL, AGENT_HANDOFF_TOOL, TASK_RETURN_TOOL,
 };
 
 pub fn materialize_agent_system_prompt(
     tools: &[AgentModelTool],
     profile: &ResolvedAgentProfile,
+    exit_policy: AgentInvocationExitPolicy,
 ) -> String {
     if let Some(prompt) = profile.instructions.agent_system_prompt.as_ref() {
         return prompt.clone();
+    }
+
+    if exit_policy == AgentInvocationExitPolicy::ReplyAllowed {
+        let mut lines = vec![
+            "Assist the user with their request. Use tools when needed and reply directly when finished."
+                .to_string(),
+        ];
+        if [
+            "workspace.list_files",
+            "workspace.read_file",
+            "workspace.search_files",
+            "workspace.write_file",
+            "workspace.apply_patch",
+            "workspace.shell",
+        ]
+        .iter()
+        .any(|name| has_tool(tools, name))
+        {
+            lines.extend([
+                format!(
+                    "Readable workspace directories: {}.",
+                    format_model_visible_workspace_roots(&profile.workspace.visible_roots),
+                ),
+                format!(
+                    "Writable workspace directories: {}.",
+                    format_model_workspace_roots(&profile.workspace.writable_roots),
+                ),
+                "Use work/ for lasting work and tmp/ for temporary files. Both persist across turns and restarts. Remove temporary files when no longer needed."
+                    .to_string(),
+            ]);
+        }
+        if has_tool(tools, "workspace.shell") {
+            lines.push("Shell /work and /tmp map to work/ and tmp/ in this workspace.".to_string());
+            if has_tool(tools, "workspace.read_file")
+                && (has_tool(tools, "workspace.write_file")
+                    || has_tool(tools, "workspace.apply_patch"))
+            {
+                lines.push(format!(
+                    "After editing with {}, use {} before replacing or patching the file with text tools.",
+                    model_alias(tools, "workspace.shell"),
+                    model_alias(tools, "workspace.read_file"),
+                ));
+            }
+        }
+        return lines.join("\n");
     }
 
     let mut lines = vec!["---".to_string(), "tools:".to_string()];
@@ -63,18 +109,6 @@ pub fn materialize_agent_system_prompt(
             model_alias(tools, "dice.roll")
         ));
     }
-    if has_tool(tools, "skill.list") {
-        lines.push(format!(
-            "- Use {} to discover visible agent skills when reusable writing, editing, planning, style, or character guidance may be helpful.",
-            model_alias(tools, "skill.list")
-        ));
-    }
-    if has_tool(tools, AGENT_LIST_TOOL) {
-        lines.push(format!(
-            "- Use {} to find other Agents that can help with a focused writing, critique, planning, or style task. This tool only lists Agents; it does not start any work.",
-            model_alias(tools, AGENT_LIST_TOOL)
-        ));
-    }
     if has_tool(tools, AGENT_DELEGATE_TOOL) {
         if has_tool(tools, AGENT_AWAIT_TOOL) {
             lines.push(format!(
@@ -103,53 +137,28 @@ pub fn materialize_agent_system_prompt(
             model_alias(tools, AGENT_HANDOFF_TOOL)
         ));
     }
-    if has_tool(tools, "skill.search") {
-        lines.push(format!(
-            "- Before reading exact ranges, use {} to locate relevant text within larger visible skill files.",
-            model_alias(tools, "skill.search")
-        ));
+    if has_tool(tools, "workspace.shell") {
+        lines.push(
+            "- Workspace tools share the same files. Each shell call starts a new session; files persist between calls."
+                .to_string(),
+        );
+        if has_tool(tools, "workspace.read_file")
+            && (has_tool(tools, "workspace.apply_patch") || has_tool(tools, "workspace.write_file"))
+        {
+            lines.push(format!(
+                "- After editing a file with {}, read it with {} before patching or replacing it with the text tools.",
+                model_alias(tools, "workspace.shell"),
+                model_alias(tools, "workspace.read_file")
+            ));
+        }
     }
-    if has_tool(tools, "skill.read") {
+    if let Some(output) = &profile.output
+        && has_tool(tools, "workspace.commit")
+    {
         lines.push(format!(
-            "- Use {} to read SKILL.md first. Files are read in full by default; when a preview is returned, continue with start_line and line_count.",
-            model_alias(tools, "skill.read")
-        ));
-    }
-    if has_tool(tools, "workspace.list_files") {
-        lines.push(format!(
-            "- Use {} to inspect visible workspace files.",
-            model_alias(tools, "workspace.list_files")
-        ));
-    }
-    if has_tool(tools, "workspace.search_files") {
-        lines.push(format!(
-            "- Before reading exact ranges, use {} to find relevant text within visible workspace files (e.g., persist/ memory).",
-            model_alias(tools, "workspace.search_files")
-        ));
-    }
-    if has_tool(tools, "workspace.read_file") {
-        lines.push(format!(
-            "- Use {} before modifying an existing file. Omit start_line and line_count to read the full file; if a preview is returned, continue from its next line. Read the exact text you want to replace; if a patch fails, fully read the file before retrying. Read content includes line numbers; never include line number prefixes in old_string or new_string.",
-            model_alias(tools, "workspace.read_file")
-        ));
-    }
-    if has_tool(tools, "workspace.apply_patch") {
-        lines.push(format!(
-            "- Use {} to perform precise edits on existing files. old_string must match exactly and be unique unless replace_all is true.",
-            model_alias(tools, "workspace.apply_patch")
-        ));
-    }
-    if has_tool(tools, "workspace.write_file") {
-        lines.push(format!(
-            "- Use {} to create files, append to files, or perform complete rewrites.",
-            model_alias(tools, "workspace.write_file")
-        ));
-    }
-    if has_tool(tools, "workspace.commit") {
-        lines.push(format!(
-            "- Use {} to publish visible workspace files into the current chat message. Without arguments, it will replace the current run's chat message with {}; mode append will append to the same message, creating it if this run has not committed yet.",
+            "- Use {} to publish Run workspace files into the current chat message. Without arguments, it will replace the current run's chat message with {}; mode append will append to the same message, creating it if this run has not committed yet.",
             model_alias(tools, "workspace.commit"),
-            profile.output.message_body_path
+            output.message_body_path
         ));
     }
 
@@ -181,11 +190,11 @@ pub fn materialize_agent_system_prompt(
                 .to_string(),
         );
         lines.push(format!(
-            "- Visible workspace roots for this task: {}.",
+            "- Readable workspace directories: {}.",
             format_model_visible_workspace_roots(&profile.workspace.visible_roots)
         ));
         lines.push(format!(
-            "- Writable workspace roots for this task: {}.",
+            "- Writable workspace directories: {}.",
             format_model_workspace_roots(&profile.workspace.writable_roots)
         ));
         lines.push(format!(
@@ -198,16 +207,12 @@ pub fn materialize_agent_system_prompt(
         );
     } else {
         lines.push(format!(
-            "- Visible workspace roots: {}.",
+            "- Readable workspace directories: {}.",
             format_model_visible_workspace_roots(&profile.workspace.visible_roots)
         ));
         lines.push(format!(
-            "- Writable workspace roots: {}.",
+            "- Writable workspace directories: {}.",
             format_model_workspace_roots(&profile.workspace.writable_roots)
-        ));
-        lines.push(format!(
-            "- **Never** read {} before commit",
-            profile.output.message_body_path
         ));
         lines.push(
             "> You may encounter: \"No visible workspace files found.\" This happens because there are no persisted files; please continue."
@@ -301,9 +306,6 @@ pub fn materialize_agent_system_prompt(
                 "    ({})",
                 model_alias(tools, "worldinfo.read_activated")
             ));
-        }
-        if has_tool(tools, "skill.list") {
-            lines.push(format!("    ({})", model_alias(tools, "skill.list")));
         }
         lines.extend([
             format!(

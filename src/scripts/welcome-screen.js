@@ -2,13 +2,16 @@ import {
     addOneMessage,
     characters,
     chat,
-    deleteCharacterChatByName,
+    deleteCharacterChat,
+    confirmChatDelete,
+    promptChatRename,
     displayVersion,
     doNewChat,
     event_types,
     eventSource,
     getCharacters,
     getCurrentChatId,
+    isChatOpen,
     getRequestHeaders,
     getSystemMessageByType,
     getThumbnailUrl,
@@ -28,12 +31,12 @@ import {
     system_message_types,
     this_chid,
     unshallowCharacter,
-    updateRemoteChatName,
 } from '../script.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { ChatInputFocusIntent, focusChatInput } from './chat-input-focus.js';
-import { deleteGroupChatByName, getGroupAvatar, groups, is_group_generating, openGroupById, selected_group } from './group-chats.js';
+import { deleteGroupChat, getGroupAvatar, groups, is_group_generating, openGroupById } from './group-chats.js';
 import { t } from './i18n.js';
+import { captureFocus, setAriaRelation } from './dom-handlers.js';
 import { callGenericPopup, POPUP_TYPE } from './popup.js';
 import { getMessageTimeStamp } from './RossAscends-mods.js';
 import { renderTemplateAsync } from './templates.js';
@@ -237,22 +240,30 @@ export async function openWelcomeScreen({ force = false, expand = false } = {}) 
     }
 
     const recentChats = await getRecentChats();
-    const chatAfterFetch = getCurrentChatId();
-    if (chatAfterFetch !== currentChatId) {
-        console.debug('Chat changed while fetching recent chats.');
+    const panel = await createWelcomePanel(recentChats, expand);
+    await unshallowPermanentAssistant();
+    if (getCurrentChatId() !== currentChatId) {
+        console.debug('Chat changed while preparing the welcome screen.');
         return;
     }
 
-    if (chatAfterFetch === undefined && force) {
-        console.debug('Forcing welcome screen open.');
+    const restoreHeader = captureFocus(
+        () => document.querySelectorAll('#chat .welcomeHeaderTitle, #chat .welcomeHeader'),
+        item => item.className,
+    );
+    const restoreChats = captureFocus(
+        () => document.querySelectorAll('#chat .recentChat:not(.hidden), #chat .recentChatsMore'),
+        item => item.matches('.recentChat') ? JSON.stringify([item.dataset.group, item.dataset.avatar, item.dataset.file]) : item.className,
+    );
+    if (force) {
         replaceChatContents([]);
         resetChatSurfaceView({ includeAuxiliary: true });
     }
-
-    await sendWelcomePanel(recentChats, expand);
-    await unshallowPermanentAssistant();
+    document.getElementById('chat').append(panel);
     sendAssistantMessage();
     sendWelcomePrompt();
+    restoreHeader();
+    if (!restoreChats()) panel.querySelector('button.openTemporaryChat').focus();
 }
 
 /**
@@ -315,175 +326,166 @@ function sendWelcomePrompt() {
 }
 
 /**
- * Sends the welcome panel to the chat.
+ * Prepares the welcome panel before committing any changes to the chat.
  * @param {RecentChat[]} chats List of recent chats
  * @param {boolean} [expand=false] If true, expands the recent chats section
  */
-async function sendWelcomePanel(chats, expand = false) {
-    try {
-        const chatElement = document.getElementById('chat');
-        const sendTextArea = document.getElementById('send_textarea');
-        if (!chatElement) {
-            console.error('Chat element not found');
-            return;
+async function createWelcomePanel(chats, expand = false) {
+    const templateData = {
+        chats,
+        empty: !chats.length,
+        version: displayVersion,
+        more: chats.some(chat => chat.hidden),
+    };
+    const template = await renderTemplateAsync('welcomePanel', templateData);
+    const fragment = document.createRange().createContextualFragment(template);
+    fragment.querySelectorAll('.welcomePanel').forEach((root) => {
+        const recentHiddenClass = 'recentHidden';
+        const recentHiddenKey = 'WelcomePage_RecentChatsHidden';
+        const toggle = root.querySelector('.toggleRecentChats');
+        setAriaRelation(toggle, 'controls', root.querySelector('.welcomeRecent'));
+        function showRecentChats(show) {
+            root.classList.toggle(recentHiddenClass, !show);
+            toggle.setAttribute('aria-expanded', String(show));
+            const icon = toggle.querySelector('i');
+            icon.classList.toggle('fa-circle-xmark', show);
+            icon.classList.toggle('fa-circle-chevron-down', !show);
         }
-        const templateData = {
-            chats,
-            empty: !chats.length,
-            version: displayVersion,
-            more: chats.some(chat => chat.hidden),
-        };
-        const template = await renderTemplateAsync('welcomePanel', templateData);
-        const fragment = document.createRange().createContextualFragment(template);
-        fragment.querySelectorAll('.welcomePanel').forEach((root) => {
-            const recentHiddenClass = 'recentHidden';
-            const recentHiddenKey = 'WelcomePage_RecentChatsHidden';
-            if (accountStorage.getItem(recentHiddenKey) === 'true') {
-                root.classList.add(recentHiddenClass);
-            }
-            root.querySelectorAll('.showRecentChats').forEach((button) => {
-                button.addEventListener('click', () => {
-                    root.classList.remove(recentHiddenClass);
-                    accountStorage.setItem(recentHiddenKey, 'false');
-                });
-            });
-            root.querySelectorAll('.hideRecentChats').forEach((button) => {
-                button.addEventListener('click', () => {
-                    root.classList.add(recentHiddenClass);
-                    accountStorage.setItem(recentHiddenKey, 'true');
-                });
-            });
-            root.querySelectorAll('.recentChatsSettings').forEach((button) => {
-                button.addEventListener('click', async (event) => {
-                    event.stopPropagation();
-                    await openRecentChatsSettingsPopup();
-                });
+        showRecentChats(accountStorage.getItem(recentHiddenKey) !== 'true');
+        toggle.addEventListener('click', () => {
+            const show = root.classList.contains(recentHiddenClass);
+            showRecentChats(show);
+            accountStorage.setItem(recentHiddenKey, String(!show));
+        });
+        root.querySelectorAll('.recentChatsSettings').forEach((button) => {
+            button.addEventListener('click', async (event) => {
+                event.stopPropagation();
+                await openRecentChatsSettingsPopup();
             });
         });
-        fragment.querySelectorAll('.recentChat').forEach((item) => {
-            const image = item.querySelector('.avatar img');
-            if (image instanceof HTMLImageElement) {
-                // Re-apply the same src via JS so Tauri thumbnail bridge can normalize /thumbnail URLs.
-                const thumbnail = item.getAttribute('data-thumbnail') || image.getAttribute('src') || '';
-                if (thumbnail) {
-                    image.src = thumbnail;
-                }
+    });
+    fragment.querySelectorAll('.recentChat').forEach((item) => {
+        const name = item.querySelector('.chatName');
+        const primary = item.querySelector(':scope > .sr-only');
+        setAriaRelation(primary, 'labelledby', name);
+        setAriaRelation(primary, 'describedby', item.querySelector('.chatDate'));
+        item.querySelectorAll('.chatActions button').forEach(button => setAriaRelation(button, 'labelledby', button, name));
+        const image = item.querySelector('.avatar img');
+        if (image instanceof HTMLImageElement) {
+            // Re-apply the same src via JS so Tauri thumbnail bridge can normalize /thumbnail URLs.
+            const thumbnail = item.getAttribute('data-thumbnail') || image.getAttribute('src') || '';
+            if (thumbnail) {
+                image.src = thumbnail;
             }
+        }
 
-            item.addEventListener('click', () => {
-                const avatarId = item.getAttribute('data-avatar');
-                const groupId = item.getAttribute('data-group');
-                const fileName = item.getAttribute('data-file');
-                if (avatarId && fileName) {
-                    void openRecentCharacterChat(avatarId, fileName);
-                }
-                if (groupId && fileName) {
-                    void openRecentGroupChat(groupId, fileName);
-                }
-            });
+        item.addEventListener('click', () => {
+            const avatarId = item.getAttribute('data-avatar');
+            const groupId = item.getAttribute('data-group');
+            const fileName = item.getAttribute('data-file');
+            if (avatarId && fileName) {
+                void openRecentCharacterChat(avatarId, fileName);
+            }
+            if (groupId && fileName) {
+                void openRecentGroupChat(groupId, fileName);
+            }
         });
-        const hiddenChats = fragment.querySelectorAll('.recentChat.hidden');
+    });
+    const hiddenChats = fragment.querySelectorAll('.recentChat.hidden');
+    fragment.querySelectorAll('button.showMoreChats').forEach((button) => {
+        button.setAttribute('title', t`Show more recent chats`);
+        button.setAttribute('aria-expanded', 'false');
+        button.addEventListener('click', () => {
+            const rotate = button.classList.contains('rotated');
+            hiddenChats.forEach((chatItem) => {
+                chatItem.classList.toggle('hidden', rotate);
+            });
+            button.classList.toggle('rotated', !rotate);
+            button.setAttribute('aria-expanded', String(!rotate));
+        });
+    });
+    fragment.querySelectorAll('button.openTemporaryChat').forEach((button) => {
+        button.addEventListener('click', async () => {
+            await newAssistantChat({ temporary: true });
+            focusChatInput(ChatInputFocusIntent.NAVIGATION);
+        });
+    });
+    fragment.querySelectorAll('.recentChat.group').forEach((groupChat) => {
+        const groupId = groupChat.getAttribute('data-group');
+        const group = groups.find(x => x.id === groupId);
+        if (group) {
+            const avatar = groupChat.querySelector('.avatar');
+            if (!avatar) {
+                return;
+            }
+            const groupAvatar = getGroupAvatar(group);
+            $(avatar).replaceWith(groupAvatar);
+        }
+    });
+    fragment.querySelectorAll('.recentChat .renameChat').forEach((renameButton) => {
+        renameButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const chatItem = renameButton.closest('.recentChat');
+            if (!chatItem) {
+                return;
+            }
+            const avatarId = chatItem.getAttribute('data-avatar');
+            const groupId = chatItem.getAttribute('data-group');
+            const fileName = chatItem.getAttribute('data-file');
+            if (avatarId && fileName) {
+                void renameRecentCharacterChat(avatarId, fileName);
+            }
+            if (groupId && fileName) {
+                void renameRecentGroupChat(groupId, fileName);
+            }
+        });
+    });
+    fragment.querySelectorAll('.recentChat .deleteChat').forEach((deleteButton) => {
+        deleteButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const chatItem = deleteButton.closest('.recentChat');
+            if (!chatItem) {
+                return;
+            }
+            const avatarId = chatItem.getAttribute('data-avatar');
+            const groupId = chatItem.getAttribute('data-group');
+            const fileName = chatItem.getAttribute('data-file');
+            if (avatarId && fileName) {
+                void deleteRecentCharacterChat(avatarId, fileName);
+            }
+            if (groupId && fileName) {
+                void deleteRecentGroupChat(groupId, fileName);
+            }
+        });
+    });
+    fragment.querySelectorAll('.recentChat .pinChat').forEach((pinButton) => {
+        pinButton.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            const chatItem = pinButton.closest('.recentChat');
+            if (!chatItem) {
+                return;
+            }
+            const avatarId = chatItem.getAttribute('data-avatar');
+            const groupId = chatItem.getAttribute('data-group');
+            const fileName = chatItem.getAttribute('data-file');
+            const recentChat = chats.find(c => c.chat_name === fileName && ((c.is_group && c.group === groupId) || (!c.is_group && c.avatar === avatarId)));
+            if (!recentChat) {
+                console.error('Recent chat not found for pinning.');
+                return;
+            }
+            const currentlyPinned = PinnedChatsManager.isPinned(recentChat);
+            PinnedChatsManager.toggle(recentChat, !currentlyPinned);
+            await refreshWelcomeScreen({ flashChat: recentChat });
+        });
+    });
+    if (expand) {
         fragment.querySelectorAll('button.showMoreChats').forEach((button) => {
-            const showRecentChatsTitle = t`Show more recent chats`;
-            const hideRecentChatsTitle = t`Show less recent chats`;
-
-            button.setAttribute('title', showRecentChatsTitle);
-            button.addEventListener('click', () => {
-                const rotate = button.classList.contains('rotated');
-                hiddenChats.forEach((chatItem) => {
-                    chatItem.classList.toggle('hidden', rotate);
-                });
-                button.classList.toggle('rotated', !rotate);
-                button.setAttribute('title', rotate ? showRecentChatsTitle : hideRecentChatsTitle);
-            });
-        });
-        fragment.querySelectorAll('button.openTemporaryChat').forEach((button) => {
-            button.addEventListener('click', async () => {
-                await newAssistantChat({ temporary: true });
-                if (sendTextArea instanceof HTMLTextAreaElement) {
-                    focusChatInput(ChatInputFocusIntent.NAVIGATION);
-                }
-            });
-        });
-        fragment.querySelectorAll('.recentChat.group').forEach((groupChat) => {
-            const groupId = groupChat.getAttribute('data-group');
-            const group = groups.find(x => x.id === groupId);
-            if (group) {
-                const avatar = groupChat.querySelector('.avatar');
-                if (!avatar) {
-                    return;
-                }
-                const groupAvatar = getGroupAvatar(group);
-                $(avatar).replaceWith(groupAvatar);
+            if (button instanceof HTMLButtonElement) {
+                button.click();
             }
         });
-        fragment.querySelectorAll('.recentChat .renameChat').forEach((renameButton) => {
-            renameButton.addEventListener('click', (event) => {
-                event.stopPropagation();
-                const chatItem = renameButton.closest('.recentChat');
-                if (!chatItem) {
-                    return;
-                }
-                const avatarId = chatItem.getAttribute('data-avatar');
-                const groupId = chatItem.getAttribute('data-group');
-                const fileName = chatItem.getAttribute('data-file');
-                if (avatarId && fileName) {
-                    void renameRecentCharacterChat(avatarId, fileName);
-                }
-                if (groupId && fileName) {
-                    void renameRecentGroupChat(groupId, fileName);
-                }
-            });
-        });
-        fragment.querySelectorAll('.recentChat .deleteChat').forEach((deleteButton) => {
-            deleteButton.addEventListener('click', (event) => {
-                event.stopPropagation();
-                const chatItem = deleteButton.closest('.recentChat');
-                if (!chatItem) {
-                    return;
-                }
-                const avatarId = chatItem.getAttribute('data-avatar');
-                const groupId = chatItem.getAttribute('data-group');
-                const fileName = chatItem.getAttribute('data-file');
-                if (avatarId && fileName) {
-                    void deleteRecentCharacterChat(avatarId, fileName);
-                }
-                if (groupId && fileName) {
-                    void deleteRecentGroupChat(groupId, fileName);
-                }
-            });
-        });
-        fragment.querySelectorAll('.recentChat .pinChat').forEach((pinButton) => {
-            pinButton.addEventListener('click', async (event) => {
-                event.stopPropagation();
-                const chatItem = pinButton.closest('.recentChat');
-                if (!chatItem) {
-                    return;
-                }
-                const avatarId = chatItem.getAttribute('data-avatar');
-                const groupId = chatItem.getAttribute('data-group');
-                const fileName = chatItem.getAttribute('data-file');
-                const recentChat = chats.find(c => c.chat_name === fileName && ((c.is_group && c.group === groupId) || (!c.is_group && c.avatar === avatarId)));
-                if (!recentChat) {
-                    console.error('Recent chat not found for pinning.');
-                    return;
-                }
-                const currentlyPinned = PinnedChatsManager.isPinned(recentChat);
-                PinnedChatsManager.toggle(recentChat, !currentlyPinned);
-                await refreshWelcomeScreen({ flashChat: recentChat });
-            });
-        });
-        chatElement.append(fragment.firstChild);
-        if (expand) {
-            chatElement.querySelectorAll('button.showMoreChats').forEach((button) => {
-                if (button instanceof HTMLButtonElement) {
-                    button.click();
-                }
-            });
-        }
-    } catch (error) {
-        console.error('Welcome screen error:', error);
     }
+    return fragment.firstElementChild;
 }
 
 /**
@@ -493,21 +495,17 @@ async function sendWelcomePanel(chats, expand = false) {
  */
 async function openRecentCharacterChat(avatarId, fileName) {
     const characterId = characters.findIndex(x => x.avatar === avatarId);
-    if (characterId === -1) {
-        console.error(`Character not found for avatar ID: ${avatarId}`);
-        return;
-    }
 
     try {
         await selectCharacterById(characterId, { chatFile: fileName });
-        if (selected_group || String(this_chid) !== String(characterId) || getCurrentChatId() !== fileName) {
+        if (!isChatOpen({ avatar: avatarId }, fileName)) {
             return;
         }
         setActiveCharacter(avatarId);
         saveSettingsDebounced();
     } catch (error) {
         console.error('Error opening recent chat:', error);
-        toastr.error(t`Failed to open recent chat. See console for details.`);
+        toastr.error(error.message, t`Chat could not be opened.`);
     }
 }
 
@@ -517,22 +515,16 @@ async function openRecentCharacterChat(avatarId, fileName) {
  * @param {string} fileName Chat file name
  */
 async function openRecentGroupChat(groupId, fileName) {
-    const group = groups.find(x => x.id === groupId);
-    if (!group) {
-        console.error(`Group not found for ID: ${groupId}`);
-        return;
-    }
-
     try {
         await openGroupById(groupId, { chatId: fileName });
-        if (selected_group !== groupId || getCurrentChatId() !== fileName) {
+        if (!isChatOpen({ groupId }, fileName)) {
             return;
         }
         setActiveGroup(groupId);
         saveSettingsDebounced();
     } catch (error) {
         console.error('Error opening recent group chat:', error);
-        toastr.error(t`Failed to open recent group chat. See console for details.`);
+        toastr.error(error.message, t`Chat could not be opened.`);
     }
 }
 
@@ -542,34 +534,15 @@ async function openRecentGroupChat(groupId, fileName) {
  * @param {string} fileName Chat file name
  */
 async function renameRecentCharacterChat(avatarId, fileName) {
-    const characterId = characters.findIndex(x => x.avatar === avatarId);
-    if (characterId === -1) {
-        console.error(`Character not found for avatar ID: ${avatarId}`);
-        return;
-    }
-    try {
-        const popupText = await renderTemplateAsync('chatRename');
-        const newName = await callGenericPopup(popupText, POPUP_TYPE.INPUT, fileName);
-        if (!newName || typeof newName !== 'string' || newName === fileName) {
-            console.log('No new name provided, aborting');
-            return;
-        }
-        const committedFileName = await renameGroupOrCharacterChat({
-            characterId: String(characterId),
-            oldFileName: fileName,
-            newFileName: newName,
-            loader: false,
-        });
-        if (!committedFileName) {
-            return;
-        }
-        await updateRemoteChatName(characterId, committedFileName);
-        await refreshWelcomeScreen();
-        toastr.success(t`Chat renamed.`);
-    } catch (error) {
-        console.error('Error renaming recent character chat:', error);
-        toastr.error(t`Failed to rename recent chat. See console for details.`);
-    }
+    const newName = await promptChatRename(fileName);
+    if (!newName) return;
+    const committedFileName = await renameGroupOrCharacterChat({
+        characterId: characters.findIndex(character => character.avatar === avatarId),
+        oldFileName: fileName,
+        newFileName: newName,
+        loader: false,
+    });
+    if (committedFileName) await refreshWelcomeScreen();
 }
 
 /**
@@ -578,33 +551,15 @@ async function renameRecentCharacterChat(avatarId, fileName) {
  * @param {string} fileName Chat file name
  */
 async function renameRecentGroupChat(groupId, fileName) {
-    const group = groups.find(x => x.id === groupId);
-    if (!group) {
-        console.error(`Group not found for ID: ${groupId}`);
-        return;
-    }
-    try {
-        const popupText = await renderTemplateAsync('chatRename');
-        const newName = await callGenericPopup(popupText, POPUP_TYPE.INPUT, fileName);
-        if (!newName || newName === fileName) {
-            console.log('No new name provided, aborting');
-            return;
-        }
-        const committedFileName = await renameGroupOrCharacterChat({
-            groupId: String(groupId),
-            oldFileName: fileName,
-            newFileName: String(newName),
-            loader: false,
-        });
-        if (!committedFileName) {
-            return;
-        }
-        await refreshWelcomeScreen();
-        toastr.success(t`Group chat renamed.`);
-    } catch (error) {
-        console.error('Error renaming recent group chat:', error);
-        toastr.error(t`Failed to rename recent group chat. See console for details.`);
-    }
+    const newName = await promptChatRename(fileName);
+    if (!newName) return;
+    const committedFileName = await renameGroupOrCharacterChat({
+        groupId: String(groupId),
+        oldFileName: fileName,
+        newFileName: newName,
+        loader: false,
+    });
+    if (committedFileName) await refreshWelcomeScreen();
 }
 
 /**
@@ -613,23 +568,17 @@ async function renameRecentGroupChat(groupId, fileName) {
  * @param {string} fileName Chat file name
  */
 async function deleteRecentCharacterChat(avatarId, fileName) {
-    const characterId = characters.findIndex(x => x.avatar === avatarId);
-    if (characterId === -1) {
-        console.error(`Character not found for avatar ID: ${avatarId}`);
-        return;
-    }
     try {
-        const confirm = await callGenericPopup(t`Delete the Chat File?`, POPUP_TYPE.CONFIRM);
+        const confirm = await confirmChatDelete(fileName);
         if (!confirm) {
             console.log('Deletion cancelled by user');
             return;
         }
-        await deleteCharacterChatByName(String(characterId), fileName);
+        await deleteCharacterChat(avatarId, fileName);
         await refreshWelcomeScreen();
-        toastr.success(t`Chat deleted.`);
     } catch (error) {
         console.error('Error deleting recent character chat:', error);
-        toastr.error(t`Failed to delete recent chat. See console for details.`);
+        toastr.error(error.message, t`Chat could not be deleted.`);
     }
 }
 
@@ -639,23 +588,17 @@ async function deleteRecentCharacterChat(avatarId, fileName) {
  * @param {string} fileName Chat file name
  */
 async function deleteRecentGroupChat(groupId, fileName) {
-    const group = groups.find(x => x.id === groupId);
-    if (!group) {
-        console.error(`Group not found for ID: ${groupId}`);
-        return;
-    }
     try {
-        const confirm = await callGenericPopup(t`Delete the Chat File?`, POPUP_TYPE.CONFIRM);
+        const confirm = await confirmChatDelete(fileName);
         if (!confirm) {
             console.log('Deletion cancelled by user');
             return;
         }
-        await deleteGroupChatByName(groupId, fileName);
+        await deleteGroupChat(groupId, fileName);
         await refreshWelcomeScreen();
-        toastr.success(t`Group chat deleted.`);
     } catch (error) {
         console.error('Error deleting recent group chat:', error);
-        toastr.error(t`Failed to delete recent group chat. See console for details.`);
+        toastr.error(error.message, t`Chat could not be deleted.`);
     }
 }
 
@@ -676,27 +619,31 @@ async function refreshWelcomeScreen({ flashChat = null } = {}) {
     const scrollHeight = chatElement.scrollHeight;
     const expand = chatElement.querySelectorAll('button.showMoreChats.rotated').length > 0;
 
-    await openWelcomeScreen({ force: true, expand });
+    try {
+        await openWelcomeScreen({ force: true, expand });
+        if (getCurrentChatId() !== undefined) return;
 
-    // Restore scroll position or flash specific chat
-    if (flashChat) {
-        const recentChats = Array.from(chatElement.querySelectorAll('.recentChat'));
-        const chatToFlash = recentChats.find(el => {
-            const file = el.getAttribute('data-file');
-            const group = el.getAttribute('data-group');
-            const avatar = el.getAttribute('data-avatar');
-            return file === flashChat.chat_name &&
-                ((flashChat.is_group && group === flashChat.group) || (!flashChat.is_group && avatar === flashChat.avatar));
-        });
-        if (chatToFlash instanceof HTMLElement) {
-            if (!isElementInViewport(chatToFlash)) {
-                setChatScrollTop(chatToFlash.offsetTop - chatElement.offsetTop - (chatToFlash.clientHeight / 2));
+        if (flashChat) {
+            const recentChats = Array.from(chatElement.querySelectorAll('.recentChat'));
+            const chatToFlash = recentChats.find(el => {
+                const file = el.getAttribute('data-file');
+                const group = el.getAttribute('data-group');
+                const avatar = el.getAttribute('data-avatar');
+                return file === flashChat.chat_name &&
+                    ((flashChat.is_group && group === flashChat.group) || (!flashChat.is_group && avatar === flashChat.avatar));
+            });
+            if (chatToFlash instanceof HTMLElement) {
+                if (!isElementInViewport(chatToFlash)) {
+                    setChatScrollTop(chatToFlash.offsetTop - chatElement.offsetTop - (chatToFlash.clientHeight / 2));
+                }
+                flashHighlight($(chatToFlash), 1000);
             }
-            flashHighlight($(chatToFlash), 1000);
+        } else {
+            setChatScrollTop(scrollTop + (chatElement.scrollHeight - scrollHeight));
         }
-    } else {
-        // Restore scroll position
-        setChatScrollTop(scrollTop + (chatElement.scrollHeight - scrollHeight));
+    } catch (error) {
+        console.error('Could not refresh recent chats:', error);
+        toastr.error(error.message, t`Recent chats could not be refreshed.`);
     }
 }
 
@@ -734,6 +681,7 @@ async function openRecentChatsSettingsPopup() {
     };
 
     await callGenericPopup(t`Recent Chats Settings`, POPUP_TYPE.CONFIRM, null, {
+        label: t`Recent Chats Settings`,
         okButton: t`Save`,
         cancelButton: t`Cancel`,
         customInputs: [maxRecentChatsInput, collapsedRecentChatsInput],
@@ -853,7 +801,7 @@ export async function openPermanentAssistantChat({ tryCreate = true, created = f
         }
         catch (error) {
             console.error('Error creating permanent assistant:', error);
-            toastr.error(t`Failed to create ${neutralCharacterName}. See console for details.`);
+            toastr.error(error.message, t`Assistant could not be created.`);
             return;
         }
     }
@@ -866,7 +814,7 @@ export async function openPermanentAssistantChat({ tryCreate = true, created = f
         console.log(`Opened permanent assistant chat for ${neutralCharacterName}.`, getCurrentChatId());
     } catch (error) {
         console.error('Error opening permanent assistant chat:', error);
-        toastr.error(t`Failed to open permanent assistant chat. See console for details.`);
+        toastr.error(error.message, t`Chat could not be opened.`);
     }
 }
 

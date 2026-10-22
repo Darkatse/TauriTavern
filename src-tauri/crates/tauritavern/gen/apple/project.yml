@@ -38,6 +38,8 @@ targets:
     info:
       path: tauritavern_iOS/Info.plist
       properties:
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
         LSRequiresIPhoneOS: true
         NSBonjourServices: ["_tauritavern._tcp"]
         UILaunchStoryboardName: LaunchScreen
@@ -55,6 +57,8 @@ targets:
         CFBundleVersion: "1.0.0"
     entitlements:
       path: tauritavern_iOS/tauritavern_iOS.entitlements
+      properties:
+        com.apple.developer.kernel.increased-memory-limit: true
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full

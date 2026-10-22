@@ -79,6 +79,9 @@ impl ChatCompletionRepositoryGenerateResponse {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ChatCompletionStreamDelta {
+    Text {
+        text: String,
+    },
     ToolCall {
         tool_call_index: usize,
         name: String,
@@ -86,7 +89,9 @@ pub enum ChatCompletionStreamDelta {
         arguments_fragment: String,
     },
     /// Provider-exposed reasoning text only; never signatures or encrypted state.
-    Reasoning { text: String },
+    Reasoning {
+        text: String,
+    },
 }
 
 #[async_trait]

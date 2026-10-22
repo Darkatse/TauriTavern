@@ -25,12 +25,6 @@ const RUN_FAILURE_PRESENTATIONS = Object.freeze({
         summary: 'Model kept calling tools after workspace.finish; no output was committed, but any streamed partial text was kept.',
         summaryKey: 'agent.error.tool_after_finish.summary',
     }),
-    'agent.max_tool_rounds_exceeded': Object.freeze({
-        message: 'The Agent loop exceeded the configured maximum tool rounds before calling workspace.finish. No Agent output was committed; any streamed partial text remains in chat. Try regenerating with a tighter prompt, or raise the round budget in the profile.',
-        messageKey: 'agent.error.max_tool_rounds_exceeded.message',
-        summary: 'Tool round budget exhausted; no output was committed, but any streamed partial text was kept.',
-        summaryKey: 'agent.error.max_tool_rounds_exceeded.summary',
-    }),
     'agent.profile_model_requires_configuration': Object.freeze({
         message: 'This Agent profile needs a local model selection before it can run. Open Agent System, choose a saved model target for the profile, then run it again.',
         messageKey: 'agent.error.profile_model_requires_configuration.message',

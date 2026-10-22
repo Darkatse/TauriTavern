@@ -12,7 +12,7 @@ import {
 } from './settings-view-model.js';
 import { buildTauriTavernSettingsUpdate } from './settings-patch.js';
 import { applyTauriTavernSettingsUpdateEffects } from './settings-effects.js';
-import { callTauriTavernPanelPopup } from '../panel-popup.js';
+import { callTauriTavernPanelPopup, createTauriTavernPanelPopup } from '../panel-popup.js';
 import { setOledBackgroundEnabled } from '../oled-background.js';
 
 const SETTINGS_STYLE_ID = 'tauritavern-settings-style';
@@ -434,7 +434,8 @@ export async function openTauriTavernSettingsPopup() {
     let savedUpdate = null;
 
     try {
-        const popupPromise = callTauriTavernPanelPopup(mount, POPUP_TYPE.CONFIRM, '', {
+        const popup = createTauriTavernPanelPopup(mount, POPUP_TYPE.CONFIRM, '', {
+            label: translate('TauriTavern Settings'),
             okButton: translate('Save'),
             cancelButton: translate('Close'),
             allowVerticalScrolling: true,
@@ -484,6 +485,7 @@ export async function openTauriTavernSettingsPopup() {
                 }
             },
         });
+        const popupPromise = popup.show();
         if (viewModel.values.chatBackups.zstdCompressionEnabled) {
             void loadChatBackupStorageStats()
                 .then(appHandle.setChatBackupStorageStats)

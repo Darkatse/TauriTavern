@@ -1,5 +1,5 @@
 /**
- * Central entry point for the new macro system.
+ * Shared live and explicit-context macro entry points.
  *
  * Exposes the MacroEngine / MacroRegistry singletons and provides a
  * single registerMacros() function that wires up all built-in macro
@@ -13,6 +13,7 @@ import { MacroLexer } from './engine/MacroLexer.js';
 import { MacroParser } from './engine/MacroParser.js';
 import { MacroCstWalker } from './engine/MacroCstWalker.js';
 import { MacroEnvBuilder } from './engine/MacroEnvBuilder.js';
+import { evaluateLegacyWithEnv } from '../macros.js';
 
 // Macro definition groups
 import { registerCoreMacros } from './definitions/core-macros.js';
@@ -41,7 +42,38 @@ export { MacroCategory, MacroValueType };
 /** @typedef {import('./engine/MacroEnv.types.js').MacroEnvSystem} MacroEnvSystem */
 /** @typedef {import('./engine/MacroEnv.types.js').MacroEnvFunctions} MacroEnvFunctions */
 
+/**
+ * Capture reusable input data without evaluating any character templates.
+ * @returns {import('./engine/MacroEnv.types.js').MacroContext}
+ */
+export function captureContext() {
+    return MacroEnvBuilder.captureContext();
+}
+
+/**
+ * Evaluate one top-level text; repeated calls share the caller's variable data.
+ * @param {string} content
+ * @param {import('./engine/MacroEnv.types.js').MacroContext} context
+ * @param {import('./engine/MacroEnv.types.js').MacroEvaluationOptions} [options]
+ * @returns {string}
+ */
+export function evaluateWithContext(content, context, options = {}) {
+    if (typeof content !== 'string') throw new TypeError('Macro input must be a string');
+    if (!content) return '';
+    const env = MacroEnvBuilder.buildFromContext({ ...options, content }, context);
+    return evaluateMacroEnv(content, env);
+}
+
+/** The parser choice belongs to the prepared input, not the current UI. */
+export function evaluateMacroEnv(content, env) {
+    if (env.engine === 'new') return MacroEngine.evaluate(content, env);
+    if (env.engine === 'legacy') return evaluateLegacyWithEnv(content, env);
+    throw new Error('macro.engine_invalid: Unknown macro engine');
+}
+
 export const macros = {
+    captureContext,
+    evaluateWithContext,
     // engine singletons
     engine: MacroEngine,
     registry: MacroRegistry,
@@ -52,6 +84,7 @@ export const macros = {
 
     // enums
     category: MacroCategory,
+    valueType: MacroValueType,
 
     // shorthand functions
     register: MacroRegistry.registerMacro.bind(MacroRegistry),

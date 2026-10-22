@@ -1,4 +1,6 @@
 import { getMountedCodeMirrorEditor, mountCodeMirrorEditor } from './tauri/codemirror-editor.js';
+import { translate } from './i18n.js';
+import { subscribeAgentRunState } from './tauritavern/agent/agent-run-controller.js';
 
 const EXPAND_BUTTON_ID = 'send_textarea_expand';
 const EDITOR_DIALOG_ID = 'tt-chat-input-editor';
@@ -87,7 +89,6 @@ function createEditorDialog(sourceTextarea) {
     const dialog = document.createElement('dialog');
     dialog.id = EDITOR_DIALOG_ID;
     dialog.className = 'tt-chat-input-editor';
-    dialog.setAttribute('data-tt-mobile-surface', 'fullscreen-window');
     dialog.setAttribute('aria-labelledby', EDITOR_TITLE_ID);
 
     const surface = document.createElement('div');
@@ -146,17 +147,18 @@ function createEditorDialog(sourceTextarea) {
  * @param {object} deps
  * @param {HTMLTextAreaElement} deps.sendTextArea
  * @param {() => Promise<void>|void} deps.sendMessage
- * @param {() => boolean} deps.isMobile
+ * @param {(text: string) => boolean} deps.canSubmitGuidance
+ * @param {() => boolean} deps.isMobileHost
  */
-export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, isMobile }) {
+export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, canSubmitGuidance, isMobileHost }) {
     if (!(sendTextArea instanceof HTMLTextAreaElement)) {
         throw new Error('sendTextArea must be an HTMLTextAreaElement');
     }
     if (typeof sendMessage !== 'function') {
         throw new Error('sendMessage must be a function');
     }
-    if (typeof isMobile !== 'function') {
-        throw new Error('isMobile must be a function');
+    if (typeof isMobileHost !== 'function') {
+        throw new Error('isMobileHost must be a function');
     }
 
     const inputHost = requireInputHost(sendTextArea);
@@ -168,6 +170,16 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, is
     inputHost.appendChild(expandButton);
 
     const { dialog, textarea, collapseButton, sendButton } = createEditorDialog(sendTextArea);
+
+    const syncSendAction = () => {
+        getMountedCodeMirrorEditor(textarea)?.flush();
+        const label = canSubmitGuidance(textarea.value) ? 'Submit guidance' : 'Send a message';
+        sendButton.title = translate(label);
+        sendButton.setAttribute('aria-label', translate(label));
+        sendButton.dataset.i18n = `[title]${label};[aria-label]${label}`;
+    };
+    textarea.addEventListener('input', syncSendAction);
+    subscribeAgentRunState(() => { if (dialog.open) syncSendAction(); });
 
     let pendingButtonFrame = 0;
     let pendingSourceFocus = false;
@@ -230,12 +242,13 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, is
 
         textarea.value = sendTextArea.value;
         textarea.placeholder = sendTextArea.placeholder;
+        syncSendAction();
 
         dialog.showModal();
         textarea.focus();
         textarea.setSelectionRange(sendTextArea.selectionStart, sendTextArea.selectionEnd, sendTextArea.selectionDirection);
         editorMount = new AbortController();
-        await mountCodeMirrorEditor(textarea, { signal: editorMount.signal });
+        await mountCodeMirrorEditor(textarea, { signal: editorMount.signal, onChange: syncSendAction });
     };
 
     expandButton.addEventListener('click', (event) => {
@@ -247,7 +260,7 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, is
     });
 
     collapseButton.addEventListener('click', () => {
-        closeEditor({ focusSource: !isMobile(), reason: 'collapse' });
+        closeEditor({ focusSource: !isMobileHost(), reason: 'collapse' });
     });
 
     sendButton.addEventListener('click', () => {
@@ -268,13 +281,13 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, is
         event.stopPropagation();
         if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing) {
             event.preventDefault();
-            closeEditor({ focusSource: !isMobile(), reason: 'cancel' });
+            closeEditor({ focusSource: !isMobileHost(), reason: 'cancel' });
         }
     });
 
     dialog.addEventListener('cancel', (event) => {
         event.preventDefault();
-        closeEditor({ focusSource: !isMobile(), reason: 'cancel' });
+        closeEditor({ focusSource: !isMobileHost(), reason: 'cancel' });
     });
 
     dialog.addEventListener('close', () => {

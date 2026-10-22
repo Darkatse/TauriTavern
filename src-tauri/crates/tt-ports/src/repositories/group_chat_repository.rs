@@ -89,14 +89,6 @@ pub trait GroupChatRepository: Send + Sync {
     /// Read the group chat metadata (header only).
     async fn get_group_chat_metadata(&self, chat_id: &str) -> Result<Value, DomainError>;
 
-    /// Set `chat_metadata.extensions[namespace]` for a group chat (header-only rewrite).
-    async fn set_group_chat_metadata_extension(
-        &self,
-        chat_id: &str,
-        namespace: &str,
-        value: Value,
-    ) -> Result<(), DomainError>;
-
     /// Read a JSON value from the group chat extension store.
     async fn get_group_chat_store_json(
         &self,

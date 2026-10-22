@@ -1,15 +1,9 @@
 export function registerBootstrapRoutes(router, context, { jsonResponse }) {
     router.post('/api/bootstrap', async () => {
-        const snapshot = await context.safeInvoke('get_bootstrap_snapshot');
-        const normalizedCharacters = snapshot.characters.map((character) => context.normalizeCharacter(character));
-
+        const snapshot = await context.safeInvoke('get_bootstrap_metadata');
         return jsonResponse({
-            ios_policy: snapshot.ios_policy,
-            settings: snapshot.settings,
-            characters: normalizedCharacters,
-            groups: snapshot.groups,
-            avatars: snapshot.avatars,
-            secret_state: snapshot.secret_state,
+            ...snapshot,
+            characters: snapshot.characters.map(character => context.normalizeCharacter(character)),
         });
     });
 }

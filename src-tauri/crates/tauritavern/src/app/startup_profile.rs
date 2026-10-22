@@ -1,10 +1,15 @@
 use std::path::Path;
 
+use serde::{Deserialize, de::value::StrDeserializer};
+
 use crate::infrastructure::ios_policy_cache::resolve_effective_raw_policy_sync;
+use crate::platform::identity::HOST_IDENTITY;
 use tt_adapter_storage_core::load_tauritavern_settings_blocking;
+use tt_contracts::host::HostPlatform;
 use tt_domain::errors::DomainError;
 use tt_domain::ios_policy::{
-    IosPolicyActivationReport, IosPolicyScope, resolve_ios_policy_activation_report,
+    IosPolicyActivationReport, IosPolicyProfile, IosPolicyScope, ios_policy_seed,
+    resolve_ios_policy_activation_report,
 };
 use tt_domain::models::settings::TauriTavernSettings;
 
@@ -16,24 +21,52 @@ pub(crate) struct StartupProfile {
 
 impl StartupProfile {
     pub(crate) fn load(data_root: &Path) -> Result<Self, DomainError> {
-        let tauritavern_settings =
-            load_tauritavern_settings_blocking(&data_root.join("default-user"))?;
+        let tauritavern_settings = load_tauritavern_settings_blocking(
+            &data_root.join("default-user"),
+            &initial_tauritavern_settings(),
+        )?;
         tauritavern_settings
             .chat_backups
             .validate()
             .map_err(|error| DomainError::InvalidData(error.message()))?;
-        let scope = IosPolicyScope::for_current_platform();
+        let scope = if HOST_IDENTITY.platform == HostPlatform::Ios {
+            IosPolicyScope::Ios
+        } else {
+            IosPolicyScope::Ignored
+        };
         let raw_policy = if scope == IosPolicyScope::Ios {
             resolve_effective_raw_policy_sync(data_root, tauritavern_settings.ios_policy.as_ref())?
         } else {
             None
         };
-        let ios_policy = resolve_ios_policy_activation_report(scope, raw_policy.as_ref())?;
+        let ios_policy = resolve_ios_policy_activation_report(
+            scope,
+            raw_policy.as_ref(),
+            factory_ios_profile(),
+        )?;
 
         Ok(Self {
             tauritavern_settings,
             ios_policy,
         })
+    }
+}
+
+/// Native defaults shared by startup loading and repository composition.
+pub(super) fn initial_tauritavern_settings() -> TauriTavernSettings {
+    TauriTavernSettings {
+        ios_policy: factory_ios_profile().map(ios_policy_seed),
+        ..TauriTavernSettings::default()
+    }
+}
+
+fn factory_ios_profile() -> Option<IosPolicyProfile> {
+    match env!("TAURITAVERN_IOS_POLICY_PROFILE") {
+        "" => None,
+        value => Some(
+            IosPolicyProfile::deserialize(StrDeserializer::<serde::de::value::Error>::new(value))
+                .expect("iOS factory profile was validated by build.rs"),
+        ),
     }
 }
 
@@ -85,8 +118,8 @@ mod tests {
                 .is_file()
         );
         assert_eq!(
-            profile.ios_policy.scope,
-            IosPolicyScope::for_current_platform()
+            profile.tauritavern_settings.ios_policy,
+            initial_tauritavern_settings().ios_policy
         );
     }
 

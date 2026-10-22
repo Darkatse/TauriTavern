@@ -14,6 +14,7 @@ const DEPENDENCY_TREE_ARGS = ['--all-features', '--target', 'all', '-e', 'normal
 const DOMAIN_FORBIDDEN_PACKAGES = new Set([
     'async-trait',
     'axum',
+    'bashkit',
     'image',
     'miktik',
     'reqwest',
@@ -31,6 +32,7 @@ const DOMAIN_FORBIDDEN_SOURCE_PATTERNS = [
     ['repository path', /\bcrate::repositories::/],
     ['async-trait', /\basync_trait\b/],
     ['axum', /\baxum::/],
+    ['bashkit', /\bbashkit::/],
     ['image', /\bimage::/],
     ['miktik', /\bmiktik::/],
     ['reqwest', /\breqwest::/],
@@ -44,6 +46,7 @@ const DOMAIN_FORBIDDEN_SOURCE_PATTERNS = [
 const CONTRACTS_FORBIDDEN_PACKAGES = new Set([
     'async-trait',
     'axum',
+    'bashkit',
     'image',
     'miktik',
     'reqwest',
@@ -60,6 +63,7 @@ const CONTRACTS_FORBIDDEN_PACKAGES = new Set([
 const CONTRACTS_FORBIDDEN_SOURCE_PATTERNS = [
     ['async-trait', /\basync_trait\b/],
     ['axum', /\baxum::/],
+    ['bashkit', /\bbashkit::/],
     ['image', /\bimage::/],
     ['miktik', /\bmiktik::/],
     ['reqwest', /\breqwest::/],
@@ -74,6 +78,7 @@ const CONTRACTS_FORBIDDEN_SOURCE_PATTERNS = [
 
 const PORTS_FORBIDDEN_PACKAGES = new Set([
     'axum',
+    'bashkit',
     'image',
     'miktik',
     'reqwest',
@@ -87,6 +92,7 @@ const PORTS_FORBIDDEN_PACKAGES = new Set([
 
 const PORTS_FORBIDDEN_SOURCE_PATTERNS = [
     ['axum', /\baxum::/],
+    ['bashkit', /\bbashkit::/],
     ['image', /\bimage::/],
     ['miktik', /\bmiktik::/],
     ['reqwest', /\breqwest::/],
@@ -100,6 +106,7 @@ const PORTS_FORBIDDEN_SOURCE_PATTERNS = [
 const APPLICATION_FORBIDDEN_PACKAGES = new Set([
     'async-compression',
     'axum',
+    'bashkit',
     'image',
     'miktik',
     'qrcode',
@@ -115,7 +122,7 @@ const APPLICATION_FORBIDDEN_PACKAGES = new Set([
     'tt-adapter-media',
     'tt-adapter-mcp',
     'tt-adapter-provider-http',
-    'tt-adapter-quickjs',
+    'tt-adapter-workspace-shell',
     'tt-adapter-storage-core',
     'tt-adapter-storage-userdata',
     'tt-adapter-sync',
@@ -133,6 +140,7 @@ const APPLICATION_FORBIDDEN_SOURCE_PATTERNS = [
     ['presentation path', /\bcrate::presentation::/],
     ['platform path', /\bcrate::platform::/],
     ['axum', /\baxum::/],
+    ['bashkit', /\bbashkit::/],
     ['image', /\bimage::/],
     ['miktik', /\bmiktik::/],
     ['qrcode', /\bqrcode::/],
@@ -146,7 +154,7 @@ const APPLICATION_FORBIDDEN_SOURCE_PATTERNS = [
     ['tt-adapter-media', /\btt_adapter_media::/],
     ['tt-adapter-mcp', /\btt_adapter_mcp::/],
     ['tt-adapter-provider-http', /\btt_adapter_provider_http::/],
-    ['tt-adapter-quickjs', /\btt_adapter_quickjs::/],
+    ['tt-adapter-workspace-shell', /\btt_adapter_workspace_shell::/],
     ['tt-adapter-storage-core', /\btt_adapter_storage_core::/],
     ['tt-adapter-storage-userdata', /\btt_adapter_storage_userdata::/],
     ['tt-adapter-sync', /\btt_adapter_sync::/],
@@ -498,7 +506,7 @@ const ADAPTER_MEDIA_FORBIDDEN_SOURCE_PATTERNS = [
     ['network IO', /\bstd::net::/],
 ];
 
-const ADAPTER_QUICKJS_FORBIDDEN_PACKAGES = new Set([
+const ADAPTER_WORKSPACE_SHELL_FORBIDDEN_PACKAGES = new Set([
     'axum',
     'miktik',
     'qrcode',
@@ -523,7 +531,7 @@ const ADAPTER_QUICKJS_FORBIDDEN_PACKAGES = new Set([
     'ttsync-core',
 ]);
 
-const ADAPTER_QUICKJS_FORBIDDEN_SOURCE_PATTERNS = [
+const ADAPTER_WORKSPACE_SHELL_FORBIDDEN_SOURCE_PATTERNS = [
     ...ADAPTER_FORBIDDEN_SOURCE_PATTERNS,
     ['axum', /\baxum::/],
     ['image', /\bimage::/],
@@ -598,7 +606,7 @@ const CRATES = [
     crateConfig('tt-adapter-storage-core', ADAPTER_STORAGE_CORE_FORBIDDEN_PACKAGES, ADAPTER_STORAGE_CORE_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-storage-userdata', ADAPTER_STORAGE_USERDATA_FORBIDDEN_PACKAGES, ADAPTER_STORAGE_USERDATA_FORBIDDEN_SOURCE_PATTERNS),
     crateConfig('tt-adapter-media', ADAPTER_MEDIA_FORBIDDEN_PACKAGES, ADAPTER_MEDIA_FORBIDDEN_SOURCE_PATTERNS),
-    crateConfig('tt-adapter-quickjs', ADAPTER_QUICKJS_FORBIDDEN_PACKAGES, ADAPTER_QUICKJS_FORBIDDEN_SOURCE_PATTERNS),
+    crateConfig('tt-adapter-workspace-shell', ADAPTER_WORKSPACE_SHELL_FORBIDDEN_PACKAGES, ADAPTER_WORKSPACE_SHELL_FORBIDDEN_SOURCE_PATTERNS),
 ];
 
 const MAIN_CRATE_SOURCE_RULES = [

@@ -912,9 +912,12 @@ export class QuickReply {
                 if (!evt.ctrlKey || !evt.altKey || message.selectionStart != message.selectionEnd) return;
                 toggleBreakpoint();
             });
+            let editorViewportWidth = window.innerWidth;
             /** @type {any} */
-            const resizeListener = debounce((evt) => {
-                updateScrollDebounced(evt);
+            const resizeListener = debounce(() => {
+                updateScrollDebounced();
+                if (window.innerWidth === editorViewportWidth) return;
+                editorViewportWidth = window.innerWidth;
                 if (document.activeElement == message) {
                     message.blur();
                     message.focus();

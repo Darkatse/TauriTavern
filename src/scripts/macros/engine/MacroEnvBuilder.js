@@ -1,19 +1,26 @@
-import { name1, name2, characters, getCharacterCardFieldsLazy, getGeneratingModel } from '../../../script.js';
-import { groups, selected_group } from '../../../scripts/group-chats.js';
+import {
+    name1, name2, characters, chat, chat_metadata, extension_prompts, main_api,
+    getCharacterCardFieldsSource, getCharacterCardFieldsLazy, createCharacterCardFields, getGeneratingModel,
+    getMaxPromptTokens, getMaxContextTokens, getMaxResponseTokens, substituteParams,
+} from '../../../script.js';
+import { groups, selected_group } from '../../group-chats.js';
+import { power_user, collapseNewlines, EPHEMERAL_STOPPING_STRINGS } from '../../power-user.js';
+import { extension_settings, extensionNames } from '../../extensions.js';
+import { isMobile } from '../../RossAscends-mods.js';
+import { textgenerationwebui_banned_in_macros } from '../../textgen-settings.js';
+import {
+    getLastMessage, getLastUserMessage, getLastCharMessage, getLastMessageId,
+    getLastSwipeId, getCurrentSwipeId, getFirstIncludedMessageId, getFirstDisplayedMessageId,
+    getTimeSinceLastMessage, getChatIdHash,
+} from '../../macros.js';
+import { liveVariables, createMacroVariables } from '../../variables/scopes.js';
+import { getLastGenerationType } from '../definitions/state-macros.js';
+import { evaluateWithContext } from '../macro-system.js';
 import { logMacroGeneralError } from './MacroDiagnostics.js';
-import { getStringHash } from '/scripts/utils.js';
-/**
- * MacroEnvBuilder is responsible for constructing the MacroEnv object
- * that is passed to macro handlers.
- *
- * It does **not** depend on the legacy regex macro system. Instead, it
- * works from the same raw inputs that substituteParams receives plus a
- * small bundle of global helpers, so it can eventually replace the
- * environment-building block in substituteParams.
- */
+import { getStringHash } from '../../utils.js';
 
 /** @typedef {import('./MacroEnv.types.js').MacroEnv} MacroEnv */
-
+/** @typedef {import('./MacroEnv.types.js').MacroContext} MacroContext */
 /**
  * @typedef {Object} MacroEnvRawContext
  * @property {string} content
@@ -25,187 +32,256 @@ import { getStringHash } from '/scripts/utils.js';
  * @property {Record<string, import('./MacroEnv.types.js').DynamicMacroValue>|null} [dynamicMacros]
  * @property {(value: string) => string} [postProcessFn]
  */
+/** @typedef {(env: MacroEnv, ctx: MacroEnvRawContext) => void} MacroEnvProvider */
 
-/**
- * @typedef {(env: MacroEnv, ctx: MacroEnvRawContext) => void} MacroEnvProvider
- */
+export const env_provider_order = { EARLIEST: 0, EARLY: 10, NORMAL: 50, LATE: 90, LATEST: 100 };
 
-/**
- * @enum {number} Exposed ordering buckets for providers. Callers can use envBuilder.providerOrder.* when registering providers.
- */
-export const env_provider_order = {
-    EARLIEST: 0,
-    EARLY: 10,
-    NORMAL: 50,
-    LATE: 90,
-    LATEST: 100,
-};
+const characterFields = [
+    ['charPrompt', 'system'], ['charInstruction', 'jailbreak'], ['description', 'description'],
+    ['personality', 'personality'], ['scenario', 'scenario'], ['persona', 'persona'],
+    ['mesExamplesRaw', 'mesExamples'], ['version', 'version'], ['charDepthPrompt', 'charDepthPrompt'],
+    ['creatorNotes', 'creatorNotes'], ['firstMessage', 'firstMessage'], ['alternateGreetings', 'alternateGreetings'],
+];
 
-/** @type {MacroEnvBuilder} */
-let instance;
-export { instance as MacroEnvBuilder };
+function readSettings() {
+    const group = groups.find(entry => entry.id === selected_group);
+    const members = (group?.members ?? []).map(avatar => characters.find(c => c.avatar === avatar)).filter(Boolean);
+    return {
+        instruct: power_user.instruct,
+        sysprompt: power_user.sysprompt,
+        context: power_user.context,
+        reasoning: power_user.reasoning,
+        prefer_character_prompt: power_user.prefer_character_prompt,
+        collapse_newlines: power_user.collapse_newlines,
+        pin_examples: power_user.pin_examples,
+        custom_stopping_strings: power_user.custom_stopping_strings,
+        custom_stopping_strings_macro: power_user.custom_stopping_strings_macro,
+        isGroup: Boolean(selected_group),
+        groupNames: members.map(character => character.name),
+        groupNamesNotMuted: members.filter(c => !group.disabled_members.includes(c.avatar)).map(c => c.name),
+    };
+}
 
-class MacroEnvBuilder {
-    /** @type {MacroEnvBuilder} */ static #instance;
-    /** @type {MacroEnvBuilder} */ static get instance() { return MacroEnvBuilder.#instance ?? (MacroEnvBuilder.#instance = new MacroEnvBuilder()); }
+function readCharacter() {
+    const source = getCharacterCardFieldsSource();
+    return {
+        ...Object.fromEntries(characterFields.map(([key, field]) => [key, source[field]])),
+        groupCards: source.groupCards,
+        personaPosition: Number(power_user.persona_description_position),
+    };
+}
 
-    /** @type {{ fn: MacroEnvProvider, order: env_provider_order }[]} */
-    #providers;
+function readExtensions() {
+    return extensionNames.map(name => ({ name, enabled: !extension_settings.disabledExtensions.includes(name) }));
+}
 
-    constructor() {
-        this.#providers = [];
-    }
+function readNames(settings, engine) {
+    const user = name1 ?? '';
+    const char = name2 ?? '';
+    // Legacy includes muted members and the user; the new engine excludes both.
+    const others = (engine === 'legacy' ? settings.groupNames : settings.groupNamesNotMuted)
+        .filter(name => name !== char);
+    if (engine === 'legacy') others.push(user);
+    return {
+        user, char,
+        group: settings.isGroup ? settings.groupNames.join(', ') : char,
+        groupNotMuted: settings.isGroup ? settings.groupNamesNotMuted.join(', ') : char,
+        notChar: settings.isGroup ? others.join(', ') : user,
+    };
+}
 
-    /**
-     * Registers a provider that can augment the MacroEnv with additional
-     * data (for extensions, extra context, etc.).
-     *
-     * Should be called once during initialization.
-     *
-     * @param {MacroEnvProvider} provider
-     * @param {env_provider_order} [order=env_provider_order.NORMAL]
-     * @returns {void}
-     */
+// Stateless read-only views. Live reads stay current; capture materializes their values once.
+const liveChat = Object.freeze({
+    get lastMessage() { return getLastMessage(); },
+    get lastUserMessage() { return getLastUserMessage(); },
+    get lastCharMessage() { return getLastCharMessage(); },
+    get lastMessageId() { return getLastMessageId() ?? ''; },
+    get lastSwipeId() { return getLastSwipeId() ?? ''; },
+    get currentSwipeId() { return getCurrentSwipeId() ?? ''; },
+    get firstIncludedMessageId() { return getFirstIncludedMessageId(); },
+    get firstDisplayedMessageId() { return getFirstDisplayedMessageId(); },
+    get allChatRange() { return chat.length ? `0-${chat.length - 1}` : ''; },
+    get idHash() { return getChatIdHash(); },
+    get pickRerollSeed() { return chat_metadata.pick_reroll_seed || null; },
+    get idleDuration() { return getTimeSinceLastMessage(); },
+});
+
+const liveState = Object.freeze({
+    get input() { return String(document.querySelector('#send_textarea')?.value ?? ''); },
+    get isMobile() { return isMobile(); },
+    get lastGenerationType() { return getLastGenerationType(); },
+    get extensions() { return readExtensions(); },
+    get ephemeralStoppingStrings() { return EPHEMERAL_STOPPING_STRINGS; },
+});
+
+function readLiveContext(engine) {
+    const settings = readSettings();
+    return {
+        engine,
+        names: readNames(settings, engine),
+        get character() { return readCharacter(); },
+        system: {
+            model: getGeneratingModel(),
+            get api() { return main_api; },
+            get maxPrompt() { return getMaxPromptTokens(); },
+            get maxContext() { return getMaxContextTokens(); },
+            get maxResponse() { return getMaxResponseTokens(); },
+        },
+        chat: liveChat,
+        settings,
+        state: liveState,
+        now: Date.now(),
+        variables: { local: chat_metadata.variables ?? {}, global: extension_settings.variables?.global ?? {} },
+        extensionPrompts: extension_prompts,
+        bannedWords: [],
+        extra: {},
+    };
+}
+
+class EnvBuilder {
+    #providers = [];
+
+    /** @param {MacroEnvProvider} provider @param {number} [order] */
     registerProvider(provider, order = env_provider_order.NORMAL) {
         if (typeof provider !== 'function') throw new Error('Provider must be a function');
         this.#providers.push({ fn: provider, order });
     }
 
     /**
-     * Builds a MacroEnv from the raw arguments that are conceptually the
-     * same as substituteParams receives, plus a bundle of global helpers.
-     *
+     * Existing low-level entry defaults to the new engine; wrappers select their own engine.
      * @param {MacroEnvRawContext} ctx
-     * @returns {MacroEnv}
+     * @param {'new'|'legacy'} [engine='new']
      */
-    buildFromRawEnv(ctx) {
-        // Create the env first, we will populate it step by step.
-        // Some fields are marked as required, so we have to fill them with dummy fields here
-        /** @type {MacroEnv} */
-        const env = {
-            content: ctx.content,
-            contentHash: getStringHash(ctx.content),
-            names: { user: '', char: '', group: '', groupNotMuted: '', notChar: '' },
-            character: {},
-            system: { model: '' },
-            functions: { postProcess: (x) => x },
-            dynamicMacros: {},
-            extra: {},
-        };
-
-        if (ctx.replaceCharacterCard) {
-            // Use lazy fields - each property is only resolved when accessed
-            const fields = getCharacterCardFieldsLazy();
-            if (fields) {
-                // Define lazy getters on env.character that delegate to fields
-                const fieldMappings = /** @type {const} */ ([
-                    ['charPrompt', 'system'],
-                    ['charInstruction', 'jailbreak'],
-                    ['description', 'description'],
-                    ['personality', 'personality'],
-                    ['scenario', 'scenario'],
-                    ['persona', 'persona'],
-                    ['mesExamplesRaw', 'mesExamples'],
-                    ['version', 'version'],
-                    ['charDepthPrompt', 'charDepthPrompt'],
-                    ['creatorNotes', 'creatorNotes'],
-                    ['firstMessage', 'firstMessage'],
-                    ['alternateGreetings', 'alternateGreetings'],
-                ]);
-                for (const [envKey, fieldKey] of fieldMappings) {
-                    Object.defineProperty(env.character, envKey, {
-                        get() {
-                            const value = fields[fieldKey];
-                            // alternateGreetings should default to [] instead of ''
-                            if (envKey === 'alternateGreetings') {
-                                return Array.isArray(value) ? value : [];
-                            }
-                            return value || '';
-                        },
-                        enumerable: true,
-                        configurable: true,
-                    });
-                }
+    buildFromRawEnv(ctx, engine = 'new') {
+        const context = readLiveContext(engine);
+        const env = this.#build({ ...ctx, replaceCharacterCard: ctx.replaceCharacterCard ?? false },
+            context, liveVariables, substituteParams, getCharacterCardFieldsLazy);
+        env.bannedWords = textgenerationwebui_banned_in_macros;
+        for (const { fn } of this.#providers.slice().sort((a, b) => a.order - b.order)) {
+            try {
+                fn(env, ctx);
+            } catch (error) {
+                logMacroGeneralError({ message: 'MacroEnvBuilder: Provider error', error });
             }
         }
+        return env;
+    }
 
-        // Names
-        env.names.user = ctx.name1Override ?? name1 ?? '';
-        env.names.char = ctx.name2Override ?? name2 ?? '';
-        env.names.group = getGroupValue(ctx, { currentChar: env.names.char, includeMuted: true });
-        env.names.groupNotMuted = getGroupValue(ctx, { currentChar: env.names.char, includeMuted: false });
-        env.names.notChar = getGroupValue(ctx, { currentChar: env.names.char, filterOutChar: true, includeUser: env.names.user });
+    /** Capture facts, never the interpreted lazy character fields or macro handlers. */
+    captureContext() {
+        const env = this.buildFromRawEnv({ content: '', replaceCharacterCard: false },
+            power_user.experimental_macro_engine ? 'new' : 'legacy');
+        return structuredClone({
+            ...env.context,
+            names: env.names,
+            system: env.system,
+            extra: env.extra,
+            // Filters belong to prompt assembly. Macro outlets only consume text.
+            extensionPrompts: Object.fromEntries(Object.entries(env.extensionPrompts)
+                .map(([key, prompt]) => [key, { value: prompt.value ?? '' }])),
+        });
+    }
 
-        // System
-        env.system.model = getGeneratingModel();
+    /** A new top-level text shares the caller's data; providers have already run. */
+    buildFromContext(ctx, context) {
+        if (!context?.character || !context.names || !context.variables || !context.settings || !context.chat) {
+            throw new Error('macro.context_required: Explicit evaluation requires a complete macro context');
+        }
+        const substitute = (text, options) => evaluateWithContext(text, context, options);
+        const readFields = () => createCharacterCardFields({
+            ...Object.fromEntries(characterFields.map(([key, field]) => [field, context.character[key]])),
+            groupCards: context.character.groupCards,
+        }, (text, name1Override = null, name2Override = null) => {
+            if (typeof text !== 'string' || !text) return text;
+            let result = substitute(text, { name1Override, name2Override, replaceCharacterCard: false });
+            if (context.settings.collapse_newlines) result = collapseNewlines(result);
+            return result.replace(/\r/g, '');
+        });
+        return this.#build(ctx, context, createMacroVariables(context.variables), substitute, readFields);
+    }
 
-        // Functions
-        // original (one-shot) and arbitrary additional values
+    #build(ctx, context, variables, substitute, readFields) {
+        const names = { ...context.names };
+        if (ctx.name1Override != null) names.user = ctx.name1Override;
+        if (ctx.name2Override != null) names.char = ctx.name2Override;
+        if (!context.settings.isGroup && (ctx.name1Override != null || ctx.name2Override != null)) {
+            names.group = names.groupNotMuted = names.char;
+            names.notChar = names.user;
+        } else if (ctx.name1Override != null || ctx.name2Override != null) {
+            const members = context.engine === 'legacy' ? context.settings.groupNames : context.settings.groupNamesNotMuted;
+            const others = members.filter(name => name !== names.char);
+            if (context.engine === 'legacy') others.push(names.user);
+            names.notChar = others.join(', ');
+        }
+        if (ctx.groupOverride != null) {
+            names.group = names.groupNotMuted = ctx.groupOverride;
+            if (context.engine === 'new') names.notChar = ctx.groupOverride;
+        }
+        const env = {
+            context,
+            engine: context.engine,
+            system: context.system,
+            chat: context.chat,
+            settings: context.settings,
+            state: context.state,
+            now: context.now,
+            extra: context.extra,
+            extensionPrompts: context.extensionPrompts,
+            bannedWords: context.bannedWords,
+            content: ctx.content,
+            contentHash: getStringHash(ctx.content),
+            names,
+            character: {},
+            variables,
+            functions: { postProcess: ctx.postProcessFn ?? (value => value), substitute },
+            dynamicMacros: Object.fromEntries(Object.entries(ctx.dynamicMacros ?? {}).map(([key, value]) => [key.toLowerCase(), value])),
+        };
         if (typeof ctx.original === 'string') {
-            let originalSubstituted = false;
+            let available = true;
             env.functions.original = () => {
-                if (originalSubstituted) return '';
-                originalSubstituted = true;
+                if (!available) return '';
+                available = false;
                 return ctx.original;
             };
         }
-        env.functions.postProcess = typeof ctx.postProcessFn === 'function' ? ctx.postProcessFn : (x) => x;
-
-        // Dynamic, per-call macros that should be visible only for this evaluation run.
-        // Keys are normalized to lowercase for case-insensitive matching.
-        if (ctx.dynamicMacros && typeof ctx.dynamicMacros === 'object') {
-            for (const [key, value] of Object.entries(ctx.dynamicMacros)) {
-                env.dynamicMacros[key.toLowerCase()] = value;
+        if (ctx.replaceCharacterCard !== false) {
+            let fields;
+            for (const [key, field] of characterFields) {
+                Object.defineProperty(env.character, key, { enumerable: true, configurable: true, get: () => (fields ??= readFields())[field] });
             }
         }
-
-        // Let providers augment the env, if any are registered. Apply them in order,
-        // so callers can influence when their provider runs relative to others.
-        const orderedProviders = this.#providers.slice().sort((a, b) => a.order - b.order);
-        for (const { fn } of orderedProviders) {
-            try {
-                fn(env, ctx);
-            } catch (e) {
-                // Provider errors should not break macro evaluation
-                logMacroGeneralError({ message: 'MacroEnvBuilder: Provider error', error: e });
-            }
-        }
-
         return env;
     }
-}
 
-instance = MacroEnvBuilder.instance;
-
-/**
- * @param {MacroEnvRawContext} ctx
- * @param {Object} options
- * @param {string} [options.currentChar=null]
- * @param {boolean} [options.includeMuted=false]
- * @param {boolean} [options.filterOutChar=false]
- * @param {string|null} [options.includeUser=null]
- * @returns {string}
- */
-function getGroupValue(ctx, { currentChar = null, includeMuted = false, filterOutChar = false, includeUser = null }) {
-    if (typeof ctx.groupOverride === 'string') {
-        return ctx.groupOverride;
+    /** Session inputs have no current character or chat. Only user-wide settings are shared. */
+    createSessionContext(messages, { sessionId = '', variables } = {}) {
+        const text = message => (message?.parts ?? []).filter(part => part.type === 'text').map(part => part.text).join('\n');
+        const lastUser = messages.findLast(message => message.role === 'user');
+        const lastChar = messages.findLast(message => message.role === 'assistant');
+        const settings = structuredClone(readSettings());
+        settings.isGroup = false;
+        settings.groupNames = [];
+        settings.groupNamesNotMuted = [];
+        settings.prefer_character_prompt = false;
+        return {
+            engine: power_user.experimental_macro_engine ? 'new' : 'legacy',
+            names: { user: '', char: '', group: '', groupNotMuted: '', notChar: '' },
+            character: { ...Object.fromEntries(characterFields.map(([key]) => [key, key === 'alternateGreetings' ? [] : ''])), groupCards: null, personaPosition: 0 },
+            system: { model: '', api: 'openai', maxPrompt: 0, maxContext: 0, maxResponse: 0 },
+            chat: {
+                lastMessage: text(messages.at(-1)), lastUserMessage: text(lastUser), lastCharMessage: text(lastChar),
+                lastMessageId: messages.length ? messages.length - 1 : '',
+                lastSwipeId: '', currentSwipeId: '', firstIncludedMessageId: null, firstDisplayedMessageId: null,
+                allChatRange: messages.length ? `0-${messages.length - 1}` : '',
+                idHash: getStringHash(sessionId), pickRerollSeed: null, idleDuration: 'just now',
+            },
+            settings,
+            state: { input: text(lastUser), isMobile: isMobile(), lastGenerationType: 'normal', extensions: readExtensions(), ephemeralStoppingStrings: [] },
+            now: Date.now(),
+            variables: structuredClone(variables ?? { local: {}, global: extension_settings.variables?.global ?? {} }),
+            extensionPrompts: {}, bannedWords: [], extra: {},
+        };
     }
-
-    if (!selected_group) return filterOutChar ? (includeUser || '') : (currentChar ?? '');
-
-    const groupEntry = Array.isArray(groups) ? groups.find(x => x && x.id === selected_group) : null;
-    const members = /** @type {string[]} */ (groupEntry?.members ?? []);
-    const disabledMembers = /** @type {string[]} */ (groupEntry?.disabled_members ?? []);
-
-    const names = Array.isArray(members)
-        ? members
-            .filter(((id) => includeMuted ? true : !disabledMembers.includes(id)))
-            .map(m => Array.isArray(characters) ? characters.find(c => c && c.avatar === m) : null)
-            .filter(c => !!c && typeof c.name === 'string')
-            .filter(c => !filterOutChar || c.name !== currentChar)
-            .map(c => c.name)
-            .join(', ')
-        : '';
-
-    return names;
 }
+
+export const MacroEnvBuilder = new EnvBuilder();

@@ -2,7 +2,7 @@
 
 本文档记录 TauriTavern 记忆、数据库与检索类扩展 API 的当前状态。
 
-TauriTavern 遵循 SillyTavern 1.18.0 契约：`getContext().chat` 是当前聊天的完整、有序消息数组，数组下标就是 0-based 绝对消息索引。增强 API 不替代这一契约，而是把有界读取、定位、搜索和扩展状态持久化交给 Rust 后端。
+TauriTavern 遵循 SillyTavern 的完整历史契约：`getContext().chat` 是当前聊天的完整、有序消息数组，数组下标就是 0-based 绝对消息索引。增强 API 不替代这一契约，而是把有界读取、定位、搜索和扩展状态持久化交给 Rust 后端。
 
 ## 1. 唯一入口
 
@@ -47,7 +47,7 @@ const api = window.__TAURITAVERN__.api.chat;
 
 ## 5. 内置 Summarize
 
-TauriTavern 保留 SillyTavern 1.18.0 Summarize 扩展的三种来源：Main API、外部 Extras 与 WebLLM。新建设置默认使用已由 TauriTavern 支持的 Main API；已经显式保存的来源保持不变。Extras 仍是用户配置的外部服务，宿主不伪造同源 `/api/summarize` 模块。
+TauriTavern 保留 SillyTavern Summarize 扩展的三种来源：Main API、外部 Extras 与 WebLLM。新建设置默认使用已由 TauriTavern 支持的 Main API；已经显式保存的来源保持不变。Extras 仍是用户配置的外部服务，宿主不伪造同源 `/api/summarize` 模块。
 
 摘要仍按上游逻辑写入 `message.extra.memory` 并通过原有 extension prompt 注入；请求完成时只检查当前聊天身份，避免将结果写入另一个聊天。
 

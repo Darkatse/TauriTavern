@@ -1,0 +1,11 @@
+{
+  "app": {
+    "bundleName": "com.tauritavern.client",
+    "vendor": "TauriTavern",
+    // Set from the merged Tauri config by the root hvigorfile.ts during build.
+    "versionCode": 1,
+    "versionName": "0.0.0",
+    "icon": "$media:layered_image",
+    "label": "$string:app_name"
+  }
+}

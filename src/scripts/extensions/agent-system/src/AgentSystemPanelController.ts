@@ -196,7 +196,7 @@ export function createAgentSystemPanelController(deps: AgentSystemPanelControlle
     }
 
     async function refreshToolCatalog(): Promise<void> {
-        const result = await deps.listTools();
+        const result = await deps.listTools({ context: 'chat' });
         if (disposed) {
             return;
         }

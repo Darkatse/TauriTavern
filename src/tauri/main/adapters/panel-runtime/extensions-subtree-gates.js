@@ -1,18 +1,13 @@
 // @ts-check
 
+import { isTopLevelDrawerOpen, subscribeDrawerState } from '../../../../scripts/drawers.js';
+
 import { PanelRuntimeKind } from '../../services/panel-runtime/panel-runtime-kinds.js';
 
 /**
  * @typedef {import('../../services/embedded-runtime/embedded-runtime-manager.js').createEmbeddedRuntimeManager} createEmbeddedRuntimeManager
  * @typedef {ReturnType<createEmbeddedRuntimeManager>} EmbeddedRuntimeManager
  */
-
-/**
- * @param {HTMLElement} drawerContent
- */
-function isDrawerOpen(drawerContent) {
-    return drawerContent.classList.contains('openDrawer') && !drawerContent.classList.contains('closedDrawer');
-}
 
 const ALWAYS_CONNECTED_EXTENSION_CONTAINER_IDS = new Set([
     'regex_container',
@@ -93,7 +88,7 @@ export function installExtensionsSubtreeGates({ manager }) {
         kind: PanelRuntimeKind.SubtreeGate,
         element: host,
         visibilityMode: 'manual',
-        initialVisible: isDrawerOpen(host),
+        initialVisible: isTopLevelDrawerOpen(host),
         hydrate: () => {
             for (const [container, frag] of parkedByContainer.entries()) {
                 restoreChildren(container, frag);
@@ -112,22 +107,20 @@ export function installExtensionsSubtreeGates({ manager }) {
     };
     toggle.addEventListener('click', onToggleClickCapture, true);
 
-    const classObserver = new MutationObserver(() => {
-        const open = isDrawerOpen(host);
+    const unsubscribeDrawer = subscribeDrawerState(host, () => {
+        const open = isTopLevelDrawerOpen(host);
         manager.setVisible(slotId, open);
         if (open) {
             manager.reconcile();
         }
     });
 
-    classObserver.observe(host, { attributes: true, attributeFilter: ['class'] });
-
     manager.reconcile();
 
     return {
         slotId,
         dispose: () => {
-            classObserver.disconnect();
+            unsubscribeDrawer();
             toggle.removeEventListener('click', onToggleClickCapture, true);
         },
     };

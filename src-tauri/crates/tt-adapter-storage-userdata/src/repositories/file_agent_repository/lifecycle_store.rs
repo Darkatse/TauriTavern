@@ -62,7 +62,7 @@ impl AgentWorkspaceLifecycleRepository for FileAgentRepository {
             )));
         }
 
-        let run_ids = self.run_ids_in_chat_workspace(&chat_dir).await?;
+        let run_ids = self.run_ids_in_workspace(&chat_dir).await?;
         fs::remove_dir_all(&chat_dir).await.map_err(|error| {
             DomainError::InternalError(format!(
                 "Failed to delete agent chat workspace {}: {}",
@@ -199,8 +199,11 @@ impl AgentWorkspaceLifecycleRepository for FileAgentRepository {
 }
 
 impl FileAgentRepository {
-    async fn run_ids_in_chat_workspace(&self, chat_dir: &Path) -> Result<Vec<String>, DomainError> {
-        let runs_dir = chat_dir.join("runs");
+    pub(super) async fn run_ids_in_workspace(
+        &self,
+        workspace_dir: &Path,
+    ) -> Result<Vec<String>, DomainError> {
+        let runs_dir = workspace_dir.join("runs");
         let metadata = match fs::symlink_metadata(&runs_dir).await {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),

@@ -622,7 +622,7 @@ async function promptItemizeRecords(promptRecords, requestedMesId) {
         ? await renderTemplateAsync('itemizationChat', params)
         : await renderTemplateAsync('itemizationText', params);
 
-    const popup = new Popup(template, POPUP_TYPE.TEXT);
+    const popup = new Popup(template, POPUP_TYPE.TEXT, '', { label: t`Prompt Itemization` });
 
     /** @type {HTMLElement} */
     const diffPrevPrompt = popup.dlg.querySelector('#diffPrevPrompt');
@@ -650,7 +650,7 @@ async function promptItemizeRecords(promptRecords, requestedMesId) {
     } else {
         diffPrevPrompt.style.display = 'none';
     }
-    popup.dlg.querySelector('#copyPromptToClipboard').addEventListener('pointerup', async function () {
+    popup.dlg.querySelector('#copyPromptToClipboard').addEventListener('click', async function () {
         let rawPrompt = promptRecords[PromptArrayItemForRawPromptDisplay].rawPrompt;
         let rawPromptValues = rawPrompt;
 
@@ -676,7 +676,7 @@ async function promptItemizeRecords(promptRecords, requestedMesId) {
             const content = document.createElement('div');
             content.classList.add('tokenItemizingMaintext');
             content.innerText = rawPrompt;
-            const popup = new Popup(content, POPUP_TYPE.TEXT, null, { allowVerticalScrolling: true, leftAlign: true });
+            const popup = new Popup(content, POPUP_TYPE.TEXT, null, { label: t`Show Prompt Differences`, allowVerticalScrolling: true, leftAlign: true });
             await popup.show();
             return;
         }
@@ -747,7 +747,7 @@ export function initItemizedPrompts() {
         }
     });
 
-    $(document).on('pointerup', '.mes_prompt', async function () {
+    $(document).on('click', '.mes_prompt', async function () {
         let mesIdForItemization = $(this).closest('.mes').attr('mesId');
         console.log(`looking for mesID: ${mesIdForItemization}`);
         if (itemizedPrompts.length !== undefined && itemizedPrompts.length !== 0) {

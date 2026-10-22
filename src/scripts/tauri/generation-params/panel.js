@@ -3,6 +3,7 @@
 import { saveSettingsDebounced } from '../../../script.js';
 import { eventSource, event_types } from '../../events.js';
 import { translate } from '../../i18n.js';
+import { getControlLabel } from '../../dom-handlers.js';
 import { oai_settings, settingsToUpdate } from '../../openai.js';
 import { DRAWERS, EXCLUDED_PRESET_KEYS, PANEL_SCOPE, PAYLOAD_KEYS, SOURCE_SPECIFIC_MAX_SOURCES } from './catalog.js';
 import { parseParams, serializeParams } from './json-view.js';
@@ -105,9 +106,8 @@ function sourceLabel() {
 
 /** Upstream element carrying the block's label. */
 function labelElementOf(/** @type {Entry} */ { block, control }) {
-    return /** @type {HTMLInputElement} */ (control).labels?.[0]
-        ?? document.getElementById(`${control.id}_text`)
-        ?? block.querySelector('.range-block-title, .inline-drawer-header b, .inline-drawer-header');
+    const owner = block.matches('.inline-drawer') ? block.querySelector('.inline-drawer-icon') : control;
+    return owner ? getControlLabel(owner) : null;
 }
 
 /** Localized label straight from upstream markup, so no parallel i18n table. */
@@ -203,7 +203,7 @@ export function installGenerationParamsPanel() {
     const bar = document.createElement('div');
     bar.className = 'tt-gp-bar';
     bar.innerHTML = `
-        <div class="tt-gp-title">${translate('Request Parameter Management')}</div>
+        <div class="tt-gp-title"><span id="tt-gp-json-text_label">${translate('Request Parameter Management')}</span></div>
         <div class="tt-gp-actions">
             <button type="button" class="menu_button tt-gp-add" aria-expanded="false">
                 <i class="fa-solid fa-plus" aria-hidden="true"></i><span>${translate('Add parameter')}</span>
@@ -214,9 +214,9 @@ export function installGenerationParamsPanel() {
         </div>
         <div class="tt-gp-picker" hidden></div>
         <div class="tt-gp-json" hidden>
-            <small class="tt-gp-json-hint">${translate('Keys listed here are sent with these values; keys omitted are removed from the request. Only known parameters are accepted.')}</small>
-            <textarea class="text_pole tt-gp-json-text" rows="12" spellcheck="false"></textarea>
-            <small class="tt-gp-json-error" hidden></small>
+            <small id="tt-gp-json-hint" class="tt-gp-json-hint">${translate('Keys listed here are sent with these values; keys omitted are removed from the request. Only known parameters are accepted.')}</small>
+            <textarea id="tt-gp-json-text" aria-labelledby="tt-gp-json-text_label" aria-describedby="tt-gp-json-hint" class="text_pole tt-gp-json-text" rows="12" spellcheck="false"></textarea>
+            <small id="tt-gp-json-error" class="tt-gp-json-error" role="status" hidden></small>
             <div class="tt-gp-json-actions">
                 <button type="button" class="menu_button tt-gp-json-apply">${translate('Apply')}</button>
                 <button type="button" class="menu_button tt-gp-json-reset">${translate('Reset')}</button>
@@ -232,6 +232,8 @@ export function installGenerationParamsPanel() {
     const jsonError = q('.tt-gp-json-error');
     const jsonHint = q('.tt-gp-json-hint');
     const defaultJsonHint = jsonHint.textContent;
+    picker.id = 'tt-gp-picker';
+    addButton.setAttribute('aria-controls', picker.id);
 
     // Local blocks are display preferences, not request configuration; JSON covers the rest.
     const jsonEntries = entries.filter(entry => entry.param.kind !== 'local');
@@ -254,15 +256,26 @@ export function installGenerationParamsPanel() {
                 chip.addEventListener('click', () => {
                     setActive(entry, true);
                     sync();
+                    setPickerOpen(false);
+                    const target = entry.control.matches('input[type="range"]')
+                        ? /** @type {HTMLElement} */ (entry.block.querySelector(`input[type="number"][data-for="${CSS.escape(entry.control.id)}"]`))
+                        : entry.control;
+                    const drawerToggle = entry.block.matches('.inline-drawer')
+                        ? /** @type {HTMLElement} */ (entry.block.querySelector('.inline-drawer-icon'))
+                        : null;
+                    (drawerToggle ?? target).focus();
                 });
                 return chip;
             });
             if (!chips.length) return [];
             const group = document.createElement('div');
             group.className = 'tt-gp-group';
+            group.setAttribute('role', 'group');
+            group.setAttribute('aria-labelledby', `tt-gp-${scope}-label`);
             group.dataset.ttScope = scope;
             const heading = document.createElement('div');
             heading.className = 'tt-gp-group-title';
+            heading.id = `tt-gp-${scope}-label`;
             heading.textContent = title;
             group.append(heading, ...chips);
             return [group];
@@ -293,6 +306,8 @@ export function installGenerationParamsPanel() {
     /** @param {import('./json-view.js').ParseError[]} errors */
     function showJsonError(errors) {
         jsonError.hidden = errors.length === 0;
+        jsonText.setAttribute('aria-invalid', String(errors.length > 0));
+        jsonText.setAttribute('aria-describedby', errors.length ? 'tt-gp-json-hint tt-gp-json-error' : 'tt-gp-json-hint');
         jsonError.textContent = errors.map(error => {
             switch (error.kind) {
                 case 'syntax': return `${translate('Invalid JSON format')}: ${error.detail}`;
@@ -347,6 +362,13 @@ export function installGenerationParamsPanel() {
     }
 
     addButton.addEventListener('click', () => setPickerOpen(picker.hidden));
+    picker.addEventListener('keydown', event => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        event.stopPropagation();
+        setPickerOpen(false);
+        addButton.focus();
+    });
     document.addEventListener('click', event => {
         if (!picker.hidden && event.target instanceof Node && !bar.contains(event.target)) {
             setPickerOpen(false);
@@ -368,13 +390,14 @@ export function installGenerationParamsPanel() {
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'tt-gp-remove';
-        remove.title = remove.ariaLabel = translate(REMOVE_TITLE[entry.param.kind]);
+        remove.title = remove.ariaLabel = `${translate(REMOVE_TITLE[entry.param.kind])}: ${labelOf(entry)}`;
         remove.innerHTML = '<i class="fa-solid fa-xmark" aria-hidden="true"></i>';
         remove.addEventListener('click', event => {
             // Inside a drawer header the click would also toggle the drawer.
             if (entry.block.classList.contains('inline-drawer')) event.stopPropagation();
             setActive(entry, false);
             sync();
+            addButton.focus();
         });
         // Localization replaces label contents; keep the button outside that node.
         const label = labelElementOf(entry);

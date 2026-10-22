@@ -1,6 +1,4 @@
 import { moment } from '../../../lib.js';
-import { chat } from '../../../script.js';
-import { timestampToMoment } from '../../utils.js';
 import { MacroRegistry, MacroCategory, MacroValueType } from '../engine/MacroRegistry.js';
 
 /**
@@ -25,16 +23,16 @@ export function registerTimeMacros() {
         returns: 'A time string in the format HH:mm.',
         displayOverride: '{{time::[UTC±(offset)]}}',
         exampleUsage: ['{{time}}', '{{time::UTC+2}}', '{{time::UTC-7}}'],
-        handler: ({ unnamedArgs: [offsetSpec] }) => {
-            if (!offsetSpec) return moment().format('LT');
+        handler: ({ env, unnamedArgs: [offsetSpec] }) => {
+            if (!offsetSpec) return moment(env.now).format('LT');
 
             const match = /^UTC([+-]\d+)$/.exec(offsetSpec);
-            if (!match) return moment().format('LT');
+            if (!match) return moment(env.now).format('LT');
 
             const offset = Number.parseInt(match[1], 10);
-            if (Number.isNaN(offset)) return moment().format('LT');
+            if (Number.isNaN(offset)) return moment(env.now).format('LT');
 
-            return moment().utc().utcOffset(offset).format('LT');
+            return moment(env.now).utc().utcOffset(offset).format('LT');
         },
     });
 
@@ -42,28 +40,28 @@ export function registerTimeMacros() {
         category: MacroCategory.TIME,
         description: 'Current local date as a string in the local short format.',
         returns: 'Current local date in local short format.',
-        handler: () => moment().format('LL'),
+        handler: ({ env }) => moment(env.now).format('LL'),
     });
 
     MacroRegistry.registerMacro('weekday', {
         category: MacroCategory.TIME,
         description: 'Current weekday name.',
         returns: 'Current weekday name.',
-        handler: () => moment().format('dddd'),
+        handler: ({ env }) => moment(env.now).format('dddd'),
     });
 
     MacroRegistry.registerMacro('isotime', {
         category: MacroCategory.TIME,
         description: 'Current time in HH:mm format.',
         returns: 'Current time in HH:mm format.',
-        handler: () => moment().format('HH:mm'),
+        handler: ({ env }) => moment(env.now).format('HH:mm'),
     });
 
     MacroRegistry.registerMacro('isodate', {
         category: MacroCategory.TIME,
         description: 'Current date in YYYY-MM-DD format.',
         returns: 'Current date in YYYY-MM-DD format.',
-        handler: () => moment().format('YYYY-MM-DD'),
+        handler: ({ env }) => moment(env.now).format('YYYY-MM-DD'),
     });
 
     MacroRegistry.registerMacro('datetimeformat', {
@@ -79,7 +77,7 @@ export function registerTimeMacros() {
         description: 'Formats the current date/time using the given moment.js format string.',
         returns: 'Formatted date/time string.',
         exampleUsage: ['{{datetimeformat::YYYY-MM-DD HH:mm:ss}}', '{{datetimeformat::LLLL}}'],
-        handler: ({ unnamedArgs: [format] }) => moment().format(format),
+        handler: ({ env, unnamedArgs: [format] }) => moment(env.now).format(format),
     });
 
     MacroRegistry.registerMacro('idleDuration', {
@@ -87,7 +85,7 @@ export function registerTimeMacros() {
         category: MacroCategory.TIME,
         description: 'Human-readable duration since the last user message.',
         returns: 'Human-readable duration since the last user message.',
-        handler: () => getTimeSinceLastMessage(),
+        handler: ({ env }) => env.chat.idleDuration,
     });
 
     // Time difference between two values
@@ -116,36 +114,4 @@ export function registerTimeMacros() {
             return diff.humanize(true);
         },
     });
-}
-
-function getTimeSinceLastMessage() {
-    const now = moment();
-
-    if (Array.isArray(chat) && chat.length > 0) {
-        let lastMessage;
-        let takeNext = false;
-
-        for (let i = chat.length - 1; i >= 0; i--) {
-            const message = chat[i];
-
-            if (message.is_system) {
-                continue;
-            }
-
-            if (message.is_user && takeNext) {
-                lastMessage = message;
-                break;
-            }
-
-            takeNext = true;
-        }
-
-        if (lastMessage?.send_date) {
-            const lastMessageDate = timestampToMoment(lastMessage.send_date);
-            const duration = moment.duration(now.diff(lastMessageDate));
-            return duration.humanize();
-        }
-    }
-
-    return 'just now';
 }

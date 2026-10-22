@@ -1,6 +1,5 @@
 import { getRequestHeaders } from '../script.js';
 import { POPUP_RESULT, POPUP_TYPE, callGenericPopup } from './popup.js';
-import { canViewSecrets } from './secrets.js';
 import { renderTemplateAsync } from './templates.js';
 import { ensureImageFormatSupported, getBase64Async, humanFileSize } from './utils.js';
 import { flushLifecycleState } from '../tauri/main/services/lifecycle/lifecycle-flush-service.js';
@@ -263,49 +262,24 @@ async function readBackupFailureMessage(response) {
     }
 }
 
-function isTauriRuntime() {
-    return globalThis.__TAURI_RUNNING__ === true;
-}
-
 function showNativeBackupResult(payload) {
-    const cleanupError = String(payload?.cleanup_error || '').trim();
-    if (cleanupError) {
-        toastr.warning(cleanupError, 'Backup cleanup failed');
+    if (payload.delivered) {
+        toastr.success('User backup exported.', 'Backup Complete');
     }
-
-    if (payload?.mode === 'ios-native-share') {
-        if (payload?.completed === true) {
-            toastr.success('User backup is ready to share or save.', 'Backup Complete', { timeOut: 8000 });
-        } else {
-            toastr.info('Sharing cancelled.', 'Backup Cancelled');
-        }
-        return;
-    }
-
-    const savedPath = String(payload?.saved_target || '').trim();
-    if (savedPath) {
-        toastr.success(`User backup saved: ${savedPath}`, 'Backup Complete', { timeOut: 8000 });
-        return;
-    }
-
-    toastr.success('User backup saved.', 'Backup Complete');
 }
 
 function showBackupSecretsWarning() {
-    const message = isTauriRuntime()
-        ? 'The backup will not include secrets because Allow Keys Exposure is disabled in TauriTavern Settings.'
-        : 'The backup will not include secrets due to a server configuration.';
-    toastr.warning(message, 'Secrets Not Included');
+    toastr.warning('The backup will not include secrets because Allow Keys Exposure is disabled in TauriTavern Settings.', 'Secrets Not Included');
 }
 
 async function backupUserData(handle, callback) {
     try {
         await flushLifecycleState('user-backup');
-        toastr.info(isTauriRuntime() ? 'Please wait while the backup is prepared.' : 'Please wait for the download to start.', 'Backup Requested');
+        toastr.info('Please wait while the backup is prepared.', 'Backup Requested');
         const response = await fetch('/api/users/backup', {
             method: 'POST',
             headers: getRequestHeaders(),
-            body: JSON.stringify({ handle, native: isTauriRuntime() }),
+            body: JSON.stringify({ handle }),
         });
 
         if (!response.ok) {
@@ -314,30 +288,11 @@ async function backupUserData(handle, callback) {
             throw new Error('Failed to backup user data');
         }
 
-        if (isTauriRuntime()) {
-            const payload = await response.json();
-            if (payload?.includes_secrets === false) {
-                showBackupSecretsWarning();
-            }
-            showNativeBackupResult(payload);
-            return;
-        }
-
-        const includesSecrets = await canViewSecrets();
-        if (includesSecrets === false) {
+        const payload = await response.json();
+        if (payload?.includes_secrets === false) {
             showBackupSecretsWarning();
         }
-
-        const blob = await response.blob();
-        const header = response.headers.get('Content-Disposition');
-        const parts = header.split(';');
-        const filename = parts[1].split('=')[1].replaceAll('"', '');
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
+        showNativeBackupResult(payload);
     } catch (error) {
         console.error('Error backing up user data:', error);
     } finally {

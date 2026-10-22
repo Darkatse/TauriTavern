@@ -3,20 +3,18 @@ use serde_json::{Map, Value};
 
 use super::args::{
     ensure_visible_workspace_path, optional_list_path_arg, optional_usize_arg,
-    required_trimmed_string_arg, tool_error,
+    required_trimmed_string_arg,
 };
-use super::policy::{WorkspaceAccessPolicy, workspace_access_policy};
-use super::render::filter_visible_entries;
 use super::{MAX_SEARCH_CONTEXT_LINES, MAX_SEARCH_DEPTH, MAX_SEARCH_FILES, MAX_SEARCH_LIMIT};
 use crate::errors::ApplicationError;
+use crate::services::agent_workspace_scope::ScopedWorkspaceFs;
+use crate::services::agent_workspace_scope::WorkspaceAccessPolicy;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::{AgentToolResult, WorkspacePath};
 use tt_domain::models::tool::ToolInvocation;
 use tt_domain::text_metrics::TextMetrics;
 use tt_domain::text_search::PreparedTextSearch;
-use tt_ports::repositories::workspace_repository::{
-    WorkspaceEntryKind, WorkspaceFile, WorkspaceRepository,
-};
+use tt_ports::workspace_fs::{WorkspaceEntryKind, WorkspaceFs};
 
 use super::super::dispatcher::AgentToolEffect;
 use super::super::structured::{TextMetricsPayload, structured_value};
@@ -62,15 +60,15 @@ struct WorkspaceSearchHit {
 }
 
 pub(in crate::services::agent_tools) async fn search_files(
-    workspace_repository: &dyn WorkspaceRepository,
-    run_id: &str,
+    workspace: &ScopedWorkspaceFs,
     call: &ToolInvocation,
     args: &Map<String, Value>,
 ) -> Result<(AgentToolResult, AgentToolEffect), ApplicationError> {
-    let policy = workspace_access_policy(workspace_repository, run_id).await?;
+    let policy = &workspace.policy;
+    let workspace_files: &dyn WorkspaceFs = workspace;
     let Some(query) = required_trimmed_string_arg(args, "query") else {
         return Ok((
-            tool_error(call, "tool.invalid_arguments", "query is required"),
+            AgentToolResult::error(call, "tool.invalid_arguments", "query is required"),
             AgentToolEffect::None,
         ));
     };
@@ -78,13 +76,13 @@ pub(in crate::services::agent_tools) async fn search_files(
         Ok(path) => path,
         Err(message) => {
             return Ok((
-                tool_error(call, "tool.invalid_arguments", &message),
+                AgentToolResult::error(call, "tool.invalid_arguments", &message),
                 AgentToolEffect::None,
             ));
         }
     };
     if let Some(path) = &path
-        && let Err(error) = ensure_visible_workspace_path(&policy, path)
+        && let Err(error) = ensure_visible_workspace_path(policy, path)
     {
         return Ok((error.into_tool_result(call), AgentToolEffect::None));
     }
@@ -93,20 +91,20 @@ pub(in crate::services::agent_tools) async fn search_files(
         Ok(limit) => limit.unwrap_or(DEFAULT_SEARCH_LIMIT),
         Err(message) => {
             return Ok((
-                tool_error(call, "tool.invalid_arguments", &message),
+                AgentToolResult::error(call, "tool.invalid_arguments", &message),
                 AgentToolEffect::None,
             ));
         }
     };
     if limit == 0 {
         return Ok((
-            tool_error(call, "workspace.search_limit_invalid", "limit must be >= 1"),
+            AgentToolResult::error(call, "workspace.search_limit_invalid", "limit must be >= 1"),
             AgentToolEffect::None,
         ));
     }
     if limit > MAX_SEARCH_LIMIT {
         return Ok((
-            tool_error(
+            AgentToolResult::error(
                 call,
                 "workspace.search_limit_too_large",
                 &format!("limit must be <= {MAX_SEARCH_LIMIT}"),
@@ -119,14 +117,14 @@ pub(in crate::services::agent_tools) async fn search_files(
         Ok(context_lines) => context_lines.unwrap_or(DEFAULT_SEARCH_CONTEXT_LINES),
         Err(message) => {
             return Ok((
-                tool_error(call, "tool.invalid_arguments", &message),
+                AgentToolResult::error(call, "tool.invalid_arguments", &message),
                 AgentToolEffect::None,
             ));
         }
     };
     if context_lines > MAX_SEARCH_CONTEXT_LINES {
         return Ok((
-            tool_error(
+            AgentToolResult::error(
                 call,
                 "workspace.search_context_too_large",
                 &format!("context_lines must be <= {MAX_SEARCH_CONTEXT_LINES}"),
@@ -136,20 +134,42 @@ pub(in crate::services::agent_tools) async fn search_files(
     }
 
     let (files, traversal_truncated) =
-        match collect_search_files(workspace_repository, run_id, &policy, path.as_ref()).await {
+        match collect_search_paths(workspace_files, policy, path.as_ref()).await {
             Ok(result) => result,
-            Err(ApplicationError::ValidationError(message)) => {
+            Err(DomainError::NotFound(message)) => {
                 return Ok((
-                    tool_error(call, "workspace.path_not_found", &message),
+                    AgentToolResult::error(call, "workspace.path_not_found", &message),
                     AgentToolEffect::None,
                 ));
             }
-            Err(error) => return Err(error),
+            Err(error) => match super::args::classify_workspace_io_error(call, error) {
+                Ok(result) => return Ok((result, AgentToolEffect::None)),
+                Err(error) => return Err(error.into()),
+            },
         };
-    let searched_files = files.len();
+    let mut searched_files = 0;
+    let mut skipped_files = 0;
     let search = PreparedTextSearch::new(query, limit, context_lines);
     let mut hits = Vec::new();
-    for file in files {
+    for path in files {
+        let file = match workspace_files.read_text(&path).await {
+            Ok(file) => file,
+            Err(DomainError::WorkspaceFileNotText { .. }) => {
+                skipped_files += 1;
+                continue;
+            }
+            Err(DomainError::NotFound(message)) => {
+                return Ok((
+                    AgentToolResult::error(call, "workspace.path_not_found", &message),
+                    AgentToolEffect::None,
+                ));
+            }
+            Err(error) => match super::args::classify_workspace_io_error(call, error) {
+                Ok(result) => return Ok((result, AgentToolEffect::None)),
+                Err(error) => return Err(error.into()),
+            },
+        };
+        searched_files += 1;
         hits.extend(search.search(&file.text).into_iter().map(|hit| {
             let path = file.path.as_str().to_string();
             let metrics = TextMetrics::from_text(&hit.snippet);
@@ -177,37 +197,37 @@ pub(in crate::services::agent_tools) async fn search_files(
     let hit_truncated = hits.len() > limit;
     hits.truncate(limit);
 
-    let content = render_content(query, &hits, traversal_truncated || hit_truncated);
+    let mut content = render_content(query, &hits, traversal_truncated || hit_truncated);
+    if skipped_files > 0 {
+        content.push_str(&format!(
+            "\n\nSkipped {skipped_files} file{} that could not be read as text.",
+            if skipped_files == 1 { "" } else { "s" }
+        ));
+    }
     let resource_refs = hits
         .iter()
         .map(|hit| hit.ref_id.clone())
         .collect::<Vec<_>>();
-    Ok((
-        AgentToolResult {
-            call_id: call.call_id.clone(),
-            tool_id: call.tool_id.clone(),
-            content,
-            structured: structured_value(WorkspaceSearchFilesStructured {
-                query,
-                hits: hits.iter().map(structured_hit).collect(),
-                searched_files,
-                skipped_files: 0,
-                truncated: traversal_truncated || hit_truncated,
-            }),
-            is_error: false,
-            error_code: None,
-            resource_refs,
-        },
-        AgentToolEffect::None,
-    ))
+    let mut result = AgentToolResult::ok(
+        call,
+        content,
+        structured_value(WorkspaceSearchFilesStructured {
+            query,
+            hits: hits.iter().map(structured_hit).collect(),
+            searched_files,
+            skipped_files,
+            truncated: traversal_truncated || hit_truncated,
+        }),
+    );
+    result.resource_refs = resource_refs;
+    Ok((result, AgentToolEffect::None))
 }
 
-async fn collect_search_files(
-    workspace_repository: &dyn WorkspaceRepository,
-    run_id: &str,
+async fn collect_search_paths(
+    workspace_files: &dyn WorkspaceFs,
     policy: &WorkspaceAccessPolicy,
     path: Option<&WorkspacePath>,
-) -> Result<(Vec<WorkspaceFile>, bool), ApplicationError> {
+) -> Result<(Vec<WorkspacePath>, bool), DomainError> {
     let roots = match path {
         Some(path) => vec![path.clone()],
         None => policy
@@ -225,16 +245,9 @@ async fn collect_search_files(
             truncated = true;
             break;
         }
-        let list = match workspace_repository
-            .list_files(run_id, Some(&root), MAX_SEARCH_DEPTH, remaining + 1)
-            .await
-        {
-            Ok(list) => filter_visible_entries(list, policy),
-            Err(DomainError::NotFound(message)) => {
-                return Err(ApplicationError::ValidationError(message));
-            }
-            Err(error) => return Err(error.into()),
-        };
+        let list = workspace_files
+            .list_files(Some(&root), MAX_SEARCH_DEPTH, remaining + 1)
+            .await?;
         truncated |= list.truncated;
         for entry in list.entries {
             if entry.kind != WorkspaceEntryKind::File {
@@ -244,14 +257,7 @@ async fn collect_search_files(
                 truncated = true;
                 break;
             }
-            let file = match workspace_repository.read_text(run_id, &entry.path).await {
-                Ok(file) => file,
-                Err(DomainError::NotFound(message)) => {
-                    return Err(ApplicationError::ValidationError(message));
-                }
-                Err(error) => return Err(error.into()),
-            };
-            files.push(file);
+            files.push(entry.path);
         }
     }
     Ok((files, truncated))

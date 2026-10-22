@@ -6,8 +6,7 @@ use crate::errors::ApplicationError;
 /// Drift-class codes that should _never_ be auto-retried (the model
 /// disobeyed the tool contract), but the user is allowed to manually retry
 /// when no host-confirmed chat commit needs to be preserved. See issue #55.
-const USER_RETRYABLE_DRIFT_CODES: &[&str] =
-    &["model.tool_call_required", "agent.max_tool_rounds_exceeded"];
+const USER_RETRYABLE_DRIFT_CODES: &[&str] = &["model.tool_call_required"];
 
 pub(super) fn run_failure_payload(error: &ApplicationError) -> Value {
     let (code, message) = agent_error_code_and_message(error);

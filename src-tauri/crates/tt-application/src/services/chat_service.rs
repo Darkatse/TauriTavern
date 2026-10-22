@@ -1,11 +1,12 @@
 use std::path::Path;
 use std::sync::Arc;
+use tt_ports::byte_reader::ByteReader;
 
 use serde_json::Value;
 
 use crate::dto::chat_dto::{
-    AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ExportChatDto,
-    ImportCharacterChatsDto, ImportChatDto, RenameChatDto, RestoreCharacterChatBackupDto,
+    AddMessageDto, ChatDto, ChatSearchResultDto, CreateChatDto, ImportCharacterChatsDto,
+    ImportChatDto, RenameChatDto, RestoreCharacterChatBackupDto,
 };
 use crate::dto::chat_history_dto::{ChatHistoryLocator, CurrentCommitReason};
 use crate::errors::ApplicationError;
@@ -23,7 +24,7 @@ use tt_ports::repositories::agent_workspace_lifecycle_repository::{
 };
 use tt_ports::repositories::character_repository::CharacterRepository;
 use tt_ports::repositories::chat_repository::{
-    ChatBackupCatalogEntry, ChatByteReader, ChatExportFormat, ChatImportFormat, ChatRepository,
+    ChatBackupCatalogEntry, ChatImportFormat, ChatRepository,
 };
 use tt_ports::repositories::chat_types::{
     ChatMessageSearchHit, ChatMessageSearchQuery, ChatPayloadChunk, ChatPayloadCursor,
@@ -220,18 +221,20 @@ impl ChatService {
             .lock_run_lifecycle()
             .await;
 
-        let summary = self
+        let integrity = self
             .chat_repository
-            .get_character_chat_summary(character_name, file_name, true)
+            .get_character_chat_integrity(character_name, file_name)
             .await?;
-        let target = match summary.chat_metadata.as_ref() {
-            Some(metadata) => AgentWorkspaceLifecycleService::character_target_from_metadata(
-                character_name,
-                file_name,
-                metadata,
-            )?,
-            None => None,
-        };
+        let target = integrity
+            .as_deref()
+            .map(|integrity| {
+                AgentWorkspaceLifecycleService::character_target(
+                    character_name,
+                    file_name,
+                    integrity,
+                )
+            })
+            .transpose()?;
         if let Some(target) = target.as_ref() {
             self.agent_workspace_lifecycle_service
                 .ensure_chat_workspace_inactive(target)
@@ -334,31 +337,6 @@ impl ChatService {
         Ok(ChatDto::from(chat))
     }
 
-    /// Export a chat
-    pub async fn export_chat(&self, dto: ExportChatDto) -> Result<(), ApplicationError> {
-        tracing::info!(
-            "Exporting chat: {}/{} to {}",
-            dto.character_name,
-            dto.file_name,
-            dto.target_path
-        );
-
-        // Convert the format string to enum
-        let format = ChatExportFormat::from(dto.format);
-
-        // Export the chat
-        self.chat_repository
-            .export_chat(
-                &dto.character_name,
-                &dto.file_name,
-                Path::new(&dto.target_path),
-                format,
-            )
-            .await?;
-
-        Ok(())
-    }
-
     /// Backup a chat
     pub async fn backup_chat(
         &self,
@@ -395,7 +373,7 @@ impl ChatService {
     pub async fn open_chat_backup_download(
         &self,
         backup_file_name: &str,
-    ) -> Result<Box<dyn ChatByteReader>, ApplicationError> {
+    ) -> Result<Box<dyn ByteReader>, ApplicationError> {
         if backup_file_name.trim().is_empty() {
             return Err(ApplicationError::ValidationError(
                 "Backup file name cannot be empty".to_string(),
@@ -462,6 +440,17 @@ impl ChatService {
         Ok(ChatSearchResultDto::from(summary))
     }
 
+    pub async fn get_character_chat_integrity(
+        &self,
+        character_name: &str,
+        file_name: &str,
+    ) -> Result<Option<String>, ApplicationError> {
+        Ok(self
+            .chat_repository
+            .get_character_chat_integrity(character_name, file_name)
+            .await?)
+    }
+
     pub async fn get_character_chat_metadata(
         &self,
         character_name: &str,
@@ -471,21 +460,6 @@ impl ChatService {
             .chat_repository
             .get_character_chat_metadata(character_name, file_name)
             .await?)
-    }
-
-    pub async fn set_character_chat_metadata_extension(
-        &self,
-        character_name: &str,
-        file_name: &str,
-        namespace: &str,
-        value: Value,
-    ) -> Result<(), ApplicationError> {
-        self.chat_repository
-            .set_character_chat_metadata_extension(character_name, file_name, namespace, value)
-            .await?;
-        self.note_current_committed(character_name, file_name, CurrentCommitReason::Mutation)
-            .await;
-        Ok(())
     }
 
     pub async fn get_character_chat_store_json(

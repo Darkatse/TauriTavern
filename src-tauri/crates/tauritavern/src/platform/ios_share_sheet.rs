@@ -1,7 +1,6 @@
 #![cfg(target_os = "ios")]
 
 use block2::RcBlock;
-use objc2::rc::Retained;
 use objc2::runtime::{Bool, ProtocolObject};
 use objc2::{AnyThread, MainThreadMarker, MainThreadOnly};
 use objc2_foundation::{NSArray, NSError, NSItemProvider, NSString, NSURL};
@@ -15,22 +14,16 @@ use tokio::sync::oneshot;
 use crate::platform::ios_ui::resolve_presenting_view_controller;
 use tt_domain::errors::DomainError;
 
-#[derive(Debug, Clone)]
-pub struct ShareResult {
-    pub completed: bool,
-    pub activity: Option<String>,
-}
-
 enum ShareOutcome {
-    Finished(ShareResult),
+    Finished(bool),
     Failed(String),
 }
 
 pub async fn share_file(
     window: &WebviewWindow,
     file_path: &std::path::Path,
-    suggested_name: Option<&str>,
-) -> Result<ShareResult, DomainError> {
+    suggested_name: &str,
+) -> Result<bool, DomainError> {
     if !file_path.is_file() {
         return Err(DomainError::NotFound(format!(
             "Shared file not found: {}",
@@ -39,7 +32,7 @@ pub async fn share_file(
     }
 
     let file_path_string = file_path.to_string_lossy().to_string();
-    let suggested_name = suggested_name.map(str::to_owned);
+    let suggested_name = suggested_name.to_owned();
     let (sender, receiver) = oneshot::channel::<ShareOutcome>();
 
     window
@@ -71,45 +64,33 @@ pub async fn share_file(
 
             let ns_path = NSString::from_str(&file_path_string);
             let url = NSURL::fileURLWithPath(&ns_path);
-            let controller = if let Some(suggested_name) = suggested_name.as_deref() {
-                let Some(provider) = (unsafe {
-                    NSItemProvider::initWithContentsOfURL(NSItemProvider::alloc(), Some(&url))
-                }) else {
-                    send_failure(
-                        &mut sender,
-                        "Failed to create an iOS file share provider".to_string(),
-                    );
-                    return;
-                };
-                let suggested_name = NSString::from_str(suggested_name);
-                provider.setSuggestedName(Some(&suggested_name));
-                let providers = NSArray::from_retained_slice(&[provider]);
-                let configuration =
-                    UIActivityItemsConfiguration::activityItemsConfigurationWithItemProviders(
-                        &providers, mtm,
-                    );
-                let configuration: &ProtocolObject<dyn UIActivityItemsConfigurationReading> =
-                    ProtocolObject::from_ref(&*configuration);
-                UIActivityViewController::initWithActivityItemsConfiguration(
-                    UIActivityViewController::alloc(mtm),
-                    configuration,
-                )
-            } else {
-                let activity_items = NSArray::from_retained_slice(&[Retained::from(url)]);
-                unsafe {
-                    UIActivityViewController::initWithActivityItems_applicationActivities(
-                        UIActivityViewController::alloc(mtm),
-                        &activity_items,
-                        None,
-                    )
-                }
+            let Some(provider) = (unsafe {
+                NSItemProvider::initWithContentsOfURL(NSItemProvider::alloc(), Some(&url))
+            }) else {
+                send_failure(
+                    &mut sender,
+                    "Failed to create an iOS file share provider".to_string(),
+                );
+                return;
             };
+            provider.setSuggestedName(Some(&NSString::from_str(&suggested_name)));
+            let providers = NSArray::from_retained_slice(&[provider]);
+            let configuration =
+                UIActivityItemsConfiguration::activityItemsConfigurationWithItemProviders(
+                    &providers, mtm,
+                );
+            let configuration: &ProtocolObject<dyn UIActivityItemsConfigurationReading> =
+                ProtocolObject::from_ref(&*configuration);
+            let controller = UIActivityViewController::initWithActivityItemsConfiguration(
+                UIActivityViewController::alloc(mtm),
+                configuration,
+            );
 
             let completion_sender = std::cell::RefCell::new(sender.take());
             let completion_block: RcBlock<
                 dyn Fn(*mut UIActivityType, Bool, *mut NSArray, *mut NSError),
             > = RcBlock::new(
-                move |activity_type: *mut UIActivityType,
+                move |_activity_type: *mut UIActivityType,
                       completed: Bool,
                       _items: *mut NSArray,
                       error: *mut NSError| {
@@ -125,11 +106,7 @@ pub async fn share_file(
                         return;
                     }
 
-                    let activity = unsafe { activity_type.as_ref() }.map(|value| value.to_string());
-                    let _ = sender.send(ShareOutcome::Finished(ShareResult {
-                        completed: completed.as_bool(),
-                        activity,
-                    }));
+                    let _ = sender.send(ShareOutcome::Finished(completed.as_bool()));
                 },
             );
 

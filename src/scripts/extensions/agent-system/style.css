@@ -2086,25 +2086,19 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
 }
 
 .ttas-dialog {
-    --ttas-dialog-safe-top: max(var(--tt-inset-top, 0px), 0px);
-    --ttas-dialog-safe-right: max(var(--tt-inset-right, 0px), 0px);
-    --ttas-dialog-safe-bottom: max(var(--tt-viewport-bottom-inset, var(--tt-inset-bottom, 0px)), 0px);
-    --ttas-dialog-safe-left: max(var(--tt-inset-left, 0px), 0px);
     --ttas-dialog-margin-x: 18px;
     --ttas-dialog-margin-y: 18px;
-    --ttas-dialog-width: calc(100vw - var(--ttas-dialog-safe-left) - var(--ttas-dialog-safe-right) - var(--ttas-dialog-margin-x) * 2);
-    --ttas-dialog-height: calc(var(--tt-base-viewport-height, 100vh) - var(--ttas-dialog-safe-top) - var(--ttas-dialog-safe-bottom) - var(--ttas-dialog-margin-y) * 2);
+    --ttas-dialog-width: calc(100vw - var(--ttas-dialog-margin-x) * 2);
+    --ttas-dialog-height: calc(var(--doc-height) - var(--ttas-dialog-margin-y) * 2);
 
     position: fixed;
-    inset: var(--ttas-dialog-safe-top) var(--ttas-dialog-safe-right) var(--ttas-dialog-safe-bottom) var(--ttas-dialog-safe-left);
+    inset: 0;
     width: min(1180px, var(--ttas-dialog-width));
-    width: min(1180px, calc(100dvw - var(--ttas-dialog-safe-left) - var(--ttas-dialog-safe-right) - var(--ttas-dialog-margin-x) * 2));
+    width: min(1180px, calc(100dvw - var(--ttas-dialog-margin-x) * 2));
     height: min(900px, var(--ttas-dialog-height));
-    height: min(900px, calc(var(--tt-base-viewport-height, 100dvh) - var(--ttas-dialog-safe-top) - var(--ttas-dialog-safe-bottom) - var(--ttas-dialog-margin-y) * 2));
     max-width: min(1180px, var(--ttas-dialog-width));
-    max-width: min(1180px, calc(100dvw - var(--ttas-dialog-safe-left) - var(--ttas-dialog-safe-right) - var(--ttas-dialog-margin-x) * 2));
+    max-width: min(1180px, calc(100dvw - var(--ttas-dialog-margin-x) * 2));
     max-height: min(900px, var(--ttas-dialog-height));
-    max-height: min(900px, calc(var(--tt-base-viewport-height, 100dvh) - var(--ttas-dialog-safe-top) - var(--ttas-dialog-safe-bottom) - var(--ttas-dialog-margin-y) * 2));
     margin: auto;
     padding: 0;
     color: var(--SmartThemeBodyColor);
@@ -2129,12 +2123,11 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
 
 .ttas-embed-dialog {
     width: min(560px, var(--ttas-dialog-width));
-    width: min(560px, calc(100dvw - var(--ttas-dialog-safe-left) - var(--ttas-dialog-safe-right) - var(--ttas-dialog-margin-x) * 2));
+    width: min(560px, calc(100dvw - var(--ttas-dialog-margin-x) * 2));
     height: auto;
     max-width: min(560px, var(--ttas-dialog-width));
-    max-width: min(560px, calc(100dvw - var(--ttas-dialog-safe-left) - var(--ttas-dialog-safe-right) - var(--ttas-dialog-margin-x) * 2));
+    max-width: min(560px, calc(100dvw - var(--ttas-dialog-margin-x) * 2));
     max-height: min(760px, var(--ttas-dialog-height));
-    max-height: min(760px, calc(var(--tt-base-viewport-height, 100dvh) - var(--ttas-dialog-safe-top) - var(--ttas-dialog-safe-bottom) - var(--ttas-dialog-margin-y) * 2));
 }
 
 .ttas-embed-popup-mount {
@@ -2151,13 +2144,11 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     --ttas-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
     width: min(1040px, var(--ttas-dialog-width));
-    width: min(1040px, calc(100dvw - var(--ttas-dialog-safe-left) - var(--ttas-dialog-safe-right) - var(--ttas-dialog-margin-x) * 2));
+    width: min(1040px, calc(100dvw - var(--ttas-dialog-margin-x) * 2));
     height: min(720px, var(--ttas-dialog-height));
-    height: min(720px, calc(var(--tt-base-viewport-height, 100dvh) - var(--ttas-dialog-safe-top) - var(--ttas-dialog-safe-bottom) - var(--ttas-dialog-margin-y) * 2));
     max-width: min(1040px, var(--ttas-dialog-width));
-    max-width: min(1040px, calc(100dvw - var(--ttas-dialog-safe-left) - var(--ttas-dialog-safe-right) - var(--ttas-dialog-margin-x) * 2));
+    max-width: min(1040px, calc(100dvw - var(--ttas-dialog-margin-x) * 2));
     max-height: min(720px, var(--ttas-dialog-height));
-    max-height: min(720px, calc(var(--tt-base-viewport-height, 100dvh) - var(--ttas-dialog-safe-top) - var(--ttas-dialog-safe-bottom) - var(--ttas-dialog-margin-y) * 2));
 }
 
 .ttas-subagent-panel {
@@ -4706,15 +4697,10 @@ textarea.ttas-json {
 }
 
 .ttas-scope-dialog {
-    --ttas-scope-dialog-safe-top: max(var(--tt-inset-top, 0px), 0px);
-    --ttas-scope-dialog-safe-right: max(var(--tt-inset-right, 0px), 0px);
-    --ttas-scope-dialog-safe-bottom: max(var(--tt-viewport-bottom-inset, var(--tt-inset-bottom, 0px)), 0px);
-    --ttas-scope-dialog-safe-left: max(var(--tt-inset-left, 0px), 0px);
-
     position: fixed;
-    inset: var(--ttas-scope-dialog-safe-top) var(--ttas-scope-dialog-safe-right) var(--ttas-scope-dialog-safe-bottom) var(--ttas-scope-dialog-safe-left);
-    width: min(460px, calc(100dvw - var(--ttas-scope-dialog-safe-left) - var(--ttas-scope-dialog-safe-right) - 28px));
-    max-height: min(620px, calc(var(--tt-base-viewport-height, 100dvh) - var(--ttas-scope-dialog-safe-top) - var(--ttas-scope-dialog-safe-bottom) - 28px));
+    inset: 0;
+    width: min(460px, calc(100dvw - 28px));
+    max-height: min(620px, calc(var(--doc-height) - 28px));
     margin: auto;
     padding: 0;
     color: var(--SmartThemeBodyColor);
@@ -4871,7 +4857,7 @@ textarea.ttas-json {
 }
 
 .ttas-skill-source-dialog {
-    width: min(680px, calc(100dvw - var(--ttas-scope-dialog-safe-left) - var(--ttas-scope-dialog-safe-right) - 28px));
+    width: min(680px, calc(100dvw - 28px));
 }
 
 .ttas-skill-source-body {
@@ -5059,27 +5045,21 @@ textarea.ttas-json {
 }
 
 .ttas-file-dialog {
-    --ttas-file-viewer-safe-top: max(var(--tt-inset-top, 0px), 0px);
-    --ttas-file-viewer-safe-right: max(var(--tt-inset-right, 0px), 0px);
-    --ttas-file-viewer-safe-bottom: max(var(--tt-viewport-bottom-inset, var(--tt-inset-bottom, 0px)), 0px);
-    --ttas-file-viewer-safe-left: max(var(--tt-inset-left, 0px), 0px);
     --ttas-file-viewer-margin-x: 32px;
     --ttas-file-viewer-margin-y: 30px;
     --ttas-file-viewer-max-width: 1080px;
     --ttas-file-viewer-max-height: 760px;
-    --ttas-file-viewer-width: calc(100vw - var(--ttas-file-viewer-safe-left) - var(--ttas-file-viewer-safe-right) - var(--ttas-file-viewer-margin-x) * 2);
-    --ttas-file-viewer-height: calc(var(--tt-base-viewport-height, 100vh) - var(--ttas-file-viewer-safe-top) - var(--ttas-file-viewer-safe-bottom) - var(--ttas-file-viewer-margin-y) * 2);
+    --ttas-file-viewer-width: calc(100vw - var(--ttas-file-viewer-margin-x) * 2);
+    --ttas-file-viewer-height: calc(var(--doc-height) - var(--ttas-file-viewer-margin-y) * 2);
 
     position: fixed;
-    inset: var(--ttas-file-viewer-safe-top) var(--ttas-file-viewer-safe-right) var(--ttas-file-viewer-safe-bottom) var(--ttas-file-viewer-safe-left);
+    inset: 0;
     width: min(var(--ttas-file-viewer-max-width), var(--ttas-file-viewer-width));
-    width: min(var(--ttas-file-viewer-max-width), calc(100dvw - var(--ttas-file-viewer-safe-left) - var(--ttas-file-viewer-safe-right) - var(--ttas-file-viewer-margin-x) * 2));
+    width: min(var(--ttas-file-viewer-max-width), calc(100dvw - var(--ttas-file-viewer-margin-x) * 2));
     height: min(var(--ttas-file-viewer-max-height), var(--ttas-file-viewer-height));
-    height: min(var(--ttas-file-viewer-max-height), calc(var(--tt-base-viewport-height, 100dvh) - var(--ttas-file-viewer-safe-top) - var(--ttas-file-viewer-safe-bottom) - var(--ttas-file-viewer-margin-y) * 2));
     max-width: min(var(--ttas-file-viewer-max-width), var(--ttas-file-viewer-width));
-    max-width: min(var(--ttas-file-viewer-max-width), calc(100dvw - var(--ttas-file-viewer-safe-left) - var(--ttas-file-viewer-safe-right) - var(--ttas-file-viewer-margin-x) * 2));
+    max-width: min(var(--ttas-file-viewer-max-width), calc(100dvw - var(--ttas-file-viewer-margin-x) * 2));
     max-height: min(var(--ttas-file-viewer-max-height), var(--ttas-file-viewer-height));
-    max-height: min(var(--ttas-file-viewer-max-height), calc(var(--tt-base-viewport-height, 100dvh) - var(--ttas-file-viewer-safe-top) - var(--ttas-file-viewer-safe-bottom) - var(--ttas-file-viewer-margin-y) * 2));
     margin: auto;
     padding: 0;
     color: var(--SmartThemeBodyColor);
@@ -5503,11 +5483,9 @@ textarea.ttas-json {
 
     .ttas-embed-dialog {
         width: min(560px, var(--ttas-dialog-width));
-        width: min(560px, calc(100dvw - var(--ttas-dialog-safe-left) - var(--ttas-dialog-safe-right) - var(--ttas-dialog-margin-x) * 2));
+        width: min(560px, calc(100dvw - var(--ttas-dialog-margin-x) * 2));
         height: min(760px, var(--ttas-dialog-height));
-        height: min(760px, calc(var(--tt-base-viewport-height, 100dvh) - var(--ttas-dialog-safe-top) - var(--ttas-dialog-safe-bottom) - var(--ttas-dialog-margin-y) * 2));
         max-height: min(760px, var(--ttas-dialog-height));
-        max-height: min(760px, calc(var(--tt-base-viewport-height, 100dvh) - var(--ttas-dialog-safe-top) - var(--ttas-dialog-safe-bottom) - var(--ttas-dialog-margin-y) * 2));
     }
 
     .ttas-embed-popup-mount,

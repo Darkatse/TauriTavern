@@ -9,7 +9,7 @@ async-trait = "0.1"
 axum = { version = "0.8", default-features = false, features = ["http1", "http2", "json", "query", "tokio"] }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
 filetime = "0.2"
-local-ip-address = "0.6"
+if-addrs = "0.15"
 rand = { workspace = true }
 reqwest = { workspace = true, features = ["json", "rustls", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
@@ -37,7 +37,6 @@ mdns-sd = "0.21.3"
 
 [dev-dependencies]
 base64 = "0.23"
-socket2 = { version = "0.6", features = ["all"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 mdns-sd = "0.21.3"

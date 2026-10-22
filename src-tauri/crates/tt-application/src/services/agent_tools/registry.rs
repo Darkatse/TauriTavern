@@ -1,18 +1,16 @@
 use super::agent::{
     agent_await_descriptor, agent_delegate_descriptor, agent_handoff_descriptor,
-    agent_list_descriptor, task_return_descriptor,
+    task_return_descriptor,
 };
 use super::chat::{chat_read_messages_descriptor, chat_search_descriptor};
 use super::dice::dice_roll_descriptor;
-use super::skill::{
-    skill_list_descriptor, skill_read_descriptor, skill_script_descriptor, skill_search_descriptor,
-};
+use super::policy::builtin_model_alias;
 use super::workspace::{
     WORKSPACE_APPLY_PATCH, WORKSPACE_COMMIT, WORKSPACE_FINISH, WORKSPACE_LIST_FILES,
-    WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_WRITE_FILE,
+    WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES, WORKSPACE_SHELL, WORKSPACE_WRITE_FILE,
     workspace_apply_patch_descriptor, workspace_commit_descriptor, workspace_finish_descriptor,
     workspace_list_files_descriptor, workspace_read_file_descriptor,
-    workspace_search_files_descriptor, workspace_write_file_descriptor,
+    workspace_search_files_descriptor, workspace_shell_descriptor, workspace_write_file_descriptor,
 };
 use super::world_info::worldinfo_read_activated_descriptor;
 use crate::errors::ApplicationError;
@@ -30,7 +28,6 @@ pub struct BuiltinAgentToolRegistry {
 impl BuiltinAgentToolRegistry {
     pub fn all() -> Self {
         let descriptors = vec![
-            agent_list_descriptor(),
             agent_delegate_descriptor(),
             agent_handoff_descriptor(),
             agent_await_descriptor(),
@@ -39,15 +36,12 @@ impl BuiltinAgentToolRegistry {
             chat_read_messages_descriptor(),
             worldinfo_read_activated_descriptor(),
             dice_roll_descriptor(),
-            skill_list_descriptor(),
-            skill_search_descriptor(),
-            skill_read_descriptor(),
-            skill_script_descriptor(),
             workspace_list_files_descriptor(),
             workspace_search_files_descriptor(),
             workspace_read_file_descriptor(),
             workspace_write_file_descriptor(),
             workspace_apply_patch_descriptor(),
+            workspace_shell_descriptor(),
             workspace_commit_descriptor(),
             workspace_finish_descriptor(),
         ];
@@ -158,7 +152,6 @@ fn apply_profile_context(
 ) -> Result<(), ApplicationError> {
     let visible_roots = format_model_visible_workspace_roots(&profile.workspace.visible_roots);
     let writable_roots = format_model_workspace_roots(&profile.workspace.writable_roots);
-    let final_path = profile.output.message_body_path.as_str();
 
     match descriptor.id.native_name() {
         WORKSPACE_LIST_FILES => {
@@ -198,8 +191,18 @@ fn apply_profile_context(
             )?;
         }
         WORKSPACE_WRITE_FILE => {
+            let output_hint = profile
+                .output
+                .as_ref()
+                .map(|output| {
+                    format!(
+                        " Use {} for the default chat message body.",
+                        output.message_body_path
+                    )
+                })
+                .unwrap_or_default();
             descriptor.description = Some(format!(
-                "Write UTF-8 text to a writable Agent workspace file. mode replace writes the complete file; mode append adds content exactly to the end and creates the file when missing. Use {final_path} for the default chat message body."
+                "Write UTF-8 text to a writable Agent workspace file. mode replace writes the complete file; mode append adds content exactly to the end and creates the file when missing.{output_hint}"
             ));
             descriptor.set_property_description(
                 "path",
@@ -213,7 +216,34 @@ fn apply_profile_context(
                 &format!("Relative writable workspace file path under {writable_roots}."),
             )?;
         }
+        WORKSPACE_SHELL => {
+            let preferred_tools = [
+                (
+                    WORKSPACE_READ_FILE,
+                    "straightforward single-file text reads",
+                ),
+                (
+                    WORKSPACE_WRITE_FILE,
+                    "straightforward single-file text writes",
+                ),
+                (WORKSPACE_APPLY_PATCH, "precise edits"),
+            ]
+            .into_iter()
+            .filter(|(name, _)| profile_tool_visible(profile, name))
+            .map(|(name, purpose)| format!("{} for {purpose}", builtin_model_alias(name)))
+            .collect::<Vec<_>>();
+            if !preferred_tools.is_empty() {
+                descriptor
+                    .description
+                    .as_mut()
+                    .expect("workspace.shell has a description")
+                    .push_str(&format!(" Prefer {}.", preferred_tools.join(", ")));
+            }
+        }
         WORKSPACE_COMMIT => {
+            let final_path = crate::services::agent_profile_service::require_output(profile)?
+                .message_body_path
+                .as_str();
             descriptor.description = Some(format!(
                 "Commit a workspace text file to this run's single chat message. With no arguments, replace the current run message with {final_path}. mode append appends the file text to the same message, creating it when this run has not committed yet."
             ));
@@ -246,10 +276,9 @@ fn profile_tool_visible(profile: &ResolvedAgentProfile, name: &str) -> bool {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::super::agent::{AGENT_LIST, TASK_RETURN};
-    use super::super::policy::compile_invocation_tool_snapshot;
-    use super::super::skill::SKILL_READ;
-    use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE};
+    use super::super::agent::{AGENT_DELEGATE, TASK_RETURN};
+    use super::super::policy::{compile_invocation_tool_snapshot, prepare_tool_bindings};
+    use super::super::workspace::{WORKSPACE_FINISH, WORKSPACE_READ_FILE, WORKSPACE_SEARCH_FILES};
     use super::*;
     use tt_domain::models::agent::plan::{AgentPlanMode, AgentPlanPolicy};
     use tt_domain::models::agent::profile::{
@@ -262,57 +291,26 @@ mod tests {
     use tt_domain::models::agent::{
         AgentInvocationExitPolicy, AgentRunPresentation, ArtifactSpec, ArtifactTarget,
     };
-    use tt_domain::models::tool::{ToolId, ToolSnapshotId};
-
-    #[test]
-    fn snapshot_compiler_derives_builtin_model_aliases() {
-        let registry = BuiltinAgentToolRegistry::all();
-        let mut profile = profile_with_skill_budget(100_000, 100_000);
-        profile.tools.allow = registry
-            .catalog()
-            .iter()
-            .map(|descriptor| descriptor.id.clone())
-            .filter(|id| id.native_name() != TASK_RETURN)
-            .collect();
-        let snapshot = compile_invocation_tool_snapshot(
-            &registry,
-            &profile,
-            AgentInvocationExitPolicy::RunFinishAllowed,
-            ToolSnapshotId::parse("aliases").unwrap(),
-            &[],
-        )
-        .unwrap();
-
-        for binding in snapshot.bindings() {
-            assert_eq!(
-                binding.model_alias(),
-                binding.tool_id().native_name().replace('.', "_")
-            );
-        }
-    }
+    use tt_domain::models::tool::{AgentToolScope, ToolId, ToolSnapshotId};
 
     #[test]
     fn invocation_policy_preserves_order_and_materializes_return_mode_without_profile_mutation() {
         let registry = BuiltinAgentToolRegistry::all();
-        let mut profile = profile_with_skill_budget(100_000, 100_000);
+        let mut profile = test_profile();
         profile.tools.allow = vec![
             ToolId::builtin(WORKSPACE_READ_FILE).unwrap(),
-            ToolId::builtin(SKILL_READ).unwrap(),
+            ToolId::builtin(WORKSPACE_SEARCH_FILES).unwrap(),
             ToolId::builtin(WORKSPACE_FINISH).unwrap(),
-            ToolId::builtin(AGENT_LIST).unwrap(),
+            ToolId::builtin(AGENT_DELEGATE).unwrap(),
         ];
-        profile.tools.deny = vec![ToolId::builtin(SKILL_READ).unwrap()];
-        profile
-            .tools
-            .max_calls_per_tool
-            .insert(ToolId::builtin(WORKSPACE_READ_FILE).unwrap(), 2);
+        profile.tools.deny = vec![ToolId::builtin(WORKSPACE_SEARCH_FILES).unwrap()];
 
         let root = compile_invocation_tool_snapshot(
             &registry,
             &profile,
             AgentInvocationExitPolicy::RunFinishAllowed,
             ToolSnapshotId::parse("root").unwrap(),
-            &[],
+            prepare_tool_bindings(&registry, &profile, AgentToolScope::Chat, &[]).unwrap(),
         )
         .unwrap();
         assert_eq!(
@@ -320,15 +318,7 @@ mod tests {
                 .iter()
                 .map(|binding| binding.tool_id().native_name())
                 .collect::<Vec<_>>(),
-            vec![WORKSPACE_READ_FILE, WORKSPACE_FINISH, AGENT_LIST]
-        );
-        assert_eq!(root.bindings()[0].max_calls(), Some(2));
-        assert!(
-            root.bindings()[0]
-                .descriptor()
-                .description
-                .as_deref()
-                .is_some_and(|description| description.contains("Omit start_line and line_count"))
+            vec![WORKSPACE_READ_FILE, WORKSPACE_FINISH, AGENT_DELEGATE]
         );
 
         let child = compile_invocation_tool_snapshot(
@@ -336,7 +326,7 @@ mod tests {
             &profile,
             AgentInvocationExitPolicy::TaskReturnRequired,
             ToolSnapshotId::parse("child").unwrap(),
-            &[],
+            prepare_tool_bindings(&registry, &profile, AgentToolScope::Chat, &[]).unwrap(),
         )
         .unwrap();
         assert_eq!(
@@ -347,28 +337,18 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![WORKSPACE_READ_FILE, TASK_RETURN]
         );
-        assert!(
-            child.bindings()[0]
-                .descriptor()
-                .description
-                .as_deref()
-                .is_some_and(|description| {
-                    description.contains("task workspace file")
-                        && description.contains("Omit start_line and line_count")
-                })
-        );
         assert_eq!(
             profile.tools.allow,
             vec![
                 ToolId::builtin(WORKSPACE_READ_FILE).unwrap(),
-                ToolId::builtin(SKILL_READ).unwrap(),
+                ToolId::builtin(WORKSPACE_SEARCH_FILES).unwrap(),
                 ToolId::builtin(WORKSPACE_FINISH).unwrap(),
-                ToolId::builtin(AGENT_LIST).unwrap(),
+                ToolId::builtin(AGENT_DELEGATE).unwrap(),
             ]
         );
     }
 
-    fn profile_with_skill_budget(per_call: usize, per_run: usize) -> ResolvedAgentProfile {
+    fn test_profile() -> ResolvedAgentProfile {
         ResolvedAgentProfile {
             schema_version: AGENT_PROFILE_SCHEMA_VERSION,
             kind: AGENT_PROFILE_KIND.to_string(),
@@ -379,6 +359,7 @@ mod tests {
                 mode: AgentPresetBindingMode::CurrentPromptSnapshot,
                 ref_: None,
                 required: false,
+                reasoning_effort: None,
             },
             model: AgentModelBinding {
                 mode: AgentModelBindingMode::CurrentPromptSnapshot,
@@ -395,19 +376,14 @@ mod tests {
             delegation: AgentDelegationPolicy::default(),
             instructions: AgentProfileInstructions::default(),
             tools: AgentToolPolicy {
-                allow: vec![ToolId::builtin(SKILL_READ).unwrap()],
+                allow: vec![ToolId::builtin(WORKSPACE_READ_FILE).unwrap()],
                 deny: Vec::new(),
                 tool_descriptions: BTreeMap::new(),
-                max_rounds: 1,
-                max_calls_per_run: 1,
-                mcp_result_inline_char_limit: 50_000,
-                max_calls_per_tool: BTreeMap::new(),
+                external_result_inline_char_limit: 50_000,
             },
             skills: AgentSkillPolicy {
                 visible: vec!["*".to_string()],
                 deny: Vec::new(),
-                max_read_chars_per_call: per_call,
-                max_read_chars_per_run: per_run,
             },
             workspace: AgentWorkspacePolicy {
                 visible_roots: vec!["output".to_string()],
@@ -418,7 +394,7 @@ mod tests {
                 beta: true,
                 nodes: Vec::new(),
             },
-            output: ResolvedAgentOutputPolicy {
+            output: Some(ResolvedAgentOutputPolicy {
                 artifacts: vec![ArtifactSpec {
                     id: "main".to_string(),
                     path: "output/main.md".to_string(),
@@ -429,7 +405,7 @@ mod tests {
                 }],
                 message_body_artifact_id: "main".to_string(),
                 message_body_path: "output/main.md".to_string(),
-            },
+            }),
             source_trace: AgentProfileSourceTrace {
                 profile_source: "test".to_string(),
             },

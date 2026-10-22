@@ -1208,10 +1208,7 @@ async function generateStreamCallback(args, value) {
         }
 
         const effectiveProfile = ConnectionManagerRequestService.getProfile(effectiveProfileId);
-        const selectedApiMap = ConnectionManagerRequestService.validateProfile(effectiveProfile);
-        if (globalThis.__TAURI_RUNNING__ === true && selectedApiMap.selected === 'textgenerationwebui') {
-            throw new Error('Text Completion profiles are not supported by the native TauriTavern generation backend yet. Use a Chat Completion profile.');
-        }
+        ConnectionManagerRequestService.validateProfile(effectiveProfile);
 
         const display = new StreamingDisplay();
         display.show({

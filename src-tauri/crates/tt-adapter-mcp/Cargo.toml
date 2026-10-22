@@ -6,13 +6,11 @@ publish = false
 
 [dependencies]
 async-trait = "0.1"
-futures-util = "0.3"
 http = "1"
 jsonschema = { version = "0.49.7", default-features = false }
-reqwest = { workspace = true, features = ["json", "stream"] }
-rmcp = { version = "3.1.2", default-features = false, features = ["client", "transport-streamable-http-client-reqwest"] }
+reqwest = { workspace = true }
+rmcp = { version = "3.5", default-features = false, features = ["client", "transport-streamable-http-client-reqwest"] }
 serde_json = { workspace = true }
-sse-stream = "0.2.5"
 thiserror = { workspace = true }
 tokio = { version = "1", default-features = false, features = ["time"] }
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }

@@ -1,0 +1,61 @@
+import { createInAppAgentController } from './controller';
+import { registerAssistantTools } from './tools';
+import { createElement } from 'react';
+import { createRoot } from 'react-dom/client';
+import { AssistantApp } from './AssistantApp';
+import { installAssistantDrawer, type DrawerState } from './drawer';
+import { assistantSelection, createAssistantActions, requireContext } from './host';
+import { createInteractionCursor } from '@tauritavern/app-use';
+import '@tauritavern/app-use/cursor.css';
+import '../style.css';
+
+const host = window.__TAURITAVERN__;
+if (host?.ready == null) throw new Error('in-app-agent: Host readiness is unavailable');
+await host.ready;
+const api = host.api;
+if (!api?.agent || !api.dev || !api.extension || !api.layout) throw new Error('in-app-agent: required Host APIs are unavailable');
+const hostApi: TauriTavernHostApi = api;
+const { agent, dev } = api;
+const context = requireContext();
+const controller = createAssistantController();
+const cursor = createInteractionCursor(() => context.Popup.util.getTopmostModalLayer());
+const unsubscribeCursor = controller.subscribe(() => {
+    const { activeRun, startingSessionId } = controller.getSnapshot();
+    if (!activeRun && startingSessionId === undefined) cursor.clear();
+});
+let pageReady = false;
+await registerAssistantTools(api, agent.tools, dev.frontendLogs, () => pageReady, context.scrollChatSurfaceTo, (point, toolContext) => {
+    const { activeRun, startingSessionId } = controller.getSnapshot();
+    // Only the task owned by this assistant drives its cursor, including the send admission window.
+    if (activeRun?.runId === toolContext.runId
+        || (toolContext.target.kind === 'session' && startingSessionId === toolContext.target.sessionId)) {
+        cursor.move(point);
+    }
+});
+
+export function createAssistantController() {
+    return createInAppAgentController({ agent, selection: assistantSelection });
+}
+
+context.eventSource.once(context.eventTypes.APP_READY, () => {
+    pageReady = true;
+    void mount().catch(error => {
+        console.error('[InAppAssistant] Failed to mount assistant', error);
+        window.toastr?.error?.(error instanceof Error ? error.message : String(error));
+    });
+});
+async function mount() {
+    // Reuse the page's drawer runtime instead of bundling another state owner.
+    const drawerUrl = '/scripts/drawers.js';
+    const [actions, drawers] = await Promise.all([
+        createAssistantActions(hostApi, context),
+        import(drawerUrl /* webpackIgnore: true */) as Promise<DrawerState>,
+    ]);
+    const drawer = installAssistantDrawer(drawers);
+    const root = createRoot(drawer.mount);
+    root.render(createElement(AssistantApp, { controller, actions, drawer }));
+    window.addEventListener('pagehide', () => {
+        unsubscribeCursor(); cursor.clear();
+        root.unmount(); controller.dispose(); drawer.dispose();
+    }, { once: true });
+}

@@ -14,7 +14,7 @@ use tokio::sync::{Mutex, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use tt_adapter_quickjs::QuickJsScriptEngine;
+use tt_adapter_http::HttpClientPool;
 use tt_adapter_storage_core::chat_directory_identity::new_shared_chat_alias_store_for_user_dir;
 use tt_adapter_storage_core::{FileChatRepository, FileSettingsRepository};
 use tt_adapter_storage_core::{FileLlmConnectionRepository, FileMcpServerRepository};
@@ -26,15 +26,17 @@ use tt_adapter_storage_userdata::FileWorldInfoRepository;
 use tt_adapter_storage_userdata::png_card_metadata::{
     read_character_data_from_png, write_character_data_to_png,
 };
+use tt_adapter_tokenization::MiktikTokenizerRepository;
+use tt_adapter_workspace_shell::WorkspaceShellEngine;
 use tt_application::dto::agent_dto::{
     AgentResolveChatCommitDto, AgentResolvePersistentStateMetadataUpdateDto, AgentRunHandleDto,
     AgentSkillScopeRefsDto, AgentStartRunDto, AgentStartRunOptionsDto,
 };
 use tt_application::dto::character_dto::{
-    CharacterLorebookConflictResolution, CheckCharacterLorebookConflictDto, CreateCharacterDto,
-    DeleteCharacterDto, ExportCharacterContentDto, ExportCharacterDto, ImportCharacterDto,
-    MergeCharacterCardDataDto, ReplaceCharacterDto, ResolveCharacterLorebookConflictDto,
-    UpdateAvatarDto, UpdateCharacterCardDataDto, UpdateCharacterDto,
+    CharacterLorebookAdoptionChoice, CharacterLorebookAdoptionDto, CreateCharacterDto,
+    ExportCharacterContentDto, ImportCharacterDto, MergeCharacterCardDataDto, ReplaceCharacterDto,
+    ResolveCharacterLorebookAdoptionDto, UpdateAvatarDto, UpdateCharacterCardDataDto,
+    UpdateCharacterDto,
 };
 use tt_application::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use tt_application::errors::ApplicationError;
@@ -55,6 +57,7 @@ use tt_application::services::llm_connection_service::LlmConnectionService;
 use tt_application::services::mcp_service::McpService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
+use tt_application::services::tokenization_service::TokenizationService;
 use tt_domain::errors::DomainError;
 use tt_domain::models::agent::profile::{
     AgentDelegationPolicy, AgentProfileId, DEFAULT_AGENT_PROFILE_ID,
@@ -88,8 +91,9 @@ const AGENT_CONTRACT_ASYNC_TIMEOUT: Duration = Duration::from_secs(5);
 
 mod agent_runtime;
 mod character;
-mod chat_payload_commit;
 mod host_resources;
+mod profile_migration;
+mod world_info;
 
 struct AgentRuntimeFixture {
     service: Arc<AgentRuntimeService>,
@@ -100,6 +104,7 @@ struct AgentRuntimeFixture {
     model_gateway: Arc<MockAgentModelGateway>,
     mcp_service: Arc<McpService>,
     mcp_gateway: Arc<ContractMcpGateway>,
+    extension_tools: Arc<crate::infrastructure::agent_extension_tools::AgentExtensionTools>,
 }
 
 fn temp_root(label: &str) -> PathBuf {
@@ -149,7 +154,11 @@ async fn character_service_with_world_repository(
         chat_repository.clone(),
         group_chat_repository,
     ));
-    let world_repository = Arc::new(FileWorldInfoRepository::new(default_user.join("worlds")));
+    let world_repository = Arc::new(FileWorldInfoRepository::new(
+        default_user.join("worlds"),
+        Arc::default(),
+        4 * 1024 * 1024,
+    ));
     let agent_repository = Arc::new(FileAgentRepository::new(
         root.join("_tauritavern/agent-workspaces"),
     ));
@@ -184,6 +193,15 @@ fn agent_runtime_fixture_with_results(
     root: &Path,
     responses: Vec<Result<Value, ApplicationError>>,
 ) -> AgentRuntimeFixture {
+    agent_runtime_fixture_with_shell(root, responses, Arc::new(WorkspaceShellEngine))
+}
+
+fn agent_runtime_fixture_with_shell(
+    root: &Path,
+    responses: Vec<Result<Value, ApplicationError>>,
+    shell: Arc<dyn tt_ports::workspace_shell::WorkspaceShell>,
+) -> AgentRuntimeFixture {
+    std::fs::create_dir_all(root.join("builtin-skills")).unwrap();
     let default_user = root.join("default-user");
     let aliases = new_shared_chat_alias_store_for_user_dir(&default_user);
     let agent_repository = Arc::new(FileAgentRepository::new(
@@ -207,9 +225,11 @@ fn agent_runtime_fixture_with_results(
         profile_repository,
         profile_health_repository,
         preset_repository.clone(),
+        agent_repository.clone(),
     ));
     let skill_service = Arc::new(SkillService::new(Arc::new(FileSkillRepository::new(
         root.join("_tauritavern/skills"),
+        root.join("builtin-skills"),
     ))));
     let llm_connection_service = Arc::new(LlmConnectionService::new(
         Arc::new(FileLlmConnectionRepository::new(
@@ -218,6 +238,9 @@ fn agent_runtime_fixture_with_results(
         Arc::new(FileSettingsRepository::new(
             default_user.clone(),
             UserSettings::default(),
+            Default::default(),
+            Arc::default(),
+            4 * 1024 * 1024,
         )),
     ));
     let prompt_assembly_service = Arc::new(PromptAssemblyService::new(
@@ -231,8 +254,12 @@ fn agent_runtime_fixture_with_results(
         Arc::new(FileMcpServerRepository::new(root.join("_tauritavern/mcp"))),
         mcp_gateway.clone(),
     ));
+    let extension_tools =
+        Arc::new(crate::infrastructure::agent_extension_tools::AgentExtensionTools::default());
     let service = Arc::new(AgentRuntimeService::new(
         agent_repository.clone() as Arc<dyn AgentRunRepository>,
+        agent_repository.clone()
+            as Arc<dyn tt_ports::repositories::agent_session_repository::AgentSessionRepository>,
         agent_repository.clone() as Arc<dyn AgentInvocationRepository>,
         agent_repository.clone() as Arc<dyn WorkspaceRepository>,
         chat_file_repository.clone() as Arc<dyn ChatRepository>,
@@ -243,7 +270,15 @@ fn agent_runtime_fixture_with_results(
         llm_connection_service,
         prompt_assembly_service,
         mcp_service.clone(),
-        Arc::new(QuickJsScriptEngine::new()),
+        shell,
+        extension_tools.clone(),
+        Arc::new(TokenizationService::new(Arc::new(
+            MiktikTokenizerRepository::new(
+                root.join("tokenizers"),
+                Arc::new(HttpClientPool::new("TauriTavern contract tests")),
+            ),
+        ))),
+        Arc::new(tt_adapter_media::MediaToolImageNormalizer),
     ));
 
     AgentRuntimeFixture {
@@ -255,6 +290,7 @@ fn agent_runtime_fixture_with_results(
         model_gateway,
         mcp_service,
         mcp_gateway,
+        extension_tools,
     }
 }
 
@@ -302,7 +338,7 @@ async fn resolve_contract_profile(
     fixture
         .profile_service
         .resolve_profile(AgentProfileResolveInput {
-            profile_id: None,
+            profile_id: Some("default-writer"),
             tool_catalog: registry.catalog(),
         })
         .await
@@ -325,7 +361,7 @@ async fn start_contract_agent_run(
             presentation: Some(presentation),
             ..Default::default()
         },
-        None,
+        Some(contract_frozen_run_input()),
     )
     .await
 }
@@ -370,6 +406,23 @@ async fn start_contract_agent_run_with_options(
         .expect("start contract Agent run")
 }
 
+fn contract_frozen_run_input() -> Value {
+    json!({
+        "schemaVersion": 2, "kind": "tauritavern.agentFrozenRunInputSnapshot", "generationType": "normal",
+        "promptInputs": { "messages": [], "extensionPrompts": {} },
+        "worldInfoActivation": { "entries": [] },
+        "macroContext": {},
+        "currentPreset": {
+            "apiId": "openai", "name": "Captured A",
+            "settings": { "prompts": [{ "identifier": "main", "content": "Captured preset A" }] }
+        },
+        "currentModelConnection": {
+            "schemaVersion": 1, "kind": "tauritavern.currentModelConnectionSnapshot",
+            "settings": { "chat_completion_source": "openai", "model": "captured-model", "openai_model": "captured-model" }
+        }
+    })
+}
+
 async fn wait_for_terminal_agent_run(repository: &FileAgentRepository, run_id: &str) -> AgentRun {
     tokio::time::timeout(AGENT_CONTRACT_ASYNC_TIMEOUT, async {
         loop {
@@ -398,17 +451,21 @@ fn contract_run(
     AgentRun {
         id: id.to_string(),
         workspace_id: format!("{id}_workspace"),
-        stable_chat_id: format!("{id}_stable_chat"),
-        chat_ref: AgentChatRef::Character {
-            character_id: "Alice".to_string(),
-            file_name: "Alice.png".to_string(),
-        },
-        generation_type: "normal".to_string(),
+        target: tt_domain::models::agent::AgentRunTarget::Chat(
+            tt_domain::models::agent::AgentChatRunTarget {
+                stable_chat_id: format!("{id}_stable_chat"),
+                chat_ref: AgentChatRef::Character {
+                    character_id: "Alice".to_string(),
+                    file_name: "Alice.png".to_string(),
+                },
+                generation_type: "normal".to_string(),
+                skill_scope_refs: Default::default(),
+                persist_base_state_id: None,
+                input_message_count: None,
+                presentation,
+            },
+        ),
         profile_id: Some(profile.id.as_str().to_string()),
-        skill_scope_refs: Default::default(),
-        persist_base_state_id: None,
-        input_message_count: None,
-        presentation,
         status: AgentRunStatus::Created,
         created_at: Utc::now(),
         updated_at: Utc::now(),
@@ -544,7 +601,6 @@ async fn execute_agent_loop_with_host_resolver<R>(
     service: Arc<AgentRuntimeService>,
     run_id: String,
     prompt_snapshot: Value,
-    request: ChatCompletionGenerateRequestDto,
     profile: tt_domain::models::agent::profile::ResolvedAgentProfile,
     cancel_receiver: &mut watch::Receiver<bool>,
     resolver: R,
@@ -558,7 +614,6 @@ where
                 service.execute_agent_loop_run_inner(
                     &run_id,
                     prompt_snapshot,
-                    request,
                     profile,
                     cancel_receiver,
                 ),
@@ -666,26 +721,13 @@ async fn read_agent_events(
 
 async fn read_workspace_json(repository: &FileAgentRepository, run_id: &str, path: &str) -> Value {
     let file = repository
-        .read_text(run_id, &WorkspacePath::parse(path).expect("workspace path"))
+        .open_filesystem(run_id)
+        .await
+        .expect("open workspace")
+        .read_text(&WorkspacePath::parse(path).expect("workspace path"))
         .await
         .expect("read workspace json");
     serde_json::from_str(&file.text).expect("parse workspace json")
-}
-
-fn tool_result_structured_values(request: &AgentModelRequest, name: &str) -> Vec<Value> {
-    request
-        .messages
-        .iter()
-        .flat_map(|message| message.parts.iter())
-        .filter_map(|part| match part {
-            AgentModelContentPart::ToolResult { result }
-                if result.tool_id.is_builtin() && result.tool_id.native_name() == name =>
-            {
-                Some(result.structured.clone())
-            }
-            _ => None,
-        })
-        .collect()
 }
 
 async fn wait_for_closed_sessions(gateway: &MockAgentModelGateway, expected: Vec<String>) {
@@ -711,6 +753,10 @@ fn chat_request(user_content: &str) -> ChatCompletionGenerateRequestDto {
             "chat_completion_source": "openai",
             "model": "test-model",
             "messages": [{
+                "role": "system",
+                "content": "Use the available Agent tools.",
+                "_tauritavern_prompt_component": "agentSystemPrompt"
+            }, {
                 "role": "user",
                 "content": user_content
             }]
@@ -761,11 +807,11 @@ impl PresetRepository for TestPresetRepository {
         Ok(())
     }
 
-    async fn delete_preset(
-        &self,
-        _name: &str,
-        _preset_type: &PresetType,
-    ) -> Result<(), DomainError> {
+    async fn delete_preset(&self, name: &str, preset_type: &PresetType) -> Result<(), DomainError> {
+        self.presets
+            .lock()
+            .await
+            .remove(&(name.to_string(), preset_type.clone()));
         Ok(())
     }
 
@@ -865,10 +911,11 @@ impl McpGateway for ContractMcpGateway {
         }
         Ok(McpCallOutcome::KnownResponse(McpKnownResponse::ToolResult(
             McpToolCallResult {
+                images: Vec::new(),
                 is_error: false,
                 text: vec![McpTextContent {
                     index: 0,
-                    text: "x".repeat(60_000),
+                    text: format!("{}\nEnd of result.", "界".repeat(60_000)),
                 }],
                 structured_content: Some(json!({ "issueId": 42 })),
                 diagnostics: Vec::new(),

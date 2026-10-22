@@ -2,13 +2,17 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const OWNED_UI_ROOTS = [
+    'packages/app-use/src',
     'src/scripts/extensions/agent-system/src',
+    'src/scripts/extensions/in-app-agent/src',
     'src/scripts/extensions/mcp-manager/src',
     'src/scripts/tauri/setting',
 ];
 
 const COMPILER_OWNED_ROOTS = [
+    'packages/app-use/src',
     'src/scripts/extensions/agent-system/src',
+    'src/scripts/extensions/in-app-agent/src',
     'src/scripts/extensions/mcp-manager/src',
     'src/scripts/tauri/setting/settings-app',
     'src/scripts/tauri/setting/dev-logs-app',

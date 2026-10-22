@@ -1,13 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-async function importFresh(modulePath) {
-    return import(`${pathToFileURL(modulePath).href}?t=${Date.now()}-${Math.random()}`);
-}
+import { installChatApi } from '../src/tauri/main/api/chat.js';
 
 async function withChatApi(stContext, safeInvoke, run) {
     const previousWindow = globalThis.window;
@@ -17,9 +10,6 @@ async function withChatApi(stContext, safeInvoke, run) {
     };
 
     try {
-        const { installChatApi } = await importFresh(
-            path.join(REPO_ROOT, 'src/tauri/main/api/chat.js'),
-        );
         installChatApi({ safeInvoke });
         await run(globalThis.window.__TAURITAVERN__.api.chat);
     } finally {
@@ -58,10 +48,17 @@ test('windowInfo exposes full-history semantics without a summary invoke', async
     });
 });
 
-test('history API retains character and group tail/before/beforePages command routing', async () => {
-    const calls = [];
+test('opening a chat preserves identity whitespace and literal avatar characters', async () => {
+    const metadata = { integrity: 'exact-identity' };
+    await withChatApi({}, async (_command, args) => args.characterName === ' Alice#1' && args.fileName === ' Story'
+        ? metadata : undefined, async api => {
+        const chat = api.open({ kind: 'character', characterId: ' Alice#1', fileName: ' Story.jsonl' });
+        assert.deepEqual(await chat.metadata.get(), metadata);
+    });
+});
+
+test('history pages preserve absolute message indices for characters and groups', async () => {
     const safeInvoke = async (command, args) => {
-        calls.push({ command, args });
         if (command.endsWith('_summary')) {
             return { message_count: 4 };
         }
@@ -114,14 +111,23 @@ test('history API retains character and group tail/before/beforePages command ro
         assert.deepEqual(groupPages.map(page => page.startIndex), [1, 0]);
     });
 
-    assert.deepEqual(calls.map(call => call.command), [
-        'get_character_chat_summary',
-        'get_chat_payload_tail',
-        'get_chat_payload_before',
-        'get_chat_payload_before_pages',
-        'get_group_chat_summary',
-        'get_group_chat_payload_tail',
-        'get_group_chat_payload_before',
-        'get_group_chat_payload_before_pages',
-    ]);
+
+});
+
+test('history pages parse only message records and preserve empty chat results', async () => {
+    let lines = [];
+    await withChatApi({}, async command => command.endsWith('_summary')
+        ? { message_count: lines.length }
+        : { header: '', lines, cursor: { offset: 0, size: 0, modifiedMillis: 1 }, hasMoreBefore: false }, async api => {
+        const chat = api.open({ kind: 'group', chatId: 'Story' });
+        const empty = await chat.history.tail({ limit: 2 });
+        assert.deepEqual(empty.messages, []);
+        assert.equal(empty.startIndex, 0);
+
+        const message = { chat_metadata: { integrity: 'ordinary message data' }, mes: 'hello' };
+        lines = [JSON.stringify(message)];
+        assert.deepEqual((await chat.history.tail({ limit: 2 })).messages, [message]);
+        lines = ['\uFEFF{}'];
+        await assert.rejects(chat.history.tail({ limit: 2 }));
+    });
 });

@@ -2,6 +2,7 @@
 import { resolveStableChatId } from './agent-chat-identity.js';
 import { createAgentRunGuidanceApi } from './agent-run-guidance.js';
 import { createAgentRunRetentionApi } from './agent-run-retention.js';
+import { readByteResponse } from '../kernel/byte-protocol.js';
 const DEFAULT_EVENT_POLL_MS = 500;
 const MAX_RUN_LIST_LIMIT = 200;
 const AGENT_RUN_STATUSES = new Set([
@@ -9,6 +10,7 @@ const AGENT_RUN_STATUSES = new Set([
     'initializing_workspace',
     'assembling_context',
     'calling_model',
+    'compacting_context',
     'dispatching_tool',
     'applying_workspace_patch',
     'awaiting_host_commit',
@@ -41,7 +43,10 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
             throw new Error('chatRef must be an object');
         }
 
-        const stableChatId = normalizeOptionalString(input.stableChatId ?? input.stable_chat_id);
+        const stableChatId = input.stableChatId ?? input.stable_chat_id;
+        if (stableChatId != null && (typeof stableChatId !== 'string' || stableChatId.length === 0)) {
+            throw new Error('stableChatId must be a non-empty string');
+        }
         const statuses = normalizeRunStatuses(input.statuses);
         const before = normalizeRunListBefore(input.before);
         const limit = normalizeRunListLimit(input.limit);
@@ -49,7 +54,7 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
         return safeInvoke('list_agent_runs', {
             dto: {
                 ...(chatRef ? { chatRef } : {}),
-                ...(stableChatId ? { stableChatId } : {}),
+                ...(stableChatId == null ? {} : { stableChatId }),
                 ...(statuses ? { statuses } : {}),
                 ...(before ? { before } : {}),
                 ...(limit == null ? {} : { limit }),
@@ -77,10 +82,12 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
     }
 
     async function readWorkspaceFile(input) {
-        const runId = requireRunId(input?.runId);
-        const path = String(input?.path || '').trim();
-        if (!path) throw new Error('path is required');
-        return safeInvoke('read_agent_workspace_file', { dto: { runId, path } });
+        return safeInvoke('read_agent_workspace_file', { dto: workspaceReadInput(input) });
+    }
+
+    async function readWorkspaceBytes(input) {
+        const data = await safeInvoke('read_agent_workspace_bytes', { dto: workspaceReadInput(input) });
+        return readByteResponse(data);
     }
 
     async function readTaskDetail(input) {
@@ -124,9 +131,9 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
         if (!chatRef || typeof chatRef !== 'object') {
             throw new Error('chatRef is required');
         }
-        const stableChatId = String(input.stableChatId || '').trim() || await resolveStableChatId(chatRef);
-        if (!stableChatId) {
-            throw new Error('stableChatId is required');
+        const stableChatId = input.stableChatId ?? await resolveStableChatId(chatRef);
+        if (typeof stableChatId !== 'string' || stableChatId.length === 0) {
+            throw new Error('stableChatId must be a non-empty string');
         }
         const candidateStateIdsInput = Object.prototype.hasOwnProperty.call(input, 'candidateStateIds')
             ? input.candidateStateIds
@@ -166,10 +173,12 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
                 });
                 const events = Array.isArray(result?.events) ? result.events : [];
                 for (const event of events) {
+                    if (stopped) return;
                     afterSeq = Math.max(afterSeq, Number(event?.seq || 0));
                     handler(event);
                 }
             } catch (error) {
+                if (stopped) return;
                 if (typeof options?.onError === 'function') {
                     options.onError(error);
                 } else {
@@ -202,11 +211,19 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
         retention: createAgentRunRetentionApi({ safeInvoke }),
         readEvents,
         readWorkspaceFile,
+        readWorkspaceBytes,
         readTaskDetail,
         readModelTurn,
         pruneChatPersistentStates,
         subscribe,
     };
+}
+
+function workspaceReadInput(input) {
+    const runId = requireRunId(input?.runId);
+    const path = String(input?.path || '').trim();
+    if (!path) throw new Error('path is required');
+    return { runId, path };
 }
 
 function requireRunId(value) {
@@ -215,14 +232,6 @@ function requireRunId(value) {
         throw new Error('runId is required');
     }
     return runId;
-}
-
-function normalizeOptionalString(value) {
-    if (value == null || value === '') {
-        return undefined;
-    }
-    const text = String(value).trim();
-    return text || undefined;
 }
 
 function normalizeRunStatuses(value) {

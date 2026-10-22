@@ -2,33 +2,56 @@ import { expect, test } from '@rstest/core';
 
 import { defaultProfile, normalizeProfileForSave, profileForEdit } from './profile-model';
 
-test('profileForEdit migrates v2 native tool names to canonical ToolIds', () => {
-    const profile = defaultProfile('legacy-profile');
-    profile.schemaVersion = 2;
-    profile.tools.allow = ['workspace.read_file'];
-    profile.tools.deny = ['workspace.write_file'];
-    profile.tools.toolDescriptions = { 'workspace.read_file': { description: 'Read' } };
-    profile.tools.maxCallsPerTool = { 'workspace.read_file': 4 };
-    // Simulate a v2 persisted profile that predates the field.
-    Reflect.deleteProperty(profile.tools, 'mcpResultInlineCharLimit');
+test('profileForEdit migrates legacy tools without widening permissions', () => {
+    for (const version of [1, 2, 3, 4]) {
+        const profile = defaultProfile('legacy-profile');
+        profile.schemaVersion = version;
+        profile.tools.allow = ['builtin:workspace.read_file'];
+        profile.tools.deny = ['builtin:workspace.shell'];
+        profile.tools.toolDescriptions = { 'builtin:workspace.read_file': { description: 'Read' } };
+        if (version < 4) {
+            const id = (name: string) => version < 3 ? name : `builtin:${name}`;
+            profile.tools.allow = [id('workspace.read_file'), id('agent.list'), id('skill.read'), id('skill.run_script')];
+            profile.tools.deny = [id('workspace.shell'), id('agent.list'), id('skill.search')];
+            profile.tools.toolDescriptions = {
+                [id('workspace.read_file')]: { description: 'Read' },
+                [id('skill.read')]: { description: 'Old Skill read' },
+                [id('agent.list')]: { description: 'Old Agent list' },
+            };
+            Object.assign(profile.skills, { maxReadCharsPerCall: 20_000, maxReadCharsPerRun: 80_000 });
+        }
+        Object.assign(profile.tools, {
+            maxRounds: 80,
+            maxCallsPerRun: 80,
+            maxCallsPerTool: { 'builtin:workspace.read_file': 4 },
+        });
+        // Older persisted profiles can predate this field.
+        Reflect.deleteProperty(profile.tools, 'externalResultInlineCharLimit');
 
-    const migrated = profileForEdit(profile);
-    expect(migrated.schemaVersion).toBe(3);
-    expect(migrated.tools.allow).toEqual(['builtin:workspace.read_file']);
-    expect(migrated.tools.deny).toEqual(['builtin:workspace.write_file']);
-    expect(Object.keys(migrated.tools.toolDescriptions ?? {})).toEqual(['builtin:workspace.read_file']);
-    expect(Object.keys(migrated.tools.maxCallsPerTool ?? {})).toEqual(['builtin:workspace.read_file']);
-    expect(migrated.tools.mcpResultInlineCharLimit).toBe(50_000);
+        const migrated = profileForEdit(profile);
+        expect(migrated.schemaVersion).toBe(5);
+        expect(migrated.tools.allow).toEqual(['builtin:workspace.read_file']);
+        expect(migrated.tools.deny).toEqual(['builtin:workspace.shell']);
+        expect(migrated.tools.toolDescriptions).toEqual({ 'builtin:workspace.read_file': { description: 'Read' } });
+        expect('maxRounds' in migrated.tools).toBe(false);
+        expect('maxCallsPerRun' in migrated.tools).toBe(false);
+        expect('maxCallsPerTool' in migrated.tools).toBe(false);
+        expect(migrated.tools.externalResultInlineCharLimit).toBe(50_000);
+        expect('maxReadCharsPerCall' in migrated.skills).toBe(false);
+        expect('maxReadCharsPerRun' in migrated.skills).toBe(false);
 
-    profile.schemaVersion = 4;
-    expect(() => profileForEdit(profile)).toThrow(/profile\.schemaVersion is unsupported: 4/);
+        profile.schemaVersion = 6;
+        expect(() => profileForEdit(profile)).toThrow(/profile\.schemaVersion is unsupported: 6/);
+    }
 });
 
-test('profileForEdit keeps CSV drafts separate and normalizeProfileForSave restores lists', () => {
+test('profile editing restores canonical lists and preserves legacy tool result limits on save', () => {
     const profile = defaultProfile('writer');
     profile.run.stream = false;
     profile.skills.visible = ['lore', 'tools'];
     profile.delegation.allowedCallers = ['main', 'reviewer'];
+    Reflect.deleteProperty(profile.tools, 'externalResultInlineCharLimit');
+    Reflect.set(profile.tools, 'mcpResultInlineCharLimit', 12345);
 
     const draft = profileForEdit(profile);
     expect(draft.skills.visibleCsv).toBe('lore, tools');
@@ -42,6 +65,8 @@ test('profileForEdit keeps CSV drafts separate and normalizeProfileForSave resto
     expect(saved.delegation.allowedCallers).toEqual(['editor']);
     expect('visibleCsv' in saved.skills).toBe(false);
     expect('allowedCallersCsv' in saved.delegation).toBe(false);
+    expect(saved.tools.externalResultInlineCharLimit).toBe(12345);
+    expect('mcpResultInlineCharLimit' in saved.tools).toBe(false);
 });
 
 test('run streaming defaults missing fields and rejects non-booleans', () => {

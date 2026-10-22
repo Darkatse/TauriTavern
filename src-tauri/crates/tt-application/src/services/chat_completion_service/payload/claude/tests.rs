@@ -99,26 +99,52 @@ fn claude_rejects_unknown_tool_choice_instead_of_using_auto() {
 }
 
 #[test]
-fn claude_rejects_assistant_prefill_for_models_that_removed_it() {
-    for model in [
-        "claude-opus-5",
-        "claude-fable-5",
-        "claude-mythos-5",
-        "claude-sonnet-5",
-        "claude-opus-4-7",
-        "claude-opus-4-6",
-        "claude-sonnet-4-6",
+fn claude_model_contract_builds_supported_requests() {
+    for (model, parameters, expected) in [
+        (
+            "claude-sonnet-4-20250514",
+            json!({"temperature": 0.7}),
+            json!({"/temperature": 0.7}),
+        ),
+        (
+            "claude-sonnet-4-20250514",
+            json!({"reasoning_effort": "medium"}),
+            json!({"/thinking/type": "enabled"}),
+        ),
+        (
+            "claude-sonnet-4-5",
+            json!({"temperature": 0.7, "top_p": 0.9}),
+            json!({"/top_p": 0.9, "/temperature": null}),
+        ),
+        (
+            "claude-sonnet-4-20250514",
+            json!({"reasoning_effort": "medium", "assistant_prefill": "prefill"}),
+            json!({"/messages": [{"role": "user", "content": [
+                {"type": "text", "text": "hello"},
+                {"type": "text", "text": "prefill"}
+            ]}]}),
+        ),
+        (
+            "claude-opus-5-5",
+            json!({"json_schema": {"value": {"type": "object"}}}),
+            json!({"/output_config/format": {"type": "json_schema", "schema": {"type": "object"}}}),
+        ),
+        (
+            "claude-sonnet-5-5",
+            json!({"json_schema": {"value": {"type": "object"}}}),
+            json!({"/output_config/format": {"type": "json_schema", "schema": {"type": "object"}}}),
+        ),
     ] {
         let mut payload = claude_payload(model);
-        payload.insert("assistant_prefill".to_string(), json!("prefill"));
-
-        let error = build(payload).expect_err("build should fail");
-        let message = error.to_string();
-
-        assert!(
-            message.contains("does not support assistant_prefill"),
-            "{model} should reject assistant_prefill, got: {message}"
-        );
+        payload.extend(parameters.as_object().unwrap().clone());
+        let (_, request) = build(payload).expect("supported request should build");
+        for (pointer, value) in expected.as_object().unwrap() {
+            assert_eq!(
+                request.pointer(pointer).unwrap_or(&Value::Null),
+                value,
+                "{model}: {pointer}"
+            );
+        }
     }
 }
 
@@ -542,20 +568,6 @@ fn claude_moves_images_out_of_assistant_messages() {
 }
 
 #[test]
-fn claude_limited_sampling_models_reject_temperature_and_top_p_together() {
-    let mut payload = claude_payload("claude-sonnet-4-5");
-    payload.insert("temperature".to_string(), json!(0.7));
-    payload.insert("top_p".to_string(), json!(0.9));
-
-    let error = build(payload).expect_err("build should fail");
-    assert!(
-        error
-            .to_string()
-            .contains("accepts either temperature or top_p, not both")
-    );
-}
-
-#[test]
 fn claude_sampling_free_models_drop_non_default_sampling_params() {
     for model in [
         "claude-opus-5",
@@ -580,7 +592,7 @@ fn claude_sampling_free_models_drop_non_default_sampling_params() {
 
 #[test]
 fn claude_unknown_models_do_not_inherit_reasoning_support() {
-    let mut payload = claude_payload("claude-opus-4-9");
+    let mut payload = claude_payload("claude-unknown");
     payload.insert("reasoning_effort".to_string(), json!("medium"));
 
     let error = build(payload).expect_err("build should fail");
@@ -598,6 +610,7 @@ fn claude_adaptive_reasoning_uses_adaptive_thinking_and_effort() {
         "claude-fable-5",
         "claude-mythos-5",
         "claude-sonnet-5",
+        "claude-haiku-5-5",
         "claude-opus-4-7",
         "claude-opus-4-8",
     ] {
@@ -652,6 +665,7 @@ fn claude_default_thinking_only_requests_visible_summary() {
         "claude-fable-5",
         "claude-mythos-5",
         "claude-sonnet-5",
+        "claude-haiku-5-5",
     ] {
         let mut visible_payload = claude_payload(model);
         visible_payload.insert("include_reasoning".to_string(), json!(true));
@@ -681,42 +695,53 @@ fn claude_default_thinking_only_requests_visible_summary() {
 }
 
 #[test]
-fn claude_validation_rejects_passthrough_xhigh_on_non_xhigh_models() {
-    let request = json!({
-        "model": "claude-opus-4-6",
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
-        "thinking": {
-            "type": "adaptive",
-            "display": "omitted"
-        },
-        "output_config": {
-            "effort": "xhigh"
-        },
-        "max_tokens": 4096
-    });
-
-    let error = super::validate_request(&request).expect_err("xhigh should be model gated");
-    assert!(
-        error
-            .to_string()
-            .contains("does not support `output_config.effort=xhigh`")
+fn claude_json_output_coexists_with_thinking_and_tools() {
+    let schema = json!({"type": "object", "properties": {"answer": {"type": "string"}}});
+    let mut payload = claude_payload("claude-fable-5-1");
+    payload.insert("reasoning_effort".into(), json!("high"));
+    payload.insert(
+        "json_schema".into(),
+        json!({"name": "answer", "value": schema}),
     );
+    payload.insert(
+        "tools".into(),
+        json!([{"type": "function", "function": {
+            "name": "lookup", "parameters": {"type": "object"}
+        }}]),
+    );
+    let (_, request) = build(payload).unwrap();
+    assert_eq!(
+        request["output_config"],
+        json!({"effort": "high", "format": {"type": "json_schema", "schema": schema}})
+    );
+    assert_eq!(request["tools"][0]["name"], "lookup");
+    assert_eq!(request["tools"].as_array().unwrap().len(), 1);
+    assert!(request.get("tool_choice").is_none());
 }
 
 #[test]
-fn claude_adaptive_only_models_reject_legacy_thinking_overrides() {
-    for model in ["claude-opus-5", "claude-sonnet-5"] {
-        let request = json!({
-            "model": model,
-            "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
-            "thinking": {
-                "type": "enabled",
-                "budget_tokens": 2048
-            },
-            "max_tokens": 4096
-        });
-
-        let error = super::validate_request(&request).expect_err("legacy thinking should fail");
-        assert!(error.to_string().contains("requires adaptive thinking"));
+fn tool_result_images_are_preserved() {
+    let payload = json!({"model":"claude-sonnet-4-5", "tools":[{"type":"function","function":{"name":"capture","parameters":{"type":"object"}}}],
+            "messages":[
+                {"role":"user","content":"capture"},
+                {"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"capture","arguments":"{}"}}]},
+                {"role":"tool","tool_call_id":"call_1","name":"capture","content":[{"type":"text","text":"screen"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}
+            ]}).as_object().unwrap().clone();
+    let expected = json!([{"type":"text","text":"screen"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}]);
+    for use_tools in [true, false] {
+        let mut payload = payload.clone();
+        if !use_tools {
+            payload.remove("tools");
+        }
+        let (_, upstream) = build(payload).unwrap();
+        let message = upstream["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(message["role"], "user");
+        let content = if use_tools {
+            assert_eq!(message["content"][0]["type"], "tool_result");
+            &message["content"][0]["content"]
+        } else {
+            &message["content"]
+        };
+        assert_eq!(content, &expected);
     }
 }

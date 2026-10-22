@@ -30,7 +30,7 @@ function installHost(tryGetJson: () => Promise<StoredSettingsResult>): void {
         }),
         resolveSystemPrompt: () => Promise.resolve({ agentSystemPrompt: 'Resolved prompt.' }),
         repairFile: () => Promise.resolve(),
-        retargetPresetRefs: () => Promise.resolve({ updated: 0, profileIds: [] }),
+        retargetPresetRefs: () => Promise.resolve({ updated: 0, profileIds: [], sessionProfileUpdated: false }),
         save: () => Promise.resolve(),
         delete: () => Promise.resolve(),
     };

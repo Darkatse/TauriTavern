@@ -142,7 +142,7 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 
 ## O que é o TauriTavern
 
-O TauriTavern transforma o [SillyTavern](https://github.com/SillyTavern/SillyTavern) em um aplicativo nativo. O frontend mantém a experiência do projeto original e está sincronizado com a versão 1.18.0, enquanto o backend foi reescrito de Node.js para Rust com Tauri v2.
+O TauriTavern transforma o [SillyTavern](https://github.com/SillyTavern/SillyTavern) em um aplicativo nativo. O frontend mantém a experiência do projeto original e está sincronizado com a versão 1.19.0, enquanto o backend foi reescrito de Node.js para Rust com Tauri v2.
 
 Não é preciso instalar o Node.js nem usar a linha de comando: basta baixar e executar. Seus cartões de personagem, chats, predefinições, Informações do Mundo e extensões de frontend continuam compatíveis com o SillyTavern.
 
@@ -151,12 +151,12 @@ Não é preciso instalar o Node.js nem usar a linha de comando: basta baixar e e
 ## Principais recursos
 
 - 🖥️ **Cinco plataformas nativas**: Windows, macOS, Linux, Android e iOS com a mesma experiência de uso
-- 🎭 **Compatibilidade com o SillyTavern**: o frontend está sincronizado com a versão 1.18.0, incluindo formatos de dados e estrutura de diretórios compatíveis
+- 🎭 **Compatibilidade com o SillyTavern**: o frontend está sincronizado com a versão 1.19.0, incluindo formatos de dados e estrutura de diretórios compatíveis
 - 🧩 **Ecossistema de extensões do frontend**: o Git nativo integrado permite instalar, atualizar e trocar de branch pela própria interface (plugins de backend exclusivos para Node.js não são compatíveis)
 - 🔄 **Sincronização entre dispositivos**: pareamento criptografado pela rede local ou envio automático pelo TT-Sync v2 remoto
 - 🤖 **Agent Framework**: chamadas de ferramentas, Skills, subagentes e linha do tempo de execução; o desenvolvimento continua
 - 📦 **Migração direta**: scripts de exportação do SillyTavern e importação dentro do aplicativo
-- ⚡ **Otimizações de desempenho**: inicialização em etapas e carregamento em janelas mantêm a interface responsiva mesmo em conversas longas
+- ⚡ **Otimizações de desempenho**: inicialização em etapas e virtualização do DOM do chat mantêm a interface fluida mesmo em conversas muito longas
 - 🔒 **Seus dados permanecem com você**: tudo fica armazenado no dispositivo, com um modo portátil opcional
 
 ## Capturas de tela
@@ -199,11 +199,13 @@ pnpm run ios:dev       # modo de desenvolvimento para iOS
 
 **Tauri Pilot (desenvolvimento de frontend com agentes de IA)**
 
-O projeto inclui o plugin [Tauri Pilot](https://github.com/mpiton/tauri-pilot) e suas permissões somente para desenvolvimento. Com ele, um agente de IA pode inspecionar e operar o WebView para desktop por meio de snapshots de acessibilidade. Os comandos normais de desenvolvimento e as compilações de lançamento não ativam esse recurso.
+O projeto inclui o plugin [Tauri Pilot](https://github.com/mpiton/tauri-pilot) e suas permissões somente para desenvolvimento. Com ele, um agente de IA pode inspecionar e operar o WebView no desktop, no Android e no Simulador do iOS por meio de snapshots de acessibilidade. Os comandos normais de desenvolvimento e as compilações de lançamento não ativam esse recurso.
 
 ```bash
 cargo install tauri-pilot-cli  # necessário apenas uma vez
-pnpm run tauri:dev:pilot
+pnpm run tauri:dev:pilot       # desktop
+pnpm run android:dev:pilot     # Android; encaminhe o socket antes, veja docs/AndroidDevelopment.md
+pnpm run ios:dev:pilot         # Simulador do iOS
 ```
 
 Depois de iniciar o aplicativo, use outro terminal para executar o fluxo básico:

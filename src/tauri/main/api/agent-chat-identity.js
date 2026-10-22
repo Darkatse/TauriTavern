@@ -11,15 +11,14 @@ export async function resolveStableChatId(chatRef) {
         throw new Error('api.chat.open(ref).stableId is required to resolve stableChatId');
     }
 
-    return String(await handle.stableId()).trim();
+    return handle.stableId();
 }
 
 export async function assertCurrentChat(expectedRef, expectedStableChatId = null) {
     const currentRef = window.__TAURITAVERN__?.api?.chat?.current?.ref?.();
     if (sameChatRef(currentRef, expectedRef)) return;
 
-    const expectedStable = String(expectedStableChatId || '').trim();
-    if (expectedStable && await resolveStableChatId(currentRef) === expectedStable) return;
+    if (expectedStableChatId != null && await resolveStableChatId(currentRef) === expectedStableChatId) return;
 
     throw new Error('agent.commit_chat_mismatch: active chat changed before commit');
 }

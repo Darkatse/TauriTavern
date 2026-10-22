@@ -4,7 +4,7 @@
 
 ## 1. 核心契约
 
-对合法 SillyTavern JSONL，第一行是 header，后续每个非空记录都是一条消息。当前聊天加载完成后：
+聊天 JSONL 的首个非空记录是 header，后续每个非空记录都是一条消息。当前聊天加载完成后：
 
 - `chat[]` 包含 header 之后的全部消息，顺序与磁盘一致。
 - `chat[i]` 始终是 0-based 绝对消息索引。
@@ -13,7 +13,32 @@
 - 任一 JSONL 记录无法解析时，加载整体失败；不得提交部分历史。
 - 未显式切换聊天时，角色的 `chat` 文件 stem 在浅层、完整和重复读取之间保持稳定。
 
-消息集合与索引遵循 SillyTavern 1.18.0；显式开启历史滑动按需加载时，候选内容采用下述受限表示。TauriTavern 不再提供 `chat_history_mode`，也不存在前端 window state、生成时 backfill 或局部 patch 保存。
+消息集合与索引遵循 SillyTavern 的完整历史契约；显式开启历史滑动按需加载时，候选内容采用下述受限表示。TauriTavern 不再提供 `chat_history_mode`，也不存在前端 window state、生成时 backfill 或局部 patch 保存。
+
+### 1.1 统一格式底线
+
+- header 和消息均须为 JSON object。`chat_metadata.integrity` 可缺省，出现则须为非空字符串，保留空白并按原值比较；第一方仍生成 UUID，其他字段由使用它们的用例解释。
+- header 中的 `chat_metadata` 及其内部同名字段取最后一次出现的值；integrity 校验基于最终生效的 metadata。
+- 严格解码 UTF-8，结构空白仅限空格、Tab、CR、LF。首个记录前允许空白和最多一个 BOM，由格式层统一消费；正文记录外不允许 BOM。
+- 无记录可读为空聊天；新完整提交必须自带合法 header，force 也不例外。无消息聊天写为 header-only。
+- 读取严格验证实际解释的记录，不跳过坏记录；原生完整字节提交只验证 header，不额外扫描正文。
+- TT 重新序列化写出无 BOM 的 UTF-8；原样传输、备份和复制保留字节。metadata 更新保留正文原字节，见 §3.1。
+- byte offset 以原文件计数；空白行不占逻辑记录编号。分页和 cold 消息切片不另设 header/BOM 前导区。
+
+### 1.2 目录查询投影
+
+目录信息由 storage-core 聊天仓储解释，userdata 只映射结果；各类查询保留所需的读取范围。
+
+- header 合法时，损坏的末条预览显示“Preview unavailable”，保留条目和消息记录位置。正文缺省、空正文及 header-only 不属于损坏。
+- 日期使用末条有效 `send_date`，否则使用 mtime；正文不可用不抹去有效日期。
+- 角色列表返回完整末条正文，摘要只缓存短预览。搜索发现不可用投影时不缓存整查询，即使该文件未命中。
+- 普通摘要、搜索结果和备份详情使用轻量投影，完整 `chat_metadata` 仅在显式请求时读取并附加到本次响应。
+- 目录索引是可重建缓存，版本不匹配或文件损坏时按需重建。旧索引在首次加载时清理；清理或持久化失败记录告警，不阻塞目录查询。
+- 删除聊天或角色前从当前 header 查询身份。合法旧聊天缺少 integrity 表示无身份；读取或格式错误会停止相关删除操作。目录展示按文件报告并跳过失败项。
+
+目录搜索匹配原始 JSONL。目录可见不保证全文可加载；I/O、编码、解压及必需 header 错误继续传播。
+
+普通摘要缓存的占用随条目及摘要字段增长，不随未知 metadata 体积增长。显式完整 metadata 响应、完整末条正文和搜索的整行读取有各自的数据规模成本；此处不承诺整个聊天链路恒定内存。
 
 ## 2. 完整加载与受限 DOM
 
@@ -22,15 +47,15 @@
 - 角色：`loadCharacterChatPayload()`
 - 群聊：`loadGroupChatPayload()`
 
-transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方，不再经过本地 Fetch 的 `JSON.stringify()` / `Response.json()` 往返。角色和群聊调用方继续负责 `allowNotFound`、stale-selection guard、header 处理和既有事件时序。`POST /api/chats/get` 与 `POST /api/chats/group/get` 仍是扩展和脚本可主动调用的兼容路由，并复用同一 transport。
+transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方。角色和群聊调用方负责 `allowNotFound`、stale-selection guard、header 处理和既有事件时序。
 
-角色聊天在完整水合后才绑定本次 payload 请求的 character/chat 快照。若角色当前 stem 不存在、但已有聊天列表非空，则沿用 `replaceCurrentChat()` 的最近聊天语义按需修复并写回；列表为空时才允许创建新聊天。恢复只在打开目标角色时发生，不做启动期全库扫描。
+扩展的兼容 get 共用仓储读取器，将 JSONL 按需转换为 JSON 数组字节，由消费者解析；接口与流式错误语义见 [FrontendHostContract §4.3](../FrontendHostContract.md#43-路由表public)。
+
+角色聊天在完整水合后才绑定本次 payload 请求的 character/chat 快照。若角色当前 stem 不存在、但已有聊天列表非空，则由 `resolvePersistedChat` 按最近聊天语义按需修复并写回；列表为空时才允许创建新聊天。恢复只在打开目标角色时发生，不做启动期全库扫描。
 
 显式打开指定聊天（首页 recent、聊天管理器、书签、分支）统一经由 `selectCharacterById(id, { chatFile })` 与 `openGroupById(id, { chatId })`：不预扫聊天列表、不恢复、不新建；角色 `chat` 与群组 `chat_id` 只在目标加载成功后写回。
 
-默认完整加载通过共享的 Tauri FileHandle pull stream 有界读取 JSONL。每次加载始终复用同一个文件 handle，并在 EOF、取消或失败时关闭资源；桌面标准模式、portable 模式及自定义数据目录使用同一个已解析 `data_root` runtime scope。
-
-读取前对已打开的 handle 调用 `fstat`，之后按剩余字节数请求，每次不超过共享 reader 的块上限，读满声明长度即止，不额外发 EOF 空读。正数短读继续读取，提前 EOF 或非法响应长度直接报错并关闭资源；读取和关闭同时失败时保留两个错误。
+第一方默认加载通过共享的 Tauri FileHandle 流读取 JSONL，以同一已打开文件及其初始大小为界；提前 EOF 视为失败，完成、取消或失败时关闭资源。各运行模式共用已解析的 `data_root` scope。
 
 `power_user.chat_truncation` 只限制首次挂载的 DOM 数量，不裁剪 `chat[]`。`Show more messages` 从完整数组中补挂更早楼层，不发起历史 I/O，也不改变数组索引。后续 DOM virtualization 若实施，也只能替换渲染层，不能改变 canonical data contract。
 
@@ -44,42 +69,42 @@ transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方
 
 投影与合并位于 storage-core 的 `cold_swipes.rs`，前端通过 `chat-payload-transport.js` 接入，Tauri 资源寿命由 host 管理。
 
-## 3. 完整保存
+## 3. 统一聊天提交
 
-第一方完整保存通过统一 transport 提交 header 与消息，不再经过本地 Fetch 的请求序列化和解析：
+第一方聊天保存经由 `chat-payload-transport.js`；当前聊天由 `enqueueChatSave()` 串行调度，transport 不重复入队。兼容路由与事件契约见 [FrontendHostContract §4.3](../FrontendHostContract.md#43-路由表public)。
 
-- 角色：`saveCharacterChatPayload()`
-- 群聊：`saveGroupChatPayload()`
+提交在首次异步让出前捕获 JSON 文本快照，当前聊天在队列任务开始时捕获；后续修改不混入本次保存。分帧限制传输开销，快照仍随内容规模增长。
 
-当前聊天业务入口仍通过 `enqueueChatSave()` 串行调度；扩展调用 `getContext().saveChat()` 也复用该入口。分支、检查点、角色转群和历史重命名复用同一 transport，保留各自的消息范围、metadata 与事件时序。transport 本身不入队，避免队列任务等待自身排队的提交。
+聊天与世界书共用 storage-core 的提交会话、帧上限和暂存生命周期，各仓储负责内容校验与发布。host 确认数据完整后才发布；平台传输限制见 [AndroidDevelopment §11](../AndroidDevelopment.md#11-android-大型-byte-ingress)。
 
-commit 在首次异步让出前同步逐记录 `JSON.stringify()`，捕获本次提交私有的 JSON 文本快照。之后的消息或嵌套 metadata 修改不会混入本次保存。快照在任务执行时捕获，不提前为排队任务生成；不深拷贝聊天对象图，也不拼接整份 JSONL 字符串。它仍占用与 payload 大小成正比的临时文本空间，单条记录仍需完整编码，帧预算不是整个保存过程的内存上限。
+提交和取消错误向调用方传播；收尾及启动清理失败只记告警，不改写提交结果。integrity 冲突按明确错误码识别。
 
-facade 使用 target-local commit session，按 host 返回的帧预算编码并传输快照，每次只有一帧在途。Android 使用 base64 帧，其他平台使用 raw bytes；finish 阶段校验 ACK 并原子发布。ACK 比较接收字节数 `acceptedSize`；`size` 表示补回冷内容后的发布字节数。序列化失败不会创建会话；begin 成功后到 finish 之前的失败走 abort，清理失败与原始错误以 `AggregateError` 一并传播。host 的 finish 无论成败都消费会话并清理 stage，因此 finish 之后不再 abort。
-
-帧预算由 storage-core 按平台统一定义，begin 返回值与 append 上限校验共用同一处定义。Android 使用较小预算以缩短同步字符串 IPC 的阻塞；iOS 和桌面保留各自的 raw bytes 预算。
-
-共享 base64 encoder 在引擎支持时直接使用 `Uint8Array.prototype.toBase64()`，缺失时使用既有分块编码；两者均输出带 padding 的标准 Base64。原生调用失败直接传播，不切换编码路径。
-
-`POST /api/chats/save` 与 `POST /api/chats/group/save` 保留为扩展和脚本主动调用的兼容路由，复用同一 transport。成功仍返回 `{ ok: true }`，integrity 冲突仍返回 `400 { error: 'integrity' }`。第一方保存不再产生这些 Fetch 请求，依赖 monkeypatch Fetch 观察保存的扩展不再收到它们；兼容路由不额外加入核心前端保存队列。
-
-host 以 serde 外部标签形状 `{ Variant: payload }` 拒绝，该值本身不是 Error。聊天提交 command 的拒绝在 commit facade 离开 IPC 边界时归一为 Error 并保留原值为 `cause`（其他 command 由 `safeInvoke` 归一）：`{ BadRequest: 'integrity' }` 得到 `code: 'integrity'`，其他对象以其 JSON 文本为 message，字符串原文为 message。这是无损的形状转换，不按错误文案猜测冲突。当前聊天冲突由共享弹窗确认后强制全量保存，拒绝则 reload。不存在保存失败后静默改走另一条写路径的降级逻辑。
-
-完整提交、导入、metadata 更新和备份发布共用 storage-core 的 `persist_file` / `persist_file_blocking`：完成写入与必要的 flush 后，将原写入句柄交给 helper 执行 `sync_all`，关闭后再严格 rename。备份编码器返回原写入句柄，保留到时间戳设置和内容同步完成。分块传输期间不逐块同步；聊天扩展 JSON store 使用同一发布机制，摘要缓存不强制同步。此保证覆盖文件内容同步和运行时原子替换，不包含 rename 后父目录项的断电持久化。
+聊天发布先同步暂存文件，再原子替换目标；失败不回退为覆盖复制。此保证不包含 rename 后父目录项的断电持久化。
 
 ### 3.1 Metadata 保存
 
-`saveMetadata()` 与 `getContext().saveMetadata()` 只持久化 JSONL header 中的整个 `chat_metadata`，不保存消息修改。字段删除会落盘；header 其他 JSON 字段保留，正文逐字节保留。这是相对 SillyTavern 1.18.0 的语义收窄：修改消息的扩展必须显式调用完整保存，否则重载前未提交的消息修改可能丢失。
+`saveMetadata()` / `getContext().saveMetadata()` 替换 JSONL header 内的整个 `chat_metadata`，字段删除也会落盘；header 其他字段保留语义，正文逐字节保留。与 SillyTavern 1.18.0 不同，它不顺带保存消息，修改消息的扩展必须显式调用完整保存。
 
-角色与群聊分别通过 `saveCharacterChatMetadata()` / `saveGroupChatMetadata()` 进入同一个 `commit_chat_metadata` command。业务入口在队列任务执行时以 `persistedChatMetadata()` 取得去掉 `lastInContextMessageId` 的副本，与完整保存的 header 同源；facade 在首次异步让出前捕获它的 JSON 快照。canonical metadata 不被修改。正常路径不遍历 `chat[]`、不启动完整 commit session，也不保存 token cache / itemized prompts。
+当前聊天的 metadata 与完整保存共用 `persistedChatMetadata()` 和保存队列。该 helper 排除 `lastInContextMessageId`，不修改活 metadata；metadata 保存不遍历或传输消息、不保存消息派生缓存，也不取消待执行的完整保存。integrity 弹窗及恢复留在同一次队列任务内：确认后强制完整保存，拒绝则 reload；缺文件或普通错误不回退。
 
-metadata 业务保存复用 `enqueueChatSave()`，不取消挂起的 `saveChatDebounced()`。`saveMetadataDebounced()` 保持 1000 ms debounce，`clearChat()` 仍取消两种 debounce。integrity 冲突的弹窗与恢复在同一次队列任务内完成；确认后强制完整保存，拒绝则 reload。metadata command 没有 force，缺文件和普通错误不触发完整保存回退。
+metadata 操作要求目标文件存在。新群聊在首次问候扩展事件前绑定 metadata 和 identity、发布初始 header，后续初始化不得覆盖事件修改。扩展的 [`metadata.setExtension()`](../API/Chat.md) 仅修改磁盘目标的指定 namespace，不加入当前聊天队列或合并活 metadata。
 
-文件存在是 metadata 提交的前提。新群聊先绑定本次 metadata 和 integrity，并以 MAINTENANCE 发布初始 header，再触发首次问候扩展事件；问候消息生成后仍执行完整提交。事件写入的 metadata 不会再被旧的局部初始化值覆盖。
+storage-core 的 `chat_metadata.rs` 在路径 mutation lock 内读取最新 header、应用修改并复制正文，复用统一发布机制；成功后失效缓存并通知备份协调器。内容签名必须对应完整发布文件，不能用上传的 metadata 字节代替。integrity 表示身份而非内容版本，进程内锁不提供跨进程或 Sync 冲突隔离。
 
-storage-core 的 `chat_metadata.rs` 统一承担整体替换和 `metadata.setExtension()` 的 header 写入。在路径 mutation lock 内，以单次 Tokio blocking 任务读取 header，继续从同一个 reader 复制正文，再同步发布。现有 mutation lock 已清除 content signature；发布成功后清除角色 memory cache 与 summary cache，application 随后以 Mutation 通知既有备份协调器。namespace set/delete 语义不变，也不新增与前端活 metadata 的自动合并。
+JS 与 IPC 成本随提交的 metadata 大小增长；Rust 工作内存随 header 与新值增长，不随正文增长。磁盘仍需读写完整替代文件，成本为 Θ(文件大小)，文件 mtime 随之更新。header 不保证字段顺序或格式，正文保持原字节。
 
-JS 与 IPC 成本为 Θ(header)，Rust 工作内存不随正文大小增长；磁盘仍需复制正文并写出完整替代文件，为 Θ(文件大小)。正常 metadata 保存不手动更新角色/群组日期或调用 `editGroup()`，但文件 mtime 会变化，依赖它的群聊统计与同步仍按原规则运行。integrity 是身份而非内容版本，进程内路径锁不提供跨进程或 Sync 冲突隔离。
+### 3.2 删除与重命名
+
+删除或重命名打开中的聊天前先经 `prepareCurrentChatFileChange({ saveEdits })`：生成中拒绝；之后不再有写入落到该文件。重命名保留内容，先完整保存（`saveChatConditional()`），保存失败则中止；删除不需要内容，取消已排定的防抖保存并等待已排队的写入结束，未保存的编辑随文件一起删除。`doNewChat({ deleteCurrentChat: true })` 在清空前保存，与 HEAD 一致，使被删聊天的备份是最新的；新聊天建立后删除失败，报告“已创建，但……”。
+
+文件操作在开始时确定目标（头像或群组 id 加文件名），角色记录由 `updateRemoteChatName(characterId, name)` 写入。上游导出 `replaceCurrentChat`、`deleteCharacterChatByName`、`deleteGroupChatByName` 与界面共用同一套删除与替换实现。删除打开中的聊天后，按“清空 → 重置元数据 → 记录指向替代聊天 → 加载 → 保存记录”替换；改名后由 `renameGroupOrCharacterChat` 让仍指向旧名的记录跟随。文件操作成功后，后续步骤失败报告“已删除 / 已改名，但……”。导出只在目标是打开中的聊天时先保存。
+
+按名删除也会加载替代聊天。已确认的扩展边界（2026-10-09）：
+
+- Discordia 0.7.3 删除后再次清空宿主聊天的流程不支持；它可能清空并在后续保存时覆盖替代聊天。
+- Folder Manager 3.0.15 批量删除最后一条当前聊天后会自行新建，可能多留一份新聊天；此差异已接受。
+
+已知边界：当前聊天没有显式会话；准入不阻止之后新发起的保存，也不覆盖队列外的批量写入（`renamePastChats`、`renameGroupMember`）。
 
 ## 4. First-class Tool 消息
 
@@ -94,7 +119,9 @@ Assistant 即使没有正文，只要包含 `tool_calls` 就是完整消息。�
 
 新 writer 固定写入 `is_user:false`、`is_system:true`，使只理解 SillyTavern legacy booleans 的扩展默认过滤 Tool；历史重放只以 `role === "tool"` 为角色事实，不因兼容 booleans 或展示用 `name`/`error` 被编辑而阻塞。Tool 是可见、可编辑、可独立删除的真实楼层，复用 legacy tool floor 的 `smallSysMes` 紧凑样式；展示层按 `tool_call_id` 向前读取最近的 Assistant call，并以旧 formatter 在同一个默认折叠的 `<details>` 中显示 Arguments 与 Result，不复制持久化数据。`chat[]` 物理顺序、DOM `mesid` 与 `.last_mes` 始终表达同一顺序，不再维护“物理尾 Tool / 逻辑尾 Assistant”两套语义。
 
-编辑、删除、移动、复制、隐藏与分支都只处理用户指定的物理消息，不做 owner/result 级联，也不阻止用户制造不完整工具轮。Assistant call 与 Tool result 的配对只在 provider prompt 组装边界执行；只有 provider 无法重放的 missing、orphan、duplicate、无效 ID/参数/结果关系才会带原始 `chat[index]` 明确失败。空 `tool_calls`/legacy invocation 数组视为没有工具事实，非协议必需的展示元数据不会阻断生成。
+编辑、删除、移动、复制、隐藏与分支都只处理用户指定的物理消息，不做 owner/result 级联，也不阻止用户制造不完整工具轮。Assistant call 与 Tool result 的配对只在 provider prompt 组装边界执行；只有 provider 无法重放的 missing、orphan、duplicate、无效 ID/参数/结果关系才会带原始 `chat[index]` 明确失败。空 `tool_calls`/legacy invocation 数组视为没有工具事实，非协议必需的展示元数据不会阻断生成。隐藏带工具调用的 Assistant 时，它的 Tool 结果也不进入提示词。
+
+SillyTavern 1.19.0 新增的工具级联删除及其参数不在 TT 支持范围内。
 
 Tool call 不进入 `swipe_info`；owner Assistant 只保留 `saveReply` 原本创建的普通单 swipe 元数据，核心 UI 不再为工具轮维护可切换状态。Tool 本身不可 swipe。若物理尾是 Tool，append/continue/swipe 的生成结果作为新的 Assistant 楼层保存，不覆盖 Tool，也不寻找所谓“逻辑 Assistant 尾”；用户可以保留、编辑或删除这次结果。
 
@@ -154,7 +181,7 @@ Rust：
 
 - DTO / service：`tt-application`。
 - repository ports：`tt-ports`。
-- JSONL 具体 I/O：`tt-adapter-storage-core`。
+- JSONL 格式与具体 I/O：`tt-adapter-storage-core`，共同格式规则位于 `chat_jsonl.rs`。
 - Tauri commands：`tauritavern` presentation 层。
 - 分页读取实现暂位于 `windowed_payload.rs` 与 `windowed_payload_io.rs`；文件名是内部历史命名，不代表前端 window mode。
 

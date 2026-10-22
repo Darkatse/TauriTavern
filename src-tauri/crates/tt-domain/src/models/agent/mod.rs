@@ -10,6 +10,7 @@ use crate::models::tool::{ToolChoice, ToolId, ToolInvocation};
 pub mod plan;
 pub mod profile;
 pub mod profile_diagnostic;
+pub mod session;
 pub mod storage;
 
 pub const ROOT_AGENT_INVOCATION_ID: &str = "inv_root";
@@ -38,6 +39,7 @@ pub enum AgentRunStatus {
     InitializingWorkspace,
     AssemblingContext,
     CallingModel,
+    CompactingContext,
     DispatchingTool,
     ApplyingWorkspacePatch,
     AwaitingHostCommit,
@@ -99,10 +101,45 @@ impl AgentRunSkillScopeRefs {
 pub struct AgentRun {
     pub id: String,
     pub workspace_id: String,
+    pub target: AgentRunTarget,
+    pub profile_id: Option<String>,
+    pub status: AgentRunStatus,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AgentRunTarget {
+    Chat(AgentChatRunTarget),
+    Session {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+    },
+}
+
+impl AgentRunTarget {
+    pub fn tool_scope(&self) -> crate::models::tool::AgentToolScope {
+        match self {
+            Self::Chat(_) => crate::models::tool::AgentToolScope::Chat,
+            Self::Session { .. } => crate::models::tool::AgentToolScope::Session,
+        }
+    }
+
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::Session { session_id } => Some(session_id),
+            Self::Chat(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentChatRunTarget {
     pub stable_chat_id: String,
     pub chat_ref: AgentChatRef,
     pub generation_type: String,
-    pub profile_id: Option<String>,
     #[serde(default, skip_serializing_if = "AgentRunSkillScopeRefs::is_empty")]
     pub skill_scope_refs: AgentRunSkillScopeRefs,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -110,9 +147,28 @@ pub struct AgentRun {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_message_count: Option<usize>,
     pub presentation: AgentRunPresentation,
-    pub status: AgentRunStatus,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+}
+
+impl AgentRun {
+    pub fn chat_target(&self) -> Result<&AgentChatRunTarget, DomainError> {
+        match &self.target {
+            AgentRunTarget::Chat(chat) => Ok(chat),
+            AgentRunTarget::Session { .. } => Err(DomainError::InvalidData(format!(
+                "agent.chat_run_required: run `{}` belongs to a Session",
+                self.id
+            ))),
+        }
+    }
+
+    pub fn chat_target_mut(&mut self) -> Result<&mut AgentChatRunTarget, DomainError> {
+        match &mut self.target {
+            AgentRunTarget::Chat(chat) => Ok(chat),
+            AgentRunTarget::Session { .. } => Err(DomainError::InvalidData(format!(
+                "agent.chat_run_required: run `{}` belongs to a Session",
+                self.id
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,6 +203,12 @@ pub enum AgentInvocationKind {
     Revision,
 }
 
+impl AgentInvocationKind {
+    pub fn owns_run_status(self) -> bool {
+        !matches!(self, Self::Subagent)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentInvocationStatus {
@@ -163,6 +225,7 @@ pub enum AgentInvocationStatus {
 pub enum AgentInvocationExitPolicy {
     RunFinishAllowed,
     TaskReturnRequired,
+    ReplyAllowed,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -253,6 +316,14 @@ pub struct AgentModelTool {
     pub input_schema: Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentToolImage {
+    /// Workspace path of the image file, readable by later Runs of a Session.
+    pub path: String,
+    pub mime_type: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentToolResult {
@@ -267,6 +338,38 @@ pub struct AgentToolResult {
     pub error_code: Option<String>,
     #[serde(default)]
     pub resource_refs: Vec<String>,
+    // Existing history, checkpoints and audit records predate tool images.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<AgentToolImage>,
+}
+
+impl AgentToolResult {
+    pub fn ok(call: &ToolInvocation, content: String, structured: Value) -> Self {
+        Self {
+            call_id: call.call_id.clone(),
+            tool_id: call.tool_id.clone(),
+            content,
+            structured,
+            is_error: false,
+            error_code: None,
+            resource_refs: Vec::new(),
+            images: Vec::new(),
+        }
+    }
+
+    /// The model reads `message`; callers may replace the default structured error details.
+    pub fn error(call: &ToolInvocation, code: &str, message: &str) -> Self {
+        let mut result = Self::ok(
+            call,
+            message.to_owned(),
+            serde_json::json!({
+                "error": { "code": code, "message": message }
+            }),
+        );
+        result.is_error = true;
+        result.error_code = Some(code.to_owned());
+        result
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -415,8 +518,6 @@ impl WorkspacePath {
 pub struct WorkspaceManifest {
     pub workspace_version: u32,
     pub run_id: String,
-    pub stable_chat_id: String,
-    pub chat_ref: AgentChatRef,
     pub created_at: DateTime<Utc>,
     pub input: WorkspaceInputManifest,
     pub roots: Vec<WorkspaceRootSpec>,
@@ -456,6 +557,7 @@ pub enum WorkspaceRootLifecycle {
 pub enum WorkspaceRootScope {
     Run,
     Chat,
+    Session,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -514,19 +616,39 @@ pub struct WorkspacePersistentChangeSet {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspacePersistentChange {
-    pub path: String,
-    pub kind: WorkspacePersistentChangeKind,
-    pub sha256: String,
-    pub bytes: u64,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkspacePersistentChange {
+    Added {
+        path: String,
+        sha256: String,
+        bytes: u64,
+    },
+    Modified {
+        path: String,
+        sha256: String,
+        bytes: u64,
+    },
+    Deleted {
+        path: String,
+    },
+    DirectoryAdded {
+        path: String,
+    },
+    DirectoryDeleted {
+        path: String,
+    },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkspacePersistentChangeKind {
-    Added,
-    Modified,
+impl WorkspacePersistentChange {
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Added { path, .. }
+            | Self::Modified { path, .. }
+            | Self::Deleted { path }
+            | Self::DirectoryAdded { path }
+            | Self::DirectoryDeleted { path } => path,
+        }
+    }
 }
 
 #[cfg(test)]

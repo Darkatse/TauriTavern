@@ -13,7 +13,7 @@
   "runId": "run_...",
   "timestamp": "2026-09-06T12:00:00Z",
   "level": "info",
-  "type": "run_started",
+  "type": "run_created",
   "payload": {}
 }
 ```
@@ -23,7 +23,7 @@
 事件保存阶段信息和文件引用。工具参数、完整结果和模型响应单独保存，避免每次读取 Timeline 都搬运完整上下文。常用事件可按一次运行理解：
 
 ```text
-run_started
+run_created
   → workspace_initialized
   → model_request_created → model_completed
   → tool_call_requested → tool_call_completed / tool_call_failed
@@ -33,6 +33,10 @@ run_started
 ```
 
 这张图说明主要步骤；一次运行通常有多轮调用，期间还会记录状态变化、委派、交接和用户补充指令。
+
+Session Run 也会发出 `prompt_assembly_requested`，由宿主应答压缩后的提示词重组。
+
+Session 的 `model_request_created` 带 `context: { tokens, point }`，即本次请求的上下文用量与压缩点，也就是 runtime 判断压缩所用的计数。压缩期间状态为 `compacting_context`。`context_compaction_started` 携带 `round`、`invocationId`、`trigger`（`point`、`overflow` 或 `manual`）及当前 `tokens`；成功后 `context_compacted` 携带同一回合身份、压缩记录的 `seq`、`tokensBefore`、`tokensAfter`、`keptFromSeq` 和 `point`。循环中的压缩随后回到 `calling_model`，手动压缩的 Run 随即结束。压缩记录本身通过 `session_message_appended` 通知读取，摘要正文保存在 Session 历史，不复制进事件。
 
 ## 读取与展示
 

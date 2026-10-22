@@ -64,7 +64,7 @@
     min-width: 200px;
 }
 
-#rm_group_members,
+.rm_group_members,
 #rm_group_add_members {
     margin-top: 0.25rem;
     margin-bottom: 0.5rem;
@@ -82,12 +82,12 @@
     color: rgb(190, 0, 0);
 }
 
-#rm_group_members:empty {
+.rm_group_members:empty {
     width: 100%;
     padding: 0.5em 0;
 }
 
-#rm_group_members:empty::before {
+.rm_group_members:empty::before {
     content: attr(group_empty_text);
 
     font-weight: bolder;
@@ -161,7 +161,7 @@
     gap: 0px;
 }
 
-#rm_group_members .right_menu_button,
+.rm_group_members .right_menu_button,
 #rm_group_add_members .right_menu_button {
     padding: 0px;
     height: 20px;
@@ -169,34 +169,34 @@
     align-items: center;
 }
 
-#rm_group_members .right_menu_button[data-action="speak"],
-#rm_group_members .group_member:not(.disabled) .right_menu_button[data-action="disable"] {
+.rm_group_members .right_menu_button[data-action="speak"],
+.rm_group_members .group_member:not(.disabled) .right_menu_button[data-action="disable"] {
     opacity: 0.4;
     filter: brightness(0.5);
     transition: all var(--animation-duration-2x) ease-in-out;
 }
 
-/* #rm_group_members .right_menu_button[data-action="speak"]:hover, */
-#rm_group_members .group_member:not(.disabled) .right_menu_button[data-action="disable"]:hover {
+/* .rm_group_members .right_menu_button[data-action="speak"]:hover, */
+.rm_group_members .group_member:not(.disabled) .right_menu_button[data-action="disable"]:hover {
     opacity: inherit;
     filter: drop-shadow(0px 0px 5px rgb(243, 166, 65));
 }
 
-#rm_group_members .group_member.disabled .right_menu_button[data-action="enable"] {
+.rm_group_members .group_member.disabled .right_menu_button[data-action="enable"] {
     filter: drop-shadow(0px 0px 5px rgb(243, 166, 65));
 }
 
 
-#rm_group_members .right_menu_button[data-action="speak"]:hover {
+.rm_group_members .right_menu_button[data-action="speak"]:hover {
     opacity: inherit;
     filter: drop-shadow(0px 0px 5px rgb(153, 255, 153));
 }
 
 /* Rules for icon display */
 #rm_group_add_members .right_menu_button:not([data-action="add"], [data-action="view"]),
-#rm_group_members .right_menu_button[data-action="add"],
-#rm_group_members .group_member.disabled .right_menu_button[data-action="disable"],
-#rm_group_members .group_member:not(.disabled) .right_menu_button[data-action="enable"] {
+.rm_group_members .right_menu_button[data-action="add"],
+.rm_group_members .group_member.disabled .right_menu_button[data-action="disable"],
+.rm_group_members .group_member:not(.disabled) .right_menu_button[data-action="enable"] {
     display: none;
 }
 

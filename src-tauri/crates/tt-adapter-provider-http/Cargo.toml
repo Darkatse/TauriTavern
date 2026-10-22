@@ -10,6 +10,7 @@ base64 = "0.23"
 futures-util = "0.3"
 jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 percent-encoding = "2"
+regex = "1"
 reqwest = { workspace = true, features = ["form", "http2", "json", "multipart", "query", "rustls", "stream"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1,19 +1,12 @@
 // @ts-check
 
+import { getCurrentWindow } from '../../../../tauri-bridge.js';
+
 const installedDocuments = new WeakSet();
 let fullscreenToggle = Promise.resolve();
 const FULLSCREEN_EXIT_TIMEOUT_MS = 5000;
 /** @type {{ size: { width: number; height: number }; position: { x: number; y: number } } | null} */
 let windowedGeometry = null;
-
-function getCurrentAppWindow() {
-    const tauriWindow = window.__TAURI__?.window;
-    if (typeof tauriWindow?.getCurrentWindow !== 'function') {
-        throw new Error('Desktop fullscreen requires the Tauri window API');
-    }
-
-    return tauriWindow.getCurrentWindow();
-}
 
 /**
  * Leaves native fullscreen before the window-state plugin records final geometry.
@@ -25,7 +18,7 @@ export async function leaveDesktopFullscreenForShutdown(reason) {
         return;
     }
 
-    const appWindow = getCurrentAppWindow();
+    const appWindow = getCurrentWindow();
     if (!await appWindow.isFullscreen()) {
         return;
     }
@@ -96,7 +89,7 @@ export function installDesktopFullscreenShortcut(targetWindow = window) {
         return;
     }
 
-    const appWindow = getCurrentAppWindow();
+    const appWindow = getCurrentWindow();
     installedDocuments.add(targetDocument);
     targetDocument.addEventListener('keydown', (event) => {
         if (event.key !== 'F11'

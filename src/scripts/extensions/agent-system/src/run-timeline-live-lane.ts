@@ -23,7 +23,7 @@ type LiveLaneState = {
     truncated: boolean;
 };
 
-type LiveLaneReasoning = TauriTavernAgentRunLiveReasoning & LiveLaneState;
+type LiveLaneReasoning = Omit<TauriTavernAgentRunLiveResponse, 'text'> & LiveLaneState;
 type LiveLaneCall = TauriTavernAgentRunLiveToolCall & LiveLaneState & {
     activeField: LiveStreamField | null;
 };
@@ -72,22 +72,23 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
             case 'snapshot':
                 changed = replaceSnapshot(update);
                 break;
-            case 'reasoningReplace':
-                changed = upsertReasoning(update.reasoning);
+            case 'responseReplace':
+                changed = upsertReasoning(update.response);
                 break;
-            case 'reasoningAppend': {
+            case 'responseAppend': {
+                if (!update.reasoning && update.toolIds.length === 0) return;
                 const current = reasoning.get(reasoningKey(update.invocationId));
                 if (!current) return;
-                const preview = streamPreview(current.tail + update.text);
+                const preview = streamPreview(current.tail + update.reasoning);
                 reasoning.set(reasoningKey(update.invocationId), {
                     ...current, ...preview, truncated: current.truncated || preview.truncated,
-                    text: current.text + update.text,
+                    reasoning: current.reasoning + update.reasoning,
                     toolIds: [...current.toolIds, ...update.toolIds],
                 });
                 changed = true;
                 break;
             }
-            case 'reasoningRemove':
+            case 'responseRemove':
                 changed = reasoning.delete(reasoningKey(update.invocationId));
                 break;
             case 'replace':
@@ -109,19 +110,24 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
 
     function replaceSnapshot(snapshot: Extract<TauriTavernAgentRunLiveUpdate, { type: 'snapshot' }>): boolean {
         let changed = resetProjection();
-        for (const item of snapshot.reasoning) changed = upsertReasoning(item) || changed;
+        for (const item of snapshot.responses) changed = upsertReasoning(item) || changed;
         for (const call of snapshot.calls) changed = upsertCall(call) || changed;
         return changed;
     }
 
-    function upsertReasoning(item: TauriTavernAgentRunLiveReasoning): boolean {
+    function upsertReasoning(item: TauriTavernAgentRunLiveResponse): boolean {
         if (item.invocationExitPolicy !== 'run_finish_allowed') return false;
         const key = reasoningKey(item.invocationId);
         reasoning.set(key, {
-            ...item,
+            invocationId: item.invocationId,
+            invocationExitPolicy: item.invocationExitPolicy,
+            round: item.round,
+            attempt: item.attempt,
+            reasoning: item.reasoning,
+            toolIds: item.toolIds,
             expanded: false,
             insertionIndex: reasoning.get(key)?.insertionIndex ?? insertionCounter++,
-            ...streamPreview(item.text),
+            ...streamPreview(item.reasoning),
         });
         return true;
     }
@@ -146,7 +152,7 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
                 truncated: item.truncated,
                 streamTone: 'reasoning',
                 expanded: item.expanded,
-                blocks: [{ text: item.text, streamTone: 'reasoning' }],
+                blocks: [{ text: item.reasoning, streamTone: 'reasoning' }],
                 toolLabel: item.toolIds.map(displayToolLabel).join(' · '),
             },
         };
@@ -265,7 +271,7 @@ export function createRunTimelineLiveLane(options: RunTimelineLiveLaneOptions): 
     return {
         version: () => storeVersion,
         items: () => [
-            ...[...reasoning.entries()].map(presentReasoning),
+            ...[...reasoning.entries()].filter(([, item]) => item.reasoning.length > 0).map(presentReasoning),
             ...[...calls.values()].map(presentCall),
         ].sort((a, b) => a.seq - b.seq),
         toggleExpanded(id) {

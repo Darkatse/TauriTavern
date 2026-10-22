@@ -19,6 +19,7 @@ use tt_ports::repositories::chat_completion_repository::{
 mod aws_bedrock;
 mod claude;
 mod cohere;
+mod context_overflow;
 mod gemini;
 mod gemini_interactions;
 mod makersuite;
@@ -282,9 +283,28 @@ impl HttpChatCompletionRepository {
         body: &str,
         default_message: &str,
     ) -> DomainError {
-        let message = extract_error_message(body, default_message);
+        let body = body.trim();
+        let parsed = serde_json::from_str::<Value>(body).ok();
+        let error = parsed.as_ref().and_then(response_body::provider_error);
+        let message = parsed
+            .as_ref()
+            .and_then(|value| match error {
+                Some(error) => Some(response_body::provider_error_message(error, value)),
+                None => value
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            })
+            .unwrap_or_else(|| {
+                if body.is_empty() {
+                    default_message
+                } else {
+                    body
+                }
+                .to_string()
+            });
 
-        match status {
+        let status_error = |message: String| match status {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
                 DomainError::AuthenticationError(message)
             }
@@ -301,6 +321,15 @@ impl HttpChatCompletionRepository {
                 "{provider_name} endpoint failed with status {}: {message}",
                 status.as_u16()
             )),
+        };
+
+        match status {
+            StatusCode::PAYLOAD_TOO_LARGE => context_overflow::context_overflow_error(message),
+            StatusCode::BAD_REQUEST => {
+                let error = error.map_or_else(|| body.to_owned(), Value::to_string);
+                context_overflow::context_overflow_or(error, message, status_error)
+            }
+            _ => status_error(message),
         }
     }
 
@@ -982,26 +1011,6 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
     }
 }
 
-fn extract_error_message(body: &str, default_message: &str) -> String {
-    let body = body.trim();
-    if body.is_empty() {
-        return default_message.to_string();
-    }
-
-    if let Ok(value) = serde_json::from_str::<Value>(body)
-        && let Some(message) = value
-            .pointer("/error/message")
-            .or_else(|| value.get("message"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    {
-        return message.to_string();
-    }
-
-    body.to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -1119,30 +1128,71 @@ mod tests {
     }
 
     #[test]
-    fn error_status_classification_marks_retryable_provider_failures() {
-        let rate_limited = HttpChatCompletionRepository::map_error_status(
-            "OpenAI",
-            reqwest::StatusCode::TOO_MANY_REQUESTS,
-            r#"{"error":{"message":"slow down"}}"#,
-            "Generation request failed",
-        );
-        assert!(matches!(rate_limited, DomainError::RateLimited { .. }));
-
-        let gateway_timeout = HttpChatCompletionRepository::map_error_status(
-            "OpenAI",
-            reqwest::StatusCode::BAD_GATEWAY,
-            "upstream unavailable",
-            "Generation request failed",
-        );
-        assert!(matches!(gateway_timeout, DomainError::Transient(_)));
-
-        let bad_request = HttpChatCompletionRepository::map_error_status(
-            "OpenAI",
-            reqwest::StatusCode::BAD_REQUEST,
-            r#"{"error":{"message":"bad payload"}}"#,
-            "Generation request failed",
-        );
-        assert!(matches!(bad_request, DomainError::InvalidData(_)));
+    fn error_status_classification_preserves_recovery_semantics() {
+        for (status, body, overflow) in [
+            (
+                400,
+                "prompt is too long: 213462 tokens > 200000 maximum",
+                true,
+            ),
+            (
+                400,
+                "input length and `max_tokens` exceed context limit: 190000 + 32768 > 200000",
+                true,
+            ),
+            (
+                400,
+                "Your input exceeds the context window of this model",
+                true,
+            ),
+            (
+                400,
+                "This model's maximum context length is 131072 tokens. However, you requested 140000 tokens",
+                true,
+            ),
+            (
+                400,
+                "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)",
+                true,
+            ),
+            (
+                400,
+                r#"{"error":{"code":"context_length_exceeded","message":"invalid request"}}"#,
+                true,
+            ),
+            (400, r#"{"message":"prompt is too long"}"#, true),
+            (413, "<html>Request Entity Too Large</html>", true),
+            (
+                400,
+                "Request payload size exceeds the limit: 20971520 bytes.",
+                true,
+            ),
+            (400, "Invalid value for temperature", false),
+            (400, "rate limit: too many tokens", false),
+            (
+                429,
+                "ThrottlingException: Too many tokens, please wait before trying again.",
+                false,
+            ),
+            (502, "upstream unavailable", false),
+        ] {
+            let error = HttpChatCompletionRepository::map_error_status(
+                "Provider",
+                reqwest::StatusCode::from_u16(status).unwrap(),
+                body,
+                "Generation request failed",
+            );
+            assert_eq!(
+                matches!(&error, DomainError::InvalidData(message) if message.starts_with("model.context_overflow:")),
+                overflow,
+                "{status}: {body}: {error}"
+            );
+            match status {
+                429 => assert!(matches!(error, DomainError::RateLimited { .. })),
+                502 => assert!(matches!(error, DomainError::Transient(_))),
+                _ => assert!(matches!(error, DomainError::InvalidData(_))),
+            }
+        }
     }
 
     #[test]

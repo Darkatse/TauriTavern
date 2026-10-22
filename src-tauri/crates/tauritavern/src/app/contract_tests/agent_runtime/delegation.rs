@@ -40,7 +40,8 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
             )]),
         ],
     );
-    let profile = configure_return_mode_profiles(&fixture).await;
+    configure_return_mode_profiles(&fixture).await;
+    let profile = configure_distinct_root_binding(&fixture, &root).await;
     let handle = start_contract_agent_run(
         &fixture,
         &profile,
@@ -50,6 +51,21 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
     )
     .await;
 
+    let assembly =
+        resolve_contract_prompt_assembly(&fixture, &handle.run_id, delegated_prompt_snapshot).await;
+    assert_eq!(assembly.preset_ref.name, "Captured A");
+    assert_eq!(
+        assembly.agent_context_policy.initial_chat_history_messages,
+        -1
+    );
+    assert!(assembly.agent_context_policy.include_activated_world_info);
+    assert!(
+        assembly
+            .agent_task_prompt
+            .as_ref()
+            .unwrap()
+            .contains("Return one concrete revision note.")
+    );
     let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;
     assert_eq!(run.status, AgentRunStatus::Completed);
     let tasks = fixture
@@ -93,6 +109,21 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
 
     let requests = fixture.model_gateway.requests().await;
     assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1].payload["model"], "captured-model");
+    assert!(
+        message_text_for_role(&requests[1], AgentModelRole::System).contains("Captured preset A")
+    );
+    assert!(
+        message_text_for_role(&requests[1], AgentModelRole::System)
+            .contains("Captured preset skill")
+    );
+    assert!(
+        message_text_for_role(&requests[0], AgentModelRole::System)
+            .contains("scene-critic [delegate]")
+    );
+    assert!(
+        !message_text_for_role(&requests[1], AgentModelRole::System).contains("Available agents:")
+    );
     assert_eq!(
         requests[0].provider_state["invocationId"],
         ROOT_AGENT_INVOCATION_ID
@@ -116,7 +147,6 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
             tool.tool_id.native_name(),
             "workspace.commit"
                 | "workspace.finish"
-                | "agent.list"
                 | "agent.delegate"
                 | "agent.handoff"
                 | "agent.await"
@@ -143,13 +173,11 @@ async fn agent_runtime_delegate_await_runs_return_mode_child() {
             *tool_id,
             "builtin:workspace.commit"
                 | "builtin:workspace.finish"
-                | "builtin:agent.list"
                 | "builtin:agent.delegate"
                 | "builtin:agent.handoff"
                 | "builtin:agent.await"
         )
     }));
-    assert!(message_text_for_role(&requests[1], AgentModelRole::User).contains("# Delegated Task"));
     wait_for_closed_sessions(
         &fixture.model_gateway,
         vec![
@@ -184,14 +212,40 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
                     }),
                 ),
             ]),
-            model_tool_response(vec![model_tool_call(
-                "call_target_finish",
-                "workspace_finish",
-                json!({}),
-            )]),
+            model_tool_response(vec![
+                model_tool_call(
+                    "call_target_denied",
+                    "workspace_write_file",
+                    json!({
+                        "path": "scratch/forbidden.md", "content": "must not be written"
+                    }),
+                ),
+                model_tool_call(
+                    "call_target_write",
+                    "workspace_write_file",
+                    json!({
+                        "path": "summaries/review.md", "content": "Reviewed."
+                    }),
+                ),
+                model_tool_call("call_target_finish", "workspace_finish", json!({})),
+            ]),
         ],
     );
-    let profile = configure_handoff_profiles(&fixture).await;
+    configure_handoff_profiles(&fixture).await;
+    let profile = configure_distinct_root_binding(&fixture, &root).await;
+    let mut editor = fixture
+        .profile_service
+        .load_profile("final-editor")
+        .await
+        .unwrap()
+        .unwrap();
+    editor.workspace.visible_roots = vec!["output".into(), "summaries".into()];
+    editor.workspace.writable_roots = vec!["output".into(), "summaries".into()];
+    fixture
+        .profile_service
+        .save_profile(editor, fixture.service.tool_catalog())
+        .await
+        .unwrap();
     let handle = start_contract_agent_run(
         &fixture,
         &profile,
@@ -200,15 +254,18 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
         Some(false),
     )
     .await;
-    resolve_chat_commits_and_persistent_state_update(
-        fixture.service.clone(),
-        fixture.agent_repository.clone(),
-        handle.run_id.clone(),
-        "message_handoff",
-        &[],
-    )
-    .await
-    .expect("resolve host commit");
+    let (commits, assembly) = tokio::join!(
+        resolve_chat_commits_and_persistent_state_update(
+            fixture.service.clone(),
+            fixture.agent_repository.clone(),
+            handle.run_id.clone(),
+            "message_handoff",
+            &[],
+        ),
+        resolve_contract_prompt_assembly(&fixture, &handle.run_id, delegated_prompt_snapshot)
+    );
+    commits.expect("resolve host commit");
+    assert_eq!(assembly.preset_ref.name, "Captured A");
 
     let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;
     assert_eq!(run.status, AgentRunStatus::Completed);
@@ -244,6 +301,32 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
 
     wait_for_event_type(&fixture.agent_repository, &handle.run_id, "run_completed").await;
     let events = read_agent_events(&fixture.agent_repository, &handle.run_id).await;
+    let files = fixture
+        .agent_repository
+        .open_filesystem(&handle.run_id)
+        .await
+        .unwrap();
+    assert!(
+        files
+            .metadata(Some(&WorkspacePath::parse("scratch/forbidden.md").unwrap()))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        files
+            .read_text(&WorkspacePath::parse("summaries/review.md").unwrap())
+            .await
+            .unwrap()
+            .text,
+        "Reviewed."
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "tool_call_failed"
+                && event.payload["callId"] == "call_target_denied"
+                && event.payload["isError"] == true)
+    );
     let commit = events
         .iter()
         .find(|event| event.event_type == "chat_commit_recorded")
@@ -269,6 +352,16 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
     assert!(task_completed < invocation_completed && invocation_completed < run_completed);
     let requests = fixture.model_gateway.requests().await;
     assert_eq!(requests.len(), 2);
+    assert!(
+        message_text_for_role(&requests[1], AgentModelRole::System).contains("Captured preset A")
+    );
+    assert!(
+        message_text_for_role(&requests[0], AgentModelRole::System)
+            .contains("final-editor [handoff]")
+    );
+    assert!(
+        !message_text_for_role(&requests[1], AgentModelRole::System).contains("Available agents:")
+    );
     assert_eq!(
         requests[1].provider_state["invocationId"],
         task.child_invocation_id
@@ -301,7 +394,6 @@ async fn agent_runtime_handoff_preserves_prior_commit_and_switches_invocation() 
             .iter()
             .any(|binding| binding["descriptor"]["id"] == "builtin:workspace.finish")
     );
-    assert!(message_text_for_role(&requests[1], AgentModelRole::User).contains("# Handoff Brief"));
     wait_for_closed_sessions(
         &fixture.model_gateway,
         vec![
@@ -342,6 +434,7 @@ async fn agent_runtime_handoff_target_failure_keeps_root_transferred() {
         Some(false),
     )
     .await;
+    resolve_contract_prompt_assembly(&fixture, &handle.run_id, delegated_prompt_snapshot).await;
 
     let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;
     assert_eq!(run.status, AgentRunStatus::Failed);
@@ -437,6 +530,7 @@ async fn agent_runtime_recovers_handoff_before_trailing_tool() {
         Some(false),
     )
     .await;
+    resolve_contract_prompt_assembly(&fixture, &handle.run_id, delegated_prompt_snapshot).await;
 
     let run = wait_for_terminal_agent_run(&fixture.agent_repository, &handle.run_id).await;
     assert_eq!(run.status, AgentRunStatus::Completed);
@@ -455,10 +549,10 @@ async fn agent_runtime_recovers_handoff_before_trailing_tool() {
     assert_eq!(root_invocation.status, AgentInvocationStatus::Transferred);
     let artifact = fixture
         .agent_repository
-        .read_text(
-            &handle.run_id,
-            &WorkspacePath::parse("output/main.md").unwrap(),
-        )
+        .open_filesystem(&handle.run_id)
+        .await
+        .expect("open workspace")
+        .read_text(&WorkspacePath::parse("output/main.md").unwrap())
         .await
         .expect("read artifact");
     assert_eq!(artifact.text, "Complete this work before handing off.");
@@ -473,6 +567,75 @@ async fn agent_runtime_recovers_handoff_before_trailing_tool() {
     let _ = fs::remove_dir_all(root).await;
 }
 
+async fn configure_distinct_root_binding(
+    fixture: &AgentRuntimeFixture,
+    root: &Path,
+) -> tt_domain::models::agent::profile::ResolvedAgentProfile {
+    use tt_domain::models::agent::profile::{
+        AgentModelBindingMode, AgentPresetBindingMode, AgentPresetRef,
+    };
+    use tt_domain::models::llm_connection::LlmConnectionDefinition;
+    use tt_domain::models::skill::{
+        SkillImportInput, SkillInlineFile, SkillInstallRequest, SkillScope,
+    };
+    use tt_ports::repositories::{
+        llm_connection_repository::LlmConnectionRepository, skill_repository::SkillRepository,
+    };
+
+    fixture
+        .preset_repository
+        .save_preset(&Preset::new(
+            "Root B".into(),
+            PresetType::OpenAI,
+            json!({ "prompts": [{ "identifier": "main", "content": "Root preset B" }] }),
+        ))
+        .await
+        .unwrap();
+    let connection: LlmConnectionDefinition = serde_json::from_value(json!({
+        "schemaVersion": 1, "kind": "tauritavern.llmConnection", "id": "root-connection", "displayName": "Root connection",
+        "provider": { "chatCompletionSource": "openai" }, "auth": { "secretRef": { "key": "api_key_openai", "id": "root-secret" } }
+    })).unwrap();
+    FileLlmConnectionRepository::new(root.join("_tauritavern/llm-connections"))
+        .save_connection(&connection)
+        .await
+        .unwrap();
+    let mut profile = fixture
+        .profile_service
+        .load_profile("default-writer")
+        .await
+        .unwrap()
+        .unwrap();
+    profile.preset.mode = AgentPresetBindingMode::Ref;
+    profile.preset.ref_ = Some(AgentPresetRef {
+        api_id: "openai".into(),
+        name: "Root B".into(),
+    });
+    profile.model.mode = AgentModelBindingMode::ConnectionRef;
+    profile.model.connection_ref = Some("root-connection".into());
+    profile.model.model_id = Some("root-model".into());
+    profile.context.initial_chat_history_messages = 0;
+    profile.context.include_activated_world_info = false;
+    fixture
+        .profile_service
+        .save_profile(profile, fixture.service.tool_catalog())
+        .await
+        .unwrap();
+
+    FileSkillRepository::new(root.join("_tauritavern/skills"), root.join("builtin-skills")).install_import(SkillInstallRequest {
+        target_scope: SkillScope::Preset { api_id: "openai".into(), name: "Captured A".into() },
+        conflict_strategy: None,
+        input: SkillImportInput::InlineFiles {
+            source: json!({ "kind": "test" }),
+            files: vec![SkillInlineFile {
+                path: "SKILL.md".into(),
+                content: "---\nname: captured-style\ndescription: Captured preset skill\n---\nUse the captured style.".into(),
+                encoding: "utf8".into(), media_type: None, size_bytes: None, sha256: None,
+            }],
+        },
+    }).await.unwrap();
+    resolve_contract_profile(fixture).await
+}
+
 pub(super) async fn configure_return_mode_profiles(
     fixture: &AgentRuntimeFixture,
 ) -> tt_domain::models::agent::profile::ResolvedAgentProfile {
@@ -485,23 +648,14 @@ pub(super) async fn configure_return_mode_profiles(
     let mut child = root.clone();
     child.id = AgentProfileId::parse("scene-critic").expect("child profile id");
     child.display_name = "Scene Critic".to_string();
-    child.tools.max_rounds = 1;
-    child.tools.allow.retain(|name| {
-        !matches!(
-            name.as_str(),
-            "builtin:agent.list"
-                | "builtin:agent.delegate"
-                | "builtin:agent.handoff"
-                | "builtin:agent.await"
-        )
-    });
+    // The return-mode invocation must prune these capabilities from the profile.
     child.delegation = AgentDelegationPolicy {
+        can_delegate: true,
         callable: true,
         allow_as_subagent: true,
         allowed_callers: vec![root.id.as_str().to_string()],
         ..Default::default()
     };
-    root.tools.max_rounds = 2;
     root.delegation.can_delegate = true;
     allow_profile_tool(&mut root.tools.allow, "agent.delegate");
     allow_profile_tool(&mut root.tools.allow, "agent.await");
@@ -531,7 +685,6 @@ async fn configure_handoff_profiles(
     target.id = AgentProfileId::parse("final-editor").expect("target profile id");
     target.display_name = "Final Editor".to_string();
     target.run.direct_runnable = false;
-    target.tools.max_rounds = 1;
     target.tools.allow.retain(|name| {
         matches!(
             name.as_str(),
@@ -546,7 +699,6 @@ async fn configure_handoff_profiles(
         allowed_callers: vec![root.id.as_str().to_string()],
         ..Default::default()
     };
-    root.tools.max_rounds = 2;
     root.delegation.can_handoff = true;
     allow_profile_tool(&mut root.tools.allow, "agent.handoff");
     fixture

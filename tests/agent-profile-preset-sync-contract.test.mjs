@@ -20,7 +20,7 @@ test('preset rename retargets Agent Profile preset refs through Host API', async
                     profiles: {
                         async retargetPresetRefs(request) {
                             calls.push(request);
-                            return { updated: 1, profileIds: ['writer'] };
+                            return { updated: 2, profileIds: ['writer'], sessionProfileUpdated: true };
                         },
                     },
                 },
@@ -42,5 +42,5 @@ test('preset rename retargets Agent Profile preset refs through Host API', async
         from: { apiId: 'openai', name: 'Old Preset' },
         to: { apiId: 'openai', name: 'New Preset' },
     }]);
-    assert.deepEqual(result, { updated: 1, profileIds: ['writer'] });
+    assert.deepEqual(result, { updated: 2, profileIds: ['writer'], sessionProfileUpdated: true });
 });

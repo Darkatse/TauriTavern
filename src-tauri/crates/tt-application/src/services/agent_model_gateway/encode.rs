@@ -1,4 +1,5 @@
 use serde_json::{Map, Value, json};
+use std::collections::HashMap;
 
 use crate::dto::chat_completion_dto::ChatCompletionGenerateRequestDto;
 use crate::errors::ApplicationError;
@@ -22,16 +23,28 @@ pub(crate) fn encode_chat_completion_request(
     payload.remove("tools");
     payload.remove("tool_choice");
 
-    payload.insert(
-        "messages".to_string(),
-        Value::Array(
-            adapter
-                .messages_for_request(request)?
-                .into_iter()
-                .map(|message| encode_openai_compatible_message(message, &request.tools, adapter))
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-    );
+    // Responses continuations may omit the assistant call from the outgoing slice.
+    let mut call_aliases = HashMap::new();
+    for message in &request.messages {
+        record_call_aliases(message, &request.tools, &mut call_aliases)?;
+    }
+    let mut messages = Vec::new();
+    let mut tool_images = Vec::new();
+    for message in adapter.messages_for_request(request)? {
+        if message.role != AgentModelRole::Tool && !tool_images.is_empty() {
+            messages.push(tool_image_message(std::mem::take(&mut tool_images)));
+        }
+        // Call IDs may recur across Session runs; the preceding call owns its result.
+        record_call_aliases(message, &request.tools, &mut call_aliases)?;
+        let (encoded, images) =
+            encode_openai_compatible_message(message, &request.tools, &call_aliases, adapter)?;
+        messages.push(encoded);
+        tool_images.extend(images);
+    }
+    if !tool_images.is_empty() {
+        messages.push(tool_image_message(tool_images));
+    }
+    payload.insert("messages".into(), Value::Array(messages));
 
     if request.tools.is_empty() {
         if matches!(
@@ -60,6 +73,13 @@ pub(crate) fn encode_chat_completion_request(
     Ok(ChatCompletionGenerateRequestDto { payload })
 }
 
+fn tool_image_message(images: Vec<Value>) -> Value {
+    let mut content =
+        vec![json!({ "type": "text", "text": "Attached image(s) from tool result:" })];
+    content.extend(images);
+    json!({ "role": "user", "content": content })
+}
+
 fn encode_tool_choice(
     choice: &ToolChoice,
     tools: &[AgentModelTool],
@@ -86,9 +106,11 @@ fn encode_tool_choice(
 fn encode_openai_compatible_message(
     message: &AgentModelMessage,
     tools: &[AgentModelTool],
+    call_aliases: &HashMap<&str, &str>,
     adapter: AgentProviderAdapter,
-) -> Result<Value, ApplicationError> {
+) -> Result<(Value, Vec<Value>), ApplicationError> {
     let mut object = Map::new();
+    let mut tool_images = Vec::new();
     object.insert(
         "role".to_string(),
         Value::String(role_name(message.role).to_string()),
@@ -158,16 +180,45 @@ fn encode_openai_compatible_message(
             object.insert(
                 "name".to_string(),
                 Value::String(
-                    model_tool_for_id(&result.tool_id, tools)
-                        .ok_or_else(|| tool_history_not_advertised(&result.tool_id))?
-                        .model_alias
-                        .clone(),
+                    call_aliases
+                        .get(result.call_id.as_str())
+                        .copied()
+                        .or_else(|| {
+                            model_tool_for_id(&result.tool_id, tools)
+                                .map(|tool| tool.model_alias.as_str())
+                        })
+                        .ok_or_else(|| {
+                            ApplicationError::ValidationError(format!(
+                                "agent.tool_result_call_missing: no call for tool result `{}`",
+                                result.call_id
+                            ))
+                        })?
+                        .to_string(),
                 ),
             );
-            object.insert(
-                "content".to_string(),
-                Value::String(tool_result_message_content(result)),
-            );
+            let mut text = tool_result_message_content(result);
+            let media = message
+                .parts
+                .iter()
+                .filter_map(|part| match part {
+                    AgentModelContentPart::Media { value, .. } => Some(value.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let content = if media.is_empty() {
+                Value::String(text)
+            } else if adapter == AgentProviderAdapter::OpenAiCompatible {
+                tool_images = media;
+                if text.is_empty() {
+                    text = "(see attached image)".to_string();
+                }
+                Value::String(text)
+            } else {
+                let mut parts = vec![json!({ "type": "text", "text": text })];
+                parts.extend(media);
+                Value::Array(parts)
+            };
+            object.insert("content".to_string(), content);
         }
         _ => {
             object.insert(
@@ -180,7 +231,7 @@ fn encode_openai_compatible_message(
     copy_native_continuation(&mut object, &message.parts, adapter);
     copy_reasoning_content(&mut object, &message.parts);
 
-    Ok(Value::Object(object))
+    Ok((Value::Object(object), tool_images))
 }
 
 fn role_name(role: AgentModelRole) -> &'static str {
@@ -287,9 +338,7 @@ fn encode_openai_tool_call(
     call: &ToolInvocation,
     tools: &[AgentModelTool],
 ) -> Result<Value, ApplicationError> {
-    let model_alias = model_tool_for_id(&call.tool_id, tools)
-        .map(|tool| tool.model_alias.as_str())
-        .ok_or_else(|| tool_history_not_advertised(&call.tool_id))?;
+    let model_alias = call_model_alias(call, tools)?;
     let mut object = Map::new();
     object.insert("id".to_string(), Value::String(call.call_id.clone()));
     object.insert("type".to_string(), Value::String("function".to_string()));
@@ -324,10 +373,33 @@ fn model_tool_for_id<'a>(
     tools.iter().find(|tool| tool.tool_id == *tool_id)
 }
 
-fn tool_history_not_advertised(tool_id: &ToolId) -> ApplicationError {
-    ApplicationError::ValidationError(format!(
-        "agent.tool_history_not_advertised: tool `{tool_id}` is not advertised in this request"
-    ))
+pub(crate) fn call_model_alias<'a>(
+    call: &'a ToolInvocation,
+    tools: &'a [AgentModelTool],
+) -> Result<&'a str, ApplicationError> {
+    call.provider_metadata
+        .get("modelAlias")
+        .and_then(Value::as_str)
+        .or_else(|| model_tool_for_id(&call.tool_id, tools).map(|tool| tool.model_alias.as_str()))
+        .ok_or_else(|| {
+            ApplicationError::ValidationError(format!(
+                "agent.tool_history_alias_missing: call `{}` has no recorded model alias",
+                call.call_id
+            ))
+        })
+}
+
+fn record_call_aliases<'a>(
+    message: &'a AgentModelMessage,
+    tools: &'a [AgentModelTool],
+    aliases: &mut HashMap<&'a str, &'a str>,
+) -> Result<(), ApplicationError> {
+    for part in &message.parts {
+        if let AgentModelContentPart::ToolCall { call } = part {
+            aliases.insert(call.call_id.as_str(), call_model_alias(call, tools)?);
+        }
+    }
+    Ok(())
 }
 
 fn tool_result_message_content(result: &AgentToolResult) -> String {

@@ -15,7 +15,8 @@ import {
     normalizeAgentContextPolicy,
 } from '../../../tauritavern/agent/agent-context-policy.js';
 
-const DEFAULT_MCP_RESULT_INLINE_CHAR_LIMIT = 50_000;
+const AGENT_PROFILE_SCHEMA_VERSION = 5;
+const DEFAULT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT = 50_000;
 
 type AgentProfile = TauriTavernAgentProfileDefinition;
 
@@ -50,14 +51,10 @@ export type AgentProfileDraft = Omit<AgentProfile, 'run' | 'context' | 'delegati
         includeActivatedWorldInfo: boolean;
     };
     delegation: AgentProfileDraftDelegation;
-    tools: Omit<AgentProfile['tools'], 'maxRounds' | 'maxCallsPerRun' | 'mcpResultInlineCharLimit'> & {
-        maxRounds: AgentProfileDraftNumber;
-        maxCallsPerRun: AgentProfileDraftNumber;
-        mcpResultInlineCharLimit: AgentProfileDraftNumber;
+    tools: Omit<AgentProfile['tools'], 'externalResultInlineCharLimit'> & {
+        externalResultInlineCharLimit: AgentProfileDraftNumber;
     };
-    skills: Omit<AgentProfile['skills'], 'maxReadCharsPerCall' | 'maxReadCharsPerRun'> & {
-        maxReadCharsPerCall: AgentProfileDraftNumber;
-        maxReadCharsPerRun: AgentProfileDraftNumber;
+    skills: AgentProfile['skills'] & {
         visibleCsv?: string;
         denyCsv?: string;
     };
@@ -156,7 +153,7 @@ function normalizePresetBinding(value: unknown): AgentProfile['preset'] {
     const mode = (looseString(binding.mode) || 'currentPromptSnapshot').trim() || 'currentPromptSnapshot';
     if (mode === 'currentPromptSnapshot' || mode === 'none') {
         return {
-            mode,
+            mode: 'currentPromptSnapshot',
             required: false,
         };
     }
@@ -173,6 +170,8 @@ function normalizePresetBinding(value: unknown): AgentProfile['preset'] {
             name: looseString(ref.name).trim(),
         },
         required: Boolean(binding.required),
+        // Kept as saved; the backend validates the value with the Profile.
+        ...(binding.reasoningEffort ? { reasoningEffort: binding.reasoningEffort as TauriTavernReasoningEffort } : {}),
     };
 }
 
@@ -295,10 +294,6 @@ export function normalizeDelegationToolAllowList(
         allow.delete('builtin:agent.handoff');
     }
 
-    if (!delegation.canDelegate && !delegation.canHandoff) {
-        allow.delete('builtin:agent.list');
-    }
-
     const orderedSet = new Set(preferredOrder);
     return [
         ...preferredOrder.filter((tool) => allow.has(tool)),
@@ -320,7 +315,7 @@ function applyDelegationToolPolicy(profile: AgentProfileDraft): void {
 export function defaultProfile(id: string = DEFAULT_PROFILE_ID): AgentProfile {
     const profileId = normalizeProfileId(id) || DEFAULT_PROFILE_ID;
     const profile: AgentProfile = {
-        schemaVersion: 3,
+        schemaVersion: AGENT_PROFILE_SCHEMA_VERSION,
         kind: 'tauritavern.agentProfile',
         id: profileId,
         displayName: profileId === DEFAULT_PROFILE_ID ? tr('defaultWriter') : tr('newAgentProfile'),
@@ -352,16 +347,11 @@ export function defaultProfile(id: string = DEFAULT_PROFILE_ID): AgentProfile {
             allow: [...KNOWN_TOOLS],
             deny: [],
             toolDescriptions: {},
-            maxRounds: 80,
-            maxCallsPerRun: 80,
-            mcpResultInlineCharLimit: DEFAULT_MCP_RESULT_INLINE_CHAR_LIMIT,
-            maxCallsPerTool: {},
+            externalResultInlineCharLimit: DEFAULT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT,
         },
         skills: {
             visible: ['*'],
             deny: [],
-            maxReadCharsPerCall: 20000,
-            maxReadCharsPerRun: 80000,
         },
         workspace: {
             visibleRoots: [...WORKSPACE_ROOTS],
@@ -390,7 +380,7 @@ export function defaultProfile(id: string = DEFAULT_PROFILE_ID): AgentProfile {
 
 export function normalizeProfileForSave(profile: AgentProfileDraft): TauriTavernAgentProfileDefinition {
     const normalized = clone(profile);
-    migrateToolPolicyToV3(normalized);
+    migrateProfileSchema(normalized);
     const visibleCsv = Object.prototype.hasOwnProperty.call(normalized.skills, 'visibleCsv')
         ? normalized.skills.visibleCsv
         : joinCsv(normalized.skills.visible);
@@ -401,17 +391,12 @@ export function normalizeProfileForSave(profile: AgentProfileDraft): TauriTavern
     normalized.id = normalizeProfileId(normalized.id);
     normalized.displayName = looseString(normalized.displayName).trim();
     normalized.description = looseString(normalized.description).trim();
-    normalized.schemaVersion = 3;
     normalized.preset = normalizePresetBinding(normalized.preset);
     normalized.model = normalizeModelBinding(normalized.model);
     normalized.run = normalizeRunPolicy(normalized.run);
     normalized.context = normalizeAgentContextPolicy(normalized.context);
     normalized.delegation = normalizeDelegationPolicy(normalized.delegation);
-    normalized.tools.maxRounds = Number(normalized.tools.maxRounds);
-    normalized.tools.maxCallsPerRun = Number(normalized.tools.maxCallsPerRun);
     normalized.tools.toolDescriptions = normalizeToolDescriptions(normalized.tools.toolDescriptions);
-    normalized.skills.maxReadCharsPerCall = Number(normalized.skills.maxReadCharsPerCall);
-    normalized.skills.maxReadCharsPerRun = Number(normalized.skills.maxReadCharsPerRun);
     normalized.instructions.agentSystemPrompt = looseString(normalized.instructions.agentSystemPrompt).trim() || null;
     normalized.skills.visible = parseCsv(visibleCsv);
     normalized.skills.deny = parseCsv(denyCsv);
@@ -437,7 +422,7 @@ export function normalizeProfileForSave(profile: AgentProfileDraft): TauriTavern
 
 export function profileForEdit(profile: TauriTavernAgentProfileDefinition): AgentProfileDraft {
     const draft = clone(profile) as AgentProfileDraft;
-    migrateToolPolicyToV3(draft);
+    migrateProfileSchema(draft);
     draft.preset = normalizePresetBinding(draft.preset);
     draft.model = normalizeModelBinding(draft.model);
     draft.run = normalizeRunPolicy(draft.run);
@@ -450,25 +435,41 @@ export function profileForEdit(profile: TauriTavernAgentProfileDefinition): Agen
     return draft;
 }
 
-function migrateToolPolicyToV3(profile: AgentProfileDraft): void {
+function migrateProfileSchema(profile: AgentProfileDraft): void {
     const version = Number(profile.schemaVersion || 1);
-    profile.tools.mcpResultInlineCharLimit = Number(
-        profile.tools.mcpResultInlineCharLimit ?? DEFAULT_MCP_RESULT_INLINE_CHAR_LIMIT,
+    profile.tools.externalResultInlineCharLimit = Number(
+        profile.tools.externalResultInlineCharLimit
+            ?? Reflect.get(profile.tools, 'mcpResultInlineCharLimit')
+            ?? DEFAULT_EXTERNAL_RESULT_INLINE_CHAR_LIMIT,
     );
-    if (version === 3) {
+    Reflect.deleteProperty(profile.tools, 'mcpResultInlineCharLimit');
+    if (version === AGENT_PROFILE_SCHEMA_VERSION) {
         return;
     }
-    if (version !== 1 && version !== 2) {
+    if (version !== 1 && version !== 2 && version !== 3 && version !== 4) {
         throw new Error(`profile.schemaVersion is unsupported: ${version}`);
     }
-    const canonical = (name: string): string => `builtin:${name}`;
-    profile.tools.allow = (profile.tools.allow || []).map(canonical);
-    profile.tools.deny = (profile.tools.deny || []).map(canonical);
-    profile.tools.toolDescriptions = Object.fromEntries(
-        Object.entries(profile.tools.toolDescriptions || {}).map(([name, value]) => [canonical(name), value]),
-    );
-    profile.tools.maxCallsPerTool = Object.fromEntries(
-        Object.entries(profile.tools.maxCallsPerTool || {}).map(([name, value]) => [canonical(name), value]),
-    );
-    profile.schemaVersion = 3;
+    if (version < 4) {
+        const canonical = (name: string): string => version < 3 ? `builtin:${name}` : name;
+        const retired = new Set([
+            'builtin:agent.list',
+            'builtin:skill.list',
+            'builtin:skill.read',
+            'builtin:skill.search',
+            'builtin:skill.run_script',
+        ]);
+        profile.tools.allow = (profile.tools.allow || []).map(canonical).filter((id) => !retired.has(id));
+        profile.tools.deny = (profile.tools.deny || []).map(canonical).filter((id) => !retired.has(id));
+        profile.tools.toolDescriptions = Object.fromEntries(
+            Object.entries(profile.tools.toolDescriptions || {})
+                .filter(([name]) => !retired.has(canonical(name)))
+                .map(([name, value]) => [canonical(name), value]),
+        );
+        Reflect.deleteProperty(profile.skills, 'maxReadCharsPerCall');
+        Reflect.deleteProperty(profile.skills, 'maxReadCharsPerRun');
+    }
+    Reflect.deleteProperty(profile.tools, 'maxRounds');
+    Reflect.deleteProperty(profile.tools, 'maxCallsPerRun');
+    Reflect.deleteProperty(profile.tools, 'maxCallsPerTool');
+    profile.schemaVersion = AGENT_PROFILE_SCHEMA_VERSION;
 }

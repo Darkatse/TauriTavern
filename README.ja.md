@@ -142,7 +142,7 @@ nix profile add github:Darkatse/TauriTavern/Canary#canary
 
 ## TauriTavernとは
 
-TauriTavernは、[SillyTavern](https://github.com/SillyTavern/SillyTavern)をネイティブアプリとして移植したプロジェクトです。フロントエンドは上流の使用感を保ったまま1.18.0へ同期し、バックエンドはNode.jsからRust（Tauri v2）で作り直しています。
+TauriTavernは、[SillyTavern](https://github.com/SillyTavern/SillyTavern)をネイティブアプリとして移植したプロジェクトです。フロントエンドは上流の使用感を保ったまま1.19.0へ同期し、バックエンドはNode.jsからRust（Tauri v2）で作り直しています。
 
 Node.jsのインストールやコマンドライン操作は必要ありません。ダウンロードして、そのまま起動できます。キャラクターカード、チャット、プリセット、世界情報、フロントエンド拡張はSillyTavernと互換性があります。
 
@@ -151,12 +151,12 @@ Node.jsのインストールやコマンドライン操作は必要ありませ�
 ## 主な機能
 
 - 🖥️ **5つのネイティブプラットフォーム**：Windows、macOS、Linux、Android、iOSで同じように利用できます
-- 🎭 **SillyTavernとの互換性**：フロントエンドは上流1.18.0と同期し、データ形式とディレクトリ構成にも対応
+- 🎭 **SillyTavernとの互換性**：フロントエンドは上流1.19.0と同期し、データ形式とディレクトリ構成にも対応
 - 🧩 **フロントエンド拡張**：ネイティブGitを内蔵し、画面上でインストール、更新、ブランチ切り替えを行えます（Node.js専用のバックエンドプラグインは非対応）
 - 🔄 **端末間同期**：暗号化されたLANペアリング、またはTT-Sync v2を使ったリモート自動アップロードに対応
 - 🤖 **Agentフレームワーク**：ツール呼び出し、Skills、サブエージェント、実行タイムラインを備えています。開発は継続中です
 - 📦 **簡単な移行**：SillyTavern用エクスポートスクリプトとアプリ内インポートを用意
-- ⚡ **動作の最適化**：段階的な起動処理とチャットのウィンドウ読み込みにより、長いチャットでも操作性を保ちます
+- ⚡ **動作の最適化**：段階的な起動処理とチャットDOMの仮想化により、非常に長いチャットでもスムーズに操作できます
 - 🔒 **ユーザーデータを手元で管理**：データは端末内に保存され、必要に応じてポータブルモードも選べます
 
 ## スクリーンショット
@@ -199,11 +199,13 @@ pnpm run ios:dev       # iOS開発モード
 
 **Tauri Pilot（AIエージェントを使ったUI開発）**
 
-このプロジェクトには、開発時にのみ有効になる[Tauri Pilot](https://github.com/mpiton/tauri-pilot)プラグインと権限設定が含まれています。アクセシビリティのスナップショットを通じて、AIエージェントがデスクトップWebViewを確認・操作できます。通常の開発コマンドとリリースビルドでは有効になりません。
+このプロジェクトには、開発時にのみ有効になる[Tauri Pilot](https://github.com/mpiton/tauri-pilot)プラグインと権限設定が含まれています。アクセシビリティのスナップショットを通じて、AIエージェントがデスクトップ、Android、iOSシミュレーターのWebViewを確認・操作できます。通常の開発コマンドとリリースビルドでは有効になりません。
 
 ```bash
 cargo install tauri-pilot-cli  # 初回のみ必要
-pnpm run tauri:dev:pilot
+pnpm run tauri:dev:pilot       # デスクトップ
+pnpm run android:dev:pilot     # Android。接続前にソケットを転送（docs/AndroidDevelopment.md）
+pnpm run ios:dev:pilot         # iOSシミュレーター
 ```
 
 アプリを起動したら、別のターミナルで次の基本手順を実行します。

@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 use crate::errors::ApplicationError;
 
 use super::super::custom_api_format::CustomApiFormat;
-use super::claude_messages;
+use super::claude;
 use super::gemini_interactions;
 use super::makersuite;
 use super::openai;
@@ -22,7 +22,7 @@ pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), Appl
         CustomApiFormat::GeminiInteractions => return gemini_interactions::build(payload),
         CustomApiFormat::GeminiGenerateContent => return makersuite::build_custom(payload),
         CustomApiFormat::OpenAiCompat => {}
-        CustomApiFormat::ClaudeMessages => return claude_messages::build(payload),
+        CustomApiFormat::ClaudeMessages => return claude::build_passthrough(payload),
     }
 
     openai::build(payload)
@@ -137,6 +137,18 @@ mod tests {
         .unwrap();
         assert_eq!(upstream["generationConfig"]["temperature"], 0.3);
         assert_eq!(upstream["generationConfig"]["topP"], 0.9);
+
+        let (_, upstream) = request(
+            "relay/gemini-4-argon",
+            json!({ "reasoning_effort": "min", "temperature": 0.3 }),
+        )
+        .unwrap();
+        assert_eq!(upstream["model"], "relay/gemini-4-argon");
+        assert_eq!(
+            upstream["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "low"
+        );
+        assert_eq!(upstream["generationConfig"]["temperature"], 0.3);
 
         for model in [
             "gemini-3-pro-image-preview",

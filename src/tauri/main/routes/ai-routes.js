@@ -1,3 +1,4 @@
+import { mustGetSillyTavernContext } from '../adapters/st/active-chat-ref.js';
 import { estimateTokenCount } from '../brokers/token-count-broker.js';
 import { createAndroidGenerationBridge } from '../adapters/android/android-generation-bridge.js';
 import { confirmAiNotificationPermissionRationale } from '../adapters/st/ai-notification-permission-rationale-popup.js';
@@ -226,7 +227,9 @@ async function attachOpenCodeStableChatId(payload) {
         return;
     }
 
-    payload[OPENCODE_STABLE_CHAT_ID_FIELD] = await globalThis.__TAURITAVERN__.api.chat.current.handle().stableId();
+    payload[OPENCODE_STABLE_CHAT_ID_FIELD] = mustGetSillyTavernContext().getCurrentChatId()
+        ? await globalThis.__TAURITAVERN__.api.chat.current.handle().stableId()
+        : createRandomId();
 }
 
 function buildErrorAssistantText(error) {
@@ -343,7 +346,7 @@ function createImmediateErrorStreamResponse(error, payload) {
     });
 }
 
-function createStreamId() {
+function createRandomId() {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
         return crypto.randomUUID();
     }
@@ -359,7 +362,7 @@ async function invokeChatCompletionWithAbort(context, payload, signal) {
     }
     await attachOpenCodeStableChatId(payload);
 
-    const requestId = createStreamId();
+    const requestId = createRandomId();
     let abortRequested = false;
     let abortHandler = null;
     if (signal) {
@@ -394,7 +397,7 @@ async function invokeChatCompletionWithAbort(context, payload, signal) {
 
 async function createChatCompletionStreamResponse(context, payload, signal, lifecycle) {
     await attachOpenCodeStableChatId(payload);
-    const streamId = createStreamId();
+    const streamId = createRandomId();
     const encoder = new TextEncoder();
 
     let isClosed = false;
@@ -653,31 +656,12 @@ export function registerAiRoutes(router, context, { jsonResponse }) {
     });
 
     router.post('/api/backends/chat-completions/status', async ({ body }) => {
-        const payload = asObject(body);
-        const dto = {
-            chat_completion_source: String(payload.chat_completion_source || ''),
-            custom_api_format: String(payload.custom_api_format || ''),
-            opencode_endpoint: String(payload.opencode_endpoint || ''),
-            opencode_api_format: String(payload.opencode_api_format || ''),
-            reverse_proxy: String(payload.reverse_proxy || ''),
-            proxy_password: String(payload.proxy_password || ''),
-            custom_url: String(payload.custom_url || ''),
-            custom_include_headers: payload.custom_include_headers ?? null,
-            siliconflow_endpoint: String(payload.siliconflow_endpoint || ''),
-            minimax_endpoint: String(payload.minimax_endpoint || ''),
-            moonshot_endpoint: String(payload.moonshot_endpoint || ''),
-            workers_ai_account_id: String(payload.workers_ai_account_id || ''),
-            aws_bedrock_region: String(payload.aws_bedrock_region || ''),
-            secret_id: payload.secret_id ?? null,
-            bypass_status_check: Boolean(payload.bypass_status_check),
-        };
-
         try {
             const result = await context.safeInvoke('get_chat_completions_status', {
-                dto,
+                dto: body,
                 locale: getSillyTavernLocale(),
             });
-            return jsonResponse(result || { data: [] });
+            return jsonResponse(result);
         } catch (error) {
             if (isRequestCancelled(error)) {
                 return jsonResponse({ cancelled: true, data: [] });

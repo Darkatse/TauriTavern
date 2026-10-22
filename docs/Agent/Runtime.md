@@ -1,27 +1,43 @@
 # 运行循环
 
-一次 Run 从冻结聊天输入开始，在一个或多个 Invocation 中执行模型与工具循环，最后完成文件和聊天的提交。
+一次 Run 从冻结输入开始，在 Invocation 中执行模型与工具循环。`target` 明确区分 Chat 与 Session：Chat 完成文件和聊天提交，Session 持续保存对话并直接答复。
 
 ## 启动
 
 前端生成入口读取当前聊天、世界书激活结果、宏和连接设置，形成 `FrozenRunInputSnapshot`。PromptManager 根据 Profile 与预设生成初始消息，Host API 把结果交给 `AgentRuntimeService`。
 
-Runtime 创建 Run，初始化工作区，保存输入和解析后的 Profile，再准备根 Invocation。此时会确定该 Invocation 的模型请求、工具集合、可用 Skill 与工作区范围。后续修改 UI 设置不会改写已经准备好的 Invocation。
+Runtime 创建 Run，初始化工作区，保存输入和解析后的 Profile，再准备根 Invocation。此时会确定该 Invocation 的模型请求、工具集合、可用 Skill、可调用 Agent 目录与工作区范围。后续修改 UI 设置不会改写已经准备好的 Invocation。
 
 `startRunFromLegacyGenerate()` 负责从当前聊天取得输入；`startRunWithPromptSnapshot()` 接受已经组装好的输入。两者进入相同的 Rust runtime。具体参数见 [API](../API/Agent.md)，提示词的生成过程见 [Prompt assembly](PromptAssembly.md)。
 
+`sessions.send()` 每次创建一个 Run，共用该 Session 的历史与工作区。Rust 选取历史并按工具协议成组，PromptManager 负责布局，见 [Prompt assembly](PromptAssembly.md)。同一 Session 只允许一个活跃 Run；准备期间历史发生变化时拒绝启动。
+
 ## 每一轮
 
-每个 Invocation 在累计预算内交替调用模型与工具：
+每个 Invocation 交替调用模型与工具，没有轮数或调用次数上限：
 
-1. 将待处理的用户补充指令加入前台上下文，记录模型请求。
+1. Chat 前台消费待处理的用户补充指令；Session 检查上下文并在需要时压缩；记录本轮模型请求。
 2. 通过 Agent Model Gateway 调用模型，保存响应并将完整 assistant 消息加入请求历史。
 3. 按返回顺序执行工具，将已确认的结果加入上下文。
 4. 本轮工具全部结算后才进入下一次模型请求。
 
-委派结果也在轮次之间进入调用方上下文。工具参数等可由模型修正的问题作为 tool result 返回；模型请求、存储或运行状态错误交给 Run 收尾处理。模型若直接输出正文，runtime 会把正文保存为文件，并在剩余轮数内提示它继续通过工具完成工作。
+委派结果也在轮次之间进入调用方上下文。工具参数等可由模型修正的问题作为 tool result 返回；模型请求、存储或运行状态错误交给 Run 收尾处理。Chat 模型若直接输出正文，runtime 会把正文保存为文件。Chat 与 return-mode 子 Invocation 直接输出文字时，runtime 最多提醒 20 次，要求它继续通过工具完成工作；第 21 次仍只回文字时以 `model.tool_call_required` 结束。提醒次数在 Invocation 内累计，成功的工具轮不清零，续接时重新计数。
 
-流式调用额外提供工具参数的实时预览，工具执行仍使用完整的模型响应。重试策略只作用于模型请求；工具执行由本轮调用记录管理。
+Session 在 assistant 无工具调用时结束本轮，消息由后端连续保存。取消保留已写入的消息和工作文件。
+
+流式调用提供正文、思考及工具参数预览，正式消息的关联规则见 [Agent API](../API/Agent.md#控制与订阅)。工具执行始终使用完整响应；重试策略只作用于模型请求，工具执行由本轮调用记录管理。
+
+## Session 上下文压缩
+
+Session 的预算取自预设的上下文长度与最大回复长度，压缩点为 `⌊0.9 × (context − response)⌋`。Runtime 优先使用最近一次响应的输入、输出用量，再估算此后追加的消息；没有用量时，由 `TokenizationService` 估算整个请求。模型接受图片时，上下文里的每张工具图片按固定 1,400 tokens 计入，保留窗口的选组用同一计数。每轮调用前计算一次上下文用量，随请求事件发布（见[运行日志](RunEventJournal.md#一条事件)），达到压缩点时自动压缩；服务商返回 `model.context_overflow` 时，本轮尚未压缩则压缩一次再发。压缩后仍超窗时结束 Run，不重复恢复。
+
+摘要请求沿用当前请求并追加摘要指令。摘要不作为普通模型回复发布；出现工具调用时禁用工具重问一次，调用始终不执行。摘要请求超窗时，逐组移除最早的工具往来再试，保留用户消息和已有摘要；无法得到完整摘要时返回 `agent.compaction_failed`。
+
+新的模型上下文由摘要与最近的完整消息组组成，经发送时保留的组装请求和冻结宏环境交给 PromptManager 重组。普通轮次继续向请求末尾追加消息；只有压缩才重新组装。重组复用 Invocation 已解析的连接与生成参数，不读取运行中修改的配置。摘要加保留内容仍达到压缩点，或自动压缩时没有可缩小的历史，返回 `agent.context_full`。
+
+压缩成功后在 `history.jsonl` 追加带 `compaction` 的记录，原始历史不删除；下一次发送从最近的摘要和保留记录接续。摘要标明自己是模型笔记，状态需要重新观察；工作区文件的读取记录在压缩后清空，修改前须重读。取消或压缩失败不追加压缩记录。
+
+`sessions.compact()` 创建一次不带用户消息的 Session Run：它按发送时的方式准备与组装上下文，以 `manual` 触发同一压缩流程，然后结束，不请求回复。较早部分都在保留范围内时返回 `agent.nothing_to_compact`。
 
 ## 结束与交接
 
@@ -31,11 +47,17 @@ return-mode 子 Agent 使用 `task.return` 结束，把结果交给调用方。`
 
 Run 正常完成后进入 `completed`。取消进入 `cancelled`；错误发生在已确认聊天提交之后时进入 `partial_success`，此前则进入 `failed`。工作区与日志保留下来，便于查看已有结果和失败位置。
 
+Shell 取消须先等待已启动的文件修改收尾，再记录结果并进入取消终态。
+
 ## Checkpoint 与恢复
 
-每次执行结束时保存 checkpoint，由 runtime 的执行状态与宿主的消息呈现共同构成。中断后的续接沿用原 Run、冻结输入和工作区，保留已确认结果与累计预算。
+Chat 每次执行结束时保存 checkpoint，由 runtime 的执行状态与宿主的消息呈现共同构成。中断后的续接沿用原 Run、冻结输入和工作区，保留已确认结果。
 
-`/fix 修改要求` 用于修改最后一条已完成 Agent 回复的当前 swipe。当前正文保存到 `output/previous_output.md`，作为包含手工编辑的修改基准。新的前台 Invocation 继承上一前台的完整上下文，在原 Run 中获得正常预算；原提交记录与工作材料继续保留。
+Session 重启后从已保存历史发起新 Run；当前不支持 resume、revision、运行中 guidance、委派或 handoff。
+
+当前 checkpoint schema 为 2，读取时丢弃已删除的预算字段。v1 可只读查看状态，仅已完成的 Run 在首次 `/fix` 时转换；未完成的 v1 Run 需要重新开始。转换保留原权限、Skill 绑定与执行结果，将含退役工具调用的轮次转为历史文本，并通过修订说明补入新用法与目录。原始记录不改写，旧调用不重放。
+
+`/fix 修改要求` 用于修改最后一条已完成 Agent 回复的当前 swipe。当前正文保存到 `output/previous_output.md`，作为包含手工编辑的修改基准。新的前台 Invocation 继承上一前台的上下文；原提交记录与工作材料继续保留。
 
 恢复时仅按需校验所选 Run 的本地保存材料，不依赖同步状态或其他 Run。该 Run 在本进程中仍活跃、材料缺失或不匹配、外部副作用无法确认时拒绝本次恢复；可恢复的保存错误允许重试。恢复与清理须互斥，已确认的工具和提交效果不得重放。
 
@@ -48,6 +70,8 @@ Run 正常完成后进入 `completed`。取消进入 `cancelled`；错误发生�
 | 位置 | 职责 |
 | --- | --- |
 | [agent_runtime_service/lifecycle.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/lifecycle.rs) | 输入校验、创建与取消 Run |
+| [agent_runtime_service/session.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/session.rs) | Session 配置、历史读取、发送受理与消息记录 |
+| [agent_runtime_service/session_context.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/session_context.rs) | Session 上下文选取、分组、计数与压缩 |
 | [agent_runtime_service/executor.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/executor.rs) | 准备根 Invocation、推进交接链、处理终态 |
 | [agent_runtime_service/checkpoint.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/checkpoint.rs) | Checkpoint 保存、读取与恢复准入 |
 | [agent_runtime_service/revision.rs](../../src-tauri/crates/tt-application/src/services/agent_runtime_service/revision.rs) | 已完成输出的后续修订 |

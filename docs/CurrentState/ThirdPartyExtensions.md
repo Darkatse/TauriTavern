@@ -31,8 +31,8 @@
 
 补充约束：
 
-- discovery 只投影扩展目录、类型与 Git/source 管理状态，不读取或建模 manifest；单个损坏的 legacy source 状态只会使对应扩展降为 unmanaged。
-- 浏览器运行时 manifest 由前端从原始 `manifest.json` 读取并消费，包括 `display_name` / `version` / `author` 与 `js` / `css` / `i18n` 等字段；缺失、损坏或非 object manifest 以及单扩展激活异常都不会阻断其他扩展。
+- discovery 只返回扩展名称与类型，跳过没有 `manifest.json` 的第三方目录；Git/source 信息由版本查询和管理操作按需读取。
+- 前端读取原始 `manifest.json`，只将成功加载的 JSON object 发布到可用扩展列表；失败会报告并隔离，不阻断其他扩展。各入口共同消费该列表，启用与激活仍由原有机制处理。
 - install/update/switch 的 candidate preflight 仍要求根 `manifest.json` 存在、是普通文件且为 JSON object；`display_name` / `version` / `author` 仅作为安装结果展示元数据提取，缺失或非字符串值不影响候选合法性。
 
 扩展命名约定：
@@ -82,11 +82,8 @@ install/update/switch/delete/move 与 LAN/TT Sync 的本地写操作共享一个
 
 - `src/lib.js` 会把部分上游常用库挂到 `window`；其中 `window._`（lodash）是正式兼容 ABI，因为 JS-Slash-Runner、ST-Prompt-Template、MagVarUpdate 等生态扩展会在模块求值阶段直接访问 `_`
 - `src/tauri/main/compat/mobile/mobile-runtime-compat.js` 负责旧 WebView 缺失 JS API 的 polyfills（仅 Tauri mobile）
-- 第三方浮层/窗口 mobile surface compat（仅 Tauri mobile）：
-  - 分类/契约输出：`src/tauri/main/compat/mobile/mobile-overlay-surface-admission.js`
-  - 观察与有界 settle window：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
-  - 同源 iframe contract bridge：`src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`
-- `src/scripts/browser-fixes.js` 保持与上游同步（不再承载 Tauri mobile compat）
+- Android/iOS 原生内容视口避让系统栏和停靠键盘，第三方面板与 iframe 按普通视口排版，见 [MobileStyleAdaptation.md](MobileStyleAdaptation.md)。
+- `src/scripts/browser-fixes.js` 跟随上游，只删除了 iOS resize 时把根元素设为 fixed 的补偿（见 MobileStyleAdaptation.md 的本地差异）。
 
 ### 2.4 后端资源提供
 
@@ -103,6 +100,7 @@ install/update/switch/delete/move 与 LAN/TT Sync 的本地写操作共享一个
 1. 校验请求方法，只接受 `GET` / `HEAD` / `OPTIONS`
 2. 通过 `src-tauri/crates/tt-contracts/src/client_asset_paths.rs` 解析并校验路径，再由 `src-tauri/crates/tt-application/src/services/host_resource_service/route_classifier.rs` 分类到具体资源处理器
 3. 通过 `src-tauri/crates/tt-adapter-media/src/host_resources.rs` 一次完成 local/global 选源、打开文件和 metadata/revision 构造
+   - 第三方资源不支持 Range，会整体读入内存；移动宿主上源文件超过 32 MiB 时返回 `413`（`GET`、`HEAD` 与条件请求一致）
 4. 返回真实 bytes、正确 `Content-Type`、`Cache-Control: private, no-cache`、weak ETag 和 Last-Modified；条件命中时按 transport capability 返回 304 或完整 200（见 `docs/CurrentState/HostResourceCaching.md`）
    - 对用户静态资源端点（如 `/backgrounds/*`）若请求携带 `Range`，支持单范围并返回 `206 + Content-Range`（见 `docs/CurrentState/MediaAssetContract.md`）
 5. 未命中时返回真正 `404`，不回退到 `index.html`
@@ -115,13 +113,15 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 
 开发态本地 Web 入口：
 
-- `scripts/tauri-dev-server.mjs` 会在入口文档最前面注入 `src/dev-sw-bootstrap.js`；新 WebView 会话若继承旧 Service Worker controller，会先注销旧注册并重载一次，避免跨宿主进程复用失效的 Wry 协议过滤器
-- `src/init.js` 会注册 `/tt-ext-sw.js`
+- `scripts/tauri-dev-server.mjs` 只在主应用入口注入 `src/dev-sw-bootstrap.js`，标签上带 `devUrl` 的 origin。引导脚本只为这个 origin 的文档安装资源桥：移动端 dev 经 Tauri app 协议代理 dev server，这些资源由宿主 web resource 钩子提供，与打包运行一致。生产入口不注册 SW
+- 引导脚本负责注册 `/tt-ext-sw.js`、提供 window 代理和发布[就绪信号](../FrontendHostContract.md#22-就绪信号publicproject)。新 WebView 会话若继承旧 controller，先注销旧注册并重载，避免复用失效的 Wry 协议过滤器
+- 页面未受控时（首次安装或强制刷新），引导脚本先监听 `controllerchange`，再请 active worker 执行 `clients.claim()`；页面受控后才发布就绪信号
 - Service Worker 将 `/css/user.css`、`/scripts/extensions/third-party/*`、`/thumbnail`、`/characters/*`、`/User Avatars/*`、`/backgrounds/*`、`/assets/*`、`/user/images/*`、`/user/files/*` 转发到 `tt-ext` 自定义 scheme
 - Rust 侧 `register_uri_scheme_protocol("tt-ext", ...)` 在 dev 下统一分发上述资源请求
 - `convertFileSrc('', 'tt-ext')` 的结果可能因平台/WebView 不同而表现为 `tt-ext://localhost/` 或 `http(s)://tt-ext.localhost/`
 - Service Worker 的直接 `tt-ext` fetch 保留原请求 cache mode；`Range`、`If-Range`、`If-None-Match`、`If-Modified-Since` 在直连或 IPC 路径中保持同一 Host Resource 语义，并通过 `Access-Control-Expose-Headers: *` 保留直连响应的完整表示头
 - `If-Range`、`If-None-Match`、`If-Modified-Since` 会触发 custom scheme 跨源 preflight，必须直接通过通用 header wire 进入 IPC；其余 Service Worker `fetch(tt-ext)` 失败时切换到 window-context `fetch(tt-ext)`，正文以 transferable `ArrayBuffer` 返回。普通二进制资源不得经过 serde JSON IPC
+- window 代理在文档解析期间就调用 `startMessages()` 开始接收请求：`<head>` 中的 `/css/user.css` 可能经它加载，而 module 脚本要等这个样式表；等到 DOMContentLoaded 才投递，双方会互相等待
 - 非 Android 的 production、`tt-ext` 与 IPC fallback 都能代理 304；Android 按 Wry 硬约束返回完整 200。IPC 不另建 Cache API，因此自动生成 validator 的存储行为仍由具体 transport 决定
 
 因此，开发态与生产态虽然入口不同，但 third-party 路径语义保持一致。
@@ -136,7 +136,7 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
 
 当前优先级规则：
 
-- 发现时：若 local 与 global 同名，保留 local，跳过 global
+- 发现时：含 manifest 的 local 与 global 同名时保留 local；无 manifest 的 local 残留目录不遮挡 global
 - 读资源时：先查 local，再查 global
 
 这意味着 local 扩展可以覆盖同名 global 扩展。
@@ -192,7 +192,7 @@ Host Resource 只校验浏览器 URL 的路径段，不禁止 data root 内部 s
   - `src-tauri/crates/tt-application/src/services/host_resource_service/route_classifier.rs`
   - `src-tauri/crates/tt-application/src/services/host_resource_service/third_party.rs`
   - 相关测试
-- 若改动开发态代理链路，也必须同步验证 `src/dev-sw-bootstrap.js`、`src/init.js` 与 `src/tt-ext-sw.js`
+- 若改动开发态代理链路，也必须同步验证 `scripts/tauri-dev-server.mjs`、`src/dev-sw-bootstrap.js` 与 `src/tt-ext-sw.js`
 
 ## 7. 建议的最小回归面
 

@@ -90,11 +90,11 @@ await registration.refresh();
 
 - `prepare` 接收稳定的消息对象、本次请求的 `mesid` 和 `AbortSignal`，返回 HTML 字符串；不读写 live DOM，也不创建运行中的 iframe、observer 或 timer。
 - `renderBase()` 取得后续处理器和宿主格式化的结果；同一次 `prepare` 中重复读取共用同一个 Promise，不会重复执行下游。先注册的处理器包裹后注册的处理器；消息请求串行执行。需要修改原文时，在首次调用 `renderBase()` 前完成；不要在 hook 中调用 `updateMessageBlock()`、重绘或 `refresh()`。
-- 显示结果按消息对象保存，包含原文、活动 swipe、显示文本与格式化输入的版本。滚动卸载保留结果，重新挂载只重建 DOM；内容变化与 `refresh()` 使结果失效。世界书和变量依赖由扩展显式刷新，宿主不追踪这些依赖。
+- 异步处理结果按消息对象缓存，内容与宿主格式化输出不变时可在重挂载时复用；同步格式化仍可重跑。世界书、变量等外部依赖变化须由扩展调用 `refresh()`。
 - 宿主仅保存 participant 加入 wrapper/runtime 之前的 HTML 字符串，不保存 DOM、不写回 `extra.display_text`，聊天 epoch 结束后释放结果。
 - 首次准备或更新等待期间，`.mes_text` 为空且标记 `aria-busy`；`didMount` 仍表达楼层挂载。准备完成后，通过现有内容事务提交，再运行 `prepareContent`、`didCommitContent` 与 runtime admission。
 - 编辑与流式中间内容不执行处理器或启动 runtime。核心生成路径在 `MESSAGE_RECEIVED` 处理完成后提交最终内容，再发送 rendered 事件；同步 `addOneMessage()` / `updateMessageBlock()` 仍同步返回，异步显示完成以 `didCommitContent` 为准。
-- `refresh()` 只更新已挂载消息的最终内容，保留消息 root 与 mount lease，跳过编辑器和流式中间内容。被跳过的消息在结束编辑或生成时使用新的显示结果。
+- `refresh()` 更新已挂载的正文与 reasoning，保留 root 和 mount lease；编辑/流式内容延至结束后更新。reasoning 不进入正文异步处理链。
 - 内容被替代、处理中消息被删除或重编号、聊天切换时，signal abort，旧结果不得回写。扩展需要配合取消自己的异步操作；宿主无法回滚模板已经产生的业务副作用。
 - 注册必须早于首次投影；重复 id、非法返回值与处理异常立即报错，处理异常带处理器 id 和消息位置并 fault 当前 epoch。`refresh()` 返回的 Promise 等待当前挂载消息完成准备并传播错误。
 

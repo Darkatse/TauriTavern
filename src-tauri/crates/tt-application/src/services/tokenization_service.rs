@@ -75,7 +75,7 @@ impl TokenizationService {
 
         let token_counts = tokio::task::spawn_blocking(move || {
             tokenizer_repository
-                .count_system_message_prefixes(&model, &base, &suffixes, stop_at)
+                .count_text_prefixes(&model, &base, &suffixes, stop_at)
                 .map_err(ApplicationError::from)
         })
         .await

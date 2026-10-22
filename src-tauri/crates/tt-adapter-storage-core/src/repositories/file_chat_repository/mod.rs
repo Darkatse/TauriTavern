@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use crate::commit_stage::PageGeneration;
 use tokio::sync::{Mutex, RwLock};
 use tt_ports::repositories::chat_repository::ChatMessageRole;
 
@@ -12,9 +13,9 @@ mod backup_inventory;
 mod backup_restore;
 mod backup_summary;
 mod cache;
+mod chat_commit;
 mod chat_dir_resolver;
 mod chat_metadata;
-mod chat_payload_commit;
 mod cold_swipes;
 mod extension_store;
 mod group_chat_repository_impl;
@@ -25,6 +26,7 @@ mod message_read;
 mod message_search;
 mod paths;
 mod payload;
+mod payload_reader;
 mod recent_selection;
 mod repository_impl;
 mod summary;
@@ -79,9 +81,7 @@ pub struct FileChatRepository {
     chats_dir: PathBuf,
     group_chats_dir: PathBuf,
     backups_dir: PathBuf,
-    chat_commit_staging_dir: PathBuf,
-    chat_commit_sessions:
-        Mutex<HashMap<uuid::Uuid, Arc<Mutex<chat_payload_commit::CommitSession>>>>,
+    chat_commit_sessions: crate::commit_stage::CommitSessions<chat_commit::CommitMetadata>,
     path_write_locks: Arc<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>>,
     current_content_signatures: Mutex<ContentSignatureState>,
     memory_cache: Arc<Mutex<MemoryCache>>,
@@ -95,11 +95,10 @@ pub struct FileChatRepository {
 impl FileChatRepository {
     const CHAT_BACKUP_PREFIX: &'static str = "chat_";
 
-    /// Create an isolated chat repository.
+    /// Create an isolated chat repository for tests and standalone tools.
     ///
-    /// This is a convenience wrapper for single-repository use. Runtime
-    /// bootstrap constructs character and chat repositories together and must
-    /// inject a shared `FileChatRepository` into the character repository.
+    /// Runtime composition must use `with_chat_aliases_and_backup_settings`
+    /// and inject the resulting repository into the character repository.
     #[allow(dead_code)]
     pub fn new(
         characters_dir: PathBuf,
@@ -121,11 +120,11 @@ impl FileChatRepository {
         )
     }
 
-    /// Create a repository with the shared character/chat alias store.
+    /// Create a repository with a shared alias store for tests and standalone tools.
     ///
-    /// Character and chat repositories must share this store in production so
-    /// lazy legacy-dir aliases are serialized through one cache. Prefer this
-    /// constructor whenever both repositories are created for the same runtime.
+    /// Uses isolated page state, default backup settings and a fixed 4 MiB frame
+    /// budget. Runtime composition must inject these values through
+    /// `with_chat_aliases_and_backup_settings`.
     pub fn with_chat_aliases(
         characters_dir: PathBuf,
         chats_dir: PathBuf,
@@ -140,9 +139,12 @@ impl FileChatRepository {
             backups_dir,
             chat_aliases,
             tt_domain::models::settings::ChatBackupSettings::default(),
+            Arc::default(),
+            4 * 1024 * 1024,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn with_chat_aliases_and_backup_settings(
         characters_dir: PathBuf,
         chats_dir: PathBuf,
@@ -150,6 +152,8 @@ impl FileChatRepository {
         backups_dir: PathBuf,
         chat_aliases: SharedChatAliasStore,
         backup_settings: tt_domain::models::settings::ChatBackupSettings,
+        page: Arc<PageGeneration>,
+        max_frame_bytes: u64,
     ) -> Self {
         let chat_commit_staging_dir = backups_dir.with_file_name(".staging").join("chat-commits");
         // Create a memory cache with 100 chat capacity and 30 minute TTL
@@ -157,19 +161,11 @@ impl FileChatRepository {
             100,
             Duration::from_secs(30 * 60),
         )));
-        let summary_index_path = backups_dir
+        let summary_cache_dir = backups_dir
             .parent()
-            .map(|default_user_dir| {
-                default_user_dir
-                    .join("user")
-                    .join("cache")
-                    .join("chat_summary_index_v1.json")
-            })
-            .unwrap_or_else(|| backups_dir.join("chat_summary_index_v1.json"));
-        let summary_cache = Arc::new(Mutex::new(SummaryCache::new(
-            summary_index_path,
-            backups_dir.clone(),
-        )));
+            .map(|user_dir| user_dir.join("user").join("cache"))
+            .unwrap_or_else(|| backups_dir.clone());
+        let summary_cache = Arc::new(Mutex::new(SummaryCache::new(summary_cache_dir)));
         let backup_summary_index_path = backups_dir
             .parent()
             .map(|default_user_dir| {
@@ -190,8 +186,11 @@ impl FileChatRepository {
             chats_dir,
             group_chats_dir,
             backups_dir,
-            chat_commit_staging_dir,
-            chat_commit_sessions: Mutex::new(HashMap::new()),
+            chat_commit_sessions: crate::commit_stage::CommitSessions::new(
+                chat_commit_staging_dir,
+                page,
+                max_frame_bytes,
+            ),
             path_write_locks,
             current_content_signatures: Mutex::new(ContentSignatureState::default()),
             memory_cache,

@@ -10,7 +10,7 @@ const api = window.__TAURITAVERN__.api;
 | API | 用途 |
 | --- | --- |
 | [api.chat](Chat.md) | 聊天读取、检索、metadata 与扩展存储 |
-| [api.layout](Layout.md) | safe area、viewport 与输入法布局 |
+| [api.layout](Layout.md) | 内容视口的读取与订阅 |
 | [api.dev](Dev.md) | 前后端日志和模型请求诊断 |
 | [api.worldInfo](WorldInfo.md) | 世界书激活结果与条目导航 |
 | [api.extension.store](Extension.md) | 扩展的全局 JSON / Blob 存储 |

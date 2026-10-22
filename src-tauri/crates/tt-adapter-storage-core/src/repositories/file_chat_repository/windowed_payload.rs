@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::str;
 
-use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, BufReader, SeekFrom};
 
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::chat_repository::{
@@ -10,6 +10,9 @@ use tt_ports::repositories::chat_repository::{
 
 use super::FileChatRepository;
 use super::windowed_payload_io::*;
+use crate::chat_jsonl::{
+    is_whitespace, parse_header_integrity, read_header_record_async, trim_whitespace,
+};
 
 async fn read_tail_lines_with_offsets(
     path: &Path,
@@ -25,10 +28,11 @@ async fn read_tail_lines_with_offsets(
 
     let mut pos = end_position;
     let mut blocks: Vec<Vec<u8>> = Vec::new();
-    let mut newline_count: usize = 0;
+    let mut record_count = 0;
+    let mut record_has_content = false;
     let mut blocks_start: u64 = pos;
 
-    while pos > start_bound && newline_count <= max_lines {
+    while pos > start_bound && record_count <= max_lines {
         let available = pos - start_bound;
         let read_size = (available.min(WINDOW_READ_CHUNK_BYTES as u64)) as usize;
 
@@ -48,7 +52,14 @@ async fn read_tail_lines_with_offsets(
             ))
         })?;
 
-        newline_count += buf.iter().filter(|&&b| b == b'\n').count();
+        for &byte in buf.iter().rev() {
+            if byte == b'\n' {
+                record_count += usize::from(record_has_content);
+                record_has_content = false;
+            } else if !is_whitespace(byte) {
+                record_has_content = true;
+            }
+        }
         blocks.push(buf);
         blocks_start = pos;
     }
@@ -105,28 +116,23 @@ async fn read_tail_lines_with_offsets(
 
     let mut lines: Vec<(u64, String)> = Vec::with_capacity(raw_lines.len());
     for (offset, bytes) in raw_lines {
+        let bytes = trim_whitespace(bytes);
         if bytes.is_empty() {
-            return Err(DomainError::InvalidData(format!(
-                "Chat payload contains empty JSONL line at offset {} for {:?}",
-                offset, path
-            )));
+            continue;
         }
-
         let text = str::from_utf8(bytes).map_err(|error| {
             DomainError::InvalidData(format!("JSONL payload is not valid UTF-8: {}", error))
         })?;
-        let normalized = text.trim_end_matches('\r');
-        if normalized.trim().is_empty() {
-            return Err(DomainError::InvalidData(format!(
-                "Chat payload contains blank JSONL line at offset {} for {:?}",
-                offset, path
-            )));
-        }
-        lines.push((offset, normalized.to_string()));
+        lines.push((offset, text.to_string()));
     }
 
     if lines.len() > max_lines {
         lines.drain(0..(lines.len() - max_lines));
+    } else if blocks_start == start_bound
+        && let Some((offset, _)) = lines.first_mut()
+    {
+        // Leading blank records do not require an extra empty history page.
+        *offset = start_bound;
     }
 
     Ok(lines)
@@ -184,7 +190,17 @@ async fn read_payload_tail_lines(
 ) -> Result<ChatPayloadTail, DomainError> {
     let metadata = read_existing_payload_metadata(path).await?;
 
-    let (header, header_end_offset) = read_first_line_and_end_offset(path).await?;
+    let mut reader = BufReader::new(open_existing_payload_file(path).await?);
+    let Some((header, header_end_offset)) = read_header_record_async(&mut reader).await? else {
+        return Ok(ChatPayloadTail {
+            header: String::new(),
+            lines: Vec::new(),
+            cursor: cursor_from_metadata(metadata.len(), &metadata)?,
+            has_more_before: false,
+        });
+    };
+    parse_header_integrity(&header)?;
+    let header = String::from_utf8(header).expect("validated header UTF-8");
     let end_position = metadata.len();
 
     let lines_with_offsets =
@@ -214,7 +230,14 @@ async fn read_payload_before_lines(
     let metadata = read_existing_payload_metadata(path).await?;
     verify_cursor_signature(path, cursor, &metadata)?;
 
-    let (_, header_end_offset) = read_first_line_and_end_offset(path).await?;
+    let mut reader = BufReader::new(open_existing_payload_file(path).await?);
+    let header_end_offset = match read_header_record_async(&mut reader).await? {
+        Some((header, offset)) => {
+            parse_header_integrity(&header)?;
+            offset
+        }
+        None => metadata.len(),
+    };
 
     if cursor.offset > metadata.len() {
         return Err(DomainError::InvalidData(format!(

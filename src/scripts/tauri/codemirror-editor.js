@@ -1,5 +1,6 @@
 // @ts-check
 
+import { getEditorName } from '../dom-handlers.js';
 import { getCodeMirrorEditor } from '../../lib.js';
 import { callGenericPopup, POPUP_TYPE } from '../popup.js';
 import { t } from '../i18n.js';
@@ -81,12 +82,12 @@ export async function mountCodeMirrorEditor(source, { onChange, signal } = {}) {
     const [anchor, head] = source.selectionDirection === 'backward'
         ? [source.selectionEnd, source.selectionStart]
         : [source.selectionStart, source.selectionEnd];
-    const label = source.getAttribute('aria-label') || source.labels?.[0]?.textContent?.trim();
+    const label = getEditorName(source);
 
     const editor = createCodeMirrorView(wrapper, {
         doc: source.value,
         readOnly: source.disabled || source.readOnly,
-        ariaLabel: label || source.placeholder || 'Text editor',
+        ariaLabel: label,
         placeholder: source.placeholder,
         selection: focused ? { anchor, head } : undefined,
         onChange,
@@ -168,7 +169,7 @@ export async function showCodeMirrorEditorFullscreen(source) {
     editor.requestMeasure();
 
     try {
-        await callGenericPopup(host, POPUP_TYPE.TEXT, '', { wide: true, large: true, animation: 'none' });
+        await callGenericPopup(host, POPUP_TYPE.TEXT, '', { label: getEditorName(source), wide: true, large: true, animation: 'none' });
     } finally {
         editor.wrapper.style.height = `${editor.height}px`;
         if (source.isConnected) {

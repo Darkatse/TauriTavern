@@ -1,8 +1,7 @@
 import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
-import { isMobile } from '../../../RossAscends-mods.js';
 import { t, translate } from '../../../i18n.js';
-import { scanQrCodeWithBackCancellation } from '../../../../tauri/main/services/barcode-scanner/barcode-scanner-service.js';
-import { writeClipboardText } from '../../../../tauri-bridge.js';
+import { canScanQrCode, scanQrCodeWithBackCancellation } from '../../../../tauri/main/services/barcode-scanner/barcode-scanner-service.js';
+import { invoke, listen, writeClipboardText } from '../../../../tauri-bridge.js';
 import {
     LAN_SYNC_DEVICES_CHANGED_EVENT,
     SYNC_AUTOMATION_CHANGED_EVENT,
@@ -25,14 +24,6 @@ import {
 } from './sync-state.js';
 
 const SYNC_STYLE_ID = 'tauritavern-sync-style';
-
-function getInvoke() {
-    const invoke = window.__TAURI__?.core?.invoke;
-    if (typeof invoke !== 'function') {
-        throw new Error('Tauri invoke API is unavailable');
-    }
-    return invoke;
-}
 
 function ensureSyncStyle() {
     if (document.getElementById(SYNC_STYLE_ID)) {
@@ -275,8 +266,6 @@ function ensureArray(value, commandName) {
 }
 
 function createSyncClient() {
-    const invoke = getInvoke();
-
     return {
         async loadState() {
             const [
@@ -313,10 +302,6 @@ function createSyncClient() {
         getLanPairingInfo: () => invoke('lan_sync_get_pairing_info').then(normalizePairingInfo),
         discoverLanDevices: () => invoke('lan_sync_discover_devices').then(normalizeNearbyDevices),
         async subscribeLanDevices(handler) {
-            const listen = window.__TAURI__?.event?.listen;
-            if (typeof listen !== 'function') {
-                throw new Error('Tauri event API is unavailable');
-            }
             return listen('lan_sync:devices_changed', event => handler(normalizeNearbyDevices(event.payload)));
         },
         pairLanDevice: (deviceId) => invoke('lan_sync_pair_device', { deviceId }),
@@ -562,10 +547,6 @@ function createSyncActions(client) {
     };
 }
 
-function canScanPairUri() {
-    return isMobile() && Boolean(window.__TAURI__?.barcodeScanner?.scan);
-}
-
 export async function openSyncPopup() {
     ensureSyncStyle();
 
@@ -575,7 +556,7 @@ export async function openSyncPopup() {
     const appHandle = bundle.mountTauriTavernSyncApp(mount, {
         client,
         actions: createSyncActions(client),
-        canScanPairUri: canScanPairUri(),
+        canScanPairUri: canScanQrCode(),
         tr: translate,
     });
 

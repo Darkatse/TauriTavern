@@ -1,8 +1,10 @@
 # TauriTavern 前端指南
 
-本文档描述 TauriTavern 当前前端（基于 SillyTavern 1.18.0）在 Tauri 环境下的集成架构与开发方式。
+本文档描述 TauriTavern 当前前端（基于 SillyTavern 1.19.0）在 Tauri 环境下的集成架构与开发方式。
 
 宿主层对外契约清单见：`docs/FrontendHostContract.md`（重构时优先保障其不回归）。
+
+共同控件与无障碍约定见 [FrontendAccessibility](FrontendAccessibility.md)。
 
 ## 1. 目标与原则
 
@@ -13,9 +15,9 @@
 
 ## 2. 启动链路
 
-当前前端启动顺序如下：
+当前前端启动顺序如下（宿主身份在页面脚本运行前已写入，见 2.1）：
 
-1. `src/init.js` 动态导入：`lib.js` -> `tauri-main.js` -> `script.js`
+1. `src/init.js` 等待[可选的开发资源桥就绪信号](FrontendHostContract.md#22-就绪信号publicproject)，随后动态导入：`lib.js` -> `tauri-main.js` -> `script.js`
 2. `src/lib.js` 静态导入 `src/dist/lib.core.bundle.js`，统一提供 ESM 导出；`highlight.js` 通过 `getHljs()` 按需加载
 3. `src/tauri-main.js` 仅调用 `bootstrapTauriMain()`（薄入口）
 4. `src/tauri/main/bootstrap.js` 负责：
@@ -23,10 +25,36 @@
    - 注册前端路由（`router + routes/*`）
    - 安装请求拦截器（`fetch` 与 `jQuery.ajax`）
    - 安装平台 ABI：`window.__TAURITAVERN__`（小而稳定的宿主对外接口）
-   - 安装同源窗口下载桥（移动端浏览器式导出 -> 原生落盘）
-   - 安装 Tauri mobile 兼容层（runtime polyfills + geometry firewall + surface classifier，仅移动端）
+   - 安装同源窗口下载桥（所有宿主的浏览器式导出 → 原生交付）
+   - 安装 Tauri mobile 兼容层（runtime polyfills，仅移动端）
    - 为宿主接管的路由响应注入追踪 header：`x-tauritavern-trace-id`
-   - 初始化 bridge 与目录信息
+   - 安装后端错误桥并等待 `BackendReadiness`
+   - Tauri 就绪后安装窗口快照与窗口背景发布（仅移动端）
+
+### 2.1 宿主身份
+
+宿主身份 `{ platform, kind }` 由 Rust 按编译目标生成（契约见 `docs/FrontendHostContract.md` §2.2）。前端只通过 `src/scripts/util/host-identity.js` 读取：`hostPlatform()` 返回平台，`isMobileHost()` / `isDesktopHost()` 返回宿主类别。测试由 harness 安装身份。
+
+与平台有关的判断，先分清在问什么：
+
+| 问题 | 依据 | 例子 |
+| --- | --- | --- |
+| 宿主属于哪一类外壳 | `isMobileHost()` / `isDesktopHost()` | 移动端兼容层、F11 全屏、数据目录选择、软键盘相关的自动聚焦 |
+| 选用哪个平台的实现，或某个平台独有的问题 | `hostPlatform()` | Windows 托盘、Android WebView 的剪贴板与 IME |
+| 可选能力是否存在 | 插件、原生桥或 DOM API 本身 | 扫码插件、Android 原生桥 |
+| 屏幕与交互形态 | 上游 Bowser `isMobile()`、CSS 媒体查询 | select2、MovingUI、`{{isMobile}}` |
+
+约束：
+
+- 不用 UA、`navigator.platform` 或 `maxTouchPoints` 推断宿主：iPadOS 报告为 Macintosh，OpenHarmony 的 UA 不含 Android。
+- 用正向条件表达类别，不用 `!android && !ios` 代表桌面。为每个平台选择实现时，`switch` 列出全部平台，`default` 抛错；某个平台独有的处理用正向判断即可。
+- 上游 Bowser `isMobile()` 与 CSS 媒体查询属于上游布局语义，保持不变。规则同时取决于宿主类别与窗口方向时（如聊天宽度），组合 `isMobileHost()` 与 `util/window-layout.js` 的 `isWindowPortrait()`。
+
+`pnpm run check:platform`（已接入 `pnpm run check`）检查以上约束，报错指向本节。
+
+### 2.2 原生能力
+
+TT 前端总是运行在宿主之上，代码中不判断“是否在 Tauri 中”。应用模块只通过 `tauri-bridge.js` 使用原生能力，能力缺失时由 bridge 在调用处报错。可选插件由对应 service 判断是否可用，例如扫码的 `canScanQrCode()`。唯一例外是 Rust 在 document-start 注入的 Android 语音脚本，见[系统 TTS](CurrentState/TTS.md#接入位置)。`__TAURI_RUNNING__` 只是对外标记，内部不读取。`check:frontend` 检查这条边界。
 
 ## 3. 目录结构（前端集成相关）
 
@@ -65,7 +93,7 @@ src/
 
 - 组装模块依赖并执行初始化。
 - 确保只 bootstrap 一次。
-- 在 bridge 初始化后再次尝试 patch 运行时补丁（处理加载时序问题）。
+- 在后端就绪后再次尝试 patch 运行时补丁（处理加载时序问题）。
 - 维护对第三方可见的宿主 ABI（`window.__TAURITAVERN__`）与请求追踪 header。
 
 ### 4.2 `context.js`
@@ -88,12 +116,13 @@ src/
 
 - 代理 `window.fetch`。
 - 代理 `$.ajax` 并保持 Deferred/jqXHR 行为兼容。
-- 只拦截本地 API 请求，其余请求透传原生实现。
+- 接管整个 `/api/*` 命名空间与其他已注册路由，其余请求透传原生实现（见 `FrontendHostContract.md` §4.2）。
 
 ### 4.4 `download-bridge.js`
 
-- 只处理移动端同源窗口中的浏览器式下载（如 `blob:` / `data:` / 同源 URL + `a[download]`）。
-- 将命中的导出转接到现有原生文件导出链路。
+- 处理所有宿主同源窗口中的浏览器式下载（如 `blob:` / `data:` / 同源 URL + `a[download]`）。
+- Android 上为同源窗口中的 `<img>` 补上 `contextmenu` 默认行为（保存图片）：用户确认后，图片进入同一条导出链路。
+- 页面可读的内容交给 `deliverBlob()`；远程图片交给 `deliverRemoteFile()`，由宿主下载。两者都先暂存再交付，见[文件传输](CurrentState/FileTransfer.md)。
 - 不参与 API 路由判断，避免与请求拦截职责混合。
 
 ### 4.5 `router.js` + `routes/*`
@@ -131,16 +160,14 @@ src/
 
 - 上游接管点：`src/script.js`（character chat）与 `src/scripts/group-chats.js`（group chat）。
 - 统一入口：上游只 import `src/scripts/chat-payload-transport.js`，不要直接依赖 `src/scripts/tauri/chat/*`。
-- 第一方当前聊天通过 `src/scripts/chat-payload-transport.js` 加载全部楼层，可选[历史滑动按需加载](CurrentState/ChatPayload.md#21-历史滑动按需加载)；`/api/chats/get` 与 `/api/chats/group/get` 保留为扩展和脚本的兼容路由。header 与完整、有序的消息数组分离后，generation、扩展和保存共享同一个 canonical `chat[]`。
+- 第一方加载全部楼层，可选[历史滑动按需加载](CurrentState/ChatPayload.md#21-历史滑动按需加载)。header 与消息数组分离，generation、扩展和保存共享完整、有序的 canonical `chat[]`。
 - `chat_truncation` 只限制初始 DOM。Show More 从完整 `chat[]` 补挂楼层，不发起分页 I/O，不改变消息绝对索引。
-- 第一方完整保存通过统一 transport 直连；`/api/chats/save` 与 `/api/chats/group/save` 保留为扩展兼容路由。当前聊天业务入口仍经 `enqueueChatSave()`，transport 自身不重复入队。落盘的 header metadata 统一取自 `persistedChatMetadata()`，它去掉 `chat_metadata.lastInContextMessageId`；不要另行拼装。
-- commit 在首次异步让出前捕获逐记录 JSON 文本快照，再经 target-local commit session 编码、分帧和原子发布；保存期间的消息修改不混入本次提交。integrity 错误按明确的 `code` 处理，不按错误文案猜测。
-- `saveMetadata()` 只保存 header 的 `chat_metadata`，通过同一 transport facade 发送独立 JSON 快照，不遍历或传输消息。它仍经当前聊天保存队列，但不取消挂起的完整保存、不保存消息派生缓存。角色与群聊、完整与 metadata 四种当前聊天写入共用 `runChatSave()` 的失败策略：integrity 弹窗与强制完整保存恢复都留在同一次队列任务中，其他失败提示并抛出。
-- 新群聊在问候扩展事件前绑定 metadata 并落盘初始 header，保证 metadata 保存的文件存在前提；后续初始化不得覆盖事件修改。修改消息的扩展需显式调用完整保存。
+- 当前聊天完整保存与 metadata 保存共用 `enqueueChatSave()` 和 transport 提交会话；transport 自身不重复入队。提交捕获独立快照并原子发布，保存期间的修改不混入本次提交。
+- `saveMetadata()` 只保存 header 的 `chat_metadata`，不保存消息，也不取消待执行的完整保存。修改消息的扩展必须显式调用完整保存。
 - tail/before/beforePages 只属于 `api.chat.history` 与 Agent 的显式只读查询，不参与前端当前聊天状态。
-- 合法 JSONL 任一记录解析失败时整体加载失败；不得提交部分历史或静默降级。
+- 聊天格式遵循 [ChatPayload §1.1](CurrentState/ChatPayload.md#11-统一格式底线)；解析失败必须传播，不能提交部分历史。
 
-完整现状见 `docs/CurrentState/ChatPayload.md`。
+保存规则与职责见 [ChatPayload](CurrentState/ChatPayload.md)；兼容 get/save 路由及事件契约见 [FrontendHostContract §4.3](FrontendHostContract.md#43-路由表public)。
 
 ## 6.2 ChatSurface 所有权与 participant
 
@@ -148,7 +175,7 @@ src/
 - `installChatSurfaceRuntime()` 是 `script.js` 唯一的 concrete composition seam；结构/投影位于 kernel，生命周期协调位于 services，真实 DOM/scroll 写入位于 adapters。
 - 外部 renderer 通过 `window.__TAURITAVERN__.api.chatSurface.registerParticipant()` 接入，不直接控制投影，也不依赖伪造消息事件。
 - 异步模板通过独立的 `registerContentProcessor()` 准备显示 HTML；`content-preparation.js` 保存消息内容结果，滚动重挂载不重复求值。manifest `hooks.chatSurface` 在首次投影前完成注册，内容结果通过既有同步事务交给 participant。
-- 最终内容统一通过 `getMessageTextHTML()` 格式化；核心调用 `finalizeMessageContent(messageId, event?, ...args)` 完成内容提交后再发送相应消息事件。刷新只替换内容，控制器的 `commitContent()` 只提交已准备内容，不回到预处理入口。
+- 同步与批量格式化共用一条链路，对外只交付最终 HTML；正文与 reasoning 共用 ChatSurface 内容刷新。核心通过 `finalizeMessageContent()` 等待内容提交后发送消息事件，`commitContent()` 只提交已准备内容。
 - renderer 在入口只调用一次 `isManagedOwnershipRequired()`：`true` 时只启用 participant owner，`false` 时只启用原 static owner；API 是否存在和当前 DOM 形状都不能替代该决策。
 - 结构 reconcile 与纯 range projection 分离：前者只在 canonical `chat[]` 结构改变时 O(N) 执行，后者携带 epoch/revision token 并保持 O(M)。
 - mount lease 与 content lease 分离；streaming 中间帧只提交内容，最终帧才恢复 decorator/runtime。
@@ -190,17 +217,14 @@ src/
 - `src/scripts/extensions.js`：插件激活编排层（发现、排序、依赖/版本检查、触发加载）。
 - `src/scripts/browser-fixes.js`：上游浏览器补丁（保持与 SillyTavern 同步）。
 - `src/tauri/main/compat/mobile/mobile-runtime-compat.js`：Tauri mobile 运行时 polyfills（补齐旧 WebView 缺失 JS API）。
-- `src/tauri/main/compat/mobile/mobile-overlay-surface-admission.js`：Tauri mobile 第三方 fixed overlay admission（分类 + 契约输出）。
-- `src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`：Tauri mobile overlay compat controller（观察 + 有界 settle window，暴露 `window.__TAURITAVERN_MOBILE_OVERLAY_COMPAT__`）。
-- `src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`：Same-origin iframe 的 viewport/inset contract bridge（`viewport-host` 边界变量同步）。
+- `src/scripts/util/window-layout.js`：移动端原生窗口快照；`src/scripts/window-backdrop.js`：第一方背景唯一写入与条带发布入口。
 - `src/scripts/extensions/runtime/resource-paths.js`：扩展资源路径规范化与 third-party 判定。
-- `src/scripts/extensions/runtime/tauri-ready.js`：等待 `__TAURITAVERN_MAIN_READY__`，避免 bridge 未就绪时提前加载。
 - `src/scripts/extensions/runtime/third-party-runtime.js`：第三方扩展样式兼容层（legacy WebView 下为样式 URL 附加 `ttCompat=layer`，触发 Rust 端点做 `@layer` 展平；不再走前端预取/Blob 注入）。
 - `src/scripts/extensions/runtime/asset-loader.js`：脚本与样式注入、超时保护、重复注入幂等控制。
 
 ### 7.3 端到端加载链路
 
-1. `loadExtensionSettings()` 先等待 `waitForTauriMainReady()`。
+1. 启动 core 阶段确认宿主就绪后，才开始扩展发现。
 2. 前端通过 `/api/extensions/discover` 获取扩展列表与类型，读取 manifest 并进入 `activateExtensions()`。
 3. 对每个扩展执行 `addExtensionLocale()` + `addExtensionScript()` + `addExtensionStyle()`。
 4. 当扩展为 `third-party/*` 时：
@@ -284,24 +308,11 @@ TauriTavern 自有的状态型 UI 作为 SillyTavern first-party extension 挂�
 
 该策略用于修复移动端插件面板（如 `TH-custom-tailwind`）样式大面积失效导致的布局错乱。
 
-#### 7.7.3 浮层 safe-area 修正（移动端）
+#### 7.7.3 原生内容视口与窗口背景
 
-- 实现位置：
-  - 分类/契约输出：`src/tauri/main/compat/mobile/mobile-overlay-surface-admission.js`
-  - 观察与有界 settle window：`src/tauri/main/compat/mobile/mobile-overlay-compat-controller.js`
-  - 同源 iframe bridge：`src/tauri/main/compat/mobile/mobile-iframe-viewport-contract-bridge.js`
-- 入口：`src/tauri/main/bootstrap.js` 中安装（仅 Tauri mobile）。
-- 触发条件：只处理“第三方顶层 surface”候选（通常为 `position: fixed` 且顶边贴近 0 的窗口/遮罩）。
-- 处理策略（两段式）：
-  - JS classifier：观察 `document.body` 直系子节点增删，并对 `script_id` portal root 扫描其子树；对已跟踪候选仅监听自身生命周期属性（`class/style/hidden/open/aria-hidden`）以撤销/恢复 host-admitted contract，属性重算按 animation frame 合并；稳定的 `free-window` 只响应 inline lifecycle style（`display/visibility/position/pointer-events/cursor/touch-action`）变化，几何类 style 写入保持在拖动热路径之外；对命中元素分类并输出：
-    - `data-tt-mobile-surface="backdrop|viewport-host|fullscreen-window|free-window|edge-window"`
-    - `data-tt-mobile-surface-admitted="1"`（host-private sentinel）
-    - `--tt-original-top=<px>`（仅 edge-window）
-  - CSS contract：由 `mobile-geometry-firewall.js` 提供 `[data-tt-mobile-surface="..."]` 的几何规则，统一执行 safe-area 约束（backdrop 保持 full-bleed）。
-- 显式 opt-in：若节点已带 `data-tt-mobile-surface`，classifier 将尊重并不再改写（便于第三方脚本作者自我修复）。
-- Android 变量语义：`--tt-inset-top` 表示当前布局应避开的有效 inset；非沉浸模式下反映顶部 safe area，沉浸模式下回落为 `0`，因此对应的 contract 会自然退化为 full-bleed。
+原生宿主拥有主 WebView 的矩形，系统栏、刘海和停靠键盘在原生层消费一次，网页按普通视口排版。前端只做两件事：`util/window-layout.js` 接收窗口快照并设置 `#bg1` 的窗口矩形；`window-backdrop.js` 的 `applyWindowBackdrop()` 是第一方背景的唯一写入点，新增背景来源接入它。只有高度变化的 resize 不触发与宽度相关的工作。
 
-该策略用于修复 JS-Slash-Runner 等脚本在运行时注入固定定位弹窗样式时，关闭按钮落入状态栏导致不可点击的问题。
+细节见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md)，扩展可见的契约见 [API/Layout.md](API/Layout.md)。
 
 #### 7.7.4 调试建议
 
@@ -313,8 +324,8 @@ TauriTavern 自有的状态型 UI 作为 SillyTavern first-party extension 挂�
   - 优先检查是否命中 `@layer` 降级分支；
   - 关注 `resolveStylesheetUrl()` 是否返回带 `ttCompat=layer` 的 URL。
 - 若脚本弹窗贴顶到状态栏：
-  - 检查脚本是否通过 `<style>` 或行内 `style` 设置了固定定位顶边；
-  - 检查 `window.__TAURITAVERN_MOBILE_OVERLAY_COMPAT__` 是否已安装。
+  - 所有内容一起偏移时，检查原生 WebView 矩形是否与政策避让一致；
+  - 只有某个面板溢出时，检查其硬编码尺寸、负坐标或内部滚动边界。
 
 ### 7.8 嵌入式运行时（Embedded Runtime，消息内 iframe）
 
@@ -382,7 +393,7 @@ TauriTavern 自有的状态型 UI 作为 SillyTavern first-party extension 挂�
 
 用于快速定位移动端/低端机型的主线程卡顿、DOM 膨胀、以及 invoke 热点。
 
-- 默认关闭：未启用时不会加载 HUD 模块，也不会包裹 `context.safeInvoke`（prod 默认近似零成本）。
+- 默认关闭。
 - 启用（需 reload 才能抓启动打点）：
   - 控制台：`localStorage.setItem('tt:perf','1'); location.reload();`
   - 或 URL：`?ttPerf=1`

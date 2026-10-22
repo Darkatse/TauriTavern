@@ -40,7 +40,10 @@ pub(super) fn build(
     let lan_settings_store = Arc::new(LanSyncStore::new(
         data_directory.default_user().to_path_buf(),
     ));
-    let lan_peer_store = LanPeerStore::new(data_directory.default_user().to_path_buf());
+    let lan_peer_store = LanPeerStore::new(
+        data_directory.default_user().to_path_buf(),
+        crate::platform::identity::HOST_IDENTITY.platform,
+    );
     let lan_settings_repository: Arc<dyn LanSyncSettingsRepository> = lan_settings_store.clone();
     let lan_peer_repository: Arc<dyn LanPeerRepository> = Arc::new(lan_peer_store.clone());
     let sync_job_events = adapters::sync_job_events(app_handle);
@@ -58,6 +61,7 @@ pub(super) fn build(
         tt_runtime.clone(),
         product_user_agent,
         database.clone(),
+        crate::platform::identity::HOST_IDENTITY.kind,
     ));
     let sync_job_coordinator = Arc::new(SyncJobCoordinator::new(
         sync_job_executor,

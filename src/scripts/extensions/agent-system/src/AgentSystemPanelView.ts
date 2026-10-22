@@ -46,9 +46,6 @@ export function presetSummaryLabel(draft: AgentProfileDraft, tr: Tr): string {
     if (preset.mode === 'ref') {
         return preset.ref?.name || tr('savedPreset');
     }
-    if (preset.mode === 'none') {
-        return tr('none');
-    }
     return tr('currentPromptPreset');
 }
 
@@ -358,6 +355,9 @@ export function toolBadges(
     }
     if (item?.permission === 'ask') {
         badges.push({ key: 'ask', label: tr('askAutoTool') });
+    }
+    if (item?.source === 'extension' && item.enabled === false) {
+        badges.push({ key: 'disabled', label: tr('extensionToolDisabled') });
     }
     if (toolHasDescriptionOverride(draft, toolId)) {
         badges.push({ key: 'custom', label: tr('customizedTool') });

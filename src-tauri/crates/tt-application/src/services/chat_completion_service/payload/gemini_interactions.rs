@@ -9,10 +9,7 @@ use super::content_parts::{
     reject_media_for_text_only_content,
 };
 use super::shared::message_content_to_text;
-use super::tool_calls::{
-    OpenAiToolCall, extract_openai_tool_calls, message_tool_call_id,
-    validate_openai_chat_tool_transcript,
-};
+use super::tool_calls::{OpenAiToolCall, extract_openai_tool_calls, message_tool_call_id};
 use super::tool_choice::{OpenAiToolChoice, parse_openai_tool_choice};
 
 pub(super) fn build(payload: Map<String, Value>) -> Result<(String, Value), ApplicationError> {
@@ -242,7 +239,6 @@ fn build_input_and_system_instruction(
             "Gemini Interactions messages must be a string or an array".to_string(),
         )
     })?;
-    validate_openai_chat_tool_transcript(Some(messages), false)?;
 
     let mut steps = Vec::new();
     let mut system_parts = Vec::new();

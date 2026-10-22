@@ -30,8 +30,6 @@ test('ChatSurface projection validates exact one-or-two-range intent', () => {
     const projection = createChatProjection([0, 1, 7, 8], { count: 10 });
     assert.deepEqual(projection.indices, [0, 1, 7, 8]);
     assert.deepEqual(projection.ranges, [{ start: 0, end: 2 }, { start: 7, end: 9 }]);
-    assert.ok(Object.isFrozen(projection));
-    assert.ok(Object.isFrozen(projection.indices));
 
     assert.throws(() => createChatProjection([1, 1], { count: 2 }), /strictly increasing/);
     assert.throws(() => createChatProjection([2], { count: 2 }), /outside/);

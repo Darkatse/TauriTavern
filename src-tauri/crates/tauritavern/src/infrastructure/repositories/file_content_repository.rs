@@ -5,7 +5,7 @@ use tauri::AppHandle;
 use tokio::fs;
 
 use crate::infrastructure::assets::{
-    copy_resource_to_file, list_default_content_files_under, read_resource_json,
+    copy_resource_to_file, list_default_files_under, read_resource_json,
 };
 use tt_domain::errors::DomainError;
 use tt_ports::repositories::content_repository::{
@@ -109,7 +109,7 @@ impl FileContentRepository {
             return Ok(vec![filename.to_string()]);
         }
 
-        let entries = list_default_content_files_under(filename);
+        let entries = list_default_files_under("content", filename);
         if entries.is_empty() {
             return Err(DomainError::NotFound(format!(
                 "Resource directory is empty or missing: {}",

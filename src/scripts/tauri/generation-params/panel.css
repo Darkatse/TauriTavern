@@ -121,8 +121,13 @@
     display: none !important;
 }
 
+/* The remove button stays on its label's row. */
 .tt-gp-block > .range-block-title {
     width: auto;
+}
+
+.tt-gp-block > .checkbox_label {
+    flex: 1;
 }
 
 /* Slider blocks: label left, number box right, no range track. */
@@ -131,6 +136,10 @@
     align-items: center;
     gap: 8px;
     margin-bottom: 2px;
+}
+
+.tt-gp-compact:has(> .range-input-description, > .range-input-error) {
+    flex-wrap: wrap;
 }
 
 .tt-gp-compact > .range-block-title {

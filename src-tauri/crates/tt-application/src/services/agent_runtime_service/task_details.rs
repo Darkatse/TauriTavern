@@ -72,7 +72,7 @@ impl AgentRuntimeService {
             ))
         };
         let path = WorkspacePath::parse(result_ref)?;
-        let file = self.workspace_repository.read_text(run_id, &path).await?;
+        let file = self.workspace_files(run_id).await?.read_text(&path).await?;
         let mut result: StoredTaskResult =
             serde_json::from_str(&file.text).map_err(|error| invalid_result(&error.to_string()))?;
         if result.schema_version != 1 || result.kind != "tauritavern.agentTaskResult" {

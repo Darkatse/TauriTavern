@@ -463,11 +463,7 @@ fn default_base_url(
 ) -> Result<String, ApplicationError> {
     let base_url = match source {
         ChatCompletionSource::OpenAi => OPENAI_API_BASE.to_string(),
-        ChatCompletionSource::OpenCode => opencode::base_url(
-            hints.opencode_endpoint,
-            OpenCodeApiFormat::parse(hints.opencode_api_format)?,
-        )?
-        .to_string(),
+        ChatCompletionSource::OpenCode => opencode::base_url(hints.opencode_endpoint)?.to_string(),
         ChatCompletionSource::OpenRouter => OPENROUTER_API_BASE.to_string(),
         ChatCompletionSource::Claude => CLAUDE_API_BASE.to_string(),
         ChatCompletionSource::Makersuite => GEMINI_API_BASE.to_string(),
@@ -683,9 +679,14 @@ async fn resolve_vertexai_generate_api_config(
                 "Google Vertex AI",
             )
             .await?;
+            let project_id = payload
+                .get("vertexai_express_project_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
 
             Ok(ChatCompletionApiConfig {
-                base_url: format!("{VERTEXAI_GLOBAL_BASE}/v1"),
+                base_url: vertexai_base_url(&region, project_id),
                 user_configured_endpoint: false,
                 api_key,
                 authorization_header: None,
@@ -707,13 +708,8 @@ async fn resolve_vertexai_generate_api_config(
             .await?;
             let project_id = vertexai_service_account_project_id(&service_account_json)?;
 
-            let base_url = format!(
-                "{}/v1/projects/{project_id}/locations/{region}",
-                vertexai_host(&region)
-            );
-
             Ok(ChatCompletionApiConfig {
-                base_url,
+                base_url: vertexai_base_url(&region, Some(&project_id)),
                 user_configured_endpoint: false,
                 api_key: String::new(),
                 authorization_header: None,
@@ -731,13 +727,17 @@ async fn resolve_vertexai_generate_api_config(
     }
 }
 
-fn vertexai_host(region: &str) -> String {
-    let region = region.trim().to_ascii_lowercase();
-    match region.as_str() {
+/// Without a project, Vertex AI Express serves the location chosen at signup.
+fn vertexai_base_url(region: &str, project_id: Option<&str>) -> String {
+    let Some(project_id) = project_id else {
+        return format!("{VERTEXAI_GLOBAL_BASE}/v1");
+    };
+    let host = match region {
         "global" => VERTEXAI_GLOBAL_BASE.to_string(),
         "us" | "eu" => format!("https://aiplatform.{region}.rep.googleapis.com"),
         _ => format!("https://{region}-aiplatform.googleapis.com"),
-    }
+    };
+    format!("{host}/v1/projects/{project_id}/locations/{region}")
 }
 
 fn vertexai_service_account_project_id(
@@ -1303,7 +1303,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn vertexai_gemini_express_uses_global_api_key_base_url() {
+    async fn vertexai_express_project_id_selects_project_location_base_url() {
         let secret_repository: Arc<dyn SecretRepository> = Arc::new(TestSecretRepository::active(
             SecretKeys::VERTEXAI,
             "vertex-key",
@@ -1311,9 +1311,9 @@ mod tests {
         let dto = ChatCompletionGenerateRequestDto {
             payload: json!({
                 "chat_completion_source": "vertexai",
-                "model": "gemini-2.5-pro",
+                "model": "gemini-4-argon",
                 "vertexai_auth_mode": "express",
-                "vertexai_region": "us-central1",
+                "vertexai_region": "global",
                 "vertexai_express_project_id": "vertex-project",
             })
             .as_object()
@@ -1326,7 +1326,10 @@ mod tests {
                 .await
                 .expect("Vertex Gemini Express config should resolve with project id");
 
-        assert_eq!(config.base_url, "https://aiplatform.googleapis.com/v1");
+        assert_eq!(
+            config.base_url,
+            "https://aiplatform.googleapis.com/v1/projects/vertex-project/locations/global"
+        );
     }
 
     #[tokio::test]

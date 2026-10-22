@@ -74,16 +74,17 @@ async fn missing_persist_requires_an_explicit_empty_start_before_creating_a_run(
                 .await
                 .unwrap();
             assert_eq!(run.status, AgentRunStatus::Completed);
-            assert_eq!(run.persist_base_state_id, None);
-            assert_eq!(run.input_message_count, Some(1));
+            assert_eq!(
+                run.chat_target().unwrap().persist_base_state_id.clone(),
+                None
+            );
+            assert_eq!(run.chat_target().unwrap().input_message_count, Some(1));
             let files = fixture
                 .agent_repository
-                .list_files(
-                    &run.id,
-                    Some(&WorkspacePath::parse("persist").unwrap()),
-                    1,
-                    10,
-                )
+                .open_filesystem(&run.id)
+                .await
+                .expect("open workspace")
+                .list_files(Some(&WorkspacePath::parse("persist").unwrap()), 1, 10)
                 .await
                 .unwrap();
             assert!(files.entries.is_empty());

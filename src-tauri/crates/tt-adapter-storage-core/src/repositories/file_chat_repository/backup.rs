@@ -8,7 +8,7 @@ use tokio::fs;
 use tokio::io::AsyncReadExt;
 use tt_domain::errors::DomainError;
 use tt_domain::models::settings::ChatBackupSettings;
-use tt_ports::repositories::chat_repository::ChatByteReader;
+use tt_ports::byte_reader::ByteReader;
 use tt_ports::settings::{ChatBackupRuntime, ChatBackupStorageStats};
 
 use super::FileChatRepository;
@@ -20,8 +20,6 @@ use super::backup_inventory::{
     BackupCandidate, BackupEntry, BackupHistoryState, BackupInventory, BackupInventoryState,
     parsed_backup_prefix, plan_evictions,
 };
-#[cfg(test)]
-use super::summary::ChatFileDescriptor;
 use crate::file_system::persist_file;
 
 enum BackupPublishOutcome {
@@ -42,7 +40,7 @@ struct FileChatBackupReader {
 }
 
 #[async_trait]
-impl ChatByteReader for FileChatBackupReader {
+impl ByteReader for FileChatBackupReader {
     async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, DomainError> {
         self.reader.read(buffer).await.map_err(|error| {
             DomainError::InternalError(format!(
@@ -57,7 +55,7 @@ impl FileChatRepository {
     pub(super) async fn open_chat_backup_download_file(
         &self,
         backup_file_name: &str,
-    ) -> Result<Box<dyn ChatByteReader>, DomainError> {
+    ) -> Result<Box<dyn ByteReader>, DomainError> {
         let logical_file_name = Self::normalize_backup_file_name(backup_file_name)?;
         let mut state = self.backup_history.lock().await;
         self.ensure_backup_inventory_ready(&mut state).await?;
@@ -678,22 +676,6 @@ impl FileChatRepository {
                 Err(error)
             }
         }
-    }
-
-    #[cfg(test)]
-    pub(super) async fn list_chat_backup_files(
-        &self,
-    ) -> Result<Vec<ChatFileDescriptor>, DomainError> {
-        Ok(self
-            .list_chat_backup_entries()
-            .await?
-            .into_iter()
-            .map(|entry| ChatFileDescriptor {
-                character_name: String::new(),
-                file_name: entry.logical_file_name,
-                path: self.backups_dir.join(entry.file_name),
-            })
-            .collect())
     }
 
     pub(super) async fn list_chat_backup_entries(&self) -> Result<Vec<BackupEntry>, DomainError> {

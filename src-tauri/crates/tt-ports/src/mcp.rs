@@ -57,9 +57,17 @@ pub struct McpTextContent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpImageContent {
+    pub index: usize,
+    pub mime_type: String,
+    pub data: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpToolCallResult {
     pub is_error: bool,
     pub text: Vec<McpTextContent>,
+    pub images: Vec<McpImageContent>,
     pub structured_content: Option<Value>,
     pub diagnostics: Vec<McpCallDiagnostic>,
 }

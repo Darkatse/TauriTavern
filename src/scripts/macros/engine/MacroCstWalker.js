@@ -18,6 +18,7 @@ import { isFalseBoolean } from '/scripts/utils.js';
  * @property {boolean} isScoped - Whether this macro was invoked using scoped syntax (opening + closing tags).
  * @property {boolean} [isVariableShorthand] - Whether this call originated from variable shorthand syntax.
  * @property {MacroEnv} env
+ * @property {import('./MacroRegistry.js').MacroDefinition|undefined} definition
  * @property {string} rawInner
  * @property {string} rawWithBraces
  * @property {string[]} rawArgs
@@ -111,7 +112,7 @@ class MacroCstWalker {
         let items = this.#collectDocumentItems(cst);
 
         // Process scoped macros: find opening/closing pairs and merge them
-        items = this.#processScopedMacros(items, text);
+        items = this.#processScopedMacros(items, text, env);
 
         if (items.length === 0) {
             return text;
@@ -189,7 +190,21 @@ class MacroCstWalker {
 
         // Check for closing block flag
         const flagTokens = /** @type {IToken[]} */ (children.flags || []);
-        const isClosing = flagTokens.some(token => token.image === MacroFlagType.CLOSING_BLOCK);
+        let isClosing = flagTokens.some(token => token.image === MacroFlagType.CLOSING_BLOCK);
+
+        // Special case for the comment macro (//):
+        // The lexer always greedily tokenizes '//' before a single '/', so {{///}} is parsed as
+        // {{// /}} (comment with arg '/') rather than {{/ //}} (closing block for //).
+        // We detect this by checking if the '//' macro's positionally-first argument token starts with '/'.
+        if (!isClosing && name === '//') {
+            const firstArgNode = /** @type {CstNode?} */ ((argumentNodes || [])[0]);
+            if (firstArgNode) {
+                const firstToken = this.#getFirstTokenInNode(firstArgNode);
+                if (firstToken?.image?.startsWith('/')) {
+                    isClosing = true;
+                }
+            }
+        }
 
         return {
             name,
@@ -227,7 +242,7 @@ class MacroCstWalker {
         for (const item of items) {
             if (item.type !== 'macro') continue;
 
-            const info = this.#extractMacroInfo(item.node);
+            const info = this.extractMacroInfo(item.node);
             if (!info) continue;
 
             if (info.isClosing) {
@@ -394,7 +409,7 @@ class MacroCstWalker {
         const argumentNodes = /** @type {CstNode[]} */ (argumentsNode?.children?.argument || []);
 
         // Check if this macro has delayArgResolution flag - if so, skip nested macro evaluation
-        const macroDef = MacroRegistry.getMacro(name);
+        const macroDef = MacroRegistry.getEffectiveMacro(name, env);
         const delayArgResolution = macroDef?.delayArgResolution === true;
 
         /** @type {string[]} */
@@ -490,6 +505,7 @@ class MacroCstWalker {
             globalOffset: contextOffset + range.startOffset,
             cstNode: macroNode,
             env,
+            definition: macroDef,
         };
 
         const value = resolveMacro(call);
@@ -606,7 +622,7 @@ class MacroCstWalker {
         const lazyValue = hasValueExpr ? this.#createLazyValue(operatorChildren, context) : () => '';
 
         // Execute the operation using direct variable API calls
-        return this.#executeVariableOperation(varName, isGlobal, operation, lazyValue);
+        return this.#executeVariableOperation(varName, isGlobal, operation, lazyValue, context.env);
     }
 
     /**
@@ -631,17 +647,17 @@ class MacroCstWalker {
     }
 
     /**
-     * Executes a variable operation using the SillyTavern context API.
+     * Executes a variable operation in the current evaluation environment.
      *
      * @param {string} varName - The variable name.
      * @param {boolean} isGlobal - Whether this is a global ($) or local (.) variable.
      * @param {string} operation - The operation to perform.
      * @param {() => string} lazyValue - A lazy function that returns the value when called. Only evaluated when needed.
+     * @param {MacroEnv} env
      * @returns {string} The result of the operation.
      */
-    #executeVariableOperation(varName, isGlobal, operation, lazyValue) {
-        const ctx = SillyTavern.getContext();
-        const vars = isGlobal ? ctx.variables.global : ctx.variables.local;
+    #executeVariableOperation(varName, isGlobal, operation, lazyValue, env) {
+        const vars = isGlobal ? env.variables.global : env.variables.local;
 
         /**
         * Normalizes macro results into a string.
@@ -916,7 +932,7 @@ class MacroCstWalker {
 
         // Collect items and process scoped macros
         let items = this.#collectDocumentItems(cst);
-        items = this.#processScopedMacros(items, rawContent);
+        items = this.#processScopedMacros(items, rawContent, context.env);
 
         // If no items, return raw content
         if (items.length === 0) {
@@ -1099,6 +1115,34 @@ class MacroCstWalker {
     }
 
     /**
+     * Returns the positionally-first leaf token (by startOffset) across all children of a CST node.
+     * Chevrotain groups tokens by type in the children object, so we must scan all type arrays
+     * and pick the token with the smallest startOffset rather than assuming any one array is ordered first.
+     *
+     * @param {CstNode} node
+     * @returns {IToken|null}
+     */
+    #getFirstTokenInNode(node) {
+        const children = node?.children || {};
+        /** @type {IToken|null} */
+        let first = null;
+
+        for (const key of Object.keys(children)) {
+            for (const element of children[key] || []) {
+                // Skip CST nodes (nested rules) — we only want leaf tokens
+                if (this.#isCstNode(element)) continue;
+                const token = /** @type {IToken} */ (element);
+                if (typeof token.startOffset !== 'number' || isNaN(token.startOffset)) continue;
+                if (first === null || token.startOffset < first.startOffset) {
+                    first = token;
+                }
+            }
+        }
+
+        return first;
+    }
+
+    /**
      * Evaluates scoped content between an opening and closing macro tag.
      * This resolves any nested macros within the scoped content.
      *
@@ -1135,9 +1179,10 @@ class MacroCstWalker {
      *
      * @param {Array<DocumentItem>} items - The collected document items.
      * @param {string} text - The original document text.
+     * @param {MacroEnv} env
      * @returns {Array<DocumentItem>} - The processed items with scoped macros merged.
      */
-    #processScopedMacros(items, text) {
+    #processScopedMacros(items, text, env) {
         // Build a list of scoped macro info for each macro item
         /** @type {Array<{ index: number, item: DocumentItemMacro, name: string, isClosing: boolean, matched: boolean }>} */
         const macroInfos = [];
@@ -1146,7 +1191,7 @@ class MacroCstWalker {
             const item = items[i];
             if (item.type !== 'macro') continue;
 
-            const info = this.#extractMacroInfo(item.node);
+            const info = this.extractMacroInfo(item.node);
             if (!info) continue;
 
             macroInfos.push({
@@ -1174,11 +1219,11 @@ class MacroCstWalker {
             if (openInfo.isClosing || openInfo.matched || insideScope.has(openInfo.index)) continue;
 
             // Find the matching closing macro for this opening macro
-            const closingIdx = this.#findMatchingClosingMacro(macroInfos, i);
+            const closingIdx = this.#findMatchingClosingMacro(macroInfos, i, env);
             if (closingIdx === -1) continue;
 
             // Check if the macro can accept scoped content (arity validation)
-            if (!this.#canAcceptScopedContent(openInfo.item.node, openInfo.name)) {
+            if (!this.#canAcceptScopedContent(openInfo.item.node, openInfo.name, env)) {
                 // Macro cannot accept scoped content - mark both as keepRaw
                 openInfo.item.keepRaw = true;
                 macroInfos[closingIdx].item.keepRaw = true;
@@ -1254,36 +1299,6 @@ class MacroCstWalker {
         return items.filter((_, index) => !itemsToRemove.has(index));
     }
 
-    /**
-     * Extracts macro name and closing flag status from a macro node.
-     *
-     * @param {CstNode} macroNode
-     * @returns {{ name: string, isClosing: boolean } | null}
-     */
-    #extractMacroInfo(macroNode) {
-        const children = macroNode.children || {};
-
-        // Check if this is a variable expression - they can't be scoped
-        const variableExprNode = (children.variableExpr || [])[0];
-        if (variableExprNode) {
-            return null; // Variable expressions don't support scoped content
-        }
-
-        // Regular macro - get info from macroBody
-        const macroBodyNode = /** @type {CstNode?} */ ((children.macroBody || [])[0]);
-        const bodyChildren = macroBodyNode?.children || {};
-
-        const identifierTokens = /** @type {IToken[]} */ (bodyChildren['Macro.identifier'] || []);
-        const name = identifierTokens[0]?.image || '';
-
-        if (!name) return null;
-
-        // Check for closing block flag (inside macroBody)
-        const flagTokens = /** @type {IToken[]} */ (children.flags || []);
-        const isClosing = flagTokens.some(token => token.image === MacroFlagType.CLOSING_BLOCK);
-
-        return { name, isClosing };
-    }
 
     /**
      * Checks if a macro can accept scoped content as an additional argument.
@@ -1291,10 +1306,11 @@ class MacroCstWalker {
      *
      * @param {CstNode} macroNode - The macro CST node.
      * @param {string} macroName - The macro name.
+     * @param {MacroEnv} [env]
      * @returns {boolean} - True if scoped content is allowed.
      */
-    #canAcceptScopedContent(macroNode, macroName) {
-        const def = MacroRegistry.getPrimaryMacro(macroName);
+    #canAcceptScopedContent(macroNode, macroName, env) {
+        const def = MacroRegistry.getEffectiveMacro(macroName, env);
         if (!def) {
             // Unknown macro - allow scoped content (will be handled as unknown macro later)
             return true;
@@ -1327,9 +1343,10 @@ class MacroCstWalker {
      *
      * @param {Array<{ index: number, item: DocumentItemMacro, name: string, isClosing: boolean, matched: boolean }>} macroInfos
      * @param {number} openingIdx - Index in macroInfos array of the opening macro.
+     * @param {MacroEnv} env
      * @returns {number} - Index in macroInfos array of the matching closing macro, or -1 if not found.
      */
-    #findMatchingClosingMacro(macroInfos, openingIdx) {
+    #findMatchingClosingMacro(macroInfos, openingIdx, env) {
         const openInfo = macroInfos[openingIdx];
         const targetName = openInfo.name;
         let depth = 1;
@@ -1351,7 +1368,7 @@ class MacroCstWalker {
             } else {
                 // Only increment depth for opening macros that can accept scoped content
                 // Inline macros (e.g., {{if condition::content}}) don't need closing tags
-                if (this.#canAcceptScopedContent(info.item.node, info.name)) {
+                if (this.#canAcceptScopedContent(info.item.node, info.name, env)) {
                     depth++;
                 }
             }

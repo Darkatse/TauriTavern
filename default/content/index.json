@@ -284,6 +284,10 @@
         "type": "openai_preset"
     },
     {
+        "filename": "presets/openai/Agent.json",
+        "type": "openai_preset"
+    },
+    {
         "filename": "presets/context/Adventure.json",
         "type": "context"
     },

@@ -30,7 +30,7 @@ fn model_binding(
 fn normalizes_frozen_run_input_snapshot() {
     let snapshot = normalize_frozen_run_input_snapshot(
         &json!({
-            "schemaVersion": 1,
+            "schemaVersion": FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
             "kind": FROZEN_RUN_INPUT_SNAPSHOT_KIND,
             "generationType": "swipe",
             "promptInputs": { "type": "swipe", "messages": [] },
@@ -78,7 +78,7 @@ fn attaches_selected_frozen_input_and_preserves_optional_input() {
     );
 
     let frozen = json!({
-        "schemaVersion": 1,
+        "schemaVersion": FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
         "kind": FROZEN_RUN_INPUT_SNAPSHOT_KIND,
         "generationType": "normal",
         "promptInputs": {},
@@ -107,7 +107,7 @@ fn rejects_malformed_embedded_frozen_input() {
         (json!(7), "agent.frozen_run_input_snapshot_required"),
         (
             json!({
-                "schemaVersion": 1,
+                "schemaVersion": FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
                 "kind": FROZEN_RUN_INPUT_SNAPSHOT_KIND,
                 "generationType": "normal",
                 "promptInputs": {},
@@ -229,7 +229,7 @@ fn current_model_connection_snapshot_rejects_unsupported_source() {
 fn rejects_frozen_snapshot_generation_type_mismatch() {
     let error = normalize_frozen_run_input_snapshot(
         &json!({
-            "schemaVersion": 1,
+            "schemaVersion": FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
             "kind": FROZEN_RUN_INPUT_SNAPSHOT_KIND,
             "generationType": "normal",
             "promptInputs": {},
@@ -292,7 +292,7 @@ fn current_prompt_snapshot_removes_stale_secret_when_current_connection_is_keyle
     });
     let frozen_run_input_snapshot = normalize_frozen_run_input_snapshot(
         &json!({
-            "schemaVersion": 1,
+            "schemaVersion": FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
             "kind": FROZEN_RUN_INPUT_SNAPSHOT_KIND,
             "generationType": "normal",
             "promptInputs": {},
@@ -330,7 +330,7 @@ fn current_prompt_snapshot_requires_frozen_current_model_connection() {
     });
     let frozen_run_input_snapshot = normalize_frozen_run_input_snapshot(
         &json!({
-            "schemaVersion": 1,
+            "schemaVersion": FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
             "kind": FROZEN_RUN_INPUT_SNAPSHOT_KIND,
             "generationType": "normal",
             "promptInputs": {},

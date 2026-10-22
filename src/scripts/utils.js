@@ -7,7 +7,8 @@ import {
 } from '../lib.js';
 
 import { getContext } from './extensions.js';
-import { characters, getRequestHeaders, processDroppedFiles, this_chid, user_avatar } from '../script.js';
+import { setInlineDrawerOpen } from './drawers.js';
+import { animation_duration, characters, getRequestHeaders, processDroppedFiles, this_chid, user_avatar } from '../script.js';
 import { isMobile } from './RossAscends-mods.js';
 import { collapseNewlines, power_user } from './power-user.js';
 import { debounce_timeout } from './constants.js';
@@ -17,24 +18,11 @@ import { getTagsList } from './tags.js';
 import { groups, selected_group } from './group-chats.js';
 import { getCurrentLocale, t } from './i18n.js';
 import { importWorldInfo } from './world-info.js';
-import { downloadBlobWithRuntime } from './file-export.js';
+import { deliverBlob } from './file-export.js';
 import { showExportFailureToast, showExportSuccessToast } from './download-feedback.js';
 
 export const shiftUpByOne = (e, i, a) => a[i] = e + 1;
 export const shiftDownByOne = (e, i, a) => a[i] = e - 1;
-
-/**
- * Pagination status string template.
- * @type {string}
- */
-export const PAGINATION_TEMPLATE = '<%= rangeStart %>-<%= rangeEnd %> .. <%= totalNumber %>';
-
-export const localizePagination = function (container) {
-    container.find('[title="Next page"]').attr('title', t`Next page`);
-    container.find('[title="Previous page"]').attr('title', t`Previous page`);
-    container.find('[title="First page"]').attr('title', t`First page`);
-    container.find('[title="Last page"]').attr('title', t`Last page`);
-};
 
 /**
  * Checks if the current environment supports negative lookbehind in regular expressions.
@@ -59,40 +47,6 @@ export function canUseNegativeLookbehind() {
     }
     return result;
 }
-
-/**
- * Renders a dropdown for selecting page size in pagination.
- * @param {number} pageSize Page size
- * @param {number[]} sizeChangerOptions Array of page size options
- * @returns {string} The rendered dropdown element as a string
- */
-export const renderPaginationDropdown = function (pageSize, sizeChangerOptions) {
-    const sizeSelect = document.createElement('select');
-    sizeSelect.classList.add('J-paginationjs-size-select');
-
-    if (sizeChangerOptions.indexOf(pageSize) === -1) {
-        sizeChangerOptions.unshift(pageSize);
-        sizeChangerOptions.sort((a, b) => a - b);
-    }
-
-    for (let i = 0; i < sizeChangerOptions.length; i++) {
-        const option = document.createElement('option');
-        option.value = `${sizeChangerOptions[i]}`;
-        option.textContent = `${sizeChangerOptions[i]} ${t`/ page`}`;
-        if (sizeChangerOptions[i] === pageSize) {
-            option.setAttribute('selected', 'selected');
-        }
-        sizeSelect.appendChild(option);
-    }
-
-    return sizeSelect.outerHTML;
-};
-
-export const paginationDropdownChangeHandler = function (event, size) {
-    let dropdown = $(event?.originalEvent?.currentTarget || event.delegateTarget).find('select');
-    dropdown.find('[selected]').removeAttr('selected');
-    dropdown.find(`[value=${size}]`).attr('selected', '');
-};
 
 /**
  * Navigation options for pagination.
@@ -411,9 +365,7 @@ export async function download(content, fileName, contentType, options = {}) {
         : new Blob([content], { type: contentType });
 
     try {
-        const result = await downloadBlobWithRuntime(file, fileName, {
-            fallbackName: 'download.bin',
-        });
+        const result = await deliverBlob(file, fileName);
         showExportSuccessToast(result);
         return result;
     } catch (error) {
@@ -424,10 +376,7 @@ export async function download(content, fileName, contentType, options = {}) {
 
         showExportFailureToast(error);
 
-        return {
-            mode: 'failed',
-            savedPath: '',
-        };
+        return { delivered: false };
     }
 }
 
@@ -712,13 +661,12 @@ export function isElementInViewport(el) {
  * @param {{ (name: string): boolean; }} exists Function to check if name exists.
  * @param {Object} [options] The options.
  * @param {((baseName: string, i: number) => string)|null} [options.nameBuilder=null] Function to build the name.
- *        Starts with the index provided by `startIndex` (default is 1). If not provided, uses "${baseName} (${i})".
+ *        Starts with the index provided by `startIndex` (default is 0). If not provided, uses `baseName` for index 0 and "${baseName} (${i})" for higher indices.
  * @param {number} [options.maxTries=1000] The maximum number of tries to find a unique name. Default is 1000.
- * @param {number} [options.startIndex=1] The index to start with when building the name. Default is 1.
- *        When set to 0, the intention is to also check if the basename (without applied index) is free.
+ * @param {number} [options.startIndex=0] The index to start with when building the name. Default is 0.
  * @returns {string|null} A unique name. Null if no unique name could be found in `maxTries`.
  */
-export function getUniqueName(baseName, exists, { nameBuilder = null, maxTries = 1000, startIndex = 1 } = {}) {
+export function getUniqueName(baseName, exists, { nameBuilder = null, maxTries = 1000, startIndex = 0 } = {}) {
     nameBuilder ??= (baseName, i) => i === 0 ? baseName : `${baseName} (${i})`;
     let i = startIndex;
     let name;
@@ -2587,31 +2535,11 @@ export function getFreeName(name, list, numberFormatter = (n) => ` #${n}`) {
  * @param {boolean} [expand=true] - Whether to expand or collapse the drawer
  */
 export function toggleDrawer(drawer, expand = true) {
-    /** @type {HTMLElement} */
-    const icon = drawer.querySelector(':scope > .inline-drawer-header .inline-drawer-icon');
-    /** @type {HTMLElement} */
-    const content = drawer.querySelector(':scope > .inline-drawer-content');
-
-    if (!icon || !content) {
-        console.debug('toggleDrawer: No icon or content found in the drawer element.');
-        return;
-    }
-
-    if (expand) {
-        icon.classList.remove('down', 'fa-circle-chevron-down');
-        icon.classList.add('up', 'fa-circle-chevron-up');
-        content.style.display = 'block';
-    } else {
-        icon.classList.remove('up', 'fa-circle-chevron-up');
-        icon.classList.add('down', 'fa-circle-chevron-down');
-        content.style.display = 'none';
-    }
-
-    drawer.dispatchEvent(new CustomEvent('inline-drawer-toggle', { bubbles: true }));
+    setInlineDrawerOpen(drawer, expand);
 
     // Set the height of "autoSetHeight" textareas within the inline-drawer to their scroll height
     if (!CSS.supports('field-sizing', 'content')) {
-        content.querySelectorAll('textarea.autoSetHeight').forEach(resetScrollHeight);
+        drawer.querySelectorAll(':scope > .inline-drawer-content textarea.autoSetHeight').forEach(resetScrollHeight);
     }
 }
 
@@ -2639,8 +2567,8 @@ export async function fetchFaFile(name) {
     const sheet = style.sheet;
     style.remove();
     return [...sheet.cssRules]
-        .filter(rule => (rule instanceof CSSStyleRule && rule.style?.content))
-        .map(rule => rule['selectorText'].split(/,\s*/).map(selector => selector.split('::').shift().slice(1)))
+        .filter(rule => rule instanceof CSSStyleRule && rule.style.getPropertyValue('--fa'))
+        .map(rule => rule.selectorText.split(/,\s*/).map(selector => selector.slice(1)))
     ;
 }
 
@@ -2843,32 +2771,54 @@ export function arraysEqual(a, b) {
  * @param {string | HTMLElement} target - The CSS selector or the HTML element of the information block
  * @param {string | HTMLElement?} content - The message to display inside the information block (supports HTML) or an HTML element
  * @param {'hint' | 'info' | 'warning' | 'error'} [type='info'] - The type of message, which determines the styling of the information block
+ * @param {object} [options={}] - Optional settings
+ * @param {boolean} [options.animate=true] - Whether to animate the block sliding in when first shown
  */
-export function setInfoBlock(target, content, type = 'info') {
+export function setInfoBlock(target, content, type = 'info', { animate = true } = {}) {
     if (!content) {
         clearInfoBlock(target);
         return;
     }
 
     const infoBlock = typeof target === 'string' ? document.querySelector(target) : target;
-    if (infoBlock) {
-        infoBlock.className = `info-block ${type}`;
-        if (typeof content === 'string') {
-            infoBlock.innerHTML = content;
-        } else {
-            infoBlock.innerHTML = '';
-            infoBlock.appendChild(content);
-        }
+    if (!infoBlock) return;
+
+    const wasVisible = infoBlock.classList.contains('info-block');
+
+    if (!wasVisible && animate) {
+        $(infoBlock).hide();
+    }
+
+    infoBlock.className = `info-block ${type}`;
+    if (typeof content === 'string') {
+        infoBlock.innerHTML = content;
+    } else {
+        infoBlock.innerHTML = '';
+        infoBlock.appendChild(content);
+    }
+
+    if (!wasVisible && animate) {
+        $(infoBlock).slideDown(animation_duration * 1.5);
     }
 }
 
 /**
  * Clears the content and style of an information block.
  * @param {string | HTMLElement} target - The CSS selector or the HTML element of the information block
+ * @param {object} [options={}] - Optional settings
+ * @param {boolean} [options.animate=true] - Whether to animate the block fading out before clearing
  */
-export function clearInfoBlock(target) {
+export function clearInfoBlock(target, { animate = true } = {}) {
     const infoBlock = typeof target === 'string' ? document.querySelector(target) : target;
-    if (infoBlock && infoBlock.classList.contains('info-block')) {
+    if (!infoBlock || !infoBlock.classList.contains('info-block')) return;
+
+    if (animate) {
+        $(infoBlock).slideUp(animation_duration * 1.5, () => {
+            infoBlock.className = '';
+            infoBlock.innerHTML = '';
+            $(infoBlock).css('display', '');
+        });
+    } else {
         infoBlock.className = '';
         infoBlock.innerHTML = '';
     }

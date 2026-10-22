@@ -63,9 +63,17 @@ test('cache usage distinguishes unknown from zero and includes Claude cache writ
         assert.deepEqual(getPromptCacheUsage(usage), expected);
     }
     assert.equal(getPromptCacheUsage({ prompt_tokens: 1000 }), null);
-    assert.deepEqual(getPromptCacheUsage({ prompt_tokens: 1000, prompt_tokens_details: { cached_tokens: 0 } }),
-        { input_tokens: 1000, cached_tokens: 0 });
-    assert.throws(() => getPromptCacheUsage({ prompt_tokens: 100, cached_tokens: 101 }), /Invalid prompt cache usage/);
+    // #304: the provider temporarily reports cached tokens with a zero input count.
+    const snapshots = [
+        { prompt_tokens: 33665, prompt_tokens_details: { cached_tokens: 0 } },
+        { prompt_tokens: 0, prompt_tokens_details: { cached_tokens: 64 } },
+        { prompt_tokens: 33639, prompt_tokens_details: { cached_tokens: 512 } },
+    ];
+    assert.deepEqual(snapshots.map(getPromptCacheUsage), [
+        { input_tokens: 33665, cached_tokens: 0 },
+        null,
+        { input_tokens: 33639, cached_tokens: 512 },
+    ]);
 });
 
 test('smooth streaming preserves Gemini usage-only terminal events and excludes secondary candidates', async () => {

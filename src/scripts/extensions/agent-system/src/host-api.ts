@@ -18,8 +18,7 @@ function getSillyTavernContext(): unknown {
 }
 
 export function waitForHostReady(): Promise<void> {
-    const ready = window.__TAURITAVERN__?.ready
-        ?? window.__TAURITAVERN_MAIN_READY__;
+    const ready = window.__TAURITAVERN__?.ready;
     if (ready == null) {
         throw new Error(tr('hostReadyUnavailable'));
     }

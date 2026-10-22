@@ -2,10 +2,9 @@ import { ensureImageFormatSupported, getBase64Async, getFileExtension, isTrueBoo
 import { getContext, getApiUrl, doExtrasFetch, extension_settings, modules, renderExtensionTemplateAsync } from '../../extensions.js';
 import { appendMediaToMessage, chat_metadata, eventSource, event_types, getRequestHeaders, saveChatConditional, saveSettingsDebounced, substituteParamsExtended, withChatSurfaceStructureMutation } from '../../../script.js';
 import { getMessageTimeStamp } from '../../RossAscends-mods.js';
-import { SECRET_KEYS, secret_state } from '../../secrets.js';
-import { oai_settings, POLLINATIONS_ENDPOINT } from '../../openai.js';
+import { oai_settings } from '../../openai.js';
 import { getMultimodalCaption, NATIVE_CAPTION_UNAVAILABLE_MESSAGE } from '../shared.js';
-import { textgen_types, textgenerationwebui_settings } from '../../textgen-settings.js';
+import { textgenerationwebui_settings } from '../../textgen-settings.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../slash-commands/SlashCommandArgument.js';
@@ -18,6 +17,12 @@ const MODULE_NAME = 'caption';
 
 const PROMPT_DEFAULT = 'What\'s in this image?';
 const TEMPLATE_DEFAULT = '[{{user}} sends {{char}} a picture that contains: {{caption}}]';
+
+const GOOGLE_MODEL_MIGRATIONS = new Map([
+    ['gemini-3.1-flash-lite-preview', 'gemini-3.1-flash-lite'],
+    ['gemini-3.1-flash-image-preview', 'gemini-3.1-flash-image'],
+    ['gemini-3-pro-image-preview', 'gemini-3-pro-image'],
+]);
 
 /**
  * Migrates old extension settings to the new format.
@@ -37,7 +42,12 @@ function migrateSettings() {
     if (extension_settings.caption.source === 'openai') {
         extension_settings.caption.source = 'multimodal';
         extension_settings.caption.multimodal_api = 'openai';
-        extension_settings.caption.multimodal_model = 'gpt-4-turbo';
+        extension_settings.caption.multimodal_model = 'gpt-5.6-luna';
+    }
+
+    if (['google', 'vertexai'].includes(extension_settings.caption.multimodal_api)) {
+        extension_settings.caption.multimodal_model = GOOGLE_MODEL_MIGRATIONS.get(extension_settings.caption.multimodal_model)
+            ?? extension_settings.caption.multimodal_model;
     }
 
     if (!extension_settings.caption.multimodal_api) {
@@ -45,7 +55,7 @@ function migrateSettings() {
     }
 
     if (!extension_settings.caption.multimodal_model) {
-        extension_settings.caption.multimodal_model = 'gpt-4-turbo';
+        extension_settings.caption.multimodal_model = 'gpt-5.6-luna';
     }
 
     if (!extension_settings.caption.prompt) {
@@ -225,17 +235,12 @@ async function sendCaptionedMessage(caption, image, mimeType) {
  * @returns {Promise<{caption: string}>} Generated caption
  */
 async function doCaptionRequest(base64Img, fileData, externalPrompt) {
-    if (globalThis.__TAURI_RUNNING__ === true && ['local', 'horde'].includes(extension_settings.caption.source)) {
-        throw new Error(NATIVE_CAPTION_UNAVAILABLE_MESSAGE);
-    }
-
     switch (extension_settings.caption.source) {
         case 'local':
-            return await captionLocal(base64Img);
+        case 'horde':
+            throw new Error(NATIVE_CAPTION_UNAVAILABLE_MESSAGE);
         case 'extras':
             return await captionExtras(base64Img);
-        case 'horde':
-            return await captionHorde(base64Img);
         case 'multimodal':
             return await captionMultimodal(fileData, externalPrompt);
         default:
@@ -267,46 +272,6 @@ async function captionExtras(base64Img) {
 
     if (!apiResult.ok) {
         throw new Error('Failed to caption image via Extras.');
-    }
-
-    const data = await apiResult.json();
-    return data;
-}
-
-/**
- * Generates a caption for an image using a local model.
- * @param {string} base64Img Base64 encoded image without the data:image/...;base64, prefix
- * @returns {Promise<{caption: string}>} Generated caption
- */
-async function captionLocal(base64Img) {
-    const apiResult = await fetch('/api/extra/caption', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ image: base64Img }),
-    });
-
-    if (!apiResult.ok) {
-        throw new Error('Failed to caption image via local pipeline.');
-    }
-
-    const data = await apiResult.json();
-    return data;
-}
-
-/**
- * Generates a caption for an image using a Horde model.
- * @param {string} base64Img Base64 encoded image without the data:image/...;base64, prefix
- * @returns {Promise<{caption: string}>} Generated caption
- */
-async function captionHorde(base64Img) {
-    const apiResult = await fetch('/api/horde/caption-image', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ image: base64Img }),
-    });
-
-    if (!apiResult.ok) {
-        throw new Error('Failed to caption image via Horde.');
     }
 
     const data = await apiResult.json();
@@ -475,89 +440,12 @@ export async function init() {
 
         $('#caption_wand_container').append(sendButton);
         $(sendButton).on('click', () => {
-            let unavailableReason = '';
-            const hasCaptionModule = (() => {
-                const settings = extension_settings.caption;
-
-                if (globalThis.__TAURI_RUNNING__ === true && ['local', 'horde'].includes(settings.source)) {
-                    unavailableReason = NATIVE_CAPTION_UNAVAILABLE_MESSAGE;
-                    return false;
-                }
-                if (globalThis.__TAURI_RUNNING__ === true && settings.source === 'multimodal') {
-                    return true;
-                }
-
-                // Handle non-multimodal sources
-                if (settings.source === 'extras' && modules.includes('caption')) return true;
-                if (settings.source === 'local' || settings.source === 'horde') return true;
-
-                // Handle multimodal sources
-                if (settings.source === 'multimodal') {
-                    const api = settings.multimodal_api;
-                    const altEndpointEnabled = settings.alt_endpoint_enabled;
-                    const altEndpointUrl = settings.alt_endpoint_url;
-
-                    // APIs that support reverse proxy
-                    const reverseProxyApis = {
-                        'openai': SECRET_KEYS.OPENAI,
-                        'mistral': SECRET_KEYS.MISTRALAI,
-                        'google': SECRET_KEYS.MAKERSUITE,
-                        'vertexai': SECRET_KEYS.VERTEXAI,
-                        'anthropic': SECRET_KEYS.CLAUDE,
-                        'xai': SECRET_KEYS.XAI,
-                        'zai': SECRET_KEYS.ZAI,
-                        'moonshot': SECRET_KEYS.MOONSHOT,
-                    };
-
-                    if (reverseProxyApis[api]) {
-                        if (secret_state[reverseProxyApis[api]] || settings.allow_reverse_proxy) {
-                            return true;
-                        }
-                    }
-
-                    const chatCompletionApis = {
-                        'openrouter': SECRET_KEYS.OPENROUTER,
-                        'groq': SECRET_KEYS.GROQ,
-                        'cohere': SECRET_KEYS.COHERE,
-                        'aimlapi': SECRET_KEYS.AIMLAPI,
-                        'nanogpt': SECRET_KEYS.NANOGPT,
-                        'chutes': SECRET_KEYS.CHUTES,
-                        'electronhub': SECRET_KEYS.ELECTRONHUB,
-                        'pollinations': SECRET_KEYS.POLLINATIONS,
-                        'workers_ai': SECRET_KEYS.WORKERS_AI,
-                    };
-
-                    if (chatCompletionApis[api] && secret_state[chatCompletionApis[api]]) {
-                        return true;
-                    }
-
-                    const textCompletionApis = {
-                        'ollama': textgen_types.OLLAMA,
-                        'llamacpp': textgen_types.LLAMACPP,
-                        'ooba': textgen_types.OOBA,
-                        'koboldcpp': textgen_types.KOBOLDCPP,
-                        'vllm': textgen_types.VLLM,
-                    };
-
-                    if (textCompletionApis[api] && altEndpointEnabled && altEndpointUrl) {
-                        return true;
-                    }
-
-                    if (textCompletionApis[api] && !altEndpointEnabled && textgenerationwebui_settings.server_urls[textCompletionApis[api]]) {
-                        return true;
-                    }
-
-                    // Custom API and anonymous Pollinations don't need additional checks
-                    if (api === 'custom' || (api === 'pollinations' && oai_settings.pollinations_endpoint === POLLINATIONS_ENDPOINT.ANONYMOUS)) {
-                        return true;
-                    }
-                }
-
-                return false;
-            })();
+            const settings = extension_settings.caption;
+            const hasCaptionModule = settings.source === 'multimodal'
+                || (settings.source === 'extras' && modules.includes('caption'));
 
             if (!hasCaptionModule) {
-                toastr.error(unavailableReason || 'Choose other captioning source in the extension settings.', 'Captioning is not available');
+                toastr.error('Choose other captioning source in the extension settings.', 'Captioning is not available');
                 return;
             }
 

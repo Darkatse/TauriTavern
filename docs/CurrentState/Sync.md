@@ -47,9 +47,11 @@ LAN 上传保留发起方的覆盖策略，但实际回拉使用目标设备的�
 
 本机广播随接收服务启停，只下载时可以独立发现。发现失败不删除配对或停用仍可用的 HTTPS 连接；停止接收服务不取消已接受的本地下载作业。
 
-附近发现使用 mDNS / DNS-SD。iOS 与 macOS 使用系统 Bonjour，Android、Windows 与 Linux 使用 Rust mDNS；两套后端共享服务信息与设备目录，记录更新和过期由发现后端处理。
+本机地址按用途分三类：**可用地址**列出全部非回环 IPv4，包括 VPN 与组网地址；**默认地址**用于配对链接，优先取运行中的广播接口上默认路由所在的地址，广播接口也包括虚拟网桥与 TAP；**回连地址**在配对时取本机到对端路由的源地址。
 
-LAN 功能受宿主 `sync.lan` 能力门禁和平台权限约束。移动端权限、签名与生命周期要求见 [Android](../AndroidDevelopment.md) 和 [iOS](../iOSDevelopment.md)。
+附近发现使用 mDNS / DNS-SD。iOS 受直接组播权限限制，使用系统 Bonjour，macOS 共用这一后端；Android、Windows、Linux 与鸿蒙使用 Rust mDNS。两套后端共享服务信息与设备目录，记录更新和过期由发现后端处理。
+
+LAN 功能受宿主 `sync.lan` 能力门禁和平台权限约束。移动端权限、签名与生命周期要求见 [Android](../AndroidDevelopment.md)、[iOS](../iOSDevelopment.md) 和 [鸿蒙](../OpenHarmonyDevelopment.md)。
 
 ## 面板、事件与自动同步
 

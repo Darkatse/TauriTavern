@@ -1,28 +1,82 @@
 use std::sync::Arc;
 
-use tauri::State;
+use serde::Serialize;
+#[cfg(mobile)]
+use tauri::Manager;
+use tauri::{State, WebviewWindow};
 
 use crate::app::AppState;
+use crate::platform::file_transfer::{self, PickKind};
+use crate::presentation::commands::file_transfer_commands::DeliveryResult;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
-use tt_application::dto::data_archive_dto::{DataArchiveJobStatus, UserBackupArchiveResult};
+use tt_application::dto::data_archive_dto::DataArchiveJobStatus;
+
+#[derive(Serialize)]
+pub struct ImportArchiveResult {
+    cancelled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_name: Option<String>,
+}
 
 #[tauri::command]
-pub fn start_import_data_archive(
+pub async fn import_data_archive_from_picker(
     app_state: State<'_, Arc<AppState>>,
-    archive_path: String,
-    archive_is_temporary: bool,
-) -> Result<String, CommandError> {
-    log_command(format!(
-        "start_import_data_archive {} temporary={}",
-        archive_path, archive_is_temporary
-    ));
+    window: WebviewWindow,
+) -> Result<ImportArchiveResult, CommandError> {
+    log_command("import_data_archive_from_picker");
+    let Some(files) = file_transfer::pick(&window, PickKind::DataArchive, false).await? else {
+        return Ok(ImportArchiveResult {
+            cancelled: true,
+            job_id: None,
+            file_name: None,
+        });
+    };
+    let picked = files
+        .into_iter()
+        .next()
+        .ok_or_else(|| CommandError::BadRequest("No archive was selected".into()))?;
+    let service = app_state.services.data_archive_service.clone();
 
-    app_state
-        .services
-        .data_archive_service
-        .start_import(std::path::Path::new(&archive_path), archive_is_temporary)
-        .map_err(map_command_error("Failed to start data archive import"))
+    #[cfg(desktop)]
+    let (archive_path, temporary) = {
+        let file_transfer::PickedSource::UserPath(path) = picked.source;
+        (path, false)
+    };
+    #[cfg(mobile)]
+    let (archive_path, temporary) = {
+        let staging_service = service.clone();
+        let target = tauri::async_runtime::spawn_blocking(move || {
+            staging_service.prepare_incoming_import_archive_path()
+        })
+        .await
+        .map_err(|error| {
+            CommandError::InternalServerError(format!("Import staging task failed: {error}"))
+        })??;
+        (
+            file_transfer::materialize(window.app_handle(), picked.source, target).await?,
+            true,
+        )
+    };
+
+    let job_id = tauri::async_runtime::spawn_blocking(move || {
+        let result = service.start_import(&archive_path, temporary);
+        // A temporary source is moved into the job workspace before returning.
+        if temporary && result.is_err()
+            && let Err(error) = std::fs::remove_file(&archive_path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(%error, path = %archive_path.display(), "Failed to discard imported archive");
+        }
+        result
+    }).await.map_err(|error| CommandError::InternalServerError(format!("Import startup task failed: {error}")))??;
+    Ok(ImportArchiveResult {
+        cancelled: false,
+        job_id: Some(job_id),
+        file_name: Some(picked.name),
+    })
 }
 
 #[tauri::command]
@@ -30,7 +84,6 @@ pub fn start_export_data_archive(
     app_state: State<'_, Arc<AppState>>,
 ) -> Result<String, CommandError> {
     log_command("start_export_data_archive");
-
     app_state
         .services
         .data_archive_service
@@ -39,29 +92,10 @@ pub fn start_export_data_archive(
 }
 
 #[tauri::command]
-pub fn prepare_data_archive_import_target_path(
-    app_state: State<'_, Arc<AppState>>,
-) -> Result<String, CommandError> {
-    log_command("prepare_data_archive_import_target_path");
-
-    let path = app_state
-        .services
-        .data_archive_service
-        .prepare_incoming_import_archive_path()
-        .map_err(map_command_error(
-            "Failed to prepare data archive import target path",
-        ))?;
-
-    Ok(path.to_string_lossy().to_string())
-}
-
-#[tauri::command]
 pub fn get_data_archive_job_status(
     app_state: State<'_, Arc<AppState>>,
     job_id: String,
 ) -> Result<DataArchiveJobStatus, CommandError> {
-    log_command(format!("get_data_archive_job_status {}", job_id));
-
     app_state
         .services
         .data_archive_service
@@ -74,8 +108,6 @@ pub fn cancel_data_archive_job(
     app_state: State<'_, Arc<AppState>>,
     job_id: String,
 ) -> Result<(), CommandError> {
-    log_command(format!("cancel_data_archive_job {}", job_id));
-
     app_state
         .services
         .data_archive_service
@@ -86,102 +118,36 @@ pub fn cancel_data_archive_job(
 #[tauri::command]
 pub async fn save_export_data_archive(
     app_state: State<'_, Arc<AppState>>,
+    window: WebviewWindow,
     job_id: String,
-) -> Result<String, CommandError> {
-    log_command(format!("save_export_data_archive {}", job_id));
-
-    let saved_path = app_state
-        .services
-        .data_archive_service
-        .save_export(job_id)
-        .await
-        .map_err(map_command_error("Failed to save export data archive"))?;
-
-    Ok(saved_path.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-pub fn cleanup_export_data_archive(
-    app_state: State<'_, Arc<AppState>>,
-    job_id: String,
-) -> Result<(), CommandError> {
-    log_command(format!("cleanup_export_data_archive {}", job_id));
-
-    app_state
-        .services
-        .data_archive_service
-        .cleanup_export(&job_id)
-        .map_err(map_command_error("Failed to cleanup export data archive"))
-}
-
-#[tauri::command]
-pub fn finalize_export_data_archive_delivery(
-    app_state: State<'_, Arc<AppState>>,
-    job_id: String,
-    saved_path: Option<String>,
-) -> Result<Option<String>, CommandError> {
-    log_command(format!("finalize_export_data_archive_delivery {}", job_id));
-
-    let saved_target = saved_path
-        .map(|path| path.trim().to_string())
-        .filter(|path| !path.is_empty());
-
-    app_state
-        .services
-        .data_archive_service
-        .finalize_export_delivery(&job_id, saved_target)
-        .map_err(map_command_error(
-            "Failed to finalize export data archive delivery",
-        ))
+) -> Result<DeliveryResult, CommandError> {
+    log_command(format!("save_export_data_archive {job_id}"));
+    let service = &app_state.services.data_archive_service;
+    let artifact = service.claim_export_artifact(&job_id)?;
+    let delivery =
+        file_transfer::deliver(&window, artifact.archive_path, &artifact.file_name).await;
+    service.finish_export_delivery(&job_id)?;
+    Ok(delivery?.into())
 }
 
 #[tauri::command]
 pub async fn export_user_backup_archive(
     app_state: State<'_, Arc<AppState>>,
+    window: WebviewWindow,
     handle: String,
     include_secrets: bool,
-) -> Result<UserBackupArchiveResult, CommandError> {
+) -> Result<DeliveryResult, CommandError> {
     log_command(format!(
-        "export_user_backup_archive {} include_secrets={}",
-        handle, include_secrets
+        "export_user_backup_archive {handle} include_secrets={include_secrets}"
     ));
-
-    app_state
+    let archive = app_state
         .services
         .data_archive_service
         .export_user_backup(handle, include_secrets)
-        .await
-        .map_err(map_command_error("Failed to export user backup archive"))
-}
-
-#[tauri::command]
-pub async fn save_user_backup_archive(
-    app_state: State<'_, Arc<AppState>>,
-    archive_path: String,
-    file_name: String,
-) -> Result<String, CommandError> {
-    log_command("save_user_backup_archive");
-
-    let saved_path = app_state
-        .services
-        .data_archive_service
-        .save_user_backup(archive_path, file_name)
-        .await
-        .map_err(map_command_error("Failed to save user backup archive"))?;
-
-    Ok(saved_path.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-pub fn cleanup_user_backup_archive(
-    app_state: State<'_, Arc<AppState>>,
-    archive_path: String,
-) -> Result<(), CommandError> {
-    log_command("cleanup_user_backup_archive");
-
-    app_state
-        .services
-        .data_archive_service
-        .cleanup_user_backup(&archive_path)
-        .map_err(map_command_error("Failed to cleanup user backup archive"))
+        .await?;
+    Ok(
+        file_transfer::deliver(&window, archive.archive_path.into(), &archive.file_name)
+            .await?
+            .into(),
+    )
 }
