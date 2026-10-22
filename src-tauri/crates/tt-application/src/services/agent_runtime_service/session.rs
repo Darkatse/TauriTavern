@@ -12,7 +12,7 @@ use crate::dto::agent_dto::{
     AgentDeleteSessionDto, AgentListSessionsResultDto, AgentReadSessionDto,
     AgentReadSessionResultDto, AgentRenameSessionDto, AgentSaveProfileDto,
     AgentSessionProfileResultDto, AgentSessionResultDto, AgentSessionRunHandleDto,
-    AgentStartSessionRunDto,
+    AgentSessionRunInput, AgentStartSessionRunDto,
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_workspace_lifecycle_service::AgentRunActivity;
@@ -189,11 +189,7 @@ impl AgentRuntimeService {
         self: &Arc<Self>,
         dto: AgentStartSessionRunDto,
     ) -> Result<AgentSessionRunHandleDto, ApplicationError> {
-        if dto.text.trim().is_empty() {
-            return Err(ApplicationError::ValidationError(
-                "agent.session_text_required: text cannot be empty".into(),
-            ));
-        }
+        let user_message = session_user_message(&dto.input)?;
         let profile = self
             .profile_service
             .resolve_session_profile(dto.profile, self.tool_registry.catalog())
@@ -214,7 +210,11 @@ impl AgentRuntimeService {
             .frozen_run_input_snapshot_sha256 =
             sha256_value(&assembly_request.frozen_run_input_snapshot)?;
         let assembly_metadata = assembly_request.metadata();
-        let session_invocation = SessionInvocation::new(assembly_request, &prompt_snapshot)?;
+        let session_invocation = SessionInvocation::new(
+            assembly_request,
+            &prompt_snapshot,
+            matches!(dto.input, AgentSessionRunInput::Compaction),
+        )?;
         let _admission = self.run_lifecycle_lock.lock().await;
         self.session_repository
             .load_session(&dto.session_id)
@@ -261,20 +261,18 @@ impl AgentRuntimeService {
             }),
         )
         .await?;
-        self.record_session_message(
-            &dto.session_id,
-            NewAgentSessionMessage {
-                run_id: run.id.clone(),
-                message: AgentModelMessage {
-                    role: AgentModelRole::User,
-                    parts: vec![AgentModelContentPart::Text { text: dto.text }],
-                    provider_metadata: Value::Null,
+        if let Some(message) = user_message {
+            self.record_session_message(
+                &dto.session_id,
+                NewAgentSessionMessage {
+                    run_id: run.id.clone(),
+                    message,
+                    origin: None,
+                    compaction: None,
                 },
-                origin: None,
-                compaction: None,
-            },
-        )
-        .await?;
+            )
+            .await?;
+        }
         let mut intent = dto.generation_intent;
         intent.insert("promptAssembly".into(), json!(assembly_metadata));
         self.event(
@@ -403,5 +401,23 @@ impl AgentRuntimeService {
                 &profile.skills,
             )
             .await
+    }
+}
+
+pub(super) fn session_user_message(
+    input: &AgentSessionRunInput,
+) -> Result<Option<AgentModelMessage>, ApplicationError> {
+    match input {
+        AgentSessionRunInput::Message { text } if text.trim().is_empty() => {
+            Err(ApplicationError::ValidationError(
+                "agent.session_text_required: text cannot be empty".into(),
+            ))
+        }
+        AgentSessionRunInput::Message { text } => Ok(Some(AgentModelMessage {
+            role: AgentModelRole::User,
+            parts: vec![AgentModelContentPart::Text { text: text.clone() }],
+            provider_metadata: Value::Null,
+        })),
+        AgentSessionRunInput::Compaction => Ok(None),
     }
 }

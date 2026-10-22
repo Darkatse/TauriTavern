@@ -6,7 +6,9 @@ use tt_application::dto::agent_dto::{AgentCancelRunDto, AgentReadSessionDto, Age
 use tt_contracts::extension_tools::{ExtensionToolDefinition, ExtensionToolReply};
 use tt_domain::models::tool::{AgentToolScope, ToolId};
 
-use super::session::{configure_session_profile, prepare_input, wait_until_session_idle};
+use super::session::{
+    configure_session_profile, prepare_input, user_input, wait_until_session_idle,
+};
 
 fn register_tool(
     fixture: &AgentRuntimeFixture,
@@ -242,7 +244,13 @@ async fn session_filters_tools_and_preserves_profile_choices_when_extensions_are
         .extension_tools
         .set_enabled("main", &tool_id, false)
         .unwrap();
-    let input = prepare_input(&fixture, &session.id, &profile, "Continue while disabled.").await;
+    let input = prepare_input(
+        &fixture,
+        &session.id,
+        &profile,
+        user_input("Continue while disabled."),
+    )
+    .await;
     let disabled = fixture.service.start_session_run(input).await.unwrap();
     wait_until_session_idle(&fixture, &disabled.run_id).await;
     let requests = fixture.model_gateway.requests().await;
@@ -257,7 +265,13 @@ async fn session_filters_tools_and_preserves_profile_choices_when_extensions_are
         .extension_tools
         .set_enabled("main", &tool_id, true)
         .unwrap();
-    let input = prepare_input(&fixture, &session.id, &profile, "Inspect the application.").await;
+    let input = prepare_input(
+        &fixture,
+        &session.id,
+        &profile,
+        user_input("Inspect the application."),
+    )
+    .await;
     let enabled = fixture.service.start_session_run(input).await.unwrap();
     let event = next_event(&mut events).await;
     assert_eq!(
@@ -319,7 +333,13 @@ async fn session_filters_tools_and_preserves_profile_choices_when_extensions_are
         .profile
         .unwrap();
     assert!(stored.tools.allow.contains(&tool_id.to_string()));
-    let input = prepare_input(&fixture, &session.id, &stored, "Continue after reload.").await;
+    let input = prepare_input(
+        &fixture,
+        &session.id,
+        &stored,
+        user_input("Continue after reload."),
+    )
+    .await;
     let missing = fixture.service.start_session_run(input).await.unwrap();
     wait_until_session_idle(&fixture, &missing.run_id).await;
     assert_eq!(
@@ -370,7 +390,13 @@ async fn session_cancellation_stops_after_the_started_extension_call() {
         .await
         .unwrap();
     let session = fixture.service.create_session().await.unwrap().session;
-    let input = prepare_input(&fixture, &session.id, &profile, "Wait for cancellation.").await;
+    let input = prepare_input(
+        &fixture,
+        &session.id,
+        &profile,
+        user_input("Wait for cancellation."),
+    )
+    .await;
     let handle = fixture.service.start_session_run(input).await.unwrap();
     let event = next_event(&mut events).await;
     fixture

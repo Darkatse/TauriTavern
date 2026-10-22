@@ -44,8 +44,13 @@ function harness(selectionId?: string | null) {
                 state.active = handle;
                 return state.failSend ? Promise.reject(new Error('send receipt lost')) : Promise.resolve(handle);
             },
+            compact: () => {
+                const handle: TauriTavernAgentSessionRunHandle = { sessionId: 'session', runId: 'compaction', status: 'created', createdAt };
+                state.active = handle;
+                return Promise.resolve(handle);
+            },
         },
-        readEvents: () => Promise.resolve({ events: [...state.events] }),
+        readEvents: ({ runId }) => Promise.resolve({ events: state.events.filter(item => item.runId === runId) }),
         subscribe: (_runId, handler) => { state.event = handler; return () => { state.event = null; }; },
         subscribeLiveProjection: (_runId, handler) => { state.live = handler; return () => { state.live = null; }; },
         cancel: () => Promise.resolve({ sessionId: 'session', runId: 'run', status: 'cancelling', createdAt }),
@@ -121,6 +126,22 @@ test('canonical origin replaces previews in either delivery order; terminal refr
     expect(controller.getSnapshot().responses).toEqual([]);
     expect(state.event).toBeNull();
     expect(state.live).toBeNull();
+    controller.dispose();
+});
+
+test('a compaction that fails before saving a message stays the current run', async () => {
+    const { controller, state } = harness('session');
+    state.messages = [{ ...message(1, 'user'), createdAt: '2026-09-22T11:00:00Z' }, { ...message(2), createdAt: '2026-09-22T11:00:01Z' }];
+    state.events = [event(3, 'run_completed')];
+    await controller.initialize();
+    await controller.compact();
+    expect(controller.getSnapshot().run).toMatchObject({ runId: 'compaction', active: true });
+    state.active = null;
+    const failed = { ...event(4, 'run_failed'), runId: 'compaction' };
+    state.events.push(failed);
+    state.event?.(failed);
+    await controller.refresh();
+    expect(controller.getSnapshot().run).toMatchObject({ runId: 'compaction', status: 'failed', active: false });
     controller.dispose();
 });
 

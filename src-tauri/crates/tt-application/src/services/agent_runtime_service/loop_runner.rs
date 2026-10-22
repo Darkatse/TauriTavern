@@ -80,7 +80,7 @@ impl AgentRuntimeService {
                         self.transition_status(run_id, AgentRunStatus::CallingModel)
                             .await?;
                     }
-                    let session_tokens = match &prepared.session {
+                    let mut session_tokens = match &prepared.session {
                         Some(session) => Some(
                             self.context_tokens(
                                 &prepared.request,
@@ -102,18 +102,33 @@ impl AgentRuntimeService {
                         if let (Some((trigger, tokens)), Some(session)) =
                             (pending.take(), &prepared.session)
                         {
-                            prepared.request = self
+                            let (request, tokens_after) = self
                                 .compact_session_context(
                                     prepared, session, round, trigger, tokens, cancel,
                                 )
                                 .await?;
+                            prepared.request = request;
+                            session_tokens = Some(tokens_after);
                             progress.session.clear_reads();
                             compacted = true;
+                            self.transition_status(run_id, AgentRunStatus::CallingModel)
+                                .await?;
                         }
-                        self.event(run_id, AgentRunEventLevel::Info, "model_request_created", json!({
+                        let mut created = json!({
                             "round": round, "invocationId": invocation_id,
                             "toolTurn": &prepared.tool_turn, "request": request_summary(&prepared.request),
-                        })).await?;
+                        });
+                        if let (Some(session), Some(tokens)) = (&prepared.session, session_tokens) {
+                            created["context"] =
+                                json!({ "tokens": tokens, "point": session.point });
+                        }
+                        self.event(
+                            run_id,
+                            AgentRunEventLevel::Info,
+                            "model_request_created",
+                            created,
+                        )
+                        .await?;
                         let result = self
                             .generate_model_with_retry(
                                 &prepared.invocation,

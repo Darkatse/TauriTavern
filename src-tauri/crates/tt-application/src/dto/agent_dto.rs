@@ -21,8 +21,15 @@ use tt_ports::repositories::agent_profile_storage_health_repository::{
 #[serde(rename_all = "camelCase")]
 pub struct AgentPrepareSessionRunDto {
     pub session_id: String,
-    pub text: String,
+    pub input: AgentSessionRunInput,
     pub profile: AgentProfileDefinition,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AgentSessionRunInput {
+    Message { text: String },
+    Compaction,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,7 +44,7 @@ pub struct AgentPrepareSessionRunResultDto {
 #[serde(rename_all = "camelCase")]
 pub struct AgentStartSessionRunDto {
     pub session_id: String,
-    pub text: String,
+    pub input: AgentSessionRunInput,
     pub profile: AgentProfileDefinition,
     pub expected_history_seq: u64,
     pub prompt_snapshot: Value,

@@ -45,6 +45,7 @@ Session 独立于角色聊天和写作 Agent Mode。使用前通过 `sessions.pr
 | `sessions.delete({ sessionId })` | 删除会话数据；活动会话拒绝删除，目标已不存在时成功 |
 | `sessions.read({ sessionId, beforeSeq?, limit? })` | `{ session, messages, lastSeq, nextBeforeSeq, activeRun }` |
 | `sessions.send({ sessionId, text, variables? })` | `{ sessionId, runId, status, createdAt }`；执行在原生端继续 |
+| `sessions.compact({ sessionId })` | 同上；这次 Run 只压缩上下文，不回复 |
 
 ```js
 // 已配置 Session Profile；agent 的取得方式同上。
@@ -62,7 +63,7 @@ const run = await agent.sessions.send({ sessionId: session.id, text: '查看 wor
 
 `origin: { invocationId, round }` 关联 assistant/tool 消息及压缩记录所属的回合，不进入模型消息；用户自己的消息没有 origin，旧历史也可缺少它。Session seq 标识持久消息。压缩记录为 user 角色，两个 Text part 分别保存说明和摘要，并带 `compaction: { keptFromSeq: number | null, tokensBefore: number, tokensAfter: number }`；它不是用户发言，不更新标题或 `lastUsedAt`，也不替代同 origin 的模型回复。`keptFromSeq` 指向保留的完整组起点，null 表示没有保留组。
 
-Session 的 snapshot 另带 `contextLimits: { context, response, tokenizerModel }`，由组装时的有效模型设置提供。自动压缩的规则见[运行循环](../Agent/Runtime.md#session-上下文压缩)，状态与事件见[运行日志](../Agent/RunEventJournal.md#一条事件)。常见失败码：
+Session 的 snapshot 另带 `contextLimits: { context, response, tokenizerModel }`，由组装时的有效模型设置提供。压缩的规则见[运行循环](../Agent/Runtime.md#session-上下文压缩)，状态与事件见[运行日志](../Agent/RunEventJournal.md#一条事件)。常见失败码：
 
 | 错误码 | 含义 |
 | --- | --- |
@@ -70,6 +71,7 @@ Session 的 snapshot 另带 `contextLimits: { context, response, tokenizerModel 
 | `agent.session_context_limits_missing` | 快照缺少有效的 `contextLimits` |
 | `agent.session_context_limits_invalid` | `contextLimits.context` 不大于 `contextLimits.response` |
 | `agent.context_full` | 上下文无法通过压缩降到压缩点以下 |
+| `agent.nothing_to_compact` | 手动压缩时，较早部分都在保留范围内 |
 | `agent.compaction_failed` | 模型未按要求产出摘要、回复截断或输入无法缩小到可摘要的范围 |
 | `model.context_overflow` | 服务商报告超窗；本轮压缩恢复后仍失败时传播 |
 

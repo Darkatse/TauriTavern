@@ -17,10 +17,14 @@ export function createAgentSessionsApi({ safeInvoke, promptAssembly, attachAssem
     }
 
     async function send({ sessionId, text, variables } = {}) {
-        sessionId = requireSessionId(sessionId);
-        if (typeof text !== 'string' || !text.trim()) {
-            throw new Error('agent.session_message_required: text cannot be empty');
-        }
+        return startRun(requireSessionId(sessionId), { kind: 'message', text }, variables);
+    }
+
+    async function compact({ sessionId } = {}) {
+        return startRun(requireSessionId(sessionId), { kind: 'compaction' });
+    }
+
+    async function startRun(sessionId, input, variables) {
         if (preparing.has(sessionId)) throw new Error('agent.session_busy: this Session is already preparing a run');
         preparing.add(sessionId);
         try {
@@ -35,7 +39,7 @@ export function createAgentSessionsApi({ safeInvoke, promptAssembly, attachAssem
             const { profile } = await load();
             if (!profile) throw new Error('agent.session_profile_missing: configure the Session Profile before sending');
             await ensureModelTargetLlmConnectionForProfile(profile);
-            const prepared = await safeInvoke('prepare_agent_session_run', { dto: { sessionId, text, profile } });
+            const prepared = await safeInvoke('prepare_agent_session_run', { dto: { sessionId, input, profile } });
             const frozenInput = prepared.request.frozenRunInputSnapshot;
             const macroContext = MacroEnvBuilder.createSessionContext(prepared.sessionMessages, {
                 sessionId,
@@ -46,7 +50,7 @@ export function createAgentSessionsApi({ safeInvoke, promptAssembly, attachAssem
             prepared.request.frozenRunInputSnapshot = assembled.frozenRunInputSnapshot;
             const run = await safeInvoke('start_agent_session_run', { dto: {
                 sessionId,
-                text,
+                input,
                 profile,
                 expectedHistorySeq: prepared.expectedHistorySeq,
                 promptAssemblyRequest: prepared.request,
@@ -79,6 +83,7 @@ export function createAgentSessionsApi({ safeInvoke, promptAssembly, attachAssem
             } });
         },
         send,
+        compact,
     };
 }
 

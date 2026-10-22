@@ -26,7 +26,7 @@ function harness() {
     let snapshot: AssistantSnapshot = {
         initialized: true, profile, profileSaved: true, busy: false, error: null,
         sessionId: 'session', messages: [], nextBeforeSeq: null, run: null, events: [], responses: [],
-        loading: false, draft: '', activeRun: null, sendingSessionId: undefined,
+        loading: false, draft: '', activeRun: null, startingSessionId: undefined,
         sessions: [{ id: 'session', title: 'Test conversation', createdAt: '2026-09-22T12:00:00Z', lastUsedAt: null }],
     };
     const listeners = new Set<() => void>();
@@ -34,7 +34,7 @@ function harness() {
     const sendMessage = vi.fn(() => Promise.resolve<TauriTavernAgentSessionRunHandle>({ runId: 'run', sessionId: 'session', status: 'calling_model', createdAt: '2026-09-22T12:00:00Z' }));
     const controller: AssistantController = {
         getSnapshot: () => snapshot, subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-        initialize: () => Promise.resolve(), saveProfile: () => Promise.resolve(), send: sendMessage,
+        initialize: () => Promise.resolve(), saveProfile: () => Promise.resolve(), send: sendMessage, compact: sendMessage,
         selectSession: () => Promise.resolve(), newSession: () => Promise.resolve(),
         setDraft: text => publish({ draft: text }),
         refreshSessions: () => Promise.resolve(),

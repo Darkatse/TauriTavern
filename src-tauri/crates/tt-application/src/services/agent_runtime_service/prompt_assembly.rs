@@ -1,9 +1,10 @@
-use serde_json::{Value, json};
+use serde_json::json;
 use tokio::sync::oneshot;
 use tt_ports::workspace_fs::WorkspaceWriteGuard;
 use uuid::Uuid;
 
 use super::prompt_snapshot::{AgentPromptRequest, admit_prompt_snapshot};
+use super::session::session_user_message;
 use super::session_context::{session_context, session_history_groups};
 use super::{
     AgentCancelReceiver, AgentRuntimeService, HostPromptAssemblyResult, PendingHostPromptAssembly,
@@ -23,18 +24,12 @@ impl AgentRuntimeService {
         &self,
         dto: crate::dto::agent_dto::AgentPrepareSessionRunDto,
     ) -> Result<crate::dto::agent_dto::AgentPrepareSessionRunResultDto, ApplicationError> {
-        use tt_domain::models::agent::{
-            AgentInvocationExitPolicy, AgentModelContentPart, AgentModelMessage, AgentModelRole,
-        };
+        use tt_domain::models::agent::AgentInvocationExitPolicy;
 
         self.session_repository
             .load_session(&dto.session_id)
             .await?;
-        if dto.text.trim().is_empty() {
-            return Err(ApplicationError::ValidationError(
-                "agent.session_text_required: text must not be empty".into(),
-            ));
-        }
+        let user_message = session_user_message(&dto.input)?;
         let profile = self
             .profile_service
             .resolve_session_profile(dto.profile, self.tool_catalog())
@@ -45,14 +40,11 @@ impl AgentRuntimeService {
             .iter()
             .map(|entry| entry.message.clone())
             .collect::<Vec<_>>();
-        let user_message = AgentModelMessage {
-            role: AgentModelRole::User,
-            parts: vec![AgentModelContentPart::Text { text: dto.text }],
-            provider_metadata: Value::Null,
-        };
         let mut groups = session_history_groups(&session_context(&history)?)?;
-        groups.push(vec![user_message.clone()]);
-        messages.push(user_message);
+        if let Some(message) = user_message {
+            groups.push(vec![message.clone()]);
+            messages.push(message);
+        }
         let tools = self
             .prepare_invocation_tools(
                 &profile,

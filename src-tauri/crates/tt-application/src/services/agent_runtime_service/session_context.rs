@@ -51,6 +51,7 @@ pub(super) struct SessionInvocation {
     pub tokenizer_model: String,
     /// Replaced after every model response, so a request rebuilt by compaction is never counted against a stale anchor.
     pub usage_anchor: Option<UsageAnchor>,
+    pub manual_compaction: bool,
 }
 
 #[derive(Debug)]
@@ -64,12 +65,14 @@ pub(super) struct UsageAnchor {
 pub(super) enum CompactionTrigger {
     Point,
     Overflow,
+    Manual,
 }
 
 impl SessionInvocation {
     pub fn new(
         assembly_request: AgentPromptAssemblyBrokerRequestDto,
         snapshot: &Value,
+        manual_compaction: bool,
     ) -> Result<Self, ApplicationError> {
         let limits = &snapshot["contextLimits"];
         let missing = || {
@@ -98,6 +101,7 @@ impl SessionInvocation {
             point: compaction_point(context, response),
             tokenizer_model,
             usage_anchor: None,
+            manual_compaction,
         })
     }
 
@@ -495,7 +499,7 @@ impl AgentRuntimeService {
         trigger: CompactionTrigger,
         tokens_before: usize,
         cancel: &mut AgentCancelReceiver,
-    ) -> Result<AgentModelRequest, ApplicationError> {
+    ) -> Result<(AgentModelRequest, usize), ApplicationError> {
         let invocation = &prepared.invocation;
         let run_id = invocation.run_id.as_str();
         let active = self.active_run_handle(run_id).await?;
@@ -514,7 +518,14 @@ impl AgentRuntimeService {
             .retained_group_start(&entries, session, &prepared.request.tools)
             .await?;
         if kept_start == 0 {
-            return Err(context_full(session, tokens_before));
+            return Err(match trigger {
+                CompactionTrigger::Manual => ApplicationError::ValidationError(
+                    "agent.nothing_to_compact: Every message is recent enough to be kept as it is; there is no earlier part of the conversation to summarize.".into(),
+                ),
+                CompactionTrigger::Point | CompactionTrigger::Overflow => {
+                    context_full(session, tokens_before)
+                }
+            });
         }
         self.transition_status(run_id, AgentRunStatus::CompactingContext)
             .await?;
@@ -568,10 +579,9 @@ impl AgentRuntimeService {
         self.event(run_id, AgentRunEventLevel::Info, "context_compacted", json!({
             "round": round, "invocationId": invocation.id, "seq": record.seq,
             "tokensBefore": tokens_before, "tokensAfter": tokens_after, "keptFromSeq": kept_from_seq,
+            "point": session.point,
         })).await?;
-        self.transition_status(run_id, AgentRunStatus::CallingModel)
-            .await?;
-        Ok(request)
+        Ok((request, tokens_after))
     }
 }
 

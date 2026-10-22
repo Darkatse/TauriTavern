@@ -20,15 +20,15 @@ const context = requireContext();
 const controller = createAssistantController();
 const cursor = createInteractionCursor(() => context.Popup.util.getTopmostModalLayer());
 const unsubscribeCursor = controller.subscribe(() => {
-    const { activeRun, sendingSessionId } = controller.getSnapshot();
-    if (!activeRun && sendingSessionId === undefined) cursor.clear();
+    const { activeRun, startingSessionId } = controller.getSnapshot();
+    if (!activeRun && startingSessionId === undefined) cursor.clear();
 });
 let pageReady = false;
 await registerAssistantTools(api, agent.tools, dev.frontendLogs, () => pageReady, context.scrollChatSurfaceTo, (point, toolContext) => {
-    const { activeRun, sendingSessionId } = controller.getSnapshot();
+    const { activeRun, startingSessionId } = controller.getSnapshot();
     // Only the task owned by this assistant drives its cursor, including the send admission window.
     if (activeRun?.runId === toolContext.runId
-        || (toolContext.target.kind === 'session' && sendingSessionId === toolContext.target.sessionId)) {
+        || (toolContext.target.kind === 'session' && startingSessionId === toolContext.target.sessionId)) {
         cursor.move(point);
     }
 });

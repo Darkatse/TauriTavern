@@ -12,6 +12,7 @@ use super::invocation::model_session_id;
 use super::loop_runner::AgentLoopExit;
 use super::prompt_snapshot::AgentPromptRequest;
 use super::prompt_snapshot::{request_summary, runtime_context_from_snapshot};
+use super::session_context::CompactionTrigger;
 use super::tool_snapshot::tool_snapshot_summary;
 use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation, RootInvocationInput};
 use crate::errors::ApplicationError;
@@ -381,17 +382,36 @@ impl AgentRuntimeService {
         .await?;
         self.ensure_not_cancelled(cancel)?;
 
-        state.foreground = Some(InvocationFrame::new(PreparedInvocation {
-            runtime_context: runtime_context_from_snapshot(&prompt_snapshot)?,
-            invocation: root_invocation,
-            delegation_task_id: None,
-            profile: resolved_profile,
-            tool_snapshot,
-            tool_turn,
-            request,
-            effective_skills,
-            session,
-        }));
+        let frame = state
+            .foreground
+            .insert(InvocationFrame::new(PreparedInvocation {
+                runtime_context: runtime_context_from_snapshot(&prompt_snapshot)?,
+                invocation: root_invocation,
+                delegation_task_id: None,
+                profile: resolved_profile,
+                tool_snapshot,
+                tool_turn,
+                request,
+                effective_skills,
+                session,
+            }));
+        if let Some(session) = &frame.prepared.session
+            && session.manual_compaction
+        {
+            let tokens = self
+                .context_tokens(&frame.prepared.request, &session.tokenizer_model, None)
+                .await?;
+            self.compact_session_context(
+                &frame.prepared,
+                session,
+                frame.progress.round,
+                CompactionTrigger::Manual,
+                tokens,
+                cancel,
+            )
+            .await?;
+            return Ok(());
+        }
         self.execute_active_invocation_chain(state, cancel).await
     }
 

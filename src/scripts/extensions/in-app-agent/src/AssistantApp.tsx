@@ -5,6 +5,7 @@ import type { AssistantDrawer } from './drawer';
 import type { AssistantSnapshot } from './controller';
 import { tr, type MessageKey } from './i18n';
 import { ErrorNotice, Icon, NewConversationIcon, formatTick, useNow } from './components';
+import { ContextMeter } from './ContextMeter';
 import { EffortMenu, withReasoningEffort } from './EffortMenu';
 import { ModelMenu, modelChoice } from './ModelMenu';
 import { Settings } from './Settings';
@@ -65,7 +66,7 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
     const [error, setError] = useState<unknown>(null);
     const [notice, setNotice] = useState('');
     const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
-    const [menu, setMenu] = useState<'model' | 'effort' | null>(null);
+    const [menu, setMenu] = useState<'model' | 'effort' | 'context' | null>(null);
     const [sweep, setSweep] = useState(0);
     const input = useRef<HTMLTextAreaElement>(null);
     const resizeAnimation = useRef<Animation | null>(null);
@@ -163,6 +164,11 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
         try { await controller.send(); }
         catch { /* The controller keeps the failure and draft with the originating Session. */ }
     }
+    async function compact() {
+        setError(null); setNotice('');
+        try { await controller.compact(); }
+        catch { /* The controller keeps the failure with the originating Session. */ }
+    }
     async function stop() {
         const runId = snapshot.activeRun?.runId;
         if (!runId) return;
@@ -192,14 +198,16 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
     const choicesDisabled = !snapshot.initialized || snapshot.busy || operation !== null;
     // Leaving the chat view closes the menu instead of restoring it later.
     if (menu && (view !== 'chat' || !visible)) setMenu(null);
-    const preparing = snapshot.sendingSessionId !== undefined;
-    const preparingHere = preparing && snapshot.sendingSessionId === snapshot.sessionId;
+    const preparing = snapshot.startingSessionId !== undefined;
+    const preparingHere = preparing && snapshot.startingSessionId === snapshot.sessionId;
     const cancelling = snapshot.activeRun?.runId === cancellingRunId;
-    const taskSessionId = snapshot.activeRun?.sessionId ?? snapshot.sendingSessionId;
+    const taskSessionId = snapshot.activeRun?.sessionId ?? snapshot.startingSessionId;
     const showTaskBanner = taskSessionId !== undefined && (view !== 'chat' || taskSessionId !== snapshot.sessionId);
-    const canSubmit = snapshot.initialized && Boolean(text.trim()) && !snapshot.activeRun && !preparing && !snapshot.busy && !snapshot.loading && !operation;
+    const idle = snapshot.initialized && !snapshot.activeRun && !preparing && !snapshot.busy && !snapshot.loading && !operation;
+    const canSubmit = idle && Boolean(text.trim());
+    const modelReady = snapshot.profileSaved && choice.state === 'ready';
     // Without a usable model, submitting opens the model menu instead of sending.
-    const canSend = canSubmit && snapshot.profileSaved && choice.state === 'ready';
+    const canSend = canSubmit && modelReady;
     const session = snapshot.sessions.find(item => item.id === snapshot.sessionId);
     const heading = view === 'chat' ? (session ? sessionTitle(session) : tr('title')) : tr(view === 'settings' ? 'settings' : 'history');
     const issue = error ?? snapshot.error;
@@ -270,6 +278,8 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
                                 {effortChoosable && <EffortMenu effort={snapshot.profile.preset.reasoningEffort} preset={presetName}
                                     presetEffort={actions.presetReasoningEffort(presetName)} open={menu === 'effort'} disabled={choicesDisabled} onOpenChange={open => setMenu(open ? 'effort' : null)}
                                     onSelect={effort => { void saveChoice(profile => withReasoningEffort(profile, effort)); }} />}
+                                <ContextMeter events={snapshot.events} open={menu === 'context'} canCompact={idle && modelReady}
+                                    onOpenChange={open => setMenu(open ? 'context' : null)} onCompact={() => { void compact(); }} />
                             </div>
                             {snapshot.run?.active ? <button type="button" className="ttia-send is-stop" aria-label={tr('stop')} title={tr('stop')} disabled={cancelling} onClick={() => { void stop(); }}><Icon name="stop" /></button>
                                 : <button type="submit" className="ttia-send" aria-label={tr('send')} title={tr('send')} disabled={!canSubmit}><Icon name={preparingHere ? 'ellipsis' : 'arrow-up'} /></button>}

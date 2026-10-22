@@ -264,6 +264,7 @@ type TauriTavernAgentSessionsApi = {
         activeRun: TauriTavernAgentSessionRunHandle | null;
     }>;
     send: (input: { sessionId: string; text: string; variables?: { local?: Record<string, unknown> } }) => Promise<TauriTavernAgentSessionRunHandle>;
+    compact: (input: { sessionId: string }) => Promise<TauriTavernAgentSessionRunHandle>;
 };
 
 type TauriTavernAgentRunCheckpoint = {

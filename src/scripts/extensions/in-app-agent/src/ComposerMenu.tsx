@@ -76,9 +76,12 @@ export function ComposerMenu({ className, state, label, title, name, open, disab
             }}>{trigger}</button>
         <div ref={pop} className="ttia-menu-pop" id={menuId} role="menu" tabIndex={-1} aria-label={name} data-open={open}
             inert={!open} aria-hidden={!open} onKeyDown={onKeyDown}>
-            {/* Choosing a row closes the menu first, so the row's own action can move focus onward. */}
+            {/* Choosing a row closes the menu first, so the row's own action can move focus onward. A disabled row stays focusable and does nothing. */}
             <div className="ttia-menu-list" onPointerOver={onPointerOver} onPointerLeave={() => setLit(false)} onClickCapture={event => {
-                if (event.target instanceof Element && event.target.closest(ITEM)) close();
+                const row = event.target instanceof Element ? event.target.closest(ITEM) : null;
+                if (!row) return;
+                if (row.getAttribute('aria-disabled') === 'true') event.stopPropagation();
+                else close();
             }} onFocus={event => {
                 if (!(event.target instanceof HTMLButtonElement) || !glide.current) return;
                 glide.current.style.setProperty('--ttia-glide-y', `${event.target.offsetTop}px`);
@@ -96,5 +99,13 @@ export function MenuRadio({ checked, label, detail, title, onSelect }: {
 }) {
     return <button type="button" tabIndex={-1} className="ttia-menu-item" role="menuitemradio" aria-checked={checked} title={title} onClick={onSelect}>
         <span className="ttia-menu-label">{label}</span>{detail && <span className="ttia-menu-detail" aria-hidden="true">{detail}</span>}<Icon name="check" />
+    </button>;
+}
+
+export function MenuAction({ label, detail, disabled, onSelect }: {
+    label: string; detail?: string | undefined; disabled: boolean; onSelect: () => void;
+}) {
+    return <button type="button" tabIndex={-1} className="ttia-menu-item" role="menuitem" aria-disabled={disabled} onClick={onSelect}>
+        <span className="ttia-menu-label">{label}</span>{detail && <span className="ttia-menu-detail">{detail}</span>}
     </button>;
 }

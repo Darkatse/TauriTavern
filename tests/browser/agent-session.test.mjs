@@ -118,12 +118,12 @@ try {
                     case 'prepare_agent_session_run':
                         return {
                             expectedHistorySeq: 0,
-                            sessionMessages: [message('user', dto.text)],
+                            sessionMessages: [message('user', dto.input.text)],
                             request: {
                                 modelId: 'test-model', settings: sessionPreset,
                                 agentContextPolicy: { initialChatHistoryMessages: -1, includeActivatedWorldInfo: false },
                                 agentSystemPrompt: 'Inspect the workspace.',
-                                frozenRunInputSnapshot: sessionInput([[message('user', dto.text)]]),
+                                frozenRunInputSnapshot: sessionInput([[message('user', dto.input.text)]]),
                             },
                         };
                     case 'start_agent_session_run':
