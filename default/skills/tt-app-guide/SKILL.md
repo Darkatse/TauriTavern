@@ -75,6 +75,8 @@ Elsewhere:
 - **Themes.** Appearance settings such as font scale and colors also belong to the current theme. They are saved as settings at once, but the theme file changes only when the theme is updated (`#ui-preset-update-button`), and switching themes brings back the theme's values. Ask whether the change should go into the theme.
 - **Presets.** An edited Chat Completion preset stays unsaved until it is updated (`#update_oai_preset`). Ask whether to overwrite it or save it under a new name.
 - **Saving settings.** SillyTavern settings save about a second after a change; `settings_updated` fires after a successful save. Read the saved settings back to confirm.
+  - On disk, TauriTavern splits them into `default-user/settings.json` and files under `default-user/settings/`. The theme fields, such as font scale and colors, are in `appearance.json`; the others are `presets.json`, `layout.json` and `persona-state.json`.
+  - `/api/settings/get` returns them merged in SillyTavern's format.
 - **Popups.** A popup is a `dialog.popup`; the one in front is `dialog.popup[open]:not([closing])`. The button with `data-result="1"` confirms and `data-result="0"` cancels.
 - **Things only the user can do.**
   - File pickers and native dialogs: importing a card or preset, choosing a folder, saving an export, approving a custom endpoint.

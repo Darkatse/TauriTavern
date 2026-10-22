@@ -10,6 +10,10 @@ Each feature lists the files that implement it, as served from the app, and the 
   - Requests go through `sendGenerationRequest` and `sendStreamingRequest`; streaming is handled by `StreamingProcessor`.
   - The reply is processed by `cleanUpMessage` and stored by `saveReply`.
   - Extensions generate with `generateQuietPrompt` and `generateRaw`.
+- **Agent Mode.** When it is on (`agentModeEnabled` in the Agent System settings), the request does not go to the model directly.
+  - `sendTextareaMessage` gets the run options from `getAgentGenerationOptions` in `/scripts/tauritavern/agent/agent-generation-router.js`.
+  - `Generate` builds the prompt as usual, then freezes the inputs and starts an Agent run with `startAgentRunFromGeneratedPrompt`.
+  - The Rust Agent runtime calls the model; see `references/API/Agent.md` in the tt-docs skill.
 - **Chat Completion requests**, in `/scripts/openai.js`:
   - `prepareOpenAIMessages` assembles the messages, using `populateChatCompletion` and `populateChatHistory`.
   - `sendOpenAIRequest` with `createGenerationParameters` sends them, and `getStreamingReply` reads the stream.
