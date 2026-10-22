@@ -214,9 +214,11 @@ type TauriTavernAgentModelContentPart =
         isError: boolean;
         errorCode?: string;
         resourceRefs: string[];
+        images?: { path: string; mimeType: string }[];
     } };
 
 type TauriTavernAgentPromptSnapshot = {
+    acceptsImages?: boolean;
     contextLimits?: { context: number; response: number; tokenizerModel: string };
     messages: TauriTavernAgentModelMessage[];
     generationParameters: Record<string, unknown>;
@@ -675,6 +677,7 @@ type TauriTavernExtensionToolDefinition = {
     inputSchema: Record<string, TauriTavernJsonValue>;
     contexts: readonly TauriTavernAgentToolScope[];
     enabled?: boolean;
+    returnsImages?: boolean;
 };
 
 type TauriTavernExtensionToolContext = Readonly<{
@@ -683,6 +686,7 @@ type TauriTavernExtensionToolContext = Readonly<{
     callId: string;
     target: TauriTavernAgentToolTarget;
     signal: AbortSignal;
+    attachImage: (image: Blob) => void;
 }>;
 
 type TauriTavernAgentToolsApi = {

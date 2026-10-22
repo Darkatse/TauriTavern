@@ -38,6 +38,7 @@ pub(super) struct AgentDependencies {
     pub(super) tokenization_service: Arc<TokenizationService>,
     pub(super) workspace_shell: Arc<dyn WorkspaceShell>,
     pub(super) extension_tools: Arc<dyn ExtensionTools>,
+    pub(super) tool_image_normalizer: Arc<dyn tt_ports::tool_images::ToolImageNormalizer>,
 }
 
 pub(super) fn build(
@@ -52,6 +53,7 @@ pub(super) fn build(
         tokenization_service,
         workspace_shell,
         extension_tools,
+        tool_image_normalizer,
     } = dependencies;
     let agent_profile_service = Arc::new(AgentProfileService::new(
         repositories.agent_profile_repository.clone(),
@@ -87,6 +89,7 @@ pub(super) fn build(
         workspace_shell,
         extension_tools,
         tokenization_service,
+        tool_image_normalizer,
     ));
     let agent_run_history_service = Arc::new(AgentRunHistoryService::new(
         repositories.agent_run_repository.clone(),

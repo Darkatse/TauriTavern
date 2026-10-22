@@ -2529,6 +2529,7 @@ export function createAgentPromptSnapshot(payload, { settings, contextPolicy, wo
     }
     const { messages, prompt: _prompt, ...generationParameters } = payload;
     return {
+        acceptsImages: isImageInliningSupported(settings) === true,
         contextLimits: {
             context: settings.openai_max_context,
             response: settings.openai_max_tokens,

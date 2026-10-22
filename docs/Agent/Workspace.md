@@ -13,7 +13,7 @@
 | `plan/` | 普通计划文件 |
 | `summaries/` | 摘要与子 Agent 结果的可读版本 |
 | `persist/` | 本次运行的持久内容工作副本 |
-| `tool-results/` | 工具结果及较长结果的可读版本，只读 |
+| `tool-results/` | 工具结果、较长结果的可读版本和工具结果图片，只读 |
 | `skills/` | 当前 Invocation 的有效 Skill 安装包，只读；无绑定时为空目录 |
 
 模型用 `workspace.list_files`、`search_files`、`read_file` 寻找和读取材料，用 `write_file`、`apply_patch` 修改文本，或用 `workspace.shell` 批量处理文件。路径相对于工作区，例如 `output/main.md`；Shell 中的 `/output/main.md` 指向同一文件。

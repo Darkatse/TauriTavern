@@ -718,3 +718,25 @@ fn claude_json_output_coexists_with_thinking_and_tools() {
     assert_eq!(request["tools"].as_array().unwrap().len(), 1);
     assert!(request.get("tool_choice").is_none());
 }
+
+#[test]
+fn tool_result_images_are_preserved() {
+    let payload = json!({"model":"claude-sonnet-4-5", "tools":[{"type":"function","function":{"name":"capture","parameters":{"type":"object"}}}],
+            "messages":[
+                {"role":"user","content":"capture"},
+                {"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"capture","arguments":"{}"}}]},
+                {"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"screen"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}
+            ]}).as_object().unwrap().clone();
+    let (_, upstream) = build(payload).unwrap();
+    let blocks = upstream["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|m| m["content"].as_array().unwrap())
+        .find(|b| b["type"] == "tool_result")
+        .unwrap();
+    assert_eq!(
+        blocks["content"],
+        json!([{"type":"text","text":"screen"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}])
+    );
+}

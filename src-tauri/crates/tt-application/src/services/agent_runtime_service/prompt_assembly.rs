@@ -51,6 +51,7 @@ impl AgentRuntimeService {
                 tt_domain::models::tool::AgentToolScope::Session,
                 AgentInvocationExitPolicy::ReplyAllowed,
                 "session_prepare",
+                false,
             )
             .await?;
         let request = self

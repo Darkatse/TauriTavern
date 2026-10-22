@@ -99,24 +99,3 @@ impl TextLineRangePayload {
         }
     }
 }
-
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(in crate::services::agent_tools) struct ToolErrorStructured<'a> {
-    pub error: ToolErrorBody<'a>,
-}
-
-impl<'a> ToolErrorStructured<'a> {
-    pub(in crate::services::agent_tools) fn new(code: &'a str, message: &'a str) -> Self {
-        Self {
-            error: ToolErrorBody { code, message },
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(in crate::services::agent_tools) struct ToolErrorBody<'a> {
-    pub code: &'a str,
-    pub message: &'a str,
-}

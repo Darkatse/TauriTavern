@@ -397,6 +397,7 @@ fn convert_messages(
         }
     }
 
+    let mut tool_images = Vec::new();
     for (index, entry) in entries.iter().enumerate().skip(start_index) {
         let Some(message) = entry.as_object() else {
             continue;
@@ -422,11 +423,28 @@ fn convert_messages(
                 .or_else(|| previous_call.map(|(name, _)| name.clone()))
                 .unwrap_or_else(|| fallback_tool_name().to_string());
             let content = message_tool_result_text(message);
-            vec![build_tool_response_part(
+            let images = parse_openai_chat_content(message.get("content"))?
+                .iter()
+                .filter_map(|part| match part {
+                    InputPart::Image(media) => {
+                        Some(render_google_media_part("image", media, false))
+                    }
+                    _ => None,
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut response = build_tool_response_part(
                 &name,
                 &content,
                 previous_call.and_then(|(_, id)| id.as_deref()),
-            )]
+            );
+            if !images.is_empty() {
+                if is_gemini3_or_later {
+                    response["functionResponse"]["parts"] = json!(images);
+                } else {
+                    tool_images.extend(images);
+                }
+            }
+            vec![response]
         } else {
             let mut parts = if let Some(native_parts) = native_gemini_parts.clone() {
                 native_parts
@@ -542,6 +560,16 @@ fn convert_messages(
                 "role": target_role,
                 "parts": parts,
             }));
+        }
+        let next_is_tool = entries
+            .get(index + 1)
+            .and_then(|entry| entry.get("role"))
+            .and_then(Value::as_str)
+            .is_some_and(|role| matches!(role, "tool" | "function"));
+        if !next_is_tool && !tool_images.is_empty() {
+            let mut parts = vec![json!({ "text": "Tool result image:" })];
+            parts.append(&mut tool_images);
+            contents.push(json!({ "role": "user", "parts": parts }));
         }
     }
 
@@ -1717,6 +1745,36 @@ mod tests {
             assert_eq!(contents.last().unwrap()["role"], role);
             if last.get("native").is_some() {
                 assert_eq!(contents.last().unwrap()["parts"], native["parts"]);
+            }
+        }
+    }
+
+    #[test]
+    fn tool_result_images_use_model_supported_wire_shape() {
+        for model in ["gemini-3-flash-preview", "gemini-2.5-flash"] {
+            let payload = json!({"model":model,"messages":[
+                {"role":"user","content":"capture"},
+                {"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"capture","arguments":"{}"}},{"id":"call_2","type":"function","function":{"name":"capture","arguments":"{}"}}]},
+                {"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"screen"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]},
+                {"role":"tool","tool_call_id":"call_2","content":"done"}
+            ]}).as_object().unwrap().clone();
+            let (_, upstream) = build(payload).unwrap();
+            let contents = upstream["contents"].as_array().unwrap();
+            let images = json!([{"inlineData":{"mimeType":"image/png","data":"AAAA"}}]);
+            if model.starts_with("gemini-3") {
+                assert_eq!(contents[2]["parts"][0]["functionResponse"]["parts"], images);
+                assert_eq!(contents.len(), 3);
+            } else {
+                assert!(
+                    contents[2]["parts"][0]["functionResponse"]
+                        .get("parts")
+                        .is_none()
+                );
+                assert_eq!(contents[2]["parts"].as_array().unwrap().len(), 2);
+                assert_eq!(
+                    contents[3],
+                    json!({"role":"user","parts":[{"text":"Tool result image:"},images[0]]})
+                );
             }
         }
     }

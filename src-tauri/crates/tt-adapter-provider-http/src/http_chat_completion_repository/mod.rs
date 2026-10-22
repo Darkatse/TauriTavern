@@ -324,7 +324,8 @@ impl HttpChatCompletionRepository {
         };
 
         match status {
-            StatusCode::BAD_REQUEST | StatusCode::PAYLOAD_TOO_LARGE => {
+            StatusCode::PAYLOAD_TOO_LARGE => context_overflow::context_overflow_error(message),
+            StatusCode::BAD_REQUEST => {
                 let error = error.map_or_else(|| body.to_owned(), Value::to_string);
                 context_overflow::context_overflow_or(error, message, status_error)
             }
@@ -1162,6 +1163,12 @@ mod tests {
             (400, r#"{"message":"prompt is too long"}"#, true),
             (413, "PROMPT IS TOO LONG", true),
             (413, "request_too_large", true),
+            (413, "<html>Request Entity Too Large</html>", true),
+            (
+                400,
+                "Request payload size exceeds the limit: 20971520 bytes.",
+                true,
+            ),
             (400, "Invalid value for temperature", false),
             (400, "rate limit: too many tokens", false),
             (

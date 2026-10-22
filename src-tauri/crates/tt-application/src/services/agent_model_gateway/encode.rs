@@ -29,7 +29,18 @@ pub(crate) fn encode_chat_completion_request(
         record_call_aliases(message, &request.tools, &mut call_aliases)?;
     }
     let mut messages = Vec::new();
+    let mut tool_images = Vec::new();
     for message in adapter.messages_for_request(request)? {
+        if message.role != AgentModelRole::Tool && !tool_images.is_empty() {
+            messages.push(tool_image_message(std::mem::take(&mut tool_images)));
+        }
+        if adapter == AgentProviderAdapter::OpenAiCompatible && message.role == AgentModelRole::Tool
+        {
+            tool_images.extend(message.parts.iter().filter_map(|part| match part {
+                AgentModelContentPart::Media { value, .. } => Some(value.clone()),
+                _ => None,
+            }));
+        }
         // Call IDs may recur across Session runs; the preceding call owns its result.
         record_call_aliases(message, &request.tools, &mut call_aliases)?;
         messages.push(encode_openai_compatible_message(
@@ -38,6 +49,9 @@ pub(crate) fn encode_chat_completion_request(
             &call_aliases,
             adapter,
         )?);
+    }
+    if !tool_images.is_empty() {
+        messages.push(tool_image_message(tool_images));
     }
     payload.insert("messages".into(), Value::Array(messages));
 
@@ -66,6 +80,13 @@ pub(crate) fn encode_chat_completion_request(
     payload.insert("stream".to_string(), Value::Bool(stream));
     payload.insert("n".to_string(), json!(1));
     Ok(ChatCompletionGenerateRequestDto { payload })
+}
+
+fn tool_image_message(images: Vec<Value>) -> Value {
+    let mut content =
+        vec![json!({ "type": "text", "text": "Attached image(s) from tool result:" })];
+    content.extend(images);
+    json!({ "role": "user", "content": content })
 }
 
 fn encode_tool_choice(
@@ -183,10 +204,28 @@ fn encode_openai_compatible_message(
                         .to_string(),
                 ),
             );
-            object.insert(
-                "content".to_string(),
-                Value::String(tool_result_message_content(result)),
-            );
+            let mut text = tool_result_message_content(result);
+            let media = message
+                .parts
+                .iter()
+                .filter_map(|part| match part {
+                    AgentModelContentPart::Media { value, .. } => Some(value.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let content = if media.is_empty() {
+                Value::String(text)
+            } else if adapter == AgentProviderAdapter::OpenAiCompatible {
+                if text.is_empty() {
+                    text = "(see attached image)".to_string();
+                }
+                Value::String(text)
+            } else {
+                let mut parts = vec![json!({ "type": "text", "text": text })];
+                parts.extend(media);
+                Value::Array(parts)
+            };
+            object.insert("content".to_string(), content);
         }
         _ => {
             object.insert(

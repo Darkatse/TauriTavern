@@ -25,7 +25,9 @@ const unsubscribe = agent.subscribe(run.runId, event => {
 
 共同选项有 `profileId`、`generationType`、`stableChatId`、`presentation` 和 `options.stream`。稳定聊天 ID 省略时由 Host API 解析。`options.stream` 省略时使用各 Invocation 的 Profile 设置，显式值覆盖整次 Run。
 
-两种 Chat 方法返回 `{ runId, status, workspaceId, stableChatId, generationType }`。Snapshot 使用 `{ contextPolicy, messages, generationParameters }`，消息为 `AgentModelMessage[]`；旧 `chatCompletionPayload` 在入口适配，Chat 输入不能注入外部工具回合。冻结输入与组装规则见 [Prompt assembly](../Agent/PromptAssembly.md)。
+两种 Chat 方法返回 `{ runId, status, workspaceId, stableChatId, generationType }`。Snapshot 使用 `{ contextPolicy, messages, generationParameters, acceptsImages? }`，消息为 `AgentModelMessage[]`；旧 `chatCompletionPayload` 在入口适配，Chat 输入不能注入外部工具回合。冻结输入与组装规则见 [Prompt assembly](../Agent/PromptAssembly.md)。
+
+`acceptsImages` 由组装时的 `isImageInliningSupported(settings) === true` 提供；公开快照省略它时按 false 处理，已有调用方仍可使用。该值在本次 Invocation 中固定，包括 Session 压缩后的重建。
 
 canonical snapshot 的指令消息以 Text part 保存正文，并携带 `providerMetadata.promptComponent: "agentSystemPrompt"`，供 runtime 追加目录。旧 Chat 输入仍接受字符串 `content` 与 `_tauritavern_prompt_component: "agentSystemPrompt"`。共同 PromptManager 自动提供标记，标记不会发送给模型。
 
@@ -191,6 +193,10 @@ await agent.tools.setEnabled('extension/my-extension:read_auto_reply_settings', 
 `contexts` 必填且非空，`enabled` 默认 true；注册后仍需在 [Profile](../Agent/ProfilesAndPreset.md#调整工作方式) 中选择工具。关闭后不再接受新调用，已开始的调用继续执行，`list()` 仍包含关闭条目。开关持久化由扩展自己的设置或 `api.extension.store` 负责，页面 reload 后按保存的值重新注册。
 
 回调接收 JSON 对象参数与执行上下文，其中 `target` 指向本次 Run 所属的 Chat 或 Session，与当前 UI 无关；`signal: AbortSignal` 提供合作式取消，不回滚已发生的操作。完整字段见 [类型定义](../../src/types.d.ts)。
+
+图片通过 `context.attachImage(blob)` 附加，函数的 JSON 返回值继续描述结果。每张图片在 runtime 入库时规范化一次：PNG、JPEG、WebP 且长边不超过 1280、字节数不超过 1,000,000 时原样保存，否则白底转为 JPEG（质量 85）并按需缩小。无法解码或仍过大的图片在结果文字中说明；文字结果继续有效。图片存入工作区，结果的 `images` 只保留 `{ path, mimeType }`，并随所在消息留到上下文压缩将它移出。
+
+`returnsImages` 默认 false；声明 true 的工具仅在绑定时已知模型接受图片的 Invocation 中提供，否则产生 `extension.tool_needs_image_input` 诊断。工具目录仍列出它。其他工具也可附图；模型不接受图片时，runtime 用说明代替图片。
 
 函数可异步返回 JSON 值，顶层 `undefined` 按 `null` 返回；抛错或无法通过 JSON IPC 传输时报告工具错误。60 秒无回执时请求取消该调用，将“执行结果未知”作为工具错误交给模型继续处理，不自动重发；脚本可能仍在运行，后续操作应先核查状态。用户主动取消仍结束 Run。
 

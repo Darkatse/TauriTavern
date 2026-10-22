@@ -4,7 +4,6 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use super::policy::AgentOperation;
-use super::tool_error::tool_error_outcome;
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::AgentProfileResolveInput;
 use crate::services::agent_runtime_service::AgentRuntimeService;
@@ -43,7 +42,7 @@ impl AgentRuntimeService {
         let args = match serde_json::from_value::<AgentHandoffArgs>(Value::Object(args.clone())) {
             Ok(args) => args,
             Err(error) => {
-                return Ok(tool_error_outcome(
+                return Ok(AgentToolDispatchOutcome::error(
                     call,
                     "tool.invalid_arguments",
                     &format!("Invalid agent_handoff arguments: {error}"),
@@ -52,7 +51,7 @@ impl AgentRuntimeService {
             }
         };
         if let Err(message) = validate_handoff_packet(&args.handoff) {
-            return Ok(tool_error_outcome(
+            return Ok(AgentToolDispatchOutcome::error(
                 call,
                 "tool.invalid_arguments",
                 &message,
@@ -63,7 +62,7 @@ impl AgentRuntimeService {
             .pending_task_policy
             .unwrap_or(PendingTaskPolicy::DenyIfPending);
         if pending_task_policy != PendingTaskPolicy::DenyIfPending {
-            return Ok(tool_error_outcome(
+            return Ok(AgentToolDispatchOutcome::error(
                 call,
                 "tool.invalid_arguments",
                 "pendingTaskPolicy currently supports only denyIfPending",
@@ -83,7 +82,7 @@ impl AgentRuntimeService {
         .await?;
 
         if !profile.delegation.can_handoff {
-            return Ok(tool_error_outcome(
+            return Ok(AgentToolDispatchOutcome::error(
                 call,
                 "agent.handoff_policy_denied",
                 "Handoff is not available to you.",
@@ -91,7 +90,7 @@ impl AgentRuntimeService {
             ));
         }
         if self.has_pending_child_tasks(run_id, invocation_id).await? {
-            return Ok(tool_error_outcome(
+            return Ok(AgentToolDispatchOutcome::error(
                 call,
                 "agent.handoff_pending_tasks",
                 "You still have unfinished delegated tasks. Use agent_await before handing off.",
@@ -99,7 +98,7 @@ impl AgentRuntimeService {
             ));
         }
         if let Err(message) = self.validate_handoff_depth(run_id, profile).await? {
-            return Ok(tool_error_outcome(
+            return Ok(AgentToolDispatchOutcome::error(
                 call,
                 "agent.handoff_depth_exhausted",
                 &message,
@@ -186,25 +185,21 @@ impl AgentRuntimeService {
             "status": "accepted",
             "agentId": target.id.as_str(),
         });
-        Ok(AgentToolDispatchOutcome {
-            result: AgentToolResult {
-                call_id: call.call_id.clone(),
-                tool_id: call.tool_id.clone(),
-                content: format!(
+        Ok(AgentToolDispatchOutcome::new(
+            AgentToolResult::ok(
+                call,
+                format!(
                     "Handoff accepted for Agent {}. Your part is complete.",
                     target.id.as_str()
                 ),
                 structured,
-                is_error: false,
-                error_code: None,
-                resource_refs: Vec::new(),
-            },
-            effect: AgentToolEffect::HandoffAccepted {
+            ),
+            AgentToolEffect::HandoffAccepted {
                 task_id: task.id,
                 new_invocation_id: task.child_invocation_id,
             },
-            elapsed_ms: started.elapsed().as_millis(),
-        })
+            started.elapsed().as_millis(),
+        ))
     }
 
     async fn validate_handoff_depth(

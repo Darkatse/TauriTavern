@@ -6,7 +6,6 @@ use serde_json::{Map, Value, json};
 
 use super::rendering::{DelegatedResultContinuationHint, render_await_content};
 use super::task_status::task_is_terminal;
-use super::tool_error::tool_error_outcome;
 use crate::errors::ApplicationError;
 use crate::services::agent_runtime_service::{
     AgentCancelReceiver, AgentRuntimeService, PreparedInvocation,
@@ -80,7 +79,7 @@ impl AgentRuntimeService {
         let args = match serde_json::from_value::<AgentAwaitArgs>(Value::Object(args.clone())) {
             Ok(args) => args,
             Err(error) => {
-                return Ok(tool_error_outcome(
+                return Ok(AgentToolDispatchOutcome::error(
                     call,
                     "tool.invalid_arguments",
                     &format!("invalid arguments: {error}"),
@@ -91,7 +90,7 @@ impl AgentRuntimeService {
         let mode = args.mode.unwrap_or(AgentAwaitMode::NextCompleted);
         let timeout_ms = args.timeout_ms.unwrap_or(DEFAULT_AGENT_AWAIT_TIMEOUT_MS);
         if timeout_ms > MAX_AGENT_AWAIT_TIMEOUT_MS {
-            return Ok(tool_error_outcome(
+            return Ok(AgentToolDispatchOutcome::error(
                 call,
                 "tool.invalid_arguments",
                 &format!("timeoutMs must be <= {MAX_AGENT_AWAIT_TIMEOUT_MS}"),
@@ -101,7 +100,7 @@ impl AgentRuntimeService {
         let selected_ids = match normalize_task_ids(args.task_ids) {
             Ok(ids) => ids,
             Err(message) => {
-                return Ok(tool_error_outcome(
+                return Ok(AgentToolDispatchOutcome::error(
                     call,
                     "tool.invalid_arguments",
                     &message,
@@ -127,7 +126,7 @@ impl AgentRuntimeService {
         let mut task_events = scheduler.subscribe();
         let (tasks, timed_out) = loop {
             if *cancel.borrow() {
-                return Ok(tool_error_outcome(
+                return Ok(AgentToolDispatchOutcome::error(
                     call,
                     "agent.await_interrupted",
                     "Waiting ended because this run stopped. Query the delegated tasks again after resuming.",
@@ -142,7 +141,7 @@ impl AgentRuntimeService {
                 Err(ApplicationError::ValidationError(message))
                     if message.contains("agent.await_task_not_found") =>
                 {
-                    return Ok(tool_error_outcome(
+                    return Ok(AgentToolDispatchOutcome::error(
                         call,
                         "agent.await_task_not_found",
                         &message,
@@ -152,7 +151,7 @@ impl AgentRuntimeService {
                 Err(error) => return Err(error),
             };
             if tasks.is_empty() {
-                return Ok(tool_error_outcome(
+                return Ok(AgentToolDispatchOutcome::error(
                     call,
                     "agent.no_child_tasks",
                     "No delegated tasks are selected.",
@@ -208,19 +207,11 @@ impl AgentRuntimeService {
         )
         .await?;
 
-        Ok(AgentToolDispatchOutcome {
-            result: AgentToolResult {
-                call_id: call.call_id.clone(),
-                tool_id: call.tool_id.clone(),
-                content,
-                structured,
-                is_error: false,
-                error_code: None,
-                resource_refs: Vec::new(),
-            },
-            effect: AgentToolEffect::None,
-            elapsed_ms: started.elapsed().as_millis(),
-        })
+        Ok(AgentToolDispatchOutcome::new(
+            AgentToolResult::ok(call, content, structured),
+            AgentToolEffect::None,
+            started.elapsed().as_millis(),
+        ))
     }
 
     async fn selected_child_tasks(

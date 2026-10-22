@@ -241,7 +241,11 @@ impl ResponsesTranscriptCompiler {
         self.input.push(json!({
             "type": "function_call_output",
             "call_id": call_id,
-            "output": message_content_to_text(message.get("content")),
+            "output": if message.get("content").is_some_and(Value::is_array) {
+                responses_input_message_content(message.get("content"), true)?
+            } else {
+                Value::String(message_content_to_text(message.get("content")))
+            },
         }));
 
         Ok(())
@@ -1064,6 +1068,27 @@ mod tests {
                 "call_id": "call_123",
                 "output": "ok"
             }])
+        );
+    }
+
+    #[test]
+    fn tool_result_images_are_preserved() {
+        let payload = json!({"model":"gpt-5",
+            "messages":[
+                {"role":"user","content":"capture"},
+                {"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"capture","arguments":"{}"}}]},
+                {"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"screen"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}
+            ]}).as_object().unwrap().clone();
+        let (_, upstream) = build(payload).unwrap();
+        let output = upstream["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["type"] == "function_call_output")
+            .unwrap();
+        assert_eq!(
+            output["output"],
+            json!([{"type":"input_text","text":"screen"},{"type":"input_image","image_url":"data:image/png;base64,AAAA"}])
         );
     }
 }

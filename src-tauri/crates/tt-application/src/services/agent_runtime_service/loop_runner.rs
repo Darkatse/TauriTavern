@@ -9,10 +9,11 @@ use super::continuation::{AutoCommitFile, InvocationFrame, InvocationStep, Pendi
 use super::model_turn_display::model_turn_event_summary;
 use super::prompt_snapshot::request_summary;
 use super::session_context::{CompactionTrigger, is_context_overflow_error};
-use super::tool_execution::recoverable_tool_error;
 use super::{AgentCancelReceiver, AgentRuntimeService};
 use crate::errors::ApplicationError;
-use crate::services::agent_tools::{AGENT_AWAIT, AGENT_HANDOFF, AgentToolEffect};
+use crate::services::agent_tools::{
+    AGENT_AWAIT, AGENT_HANDOFF, AgentToolDispatchOutcome, AgentToolEffect,
+};
 use crate::services::agent_workspace_scope::is_auto_commit_text_path;
 use tt_domain::models::agent::profile::ResolvedAgentProfile;
 use tt_domain::models::agent::{
@@ -86,6 +87,7 @@ impl AgentRuntimeService {
                                 &prepared.request,
                                 &session.tokenizer_model,
                                 session.usage_anchor.as_ref(),
+                                prepared.accepts_images,
                             )
                             .await?,
                         ),
@@ -131,10 +133,9 @@ impl AgentRuntimeService {
                         .await?;
                         let result = self
                             .generate_model_with_retry(
-                                &prepared.invocation,
+                                prepared,
                                 round,
                                 &prepared.request,
-                                &profile.run.model_retry,
                                 stream,
                                 cancel,
                             )
@@ -307,7 +308,7 @@ impl AgentRuntimeService {
                                         call.call_id, call.tool_id, failure.error
                                     ));
                                 } else {
-                                    let result = recoverable_tool_error(
+                                    let result = AgentToolDispatchOutcome::error(
                                         call,
                                         "agent.tool_not_started",
                                         &failure.error.to_string(),

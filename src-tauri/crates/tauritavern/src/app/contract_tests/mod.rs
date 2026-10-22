@@ -276,6 +276,7 @@ fn agent_runtime_fixture_with_shell(
                 Arc::new(HttpClientPool::new("TauriTavern contract tests")),
             ),
         ))),
+        Arc::new(tt_adapter_media::MediaToolImageNormalizer),
     ));
 
     AgentRuntimeFixture {

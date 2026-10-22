@@ -1,3 +1,4 @@
+use crate::services::agent_runtime_service::tool_images::IncomingToolImage;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -27,9 +28,39 @@ const RUN_PROMPT_SNAPSHOT_PATH: &str = "input/prompt_snapshot.json";
 
 #[derive(Debug, Clone)]
 pub(crate) struct AgentToolDispatchOutcome {
+    pub images: Vec<IncomingToolImage>,
     pub result: AgentToolResult,
     pub effect: AgentToolEffect,
     pub elapsed_ms: u128,
+}
+
+impl AgentToolDispatchOutcome {
+    pub(crate) fn new(result: AgentToolResult, effect: AgentToolEffect, elapsed_ms: u128) -> Self {
+        Self {
+            result,
+            effect,
+            elapsed_ms,
+            images: Vec::new(),
+        }
+    }
+
+    pub(crate) fn error(
+        call: &ToolInvocation,
+        code: &str,
+        message: &str,
+        elapsed_ms: u128,
+    ) -> Self {
+        Self::new(
+            AgentToolResult::error(call, code, message),
+            AgentToolEffect::None,
+            elapsed_ms,
+        )
+    }
+
+    pub(crate) fn with_images(mut self, images: Vec<IncomingToolImage>) -> Self {
+        self.images = images;
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -184,11 +215,11 @@ impl AgentToolDispatcher {
             }
         };
 
-        Ok(AgentToolDispatchOutcome {
-            result: outcome.0,
-            effect: outcome.1,
-            elapsed_ms: started.elapsed().as_millis(),
-        })
+        Ok(AgentToolDispatchOutcome::new(
+            outcome.0,
+            outcome.1,
+            started.elapsed().as_millis(),
+        ))
     }
 
     async fn read_run_prompt_snapshot(

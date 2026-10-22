@@ -162,7 +162,11 @@ pub(super) fn convert_messages(
                         "content": [{
                             "type": "tool_result",
                             "tool_use_id": tool_use_id,
-                            "content": message_tool_result_text(message),
+                            "content": if message.get("content").is_some_and(Value::is_array) {
+                                Value::Array(convert_message_content_to_claude_blocks(message.get("content"), name)?)
+                            } else {
+                                Value::String(message_tool_result_text(message))
+                            },
                         }],
                     }));
                 } else {

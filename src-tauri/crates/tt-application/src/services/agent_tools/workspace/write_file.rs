@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 
 use super::args::{
     classify_workspace_io_error, ensure_writable_workspace_path, parse_workspace_path,
-    required_raw_string_arg, required_trimmed_string_arg, tool_error,
+    required_raw_string_arg, required_trimmed_string_arg,
 };
 use crate::errors::ApplicationError;
 use crate::services::agent_workspace_scope::ScopedWorkspaceFs;
@@ -39,13 +39,13 @@ pub(in crate::services::agent_tools) async fn write_file(
     let workspace_files: &dyn WorkspaceFs = workspace;
     let Some(path) = required_trimmed_string_arg(args, "path") else {
         return Ok((
-            tool_error(call, "tool.invalid_arguments", "path is required"),
+            AgentToolResult::error(call, "tool.invalid_arguments", "path is required"),
             AgentToolEffect::None,
         ));
     };
     let Some(content) = required_raw_string_arg(args, "content") else {
         return Ok((
-            tool_error(call, "tool.invalid_arguments", "content is required"),
+            AgentToolResult::error(call, "tool.invalid_arguments", "content is required"),
             AgentToolEffect::None,
         ));
     };
@@ -53,7 +53,7 @@ pub(in crate::services::agent_tools) async fn write_file(
         Ok(mode) => mode,
         Err(message) => {
             return Ok((
-                tool_error(call, "workspace.write_mode_invalid", message),
+                AgentToolResult::error(call, "workspace.write_mode_invalid", message),
                 AgentToolEffect::None,
             ));
         }
@@ -112,26 +112,23 @@ pub(in crate::services::agent_tools) async fn write_file(
     }
     let metrics = TextMetrics::from_text(&file.text);
 
-    let result = AgentToolResult {
-        call_id: call.call_id.clone(),
-        tool_id: call.tool_id.clone(),
-        content: format!(
+    let mut result = AgentToolResult::ok(
+        call,
+        format!(
             "{} {} chars / {} words to {}.",
             write_mode_past_tense(mode),
             metrics.chars,
             metrics.words,
             file.path.as_str()
         ),
-        structured: structured_value(WorkspaceWriteFileStructured {
+        structured_value(WorkspaceWriteFileStructured {
             path: file.path.as_str(),
             mode,
             metrics: metrics.into(),
             sha256: file.sha256.as_str(),
         }),
-        is_error: false,
-        error_code: None,
-        resource_refs: vec![file.path.as_str().to_string()],
-    };
+    );
+    result.resource_refs = vec![file.path.as_str().to_string()];
 
     Ok((result, AgentToolEffect::WorkspaceFileWritten { file, mode }))
 }
@@ -175,7 +172,7 @@ fn write_conflict_error(
     kind: WorkspaceWriteConflictKind,
 ) -> AgentToolResult {
     match kind {
-        WorkspaceWriteConflictKind::AlreadyExists { .. } => tool_error(
+        WorkspaceWriteConflictKind::AlreadyExists { .. } => AgentToolResult::error(
             call,
             "workspace.write_requires_read",
             "file already exists; read it with workspace_read_file before rewriting it",
@@ -183,7 +180,7 @@ fn write_conflict_error(
         WorkspaceWriteConflictKind::Stale {
             actual_sha256: Some(_),
             ..
-        } => tool_error(
+        } => AgentToolResult::error(
             call,
             "workspace.write_stale_file",
             "file changed since you last read or wrote it. Read the file again before rewriting it.",
@@ -191,7 +188,7 @@ fn write_conflict_error(
         WorkspaceWriteConflictKind::Stale {
             actual_sha256: None,
             ..
-        } => tool_error(
+        } => AgentToolResult::error(
             call,
             "workspace.write_stale_file",
             "file changed since you last read or wrote it and is no longer present. Read the parent directory before writing again.",

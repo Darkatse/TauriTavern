@@ -23,6 +23,7 @@ use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
 
 const COMPACT_SHARE: f64 = 0.9;
 const KEPT_TOKENS: usize = 20_000;
+const IMAGE_TOKENS: usize = 1_400;
 
 const COMPACTION_REQUEST: &str = "Context compaction: write a summary for yourself. The earlier part of this conversation is about to leave your context, and you will continue from the summary, with only the latest messages kept as they are. Reply with the summary alone; do not call tools and do not continue the task.
 
@@ -248,6 +249,20 @@ pub(super) fn session_history_groups(
     }).collect()
 }
 
+fn image_tokens(message: &AgentModelMessage, accepts_images: bool) -> usize {
+    if !accepts_images {
+        return 0;
+    }
+    message
+        .parts
+        .iter()
+        .map(|part| match part {
+            AgentModelContentPart::ToolResult { result } => result.images.len() * IMAGE_TOKENS,
+            _ => 0,
+        })
+        .sum()
+}
+
 fn message_token_input(
     message: &AgentModelMessage,
     tools: &[AgentModelTool],
@@ -298,6 +313,7 @@ impl AgentRuntimeService {
         request: &AgentModelRequest,
         tokenizer_model: &str,
         anchor: Option<&UsageAnchor>,
+        accepts_images: bool,
     ) -> Result<usize, ApplicationError> {
         let (base, start) = match anchor {
             Some(anchor) => (anchor.tokens, anchor.messages),
@@ -324,7 +340,11 @@ impl AgentRuntimeService {
                 requests: vec![OpenAiTokenCountBatchItemDto { messages }],
             })
             .await?;
-        Ok(base + counts.token_counts[0])
+        let images = request.messages[start..]
+            .iter()
+            .map(|message| image_tokens(message, accepts_images))
+            .sum::<usize>();
+        Ok(base + counts.token_counts[0] + images)
     }
 
     async fn rebuild_session_request(
@@ -349,6 +369,7 @@ impl AgentRuntimeService {
         let request = AgentPromptRequest {
             payload: prepared.request.payload.clone(),
             messages: admitted.messages,
+            accepts_images: prepared.accepts_images,
         };
         self.prepare_invocation_model_request(
             request,
@@ -366,6 +387,7 @@ impl AgentRuntimeService {
         entries: &[&AgentSessionMessage],
         session: &SessionInvocation,
         tools: &[AgentModelTool],
+        accepts_images: bool,
     ) -> Result<usize, ApplicationError> {
         let groups = session_groups(entries)?;
         let requests = groups
@@ -390,6 +412,11 @@ impl AgentRuntimeService {
         let mut kept_tokens = 0;
         let mut kept_start = entries.len();
         for (group, tokens) in groups.iter().zip(counts.token_counts).rev() {
+            let tokens = tokens
+                + entries[group.range.clone()]
+                    .iter()
+                    .map(|entry| image_tokens(&entry.message, accepts_images))
+                    .sum::<usize>();
             if kept_tokens + tokens > kept_limit {
                 break;
             }
@@ -429,14 +456,7 @@ impl AgentRuntimeService {
         loop {
             self.ensure_not_cancelled(cancel)?;
             let exchange = self
-                .generate_model_with_retry(
-                    &prepared.invocation,
-                    round,
-                    &request,
-                    &prepared.profile.run.model_retry,
-                    false,
-                    cancel,
-                )
+                .generate_model_with_retry(prepared, round, &request, false, cancel)
                 .await;
             match exchange {
                 Err(error) if is_context_overflow_error(&error) => {
@@ -515,7 +535,12 @@ impl AgentRuntimeService {
             .filter(|entry| entry.compaction.is_none())
             .collect::<Vec<_>>();
         let kept_start = self
-            .retained_group_start(&entries, session, &prepared.request.tools)
+            .retained_group_start(
+                &entries,
+                session,
+                &prepared.request.tools,
+                prepared.accepts_images,
+            )
             .await?;
         if kept_start == 0 {
             return Err(match trigger {
@@ -551,7 +576,12 @@ impl AgentRuntimeService {
             .rebuild_session_request(prepared, session, groups, cancel)
             .await?;
         let tokens_after = self
-            .context_tokens(&request, &session.tokenizer_model, None)
+            .context_tokens(
+                &request,
+                &session.tokenizer_model,
+                None,
+                prepared.accepts_images,
+            )
             .await?;
         if tokens_after >= session.point {
             return Err(context_full(session, tokens_after));

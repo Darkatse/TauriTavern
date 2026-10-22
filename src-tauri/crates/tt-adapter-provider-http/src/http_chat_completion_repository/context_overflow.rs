@@ -23,6 +23,7 @@ fn is_context_overflow(text: &str) -> bool {
             r"prompt (?:is )?too long",
             r"prompt exceeds max length",
             r"request_too_large",
+            r"request payload size exceeds the limit",
             r"input is too long for requested model",
             r"input length and `?max_tokens`? exceed context limit",
             r"exceeds the context window",
@@ -61,6 +62,6 @@ fn is_context_overflow(text: &str) -> bool {
     !EXCLUDED.is_match(text) && OVERFLOW.is_match(text)
 }
 
-fn context_overflow_error(message: impl Display) -> DomainError {
+pub(super) fn context_overflow_error(message: impl Display) -> DomainError {
     DomainError::InvalidData(format!("model.context_overflow: {message}"))
 }

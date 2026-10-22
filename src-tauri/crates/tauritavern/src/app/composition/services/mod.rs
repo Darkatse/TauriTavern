@@ -157,6 +157,7 @@ pub(super) async fn build(
     let agent_services = agent::build(
         &repositories,
         agent::AgentDependencies {
+            tool_image_normalizer: Arc::new(tt_adapter_media::MediaToolImageNormalizer),
             skill_service: skill_service.clone(),
             chat_completion_service: chat_completion_service.clone(),
             llm_connection_service: llm_connection_service.clone(),

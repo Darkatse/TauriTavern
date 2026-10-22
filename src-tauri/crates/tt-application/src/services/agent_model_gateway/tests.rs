@@ -336,14 +336,19 @@ fn encodes_tool_results_as_model_facing_text() {
     request.messages = vec![AgentModelMessage {
         role: AgentModelRole::Tool,
         parts: vec![AgentModelContentPart::ToolResult {
-            result: AgentToolResult {
-                call_id: "call_mcp".to_string(),
-                tool_id: mcp_id,
-                content: "done".to_string(),
-                structured: json!({ "auditOnly": true }),
-                is_error: false,
-                error_code: None,
-                resource_refs: vec!["tool-results/call_mcp.json".to_string()],
+            result: {
+                let mut result = AgentToolResult::ok(
+                    &tt_domain::models::tool::ToolInvocation {
+                        call_id: "call_mcp".to_string(),
+                        tool_id: mcp_id,
+                        arguments: tt_domain::models::tool::ToolArguments::empty(),
+                        provider_metadata: serde_json::Value::Null,
+                    },
+                    "done".to_string(),
+                    json!({ "auditOnly": true }),
+                );
+                result.resource_refs = vec!["tool-results/call_mcp.json".to_string()];
+                result
             },
         }],
         provider_metadata: Value::Null,
@@ -998,16 +1003,58 @@ fn tool_result_message(call_id: &str, name: &str, content: &str) -> AgentModelMe
     AgentModelMessage {
         role: AgentModelRole::Tool,
         parts: vec![AgentModelContentPart::ToolResult {
-            result: AgentToolResult {
-                call_id: call_id.to_string(),
-                tool_id: ToolId::builtin(name).unwrap(),
-                content: content.to_string(),
-                structured: Value::Null,
-                is_error: false,
-                error_code: None,
-                resource_refs: Vec::new(),
-            },
+            result: AgentToolResult::ok(
+                &tt_domain::models::tool::ToolInvocation {
+                    call_id: call_id.to_string(),
+                    tool_id: ToolId::builtin(name).unwrap(),
+                    arguments: tt_domain::models::tool::ToolArguments::empty(),
+                    provider_metadata: serde_json::Value::Null,
+                },
+                content.to_string(),
+                Value::Null,
+            ),
         }],
         provider_metadata: Value::Null,
     }
+}
+
+#[test]
+fn openai_tool_images_follow_the_complete_tool_result_group() {
+    let mut first = tool_result_message("call_a", "search", "");
+    let image = json!({"type":"image_url", "image_url":{"url":"data:image/png;base64,AAAA"}});
+    first.parts.push(AgentModelContentPart::Media {
+        mime_type: "image/png".into(),
+        value: image.clone(),
+    });
+    let mut request = basic_request(
+        "openai",
+        None,
+        vec![
+            first,
+            tool_result_message("call_b", "search", "done"),
+            AgentModelMessage {
+                role: AgentModelRole::Assistant,
+                parts: vec![AgentModelContentPart::Text {
+                    text: "finished".into(),
+                }],
+                provider_metadata: Value::Null,
+            },
+        ],
+    );
+    request.tools.push(AgentModelTool {
+        tool_id: ToolId::builtin("search").unwrap(),
+        model_alias: "search".into(),
+        description: None,
+        input_schema: json!({"type":"object"}),
+    });
+    let dto = encode_chat_completion_request(&request, false).unwrap();
+    assert_eq!(
+        dto.payload["messages"],
+        json!([
+            {"role":"tool", "tool_call_id":"call_a", "name":"search", "content":"(see attached image)"},
+            {"role":"tool", "tool_call_id":"call_b", "name":"search", "content":"done"},
+            {"role":"user", "content":[{"type":"text", "text":"Attached image(s) from tool result:"}, image]},
+            {"role":"assistant", "content":"finished"}
+        ])
+    );
 }

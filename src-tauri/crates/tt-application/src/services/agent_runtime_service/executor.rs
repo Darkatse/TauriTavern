@@ -332,12 +332,14 @@ impl AgentRuntimeService {
             )
             .await?;
 
+        let accepts_images = request.accepts_images;
         let prepared_tools = self
             .prepare_invocation_tools(
                 &resolved_profile,
                 run.target.tool_scope(),
                 root_invocation.exit_policy,
                 root_invocation.id.as_str(),
+                accepts_images,
             )
             .await?;
         let tool_snapshot = prepared_tools.snapshot;
@@ -392,6 +394,7 @@ impl AgentRuntimeService {
                 tool_snapshot,
                 tool_turn,
                 request,
+                accepts_images,
                 effective_skills,
                 session,
             }));
@@ -399,7 +402,12 @@ impl AgentRuntimeService {
             && session.manual_compaction
         {
             let tokens = self
-                .context_tokens(&frame.prepared.request, &session.tokenizer_model, None)
+                .context_tokens(
+                    &frame.prepared.request,
+                    &session.tokenizer_model,
+                    None,
+                    frame.prepared.accepts_images,
+                )
                 .await?;
             self.compact_session_context(
                 &frame.prepared,

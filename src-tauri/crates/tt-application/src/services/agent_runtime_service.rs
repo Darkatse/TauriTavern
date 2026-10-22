@@ -60,6 +60,7 @@ mod task_details;
 mod timeline_projection;
 mod tool_catalog;
 mod tool_execution;
+pub(crate) mod tool_images;
 mod tool_results;
 mod tool_snapshot;
 
@@ -112,6 +113,9 @@ struct PreparedInvocation {
     tool_snapshot: InvocationToolSnapshot,
     tool_turn: ToolTurnContract,
     request: AgentModelRequest,
+    // Old checkpoints predate tool images.
+    #[serde(default)]
+    accepts_images: bool,
     effective_skills: Vec<SkillIndexEntry>,
     #[serde(skip)]
     session: Option<session_context::SessionInvocation>,
@@ -148,6 +152,7 @@ pub struct AgentRuntimeService {
     mcp_service: Arc<McpService>,
     extension_tools: Arc<dyn tt_ports::extension_tools::ExtensionTools>,
     tokenization: Arc<crate::services::tokenization_service::TokenizationService>,
+    tool_image_normalizer: Arc<dyn tt_ports::tool_images::ToolImageNormalizer>,
     tool_registry: BuiltinAgentToolRegistry,
     tool_dispatcher: AgentToolDispatcher,
     active_runs: RwLock<HashMap<String, Arc<ActiveRunHandle>>>,
@@ -179,6 +184,7 @@ impl AgentRuntimeService {
         workspace_shell: Arc<dyn WorkspaceShell>,
         extension_tools: Arc<dyn tt_ports::extension_tools::ExtensionTools>,
         tokenization: Arc<crate::services::tokenization_service::TokenizationService>,
+        tool_image_normalizer: Arc<dyn tt_ports::tool_images::ToolImageNormalizer>,
     ) -> Self {
         let tool_registry = BuiltinAgentToolRegistry::all();
         let tool_dispatcher = AgentToolDispatcher::new(
@@ -203,6 +209,7 @@ impl AgentRuntimeService {
             mcp_service,
             extension_tools,
             tokenization,
+            tool_image_normalizer,
             tool_registry,
             tool_dispatcher,
             active_runs: RwLock::new(HashMap::new()),

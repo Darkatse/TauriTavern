@@ -46,6 +46,7 @@ const AGENT_PROMPT_MARKER_FIELD: &str = "_tauritavern_agent_prompt_marker";
 pub(super) struct AgentPromptRequest {
     pub payload: Map<String, Value>,
     pub messages: Vec<AgentModelMessage>,
+    pub accepts_images: bool,
 }
 
 /// PromptManager supplies the component identity; its position and role belong
@@ -144,7 +145,19 @@ pub(super) fn request_from_prompt_snapshot(
     payload
         .entry("chat_completion_source")
         .or_insert_with(|| Value::String("openai".into()));
-    Ok(AgentPromptRequest { payload, messages })
+    let accepts_images = match prompt_snapshot.get("acceptsImages") {
+        Some(value) => value.as_bool().ok_or_else(|| {
+            ApplicationError::ValidationError(
+                "agent.snapshot_accepts_images_invalid: acceptsImages must be a boolean".into(),
+            )
+        })?,
+        None => false,
+    };
+    Ok(AgentPromptRequest {
+        payload,
+        messages,
+        accepts_images,
+    })
 }
 
 pub(super) fn prepare_agent_tool_request(

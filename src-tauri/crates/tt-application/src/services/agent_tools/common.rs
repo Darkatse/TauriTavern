@@ -1,10 +1,5 @@
 use serde_json::{Map, Value};
 
-use super::structured::{ToolErrorStructured, structured_value};
-
-use tt_domain::models::agent::AgentToolResult;
-use tt_domain::models::tool::ToolInvocation;
-
 pub(super) fn required_trimmed_string_arg<'a>(
     args: &'a Map<String, Value>,
     key: &str,
@@ -66,20 +61,4 @@ pub(crate) fn workspace_path_is_directory_message(path: &str) -> String {
     format!(
         "workspace path `{path}` is a directory; call workspace_list_files to list its contents and re-target a specific file."
     )
-}
-
-pub(super) fn tool_error(
-    call: &ToolInvocation,
-    error_code: &str,
-    message: &str,
-) -> AgentToolResult {
-    AgentToolResult {
-        call_id: call.call_id.clone(),
-        tool_id: call.tool_id.clone(),
-        content: message.to_string(),
-        structured: structured_value(ToolErrorStructured::new(error_code, message)),
-        is_error: true,
-        error_code: Some(error_code.to_string()),
-        resource_refs: Vec::new(),
-    }
 }

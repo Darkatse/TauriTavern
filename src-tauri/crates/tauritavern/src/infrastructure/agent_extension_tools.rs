@@ -231,6 +231,7 @@ mod tests {
             .register(
                 "main",
                 ExtensionToolDefinition {
+                    returns_images: false,
                     extension_id: "example".into(),
                     name: "inspect".into(),
                     description: "Inspect application state".into(),
@@ -268,7 +269,10 @@ mod tests {
         });
         let event = events.recv().await.unwrap();
         let request_id = event["requestId"].as_str().unwrap();
-        let reply = ExtensionToolReply::Value { value: Value::Null };
+        let reply = ExtensionToolReply::Value {
+            value: Value::Null,
+            images: vec![],
+        };
         assert!(!bridge.resolve("other", request_id, reply.clone()));
         assert!(bridge.resolve("main", request_id, reply.clone()));
         task.await
@@ -290,7 +294,10 @@ mod tests {
         assert!(!bridge.resolve(
             "main",
             event["requestId"].as_str().unwrap(),
-            ExtensionToolReply::Value { value: Value::Null }
+            ExtensionToolReply::Value {
+                value: Value::Null,
+                images: vec![]
+            }
         ));
     }
 }

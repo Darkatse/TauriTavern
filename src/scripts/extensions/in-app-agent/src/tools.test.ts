@@ -28,7 +28,7 @@ async function registerTools(entries: TauriTavernFrontendLogEntry[] = []) {
     }, () => true, () => undefined);
     const context: TauriTavernExtensionToolContext = {
         runId: 'run', invocationId: 'inv_root', callId: 'call', target: { kind: 'session', sessionId: 'session' },
-        signal: new AbortController().signal,
+        signal: new AbortController().signal, attachImage: () => {},
     };
     return { handlers, context, setConsoleCaptureEnabled };
 }

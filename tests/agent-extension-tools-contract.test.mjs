@@ -38,8 +38,9 @@ test('registered extension callbacks await async closures before returning JSON 
     const { api, channels, replies, call } = harness();
     let multiplier = 2;
     const ready = Promise.withResolvers();
-    await api.register(definition, async (args) => {
+    await api.register(definition, async (args, context) => {
         await ready.promise;
+        context.attachImage(new Blob(['image bytes']));
         return { answer: args.value * multiplier };
     });
     const completed = channels[0].onmessage(call('request-1', { value: 7 }));
@@ -47,7 +48,7 @@ test('registered extension callbacks await async closures before returning JSON 
     multiplier = 3;
     ready.resolve();
     await completed;
-    assert.deepEqual(replies, [{ requestId: 'request-1', result: { kind: 'value', value: { answer: 21 } } }]);
+    assert.deepEqual(replies, [{ requestId: 'request-1', result: { kind: 'value', value: { answer: 21 }, images: [{ data: Buffer.from('image bytes').toString('base64') }] } }]);
 });
 
 test('undefined returns null while callback and JSON serialization failures return tool errors', async () => {
@@ -61,7 +62,7 @@ test('undefined returns null while callback and JSON serialization failures retu
     for (const mode of ['void', 'throw', 'cyclic']) {
         await channels[0].onmessage(call(mode, { mode }));
     }
-    assert.deepEqual(replies[0].result, { kind: 'value', value: null });
+    assert.deepEqual(replies[0].result, { kind: 'value', value: null, images: [] });
     assert.deepEqual(replies[1].result, { kind: 'error', message: 'tool failed' });
     assert.equal(replies[2].result.kind, 'error');
 });
@@ -82,5 +83,5 @@ test('cancellation aborts only its request and suppresses late completion', asyn
     assert.equal(contexts[1].signal.aborted, false);
     blocked.resolve();
     await Promise.all([first, second]);
-    assert.deepEqual(replies, [{ requestId: 'second', result: { kind: 'value', value: 'complete' } }]);
+    assert.deepEqual(replies, [{ requestId: 'second', result: { kind: 'value', value: 'complete', images: [] } }]);
 });

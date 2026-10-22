@@ -259,6 +259,7 @@ impl AgentRuntimeService {
                 run.target.tool_scope(),
                 invocation.exit_policy,
                 invocation_id,
+                false,
             )
             .await?;
         let tool_snapshot = prepared_tools.snapshot;
@@ -294,6 +295,7 @@ impl AgentRuntimeService {
             .await?;
         self.resolve_model_binding(run_id, &profile, &mut request)
             .await?;
+        let accepts_images = request.accepts_images;
         let (skill_scope_order, effective_skills) = self
             .resolve_child_effective_skills(&profile, &run.chat_target()?.skill_scope_refs)
             .await?;
@@ -362,6 +364,7 @@ impl AgentRuntimeService {
             tool_snapshot,
             tool_turn,
             request,
+            accepts_images,
             effective_skills,
             session: None,
         })
