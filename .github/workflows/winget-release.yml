@@ -180,6 +180,27 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Sync WinGet fork
+        if: steps.preflight.outputs.skip != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            throw "WINGET_CREATE_GITHUB_TOKEN is not configured"
+          }
+
+          $forkOwner = gh api user --jq .login
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to resolve the WinGet submission account"
+          }
+
+          # gh can fast-forward via the refs API when GitHub's fork-sync endpoint returns 422.
+          gh repo sync "$forkOwner/winget-pkgs" --source microsoft/winget-pkgs --branch master
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to sync the WinGet fork with microsoft/winget-pkgs"
+          }
+
       - name: Submit manifest update
         if: steps.preflight.outputs.skip != 'true'
         shell: pwsh
@@ -188,10 +209,6 @@ jobs:
           WINGETCREATE_PATH: ${{ steps.wingetcreate.outputs.path }}
           WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:WINGET_CREATE_GITHUB_TOKEN)) {
-            throw "WINGET_CREATE_GITHUB_TOKEN is not configured"
-          }
-
           & $env:WINGETCREATE_PATH submit $env:MANIFEST_DIRECTORY --no-open
           if ($LASTEXITCODE -ne 0) {
             throw "WingetCreate failed to submit the manifest update"
