@@ -73,7 +73,7 @@ iOS 外测/内测分发裁剪与能力分级已落地为 iOS-only 的 `ios_polic
 
 - 当前实现快照：`docs/CurrentState/iOSPolicy.md`
 
-## 6. iOS 18+ App Icon 外观变体
+## 6. App Icon 外观变体（iOS 18+ / macOS 26+）
 
 ### 6.1 现象
 
@@ -119,6 +119,19 @@ xcrun assetutil --info /tmp/tt-appicon/Assets.car
 ```
 
 输出应包含 `UIAppearanceDark` 与 `ISAppearanceTintable`。若未来重新运行 `tauri icon`，必须重新生成并保留这三个 appearance 变体。
+
+### 6.4 macOS 26+
+
+macOS 26 会把不规则形状的 `.icns` 缩小放进灰色底板。`src-tauri/crates/tauritavern/icons/AppIcon.icon` 是 Icon Composer 文档：底色与 iOS `Any` 相同，logo 为单一图层，深色、着色与透明外观由系统生成。Tauri 打包时用 `actool`（Xcode 26+）把它编译为 `Assets.car` 并写入 `CFBundleIconName`；`icon.icns` 仍作为 `CFBundleIconFile` 供 macOS 15 及更早版本使用。
+
+更换 logo 时，用 Icon Composer 打开该文档替换 `Assets/logo.png`（1024px 透明 PNG）。预览各外观：
+
+```sh
+"$(xcode-select -p)/../Applications/Icon Composer.app/Contents/Executables/ictool" \
+  src-tauri/crates/tauritavern/icons/AppIcon.icon \
+  --export-image --output-file /tmp/tt-macos-icon.png \
+  --platform macOS --rendition Dark --width 512 --height 512 --scale 1
+```
 
 ## 7. AI 生成后台执行
 

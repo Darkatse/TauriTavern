@@ -1,0 +1,21 @@
+{
+  "fill" : {
+    "solid" : "srgb:1.00000,0.98039,0.94902,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "glass" : false,
+          "image-name" : "logo.png",
+          "name" : "Logo"
+        }
+      ]
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}
