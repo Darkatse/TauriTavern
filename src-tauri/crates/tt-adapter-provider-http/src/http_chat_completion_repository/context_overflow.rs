@@ -1,10 +1,23 @@
+use std::fmt::Display;
 use std::sync::LazyLock;
 
 use regex::{RegexSet, RegexSetBuilder};
 use tt_domain::errors::DomainError;
 
+pub(super) fn context_overflow_or(
+    error: impl Display,
+    message: String,
+    otherwise: impl FnOnce(String) -> DomainError,
+) -> DomainError {
+    if is_context_overflow(&error.to_string()) {
+        context_overflow_error(message)
+    } else {
+        otherwise(message)
+    }
+}
+
 // Adapted from pi-ai 1.3.0 utils/overflow.js (MIT).
-pub(super) fn is_context_overflow(text: &str) -> bool {
+fn is_context_overflow(text: &str) -> bool {
     static OVERFLOW: LazyLock<RegexSet> = LazyLock::new(|| {
         RegexSetBuilder::new([
             r"prompt (?:is )?too long",
@@ -48,6 +61,6 @@ pub(super) fn is_context_overflow(text: &str) -> bool {
     !EXCLUDED.is_match(text) && OVERFLOW.is_match(text)
 }
 
-pub(super) fn context_overflow_error(message: impl std::fmt::Display) -> DomainError {
+fn context_overflow_error(message: impl Display) -> DomainError {
     DomainError::InvalidData(format!("model.context_overflow: {message}"))
 }

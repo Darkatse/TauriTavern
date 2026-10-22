@@ -201,18 +201,10 @@ impl AgentRuntimeService {
         self: &Arc<Self>,
         run_id: &str,
         prompt_snapshot: Value,
-        request: crate::dto::chat_completion_dto::ChatCompletionGenerateRequestDto,
         resolved_profile: ResolvedAgentProfile,
         cancel: &mut AgentCancelReceiver,
     ) -> Result<(), ApplicationError> {
-        let mut prompt_snapshot = prompt_snapshot;
-        let snapshot = prompt_snapshot.as_object_mut().ok_or_else(|| {
-            ApplicationError::ValidationError(
-                "agent.invalid_prompt_snapshot: expected an object".into(),
-            )
-        })?;
-        snapshot.remove("generationParameters");
-        snapshot.insert("chatCompletionPayload".into(), json!(request.payload));
+        let request = super::prompt_snapshot::request_from_prompt_snapshot(&prompt_snapshot)?;
         let mut state = RunExecutionState::default();
         let run = self.run_repository.load_run(run_id).await?;
         let effective_skills = match &run.target {
@@ -246,6 +238,7 @@ impl AgentRuntimeService {
                 RootInvocationInput {
                     run_id: run_id.to_owned(),
                     prompt_snapshot,
+                    request,
                     resolved_profile,
                     effective_skills,
                     session: None,
@@ -278,6 +271,7 @@ impl AgentRuntimeService {
         let RootInvocationInput {
             run_id,
             prompt_snapshot,
+            mut request,
             resolved_profile,
             effective_skills,
             session,
@@ -350,8 +344,7 @@ impl AgentRuntimeService {
         let visible_tools = prepared_tools.model_tools;
         let tool_diagnostics = prepared_tools.diagnostics;
         let tool_snapshot_path = self.persist_tool_snapshot(run_id, &tool_snapshot).await?;
-        let request = self
-            .bind_invocation_model_request(run_id, &resolved_profile, &prompt_snapshot)
+        self.resolve_model_binding(run_id, &resolved_profile, &mut request)
             .await?;
         self.ensure_not_cancelled(cancel)?;
         let request = self

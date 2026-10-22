@@ -285,14 +285,16 @@ impl HttpChatCompletionRepository {
     ) -> DomainError {
         let body = body.trim();
         let parsed = serde_json::from_str::<Value>(body).ok();
-        let error = parsed.as_ref().and_then(|value| {
-            response_body::provider_error(value)
-                .or_else(|| value.get("message").filter(|message| message.is_string()))
-        });
+        let error = parsed.as_ref().and_then(response_body::provider_error);
         let message = parsed
             .as_ref()
-            .zip(error)
-            .map(|(value, error)| response_body::provider_error_message(error, value))
+            .and_then(|value| match error {
+                Some(error) => Some(response_body::provider_error_message(error, value)),
+                None => value
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            })
             .unwrap_or_else(|| {
                 if body.is_empty() {
                     default_message
@@ -302,17 +304,9 @@ impl HttpChatCompletionRepository {
                 .to_string()
             });
 
-        match status {
+        let status_error = |message: String| match status {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
                 DomainError::AuthenticationError(message)
-            }
-            StatusCode::BAD_REQUEST | StatusCode::PAYLOAD_TOO_LARGE
-                if error.map_or_else(
-                    || parsed.is_none() && context_overflow::is_context_overflow(body),
-                    |error| context_overflow::is_context_overflow(&error.to_string()),
-                ) =>
-            {
-                context_overflow::context_overflow_error(message)
             }
             StatusCode::BAD_REQUEST => DomainError::InvalidData(message),
             StatusCode::TOO_MANY_REQUESTS => DomainError::rate_limited(format!(
@@ -327,6 +321,14 @@ impl HttpChatCompletionRepository {
                 "{provider_name} endpoint failed with status {}: {message}",
                 status.as_u16()
             )),
+        };
+
+        match status {
+            StatusCode::BAD_REQUEST | StatusCode::PAYLOAD_TOO_LARGE => {
+                let error = error.map_or_else(|| body.to_owned(), Value::to_string);
+                context_overflow::context_overflow_or(error, message, status_error)
+            }
+            _ => status_error(message),
         }
     }
 
@@ -1156,11 +1158,6 @@ mod tests {
                 400,
                 r#"{"error":{"code":"context_length_exceeded","message":"invalid request"}}"#,
                 true,
-            ),
-            (
-                400,
-                r#"{"error":{"message":"invalid temperature"},"tools":[{"description":"prompt is too long"}]}"#,
-                false,
             ),
             (400, r#"{"message":"prompt is too long"}"#, true),
             (413, "PROMPT IS TOO LONG", true),

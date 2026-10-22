@@ -63,20 +63,13 @@ export async function buildAgentPromptSnapshotSeed(input = {}) {
     };
 }
 
-/**
- * @param {{ generationType?: string; generateOptions?: Record<string, any>; profileId?: string; agentContextPolicy?: Record<string, any>; agentSystemPrompt?: string }} input
- * @returns {Promise<{ promptSnapshot: TauriTavernAgentPromptSnapshot; frozenRunInputSnapshot: any; generationIntent: any }>}
- */
-export async function buildAgentPromptSnapshot(input = {}) {
-    return materializeCurrentPromptSnapshot(await buildAgentPromptSnapshotSeed(input));
-}
-
 /** @param {{ currentPromptSnapshotSeed: any; frozenRunInputSnapshot: any }} input */
 export async function materializeCurrentPromptSnapshot(input) {
-    const { payload, snapshotInputs, ...prepared } = await prepareCurrentPromptPayload(input);
+    const { payload, snapshotInputs, generationIntent } = await prepareCurrentPromptPayload(input);
     const { createAgentPromptSnapshot } = await import('../../../scripts/openai.js');
     return {
-        ...prepared,
+        frozenRunInputSnapshot: input.frozenRunInputSnapshot,
+        generationIntent: { source: LEGACY_DRY_RUN_SOURCE, ...generationIntent },
         promptSnapshot: createAgentPromptSnapshot(payload, snapshotInputs),
     };
 }
@@ -90,8 +83,7 @@ export async function prepareCurrentPromptPayload(input) {
     const generationType = normalizeGenerationType(seed.generationType);
     const messages = seed.messages;
     assertMessagesReady(messages);
-    assertNoExternalToolTurns(messages);
-    const frozenRunInputSnapshot = normalizeFrozenRunInputSnapshot(input.frozenRunInputSnapshot);
+    const frozenRunInputSnapshot = input.frozenRunInputSnapshot;
     const openai = await import('../../../scripts/openai.js');
     const settings = await buildSettingsWithCurrentModelConnectionSnapshot(
         openai.oai_settings,
@@ -118,9 +110,6 @@ export async function prepareCurrentPromptPayload(input) {
         },
     ));
 
-    assertNoExternalTools(payload);
-    assertNoExternalToolTurns(payload.messages);
-
     return {
         payload,
         snapshotInputs: {
@@ -128,9 +117,7 @@ export async function prepareCurrentPromptPayload(input) {
             contextPolicy: seed.contextPolicy,
             worldInfoActivation: seed.worldInfoActivation,
         },
-        frozenRunInputSnapshot,
         generationIntent: {
-            source: LEGACY_DRY_RUN_SOURCE,
             generationType,
             chatCompletionSource: payload.chat_completion_source,
             model: payload.model,
@@ -183,17 +170,6 @@ async function captureAgentDryRun(script, generationType, generateOptions) {
 function assertMessagesReady(messages) {
     if (!Array.isArray(messages)) {
         throw new Error('agent.prompt_snapshot_messages_required: dryRun did not produce chat-completion messages');
-    }
-}
-
-/** @param {any} payload */
-function assertNoExternalTools(payload) {
-    const tools = payload?.tools;
-    if (Array.isArray(tools) && tools.length > 0) {
-        throw new Error('agent.external_tools_unsupported: Agent runtime owns the tool registry');
-    }
-    if (Object.prototype.hasOwnProperty.call(payload || {}, 'tool_choice')) {
-        throw new Error('agent.external_tool_choice_unsupported: Agent runtime owns tool choice');
     }
 }
 

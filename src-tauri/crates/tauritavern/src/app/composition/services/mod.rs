@@ -156,16 +156,18 @@ pub(super) async fn build(
     ));
     let agent_services = agent::build(
         &repositories,
-        skill_service.clone(),
-        chat_completion_service.clone(),
-        llm_connection_service.clone(),
-        mcp_service.clone(),
-        Arc::new(WorkspaceShellEngine),
-        app_handle
-            .state::<Arc<AgentExtensionTools>>()
-            .inner()
-            .clone(),
-        tokenization_service.clone(),
+        agent::AgentDependencies {
+            skill_service: skill_service.clone(),
+            chat_completion_service: chat_completion_service.clone(),
+            llm_connection_service: llm_connection_service.clone(),
+            mcp_service: mcp_service.clone(),
+            tokenization_service: tokenization_service.clone(),
+            workspace_shell: Arc::new(WorkspaceShellEngine),
+            extension_tools: app_handle
+                .state::<Arc<AgentExtensionTools>>()
+                .inner()
+                .clone(),
+        },
     );
     let stable_diffusion_service = Arc::new(StableDiffusionService::new(
         repositories.stable_diffusion_repository.clone(),

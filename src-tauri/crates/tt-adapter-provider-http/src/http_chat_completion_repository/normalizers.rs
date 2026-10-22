@@ -218,8 +218,8 @@ pub(super) fn normalize_gemini_response(
     });
     if !usable {
         let finish_reason = first_candidate.get("finishReason").and_then(Value::as_str);
-        if let Some(reason) = finish_reason
-            .filter(|reason| map_gemini_finish_reason(Some(reason), false) == "length")
+        if let Some(reason) =
+            finish_reason.filter(|reason| map_gemini_finish_reason(Some(reason), false) == "length")
         {
             return Err(DomainError::InvalidData(format!(
                 "model.output_truncated: {provider_name} reached {reason} before returning visible output"

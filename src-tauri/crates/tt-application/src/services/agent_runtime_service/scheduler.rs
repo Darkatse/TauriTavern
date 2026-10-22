@@ -26,6 +26,8 @@ pub(super) struct ActiveRunHandle {
     pub(super) host_presentation: bool,
     pub(super) pending_checkpoint: tokio::sync::Mutex<Option<RunCheckpoint>>,
     pub(super) live_projection: watch::Sender<AgentRunLiveProjection>,
+    /// Events of this activation start after this seq; a resumed Run's journal keeps its earlier terminal event.
+    pub(super) after_seq: u64,
 }
 
 impl ActiveRunHandle {
@@ -48,6 +50,7 @@ impl ActiveRunHandle {
             host_presentation,
             pending_checkpoint: tokio::sync::Mutex::new(None),
             live_projection,
+            after_seq: 0,
         }
     }
 

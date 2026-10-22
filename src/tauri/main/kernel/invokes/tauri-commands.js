@@ -116,6 +116,7 @@ export {};
  *   | 'install_extension'
  *   | 'install_skill_import'
  *   | 'list_character_chat_store_keys'
+ *   | 'list_active_agent_runs'
  *   | 'list_agent_profiles'
  *   | 'list_agent_runs'
  *   | 'list_agent_tools'

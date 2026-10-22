@@ -40,7 +40,7 @@ live 根生成同样先投影。live `{{outlet}}` 读取全局扩展提示词，
   → startRunWithPromptSnapshot：Rust 创建 Run 并开始循环
 ```
 
-运行中的组装通过同一宿主往返：runtime 写入 `prompt_assembly_requested` 事件，host bridge 按请求 ID 读取组装输入，调用同一个前端组装器，再把结果交回等待中的 Invocation。委派与交接先按接收方 Profile 生成请求；Session 保留发送时包含已接受冻结输入的组装请求。宿主往返生成组装 ID 并从 scope 取得运行身份。宿主在 `APP_READY` 后为全部活动 Run 挂桥；待决查询以请求或 null 表达当前状态。缺少当前预设时返回 `prompt_assembly.current_preset_unavailable`；需要预设身份而当前预设未命名时返回 `agent.current_preset_unnamed`。
+运行中的组装通过同一宿主往返：runtime 写入 `prompt_assembly_requested` 事件，host bridge 按请求 ID 读取组装输入，调用同一个前端组装器，再把结果交回等待中的 Invocation。委派与交接先按接收方 Profile 生成请求；Session 复用发送时的组装请求。宿主在 `APP_READY` 后为全部活动 Run 挂桥，从各 Run 本次启动或续接之后的事件开始监听。缺少当前预设时返回 `prompt_assembly.current_preset_unavailable`；需要预设身份而当前预设未命名时返回 `agent.current_preset_unnamed`。
 
 `agentSystemPrompt` 是 Profile 指令在 PromptManager 中的位置，`agentTask` 是委派或交接任务的位置。Preset 控制组件的位置和 role，runtime 消费最终组装好的消息。
 
@@ -48,9 +48,9 @@ live 根生成同样先投影。live `{{outlet}}` 读取全局扩展提示词，
 
 普通 Chat 在 `CHAT_COMPLETION_SETTINGS_READY` 完成后转换最终请求；其中的 live 变量修改不写回冻结输入。SDK 独立组装不触发此事件。
 
-Session 历史由 Rust 选取、校验并组成完整的工具调用与结果组，以 `promptInputs.sessionHistory` 交给 PromptManager。PromptManager 负责布局、历史位置、深度注入和附加提示词，保留原始内容及 metadata，不重新展开历史宏。整个 Session 提示词的预算与计数由 runtime 负责，前端不分词，也不提供 `assembly.tokenCounts`。未闭合工具组由 Rust 转为中断说明，原历史不改写，工具不重放。Session 不接受历史窗口，`initialChatHistoryMessages` 必须为 `-1`。
+Session 历史由 Rust 选取、校验并组成完整的工具调用与结果组，以 `promptInputs.sessionHistory` 交给 PromptManager。PromptManager 负责布局、历史位置、深度注入和附加提示词，保留原始内容及 metadata，不重新展开历史宏。Session 组装不分词，也不提供 `assembly.tokenCounts`，计数见[运行循环](Runtime.md#session-上下文压缩)。未闭合工具组由 Rust 转为中断说明，原历史不改写，工具不重放。
 
-普通 Session 轮次沿用已组装请求并追加消息；压缩时才以摘要和保留组替换组装输入，复用本 Run 的组装请求、宏环境及已解析的连接和生成参数。深度注入和附加提示词继续作用于模型当前看到的上下文；附加提示词的正索引从该上下文开头计数，摘要可能成为第一条 user 消息。完整会话的宏值不随压缩倒退。压缩规则见[运行循环](Runtime.md#session-上下文压缩)。
+普通 Session 轮次沿用已组装请求并追加消息；压缩时才以摘要和保留组替换组装输入，复用本 Run 的组装请求与宏环境。深度注入和附加提示词继续作用于模型当前看到的上下文；附加提示词的正索引从该上下文开头计数，摘要可能成为第一条 user 消息。压缩规则见[运行循环](Runtime.md#session-上下文压缩)。
 
 ## Skill 与 Agent 目录
 

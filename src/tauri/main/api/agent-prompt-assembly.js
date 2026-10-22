@@ -85,7 +85,7 @@ export async function buildPromptAssemblyPayload(input = {}) {
         assembly: {
             schemaVersion: 1,
             engine: 'sillytavern-chat-completion-prompt-manager',
-            ...(result.tokenCounts ? { tokenCounts: result.tokenCounts } : {}),
+            tokenCounts: result.tokenCounts,
         },
     };
 }
@@ -99,7 +99,7 @@ async function normalizePromptAssemblyRequest(input) {
     const profileId = normalizeOptionalString(input.profileId ?? input.profile_id);
     const frozenRunInputSnapshot = normalizeRequiredFrozenRunInputSnapshot(input);
     const generationType = normalizeGenerationType(
-        input.generationType ?? input.generation_type ?? frozenRunInputSnapshot?.generationType,
+        input.generationType ?? input.generation_type ?? frozenRunInputSnapshot.generationType,
     );
     if (frozenRunInputSnapshot.generationType !== generationType) {
         throw new Error('prompt_assembly.generation_type_mismatch: generationType must match FrozenRunInputSnapshot.generationType');

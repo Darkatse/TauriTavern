@@ -52,13 +52,7 @@ async fn agent_runtime_background_run_finish_uses_run_presentation() {
 
     fixture
         .service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
+        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, profile, &mut cancel_receiver)
         .await
         .expect("execute agent loop");
 
@@ -324,13 +318,7 @@ async fn agent_runtime_returns_missing_chat_reads_to_the_agent() {
 
     fixture
         .service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
+        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, profile, &mut cancel_receiver)
         .await
         .expect("recoverable chat errors must not stop the run");
 
@@ -405,13 +393,7 @@ async fn agent_runtime_normalizes_empty_arguments_and_recovers_from_invalid_argu
 
     fixture
         .service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
+        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, profile, &mut cancel_receiver)
         .await
         .expect("argument errors remain recoverable");
 
@@ -796,7 +778,6 @@ async fn agent_runtime_foreground_auto_commits_once_per_round_until_explicit_com
         fixture.service.clone(),
         run.id.clone(),
         prompt_snapshot,
-        request,
         profile,
         &mut cancel_receiver,
         resolve_chat_commits_and_persistent_state_update(
@@ -1082,13 +1063,7 @@ async fn agent_runtime_retries_retryable_model_errors_with_real_repositories() {
 
     fixture
         .service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
+        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, profile, &mut cancel_receiver)
         .await
         .expect("agent loop");
 
@@ -1149,13 +1124,7 @@ async fn agent_runtime_does_not_retry_non_retryable_model_errors() {
 
     let error = fixture
         .service
-        .execute_agent_loop_run_inner(
-            &run.id,
-            prompt_snapshot,
-            request,
-            profile,
-            &mut cancel_receiver,
-        )
+        .execute_agent_loop_run_inner(&run.id, prompt_snapshot, profile, &mut cancel_receiver)
         .await
         .expect_err("non-retryable error");
 
@@ -1311,7 +1280,7 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
     let (_cancel, mut receiver) = watch::channel(false);
     fixture
         .service
-        .execute_agent_loop_run_inner(&run.id, prompt, request, profile, &mut receiver)
+        .execute_agent_loop_run_inner(&run.id, prompt, profile, &mut receiver)
         .await
         .unwrap();
     let requests = fixture.model_gateway.requests().await;

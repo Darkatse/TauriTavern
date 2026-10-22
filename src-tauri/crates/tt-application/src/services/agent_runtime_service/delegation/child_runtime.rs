@@ -4,7 +4,7 @@ use tt_ports::workspace_fs::WorkspaceWriteGuard;
 use super::super::loop_runner::AgentLoopExit;
 use super::rendering::{render_child_task_prompt, render_handoff_task_prompt};
 use super::task_status::task_is_terminal;
-use crate::dto::agent_dto::{AgentPreparePromptAssemblyDto, AgentPromptAssemblyScopeDto};
+use crate::dto::agent_dto::AgentPreparePromptAssemblyDto;
 use crate::errors::ApplicationError;
 use crate::services::agent_profile_service::{
     AgentProfileResolveInput, ensure_profile_model_configured, validate_chat_profile,
@@ -266,17 +266,9 @@ impl AgentRuntimeService {
         let visible_tools = prepared_tools.model_tools;
         let tool_diagnostics = prepared_tools.diagnostics;
         let tool_snapshot_path = self.persist_tool_snapshot(run_id, &tool_snapshot).await?;
-        let scope = AgentPromptAssemblyScopeDto {
-            run_id: run_id.to_string(),
-            invocation_id: invocation_id.to_string(),
-            invocation_kind: invocation.kind,
-            parent_invocation_id: invocation.parent_invocation_id.clone(),
-            task_id: Some(task.id.clone()),
-            exit_policy: invocation.exit_policy,
-        };
         let request = self
             .prompt_assembly_service
-            .prepare_invocation_frontend_prompt_assembly(
+            .build_prompt_assembly_request(
                 AgentPreparePromptAssemblyDto {
                     profile_id: Some(profile.id.as_str().to_owned()),
                     generation_type: run.chat_target()?.generation_type.clone(),
@@ -287,8 +279,8 @@ impl AgentRuntimeService {
                 },
                 profile.clone(),
                 &visible_tools,
+                invocation.exit_policy,
                 AgentInvocationPromptAssemblyContext {
-                    exit_policy: invocation.exit_policy,
                     agent_task_prompt: Some(task_prompt),
                     required_agent_prompt_components: vec![
                         "agentSystemPrompt".into(),
@@ -297,11 +289,10 @@ impl AgentRuntimeService {
                 },
             )
             .await?;
-        let invocation_prompt_snapshot = self
-            .request_host_prompt_assembly(&profile, request, scope, cancel)
+        let mut request = self
+            .request_host_prompt_assembly(&invocation, Some(task.id.clone()), request, cancel)
             .await?;
-        let request = self
-            .bind_invocation_model_request(run_id, &profile, &invocation_prompt_snapshot)
+        self.resolve_model_binding(run_id, &profile, &mut request)
             .await?;
         let (skill_scope_order, effective_skills) = self
             .resolve_child_effective_skills(&profile, &run.chat_target()?.skill_scope_refs)

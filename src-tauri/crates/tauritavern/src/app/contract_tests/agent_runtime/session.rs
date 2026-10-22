@@ -540,7 +540,7 @@ async fn session_compacts_at_the_point_and_rebuilds_before_continuing() {
         .await
         .unwrap();
     assert_eq!(next.session_messages.len(), history.messages.len() + 1);
-    let prompt_inputs = &next.assembly.request.unwrap().frozen_run_input_snapshot["promptInputs"];
+    let prompt_inputs = &next.request.frozen_run_input_snapshot["promptInputs"];
     assert_eq!(
         prompt_inputs["sessionHistory"][0][0],
         serde_json::to_value(&compacted.message).unwrap()
@@ -712,7 +712,7 @@ pub(super) async fn prepare_input(
         })
         .await
         .unwrap();
-    let mut request = prepared.assembly.request.unwrap();
+    let mut request = prepared.request;
     let (prompt_snapshot, frozen_run_input_snapshot) = session_prompt_snapshot(&request);
     request.frozen_run_input_snapshot = frozen_run_input_snapshot;
     AgentStartSessionRunDto {
@@ -722,7 +722,7 @@ pub(super) async fn prepare_input(
         expected_history_seq: prepared.expected_history_seq,
         prompt_assembly_request: request,
         prompt_snapshot,
-        generation_intent: None,
+        generation_intent: serde_json::Map::new(),
         stream: Some(false),
     }
 }

@@ -22,6 +22,7 @@ mod tests;
 
 #[cfg(feature = "test-support")]
 pub use decode::decode_chat_completion_response;
+pub(crate) use encode::call_model_alias;
 pub use provider_state::reset_transport_for_resume;
 
 #[async_trait]

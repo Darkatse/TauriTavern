@@ -53,7 +53,7 @@ export function createAgentSessionsApi({ safeInvoke, promptAssembly, attachAssem
                 promptSnapshot: assembled.promptSnapshot,
                 generationIntent: { ...assembled.generationIntent, source: 'session' },
             } });
-            attachAssemblyBridge(run.runId);
+            attachAssemblyBridge(run);
             return run;
         } finally {
             preparing.delete(sessionId);

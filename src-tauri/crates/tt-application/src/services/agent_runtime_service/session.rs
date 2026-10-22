@@ -5,10 +5,7 @@ use serde_json::{Value, json};
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use super::prompt_snapshot::{
-    reject_external_tool_request, request_from_prompt_snapshot,
-    validate_prompt_snapshot_context_policy,
-};
+use super::prompt_snapshot::admit_prompt_snapshot;
 use super::session_context::SessionInvocation;
 use super::{ActiveRunHandle, AgentRuntimeService};
 use crate::dto::agent_dto::{
@@ -202,9 +199,7 @@ impl AgentRuntimeService {
             .resolve_session_profile(dto.profile, self.tool_registry.catalog())
             .await?;
         let effective_skills = self.resolve_session_skills(&profile).await?;
-        let request = request_from_prompt_snapshot(&dto.prompt_snapshot)?;
-        reject_external_tool_request(&request.payload)?;
-        validate_prompt_snapshot_context_policy(&dto.prompt_snapshot, &profile)?;
+        let request = admit_prompt_snapshot(&dto.prompt_snapshot, &profile.context)?;
         let mut assembly_request = dto.prompt_assembly_request;
         let prompt_snapshot = attach_frozen_run_input_snapshot(
             dto.prompt_snapshot,
@@ -280,16 +275,15 @@ impl AgentRuntimeService {
             },
         )
         .await?;
-        if let Some(mut intent) = dto.generation_intent {
-            intent.insert("promptAssembly".into(), json!(assembly_metadata));
-            self.event(
-                &run.id,
-                AgentRunEventLevel::Info,
-                "generation_intent_recorded",
-                Value::Object(intent),
-            )
-            .await?;
-        }
+        let mut intent = dto.generation_intent;
+        intent.insert("promptAssembly".into(), json!(assembly_metadata));
+        self.event(
+            &run.id,
+            AgentRunEventLevel::Info,
+            "generation_intent_recorded",
+            Value::Object(intent),
+        )
+        .await?;
         let (cancel_sender, cancel_receiver) = watch::channel(false);
         let handle = Arc::new(ActiveRunHandle::new(
             self,
@@ -311,6 +305,7 @@ impl AgentRuntimeService {
                     super::RootInvocationInput {
                         run_id,
                         prompt_snapshot,
+                        request,
                         resolved_profile: profile,
                         effective_skills,
                         session: Some(session_invocation),

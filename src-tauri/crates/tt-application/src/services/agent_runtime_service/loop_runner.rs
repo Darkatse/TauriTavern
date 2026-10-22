@@ -91,27 +91,22 @@ impl AgentRuntimeService {
                         ),
                         None => None,
                     };
-                    let mut trigger = match (&prepared.session, session_tokens) {
+                    let mut pending = match (&prepared.session, session_tokens) {
                         (Some(session), Some(tokens)) if tokens >= session.point => {
-                            Some(CompactionTrigger::Point)
+                            Some((CompactionTrigger::Point, tokens))
                         }
                         _ => None,
                     };
                     let mut compacted = false;
                     let exchange = loop {
-                        if let (Some(trigger), Some(session), Some(tokens)) =
-                            (trigger.take(), prepared.session.as_ref(), session_tokens)
+                        if let (Some((trigger, tokens)), Some(session)) =
+                            (pending.take(), &prepared.session)
                         {
                             prepared.request = self
                                 .compact_session_context(
                                     prepared, session, round, trigger, tokens, cancel,
                                 )
                                 .await?;
-                            prepared
-                                .session
-                                .as_mut()
-                                .expect("Session compaction")
-                                .usage_anchor = None;
                             progress.session.clear_reads();
                             compacted = true;
                         }
@@ -119,7 +114,7 @@ impl AgentRuntimeService {
                             "round": round, "invocationId": invocation_id,
                             "toolTurn": &prepared.tool_turn, "request": request_summary(&prepared.request),
                         })).await?;
-                        match self
+                        let result = self
                             .generate_model_with_retry(
                                 &prepared.invocation,
                                 round,
@@ -128,16 +123,14 @@ impl AgentRuntimeService {
                                 stream,
                                 cancel,
                             )
-                            .await
-                        {
-                            Err(error)
-                                if is_context_overflow_error(&error)
-                                    && prepared.session.is_some()
-                                    && !compacted =>
+                            .await;
+                        match (result, session_tokens) {
+                            (Err(error), Some(tokens))
+                                if !compacted && is_context_overflow_error(&error) =>
                             {
-                                trigger = Some(CompactionTrigger::Overflow);
+                                pending = Some((CompactionTrigger::Overflow, tokens));
                             }
-                            result => break result?,
+                            (result, _) => break result?,
                         }
                     };
                     let response = exchange.response;

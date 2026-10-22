@@ -3,6 +3,7 @@ use tokio::sync::oneshot;
 use tt_ports::workspace_fs::WorkspaceWriteGuard;
 use uuid::Uuid;
 
+use super::prompt_snapshot::{AgentPromptRequest, admit_prompt_snapshot};
 use super::session_context::{session_context, session_history_groups};
 use super::{
     AgentCancelReceiver, AgentRuntimeService, HostPromptAssemblyResult, PendingHostPromptAssembly,
@@ -15,8 +16,7 @@ use crate::errors::ApplicationError;
 use crate::services::prompt_assembly_service::{
     FROZEN_RUN_INPUT_SNAPSHOT_KIND, FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
 };
-use tt_domain::models::agent::profile::ResolvedAgentProfile;
-use tt_domain::models::agent::{AgentRunEventLevel, WorkspacePath};
+use tt_domain::models::agent::{AgentInvocation, AgentRunEventLevel, WorkspacePath};
 
 impl AgentRuntimeService {
     pub async fn prepare_session_run(
@@ -61,9 +61,9 @@ impl AgentRuntimeService {
                 "session_prepare",
             )
             .await?;
-        let assembly = self
+        let request = self
             .prompt_assembly_service
-            .prepare_frontend_prompt_assembly(
+            .build_prompt_assembly_request(
                 AgentPreparePromptAssemblyDto {
                     profile_id: None,
                     generation_type: "normal".into(),
@@ -87,12 +87,13 @@ impl AgentRuntimeService {
                 profile,
                 &tools.model_tools,
                 AgentInvocationExitPolicy::ReplyAllowed,
+                Default::default(),
             )
             .await?;
         Ok(crate::dto::agent_dto::AgentPrepareSessionRunResultDto {
             expected_history_seq: last_seq,
             session_messages: messages,
-            assembly,
+            request,
         })
     }
 
@@ -182,21 +183,31 @@ impl AgentRuntimeService {
 
     pub(super) async fn request_host_prompt_assembly(
         &self,
-        profile: &ResolvedAgentProfile,
+        invocation: &AgentInvocation,
+        task_id: Option<String>,
         mut request: AgentPromptAssemblyBrokerRequestDto,
-        scope: AgentPromptAssemblyScopeDto,
         cancel: &mut AgentCancelReceiver,
-    ) -> Result<Value, ApplicationError> {
+    ) -> Result<AgentPromptRequest, ApplicationError> {
         let assembly_id = format!("prompt_assembly_{}", Uuid::new_v4().simple());
+        let scope = AgentPromptAssemblyScopeDto {
+            run_id: invocation.run_id.clone(),
+            invocation_id: invocation.id.clone(),
+            invocation_kind: invocation.kind,
+            parent_invocation_id: invocation.parent_invocation_id.clone(),
+            task_id,
+            exit_policy: invocation.exit_policy,
+        };
         request.assembly_id = Some(assembly_id.clone());
         request.scope = Some(scope.clone());
         let run_id = scope.run_id.as_str();
         let invocation_id = scope.invocation_id.as_str();
+        let profile_id = request.profile_id.clone();
+        let context_policy = request.agent_context_policy.clone();
         let request_metadata = request.metadata();
         let requested_event = json!({
             "assemblyId": assembly_id.as_str(),
             "invocationId": invocation_id,
-            "profileId": profile.id.as_str(),
+            "profileId": profile_id.as_str(),
             "scope": &scope,
             "requestKind": request.kind.as_str(),
             "requestSchemaVersion": request.schema_version,
@@ -204,7 +215,7 @@ impl AgentRuntimeService {
         });
 
         let (sender, receiver) = oneshot::channel();
-        let previous = self.active_prompt_assemblies.write().await.insert(
+        self.active_prompt_assemblies.write().await.insert(
             assembly_id.clone(),
             PendingHostPromptAssembly {
                 run_id: run_id.to_string(),
@@ -212,11 +223,6 @@ impl AgentRuntimeService {
                 sender,
             },
         );
-        if previous.is_some() {
-            return Err(ApplicationError::InternalError(format!(
-                "agent.prompt_assembly_id_collision: duplicate assembly id `{assembly_id}`"
-            )));
-        }
 
         if let Err(error) = self
             .event(
@@ -252,32 +258,25 @@ impl AgentRuntimeService {
 
         match host_result {
             Ok(result) => {
-                let validation =
-                    super::prompt_snapshot::request_from_prompt_snapshot(&result.prompt_snapshot)
-                        .and_then(|request| {
-                            super::prompt_snapshot::reject_external_tool_request(&request.payload)
-                        })
-                        .and_then(|()| {
-                            super::prompt_snapshot::validate_prompt_snapshot_context_policy(
-                                &result.prompt_snapshot,
-                                profile,
-                            )
-                        });
-                if let Err(error) = validation {
-                    self.event(
-                        run_id,
-                        AgentRunEventLevel::Error,
-                        "prompt_assembly_failed",
-                        json!({
-                            "assemblyId": assembly_id.as_str(),
-                            "invocationId": invocation_id,
-                            "profileId": profile.id.as_str(),
-                            "message": error.to_string(),
-                        }),
-                    )
-                    .await?;
-                    return Err(error);
-                }
+                let admitted = match admit_prompt_snapshot(&result.prompt_snapshot, &context_policy)
+                {
+                    Ok(request) => request,
+                    Err(error) => {
+                        self.event(
+                            run_id,
+                            AgentRunEventLevel::Error,
+                            "prompt_assembly_failed",
+                            json!({
+                                "assemblyId": assembly_id.as_str(),
+                                "invocationId": invocation_id,
+                                "profileId": profile_id.as_str(),
+                                "message": error.to_string(),
+                            }),
+                        )
+                        .await?;
+                        return Err(error);
+                    }
+                };
                 let snapshot_path = WorkspacePath::parse(format!(
                     "input/invocations/{invocation_id}/prompt_snapshot.json"
                 ))?;
@@ -305,7 +304,7 @@ impl AgentRuntimeService {
                         &serde_json::to_string_pretty(&json!({
                             "assemblyId": assembly_id.as_str(),
                             "invocationId": invocation_id,
-                            "profileId": profile.id.as_str(),
+                            "profileId": profile_id.as_str(),
                             "scope": scope,
                             "requestMetadata": request_metadata,
                             "frozenRunInputSnapshot": result.frozen_run_input_snapshot,
@@ -327,13 +326,13 @@ impl AgentRuntimeService {
                     json!({
                         "assemblyId": assembly_id.as_str(),
                         "invocationId": invocation_id,
-                        "profileId": profile.id.as_str(),
+                        "profileId": profile_id.as_str(),
                         "promptSnapshotPath": snapshot_path.as_str(),
                         "promptAssemblyPath": assembly_path.as_str(),
                     }),
                 )
                 .await?;
-                Ok(result.prompt_snapshot)
+                Ok(admitted)
             }
             Err(message) => {
                 self.event(
@@ -343,7 +342,7 @@ impl AgentRuntimeService {
                     json!({
                         "assemblyId": assembly_id.as_str(),
                         "invocationId": invocation_id,
-                        "profileId": profile.id.as_str(),
+                        "profileId": profile_id.as_str(),
                         "message": message,
                     }),
                 )

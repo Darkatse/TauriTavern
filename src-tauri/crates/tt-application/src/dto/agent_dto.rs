@@ -30,8 +30,7 @@ pub struct AgentPrepareSessionRunDto {
 pub struct AgentPrepareSessionRunResultDto {
     pub expected_history_seq: u64,
     pub session_messages: Vec<tt_domain::models::agent::AgentModelMessage>,
-    #[serde(flatten)]
-    pub assembly: AgentPreparePromptAssemblyResultDto,
+    pub request: AgentPromptAssemblyBrokerRequestDto,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -43,8 +42,7 @@ pub struct AgentStartSessionRunDto {
     pub expected_history_seq: u64,
     pub prompt_snapshot: Value,
     pub prompt_assembly_request: AgentPromptAssemblyBrokerRequestDto,
-    #[serde(default)]
-    pub generation_intent: Option<serde_json::Map<String, Value>>,
+    pub generation_intent: serde_json::Map<String, Value>,
     #[serde(default)]
     pub stream: Option<bool>,
 }
@@ -794,6 +792,13 @@ pub enum AgentRunPruneBlockReasonDto {
     MissingTerminalEvent,
     InvalidJournal,
     InvalidStorage,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentActiveRunDto {
+    pub run_id: String,
+    pub after_seq: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

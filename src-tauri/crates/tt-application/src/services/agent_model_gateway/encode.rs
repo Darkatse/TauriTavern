@@ -341,7 +341,7 @@ fn model_tool_for_id<'a>(
     tools.iter().find(|tool| tool.tool_id == *tool_id)
 }
 
-fn call_model_alias<'a>(
+pub(crate) fn call_model_alias<'a>(
     call: &'a ToolInvocation,
     tools: &'a [AgentModelTool],
 ) -> Result<&'a str, ApplicationError> {

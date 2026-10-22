@@ -50,9 +50,8 @@ pub struct PromptAssemblyService {
     llm_connection_service: Arc<LlmConnectionService>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AgentInvocationPromptAssemblyContext {
-    pub exit_policy: AgentInvocationExitPolicy,
     pub agent_task_prompt: Option<String>,
     pub required_agent_prompt_components: Vec<String>,
 }
@@ -106,25 +105,19 @@ impl PromptAssemblyService {
             });
         }
         let request = self
-            .build_prompt_assembly_request(dto, profile, visible_tools, None, exit_policy)
+            .build_prompt_assembly_request(
+                dto,
+                profile,
+                visible_tools,
+                exit_policy,
+                AgentInvocationPromptAssemblyContext::default(),
+            )
             .await?;
         Ok(AgentPreparePromptAssemblyResultDto {
             mode: AgentPromptAssemblyModeDto::FrontendPromptAssembly,
             assembly: Some(request.metadata()),
             request: Some(request),
         })
-    }
-
-    pub async fn prepare_invocation_frontend_prompt_assembly(
-        &self,
-        dto: AgentPreparePromptAssemblyDto,
-        profile: ResolvedAgentProfile,
-        visible_tools: &[AgentModelTool],
-        context: AgentInvocationPromptAssemblyContext,
-    ) -> Result<AgentPromptAssemblyBrokerRequestDto, ApplicationError> {
-        let exit_policy = context.exit_policy;
-        self.build_prompt_assembly_request(dto, profile, visible_tools, Some(context), exit_policy)
-            .await
     }
 
     pub fn build_current_model_connection_snapshot(
@@ -149,13 +142,13 @@ impl PromptAssemblyService {
         Ok(settings)
     }
 
-    async fn build_prompt_assembly_request(
+    pub async fn build_prompt_assembly_request(
         &self,
         dto: AgentPreparePromptAssemblyDto,
         profile: ResolvedAgentProfile,
         visible_tools: &[AgentModelTool],
-        invocation_context: Option<AgentInvocationPromptAssemblyContext>,
         exit_policy: AgentInvocationExitPolicy,
+        context: AgentInvocationPromptAssemblyContext,
     ) -> Result<AgentPromptAssemblyBrokerRequestDto, ApplicationError> {
         let generation_type = normalize_generation_type(&dto.generation_type)?;
         let frozen_run_input_snapshot =
@@ -171,18 +164,8 @@ impl PromptAssemblyService {
         let fingerprint = AgentPromptAssemblyFingerprintDto {
             preset_sha256,
             frozen_run_input_snapshot_sha256: sha256_value(&frozen_run_input_snapshot)?,
-            agent_task_prompt_sha256: invocation_context
-                .as_ref()
-                .and_then(|context| context.agent_task_prompt.as_ref())
-                .map(|prompt| sha256_string(prompt)),
+            agent_task_prompt_sha256: context.agent_task_prompt.as_deref().map(sha256_string),
         };
-        let agent_task_prompt = invocation_context
-            .as_ref()
-            .and_then(|context| context.agent_task_prompt.clone());
-        let required_agent_prompt_components = invocation_context
-            .as_ref()
-            .map(|context| context.required_agent_prompt_components.clone())
-            .unwrap_or_default();
 
         let request = AgentPromptAssemblyBrokerRequestDto {
             schema_version: PROMPT_ASSEMBLY_REQUEST_SCHEMA_VERSION,
@@ -202,8 +185,8 @@ impl PromptAssemblyService {
                 &profile,
                 exit_policy,
             ),
-            agent_task_prompt,
-            required_agent_prompt_components,
+            agent_task_prompt: context.agent_task_prompt,
+            required_agent_prompt_components: context.required_agent_prompt_components,
             json_schema: dto.json_schema,
             fingerprint,
         };

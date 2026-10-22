@@ -385,11 +385,12 @@ impl AgentRuntimeService {
                 return Err(error);
             }
         };
+        handle.after_seq = resumed.seq - 1;
+        let result = run_handle(&checkpoint.run, Some(handle.after_seq))?;
         self.active_runs
             .write()
             .await
             .insert(dto.run_id.clone(), Arc::new(handle));
-        let result = run_handle(&checkpoint.run, Some(resumed.seq - 1))?;
         let service = Arc::clone(self);
         tokio::spawn(async move {
             service

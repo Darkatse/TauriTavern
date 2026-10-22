@@ -598,7 +598,6 @@ async fn execute_agent_loop_with_host_resolver<R>(
     service: Arc<AgentRuntimeService>,
     run_id: String,
     prompt_snapshot: Value,
-    request: ChatCompletionGenerateRequestDto,
     profile: tt_domain::models::agent::profile::ResolvedAgentProfile,
     cancel_receiver: &mut watch::Receiver<bool>,
     resolver: R,
@@ -612,7 +611,6 @@ where
                 service.execute_agent_loop_run_inner(
                     &run_id,
                     prompt_snapshot,
-                    request,
                     profile,
                     cancel_receiver,
                 ),

@@ -10,11 +10,12 @@ use crate::presentation::commands::agent_live_projection::AgentRunLivePresenter;
 use crate::presentation::commands::helpers::{log_command, map_command_error};
 use crate::presentation::errors::CommandError;
 use tt_application::dto::agent_dto::{
-    AgentApplyCurrentModelConnectionSnapshotDto, AgentApplyCurrentModelConnectionSnapshotResultDto,
-    AgentApplyRunPruneDto, AgentBuildCurrentModelConnectionSnapshotDto,
-    AgentBuildCurrentModelConnectionSnapshotResultDto, AgentCancelRunDto, AgentCancelRunResultDto,
-    AgentCopyChatPersistentStatesDto, AgentFinishRunPresentationDto, AgentListProfilesResultDto,
-    AgentListRunsDto, AgentListRunsResultDto, AgentListToolsResultDto, AgentLoadProfileResultDto,
+    AgentActiveRunDto, AgentApplyCurrentModelConnectionSnapshotDto,
+    AgentApplyCurrentModelConnectionSnapshotResultDto, AgentApplyRunPruneDto,
+    AgentBuildCurrentModelConnectionSnapshotDto, AgentBuildCurrentModelConnectionSnapshotResultDto,
+    AgentCancelRunDto, AgentCancelRunResultDto, AgentCopyChatPersistentStatesDto,
+    AgentFinishRunPresentationDto, AgentListProfilesResultDto, AgentListRunsDto,
+    AgentListRunsResultDto, AgentListToolsResultDto, AgentLoadProfileResultDto,
     AgentModelTurnDisplayDto, AgentPlanRunPruneDto, AgentPreparePromptAssemblyDto,
     AgentPreparePromptAssemblyResultDto, AgentProfileIdDto, AgentPromptAssemblyBrokerRequestDto,
     AgentPruneChatPersistentStatesDto, AgentPruneChatPersistentStatesResultDto, AgentReadEventsDto,
@@ -417,15 +418,13 @@ pub async fn submit_agent_run_guidance(
 #[tauri::command]
 pub async fn list_active_agent_runs(
     app_state: State<'_, Arc<AppState>>,
-) -> Result<Vec<String>, CommandError> {
-    use tt_application::services::agent_workspace_lifecycle_service::AgentRunActivity;
+) -> Result<Vec<AgentActiveRunDto>, CommandError> {
     log_command("list_active_agent_runs");
-    app_state
+    Ok(app_state
         .services
         .agent_runtime_service
-        .active_run_ids()
-        .await
-        .map_err(map_command_error("Failed to list active agent runs"))
+        .list_active_runs()
+        .await)
 }
 
 #[tauri::command]

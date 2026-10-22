@@ -9,7 +9,7 @@ use tt_ports::repositories::chat_completion_repository::{
 };
 
 use super::HttpChatCompletionRepository;
-use super::context_overflow::{context_overflow_error, is_context_overflow};
+use super::context_overflow::context_overflow_or;
 use super::response_body::{provider_error, provider_error_message, read_upstream_json_body};
 
 pub(super) async fn list_models(
@@ -200,12 +200,11 @@ impl OpenAiChatAccumulator {
             invalid_openai_response(format!("event is not valid JSON: {error}"))
         })?;
         if let Some(error) = provider_error(&event) {
-            let message = provider_error_message(error, &event);
-            return Err(if is_context_overflow(&error.to_string()) {
-                context_overflow_error(message)
-            } else {
-                DomainError::InvalidData(message)
-            });
+            return Err(context_overflow_or(
+                error,
+                provider_error_message(error, &event),
+                DomainError::InvalidData,
+            ));
         }
         let event = event
             .as_object_mut()

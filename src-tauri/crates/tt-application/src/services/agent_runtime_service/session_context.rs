@@ -7,18 +7,18 @@ use tt_domain::models::agent::session::{
     AgentSessionCompaction, AgentSessionMessage, AgentSessionMessageOrigin, NewAgentSessionMessage,
 };
 use tt_domain::models::agent::{
-    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole,
+    AgentModelContentPart, AgentModelMessage, AgentModelRequest, AgentModelRole, AgentModelTool,
     AgentRunEventLevel, AgentRunStatus,
 };
 use tt_domain::models::tool::ToolChoice;
 
-use crate::dto::agent_dto::{AgentPromptAssemblyBrokerRequestDto, AgentPromptAssemblyScopeDto};
+use crate::dto::agent_dto::AgentPromptAssemblyBrokerRequestDto;
 use crate::dto::tokenization_dto::{OpenAiTokenCountBatchItemDto, OpenAiTokenCountBatchRequestDto};
 use crate::errors::ApplicationError;
-use crate::services::agent_model_gateway::reset_transport_for_resume;
+use crate::services::agent_model_gateway::{call_model_alias, reset_transport_for_resume};
 use crate::services::prompt_assembly_service::sha256_value;
 
-use super::prompt_snapshot::{AgentPromptRequest, prompt_snapshot_messages};
+use super::prompt_snapshot::AgentPromptRequest;
 use super::{AgentCancelReceiver, AgentRuntimeService, PreparedInvocation};
 
 const COMPACT_SHARE: f64 = 0.9;
@@ -49,6 +49,7 @@ pub(super) struct SessionInvocation {
     pub assembly_request: AgentPromptAssemblyBrokerRequestDto,
     pub point: usize,
     pub tokenizer_model: String,
+    /// Replaced after every model response, so a request rebuilt by compaction is never counted against a stale anchor.
     pub usage_anchor: Option<UsageAnchor>,
 }
 
@@ -70,27 +71,27 @@ impl SessionInvocation {
         assembly_request: AgentPromptAssemblyBrokerRequestDto,
         snapshot: &Value,
     ) -> Result<Self, ApplicationError> {
-        let budget = &snapshot["contextLimits"];
+        let limits = &snapshot["contextLimits"];
         let missing = || {
             ApplicationError::ValidationError(
-            "agent.session_token_budget_missing: Session prompt snapshot requires positive context and response token budgets and a tokenizerModel".into()
+            "agent.session_context_limits_missing: Session prompt snapshot requires contextLimits with positive context and response sizes and a tokenizerModel".into()
         )
         };
-        let context = budget["context"]
+        let context = limits["context"]
             .as_u64()
             .filter(|n| *n > 0)
             .ok_or_else(missing)? as usize;
-        let response = budget["response"]
+        let response = limits["response"]
             .as_u64()
             .filter(|n| *n > 0)
             .ok_or_else(missing)? as usize;
-        let tokenizer_model = budget["tokenizerModel"]
+        let tokenizer_model = limits["tokenizerModel"]
             .as_str()
             .filter(|model| !model.is_empty())
             .ok_or_else(missing)?
             .to_owned();
         if context <= response {
-            return Err(ApplicationError::ValidationError("agent.session_token_budget_invalid: context size must exceed the maximum response length".into()));
+            return Err(ApplicationError::ValidationError("agent.session_context_limits_invalid: contextLimits.context must exceed contextLimits.response".into()));
         }
         Ok(Self {
             assembly_request,
@@ -243,7 +244,10 @@ pub(super) fn session_history_groups(
     }).collect()
 }
 
-fn message_token_input(message: &AgentModelMessage) -> Value {
+fn message_token_input(
+    message: &AgentModelMessage,
+    tools: &[AgentModelTool],
+) -> Result<Value, ApplicationError> {
     let mut content = String::new();
     for part in &message.parts {
         match part {
@@ -252,7 +256,7 @@ fn message_token_input(message: &AgentModelMessage) -> Value {
                 text: Some(text), ..
             } => content.push_str(text),
             AgentModelContentPart::ToolCall { call } => {
-                content.push_str(&call.provider_metadata["modelAlias"].to_string());
+                content.push_str(call_model_alias(call, tools)?);
                 content.push_str(
                     &serde_json::to_string(&call.arguments)
                         .expect("tool arguments are serializable"),
@@ -266,7 +270,7 @@ fn message_token_input(message: &AgentModelMessage) -> Value {
         }
         content.push('\n');
     }
-    json!({ "role": message.role, "content": content })
+    Ok(json!({ "role": message.role, "content": content }))
 }
 
 pub(super) fn is_context_overflow_error(error: &ApplicationError) -> bool {
@@ -297,8 +301,8 @@ impl AgentRuntimeService {
         };
         let mut messages = request.messages[start..]
             .iter()
-            .map(message_token_input)
-            .collect::<Vec<_>>();
+            .map(|message| message_token_input(message, &request.tools))
+            .collect::<Result<Vec<_>, _>>()?;
         if anchor.is_none() {
             for tool in &request.tools {
                 let mut content = tool.model_alias.clone();
@@ -327,23 +331,20 @@ impl AgentRuntimeService {
         cancel: &mut AgentCancelReceiver,
     ) -> Result<AgentModelRequest, ApplicationError> {
         let mut assembly = session.assembly_request.clone();
-        let scope = AgentPromptAssemblyScopeDto {
-            run_id: prepared.invocation.run_id.clone(),
-            invocation_id: prepared.invocation.id.clone(),
-            invocation_kind: prepared.invocation.kind,
-            parent_invocation_id: prepared.invocation.parent_invocation_id.clone(),
-            task_id: prepared.delegation_task_id.clone(),
-            exit_policy: prepared.invocation.exit_policy,
-        };
         assembly.frozen_run_input_snapshot["promptInputs"]["sessionHistory"] = json!(groups);
         assembly.fingerprint.frozen_run_input_snapshot_sha256 =
             sha256_value(&assembly.frozen_run_input_snapshot)?;
-        let snapshot = self
-            .request_host_prompt_assembly(&prepared.profile, assembly, scope, cancel)
+        let admitted = self
+            .request_host_prompt_assembly(
+                &prepared.invocation,
+                prepared.delegation_task_id.clone(),
+                assembly,
+                cancel,
+            )
             .await?;
         let request = AgentPromptRequest {
             payload: prepared.request.payload.clone(),
-            messages: prompt_snapshot_messages(&snapshot)?,
+            messages: admitted.messages,
         };
         self.prepare_invocation_model_request(
             request,
@@ -360,21 +361,25 @@ impl AgentRuntimeService {
         &self,
         entries: &[&AgentSessionMessage],
         session: &SessionInvocation,
+        tools: &[AgentModelTool],
     ) -> Result<usize, ApplicationError> {
         let groups = session_groups(entries)?;
+        let requests = groups
+            .iter()
+            .map(|group| {
+                Ok(OpenAiTokenCountBatchItemDto {
+                    messages: entries[group.range.clone()]
+                        .iter()
+                        .map(|entry| message_token_input(&entry.message, tools))
+                        .collect::<Result<_, ApplicationError>>()?,
+                })
+            })
+            .collect::<Result<_, ApplicationError>>()?;
         let counts = self
             .tokenization
             .count_openai_tokens_batch(OpenAiTokenCountBatchRequestDto {
                 model: session.tokenizer_model.clone(),
-                requests: groups
-                    .iter()
-                    .map(|group| OpenAiTokenCountBatchItemDto {
-                        messages: entries[group.range.clone()]
-                            .iter()
-                            .map(|entry| message_token_input(&entry.message))
-                            .collect(),
-                    })
-                    .collect(),
+                requests,
             })
             .await?;
         let kept_limit = KEPT_TOKENS.min(session.point / 4);
@@ -505,7 +510,9 @@ impl AgentRuntimeService {
             .copied()
             .filter(|entry| entry.compaction.is_none())
             .collect::<Vec<_>>();
-        let kept_start = self.retained_group_start(&entries, session).await?;
+        let kept_start = self
+            .retained_group_start(&entries, session, &prepared.request.tools)
+            .await?;
         if kept_start == 0 {
             return Err(context_full(session, tokens_before));
         }

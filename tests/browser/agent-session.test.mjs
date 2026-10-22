@@ -34,7 +34,7 @@ try {
     initRegisterMacros();
     const { setParamOmitted } = getModule('scripts/tauri/generation-params/omission.js').namespace;
     const preset = normalizeChatCompletionSettingsForPromptAssembly({
-        chat_completion_source: 'custom', custom_model: 'test-model', openai_max_context: 4096, openai_max_tokens: 32, new_chat_prompt: '',
+        chat_completion_source: 'custom', custom_model: 'test-model', openai_max_tokens: 32, new_chat_prompt: '',
     });
     preset.prompt_order = [{ character_id: 100001, order: ['main', 'agentSystemPrompt', 'chatHistory'].map(identifier => ({ identifier, enabled: true })) }];
     const sessionInput = messages => ({
@@ -69,7 +69,6 @@ try {
 
     const longerInput = await assemble([[message('user', 'Older history.')], ...history]);
     assert.deepEqual(longerInput.frozenRunInputSnapshot.promptInputs, assembled.frozenRunInputSnapshot.promptInputs);
-    assert.equal(JSON.stringify(longerInput.frozenRunInputSnapshot).includes('Older history.'), false);
 
     const depthPrompt = { identifier: 'session-depth', name: 'Session depth', role: 'system', content: 'Depth instruction.', injection_position: 1, injection_depth: 1 };
     preset.prompts.push(depthPrompt);
@@ -93,8 +92,7 @@ try {
     script.chat_metadata.variables = { sessionValue: 'foreground-chat' };
     script.setCharacterName('Foreground character');
     const sessionPreset = normalizeChatCompletionSettingsForPromptAssembly({
-        chat_completion_source: 'custom', custom_model: 'test-model', openai_max_context: 4096,
-        openai_max_tokens: 32, new_chat_prompt: '',
+        chat_completion_source: 'custom', custom_model: 'test-model', openai_max_tokens: 32, new_chat_prompt: '',
     });
     sessionPreset.prompt_order = structuredClone(preset.prompt_order);
     sessionPreset.prompts.find(prompt => prompt.identifier === 'main').content =

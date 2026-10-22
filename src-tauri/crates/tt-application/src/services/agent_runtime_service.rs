@@ -120,6 +120,7 @@ struct PreparedInvocation {
 struct RootInvocationInput {
     run_id: String,
     prompt_snapshot: serde_json::Value,
+    request: prompt_snapshot::AgentPromptRequest,
     resolved_profile: ResolvedAgentProfile,
     effective_skills: Vec<SkillIndexEntry>,
     session: Option<session_context::SessionInvocation>,

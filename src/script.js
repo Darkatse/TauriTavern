@@ -6703,7 +6703,7 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
     let generationIntent;
     let runFrozenRunInputSnapshot = frozenRunInputSnapshot;
 
-    if (promptAssembly?.mode === 'currentPromptSnapshot') {
+    if (promptAssembly.mode === 'currentPromptSnapshot') {
         const prepared = await prepareCurrentPromptPayload({
             currentPromptSnapshotSeed: {
                 generationType: type,
@@ -6716,20 +6716,18 @@ async function startAgentRunFromGeneratedPrompt({ type, generateData, jsonSchema
         });
         payload = prepared.payload;
         snapshotInputs = prepared.snapshotInputs;
-        runFrozenRunInputSnapshot = prepared.frozenRunInputSnapshot;
         generationIntent = {
             ...prepared.generationIntent,
             source: 'legacy-generate-live-handoff',
             contextPolicy: agentContextPolicy,
         };
-    } else if (promptAssembly?.mode === 'frontendPromptAssembly') {
+    } else if (promptAssembly.mode === 'frontendPromptAssembly') {
         const assembled = await buildPromptAssemblyPayload(promptAssembly.request);
         payload = assembled.payload;
         snapshotInputs = assembled.snapshotInputs;
-        runFrozenRunInputSnapshot = assembled.frozenRunInputSnapshot ?? frozenRunInputSnapshot;
+        runFrozenRunInputSnapshot = assembled.frozenRunInputSnapshot;
         generationIntent = {
             ...assembled.generationIntent,
-            source: 'frontend-prompt-assembly-broker',
             parentSource: 'legacy-generate-live-handoff',
             contextPolicy: snapshotInputs.contextPolicy,
             promptAssembly: promptAssembly.assembly,

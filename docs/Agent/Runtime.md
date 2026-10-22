@@ -10,9 +10,7 @@ Runtime 创建 Run，初始化工作区，保存输入和解析后的 Profile，
 
 `startRunFromLegacyGenerate()` 负责从当前聊天取得输入；`startRunWithPromptSnapshot()` 接受已经组装好的输入。两者进入相同的 Rust runtime。具体参数见 [API](../API/Agent.md)，提示词的生成过程见 [Prompt assembly](PromptAssembly.md)。
 
-`sessions.send()` 每次创建一个 Run，共用该 Session 的历史与工作区。Rust 选取历史并按工具协议成组，PromptManager 负责布局；宏环境从完整会话求出并冻结。同一 Session 只允许一个活跃 Run；准备期间历史发生变化时拒绝启动。
-
-Session 发送时只在组装请求中交回接受的冻结输入，runtime 在 start 处确定其 fingerprint 并派生元数据。Session、委派与交接共用宿主组装桥；宿主在 `APP_READY` 后查询 runtime 的全部活动 Run 并挂桥，此时扩展工具已注册。重建沿用已绑定的模型 payload，只取新快照的消息，不重新解析连接。
+`sessions.send()` 每次创建一个 Run，共用该 Session 的历史与工作区。Rust 选取历史并按工具协议成组，PromptManager 负责布局，见 [Prompt assembly](PromptAssembly.md)。同一 Session 只允许一个活跃 Run；准备期间历史发生变化时拒绝启动。
 
 ## 每一轮
 
@@ -31,13 +29,13 @@ Session 在 assistant 无工具调用时结束本轮，消息由后端连续保�
 
 ## Session 上下文压缩
 
-Session 的预算取自预设的上下文长度与最大回复长度，压缩点为 `⌊0.9 × (context − response)⌋`。Runtime 优先使用最近一次响应的输入、输出用量，再估算此后追加的消息；没有用量时，由 `TokenizationService` 估算整个请求。前端只组装 Session 提示词，不重复计数。每轮调用前计算一次上下文用量，达到压缩点时自动压缩；服务商返回 `model.context_overflow` 时，本轮尚未压缩则压缩一次再发。压缩后仍超窗时结束 Run，不重复恢复。
+Session 的预算取自预设的上下文长度与最大回复长度，压缩点为 `⌊0.9 × (context − response)⌋`。Runtime 优先使用最近一次响应的输入、输出用量，再估算此后追加的消息；没有用量时，由 `TokenizationService` 估算整个请求。每轮调用前计算一次上下文用量，达到压缩点时自动压缩；服务商返回 `model.context_overflow` 时，本轮尚未压缩则压缩一次再发。压缩后仍超窗时结束 Run，不重复恢复。
 
 摘要请求沿用当前请求并追加摘要指令。摘要不作为普通模型回复发布；出现工具调用时禁用工具重问一次，调用始终不执行。摘要请求超窗时，逐组移除最早的工具往来再试，保留用户消息和已有摘要；无法得到完整摘要时返回 `agent.compaction_failed`。
 
 新的模型上下文由摘要与最近的完整消息组组成，经发送时保留的组装请求和冻结宏环境交给 PromptManager 重组。普通轮次继续向请求末尾追加消息；只有压缩才重新组装。重组复用 Invocation 已解析的连接与生成参数，不读取运行中修改的配置。摘要加保留内容仍达到压缩点，或没有可缩小的历史时，返回 `agent.context_full`。
 
-压缩成功后在 `history.jsonl` 追加带 `compaction` 的记录，原始历史不删除；下一次发送从最近的摘要和保留记录接续。完整会话仍用于发送时的宏环境。摘要标明自己是模型笔记，状态需要重新观察；工作区文件的读取记录在压缩后清空，修改前须重读。取消或压缩失败不追加压缩记录。
+压缩成功后在 `history.jsonl` 追加带 `compaction` 的记录，原始历史不删除；下一次发送从最近的摘要和保留记录接续。摘要标明自己是模型笔记，状态需要重新观察；工作区文件的读取记录在压缩后清空，修改前须重读。取消或压缩失败不追加压缩记录。
 
 ## 结束与交接
 

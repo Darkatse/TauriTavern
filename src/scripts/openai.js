@@ -32,7 +32,7 @@ import {
 import { getGroupNames, selected_group } from './group-chats.js';
 import { extension_prompt_roles, extension_prompt_types } from './extension-prompts.js';
 import { allowlistSettingAllows, getActiveIosPolicyCapabilities } from './tauritavern/ios-policy.js';
-import { agentMessageProjection, toAgentModelMessage } from './tauritavern/agent/agent-model-messages.js';
+import { toAgentModelMessage } from './tauritavern/agent/agent-model-messages.js';
 import { projectToolTurns } from './tauritavern/tool-turn-projection.js';
 import { canReplayProviderMetadata, getChatCompletionRequestContext } from './tauritavern/provider-replay.js';
 import { applyParamOmissions, getEffectiveGenerationSettings } from './tauri/generation-params/omission.js';
@@ -1594,8 +1594,8 @@ async function populateChatHistory(messages, prompts, chatCompletion, type = nul
         const chatPrompt = chatPool[index];
 
         if (Array.isArray(chatPrompt.agentMessages)) {
-            const group = await Promise.all(chatPrompt.agentMessages.map((message, partIndex) =>
-                Message.fromAgentMessage(message, `agentHistory-${index}-${partIndex}`, assemblyTokenHandler)));
+            const group = chatPrompt.agentMessages.map((message, partIndex) =>
+                Message.fromAgentMessage(message, `agentHistory-${index}-${partIndex}`));
             for (const message of group.reverse()) chatCompletion.insertAtStart(message, 'chatHistory');
             sourceCount += chatPrompt.sourceCount;
             index += 1;
@@ -2526,9 +2526,6 @@ export async function prepareOpenAIMessages({
 export function createAgentPromptSnapshot(payload, { settings, contextPolicy, worldInfoActivation }) {
     if (!Array.isArray(payload?.messages)) {
         throw new Error('agent.prompt_snapshot_messages_required: prompt assembly must produce messages');
-    }
-    if (payload.tools?.length || Object.hasOwn(payload, 'tool_choice')) {
-        throw new Error('agent.external_tools_unsupported: Agent runtime owns the tool registry and choice');
     }
     const { messages, prompt: _prompt, ...generationParameters } = payload;
     return {
@@ -4771,7 +4768,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
                     if (type !== 'impersonate' && !jsonSchema) {
                         text = appendClaudeRefusalWarning(text, stopStatus.message);
                     }
-                } else if (stopStatus?.code === 'model.output_truncated') {
+                } else if (stopStatus) {
                     toastr.error(stopStatus.message, t`Claude response truncated`);
                 }
 
@@ -4815,7 +4812,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, al
                 message.content = appendClaudeRefusalWarning(message.content, stopStatus.message);
                 data.content?.push({ type: 'text', text: warning });
             }
-        } else if (stopStatus?.code === 'model.output_truncated') {
+        } else if (stopStatus) {
             toastr.error(stopStatus.message, t`Claude response truncated`);
         }
 
@@ -5202,15 +5199,9 @@ class Message {
         return message;
     }
 
-    static async fromAgentMessage(agentMessage, identifier, messageTokenHandler) {
-        const projection = agentMessageProjection(agentMessage);
-        const message = new Message(projection.role, projection.content, identifier);
+    static fromAgentMessage(agentMessage, identifier) {
+        const message = new Message(agentMessage.role, '', identifier);
         message.agentMessage = agentMessage;
-        message.tokens = await messageTokenHandler.countAsync({
-            ...projection,
-            ...(projection.tool_calls ? { tool_calls: JSON.stringify(projection.tool_calls) } : {}),
-            ...(projection.native ? { native: JSON.stringify(projection.native) } : {}),
-        });
         return message;
     }
 

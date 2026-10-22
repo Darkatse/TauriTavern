@@ -14,6 +14,7 @@ use tt_application::services::llm_connection_service::LlmConnectionService;
 use tt_application::services::mcp_service::McpService;
 use tt_application::services::prompt_assembly_service::PromptAssemblyService;
 use tt_application::services::skill_service::SkillService;
+use tt_application::services::tokenization_service::TokenizationService;
 use tt_ports::extension_tools::ExtensionTools;
 use tt_ports::workspace_shell::WorkspaceShell;
 
@@ -29,20 +30,29 @@ pub(super) struct AgentServices {
     pub(super) agent_workspace_lifecycle_service: Arc<AgentWorkspaceLifecycleService>,
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "composition supplies shared application services"
-)]
+pub(super) struct AgentDependencies {
+    pub(super) skill_service: Arc<SkillService>,
+    pub(super) chat_completion_service: Arc<ChatCompletionService>,
+    pub(super) llm_connection_service: Arc<LlmConnectionService>,
+    pub(super) mcp_service: Arc<McpService>,
+    pub(super) tokenization_service: Arc<TokenizationService>,
+    pub(super) workspace_shell: Arc<dyn WorkspaceShell>,
+    pub(super) extension_tools: Arc<dyn ExtensionTools>,
+}
+
 pub(super) fn build(
     repositories: &AppRepositories,
-    skill_service: Arc<SkillService>,
-    chat_completion_service: Arc<ChatCompletionService>,
-    llm_connection_service: Arc<LlmConnectionService>,
-    mcp_service: Arc<McpService>,
-    workspace_shell: Arc<dyn WorkspaceShell>,
-    extension_tools: Arc<dyn ExtensionTools>,
-    tokenization: Arc<tt_application::services::tokenization_service::TokenizationService>,
+    dependencies: AgentDependencies,
 ) -> AgentServices {
+    let AgentDependencies {
+        skill_service,
+        chat_completion_service,
+        llm_connection_service,
+        mcp_service,
+        tokenization_service,
+        workspace_shell,
+        extension_tools,
+    } = dependencies;
     let agent_profile_service = Arc::new(AgentProfileService::new(
         repositories.agent_profile_repository.clone(),
         repositories.agent_profile_storage_health_repository.clone(),
@@ -76,7 +86,7 @@ pub(super) fn build(
         mcp_service,
         workspace_shell,
         extension_tools,
-        tokenization,
+        tokenization_service,
     ));
     let agent_run_history_service = Arc::new(AgentRunHistoryService::new(
         repositories.agent_run_repository.clone(),

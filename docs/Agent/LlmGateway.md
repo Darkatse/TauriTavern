@@ -37,7 +37,7 @@ Profile 的 `run.stream` 控制当前 Invocation 的默认行为，启动参数 
 
 ## 错误归类
 
-`model.context_overflow` 表示模型上下文窗口不足。HTTP 400/413 的错误、成功 HTTP 响应内的错误对象、OpenAI 兼容流的错误事件及 Responses 的失败事件使用同一套文本分类；JSON 只读取服务商错误对象及其错误码，不把回显的工具描述或部分输出当作错误信号，非 JSON 错误保留正文信号。超窗错误由同一个构造函数返回带原错误消息的 `InvalidData`。匹配规则改编自 pi-ai 1.3.0 `utils/overflow.js`（MIT），排除限流文字；HTTP 429 和 5xx 保留原有可重试映射。
+`model.context_overflow` 表示模型上下文窗口不足。HTTP 400/413 的错误、成功 HTTP 响应内的错误对象、OpenAI 兼容流的错误事件及 Responses 的失败事件使用同一套文本分类，分类只读服务商的错误值：JSON 的 `error` 或 `detail.error`、Responses `error` 事件中的 `error` 对象（扁平的 SSE 事件则是事件本身）、失败 Response 的 `error`，回显的工具描述与部分输出不参与分类。HTTP 400/413 的正文没有这样的错误值时（非 JSON，或 JSON 中没有这两个字段），按整段正文分类。超窗错误由同一个构造函数返回带原错误消息的 `InvalidData`。匹配规则改编自 pi-ai 1.3.0 `utils/overflow.js`（MIT），排除限流文字；HTTP 429 和 5xx 保留原有可重试映射。
 
 Claude 的 `model_context_window_exceeded` 停止原因在 Rust gateway 与原生 JS 聊天流路径均归为 `model.context_overflow`。输出上限则统一为 `model.output_truncated`，包括 `max_tokens`、`length` 和 Responses 的 `incomplete_details.reason=max_output_tokens`。这些错误不自动重试同一请求；Session 的压缩恢复由运行时负责，见 [Runtime](Runtime.md)。
 

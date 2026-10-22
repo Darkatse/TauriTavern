@@ -136,7 +136,6 @@ JS
         fixture.service.clone(),
         run.id.clone(),
         prompt_snapshot,
-        request,
         profile,
         &mut cancel_receiver,
         resolve_chat_commits_and_persistent_state_update(
@@ -274,7 +273,6 @@ async fn failed_shell_keeps_its_writes_without_publishing_an_earlier_candidate()
         fixture.service.clone(),
         run.id.clone(),
         prompt_snapshot,
-        request,
         profile,
         &mut cancel_receiver,
         resolve_chat_commits_and_persistent_state_update(

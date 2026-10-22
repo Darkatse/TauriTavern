@@ -33,13 +33,17 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
     const subscribeLiveProjection = createAgentRunLiveSubscribe({ safeInvoke });
     const commitBridges = new Map();
 
-    function attachAssemblyBridge(runId, subscribe = createSharedRunEventSubscribe(runId, runtime.subscribe, 0)) {
-        attachHostPromptAssemblyBridge({ runId, safeInvoke, promptAssembly, subscribe });
+    function subscribeRunEvents(run) {
+        return createSharedRunEventSubscribe(run.runId, runtime.subscribe, run.afterSeq);
+    }
+
+    function attachAssemblyBridge(run) {
+        attachHostPromptAssemblyBridge({ runId: run.runId, safeInvoke, promptAssembly, subscribe: subscribeRunEvents(run) });
     }
 
     async function restoreAssemblyBridges() {
-        const runIds = await safeInvoke('list_active_agent_runs');
-        for (const runId of runIds) attachAssemblyBridge(runId);
+        const runs = await safeInvoke('list_active_agent_runs');
+        for (const run of runs) attachAssemblyBridge(run);
     }
 
     async function startRunWithPromptSnapshot(input) {
@@ -73,7 +77,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
     }
 
     function attachRunBridges(handle, dto, presentation = null, chatLength = presentation?.chatLength) {
-        const hostSubscribe = createSharedRunEventSubscribe(handle.runId, runtime.subscribe, handle.afterSeq);
+        const hostSubscribe = subscribeRunEvents(handle);
         const commitBridge = attachHostCommitBridge({
             runId: handle.runId,
             chatRef: dto.chatRef,
@@ -96,7 +100,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
                 : null,
         });
         commitBridges.set(handle.runId, commitBridge);
-        attachAssemblyBridge(handle.runId, hostSubscribe);
+        attachHostPromptAssemblyBridge({ runId: handle.runId, safeInvoke, promptAssembly, subscribe: hostSubscribe });
     }
 
     async function readCheckpoint(runId) {
