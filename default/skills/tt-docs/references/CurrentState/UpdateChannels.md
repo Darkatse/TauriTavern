@@ -26,7 +26,7 @@ Canary Release 必须是 prerelease；Stable latest 不能是 prerelease。返�
 
 Windows 与 macOS 的 Stable、Canary debug 包均启用 Tauri Pilot；常规 release 构建默认不启用。
 
-`.github/workflows/canary-release.yml` 从 `dev` 的同一提交构建桌面端与移动端，必需产物校验通过后才更新固定的 `Canary` Release 和 tag。实验性的鸿蒙 HAP 是可选产物：鸿蒙构建失败时 Canary 照常发布，只缺少该 HAP，失败体现在本次运行的鸿蒙 job 上。Stable 与 Canary 共用面向用户的产物命名契约：
+`.github/workflows/canary-release.yml` 从 `dev` 的同一提交构建桌面端与移动端，必需产物校验通过后才更新固定的 `Canary` Release 和 tag。实验性的鸿蒙 HAP 在 Stable 与 Canary 中都是可选产物：鸿蒙构建失败时照常发布其他平台，只缺少该 HAP，失败体现在本次运行的鸿蒙 job 上。Stable 与 Canary 共用面向用户的产物命名契约：
 
 ```text
 TauriTavern-<release-id>-<platform>-<arch>[-<variant>][.<ext>]

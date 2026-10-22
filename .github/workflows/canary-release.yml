@@ -66,7 +66,9 @@ jobs:
     with:
       architectures: '["aarch64"]'
       package_version: ${{ needs.prepare.outputs.stable_version }}
-      asset_time: ${{ needs.prepare.outputs.asset_time }}
+      release_id: ${{ needs.prepare.outputs.asset_time }}-canary
+      build_branch: dev
+      commit: ${{ github.sha }}
 
   desktop:
     needs: prepare

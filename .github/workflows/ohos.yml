@@ -15,7 +15,13 @@ on:
       package_version:
         type: string
         required: true
-      asset_time:
+      release_id:
+        type: string
+        required: true
+      build_branch:
+        type: string
+        required: true
+      commit:
         type: string
         required: true
 permissions:
@@ -36,10 +42,12 @@ jobs:
     env:
       TARGET_TRIPLE: ${{ matrix.arch }}-unknown-linux-ohos
       PACKAGE_VERSION: ${{ inputs.package_version }}
-      TAURITAVERN_BUILD_BRANCH: ${{ github.ref_name }}
-      TAURITAVERN_BUILD_REVISION: ${{ github.sha }}
+      TAURITAVERN_BUILD_BRANCH: ${{ inputs.build_branch || github.ref_name }}
+      TAURITAVERN_BUILD_REVISION: ${{ inputs.commit || github.sha }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
       - run: git config --global --add safe.directory "$PWD"
       - run: pnpm install --frozen-lockfile
       - run: python3 scripts/ohos/prepare.py
@@ -73,6 +81,6 @@ jobs:
           fi
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ inputs.asset_time && format('TauriTavern-{0}-canary-ohos-{1}-hap', inputs.asset_time, matrix.arch) || format('TauriTavern-ohos-{0}-run{1}-hap', matrix.arch, github.run_number) }}
+          name: ${{ inputs.release_id && format('TauriTavern-{0}-ohos-{1}-hap', inputs.release_id, matrix.arch) || format('TauriTavern-ohos-{0}-run{1}-hap', matrix.arch, github.run_number) }}
           path: src-tauri/crates/tauritavern/gen/ohos/entry/build/default/outputs/default/*.hap
           if-no-files-found: error

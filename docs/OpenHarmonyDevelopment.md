@@ -4,8 +4,7 @@
 
 ## 1. 定位与产物
 
-- 实验性支持，不进入 Stable 发布。
-- Canary Release 提供未签名的 ARM64 HAP，需要用自己的证书和 profile 签名后才能安装。命名与发布规则见 [更新渠道](CurrentState/UpdateChannels.md)。
+- 实验性支持：Stable 与 Canary Release 都提供未签名的 ARM64 HAP，需要用自己的证书和 profile 签名后才能安装。命名与发布规则见 [更新渠道](CurrentState/UpdateChannels.md)。
 - x86_64 HAP 用于 x86 主机上的 DevEco 模拟器：手动触发 [`ohos.yml`](../.github/workflows/ohos.yml) 获得，参数见该文件；产物作为 workflow artifact，不进入 Release。
 - 工程声明的设备类型为 phone、tablet、2in1。目前只在 x86_64 模拟器（phone）上完成验证；ARM64 真机、平板和 PC 形态尚未验收。
 - 鸿蒙 PC 运行的是同一个 HAP，不能使用 Linux 桌面版。
@@ -23,7 +22,7 @@
 
 openharmony-ability 的 Rust crate 与 ArkTS HAR 出自同一份源码。
 
-**版本约束。** fork 跟随 TT 声明的 Tauri 与插件版本：core、Wry、Tao 与插件 fork 各自合并对应的上游发布版本，升级 Tauri 或插件时一同跟进。准备脚本保留应用的版本约束、features 和 workspace 继承，pin 不满足声明时由 Cargo 报错。鸿蒙失败时 Canary 照常发布其他平台。
+**版本约束。** fork 跟随 TT 声明的 Tauri 与插件版本：core、Wry、Tao 与插件 fork 各自合并对应的上游发布版本，升级 Tauri 或插件时一同跟进。准备脚本保留应用的版本约束、features 和 workspace 继承，pin 不满足声明时由 Cargo 报错。鸿蒙失败时 Stable 与 Canary 照常发布其他平台。
 
 ## 3. 构建
 
@@ -57,7 +56,7 @@ python3 scripts/ohos/validate-hap.py --target "$TARGET_TRIPLE" \
 
 Release 构建沿用 `src-tauri/Cargo.toml` 的 release profile。`module.json5` 启用了 `compressNativeLibs`，HAP 中的原生库经 ZIP 压缩，ELF 内容不变。
 
-CI：Canary 调用 `ohos.yml` 构建 aarch64，手动触发用于构建模拟器包；两者都执行上面的校验和 §4 的工程检查。鸿蒙构建失败时 Canary 的处理见 [更新渠道](CurrentState/UpdateChannels.md)。
+CI：Stable 与 Canary 调用 `ohos.yml` 构建 aarch64，并传入各自的源码提交、构建分支和 release-id；手动触发用于构建模拟器包。三者都执行上面的校验和 §4 的工程检查。鸿蒙构建失败时的发布处理见 [更新渠道](CurrentState/UpdateChannels.md)。
 
 ## 4. 已跟踪工程与构建事实
 

@@ -464,8 +464,19 @@ jobs:
           uploadUpdaterSignatures: false
           workflowArtifactNamePattern: 'TauriTavern-${{ needs.prepare.outputs.version }}-[platform]-[arch]-TestFlight-[bundle]'
 
+  ohos:
+    needs: prepare
+    uses: ./.github/workflows/ohos.yml
+    with:
+      architectures: '["aarch64"]'
+      package_version: ${{ needs.prepare.outputs.version }}
+      release_id: ${{ needs.prepare.outputs.version }}
+      build_branch: main
+      commit: ${{ needs.prepare.outputs.commit }}
+
   testflight:
     needs: [prepare, publish-release]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
     permissions:
       actions: read
       contents: write
@@ -491,7 +502,9 @@ jobs:
       APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
 
   publish-release:
-    needs: [prepare, desktop, portable, web, mobile]
+    needs: [prepare, desktop, portable, web, mobile, ohos]
+    # Wait for experimental HAPs, but publish the other platforms if OHOS fails.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.desktop.result == 'success' && needs.portable.result == 'success' && needs.web.result == 'success' && needs.mobile.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -529,6 +542,7 @@ jobs:
 
   publish-winget:
     needs: [prepare, publish-release]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
     permissions:
       contents: read
     uses: ./.github/workflows/winget-release.yml
@@ -539,6 +553,7 @@ jobs:
 
   publish-package-repositories:
     needs: [prepare, publish-release]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
     continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
@@ -612,6 +627,7 @@ jobs:
 
   publish-flatpak-repository:
     needs: [prepare, flatpak, publish-release]
+    if: ${{ !cancelled() && needs.flatpak.result == 'success' && needs.publish-release.result == 'success' }}
     continue-on-error: true
     concurrency:
       group: tauritavern-stable-flatpak-repository
@@ -735,6 +751,7 @@ jobs:
 
   publish-nix-cache:
     needs: [prepare, publish-release]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
     continue-on-error: true
     strategy:
       fail-fast: false
