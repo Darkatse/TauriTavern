@@ -422,6 +422,19 @@ test('a saved profile remains committed when its list refresh fails', async () =
     expect(state.errors).toContain('profile list refresh failed');
 });
 
+test('export compares the draft with the saved profile in the same form', async () => {
+    const profile = defaultProfile('writer');
+    // The backend omits an empty descriptionForAgents; the editor writes null.
+    Reflect.deleteProperty(profile.delegation, 'descriptionForAgents');
+    const controller = createAgentSystemPanelController(createPanelWorld(profile).deps);
+    disposables.push(controller);
+    await controller.init();
+
+    await controller.exportSelectedProfile();
+    controller.setIdentityField('displayName', 'Unsaved Writer');
+    await expect(controller.exportSelectedProfile()).rejects.toThrow('agentProfileExportSaveFirst');
+});
+
 test('a dirty draft rejects an external overwrite and save', async () => {
     const profile = defaultProfile('writer');
     profile.preset = {
