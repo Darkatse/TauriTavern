@@ -6,6 +6,8 @@ const messages = {
     "snapshotHelp": "Read a bounded view of controls, text and current state.",
     "interact": "Operate app UI",
     "interactHelp": "Operate an observed control and read back its state.",
+    "capture": "Screenshot",
+    "captureHelp": "See how the app looks on screen",
     "readFile": "Read files",
     "writeFile": "Write files",
     "listFiles": "List files",

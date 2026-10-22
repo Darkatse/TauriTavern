@@ -14,6 +14,8 @@
     "in_app_agent.snapshotHelp": "依需要讀取控制項、文字與目前狀態。",
     "in_app_agent.interact": "操作應用程式介面",
     "in_app_agent.interactHelp": "操作已觀察的控制項，並讀取目前狀態。",
+    "in_app_agent.capture": "截圖",
+    "in_app_agent.captureHelp": "查看應用在螢幕上的樣子",
     "in_app_agent.readFile": "讀取檔案",
     "in_app_agent.writeFile": "寫入檔案",
     "in_app_agent.listFiles": "列出檔案",

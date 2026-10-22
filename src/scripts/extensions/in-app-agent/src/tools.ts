@@ -1,4 +1,4 @@
-import { createObservation, interact, snapshotTool, interactTool, evaluateTool, readLogsTool, appToolAliases } from '@tauritavern/app-use';
+import { createObservation, interact, snapshotTool, interactTool, captureTool, renderCapture, captureSummary, evaluateTool, readLogsTool, appToolAliases } from '@tauritavern/app-use';
 import type { InteractionOptions, InteractionPoint } from '@tauritavern/app-use';
 import { CONTROL_SHELL_CLASS } from '../../../legacy-controls.js';
 
@@ -6,7 +6,7 @@ const EXTENSION_ID = 'in-app-agent';
 const { snapshot: SNAPSHOT, interact: INTERACT, evaluate: EVALUATE, readLogs: READ_LOGS } = appToolAliases;
 
 export const ASSISTANT_TOOL_IDS = [
-    evaluateTool, readLogsTool, snapshotTool, interactTool,
+    evaluateTool, readLogsTool, snapshotTool, interactTool, captureTool,
 ].map(tool => `extension/${EXTENSION_ID}:${tool.name}`);
 
 type ToolContext = TauriTavernExtensionToolContext;
@@ -14,6 +14,11 @@ type ToolResult = TauriTavernJsonValue | void;
 const AsyncFunction = (async () => {}).constructor as new (
     ...args: string[]
 ) => (api: TauriTavernHostApi, context: ToolContext) => Promise<ToolResult>;
+
+async function nextPaint(): Promise<void> {
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+}
 
 export function createInteractionOptions(scrollChatSurfaceTo: (options: ScrollToOptions) => void): InteractionOptions {
     return {
@@ -72,6 +77,29 @@ Assistant conversation and tool logs are omitted from observation.`,
             ...interactionOptions,
             feedback: point => onInteract?.(point, context),
         });
+    });
+
+    await tools.register({
+        extensionId: EXTENSION_ID,
+        ...captureTool,
+        contexts: ['session'],
+        enabled: true,
+        returnsImages: true,
+        description: captureTool.description + `
+Gray boxes cover what you cannot observe: this assistant's conversation and sensitive fields. The assistant panel is part of the screen; close it first if it covers what you need to see.`,
+    }, async (args, context) => {
+        enterUI(context);
+        await nextPaint();
+        const layout = observation.captureLayout(args);
+        const pixels = api.layout!.capture();
+        const bitmap = await createImageBitmap(await pixels);
+        try {
+            const { blob, width, height } = await renderCapture(bitmap, layout);
+            context.attachImage(blob);
+            return captureSummary(layout, { width, height });
+        } finally {
+            bitmap.close();
+        }
     });
 
     await tools.register({

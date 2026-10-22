@@ -13,7 +13,7 @@ const host = window.__TAURITAVERN__;
 if (host?.ready == null) throw new Error('in-app-agent: Host readiness is unavailable');
 await host.ready;
 const api = host.api;
-if (!api?.agent || !api.dev || !api.extension) throw new Error('in-app-agent: required Host APIs are unavailable');
+if (!api?.agent || !api.dev || !api.extension || !api.layout) throw new Error('in-app-agent: required Host APIs are unavailable');
 const hostApi: TauriTavernHostApi = api;
 const { agent, dev } = api;
 const context = requireContext();
