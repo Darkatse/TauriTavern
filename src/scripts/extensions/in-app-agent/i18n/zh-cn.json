@@ -146,6 +146,7 @@
     "in_app_agent.instructions": "助手指令",
     "in_app_agent.stream": "流式回复",
     "in_app_agent.skills": "Skill",
+    "in_app_agent.builtinSkill": "内置",
     "in_app_agent.noSkills": "导入 Skill，为助手添加使用说明与参考材料。",
     "in_app_agent.skillReadNote": "建议启用文件读取，让助手按标准方式读取 Skill。Shell 需要另行启用。",
     "in_app_agent.enableRead": "启用文件读取",

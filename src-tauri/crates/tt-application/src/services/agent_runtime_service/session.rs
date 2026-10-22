@@ -391,9 +391,12 @@ impl AgentRuntimeService {
         }
         self.skill_service
             .resolve_effective_skills(
-                &[tt_domain::models::skill::SkillScope::Profile {
-                    profile_id: profile.id.as_str().to_string(),
-                }],
+                &[
+                    tt_domain::models::skill::SkillScope::Builtin,
+                    tt_domain::models::skill::SkillScope::Profile {
+                        profile_id: profile.id.as_str().to_string(),
+                    },
+                ],
                 &profile.skills,
             )
             .await

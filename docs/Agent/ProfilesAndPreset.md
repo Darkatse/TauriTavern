@@ -106,7 +106,7 @@ Profile 面板中的 Model Target 会物化为 LLM Connection。连接的端点�
 
 Session 使用相同的 `AgentProfileDefinition`，独立保存到 `_tauritavern/agent-workspaces/sessions/profile.json`，由所有 Session 共用，不进入普通 Profile 列表。修改从下一次发送准备时生效；预设重命名同时更新其引用。
 
-Session 必须指定 `preset.mode = ref`、`model.mode = connectionRef` 和 `context.initialChatHistoryMessages = -1`，不接受历史窗口；Skill 只取 Profile 自身作用域。正文产物与 commit/finish 要求属于 Chat 执行准入，Session 可使用空产物配置。目录与生命周期见 [Workspace](Workspace.md#session-的持续工作区)。
+Session 必须指定 `preset.mode = ref`、`model.mode = connectionRef` 和 `context.initialChatHistoryMessages = -1`，不接受历史窗口；Skill 来自内置与 Profile 自身作用域，同名时 Profile 覆盖内置包。正文产物与 commit/finish 要求属于 Chat 执行准入，Session 可使用空产物配置。目录与生命周期见 [Workspace](Workspace.md#session-的持续工作区)。
 
 ## 源码
 

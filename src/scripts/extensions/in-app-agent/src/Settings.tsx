@@ -28,13 +28,18 @@ export function Settings({ draft, setDraft, options, actions, busy, error, dirty
         return tool.extensionId === 'in-app-agent' ? 'appTools' : tool.source === 'builtin'
             ? tool.id.startsWith('builtin:workspace.') ? 'workspace' : 'builtin' : tool.source === 'extension' ? 'extensions' : 'mcp';
     }
-    const skillNames = [...new Set([...options.skills.map(skill => skill.name), ...draft.skills.visible, ...installed])];
+    const skillNames = [...new Set([...options.skills.map(skill => skill.name), ...draft.skills.visible, ...installed])].filter(name => name !== '*');
     function selectSkill(name: string, checked: boolean) {
         setDraft(current => ({ ...current, skills: { ...current.skills,
-            visible: checked ? [...new Set([...current.skills.visible, name])] : current.skills.visible.filter(value => value !== name),
-            deny: checked ? (current.skills.deny ?? []).filter(value => value !== name) : current.skills.deny ?? [],
+            visible: current.skills.visible.includes('*') ? current.skills.visible
+                : checked ? [...new Set([...current.skills.visible, name])] : current.skills.visible.filter(value => value !== name),
+            deny: checked ? (current.skills.deny ?? []).filter(value => value !== name)
+                : current.skills.visible.includes('*') ? [...new Set([...(current.skills.deny ?? []), name])] : current.skills.deny ?? [],
         } }));
     }
+    const skillSelected = (name: string) => !draft.skills.deny?.some(value => value === '*' || value === name)
+        && draft.skills.visible.some(value => value === '*' || value === name);
+    const selectedSkillCount = skillNames.filter(skillSelected).length;
     return <form className="ttia-settings" onSubmit={event => { event.preventDefault(); onSave(); }}>
         <fieldset className="ttia-settings-scroll" disabled={busy}>
             <label className="ttia-field"><span>{tr('preset')}</span><select value={draft.preset.ref?.name ?? ''}
@@ -64,14 +69,14 @@ export function Settings({ draft, setDraft, options, actions, busy, error, dirty
                 </label>)}
                 {options.diagnostics.map((diagnostic, index) => <p className="ttia-warning" key={index}>{diagnostic.message}</p>)}
             </Disclosure>
-            <Disclosure className="ttia-settings-section" label={<><span>{tr('skills')}</span><small>{tr('selected', { count: draft.skills.visible.length })}</small></>}>
+            <Disclosure className="ttia-settings-section" label={<><span>{tr('skills')}</span><small>{tr('selected', { count: selectedSkillCount })}</small></>}>
                 {skillNames.length === 0 && <p className="ttia-muted">{tr('noSkills')}</p>}
                 {skillNames.map(name => {
                     const skill = options.skills.find(item => item.name === name);
-                    return <label className="ttia-choice" key={name}><input type="checkbox" checked={draft.skills.visible.includes(name) && !draft.skills.deny?.includes(name)}
-                        onChange={event => selectSkill(name, event.target.checked)} /><span><strong>{skill?.displayName || name}</strong><small>{skill?.description ?? (installed.includes(name) ? '' : tr('unavailable'))}</small></span></label>;
+                    return <label className="ttia-choice" key={name}><input type="checkbox" checked={skillSelected(name)}
+                        onChange={event => selectSkill(name, event.target.checked)} /><span><strong>{skill?.displayName || name}</strong>{skill?.scope.kind === 'builtin' && <small>{tr('builtinSkill')}</small>}<small>{skill?.description ?? (installed.includes(name) ? '' : tr('unavailable'))}</small></span></label>;
                 })}
-                {draft.skills.visible.length > 0 && !selected('builtin:workspace.read_file') && <div className="ttia-note"><p>{tr('skillReadNote')}</p>
+                {selectedSkillCount > 0 && !selected('builtin:workspace.read_file') && <div className="ttia-note"><p>{tr('skillReadNote')}</p>
                     <button type="button" onClick={() => selectTool('builtin:workspace.read_file', true)}>{tr('enableRead')}</button></div>}
                 <SkillImport actions={actions} profileId={draft.id} onPendingChange={setImportPending} onInstalled={name => {
                     setInstalled(current => [...new Set([...current, name])]); selectSkill(name, true); refreshOptions();

@@ -67,7 +67,10 @@ async fn completed_legacy_revision_preserves_work_and_translates_only_affected_t
         .await
         .unwrap();
 
-    let repository = FileSkillRepository::new(root.join("_tauritavern/skills"));
+    let repository = FileSkillRepository::new(
+        root.join("_tauritavern/skills"),
+        root.join("builtin-skills"),
+    );
     let mut bound_skills = Value::Null;
     for (scope, description, body) in [
         (

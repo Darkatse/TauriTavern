@@ -146,6 +146,7 @@ const messages = {
     "instructions": "Assistant instructions",
     "stream": "Stream replies",
     "skills": "Skill",
+    "builtinSkill": "Built-in",
     "noSkills": "Import a Skill to add instructions and reference material.",
     "skillReadNote": "Enable file reading to use the standard Skill workspace. Shell is enabled separately.",
     "enableRead": "Enable file reading",

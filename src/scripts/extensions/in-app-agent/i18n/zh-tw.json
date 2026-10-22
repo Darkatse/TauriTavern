@@ -146,6 +146,7 @@
     "in_app_agent.instructions": "助理指令",
     "in_app_agent.stream": "串流回覆",
     "in_app_agent.skills": "Skill",
+    "in_app_agent.builtinSkill": "內建",
     "in_app_agent.noSkills": "匯入 Skill，為助理新增使用說明與參考資料。",
     "in_app_agent.skillReadNote": "建議啟用檔案讀取，讓助理依標準方式讀取 Skill。Shell 需另外啟用。",
     "in_app_agent.enableRead": "啟用檔案讀取",

@@ -1023,6 +1023,7 @@ type TauriTavernSkillInstallConflictStrategy = 'skip' | 'replace';
 type TauriTavernSkillInstallAction = 'installed' | 'replaced' | 'already_installed' | 'skipped';
 
 type TauriTavernSkillScope =
+    | { kind: 'builtin' }
     | { kind: 'global' }
     | { kind: 'preset'; apiId: string; name: string }
     | { kind: 'profile'; profileId: string }

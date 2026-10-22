@@ -1194,7 +1194,7 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
             )]),
         ],
     );
-    FileSkillRepository::new(root.join("_tauritavern/skills"))
+    FileSkillRepository::new(root.join("_tauritavern/skills"), root.join("builtin-skills"))
         .install_import(SkillInstallRequest {
             target_scope: SkillScope::Global,
             conflict_strategy: None,
@@ -1378,15 +1378,18 @@ async fn agent_runtime_replays_frozen_macros_before_reading_and_searching() {
         [255]
     );
     assert_eq!(
-        FileSkillRepository::new(root.join("_tauritavern/skills"))
-            .read_skill_bytes(
-                &SkillScope::Global,
-                "macro-demo",
-                &WorkspacePath::parse("references/template.md").unwrap(),
-                usize::MAX
-            )
-            .await
-            .unwrap(),
+        FileSkillRepository::new(
+            root.join("_tauritavern/skills"),
+            root.join("builtin-skills")
+        )
+        .read_skill_bytes(
+            &SkillScope::Global,
+            "macro-demo",
+            &WorkspacePath::parse("references/template.md").unwrap(),
+            usize::MAX
+        )
+        .await
+        .unwrap(),
         source.as_bytes()
     );
     let _ = fs::remove_dir_all(root).await;

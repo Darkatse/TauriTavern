@@ -201,6 +201,7 @@ fn agent_runtime_fixture_with_shell(
     responses: Vec<Result<Value, ApplicationError>>,
     shell: Arc<dyn tt_ports::workspace_shell::WorkspaceShell>,
 ) -> AgentRuntimeFixture {
+    std::fs::create_dir_all(root.join("builtin-skills")).unwrap();
     let default_user = root.join("default-user");
     let aliases = new_shared_chat_alias_store_for_user_dir(&default_user);
     let agent_repository = Arc::new(FileAgentRepository::new(
@@ -228,6 +229,7 @@ fn agent_runtime_fixture_with_shell(
     ));
     let skill_service = Arc::new(SkillService::new(Arc::new(FileSkillRepository::new(
         root.join("_tauritavern/skills"),
+        root.join("builtin-skills"),
     ))));
     let llm_connection_service = Arc::new(LlmConnectionService::new(
         Arc::new(FileLlmConnectionRepository::new(

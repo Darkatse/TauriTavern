@@ -5,6 +5,7 @@ use tauri::{AppHandle, Manager};
 use crate::app::startup_profile::initial_tauritavern_settings;
 use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepository;
 use crate::infrastructure::assets::read_resource_json;
+use crate::infrastructure::builtin_skills::materialize_builtin_skills;
 use crate::infrastructure::logging::llm_api_logs::{
     LlmApiLogStore, LoggingChatCompletionRepository,
 };
@@ -222,6 +223,7 @@ pub(super) async fn build(
     ));
     let skill_repository: Arc<dyn SkillRepository> = Arc::new(FileSkillRepository::new(
         data_root.join("_tauritavern").join("skills"),
+        materialize_builtin_skills(app_handle, &data_root).await?,
     ));
     let sprite_repository: Arc<dyn SpriteRepository> = Arc::new(FileSpriteRepository::new(
         data_directory.characters().to_path_buf(),

@@ -264,10 +264,48 @@ test('compaction stays in run order, opens its summary, and preserves a readerâ€
     expect(screen.getByText('Summary notes')).toBeTruthy();
 });
 
+for (const { visible, deny, checked, nextVisible, nextDeny } of [
+    { visible: ['*'], deny: [], checked: true, nextVisible: ['*'], nextDeny: ['test-skill'] },
+    { visible: ['test-skill', 'missing-skill'], deny: [], checked: true, nextVisible: ['missing-skill'], nextDeny: [] },
+    { visible: [], deny: [], checked: false, nextVisible: ['test-skill'], nextDeny: [] },
+    { visible: ['test-skill'], deny: ['test-skill'], checked: false, nextVisible: ['test-skill'], nextDeny: [] },
+    { visible: ['*'], deny: ['*'], checked: false, nextVisible: ['*'], nextDeny: ['*'] },
+]) test(`Skill selection preserves visible ${JSON.stringify(visible)} and deny ${JSON.stringify(deny)}`, async () => {
+    document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
+    const drawer = installAssistantDrawer(drawers);
+    const h = harness();
+    h.snapshot.profile.skills = { visible, deny };
+    const saveProfile = vi.fn(() => Promise.resolve());
+    h.controller.saveProfile = saveProfile;
+    h.actions.loadOptions = () => Promise.resolve({ presets: ['Agent'], tools: [], diagnostics: [], skills: [
+        { scope: { kind: 'builtin' }, name: 'test-skill', description: 'Test reference', tags: [], installedHash: 'hash',
+            fileCount: 1, totalBytes: 12, hasScripts: false, hasBinary: false, installedAt: '' },
+    ] });
+    render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
+    fireEvent.click(screen.getByRole('button', { name: 'Assistant settings' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Skill/ }));
+    const checkbox = screen.getByRole<HTMLInputElement>('checkbox', { name: /test-skill/ });
+    expect(checkbox.checked).toBe(checked);
+    expect(screen.getByText('Built-in')).toBeTruthy();
+    expect(screen.queryByRole('checkbox', { name: '*' })).toBeNull();
+    if (visible.includes('missing-skill')) expect(screen.getByRole('checkbox', { name: /missing-skill/ })).toBeTruthy();
+    fireEvent.click(checkbox);
+    if (deny.includes('*')) {
+        expect(checkbox.checked).toBe(false);
+    } else {
+        fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+        await waitFor(() => expect(saveProfile).toHaveBeenCalledWith(expect.objectContaining({ skills: { visible: nextVisible, deny: nextDeny } })));
+    }
+    drawer.dispose();
+});
+
 test('cancelling settings releases an unconfirmed Skill import and saving waits for its selection', async () => {
     document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
     const drawer = installAssistantDrawer(drawers);
     const h = harness();
+    h.snapshot.profile.skills.deny = ['test-skill'];
+    const saveProfile = vi.fn(() => Promise.resolve());
+    h.controller.saveProfile = saveProfile;
     let importing = false;
     const input: TauriTavernSkillImportInput = { kind: 'inlineFiles', files: [] };
     const preview: TauriTavernSkillImportPreview = {
@@ -280,7 +318,8 @@ test('cancelling settings releases an unconfirmed Skill import and saving waits 
         importing = true;
         return () => { importing = false; return Promise.resolve(); };
     }, pickImportArchives: () => Promise.resolve([input]),
-        discoverImports: () => Promise.resolve([input]), previewImport: () => Promise.resolve(preview) };
+        discoverImports: () => Promise.resolve([input]), previewImport: () => Promise.resolve(preview),
+        installImport: () => Promise.resolve({ scope: preview.skill.scope, name: preview.skill.name, action: 'installed' }) };
     const view = render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
     const editStreaming = () => {
         fireEvent.click(screen.getByRole('button', { name: 'Advanced settings' }));
@@ -303,5 +342,9 @@ test('cancelling settings releases an unconfirmed Skill import and saving waits 
     fireEvent.click(screen.getByRole('button', { name: 'Import ZIP' }));
     await screen.findByText('test-skill');
     expect(screen.queryByRole('alert')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Install and select' }));
+    await waitFor(() => expect(screen.getByRole<HTMLInputElement>('checkbox', { name: /test-skill/ }).checked).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(saveProfile).toHaveBeenCalledWith(expect.objectContaining({ skills: { visible: ['*'], deny: [] } })));
     drawer.dispose();
 });

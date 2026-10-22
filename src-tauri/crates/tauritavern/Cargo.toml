@@ -17,6 +17,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2.7.2", features = [] }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 
 [dependencies]
 tauri = { version = "2.12.3", features = ["protocol-asset"] }

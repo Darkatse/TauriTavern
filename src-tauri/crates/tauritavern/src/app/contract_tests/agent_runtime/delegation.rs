@@ -621,7 +621,7 @@ async fn configure_distinct_root_binding(
         .await
         .unwrap();
 
-    FileSkillRepository::new(root.join("_tauritavern/skills")).install_import(SkillInstallRequest {
+    FileSkillRepository::new(root.join("_tauritavern/skills"), root.join("builtin-skills")).install_import(SkillInstallRequest {
         target_scope: SkillScope::Preset { api_id: "openai".into(), name: "Captured A".into() },
         conflict_strategy: None,
         input: SkillImportInput::InlineFiles {

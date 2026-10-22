@@ -1,0 +1,91 @@
+# 移动端内容视口与窗口背景
+
+移动端的系统栏、刘海和停靠键盘由原生宿主在内容视口层消费一次。网页内没有系统栏或键盘适配机制：第一方与扩展都按普通浏览器规则排版。
+
+## 两份几何事实
+
+| 事实 | 内容 | 变化时机 | 消费者 |
+| --- | --- | --- | --- |
+| 窗口快照 | 窗口物理像素尺寸、政策避让、scale、revision | 旋转、窗口尺寸、显示政策变化 | `#bg1` 窗口矩形、原生背景条带、第一方竖屏判断 |
+| 内容视口 | 窗口减去政策避让与停靠键盘 | 上述变化，以及键盘出现、消失、高度变化 | 浏览器布局引擎 |
+
+窗口快照不含键盘。键盘只改变内容视口的底边，顶部固定；键盘过渡不产生 JS 背景发布、`:root` 变量写入或图片工作。浮动与分离键盘不报告 inset，不缩小视口。
+
+一次键盘过渡只让内容视口变化一次：宿主取键盘的目标几何，在过渡开始时提交（iOS 的交互拖动在松手时提交），键盘在已就位的页面上方滑入或滑出，露出的区域显示宿主底色。逐帧跟随会让浏览器引擎逐帧重排。
+
+## Android
+
+入口 `AndroidWindowLayout.kt`，由 `MainActivity` 编排生命周期，`WindowLayoutPlugin` 供 Rust 调用。Rust 的 `platform/window_layout_plugin.rs` 与鸿蒙共用请求、应答和条带传输，只在插件注册时选择平台入口。
+
+- edge-to-edge 只由 `WindowCompat.enableEdgeToEdge(window)` 配置。
+- 政策避让：非沉浸为稳定的 systemBars ∪ displayCutout，沉浸为零。用户偏好 `power_user.mobile_immersive_fullscreen` 经 `mobile-system-ui.js` 与 `AndroidSystemUiJsBridge` 传给原生。新安装及缺少该字段的设置默认非沉浸，已保存的选择保持不变。
+- 主 WebView 矩形由一个函数计算：四边取政策避让，底边取政策避让与 IME 底部 inset 的较大值；相同矩形不重复提交。
+- 提交时机：只跟随 `onApplyWindowInsets`。键盘动画开始时系统已按终态下发 insets；宿主不注册 insets 动画回调，否则平台改在主线程逐帧驱动键盘动画，Android 16 的预测性返回也会在拖动中逐帧改布局。预测性返回收键盘在松手确认时提交一次，取消时不变。
+- 内容根节点把原始 insets 传给子视图。主 WebView 自己的监听器把系统栏、刘海与 IME 清零：API 31+ 交给 WebView 的 `onApplyWindowInsets`；API 28–30 上它替换了 Chromium 构造时安装的监听器，引擎不接收 inset。
+- 元素全屏是独立的展示状态：隐藏系统栏，由兄弟容器覆盖主页面，不改变用户偏好、窗口快照或 WebView 矩形。临时滑出的系统栏同样不改变政策。
+- 旋转等由 `configChanges` 原位处理。Activity 重建（如切换开发者刘海选项）后 Tauri 插件仍持有旧 Activity，窗口插件拒绝请求，需重启应用。
+- 窗口背景画在 decorView 的背景上：底色加条带。状态栏与导航栏图标经 `WindowInsetsControllerCompat` 设置；导航栏按 navigationBars inset 所在的边取底边或侧边条带。
+
+## iOS
+
+入口 `infrastructure/ios_webview.rs`，安装 `platform/ios_window_layout.rs` 的窗口宿主 UIView。
+
+- WKWebView 上、左、右约束到 `safeAreaLayoutGuide`，底边约束到 `keyboardLayoutGuide.topAnchor`。键盘收起时 guide 停在底部安全区。
+- iOS 没有沉浸模式，政策避让始终是安全区。
+- 内部 UIScrollView 保持 `contentInsetAdjustmentBehavior = .never` 与零 inset；WebKit 自己的焦点、选区与键盘处理照常运行。
+- 主窗口隐藏 WebKit 表单附属栏（`disableInputAccessoryView`）。收键盘手势由宿主内的全窗口 `KeyboardScrollView` 提供：UIKit `.interactive`，与网页内部滚动视图的 pan 同时识别，不取消内容触摸，网页控件操作与键盘跟手可以同时发生。容器没有滚动内容，`setContentOffset:` 固定为零，`alwaysBounceVertical` 只用来让 pan 能够开始。
+- WKWebView 是容器的子视图，约束对象仍是宿主的 guide。UIKit 在键盘动画块里一次设定 guide；交互拖动不同，guide 跟手变化，所以容器的 pan 活动期间 WebView 高度保持不变，松手后恢复跟随。iOS WebKit 把每次 WebView 尺寸变化当作样式表环境变化整文档重建样式，逐帧跟随的代价尤其高。
+- 宿主在 `layoutSubviews` 按值去重发布窗口快照。底色设在宿主视图上，条带是插在 WKWebView 之下的 UIImageView。
+- 状态栏样式经根控制器的 `preferredStatusBarStyle` 生效。tao 没有提供这个入口，宿主安装时把它加到 `TaoUIViewController` 上；tao 自带同名方法时安装报错，改用 tao 的实现。home indicator 由系统自适应。
+- 元素全屏时 WebKit 会把 WKWebView 移出容器；归还时容器停用保持约束并重新激活同一组边约束。全屏期间手势不由容器提供；普通 CSS 全屏面板、dialog 和嵌入的 iframe 仍在覆盖范围内。
+
+## 鸿蒙
+
+入口 `gen/ohos/entry/src/main/ets/WindowLayout.ets`，由 `EntryAbility` 持有，作为应用自有的 `window-layout` 插件接入原生插件桥。
+
+- ArkUI 负责安全区布局：`setWindowLayoutFullScreen(false)` 加 `module.json5` 的 `avoid_cutout`，覆盖系统栏、导航指示条和刘海。鸿蒙没有沉浸模式，政策避让始终是安全区。
+- Ability HAR 的 Web 组件使用 `RESIZE_CONTENT`：ArkWeb 按键盘与 Web 的重叠缩小布局视口，Web 外框不变。窗口管理器每次停靠键盘过渡只下发一次终态占用区，ArkWeb 再把 20 ms 内的重复上报合并为一次，所以布局视口同样一次到位，宿主不另做键盘处理。
+- 快照由窗口尺寸、上述三类避让区和 UIContext 像素比例组成，不含键盘，按值去重。页面请求过初始快照后，变化经 `WebHost.runJavaScript` 发布。
+- 背景层是 `pages/Main` 中 Web 的兄弟节点，以 `LayoutPolicy.matchParent` 加 `ignoreLayoutSafeArea()` 铺满窗口。PNG 解码是异步的，解码完成后才核对 revision 与令牌；没有采用的 PixelMap 都释放。
+- 状态栏与三键导航栏的内容色由一次 `setWindowSystemBarProperties` 局部更新设置。手势导航指示条没有公开的设色接口，由系统控制。
+- 网页全屏沿用 HAR 的临时全屏布局，系统栏仍然可见。
+
+## 窗口背景
+
+`src/scripts/window-backdrop.js` 的 `applyWindowBackdrop()` 是第一方背景的唯一写入点：全局背景、聊天锁定背景、聊天自定义与生成图片、填充方式、主题底色、自定义 CSS 与 OLED 开关都经过它。新增第一方背景来源也接入它。
+
+`src/scripts/util/window-layout.js` 把窗口快照写成 `#bg1` 上的 `--tt-window-x/-y/-width/-height`。`#bg1` 固定为窗口矩形并使用 `background-attachment: scroll`，键盘不改变壁纸坐标。移动端壁纸切换不做渐变，两个渲染者始终呈现同一外观。
+
+`set_window_backdrop` 的顺序：
+
+1. JS 按帧合并，壁纸输入与底色分别去重；只改底色时不发送壁纸。`#bg1` 不可见（如 OLED）时清除壁纸。
+2. 原生核对窗口 revision 后立即更新底色。壁纸变化时生成新令牌并清除旧条带，返回自己的窗口快照与令牌。这一步不等待解码，新选择立即使旧渲染失效。
+3. `tt-adapter-media::window_backdrop` 一次只解码一张图：经 Host Resource Store 读取，取首帧并应用 EXIF 方向，按 `background-size`/`background-position` 映射到窗口，按预乘 alpha 采样，输出透明条带。每条条带带有所在的边和平均色（预乘 RGB 与 alpha，均为 0..1，透明像素计入）。
+4. 原生在窗口 revision 与令牌都匹配时整体替换条带，过期结果直接丢弃。
+
+系统栏图标三端同一规则：取该边条带的平均色，加上 `(1 − 平均 alpha) × 底色`，没有条带时取底色；按 sRGB 线性化与 Rec. 709 权重计算相对亮度，大于 0.179 时用深色图标。底色变化、条带替换或清空时重新计算，结果变化才设置。平均色属于条带记录，随条带一起接受与清除，所以只换底色不需要重新解码。
+
+这是近似：换壁纸时图标可能先按底色、再按新条带切换一次；系统栏覆盖网页或视频时（Android 沉浸模式滑出、元素全屏），仍按宿主背景判断。
+
+系统栏条带不呈现：视频壁纸（含第一方 mp4）、渐变与外部 URL（只画底色并记录诊断）、弹窗遮罩、主题滤镜与第三方背景层。动画图片取首帧。条带不做磁盘缓存。
+
+## 第一方行为
+
+- `--doc-height` 是静态别名：支持时 `100dvh`，否则 `100vh`。
+- 只有高度变化的 resize（键盘）不触发与宽度相关的工作：上游 resize 处理器在移动宿主上早退，聊天虚拟化度量按宽度门控，Quick Reply 编辑器只在宽度变化时 blur/focus。movingUI 缩放按宿主身份 `isMobileHost()` 判断。
+- 聊天宽度：移动宿主且窗口竖屏时固定为 100%，滑块禁用；竖屏读窗口快照，不读视口。
+- 输入框聚焦（`src/scripts/chat-input-focus.js`）：移动宿主拒绝导航与恢复类聚焦，只在编辑意图下弹出键盘；Android 进入后台时让输入框失焦。
+- 第一方弹窗用自身类名的普通 CSS 管理尺寸；聊天列表自己负责滚动。
+- 主题 CSS 按普通层叠生效，宿主不改写主题对第一方容器的几何。
+
+## 与上游的本地差异
+
+同步上游时保留这些删除：
+
+- `src/index.html` 中写入 `--doc-height` 像素值的 resize 脚本。
+- `src/style.css` 中 `html` 上的 transform 与 perspective：它们让 `html` 成为 fixed 元素的包含块，根文档滚动时 `#bg1` 会随之移动。
+- `src/css/mobile-styles.css` 中 `#bg1` 的 `100dvw`/`100dvh !important` 尺寸：它会压过 `#bg1` 的窗口矩形。
+- `src/scripts/browser-fixes.js` 中 iOS resize 时把根元素临时设为 `position: fixed` 的补偿。
+- 顶层抽屉（带 `openDrawer`/`closedDrawer`）开合时的高度动画：`src/style.css` 中 `.drawer-content` 的 `height: 0`、打开时的 `calc-size(auto, size)` 与 `.fillLeft`/`.fillRight` 的高度过渡，以及 `src/css/mobile-styles.css` 中左右面板关闭时的 `height: 0`。WebKit 不支持 `calc-size()`，高度在过渡一半时跳变；抽屉改为按最终尺寸排版一次，用 `clip-path` 揭开。浮动面板仍沿用上游的高度过渡。随之删除打开时隐藏滚动条的 `hide-scroll` 动画：它结束时滚动条才出现，内容宽度会抽动。
+
+公开布局 API 与旧变量的状态见 [API/Layout.md](../API/Layout.md)。

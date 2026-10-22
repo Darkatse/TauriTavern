@@ -29,7 +29,7 @@ description: 检查场景中的人物动机与叙事衔接。
 
 Skill Manager 可从目录或 ZIP 递归发现 Skill，逐项预览和安装；支持一次选择多个来源。角色卡和预设也可以携带 Skill。导出得到包含原始文件的 ZIP。
 
-Skill 可以属于全局、预设、Profile 或角色。运行时按 `global → preset → profile → character` 解析，同名 Skill 由靠后的作用域覆盖，再按 Profile 的 `skills.visible` 和 `deny` 筛选。
+用户安装的 Skill 可以属于全局、预设、Profile 或角色。Chat 运行时按 `global → preset → profile → character` 解析；Session 按 `builtin → profile` 解析。`builtin` 是随应用分发的只读知识包，不进入 Skill Manager 或嵌入资源列表。同名 Skill 由靠后的作用域覆盖，再按 Profile 的 `skills.visible` 和 `deny` 筛选。
 
 子 Agent 使用目标 Profile 的 Skill 配置，环境信息来自 Run 冻结输入。同名 Skill 可在不同 Invocation 中绑定到不同作用域。绑定在准备时确定，后续轮次与恢复沿用；读取使用安装包当前内容，缺失时失败，不改选其他同名包。
 
@@ -39,7 +39,7 @@ Skill 可以属于全局、预设、Profile 或角色。运行时按 `global →
 
 有效 Skill 的名称、描述和 `SKILL.md` 路径随系统提示词提供，见 [Prompt assembly](PromptAssembly.md)。模型通过工作区文件工具读取 `skills/<name>/SKILL.md` 及支持材料；相对引用以 Skill 目录为起点，Shell 中 `/skills/<name>/` 指向同一视图。
 
-`skills/` 只读。普通 UTF-8 文本展开 Run 冻结宏，`scripts/` 下的源码和非 UTF-8 文件保持原样；读取、文件大小与复制使用同一内容视图，文本搜索报告跳过数量。需要编辑或发布的材料先复制到普通工作目录，见 [Workspace](Workspace.md)。
+`skills/` 只读。内置 Skill 的所有文件保持原样。用户 Skill 的普通 UTF-8 文本展开 Run 冻结宏，`scripts/` 下的源码和非 UTF-8 文件保持原样；读取、文件大小与复制使用同一内容视图，文本搜索报告跳过数量。需要编辑或发布的材料先复制到普通工作目录，见 [Workspace](Workspace.md)。
 
 安装包由 `api.skill` 管理，管理读取与编辑使用原始内容，见 [Skill API](../API/Skill.md)。
 
@@ -132,7 +132,7 @@ console.log(JSON.stringify(await main({ path: args[0] })));
 
 ## 源码
 
-Skill 保存在 `_tauritavern/skills/`，按作用域组织安装目录，索引位于 `index/skills.json`。
+用户安装的 Skill 保存在 `_tauritavern/skills/`，按作用域组织安装目录，索引位于 `index/skills.json`。内置 Skill 来自随包的 `default/skills/`，启动时物化到 `_cache/builtin-skills/<digest>/`，与应用版本绑定，不进入安装索引或同步；更新时替换缓存版本。两者共用 `SkillRepository` 和工作区文件视图。
 
 - [SkillService](../../src-tauri/crates/tt-application/src/services/skill_service.rs)：管理与有效 Skill 解析。
 - [file_skill_repository](../../src-tauri/crates/tt-adapter-storage-userdata/src/repositories/file_skill_repository)：包格式、安装、索引与原始文件读写。

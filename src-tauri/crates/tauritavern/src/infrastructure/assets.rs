@@ -1,4 +1,5 @@
 use serde::de::DeserializeOwned;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::OnceLock;
 use tauri::AppHandle;
@@ -12,7 +13,7 @@ use tokio::fs;
 
 use tt_domain::errors::DomainError;
 
-static DEFAULT_CONTENT_MANIFEST: OnceLock<Vec<String>> = OnceLock::new();
+static DEFAULT_FILES_MANIFEST: OnceLock<BTreeMap<String, Vec<String>>> = OnceLock::new();
 
 #[cfg(any(embedded_resources, feature = "portable"))]
 mod embedded_resources {
@@ -120,7 +121,7 @@ pub async fn copy_resource_to_file(
     })
 }
 
-pub fn list_default_content_files_under(prefix: &str) -> Vec<String> {
+pub fn list_default_files_under(root: &str, prefix: &str) -> Vec<String> {
     let normalized_prefix = prefix.trim_matches('/').replace('\\', "/");
     let query = if normalized_prefix.is_empty() {
         String::new()
@@ -128,7 +129,8 @@ pub fn list_default_content_files_under(prefix: &str) -> Vec<String> {
         format!("{}/", normalized_prefix)
     };
 
-    let files = DEFAULT_CONTENT_MANIFEST.get_or_init(load_default_content_manifest);
+    let manifest = DEFAULT_FILES_MANIFEST.get_or_init(load_default_files_manifest);
+    let files = manifest.get(root).expect("known default resource root");
     if query.is_empty() {
         return files.to_vec();
     }
@@ -140,22 +142,12 @@ pub fn list_default_content_files_under(prefix: &str) -> Vec<String> {
         .collect()
 }
 
-fn load_default_content_manifest() -> Vec<String> {
-    let raw = include_str!(concat!(env!("OUT_DIR"), "/default_content_manifest.json"));
-    match serde_json::from_str::<Vec<String>>(raw) {
-        Ok(mut entries) => {
-            entries.sort();
-            entries
-        }
-        Err(error) => {
-            tracing::error!(
-                target: crate::observability_targets::USER_VISIBLE_ERROR,
-                "Failed to load generated default content manifest: {}",
-                error
-            );
-            Vec::new()
-        }
-    }
+fn load_default_files_manifest() -> BTreeMap<String, Vec<String>> {
+    serde_json::from_str(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/default_files_manifest.json"
+    )))
+    .expect("valid generated default resource manifest")
 }
 
 #[cfg(not(embedded_resources))]

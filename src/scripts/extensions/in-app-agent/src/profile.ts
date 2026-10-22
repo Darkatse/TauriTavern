@@ -28,10 +28,10 @@ export function createAssistantProfile(): TauriTavernAgentProfileDefinition {
         },
         instructions: { agentSystemPrompt: INSTRUCTIONS },
         tools: {
-            allow: [...ASSISTANT_TOOL_IDS], deny: [], toolDescriptions: {},
+            allow: [...ASSISTANT_TOOL_IDS, 'builtin:workspace.read_file', 'builtin:workspace.list_files', 'builtin:workspace.search_files'], deny: [], toolDescriptions: {},
             externalResultInlineCharLimit: 50_000,
         },
-        skills: { visible: [], deny: [] },
+        skills: { visible: ['*'], deny: [] },
         workspace: { visibleRoots: ['work', 'tmp'], writableRoots: ['work', 'tmp'] },
         plan: { mode: 'none', beta: true, nodes: [] },
         output: { artifacts: [] },

@@ -138,9 +138,16 @@ impl SkillService {
         scope_order: &[SkillScope],
         policy: &AgentSkillPolicy,
     ) -> Result<Vec<SkillIndexEntry>, ApplicationError> {
-        let installed = self.repository.list_skills(SkillScopeFilter::All).await?;
+        let mut skills = self.repository.list_skills(SkillScopeFilter::All).await?;
+        if scope_order.contains(&SkillScope::Builtin) {
+            skills.extend(
+                self.repository
+                    .list_skills(SkillScopeFilter::Builtin)
+                    .await?,
+            );
+        }
         let mut by_scope = BTreeMap::new();
-        for skill in installed {
+        for skill in skills {
             by_scope.insert((skill.scope.stable_key(), skill.name.clone()), skill);
         }
 

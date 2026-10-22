@@ -764,6 +764,110 @@ async fn session_compacts_on_request_without_a_new_message() {
     fs::remove_dir_all(root).await.unwrap();
 }
 
+#[tokio::test]
+async fn session_resolves_builtin_skills_before_profile_skills_verbatim() {
+    use tt_domain::models::skill::{
+        SkillImportInput, SkillInlineFile, SkillInstallRequest, SkillScope,
+    };
+    use tt_ports::repositories::skill_repository::SkillRepository;
+
+    let root = temp_root("session-builtin-skills");
+    let fixture = agent_runtime_fixture_with_responses(
+        &root,
+        vec![
+            model_tool_response(vec![
+                model_tool_call(
+                    "builtin_read",
+                    "workspace_read_file",
+                    json!({"path":"skills/app-guide/SKILL.md"}),
+                ),
+                model_tool_call(
+                    "profile_read",
+                    "workspace_read_file",
+                    json!({"path":"skills/style/SKILL.md"}),
+                ),
+            ]),
+            json!({"choices":[{"message":{"role":"assistant","content":"Read both skills."}}]}),
+        ],
+    );
+    for (name, description) in [
+        ("app-guide", "Built-in app guide"),
+        ("style", "Built-in style guidance"),
+    ] {
+        let directory = root.join("builtin-skills").join(name);
+        fs::create_dir_all(&directory).await.unwrap();
+        fs::write(
+            directory.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {description}\n---\nRead for {{{{char}}}}."),
+        )
+        .await
+        .unwrap();
+    }
+    let mut profile = configure_session_profile(&fixture, &root).await;
+    profile.skills.visible = vec!["*".into()];
+    FileSkillRepository::new(root.join("_tauritavern/skills"), root.join("builtin-skills"))
+        .install_import(SkillInstallRequest {
+            target_scope: SkillScope::Profile {
+                profile_id: profile.id.as_str().into(),
+            },
+            conflict_strategy: None,
+            input: SkillImportInput::InlineFiles {
+                source: json!({"kind":"test"}),
+                files: vec![SkillInlineFile {
+                    path: "SKILL.md".into(),
+                    content: "---\nname: style\ndescription: Profile style guidance\n---\nWrite for {{char}}.".into(),
+                    encoding: "utf8".into(),
+                    media_type: None,
+                    size_bytes: None,
+                    sha256: None,
+                }],
+            },
+        })
+        .await
+        .unwrap();
+    let session = fixture.service.create_session().await.unwrap().session;
+    let mut input = prepare_input(
+        &fixture,
+        &session.id,
+        &profile,
+        user_input("Read the skills."),
+    )
+    .await;
+    input.prompt_assembly_request.frozen_run_input_snapshot["macroContext"] =
+        json!({"names":{"char":"Frozen name"}});
+    let run = fixture.service.start_session_run(input).await.unwrap();
+    wait_until_session_idle(&fixture, &run.run_id).await;
+    let requests = fixture.model_gateway.requests().await;
+    let instructions = message_text_for_role(&requests[0], AgentModelRole::System);
+    assert_eq!(instructions.matches("skills/app-guide/SKILL.md").count(), 1);
+    assert_eq!(instructions.matches("skills/style/SKILL.md").count(), 1);
+    assert!(instructions.contains("Profile style guidance"));
+    assert!(!instructions.contains("Built-in style guidance"));
+    let results = requests[1]
+        .messages
+        .iter()
+        .flat_map(|message| &message.parts)
+        .filter_map(|part| match part {
+            AgentModelContentPart::ToolResult { result } => Some((result.call_id.as_str(), result)),
+            _ => None,
+        })
+        .collect::<HashMap<_, _>>();
+    for result in results.values() {
+        assert!(!result.is_error, "{}: {}", result.call_id, result.content);
+    }
+    assert!(
+        results["builtin_read"]
+            .content
+            .contains("Read for {{char}}.")
+    );
+    assert!(
+        results["profile_read"]
+            .content
+            .contains("Write for Frozen name.")
+    );
+    fs::remove_dir_all(root).await.unwrap();
+}
+
 pub(super) async fn configure_session_profile(
     fixture: &AgentRuntimeFixture,
     root: &Path,

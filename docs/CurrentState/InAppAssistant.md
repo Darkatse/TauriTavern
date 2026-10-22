@@ -6,10 +6,11 @@
 
 - 入口等待 Host ready、注册工具，再通过 APP_READY 回调挂载。不能在扩展顶层等待 APP_READY：上游在扩展加载完成后才发出该事件。
 - 一个 React root 对应一个 controller；首次打开读取配置和历史，隐藏保留视图与订阅，卸载释放订阅但不取消原生 Run。
-- 首次选择模型时保存 Profile，引用内置 `openai/Agent` 预设，默认开启 `app.snapshot`、`app.interact`、`app.capture`、`app.evaluate`、`app.read_logs`；其他工具按需选入。预设取值与取舍见[内置 Agent 预设](../Agent/ProfilesAndPreset.md#内置-agent-预设)。已有 Profile 保留用户选择与指令，新工具从助手设置显式启用。
+- 首次选择模型时保存 Profile，引用内置 `openai/Agent` 预设，默认开启 `app.snapshot`、`app.interact`、`app.capture`、`app.evaluate`、`app.read_logs` 及 `workspace.read_file`、`workspace.list_files`、`workspace.search_files`；其他工具按需选入。预设取值与取舍见[内置 Agent 预设](../Agent/ProfilesAndPreset.md#内置-agent-预设)。已有 Profile 保留用户选择与指令，新工具从助手设置显式启用。
 - 输入框中的模型与推理强度选择立即保存，并同步到未保存的设置草稿；修改影响下次发送，不改变运行中的冻结输入。
 - 会话选择保存在 `localStorage`：null 表示新对话，未保存或目标已删除时打开最近会话。`extension.store` 保存宽度偏好；Session 数据与共享 Profile 由 Session API 管理。
-- Skill 使用助手 Profile 的作用域，与 Skill Manager 共用[导入准入](../API/Skill.md#预览与安装)。取消设置释放待确认来源，但不撤销已完成的安装；选择 Skill 不自动启用 Shell。
+- Skill 来自内置与助手 Profile 作用域，同名时 Profile 覆盖内置包。新 Profile 默认 `visible: ['*']`，取消勾选加入 `deny`；已有显式名单保持原样，设置按相同的可见性规则显示和修改。安装与 Skill Manager 共用[导入准入](../API/Skill.md#预览与安装)。取消设置释放待确认来源，但不撤销已完成的安装；选择 Skill 不自动启用 Shell。
+- 内置知识包括 `tt-docs`、`tt-app-guide`、`tt-troubleshooting`、`tt-extensions`、`tt-frontend-map`，分别提供版本文档、使用指引、排障、扩展生态和前端代码入口；正文按需读取。内置包只读，来源与宏规则见 [Skill](../Agent/Skill.md)。
 
 ## 运行与历史
 
@@ -44,6 +45,7 @@
 | `app.interact` | 用最新 ref 或已知 selector 操作控件，定位后共用检查与执行链路；返回派发情况与即时状态。拒绝操作时区分隐藏、视口外与检测点未命中，提供实际命中元素及坐标所属页面；可恢复错误不结束任务，读回不证明异步保存完成。 |
 | `app.evaluate` | 在当前 WebView 执行一次 async function body，注入 `api`、`context`，显式返回 JSON；异常沿共同工具链传播，不换包装重跑。同步 JS 无法强制终止，超时或取消不撤销效果。 |
 | `app.read_logs` | 读取保留日志，先按等级筛选再取尾部，并返回采集开关状态；不修改采集设置或清除日志。 |
+| `workspace.read_file` / `workspace.list_files` / `workspace.search_files` | 通过统一工作区视图读取、列出和搜索会话材料及有效 Skill；不授予写入或 Shell 权限。 |
 
 读取和操作界面的引擎来自 [@tauritavern/app-use](../../packages/app-use/README.md)。扩展通过既有 Extension Provider 注册工具，并把 TT 特有的部分交给引擎：敏感标记 `[data-tt-sensitive]`、要省略的助手历史区、控件外壳，以及 `#chat` 的滚动。`evaluate` 的执行和 `read_logs` 由扩展实现。正文与思考按区域合并为有界预览，保留其中的控件，省略的文本不进入分页；快照不提供完整业务数据。
 
