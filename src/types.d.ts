@@ -799,6 +799,7 @@ type TauriTavernAgentApi = {
         events: TauriTavernAgentRunEvent[];
         timelineProjection?: TauriTavernAgentRunTimelineProjection;
     }>;
+    readWorkspaceBytes: (input: { runId: string; path: string }) => Promise<Uint8Array<ArrayBuffer>>;
     readWorkspaceFile: (input: {
         runId: string;
         path: string;

@@ -50,6 +50,7 @@ function harness() {
         isMobile: () => true, shouldSendOnEnter: () => true,
         isMobileHost: () => false,
         loadOptions: () => Promise.resolve({ presets: ['Agent'], tools: [], diagnostics: [], skills: [] }),
+        readImage: () => Promise.reject(new Error('No image result')),
         readResult: () => Promise.reject(new Error('No external result')), openConnections: () => {},
         confirmDeleteSession: () => Promise.resolve(true),
     };

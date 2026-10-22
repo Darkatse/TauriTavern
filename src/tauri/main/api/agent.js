@@ -199,6 +199,7 @@ export function createAgentApi({ safeInvoke, loadScript = () => import('../../..
         submitGuidance: runtime.submitGuidance,
         readEvents: runtime.readEvents,
         readWorkspaceFile: runtime.readWorkspaceFile,
+        readWorkspaceBytes: runtime.readWorkspaceBytes,
         readTaskDetail: runtime.readTaskDetail,
         readModelTurn: runtime.readModelTurn,
         pruneChatPersistentStates: runtime.pruneChatPersistentStates,

@@ -35,7 +35,7 @@
 
 消息按 Run 分组，中间回合、工具与思考可折叠，最终答案始终可见；当前与最新 Run 默认展开。
 
-历史页只读目录，正文按所选会话分页；旧会话的读取结果不能覆盖新视图。键盘事件隔离于角色聊天，内层控件以 `preventDefault` 消费 Escape，抽屉不重复处理。Markdown 使用独立 Showdown + DOMPurify，不进入聊天宏、regex 或脚本执行链。工具结果仅按明确的外部化路径读取。
+历史页只读目录，正文按所选会话分页；旧会话的读取结果不能覆盖新视图。键盘事件隔离于角色聊天，内层控件以 `preventDefault` 消费 Escape，抽屉不重复处理。Markdown 使用独立 Showdown + DOMPurify，不进入聊天宏、regex 或脚本执行链。工具结果按明确的外部化路径读取；图片按 `result.images` 中的路径与 MIME 类型读取，工具详情展开时加载缩略图，卸载时释放 object URL。
 
 | Session 工具 | 契约 |
 | --- | --- |

@@ -133,6 +133,7 @@ const { events, timelineProjection } = await agent.readEvents({
 | `listRuns({ chatRef?, stableChatId?, statuses?, before?, limit? })` | `{ runs, nextCursor? }`，按创建时间倒序；`before` 为 `{ createdAt, runId }`，最多 200 条 |
 | `readEvents({ runId, afterSeq?, beforeSeq?, limit?, invocationId?, includeTimelineProjection? })` | `{ events, timelineProjection? }`，事件按序号升序，单页最多 500 条 |
 | `readWorkspaceFile({ runId, path })` | `{ path, text, chars, words, sha256 }` |
+| `readWorkspaceBytes({ runId, path })` | `Uint8Array`；上限 1,000,000 字节，用于读取工具结果图片 |
 | `readModelTurn({ runId, invocationId?, round, maxChars? })` | assistant 文本、可见 reasoning、工具调用与 provider 摘要 |
 | `readTaskDetail({ runId, taskId, includeResult? })` | 任务说明、当前状态及按需读取的结果 |
 

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { AssistantSnapshot } from './controller';
 import type { AssistantActions, AssistantController } from './host';
 import { CopyButton, Disclosure, ErrorNotice, Icon, Markdown, formatDuration, formatTick, useNow } from './components';
@@ -118,7 +118,23 @@ function RunBar({ block, expanded, onToggle }: { block: RunBlock; expanded: bool
     </button>;
 }
 
-function ToolResult({ result, runId, actions }: { result: Result; runId: string; actions: AssistantActions }) {
+function ToolImage({ image, runId, actions }: { image: { path: string; mimeType: string }; runId: string; actions: AssistantActions }) {
+    const [url, setUrl] = useState<string | null>(null);
+    const [error, setError] = useState<unknown>(null);
+    useEffect(() => {
+        let active = true;
+        let objectUrl: string | null = null;
+        void actions.readImage(runId, image).then(blob => {
+            if (!active) return;
+            objectUrl = URL.createObjectURL(blob);
+            setUrl(objectUrl);
+        }).catch(error => { if (active) setError(error); });
+        return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+    }, [runId, image.path, image.mimeType, actions]);
+    return error != null ? <ErrorNotice error={error} /> : url ? <img className="ttia-tool-image" src={url} alt={image.path} /> : null;
+}
+
+function ToolResult({ result, runId, actions, expanded }: { result: Result; runId: string; actions: AssistantActions; expanded: boolean }) {
     const [full, setFull] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<unknown>(null);
@@ -132,6 +148,7 @@ function ToolResult({ result, runId, actions }: { result: Result; runId: string;
             setLoading(true); setError(null);
             void actions.readResult(runId, path).then(file => setFull(file.text)).catch(setError).finally(() => setLoading(false));
         }}>{loading ? tr('loading') : tr('fullResult')}</button>}
+        {expanded && result.images?.map(image => <ToolImage key={image.path} image={image} runId={runId} actions={actions} />)}
         {result.resourceRefs.length > 0 && <div className="ttia-refs">{result.resourceRefs.join('\n')}</div>}
         {error != null && <ErrorNotice error={error} />}
     </div>;
@@ -163,12 +180,12 @@ function ToolCall({ call, result, runId, origin, events, active, actions }: {
         {detail && <span className="ttia-detail-pill" title={detail}>{detail}</span>}
         <span className="ttia-tool-state">{stateText}</span>
     </>}>
-        <div className="ttia-tool-detail">
+        {open => <div className="ttia-tool-detail">
             <div className="ttia-detail-label">{tr(typeof code === 'string' ? 'code' : 'arguments')}
                 <CopyButton text={typeof code === 'string' ? code : args} copy={actions.copy} /></div>
             <pre>{typeof code === 'string' ? code : args}</pre>
-            {result && <ToolResult result={result} runId={runId} actions={actions} />}
-        </div>
+            {result && <ToolResult result={result} runId={runId} actions={actions} expanded={open} />}
+        </div>}
     </Disclosure>;
 }
 function AssistantMessage({ parts, results, runId, origin, scope, events, active, finalReply, streaming = false, actions }: {
@@ -305,7 +322,7 @@ export function Transcript({ snapshot, controller, actions, visible }: {
                         if (message.role === 'tool') {
                             const orphaned = message.parts.filter(part => part.type === 'toolResult' && !paired.has(part.result));
                             return orphaned.length ? <div key={entry.seq} data-message-seq={entry.seq}>{orphaned.map((part, index) => part.type === 'toolResult'
-                                ? <Disclosure key={index} label={tr('missingCall')}><ToolResult result={part.result} runId={entry.runId} actions={actions} /></Disclosure> : null)}</div> : null;
+                                ? <Disclosure key={index} label={tr('missingCall')}>{open => <ToolResult result={part.result} runId={entry.runId} actions={actions} expanded={open} />}</Disclosure> : null)}</div> : null;
                         }
                         const key = messageKey(entry);
                         const parts = collapseContent ? message.parts.filter(part => part.type !== 'reasoning') : message.parts;

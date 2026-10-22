@@ -81,10 +81,14 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
     }
 
     async function readWorkspaceFile(input) {
-        const runId = requireRunId(input?.runId);
-        const path = String(input?.path || '').trim();
-        if (!path) throw new Error('path is required');
-        return safeInvoke('read_agent_workspace_file', { dto: { runId, path } });
+        return safeInvoke('read_agent_workspace_file', { dto: workspaceReadInput(input) });
+    }
+
+    async function readWorkspaceBytes(input) {
+        const data = await safeInvoke('read_agent_workspace_bytes', { dto: workspaceReadInput(input) });
+        if (data instanceof Uint8Array) return data;
+        if (data instanceof ArrayBuffer) return new Uint8Array(data);
+        throw new Error('Unexpected agent workspace bytes response');
     }
 
     async function readTaskDetail(input) {
@@ -208,11 +212,19 @@ export function createAgentRunRuntimeApi({ safeInvoke }) {
         retention: createAgentRunRetentionApi({ safeInvoke }),
         readEvents,
         readWorkspaceFile,
+        readWorkspaceBytes,
         readTaskDetail,
         readModelTurn,
         pruneChatPersistentStates,
         subscribe,
     };
+}
+
+function workspaceReadInput(input) {
+    const runId = requireRunId(input?.runId);
+    const path = String(input?.path || '').trim();
+    if (!path) throw new Error('path is required');
+    return { runId, path };
 }
 
 function requireRunId(value) {

@@ -488,6 +488,21 @@ pub async fn read_agent_run_events(
 }
 
 #[tauri::command]
+pub async fn read_agent_workspace_bytes(
+    dto: AgentReadWorkspaceFileDto,
+    app_state: State<'_, Arc<AppState>>,
+) -> Result<tauri::ipc::Response, CommandError> {
+    log_command("read_agent_workspace_bytes");
+    let bytes = app_state
+        .services
+        .agent_runtime_service
+        .read_workspace_bytes(dto)
+        .await
+        .map_err(map_command_error("Failed to read agent workspace bytes"))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
 pub async fn read_agent_workspace_file(
     dto: AgentReadWorkspaceFileDto,
     app_state: State<'_, Arc<AppState>>,

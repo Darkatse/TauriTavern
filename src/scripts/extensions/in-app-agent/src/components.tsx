@@ -17,13 +17,13 @@ export function ErrorNotice({ error, retry }: { error: unknown; retry?: () => vo
         </div>
     </div>;
 }
-export function Disclosure({ label, children, className = '' }: { label: ReactNode; children: ReactNode; className?: string }) {
+export function Disclosure({ label, children, className = '' }: { label: ReactNode; children: ReactNode | ((open: boolean) => ReactNode); className?: string }) {
     const [open, setOpen] = useState(false);
     return <div className={`ttia-fold ${open ? 'is-open' : ''} ${className}`}>
         <button className="ttia-fold-toggle" type="button" aria-expanded={open} data-assistant-disclosure onClick={() => setOpen(!open)}>
             <Icon name="chevron-right" />{label}
         </button>
-        <div className="ttia-fold-body" inert={!open} aria-hidden={!open}><div>{children}</div></div>
+        <div className="ttia-fold-body" inert={!open} aria-hidden={!open}><div>{typeof children === 'function' ? children(open) : children}</div></div>
     </div>;
 }
 export function CopyButton({ text, copy }: { text: string; copy: AssistantActions['copy'] }) {

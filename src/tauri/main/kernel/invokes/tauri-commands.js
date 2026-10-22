@@ -162,6 +162,7 @@ export {};
  *   | 'open_cold_chat'
  *   | 'open_cold_swipe_record'
  *   | 'read_agent_workspace_file'
+ *   | 'read_agent_workspace_bytes'
  *   | 'read_agent_model_turn'
  *   | 'read_agent_task_detail'
  *   | 'read_skill_file'

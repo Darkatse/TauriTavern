@@ -149,6 +149,10 @@ export async function createAssistantActions(api: TauriTavernHostApi, context: A
             };
         },
         readResult: (runId: string, path: string) => agent.readWorkspaceFile({ runId, path }),
+        async readImage(runId: string, image: { path: string; mimeType: string }) {
+            const bytes = await agent.readWorkspaceBytes({ runId, path: image.path });
+            return new Blob([bytes], { type: image.mimeType });
+        },
         openConnections() {
             const toggle = document.querySelector<HTMLElement>('#sys-settings-button .drawer-toggle');
             if (!toggle) throw new Error('in-app-agent: connection settings entry is unavailable');

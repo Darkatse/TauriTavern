@@ -202,6 +202,7 @@
 .ttia-tool.is-running .ttia-tool-state { color: var(--ttia-live); }
 .ttia-detail-label { display: flex; align-items: center; justify-content: space-between; font-size: .83em; color: var(--ttia-muted); }
 .ttia-tool-detail { margin: 4px 0 12px 10px; padding-left: 15px; border-left: 1px solid var(--ttia-line); }
+.ttia-tool-image { display: block; max-width: 100%; max-height: 320px; width: auto; height: auto; margin: 8px 0; border: 1px solid var(--ttia-line); border-radius: 8px; object-fit: contain; }
 .ttia-refs { font: .73em/1.6 var(--monoFontFamily); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ttia-muted); }
 .ttia-root .ttia-latest { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); border: 1px solid var(--ttia-line); border-radius: 99px; background: var(--ttia-surface); box-shadow: var(--ttia-shadow-lift); font-size: .8em; padding: 7px 12px; white-space: nowrap; animation: ttia-latest-in 260ms var(--ttia-spring) both; }
 .ttia-root .ttia-latest:active { transform: translateX(-50%) scale(.97); }
