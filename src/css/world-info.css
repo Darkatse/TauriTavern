@@ -237,6 +237,11 @@
     display: none;
 }
 
+/* Titles grow with their text, so they never scroll; every visible scroll container adds compositing work to each frame. */
+.world_entry textarea[name="comment"] {
+    overflow: hidden;
+}
+
 .world_entry .select2-selection--multiple,
 .world_entry textarea.keyprimarytextpole,
 .world_entry textarea.keysecondarytextpole {

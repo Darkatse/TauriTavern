@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
 import { StrictMode, useState } from 'react';
 import { EditorView } from '@codemirror/view';
@@ -24,12 +24,22 @@ rstest.mock('../../../../i18n.js', () => ({ t: (strings: TemplateStringsArray) =
 rstest.mock('../../../../utils.js', () => ({ copyText: rstest.fn() }));
 
 beforeEach(() => {
+    Object.defineProperty(window, '__TAURITAVERN_HOST__', { configurable: true, value: { platform: 'windows', kind: 'desktop' } });
     editorRuntime.initializeCodeMirrorEditor({ codemirror_editor_enabled: true });
     loadBundle.mockImplementation(() => import('../../../../../lib-bundle-editor.js'));
     rstest.spyOn(hostApi, 'loadCodeMirrorEditor').mockResolvedValue(editorRuntime);
 });
 
 const tr = (key: string): string => key;
+
+/** CodeMirror renders in the shadow root of its wrapper. */
+function editorRoot(container: HTMLElement): ShadowRoot {
+    const root = container.querySelector('.tt-codemirror-editor')?.shadowRoot;
+    if (!root) throw new Error('expected editor');
+    return root;
+}
+
+const inEditor = (container: HTMLElement) => within(editorRoot(container) as unknown as HTMLElement);
 
 function skill(name: string): TauriTavernSkillIndexEntry {
     return {
@@ -129,27 +139,27 @@ afterEach(() => {
 test('Skill preview and edits share CodeMirror history and submit the current draft', async () => {
     const save = rstest.fn((content: string) => Promise.resolve({ ...readFile(), content }));
     const result = render(<StrictMode><SkillFileViewer file={readFile()} onSave={save} onClose={() => undefined} tr={tr} /></StrictMode>);
-    await waitFor(() => expect(result.container.querySelectorAll('.cm-editor').length).toBe(1));
-    expect(result.container.querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('false');
-    fireEvent.click(result.getByRole('button', { name: 'Find and replace' }));
-    fireEvent.click(result.getByRole('button', { name: 'Close' }));
-    expect(document.activeElement).toBe(result.container.querySelector('.cm-content'));
+    await waitFor(() => expect(editorRoot(result.container).querySelectorAll('.cm-editor').length).toBe(1));
+    expect(editorRoot(result.container).querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('false');
+    fireEvent.click(inEditor(result.container).getByRole('button', { name: 'Find and replace' }));
+    fireEvent.click(inEditor(result.container).getByRole('button', { name: 'Close' }));
+    expect(editorRoot(result.container).activeElement).toBe(editorRoot(result.container).querySelector('.cm-content'));
     fireEvent.click(result.getByRole('button', { name: 'edit' }));
-    const element = result.container.querySelector<HTMLElement>('.cm-editor');
+    const element = editorRoot(result.container).querySelector<HTMLElement>('.cm-editor');
     if (!element) throw new Error('expected editor');
     const editor = EditorView.findFromDOM(element);
     if (!editor) throw new Error('expected CodeMirror view');
     act(() => editor.dispatch({ changes: { from: 4, insert: ' edited' } }));
-    fireEvent.click(result.getByRole('button', { name: 'Undo' }));
+    fireEvent.click(inEditor(result.container).getByRole('button', { name: 'Undo' }));
     expect(editor.state.doc.toString()).toBe('body');
-    fireEvent.click(result.getByRole('button', { name: 'Redo' }));
+    fireEvent.click(inEditor(result.container).getByRole('button', { name: 'Redo' }));
     expect(editor.state.doc.toString()).toBe('body edited');
     fireEvent.click(result.getByRole('button', { name: 'save' }));
     await waitFor(() => expect(save).toHaveBeenCalledWith('body edited'));
     await waitFor(() => expect(result.getByRole('button', { name: 'edit' })).toBeTruthy());
 
     result.rerender(<SkillFileViewer file={{ ...readFile(), truncated: true }} onSave={save} onClose={() => undefined} tr={tr} />);
-    await waitFor(() => expect(result.container.querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('false'));
+    await waitFor(() => expect(editorRoot(result.container).querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('false'));
     expect(result.queryByRole('button', { name: 'edit' })).toBeNull();
 });
 
@@ -158,19 +168,19 @@ test('controlled Skill text survives cancelled mounts, permission changes, and t
         const [value, setValue] = useState('draft');
         return <CodeMirrorTextarea value={value} onChange={setValue} readOnly={readOnly} disabled={disabled} label="SKILL.md" className="text_pole" />;
     }
-    let release!: (bundle: typeof import('../../../../../lib-bundle-editor.js')) => void;
-    const pending = new Promise<typeof import('../../../../../lib-bundle-editor.js')>(resolve => { release = resolve; });
-    loadBundle.mockReturnValueOnce(pending);
+    let release!: (runtime: typeof editorRuntime) => void;
+    const pending = new Promise<typeof editorRuntime>(resolve => { release = resolve; });
+    const loadRuntime = rstest.spyOn(hostApi, 'loadCodeMirrorEditor').mockReturnValueOnce(pending).mockResolvedValue(editorRuntime);
     const first = render(<StrictMode><Source /></StrictMode>);
-    await waitFor(() => expect(loadBundle).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(loadRuntime).toHaveBeenCalled());
     first.unmount();
     const current = render(<StrictMode><Source /></StrictMode>);
     current.container.querySelector('textarea')?.focus();
     current.container.querySelector('textarea')?.setSelectionRange(3, 3);
-    await waitFor(() => expect(current.container.querySelectorAll('.cm-editor').length).toBe(1));
-    expect(document.activeElement).toBe(current.container.querySelector('.cm-content'));
-    await act(async () => { release(await import('../../../../../lib-bundle-editor.js')); await pending; });
-    const element = current.container.querySelector<HTMLElement>('.cm-editor');
+    await waitFor(() => expect(editorRoot(current.container).querySelectorAll('.cm-editor').length).toBe(1));
+    expect(editorRoot(current.container).activeElement).toBe(editorRoot(current.container).querySelector('.cm-content'));
+    await act(async () => { release(editorRuntime); await pending; });
+    const element = editorRoot(current.container).querySelector<HTMLElement>('.cm-editor');
     if (!element) throw new Error('expected editor');
     const editor = EditorView.findFromDOM(element);
     if (!editor) throw new Error('expected CodeMirror view');
@@ -178,23 +188,23 @@ test('controlled Skill text survives cancelled mounts, permission changes, and t
     expect(editor.state.selection.main.to).toBe(3);
     act(() => editor.dispatch({ changes: { from: 5, insert: ' updated' } }));
     expect(current.container.querySelector('textarea')?.value).toBe('draft updated');
-    fireEvent.click(current.getByRole('button', { name: 'Find and replace' }));
-    fireEvent.input(current.getByRole('textbox', { name: 'Find' }), { target: { value: 'updated' } });
+    fireEvent.click(inEditor(current.container).getByRole('button', { name: 'Find and replace' }));
+    fireEvent.input(inEditor(current.container).getByRole('textbox', { name: 'Find' }), { target: { value: 'updated' } });
     const selection = editor.state.selection.main;
     current.rerender(<StrictMode><Source readOnly /></StrictMode>);
-    expect(current.container.querySelector('.cm-content')?.getAttribute('aria-readonly')).toBe('true');
-    expect(current.queryByRole('button', { name: 'Toggle replace' })).toBeNull();
-    expect(current.container.querySelector('input[name=replace]')).toBeNull();
+    expect(editorRoot(current.container).querySelector('.cm-content')?.getAttribute('aria-readonly')).toBe('true');
+    expect(inEditor(current.container).queryByRole('button', { name: 'Toggle replace' })).toBeNull();
+    expect(editorRoot(current.container).querySelector('input[name=replace]')).toBeNull();
     current.rerender(<StrictMode><Source disabled /></StrictMode>);
-    expect(current.container.querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('false');
+    expect(editorRoot(current.container).querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('false');
     current.rerender(<StrictMode><Source /></StrictMode>);
-    expect(current.container.querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('true');
-    expect(current.container.querySelector('input[name=search]')?.getAttribute('aria-invalid')).toBe('false');
-    expect((current.getByRole('textbox', { name: 'Find' }) as HTMLInputElement).value).toBe('updated');
+    expect(editorRoot(current.container).querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('true');
+    expect(editorRoot(current.container).querySelector('input[name=search]')?.getAttribute('aria-invalid')).toBe('false');
+    expect(inEditor(current.container).getByRole<HTMLInputElement>('textbox', { name: 'Find' }).value).toBe('updated');
     expect(editor.state.selection.main.eq(selection)).toBe(true);
-    fireEvent.click(current.getByRole('button', { name: 'Toggle replace' }));
-    expect(current.getByRole('textbox', { name: 'Replace' })).toBeTruthy();
-    fireEvent.click(current.getByRole('button', { name: 'Undo' }));
+    fireEvent.click(inEditor(current.container).getByRole('button', { name: 'Toggle replace' }));
+    expect(inEditor(current.container).getByRole('textbox', { name: 'Replace' })).toBeTruthy();
+    fireEvent.click(inEditor(current.container).getByRole('button', { name: 'Undo' }));
     expect(editor.state.doc.toString()).toBe('draft');
     current.unmount();
 
@@ -203,7 +213,7 @@ test('controlled Skill text survives cancelled mounts, permission changes, and t
     await act(async () => { await Promise.resolve(); });
     fireEvent.change(plain.getByRole('textbox', { name: 'SKILL.md' }), { target: { value: 'plain draft' } });
     expect((plain.getByRole('textbox', { name: 'SKILL.md' }) as HTMLTextAreaElement).value).toBe('plain draft');
-    expect(plain.container.querySelector('.cm-editor')).toBeNull();
+    expect(plain.container.querySelector('.tt-codemirror-editor')).toBeNull();
 });
 
 test('dialog cancel is prevented and preview overlay closes only on self', async () => {

@@ -204,6 +204,22 @@ src/
 - Prompt 组装和生成判断使用本次生效设置，`createGenerationParameters()` 出口统一省略字段；用户显式配置的 Additional Parameters 仍拥有最终覆盖权。
 - JSON 视图只编辑当前格式可用的参数，非法输入整体不应用；它不是最终请求预览，后续仍遵循渠道与模型的转换规则。
 
+## 6.5 CodeMirror 编辑器
+
+挂载与生命周期在 `src/scripts/tauri/codemirror-editor.js`，编辑器本体在按需加载的 `src/lib-bundle-editor.js`。设置关闭时保留原生 textarea。
+
+- 源 textarea 是唯一的值来源。编辑器通过 `onChange` 通知有改动，调用方需要文本时用 `flush()` 写回源 textarea；`flush({ input: true })` 会在源上派发 `input`，沿用 textarea 原有的处理链。
+- 外壳 `.tt-codemirror-editor` 接管源 textarea 的盒子，并继承其 `resize`。读取尺寸时不排版源文本，除非源的高度由内容决定（`field-sizing: content`）。挂载先等调用方当前的同步工作结束（例如抽屉显示出源 textarea），编辑器包加载后在下一帧之前完成，源 textarea 不会先单独渲染；编辑器在页面外建好，再一次性放入页面。全屏结束后恢复用户调整过的高度。
+- 编辑器 DOM 的位置随引擎而定，判断集中在 `codemirror-editor.js`。Chromium 宿主（Windows、Android、OpenHarmony）把它放在外壳的 open shadow root 中：Blink 每次 DOM 变化都会重查编辑器外围的 `:has()` 锚点，隔离后页面选择器既不匹配它，也不会因它重算样式。WebKit 宿主（macOS、iOS、Linux）把它留在页面中：在 WebKit 的 shadow root 里，替换一段延伸到最后一行的选区的编辑，会把页面内容拉进编辑器。页面 CSS 和脚本不依赖编辑器内部 DOM 是否可见。
+- 原始 `input`/`beforeinput` 停在外壳；键盘与焦点事件照常冒泡，判断焦点时需要看进 shadow root（见 `isInputElementInFocus()`）。
+- 页面通过两处与编辑器样式交互：主题自定义属性自然继承，`--tt-editor-tools: none` 隐藏工具栏（查找替换仍可打开）；查找面板打开时外壳带 `data-search-open`。
+- 使用原生光标和选区，每次按键只产生一帧。
+
+## 6.6 样式与合成成本
+
+- `:has()` 之后的最右复合选择器要带类、ID、属性或标签。Blink 的所有 `:has()` 规则共用一个失效集，一条以 `:first-child`、`:not(...)` 这类无特征复合结尾的规则，会让每个 `:has()` 锚点在 DOM 变化时重算整棵子树。规则要表达“除某个元素外的全部”这类通用语义时，不要把最右复合改成已知类名的白名单，扩展插入的控件会漏掉；先看 `:has()` 条件是否已由别处保证。例如编辑消息时 ST 本身会隐藏 `.mes_buttons`，所以隐藏工具消息非编辑按钮的规则不需要 `:has(.edit_textarea)`。
+- 成批出现的控件不要无谓成为滚动容器。每个可见的滚动容器都会增加每一帧的整页合成成本；世界书条目标题按内容自适应高度，因此设为 `overflow: hidden`。
+
 ## 7. 插件系统前端适配
 
 ### 7.1 设计目标

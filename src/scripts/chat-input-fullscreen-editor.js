@@ -269,7 +269,8 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, ca
 
     // Capture before CodeMirror handles Mod-Enter as an editor command.
     dialog.addEventListener('keydown', (event) => {
-        if (event.target !== textarea && !event.target.closest('.cm-content')) return;
+        const origin = event.composedPath()[0];
+        if (origin !== textarea && !origin.closest('.cm-content')) return;
         if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && !event.isComposing) {
             event.preventDefault();
             event.stopPropagation();

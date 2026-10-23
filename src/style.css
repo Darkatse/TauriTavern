@@ -711,8 +711,11 @@ small {
     z-index: 1;
 }
 
-.mes.smallSysMes[data-message-role="tool"]:not(:has(.edit_textarea)) .ch_name > :first-child,
-.mes.smallSysMes[data-message-role="tool"]:not(:has(.edit_textarea)) .mes_buttons > :not(.mes_edit) {
+.mes.smallSysMes[data-message-role="tool"]:not(:has(.edit_textarea)) .ch_name > .mes_header_info {
+    display: none;
+}
+
+.mes.smallSysMes[data-message-role="tool"] .mes_buttons > :not(.mes_edit) {
     display: none;
 }
 
@@ -1636,7 +1639,7 @@ br {
     margin: 2px 0;
 }
 
-.tt-codemirror-editor:has(.cm-editor-search) {
+.tt-codemirror-editor[data-search-open] {
     min-height: 160px;
 }
 
