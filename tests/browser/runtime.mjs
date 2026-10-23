@@ -1,18 +1,13 @@
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import vm from 'node:vm';
 import { Window } from 'happy-dom';
+import { defaultSettings, defaultTheme, frontendRoot as root, systemExtensions } from '../helpers/frontend-content.mjs';
 import { HOSTS } from '../helpers/host-identity.mjs';
 import { createWebHostFixture } from './web-host-fixture.mjs';
 
-const root = fileURLToPath(new URL('../../src/', import.meta.url));
-const defaultSettings = JSON.parse(readFileSync(new URL('../../default/content/settings.json', import.meta.url), 'utf8'));
-const defaultTheme = JSON.parse(readFileSync(new URL('../../default/content/themes/Dark Lite.json', import.meta.url), 'utf8'));
-const extensions = readdirSync(path.join(root, 'scripts/extensions'))
-    .filter(name => existsSync(path.join(root, 'scripts/extensions', name, 'manifest.json')))
-    .map(name => ({ name, type: 'system' }));
-extensions.push({ name: 'third-party/web-host-fixture', type: 'local' });
+const extensions = [...systemExtensions, { name: 'third-party/web-host-fixture', type: 'local' }];
 
 function resourcePath(pathname) {
     const prefix = '/scripts/extensions/third-party/';
