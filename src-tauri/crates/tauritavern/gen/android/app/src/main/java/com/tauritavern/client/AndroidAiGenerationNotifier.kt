@@ -12,14 +12,38 @@ import androidx.core.content.ContextCompat
 class AndroidAiGenerationNotifier(
   private val context: Context,
 ) {
-  fun onGenerationStart(taskId: String) {
-    ContextCompat.startForegroundService(
-      context,
+  fun syncState(
+    state: KeepAliveState,
+    outcome: String? = null,
+    statusCode: Int = 0,
+    notifyCompletion: Boolean = false,
+  ) {
+    val intent =
       Intent(context, AiGenerationForegroundService::class.java).apply {
-        action = AiGenerationForegroundService.ACTION_GENERATION_START
-        putExtra(AiGenerationForegroundService.EXTRA_TASK_ID, taskId)
-      },
-    )
+        action = AiGenerationForegroundService.ACTION_SYNC_STATE
+        putExtra(AiGenerationForegroundService.EXTRA_ACTIVE, state.active)
+        putExtra(AiGenerationForegroundService.EXTRA_NEEDS_CPU, state.needsCpu)
+        putExtra(AiGenerationForegroundService.EXTRA_PERSISTENT, state.persistent)
+        if (outcome != null) {
+          putExtra(AiGenerationForegroundService.EXTRA_OUTCOME, outcome)
+          putExtra(AiGenerationForegroundService.EXTRA_STATUS_CODE, statusCode)
+          putExtra(
+            AiGenerationForegroundService.EXTRA_SHOW_COMPLETION_NOTIFICATION,
+            notifyCompletion,
+          )
+        }
+      }
+
+    if (state.active) {
+      ContextCompat.startForegroundService(context, intent)
+      return
+    }
+
+    try {
+      context.startService(intent)
+    } catch (error: IllegalStateException) {
+      Log.d(LOG_TAG, "Ignoring a background state stop after the service stopped", error)
+    }
   }
 
   fun acknowledgeCompletionNotification() {
@@ -39,26 +63,6 @@ class AndroidAiGenerationNotifier(
     } catch (error: IllegalStateException) {
       Log.d(LOG_TAG, "Ignoring a background progress update after the service stopped", error)
     }
-  }
-
-  fun onGenerationFinish(
-    taskId: String,
-    outcome: String,
-    statusCode: Int,
-    notifyCompletion: Boolean,
-  ) {
-    context.startService(
-      Intent(context, AiGenerationForegroundService::class.java).apply {
-        action = AiGenerationForegroundService.ACTION_GENERATION_FINISH
-        putExtra(AiGenerationForegroundService.EXTRA_TASK_ID, taskId)
-        putExtra(AiGenerationForegroundService.EXTRA_OUTCOME, outcome)
-        putExtra(AiGenerationForegroundService.EXTRA_STATUS_CODE, statusCode)
-        putExtra(
-          AiGenerationForegroundService.EXTRA_SHOW_COMPLETION_NOTIFICATION,
-          notifyCompletion,
-        )
-      },
-    )
   }
 
   companion object {

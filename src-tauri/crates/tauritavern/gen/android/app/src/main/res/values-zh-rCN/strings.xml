@@ -9,6 +9,9 @@
     <string name="notification_ai_keepalive_title">少女祈祷中</string>
     <string name="notification_ai_keepalive_body">TauriTavern 将在后台持续生成，请勿划掉</string>
 
+    <string name="notification_keepalive_title">TauriTavern 正在后台运行</string>
+    <string name="notification_keepalive_body">点按返回 TauriTavern</string>
+
     <string name="notification_ai_live_title">AI 生成中</string>
     <string name="notification_ai_live_body">已输出 Token：%1$d</string>
     <string name="notification_ai_live_short">生成中</string>

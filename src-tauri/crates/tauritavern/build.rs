@@ -47,6 +47,10 @@ fn main() {
         tauri_build::Attributes::new()
             .capabilities_path_pattern(capabilities)
             .plugin(
+                "generation-background",
+                tauri_build::InlinedPlugin::new().commands(&["requestIgnoreBatteryOptimizations"]),
+            )
+            .plugin(
                 "speech-synthesis",
                 tauri_build::InlinedPlugin::new().commands(&["initialize", "speak", "cancel"]),
             ),

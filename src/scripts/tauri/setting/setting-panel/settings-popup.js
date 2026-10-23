@@ -2,6 +2,7 @@ import { callGenericPopup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
 import { translate } from '../../../i18n.js';
 import {
     openDialog,
+    requestIgnoreBatteryOptimizations,
     setDataRoot,
     updateTauriTavernSettings,
 } from '../../../../tauri-bridge.js';
@@ -84,6 +85,13 @@ const HELP_TOPICS = {
             'Minimize to tray help: on',
             'Minimize to tray help: off',
             'Minimize to tray help: exit',
+        ],
+    },
+    keepAliveInBackground: {
+        title: 'Keep alive in background (Android)',
+        lines: [
+            'Keeps TauriTavern running in the background with a persistent notification to prevent the system from stopping active sessions.',
+            'Requesting battery optimization exemption helps prevent background throttling on strict Android skins.',
         ],
     },
     claudePromptCache: {
@@ -387,6 +395,7 @@ function createSettingsActions(backgroundOptions) {
         chooseDataRoot: () => runTaskOrPopup(chooseDataRoot),
         chooseWallpaper: (request) => runTaskOrPopup(() => chooseWallpaper(backgroundOptions, request)),
         showHelp: (topicId) => runTaskOrPopup(() => showHelpTopic(topicId)),
+        requestIgnoreBatteryOptimizations: () => runTaskOrPopup(requestIgnoreBatteryOptimizations),
         manageQuickAccess: () => runTaskOrPopup(async () => {
             const { openExtensionMenuShortcutsManager } = await import('../extension-menu-shortcuts.js');
             await openExtensionMenuShortcutsManager();

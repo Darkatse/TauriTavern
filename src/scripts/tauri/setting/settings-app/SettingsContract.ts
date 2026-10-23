@@ -15,6 +15,7 @@ export type SettingsCapabilities = {
     requestProxyAllowed: boolean;
     lanSyncAllowed: boolean;
     supportsCloseToTrayOnClose: boolean;
+    supportsKeepAliveInBackground: boolean;
     supportsDataRootSelection: boolean;
 };
 
@@ -45,6 +46,7 @@ export type SettingsValues = {
         maxTotalBytes: number;
     };
     closeToTrayOnClose: boolean;
+    keepAliveInBackground: boolean;
     requestProxy: {
         enabled: boolean;
         url: string;
@@ -114,6 +116,7 @@ export type SettingsDraft = {
         maxTotalUnit: ChatBackupStorageUnit;
     };
     closeToTrayOnClose: boolean;
+    keepAliveInBackground: boolean;
     requestProxy: {
         enabled: boolean;
         url: string;
@@ -161,6 +164,7 @@ export function createSettingsDraft(values: SettingsValues): SettingsDraft {
             maxTotalUnit,
         },
         closeToTrayOnClose: values.closeToTrayOnClose,
+        keepAliveInBackground: values.keepAliveInBackground,
         requestProxy: {
             enabled: values.requestProxy.enabled,
             url: values.requestProxy.url,
@@ -195,6 +199,7 @@ export type SettingsActions = {
     chooseDataRoot: () => Promise<string | null | undefined>;
     chooseWallpaper: (request: { currentValue: string }) => Promise<string | null | undefined>;
     showHelp: (topicId: string) => Promise<unknown>;
+    requestIgnoreBatteryOptimizations: () => Promise<unknown>;
     manageQuickAccess: () => Promise<unknown>;
     reloadFrontend: () => Promise<unknown>;
     openFrontendLogs: () => Promise<unknown>;
@@ -224,6 +229,7 @@ const REQUIRED_ACTIONS = [
     'chooseDataRoot',
     'chooseWallpaper',
     'showHelp',
+    'requestIgnoreBatteryOptimizations',
     'manageQuickAccess',
     'reloadFrontend',
     'openFrontendLogs',
