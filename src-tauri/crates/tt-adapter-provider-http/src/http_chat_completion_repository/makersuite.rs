@@ -20,6 +20,8 @@ const GEMINI_API_VERSION: &str = "v1beta";
 
 #[derive(serde::Deserialize)]
 struct ModelsPage {
+    // Proxies such as OpenCode serve another format's list here: no models, not a failed connection.
+    #[serde(default)]
     models: Vec<Value>,
     #[serde(rename = "nextPageToken")]
     next_page_token: Option<String>,

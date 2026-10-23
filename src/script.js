@@ -9375,9 +9375,8 @@ async function applySettingsSnapshot(data, initLoaderHandle = null) {
         await eventSource.emit(event_types.SETTINGS_LOADED_BEFORE, settings);
 
         //Load AI model config settings
-        amount_gen = settings.amount_gen;
-        if (settings.max_context !== undefined)
-            max_context = parseInt(settings.max_context);
+        amount_gen = settings.amount_gen ?? amount_gen;
+        max_context = parseInt(settings.max_context ?? max_context);
 
         swipes = settings.swipes !== undefined ? !!settings.swipes : true;  // enable swipes by default
         $('#swipes-checkbox').prop('checked', swipes); /// swipecode

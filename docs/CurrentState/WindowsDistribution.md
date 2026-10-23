@@ -25,7 +25,10 @@ TauriTavern 的 Windows Stable Release 以 GitHub Release 为唯一安装包来�
 2. 精确选择一个 x64 NSIS setup 资产；
 3. 若目标版本已合入或已有开放 PR，则幂等成功；
 4. 下载固定版本的 WingetCreate 并校验 SHA256；
-5. 从官方仓库中的上一版 manifest 生成更新，先上传为 Actions artifact，再提交 PR。
+5. 从官方仓库中的上一版 manifest 生成更新并上传为 Actions artifact；
+6. 使用提交令牌对应账号，将其 `winget-pkgs` fork 的 `master` 快进同步到上游，再提交 PR。
+
+同步不使用强制覆盖；fork 有分歧或权限不足时，停止发布并报告错误。
 
 工作流可以按 `release_tag` 手动运行，因此 WinGet 失败时只重试 manifest 发布，
 不需要重新构建 Stable Release。Stable 的资产上传仍保留 `--clobber`；发布契约是

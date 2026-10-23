@@ -19,6 +19,8 @@
 
 Android 的 content URI 不带文件名，由 `ContentUriPlugin` 查询 `DISPLAY_NAME` 得到。
 
+Android 与鸿蒙的保存面板只接收文件扩展名，类型由系统按自己的表转换；系统不认识的扩展名不声明具体类型。保存面板会按类型推导后缀，自行指定的类型可能与系统的表不一致，例如 ColorOS 会把 `application/octet-stream` 的 `.jsonl` 存成 `.bin`。
+
 ## 3. 暂存
 
 | 暂存 | 位置 | 内容 |

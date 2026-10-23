@@ -11,7 +11,11 @@ for (const identity of [HOSTS.windows, HOSTS.android]) {
         const readSettings = () => JSON.parse(JSON.parse(fixture.backend.handle({
             method: 'POST', url: '/api/settings/get', headers: {}, body: '{}',
         }).body).settings);
-        const original = readSettings().power_user;
+        // Settings that lost amount_gen keep starting and save its default (#391).
+        const legacy = readSettings();
+        const original = legacy.power_user;
+        delete legacy.amount_gen;
+        fixture.backend.handle({ method: 'POST', url: '/api/settings/save', headers: {}, body: JSON.stringify(legacy) });
         const { errors, failed } = captureBrowserErrors(window);
         try {
             await startHost();
@@ -29,9 +33,10 @@ for (const identity of [HOSTS.windows, HOSTS.android]) {
             assert.equal(window.document.getElementById('extensions_details').classList.contains('warning'), false);
             assert.equal(window.webHostFixtureActivated, true);
             assert.equal(lore[0].content, 'Review lore loaded.');
-            const saved = readSettings().power_user;
-            assert.deepEqual(saved.personas, original.personas);
-            assert.deepEqual(saved.persona_descriptions, original.persona_descriptions);
+            const saved = readSettings();
+            assert.equal(saved.amount_gen, 80);
+            assert.deepEqual(saved.power_user.personas, original.personas);
+            assert.deepEqual(saved.power_user.persona_descriptions, original.persona_descriptions);
             assert.deepEqual(errors, []);
         } finally {
             await window.happyDOM.close();

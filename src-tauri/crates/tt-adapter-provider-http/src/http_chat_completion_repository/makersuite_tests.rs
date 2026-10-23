@@ -244,6 +244,21 @@ async fn models_pagination_preserves_metadata_and_headers_and_rejects_partial_re
 }
 
 #[tokio::test]
+async fn models_from_a_proxy_serving_an_openai_list_are_empty() {
+    let page = json!({"object": "list", "data": [{"id": "gemini-test", "object": "model"}]});
+    let (base, server) = upstream(vec![page.to_string()]).await;
+    let (repository, config) = repository(format!("{base}/zen/v1"));
+
+    let result = repository
+        .list_models(ChatCompletionSource::Makersuite, &config)
+        .await
+        .unwrap();
+
+    assert_eq!(result, json!({ "data": [] }));
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn models_pagination_stops_when_a_proxy_ignores_page_token() {
     let page = json!({
         "models": [{"name": "models/first", "supportedGenerationMethods": ["generateContent"]}],
