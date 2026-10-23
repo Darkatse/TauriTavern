@@ -1096,6 +1096,11 @@ export async function pingServer() {
     }
 }
 
+/** The startup failure dialog shows only this message, so it carries the host's reason. */
+async function startupRequestError(name, response) {
+    return new Error(`${name} request failed with status ${response.status}: ${await response.text()}`);
+}
+
 async function fetchBootstrapMetadata() {
     const response = await fetch('/api/bootstrap', {
         method: 'POST',
@@ -1103,7 +1108,7 @@ async function fetchBootstrapMetadata() {
     });
 
     if (!response.ok) {
-        throw new Error(`Bootstrap metadata request failed with status ${response.status}`);
+        throw await startupRequestError('Bootstrap metadata', response);
     }
 
     return response.json();
@@ -1117,7 +1122,7 @@ async function fetchSettingsSnapshot() {
         cache: 'no-cache',
     });
     if (!response.ok) {
-        throw new Error(`Settings request failed with status ${response.status}`);
+        throw await startupRequestError('Settings', response);
     }
     return response.json();
 }
@@ -1163,7 +1168,7 @@ async function firstLoadInit() {
 
         const tokenResponse = await fetch('/csrf-token');
         if (!tokenResponse.ok) {
-            throw new Error(`CSRF request failed with status ${tokenResponse.status}`);
+            throw await startupRequestError('CSRF', tokenResponse);
         }
         const tokenData = await tokenResponse.json();
         if (typeof tokenData?.token !== 'string' || !tokenData.token) {

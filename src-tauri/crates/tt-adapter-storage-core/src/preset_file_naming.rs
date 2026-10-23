@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -132,60 +133,69 @@ pub async fn load_named_preset_files(dir: &Path) -> Result<Vec<NamedPresetFile>,
     let mut indices = HashMap::<String, usize>::new();
 
     for path in files {
-        let file_stem = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .ok_or_else(|| {
-                DomainError::InvalidData(format!(
-                    "Preset file name is not valid UTF-8: {}",
-                    path.display()
-                ))
-            })?;
-        let raw_content = fs::read_to_string(&path).await.map_err(|error| {
-            DomainError::InternalError(format!(
-                "Failed to read preset file '{}': {}",
-                path.display(),
-                error
-            ))
-        })?;
-        let value: Value = serde_json::from_str(&raw_content).map_err(|error| {
-            DomainError::InvalidData(format!(
-                "Invalid preset JSON in '{}': {}",
-                path.display(),
-                error
-            ))
-        })?;
-        let name = preset_name_from_value(file_stem, &value);
-        let is_canonical = canonical_preset_file_stem(&name)? == file_stem;
-
-        let entry = NamedPresetFile {
-            #[cfg(test)]
-            path,
-            name: name.clone(),
-            raw_content,
-            is_canonical,
+        let entry = match read_named_preset_file(&path).await {
+            Ok(entry) => entry,
+            Err(error) => {
+                report_skipped_preset(error);
+                continue;
+            }
         };
 
-        if let Some(existing_index) = indices.get(&name).copied() {
-            let existing = &entries[existing_index];
-            match (existing.is_canonical, entry.is_canonical) {
-                (true, false) => continue,
+        if let Some(existing_index) = indices.get(&entry.name).copied() {
+            match (entries[existing_index].is_canonical, entry.is_canonical) {
+                (true, false) => {}
                 (false, true) => entries[existing_index] = entry,
-                _ => {
-                    return Err(DomainError::InvalidData(format!(
-                        "Duplicate preset name '{}' found in '{}'",
-                        name,
-                        dir.display()
-                    )));
-                }
+                _ => report_skipped_preset(format_args!(
+                    "name '{}' is already used by another file: {}",
+                    entry.name,
+                    path.display()
+                )),
             }
         } else {
-            indices.insert(name, entries.len());
+            indices.insert(entry.name.clone(), entries.len());
             entries.push(entry);
         }
     }
 
     Ok(entries)
+}
+
+async fn read_named_preset_file(path: &Path) -> Result<NamedPresetFile, DomainError> {
+    let file_stem = path
+        .file_stem()
+        .and_then(OsStr::to_str)
+        .expect("sorting rejects file names that are not UTF-8");
+    let raw_content = fs::read_to_string(path).await.map_err(|error| {
+        DomainError::InternalError(format!(
+            "Failed to read preset file '{}': {}",
+            path.display(),
+            error
+        ))
+    })?;
+    let value: Value = serde_json::from_str(&raw_content).map_err(|error| {
+        DomainError::InvalidData(format!(
+            "Invalid preset JSON in '{}': {}",
+            path.display(),
+            error
+        ))
+    })?;
+    let name = preset_name_from_value(file_stem, &value);
+    let is_canonical = canonical_preset_file_stem(&name)? == file_stem;
+
+    Ok(NamedPresetFile {
+        #[cfg(test)]
+        path: path.to_path_buf(),
+        name,
+        raw_content,
+        is_canonical,
+    })
+}
+
+fn report_skipped_preset(reason: impl std::fmt::Display) {
+    tracing::error!(
+        target: tt_contracts::observability::USER_VISIBLE_ERROR,
+        "Skipped preset: {reason}"
+    );
 }
 
 fn preset_name_from_value(file_stem: &str, value: &Value) -> String {
@@ -344,6 +354,36 @@ mod tests {
         assert_eq!(entries[0].name, "【明月青秋】");
         assert!(entries[0].is_canonical);
         assert_eq!(entries[0].path, dir.path().join("【明月青秋】.json"));
+    }
+
+    #[tokio::test]
+    async fn load_named_preset_files_skips_files_that_cannot_be_presets() {
+        let dir = TestDir::new();
+        for (file, content) in [
+            ("Broken.json", "{"),
+            ("First.json", r#"{"name":"Shared"}"#),
+            ("Second.json", r#"{"name":"Shared"}"#),
+            ("Valid.json", r#"{"temperature":0.5}"#),
+        ] {
+            tokio::fs::write(dir.path().join(file), content)
+                .await
+                .expect("write preset");
+        }
+
+        let entries = load_named_preset_files(dir.path())
+            .await
+            .expect("load preset files");
+
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| (entry.name.as_str(), entry.path.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("Shared", dir.path().join("First.json")),
+                ("Valid", dir.path().join("Valid.json")),
+            ]
+        );
     }
 
     #[tokio::test]
