@@ -31,7 +31,7 @@ export function createWebHostFixture(defaultSettings, theme, extensions) {
     // ST drops unparseable records on read, but checks the raw first line before saving.
     const parse = text => { try { return JSON.parse(text); } catch { return null; } };
     const records = text => text.split('\n').map(parse).filter(Boolean);
-    const lore = { entries: { 0: { uid: 0, key: ['Review'], content: 'Review lore loaded.', disable: false, order: 100, position: 0 } } };
+    let lore = { entries: { 0: { uid: 0, key: ['Review'], content: 'Review lore loaded.', disable: false, order: 100, position: 0 } } };
     const payload = {
         settings: JSON.stringify(settings), enable_extensions: true, enable_extensions_auto_update: false, enable_accounts: false,
         koboldai_settings: [], koboldai_setting_names: [], novelai_settings: [], novelai_setting_names: [],
@@ -114,6 +114,9 @@ export function createWebHostFixture(defaultSettings, theme, extensions) {
                     };
                 }
                 case 'POST /api/worldinfo/get': return respond(lore);
+                case 'POST /api/worldinfo/edit':
+                    lore = body.data;
+                    return respond({ ok: true });
                 default: throw new Error(`Unexpected ST backend request: ${request.method} ${request.url}`);
             }
         },

@@ -68,6 +68,10 @@ for (const identity of [HOSTS.windows, HOSTS.android]) {
             await assert.rejects(transport.saveCharacterChatPayload(repair), /400.*integrity/);
             assert.equal(fixture.chatFiles.get('review-chat'), corrupted);
             await transport.saveCharacterChatPayload({ ...repair, force: true });
+            const worldInfo = getModule('scripts/world-info.js').namespace;
+            const lore = structuredClone(await worldInfo.loadWorldInfo('Review lore'));
+            lore.entries[0].content = 'Review lore edited.';
+            await Promise.race([worldInfo.saveWorldInfo('Review lore', lore, true), first.failed]);
             await Promise.race([first.host.exit(), first.failed]);
             assert.deepEqual(first.errors, []);
         } finally { await window.happyDOM.close(); }
@@ -87,6 +91,8 @@ for (const identity of [HOSTS.windows, HOSTS.android]) {
             assert.deepEqual(card.data.extensions.tavern_helper, { scripts: [{ id: 'script', content: 'console.log(1)' }], variables: { rank: 2 } });
             assert.equal(card.data.extensions.merged, true);
             assert.equal(second.window.quickReplyApi.getSetByName('Review QR').qrList[0].message, 'A saved quick reply');
+            const lore = JSON.parse(fixture.backend.handle({ method: 'POST', url: '/api/worldinfo/get', headers: {}, body: '{"name":"Review lore"}' }).body);
+            assert.equal(lore.entries[0].content, 'Review lore edited.');
             assert.deepEqual(second.errors, []);
         } finally { await second.window.happyDOM.close(); }
     });

@@ -78,6 +78,7 @@ const host = installWebHost({
 | `get_world_info` | `/api/worldinfo/get`；打开聊天时会预读关联的世界书 |
 | `begin_settings_commit`、`append_settings_commit_chunk`、`finish_settings_commit`、`abort_settings_commit` | 最终写入 `/api/settings/save`，见"设置提交" |
 | `begin_chat_commit`、`append_chat_commit_chunk`、`finish_chat_commit`、`abort_chat_commit` | 完整聊天、metadata 与 metadata extension，最终写入 `/api/chats/save` |
+| `begin_world_info_commit`、`append_world_info_commit_chunk`、`finish_world_info_commit`、`abort_world_info_commit` | 提交的 `{ name, data }` 原样写入 `/api/worldinfo/edit` |
 | `save_theme` | `/api/themes/save` |
 | `save_quick_reply_set` | `/api/quick-replies/save` |
 | `update_character_card_data` | 卡片 DTO 转为 `/api/characters/edit` 的文本表单，随后读取 `/api/characters/get` 返回更新后的 DTO |
@@ -102,7 +103,7 @@ const host = installWebHost({
 - revision 是后端当前设置字符串的 SHA-256。比较 revision 与写入在同一次同步调用里完成；两个页面先后基于同一版本保存时，后到的一方收到 `{ Conflict: message }`。
 - 提交里的 `power_user.personas` 与 `persona_descriptions` 只包含有变化的 Persona，没有提到的不表示删除。Web Host 保留后端里其余的 Persona，用提交的记录整条替换对应的 ID，再保存完整的 ST 设置。Persona 与 ST 设置之间的转换和前端共用 `tauri/main/kernel/persona-projection.js`。
 - 分块编码与原生相同：Android 用 `chunk-encoding: base64`，其他平台直接传字节。协议常量与内核共用 `tauri/main/kernel/byte-protocol.js`。
-- 设置和聊天共用 `protocols/byte-commit.js` 的分块会话机制。
+- 设置、聊天与世界书共用 `protocols/byte-commit.js` 的分块会话机制。
 
 **聊天提交**。完整 payload 编码为 JSONL；metadata 提交只替换 header 的 `chat_metadata`；metadata extension 替换对应命名空间，`null` 删除它。TT 在已有 integrity 时要求新值完全匹配，省略也拒绝，不匹配返回 `{ BadRequest: 'integrity' }`。完整 payload 的 `force` 原样传给 ST，metadata 提交用 `false`；不强制保存时，ST 会拒绝覆盖首行已损坏的聊天文件。
 

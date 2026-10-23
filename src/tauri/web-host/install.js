@@ -7,6 +7,7 @@ import { createResources } from './protocols/resources.js';
 import { createSettingsCommits } from './protocols/settings-commit.js';
 import { createBackend } from './backend.js';
 import { createChatCommits } from './protocols/chat-commit.js';
+import { createWorldInfoCommits } from './protocols/world-info-commit.js';
 import { createWriteCommands } from './commands/write.js';
 import { createGenerationCommands } from './protocols/generation.js';
 import { createExtensionCommands } from './commands/extensions.js';
@@ -46,6 +47,7 @@ export function installWebHost({ identity, backend, store }) {
         ...resources.commands,
         ...createSettingsCommits(st),
         ...createChatCommits(st),
+        ...createWorldInfoCommits(st),
         ...createWriteCommands(st),
         ...createGenerationCommands(st),
         ...createExtensionCommands(st, fetchResource, loadDefaults),
