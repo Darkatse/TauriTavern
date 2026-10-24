@@ -6,6 +6,7 @@ import { subscribeWindowSnapshot } from './util/window-layout.js';
 const HOLDER_OBSERVATION = { childList: true, attributes: true, attributeFilter: ['style', 'class'] };
 // Labels and marks have many writers. No aria-* here: drawers.js rewrites it on every lookup.
 const TOGGLE_OBSERVATION = { subtree: true, attributes: true, attributeFilter: ['class', 'title', 'data-tt-assistant-activity'] };
+const ACTIVITY_MARKS = new Set(['working', 'unread']);
 
 /** @type {Map<string, HTMLElement>} */
 const controls = new Map();
@@ -36,7 +37,7 @@ export function installDrawerBar(context) {
             console.warn('[TauriTavern] Drawer bar activated an unknown drawer:', event.detail.id);
             return;
         }
-        // The outside-tap handler spares only taps on the icon itself.
+        // Icon handlers persist panel state; the click then bubbles to the toggle.
         control.click();
     });
 }
@@ -69,7 +70,7 @@ async function publish() {
             id,
             title: icon?.title || toggle.title,
             open: isTopLevelDrawerOpen(panel),
-            mark: markOf(icon),
+            mark: markOf(id, icon),
         });
     }
     const key = JSON.stringify(items);
@@ -85,8 +86,13 @@ async function publish() {
 }
 
 /** The page marks drawers with the API status glow and the assistant's activity badge. */
-function markOf(icon) {
+function markOf(id, icon) {
     if (!icon) return null;
     if (icon.classList.contains('redOverlayGlow')) return 'alert';
-    return icon.dataset.ttAssistantActivity || null;
+    const activity = icon.dataset.ttAssistantActivity;
+    if (!activity) return null;
+    if (ACTIVITY_MARKS.has(activity)) return activity;
+    // The host rejects unknown marks, and with them every drawer button.
+    console.error(`[TauriTavern] Drawer bar: ${id} has an unknown assistant activity "${activity}"`);
+    return null;
 }
