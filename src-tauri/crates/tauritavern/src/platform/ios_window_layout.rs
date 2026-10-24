@@ -11,8 +11,8 @@ use objc2_ui_kit::{
     NSLayoutConstraint, UIColor, UIGestureRecognizer, UIGestureRecognizerDelegate,
     UIGestureRecognizerState, UIImage, UIImageView, UILayoutGuide, UILayoutPriorityDefaultHigh,
     UIPanGestureRecognizer, UIScrollView, UIScrollViewContentInsetAdjustmentBehavior,
-    UIScrollViewKeyboardDismissMode, UIStatusBarStyle, UITraitEnvironment, UIView,
-    UIViewAutoresizing, UIViewLayoutRegion, UIViewLayoutRegionAdaptivityAxis,
+    UIScrollViewKeyboardDismissMode, UIStatusBarStyle, UIView, UIViewAutoresizing,
+    UIViewLayoutRegion, UIViewLayoutRegionAdaptivityAxis,
 };
 use tauri::{AppHandle, WebviewWindow};
 use tt_adapter_media::window_backdrop::{BackdropStrip, StripEdge};
@@ -192,8 +192,7 @@ impl WindowHost {
 
     fn update_status_bar_style(&self) {
         // The status bar sits in the vertical bar whenever the layout presents one.
-        let status_bar_edge = match SystemBar::vertical(&self.traitCollection()).map(|bar| bar.edge)
-        {
+        let status_bar_edge = match SystemBar::vertical(self).map(|bar| bar.edge) {
             Some(DrawerBarEdge::Left) => StripEdge::Left,
             Some(DrawerBarEdge::Right) => StripEdge::Right,
             Some(DrawerBarEdge::Top) | None => StripEdge::Top,
@@ -266,9 +265,7 @@ impl WindowHost {
             }
             return;
         };
-        if let Some(stale) =
-            slot.take_if(|bar| bar.directional_edge() != system_bar.directional_edge)
-        {
+        if let Some(stale) = slot.take_if(|bar| bar.edge() != system_bar.edge) {
             stale.remove();
         }
         match slot.as_mut() {

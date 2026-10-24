@@ -37,7 +37,7 @@
 - WKWebView 是容器的子视图，约束对象仍是宿主的 guide。UIKit 在键盘动画块里一次设定 guide；交互拖动不同，guide 跟手变化，所以容器的 pan 活动期间 WebView 高度保持不变，松手后恢复跟随。iOS WebKit 把每次 WebView 尺寸变化当作样式表环境变化整文档重建样式，逐帧跟随的代价尤其高。
 - 宿主在 `layoutSubviews` 按值去重发布窗口快照。底色设在宿主视图上，条带是插在 WKWebView 之下的 UIImageView。
 - 状态栏样式经根控制器的 `preferredStatusBarStyle` 生效。tao 没有提供这个入口，宿主安装时把它加到 `TaoUIViewController` 上；tao 自带同名方法时安装报错，改用 tao 的实现。有系统竖栏时状态栏在竖栏里，图标颜色取该侧条带。home indicator 由系统自适应。
-- 抽屉栏（iOS 27.1+，vertical size class 为 regular）：宿主把页面顶层抽屉的按钮画成原生玻璃胶囊（`UIGlassEffect` 与 SF Symbol 按钮），放进系统 bar 区域。有系统竖栏（`verticalBarEdge`）时放竖栏；否则当 UIKit 的顶部 bar 区域整块落在顶部安全区内时，放进状态栏旁的顶部带。区域取自 `layoutRegionForBarOnDirectionalEdge:extent:`，胶囊从区域起点排起，放不下时按钮等分缩小。iPhone Duo 上，合起竖屏与展开宽屏用竖栏，展开竖屏用顶部带，合起横屏（compact 高度）保留页面顶栏。
+- 抽屉栏（iOS 27.1+，vertical size class 为 regular）：宿主把页面顶层抽屉的按钮画成原生玻璃胶囊（`UIGlassEffect` 与 SF Symbol 按钮），放进系统 bar 区域。区域取自 `layoutRegionForBarOnEdge:extent:`；左、右、顶三条边中，区域非空且整块落在该边安全区 inset 内的那条边承载抽屉栏，左右的竖栏优先。位置只看几何，不读 `verticalBarEdge`：旋转时这个 trait 比安全区晚一次布局更新，中间那次会指向另一侧。胶囊从区域起点排起，放不下时按钮等分缩小。iPhone Duo 上，合起竖屏与展开宽屏用竖栏，展开竖屏用顶部带，合起横屏（compact 高度）保留页面顶栏。
 - 快照的 `drawerBar.edge`（`left`/`right`/`top`）宣告抽屉栏。页面经 `set_drawer_bar_items` 发布每个抽屉的 id、标题、开合与标记（API 断开为 `alert`，助手为 `working`/`unread`）；原生点按派发 `tt-drawer-bar-activate`，页面点击该抽屉自己的图标，开合与 hydration 走原有路径。SF Symbol 按抽屉 id 对应，扩展添加的抽屉用通用符号。胶囊的明暗跟随状态栏样式。
 - 元素全屏时 WebKit 会把 WKWebView 移出容器；归还时容器停用保持约束并重新激活同一组边约束。全屏期间手势不由容器提供；普通 CSS 全屏面板、dialog 和嵌入的 iframe 仍在覆盖范围内。
 

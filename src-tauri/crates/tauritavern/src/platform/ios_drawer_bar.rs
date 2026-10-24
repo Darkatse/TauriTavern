@@ -3,16 +3,15 @@ use std::ptr::NonNull;
 
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, NSObjectProtocol, ProtocolObject};
-use objc2::{ClassType, MainThreadMarker, MainThreadOnly, class, msg_send, sel};
-use objc2_foundation::{NSArray, NSInteger, NSString};
+use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::{ClassType, MainThreadMarker, MainThreadOnly, available, class, msg_send};
+use objc2_foundation::{NSArray, NSString};
 use objc2_ui_kit::{
-    NSDirectionalRectEdge, NSLayoutConstraint, NSObjectUIAccessibility, UIAction, UIButton,
-    UIButtonConfiguration, UIButtonConfigurationCornerStyle, UIColor, UICornerConfiguration,
-    UIGlassEffect, UIGlassEffectStyle, UIImage, UIImageSymbolConfiguration, UIImageSymbolWeight,
-    UIImageView, UILargeContentViewerInteraction, UILayoutConstraintAxis,
-    UILayoutPriorityDefaultHigh, UIStackView, UIStackViewDistribution, UIStatusBarStyle,
-    UITraitCollection, UITraitEnvironment, UITraitEnvironmentLayoutDirection,
+    NSLayoutConstraint, NSObjectUIAccessibility, UIAction, UIButton, UIButtonConfiguration,
+    UIButtonConfigurationCornerStyle, UIColor, UICornerConfiguration, UIGlassEffect,
+    UIGlassEffectStyle, UIImage, UIImageSymbolConfiguration, UIImageSymbolWeight, UIImageView,
+    UILargeContentViewerInteraction, UILayoutConstraintAxis, UILayoutPriorityDefaultHigh,
+    UIRectEdge, UIStackView, UIStackViewDistribution, UIStatusBarStyle, UITraitEnvironment,
     UIUserInterfaceSizeClass, UIUserInterfaceStyle, UIView, UIViewLayoutRegion, UIVisualEffectView,
 };
 use tauri::WebviewWindow;
@@ -27,66 +26,58 @@ const DOT_POINT_SIZE: f64 = 7.0;
 /// Puts the dot on the glyph's top trailing corner, where the page draws its badge.
 const DOT_OFFSET: f64 = 11.0;
 
-/// A bar region the system lays out beside its status bar.
+/// A bar region the system lays out beside the content, inside its edge's safe-area inset.
 #[derive(Clone, Copy)]
 pub(super) struct SystemBar {
-    pub directional_edge: NSDirectionalRectEdge,
     pub edge: DrawerBarEdge,
 }
 
 impl SystemBar {
     /// The system's vertical bar, which also holds the status bar.
-    pub fn vertical(traits: &UITraitCollection) -> Option<Self> {
-        if !traits.respondsToSelector(sel!(verticalBarEdge)) {
-            return None;
-        }
-        let raw: NSInteger = unsafe { msg_send![traits, verticalBarEdge] };
-        let directional_edge = match raw {
-            0 => return None,
-            1 => NSDirectionalRectEdge::Leading,
-            2 => NSDirectionalRectEdge::Trailing,
-            other => {
-                tracing::error!("Unknown UIVerticalBarEdge {other}; the page keeps its top bar");
-                return None;
-            }
-        };
-        let right_to_left =
-            unsafe { traits.layoutDirection() } == UITraitEnvironmentLayoutDirection::RightToLeft;
-        let edge = if (directional_edge == NSDirectionalRectEdge::Trailing) != right_to_left {
-            DrawerBarEdge::Right
-        } else {
-            DrawerBarEdge::Left
-        };
-        Some(Self {
-            directional_edge,
-            edge,
-        })
+    pub fn vertical(host: &UIView) -> Option<Self> {
+        // Not `verticalBarEdge`: while rotating, that trait trails the safe area by a layout pass.
+        [DrawerBarEdge::Left, DrawerBarEdge::Right]
+            .into_iter()
+            .find_map(|edge| Self::beside_content(host, edge))
     }
 
     /// Where the host draws the drawers; compact height keeps the page's own top bar.
     pub fn hosting_drawers(host: &UIView) -> Option<Self> {
-        let traits = host.traitCollection();
-        // Bar regions arrived together with the vertical bar.
-        if !traits.respondsToSelector(sel!(verticalBarEdge))
-            || unsafe { traits.verticalSizeClass() } != UIUserInterfaceSizeClass::Regular
+        if unsafe { host.traitCollection().verticalSizeClass() }
+            != UIUserInterfaceSizeClass::Regular
         {
             return None;
         }
-        Self::vertical(&traits).or_else(|| {
-            let top = Self {
-                directional_edge: NSDirectionalRectEdge::Top,
-                edge: DrawerBarEdge::Top,
-            };
-            // Some layouts set the top bar beside the status bar, inside the top safe-area inset.
-            let region = host.edgeInsetsForLayoutRegion(&top.region());
-            let region_bottom = host.bounds().size.height - region.bottom;
-            (region_bottom <= host.safeAreaInsets().top).then_some(top)
-        })
+        Self::vertical(host).or_else(|| Self::beside_content(host, DrawerBarEdge::Top))
+    }
+
+    /// The bar region on `edge`, when the system lays it out inside that edge's safe-area inset.
+    fn beside_content(host: &UIView, edge: DrawerBarEdge) -> Option<Self> {
+        if !available!(ios = 27.1) {
+            return None;
+        }
+        let bar = Self { edge };
+        let size = host.bounds().size;
+        let safe = host.safeAreaInsets();
+        let region = host.edgeInsetsForLayoutRegion(&bar.region());
+        let (left, right) = (region.left, size.width - region.right);
+        let (top, bottom) = (region.top, size.height - region.bottom);
+        let inside_inset = match edge {
+            DrawerBarEdge::Left => right <= safe.left,
+            DrawerBarEdge::Right => left >= size.width - safe.right,
+            DrawerBarEdge::Top => bottom <= safe.top,
+        };
+        (left < right && top < bottom && inside_inset).then_some(bar)
     }
 
     fn region(&self) -> Retained<UIViewLayoutRegion> {
+        let edge = match self.edge {
+            DrawerBarEdge::Left => UIRectEdge::Left,
+            DrawerBarEdge::Right => UIRectEdge::Right,
+            DrawerBarEdge::Top => UIRectEdge::Top,
+        };
         unsafe {
-            msg_send![UIViewLayoutRegion::class(), layoutRegionForBarOnDirectionalEdge: self.directional_edge, extent: BAR_EXTENT]
+            msg_send![UIViewLayoutRegion::class(), layoutRegionForBarOnEdge: edge, extent: BAR_EXTENT]
         }
     }
 
@@ -231,8 +222,8 @@ impl NativeDrawerBar {
         drawer_bar
     }
 
-    pub fn directional_edge(&self) -> NSDirectionalRectEdge {
-        self.bar.directional_edge
+    pub fn edge(&self) -> DrawerBarEdge {
+        self.bar.edge
     }
 
     pub fn set_shown(&mut self, shown: bool) {
