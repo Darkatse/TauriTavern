@@ -110,6 +110,19 @@ test('CodeMirror, isolated or in the page, keeps raw input inside, shares edit a
         assert.ok(root.querySelector('input[name=search]'));
         assert.equal(root.querySelector('input[name=replace]'), null);
 
+        if (!isolated) {
+            // Every editor mounts the same styles; rewriting the page's style element would restyle the whole page.
+            const styles = [...document.head.querySelectorAll('style')].find(style => style.textContent.includes('.cm-editor'));
+            const rewrites = new MutationObserver(() => {});
+            rewrites.observe(styles, { childList: true, characterData: true, subtree: true });
+            const other = document.createElement('div');
+            document.body.append(other);
+            createCodeMirrorView(other, { isolated, doc: '', readOnly: false, ariaLabel: 'Other', onCopy() {}, onChange() {} }).destroy();
+            editor.reset('Read only again', true);
+            assert.equal(rewrites.takeRecords().length, 0);
+            rewrites.disconnect();
+        }
+
         editor.destroy();
     }
     window.close();

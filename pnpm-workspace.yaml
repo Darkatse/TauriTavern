@@ -9,3 +9,5 @@ enableGlobalVirtualStore: false
 minimumReleaseAge: 0
 overrides:
   lodash-es: 4.18.1
+patchedDependencies:
+  style-mod@4.1.3: patches/style-mod@4.1.3.patch
