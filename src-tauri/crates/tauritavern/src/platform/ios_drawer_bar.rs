@@ -1,8 +1,8 @@
-//! The page's top-level drawers as native buttons in a system bar region (iOS 27.1+).
+//! The page's top-level drawers as native buttons in iPhone Duo's system bar regions (iOS 27.1+).
 use std::ptr::NonNull;
 
 use block2::RcBlock;
-use objc2::rc::Retained;
+use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{ClassType, MainThreadMarker, MainThreadOnly, available, class, msg_send};
 use objc2_foundation::{NSArray, NSString};
@@ -41,10 +41,11 @@ impl SystemBar {
             .find_map(|edge| Self::beside_content(host, edge))
     }
 
-    /// Where the host draws the drawers; compact height keeps the page's own top bar.
-    pub fn hosting_drawers(host: &UIView) -> Option<Self> {
-        if unsafe { host.traitCollection().verticalSizeClass() }
-            != UIUserInterfaceSizeClass::Regular
+    /// Where the host draws the drawers on iPhone Duo; compact height keeps the page's top bar.
+    pub fn hosting_drawers(host: &UIView, hinged: bool) -> Option<Self> {
+        if !hinged
+            || unsafe { host.traitCollection().verticalSizeClass() }
+                != UIUserInterfaceSizeClass::Regular
         {
             return None;
         }
@@ -86,6 +87,25 @@ impl SystemBar {
             DrawerBarEdge::Top => UILayoutConstraintAxis::Horizontal,
             DrawerBarEdge::Left | DrawerBarEdge::Right => UILayoutConstraintAxis::Vertical,
         }
+    }
+}
+
+/// Reports whether `view`'s hierarchy has a hinge, as the Duo does, on every hinge update.
+pub(super) fn observe_hinge(view: &UIView, changed: impl Fn(bool) + 'static) {
+    if !available!(ios = 27.1) {
+        return;
+    }
+    let handler: RcBlock<dyn Fn(NonNull<AnyObject>, NonNull<AnyObject>)> = RcBlock::new(
+        move |_interaction: NonNull<AnyObject>, update: NonNull<AnyObject>| {
+            let hinge: Option<Retained<AnyObject>> = unsafe { msg_send![update, hinge] };
+            changed(hinge.is_some());
+        },
+    );
+    unsafe {
+        let interaction: Allocated<AnyObject> = msg_send![class!(UIHingeInteraction), alloc];
+        let interaction: Retained<AnyObject> =
+            msg_send![interaction, initWithUpdateHandler: &*handler];
+        let _: () = msg_send![view, addInteraction: &*interaction];
     }
 }
 

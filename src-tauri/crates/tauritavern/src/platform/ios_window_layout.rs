@@ -20,7 +20,7 @@ use tt_contracts::window_layout::{
     DrawerBar, DrawerBarEdge, DrawerBarItem, WindowBackdropRequest, WindowInsets, WindowSnapshot,
 };
 
-use super::ios_drawer_bar::{BarItem, NativeDrawerBar, SystemBar, resolve_items};
+use super::ios_drawer_bar::{BarItem, NativeDrawerBar, SystemBar, observe_hinge, resolve_items};
 use super::window_layout::WallpaperRenderTarget;
 use tt_domain::errors::DomainError;
 
@@ -37,6 +37,8 @@ struct WindowHostIvars {
     corner_top: RefCell<Option<Retained<NSLayoutConstraint>>>,
     drawer_bar: RefCell<Option<NativeDrawerBar>>,
     drawer_bar_items: RefCell<Vec<BarItem>>,
+    /// Whether the hierarchy has a hinge, that is, the window is on iPhone Duo.
+    hinged: Cell<bool>,
     installing: Cell<bool>,
 }
 
@@ -300,7 +302,7 @@ impl WindowHost {
             return;
         }
         let Some(window) = self.window() else { return };
-        let drawer_bar = SystemBar::hosting_drawers(self);
+        let drawer_bar = SystemBar::hosting_drawers(self, self.ivars().hinged.get());
         if self.avoid_corners(drawer_bar.is_some()) {
             // The next layout pass publishes the settled content edges.
             self.setNeedsLayout();
@@ -399,6 +401,7 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
         corner_top: RefCell::new(None),
         drawer_bar: RefCell::new(None),
         drawer_bar_items: RefCell::new(Vec::new()),
+        hinged: Cell::new(false),
         installing: Cell::new(true),
     });
     let host: Retained<WindowHost> =
@@ -485,6 +488,15 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
     host.addSubview(&keyboard_scroll);
     keyboard_scroll.addSubview(webview);
     MAIN_HOST.with(|slot| *slot.borrow_mut() = Some(host.clone()));
+    observe_hinge(&host, |hinged| {
+        MAIN_HOST.with(|slot| {
+            if let Some(host) = slot.borrow().as_ref()
+                && host.ivars().hinged.replace(hinged) != hinged
+            {
+                host.setNeedsLayout();
+            }
+        });
+    });
     host.update_status_bar_style();
     host.setNeedsLayout();
     // Publishing must wait for `with_webview` to release its window-id lock.
