@@ -35,6 +35,12 @@ Xcode 27 的优化构建会把非 `public` 的 `@_cdecl` 函数降为本地符�
 
 `swift-rs` 按所在 crate 的调试设置选择 Swift 优化级别。Tauri 与带 Swift 包的插件必须以同一模式构建：dev profile 对所有依赖关闭调试信息，不为其中个别 crate 单独开启。模式不一致时，真机在 `registerPlugin` 以 `swift_deletedMethodError` 中止，模拟器不会暴露。
 
+### 1.3 iPhone Duo
+
+抽屉栏与内容 guide 的规则见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md) 的 iOS 一节。竖栏、bar 区域、reserved region 与铰链是 iOS 27.1 API，宿主按系统版本（`available!(ios = 27.1)`）判断，旧系统走原来的页面顶栏。27.1 上只有报告铰链的层级（iPhone Duo）由宿主绘制抽屉栏，其他设备仍走页面顶栏。
+
+模拟器验证使用 Xcode 27.1 与 iOS 27.1 runtime，该 runtime 目前只提供 iPhone Duo，非 Duo 设备上的 27.1 行为无法在模拟器上验证。模拟器的 Duo 会经 `UIHingeInteraction` 报告铰链，外屏合起时为 `closed`。形态在 Device Hub 中切换；外屏上的应用也能用 `requestGeometryUpdateWithPreferences:` 自行旋转，内屏拒绝程序旋转。不要用 `simctl io screenConfig ... power` 模拟开合：它不改变形态，还会让模拟器的 SpringBoard 崩溃。外屏与内屏分别用 `xcrun simctl io <udid> screenshot --display=primary` 与 `--display=primary-1` 截取。截图里看不到摄像头开孔，遮挡位置以 `reservedRegionsOfKind:` 的结果为准。
+
 ## 2. 文件导入与导出
 
 iOS 是[文件传输](CurrentState/FileTransfer.md)的一个平台实现：
