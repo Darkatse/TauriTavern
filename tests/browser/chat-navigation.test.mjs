@@ -298,6 +298,30 @@ test('chat persistence and navigation', async (context) => {
             }
         }
 
+        // Holds the first commit inside its frame append so a later save can take it over.
+        function holdFirstAppend() {
+            const aborts = [];
+            const finishes = [];
+            const entered = Promise.withResolvers();
+            const release = Promise.withResolvers();
+            const invoke = window.__TAURI__.core.invoke;
+            window.__TAURI__.core.invoke = async (command, args, options) => {
+                if (command === 'abort_chat_commit') aborts.push(args.sessionId);
+                if (command === 'finish_chat_commit') finishes.push(args.sessionId);
+                if (command === 'append_chat_commit_chunk') {
+                    entered.resolve();
+                    await release.promise;
+                }
+                return invoke(command, args, options);
+            };
+            const restore = async () => {
+                release.resolve();
+                await window.happyDOM.waitUntilComplete();
+                window.__TAURI__.core.invoke = invoke;
+            };
+            return { aborts, finishes, entered, release, restore };
+        }
+
         async function clickRecent() {
             await welcome.openWelcomeScreen();
             const recent = window.document.querySelector('.recentChat[data-file="target-chat"]');
@@ -417,6 +441,82 @@ test('chat persistence and navigation', async (context) => {
                 await window.happyDOM.waitUntilComplete();
                 window.__TAURI__.core.invoke = invoke;
                 window.fetch = fetch;
+            }
+        });
+
+        await context.test('a newer full save cancels the in-flight full save and settles both callers', async () => {
+            await reset('character');
+            await openExplicit('target-chat');
+            const held = holdFirstAppend();
+            try {
+                const first = main.saveChat();
+                await held.entered.promise;
+                // The second save snapshots the live chat, so its write covers the first one.
+                main.chat.push({ name: 'User', is_user: true, is_system: false, mes: 'supersede-marker', send_date: '2026-01-02T12:00:00Z', extra: {} });
+                const second = main.saveChat();
+                held.release.resolve();
+                await Promise.all([first, second]);
+                assert.equal(held.aborts.length, 1, 'the in-flight commit is aborted at its frame boundary');
+                assert.equal(held.finishes.length, 1, 'only the absorbing save writes');
+                assert.equal(errors.length, 0, 'a superseded save is not a user-visible failure');
+                assert.equal(main.isChatSaving, false);
+                const written = payloads.get('target-chat');
+                assert.match(written, /supersede-marker/, 'the surviving write carries the newer snapshot');
+            } finally {
+                await held.restore();
+            }
+        });
+
+        await context.test('a newer full save cancels an in-flight metadata save', async () => {
+            await reset('character');
+            await openExplicit('target-chat');
+            const held = holdFirstAppend();
+            try {
+                const first = main.saveMetadata();
+                await held.entered.promise;
+                const second = main.saveChat();
+                held.release.resolve();
+                await Promise.all([first, second]);
+                assert.equal(held.aborts.length, 1);
+                assert.equal(held.finishes.length, 1);
+                assert.equal(errors.length, 0);
+                assert.equal(main.isChatSaving, false);
+            } finally {
+                await held.restore();
+            }
+        });
+
+        await context.test('barrier and metadata-scope saves are never cancelled by a later save', async () => {
+            await reset('character');
+            await openExplicit('target-chat');
+
+            // A provider barrier must reach the disk itself; a later save may not take it over.
+            const barrierRun = holdFirstAppend();
+            try {
+                const barrier = main.saveChat({ commitReason: 'providerBarrier' });
+                await barrierRun.entered.promise;
+                const afterBarrier = main.saveChat();
+                barrierRun.release.resolve();
+                await Promise.all([barrier, afterBarrier]);
+                assert.equal(barrierRun.aborts.length, 0, 'a barrier save is never cancelled');
+                assert.equal(barrierRun.finishes.length, 2, 'the barrier writes, then the later save writes');
+            } finally {
+                await barrierRun.restore();
+            }
+
+            // A metadata save cannot cover a full save, so it waits instead of cancelling.
+            const scopeRun = holdFirstAppend();
+            try {
+                const full = main.saveChat();
+                await scopeRun.entered.promise;
+                const metadata = main.saveMetadata();
+                scopeRun.release.resolve();
+                await Promise.all([full, metadata]);
+                assert.equal(scopeRun.aborts.length, 0, 'a metadata save never cancels a full save');
+                assert.equal(scopeRun.finishes.length, 2);
+                assert.equal(main.isChatSaving, false);
+            } finally {
+                await scopeRun.restore();
             }
         });
 
@@ -713,6 +813,60 @@ test('chat persistence and navigation', async (context) => {
                 }
             });
         }
+
+        await context.test('character: queued saves merge into the write that covers them', async () => {
+            await reset('character');
+            await openExplicit('target-chat');
+            const invoke = window.__TAURI__.core.invoke;
+            let commits = 0;
+            window.__TAURI__.core.invoke = async (command, args, options) => {
+                if (command === 'begin_chat_commit') commits += 1;
+                return invoke(command, args, options);
+            };
+            try {
+                // 未开始的完整保存被后到的完整保存吸收：三次入队只写一次。
+                await Promise.all([main.saveChat(), main.saveChat(), main.saveChat()]);
+                assert.equal(commits, 1);
+
+                // 完整保存可以吸收排在它前面的 metadata 保存（header 是全量的子集）。
+                commits = 0;
+                await Promise.all([main.saveMetadata(), main.saveChat()]);
+                assert.equal(commits, 1);
+
+                // metadata 保存不能吸收完整保存（header 之外的正文不能丢）。
+                commits = 0;
+                await Promise.all([main.saveChat(), main.saveMetadata()]);
+                assert.equal(commits, 2);
+
+                // barrier（生成前必须落盘）不被吸收。
+                commits = 0;
+                await Promise.all([main.saveChat({ commitReason: 'providerBarrier' }), main.saveChat()]);
+                assert.equal(commits, 2);
+
+                // 先到者带 force 时，只有同样带 force 的后到者才能吸收它。
+                commits = 0;
+                await Promise.all([main.saveChat({ force: true }), main.saveChat()]);
+                assert.equal(commits, 2);
+                commits = 0;
+                await Promise.all([main.saveChat({ force: true }), main.saveChat({ force: true })]);
+                assert.equal(commits, 1);
+
+                // 被合并的调用方要等到真正写盘完成才 resolve。
+                main.chat[0].mes = 'merged write';
+                await Promise.all([main.saveChat(), main.saveChat()]);
+                assert.match(payloads.get('target-chat'), /merged write/);
+
+                // 吸收者失败时，被吸收的调用方得到同一个错误，不静默成功。
+                fullSaveError = { InternalServerError: 'save failed' };
+                await assert.rejects(Promise.all([main.saveChat(), main.saveChat()]),
+                    error => error.cause === fullSaveError);
+                fullSaveError = undefined;
+                assert.equal(main.isChatSaving, false);
+            } finally {
+                fullSaveError = undefined;
+                window.__TAURI__.core.invoke = invoke;
+            }
+        });
 
         for (const greeting of ['', 'Hello']) {
             await context.test(`new group establishes metadata before greeting hooks (${greeting || 'empty'})`, async () => {
