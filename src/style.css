@@ -114,6 +114,11 @@
     --topBarBlockPadding: calc(var(--mainFontSize) / 3);
     --top-settings-holder-max-z-index: 4005;
 
+    /* Top drawers unfold from the top bar; a host drawer bar slides them in from its edge. */
+    --tt-drawer-hidden-clip: inset(0 0 100% 0);
+    --tt-drawer-hidden-translate: none;
+    --tt-drawer-easing: ease-in-out;
+
     /* Deprecated aliases of the browser residual safe area. */
     --tt-inset-top: env(safe-area-inset-top, 0px);
     --tt-inset-right: env(safe-area-inset-right, 0px);
@@ -5965,20 +5970,24 @@ body:not(.caption) .mes_img_caption {
 }
 
 .drawer-content:is(.openDrawer, .closedDrawer) {
-    transition-property: clip-path, display;
+    transition-property: clip-path, translate, display;
+    transition-timing-function: var(--tt-drawer-easing);
 }
 
 .drawer-content.closedDrawer {
-    clip-path: inset(0 0 100% 0);
+    clip-path: var(--tt-drawer-hidden-clip);
+    translate: var(--tt-drawer-hidden-translate);
 }
 
 .drawer-content.openDrawer {
     display: block;
     overflow-y: auto;
     clip-path: inset(0);
+    translate: none;
 
     @starting-style {
-        clip-path: inset(0 0 100% 0);
+        clip-path: var(--tt-drawer-hidden-clip);
+        translate: var(--tt-drawer-hidden-translate);
     }
 }
 

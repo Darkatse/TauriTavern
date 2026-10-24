@@ -9,14 +9,18 @@ use objc2::{ClassType, DefinedClass, MainThreadOnly, Message, define_class, msg_
 use objc2_foundation::{NSArray, NSData, NSObjectProtocol, NSPoint, NSRect, NSSize};
 use objc2_ui_kit::{
     NSLayoutConstraint, UIColor, UIGestureRecognizer, UIGestureRecognizerDelegate,
-    UIGestureRecognizerState, UIImage, UIImageView, UIPanGestureRecognizer, UIScrollView,
-    UIScrollViewContentInsetAdjustmentBehavior, UIScrollViewKeyboardDismissMode,
-    UIStatusBarStyle, UIView, UIViewAutoresizing,
+    UIGestureRecognizerState, UIImage, UIImageView, UILayoutGuide, UILayoutPriorityDefaultHigh,
+    UIPanGestureRecognizer, UIScrollView, UIScrollViewContentInsetAdjustmentBehavior,
+    UIScrollViewKeyboardDismissMode, UIStatusBarStyle, UITraitEnvironment, UIView,
+    UIViewAutoresizing, UIViewLayoutRegion, UIViewLayoutRegionAdaptivityAxis,
 };
 use tauri::{AppHandle, WebviewWindow};
 use tt_adapter_media::window_backdrop::{BackdropStrip, StripEdge};
-use tt_contracts::window_layout::{WindowBackdropRequest, WindowInsets, WindowSnapshot};
+use tt_contracts::window_layout::{
+    DrawerBar, DrawerBarEdge, DrawerBarItem, WindowBackdropRequest, WindowInsets, WindowSnapshot,
+};
 
+use super::ios_drawer_bar::{BarItem, NativeDrawerBar, SystemBar, resolve_items};
 use super::window_layout::WallpaperRenderTarget;
 use tt_domain::errors::DomainError;
 
@@ -27,6 +31,12 @@ struct WindowHostIvars {
     color: Cell<[u8; 3]>,
     status_bar_style: Cell<UIStatusBarStyle>,
     strips: RefCell<Vec<VisibleStrip>>,
+    /// The content viewport's edges, excluding the keyboard: the safe area, held below the
+    /// display corners by `corner_top` while the page has no top bar.
+    content: Retained<UILayoutGuide>,
+    corner_top: RefCell<Option<Retained<NSLayoutConstraint>>>,
+    drawer_bar: RefCell<Option<NativeDrawerBar>>,
+    drawer_bar_items: RefCell<Vec<BarItem>>,
     installing: Cell<bool>,
 }
 
@@ -181,12 +191,19 @@ impl WindowHost {
     }
 
     fn update_status_bar_style(&self) {
+        // The status bar sits in the vertical bar whenever the layout presents one.
+        let status_bar_edge = match SystemBar::vertical(&self.traitCollection()).map(|bar| bar.edge)
+        {
+            Some(DrawerBarEdge::Left) => StripEdge::Left,
+            Some(DrawerBarEdge::Right) => StripEdge::Right,
+            Some(DrawerBarEdge::Top) | None => StripEdge::Top,
+        };
         let average = self
             .ivars()
             .strips
             .borrow()
             .iter()
-            .find(|strip| strip.edge == StripEdge::Top)
+            .find(|strip| strip.edge == status_bar_edge)
             .map(|strip| strip.average)
             .unwrap_or([0.0; 4]);
         let color = self.ivars().color.get();
@@ -207,9 +224,72 @@ impl WindowHost {
         if self.ivars().status_bar_style.replace(style) == style {
             return;
         }
+        if let Some(bar) = self.ivars().drawer_bar.borrow().as_ref() {
+            bar.set_status_bar_style(style);
+        }
         if let Some(controller) = self.window().and_then(|window| window.rootViewController()) {
             controller.setNeedsStatusBarAppearanceUpdate();
         }
+    }
+
+    /// The page's top bar keeps its content clear of the top corners; without it the content
+    /// guide takes UIKit's corner-adapted safe area. Returns whether the guide moves.
+    fn avoid_corners(&self, avoid: bool) -> bool {
+        let mut slot = self.ivars().corner_top.borrow_mut();
+        if slot
+            .as_ref()
+            .is_some_and(|constraint| constraint.isActive())
+            == avoid
+        {
+            return false;
+        }
+        let constraint = slot.get_or_insert_with(|| {
+            let corners = self.layoutGuideForLayoutRegion(
+                &UIViewLayoutRegion::safeAreaLayoutRegionWithCornerAdaptation(
+                    UIViewLayoutRegionAdaptivityAxis::Vertical,
+                ),
+            );
+            self.ivars()
+                .content
+                .topAnchor()
+                .constraintGreaterThanOrEqualToAnchor(&corners.topAnchor())
+        });
+        constraint.setActive(avoid);
+        true
+    }
+
+    fn place_drawer_bar(&self, system_bar: Option<SystemBar>) {
+        let mut slot = self.ivars().drawer_bar.borrow_mut();
+        let Some(system_bar) = system_bar else {
+            if let Some(bar) = slot.as_mut() {
+                bar.set_shown(false);
+            }
+            return;
+        };
+        if let Some(stale) =
+            slot.take_if(|bar| bar.directional_edge() != system_bar.directional_edge)
+        {
+            stale.remove();
+        }
+        match slot.as_mut() {
+            Some(bar) => bar.set_shown(true),
+            None => {
+                let mut bar =
+                    NativeDrawerBar::install(self, system_bar, self.ivars().window.clone());
+                bar.set_items(&self.ivars().drawer_bar_items.borrow());
+                bar.set_status_bar_style(self.ivars().status_bar_style.get());
+                *slot = Some(bar);
+            }
+        }
+    }
+
+    fn set_drawer_bar_items(&self, items: Vec<DrawerBarItem>) -> Result<(), DomainError> {
+        let items = resolve_items(items)?;
+        if let Some(bar) = self.ivars().drawer_bar.borrow_mut().as_mut() {
+            bar.set_items(&items);
+        }
+        *self.ivars().drawer_bar_items.borrow_mut() = items;
+        Ok(())
     }
 
     fn clear_strips(&self) {
@@ -223,9 +303,15 @@ impl WindowHost {
             return;
         }
         let Some(window) = self.window() else { return };
+        let drawer_bar = SystemBar::hosting_drawers(self);
+        if self.avoid_corners(drawer_bar.is_some()) {
+            // The next layout pass publishes the settled content edges.
+            self.setNeedsLayout();
+            return;
+        }
         let scale = window.screen().scale();
         let bounds = self.bounds();
-        let safe = self.safeAreaInsets();
+        let content = self.ivars().content.layoutFrame();
         let pixels = |points: f64| (points * scale).round() as u32;
         let mut next = WindowSnapshot {
             revision: 0,
@@ -233,11 +319,12 @@ impl WindowHost {
             height: pixels(bounds.size.height),
             scale,
             insets: WindowInsets {
-                top: pixels(safe.top),
-                right: pixels(safe.right),
-                bottom: pixels(safe.bottom),
-                left: pixels(safe.left),
+                top: pixels(content.origin.y),
+                right: pixels(bounds.size.width - content.origin.x - content.size.width),
+                bottom: pixels(bounds.size.height - content.origin.y - content.size.height),
+                left: pixels(content.origin.x),
             },
+            drawer_bar: drawer_bar.map(|bar| DrawerBar { edge: bar.edge }),
         };
         if next.width == 0 || next.height == 0 {
             return;
@@ -252,6 +339,7 @@ impl WindowHost {
         next.revision += 1;
         *current = Some(next.clone());
         drop(current);
+        self.place_drawer_bar(drawer_bar);
         self.clear_strips();
         self.update_status_bar_style();
         let json = serde_json::to_string(&next).expect("finite window geometry");
@@ -302,13 +390,18 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
         install_status_bar_style();
     }
     let parent = webview.superview().expect("WKWebView must have a parent");
-    let allocated = WindowHost::alloc(webview.mtm()).set_ivars(WindowHostIvars {
+    let mtm = webview.mtm();
+    let allocated = WindowHost::alloc(mtm).set_ivars(WindowHostIvars {
         window,
         snapshot: RefCell::new(None),
         wallpaper_token: Cell::new(0),
         color: Cell::new([0; 3]),
         status_bar_style: Cell::new(UIStatusBarStyle::Default),
         strips: RefCell::new(Vec::new()),
+        content: UILayoutGuide::new(mtm),
+        corner_top: RefCell::new(None),
+        drawer_bar: RefCell::new(None),
+        drawer_bar_items: RefCell::new(Vec::new()),
         installing: Cell::new(true),
     });
     let host: Retained<WindowHost> =
@@ -318,9 +411,34 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
         UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight,
     );
     parent.addSubview(&host);
+    let content = &host.ivars().content;
+    host.addLayoutGuide(content);
+    let safe = host.safeAreaLayoutGuide();
+    // Yields to the corner constraint; the safe area stays the floor.
+    let safe_top = content
+        .topAnchor()
+        .constraintEqualToAnchor(&safe.topAnchor());
+    safe_top.setPriority(UILayoutPriorityDefaultHigh);
+    NSLayoutConstraint::activateConstraints(
+        &NSArray::from_retained_slice(&[
+            safe_top,
+            content
+                .topAnchor()
+                .constraintGreaterThanOrEqualToAnchor(&safe.topAnchor()),
+            content
+                .leadingAnchor()
+                .constraintEqualToAnchor(&safe.leadingAnchor()),
+            content
+                .trailingAnchor()
+                .constraintEqualToAnchor(&safe.trailingAnchor()),
+            content
+                .bottomAnchor()
+                .constraintEqualToAnchor(&safe.bottomAnchor()),
+        ]),
+        mtm,
+    );
     webview.setAutoresizingMask(UIViewAutoresizing::empty());
     webview.setTranslatesAutoresizingMaskIntoConstraints(false);
-    let safe = host.safeAreaLayoutGuide();
     // The guide rests at the bottom safe area when a docked keyboard is absent.
     // Floating/undocked keyboards do not reserve the entire viewport.
     let keyboard = host.keyboardLayoutGuide();
@@ -330,16 +448,16 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
     let content_constraints = vec![
         webview
             .topAnchor()
-            .constraintEqualToAnchor(&safe.topAnchor()),
+            .constraintEqualToAnchor(&content.topAnchor()),
         webview
             .leadingAnchor()
-            .constraintEqualToAnchor(&safe.leadingAnchor()),
+            .constraintEqualToAnchor(&content.leadingAnchor()),
         webview
             .trailingAnchor()
-            .constraintEqualToAnchor(&safe.trailingAnchor()),
+            .constraintEqualToAnchor(&content.trailingAnchor()),
         keyboard_constraint.clone(),
     ];
-    let allocated = KeyboardScrollView::alloc(webview.mtm()).set_ivars(KeyboardScrollViewIvars {
+    let allocated = KeyboardScrollView::alloc(mtm).set_ivars(KeyboardScrollViewIvars {
         webview: webview.retain(),
         content_constraints,
         keyboard_constraint,
@@ -415,6 +533,13 @@ pub async fn snapshot(app: &AppHandle) -> Result<WindowSnapshot, DomainError> {
             .ok_or_else(|| failure("window is not laid out"))
     })
     .await
+}
+
+pub(super) async fn set_drawer_bar_items(
+    app: &AppHandle,
+    items: Vec<DrawerBarItem>,
+) -> Result<(), DomainError> {
+    with_host(app, move |host| host.set_drawer_bar_items(items)).await
 }
 
 pub(super) async fn begin_backdrop(

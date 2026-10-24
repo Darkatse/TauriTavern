@@ -347,6 +347,7 @@ header 名也可从 `window.__TAURITAVERN__?.traceHeader` 获取（用于避免�
 | `--tt-inset-*` | `env(safe-area-inset-*, 0px)` 的别名 |
 | `--tt-viewport-bottom-inset` | `--tt-inset-bottom` 的别名 |
 | `--tt-window-x/-y/-width/-height` | Project：只写在 `#bg1` 上，供第一方窗口背景使用 |
+| `data-tt-drawer-bar` | Project：宿主在系统 bar 区域绘制抽屉按钮时写在根元素上（`left`/`right`/`top`），页面没有顶栏 |
 | `data-tt-mobile-surface`；`layout-kit.js` 的 `SURFACE`/`applySurface()` | 保留，无布局作用 |
 | `--tt-ime-bottom`、`--tt-base-viewport-height`、`__TAURITAVERN_INSETS__`、`__TAURITAVERN_MOBILE_OVERLAY_COMPAT__`、`__TAURITAVERN_MOBILE_IFRAME_VIEWPORT_CONTRACT_BRIDGE__`、`__TAURITAVERN_ANDROID_IME_LAYOUT_HOST__` | 已移除 |
 

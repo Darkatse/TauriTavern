@@ -391,4 +391,4 @@ pnpm run test:contracts
 
 ### 移动窗口背景边界
 
-`tt-contracts::window_layout` 定义窗口快照与背景请求。主 WebView 布局、系统栏政策、条带显示与过期结果的丢弃属于 `tauritavern::platform` 的 shell glue。`tt-adapter-media::window_backdrop` 负责 Tauri-free 的资源读取、解码与条带裁切，复用 Host Resource Store。流程见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md)。
+`tt-contracts::window_layout` 定义窗口快照、抽屉栏条目与背景请求。主 WebView 布局、系统栏政策、原生抽屉栏、条带显示与过期结果的丢弃属于 `tauritavern::platform` 的 shell glue。`tt-adapter-media::window_backdrop` 负责 Tauri-free 的资源读取、解码与条带裁切，复用 Host Resource Store。流程见 [CurrentState/MobileStyleAdaptation.md](CurrentState/MobileStyleAdaptation.md)。
