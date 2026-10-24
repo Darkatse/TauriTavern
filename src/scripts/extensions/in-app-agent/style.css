@@ -138,7 +138,7 @@
     padding: 9px 14px; box-shadow: var(--ttia-shadow);
 }
 .ttia-reply { min-width: 0; line-height: 1.72; }
-.ttia-reply > * + * { margin-top: 10px; }
+.ttia-reply > :not(:first-child) { margin-top: 10px; }
 .ttia-markdown { overflow-wrap: anywhere; }
 .ttia-markdown.is-streaming::after {
     content: ''; display: inline-block; width: 2px; height: 1.05em; margin-left: 3px;

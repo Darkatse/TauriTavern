@@ -1,6 +1,6 @@
 /* The host sets inline display:block when the drawer opens, so zone spacing
    must come from margins rather than a flex context on the content element. */
-#tauritavern_version_settings .inline-drawer-content > * + * {
+#tauritavern_version_settings .inline-drawer-content > :not(:first-child) {
     margin-top: 8px;
 }
 
@@ -85,7 +85,7 @@
     border-top: 1px solid var(--SmartThemeBorderColor);
 }
 
-#tauritavern_version_settings .ttv-channel-body > * + * {
+#tauritavern_version_settings .ttv-channel-body > :not(:first-child) {
     margin-top: 8px;
 }
 
@@ -204,7 +204,7 @@
     background-color: var(--black30a);
 }
 
-#tauritavern_version_settings .ttv-update-result > * + * {
+#tauritavern_version_settings .ttv-update-result > :not(:first-child) {
     margin-top: 10px;
 }
 

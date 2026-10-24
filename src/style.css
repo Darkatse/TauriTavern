@@ -2436,7 +2436,7 @@ body[data-stscript-style] .hljs.language-stscript {
             height: 100%;
         }
 
-        >*+* {
+        >:not(:first-child) {
             padding-left: 0.5em;
         }
 
@@ -5781,9 +5781,8 @@ body:not(.caption) .mes_img_caption {
 }
 
 @media screen and (min-width: 1001px) {
-    body:has(.drawer-content.maximized) #top-settings-holder:has(.drawer-content.openDrawer:not(.fillLeft):not(.fillRight)),
-    body:has(.drawer-content.open) #top-settings-holder:has(.drawer-content.openDrawer:not(.fillLeft):not(.fillRight)),
-    body:has(#character_popup.open) #top-settings-holder:has(.drawer-content.openDrawer:not(.fillLeft):not(.fillRight)) {
+    /* An open centered drawer covers floating panels and the character popup. */
+    #top-settings-holder:has(.drawer-content.openDrawer:not(.fillLeft):not(.fillRight)) {
         z-index: var(--top-settings-holder-max-z-index);
     }
 }

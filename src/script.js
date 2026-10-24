@@ -9314,6 +9314,7 @@ export function changeMainAPI(api = null) {
     }
 
     main_api = selectedVal;
+    document.body.dataset.mainApi = selectedVal;
     setOnlineStatus('no_connection');
 
     if (main_api == 'koboldhorde') {

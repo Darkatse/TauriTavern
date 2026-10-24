@@ -345,10 +345,6 @@ body.documentstyle #chat .last_mes .mes_text {
     min-height: 70px;
 }
 
-body.documentstyle #chat .last_mes:has(> .del_checkbox[style*="display: block"]) .mes_text {
-    margin-left: 0px;
-}
-
 body.documentstyle #chat .last_mes .swipe_left {
     left: 5px;
 }
@@ -480,8 +476,7 @@ body.expandMessageActions .mes .mes_buttons .extraMesButtonsHint {
     display: none !important;
 }
 
-#smooth_streaming_control:has(#smooth_streaming:not(:checked))~#smooth_streaming_speed_control,
-#smooth_streaming_control:has(#smooth_streaming:not(:checked))~#smooth_streaming_no_think_control {
+[name="MiscellaneousToggles"]:has(#smooth_streaming:not(:checked)) :is(#smooth_streaming_speed_control, #smooth_streaming_no_think_control) {
     display: none;
 }
 
@@ -532,7 +527,6 @@ label[for="bind_preset_to_connection"]:has(input:checked) {
 }
 
 #openai_settings input[type="checkbox"]:not(:checked)~[data-cc-toggle],
-#openai_settings input[type="checkbox"]:not(:checked)~*:has([data-cc-toggle]),
 #openai_settings [data-cc-toggle="false"]>.icon-supported,
 #openai_settings [data-cc-toggle="true"]>.icon-unsupported {
     display: none;
@@ -554,11 +548,11 @@ label[for="bind_preset_to_connection"]:has(input:checked) {
     padding: 5px 10px;
 }
 
-#top-settings-holder:has(#main_api option[value="openai"]:checked) #advanced-formatting-cc-notice {
+body[data-main-api="openai"] #advanced-formatting-cc-notice {
     display: flex;
 }
 
-#top-settings-holder:has(#main_api option[value="openai"]:checked) #AdvancedFormatting [data-cc-null] {
+body[data-main-api="openai"] #AdvancedFormatting [data-cc-null] {
     opacity: 0.5;
     filter: grayscale(0.5);
     cursor: not-allowed;
@@ -569,10 +563,6 @@ label[for="bind_preset_to_connection"]:has(input:checked) {
 }
 
 #openai_settings:has(#openai_function_calling:not(:checked)) #tool_call_recurse_limit_block {
-    display: none;
-}
-
-#adaptive_p_block:has([data-tg-samplers="adaptive_target"][style*="display: none"]):has([data-tg-samplers="adaptive_decay"][style*="display: none"]) {
     display: none;
 }
 

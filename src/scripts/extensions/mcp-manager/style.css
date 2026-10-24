@@ -19,7 +19,7 @@
     text-align: left;
 }
 
-.tt-mcp-root .inline-drawer-content > * + * {
+.tt-mcp-root .inline-drawer-content > :not(:first-child) {
     margin-top: 10px;
 }
 
