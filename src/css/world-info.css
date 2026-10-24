@@ -11,6 +11,8 @@
 }
 
 #world_popup {
+    /* Fits position labels of up to six characters; the column heading shares it. */
+    --wi-position-width: calc(6 * var(--mainFontSize) + 25px);
     min-height: 100px;
     min-width: 100px;
     left: 0;
@@ -215,6 +217,21 @@
     transition: opacity var(--animation-duration-3x);
 }
 
+/* Off-screen entries skip rendering at their last rendered height. Dormant entries also drop their header, which holds
+   the costly selects, but the rest stays measurable. */
+#world_popup_entries_list > .world_entry {
+    content-visibility: auto;
+    contain-intrinsic-block-size: auto 40px;
+}
+
+#world_popup_entries_list > .world_entry.dormant {
+    content-visibility: hidden;
+}
+
+#world_popup_entries_list > .world_entry.dormant > .world_entry_form > .inline-drawer > .inline-drawer-header {
+    display: none;
+}
+
 .world_entry_edit {
     display: contents;
 }
@@ -237,9 +254,25 @@
     display: none;
 }
 
-/* Titles grow with their text, so they never scroll; every visible scroll container adds compositing work to each frame. */
+/* Titles fit their text instead of scrolling, and show at most three lines unless edited. */
 .world_entry textarea[name="comment"] {
     overflow: hidden;
+}
+
+.world_entry textarea[name="comment"]:not(:focus) {
+    max-height: calc(3lh + 8px);
+}
+
+.world_entry .WIEntryTitleAndStatus {
+    flex-wrap: nowrap;
+}
+
+.world_entry select[name="position"] {
+    width: var(--wi-position-width);
+}
+
+#WIEntryHeaderTitlesPC {
+    flex-wrap: nowrap;
 }
 
 .world_entry .select2-selection--multiple,

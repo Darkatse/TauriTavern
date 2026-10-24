@@ -81,6 +81,35 @@ const WI_ENTRY_HEADER_TEMPLATE = $('#entry_edit_template .world_entry');
 const WI_ENTRY_EDIT_TEMPLATE = $('#entry_edit_template .world_entry_edit');
 // The editor keeps the same list even when Panel Runtime detaches it from document.
 const worldEntriesList = $('#world_popup_entries_list');
+/**
+ * Titles stay one row tall and grow only when their text wraps.
+ * @param {HTMLTextAreaElement[]} titles
+ */
+function fitTitles(titles) {
+    for (const title of titles) title.style.height = '';
+    resetScrollHeight(titles.filter(title => title.scrollHeight > title.clientHeight * 1.5));
+}
+// Entries near the visible part of the editor are awake, the rest dormant. Titles are fitted on an entry's first wake.
+const fittedEntries = new WeakSet();
+const entryWaker = new IntersectionObserver(observations => {
+    const titles = [];
+    for (const { target, isIntersecting } of observations) {
+        // A focused entry stays awake so it keeps the focus.
+        target.classList.toggle('dormant', !isIntersecting && !target.contains(document.activeElement));
+        if (isIntersecting && !fittedEntries.has(target)) {
+            fittedEntries.add(target);
+            titles.push(target.querySelector('textarea[name="comment"]'));
+        }
+    }
+    fitTitles(titles);
+}, { root: document.getElementById('WorldInfo'), rootMargin: '50% 0px' });
+// A press outside the fields places no selection, which WebKit would search the whole list for. It still leaves the
+// field being edited, so fields that save on change commit.
+worldEntriesList[0].addEventListener('mousedown', event => {
+    if (event.target instanceof Element && event.target.closest('input, textarea, select, .tt-codemirror-editor, .select2-container')) return;
+    event.preventDefault();
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+});
 
 export let world_info = {};
 export let selected_world_info = [];
@@ -2351,15 +2380,16 @@ function updateWorldEntryKeyOptionsCache(keyOptions, { remove = false, reset = f
     /** @type {Select2Option[]} */
     const options = keyOptions.map(x => typeof x === 'string' ? { id: getSelect2OptionId(x), text: x } : x);
     if (reset) worldEntryKeyOptionsCache.length = 0;
+    const cachedById = new Map(worldEntryKeyOptionsCache.map(option => [String(option.id), option]));
     options.forEach(option => {
         // Update the cache list
-        let cachedEntry = worldEntryKeyOptionsCache.find(x => x.id == option.id);
+        const cachedEntry = cachedById.get(String(option.id));
         if (cachedEntry) {
             cachedEntry.count += !remove ? 1 : -1;
         } else if (!remove) {
+            option.count = 1;
             worldEntryKeyOptionsCache.push(option);
-            cachedEntry = option;
-            cachedEntry.count = 1;
+            cachedById.set(String(option.id), option);
         }
     });
 
@@ -2368,71 +2398,20 @@ function updateWorldEntryKeyOptionsCache(keyOptions, { remove = false, reset = f
 }
 
 function clearEntryList($list) {
-    console.time('clearEntryList');
-
-    // List already empty, skipping cleanup
-    if (!$list.children().length) {
-        console.timeEnd('clearEntryList');
-        return;
-    }
-
+    // Removing the node that holds the selection makes WebKit search the page for a new place for it.
+    const selection = document.getSelection();
+    if (selection.rangeCount > 0 && $list[0].contains(selection.anchorNode)) selection.removeAllRanges();
+    $list.children('.world_entry').each((_, entry) => entryWaker.unobserve(entry));
     $list.find('textarea').each((_, source) => {
         const editor = getMountedCodeMirrorEditor(source);
         editor?.flush({ input: true });
         editor?.destroy();
     });
-
-    // Unsubscribe from toggle events, so that mass open won't create new drawers
-    $list.find('.inline-drawer').off('inline-drawer-toggle');
-
-    // Step 1: Clean all <option> elements within <select>
-    $list.find('option').each(function () {
-        const $option = $(this);
-        $option.off();
-        $.cleanData([$option[0]]);
-        $option.remove();
-    });
-
-    // Step 2: Clean all <select> elements
+    // Select2 keeps its listeners until destroyed; empty() cleans up the rest.
     $list.find('select').each(function () {
-        const $select = $(this);
-        // Remove Select2-related data and container if present
-        if ($select.data('select2')) {
-            try {
-                $select.select2('destroy');
-            } catch (e) {
-                console.debug('Select2 destroy failed:', e);
-            }
-        }
-        const $container = $select.parent();
-        if ($container.length) {
-            $container.find('*').off();
-            $.cleanData($container.find('*').get());
-            $container.remove();
-        }
-
-        $select.off();
-        $.cleanData([$select[0]]);
+        if ($(this).data('select2')) $(this).select2('destroy');
     });
-
-    // Step 3: Clean <div>, <span>, <input>
-    $list.find('div, span, input').each(function () {
-        const $elem = $(this);
-        $elem.off();
-        $.cleanData([$elem[0]]);
-        $elem.remove();
-    });
-
-    const totalElementsOfAnyKindLeftInList = $list.children().length;
-
-    // Final cleanup
-    if (totalElementsOfAnyKindLeftInList) {
-        console.time('empty');
-        $list.empty();
-        console.timeEnd('empty');
-    }
-
-    console.timeEnd('clearEntryList');
+    $list.empty();
 }
 
 //MARK: displayWorldEntries
@@ -2549,15 +2528,10 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
 
                 worldEntriesList.append(keywordHeaders);
                 worldEntriesList.append(blocks);
+                blocks.forEach(block => entryWaker.observe(block[0]));
             } catch (error) {
                 console.error('Error while rendering WI entries:', error);
             }
-        },
-        afterPaging: function () {
-            if (!worldEntriesList[0].isConnected) return;
-            worldEntriesList.find('textarea[name="comment"]').each(function () {
-                initScrollHeight($(this));
-            });
         },
     });
 
@@ -3485,7 +3459,7 @@ export async function getWorldEntry(name, data, entry) {
     commentInput.on('input', async function (_, { skipReset = false, noSave = false } = {}) {
         const uid = $(this).data('uid');
         const value = $(this).val();
-        !skipReset && await resetScrollHeight(this);
+        !skipReset && fitTitles([this]);
         data.entries[uid].comment = value;
         setWIOriginalDataValue(data, uid, 'comment', data.entries[uid].comment);
         !noSave && await saveWorldInfo(name, data);
@@ -3657,7 +3631,6 @@ export async function getWorldEntry(name, data, entry) {
                     return;
                 }
                 commitContent();
-                contentEditor?.destroy();
                 contentEditor = null;
                 drawerInitialized = false;
                 clearEntryList(editOutlet);
@@ -6563,13 +6536,8 @@ export function initWorldInfo() {
         }, { buttonStyle: true, closeDrawer: true });
     }
 
+    // Suggestion menus stay where they opened, so scrolling the list closes them.
     $('#WorldInfo').on('scroll', () => {
-        $('.world_entry input[name="group"], .world_entry input[name="automationId"]').each((_, el) => {
-            const instance = $(el).autocomplete('instance');
-
-            if (instance !== undefined) {
-                $(el).autocomplete('close');
-            }
-        });
+        worldEntriesList.find('.ui-autocomplete-input').autocomplete('close');
     });
 }
