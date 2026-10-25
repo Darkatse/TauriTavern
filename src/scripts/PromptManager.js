@@ -304,6 +304,16 @@ export class PromptCollection {
     }
 }
 
+/**
+ * @param {string} html
+ * @returns {DocumentFragment}
+ */
+function parseHtml(html) {
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    return template.content;
+}
+
 class PromptManager {
     #isVisible = false;
     #previewPending = false;
@@ -316,6 +326,8 @@ class PromptManager {
      */
     #renderGeneration = 0;
     #visibilityObserver = null;
+    /** The markup each rendered part was built from; a part is rebuilt only when its markup changes. */
+    #renderedMarkup = new WeakMap();
 
     get promptSources() {
         return {
@@ -470,26 +482,14 @@ class PromptManager {
 
         // Enable and disable prompts
         this.handleToggle = (event) => {
-            const { prefix } = this.configuration;
-            const promptRow = event.target.closest('.' + prefix + 'prompt_manager_prompt');
-            const promptID = promptRow.dataset.pmIdentifier;
+            const promptID = event.target.closest('.' + this.configuration.prefix + 'prompt_manager_prompt').dataset.pmIdentifier;
             const promptOrderEntry = this.getPromptOrderEntry(this.activeCharacter, promptID);
             const counts = this.tokenHandler.getCounts();
-            const enabled = !promptOrderEntry.enabled;
 
             counts[promptID] = null;
-            promptOrderEntry.enabled = enabled;
+            promptOrderEntry.enabled = !promptOrderEntry.enabled;
 
-            promptRow.classList.toggle(prefix + 'prompt_manager_prompt_disabled', !enabled);
-
-            const toggle = promptRow.querySelector('.prompt-manager-toggle-action');
-            toggle.classList.toggle('fa-toggle-on', enabled);
-            toggle.classList.toggle('fa-toggle-off', !enabled);
-
-            const tokenElement = promptRow.querySelector('.prompt_manager_prompt_tokens');
-            tokenElement.dataset.pmTokens = '-';
-            tokenElement.textContent = '-';
-
+            this.#renderListRows();
             this.renderDebounced();
             this.saveServiceSettings();
         };
@@ -909,23 +909,6 @@ class PromptManager {
         this.#visibilityObserver.observe(visibilityTarget);
     }
 
-    /**
-     * Get the scroll position of the prompt manager
-     * @returns {number} - Scroll position of the prompt manager
-     */
-    #getScrollPosition() {
-        return document.getElementById(this.configuration.prefix + 'prompt_manager')?.closest('.scrollableInner')?.scrollTop;
-    }
-
-    /**
-     * Set the scroll position of the prompt manager
-     * @param {number} scrollPosition - The scroll position to set
-     */
-    #setScrollPosition(scrollPosition) {
-        if (scrollPosition === undefined || scrollPosition === null) return;
-        document.getElementById(this.configuration.prefix + 'prompt_manager')?.closest('.scrollableInner')?.scrollTo(0, scrollPosition);
-    }
-
     async #renderPromptManagerUi() {
         if (!this.#isVisible) {
             this.#uiStale = true;
@@ -935,14 +918,10 @@ class PromptManager {
         this.#uiStale = false;
         const generation = ++this.#renderGeneration;
         this.profileStart('render');
-        const scrollPosition = this.#getScrollPosition();
         try {
             await this.renderPromptManager(generation);
             if (generation !== this.#renderGeneration) return;
-            this.makeDraggable();
-            await this.renderPromptManagerListItems(generation);
-            if (generation !== this.#renderGeneration) return;
-            this.#setScrollPosition(scrollPosition);
+            await this.renderPromptManagerListItems();
         } finally {
             this.profileEnd('render');
         }
@@ -1862,81 +1841,120 @@ class PromptManager {
     }
 
     /**
-     * Empties, then re-assembles the container containing the prompt list.
+     * Brings the header and footer in line with the current state. The list and its sortable are created once.
      * @param {number} [generation] Render generation; stale renders stop after each await.
      */
     async renderPromptManager(generation = this.#renderGeneration) {
-        let selectedPromptIndex = 0;
-        const existingAppendSelect = document.getElementById(`${this.configuration.prefix}prompt_manager_footer_append_prompt`);
-        if (existingAppendSelect instanceof HTMLSelectElement) {
-            selectedPromptIndex = existingAppendSelect.selectedIndex;
-        }
-        const promptManagerDiv = this.containerElement;
-        promptManagerDiv.innerHTML = '';
-
+        const { prefix } = this.configuration;
         const errorDiv = this.error ? `
-                <div class="${this.configuration.prefix}prompt_manager_error">
+                <div class="${prefix}prompt_manager_error">
                     <span class="fa-solid tooltip fa-triangle-exclamation text_danger"></span> ${DOMPurify.sanitize(this.error)}
                 </div>
         ` : '';
 
         const totalActiveTokens = this.#previewPending ? '-' : this.tokenUsage;
 
-        const headerHtml = await renderTemplateAsync('promptManagerHeader', { error: this.error, errorDiv, prefix: this.configuration.prefix, totalActiveTokens });
+        const headerHtml = await renderTemplateAsync('promptManagerHeader', { error: this.error, errorDiv, prefix, totalActiveTokens });
         if (generation !== this.#renderGeneration) return;
-        promptManagerDiv.insertAdjacentHTML('beforeend', headerHtml);
+        const listHeaderHtml = this.listElement ? '' : await renderTemplateAsync('promptManagerListHeader', { prefix });
+        if (generation !== this.#renderGeneration) return;
 
-        this.listElement = promptManagerDiv.querySelector(`#${this.configuration.prefix}prompt_manager_list`);
-
+        let prompts = [];
+        let footerHtml = '';
         if (null !== this.activeCharacter) {
-            const prompts = [...this.serviceSettings.prompts]
+            prompts = [...this.serviceSettings.prompts]
                 .filter(prompt => prompt && !prompt?.system_prompt)
                 .sort((promptA, promptB) => promptA.name.localeCompare(promptB.name));
             const promptsHtml = prompts.reduce((acc, prompt) => acc + `<option value="${prompt.identifier}">${escapeHtml(prompt.name)}</option>`, '');
-
-            if (selectedPromptIndex > 0) {
-                selectedPromptIndex = Math.min(selectedPromptIndex, prompts.length - 1);
-            }
-
-            if (selectedPromptIndex === -1 && prompts.length) {
-                selectedPromptIndex = 0;
-            }
-
-            const rangeBlockDiv = promptManagerDiv.querySelector('.range-block');
-            const headerDiv = promptManagerDiv.querySelector('.completion_prompt_manager_header');
-            const footerHtml = await renderTemplateAsync('promptManagerFooter', { promptsHtml, prefix: this.configuration.prefix });
+            footerHtml = await renderTemplateAsync('promptManagerFooter', { promptsHtml, prefix });
             if (generation !== this.#renderGeneration) return;
-            headerDiv.insertAdjacentHTML('afterend', footerHtml);
-            rangeBlockDiv.querySelector('#prompt-manager-reset-character').addEventListener('click', this.handleCharacterReset);
-
-            const footerDiv = rangeBlockDiv.querySelector(`.${this.configuration.prefix}prompt_manager_footer`);
-            footerDiv.querySelector('.menu_button:nth-child(2)').addEventListener('click', this.handleAppendPrompt);
-            footerDiv.querySelector('.caution').addEventListener('click', this.handleDeletePrompt);
-            footerDiv.querySelector('.menu_button:last-child').addEventListener('click', this.handleNewPrompt);
-            footerDiv.querySelector('select').selectedIndex = selectedPromptIndex;
-
-            // Add prompt export dialogue and options
-            footerDiv.querySelector('#prompt-manager-import').addEventListener('click', this.handleImport);
-            footerDiv.querySelector('#prompt-manager-export').addEventListener('click', this.handleFullExport);
         }
+
+        const partSelector = part => `:scope > .${prefix}prompt_manager_${part}`;
+        let rangeBlockDiv = this.listElement?.parentElement;
+        if (!rangeBlockDiv) {
+            rangeBlockDiv = parseHtml(headerHtml).querySelector('.range-block');
+            this.listElement = rangeBlockDiv.querySelector(`#${prefix}prompt_manager_list`);
+            this.listElement.innerHTML = listHeaderHtml;
+            this.containerElement.replaceChildren(rangeBlockDiv);
+            this.#renderedMarkup.set(rangeBlockDiv.querySelector(partSelector('header')), headerHtml);
+            this.makeDraggable();
+        }
+
+        // The list's siblings keep their elements; only their content is rebuilt.
+        const headerDiv = rangeBlockDiv.querySelector(partSelector('header'));
+        if (this.#renderedMarkup.get(headerDiv) !== headerHtml) {
+            const templateBlock = parseHtml(headerHtml).querySelector('.range-block');
+            const currentErrorDiv = rangeBlockDiv.querySelector(partSelector('error'));
+            const templateErrorDiv = templateBlock.querySelector(partSelector('error'));
+            if (currentErrorDiv && templateErrorDiv) currentErrorDiv.replaceChildren(...templateErrorDiv.childNodes);
+            else if (templateErrorDiv) rangeBlockDiv.prepend(templateErrorDiv);
+            else currentErrorDiv?.remove();
+            headerDiv.replaceChildren(...templateBlock.querySelector(partSelector('header')).childNodes);
+            this.#renderedMarkup.set(headerDiv, headerHtml);
+        }
+
+        let footerDiv = rangeBlockDiv.querySelector(partSelector('footer'));
+        if ((footerDiv ? this.#renderedMarkup.get(footerDiv) : '') === footerHtml) return;
+        if (!footerHtml) {
+            footerDiv.remove();
+            return;
+        }
+
+        let selectedPromptIndex = footerDiv?.querySelector('select').selectedIndex ?? 0;
+        const templateFooterDiv = parseHtml(footerHtml).firstElementChild;
+        if (footerDiv) {
+            footerDiv.replaceChildren(...templateFooterDiv.childNodes);
+        } else {
+            footerDiv = templateFooterDiv;
+            this.listElement.before(footerDiv);
+        }
+        this.#renderedMarkup.set(footerDiv, footerHtml);
+
+        if (selectedPromptIndex > 0) {
+            selectedPromptIndex = Math.min(selectedPromptIndex, prompts.length - 1);
+        }
+
+        if (selectedPromptIndex === -1 && prompts.length) {
+            selectedPromptIndex = 0;
+        }
+
+        footerDiv.querySelector('#prompt-manager-reset-character').addEventListener('click', this.handleCharacterReset);
+        footerDiv.querySelector('.menu_button:nth-child(2)').addEventListener('click', this.handleAppendPrompt);
+        footerDiv.querySelector('.caution').addEventListener('click', this.handleDeletePrompt);
+        footerDiv.querySelector('.menu_button:last-child').addEventListener('click', this.handleNewPrompt);
+        footerDiv.querySelector('select').selectedIndex = selectedPromptIndex;
+
+        // Add prompt export dialogue and options
+        footerDiv.querySelector('#prompt-manager-import').addEventListener('click', this.handleImport);
+        footerDiv.querySelector('#prompt-manager-export').addEventListener('click', this.handleFullExport);
     }
 
     /**
-     * Empties, then re-assembles the prompt list
-     * @param {number} [generation] Render generation; stale renders stop after each await.
+     * Brings the prompt list in line with the current state.
      */
-    async renderPromptManagerListItems(generation = this.#renderGeneration) {
+    async renderPromptManagerListItems() {
         if (!this.serviceSettings.prompts) return;
+        this.#renderListRows();
+    }
 
+    /**
+     * Rows follow the list head in prompt order. A row is rebuilt only when its markup outside the
+     * token count changes; the token count is rebuilt on its own.
+     */
+    #renderListRows() {
         const promptManagerList = this.listElement;
-        promptManagerList.innerHTML = '';
-
         const { prefix } = this.configuration;
         const previewPending = this.#previewPending;
         const dragHandleClass = isMobile() ? ' ui-sortable-handle' : '';
 
-        let listItemHtml = await renderTemplateAsync('promptManagerListHeader', { prefix });
-        if (generation !== this.#renderGeneration) return;
+        const existingRows = new Map();
+        for (const row of promptManagerList.querySelectorAll(`:scope > .${prefix}prompt_manager_prompt`)) {
+            existingRows.set(row.dataset.pmIdentifier, row);
+        }
+        const rows = [];
+        const newRows = [];
+        const newTokenCells = [];
 
         this.getPromptsForCharacter(this.activeCharacter).forEach(prompt => {
             if (!prompt) return;
@@ -2018,8 +2036,7 @@ class PromptManager {
             const roleIcon = promptRoles[iconLookup]?.roleIcon || '';
             const roleTitle = promptRoles[iconLookup]?.roleTitle || '';
 
-            listItemHtml += `
-                <li class="${prefix}prompt_manager_prompt ${draggableClass} ${enabledClass} ${markerClass} ${importantClass}" data-pm-identifier="${escapeHtml(prompt.identifier)}">
+            const rowStart = `<li class="${prefix}prompt_manager_prompt ${draggableClass} ${enabledClass} ${markerClass} ${importantClass}" data-pm-identifier="${escapeHtml(prompt.identifier)}">
                     <span class="drag-handle${dragHandleClass}">☰</span>
                     <span class="${prefix}prompt_manager_prompt_name" data-pm-name="${encodedName}">
                         ${isMarkerPrompt ? '<span class="fa-fw fa-solid fa-thumb-tack" title="Marker"></span>' : ''}
@@ -2044,29 +2061,60 @@ class PromptManager {
                             </span>
                     </span>
 
-                    <span class="prompt_manager_prompt_tokens" data-pm-tokens="${calculatedTokens}"><span class="${warningClass}" title="${warningTitle}"> </span>${calculatedTokens}</span>
-                </li>
-            `;
+                    `;
+            const tokenCellHtml = `<span class="prompt_manager_prompt_tokens" data-pm-tokens="${calculatedTokens}"><span class="${warningClass}" title="${warningTitle}"> </span>${calculatedTokens}</span>`;
+            const rowEnd = `
+                </li>`;
+
+            const rowHtml = rowStart + rowEnd;
+            const existingRow = existingRows.get(prompt.identifier);
+            existingRows.delete(prompt.identifier);
+            if (existingRow && this.#renderedMarkup.get(existingRow) === rowHtml) {
+                const tokenCell = existingRow.querySelector(':scope > .prompt_manager_prompt_tokens');
+                if (this.#renderedMarkup.get(tokenCell) !== tokenCellHtml) newTokenCells.push({ tokenCell, html: tokenCellHtml });
+                rows.push(existingRow);
+            } else {
+                newRows.push({ index: rows.length, rowHtml, tokenCellHtml, html: rowStart + tokenCellHtml + rowEnd });
+                rows.push(null);
+            }
         });
 
-        promptManagerList.insertAdjacentHTML('beforeend', listItemHtml);
-
-        // Now that the new elements are in the DOM, you can add the event listeners.
-        Array.from(promptManagerList.getElementsByClassName('prompt-manager-detach-action')).forEach(el => {
-            el.addEventListener('click', this.handleDetach);
+        [...parseHtml(newRows.map(row => row.html).join('')).children].forEach((element, i) => {
+            const { index, rowHtml, tokenCellHtml } = newRows[i];
+            rows[index] = element;
+            this.#renderedMarkup.set(element, rowHtml);
+            this.#renderedMarkup.set(element.querySelector(':scope > .prompt_manager_prompt_tokens'), tokenCellHtml);
+            element.querySelector('.prompt-manager-detach-action')?.addEventListener('click', this.handleDetach);
+            element.querySelector('.prompt-manager-inspect-action')?.addEventListener('click', this.handleInspect);
+            element.querySelector('.prompt-manager-edit-action')?.addEventListener('click', this.handleEdit);
+            element.querySelector('.prompt-manager-toggle-action')?.addEventListener('click', this.handleToggle);
         });
 
-        Array.from(promptManagerList.getElementsByClassName('prompt-manager-inspect-action')).forEach(el => {
-            el.addEventListener('click', this.handleInspect);
+        [...parseHtml(newTokenCells.map(cell => cell.html).join('')).children].forEach((element, i) => {
+            const { tokenCell, html } = newTokenCells[i];
+            tokenCell.replaceWith(element);
+            this.#renderedMarkup.set(element, html);
         });
 
-        Array.from(promptManagerList.getElementsByClassName('prompt-manager-edit-action')).forEach(el => {
-            el.addEventListener('click', this.handleEdit);
-        });
-
-        Array.from(promptManagerList.querySelectorAll('.prompt-manager-toggle-action')).forEach(el => {
-            el.addEventListener('click', this.handleToggle);
-        });
+        // Rows already in place are not moved.
+        const kept = new Set(rows);
+        let cursor = promptManagerList.querySelector(`:scope > .${prefix}prompt_manager_list_separator`).nextElementSibling;
+        const skipRemoved = () => {
+            while (cursor && !kept.has(cursor)) {
+                const next = cursor.nextElementSibling;
+                cursor.remove();
+                cursor = next;
+            }
+        };
+        for (const row of rows) {
+            skipRemoved();
+            if (row === cursor) {
+                cursor = cursor.nextElementSibling;
+            } else {
+                promptManagerList.insertBefore(row, cursor);
+            }
+        }
+        skipRemoved();
     }
 
     /**
