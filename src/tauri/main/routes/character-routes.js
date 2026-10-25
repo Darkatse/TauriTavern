@@ -55,7 +55,7 @@ function createCharacterResponse(outcome, textResponse) {
 
 export function registerCharacterRoutes(router, context, { jsonResponse, textResponse }) {
     router.post('/api/characters/all', async () => {
-        const characters = await context.getAllCharacters({ shallow: true, forceRefresh: true });
+        const characters = await context.getAllCharacters();
         return jsonResponse(characters);
     });
 

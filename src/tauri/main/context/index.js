@@ -75,6 +75,7 @@ export function createTauriMainContext({ invoke }) {
         normalizeCharacter: characterService.normalizeCharacter,
         normalizeExtensions: characterService.normalizeExtensions,
         getAllCharacters: characterService.getAllCharacters,
+        ensureCharacterIndex: characterService.ensureCharacterIndex,
         invalidateCharacterCache: characterService.invalidateCharacterCache,
         resolveCharacterId: characterService.resolveCharacterId,
         resolveExistingCharacterId: characterService.resolveExistingCharacterId,

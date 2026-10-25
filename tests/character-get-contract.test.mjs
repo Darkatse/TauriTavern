@@ -13,23 +13,23 @@ function registerGetRoute(context) {
     return router;
 }
 
-test('character cache invalidation defers refresh until the next read', async () => {
+test('character index invalidation defers refresh until the next lookup', async () => {
     let reads = 0;
     const service = createCharacterService({
         safeInvoke: async (command) => {
             assert.equal(command, 'get_all_characters');
             reads += 1;
-            return [{ name: `Character ${reads}`, avatar: `Character ${reads}.png` }];
+            return [{ name: `Character ${reads}`, avatar: `Stem ${reads}.png` }];
         },
     });
 
-    await service.getAllCharacters();
-    await service.getAllCharacters();
+    await service.ensureCharacterIndex();
+    await service.ensureCharacterIndex();
     service.invalidateCharacterCache();
-    const refreshed = await service.getAllCharacters();
+    await service.ensureCharacterIndex();
 
     assert.equal(reads, 2);
-    assert.equal(refreshed[0].name, 'Character 2');
+    assert.equal(service.findAvatarByCharacterId('Character 2'), 'Stem 2.png');
 });
 
 
