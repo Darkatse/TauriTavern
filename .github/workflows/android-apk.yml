@@ -102,6 +102,12 @@ jobs:
           grep -q 'applicationId = "com.tauritavern.client.custom"' "$GRADLE"
           grep -q 'namespace = "com.tauritavern.client"' "$GRADLE"
 
+          # Drop imports of a package that does not exist. With the identifier set to
+          # com.tauritavern.client, Tauri's generated classes are in com.tauritavern.client
+          # itself, so the Kotlin files need no import for them.
+          find "$ANDROID_DIR/app/src/main/java/com/tauritavern/client" -maxdepth 1 -name '*.kt' \
+            -exec sed -i '/^import com\.tauritavern\.client\.custom\./d' {} +
+
           # Launcher used by the Gradle Rust build (same as the previous workflow).
           cat > "$CRATE/tauri" <<'EOF2'
           import "../../../scripts/tauri-app.mjs";
