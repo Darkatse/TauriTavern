@@ -6,12 +6,13 @@ import { subscribeWindowSnapshot } from './util/window-layout.js';
 const HOLDER_OBSERVATION = { childList: true, attributes: true, attributeFilter: ['style', 'class'] };
 // Labels and marks have many writers. No aria-* here: drawers.js rewrites it on every lookup.
 const TOGGLE_OBSERVATION = { subtree: true, attributes: true, attributeFilter: ['class', 'title', 'data-tt-assistant-activity'] };
-const ACTIVITY_MARKS = new Set(['working', 'unread']);
 
 /** @type {Map<string, HTMLElement>} */
 const controls = new Map();
 /** @type {WeakSet<HTMLElement>} */
 const trackedToggles = new WeakSet();
+/** @type {WeakSet<HTMLElement>} */
+const trackedPanels = new WeakSet();
 const observer = new MutationObserver(refresh);
 let invoke = null;
 let active = false;
@@ -32,6 +33,8 @@ export function installDrawerBar(context) {
         }
     });
     window.addEventListener('tt-drawer-bar-activate', (event) => {
+        // Like the toggles they stand for, native buttons are inert behind a modal.
+        if (document.querySelector(':modal')) return;
         const control = controls.get(event.detail.id);
         if (!control) {
             console.warn('[TauriTavern] Drawer bar activated an unknown drawer:', event.detail.id);
@@ -54,14 +57,18 @@ function refresh() {
 async function publish() {
     controls.clear();
     const items = [];
+    // Every toggle the stylesheet hides gets a native button, including drawers without a panel.
     for (const drawer of document.querySelectorAll('#top-settings-holder > .drawer')) {
         const toggle = drawer.querySelector(':scope > .drawer-toggle');
+        if (!toggle || !drawer.checkVisibility()) continue;
         const panel = getTopLevelDrawerPanel(toggle);
-        if (!panel || !drawer.checkVisibility()) continue;
         if (!trackedToggles.has(toggle)) {
             trackedToggles.add(toggle);
-            subscribeDrawerState(panel, refresh);
             observer.observe(toggle, TOGGLE_OBSERVATION);
+        }
+        if (panel && !trackedPanels.has(panel)) {
+            trackedPanels.add(panel);
+            subscribeDrawerState(panel, refresh);
         }
         const icon = toggle.querySelector('.drawer-icon');
         const id = drawer.id || `drawer-${items.length}`;
@@ -69,8 +76,8 @@ async function publish() {
         items.push({
             id,
             title: icon?.title || toggle.title,
-            open: isTopLevelDrawerOpen(panel),
-            mark: markOf(id, icon),
+            open: panel ? isTopLevelDrawerOpen(panel) : false,
+            mark: markOf(icon),
         });
     }
     const key = JSON.stringify(items);
@@ -86,13 +93,7 @@ async function publish() {
 }
 
 /** The page marks drawers with the API status glow and the assistant's activity badge. */
-function markOf(id, icon) {
-    if (!icon) return null;
-    if (icon.classList.contains('redOverlayGlow')) return 'alert';
-    const activity = icon.dataset.ttAssistantActivity;
-    if (!activity) return null;
-    if (ACTIVITY_MARKS.has(activity)) return activity;
-    // The host rejects unknown marks, and with them every drawer button.
-    console.error(`[TauriTavern] Drawer bar: ${id} has an unknown assistant activity "${activity}"`);
-    return null;
+function markOf(icon) {
+    if (icon?.classList.contains('redOverlayGlow')) return 'alert';
+    return icon?.dataset.ttAssistantActivity || null;
 }
