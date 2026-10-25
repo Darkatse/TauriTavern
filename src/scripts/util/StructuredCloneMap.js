@@ -53,4 +53,21 @@ export class StructuredCloneMap extends Map {
         const value = super.get(key);
         return structuredClone(value);
     }
+
+    /**
+     * Returns part of a specified element, cloned like {@link get} clones the whole element.
+     *
+     * @template T
+     * @param {K} key - The key to get the value for
+     * @param {(value: V) => T} select - Picks the part to return; it must not modify the value
+     * @returns {T | undefined} The selected part, or undefined if no element is associated with the key
+     */
+    getPart(key, select) {
+        if (!super.has(key)) {
+            return undefined;
+        }
+
+        const part = select(super.get(key));
+        return this.cloneOnGet ? structuredClone(part) : part;
+    }
 }

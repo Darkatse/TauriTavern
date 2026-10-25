@@ -4569,6 +4569,16 @@ function collectCharacterWorldsToSearch() {
     return { characterName: character?.name, worldsToSearch };
 }
 
+/**
+ * Copies a loaded book's entries for scanning, each labeled with the book's name.
+ * @param {string} worldName
+ * @returns {object[]}
+ */
+function getLoreEntries(worldName) {
+    if (!worldInfoCache.has(worldName)) return [];
+    return Object.values(worldInfoCache.getPart(worldName, data => data.entries)).map(({ uid, ...rest }) => ({ uid, world: worldName, ...rest }));
+}
+
 async function getCharacterLore() {
     const { characterName: name, worldsToSearch } = collectCharacterWorldsToSearch();
 
@@ -4593,8 +4603,7 @@ async function getCharacterLore() {
             continue;
         }
 
-        const data = worldInfoCache.get(worldName);
-        const newEntries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(({ uid, ...rest }) => ({ uid, world: worldName, ...rest })) : [];
+        const newEntries = getLoreEntries(worldName);
         entries = entries.concat(newEntries);
 
         if (!newEntries.length) {
@@ -4613,8 +4622,7 @@ async function getGlobalLore() {
 
     let entries = [];
     for (const worldName of selected_world_info) {
-        const data = worldInfoCache.get(worldName);
-        const newEntries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(({ uid, ...rest }) => ({ uid, world: worldName, ...rest })) : [];
+        const newEntries = getLoreEntries(worldName);
         entries = entries.concat(newEntries);
     }
 
@@ -4635,8 +4643,7 @@ async function getChatLore() {
         return [];
     }
 
-    const data = worldInfoCache.get(chatWorld);
-    const entries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(({ uid, ...rest }) => ({ uid, world: chatWorld, ...rest })) : [];
+    const entries = getLoreEntries(chatWorld);
 
     console.debug(`[WI] Chat lore has ${entries.length} entries`, [chatWorld]);
 
@@ -4661,8 +4668,7 @@ async function getPersonaLore() {
         return [];
     }
 
-    const data = worldInfoCache.get(personaWorld);
-    const entries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(({ uid, ...rest }) => ({ uid, world: personaWorld, ...rest })) : [];
+    const entries = getLoreEntries(personaWorld);
 
     console.debug(`[WI] Persona lore has ${entries.length} entries`, [personaWorld]);
 
@@ -4746,8 +4752,8 @@ export async function getSortedEntries() {
 
         console.debug(`[WI] Found ${entries.length} world lore entries. Sorted by strategy`, Object.entries(world_info_insertion_strategy).find((x) => x[1] === world_info_character_strategy));
 
-        // Need to deep clone the entries to avoid modifying the cached data
-        return structuredClone(entries);
+        // worldInfoCache clones on read, so these entries share nothing with the cache.
+        return entries;
     }
     catch (e) {
         toastr.error(e.message, t`World Info could not be loaded`);
