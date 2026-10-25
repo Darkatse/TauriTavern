@@ -31,6 +31,8 @@ scene 生命周期相关的改动以 release 构建真机冷启动验收：#337 
 
 ### 1.2 Xcode 27 构建
 
+发布用的 iOS 构建（canary 与 stable 的 `mobile` job）运行在 `xcode-27` runner 上，并选用 Xcode 27.1。应用的行为跟随链接的 SDK：用 iOS 26 SDK 链接的应用在 iPhone Duo 上以兼容模式运行，画布为旧 iPhone 尺寸，没有竖栏。
+
 Xcode 27 的优化构建会把非 `public` 的 `@_cdecl` 函数降为本地符号，Rust 因此链接不到 Swift 入口。swift-rs 1.0.9、Tauri 2.12.3 与当前锁定的官方插件已把这些入口声明为 `public`；引入新的带 Swift 包的插件时，确认它的 `init_plugin_*` 也是 `public`。
 
 `swift-rs` 按所在 crate 的调试设置选择 Swift 优化级别。Tauri 与带 Swift 包的插件必须以同一模式构建：dev profile 对所有依赖关闭调试信息，不为其中个别 crate 单独开启。模式不一致时，真机在 `registerPlugin` 以 `swift_deletedMethodError` 中止，模拟器不会暴露。
