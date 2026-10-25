@@ -12,7 +12,7 @@ import {
     event_types,
     eventSource,
     Generate,
-    getExtensionPromptMaxDepth,
+    getInChatInjectionDepths,
     getMediaDisplay,
     getMediaIndex,
     getRequestHeaders,
@@ -1402,8 +1402,8 @@ async function populationInjectionPrompts(prompts, messages, extensionPrompts = 
         'assistant': extension_prompt_roles.ASSISTANT,
     };
 
-    const maxDepth = getExtensionPromptMaxDepth();
-    for (let i = 0; i <= maxDepth; i++) {
+    const injectedDepths = prompts.filter(prompt => prompt.content).map(prompt => prompt.injection_depth);
+    for (const i of getInChatInjectionDepths(normalizePromptAssemblyExtensionPrompts(extensionPrompts), injectedDepths)) {
         // Get prompts for current depth
         const depthPrompts = prompts.filter(prompt => prompt.injection_depth === i && prompt.content);
 

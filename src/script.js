@@ -3995,6 +3995,24 @@ export function getExtensionPromptMaxDepth() {
 }
 
 /**
+ * Gets the depths, in ascending order, at which in-chat prompts can be injected.
+ * @param {Record<string, object>|null} prompts Extension prompts by key
+ * @param {Iterable<unknown>} [depths] Depths of other prompts that are injected
+ * @returns {number[]} Depths from 0 to the maximum depth
+ */
+export function getInChatInjectionDepths(prompts, depths = []) {
+    const maxDepth = getExtensionPromptMaxDepth();
+    const usedDepths = new Set(depths);
+    for (const prompt of Object.values(prompts ?? {})) {
+        if (prompt.position != extension_prompt_types.IN_CHAT || !prompt.value) continue;
+        // A prompt without a depth matches every depth.
+        if (prompt.depth === undefined) return Array.from({ length: maxDepth + 1 }, (_, depth) => depth);
+        usedDepths.add(prompt.depth);
+    }
+    return [...usedDepths].filter(depth => Number.isInteger(depth) && depth >= 0 && depth <= maxDepth).sort((a, b) => a - b);
+}
+
+/**
  * Returns the extension prompt for the given position, depth, and role.
  * If multiple prompts are found, they are joined with a separator.
  * @param {number} [position] Position of the prompt
@@ -6965,8 +6983,7 @@ async function doChatInject(messages, isContinue) {
     let totalInsertedMessages = 0;
     messages.reverse();
 
-    const maxDepth = getExtensionPromptMaxDepth();
-    for (let i = 0; i <= maxDepth; i++) {
+    for (const i of getInChatInjectionDepths(extension_prompts)) {
         // Order of priority (most important go lower)
         const roles = [extension_prompt_roles.SYSTEM, extension_prompt_roles.USER, extension_prompt_roles.ASSISTANT];
         const names = {

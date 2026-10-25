@@ -1,6 +1,7 @@
 import { Popper, getHljs } from '../lib.js';
 
-import { eventSource, event_types, saveSettings, saveSettingsDebounced, getRequestHeaders, animation_duration, CLIENT_VERSION } from '../script.js';
+import { eventSource, event_types, saveSettings, saveSettingsDebounced, getRequestHeaders, animation_duration, CLIENT_VERSION, this_chid } from '../script.js';
+import { selected_group } from './group-chats.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { renderTemplate, renderTemplateAsync } from './templates.js';
 import { delay, deleteValueByPath, equalsIgnoreCaseAndAccents, escapeHtml, isSubsetOf, sanitizeSelector, setValueByPath, versionCompare } from './utils.js';
@@ -106,11 +107,10 @@ export function cancelDebouncedMetadataSave() {
 }
 
 export function saveMetadataDebounced() {
-    const context = getContext();
-    const groupId = context.groupId;
-    const characterId = context.characterId;
+    const groupId = selected_group;
+    const characterId = this_chid;
 
-    cancelDebouncedMetadataSave();
+    clearTimeout(saveMetadataTimeout);
 
     saveMetadataTimeout = setTimeout(async () => {
         const newContext = getContext();
