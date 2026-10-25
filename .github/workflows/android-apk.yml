@@ -78,40 +78,55 @@ jobs:
 
       - name: Configure Android networking
         run: ./scripts/ci/configure-mobile-http.sh enable android
-
-      - name: Prepare existing Android project
-        shell: bash
-        run: |
-          set -e
-
-          ANDROID_DIR="src-tauri/crates/tauritavern/gen/android"
-
-          # Keep the existing Android project and its resources.
-          test -f "$ANDROID_DIR/app/build.gradle.kts"
-          test -f "$ANDROID_DIR/app/src/main/AndroidManifest.xml"
-          
-          # Tauri requires this directory for the configured app identifier.
-          mkdir -p "$ANDROID_DIR/app/src/main/java/com/tauritavern/client/custom"
-
-          # Generated Kotlin activity files go here.
-          mkdir -p "$ANDROID_DIR/app/src/main/java/com/tauritavern/client/generated"
-
-          # Create the Android launcher script.
-          cat > "$ANDROID_DIR/tauri" <<'EOF'
-          import "../../../../../scripts/tauri-app.mjs";
-          EOF
-
-          # Create the launcher expected by the build.
-          cat > "src-tauri/crates/tauritavern/tauri" <<'EOF'
-          import "../../../scripts/tauri-app.mjs";
-          EOF
-          
-      - name: Configure generated Android Kotlin package
-        shell: bash
-        run: |
-          echo "WRY_ANDROID_PACKAGE=com.tauritavern.client" >> "$GITHUB_ENV"
-          echo "WRY_ANDROID_KOTLIN_FILES_OUT_DIR=$GITHUB_WORKSPACE/src-tauri/crates/tauritavern/gen/android/app/src/main/java/com/tauritavern/client/generated" >> "$GITHUB_ENV"
       
+      - name: Prepare Android project for the custom build
+        shell: bash
+        run: |
+          set -euo pipefail
+          CRATE=src-tauri/crates/tauritavern
+          ANDROID_DIR="$CRATE/gen/android"
+          GRADLE="$ANDROID_DIR/app/build.gradle.kts"
+
+          # Keep the committed Android project. It holds AiGenerationPlugin.kt and the
+          # other hand-written Kotlin. Never delete or regenerate gen/android here.
+          test -f "$ANDROID_DIR/app/src/main/java/com/tauritavern/client/AiGenerationPlugin.kt"
+
+          # Tauri identifier must match the Kotlin package (com.tauritavern.client) and
+          # the Rust plugin registration, or the generated files land in the wrong place.
+          sed -i 's/"identifier": "com\.tauritavern\.client\.custom"/"identifier": "com.tauritavern.client"/' "$CRATE/tauri.conf.json"
+          grep -q '"identifier": "com.tauritavern.client"' "$CRATE/tauri.conf.json"
+
+          # Install next to the official app: change only applicationId. The namespace
+          # (the Kotlin package) stays com.tauritavern.client.
+          sed -i 's/applicationId = "com\.tauritavern\.client"/applicationId = "com.tauritavern.client.custom"/' "$GRADLE"
+          grep -q 'applicationId = "com.tauritavern.client.custom"' "$GRADLE"
+          grep -q 'namespace = "com.tauritavern.client"' "$GRADLE"
+
+          # Launcher used by the Gradle Rust build (same as the previous workflow).
+          cat > "$CRATE/tauri" <<'EOF2'
+          import "../../../scripts/tauri-app.mjs";
+          EOF2
+
+      - name: Prepare temporary Android signing config
+        shell: bash
+        run: |
+          cd src-tauri/crates/tauritavern/gen/android
+          mkdir -p app
+          keytool -genkeypair -v \
+            -keystore app/ci-release.keystore \
+            -storepass android \
+            -alias ci-key \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=CI,O=TauriTavern,C=US"
+          cat > keystore.properties <<'EOF'
+          keyAlias=ci-key
+          password=android
+          storeFile=ci-release.keystore
+          EOF
+
       - name: Build debug APKs
         uses: tauri-apps/tauri-action@v1
         env:
@@ -127,29 +142,3 @@ jobs:
           uploadUpdaterJson: false
           uploadUpdaterSignatures: false
           workflowArtifactNamePattern: TauriTavern-custom-android-[arch]-apk
-
-      - name: Diagnose generated Android Kotlin files
-        if: always()
-        shell: bash
-        run: |
-          ANDROID_DIR="src-tauri/crates/tauritavern/gen/android"
-
-          for FILE in \
-            "$ANDROID_DIR/app/src/main/java/com/tauritavern/client/custom/generated/TauriActivity.kt" \
-            "$ANDROID_DIR/app/src/main/java/com/tauritavern/client/custom/generated/WryActivity.kt" \
-            "$ANDROID_DIR/tauri.settings.gradle" \
-            "$ANDROID_DIR/app/tauri.build.gradle.kts"
-          do
-            echo
-            echo "========== $FILE =========="
-
-            if [ -f "$FILE" ]; then
-              case "$FILE" in
-                *.kt) sed -n '1,40p' "$FILE" ;;
-                *) sed -n '1,120p' "$FILE" ;;
-              esac
-            else
-              echo "FILE NOT FOUND"
-            fi
-          done
-
