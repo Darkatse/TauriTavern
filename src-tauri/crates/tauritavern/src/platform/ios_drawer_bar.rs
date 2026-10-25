@@ -1,18 +1,18 @@
-//! The page's top-level drawers as native buttons in iPhone Duo's system bar regions (iOS 27.1+).
+//! The page's top-level drawers as native buttons in the system's bar regions (iOS 27.1+).
 use std::ptr::NonNull;
 
 use block2::RcBlock;
-use objc2::rc::{Allocated, Retained};
+use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{ClassType, MainThreadMarker, MainThreadOnly, available, class, msg_send};
-use objc2_foundation::{NSArray, NSString};
+use objc2_foundation::{NSArray, NSInteger, NSString};
 use objc2_ui_kit::{
     NSLayoutConstraint, NSObjectUIAccessibility, UIAction, UIButton, UIButtonConfiguration,
     UIButtonConfigurationCornerStyle, UIColor, UICornerConfiguration, UIGlassEffect,
     UIGlassEffectStyle, UIImage, UIImageSymbolConfiguration, UIImageSymbolWeight, UIImageView,
     UILargeContentViewerInteraction, UILayoutConstraintAxis, UILayoutPriorityDefaultHigh,
     UIRectEdge, UIStackView, UIStackViewDistribution, UIStatusBarStyle, UITraitEnvironment,
-    UIUserInterfaceSizeClass, UIUserInterfaceStyle, UIView, UIViewLayoutRegion, UIVisualEffectView,
+    UIUserInterfaceStyle, UIView, UIViewLayoutRegion, UIVisualEffectView,
 };
 use tauri::WebviewWindow;
 use tt_contracts::window_layout::{DrawerBarEdge, DrawerBarItem, DrawerBarMark};
@@ -25,6 +25,7 @@ const SYMBOL_POINT_SIZE: f64 = 20.0;
 const DOT_POINT_SIZE: f64 = 7.0;
 /// Puts the dot on the glyph's top trailing corner, where the page draws its badge.
 const DOT_OFFSET: f64 = 11.0;
+const VERTICAL_BAR_EDGE_UNSPECIFIED: NSInteger = 0;
 
 /// A bar region the system lays out beside the content, inside its edge's safe-area inset.
 #[derive(Clone, Copy)]
@@ -33,30 +34,28 @@ pub(super) struct SystemBar {
 }
 
 impl SystemBar {
-    /// The system's vertical bar, which also holds the status bar.
-    pub fn vertical(host: &UIView) -> Option<Self> {
-        // Not `verticalBarEdge`: while rotating, that trait trails the safe area by a layout pass.
-        [DrawerBarEdge::Left, DrawerBarEdge::Right]
-            .into_iter()
-            .find_map(|edge| Self::beside_content(host, edge))
-    }
-
-    /// Where the host draws the drawers on iPhone Duo; compact height keeps the page's top bar.
-    pub fn hosting_drawers(host: &UIView, hinged: bool) -> Option<Self> {
-        if !hinged
-            || unsafe { host.traitCollection().verticalSizeClass() }
-                != UIUserInterfaceSizeClass::Regular
-        {
+    /// Where the host draws the drawers: the system's vertical bar, otherwise a top bar region.
+    pub fn hosting_drawers(host: &UIView) -> Option<Self> {
+        if !available!(ios = 27.1) {
             return None;
         }
         Self::vertical(host).or_else(|| Self::beside_content(host, DrawerBarEdge::Top))
     }
 
-    /// The bar region on `edge`, when the system lays it out inside that edge's safe-area inset.
-    fn beside_content(host: &UIView, edge: DrawerBarEdge) -> Option<Self> {
-        if !available!(ios = 27.1) {
+    /// UIKit reports whether this layout uses a vertical bar; geometry finds its side, because
+    /// `verticalBarEdge` is leading or trailing and trails the safe area while rotating.
+    fn vertical(host: &UIView) -> Option<Self> {
+        let edge: NSInteger = unsafe { msg_send![&*host.traitCollection(), verticalBarEdge] };
+        if edge == VERTICAL_BAR_EDGE_UNSPECIFIED {
             return None;
         }
+        [DrawerBarEdge::Left, DrawerBarEdge::Right]
+            .into_iter()
+            .find_map(|edge| Self::beside_content(host, edge))
+    }
+
+    /// The bar region on `edge`, when the system lays it out inside that edge's safe-area inset.
+    fn beside_content(host: &UIView, edge: DrawerBarEdge) -> Option<Self> {
         let bar = Self { edge };
         let size = host.bounds().size;
         let safe = host.safeAreaInsets();
@@ -87,25 +86,6 @@ impl SystemBar {
             DrawerBarEdge::Top => UILayoutConstraintAxis::Horizontal,
             DrawerBarEdge::Left | DrawerBarEdge::Right => UILayoutConstraintAxis::Vertical,
         }
-    }
-}
-
-/// Reports whether `view`'s hierarchy has a hinge, as the Duo does, on every hinge update.
-pub(super) fn observe_hinge(view: &UIView, changed: impl Fn(bool) + 'static) {
-    if !available!(ios = 27.1) {
-        return;
-    }
-    let handler: RcBlock<dyn Fn(NonNull<AnyObject>, NonNull<AnyObject>)> = RcBlock::new(
-        move |_interaction: NonNull<AnyObject>, update: NonNull<AnyObject>| {
-            let hinge: Option<Retained<AnyObject>> = unsafe { msg_send![update, hinge] };
-            changed(hinge.is_some());
-        },
-    );
-    unsafe {
-        let interaction: Allocated<AnyObject> = msg_send![class!(UIHingeInteraction), alloc];
-        let interaction: Retained<AnyObject> =
-            msg_send![interaction, initWithUpdateHandler: &*handler];
-        let _: () = msg_send![view, addInteraction: &*interaction];
     }
 }
 

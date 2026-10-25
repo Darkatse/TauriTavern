@@ -20,7 +20,7 @@ use tt_contracts::window_layout::{
     DrawerBar, DrawerBarEdge, DrawerBarItem, WindowBackdropRequest, WindowInsets, WindowSnapshot,
 };
 
-use super::ios_drawer_bar::{BarItem, NativeDrawerBar, SystemBar, observe_hinge, resolve_items};
+use super::ios_drawer_bar::{BarItem, NativeDrawerBar, SystemBar, resolve_items};
 use super::window_layout::WallpaperRenderTarget;
 use tt_domain::errors::DomainError;
 
@@ -37,8 +37,6 @@ struct WindowHostIvars {
     corner_top: RefCell<Option<Retained<NSLayoutConstraint>>>,
     drawer_bar: RefCell<Option<NativeDrawerBar>>,
     drawer_bar_items: RefCell<Vec<BarItem>>,
-    /// Whether the hierarchy has a hinge, that is, the window is on iPhone Duo.
-    hinged: Cell<bool>,
     installing: Cell<bool>,
 }
 
@@ -193,8 +191,14 @@ impl WindowHost {
     }
 
     fn update_status_bar_style(&self) {
-        // The status bar sits in the vertical bar whenever the layout presents one.
-        let status_bar_edge = match SystemBar::vertical(self).map(|bar| bar.edge) {
+        // The status bar sits in the vertical bar, which also holds the drawers.
+        let drawer_bar = self
+            .ivars()
+            .snapshot
+            .borrow()
+            .as_ref()
+            .and_then(|snapshot| snapshot.drawer_bar);
+        let status_bar_edge = match drawer_bar.map(|bar| bar.edge) {
             Some(DrawerBarEdge::Left) => StripEdge::Left,
             Some(DrawerBarEdge::Right) => StripEdge::Right,
             Some(DrawerBarEdge::Top) | None => StripEdge::Top,
@@ -233,8 +237,8 @@ impl WindowHost {
         }
     }
 
-    /// The page's top bar keeps its content clear of the top corners; without it the content
-    /// guide takes UIKit's corner-adapted safe area. Returns whether the guide moves.
+    /// While the host draws the drawers the page has no top bar, and the content guide's top
+    /// takes UIKit's corner-adapted safe area. Returns whether the guide moves.
     fn avoid_corners(&self, avoid: bool) -> bool {
         let mut slot = self.ivars().corner_top.borrow_mut();
         if slot
@@ -302,7 +306,7 @@ impl WindowHost {
             return;
         }
         let Some(window) = self.window() else { return };
-        let drawer_bar = SystemBar::hosting_drawers(self, self.ivars().hinged.get());
+        let drawer_bar = SystemBar::hosting_drawers(self);
         if self.avoid_corners(drawer_bar.is_some()) {
             // The next layout pass publishes the settled content edges.
             self.setNeedsLayout();
@@ -401,7 +405,6 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
         corner_top: RefCell::new(None),
         drawer_bar: RefCell::new(None),
         drawer_bar_items: RefCell::new(Vec::new()),
-        hinged: Cell::new(false),
         installing: Cell::new(true),
     });
     let host: Retained<WindowHost> =
@@ -488,15 +491,6 @@ pub unsafe fn install(webview: &UIView, window: WebviewWindow) {
     host.addSubview(&keyboard_scroll);
     keyboard_scroll.addSubview(webview);
     MAIN_HOST.with(|slot| *slot.borrow_mut() = Some(host.clone()));
-    observe_hinge(&host, |hinged| {
-        MAIN_HOST.with(|slot| {
-            if let Some(host) = slot.borrow().as_ref()
-                && host.ivars().hinged.replace(hinged) != hinged
-            {
-                host.setNeedsLayout();
-            }
-        });
-    });
     host.update_status_bar_style();
     host.setNeedsLayout();
     // Publishing must wait for `with_webview` to release its window-id lock.
