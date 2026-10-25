@@ -5774,14 +5774,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/mdns-sd/mdns-sd-0.21.5.crate",
-        "sha256": "127d3355da0615643c88c885e29a1ccb29ca4b1ca1f2e44b3caed2e728a796aa",
-        "dest": "cargo/vendor/mdns-sd-0.21.5"
+        "url": "https://static.crates.io/crates/mdns-sd/mdns-sd-0.21.6.crate",
+        "sha256": "8562654710f72a9cbce4b0d5b7c366a2f94330ba1ce3740f15e932ea2d37b161",
+        "dest": "cargo/vendor/mdns-sd-0.21.6"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"127d3355da0615643c88c885e29a1ccb29ca4b1ca1f2e44b3caed2e728a796aa\", \"files\": {}}",
-        "dest": "cargo/vendor/mdns-sd-0.21.5",
+        "contents": "{\"package\": \"8562654710f72a9cbce4b0d5b7c366a2f94330ba1ce3740f15e932ea2d37b161\", \"files\": {}}",
+        "dest": "cargo/vendor/mdns-sd-0.21.6",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -8166,14 +8166,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/rmcp/rmcp-3.5.1.crate",
-        "sha256": "ab5023804cbe0304cbe06197ac16e645a0a0d0ffa2953bf735c15c2fa0213350",
-        "dest": "cargo/vendor/rmcp-3.5.1"
+        "url": "https://static.crates.io/crates/rmcp/rmcp-3.6.0.crate",
+        "sha256": "ceb42e9e47443cd83a834dea57b5816d35481417bae72ade5dc5615c59122e26",
+        "dest": "cargo/vendor/rmcp-3.6.0"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"ab5023804cbe0304cbe06197ac16e645a0a0d0ffa2953bf735c15c2fa0213350\", \"files\": {}}",
-        "dest": "cargo/vendor/rmcp-3.5.1",
+        "contents": "{\"package\": \"ceb42e9e47443cd83a834dea57b5816d35481417bae72ade5dc5615c59122e26\", \"files\": {}}",
+        "dest": "cargo/vendor/rmcp-3.6.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -10116,14 +10116,14 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/tokio/tokio-1.53.2.crate",
-        "sha256": "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044",
-        "dest": "cargo/vendor/tokio-1.53.2"
+        "url": "https://static.crates.io/crates/tokio/tokio-1.53.3.crate",
+        "sha256": "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e",
+        "dest": "cargo/vendor/tokio-1.53.3"
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044\", \"files\": {}}",
-        "dest": "cargo/vendor/tokio-1.53.2",
+        "contents": "{\"package\": \"ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e\", \"files\": {}}",
+        "dest": "cargo/vendor/tokio-1.53.3",
         "dest-filename": ".cargo-checksum.json"
     },
     {
