@@ -86,6 +86,8 @@ let nextId = 1;
 let backendForwardingEnabled = false;
 let flushTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
 let lastForwardedId = 0;
+// An unloading page captures nothing: its logs cannot reach the backend, and subscribers must not run during teardown.
+let pageUnloading = false;
 
 /** @type {Partial<Record<keyof Console, (...args: any[]) => void>> | null} */
 let originalConsole = null;
@@ -264,6 +266,10 @@ function formatConsoleArgs(args) {
  * @param {string | undefined} [target]
  */
 function push(level, message, target) {
+    if (pageUnloading) {
+        return;
+    }
+
     const entry = {
         id: nextId++,
         timestampMs: Date.now(),
@@ -438,6 +444,11 @@ function restoreConsole() {
 }
 
 export function installFrontendLogCapture() {
+    globalThis.addEventListener('pagehide', (event) => {
+        if (!event.persisted) {
+            pageUnloading = true;
+        }
+    });
     captureWindowErrors();
     iframeLogCapture.install();
 
