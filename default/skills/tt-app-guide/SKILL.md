@@ -64,6 +64,7 @@ Elsewhere:
 ## Working in the live interface
 
 - **Opening a drawer.** Click its `.drawer-toggle`. This closes every other unpinned drawer, including the Advanced Formatting drawer this assistant lives in.
+  - When `<html>` has `data-tt-drawer-bar`, the system draws the drawer buttons beside the page and the toggles are hidden, so interact cannot reach them. Click the drawer's icon with evaluate instead, using the drawer element from the table above: `document.querySelector('#ai-config-button .drawer-icon').click()`.
   - Your run continues; the user sees the drawer you opened and gets your reply when they come back.
   - Read state instead of opening drawers when the user doesn't need to see the screen.
 - **Detached panels.** With TauriTavern's Panel Runtime setting on, a closed drawer's content may be detached from the page. Open the drawer before looking inside it.

@@ -11,6 +11,7 @@ export {};
  *
  * @typedef {(
  *   | 'get_window_snapshot'
+ *   | 'set_drawer_bar_items'
  *   | 'capture_content_viewport'
  *   | 'set_window_backdrop'
  *   | 'database_handle'
