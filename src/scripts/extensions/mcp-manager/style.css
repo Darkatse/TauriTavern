@@ -535,17 +535,17 @@
     background-color: color-mix(in srgb, var(--tt-mcp-accent) 30%, transparent);
 }
 
-.tt-mcp-seg input:focus-visible + span {
+.tt-mcp-seg label:has(> input:focus-visible) > .tt-mcp-seg-text {
     outline: 2px solid var(--interactable-outline-color);
     outline-offset: 1px;
 }
 
 .tt-mcp-seg input:disabled,
-.tt-mcp-seg input:disabled + span {
+.tt-mcp-seg label:has(> input:disabled) > .tt-mcp-seg-text {
     cursor: default;
 }
 
-.tt-mcp-seg input:disabled + span {
+.tt-mcp-seg label:has(> input:disabled) > .tt-mcp-seg-text {
     opacity: 0.6;
 }
 

@@ -149,7 +149,7 @@
 .ttia-markdown h1, .ttia-markdown h2, .ttia-markdown h3 { font-size: 1.08em; line-height: 1.5; margin: 1em 0 .5em; }
 .ttia-markdown :first-child { margin-top: 0; }
 .ttia-markdown ul, .ttia-markdown ol { padding-left: 1.5em; margin-block: .6em; }
-.ttia-markdown li + li { margin-top: .3em; }
+.ttia-markdown li:not(:first-child) { margin-top: .3em; }
 .ttia-markdown blockquote { border-left: 2px solid var(--ttia-line); margin: .8em 0; padding-left: 14px; color: var(--ttia-muted); }
 .ttia-root pre { background: var(--ttia-field); border: 1px solid color-mix(in srgb, var(--ttia-ink) 8%, transparent); border-radius: 9px; padding: 12px; max-height: 22rem; overflow: auto; font-family: var(--monoFontFamily); font-size: .82em; line-height: 1.6; white-space: pre; margin: 8px 0; text-align: left; }
 .ttia-root code { color: inherit; font-family: var(--monoFontFamily); font-size: .9em; background: var(--ttia-field); border-radius: 4px; padding: .12em .25em; }

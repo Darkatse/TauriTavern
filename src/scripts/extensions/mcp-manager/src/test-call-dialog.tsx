@@ -130,7 +130,7 @@ function ArgumentInput({
                                 disabled={disabled}
                                 onChange={() => onChange(option)}
                             />
-                            <span>{option === '' ? tr('notSet') : option}</span>
+                            <span className="tt-mcp-seg-text">{option === '' ? tr('notSet') : option}</span>
                         </label>
                     ))}
                 </div>

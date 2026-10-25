@@ -132,14 +132,14 @@
     opacity: 1;
 }
 
-#tauritavern_version_settings .ttv-channel-option input:checked + .ttv-channel-pill {
+#tauritavern_version_settings .ttv-channel-option:has(> input:checked) > .ttv-channel-pill {
     color: var(--SmartThemeQuoteColor);
     background-color: var(--SmartThemeBlurTintColor);
     border-color: var(--SmartThemeBorderColor);
     opacity: 1;
 }
 
-#tauritavern_version_settings .ttv-channel-option input:focus-visible + .ttv-channel-pill {
+#tauritavern_version_settings .ttv-channel-option:has(> input:focus-visible) > .ttv-channel-pill {
     outline: 2px solid var(--interactable-outline-color);
     outline-offset: 1px;
 }
@@ -148,7 +148,7 @@
     cursor: default;
 }
 
-#tauritavern_version_settings .ttv-channel-option input:disabled + .ttv-channel-pill {
+#tauritavern_version_settings .ttv-channel-option:has(> input:disabled) > .ttv-channel-pill {
     opacity: 0.5;
     cursor: default;
 }

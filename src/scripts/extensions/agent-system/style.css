@@ -3473,16 +3473,16 @@ body:is([data-generating="true"], [data-swiping="true"]) .ttas-agent-send-toggle
     transition: transform 180ms ease;
 }
 
-.ttas-retention-auto-toggle input:checked + .ttas-retention-auto-track {
+.ttas-retention-auto-toggle:has(> input:checked) > .ttas-retention-auto-track {
     color: var(--ttas-accent);
     background-color: color-mix(in srgb, var(--ttas-accent) 15%, transparent);
 }
 
-.ttas-retention-auto-toggle input:checked + .ttas-retention-auto-track span {
+.ttas-retention-auto-toggle:has(> input:checked) .ttas-retention-auto-knob {
     transform: translateX(18px);
 }
 
-.ttas-retention-auto-toggle input:focus-visible + .ttas-retention-auto-track {
+.ttas-retention-auto-toggle:has(> input:focus-visible) > .ttas-retention-auto-track {
     outline: 2px solid color-mix(in srgb, var(--ttas-accent) 58%, transparent);
     outline-offset: 2px;
 }
