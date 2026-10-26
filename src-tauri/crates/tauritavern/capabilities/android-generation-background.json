@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "android-generation-background",
+  "description": "Android background keep-alive and battery optimization settings for the main window",
+  "windows": ["main"],
+  "platforms": ["android"],
+  "permissions": [
+    "generation-background:allow-requestIgnoreBatteryOptimizations"
+  ]
+}

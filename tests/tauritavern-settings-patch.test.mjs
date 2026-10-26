@@ -22,6 +22,7 @@ function createSettings(overrides = {}) {
             max_total_bytes: 1024 * 1024 * 1024,
         },
         close_to_tray_on_close: false,
+        keep_alive_in_background: false,
         request_proxy: {
             enabled: false,
             url: '',
@@ -92,6 +93,7 @@ test('buildTauriTavernSettingsUpdate preserves minimal nested patch semantics', 
     const initial = createTauriTavernSettingsState(createSettings());
 
     const update = buildTauriTavernSettingsUpdate(initial, createDraft(initial, {
+        keepAliveInBackground: true,
         promptCacheTtl: '5m',
         requestProxy: {
             enabled: true,
@@ -102,6 +104,7 @@ test('buildTauriTavernSettingsUpdate preserves minimal nested patch semantics', 
 
     assert.equal(update.hasChanges, true);
     assert.deepEqual(update.patch, {
+        keep_alive_in_background: true,
         models: {
             claude: {
                 prompt_cache_ttl: '5m',

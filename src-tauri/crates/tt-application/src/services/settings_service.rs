@@ -178,6 +178,10 @@ impl SettingsService {
             settings.close_to_tray_on_close = close_to_tray_on_close;
         }
 
+        if let Some(keep_alive_in_background) = dto.keep_alive_in_background {
+            settings.keep_alive_in_background = keep_alive_in_background;
+        }
+
         if let Some(request_proxy) = dto.request_proxy {
             settings.request_proxy = request_proxy.into();
         }
@@ -740,6 +744,7 @@ mod tests {
                     max_total_bytes: Some(0),
                 }),
                 close_to_tray_on_close: None,
+                keep_alive_in_background: None,
                 request_proxy: None,
                 allow_keys_exposure: None,
                 avatar_persona_original_images_enabled: None,
@@ -795,6 +800,7 @@ mod tests {
             cold_swipes_enabled: None,
             codemirror_editor_enabled: None,
             close_to_tray_on_close: None,
+            keep_alive_in_background: None,
             request_proxy: None,
             allow_keys_exposure: None,
             avatar_persona_original_images_enabled: None,
@@ -864,6 +870,7 @@ mod tests {
                 cold_swipes_enabled: None,
                 codemirror_editor_enabled: None,
                 close_to_tray_on_close: None,
+                keep_alive_in_background: None,
                 request_proxy: None,
                 allow_keys_exposure: None,
                 avatar_persona_original_images_enabled: None,

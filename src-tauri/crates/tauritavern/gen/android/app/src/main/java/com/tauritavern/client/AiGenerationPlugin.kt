@@ -1,8 +1,12 @@
 package com.tauritavern.client
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
@@ -11,14 +15,11 @@ import app.tauri.plugin.Invoke
 import app.tauri.plugin.Plugin
 
 @InvokeArg
-class StartGenerationArgs {
-  lateinit var taskId: String
-}
-
-@InvokeArg
-class FinishGenerationArgs {
-  lateinit var taskId: String
-  lateinit var outcome: String
+class SyncKeepAliveStateArgs {
+  var active: Boolean = false
+  var needsCpu: Boolean = false
+  var persistent: Boolean = false
+  var outcome: String? = null
   var statusCode: Int = 0
   var notifyCompletion: Boolean = false
 }
@@ -31,14 +32,24 @@ class AiGenerationPlugin(
   private val mainHandler = Handler(Looper.getMainLooper())
 
   @Command
-  fun start(invoke: Invoke) {
+  fun syncState(invoke: Invoke) {
     try {
-      val args = invoke.parseArgs(StartGenerationArgs::class.java)
+      val args = invoke.parseArgs(SyncKeepAliveStateArgs::class.java)
       mainHandler.post {
         try {
-          notifier.onGenerationStart(args.taskId)
+          notifier.syncState(
+            state =
+              KeepAliveState(
+                active = args.active,
+                needsCpu = args.needsCpu,
+                persistent = args.persistent,
+              ),
+            outcome = args.outcome,
+            statusCode = args.statusCode,
+            notifyCompletion = args.notifyCompletion,
+          )
         } catch (error: Exception) {
-          Log.w(LOG_TAG, "Failed to start AI generation foreground service", error)
+          Log.w(LOG_TAG, "Failed to sync AI generation foreground service state", error)
         }
       }
       invoke.resolve()
@@ -48,23 +59,16 @@ class AiGenerationPlugin(
   }
 
   @Command
-  fun finish(invoke: Invoke) {
+  fun requestIgnoreBatteryOptimizations(invoke: Invoke) {
+    val intent =
+      Intent(
+        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+        Uri.parse("package:${activity.packageName}"),
+      )
     try {
-      val args = invoke.parseArgs(FinishGenerationArgs::class.java)
-      mainHandler.post {
-        try {
-          notifier.onGenerationFinish(
-            taskId = args.taskId,
-            outcome = args.outcome,
-            statusCode = args.statusCode,
-            notifyCompletion = args.notifyCompletion,
-          )
-        } catch (error: Exception) {
-          Log.w(LOG_TAG, "Failed to finish AI generation foreground service", error)
-        }
-      }
+      activity.startActivity(intent)
       invoke.resolve()
-    } catch (error: Exception) {
+    } catch (error: ActivityNotFoundException) {
       invoke.reject(error.message)
     }
   }

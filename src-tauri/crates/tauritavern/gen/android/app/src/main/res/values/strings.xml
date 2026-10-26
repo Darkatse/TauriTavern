@@ -9,6 +9,9 @@
     <string name="notification_ai_keepalive_title">Generating AI reply</string>
     <string name="notification_ai_keepalive_body">TauriTavern will keep running in background</string>
 
+    <string name="notification_keepalive_title">TauriTavern running in background</string>
+    <string name="notification_keepalive_body">Tap to return to TauriTavern</string>
+
     <string name="notification_ai_live_title">Generating AI reply</string>
     <string name="notification_ai_live_body">Tokens: %1$d</string>
     <string name="notification_ai_live_short">Generating</string>

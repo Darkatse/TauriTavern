@@ -86,6 +86,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         nextChatBackupMaxTotalUnit,
     );
     const nextCloseToTrayOnClose = Boolean(draft.closeToTrayOnClose);
+    const nextKeepAliveInBackground = Boolean(draft.keepAliveInBackground);
 
     const nextDynamicThemeEnabled = Boolean(draft.dynamicTheme?.themeEnabled);
     const nextDynamicThemeDayTheme = String(draft.dynamicTheme?.dayTheme || '').trim();
@@ -131,6 +132,8 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         || hasChatBackupMaxTotalFilesChange
         || hasChatBackupMaxTotalBytesChange;
     const hasCloseToTrayOnCloseChange = nextCloseToTrayOnClose !== initial.closeToTrayOnClose;
+    const hasKeepAliveInBackgroundChange =
+        nextKeepAliveInBackground !== initial.keepAliveInBackground;
     const hasDynamicThemeChange = nextDynamicThemeEnabled !== initial.dynamicTheme.themeEnabled
         || nextDynamicThemeDayTheme !== initial.dynamicTheme.dayTheme
         || nextDynamicThemeNightTheme !== initial.dynamicTheme.nightTheme
@@ -154,6 +157,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
         codeMirrorEditorEnabled: hasCodeMirrorEditorEnabledChange,
         chatBackups: hasChatBackupsChange,
         closeToTrayOnClose: hasCloseToTrayOnCloseChange,
+        keepAliveInBackground: hasKeepAliveInBackgroundChange,
         dynamicTheme: hasDynamicThemeChange,
         allowKeysExposure: hasAllowKeysExposureChange,
         avatarPersonaOriginalImagesEnabled: hasAvatarPersonaOriginalImagesEnabledChange,
@@ -203,6 +207,9 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
     }
     if (hasCloseToTrayOnCloseChange) {
         patch.close_to_tray_on_close = nextCloseToTrayOnClose;
+    }
+    if (hasKeepAliveInBackgroundChange) {
+        patch.keep_alive_in_background = nextKeepAliveInBackground;
     }
     if (hasDynamicThemeChange) {
         patch.dynamic_theme = {
@@ -261,6 +268,7 @@ export function buildTauriTavernSettingsUpdate(initial, draft) {
                 maxTotalBytes: nextChatBackupMaxTotalBytes,
             },
             closeToTrayOnClose: nextCloseToTrayOnClose,
+            keepAliveInBackground: nextKeepAliveInBackground,
             dynamicTheme: {
                 themeEnabled: nextDynamicThemeEnabled,
                 dayTheme: nextDynamicThemeDayTheme,

@@ -97,6 +97,7 @@ pub async fn update_tauritavern_settings(
 #[tauri::command]
 pub async fn update_tauritavern_settings(
     dto: UpdateTauriTavernSettingsDto,
+    app_handle: tauri::AppHandle,
     app_state: State<'_, Arc<AppState>>,
     observability: State<'_, Arc<DevObservabilityHub>>,
     host_resources: State<'_, Arc<HostResourceService>>,
@@ -116,6 +117,7 @@ pub async fn update_tauritavern_settings(
         )?;
     }
 
+    let enabling_keep_alive = dto.keep_alive_in_background == Some(true);
     let settings = app_state
         .services
         .settings_service
@@ -123,6 +125,16 @@ pub async fn update_tauritavern_settings(
         .await
         .map_err(map_command_error("Failed to update TauriTavern settings"))?;
 
+    if enabling_keep_alive {
+        crate::platform::generation_background::request_notification_permission_if_needed(
+            &app_handle,
+        )
+        .await;
+    }
+    crate::platform::generation_background::set_persistent_keep_alive(
+        &app_handle,
+        settings.keep_alive_in_background,
+    );
     host_resources.set_avatar_persona_original_images_enabled(
         settings.avatar_persona_original_images_enabled,
     );
