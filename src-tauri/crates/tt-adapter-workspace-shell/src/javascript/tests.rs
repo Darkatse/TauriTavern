@@ -20,6 +20,76 @@ async fn execute(command: &str) -> bashkit::Result<ExecResult> {
 }
 
 #[tokio::test]
+async fn shell_exec_runs_workspace_commands() {
+    let result = execute(
+        r#"
+mkdir -p /scratch
+echo 'hello workspace' > /scratch/note.txt
+js - <<'JS'
+import { shell } from '@tauritavern/runtime';
+const shown = shell.exec('ls -1 /scratch');
+console.log(JSON.stringify({ code: shown.code, stdout: shown.stdout.trim() }));
+const read = shell.exec('cat /scratch/note.txt');
+if (read.code !== 0) throw new Error(read.stderr);
+console.log(JSON.stringify({ text: read.stdout.trim() }));
+JS
+"#,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    let lines = result.stdout.text_lossy();
+    assert!(
+        lines.contains(r#"{"code":0,"stdout":"note.txt"}"#),
+        "{lines}"
+    );
+    assert!(lines.contains(r#"{"text":"hello workspace"}"#), "{lines}");
+}
+
+#[tokio::test]
+async fn shell_exec_honors_options_and_rejects_bad_directories() {
+    let result = execute(
+        r#"
+mkdir -p /scratch/inner
+js - <<'JS'
+import { shell } from '@tauritavern/runtime';
+const piped = shell.exec('cat', { stdin: 'from stdin' });
+console.log(JSON.stringify({ piped: piped.stdout }));
+
+const pipedWins = shell.exec('cat | tr a-z A-Z', { stdin: 'ignored' });
+console.log(JSON.stringify({ pipedWins: pipedWins.stdout.trim() }));
+
+const env = shell.exec('printf "%s/%s" "$HOME" "$EXTRA"', { env: { EXTRA: 'set' } });
+console.log(JSON.stringify({ env: env.stdout }));
+
+const cwd = shell.exec('pwd', { cwd: '/scratch/inner' });
+console.log(JSON.stringify({ cwd: cwd.stdout.trim() }));
+
+try {
+  shell.exec('echo must-not-run', { cwd: '/scratch/missing' });
+  console.log(JSON.stringify({ error: 'none' }));
+} catch (error) {
+  console.log(JSON.stringify({ error: String(error).includes('/scratch/missing') }));
+}
+JS
+"#,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    let out = result.stdout.text_lossy();
+    for expected in [
+        r#"{"piped":"from stdin"}"#,
+        r#"{"pipedWins":"IGNORED"}"#,
+        r#"{"env":"//set"}"#,
+        r#"{"cwd":"/scratch/inner"}"#,
+        r#"{"error":true}"#,
+    ] {
+        assert!(out.contains(expected), "missing {expected} in {out}");
+    }
+}
+
+#[tokio::test]
 async fn awaited_module_keeps_output_separate_from_diagnostics() {
     let result = execute(
         r#"
