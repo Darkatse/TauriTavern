@@ -162,7 +162,7 @@ src/
 - 统一入口：上游只 import `src/scripts/chat-payload-transport.js`，不要直接依赖 `src/scripts/tauri/chat/*`。
 - 第一方加载全部楼层，可选[历史滑动按需加载](CurrentState/ChatPayload.md#21-历史滑动按需加载)。header 与消息数组分离，generation、扩展和保存共享完整、有序的 canonical `chat[]`。
 - `chat_truncation` 只限制初始 DOM。Show More 从完整 `chat[]` 补挂楼层，不发起分页 I/O，不改变消息绝对索引。
-- 当前聊天完整保存与 metadata 保存共用 `enqueueChatSave()` 和 transport 提交会话；transport 自身不重复入队。提交捕获独立快照并原子发布，保存期间的修改不混入本次提交。
+- 当前聊天完整保存与 metadata 保存共用 `enqueueChatSave()` 和 transport 提交会话；transport 自身不重复入队。队列把被后到的更宽保存覆盖的重复保存合并或接管，见 [ChatPayload §3](CurrentState/ChatPayload.md#3-统一聊天提交)。提交捕获独立快照并原子发布，保存期间的修改不混入本次提交。
 - `saveMetadata()` 只保存 header 的 `chat_metadata`，不保存消息，也不取消待执行的完整保存。修改消息的扩展必须显式调用完整保存。
 - tail/before/beforePages 只属于 `api.chat.history` 与 Agent 的显式只读查询，不参与前端当前聊天状态。
 - 聊天格式遵循 [ChatPayload §1.1](CurrentState/ChatPayload.md#11-统一格式底线)；解析失败必须传播，不能提交部分历史。
