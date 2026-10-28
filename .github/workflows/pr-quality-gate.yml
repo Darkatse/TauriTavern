@@ -40,10 +40,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libdbus-1-dev libwebkit2gtk-4.1-dev librsvg2-dev pkg-config valgrind
 
-      - name: Install latest stable Rust and Clippy
+      - name: Install latest stable Rust, Clippy and rustfmt
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Setup pnpm and Node.js
         uses: pnpm/setup@v2

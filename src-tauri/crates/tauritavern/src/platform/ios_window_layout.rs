@@ -160,7 +160,11 @@ impl KeyboardScrollView {
             return;
         }
         let height = self.ivars().webview.bounds().size.height;
-        let constraint = self.ivars().webview.heightAnchor().constraintEqualToConstant(height);
+        let constraint = self
+            .ivars()
+            .webview
+            .heightAnchor()
+            .constraintEqualToConstant(height);
         self.ivars().keyboard_constraint.setActive(false);
         constraint.setActive(true);
         *held = Some(constraint);
