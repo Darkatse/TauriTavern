@@ -158,6 +158,40 @@ export function jsonResponse(data, status = 200, statusText) {
     return new Response(JSON.stringify(data), responseInit(status, 'application/json', statusText));
 }
 
+/**
+ * A JSON response whose `json()` resolves to `data` itself; any other body read serializes it.
+ * `data` must be JSON-compatible and no longer referenced by the handler.
+ */
+export function ownedJsonResponse(data, status = 200, statusText) {
+    let value = data;
+    let cloned = false;
+    const body = new ReadableStream({
+        pull(controller) {
+            controller.enqueue(new TextEncoder().encode(JSON.stringify(value)));
+            controller.close();
+        },
+    }, { highWaterMark: 0 });
+    const response = new Response(body, responseInit(status, 'application/json', statusText));
+    // Clones share the body bytes, so a cloned response parses like any other.
+    response.clone = () => {
+        cloned = true;
+        return Response.prototype.clone.call(response);
+    };
+    response.json = async () => {
+        if (cloned) {
+            return Response.prototype.json.call(response);
+        }
+        if (response.bodyUsed) {
+            throw new TypeError('Body has already been consumed.');
+        }
+        await response.body.cancel();
+        const result = value;
+        value = undefined;
+        return result;
+    };
+    return response;
+}
+
 export function safeResponseStatusText(value) {
     const text = String(value || '').trim();
     return /^[\x20-\x7E]*$/.test(text) ? text : '';

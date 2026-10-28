@@ -420,6 +420,38 @@ test('chat persistence and navigation', async (context) => {
             }
         });
 
+        await context.test('recovering a missing current chat does not reclaim a chat opened meanwhile', async () => {
+            await reset('character');
+            main.characters[0].chat = 'missing-chat';
+            const entered = Promise.withResolvers();
+            const release = Promise.withResolvers();
+            const fetch = window.fetch;
+            window.fetch = async (url, options) => {
+                if (url === '/api/characters/chats' && JSON.parse(options.body).simple === false) {
+                    entered.resolve();
+                    await release.promise;
+                }
+                return fetch(url, options);
+            };
+            let opening;
+            try {
+                opening = main.selectCharacterById(0);
+                await entered.promise;
+                await openExplicit('later-chat');
+                release.resolve();
+                await opening;
+                assert.deepEqual(writes, ['later-chat']);
+                assert.equal(storedChat, 'later-chat');
+                assert.equal(main.getCurrentChatId(), 'later-chat');
+                assert.deepEqual(Array.from(main.chat, message => message.mes), ['later-chat']);
+                assert.deepEqual(errors, []);
+            } finally {
+                release.resolve();
+                await opening;
+                window.fetch = fetch;
+            }
+        });
+
         for (const kind of ['character', 'group']) {
             await context.test(`${kind}: failed recent deletion reports failure and preserves chat state`, async () => {
                 await reset(kind);

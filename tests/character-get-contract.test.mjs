@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { textResponse, jsonResponse } from '../src/tauri/main/http-utils.js';
+import { textResponse, jsonResponse, ownedJsonResponse } from '../src/tauri/main/http-utils.js';
 import { ensureJsonl, stripJsonl } from '../src/tauri/main/kernel/chat-utils.js';
 import { createRouteRegistry } from '../src/tauri/main/router.js';
 import { registerCharacterRoutes } from '../src/tauri/main/routes/character-routes.js';
@@ -9,7 +9,7 @@ import { createCharacterService } from '../src/tauri/main/services/characters/ch
 
 function registerGetRoute(context) {
     const router = createRouteRegistry();
-    registerCharacterRoutes(router, context, { textResponse, jsonResponse });
+    registerCharacterRoutes(router, context, { textResponse, jsonResponse, ownedJsonResponse });
     return router;
 }
 
@@ -145,6 +145,37 @@ test('/api/characters/get keeps name lookup only when avatar identity is absent'
     assert.deepEqual(calls, [
         { command: 'get_character', args: { name: 'Alice' } },
     ]);
+});
+
+test('/api/characters/get serves the same card to json(), text() and clones', async () => {
+    const service = createCharacterService({
+        safeInvoke: async () => ({
+            name: 'Alice',
+            avatar: 'Alice.png',
+            chat: 'Alice - 2026-10-25@12h00m00s',
+            json_data: JSON.stringify({ spec: 'chara_card_v2', data: { name: 'Alice', description: 'd' } }),
+        }),
+    });
+    const router = registerGetRoute(service);
+    const request = () => router.handle({
+        method: 'POST',
+        path: '/api/characters/get',
+        url: new URL('http://localhost/api/characters/get'),
+        body: { avatar_url: 'Alice.png' },
+    });
+
+    const read = await request();
+    const card = await read.json();
+    assert.equal(card.description, 'd');
+    assert.equal(read.bodyUsed, true);
+    await assert.rejects(read.text(), TypeError);
+
+    assert.deepEqual(JSON.parse(await (await request()).text()), card);
+
+    const original = await request();
+    const copy = original.clone();
+    assert.deepEqual(await original.json(), card);
+    assert.deepEqual(await copy.json(), card);
 });
 
 test('/api/characters/get restores open card fields without narrowing their JSON types', async () => {

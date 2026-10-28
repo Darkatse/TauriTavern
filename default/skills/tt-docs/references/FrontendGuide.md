@@ -398,7 +398,7 @@ TauriTavern 自有的状态型 UI 作为 SillyTavern first-party extension 挂�
 3. 若该命令为高频/可合并写入的调用，按需在 `src/tauri/main/kernel/invokes/invoke-policies.js` 增加/调整策略（dedupe / write-behind）。
 4. 在 `src/tauri/main/routes/` 对应业务域中新增路由：路由层禁止直接引用 `window`，需要浏览器能力时下沉到 `adapters/` 或 `services/`。
 5. 路由内只做参数校验、DTO 组装、`context.safeInvoke` 调用；错误直接暴露（避免 silent fallback）。
-6. 保持返回结构稳定（状态码 + JSON 结构），避免破坏上游前端调用假设。
+6. 保持返回结构稳定（状态码 + JSON 结构），避免破坏上游前端调用假设。返回本次请求新建、JSON 兼容且路由不再持有的大对象时用 `ownedJsonResponse`：`json()` 直接交出该对象，其他读取方式按需序列化。
 7. 跑 `pnpm run check`，确保完整工程门禁通过。
 
 ## 10. 调试与验证

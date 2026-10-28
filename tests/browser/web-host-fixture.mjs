@@ -65,6 +65,7 @@ export function createWebHostFixture(defaultSettings, theme, extensions) {
                     return respond({ ok: true });
                 }
                 case 'POST /api/characters/chats': return respond([...chatFiles].map(([file, text]) => {
+                    if (body.simple) return { file_name: `${file}.jsonl`, file_id: file };
                     const chat = records(text);
                     return { file_name: `${file}.jsonl`, chat_items: chat.length - 1, file_size: '200 B',
                         mes: chat.at(-1)?.mes, last_mes: chat.at(-1)?.send_date };

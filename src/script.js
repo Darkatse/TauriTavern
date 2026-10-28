@@ -1440,7 +1440,13 @@ export function resultCheckStatus() {
     stopStatusLoading();
 }
 
-async function getPersistedCharacterChats(avatar) {
+/**
+ * Lists a character's persisted chats. A simple listing carries file names only and reads no chat content.
+ * @param {string} avatar Avatar file name
+ * @param {{ simple: boolean }} options
+ * @returns {Promise<any[]>}
+ */
+async function listPersistedCharacterChats(avatar, { simple }) {
     const character = characters.find(character => character.avatar === avatar);
     if (!character) {
         return [];
@@ -1449,7 +1455,7 @@ async function getPersistedCharacterChats(avatar) {
     const response = await fetch('/api/characters/chats', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ avatar_url: character.avatar, ch_name: character.name }),
+        body: JSON.stringify({ avatar_url: character.avatar, ch_name: character.name, simple }),
     });
 
     if (!response.ok) {
@@ -1461,7 +1467,11 @@ async function getPersistedCharacterChats(avatar) {
         throw new Error('Character chat list could not be loaded');
     }
 
-    const chats = Array.isArray(data) ? data : Object.values(data ?? {});
+    return Array.isArray(data) ? data : Object.values(data ?? {});
+}
+
+async function getPersistedCharacterChats(avatar) {
+    const chats = await listPersistedCharacterChats(avatar, { simple: false });
     chats.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));
     return chats;
 }
@@ -1469,15 +1479,17 @@ async function getPersistedCharacterChats(avatar) {
 /**
  * Resolves the chat a character opens: its current chat while it still exists, otherwise its most recent one.
  * A character without persisted chats keeps its current chat name so a new chat can be created under it.
- * @param {{ file_name: string }[]} persistedChats Persisted chats, most recent first
+ * @param {string} avatar Avatar file name
+ * @param {{ file_name: string }[]} chatFiles Persisted chat files in any order
  * @param {string} currentChat Chat name stored in the character
- * @returns {string} Chat name to open
+ * @returns {Promise<string>} Chat name to open
  */
-function resolvePersistedChat(persistedChats, currentChat) {
-    if (persistedChats.length === 0 || persistedChats.some(chat => normalizeChatFileName(chat.file_name) === currentChat)) {
+async function resolvePersistedChat(avatar, chatFiles, currentChat) {
+    if (chatFiles.length === 0 || chatFiles.some(chat => normalizeChatFileName(chat.file_name) === currentChat)) {
         return currentChat;
     }
-    return normalizeChatFileName(persistedChats[0].file_name);
+    const [latest] = await getPersistedCharacterChats(avatar);
+    return normalizeChatFileName(latest.file_name);
 }
 
 /**
@@ -1508,8 +1520,8 @@ export async function selectCharacterById(id, { switchMenu = true, chatFile } = 
 
     if (selected_group || String(this_chid) !== String(id) || chatFile !== undefined) {
         if (!is_send_press) {
-            const persistedChats = chatFile === undefined ? await getPersistedCharacterChats(avatar) : [];
-            const allowNewChat = chatFile === undefined && persistedChats.length === 0;
+            const chatFiles = chatFile === undefined ? await listPersistedCharacterChats(avatar, { simple: true }) : [];
+            const allowNewChat = chatFile === undefined && chatFiles.length === 0;
             setCharacterId(undefined);
             setCharacterName('');
             resetSelectedGroup();
@@ -1525,12 +1537,17 @@ export async function selectCharacterById(id, { switchMenu = true, chatFile } = 
                 return;
             }
 
+            // After each await, this switch goes on only while the group, the character and the chat it last saw are unchanged.
+            const superseded = seenChat => selected_group || String(this_chid) !== String(id) || characters[id]?.chat !== seenChat;
             const previousChat = characters[id].chat;
-            const targetChat = chatFile ?? resolvePersistedChat(persistedChats, previousChat);
+            const targetChat = chatFile ?? await resolvePersistedChat(avatar, chatFiles, previousChat);
+            if (superseded(previousChat)) {
+                return;
+            }
             characters[id].chat = targetChat;
             await getChat({ allowNewChat });
 
-            if (selected_group || String(this_chid) !== String(id) || characters[id]?.chat !== targetChat) {
+            if (superseded(targetChat)) {
                 return;
             }
             if (chatFile !== undefined || targetChat !== previousChat) {

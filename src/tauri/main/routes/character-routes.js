@@ -53,7 +53,7 @@ function createCharacterResponse(outcome, textResponse) {
     return response;
 }
 
-export function registerCharacterRoutes(router, context, { jsonResponse, textResponse }) {
+export function registerCharacterRoutes(router, context, { jsonResponse, ownedJsonResponse, textResponse }) {
     router.post('/api/characters/all', async () => {
         const characters = await context.getAllCharacters();
         return jsonResponse(characters);
@@ -74,7 +74,7 @@ export function registerCharacterRoutes(router, context, { jsonResponse, textRes
             return jsonResponse({ error: 'Character not found' }, 404);
         }
 
-        return jsonResponse(character);
+        return ownedJsonResponse(character);
     });
 
     router.post('/api/characters/chats', async ({ body }) => {
