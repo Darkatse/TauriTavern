@@ -1,6 +1,7 @@
-// Runs every *.perf.mjs scenario in one frontend session and compares its engine counters with
-// baseline.json. Any change past the slack fails, including improvements, so every performance change
-// is recorded on purpose: `pnpm run test:perf -- --update` writes the current counters.
+// Runs every *.perf.mjs scenario in two frontend sessions, one for engine work and host traffic and one for
+// JavaScript allocations, and compares the counters with baseline.json. Any change past the slack fails,
+// including improvements, so every performance change is recorded on purpose: `pnpm run test:perf -- --update`
+// writes the current counters.
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { openFrontend } from './frontend.mjs';
 
@@ -11,17 +12,28 @@ const update = process.argv.includes('--update');
 // absorbs that and keeps small UI additions from needing a new baseline.
 const slack = expected => Math.max(2, Math.ceil(expected * 0.1));
 
-const app = await openFrontend();
-try {
-    for (const file of (await readdir(directory)).filter(name => name.endsWith('.perf.mjs')).sort()) {
-        const { default: scenario } = await import(new URL(file, directory));
-        await scenario(app);
+async function runScenarios(options) {
+    const app = await openFrontend(options);
+    try {
+        for (const file of (await readdir(directory)).filter(name => name.endsWith('.perf.mjs')).sort()) {
+            const { default: scenario } = await import(new URL(file, directory));
+            await scenario(app);
+        }
+    } finally {
+        await app.close();
     }
-} finally {
-    await app.close();
+    if (app.problems.length > 0) {
+        throw new Error(`The frontend reported problems, so its counters are not comparable:\n${app.problems.join('\n')}`);
+    }
+    return app;
 }
-if (app.problems.length > 0) {
-    throw new Error(`The frontend reported problems, so its counters are not comparable:\n${app.problems.join('\n')}`);
+
+const app = await runScenarios();
+const allocations = (await runScenarios({ allocations: true })).results;
+for (const step of Object.keys(app.results)) {
+    if (step === 'app/startup') continue;
+    if (!allocations[step]) throw new Error(`The allocation session did not measure ${step}`);
+    Object.assign(app.results[step], allocations[step]);
 }
 
 const current = { engine: app.engine, steps: app.results };

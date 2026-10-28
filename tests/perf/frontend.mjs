@@ -6,7 +6,8 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import { defaultSettings, defaultTheme, frontendRoot, systemExtensions } from '../helpers/frontend-content.mjs';
+import { frontendRoot } from '../helpers/frontend-content.mjs';
+import { pageData } from './dataset.mjs';
 
 const fixtureFile = fileURLToPath(new URL('../browser/web-host-fixture.mjs', import.meta.url));
 const TYPES = {
@@ -14,40 +15,14 @@ const TYPES = {
     '.png': 'image/png', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
 };
 
-/** A long chat and a large lorebook; the first entry holds 100k characters. */
-function dataset() {
-    const paragraph = 'The old lighthouse keeper remembers every ship that passed the northern reef, and speaks of them as friends. ';
-    const chat = [{ user_name: 'User', character_name: 'Review', chat_metadata: { integrity: 'review-integrity' } }];
-    for (let i = 0; i < 80; i++) {
-        chat.push({
-            name: i % 2 ? 'User' : 'Review', is_user: i % 2 === 1, is_system: false, send_date: '2026-01-01T12:00:00Z',
-            // Replies carry their model icon, as in a real chat, so a new reply's icon is already loaded.
-            extra: i % 2 ? {} : { api: 'custom', model: 'replay' },
-            mes: `*She glances at the map.* "${paragraph.repeat(3)}"\n\n**Note:** ${paragraph}`,
-        });
-    }
-    const entries = {};
-    for (let uid = 0; uid < 200; uid++) {
-        entries[uid] = {
-            uid, key: [`key${uid}`, `alias${uid}`], keysecondary: [], comment: `Entry ${uid}`, content: paragraph.repeat(8),
-            constant: false, selective: true, order: 100, position: 0, disable: false, displayIndex: uid, probability: 100, useProbability: true,
-        };
-    }
-    entries[0].content = `${paragraph.repeat(4)}\n\n`.repeat(250).slice(0, 100_000);
-    return { chat, lore: { entries } };
-}
-
 function bootstrap() {
-    const settings = structuredClone(defaultSettings);
-    // With the browser flags in openFrontend, no animation spreads a step's work over time.
-    settings.power_user.reduced_motion = true;
-    const data = { settings, theme: defaultTheme, extensions: systemExtensions, ...dataset() };
+    const data = pageData();
     return `<script>
 // Timer timing must not decide how DOM changes batch into frames:
 // - a timeout shorter than a frame runs just before the next frame, so a chain of them lands in one frame;
-// - during a step, a longer one, up to the relaxed debounce (1 s), waits until the page is quiet, when the
-//   harness runs every pending timeout in due order. Outside steps it keeps real time, so scenarios prepare
-//   the page as a user would.
+// - during a step, a longer one, up to 10 s, which covers debounces and a toast's lifetime, waits until the page
+//   is quiet, when the harness runs every pending timeout in due order. Outside steps it keeps real time, so
+//   scenarios prepare the page as a user would.
 const pending = new Map();
 const { setTimeout: schedule, clearTimeout: cancel, requestAnimationFrame: nextFrame } = globalThis;
 let heldId = 0, frameRequested = false;
@@ -70,7 +45,7 @@ function requestFrame() {
     });
 }
 globalThis.setTimeout = (callback, delay = 0, ...args) => {
-    if (delay > 1000) return schedule(callback, delay, ...args);
+    if (delay > 10_000) return schedule(callback, delay, ...args);
     const timeout = {
         due: performance.now() + delay,
         short: delay < 16,
@@ -92,6 +67,50 @@ import { createWebHostFixture } from '/__perf/web-host-fixture.mjs';
 const data = JSON.parse(document.getElementById('perf-data').textContent);
 const fixture = createWebHostFixture(data.settings, data.theme, data.extensions);
 fixture.chatFiles.set('review-chat', data.chat.map(record => JSON.stringify(record)).join('\\n'));
+fixture.chatFiles.set('ledger-chat', data.ledgerChat.map(record => JSON.stringify(record)).join('\\n'));
+const respond = (body, status = 200) => ({ status, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+const cards = {
+    'Review.png': () => JSON.parse(fixture.backend.handle({ method: 'POST', url: '/api/characters/get', headers: {}, body: '{}' }).body),
+    'Ledger.png': () => ({ ...JSON.parse(data.ledgerCard), json_data: data.ledgerCard, avatar: 'Ledger.png',
+        chat_size: 160000, data_size: 2100000, date_added: 2, date_last_chat: 2 }),
+};
+const chatsOf = { 'Review.png': ['review-chat'], 'Ledger.png': ['ledger-chat'] };
+// The native host's list entry (tt-domain Character::into_shallow); the full card is read when one opens.
+function shallow(card) {
+    const data = card.data ?? {}, extensions = data.extensions ?? {};
+    const pick = (value, fallback) => String(value ?? '').trim() ? value : fallback ?? '';
+    const talkativeness = card.talkativeness || extensions.talkativeness || 0.5;
+    const fav = Boolean(card.fav) || Boolean(extensions.fav);
+    return {
+        shallow: true, name: pick(card.name, data.name), description: '', personality: '', scenario: '', first_mes: '', mes_example: '',
+        avatar: card.avatar, chat: card.chat, creator: pick(card.creator, data.creator), creator_notes: pick(card.creator_notes, data.creator_notes),
+        character_version: pick(card.character_version, data.character_version), tags: card.tags?.length ? card.tags : data.tags ?? [],
+        create_date: card.create_date, talkativeness, fav, chat_size: card.chat_size, data_size: card.data_size,
+        date_added: card.date_added, date_last_chat: card.date_last_chat, alternate_greetings: [], system_prompt: '',
+        post_history_instructions: '', character_book: null, json_data: null,
+        data: { extensions: { talkativeness, fav, ...('world' in extensions ? { world: extensions.world } : {}) } },
+    };
+}
+function handleCharacters(request) {
+    const body = typeof request.body === 'string' && request.body ? JSON.parse(request.body) : {};
+    switch (\`\${request.method} \${request.url}\`) {
+        case 'POST /api/characters/all': return respond(Object.values(cards).map(card => shallow(card())));
+        case 'POST /api/characters/get':
+            return cards[body.avatar_url] ? respond(cards[body.avatar_url]()) : respond({ error: 'Character not found' }, 404);
+        case 'POST /api/characters/chats': {
+            const owned = chatsOf[body.avatar_url] ?? [];
+            const chats = JSON.parse(fixture.backend.handle(request).body);
+            return respond(chats.filter(chat => owned.includes(chat.file_name.replace(/\\.jsonl$/, ''))));
+        }
+        case 'POST /api/characters/edit':
+        case 'POST /api/characters/merge-attributes': {
+            // The fixture stores one card, Review.
+            const fields = request.body?.kind === 'form' ? Object.fromEntries(request.body.entries) : body;
+            return (fields.avatar_url ?? fields.avatar) === 'Review.png' ? null : respond({ error: 'Only Review is writable' }, 500);
+        }
+        default: return null;
+    }
+}
 // Opens the reply stream that the scenario feeds through __perfReply.
 function streamReply() {
     const encoder = new TextEncoder();
@@ -111,6 +130,8 @@ function streamReply() {
 installWebHost({
     identity: { platform: 'windows', kind: 'desktop' },
     backend: { handle(request) {
+        const characters = handleCharacters(request);
+        if (characters) return characters;
         if (request.method === 'POST' && request.url === '/api/worldinfo/get') {
             return { status: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify(data.lore) };
         }
@@ -121,6 +142,28 @@ installWebHost({
     } },
     store: fixture.store,
 });
+// Host traffic as the native host sees it: the UTF-8 JSON of every command's arguments and result, with binary
+// data counted by its bytes.
+globalThis.__perfHost = { bytes: 0 };
+const utf8 = new TextEncoder();
+function hostBytes(value) {
+    let binary = 0;
+    const text = JSON.stringify(value, (key, item) => {
+        if (item instanceof ArrayBuffer || ArrayBuffer.isView(item)) {
+            binary += item.byteLength;
+            return null;
+        }
+        return item;
+    });
+    return (text === undefined ? 0 : utf8.encode(text).length) + binary;
+}
+const { invoke } = window.__TAURI__.core;
+window.__TAURI__.core.invoke = async (command, args, options) => {
+    globalThis.__perfHost.bytes += hostBytes(args);
+    const result = await invoke(command, args, options);
+    globalThis.__perfHost.bytes += hostBytes(result);
+    return result;
+};
 </script>`;
 }
 
@@ -204,12 +247,18 @@ function countEngineWork(events) {
 /**
  * Opens the frontend and returns the scenario API. `measure(name, ...inputs)` runs the inputs in order and
  * settles the page after each one, so the machine's speed never decides which work shares a frame. It
- * records the engine work they caused plus the page's size afterwards.
+ * records the engine work and host traffic they caused plus the page's size afterwards. With `allocations`, it
+ * records only the bytes JavaScript allocated: sampling every allocation slows the page and would change how
+ * the engine work splits into frames.
  */
-export async function openFrontend() {
+export async function openFrontend({ allocations = false } = {}) {
+    const quietWithinMs = allocations ? 30_000 : 5000;
     const server = await serve();
     // Animations, including smooth scrolling, would make frame counts follow elapsed time instead of work.
-    const browser = await chromium.launch({ args: ['--disable-smooth-scrolling', '--force-prefers-reduced-motion'] });
+    const args = ['--disable-smooth-scrolling', '--force-prefers-reduced-motion'];
+    // Background compilation would let machine speed decide which allocations optimized code removes.
+    if (allocations) args.push('--js-flags=--single-threaded');
+    const browser = await chromium.launch({ args });
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Performance.enable');
@@ -234,10 +283,10 @@ export async function openFrontend() {
     // page looks quiet. Idleness is read from outside the page, so waiting adds no page work.
     async function settle() {
         const busy = async () => (await cdp.send('Performance.getMetrics')).metrics.find(metric => metric.name === 'TaskDuration').value;
-        const deadline = Date.now() + 5000;
         for (;;) {
+            const deadline = Date.now() + quietWithinMs;
             for (let quiet = 0, last = await busy(); quiet < 50;) {
-                if (Date.now() > deadline) throw new Error('The page did not go quiet within 5 s');
+                if (Date.now() > deadline) throw new Error(`The page did not go quiet within ${quietWithinMs / 1000} s`);
                 await new Promise(resolve => setTimeout(resolve, 10));
                 const now = await busy();
                 quiet = now - last < 0.001 ? quiet + 10 : 0;
@@ -286,19 +335,56 @@ export async function openFrontend() {
         return { ...dom, liveNodes: metric('Nodes'), layoutObjects: metric('LayoutObjects'), eventListeners: metric('JSEventListeners') };
     }
 
+    async function run(inputs) {
+        for (const input of inputs) {
+            await input();
+            await settle();
+        }
+    }
+
+    // Every allocation in the step counts once, including objects already collected, except allocations whose
+    // nearest script is the page's harness, the Web Host or its fixture: they stand in for the native host.
+    async function allocatedBytes(step) {
+        await cdp.send('HeapProfiler.startSampling', {
+            samplingInterval: 1, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
+        });
+        await step();
+        const { profile } = await cdp.send('HeapProfiler.stopSampling');
+        const parents = new Map(), frames = new Map();
+        (function index(node, parent) {
+            frames.set(node.id, node.callFrame);
+            if (parent) parents.set(node.id, parent.id);
+            for (const child of node.children) index(child, node);
+        })(profile.head, null);
+        const standIn = id => {
+            for (; id !== undefined; id = parents.get(id)) {
+                const { url } = frames.get(id);
+                if (url) {
+                    const { pathname } = new URL(url);
+                    return pathname === '/' || pathname.startsWith('/tauri/web-host/') || pathname.startsWith('/__perf/');
+                }
+            }
+            return false;
+        };
+        return profile.samples.reduce((sum, sample) => standIn(sample.nodeId) ? sum : sum + sample.size, 0);
+    }
+
+    const hostBytes = () => page.evaluate(() => globalThis.__perfHost.bytes);
+
     async function measure(name, ...inputs) {
         if (name in results) throw new Error(`Duplicate perf step: ${name}`);
         await settle();
-        const before = requests;
+        if (allocations) {
+            await hold(true);
+            results[name] = { jsAllocatedBytes: await allocatedBytes(() => run(inputs)) };
+            await hold(false);
+            return;
+        }
+        const before = requests, hostBefore = await hostBytes();
         await hold(true);
-        const work = await trace(async () => {
-            for (const input of inputs) {
-                await input();
-                await settle();
-            }
-        });
+        const work = await trace(() => run(inputs));
         await hold(false);
-        results[name] = { ...work, requests: requests - before, ...await pageSize() };
+        results[name] = { ...work, requests: requests - before, hostBytes: await hostBytes() - hostBefore, ...await pageSize() };
     }
 
     // Startup's work depends on when resources finish loading, so it records the page it produces.
@@ -313,7 +399,11 @@ export async function openFrontend() {
         // the pointer starts at a fixed point.
         await page.mouse.move(1, 1);
         await settle();
-        results['app/startup'] = await pageSize();
+        if (allocations) {
+            await cdp.send('HeapProfiler.enable');
+        } else {
+            results['app/startup'] = await pageSize();
+        }
     } catch (error) {
         await browser.close();
         server.close();

@@ -435,12 +435,7 @@ TauriTavern 自有的状态型 UI 作为 SillyTavern first-party extension 挂�
 
 ### 10.2 性能基线
 
-`tests/perf/` 守住前端优化不退化。`pnpm run test:perf`（已接入 `pnpm run check`）在 Playwright 固定版本的 Chromium headless shell 里，经 Web Host 运行构建后的前端：80 条消息的聊天、200 条世界书，第一条 10 万字，宿主身份为 Windows 桌面。每个场景步骤统计引擎做了多少工作，与提交的 `tests/perf/baseline.json` 比较。首次运行前安装浏览器：`pnpm exec playwright-core install --only-shell chromium`。
-
-- 计的是工作量，不是耗时，所以与机器快慢无关：事件派发；样式重算次数、其中强制的次数与重算的元素数；布局次数、强制次数与布局的对象数；有样式或布局工作的帧数与合成更新；以及步骤结束后的页面规模：请求数、元素数、可见滚动容器数、回收后仍存活的节点、布局对象与事件监听器。
-- 任一计数偏离基线超过 10%（至少 2）即失败，变少也算。有意的改变用 `pnpm run test:perf -- --update` 重新记录，基线变化随提交评审；升级 `playwright-core` 换了 Chromium 后也要重新记录。
-- 计数与机器快慢无关，靠的是测量环境的约定：动画与平滑滚动关闭；短于一帧的定时器只在下一帧之前执行，一串 jQuery Deferred 回调因此落在同一帧；步骤进行中，1 秒以内的较长定时器和网络响应都先扣住，等页面静默（主线程连续三个帧间隔没有工作）后再执行或逐个放行，页面看似静默之后就不会再有迟到的工作；页面不带 query 打开。按这些约定，CPU 限速到 6 倍时计数仍在余量之内。页面报错、控制台错误或请求失败时直接失败，避免比较坏掉的页面。
-- 新增场景：在 `tests/perf/` 放 `*.perf.mjs`，默认导出 `async (app) => {}`，用 `app.measure(name, ...inputs)` 计量一组输入。每个输入之后页面都会静默下来，再进行下一个，所以输入的划分决定哪些工作可以合并：回复的每个 token 是一个输入（经 `__perfReply.push()` 与 `end()` 送入）；连续打字放在同一个输入里，用帧隔开，防抖工作只在最后执行一次。点击坐标用 `app.centerOf(locator)` 在步骤之前取得，步骤里用 `page.mouse` 与 `page.keyboard` 发送真实输入，避免驱动自身的事件计入。新场景应在 CPU 限速（`Emulation.setCPUThrottlingRate`）下核对计数仍在余量之内。
+`pnpm run check` 会在固定场景里计量工作量并与记录比较。失败时的处理、重新记录与新增场景见 [性能基线](CurrentState/PerfBaseline.md)。
 
 ## 11. 工程守护（Guardrails + 类型检查）
 
