@@ -1,4 +1,9 @@
-// The data the perf suite runs on, served to the page through the Web Host.
+// The data the perf suites run on. The frontend suite serves it through the Web Host; the backend replay reads the
+// same data from a data root laid out like the native host's.
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { crc32, deflateSync } from 'node:zlib';
+import { createWebHostFixture } from '../browser/web-host-fixture.mjs';
 import { defaultSettings, defaultTheme, systemExtensions } from '../helpers/frontend-content.mjs';
 
 /**
@@ -62,3 +67,43 @@ export function pageData() {
     return { settings: perfSettings(), theme: defaultTheme, extensions: systemExtensions, ...dataset() };
 }
 
+const jsonl = records => records.map(record => JSON.stringify(record)).join('\n');
+
+/** A 1x1 PNG carrying a character card in its `chara` text chunk, as SillyTavern writes cards. */
+function cardPng(cardJson) {
+    const chunk = (type, data) => {
+        const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+        const length = Buffer.alloc(4), checksum = Buffer.alloc(4);
+        length.writeUInt32BE(data.length);
+        checksum.writeUInt32BE(crc32(body));
+        return Buffer.concat([length, body, checksum]);
+    };
+    const header = Buffer.from([0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+    return Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        chunk('IHDR', header),
+        chunk('tEXt', Buffer.from(`chara\0${Buffer.from(cardJson).toString('base64')}`, 'latin1')),
+        chunk('IDAT', deflateSync(Buffer.from([0, 0, 0, 0, 0]))),
+        chunk('IEND', Buffer.alloc(0)),
+    ]);
+}
+
+/** Writes the dataset under `root` in the native host's data directory layout. */
+export async function writeDataRoot(root) {
+    const data = pageData();
+    const fixture = createWebHostFixture(data.settings, data.theme, data.extensions);
+    const get = url => JSON.parse(fixture.backend.handle({ method: 'POST', url, headers: {}, body: '{}' }).body);
+    const user = path.join(root, 'default-user');
+    const files = {
+        'settings.json': get('/api/settings/get').settings,
+        'characters/Review.png': cardPng(get('/api/characters/get').json_data),
+        'characters/Ledger.png': cardPng(data.ledgerCard),
+        'chats/Review/review-chat.jsonl': jsonl(data.chat),
+        'chats/Ledger/ledger-chat.jsonl': jsonl(data.ledgerChat),
+        'worlds/Review lore.json': JSON.stringify(data.lore),
+    };
+    for (const [file, content] of Object.entries(files)) {
+        await mkdir(path.dirname(path.join(user, file)), { recursive: true });
+        await writeFile(path.join(user, file), content);
+    }
+}

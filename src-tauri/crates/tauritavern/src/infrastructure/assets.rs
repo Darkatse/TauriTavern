@@ -168,7 +168,7 @@ fn resolve_resource_path(
         })
 }
 
-fn normalize_resource_relative_path(relative_path: &str) -> Result<String, DomainError> {
+pub(crate) fn normalize_resource_relative_path(relative_path: &str) -> Result<String, DomainError> {
     let normalized = relative_path.trim().replace('\\', "/");
     let normalized = normalized.trim_start_matches('/').to_string();
 
@@ -183,7 +183,7 @@ fn normalize_resource_relative_path(relative_path: &str) -> Result<String, Domai
 }
 
 #[cfg(not(embedded_resources))]
-fn map_resource_error(relative_path: &str, error: std::io::Error) -> DomainError {
+pub(crate) fn map_resource_error(relative_path: &str, error: std::io::Error) -> DomainError {
     if error.kind() == std::io::ErrorKind::NotFound {
         DomainError::NotFound(format!("Resource not found: {}", relative_path))
     } else {

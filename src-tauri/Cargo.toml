@@ -63,3 +63,11 @@ lto = true
 opt-level = "s"
 panic = "unwind"
 strip = "symbols"
+
+# tests/perf/backend.mjs: release code generation, built incrementally, with the symbols callgrind splits steps at.
+[profile.perf]
+inherits = "release"
+codegen-units = 16
+incremental = true
+lto = false
+strip = "none"

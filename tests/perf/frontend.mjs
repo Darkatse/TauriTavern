@@ -143,8 +143,10 @@ installWebHost({
     store: fixture.store,
 });
 // Host traffic as the native host sees it: the UTF-8 JSON of every command's arguments and result, with binary
-// data counted by its bytes.
-globalThis.__perfHost = { bytes: 0 };
+// data counted by its bytes. The trace records every call in order for the backend replay; strings the host
+// issued (session ids, revisions) become references to the result that issued them, including results that are
+// JSON documents in binary form.
+globalThis.__perfHost = { bytes: 0, recording: true, step: 'app/startup', calls: [], issued: new Map() };
 const utf8 = new TextEncoder();
 function hostBytes(value) {
     let binary = 0;
@@ -157,11 +159,45 @@ function hostBytes(value) {
     });
     return (text === undefined ? 0 : utf8.encode(text).length) + binary;
 }
+const bytesOf = value => value instanceof ArrayBuffer ? new Uint8Array(value) : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+const issuedToken = value => typeof value === 'string' && value.length >= 16 && /[0-9]/.test(value) && /[a-z]/i.test(value);
+function base64(bytes) {
+    let text = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(text);
+}
+function traced(value, issued) {
+    if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return { $bytes: base64(bytesOf(value)) };
+    return JSON.parse(JSON.stringify(value ?? {}, (key, item) => {
+        if (item instanceof ArrayBuffer || ArrayBuffer.isView(item)) return Array.from(bytesOf(item));
+        return issued.has(item) ? { $result: issued.get(item) } : item;
+    }));
+}
+const utf8Text = new TextDecoder();
+function parsedResult(value) {
+    if (!(value instanceof ArrayBuffer || ArrayBuffer.isView(value))) return value;
+    try {
+        return JSON.parse(utf8Text.decode(bytesOf(value)));
+    } catch {
+        return undefined;
+    }
+}
+function rememberIssued(issued, index, value, at = []) {
+    if (issuedToken(value) && !issued.has(value)) issued.set(value, [index, at]);
+    else if (value && typeof value === 'object' && !ArrayBuffer.isView(value) && !(value instanceof ArrayBuffer)) {
+        for (const [key, item] of Object.entries(value)) rememberIssued(issued, index, item, [...at, key]);
+    }
+}
 const { invoke } = window.__TAURI__.core;
 window.__TAURI__.core.invoke = async (command, args, options) => {
-    globalThis.__perfHost.bytes += hostBytes(args);
+    const host = globalThis.__perfHost;
+    if (!host.recording) return invoke(command, args, options);
+    host.bytes += hostBytes(args);
+    const index = host.calls.length;
+    host.calls.push({ step: host.step, command, args: traced(args, host.issued), headers: traced(options?.headers, host.issued) });
     const result = await invoke(command, args, options);
-    globalThis.__perfHost.bytes += hostBytes(result);
+    host.bytes += hostBytes(result);
+    rememberIssued(host.issued, index, parsedResult(result));
     return result;
 };
 </script>`;
@@ -370,6 +406,7 @@ export async function openFrontend({ allocations = false } = {}) {
     }
 
     const hostBytes = () => page.evaluate(() => globalThis.__perfHost.bytes);
+    const traceStep = step => page.evaluate(value => { globalThis.__perfHost.step = value; }, step);
 
     async function measure(name, ...inputs) {
         if (name in results) throw new Error(`Duplicate perf step: ${name}`);
@@ -381,9 +418,11 @@ export async function openFrontend({ allocations = false } = {}) {
             return;
         }
         const before = requests, hostBefore = await hostBytes();
+        await traceStep(name);
         await hold(true);
         const work = await trace(() => run(inputs));
         await hold(false);
+        await traceStep(null);
         results[name] = { ...work, requests: requests - before, hostBytes: await hostBytes() - hostBefore, ...await pageSize() };
     }
 
@@ -400,8 +439,10 @@ export async function openFrontend({ allocations = false } = {}) {
         await page.mouse.move(1, 1);
         await settle();
         if (allocations) {
+            await page.evaluate(() => { globalThis.__perfHost.recording = false; });
             await cdp.send('HeapProfiler.enable');
         } else {
+            await traceStep(null);
             results['app/startup'] = await pageSize();
         }
     } catch (error) {
@@ -424,6 +465,8 @@ export async function openFrontend({ allocations = false } = {}) {
         results,
         problems,
         engine: `Chromium ${browser.version()}`,
+        /** Every host call so far, in order, with the step it belongs to: `app/startup`, a measured step or null. */
+        hostCalls: () => page.evaluate(() => globalThis.__perfHost.calls),
         async close() {
             await browser.close();
             server.close();

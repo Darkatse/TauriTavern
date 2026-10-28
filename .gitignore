@@ -38,3 +38,4 @@ packaging/flatpak/build-identity.env
 
 # Local upstream checkout (junction/symlink)
 sillytavern-*
+tests/perf/out/

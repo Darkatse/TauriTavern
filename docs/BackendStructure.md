@@ -183,7 +183,8 @@ src-tauri/crates/tauritavern/src/
 │   └── startup_profile.rs # 启动期 settings / policy snapshot
 ├── presentation/          # Tauri commands、CommandError、web resource adapter
 ├── infrastructure/        # Tauri-bound infrastructure
-└── platform/              # 宿主身份、iOS/UIKit、macOS/WebView、native UI glue
+├── platform/              # 宿主身份、iOS/UIKit、macOS/WebView、native UI glue
+└── perf.rs, perf/         # 后端性能重放（`perf` feature，见 CurrentState/PerfBaseline.md）
 ```
 
 ### 6.1 Host shell
@@ -208,7 +209,7 @@ src-tauri/crates/tauritavern/src/
 - service 不直接构造 concrete adapter。
 - adapter 不调用 application service。
 - `AppState` 只持有长期运行的 service 包、lifecycle handle 和启动期策略快照，不作为全局 service locator 下沉到 application 或 adapter。
-- composition 不接触 `AppHandle`。宿主提供的东西由 `app/host/environment.rs` 汇集成 `HostEnvironment` 传入。
+- composition 不接触 `AppHandle`。宿主提供的东西由 `app/host/environment.rs` 汇集成 `HostEnvironment` 传入；后端性能重放用同一套 composition，换上自己的 `HostEnvironment`。
 
 ### 6.3 Host-bound infrastructure
 
@@ -365,6 +366,7 @@ pnpm run check:rust-boundaries
 
 ```bash
 pnpm run test:rust
+pnpm run test:perf:backend
 pnpm run check:rust:dev
 cargo test --manifest-path src-tauri/Cargo.toml -p <affected-crate> <focused-test>
 ```

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{Manager, Resource, ResourceId, State, Webview};
+use tauri::{Manager, Resource, ResourceId, Runtime, State, Webview};
 use tt_application::dto::chat_history_dto::ChatHistoryLocator;
 use tt_ports::repositories::chat_commit_repository::{ChatSwipeSource, ColdSwipeCommitSource};
 
@@ -21,8 +21,8 @@ pub struct OpenColdChatResult {
     reader_id: ResourceId,
 }
 
-pub(super) fn commit_source(
-    webview: &Webview,
+pub(super) fn commit_source<R: Runtime>(
+    webview: &Webview<R>,
     id: ResourceId,
 ) -> Result<ColdSwipeCommitSource, CommandError> {
     let resource = webview
