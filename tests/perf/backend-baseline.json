@@ -1,0 +1,69 @@
+{
+    "toolchain": "1.99.0",
+    "steps": {
+        "app/startup": {
+            "readBytes": 7167329,
+            "readOps": 4916,
+            "resultBytes": 663411,
+            "writeBytes": 83688,
+            "writeOps": 5065,
+            "instructions": 1358107956
+        },
+        "character/open-back": {
+            "readBytes": 102289,
+            "readOps": 399,
+            "resultBytes": 1021,
+            "writeBytes": 30254,
+            "writeOps": 431,
+            "instructions": 32088444
+        },
+        "character/open-heavy-card": {
+            "readBytes": 2853846,
+            "readOps": 624,
+            "resultBytes": 4143999,
+            "writeBytes": 46080,
+            "writeOps": 632,
+            "instructions": 304381737
+        },
+        "chat/send-and-stream": {
+            "readBytes": 33237,
+            "readOps": 358,
+            "resultBytes": 637,
+            "writeBytes": 146829,
+            "writeOps": 428,
+            "instructions": 10807013
+        },
+        "world-info/open-entry": {
+            "readBytes": 179,
+            "readOps": 64,
+            "resultBytes": 24,
+            "writeBytes": 76,
+            "writeOps": 62,
+            "instructions": 78807517
+        },
+        "world-info/open-list": {
+            "readBytes": 749,
+            "readOps": 14,
+            "resultBytes": 662,
+            "writeBytes": 8,
+            "writeOps": 8,
+            "instructions": 55991
+        },
+        "world-info/type-10-keys": {
+            "readBytes": 447181,
+            "readOps": 136,
+            "resultBytes": 110,
+            "writeBytes": 894052,
+            "writeOps": 143,
+            "instructions": 92899686
+        },
+        "world-info/type-title-10-keys": {
+            "readBytes": 447246,
+            "readOps": 81,
+            "resultBytes": 86,
+            "writeBytes": 894221,
+            "writeOps": 86,
+            "instructions": 13549121
+        }
+    }
+}
